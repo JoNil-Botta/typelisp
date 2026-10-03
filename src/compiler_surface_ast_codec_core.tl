@@ -45,15 +45,14 @@
     (let
       [valid : (__tl_dyn-array bool) (__tl_make-array bool 1)]
       [invalid-name : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-      (begin
-        (set! (array-ref valid 0) true)
-        (set! (array-ref invalid-name 0) -1)
-        (SurfaceAstWriteContext
-          valid
-          invalid-name
-          structural-session
-          source-identity-count
-          identity-count)))))
+      (set! (array-ref valid 0) true)
+      (set! (array-ref invalid-name 0) -1)
+      (SurfaceAstWriteContext
+        valid
+        invalid-name
+        structural-session
+        source-identity-count
+        identity-count))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -95,9 +94,8 @@
   (define (surface-ast-write-string!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [text : String]) : unit
-    (begin
-      (surface-ast-write-i64! out (binary.surface-binary-string-length text))
-      (binary.surface-binary-push-string! out text))))
+    (surface-ast-write-i64! out (binary.surface-binary-string-length text))
+    (binary.surface-binary-push-string! out text)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -113,26 +111,23 @@
           name
           context.source-identity-count
           context.identity-count)]
-      (begin
-        (if (< portable 0)
-          (begin
-            (when
-              (surface-ast-write-valid? context)
-              (set! (array-ref context.invalid-name 0) name))
-            (surface-ast-write-fail! context))
-          unit)
-        (surface-ast-write-i64! out portable)))))
+      (when
+        (< portable 0)
+        (when
+          (surface-ast-write-valid? context)
+          (set! (array-ref context.invalid-name 0) name))
+        (surface-ast-write-fail! context))
+      (surface-ast-write-i64! out portable))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-ast-write-span!
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [span : ast.AstSourceSpan]) : unit
-    (begin
-      (surface-ast-write-i64! out (ast.ast-source-span-start-line span))
-      (surface-ast-write-i64! out (ast.ast-source-span-start-col span))
-      (surface-ast-write-i64! out (ast.ast-source-span-end-line span))
-      (surface-ast-write-i64! out (ast.ast-source-span-end-col span)))))
+    (surface-ast-write-i64! out (ast.ast-source-span-start-line span))
+    (surface-ast-write-i64! out (ast.ast-source-span-start-col span))
+    (surface-ast-write-i64! out (ast.ast-source-span-end-line span))
+    (surface-ast-write-i64! out (ast.ast-source-span-end-col span))))
 
 (define (surface-ast-reader-new
   [bytes : (__tl_dyn-array u8)]
@@ -141,15 +136,14 @@
   (let
     [c-function-signatures : (__tl_dyn-array ast.AstTypeList)
       (__tl_make-array ast.AstTypeList 1)]
-    (begin
-      (set!
-        (array-ref c-function-signatures 0)
-        (ast.ast-type-list-with-capacity 0))
-      (SurfaceAstReader
-        (byte_reader.new bytes byte_reader.unlimited-work)
-        structural-session
-        identity-remap
-        c-function-signatures))))
+    (set!
+      (array-ref c-function-signatures 0)
+      (ast.ast-type-list-with-capacity 0))
+    (SurfaceAstReader
+      (byte_reader.new bytes byte_reader.unlimited-work)
+      structural-session
+      identity-remap
+      c-function-signatures)))
 
 (define (surface-ast-reader-valid? [reader : (& reader SurfaceAstReader)]) : bool
   reader.cursor.ok?)
@@ -185,9 +179,8 @@
       [(= value 0) false]
       [(= value 1) true]
       [else
-        (begin
-          (surface-ast-reader-fail! reader "surface ast: invalid boolean")
-          false)])))
+        (surface-ast-reader-fail! reader "surface ast: invalid boolean")
+        false])))
 
 ;; Every read-type call records C signatures, including inline declaration and
 ;; expression annotations. Validate after the complete destination pool exists;
@@ -200,9 +193,8 @@
       (owned_view.compiler-owned-array-element-shared-view
         reader.c-function-signatures
         0)]
-    (begin
-      (ast.ast-type-list-push (&mut signatures) signature)
-      (set! (array-ref reader.c-function-signatures 0) signatures))))
+    (ast.ast-type-list-push (&mut signatures) signature)
+    (set! (array-ref reader.c-function-signatures 0) signatures)))
 
 (define (surface-ast-validate-c-function-signatures!
   [reader : (&mut reader SurfaceAstReader)]
@@ -226,13 +218,12 @@
             (match (ast.ast-node-pool-context-type-get pools signature)
               [(Func _ _) true]
               [_ false]))]
-        (begin
-          (unless
-            valid
-            (surface-ast-reader-fail!
-              reader
-              "surface ast: C function signature must reference a function type"))
-          (set! index (+ index 1)))))))
+        (unless
+          valid
+          (surface-ast-reader-fail!
+            reader
+            "surface ast: C function signature must reference a function type"))
+        (set! index (+ index 1))))))
 
 (define (surface-ast-count-valid? [count : i64]) : bool
   (and (>= count 0) (<= count surface-ast-max-count)))
@@ -256,9 +247,8 @@
       (let
         [text : String
           (binary.surface-binary-bytes->string reader.cursor.bytes offset len)]
-        (begin
-          (byte_reader.skip! (&mut reader.cursor) len)
-          text))
+        (byte_reader.skip! (&mut reader.cursor) len)
+        text)
       (begin
         (surface-ast-reader-fail! reader "surface ast: truncated string")
         ""))))
@@ -296,12 +286,10 @@
     [count : i64]) : unit
     (let
       [index : i64 0]
-      (begin
-        (surface-ast-write-i64! out count)
-        (while (< index count)
-          (begin
-            (surface-ast-write-name! out context (array-ref items index))
-            (set! index (+ index 1))))))))
+      (surface-ast-write-i64! out count)
+      (while (< index count)
+        (surface-ast-write-name! out context (array-ref items index))
+        (set! index (+ index 1))))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -317,12 +305,10 @@
     [count : i64 (surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! (array-ref slots index) (surface-ast-read-name! reader))
-          (set! index (+ index 1))))
-      (ast.AstLifetimeList slots count))))
+    (while (< index count)
+      (set! (array-ref slots index) (surface-ast-read-name! reader))
+      (set! index (+ index 1)))
+    (ast.AstLifetimeList slots count)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -332,24 +318,20 @@
     (let
       [index : i64 0]
       [count : i64 types.len]
-      (begin
-        (surface-ast-write-i64! out count)
-        (while (< index count)
-          (begin
-            (surface-ast-write-i64! out (array-ref types.slots index))
-            (set! index (+ index 1))))))))
+      (surface-ast-write-i64! out count)
+      (while (< index count)
+        (surface-ast-write-i64! out (array-ref types.slots index))
+        (set! index (+ index 1))))))
 
 (define (surface-ast-read-type-list! [reader : (&mut reader SurfaceAstReader)]) : ast.AstTypeList
   (let
     [count : i64 (surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! (array-ref slots index) (surface-ast-read-i64! reader))
-          (set! index (+ index 1))))
-      (ast.AstTypeList slots count))))
+    (while (< index count)
+      (set! (array-ref slots index) (surface-ast-read-i64! reader))
+      (set! index (+ index 1)))
+    (ast.AstTypeList slots count)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -378,91 +360,72 @@
       [(Expr) (surface-ast-write-i64! out 17)]
       [(ExprList) (surface-ast-write-i64! out 18)]
       [(Func args ret)
-        (begin
-          (surface-ast-write-i64! out 19)
-          (surface-ast-write-type-list! out (deref args))
-          (surface-ast-write-i64! out ret))]
+        (surface-ast-write-i64! out 19)
+        (surface-ast-write-type-list! out (deref args))
+        (surface-ast-write-i64! out ret)]
       [(Tuple items)
-        (begin
-          (surface-ast-write-i64! out 20)
-          (surface-ast-write-type-list! out (deref items)))]
+        (surface-ast-write-i64! out 20)
+        (surface-ast-write-type-list! out (deref items))]
       [(Array elem count)
-        (begin
-          (surface-ast-write-i64! out 21)
-          (surface-ast-write-i64! out elem)
-          (surface-ast-write-i64! out count))]
+        (surface-ast-write-i64! out 21)
+        (surface-ast-write-i64! out elem)
+        (surface-ast-write-i64! out count)]
       [(DynArray elem)
-        (begin
-          (surface-ast-write-i64! out 22)
-          (surface-ast-write-i64! out elem))]
+        (surface-ast-write-i64! out 22)
+        (surface-ast-write-i64! out elem)]
       [(Box elem)
-        (begin
-          (surface-ast-write-i64! out 23)
-          (surface-ast-write-i64! out elem))]
+        (surface-ast-write-i64! out 23)
+        (surface-ast-write-i64! out elem)]
       [(Region region inner)
-        (begin
-          (surface-ast-write-i64! out 24)
-          (surface-ast-write-name! out context region)
-          (surface-ast-write-i64! out inner))]
+        (surface-ast-write-i64! out 24)
+        (surface-ast-write-name! out context region)
+        (surface-ast-write-i64! out inner)]
       [(Ref region inner)
-        (begin
-          (surface-ast-write-i64! out 25)
-          (surface-ast-write-name! out context region)
-          (surface-ast-write-i64! out inner))]
+        (surface-ast-write-i64! out 25)
+        (surface-ast-write-name! out context region)
+        (surface-ast-write-i64! out inner)]
       [(MutRef region inner)
-        (begin
-          (surface-ast-write-i64! out 26)
-          (surface-ast-write-name! out context region)
-          (surface-ast-write-i64! out inner))]
+        (surface-ast-write-i64! out 26)
+        (surface-ast-write-name! out context region)
+        (surface-ast-write-i64! out inner)]
       [(Invalidate lifetime inner)
-        (begin
-          (surface-ast-write-i64! out 39)
-          (surface-ast-write-name! out context lifetime)
-          (surface-ast-write-i64! out inner))]
+        (surface-ast-write-i64! out 39)
+        (surface-ast-write-name! out context lifetime)
+        (surface-ast-write-i64! out inner)]
       [(Enum name)
-        (begin
-          (surface-ast-write-i64! out 27)
-          (surface-ast-write-name! out context name))]
+        (surface-ast-write-i64! out 27)
+        (surface-ast-write-name! out context name)]
       [(EnumArgs name lifetimes)
-        (begin
-          (surface-ast-write-i64! out 28)
-          (surface-ast-write-name! out context name)
-          (surface-ast-write-lifetime-list! out context (deref lifetimes)))]
+        (surface-ast-write-i64! out 28)
+        (surface-ast-write-name! out context name)
+        (surface-ast-write-lifetime-list! out context (deref lifetimes))]
       [(Struct name)
-        (begin
-          (surface-ast-write-i64! out 29)
-          (surface-ast-write-name! out context name))]
+        (surface-ast-write-i64! out 29)
+        (surface-ast-write-name! out context name)]
       [(StructArgs name lifetimes)
-        (begin
-          (surface-ast-write-i64! out 30)
-          (surface-ast-write-name! out context name)
-          (surface-ast-write-lifetime-list! out context (deref lifetimes)))]
+        (surface-ast-write-i64! out 30)
+        (surface-ast-write-name! out context name)
+        (surface-ast-write-lifetime-list! out context (deref lifetimes))]
       [(Var name)
-        (begin
-          (surface-ast-write-i64! out 31)
-          (surface-ast-write-name! out context name))]
+        (surface-ast-write-i64! out 31)
+        (surface-ast-write-name! out context name)]
       [(VarArgs name lifetimes)
-        (begin
-          (surface-ast-write-i64! out 32)
-          (surface-ast-write-name! out context name)
-          (surface-ast-write-lifetime-list! out context (deref lifetimes)))]
+        (surface-ast-write-i64! out 32)
+        (surface-ast-write-name! out context name)
+        (surface-ast-write-lifetime-list! out context (deref lifetimes))]
       [(CFunc signature mode)
-        (begin
-          (surface-ast-write-i64! out 38)
-          (surface-ast-write-i64! out signature)
-          (surface-ast-write-i64! out (ast.ast-c-function-mode-key mode)))]
+        (surface-ast-write-i64! out 38)
+        (surface-ast-write-i64! out signature)
+        (surface-ast-write-i64! out (ast.ast-c-function-mode-key mode))]
       [(Ptr elem)
-        (begin
-          (surface-ast-write-i64! out 33)
-          (surface-ast-write-i64! out elem))]
+        (surface-ast-write-i64! out 33)
+        (surface-ast-write-i64! out elem)]
       [(MutPtr elem)
-        (begin
-          (surface-ast-write-i64! out 34)
-          (surface-ast-write-i64! out elem))]
+        (surface-ast-write-i64! out 34)
+        (surface-ast-write-i64! out elem)]
       [(Slice elem)
-        (begin
-          (surface-ast-write-i64! out 36)
-          (surface-ast-write-i64! out elem))])))
+        (surface-ast-write-i64! out 36)
+        (surface-ast-write-i64! out elem)])))
 
 (define (surface-ast-read-type! [reader : (&mut reader SurfaceAstReader)]) : ast.AstType
   (let
@@ -529,11 +492,10 @@
             (surface-ast-record-c-function-signature! reader signature)]
           (cond
             [(or (< signature 0) (< mode 0) (> mode 3))
-              (begin
-                (surface-ast-reader-fail!
-                  reader
-                  "surface ast: invalid C function type")
-                Unit)]
+              (surface-ast-reader-fail!
+                reader
+                "surface ast: invalid C function type")
+              Unit]
             [(= mode 0) (CFunc signature Nullable)]
             [(= mode 1) (CFunc signature NonNull)]
             [(= mode 2) (CFunc signature UnsafeNullable)]
@@ -542,9 +504,8 @@
       [(= tag 34) (MutPtr (surface-ast-read-i64! reader))]
       [(= tag 36) (Slice (surface-ast-read-i64! reader))]
       [else
-        (begin
-          (surface-ast-reader-fail! reader "surface ast: invalid type tag")
-          Unit)])))
+        (surface-ast-reader-fail! reader "surface ast: invalid type tag")
+        Unit])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -555,9 +516,8 @@
     (match maybe-ty
       [(No) (surface-ast-write-i64! out 0)]
       [(Some ty)
-        (begin
-          (surface-ast-write-i64! out 1)
-          (surface-ast-write-type! out context ty))])))
+        (surface-ast-write-i64! out 1)
+        (surface-ast-write-type! out context ty)])))
 
 (define (surface-ast-read-maybe-type! [reader : (&mut reader SurfaceAstReader)]) : ast.AstMaybeType
   (let
@@ -566,11 +526,10 @@
       [(= tag 0) No]
       [(= tag 1) (Some (surface-ast-read-type! reader))]
       [else
-        (begin
-          (surface-ast-reader-fail!
-            reader
-            "surface ast: invalid optional type tag")
-          No)])))
+        (surface-ast-reader-fail!
+          reader
+          "surface ast: invalid optional type tag")
+        No])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -580,26 +539,21 @@
     [literal : ast.AstLiteral]) : unit
     (match literal
       [(Int value text)
-        (begin
-          (surface-ast-write-i64! out 0)
-          (surface-ast-write-i64! out value)
-          (surface-ast-write-string! out text))]
+        (surface-ast-write-i64! out 0)
+        (surface-ast-write-i64! out value)
+        (surface-ast-write-string! out text)]
       [(Float text)
-        (begin
-          (surface-ast-write-i64! out 1)
-          (surface-ast-write-string! out text))]
+        (surface-ast-write-i64! out 1)
+        (surface-ast-write-string! out text)]
       [(Bool value)
-        (begin
-          (surface-ast-write-i64! out 2)
-          (surface-ast-write-bool! out value))]
+        (surface-ast-write-i64! out 2)
+        (surface-ast-write-bool! out value)]
       [(Char value)
-        (begin
-          (surface-ast-write-i64! out 3)
-          (surface-ast-write-i64! out (cast value : i64)))]
+        (surface-ast-write-i64! out 3)
+        (surface-ast-write-i64! out (cast value : i64))]
       [(String name)
-        (begin
-          (surface-ast-write-i64! out 4)
-          (surface-ast-write-name! out context name))]
+        (surface-ast-write-i64! out 4)
+        (surface-ast-write-name! out context name)]
       [(Unit) (surface-ast-write-i64! out 5)])))
 
 (define (surface-ast-read-literal! [reader : (&mut reader SurfaceAstReader)]) : ast.AstLiteral
@@ -614,9 +568,8 @@
       [(= tag 4) (String (surface-ast-read-name! reader))]
       [(= tag 5) Unit]
       [else
-        (begin
-          (surface-ast-reader-fail! reader "surface ast: invalid literal tag")
-          Unit)])))
+        (surface-ast-reader-fail! reader "surface ast: invalid literal tag")
+        Unit])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -627,9 +580,8 @@
     (match lifetime
       [(Inferred) (surface-ast-write-i64! out 0)]
       [(Named name)
-        (begin
-          (surface-ast-write-i64! out 1)
-          (surface-ast-write-name! out context name))])))
+        (surface-ast-write-i64! out 1)
+        (surface-ast-write-name! out context name)])))
 
 (define (surface-ast-read-borrow-lifetime!
   [reader : (&mut reader SurfaceAstReader)]) : ast.AstBorrowLifetime
@@ -639,11 +591,10 @@
       [(= tag 0) Inferred]
       [(= tag 1) (Named (surface-ast-read-name! reader))]
       [else
-        (begin
-          (surface-ast-reader-fail!
-            reader
-            "surface ast: invalid borrow lifetime tag")
-          Inferred)])))
+        (surface-ast-reader-fail!
+          reader
+          "surface ast: invalid borrow lifetime tag")
+        Inferred])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -695,11 +646,8 @@
       [(= tag 16) Shl]
       [(= tag 17) Shr]
       [else
-        (begin
-          (surface-ast-reader-fail!
-            reader
-            "surface ast: invalid binary operator")
-          Add)])))
+        (surface-ast-reader-fail! reader "surface ast: invalid binary operator")
+        Add])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -721,11 +669,8 @@
       [(= tag 1) Not]
       [(= tag 2) BitNot]
       [else
-        (begin
-          (surface-ast-reader-fail!
-            reader
-            "surface ast: invalid unary operator")
-          Neg)])))
+        (surface-ast-reader-fail! reader "surface ast: invalid unary operator")
+        Neg])))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -751,8 +696,5 @@
       [(= tag 3) All]
       [(= tag 4) Any]
       [else
-        (begin
-          (surface-ast-reader-fail!
-            reader
-            "surface ast: invalid reduce operator")
-          Sum)])))
+        (surface-ast-reader-fail! reader "surface ast: invalid reduce operator")
+        Sum])))

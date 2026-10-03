@@ -156,24 +156,20 @@
             [largest : i64
               (let
                 [pick : i64 node]
-                (begin
-                  (if (and (< left count) (,before-expr ,pick-left ,left-item))
-                    (set! pick left)
-                    unit)
-                  (if (and
-                    (< right count)
-                    (,before-expr ,pick-right ,right-item))
-                    (set! pick right)
-                    unit)
-                  pick))]
+                (if (and (< left count) (,before-expr ,pick-left ,left-item))
+                  (set! pick left)
+                  unit)
+                (if (and (< right count) (,before-expr ,pick-right ,right-item))
+                  (set! pick right)
+                  unit)
+                pick)]
             (if (= largest node)
               (set! done true)
               (let
                 [node-item : ,T (,copy-expr ,node-item)]
                 [largest-item : ,T (,copy-expr ,largest-item)]
-                (begin
-                  ,sift-swap
-                  (set! node largest)))))))]
+                ,sift-swap
+                (set! node largest))))))]
     [sift-decl : Expr
       (if range?
         `(define (,sift-expr
@@ -200,19 +196,17 @@
         (let
           [index : i64 (- (/ count 2) 1)]
           (while (>= index 0)
-            (begin
-              ,heap-sift
-              (set! index (- index 1)))))
+            ,heap-sift
+            (set! index (- index 1))))
         (let
           [last : i64 (- count 1)]
           (while (> last 0)
             (let
               [root-item : ,T (,copy-expr ,root-item)]
               [last-item : ,T (,copy-expr ,last-item)]
-              (begin
-                ,extract-swap
-                ,extract-sift
-                (set! last (- last 1)))))))]
+              ,extract-swap
+              ,extract-sift
+              (set! last (- last 1))))))]
     [sort-decl : Expr
       (if range?
         `(define (,sort-expr

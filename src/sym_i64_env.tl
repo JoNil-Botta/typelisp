@@ -56,11 +56,10 @@
   [src : (& src (__tl_dyn-array SymI64Binding))]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (sym-i64-store-copy-range dst src (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set! (array-ref dst index) (array-ref src index))
+    (sym-i64-store-copy-range dst src (+ index 1) count)))
 
 (define (sym-i64-store-grow! [store : (&mut store SymI64Store)]) : unit
   (let
@@ -76,23 +75,20 @@
             (if (< capacity 1)
               8
               (* capacity 2)))]
-        (begin
-          (sym-i64-store-copy-range (&mut bigger) (& store.slots) 0 len)
-          (set! store.slots bigger))))))
+        (sym-i64-store-copy-range (&mut bigger) (& store.slots) 0 len)
+        (set! store.slots bigger)))))
 
 (define (sym-i64-store-push!
   [store : (&mut store SymI64Store)]
   [binding : SymI64Binding]) : i64
-  (begin
-    (if (< store.len (array-length store.slots))
-      unit
-      (sym-i64-store-grow! store))
-    (let
-      [index : i64 store.len]
-      (begin
-        (set! (array-ref store.slots index) binding)
-        (set! store.len (+ index 1))
-        index))))
+  (if (< store.len (array-length store.slots))
+    unit
+    (sym-i64-store-grow! store))
+  (let
+    [index : i64 store.len]
+    (set! (array-ref store.slots index) binding)
+    (set! store.len (+ index 1))
+    index))
 
 (define (sym-i64-store-bindings [store : (& store SymI64Store)]) : (Ptr
     SymI64Binding)
@@ -116,9 +112,8 @@
         e.store-address)]
     [store : SymI64Store (sym-i64-store-read address)]
     [head : i64 (sym-i64-store-push! (&mut store) (SymI64Binding k v e.head))]
-    (begin
-      (sym-i64-store-write! address store)
-      (SymI64Env address head 0))))
+    (sym-i64-store-write! address store)
+    (SymI64Env address head 0)))
 
 (define (sym-i64-view [e : SymI64Env]) : SymI64View
   (if (< e.head 0)
@@ -144,16 +139,15 @@
       [store : SymI64Store (sym-i64-store-read e.store-address)]
       [cursor : i64 e.head]
       [bindings : (Ptr SymI64Binding) (sym-i64-store-bindings (& store))]
-      (begin
-        (while (>= cursor 0)
-          (let
-            [binding : SymI64Binding
-              (unsafe
-                (ptr-read (ptr-offset bindings cursor)))]
-            (if (= binding.key k)
-              (return (Some binding.value))
-              (set! cursor binding.parent))))
-        None))))
+      (while (>= cursor 0)
+        (let
+          [binding : SymI64Binding
+            (unsafe
+              (ptr-read (ptr-offset bindings cursor)))]
+          (if (= binding.key k)
+            (return (Some binding.value))
+            (set! cursor binding.parent))))
+      None)))
 
 (define (sym-i64-lookup-id-or [e : (& e SymI64Env)] [k : i64] [fallback : i64]) : i64
   (if (= e.store-address 0)
@@ -162,16 +156,15 @@
       [store : SymI64Store (sym-i64-store-read e.store-address)]
       [cursor : i64 e.head]
       [bindings : (Ptr SymI64Binding) (sym-i64-store-bindings (& store))]
-      (begin
-        (while (>= cursor 0)
-          (let
-            [binding : SymI64Binding
-              (unsafe
-                (ptr-read (ptr-offset bindings cursor)))]
-            (if (= binding.key k)
-              (return binding.value)
-              (set! cursor binding.parent))))
-        fallback))))
+      (while (>= cursor 0)
+        (let
+          [binding : SymI64Binding
+            (unsafe
+              (ptr-read (ptr-offset bindings cursor)))]
+          (if (= binding.key k)
+            (return binding.value)
+            (set! cursor binding.parent))))
+      fallback)))
 
 (define (sym-i64-contains-id [e : (& e SymI64Env)] [k : i64]) : bool
   (if (= e.store-address 0)
@@ -180,16 +173,15 @@
       [store : SymI64Store (sym-i64-store-read e.store-address)]
       [cursor : i64 e.head]
       [bindings : (Ptr SymI64Binding) (sym-i64-store-bindings (& store))]
-      (begin
-        (while (>= cursor 0)
-          (let
-            [binding : SymI64Binding
-              (unsafe
-                (ptr-read (ptr-offset bindings cursor)))]
-            (if (= binding.key k)
-              (return true)
-              (set! cursor binding.parent))))
-        false))))
+      (while (>= cursor 0)
+        (let
+          [binding : SymI64Binding
+            (unsafe
+              (ptr-read (ptr-offset bindings cursor)))]
+          (if (= binding.key k)
+            (return true)
+            (set! cursor binding.parent))))
+      false)))
 
 ;; Copy reachable bindings into the current arena while retaining symbol IDs.
 ;; The destination must remain within the same interner lifetime. Unlike a
@@ -198,33 +190,28 @@
   (let
     [cursor : SymI64Env source]
     [count : i64 0]
-    (begin
-      (while (>= cursor.head 0)
+    (while (>= cursor.head 0)
+      (match (sym-i64-view cursor)
+        [(SymI64ViewNil) unit]
+        [(SymI64ViewBind _ _ rest)
+          (set! count (+ count 1))
+          (set! cursor rest)]))
+    (let
+      [bindings : (__tl_dyn-array SymI64Binding)
+        (__tl_make-array SymI64Binding count)]
+      [index : i64 0]
+      [out : SymI64Env (sym-i64-empty)]
+      (set! cursor source)
+      (while (< index count)
         (match (sym-i64-view cursor)
           [(SymI64ViewNil) unit]
-          [(SymI64ViewBind _ _ rest)
-            (begin
-              (set! count (+ count 1))
-              (set! cursor rest))]))
-      (let
-        [bindings : (__tl_dyn-array SymI64Binding)
-          (__tl_make-array SymI64Binding count)]
-        [index : i64 0]
-        [out : SymI64Env (sym-i64-empty)]
-        (begin
-          (set! cursor source)
-          (while (< index count)
-            (match (sym-i64-view cursor)
-              [(SymI64ViewNil) unit]
-              [(SymI64ViewBind key value rest)
-                (begin
-                  (set! (array-ref bindings index) (SymI64Binding key value -1))
-                  (set! index (+ index 1))
-                  (set! cursor rest))]))
-          (while (> index 0)
-            (begin
-              (set! index (- index 1))
-              (let
-                [binding : SymI64Binding (array-ref bindings index)]
-                (set! out (sym-i64-bind-id out binding.key binding.value)))))
-          out)))))
+          [(SymI64ViewBind key value rest)
+            (set! (array-ref bindings index) (SymI64Binding key value -1))
+            (set! index (+ index 1))
+            (set! cursor rest)]))
+      (while (> index 0)
+        (set! index (- index 1))
+        (let
+          [binding : SymI64Binding (array-ref bindings index)]
+          (set! out (sym-i64-bind-id out binding.key binding.value))))
+      out)))

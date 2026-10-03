@@ -69,19 +69,18 @@
     [index : i64 0]
     [ok : bool true]
     [done : bool false]
-    (begin
-      (while (and (not done) (< index count))
-        (match (cobj.compiler-object-symbol-list-ref symbols index)
-          [(Symbol name binding kind _)
-            (if (string.eq name target)
-              (begin
-                (match binding
-                  [(Extern)
-                    (set! ok (compiler-windows-coff-extern-linkable? name kind))]
-                  [_ (set! ok true)])
-                (set! done true))
-              (set! index (+ index 1)))]))
-      ok)))
+    (while (and (not done) (< index count))
+      (match (cobj.compiler-object-symbol-list-ref symbols index)
+        [(Symbol name binding kind _)
+          (if (string.eq name target)
+            (begin
+              (match binding
+                [(Extern)
+                  (set! ok (compiler-windows-coff-extern-linkable? name kind))]
+                [_ (set! ok true)])
+              (set! done true))
+            (set! index (+ index 1)))]))
+    ok))
 
 (define (compiler-windows-coff-relocations-linkable?
   [symbols : cobj.CompilerObjectSymbolList]
@@ -90,16 +89,15 @@
     [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< index count))
-        (match (cobj.compiler-object-relocation-list-ref relocs index)
-          [(Relocation _ _ _ target)
-            (if (compiler-windows-coff-relocation-target-linkable?
-              (owned_view.compiler-owned-shared-view symbols)
-              target)
-              (set! index (+ index 1))
-              (set! ok false))]))
-      ok)))
+    (while (and ok (< index count))
+      (match (cobj.compiler-object-relocation-list-ref relocs index)
+        [(Relocation _ _ _ target)
+          (if (compiler-windows-coff-relocation-target-linkable?
+            (owned_view.compiler-owned-shared-view symbols)
+            target)
+            (set! index (+ index 1))
+            (set! ok false))]))
+    ok))
 
 (define (compiler-windows-coff-linkability [image : cobj.CompilerObjectImage]) : CompilerWindowsCoffLinkability
   (cond
@@ -492,17 +490,15 @@
               emit-side-assembly
               profile-state
               typecheck-state))]
-        (begin
-          (if (= opt-level 0)
-            (compiler_driver_core.compiler-driver-retire-lowered-source-arena!)
-            unit)
-          (compiler_ast_types.ast-node-pool-reader-clear!)
-          (compiler_driver_core.compiler-driver-restore-frontend-return-arena!)
-          out))]
-    [(Err diag advisories)
-      (begin
+        (if (= opt-level 0)
+          (compiler_driver_core.compiler-driver-retire-lowered-source-arena!)
+          unit)
+        (compiler_ast_types.ast-node-pool-reader-clear!)
         (compiler_driver_core.compiler-driver-restore-frontend-return-arena!)
-        (Err diag advisories))]))
+        out)]
+    [(Err diag advisories)
+      (compiler_driver_core.compiler-driver-restore-frontend-return-arena!)
+      (Err diag advisories)]))
 
 (define (compiler-windows-batch-state-emit-file
   [state : compiler_driver_core.CompilerDriverState]

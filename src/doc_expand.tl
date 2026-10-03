@@ -496,9 +496,8 @@
   (match (ast.ast-decl-list-step decls)
     [(Nil) unit]
     [(Cons decl rest)
-      (begin
-        (doc-macro-import-examples-from-decl ctx decl examples)
-        (doc-macro-import-examples-from-decls-into ctx rest examples))]))
+      (doc-macro-import-examples-from-decl ctx decl examples)
+      (doc-macro-import-examples-from-decls-into ctx rest examples)]))
 
 (define (doc-macro-import-examples-from-decls
   [ctx : DocExpandContext]
@@ -506,9 +505,8 @@
   (let
     [examples : doc_macro_import_example_vec.Vec
       (doc_macro_import_example_vec.new)]
-    (begin
-      (doc-macro-import-examples-from-decls-into ctx decls (&mut examples))
-      examples)))
+    (doc-macro-import-examples-from-decls-into ctx decls (&mut examples))
+    examples))
 
 (define (doc-generated-target-example-fallback) : DocGeneratedTargetExample
   (DocGeneratedTargetExample "" ""))
@@ -623,17 +621,12 @@
   (match (ast.ast-decl-list-step decls)
     [(Nil) unit]
     [(Cons decl rest)
-      (begin
-        (doc-generated-target-examples-from-decl
-          ctx
-          decl
-          macro-examples
-          targets)
-        (doc-generated-target-examples-from-decls-into
-          ctx
-          rest
-          macro-examples
-          targets))]))
+      (doc-generated-target-examples-from-decl ctx decl macro-examples targets)
+      (doc-generated-target-examples-from-decls-into
+        ctx
+        rest
+        macro-examples
+        targets)]))
 
 (define (doc-generated-target-examples-from-decls
   [ctx : DocExpandContext]
@@ -642,13 +635,12 @@
   (let
     [targets : doc_generated_target_example_vec.Vec
       (doc_generated_target_example_vec.new)]
-    (begin
-      (doc-generated-target-examples-from-decls-into
-        ctx
-        decls
-        macro-examples
-        (&mut targets))
-      targets)))
+    (doc-generated-target-examples-from-decls-into
+      ctx
+      decls
+      macro-examples
+      (&mut targets))
+    targets))
 
 (define (doc-ast-maybe-type-source
   [ctx : DocExpandContext]
@@ -1037,20 +1029,18 @@
   [items : doc_item_vec.Vec]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (doc_item_vec.push-ref! out (doc_extract.doc-item-list-ref items index))
-      (doc-generated-copy-items out items (+ index 1) count))))
+  (unless
+    (>= index count)
+    (doc_item_vec.push-ref! out (doc_extract.doc-item-list-ref items index))
+    (doc-generated-copy-items out items (+ index 1) count)))
 
 (define (doc-generated-module-items [form : String] [items : doc_item_vec.Vec]) : doc_item_vec.Vec
   (let
     [count : i64 (doc_extract.doc-item-list-count items)]
     [out : doc_item_vec.Vec (doc_item_vec.with-capacity (+ count 1))]
-    (begin
-      (doc_item_vec.push-ref! (&mut out) (doc-generated-import-item form))
-      (doc-generated-copy-items (&mut out) items 0 count)
-      out)))
+    (doc_item_vec.push-ref! (&mut out) (doc-generated-import-item form))
+    (doc-generated-copy-items (&mut out) items 0 count)
+    out))
 
 (define (doc-generated-flush-module!
   [module-name : String]
@@ -1084,52 +1074,47 @@
     [has-generated : bool false]
     [modules : doc_module_vec.Vec (doc_module_vec.new)]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cursor)
-          [(Nil)
-            (begin
+    (while (not done)
+      (match (ast.ast-decl-list-step cursor)
+        [(Nil)
+          (doc-generated-flush-module!
+            (owned_view.compiler-owned-shared-view current-module)
+            (owned_view.compiler-owned-shared-view items)
+            has-generated
+            targets
+            (&mut modules))
+          (set! done true)]
+        [(Cons decl rest)
+          (match (owned_view.compiler-owned-shared-view decl)
+            [(Module next-module)
               (doc-generated-flush-module!
                 (owned_view.compiler-owned-shared-view current-module)
                 (owned_view.compiler-owned-shared-view items)
                 has-generated
                 targets
                 (&mut modules))
-              (set! done true))]
-          [(Cons decl rest)
-            (begin
-              (match (owned_view.compiler-owned-shared-view decl)
-                [(Module next-module)
-                  (begin
-                    (doc-generated-flush-module!
-                      (owned_view.compiler-owned-shared-view current-module)
-                      (owned_view.compiler-owned-shared-view items)
-                      has-generated
-                      targets
-                      (&mut modules))
-                    (set!
-                      current-module
-                      (let
-                        [source-id : i64
-                          (cis.intern-structural-session-syntax-source-name-id-or
-                            (cis.intern-structural-session-handle-from-source-names
-                              ctx.source-names)
-                            next-module
-                            -1)]
-                        (if (>= source-id 0)
-                          (doc-expand-source-name ctx source-id)
-                          "<structural-module>")))
-                    (set! items (doc_item_vec.new))
-                    (set! has-generated false))]
-                [_
-                  (match (doc-ast-generated-decl-item ctx decl)
-                    [(Some item)
-                      (begin
-                        (doc_item_vec.push-ref! (&mut items) item)
-                        (set! has-generated true))]
-                    [(No) unit])])
-              (set! cursor rest))]))
-      modules)))
+              (set!
+                current-module
+                (let
+                  [source-id : i64
+                    (cis.intern-structural-session-syntax-source-name-id-or
+                      (cis.intern-structural-session-handle-from-source-names
+                        ctx.source-names)
+                      next-module
+                      -1)]
+                  (if (>= source-id 0)
+                    (doc-expand-source-name ctx source-id)
+                    "<structural-module>")))
+              (set! items (doc_item_vec.new))
+              (set! has-generated false)]
+            [_
+              (match (doc-ast-generated-decl-item ctx decl)
+                [(Some item)
+                  (doc_item_vec.push-ref! (&mut items) item)
+                  (set! has-generated true)]
+                [(No) unit])])
+          (set! cursor rest)]))
+    modules))
 
 (define (doc-expanded-generated-modules-from-loaded-decls-with-state-and-pools-and-intern-state
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -1180,14 +1165,12 @@
     [i : i64 from]
     [n : i64 (string.string-length text)]
     [found : i64 n]
-    (begin
-      (while (and (< i n) (= found n))
-        (begin
-          (if (string.is-string-prefix-at text prefix i)
-            (set! found i)
-            unit)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< i n) (= found n))
+      (if (string.is-string-prefix-at text prefix i)
+        (set! found i)
+        unit)
+      (set! i (+ i 1)))
+    found))
 
 (define (doc-expand-fence-line-start
   [text : (& text str)]
@@ -1218,32 +1201,29 @@
   (let
     [pos : i64 cursor]
     [found : i64 n]
-    (begin
-      (while (and (< pos n) (= found n))
-        (let
-          [line-end : i64 (source_text.line-end text pos)]
-          (begin
-            (if (doc-expand-ignored-fence-line? text pos line-end)
-              (set! found pos)
-              unit)
-            (set! pos (source_text.next-line-start text line-end)))))
-      found)))
+    (while (and (< pos n) (= found n))
+      (let
+        [line-end : i64 (source_text.line-end text pos)]
+        (if (doc-expand-ignored-fence-line? text pos line-end)
+          (set! found pos)
+          unit)
+        (set! pos (source_text.next-line-start text line-end))))
+    found))
 
 (define (doc-expand-skip-fence [text : (& text str)] [cursor : i64] [n : i64]) : i64
   (let
     [open-end : i64 (source_text.line-end text cursor)]
     [pos : i64 (source_text.next-line-start text open-end)]
     [done : bool false]
-    (begin
-      (while (and (< pos n) (not done))
-        (let
-          [line-end : i64 (source_text.line-end text pos)]
-          (if (< (doc-expand-fence-line-start text pos line-end) line-end)
-            (begin
-              (set! pos (source_text.next-line-start text line-end))
-              (set! done true))
-            (set! pos (source_text.next-line-start text line-end)))))
-      pos)))
+    (while (and (< pos n) (not done))
+      (let
+        [line-end : i64 (source_text.line-end text pos)]
+        (if (< (doc-expand-fence-line-start text pos line-end) line-end)
+          (begin
+            (set! pos (source_text.next-line-start text line-end))
+            (set! done true))
+          (set! pos (source_text.next-line-start text line-end)))))
+    pos))
 
 (define (doc-import-forms-from-doc-text [doc-text : (& doc-text str)]) : DocImportFormScan
   (let
@@ -1251,26 +1231,23 @@
     [n : i64 (string.string-length doc-text)]
     [forms : doc_import_form_vec.Vec (doc_import_form_vec.new)]
     [has-macro : bool false]
-    (begin
-      (while (< cursor n)
-        (let
-          [ignored-fence : i64
-            (doc-expand-next-ignored-fence doc-text cursor n)]
-          [start : i64 (doc-expand-find-prefix doc-text "(import " cursor)]
-          (if (< ignored-fence start)
-            (set! cursor (doc-expand-skip-fence doc-text ignored-fence n))
-            (if (< start n)
-              (let
-                [end : i64 (doc_extract.doc-scan-form-end doc-text start n)]
-                [form : String (string.substring doc-text start (- end start))]
-                (begin
-                  (doc-import-form-list-push-unique! (&mut forms) form)
-                  (if (string.is-string-prefix-at doc-text "(import (" start)
-                    (set! has-macro true)
-                    unit)
-                  (set! cursor end)))
-              (set! cursor n)))))
-      (DocImportFormScan forms has-macro))))
+    (while (< cursor n)
+      (let
+        [ignored-fence : i64 (doc-expand-next-ignored-fence doc-text cursor n)]
+        [start : i64 (doc-expand-find-prefix doc-text "(import " cursor)]
+        (if (< ignored-fence start)
+          (set! cursor (doc-expand-skip-fence doc-text ignored-fence n))
+          (if (< start n)
+            (let
+              [end : i64 (doc_extract.doc-scan-form-end doc-text start n)]
+              [form : String (string.substring doc-text start (- end start))]
+              (doc-import-form-list-push-unique! (&mut forms) form)
+              (if (string.is-string-prefix-at doc-text "(import (" start)
+                (set! has-macro true)
+                unit)
+              (set! cursor end))
+            (set! cursor n)))))
+    (DocImportFormScan forms has-macro)))
 
 (define (doc-expanded-example-source [forms : doc_import_form_vec.Vec]) : String
   (doc-cat2
@@ -1293,38 +1270,35 @@
           (ResultDocExpandedModules.Ok (doc_module_vec.new))
           (let
             [intern-state : ci.InternCompatState intern-state]
-            (begin
-              (compiler_load.compiler-load-session-state-use-with-intern-state!
-                load-state
-                (owned_view.compiler-owned-shared-view intern-state))
+            (compiler_load.compiler-load-session-state-use-with-intern-state!
+              load-state
+              (owned_view.compiler-owned-shared-view intern-state))
+            (ast.ast-node-pool-context-install! pools)
+            (ci.intern-compat-state-install! intern-state)
+            (let
+              [loaded : compiler_load.ResultCompilerLoadWithPaths
+                (compiler_load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
+                  (owned_view.compiler-owned-shared-view load-state)
+                  (doc-cat2 source-path ".doc-examples.tl")
+                  (doc-expanded-example-source scan.forms)
+                  (sym_i64_env.sym-i64-empty)
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  No
+                  (parser.compiler-cfg-empty)
+                  pools)]
+              ;; Preserve segments appended through the explicit loader and
+              ;; publish that completed owner for legacy expansion readers.
               (ast.ast-node-pool-context-install! pools)
-              (ci.intern-compat-state-install! intern-state)
-              (let
-                [loaded : compiler_load.ResultCompilerLoadWithPaths
-                  (compiler_load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
-                    (owned_view.compiler-owned-shared-view load-state)
-                    (doc-cat2 source-path ".doc-examples.tl")
-                    (doc-expanded-example-source scan.forms)
-                    (sym_i64_env.sym-i64-empty)
-                    (owned_view.compiler-owned-shared-view stdlib-roots)
-                    No
-                    (parser.compiler-cfg-empty)
-                    pools)]
-                (begin
-                  ;; Preserve segments appended through the explicit loader and
-                  ;; publish that completed owner for legacy expansion readers.
-                  (ast.ast-node-pool-context-install! pools)
-                  (ci.intern-compat-state-capture-from-globals!
-                    (&mut intern-state))
-                  (match loaded
-                    [(Ok decls paths _ _)
-                      (doc-expanded-generated-modules-from-loaded-decls-with-state-and-pools-and-intern-state
-                        load-state
-                        job-state
-                        decls
-                        paths
-                        stdlib-roots
-                        pools
-                        intern-state)]
-                    [(Err diag)
-                      (Err (cdiag.compiler-diagnostic-render (deref diag)))])))))))]))
+              (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
+              (match loaded
+                [(Ok decls paths _ _)
+                  (doc-expanded-generated-modules-from-loaded-decls-with-state-and-pools-and-intern-state
+                    load-state
+                    job-state
+                    decls
+                    paths
+                    stdlib-roots
+                    pools
+                    intern-state)]
+                [(Err diag)
+                  (Err (cdiag.compiler-diagnostic-render (deref diag)))])))))]))

@@ -136,18 +136,17 @@
       (and
         (< start n)
         (not (and (> n (+ start 1)) (= (string.string-ref text start) '0'))))]
-    (begin
-      (while (and valid (< i n))
-        (let
-          [digit : i64 (cast (string.string-ref text i) : i64)]
-          (if (and (>= digit 48) (<= digit 57))
-            (begin
-              (set! value (+ (* value 10) (- digit 48)))
-              (set! i (+ i 1)))
-            (set! valid false))))
-      (if (and valid (<= value max))
-        value
-        -1))))
+    (while (and valid (< i n))
+      (let
+        [digit : i64 (cast (string.string-ref text i) : i64)]
+        (if (and (>= digit 48) (<= digit 57))
+          (begin
+            (set! value (+ (* value 10) (- digit 48)))
+            (set! i (+ i 1)))
+          (set! valid false))))
+    (if (and valid (<= value max))
+      value
+      -1)))
 
 (define (compiler-abi-register-id-from-spelling [spelling : String]) : i64
   (cond
@@ -335,16 +334,14 @@
   (let
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and
-        (not found)
-        (< index (compiler-abi-caller-saved-gp-register-count abi)))
-        (begin
-          (set!
-            found
-            (= (compiler-abi-caller-saved-gp-register-id abi index) reg-id))
-          (set! index (+ index 1))))
-      found)))
+    (while (and
+      (not found)
+      (< index (compiler-abi-caller-saved-gp-register-count abi)))
+      (set!
+        found
+        (= (compiler-abi-caller-saved-gp-register-id abi index) reg-id))
+      (set! index (+ index 1)))
+    found))
 
 (define (compiler-abi-stack-call-arg-for-banks?
   [abi : CompilerRegTargetAbi]

@@ -297,9 +297,8 @@
               (set! builder.owned-bytes owned)
               true)))]
       [(Err _)
-        (begin
-          (set! builder.state 3)
-          false)])
+        (set! builder.state 3)
+        false])
     (begin
       (set! builder.state 3)
       false)))
@@ -541,63 +540,43 @@
   (let
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 128)]
-    (begin
-      (binary.compiler-incremental-binary-push-u8!
-        (&mut out)
-        (compiler-trace-key-tag key))
-      (match (owned_view.compiler-owned-reference-shared-view key)
-        [(Source path)
-          (binary.compiler-incremental-binary-push-string! (&mut out) (& path))]
-        [(ImportSurface package module)
-          (begin
-            (binary.compiler-incremental-binary-push-string!
-              (&mut out)
-              (& package))
-            (binary.compiler-incremental-binary-push-string!
-              (&mut out)
-              (& module)))]
-        [(ImportResolution package module)
-          (begin
-            (binary.compiler-incremental-binary-push-string!
-              (&mut out)
-              (& package))
-            (binary.compiler-incremental-binary-push-string!
-              (&mut out)
-              (& module)))]
-        [(Configuration field)
-          (binary.compiler-incremental-binary-push-string! (&mut out) (& field))]
-        [(CompilerBuild) unit]
-        [(Stdlib distribution)
-          (binary.compiler-incremental-binary-push-string!
-            (&mut out)
-            (& distribution))]
-        [(Package package version)
-          (begin
-            (binary.compiler-incremental-binary-push-string!
-              (&mut out)
-              (& package))
-            (binary.compiler-incremental-binary-push-string!
-              (&mut out)
-              (& version)))]
-        [(MacroComptime phase request)
-          (begin
-            (binary.compiler-incremental-binary-push-string!
-              (&mut out)
-              (& phase))
-            (compiler_incremental_identity.compiler-incremental-push-child!
-              (&mut out)
-              (& request)))]
-        [(Child sequence ordinal child)
-          (begin
-            (binary.compiler-incremental-binary-push-string!
-              (&mut out)
-              (& sequence))
-            (byte_le.push-u64! (&mut out) ordinal)
-            (byte_le.push-u32! (&mut out) (array-length child.transcript))
-            (binary.compiler-incremental-binary-push-array!
-              (&mut out)
-              (& child.transcript)))])
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+    (binary.compiler-incremental-binary-push-u8!
+      (&mut out)
+      (compiler-trace-key-tag key))
+    (match (owned_view.compiler-owned-reference-shared-view key)
+      [(Source path)
+        (binary.compiler-incremental-binary-push-string! (&mut out) (& path))]
+      [(ImportSurface package module)
+        (binary.compiler-incremental-binary-push-string! (&mut out) (& package))
+        (binary.compiler-incremental-binary-push-string! (&mut out) (& module))]
+      [(ImportResolution package module)
+        (binary.compiler-incremental-binary-push-string! (&mut out) (& package))
+        (binary.compiler-incremental-binary-push-string! (&mut out) (& module))]
+      [(Configuration field)
+        (binary.compiler-incremental-binary-push-string! (&mut out) (& field))]
+      [(CompilerBuild) unit]
+      [(Stdlib distribution)
+        (binary.compiler-incremental-binary-push-string!
+          (&mut out)
+          (& distribution))]
+      [(Package package version)
+        (binary.compiler-incremental-binary-push-string! (&mut out) (& package))
+        (binary.compiler-incremental-binary-push-string! (&mut out) (& version))]
+      [(MacroComptime phase request)
+        (binary.compiler-incremental-binary-push-string! (&mut out) (& phase))
+        (compiler_incremental_identity.compiler-incremental-push-child!
+          (&mut out)
+          (& request))]
+      [(Child sequence ordinal child)
+        (binary.compiler-incremental-binary-push-string!
+          (&mut out)
+          (& sequence))
+        (byte_le.push-u64! (&mut out) ordinal)
+        (byte_le.push-u32! (&mut out) (array-length child.transcript))
+        (binary.compiler-incremental-binary-push-array!
+          (&mut out)
+          (& child.transcript))])
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 ;; Planners can name an observation before its result has been computed. A
 ;; nominal key keeps this complete logical identity distinct from a store hash.
@@ -704,81 +683,74 @@
   [value : (& value CompilerIncrementalTraceContent)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view value)
     [(Present content)
-      (begin
-        (binary.compiler-incremental-binary-push-u8! out 1)
-        (compiler_incremental_identity.compiler-incremental-push-content!
-          out
-          (& content)))]
+      (binary.compiler-incremental-binary-push-u8! out 1)
+      (compiler_incremental_identity.compiler-incremental-push-content!
+        out
+        (& content))]
     [(Absent reason)
-      (begin
-        (binary.compiler-incremental-binary-push-u8! out 2)
-        (binary.compiler-incremental-binary-push-u8! out reason))]))
+      (binary.compiler-incremental-binary-push-u8! out 2)
+      (binary.compiler-incremental-binary-push-u8! out reason)]))
 
 (define (compiler-trace-push-semantic!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [value : (& value CompilerIncrementalTraceSemantic)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view value)
     [(Present semantic)
-      (begin
-        (binary.compiler-incremental-binary-push-u8! out 1)
-        (compiler_incremental_identity.compiler-incremental-push-child!
-          out
-          (& semantic.identity)))]
+      (binary.compiler-incremental-binary-push-u8! out 1)
+      (compiler_incremental_identity.compiler-incremental-push-child!
+        out
+        (& semantic.identity))]
     [(Absent reason)
-      (begin
-        (binary.compiler-incremental-binary-push-u8! out 2)
-        (binary.compiler-incremental-binary-push-u8! out reason))]))
+      (binary.compiler-incremental-binary-push-u8! out 2)
+      (binary.compiler-incremental-binary-push-u8! out reason)]))
 
 (define (compiler-trace-push-artifact!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [value : (& value CompilerIncrementalTraceArtifact)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view value)
     [(Present child)
-      (begin
-        (binary.compiler-incremental-binary-push-u8! out 1)
-        (compiler_incremental_identity.compiler-incremental-push-child!
-          out
-          (& child)))]
+      (binary.compiler-incremental-binary-push-u8! out 1)
+      (compiler_incremental_identity.compiler-incremental-push-child!
+        out
+        (& child))]
     [(Absent reason)
-      (begin
-        (binary.compiler-incremental-binary-push-u8! out 2)
-        (binary.compiler-incremental-binary-push-u8! out reason))]))
+      (binary.compiler-incremental-binary-push-u8! out 2)
+      (binary.compiler-incremental-binary-push-u8! out reason)]))
 
 (define (compiler-trace-encode-observation
   [value : (& value CompilerIncrementalTraceObservation)]) : String
   (let
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 128)]
-    (begin
-      (match (owned_view.compiler-owned-reference-shared-view value)
-        [(Source content) (compiler-trace-push-content! (&mut out) (& content))]
-        [(ImportSurface semantic)
-          (compiler-trace-push-semantic! (&mut out) (& semantic))]
-        [(ImportResolution artifact)
-          (compiler-trace-push-artifact! (&mut out) (& artifact))]
-        [(Configuration child)
-          (compiler_incremental_identity.compiler-incremental-push-child!
-            (&mut out)
-            (& child))]
-        [(CompilerBuild child)
-          (compiler_incremental_identity.compiler-incremental-push-child!
-            (&mut out)
-            (& child))]
-        [(Stdlib content)
-          (compiler_incremental_identity.compiler-incremental-push-content!
-            (&mut out)
-            (& content))]
-        [(Package content)
-          (compiler_incremental_identity.compiler-incremental-push-content!
-            (&mut out)
-            (& content))]
-        [(MacroComptime semantic)
-          (compiler-trace-push-semantic! (&mut out) (& semantic))]
-        [(Child semantic)
-          (compiler_incremental_identity.compiler-incremental-push-child!
-            (&mut out)
-            (& semantic.identity))])
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+    (match (owned_view.compiler-owned-reference-shared-view value)
+      [(Source content) (compiler-trace-push-content! (&mut out) (& content))]
+      [(ImportSurface semantic)
+        (compiler-trace-push-semantic! (&mut out) (& semantic))]
+      [(ImportResolution artifact)
+        (compiler-trace-push-artifact! (&mut out) (& artifact))]
+      [(Configuration child)
+        (compiler_incremental_identity.compiler-incremental-push-child!
+          (&mut out)
+          (& child))]
+      [(CompilerBuild child)
+        (compiler_incremental_identity.compiler-incremental-push-child!
+          (&mut out)
+          (& child))]
+      [(Stdlib content)
+        (compiler_incremental_identity.compiler-incremental-push-content!
+          (&mut out)
+          (& content))]
+      [(Package content)
+        (compiler_incremental_identity.compiler-incremental-push-content!
+          (&mut out)
+          (& content))]
+      [(MacroComptime semantic)
+        (compiler-trace-push-semantic! (&mut out) (& semantic))]
+      [(Child semantic)
+        (compiler_incremental_identity.compiler-incremental-push-child!
+          (&mut out)
+          (& semantic.identity))])
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 (define (compiler-trace-record-less?
   [left : CompilerIncrementalTraceRecord]
@@ -841,150 +813,142 @@
       [work : i64 0]
       [sort-bytes : i64 0]
       [sort-level : i64 (trace_record_vec.len (& builder.edges))]
-      (begin
-        (while (< index (trace_record_vec.len (& builder.edges)))
+      (while (< index (trace_record_vec.len (& builder.edges)))
+        (let
+          [record : CompilerIncrementalTraceRecord
+            (owned_view.compiler-owned-array-element-shared-view
+              builder.edges.slots
+              index)]
+          (set!
+            planned
+            (compiler_incremental_identity.compiler-incremental-add-size
+              planned
+              (compiler_incremental_identity.compiler-incremental-add-size
+                8
+                (compiler_incremental_identity.compiler-incremental-add-size
+                  (string.string-length record.key)
+                  (string.string-length record.observation)))))
+          (set!
+            work
+            (compiler_incremental_identity.compiler-incremental-add-size
+              work
+              (compiler_incremental_identity.compiler-incremental-add-size
+                (string.string-length record.key)
+                (string.string-length record.observation))))
+          (when
+            (or
+              (< planned 0)
+              (> planned builder.limits.max-bytes)
+              (< work 0)
+              (> work builder.limits.max-work))
+            (return
+              (Err
+                (compiler-trace-error
+                  compiler-trace-error-limit
+                  "trace byte or work limit exceeded"))))
+          (trace_record_vec.push-ref! (&mut records) record)
+          (set! index (+ index 1))))
+      (set! sort-bytes work)
+      (while (> sort-level 1)
+        (set!
+          work
+          (compiler_incremental_identity.compiler-incremental-add-size
+            work
+            (compiler_incremental_identity.compiler-incremental-add-size
+              sort-bytes
+              sort-bytes)))
+        (when
+          (or (< work 0) (> work builder.limits.max-work))
+          (return
+            (Err
+              (compiler-trace-error
+                compiler-trace-error-limit
+                "trace sorting work limit exceeded"))))
+        (set!
+          sort-level
+          (+ (/ sort-level 2) (- sort-level (* (/ sort-level 2) 2)))))
+      (trace_record_sort.sort! (&mut records) compiler-trace-record-less?)
+      (let
+        [out : byte_buf_core.ByteBufBuilder
+          (byte_buf_core.byte-buf-builder-with-capacity planned)]
+        [last : String ""]
+        [last-value : String ""]
+        [count : i64 0]
+        (set! index 0)
+        (while (< index (trace_record_vec.len (& records)))
           (let
             [record : CompilerIncrementalTraceRecord
               (owned_view.compiler-owned-array-element-shared-view
-                builder.edges.slots
+                records.slots
                 index)]
-            (begin
-              (set!
-                planned
-                (compiler_incremental_identity.compiler-incremental-add-size
-                  planned
-                  (compiler_incremental_identity.compiler-incremental-add-size
-                    8
-                    (compiler_incremental_identity.compiler-incremental-add-size
-                      (string.string-length record.key)
-                      (string.string-length record.observation)))))
-              (set!
-                work
-                (compiler_incremental_identity.compiler-incremental-add-size
-                  work
-                  (compiler_incremental_identity.compiler-incremental-add-size
-                    (string.string-length record.key)
-                    (string.string-length record.observation))))
-              (when
-                (or
-                  (< planned 0)
-                  (> planned builder.limits.max-bytes)
-                  (< work 0)
-                  (> work builder.limits.max-work))
+            (if (and
+              (> index 0)
+              (compiler_incremental_identity.compiler-incremental-string-eq?
+                (& record.key)
+                (& last)))
+              (unless
+                (compiler_incremental_identity.compiler-incremental-string-eq?
+                  (& record.observation)
+                  (& last-value))
                 (return
                   (Err
                     (compiler-trace-error
-                      compiler-trace-error-limit
-                      "trace byte or work limit exceeded"))))
-              (trace_record_vec.push-ref! (&mut records) record)
-              (set! index (+ index 1)))))
-        (set! sort-bytes work)
-        (while (> sort-level 1)
-          (begin
-            (set!
-              work
-              (compiler_incremental_identity.compiler-incremental-add-size
-                work
-                (compiler_incremental_identity.compiler-incremental-add-size
-                  sort-bytes
-                  sort-bytes)))
-            (when
-              (or (< work 0) (> work builder.limits.max-work))
-              (return
-                (Err
-                  (compiler-trace-error
-                    compiler-trace-error-limit
-                    "trace sorting work limit exceeded"))))
-            (set!
-              sort-level
-              (+ (/ sort-level 2) (- sort-level (* (/ sort-level 2) 2))))))
-        (trace_record_sort.sort! (&mut records) compiler-trace-record-less?)
+                      compiler-trace-error-conflict
+                      "inconsistent observations for a trace key"))))
+              (set! count (+ count 1)))
+            (set! last record.key)
+            (set! last-value record.observation)
+            (set! index (+ index 1))))
+        (binary.compiler-incremental-binary-push-string!
+          (&mut out)
+          (& compiler-incremental-trace-domain))
+        (byte_le.push-u32! (&mut out) compiler-incremental-trace-schema)
+        (byte_le.push-u32! (&mut out) (array-length builder.parent.transcript))
+        (binary.compiler-incremental-binary-push-array!
+          (&mut out)
+          (& builder.parent.transcript))
+        (byte_le.push-u32! (&mut out) count)
+        (set! index 0)
+        (set! last "")
+        (while (< index (trace_record_vec.len (& records)))
+          (let
+            [record : CompilerIncrementalTraceRecord
+              (owned_view.compiler-owned-array-element-shared-view
+                records.slots
+                index)]
+            (if (and
+              (> index 0)
+              (compiler_incremental_identity.compiler-incremental-string-eq?
+                (& record.key)
+                (& last)))
+              unit
+              (begin
+                (binary.compiler-incremental-binary-push-string!
+                  (&mut out)
+                  (& record.key))
+                (binary.compiler-incremental-binary-push-string!
+                  (&mut out)
+                  (& record.observation))))
+            (set! last record.key)
+            (set! index (+ index 1))))
         (let
-          [out : byte_buf_core.ByteBufBuilder
-            (byte_buf_core.byte-buf-builder-with-capacity planned)]
-          [last : String ""]
-          [last-value : String ""]
-          [count : i64 0]
-          (begin
-            (set! index 0)
-            (while (< index (trace_record_vec.len (& records)))
-              (let
-                [record : CompilerIncrementalTraceRecord
-                  (owned_view.compiler-owned-array-element-shared-view
-                    records.slots
-                    index)]
-                (begin
-                  (if (and
-                    (> index 0)
-                    (compiler_incremental_identity.compiler-incremental-string-eq?
-                      (& record.key)
-                      (& last)))
-                    (unless
-                      (compiler_incremental_identity.compiler-incremental-string-eq?
-                        (& record.observation)
-                        (& last-value))
-                      (return
-                        (Err
-                          (compiler-trace-error
-                            compiler-trace-error-conflict
-                            "inconsistent observations for a trace key"))))
-                    (set! count (+ count 1)))
-                  (set! last record.key)
-                  (set! last-value record.observation)
-                  (set! index (+ index 1)))))
-            (binary.compiler-incremental-binary-push-string!
-              (&mut out)
-              (& compiler-incremental-trace-domain))
-            (byte_le.push-u32! (&mut out) compiler-incremental-trace-schema)
-            (byte_le.push-u32!
-              (&mut out)
-              (array-length builder.parent.transcript))
-            (binary.compiler-incremental-binary-push-array!
-              (&mut out)
-              (& builder.parent.transcript))
-            (byte_le.push-u32! (&mut out) count)
-            (set! index 0)
-            (set! last "")
-            (while (< index (trace_record_vec.len (& records)))
-              (let
-                [record : CompilerIncrementalTraceRecord
-                  (owned_view.compiler-owned-array-element-shared-view
-                    records.slots
-                    index)]
-                (begin
-                  (if (and
-                    (> index 0)
-                    (compiler_incremental_identity.compiler-incremental-string-eq?
-                      (& record.key)
-                      (& last)))
-                    unit
-                    (begin
-                      (binary.compiler-incremental-binary-push-string!
-                        (&mut out)
-                        (& record.key))
-                      (binary.compiler-incremental-binary-push-string!
-                        (&mut out)
-                        (& record.observation))))
-                  (set! last record.key)
-                  (set! index (+ index 1)))))
-            (let
-              [bytes : (__tl_dyn-array u8)
-                (byte_buf_core.byte-buf-builder-finish-array (& out))]
-              (match (compiler_incremental_identity.compiler-incremental-digest-array
-                (& bytes))
-                [(Sha256FinalizeErr _)
-                  (Err
-                    (compiler-trace-error
-                      compiler-trace-error-corrupt
-                      "trace fingerprint generation failed"))]
-                [(Sha256FinalizeOk digest)
-                  (Ok
-                    (CompilerIncrementalTrace
-                      compiler-incremental-trace-schema
-                      builder.parent
-                      count
-                      bytes
-                      digest))]))))))))
+          [bytes : (__tl_dyn-array u8)
+            (byte_buf_core.byte-buf-builder-finish-array (& out))]
+          (match (compiler_incremental_identity.compiler-incremental-digest-array
+            (& bytes))
+            [(Sha256FinalizeErr _)
+              (Err
+                (compiler-trace-error
+                  compiler-trace-error-corrupt
+                  "trace fingerprint generation failed"))]
+            [(Sha256FinalizeOk digest)
+              (Ok
+                (CompilerIncrementalTrace
+                  compiler-incremental-trace-schema
+                  builder.parent
+                  count
+                  bytes
+                  digest))]))))))
 
 ;; Strings here are byte containers: key and observation frames are not UTF-8
 ;; strings. Only their individual logical-name fields must be canonical text.
@@ -1013,29 +977,23 @@
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-with-capacity length)]
         [index : i64 0]
-        (begin
-          (while (< index length)
-            (begin
-              (byte_buf_core.byte-buf-builder-push
-                (&mut out)
-                (cast (byte_reader.read-u8! (&mut reader.cursor)) : u8))
-              (set! index (+ index 1))))
-          (set! reader.owned-bytes (+ reader.owned-bytes length))
-          (byte_buf_core.byte-buf-builder-finish-string (& out)))))))
+        (while (< index length)
+          (byte_buf_core.byte-buf-builder-push
+            (&mut out)
+            (cast (byte_reader.read-u8! (&mut reader.cursor)) : u8))
+          (set! index (+ index 1)))
+        (set! reader.owned-bytes (+ reader.owned-bytes length))
+        (byte_buf_core.byte-buf-builder-finish-string (& out))))))
 
 (define (compiler-trace-raw-bytes [raw : (& raw str)]) : (__tl_dyn-array u8)
   (let
     [length : i64 (string.string-length raw)]
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 length)]
     [index : i64 0]
-    (begin
-      (while (< index length)
-        (begin
-          (set!
-            (array-ref bytes index)
-            (cast (string.string-ref raw index) : u8))
-          (set! index (+ index 1))))
-      bytes)))
+    (while (< index length)
+      (set! (array-ref bytes index) (cast (string.string-ref raw index) : u8))
+      (set! index (+ index 1)))
+    bytes))
 
 (define (compiler-trace-record-parse-valid?
   [record : (& record CompilerIncrementalTraceRecord)]
@@ -1063,171 +1021,168 @@
     [tag : i64 (byte_reader.read-u8! (&mut key-reader.cursor))]
     [key-ok? : bool false]
     [value-ok? : bool false]
-    (begin
-      (set!
-        key-ok?
-        (cond
-          [(= tag 1)
-            (let
-              [path : String
-                (binary.compiler-incremental-binary-read-string!
-                  (&mut key-reader)
-                  true)]
-              (compiler_incremental_identity.compiler-incremental-path-valid?
-                (& path)
-                limits.max-edge-bytes))]
-          [(or (= tag 2) (= tag 3) (= tag 7))
-            (let
-              [first : String
-                (binary.compiler-incremental-binary-read-string!
-                  (&mut key-reader)
-                  false)]
-              [second : String
-                (binary.compiler-incremental-binary-read-string!
-                  (&mut key-reader)
-                  false)]
-              (and
-                (compiler_incremental_identity.compiler-incremental-text-valid?
-                  (& first)
-                  false
-                  limits.max-edge-bytes)
-                (compiler_incremental_identity.compiler-incremental-text-valid?
-                  (& second)
-                  false
-                  limits.max-edge-bytes)))]
-          [(= tag 4)
-            (let
-              [field : String
-                (binary.compiler-incremental-binary-read-string!
-                  (&mut key-reader)
-                  false)]
-              (compiler_incremental_identity.compiler-incremental-domain-valid?
-                (& field)
-                limits.max-edge-bytes))]
-          [(= tag 5) true]
-          [(= tag 6)
-            (let
-              [distribution : String
-                (binary.compiler-incremental-binary-read-string!
-                  (&mut key-reader)
-                  false)]
+    (set!
+      key-ok?
+      (cond
+        [(= tag 1)
+          (let
+            [path : String
+              (binary.compiler-incremental-binary-read-string!
+                (&mut key-reader)
+                true)]
+            (compiler_incremental_identity.compiler-incremental-path-valid?
+              (& path)
+              limits.max-edge-bytes))]
+        [(or (= tag 2) (= tag 3) (= tag 7))
+          (let
+            [first : String
+              (binary.compiler-incremental-binary-read-string!
+                (&mut key-reader)
+                false)]
+            [second : String
+              (binary.compiler-incremental-binary-read-string!
+                (&mut key-reader)
+                false)]
+            (and
               (compiler_incremental_identity.compiler-incremental-text-valid?
-                (& distribution)
+                (& first)
                 false
-                limits.max-edge-bytes))]
-          [(= tag 8)
-            (let
-              [phase : String
-                (binary.compiler-incremental-binary-read-string!
-                  (&mut key-reader)
-                  false)]
-              [_request : compiler_incremental_identity.CompilerIncrementalChildIdentity
-                (compiler_incremental_identity.compiler-incremental-read-child!
-                  (&mut key-reader)
-                  (& id-limits))]
+                limits.max-edge-bytes)
+              (compiler_incremental_identity.compiler-incremental-text-valid?
+                (& second)
+                false
+                limits.max-edge-bytes)))]
+        [(= tag 4)
+          (let
+            [field : String
+              (binary.compiler-incremental-binary-read-string!
+                (&mut key-reader)
+                false)]
+            (compiler_incremental_identity.compiler-incremental-domain-valid?
+              (& field)
+              limits.max-edge-bytes))]
+        [(= tag 5) true]
+        [(= tag 6)
+          (let
+            [distribution : String
+              (binary.compiler-incremental-binary-read-string!
+                (&mut key-reader)
+                false)]
+            (compiler_incremental_identity.compiler-incremental-text-valid?
+              (& distribution)
+              false
+              limits.max-edge-bytes))]
+        [(= tag 8)
+          (let
+            [phase : String
+              (binary.compiler-incremental-binary-read-string!
+                (&mut key-reader)
+                false)]
+            [_request : compiler_incremental_identity.CompilerIncrementalChildIdentity
+              (compiler_incremental_identity.compiler-incremental-read-child!
+                (&mut key-reader)
+                (& id-limits))]
+            (compiler_incremental_identity.compiler-incremental-domain-valid?
+              (& phase)
+              limits.max-edge-bytes))]
+        [(= tag 9)
+          (let
+            [sequence : String
+              (binary.compiler-incremental-binary-read-string!
+                (&mut key-reader)
+                false)]
+            [ordinal : i64 (byte_reader.read-u64! (&mut key-reader.cursor))]
+            [child-raw : String
+              (compiler-trace-read-raw! (&mut key-reader) limits.max-edge-bytes)]
+            [child-bytes : (__tl_dyn-array u8)
+              (compiler-trace-raw-bytes (& child-raw))]
+            (and
               (compiler_incremental_identity.compiler-incremental-domain-valid?
-                (& phase)
-                limits.max-edge-bytes))]
-          [(= tag 9)
-            (let
-              [sequence : String
-                (binary.compiler-incremental-binary-read-string!
-                  (&mut key-reader)
-                  false)]
-              [ordinal : i64 (byte_reader.read-u64! (&mut key-reader.cursor))]
-              [child-raw : String
-                (compiler-trace-read-raw!
-                  (&mut key-reader)
-                  limits.max-edge-bytes)]
-              [child-bytes : (__tl_dyn-array u8)
-                (compiler-trace-raw-bytes (& child-raw))]
-              (and
-                (compiler_incremental_identity.compiler-incremental-domain-valid?
-                  (& sequence)
-                  limits.max-edge-bytes)
-                (>= ordinal 0)
-                (not
-                  (binary.compiler-incremental-binary-bytes-eq?
-                    (& child-bytes)
-                    (& parent.transcript)))
-                (match (compiler_incremental_identity.compiler-incremental-identity-decode
+                (& sequence)
+                limits.max-edge-bytes)
+              (>= ordinal 0)
+              (not
+                (binary.compiler-incremental-binary-bytes-eq?
                   (& child-bytes)
-                  (& id-limits))
-                  [(Ok _) true]
-                  [_ false])))]
-          [else false]))
-      (set!
-        value-ok?
-        (cond
-          [(or (= tag 1) (= tag 2) (= tag 3) (= tag 8))
-            (let
-              [present : i64 (byte_reader.read-u8! (&mut value-reader.cursor))]
-              (cond
-                [(= present 2)
-                  (compiler-trace-reason-valid?
-                    (byte_reader.read-u8! (&mut value-reader.cursor)))]
-                [(= present 1)
-                  (cond
-                    [(= tag 1)
-                      (let
-                        [content : compiler_incremental_identity.CompilerIncrementalContentIdentity
-                          (compiler_incremental_identity.compiler-incremental-read-content!
-                            (&mut value-reader)
-                            (& id-limits))]
+                  (& parent.transcript)))
+              (match (compiler_incremental_identity.compiler-incremental-identity-decode
+                (& child-bytes)
+                (& id-limits))
+                [(Ok _) true]
+                [_ false])))]
+        [else false]))
+    (set!
+      value-ok?
+      (cond
+        [(or (= tag 1) (= tag 2) (= tag 3) (= tag 8))
+          (let
+            [present : i64 (byte_reader.read-u8! (&mut value-reader.cursor))]
+            (cond
+              [(= present 2)
+                (compiler-trace-reason-valid?
+                  (byte_reader.read-u8! (&mut value-reader.cursor)))]
+              [(= present 1)
+                (cond
+                  [(= tag 1)
+                    (let
+                      [content : compiler_incremental_identity.CompilerIncrementalContentIdentity
+                        (compiler_incremental_identity.compiler-incremental-read-content!
+                          (&mut value-reader)
+                          (& id-limits))]
+                      (compiler_incremental_identity.compiler-incremental-string-eq?
+                        (& content.domain)
+                        "typelisp.source-content"))]
+                  [else
+                    (let
+                      [child : compiler_incremental_identity.CompilerIncrementalChildIdentity
+                        (compiler_incremental_identity.compiler-incremental-read-child!
+                          (&mut value-reader)
+                          (& id-limits))]
+                      (if (or (= tag 2) (= tag 8))
                         (compiler_incremental_identity.compiler-incremental-string-eq?
-                          (& content.domain)
-                          "typelisp.source-content"))]
-                    [else
-                      (let
-                        [child : compiler_incremental_identity.CompilerIncrementalChildIdentity
-                          (compiler_incremental_identity.compiler-incremental-read-child!
-                            (&mut value-reader)
-                            (& id-limits))]
-                        (if (or (= tag 2) (= tag 8))
-                          (compiler_incremental_identity.compiler-incremental-string-eq?
-                            (& child.domain)
-                            (&
-                              compiler_incremental_identity.compiler-incremental-semantic-output-domain))
-                          true))])]
-                [else false]))]
-          [(or (= tag 4) (= tag 5) (= tag 9))
-            (let
-              [child : compiler_incremental_identity.CompilerIncrementalChildIdentity
-                (compiler_incremental_identity.compiler-incremental-read-child!
-                  (&mut value-reader)
-                  (& id-limits))]
-              (cond
-                [(= tag 5)
-                  (compiler_incremental_identity.compiler-incremental-string-eq?
-                    (& child.domain)
-                    (&
-                      compiler_incremental_identity.compiler-incremental-build-domain))]
-                [(= tag 9)
-                  (compiler_incremental_identity.compiler-incremental-string-eq?
-                    (& child.domain)
-                    (&
-                      compiler_incremental_identity.compiler-incremental-semantic-output-domain))]
-                [else true]))]
-          [(or (= tag 6) (= tag 7))
-            (let
-              [content : compiler_incremental_identity.CompilerIncrementalContentIdentity
-                (compiler_incremental_identity.compiler-incremental-read-content!
-                  (&mut value-reader)
-                  (& id-limits))]
-              (compiler_incremental_identity.compiler-incremental-string-eq?
-                (& content.domain)
-                (if (= tag 6)
-                  "typelisp.stdlib-content"
-                  "typelisp.package-content")))]
-          [else false]))
-      (and
-        key-reader.cursor.ok?
-        value-reader.cursor.ok?
-        key-ok?
-        value-ok?
-        (= record.kind tag)
-        (= key-reader.cursor.offset key-reader.cursor.end)
-        (= value-reader.cursor.offset value-reader.cursor.end)))))
+                          (& child.domain)
+                          (&
+                            compiler_incremental_identity.compiler-incremental-semantic-output-domain))
+                        true))])]
+              [else false]))]
+        [(or (= tag 4) (= tag 5) (= tag 9))
+          (let
+            [child : compiler_incremental_identity.CompilerIncrementalChildIdentity
+              (compiler_incremental_identity.compiler-incremental-read-child!
+                (&mut value-reader)
+                (& id-limits))]
+            (cond
+              [(= tag 5)
+                (compiler_incremental_identity.compiler-incremental-string-eq?
+                  (& child.domain)
+                  (&
+                    compiler_incremental_identity.compiler-incremental-build-domain))]
+              [(= tag 9)
+                (compiler_incremental_identity.compiler-incremental-string-eq?
+                  (& child.domain)
+                  (&
+                    compiler_incremental_identity.compiler-incremental-semantic-output-domain))]
+              [else true]))]
+        [(or (= tag 6) (= tag 7))
+          (let
+            [content : compiler_incremental_identity.CompilerIncrementalContentIdentity
+              (compiler_incremental_identity.compiler-incremental-read-content!
+                (&mut value-reader)
+                (& id-limits))]
+            (compiler_incremental_identity.compiler-incremental-string-eq?
+              (& content.domain)
+              (if (= tag 6)
+                "typelisp.stdlib-content"
+                "typelisp.package-content")))]
+        [else false]))
+    (and
+      key-reader.cursor.ok?
+      value-reader.cursor.ok?
+      key-ok?
+      value-ok?
+      (= record.kind tag)
+      (= key-reader.cursor.offset key-reader.cursor.end)
+      (= value-reader.cursor.offset value-reader.cursor.end))))
 
 ;; All published traces are revalidated before comparison. Hashes detect
 ;; corruption, while the strict frame parser also rejects a correctly hashed
@@ -1275,90 +1230,86 @@
         [records : trace_record_vec.Vec (trace_record_vec.with-capacity 0)]
         [index : i64 0]
         [last-key : String ""]
-        (begin
-          (when
-            (or
-              (not reader.cursor.ok?)
-              (not
-                (compiler_incremental_identity.compiler-incremental-string-eq?
-                  (& domain)
-                  (& compiler-incremental-trace-domain)))
-              (!= schema compiler-incremental-trace-schema)
-              (!= trace.schema schema))
-            (return
-              (Err
-                (compiler-trace-error
-                  compiler-trace-error-schema
-                  "unsupported trace schema or domain"))))
-          (when
-            (or
-              (not
-                (binary.compiler-incremental-binary-bytes-eq?
-                  (& parent-bytes)
-                  (& trace.parent.transcript)))
-              (!= count trace.edge-count)
-              (> count (- reader.cursor.end reader.cursor.offset)))
-            (return
-              (Err
-                (compiler-trace-error
-                  compiler-trace-error-corrupt
-                  "invalid trace header"))))
-          (when
-            (> count limits.max-edges)
-            (return
-              (Err
-                (compiler-trace-error
-                  compiler-trace-error-limit
-                  "trace edge count exceeds limit"))))
-          (while (< index count)
-            (let
-              [key : String
-                (compiler-trace-read-raw! (&mut reader) limits.max-edge-bytes)]
-              [observation : String
-                (compiler-trace-read-raw! (&mut reader) limits.max-edge-bytes)]
-              [kind : i64
-                (if (> (string.string-length key) 0)
-                  (cast (string.string-ref (& key) 0) : i64)
-                  0)]
-              [record : CompilerIncrementalTraceRecord
-                (CompilerIncrementalTraceRecord key observation kind)]
-              (begin
-                (when
-                  (or
-                    (not reader.cursor.ok?)
-                    (= (string.string-length record.key) 0)
-                    (>
-                      (string.string-length record.observation)
-                      (-
-                        limits.max-edge-bytes
-                        (string.string-length record.key)))
-                    (not
-                      (compiler-trace-record-parse-valid?
-                        (& record)
-                        (& trace.parent)
-                        limits))
-                    (and
-                      (> index 0)
-                      (not
-                        (stdlib.sort.string-less-borrowed?
-                          (& last-key)
-                          (& record.key)))))
-                  (return
-                    (Err
-                      (compiler-trace-error
-                        compiler-trace-error-corrupt
-                        "invalid trace record"))))
-                (set! last-key (string.copy (& record.key)))
-                (trace_record_vec.push-ref! (&mut records) record)
-                (set! index (+ index 1)))))
-          (if (or
+        (when
+          (or
             (not reader.cursor.ok?)
-            (!= reader.cursor.offset reader.cursor.end))
+            (not
+              (compiler_incremental_identity.compiler-incremental-string-eq?
+                (& domain)
+                (& compiler-incremental-trace-domain)))
+            (!= schema compiler-incremental-trace-schema)
+            (!= trace.schema schema))
+          (return
+            (Err
+              (compiler-trace-error
+                compiler-trace-error-schema
+                "unsupported trace schema or domain"))))
+        (when
+          (or
+            (not
+              (binary.compiler-incremental-binary-bytes-eq?
+                (& parent-bytes)
+                (& trace.parent.transcript)))
+            (!= count trace.edge-count)
+            (> count (- reader.cursor.end reader.cursor.offset)))
+          (return
             (Err
               (compiler-trace-error
                 compiler-trace-error-corrupt
-                "trailing or truncated trace"))
-            (ResultCompilerIncrementalTraceRecords.Ok records))))]))
+                "invalid trace header"))))
+        (when
+          (> count limits.max-edges)
+          (return
+            (Err
+              (compiler-trace-error
+                compiler-trace-error-limit
+                "trace edge count exceeds limit"))))
+        (while (< index count)
+          (let
+            [key : String
+              (compiler-trace-read-raw! (&mut reader) limits.max-edge-bytes)]
+            [observation : String
+              (compiler-trace-read-raw! (&mut reader) limits.max-edge-bytes)]
+            [kind : i64
+              (if (> (string.string-length key) 0)
+                (cast (string.string-ref (& key) 0) : i64)
+                0)]
+            [record : CompilerIncrementalTraceRecord
+              (CompilerIncrementalTraceRecord key observation kind)]
+            (when
+              (or
+                (not reader.cursor.ok?)
+                (= (string.string-length record.key) 0)
+                (>
+                  (string.string-length record.observation)
+                  (- limits.max-edge-bytes (string.string-length record.key)))
+                (not
+                  (compiler-trace-record-parse-valid?
+                    (& record)
+                    (& trace.parent)
+                    limits))
+                (and
+                  (> index 0)
+                  (not
+                    (stdlib.sort.string-less-borrowed?
+                      (& last-key)
+                      (& record.key)))))
+              (return
+                (Err
+                  (compiler-trace-error
+                    compiler-trace-error-corrupt
+                    "invalid trace record"))))
+            (set! last-key (string.copy (& record.key)))
+            (trace_record_vec.push-ref! (&mut records) record)
+            (set! index (+ index 1))))
+        (if (or
+          (not reader.cursor.ok?)
+          (!= reader.cursor.offset reader.cursor.end))
+          (Err
+            (compiler-trace-error
+              compiler-trace-error-corrupt
+              "trailing or truncated trace"))
+          (ResultCompilerIncrementalTraceRecords.Ok records)))]))
 
 (define (compiler-trace-kind-miss [kind : i64]) : i64
   (cond
@@ -1398,47 +1349,45 @@
               [index : i64 0]
               [left-count : i64 (trace_record_vec.len (& left-records))]
               [right-count : i64 (trace_record_vec.len (& right-records))]
-              (begin
-                (while (and (< index left-count) (< index right-count))
-                  (let
-                    [a : CompilerIncrementalTraceRecord
+              (while (and (< index left-count) (< index right-count))
+                (let
+                  [a : CompilerIncrementalTraceRecord
+                    (owned_view.compiler-owned-array-element-shared-view
+                      left-records.slots
+                      index)]
+                  [b : CompilerIncrementalTraceRecord
+                    (owned_view.compiler-owned-array-element-shared-view
+                      right-records.slots
+                      index)]
+                  (when
+                    (or
+                      (not
+                        (compiler_incremental_identity.compiler-incremental-string-eq?
+                          (& a.key)
+                          (& b.key)))
+                      (not
+                        (compiler_incremental_identity.compiler-incremental-string-eq?
+                          (& a.observation)
+                          (& b.observation))))
+                    (return
+                      (Miss
+                        (compiler-trace-kind-miss
+                          (if (stdlib.sort.string-less-borrowed?
+                            (& b.key)
+                            (& a.key))
+                            b.kind
+                            a.kind))
+                        index)))
+                  (set! index (+ index 1))))
+              (if (!= left-count right-count)
+                (let
+                  [record : CompilerIncrementalTraceRecord
+                    (if (< index left-count)
                       (owned_view.compiler-owned-array-element-shared-view
                         left-records.slots
-                        index)]
-                    [b : CompilerIncrementalTraceRecord
+                        index)
                       (owned_view.compiler-owned-array-element-shared-view
                         right-records.slots
-                        index)]
-                    (begin
-                      (when
-                        (or
-                          (not
-                            (compiler_incremental_identity.compiler-incremental-string-eq?
-                              (& a.key)
-                              (& b.key)))
-                          (not
-                            (compiler_incremental_identity.compiler-incremental-string-eq?
-                              (& a.observation)
-                              (& b.observation))))
-                        (return
-                          (Miss
-                            (compiler-trace-kind-miss
-                              (if (stdlib.sort.string-less-borrowed?
-                                (& b.key)
-                                (& a.key))
-                                b.kind
-                                a.kind))
-                            index)))
-                      (set! index (+ index 1)))))
-                (if (!= left-count right-count)
-                  (let
-                    [record : CompilerIncrementalTraceRecord
-                      (if (< index left-count)
-                        (owned_view.compiler-owned-array-element-shared-view
-                          left-records.slots
-                          index)
-                        (owned_view.compiler-owned-array-element-shared-view
-                          right-records.slots
-                          index))]
-                    (Miss (compiler-trace-kind-miss record.kind) index))
-                  (Hit)))))])]))
+                        index))]
+                  (Miss (compiler-trace-kind-miss record.kind) index))
+                (Hit))))])]))

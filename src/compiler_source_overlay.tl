@@ -203,16 +203,14 @@
     [bytes : (__tl_dyn-array u8) (compiler-source-string-array text)]
     [count : i64 (array-length bytes)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [byte : u8 (array-ref bytes index)]
-          (begin
-            (if (and (>= byte (cast 65 : u8)) (<= byte (cast 90 : u8)))
-              (set! (array-ref bytes index) (+ byte (cast 32 : u8)))
-              unit)
-            (set! index (+ index 1)))))
-      (byte_buf.to-string (byte_buf.from-array bytes)))))
+    (while (< index count)
+      (let
+        [byte : u8 (array-ref bytes index)]
+        (if (and (>= byte (cast 65 : u8)) (<= byte (cast 90 : u8)))
+          (set! (array-ref bytes index) (+ byte (cast 32 : u8)))
+          unit)
+        (set! index (+ index 1))))
+    (byte_buf.to-string (byte_buf.from-array bytes))))
 
 ;; Windows file names compare case-insensitively (ASCII); every other host
 ;; compares exact bytes.
@@ -299,151 +297,133 @@
     [failure : CompilerSourceOverlayError
       (compiler-source-overlay-error 0 "" "")]
     [failed : bool false]
-    (begin
-      (cond
-        [(or
-            (< limits.max-entries 0)
-            (< limits.max-total-bytes 0)
-            (< limits.max-path-bytes 1)
-            (< limits.max-ledger-entries 0)
-            (< limits.max-ledger-path-bytes 0))
-          (begin
-            (set!
-              failure
-              (compiler-source-overlay-error
-                compiler-source-overlay-error-limits
-                ""
-                "overlay limits are invalid"))
-            (set! failed true))]
-        [(< generation 1)
-          (begin
-            (set!
-              failure
-              (compiler-source-overlay-error
-                compiler-source-overlay-error-generation
-                ""
-                "overlay generation must be positive"))
-            (set! failed true))]
-        [(> count limits.max-entries)
-          (begin
-            (set!
-              failure
-              (compiler-source-overlay-error
-                compiler-source-overlay-error-count
-                ""
-                "overlay has more entries than its limit"))
-            (set! failed true))]
-        [(or
-            (not (compiler-source-path-canonical? (& root)))
-            (not (compiler-source-path-canonical? (& cwd))))
-          (begin
+    (cond
+      [(or
+        (< limits.max-entries 0)
+        (< limits.max-total-bytes 0)
+        (< limits.max-path-bytes 1)
+        (< limits.max-ledger-entries 0)
+        (< limits.max-ledger-path-bytes 0))
+        (set!
+          failure
+          (compiler-source-overlay-error
+            compiler-source-overlay-error-limits
+            ""
+            "overlay limits are invalid"))
+        (set! failed true)]
+      [(< generation 1)
+        (set!
+          failure
+          (compiler-source-overlay-error
+            compiler-source-overlay-error-generation
+            ""
+            "overlay generation must be positive"))
+        (set! failed true)]
+      [(> count limits.max-entries)
+        (set!
+          failure
+          (compiler-source-overlay-error
+            compiler-source-overlay-error-count
+            ""
+            "overlay has more entries than its limit"))
+        (set! failed true)]
+      [(or
+        (not (compiler-source-path-canonical? (& root)))
+        (not (compiler-source-path-canonical? (& cwd))))
+        (set!
+          failure
+          (compiler-source-overlay-error
+            compiler-source-overlay-error-path
+            (& root)
+            "overlay root and working directory must be canonical absolute paths"))
+        (set! failed true)]
+      [else unit])
+    (while (and (not failed) (< index count))
+      (let
+        [input-slots (overlay_input_vec.slots (& inputs))]
+        [input : CompilerSourceOverlayInput
+          (compiler-source-overlay-input-copy (& (array-ref input-slots index)))]
+        [size : i64 (string.string-length (& input.bytes))]
+        [duplicate : bool
+          (let
+            [earlier : i64 0]
+            [seen : bool false]
+            (while (and (not seen) (< earlier index))
+              (let
+                [slots (overlay_input_vec.slots (& inputs))]
+                (if (compiler-source-path-eq?
+                  (& (array-ref slots earlier).path)
+                  (& input.path))
+                  (set! seen true)
+                  unit)
+                (set! earlier (+ earlier 1))))
+            seen)]
+        (cond
+          [(or
+            (> (string.string-length (& input.path)) limits.max-path-bytes)
+            (not (compiler-source-path-canonical? (& input.path)))
+            (not (compiler-source-path-under? (& root) (& input.path)))
+            (not (compiler-source-tl-path? (& input.path))))
             (set!
               failure
               (compiler-source-overlay-error
                 compiler-source-overlay-error-path
-                (& root)
-                "overlay root and working directory must be canonical absolute paths"))
-            (set! failed true))]
-        [else unit])
-      (while (and (not failed) (< index count))
-        (let
-          [input-slots (overlay_input_vec.slots (& inputs))]
-          [input : CompilerSourceOverlayInput
-            (compiler-source-overlay-input-copy
-              (& (array-ref input-slots index)))]
-          [size : i64 (string.string-length (& input.bytes))]
-          [duplicate : bool
-            (let
-              [earlier : i64 0]
-              [seen : bool false]
-              (begin
-                (while (and (not seen) (< earlier index))
-                  (let
-                    [slots (overlay_input_vec.slots (& inputs))]
-                    (begin
-                      (if (compiler-source-path-eq?
-                        (& (array-ref slots earlier).path)
-                        (& input.path))
-                        (set! seen true)
-                        unit)
-                      (set! earlier (+ earlier 1)))))
-                seen))]
-          (begin
-            (cond
-              [(or
-                  (>
-                    (string.string-length (& input.path))
-                    limits.max-path-bytes)
-                  (not (compiler-source-path-canonical? (& input.path)))
-                  (not (compiler-source-path-under? (& root) (& input.path)))
-                  (not (compiler-source-tl-path? (& input.path))))
-                (begin
-                  (set!
-                    failure
-                    (compiler-source-overlay-error
-                      compiler-source-overlay-error-path
+                (& input.path)
+                "overlay path must be a canonical absolute .tl path under the overlay root"))
+            (set! failed true)]
+          [duplicate
+            (set!
+              failure
+              (compiler-source-overlay-error
+                compiler-source-overlay-error-duplicate
+                (& input.path)
+                "overlay names the same source twice"))
+            (set! failed true)]
+          [(or (> size (- limits.max-total-bytes total)) (< size 0))
+            (set!
+              failure
+              (compiler-source-overlay-error
+                compiler-source-overlay-error-bytes
+                (& input.path)
+                "overlay bytes exceed their limit"))
+            (set! failed true)]
+          [else
+            (match (compiler-source-read-text (& input.path))
+              [(ErrIoString _)
+                (set!
+                  failure
+                  (compiler-source-overlay-error
+                    compiler-source-overlay-error-missing
+                    (& input.path)
+                    "overlay source does not exist on disk"))
+                (set! failed true)]
+              [(OkIoString disk-text)
+                (match (compiler-source-overlay-base-check
+                  (& input.path)
+                  (& disk-text)
+                  (& input.base))
+                  [(Err base-failure)
+                    (set! failure base-failure)
+                    (set! failed true)]
+                  [(Ok)
+                    (match (compiler-source-content-identity
                       (& input.path)
-                      "overlay path must be a canonical absolute .tl path under the overlay root"))
-                  (set! failed true))]
-              [duplicate
-                (begin
-                  (set!
-                    failure
-                    (compiler-source-overlay-error
-                      compiler-source-overlay-error-duplicate
-                      (& input.path)
-                      "overlay names the same source twice"))
-                  (set! failed true))]
-              [(or (> size (- limits.max-total-bytes total)) (< size 0))
-                (begin
-                  (set!
-                    failure
-                    (compiler-source-overlay-error
-                      compiler-source-overlay-error-bytes
-                      (& input.path)
-                      "overlay bytes exceed their limit"))
-                  (set! failed true))]
-              [else
-                (match (compiler-source-read-text (& input.path))
-                  [(ErrIoString _)
-                    (begin
-                      (set!
-                        failure
-                        (compiler-source-overlay-error
-                          compiler-source-overlay-error-missing
-                          (& input.path)
-                          "overlay source does not exist on disk"))
-                      (set! failed true))]
-                  [(OkIoString disk-text)
-                    (match (compiler-source-overlay-base-check
-                      (& input.path)
-                      (& disk-text)
-                      (& input.base))
-                      [(Err base-failure)
-                        (begin
-                          (set! failure base-failure)
-                          (set! failed true))]
-                      [(Ok)
-                        (match (compiler-source-content-identity
-                          (& input.path)
-                          (& input.bytes))
-                          [(Err content-failure)
-                            (begin
-                              (set! failure content-failure)
-                              (set! failed true))]
-                          [(Ok content)
-                            (begin
-                              (overlay_entry_vec.push-ref!
-                                (&mut entries)
-                                (CompilerSourceOverlayEntry
-                                  (string.copy (& input.path))
-                                  (string.copy (& input.bytes))
-                                  content))
-                              (set! total (+ total size)))])])])])
-            (set! index (+ index 1)))))
-      (if failed
-        (Err failure)
-        (Ok (CompilerSourceOverlay generation root cwd entries limits))))))
+                      (& input.bytes))
+                      [(Err content-failure)
+                        (set! failure content-failure)
+                        (set! failed true)]
+                      [(Ok content)
+                        (overlay_entry_vec.push-ref!
+                          (&mut entries)
+                          (CompilerSourceOverlayEntry
+                            (string.copy (& input.path))
+                            (string.copy (& input.bytes))
+                            content))
+                        (set! total (+ total size))])])])])
+        (set! index (+ index 1))))
+    (if failed
+      (Err failure)
+      (Ok (CompilerSourceOverlay generation root cwd entries limits)))))
 
 ;; Check a destination's current disk bytes against the base its candidate was
 ;; planned from.
@@ -477,27 +457,25 @@
     [count : i64 (overlay_entry_vec.len (& overlay.entries))]
     [index : i64 0]
     [offender : i64 -1]
-    (begin
-      (while (and (< offender 0) (< index count))
-        (let
-          [slots (overlay_entry_vec.slots (& overlay.entries))]
-          (begin
-            (if (compiler-source-path-under?
-              (& canonical-root)
-              (& (array-ref slots index).path))
-              (set! offender index)
-              unit)
-            (set! index (+ index 1)))))
-      (if (< offender 0)
-        (Ok)
-        (let
-          [entry : CompilerSourceOverlayEntry
-            (compiler-source-overlay-entry overlay offender)]
-          (Err
-            (compiler-source-overlay-error
-              compiler-source-overlay-error-not-editable
-              (& entry.path)
-              "overlay replaces a source below a stdlib root")))))))
+    (while (and (< offender 0) (< index count))
+      (let
+        [slots (overlay_entry_vec.slots (& overlay.entries))]
+        (if (compiler-source-path-under?
+          (& canonical-root)
+          (& (array-ref slots index).path))
+          (set! offender index)
+          unit)
+        (set! index (+ index 1))))
+    (if (< offender 0)
+      (Ok)
+      (let
+        [entry : CompilerSourceOverlayEntry
+          (compiler-source-overlay-entry overlay offender)]
+        (Err
+          (compiler-source-overlay-error
+            compiler-source-overlay-error-not-editable
+            (& entry.path)
+            "overlay replaces a source below a stdlib root"))))))
 
 ;; The empty overlay: every source is read as it would be without one.
 (define (compiler-source-overlay-empty [cwd : String]) : CompilerSourceOverlay
@@ -520,16 +498,14 @@
     [count : i64 (overlay_entry_vec.len (& overlay.entries))]
     [index : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< index count))
-        (let
-          [slots (overlay_entry_vec.slots (& overlay.entries))]
-          (begin
-            (if (compiler-source-path-eq? (& (array-ref slots index).path) path)
-              (set! found index)
-              unit)
-            (set! index (+ index 1)))))
-      found)))
+    (while (and (< found 0) (< index count))
+      (let
+        [slots (overlay_entry_vec.slots (& overlay.entries))]
+        (if (compiler-source-path-eq? (& (array-ref slots index).path) path)
+          (set! found index)
+          unit)
+        (set! index (+ index 1))))
+    found))
 
 (define (compiler-source-overlay-entry
   [overlay : (& overlay CompilerSourceOverlay)]
@@ -599,11 +575,10 @@
 (define (compiler-source-ledger-fail!
   [ledger : (&mut ledger CompilerSourceLedger)]
   [failure : CompilerSourceOverlayError]) : unit
-  (if ledger.failed
-    unit
-    (begin
-      (set! (array-ref ledger.failure 0) failure)
-      (set! ledger.failed true))))
+  (unless
+    ledger.failed
+    (set! (array-ref ledger.failure 0) failure)
+    (set! ledger.failed true)))
 
 ;; Record one consumed source. An identity already recorded is not recorded
 ;; again; if its bytes differ the ledger fails, since the check then saw two
@@ -646,20 +621,19 @@
               path
               "the check read more sources than its ledger limit"))]
         [else
-          (begin
-            (ledger_entry_vec.push-ref!
-              (&mut ledger.entries)
-              (CompilerSourceLedgerEntry
-                class
-                (string.copy path)
-                (string.copy logical-path)
-                content))
-            (set!
+          (ledger_entry_vec.push-ref!
+            (&mut ledger.entries)
+            (CompilerSourceLedgerEntry
+              class
+              (string.copy path)
+              (string.copy logical-path)
+              content))
+          (set!
+            ledger.path-bytes
+            (+
               ledger.path-bytes
-              (+
-                ledger.path-bytes
-                (string.string-length path)
-                (string.string-length logical-path))))]))))
+              (string.string-length path)
+              (string.string-length logical-path)))]))))
 
 (define (compiler-source-ledger-content-matches?
   [ledger : (& ledger CompilerSourceLedger)]
@@ -692,35 +666,33 @@
     [count : i64 (ledger_entry_vec.len (& ledger.entries))]
     [index : i64 0]
     [stale : source_path_vec.Vec (source_path_vec.new)]
-    (begin
-      (while (< index count)
-        (let
-          [entry : CompilerSourceLedgerEntry
-            (compiler-source-ledger-get ledger index)]
-          (begin
-            (match entry.class
-              [(Disk)
-                (let
-                  [current : bool
-                    (match (compiler-source-read-text (& entry.path))
-                      [(ErrIoString _) false]
-                      [(OkIoString text)
-                        (match (compiler-source-content-identity
-                          (& entry.path)
-                          (& text))
-                          [(Err _) false]
-                          [(Ok content)
-                            (compiler-source-content-eq?
-                              (& content)
-                              (& entry.content))])])]
-                  (if current
-                    unit
-                    (source_path_vec.push-ref!
-                      (&mut stale)
-                      (string.copy (& entry.path)))))]
-              [_ unit])
-            (set! index (+ index 1)))))
-      stale)))
+    (while (< index count)
+      (let
+        [entry : CompilerSourceLedgerEntry
+          (compiler-source-ledger-get ledger index)]
+        (match entry.class
+          [(Disk)
+            (let
+              [current : bool
+                (match (compiler-source-read-text (& entry.path))
+                  [(ErrIoString _) false]
+                  [(OkIoString text)
+                    (match (compiler-source-content-identity
+                      (& entry.path)
+                      (& text))
+                      [(Err _) false]
+                      [(Ok content)
+                        (compiler-source-content-eq?
+                          (& content)
+                          (& entry.content))])])]
+              (if current
+                unit
+                (source_path_vec.push-ref!
+                  (&mut stale)
+                  (string.copy (& entry.path)))))]
+          [_ unit])
+        (set! index (+ index 1))))
+    stale))
 
 ;; Check that every admitted entry was consumed by the check. An entry the
 ;; check never read proves nothing about the candidate generation, so a caller
@@ -732,24 +704,20 @@
     [count : i64 (overlay_entry_vec.len (& overlay.entries))]
     [index : i64 0]
     [unread : source_path_vec.Vec (source_path_vec.new)]
-    (begin
-      (while (< index count)
-        (let
-          [entry : CompilerSourceOverlayEntry
-            (compiler-source-overlay-entry overlay index)]
-          [recorded : i64 (compiler-source-ledger-find ledger (& entry.path))]
-          (begin
-            (if (and
-              (>= recorded 0)
-              (match (compiler-source-ledger-get ledger recorded).class
-                [(Overlay) true]
-                [_ false]))
-              unit
-              (source_path_vec.push-ref!
-                (&mut unread)
-                (string.copy (& entry.path))))
-            (set! index (+ index 1)))))
-      unread)))
+    (while (< index count)
+      (let
+        [entry : CompilerSourceOverlayEntry
+          (compiler-source-overlay-entry overlay index)]
+        [recorded : i64 (compiler-source-ledger-find ledger (& entry.path))]
+        (if (and
+          (>= recorded 0)
+          (match (compiler-source-ledger-get ledger recorded).class
+            [(Overlay) true]
+            [_ false]))
+          unit
+          (source_path_vec.push-ref! (&mut unread) (string.copy (& entry.path))))
+        (set! index (+ index 1))))
+    unread))
 
 (define (compiler-source-ledger-find
   [ledger : (& ledger CompilerSourceLedger)]
@@ -758,13 +726,11 @@
     [count : i64 (ledger_entry_vec.len (& ledger.entries))]
     [index : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< index count))
-        (let
-          [slots (ledger_entry_vec.slots (& ledger.entries))]
-          (begin
-            (if (compiler-source-path-eq? (& (array-ref slots index).path) path)
-              (set! found index)
-              unit)
-            (set! index (+ index 1)))))
-      found)))
+    (while (and (< found 0) (< index count))
+      (let
+        [slots (ledger_entry_vec.slots (& ledger.entries))]
+        (if (compiler-source-path-eq? (& (array-ref slots index).path) path)
+          (set! found index)
+          unit)
+        (set! index (+ index 1))))
+    found))

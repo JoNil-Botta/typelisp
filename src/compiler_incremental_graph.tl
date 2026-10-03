@@ -219,9 +219,8 @@
   (let
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity (array-length bytes))]
-    (begin
-      (byte_buf_core.byte-buf-builder-append-array (&mut out) bytes)
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+    (byte_buf_core.byte-buf-builder-append-array (&mut out) bytes)
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 (define (compiler-graph-range-bytes
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -230,12 +229,10 @@
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
     [index : i64 0]
-    (begin
-      (while (< index length)
-        (begin
-          (set! (array-ref out index) (array-ref bytes (+ start index)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index length)
+      (set! (array-ref out index) (array-ref bytes (+ start index)))
+      (set! index (+ index 1)))
+    out))
 
 ;; Unsigned lexicographic order of two byte ranges: -1, 0 or 1.
 (define (compiler-graph-range-compare
@@ -252,22 +249,17 @@
         right-length)]
     [index : i64 0]
     [result : i64 0]
-    (begin
-      (while (and (= result 0) (< index limit))
-        (let
-          [a : i64 (cast (array-ref left (+ left-start index)) : i64)]
-          [b : i64 (cast (array-ref right (+ right-start index)) : i64)]
-          (begin
-            (cond
-              [(< a b) (set! result -1)]
-              [(> a b) (set! result 1)]
-              [else unit])
-            (set! index (+ index 1)))))
-      (cond
-        [(!= result 0) result]
-        [(< left-length right-length) -1]
-        [(> left-length right-length) 1]
-        [else 0]))))
+    (while (and (= result 0) (< index limit))
+      (let
+        [a : i64 (cast (array-ref left (+ left-start index)) : i64)]
+        [b : i64 (cast (array-ref right (+ right-start index)) : i64)]
+        (cond [(< a b) (set! result -1)] [(> a b) (set! result 1)] [else unit])
+        (set! index (+ index 1))))
+    (cond
+      [(!= result 0) result]
+      [(< left-length right-length) -1]
+      [(> left-length right-length) 1]
+      [else 0])))
 
 (define (compiler-graph-string-compare
   [left : (& left str)]
@@ -281,22 +273,17 @@
         right-length)]
     [index : i64 0]
     [result : i64 0]
-    (begin
-      (while (and (= result 0) (< index limit))
-        (let
-          [a : i64 (cast (string.string-ref left index) : i64)]
-          [b : i64 (cast (string.string-ref right index) : i64)]
-          (begin
-            (cond
-              [(< a b) (set! result -1)]
-              [(> a b) (set! result 1)]
-              [else unit])
-            (set! index (+ index 1)))))
-      (cond
-        [(!= result 0) result]
-        [(< left-length right-length) -1]
-        [(> left-length right-length) 1]
-        [else 0]))))
+    (while (and (= result 0) (< index limit))
+      (let
+        [a : i64 (cast (string.string-ref left index) : i64)]
+        [b : i64 (cast (string.string-ref right index) : i64)]
+        (cond [(< a b) (set! result -1)] [(> a b) (set! result 1)] [else unit])
+        (set! index (+ index 1))))
+    (cond
+      [(!= result 0) result]
+      [(< left-length right-length) -1]
+      [(> left-length right-length) 1]
+      [else 0])))
 
 (define (compiler-graph-push-string-bytes!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -304,11 +291,10 @@
   (let
     [index : i64 0]
     (while (< index (string.string-length text))
-      (begin
-        (byte_buf_core.byte-buf-builder-push
-          out
-          (cast (string.string-ref text index) : u8))
-        (set! index (+ index 1))))))
+      (byte_buf_core.byte-buf-builder-push
+        out
+        (cast (string.string-ref text index) : u8))
+      (set! index (+ index 1)))))
 
 ;; --- field validation and encoding --------------------------------------------
 (define (compiler-graph-identity-limits
@@ -430,12 +416,11 @@
   (let
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 64)]
-    (begin
-      (binary.compiler-incremental-binary-push-string!
-        (&mut out)
-        (& name.purpose))
-      (binary.compiler-incremental-binary-push-string! (&mut out) (& name.name))
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+    (binary.compiler-incremental-binary-push-string!
+      (&mut out)
+      (& name.purpose))
+    (binary.compiler-incremental-binary-push-string! (&mut out) (& name.name))
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 (define (compiler-graph-output-valid?
   [output : (& output identity.CompilerIncrementalSemanticOutputIdentity)]
@@ -457,9 +442,8 @@
   (let
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 96)]
-    (begin
-      (identity.compiler-incremental-push-child! (&mut out) (& output.identity))
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+    (identity.compiler-incremental-push-child! (&mut out) (& output.identity))
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 (define (compiler-graph-stored-key-valid?
   [key : (& key CompilerIncrementalStoredResultKey)]
@@ -476,11 +460,10 @@
 (define (compiler-graph-push-stored-key!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [key : (& key CompilerIncrementalStoredResultKey)]) : unit
-  (begin
-    (binary.compiler-incremental-binary-push-string! out (& key.domain))
-    (byte_le.push-u32! out key.schema)
-    (byte_le.push-u32! out (array-length key.bytes))
-    (binary.compiler-incremental-binary-push-array! out (& key.bytes))))
+  (binary.compiler-incremental-binary-push-string! out (& key.domain))
+  (byte_le.push-u32! out key.schema)
+  (byte_le.push-u32! out (array-length key.bytes))
+  (binary.compiler-incremental-binary-push-array! out (& key.bytes)))
 
 ;; Everything a node encodes after its query transcript.
 (define (compiler-graph-encode-node-body
@@ -489,22 +472,21 @@
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity
         (+ 128 (array-length node.trace.transcript)))]
-    (begin
-      (binary.compiler-incremental-binary-push-u8!
-        (&mut out)
-        compiler-graph-output-tag)
-      (identity.compiler-incremental-push-child!
-        (&mut out)
-        (& node.output.identity))
-      (binary.compiler-incremental-binary-push-u8!
-        (&mut out)
-        compiler-graph-key-tag)
-      (compiler-graph-push-stored-key! (&mut out) (& node.stored-key))
-      (byte_le.push-u32! (&mut out) (array-length node.trace.transcript))
-      (binary.compiler-incremental-binary-push-array!
-        (&mut out)
-        (& node.trace.transcript))
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+    (binary.compiler-incremental-binary-push-u8!
+      (&mut out)
+      compiler-graph-output-tag)
+    (identity.compiler-incremental-push-child!
+      (&mut out)
+      (& node.output.identity))
+    (binary.compiler-incremental-binary-push-u8!
+      (&mut out)
+      compiler-graph-key-tag)
+    (compiler-graph-push-stored-key! (&mut out) (& node.stored-key))
+    (byte_le.push-u32! (&mut out) (array-length node.trace.transcript))
+    (binary.compiler-incremental-binary-push-array!
+      (&mut out)
+      (& node.trace.transcript))
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 ;; --- builder --------------------------------------------------------------------
 (define (compiler-graph-header-bytes) : i64
@@ -532,21 +514,19 @@
   [builder : (&mut builder CompilerIncrementalGraphBuilder)]
   [code : i64]
   [message : String]) : bool
-  (begin
-    (when
-      (= builder.state 1)
-      (set! builder.error (compiler-graph-error code -1 -1 message)))
-    (set! builder.state 3)
-    false))
+  (when
+    (= builder.state 1)
+    (set! builder.error (compiler-graph-error code -1 -1 message)))
+  (set! builder.state 3)
+  false)
 
 (define (compiler-graph-abort!
   [builder : (&mut builder CompilerIncrementalGraphBuilder)]) : unit
-  (begin
-    (compiler-graph-fail!
-      builder
-      compiler-graph-error-state
-      "graph builder aborted")
-    unit))
+  (compiler-graph-fail!
+    builder
+    compiler-graph-error-state
+    "graph builder aborted")
+  unit)
 
 ;; Reserve the encoded size of one more record; false once over budget.
 (define (compiler-graph-reserve!
@@ -713,66 +693,63 @@
               node-count))]
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-with-capacity builder.planned-bytes)]
-        (begin
-          (compiler-graph-sort-range!
-            (&mut root-order)
-            (&mut scratch)
-            0
-            root-count
-            (& builder.roots.slots)
-            (& builder.nodes.slots)
-            1)
-          (compiler-graph-sort-range!
-            (&mut node-order)
-            (&mut scratch)
-            0
-            node-count
-            (& builder.roots.slots)
-            (& builder.nodes.slots)
-            2)
-          (binary.compiler-incremental-binary-push-string!
-            (&mut out)
-            (& compiler-incremental-graph-domain))
-          (byte_le.push-u32! (&mut out) compiler-incremental-graph-schema)
-          (cond
-            [(not
-                (compiler-graph-write-roots!
-                  (&mut out)
-                  (& builder.roots.slots)
-                  (& root-order)))
-              (Err
-                (compiler-graph-error
-                  compiler-graph-error-conflict
-                  -1
-                  -1
-                  "one root name names two queries"))]
-            [(not
-                (compiler-graph-write-nodes!
-                  (&mut out)
-                  (& builder.nodes.slots)
-                  (& node-order)))
-              (Err
-                (compiler-graph-error
-                  compiler-graph-error-conflict
-                  -1
-                  -1
-                  "one query has two different node records"))]
-            [else
-              (let
-                [bytes : (__tl_dyn-array u8)
-                  (byte_buf_core.byte-buf-builder-finish-array (& out))]
-                (compiler-graph-decode (& bytes) (& builder.limits)))])))]))
+        (compiler-graph-sort-range!
+          (&mut root-order)
+          (&mut scratch)
+          0
+          root-count
+          (& builder.roots.slots)
+          (& builder.nodes.slots)
+          1)
+        (compiler-graph-sort-range!
+          (&mut node-order)
+          (&mut scratch)
+          0
+          node-count
+          (& builder.roots.slots)
+          (& builder.nodes.slots)
+          2)
+        (binary.compiler-incremental-binary-push-string!
+          (&mut out)
+          (& compiler-incremental-graph-domain))
+        (byte_le.push-u32! (&mut out) compiler-incremental-graph-schema)
+        (cond
+          [(not
+              (compiler-graph-write-roots!
+                (&mut out)
+                (& builder.roots.slots)
+                (& root-order)))
+            (Err
+              (compiler-graph-error
+                compiler-graph-error-conflict
+                -1
+                -1
+                "one root name names two queries"))]
+          [(not
+              (compiler-graph-write-nodes!
+                (&mut out)
+                (& builder.nodes.slots)
+                (& node-order)))
+            (Err
+              (compiler-graph-error
+                compiler-graph-error-conflict
+                -1
+                -1
+                "one query has two different node records"))]
+          [else
+            (let
+              [bytes : (__tl_dyn-array u8)
+                (byte_buf_core.byte-buf-builder-finish-array (& out))]
+              (compiler-graph-decode (& bytes) (& builder.limits)))]))]))
 
 (define (compiler-graph-identity-order [count : i64]) : (__tl_dyn-array i64)
   (let
     [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! (array-ref out index) index)
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set! (array-ref out index) index)
+      (set! index (+ index 1)))
+    out))
 
 ;; Write the distinct roots in sorted order; false when one name is bound to
 ;; two different queries.
@@ -786,78 +763,74 @@
     [ok? : bool true]
     [no-nodes : (__tl_dyn-array CompilerIncrementalGraphNodeRecord)
       (__tl_make-array CompilerIncrementalGraphNodeRecord 0)]
-    (begin
-      (while (and ok? (< index (array-length order)))
-        (begin
-          (when
-            (or
-              (= index 0)
-              (!=
-                (compiler-graph-record-compare
-                  records
-                  (& no-nodes)
-                  1
-                  order
-                  (- index 1)
-                  index
-                  true)
-                0))
-            (set! count (+ count 1)))
-          (when
-            (and
-              (> index 0)
-              (=
-                (compiler-graph-record-compare
-                  records
-                  (& no-nodes)
-                  1
-                  order
-                  (- index 1)
-                  index
-                  true)
-                0)
-              (!=
-                (compiler-graph-record-compare
-                  records
-                  (& no-nodes)
-                  1
-                  order
-                  (- index 1)
-                  index
-                  false)
-                0))
-            (set! ok? false))
-          (set! index (+ index 1))))
+    (while (and ok? (< index (array-length order)))
       (when
-        ok?
-        (byte_le.push-u32! out count)
-        (set! index 0)
-        (while (< index (array-length order))
-          (begin
-            (when
-              (or
-                (= index 0)
-                (!=
-                  (compiler-graph-record-compare
-                    records
-                    (& no-nodes)
-                    1
-                    order
-                    (- index 1)
-                    index
-                    true)
-                  0))
-              (let
-                [record : CompilerIncrementalGraphRootRecord
-                  (owned_view.compiler-owned-array-element-shared-view
-                    (owned_view.compiler-owned-reference-shared-view records)
-                    (array-ref order index))]
-                (begin
-                  (compiler-graph-push-string-bytes! out (& record.key))
-                  (byte_le.push-u32! out (string.string-length record.query))
-                  (compiler-graph-push-string-bytes! out (& record.query)))))
-            (set! index (+ index 1)))))
-      ok?)))
+        (or
+          (= index 0)
+          (!=
+            (compiler-graph-record-compare
+              records
+              (& no-nodes)
+              1
+              order
+              (- index 1)
+              index
+              true)
+            0))
+        (set! count (+ count 1)))
+      (when
+        (and
+          (> index 0)
+          (=
+            (compiler-graph-record-compare
+              records
+              (& no-nodes)
+              1
+              order
+              (- index 1)
+              index
+              true)
+            0)
+          (!=
+            (compiler-graph-record-compare
+              records
+              (& no-nodes)
+              1
+              order
+              (- index 1)
+              index
+              false)
+            0))
+        (set! ok? false))
+      (set! index (+ index 1)))
+    (when
+      ok?
+      (byte_le.push-u32! out count)
+      (set! index 0)
+      (while (< index (array-length order))
+        (when
+          (or
+            (= index 0)
+            (!=
+              (compiler-graph-record-compare
+                records
+                (& no-nodes)
+                1
+                order
+                (- index 1)
+                index
+                true)
+              0))
+          (let
+            [record : CompilerIncrementalGraphRootRecord
+              (owned_view.compiler-owned-array-element-shared-view
+                (owned_view.compiler-owned-reference-shared-view records)
+                (array-ref order index))]
+            (compiler-graph-push-string-bytes! out (& record.key))
+            (byte_le.push-u32! out (string.string-length record.query))
+            (compiler-graph-push-string-bytes! out (& record.query))))
+        (set! index (+ index 1))))
+    ok?))
 
 ;; Write the distinct nodes in sorted order; false when one query carries two
 ;; different records.
@@ -871,78 +844,74 @@
     [ok? : bool true]
     [roots : (__tl_dyn-array CompilerIncrementalGraphRootRecord)
       (__tl_make-array CompilerIncrementalGraphRootRecord 0)]
-    (begin
-      (while (and ok? (< index (array-length order)))
-        (begin
-          (when
-            (or
-              (= index 0)
-              (!=
-                (compiler-graph-record-compare
-                  (& roots)
-                  records
-                  2
-                  order
-                  (- index 1)
-                  index
-                  true)
-                0))
-            (set! count (+ count 1)))
-          (when
-            (and
-              (> index 0)
-              (=
-                (compiler-graph-record-compare
-                  (& roots)
-                  records
-                  2
-                  order
-                  (- index 1)
-                  index
-                  true)
-                0)
-              (!=
-                (compiler-graph-record-compare
-                  (& roots)
-                  records
-                  2
-                  order
-                  (- index 1)
-                  index
-                  false)
-                0))
-            (set! ok? false))
-          (set! index (+ index 1))))
+    (while (and ok? (< index (array-length order)))
       (when
-        ok?
-        (byte_le.push-u32! out count)
-        (set! index 0)
-        (while (< index (array-length order))
-          (begin
-            (when
-              (or
-                (= index 0)
-                (!=
-                  (compiler-graph-record-compare
-                    (& roots)
-                    records
-                    2
-                    order
-                    (- index 1)
-                    index
-                    true)
-                  0))
-              (let
-                [record : CompilerIncrementalGraphNodeRecord
-                  (owned_view.compiler-owned-array-element-shared-view
-                    (owned_view.compiler-owned-reference-shared-view records)
-                    (array-ref order index))]
-                (begin
-                  (byte_le.push-u32! out (string.string-length record.query))
-                  (compiler-graph-push-string-bytes! out (& record.query))
-                  (compiler-graph-push-string-bytes! out (& record.body)))))
-            (set! index (+ index 1)))))
-      ok?)))
+        (or
+          (= index 0)
+          (!=
+            (compiler-graph-record-compare
+              (& roots)
+              records
+              2
+              order
+              (- index 1)
+              index
+              true)
+            0))
+        (set! count (+ count 1)))
+      (when
+        (and
+          (> index 0)
+          (=
+            (compiler-graph-record-compare
+              (& roots)
+              records
+              2
+              order
+              (- index 1)
+              index
+              true)
+            0)
+          (!=
+            (compiler-graph-record-compare
+              (& roots)
+              records
+              2
+              order
+              (- index 1)
+              index
+              false)
+            0))
+        (set! ok? false))
+      (set! index (+ index 1)))
+    (when
+      ok?
+      (byte_le.push-u32! out count)
+      (set! index 0)
+      (while (< index (array-length order))
+        (when
+          (or
+            (= index 0)
+            (!=
+              (compiler-graph-record-compare
+                (& roots)
+                records
+                2
+                order
+                (- index 1)
+                index
+                true)
+              0))
+          (let
+            [record : CompilerIncrementalGraphNodeRecord
+              (owned_view.compiler-owned-array-element-shared-view
+                (owned_view.compiler-owned-reference-shared-view records)
+                (array-ref order index))]
+            (byte_le.push-u32! out (string.string-length record.query))
+            (compiler-graph-push-string-bytes! out (& record.query))
+            (compiler-graph-push-string-bytes! out (& record.body))))
+        (set! index (+ index 1))))
+    ok?))
 
 ;; Compare the records at order[left] and order[right]: mode 1 roots by name
 ;; (then query unless `primary-only?`), mode 2 nodes by query (then body).
@@ -1041,21 +1010,19 @@
     (cond
       [(not reader.cursor.ok?) (__tl_make-array u8 0)]
       [(or (= length 0) (> length max-length))
-        (begin
-          (binary.compiler-incremental-binary-fail!
-            reader
-            byte_reader.error-truncated
-            length-offset
-            "graph field length is out of range")
-          (__tl_make-array u8 0))]
+        (binary.compiler-incremental-binary-fail!
+          reader
+          byte_reader.error-truncated
+          length-offset
+          "graph field length is out of range")
+        (__tl_make-array u8 0)]
       [(not (byte_reader.consume! (&mut reader.cursor) length))
         (__tl_make-array u8 0)]
       [else
         (let
           [start : i64 reader.cursor.offset]
-          (begin
-            (byte_reader.skip! (&mut reader.cursor) length)
-            (compiler-graph-range-bytes (& reader.cursor.bytes) start length)))])))
+          (byte_reader.skip! (&mut reader.cursor) length)
+          (compiler-graph-range-bytes (& reader.cursor.bytes) start length))])))
 
 ;; Collect the child-result edges (trace key tag 9) of node `node`.
 (define (compiler-graph-collect-edges!
@@ -1069,54 +1036,53 @@
     [offset : i64 first-record]
     [index : i64 0]
     [ok? : bool true]
-    (begin
-      (while (and ok? (< index count))
-        (let
-          [key-length : i64 (compiler-graph-u32-at transcript offset)]
-          [key-start : i64 (+ offset 4)]
-          [observation-length : i64
-            (compiler-graph-u32-at transcript (+ key-start key-length))]
-          [observation-start : i64 (+ (+ key-start key-length) 4)]
-          (if (or
-            (< key-length 1)
-            (< observation-length 0)
-            (not
-              (byte_reader.range-present?
-                (array-length transcript)
-                observation-start
-                observation-length)))
-            (set! ok? false)
-            (begin
-              (when
-                (= (cast (array-ref transcript key-start) : i64) 9)
-                (let
-                  [sequence-length : i64
-                    (compiler-graph-u32-at transcript (+ key-start 1))]
-                  [child-length-at : i64 (+ (+ key-start 13) sequence-length)]
-                  [child-length : i64
-                    (compiler-graph-u32-at transcript child-length-at)]
-                  [child-start : i64 (+ child-length-at 4)]
-                  (if (and
-                    (>= sequence-length 0)
-                    (>= child-length 0)
-                    (= (+ child-start child-length) (+ key-start key-length))
-                    (< (graph_edge_vec.len edges) limits.max-edges))
-                    (graph_edge_vec.push-ref!
-                      edges
-                      (CompilerIncrementalGraphEdgeRecord
-                        node
-                        (compiler-graph-range-string
-                          transcript
-                          child-start
-                          child-length)
-                        (compiler-graph-range-string
-                          transcript
-                          observation-start
-                          observation-length)))
-                    (set! ok? false))))
-              (set! offset (+ observation-start observation-length))
-              (set! index (+ index 1))))))
-      ok?)))
+    (while (and ok? (< index count))
+      (let
+        [key-length : i64 (compiler-graph-u32-at transcript offset)]
+        [key-start : i64 (+ offset 4)]
+        [observation-length : i64
+          (compiler-graph-u32-at transcript (+ key-start key-length))]
+        [observation-start : i64 (+ (+ key-start key-length) 4)]
+        (if (or
+          (< key-length 1)
+          (< observation-length 0)
+          (not
+            (byte_reader.range-present?
+              (array-length transcript)
+              observation-start
+              observation-length)))
+          (set! ok? false)
+          (begin
+            (when
+              (= (cast (array-ref transcript key-start) : i64) 9)
+              (let
+                [sequence-length : i64
+                  (compiler-graph-u32-at transcript (+ key-start 1))]
+                [child-length-at : i64 (+ (+ key-start 13) sequence-length)]
+                [child-length : i64
+                  (compiler-graph-u32-at transcript child-length-at)]
+                [child-start : i64 (+ child-length-at 4)]
+                (if (and
+                  (>= sequence-length 0)
+                  (>= child-length 0)
+                  (= (+ child-start child-length) (+ key-start key-length))
+                  (< (graph_edge_vec.len edges) limits.max-edges))
+                  (graph_edge_vec.push-ref!
+                    edges
+                    (CompilerIncrementalGraphEdgeRecord
+                      node
+                      (compiler-graph-range-string
+                        transcript
+                        child-start
+                        child-length)
+                      (compiler-graph-range-string
+                        transcript
+                        observation-start
+                        observation-length)))
+                  (set! ok? false))))
+            (set! offset (+ observation-start observation-length))
+            (set! index (+ index 1))))))
+    ok?))
 
 ;; The little-endian u32 at `offset`, or -1 when it is not wholly present.
 (define (compiler-graph-u32-at
@@ -1133,13 +1099,12 @@
   (let
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity length)]
-    (begin
-      (byte_buf_core.byte-buf-builder-append-array-range
-        (&mut out)
-        bytes
-        start
-        length)
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+    (byte_buf_core.byte-buf-builder-append-array-range
+      (&mut out)
+      bytes
+      start
+      length)
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 ;; Rebuild node `node`'s trace from its transcript, check it is a trace of
 ;; exactly `parent`, and collect its child-result edges.
@@ -1245,9 +1210,8 @@
     [scratch : arena.Arena (arena.make)]
     [result : ResultCompilerIncrementalGraph
       (compiler-graph-decode-in bytes limits scratch.handle)]
-    (begin
-      (arena.destroy-safe! scratch)
-      result)))
+    (arena.destroy-safe! scratch)
+    result))
 
 (define (compiler-graph-decode-in
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -1280,47 +1244,46 @@
           (binary.compiler-incremental-binary-read-string! (&mut reader) false)]
         [schema : i64 (byte_reader.read-u32! (&mut reader.cursor))]
         [root-count : i64 (byte_reader.read-u32! (&mut reader.cursor))]
-        (begin
-          (when
-            (not reader.cursor.ok?)
-            (return (Err (compiler-graph-reader-error (& reader) -1 -1))))
-          (when
-            (or
-              (not
-                (identity.compiler-incremental-string-eq?
-                  (& domain)
-                  (& compiler-incremental-graph-domain)))
-              (!= schema compiler-incremental-graph-schema))
-            (return
-              (Err
-                (compiler-graph-error
-                  compiler-graph-error-schema
-                  -1
-                  -1
-                  "graph domain or schema is not supported"))))
-          (when
-            (> root-count limits.max-roots)
-            (return
-              (Err
-                (compiler-graph-error
-                  compiler-graph-error-limit
-                  -1
-                  -1
-                  "graph exceeds its root limit"))))
-          (when
-            (>
-              root-count
-              (/
-                (- reader.cursor.end reader.cursor.offset)
-                compiler-graph-min-root-bytes))
-            (return
-              (Err
-                (compiler-graph-error
-                  compiler-graph-error-framing
-                  -1
-                  -1
-                  "graph root count exceeds the remaining bytes"))))
-          (compiler-graph-decode-body (&mut reader) root-count limits scratch)))]))
+        (when
+          (not reader.cursor.ok?)
+          (return (Err (compiler-graph-reader-error (& reader) -1 -1))))
+        (when
+          (or
+            (not
+              (identity.compiler-incremental-string-eq?
+                (& domain)
+                (& compiler-incremental-graph-domain)))
+            (!= schema compiler-incremental-graph-schema))
+          (return
+            (Err
+              (compiler-graph-error
+                compiler-graph-error-schema
+                -1
+                -1
+                "graph domain or schema is not supported"))))
+        (when
+          (> root-count limits.max-roots)
+          (return
+            (Err
+              (compiler-graph-error
+                compiler-graph-error-limit
+                -1
+                -1
+                "graph exceeds its root limit"))))
+        (when
+          (>
+            root-count
+            (/
+              (- reader.cursor.end reader.cursor.offset)
+              compiler-graph-min-root-bytes))
+          (return
+            (Err
+              (compiler-graph-error
+                compiler-graph-error-framing
+                -1
+                -1
+                "graph root count exceeds the remaining bytes"))))
+        (compiler-graph-decode-body (&mut reader) root-count limits scratch))]))
 
 (define (compiler-graph-decode-body
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]
@@ -1335,23 +1298,132 @@
     [index : i64 0]
     [previous-start : i64 0]
     [previous-length : i64 0]
-    (begin
-      (while (< index root-count)
-        (let
-          [key-start : i64 reader.cursor.offset]
-          [purpose : String
-            (binary.compiler-incremental-binary-read-string! reader false)]
-          [name : String
-            (binary.compiler-incremental-binary-read-string! reader false)]
-          [key-length : i64 (- reader.cursor.offset key-start)]
-          [query-bytes : (__tl_dyn-array u8)
-            (compiler-graph-read-framed! reader limits.trace.max-edge-bytes)]
-          [root-name : CompilerIncrementalGraphRootName
-            (CompilerIncrementalGraphRootName purpose name)]
-          (begin
+    (while (< index root-count)
+      (let
+        [key-start : i64 reader.cursor.offset]
+        [purpose : String
+          (binary.compiler-incremental-binary-read-string! reader false)]
+        [name : String
+          (binary.compiler-incremental-binary-read-string! reader false)]
+        [key-length : i64 (- reader.cursor.offset key-start)]
+        [query-bytes : (__tl_dyn-array u8)
+          (compiler-graph-read-framed! reader limits.trace.max-edge-bytes)]
+        [root-name : CompilerIncrementalGraphRootName
+          (CompilerIncrementalGraphRootName purpose name)]
+        (when
+          (not reader.cursor.ok?)
+          (return (Err (compiler-graph-reader-error reader index -1))))
+        (when
+          (and
+            (> index 0)
+            (>=
+              (compiler-graph-range-compare
+                (& reader.cursor.bytes)
+                previous-start
+                previous-length
+                (& reader.cursor.bytes)
+                key-start
+                key-length)
+              0))
+          (return
+            (Err
+              (compiler-graph-error
+                compiler-graph-error-order
+                index
+                -1
+                "graph roots are not in strictly increasing canonical order"))))
+        (when
+          (not (compiler-graph-root-name-valid? (& root-name) limits))
+          (return
+            (Err
+              (compiler-graph-error
+                compiler-graph-error-root
+                index
+                -1
+                "root name is invalid"))))
+        (match (compiler-graph-query-from-transcript
+          query-bytes
+          limits
+          scratch
+          index
+          -1)
+          [(Err error) (return (Err error))]
+          [(Ok query)
+            (set!
+              (array-ref roots index)
+              (CompilerIncrementalGraphRoot root-name query))])
+        (set! previous-start key-start)
+        (set! previous-length key-length)
+        (set! index (+ index 1))))
+    (let
+      [node-count : i64 (byte_reader.read-u32! (&mut reader.cursor))]
+      (when
+        (not reader.cursor.ok?)
+        (return (Err (compiler-graph-reader-error reader -1 -1))))
+      (when
+        (> node-count limits.max-nodes)
+        (return
+          (Err
+            (compiler-graph-error
+              compiler-graph-error-limit
+              -1
+              -1
+              "graph exceeds its node limit"))))
+      (when
+        (>
+          node-count
+          (/
+            (- reader.cursor.end reader.cursor.offset)
+            compiler-graph-min-node-bytes))
+        (return
+          (Err
+            (compiler-graph-error
+              compiler-graph-error-framing
+              -1
+              -1
+              "graph node count exceeds the remaining bytes"))))
+      (let
+        [nodes : (__tl_dyn-array CompilerIncrementalGraphNode)
+          (__tl_make-array CompilerIncrementalGraphNode node-count)]
+        [edges : graph_edge_vec.Vec (graph_edge_vec.with-capacity 0)]
+        (set! index 0)
+        (while (< index node-count)
+          (let
+            [query-start : i64 (+ reader.cursor.offset 4)]
+            [query-bytes : (__tl_dyn-array u8)
+              (compiler-graph-read-framed! reader limits.trace.max-edge-bytes)]
+            [query-length : i64 (array-length query-bytes)]
+            [output-tag : i64 (byte_reader.read-u8! (&mut reader.cursor))]
+            [output : identity.CompilerIncrementalSemanticOutputIdentity
+              (identity.CompilerIncrementalSemanticOutputIdentity
+                (identity.compiler-incremental-read-child! reader (& id-limits)))]
+            [key-tag : i64 (byte_reader.read-u8! (&mut reader.cursor))]
+            [key-domain : String
+              (binary.compiler-incremental-binary-read-string! reader false)]
+            [key-schema : i64 (byte_reader.read-u32! (&mut reader.cursor))]
+            [key-bytes : (__tl_dyn-array u8)
+              (compiler-graph-read-framed! reader limits.max-key-bytes)]
+            [trace-bytes : (__tl_dyn-array u8)
+              (compiler-graph-read-framed! reader limits.trace.max-bytes)]
+            [stored-key : CompilerIncrementalStoredResultKey
+              (CompilerIncrementalStoredResultKey
+                key-domain
+                key-schema
+                key-bytes)]
             (when
               (not reader.cursor.ok?)
-              (return (Err (compiler-graph-reader-error reader index -1))))
+              (return (Err (compiler-graph-reader-error reader -1 index))))
+            (when
+              (or
+                (!= output-tag compiler-graph-output-tag)
+                (!= key-tag compiler-graph-key-tag))
+              (return
+                (Err
+                  (compiler-graph-error
+                    compiler-graph-error-framing
+                    -1
+                    index
+                    "graph node field tag is unknown"))))
             (when
               (and
                 (> index 0)
@@ -1361,198 +1433,74 @@
                     previous-start
                     previous-length
                     (& reader.cursor.bytes)
-                    key-start
-                    key-length)
+                    query-start
+                    query-length)
                   0))
               (return
                 (Err
                   (compiler-graph-error
                     compiler-graph-error-order
-                    index
                     -1
-                    "graph roots are not in strictly increasing canonical order"))))
+                    index
+                    "graph nodes are not in strictly increasing canonical order"))))
             (when
-              (not (compiler-graph-root-name-valid? (& root-name) limits))
+              (not (compiler-graph-output-valid? (& output) limits))
               (return
                 (Err
                   (compiler-graph-error
-                    compiler-graph-error-root
-                    index
+                    compiler-graph-error-output
                     -1
-                    "root name is invalid"))))
+                    index
+                    "node semantic output identity is invalid"))))
+            (when
+              (not (compiler-graph-stored-key-valid? (& stored-key) limits))
+              (return
+                (Err
+                  (compiler-graph-error
+                    compiler-graph-error-key
+                    -1
+                    index
+                    "node stored-result key is invalid"))))
             (match (compiler-graph-query-from-transcript
               query-bytes
               limits
               scratch
-              index
-              -1)
+              -1
+              index)
               [(Err error) (return (Err error))]
               [(Ok query)
-                (set!
-                  (array-ref roots index)
-                  (CompilerIncrementalGraphRoot root-name query))])
-            (set! previous-start key-start)
-            (set! previous-length key-length)
-            (set! index (+ index 1)))))
-      (let
-        [node-count : i64 (byte_reader.read-u32! (&mut reader.cursor))]
-        (begin
-          (when
-            (not reader.cursor.ok?)
-            (return (Err (compiler-graph-reader-error reader -1 -1))))
-          (when
-            (> node-count limits.max-nodes)
-            (return
-              (Err
-                (compiler-graph-error
-                  compiler-graph-error-limit
-                  -1
-                  -1
-                  "graph exceeds its node limit"))))
-          (when
-            (>
-              node-count
-              (/
-                (- reader.cursor.end reader.cursor.offset)
-                compiler-graph-min-node-bytes))
-            (return
-              (Err
-                (compiler-graph-error
-                  compiler-graph-error-framing
-                  -1
-                  -1
-                  "graph node count exceeds the remaining bytes"))))
-          (let
-            [nodes : (__tl_dyn-array CompilerIncrementalGraphNode)
-              (__tl_make-array CompilerIncrementalGraphNode node-count)]
-            [edges : graph_edge_vec.Vec (graph_edge_vec.with-capacity 0)]
-            (begin
-              (set! index 0)
-              (while (< index node-count)
-                (let
-                  [query-start : i64 (+ reader.cursor.offset 4)]
-                  [query-bytes : (__tl_dyn-array u8)
-                    (compiler-graph-read-framed!
-                      reader
-                      limits.trace.max-edge-bytes)]
-                  [query-length : i64 (array-length query-bytes)]
-                  [output-tag : i64 (byte_reader.read-u8! (&mut reader.cursor))]
-                  [output : identity.CompilerIncrementalSemanticOutputIdentity
-                    (identity.CompilerIncrementalSemanticOutputIdentity
-                      (identity.compiler-incremental-read-child!
-                        reader
-                        (& id-limits)))]
-                  [key-tag : i64 (byte_reader.read-u8! (&mut reader.cursor))]
-                  [key-domain : String
-                    (binary.compiler-incremental-binary-read-string!
-                      reader
-                      false)]
-                  [key-schema : i64
-                    (byte_reader.read-u32! (&mut reader.cursor))]
-                  [key-bytes : (__tl_dyn-array u8)
-                    (compiler-graph-read-framed! reader limits.max-key-bytes)]
-                  [trace-bytes : (__tl_dyn-array u8)
-                    (compiler-graph-read-framed! reader limits.trace.max-bytes)]
-                  [stored-key : CompilerIncrementalStoredResultKey
-                    (CompilerIncrementalStoredResultKey
-                      key-domain
-                      key-schema
-                      key-bytes)]
-                  (begin
-                    (when
-                      (not reader.cursor.ok?)
-                      (return
-                        (Err (compiler-graph-reader-error reader -1 index))))
-                    (when
-                      (or
-                        (!= output-tag compiler-graph-output-tag)
-                        (!= key-tag compiler-graph-key-tag))
-                      (return
-                        (Err
-                          (compiler-graph-error
-                            compiler-graph-error-framing
-                            -1
-                            index
-                            "graph node field tag is unknown"))))
-                    (when
-                      (and
-                        (> index 0)
-                        (>=
-                          (compiler-graph-range-compare
-                            (& reader.cursor.bytes)
-                            previous-start
-                            previous-length
-                            (& reader.cursor.bytes)
-                            query-start
-                            query-length)
-                          0))
-                      (return
-                        (Err
-                          (compiler-graph-error
-                            compiler-graph-error-order
-                            -1
-                            index
-                            "graph nodes are not in strictly increasing canonical order"))))
-                    (when
-                      (not (compiler-graph-output-valid? (& output) limits))
-                      (return
-                        (Err
-                          (compiler-graph-error
-                            compiler-graph-error-output
-                            -1
-                            index
-                            "node semantic output identity is invalid"))))
-                    (when
-                      (not
-                        (compiler-graph-stored-key-valid? (& stored-key) limits))
-                      (return
-                        (Err
-                          (compiler-graph-error
-                            compiler-graph-error-key
-                            -1
-                            index
-                            "node stored-result key is invalid"))))
-                    (match (compiler-graph-query-from-transcript
-                      query-bytes
-                      limits
-                      scratch
-                      -1
-                      index)
-                      [(Err error) (return (Err error))]
-                      [(Ok query)
-                        (match (compiler-graph-read-trace
-                          (& query)
-                          trace-bytes
-                          scratch
-                          index
-                          limits
-                          (&mut edges))
-                          [(Err error) (return (Err error))]
-                          [(Ok value)
-                            (set!
-                              (array-ref nodes index)
-                              (CompilerIncrementalGraphNode
-                                query
-                                output
-                                stored-key
-                                value))])])
-                    (set! previous-start query-start)
-                    (set! previous-length query-length)
-                    (set! index (+ index 1)))))
-              (if (!= reader.cursor.offset reader.cursor.end)
-                (Err
-                  (compiler-graph-error
-                    compiler-graph-error-trailing
-                    -1
-                    -1
-                    "graph bytes continue after the last node"))
-                (compiler-graph-link
-                  roots
-                  nodes
-                  (& edges)
-                  (binary.compiler-incremental-binary-copy
-                    (& reader.cursor.bytes))
-                  limits)))))))))
+                (match (compiler-graph-read-trace
+                  (& query)
+                  trace-bytes
+                  scratch
+                  index
+                  limits
+                  (&mut edges))
+                  [(Err error) (return (Err error))]
+                  [(Ok value)
+                    (set!
+                      (array-ref nodes index)
+                      (CompilerIncrementalGraphNode
+                        query
+                        output
+                        stored-key
+                        value))])])
+            (set! previous-start query-start)
+            (set! previous-length query-length)
+            (set! index (+ index 1))))
+        (if (!= reader.cursor.offset reader.cursor.end)
+          (Err
+            (compiler-graph-error
+              compiler-graph-error-trailing
+              -1
+              -1
+              "graph bytes continue after the last node"))
+          (compiler-graph-link
+            roots
+            nodes
+            (& edges)
+            (binary.compiler-incremental-binary-copy (& reader.cursor.bytes))
+            limits))))))
 
 ;; --- linking: edges, roots, reachability, topology ---------------------------------
 ;; Index of the node whose query transcript is exactly `transcript`, or -1.
@@ -1564,23 +1512,22 @@
     [low : i64 0]
     [high : i64 (array-length nodes)]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< low high))
-        (let
-          [middle : i64 (+ low (/ (- high low) 2))]
-          [node : CompilerIncrementalGraphNode
-            (owned_view.compiler-owned-array-element-shared-view
-              (owned_view.compiler-owned-reference-shared-view nodes)
-              middle)]
-          [order : i64
-            (compiler-graph-array-string-compare
-              (& node.query.transcript)
-              transcript)]
-          (cond
-            [(= order 0) (set! found middle)]
-            [(< order 0) (set! low (+ middle 1))]
-            [else (set! high middle)])))
-      found)))
+    (while (and (< found 0) (< low high))
+      (let
+        [middle : i64 (+ low (/ (- high low) 2))]
+        [node : CompilerIncrementalGraphNode
+          (owned_view.compiler-owned-array-element-shared-view
+            (owned_view.compiler-owned-reference-shared-view nodes)
+            middle)]
+        [order : i64
+          (compiler-graph-array-string-compare
+            (& node.query.transcript)
+            transcript)]
+        (cond
+          [(= order 0) (set! found middle)]
+          [(< order 0) (set! low (+ middle 1))]
+          [else (set! high middle)])))
+    found))
 
 ;; Unsigned lexicographic order of a byte array and a string's bytes.
 (define (compiler-graph-array-string-compare
@@ -1595,22 +1542,17 @@
         right-length)]
     [index : i64 0]
     [result : i64 0]
-    (begin
-      (while (and (= result 0) (< index limit))
-        (let
-          [a : i64 (cast (array-ref left index) : i64)]
-          [b : i64 (cast (string.string-ref right index) : i64)]
-          (begin
-            (cond
-              [(< a b) (set! result -1)]
-              [(> a b) (set! result 1)]
-              [else unit])
-            (set! index (+ index 1)))))
-      (cond
-        [(!= result 0) result]
-        [(< left-length right-length) -1]
-        [(> left-length right-length) 1]
-        [else 0]))))
+    (while (and (= result 0) (< index limit))
+      (let
+        [a : i64 (cast (array-ref left index) : i64)]
+        [b : i64 (cast (string.string-ref right index) : i64)]
+        (cond [(< a b) (set! result -1)] [(> a b) (set! result 1)] [else unit])
+        (set! index (+ index 1))))
+    (cond
+      [(!= result 0) result]
+      [(< left-length right-length) -1]
+      [(> left-length right-length) 1]
+      [else 0])))
 
 ;; Stable merge sort of values[start, end) using scratch of the same length.
 ;; Mode 0 orders the values themselves; modes 1 and 2 treat them as indices of
@@ -1629,50 +1571,47 @@
     (while (< width count)
       (let
         [left : i64 start]
-        (begin
-          (while (< left end)
-            (let
-              [middle : i64
-                (if (< (+ left width) end)
-                  (+ left width)
-                  end)]
-              [right-end : i64
-                (if (< (+ middle width) end)
-                  (+ middle width)
-                  end)]
-              [i : i64 left]
-              [j : i64 middle]
-              [k : i64 left]
-              (begin
-                (while (< k right-end)
-                  (if (and
-                    (< i middle)
-                    (or
-                      (>= j right-end)
-                      (<=
-                        (compiler-graph-index-compare
-                          roots
-                          nodes
-                          mode
-                          (array-ref values i)
-                          (array-ref values j)
-                          false)
-                        0)))
-                    (begin
-                      (set! (array-ref scratch k) (array-ref values i))
-                      (set! i (+ i 1))
-                      (set! k (+ k 1)))
-                    (begin
-                      (set! (array-ref scratch k) (array-ref values j))
-                      (set! j (+ j 1))
-                      (set! k (+ k 1)))))
-                (set! k left)
-                (while (< k right-end)
-                  (begin
-                    (set! (array-ref values k) (array-ref scratch k))
-                    (set! k (+ k 1))))
-                (set! left right-end))))
-          (set! width (* width 2)))))))
+        (while (< left end)
+          (let
+            [middle : i64
+              (if (< (+ left width) end)
+                (+ left width)
+                end)]
+            [right-end : i64
+              (if (< (+ middle width) end)
+                (+ middle width)
+                end)]
+            [i : i64 left]
+            [j : i64 middle]
+            [k : i64 left]
+            (while (< k right-end)
+              (if (and
+                (< i middle)
+                (or
+                  (>= j right-end)
+                  (<=
+                    (compiler-graph-index-compare
+                      roots
+                      nodes
+                      mode
+                      (array-ref values i)
+                      (array-ref values j)
+                      false)
+                    0)))
+                (begin
+                  (set! (array-ref scratch k) (array-ref values i))
+                  (set! i (+ i 1))
+                  (set! k (+ k 1)))
+                (begin
+                  (set! (array-ref scratch k) (array-ref values j))
+                  (set! j (+ j 1))
+                  (set! k (+ k 1)))))
+            (set! k left)
+            (while (< k right-end)
+              (set! (array-ref values k) (array-ref scratch k))
+              (set! k (+ k 1)))
+            (set! left right-end)))
+        (set! width (* width 2))))))
 
 ;; A binary min-heap of node indices in heap[0, size).
 (define (compiler-graph-heap-push!
@@ -1682,20 +1621,18 @@
   (let
     [child : i64 size]
     [done? : bool false]
-    (begin
-      (set! (array-ref heap child) value)
-      (while (and (not done?) (> child 0))
-        (let
-          [parent : i64 (/ (- child 1) 2)]
-          (if (< (array-ref heap child) (array-ref heap parent))
-            (let
-              [swap : i64 (array-ref heap parent)]
-              (begin
-                (set! (array-ref heap parent) (array-ref heap child))
-                (set! (array-ref heap child) swap)
-                (set! child parent)))
-            (set! done? true))))
-      (+ size 1))))
+    (set! (array-ref heap child) value)
+    (while (and (not done?) (> child 0))
+      (let
+        [parent : i64 (/ (- child 1) 2)]
+        (if (< (array-ref heap child) (array-ref heap parent))
+          (let
+            [swap : i64 (array-ref heap parent)]
+            (set! (array-ref heap parent) (array-ref heap child))
+            (set! (array-ref heap child) swap)
+            (set! child parent))
+          (set! done? true))))
+    (+ size 1)))
 
 ;; Remove and return the smallest of heap[0, size); the heap then holds size-1.
 (define (compiler-graph-heap-pop!
@@ -1706,33 +1643,30 @@
     [last : i64 (- size 1)]
     [parent : i64 0]
     [done? : bool false]
-    (begin
-      (set! (array-ref heap 0) (array-ref heap last))
-      (while (not done?)
-        (let
-          [left : i64 (+ (* parent 2) 1)]
-          [right : i64 (+ (* parent 2) 2)]
-          [smallest : i64 parent]
-          (begin
-            (when
-              (and
-                (< left last)
-                (< (array-ref heap left) (array-ref heap smallest)))
-              (set! smallest left))
-            (when
-              (and
-                (< right last)
-                (< (array-ref heap right) (array-ref heap smallest)))
-              (set! smallest right))
-            (if (= smallest parent)
-              (set! done? true)
-              (let
-                [swap : i64 (array-ref heap parent)]
-                (begin
-                  (set! (array-ref heap parent) (array-ref heap smallest))
-                  (set! (array-ref heap smallest) swap)
-                  (set! parent smallest)))))))
-      top)))
+    (set! (array-ref heap 0) (array-ref heap last))
+    (while (not done?)
+      (let
+        [left : i64 (+ (* parent 2) 1)]
+        [right : i64 (+ (* parent 2) 2)]
+        [smallest : i64 parent]
+        (when
+          (and
+            (< left last)
+            (< (array-ref heap left) (array-ref heap smallest)))
+          (set! smallest left))
+        (when
+          (and
+            (< right last)
+            (< (array-ref heap right) (array-ref heap smallest)))
+          (set! smallest right))
+        (if (= smallest parent)
+          (set! done? true)
+          (let
+            [swap : i64 (array-ref heap parent)]
+            (set! (array-ref heap parent) (array-ref heap smallest))
+            (set! (array-ref heap smallest) swap)
+            (set! parent smallest)))))
+    top))
 
 (define (compiler-graph-link
   [roots : (__tl_dyn-array CompilerIncrementalGraphRoot)]
@@ -1757,127 +1691,118 @@
     [root-nodes : (__tl_dyn-array i64) (__tl_make-array i64 root-count)]
     [outputs : (__tl_dyn-array String) (__tl_make-array String node-count)]
     [index : i64 0]
-    (begin
-      (while (< index node-count)
-        (let
-          [node : CompilerIncrementalGraphNode
-            (owned_view.compiler-owned-array-element-shared-view nodes index)]
-          (begin
-            (set!
-              (array-ref outputs index)
-              (compiler-graph-encode-output (& node.output)))
-            (set! index (+ index 1)))))
-      (set! index 0)
-      ;; Resolve each child-result edge to the node with exactly that query, and
-      ;; require the output that node publishes to be the one observed. A node
-      ;; cannot name itself: its trace is a trace of its own query, and a trace
-      ;; never names its parent.
-      (while (< index edge-count)
-        (let
-          [edge : CompilerIncrementalGraphEdgeRecord
-            (owned_view.compiler-owned-array-element-shared-view
-              edges.slots
-              index)]
-          [target : i64
-            (compiler-graph-find-node-index (& nodes) (& edge.child))]
-          (begin
-            (when
-              (< target 0)
-              (return
-                (Err
-                  (compiler-graph-error
-                    compiler-graph-error-absent-child
-                    -1
-                    edge.node
-                    "a child-result edge names no node in the graph"))))
-            (let
-              [published : String
-                (owned_view.compiler-owned-array-element-shared-view
-                  outputs
-                  target)]
-              (when
-                (not
-                  (identity.compiler-incremental-string-eq?
-                    (& published)
-                    (& edge.observation)))
-                (return
-                  (Err
-                    (compiler-graph-error
-                      compiler-graph-error-child-output
-                      -1
-                      edge.node
-                      "a child-result edge observed a different semantic output")))))
-            (set! (array-ref targets index) target)
-            (set! index (+ index 1)))))
-      ;; Edges arrive grouped by node in node order; sort and dedupe each row.
+    (while (< index node-count)
       (let
-        [edge : i64 0]
-        [node : i64 0]
-        (while (< node node-count)
-          (let
-            [row-start : i64 edge]
-            (begin
-              (while (and
-                (< edge edge-count)
-                (=
-                  (__tl-project-field
-                    (owned_view.compiler-owned-array-element-shared-view
-                      edges.slots
-                      edge)
-                    node)
-                  node))
-                (set! edge (+ edge 1)))
-              (compiler-graph-sort-range!
-                (&mut targets)
-                (&mut scratch)
-                row-start
-                edge
-                (& no-roots)
-                (& no-nodes)
-                0)
-              (set! (array-ref dependency-start node) dependency-count)
-              (let
-                [k : i64 row-start]
-                (while (< k edge)
-                  (begin
-                    (when
-                      (or
-                        (= k row-start)
-                        (!= (array-ref targets k) (array-ref targets (- k 1))))
-                      (set!
-                        (array-ref dependencies dependency-count)
-                        (array-ref targets k))
-                      (set! dependency-count (+ dependency-count 1)))
-                    (set! k (+ k 1)))))
-              (set! node (+ node 1))))))
-      (set! (array-ref dependency-start node-count) dependency-count)
-      ;; Every root names a node.
-      (set! index 0)
-      (while (< index root-count)
+        [node : CompilerIncrementalGraphNode
+          (owned_view.compiler-owned-array-element-shared-view nodes index)]
+        (set!
+          (array-ref outputs index)
+          (compiler-graph-encode-output (& node.output)))
+        (set! index (+ index 1))))
+    (set! index 0)
+    ;; Resolve each child-result edge to the node with exactly that query, and
+    ;; require the output that node publishes to be the one observed. A node
+    ;; cannot name itself: its trace is a trace of its own query, and a trace
+    ;; never names its parent.
+    (while (< index edge-count)
+      (let
+        [edge : CompilerIncrementalGraphEdgeRecord
+          (owned_view.compiler-owned-array-element-shared-view
+            edges.slots
+            index)]
+        [target : i64 (compiler-graph-find-node-index (& nodes) (& edge.child))]
+        (when
+          (< target 0)
+          (return
+            (Err
+              (compiler-graph-error
+                compiler-graph-error-absent-child
+                -1
+                edge.node
+                "a child-result edge names no node in the graph"))))
         (let
-          [root : CompilerIncrementalGraphRoot
-            (owned_view.compiler-owned-array-element-shared-view roots index)]
-          [key : String (compiler-graph-bytes-string (& root.query.transcript))]
-          [target : i64 (compiler-graph-find-node-index (& nodes) (& key))]
-          (begin
-            (when
-              (< target 0)
-              (return
-                (Err
-                  (compiler-graph-error
-                    compiler-graph-error-absent-root
-                    index
-                    -1
-                    "a root names no node in the graph"))))
-            (set! (array-ref root-nodes index) target)
-            (set! index (+ index 1)))))
-      (compiler-graph-order
-        roots
-        root-nodes
-        nodes
-        dependency-start
-        (compiler-graph-range-prefix (& dependencies) dependency-count)
-        transcript))))
+          [published : String
+            (owned_view.compiler-owned-array-element-shared-view outputs target)]
+          (when
+            (not
+              (identity.compiler-incremental-string-eq?
+                (& published)
+                (& edge.observation)))
+            (return
+              (Err
+                (compiler-graph-error
+                  compiler-graph-error-child-output
+                  -1
+                  edge.node
+                  "a child-result edge observed a different semantic output")))))
+        (set! (array-ref targets index) target)
+        (set! index (+ index 1))))
+    ;; Edges arrive grouped by node in node order; sort and dedupe each row.
+    (let
+      [edge : i64 0]
+      [node : i64 0]
+      (while (< node node-count)
+        (let
+          [row-start : i64 edge]
+          (while (and
+            (< edge edge-count)
+            (=
+              (__tl-project-field
+                (owned_view.compiler-owned-array-element-shared-view
+                  edges.slots
+                  edge)
+                node)
+              node))
+            (set! edge (+ edge 1)))
+          (compiler-graph-sort-range!
+            (&mut targets)
+            (&mut scratch)
+            row-start
+            edge
+            (& no-roots)
+            (& no-nodes)
+            0)
+          (set! (array-ref dependency-start node) dependency-count)
+          (let
+            [k : i64 row-start]
+            (while (< k edge)
+              (when
+                (or
+                  (= k row-start)
+                  (!= (array-ref targets k) (array-ref targets (- k 1))))
+                (set!
+                  (array-ref dependencies dependency-count)
+                  (array-ref targets k))
+                (set! dependency-count (+ dependency-count 1)))
+              (set! k (+ k 1))))
+          (set! node (+ node 1)))))
+    (set! (array-ref dependency-start node-count) dependency-count)
+    ;; Every root names a node.
+    (set! index 0)
+    (while (< index root-count)
+      (let
+        [root : CompilerIncrementalGraphRoot
+          (owned_view.compiler-owned-array-element-shared-view roots index)]
+        [key : String (compiler-graph-bytes-string (& root.query.transcript))]
+        [target : i64 (compiler-graph-find-node-index (& nodes) (& key))]
+        (when
+          (< target 0)
+          (return
+            (Err
+              (compiler-graph-error
+                compiler-graph-error-absent-root
+                index
+                -1
+                "a root names no node in the graph"))))
+        (set! (array-ref root-nodes index) target)
+        (set! index (+ index 1))))
+    (compiler-graph-order
+      roots
+      root-nodes
+      nodes
+      dependency-start
+      (compiler-graph-range-prefix (& dependencies) dependency-count)
+      transcript)))
 
 (define (compiler-graph-range-prefix
   [values : (& values (__tl_dyn-array i64))]
@@ -1885,12 +1810,10 @@
   (let
     [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! (array-ref out index) (array-ref values index))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set! (array-ref out index) (array-ref values index))
+      (set! index (+ index 1)))
+    out))
 
 ;; Build the dependent rows, then order the nodes dependencies-first and check
 ;; that the graph is acyclic and that every node is reachable from a root.
@@ -1915,153 +1838,136 @@
     [emitted : i64 0]
     [node : i64 0]
     [k : i64 0]
-    (begin
-      ;; Dependents: count, prefix-sum, then fill in ascending node order so
-      ;; each row comes out ascending.
-      (while (< k edge-count)
-        (begin
-          (set!
-            (array-ref dependent-start (+ (array-ref dependencies k) 1))
-            (+ (array-ref dependent-start (+ (array-ref dependencies k) 1)) 1))
-          (set! k (+ k 1))))
-      (set! node 0)
-      (while (< node node-count)
-        (begin
-          (set!
-            (array-ref dependent-start (+ node 1))
-            (+
-              (array-ref dependent-start (+ node 1))
-              (array-ref dependent-start node)))
-          (set! (array-ref fill node) (array-ref dependent-start node))
-          (set! node (+ node 1))))
-      (set! node 0)
-      (while (< node node-count)
-        (begin
-          (set! k (array-ref dependency-start node))
-          (while (< k (array-ref dependency-start (+ node 1)))
-            (let
-              [target : i64 (array-ref dependencies k)]
-              (begin
-                (set! (array-ref dependents (array-ref fill target)) node)
-                (set! (array-ref fill target) (+ (array-ref fill target) 1))
-                (set! k (+ k 1)))))
-          (set!
-            (array-ref remaining node)
-            (-
-              (array-ref dependency-start (+ node 1))
-              (array-ref dependency-start node)))
-          (when
-            (= (array-ref remaining node) 0)
-            (set!
-              heap-size
-              (compiler-graph-heap-push! (&mut heap) heap-size node)))
-          (set! node (+ node 1))))
-      ;; Kahn's algorithm; the heap releases the smallest ready index first.
-      (while (> heap-size 0)
+    ;; Dependents: count, prefix-sum, then fill in ascending node order so
+    ;; each row comes out ascending.
+    (while (< k edge-count)
+      (set!
+        (array-ref dependent-start (+ (array-ref dependencies k) 1))
+        (+ (array-ref dependent-start (+ (array-ref dependencies k) 1)) 1))
+      (set! k (+ k 1)))
+    (set! node 0)
+    (while (< node node-count)
+      (set!
+        (array-ref dependent-start (+ node 1))
+        (+
+          (array-ref dependent-start (+ node 1))
+          (array-ref dependent-start node)))
+      (set! (array-ref fill node) (array-ref dependent-start node))
+      (set! node (+ node 1)))
+    (set! node 0)
+    (while (< node node-count)
+      (set! k (array-ref dependency-start node))
+      (while (< k (array-ref dependency-start (+ node 1)))
         (let
-          [ready : i64 (compiler-graph-heap-pop! (&mut heap) heap-size)]
-          (begin
-            (set! heap-size (- heap-size 1))
-            (set! (array-ref topological emitted) ready)
-            (set! emitted (+ emitted 1))
-            (set! k (array-ref dependent-start ready))
-            (while (< k (array-ref dependent-start (+ ready 1)))
-              (let
-                [dependent : i64 (array-ref dependents k)]
-                (begin
-                  (set!
-                    (array-ref remaining dependent)
-                    (- (array-ref remaining dependent) 1))
-                  (when
-                    (= (array-ref remaining dependent) 0)
-                    (set!
-                      heap-size
-                      (compiler-graph-heap-push!
-                        (&mut heap)
-                        heap-size
-                        dependent)))
-                  (set! k (+ k 1))))))))
+          [target : i64 (array-ref dependencies k)]
+          (set! (array-ref dependents (array-ref fill target)) node)
+          (set! (array-ref fill target) (+ (array-ref fill target) 1))
+          (set! k (+ k 1))))
+      (set!
+        (array-ref remaining node)
+        (-
+          (array-ref dependency-start (+ node 1))
+          (array-ref dependency-start node)))
       (when
-        (< emitted node-count)
-        (set! node 0)
-        (while (= (array-ref remaining node) 0)
-          (set! node (+ node 1)))
-        (return
-          (Err
-            (compiler-graph-error
-              compiler-graph-error-cycle
-              -1
-              node
-              "the graph's dependencies form a cycle"))))
-      ;; Reachability from the roots over dependencies, with an explicit stack.
+        (= (array-ref remaining node) 0)
+        (set! heap-size (compiler-graph-heap-push! (&mut heap) heap-size node)))
+      (set! node (+ node 1)))
+    ;; Kahn's algorithm; the heap releases the smallest ready index first.
+    (while (> heap-size 0)
       (let
-        [visited : (__tl_dyn-array bool) (__tl_make-array bool node-count)]
-        [stack : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
-        [top : i64 0]
-        (begin
-          (set! k 0)
-          (while (< k (array-length root-nodes))
+        [ready : i64 (compiler-graph-heap-pop! (&mut heap) heap-size)]
+        (set! heap-size (- heap-size 1))
+        (set! (array-ref topological emitted) ready)
+        (set! emitted (+ emitted 1))
+        (set! k (array-ref dependent-start ready))
+        (while (< k (array-ref dependent-start (+ ready 1)))
+          (let
+            [dependent : i64 (array-ref dependents k)]
+            (set!
+              (array-ref remaining dependent)
+              (- (array-ref remaining dependent) 1))
+            (when
+              (= (array-ref remaining dependent) 0)
+              (set!
+                heap-size
+                (compiler-graph-heap-push! (&mut heap) heap-size dependent)))
+            (set! k (+ k 1))))))
+    (when
+      (< emitted node-count)
+      (set! node 0)
+      (while (= (array-ref remaining node) 0)
+        (set! node (+ node 1)))
+      (return
+        (Err
+          (compiler-graph-error
+            compiler-graph-error-cycle
+            -1
+            node
+            "the graph's dependencies form a cycle"))))
+    ;; Reachability from the roots over dependencies, with an explicit stack.
+    (let
+      [visited : (__tl_dyn-array bool) (__tl_make-array bool node-count)]
+      [stack : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
+      [top : i64 0]
+      (set! k 0)
+      (while (< k (array-length root-nodes))
+        (let
+          [start : i64 (array-ref root-nodes k)]
+          (unless
+            (array-ref visited start)
+            (set! (array-ref visited start) true)
+            (set! (array-ref stack top) start)
+            (set! top (+ top 1)))
+          (set! k (+ k 1))))
+      (while (> top 0)
+        (let
+          [current : i64 (array-ref stack (- top 1))]
+          [edge : i64 0]
+          (set! top (- top 1))
+          (set! edge (array-ref dependency-start current))
+          (while (< edge (array-ref dependency-start (+ current 1)))
             (let
-              [start : i64 (array-ref root-nodes k)]
-              (begin
-                (unless
-                  (array-ref visited start)
-                  (set! (array-ref visited start) true)
-                  (set! (array-ref stack top) start)
-                  (set! top (+ top 1)))
-                (set! k (+ k 1)))))
-          (while (> top 0)
-            (let
-              [current : i64 (array-ref stack (- top 1))]
-              [edge : i64 0]
-              (begin
-                (set! top (- top 1))
-                (set! edge (array-ref dependency-start current))
-                (while (< edge (array-ref dependency-start (+ current 1)))
-                  (let
-                    [target : i64 (array-ref dependencies edge)]
-                    (begin
-                      (unless
-                        (array-ref visited target)
-                        (set! (array-ref visited target) true)
-                        (set! (array-ref stack top) target)
-                        (set! top (+ top 1)))
-                      (set! edge (+ edge 1))))))))
-          (set! node 0)
-          (while (< node node-count)
-            (begin
+              [target : i64 (array-ref dependencies edge)]
               (unless
-                (array-ref visited node)
-                (return
-                  (Err
-                    (compiler-graph-error
-                      compiler-graph-error-unreachable
-                      -1
-                      node
-                      "a node is not reachable from any root"))))
-              (set! node (+ node 1))))))
-      (match (identity.compiler-incremental-digest-array (& transcript))
-        [(Sha256FinalizeErr _)
-          (Err
-            (compiler-graph-error
-              compiler-graph-error-framing
-              -1
-              -1
-              "graph fingerprint failed"))]
-        [(Sha256FinalizeOk digest)
-          (Ok
-            (CompilerIncrementalGraph
-              compiler-incremental-graph-schema
-              roots
-              root-nodes
-              nodes
-              dependency-start
-              dependencies
-              dependent-start
-              dependents
-              topological
-              transcript
-              digest))]))))
+                (array-ref visited target)
+                (set! (array-ref visited target) true)
+                (set! (array-ref stack top) target)
+                (set! top (+ top 1)))
+              (set! edge (+ edge 1))))))
+      (set! node 0)
+      (while (< node node-count)
+        (unless
+          (array-ref visited node)
+          (return
+            (Err
+              (compiler-graph-error
+                compiler-graph-error-unreachable
+                -1
+                node
+                "a node is not reachable from any root"))))
+        (set! node (+ node 1))))
+    (match (identity.compiler-incremental-digest-array (& transcript))
+      [(Sha256FinalizeErr _)
+        (Err
+          (compiler-graph-error
+            compiler-graph-error-framing
+            -1
+            -1
+            "graph fingerprint failed"))]
+      [(Sha256FinalizeOk digest)
+        (Ok
+          (CompilerIncrementalGraph
+            compiler-incremental-graph-schema
+            roots
+            root-nodes
+            nodes
+            dependency-start
+            dependencies
+            dependent-start
+            dependents
+            topological
+            transcript
+            digest))])))
 
 ;; --- published graph access -----------------------------------------------------
 (define (compiler-graph-node-count [graph : (& graph CompilerIncrementalGraph)]) : i64
@@ -2104,21 +2010,20 @@
     [low : i64 0]
     [high : i64 (array-length graph.roots)]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< low high))
-        (let
-          [middle : i64 (+ low (/ (- high low) 2))]
-          [root : CompilerIncrementalGraphRoot
-            (owned_view.compiler-owned-array-element-shared-view
-              graph.roots
-              middle)]
-          [key : String (compiler-graph-encode-root-name (& root.name))]
-          [order : i64 (compiler-graph-string-compare (& key) (& wanted))]
-          (cond
-            [(= order 0) (set! found (array-ref graph.root-nodes middle))]
-            [(< order 0) (set! low (+ middle 1))]
-            [else (set! high middle)])))
-      found)))
+    (while (and (< found 0) (< low high))
+      (let
+        [middle : i64 (+ low (/ (- high low) 2))]
+        [root : CompilerIncrementalGraphRoot
+          (owned_view.compiler-owned-array-element-shared-view
+            graph.roots
+            middle)]
+        [key : String (compiler-graph-encode-root-name (& root.name))]
+        [order : i64 (compiler-graph-string-compare (& key) (& wanted))]
+        (cond
+          [(= order 0) (set! found (array-ref graph.root-nodes middle))]
+          [(< order 0) (set! low (+ middle 1))]
+          [else (set! high middle)])))
+    found))
 
 (define (compiler-graph-row
   [start : (& start (__tl_dyn-array i64))]
@@ -2129,12 +2034,10 @@
     [count : i64 (- (array-ref start (+ index 1)) from)]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [k : i64 0]
-    (begin
-      (while (< k count)
-        (begin
-          (set! (array-ref out k) (array-ref values (+ from k)))
-          (set! k (+ k 1))))
-      out)))
+    (while (< k count)
+      (set! (array-ref out k) (array-ref values (+ from k)))
+      (set! k (+ k 1)))
+    out))
 
 ;; The distinct nodes `index` depends on, ascending.
 (define (compiler-graph-dependencies

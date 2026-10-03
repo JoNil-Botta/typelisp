@@ -19,14 +19,12 @@
     (let
       [index : i64 0]
       [length : i64 (surface-binary-string-length text)]
-      (begin
-        (while (< index length)
-          (begin
-            (byte_buf_core.byte-buf-builder-push
-              out
-              (cast (surface-binary-string-ref text index) : u8))
-            (set! index (+ index 1))))
-        unit))))
+      (while (< index length)
+        (byte_buf_core.byte-buf-builder-push
+          out
+          (cast (surface-binary-string-ref text index) : u8))
+        (set! index (+ index 1)))
+      unit)))
 
 (define (surface-binary-bytes->string
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -35,10 +33,8 @@
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
     [index : i64 0]
-    (begin
-      (while (< index length)
-        (begin
-          (set! (array-ref out index) (array-ref bytes (+ offset index)))
-          (set! index (+ index 1))))
-      (unsafe
-        (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) length)))))
+    (while (< index length)
+      (set! (array-ref out index) (array-ref bytes (+ offset index)))
+      (set! index (+ index 1)))
+    (unsafe
+      (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) length))))

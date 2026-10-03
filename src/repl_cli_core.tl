@@ -94,12 +94,11 @@
 ;; A pending multiline form shows a `... ` continuation marker (aligned to the
 ;; 4-column `tl> ` prompt) so it is clear the previous input was not yet complete.
 (define (repl-prompt [continuation? : bool]) : unit
-  (begin
-    (repl-stdout-write
-      (if continuation?
-        "... "
-        "tl> "))
-    (io.stdout-flush)))
+  (repl-stdout-write
+    (if continuation?
+      "... "
+      "tl> "))
+  (io.stdout-flush))
 
 ;; `line` begins with `.` (a dot command). Empty lines are handled safely.
 (define (repl-dot-command? [line : (& line str)]) : bool
@@ -111,14 +110,13 @@
   (let
     [i : i64 start]
     [len : i64 (string.string-length text)]
-    (begin
-      (while (and
-        (< i len)
-        (source_text.source-text-space? (string.string-ref text i)))
-        (set! i (+ i 1)))
-      (if (< i len)
-        (string.substring text i (- len i))
-        ""))))
+    (while (and
+      (< i len)
+      (source_text.source-text-space? (string.string-ref text i)))
+      (set! i (+ i 1)))
+    (if (< i len)
+      (string.substring text i (- len i))
+      "")))
 
 (define (repl-line-ending? [c : char]) : bool
   (or (= c '\r') (= c '\n')))
@@ -141,16 +139,15 @@
     [len : i64 (string.string-length text)]
     [end : i64 (string.string-length text)]
     [done : bool false]
-    (begin
-      (while (> len 0)
-        (if done
-          (set! len 0)
-          (if (repl-line-ending? (string.string-ref text (- len 1)))
-            (begin
-              (set! end (- len 1))
-              (set! len (- len 1)))
-            (set! done true))))
-      (string.substring text 0 end))))
+    (while (> len 0)
+      (if done
+        (set! len 0)
+        (if (repl-line-ending? (string.string-ref text (- len 1)))
+          (begin
+            (set! end (- len 1))
+            (set! len (- len 1)))
+          (set! done true))))
+    (string.substring text 0 end)))
 
 (define (repl-normalize-input-line [text : String]) : String
   (repl-trim-right-line-ending (repl-trim-leading-utf8-bom text)))
@@ -359,14 +356,13 @@
             (owned_view.compiler-owned-shared-view source-path))]
         [in-source : bool
           (string.eq (cdiag.compiler-diagnostic-path diag) source-path)]
-        (begin
-          (repl-stderr-write
-            (cdiag.compiler-diagnostic-render-source
-              diag
-              (if in-source
-                (owned_view.compiler-owned-shared-view source)
-                (owned_view.compiler-owned-shared-view session-source))))
-          (set! index (+ index 1)))))))
+        (repl-stderr-write
+          (cdiag.compiler-diagnostic-render-source
+            diag
+            (if in-source
+              (owned_view.compiler-owned-shared-view source)
+              (owned_view.compiler-owned-shared-view session-source))))
+        (set! index (+ index 1))))))
 
 (define (repl-char-display-helpers-source) : String
   "(define __tl_repl_ascii_printable_table : String
@@ -615,14 +611,13 @@
           source
           "repl: failed to write scratch source")
           [(Err message)
-            (begin
-              (repl-print-error-line message)
-              (let
-                [file-result : io.ResultIoUnit
-                  (repl-try-remove-file-if-exists source-path)]
-                [dir-result : io.ResultIoUnit
-                  (repl-try-remove-dir-if-exists temp-dir)]
-                (repl-report-scratch-cleanup-results file-result dir-result)))]
+            (repl-print-error-line message)
+            (let
+              [file-result : io.ResultIoUnit
+                (repl-try-remove-file-if-exists source-path)]
+              [dir-result : io.ResultIoUnit
+                (repl-try-remove-dir-if-exists temp-dir)]
+              (repl-report-scratch-cleanup-results file-result dir-result))]
           [(Ok)
             (let
               [status : i64
@@ -720,22 +715,19 @@
           (match (repl-typecheck-session-source
             (owned_view.compiler-owned-shared-view candidate))
             [(Ok _)
-              (begin
-                (repl-stdout-write-line (str_cat.str-cat "Loaded " path))
-                candidate)]
+              (repl-stdout-write-line (str_cat.str-cat "Loaded " path))
+              candidate]
             [(Err diag)
-              (begin
-                (repl-report-candidate-diagnostics
-                  (deref diag)
-                  (owned_view.compiler-owned-shared-view session-source)
-                  path
-                  source)
-                session-source)]))]
+              (repl-report-candidate-diagnostics
+                (deref diag)
+                (owned_view.compiler-owned-shared-view session-source)
+                path
+                source)
+              session-source]))]
       [(ErrIoBytes error)
-        (begin
-          (repl-print-error-line
-            (str_cat.str-cat "Error: .load failed: " (io.error-message error)))
-          session-source)])))
+        (repl-print-error-line
+          (str_cat.str-cat "Error: .load failed: " (io.error-message error)))
+        session-source])))
 
 (define (repl-handle-input [session-source : String] [input : String]) : String
   (match (parser.parse-ast-repl-source
@@ -752,24 +744,21 @@
               (owned_view.compiler-owned-shared-view candidate))
               [(Ok _) candidate]
               [(Err diag)
-                (begin
-                  (repl-report-candidate-diagnostics
-                    (deref diag)
-                    (owned_view.compiler-owned-shared-view session-source)
-                    (repl-input-path)
-                    input)
-                  session-source)]))]
+                (repl-report-candidate-diagnostics
+                  (deref diag)
+                  (owned_view.compiler-owned-shared-view session-source)
+                  (repl-input-path)
+                  input)
+                session-source]))]
         [(AstReplExpr expr)
-          (begin
-            (repl-evaluate-expr
-              (owned_view.compiler-owned-shared-view session-source)
-              input
-              (ast.ast-node-get expr))
-            session-source)])]
+          (repl-evaluate-expr
+            (owned_view.compiler-owned-shared-view session-source)
+            input
+            (ast.ast-node-get expr))
+          session-source])]
     [(Err diag)
-      (begin
-        (repl-report-input-diagnostic (deref diag) input)
-        session-source)]))
+      (repl-report-input-diagnostic (deref diag) input)
+      session-source]))
 
 ;; Completeness tracking is a delimiter check: strings, comments, and char
 ;; literals do not count delimiters; unmatched closing delimiters are considered
@@ -961,11 +950,10 @@
       (Line session-source "")
       (match (repl-type-command line)
         [(Expr expr-source)
-          (begin
-            (repl-handle-type-command
-              (owned_view.compiler-owned-shared-view session-source)
-              expr-source)
-            (Line session-source ""))]
+          (repl-handle-type-command
+            (owned_view.compiler-owned-shared-view session-source)
+            expr-source)
+          (Line session-source "")]
         [(No)
           (match (repl-load-command line)
             [(Path path)
@@ -991,38 +979,36 @@
 (define (repl-loop [session-source : String] [pending : String]) : unit
   (let
     [pending? : bool (not (string.eq pending ""))]
-    (begin
-      (repl-prompt pending?)
-      (if (io.stdin-at-eof?)
-        (if pending?
-          (repl-stderr-write "Error: incomplete REPL input at EOF\n")
-          unit)
-        (let
-          [line-read : io.StdinRead (io.stdin-read-line)]
-          [line : String
-            (repl-normalize-input-line
-              (byte_buf.to-string
-                (io.stdin-read-buffer
-                  (owned_view.compiler-owned-shared-view line-read))))]
-          (if (and (not pending?) (string.eq line ".exit"))
-            unit
-            ;; A blank line while a form is pending cancels it. Guard on the
-            ;; read's EOF flag so an EOF-induced empty read is not mistaken for a
-            ;; user-entered blank line (that path still reports incomplete-at-EOF).
-            (if (and
-              pending?
-              (string.eq line "")
-              (not (io.stdin-read-eof? line-read)))
-              (repl-loop session-source "")
-              (match (repl-handle-line session-source pending line)
-                [(Line next-session next-pending)
-                  (repl-loop next-session next-pending)]))))))))
+    (repl-prompt pending?)
+    (if (io.stdin-at-eof?)
+      (if pending?
+        (repl-stderr-write "Error: incomplete REPL input at EOF\n")
+        unit)
+      (let
+        [line-read : io.StdinRead (io.stdin-read-line)]
+        [line : String
+          (repl-normalize-input-line
+            (byte_buf.to-string
+              (io.stdin-read-buffer
+                (owned_view.compiler-owned-shared-view line-read))))]
+        (if (and (not pending?) (string.eq line ".exit"))
+          unit
+          ;; A blank line while a form is pending cancels it. Guard on the
+          ;; read's EOF flag so an EOF-induced empty read is not mistaken for a
+          ;; user-entered blank line (that path still reports incomplete-at-EOF).
+          (if (and
+            pending?
+            (string.eq line "")
+            (not (io.stdin-read-eof? line-read)))
+            (repl-loop session-source "")
+            (match (repl-handle-line session-source pending line)
+              [(Line next-session next-pending)
+                (repl-loop next-session next-pending)])))))))
 
 (define (repl-run) : i64
-  (begin
-    (repl-stdout-write (repl-banner))
-    (repl-loop "" "")
-    0))
+  (repl-stdout-write (repl-banner))
+  (repl-loop "" "")
+  0)
 
 (define (repl-run-from [start : i64] [count : i64]) : i64
   (if (< start count)

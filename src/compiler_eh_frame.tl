@@ -279,168 +279,148 @@
     [message : String ""]
     [fail-at : i64 start]
     [cie? : bool (< range 0)]
-    (begin
-      (while (and (< at end) (string.eq message ""))
-        (let
-          [op-at : i64 at]
-          [op : i64 (byte_le.byte-le-at bytes at)]
-          [high : i64 (shr op 6)]
-          [low : i64 (bit-and op 63)]
-          ;; -1: no advance; otherwise the unscaled delta.
-          [advance : i64 -1]
-          ;; Registers named by this instruction, or -1.
-          [register-a : i64 -1]
-          [register-b : i64 -1]
-          [ok : bool true]
-          (begin
-            (set! at (+ at 1))
-            (set! work (+ work 1))
+    (while (and (< at end) (string.eq message ""))
+      (let
+        [op-at : i64 at]
+        [op : i64 (byte_le.byte-le-at bytes at)]
+        [high : i64 (shr op 6)]
+        [low : i64 (bit-and op 63)]
+        ;; -1: no advance; otherwise the unscaled delta.
+        [advance : i64 -1]
+        ;; Registers named by this instruction, or -1.
+        [register-a : i64 -1]
+        [register-b : i64 -1]
+        [ok : bool true]
+        (set! at (+ at 1))
+        (set! work (+ work 1))
+        (cond
+          [(= high 1) (set! advance low)]
+          [(= high 2)
+            (let
+              [operand : leb128.Decoded
+                (compiler-eh-frame-leb bytes at end false)]
+              (set! register-a low)
+              (set! ok operand.ok?)
+              (set! at operand.next))]
+          [(= high 3)
+            (if cie?
+              (set! message "cfa: DW_CFA_restore in a CIE program")
+              (set! register-a low))]
+          [(= op 0x00) unit]
+          [(= op 0x01)
+            (set! message "cfa: address-bearing DW_CFA_set_loc is not admitted")]
+          [(= op 0x02)
+            (if (> (+ at 1) end)
+              (set! ok false)
+              (begin
+                (set! advance (byte_le.byte-le-at bytes at))
+                (set! at (+ at 1))))]
+          [(= op 0x03)
+            (if (> (+ at 2) end)
+              (set! ok false)
+              (begin
+                (set! advance (byte_le.read-u16 bytes at))
+                (set! at (+ at 2))))]
+          [(= op 0x04)
+            (if (> (+ at 4) end)
+              (set! ok false)
+              (begin
+                (set! advance (byte_le.read-u32 bytes at))
+                (set! at (+ at 4))))]
+          ;; register, operand: offset_extended, register, def_cfa,
+          ;; val_offset (both ULEB) and the _sf forms (SLEB second).
+          [(or
+              (= op 0x05)
+              (= op 0x09)
+              (= op 0x0c)
+              (= op 0x11)
+              (= op 0x12)
+              (= op 0x14)
+              (= op 0x15))
+            (let
+              [first : leb128.Decoded
+                (compiler-eh-frame-leb bytes at end false)]
+              [second : leb128.Decoded
+                (compiler-eh-frame-leb
+                  bytes
+                  first.next
+                  end
+                  (or (= op 0x11) (= op 0x12) (= op 0x15)))]
+              (set! ok (and first.ok? second.ok?))
+              (set! register-a first.value)
+              (when (= op 0x09) (set! register-b second.value))
+              (set! at second.next))]
+          ;; One register operand: restore_extended, undefined,
+          ;; same_value, def_cfa_register.
+          [(or (= op 0x06) (= op 0x07) (= op 0x08) (= op 0x0d))
+            (let
+              [operand : leb128.Decoded
+                (compiler-eh-frame-leb bytes at end false)]
+              (if (and cie? (= op 0x06))
+                (set! message "cfa: DW_CFA_restore_extended in a CIE program")
+                (begin
+                  (set! ok operand.ok?)
+                  (set! register-a operand.value)
+                  (set! at operand.next))))]
+          ;; One offset operand: def_cfa_offset (ULEB), def_cfa_offset_sf
+          ;; (SLEB), GNU_args_size (ULEB).
+          [(or (= op 0x0e) (= op 0x13) (= op 0x2e))
+            (let
+              [operand : leb128.Decoded
+                (compiler-eh-frame-leb bytes at end (= op 0x13))]
+              (if (and cie? (= op 0x2e))
+                (set! message "cfa: DW_CFA_GNU_args_size in a CIE program")
+                (begin
+                  (set! ok operand.ok?)
+                  (set! at operand.next))))]
+          [(= op 0x0a)
             (cond
-              [(= high 1) (set! advance low)]
-              [(= high 2)
-                (let
-                  [operand : leb128.Decoded
-                    (compiler-eh-frame-leb bytes at end false)]
-                  (begin
-                    (set! register-a low)
-                    (set! ok operand.ok?)
-                    (set! at operand.next)))]
-              [(= high 3)
-                (if cie?
-                  (set! message "cfa: DW_CFA_restore in a CIE program")
-                  (set! register-a low))]
-              [(= op 0x00) unit]
-              [(= op 0x01)
+              [cie?
+                (set! message "cfa: DW_CFA_remember_state in a CIE program")]
+              [(>= depth max-depth)
+                (set! message "cfa: remembered state depth limit exceeded")]
+              [else (set! depth (+ depth 1))])]
+          [(= op 0x0b)
+            (cond
+              [cie? (set! message "cfa: DW_CFA_restore_state in a CIE program")]
+              [(= depth 0)
                 (set!
                   message
-                  "cfa: address-bearing DW_CFA_set_loc is not admitted")]
-              [(= op 0x02)
-                (if (> (+ at 1) end)
-                  (set! ok false)
-                  (begin
-                    (set! advance (byte_le.byte-le-at bytes at))
-                    (set! at (+ at 1))))]
-              [(= op 0x03)
-                (if (> (+ at 2) end)
-                  (set! ok false)
-                  (begin
-                    (set! advance (byte_le.read-u16 bytes at))
-                    (set! at (+ at 2))))]
-              [(= op 0x04)
-                (if (> (+ at 4) end)
-                  (set! ok false)
-                  (begin
-                    (set! advance (byte_le.read-u32 bytes at))
-                    (set! at (+ at 4))))]
-              ;; register, operand: offset_extended, register, def_cfa,
-              ;; val_offset (both ULEB) and the _sf forms (SLEB second).
-              [(or
-                  (= op 0x05)
-                  (= op 0x09)
-                  (= op 0x0c)
-                  (= op 0x11)
-                  (= op 0x12)
-                  (= op 0x14)
-                  (= op 0x15))
-                (let
-                  [first : leb128.Decoded
-                    (compiler-eh-frame-leb bytes at end false)]
-                  [second : leb128.Decoded
-                    (compiler-eh-frame-leb
-                      bytes
-                      first.next
-                      end
-                      (or (= op 0x11) (= op 0x12) (= op 0x15)))]
-                  (begin
-                    (set! ok (and first.ok? second.ok?))
-                    (set! register-a first.value)
-                    (when (= op 0x09) (set! register-b second.value))
-                    (set! at second.next)))]
-              ;; One register operand: restore_extended, undefined,
-              ;; same_value, def_cfa_register.
-              [(or (= op 0x06) (= op 0x07) (= op 0x08) (= op 0x0d))
-                (let
-                  [operand : leb128.Decoded
-                    (compiler-eh-frame-leb bytes at end false)]
-                  (if (and cie? (= op 0x06))
-                    (set!
-                      message
-                      "cfa: DW_CFA_restore_extended in a CIE program")
-                    (begin
-                      (set! ok operand.ok?)
-                      (set! register-a operand.value)
-                      (set! at operand.next))))]
-              ;; One offset operand: def_cfa_offset (ULEB), def_cfa_offset_sf
-              ;; (SLEB), GNU_args_size (ULEB).
-              [(or (= op 0x0e) (= op 0x13) (= op 0x2e))
-                (let
-                  [operand : leb128.Decoded
-                    (compiler-eh-frame-leb bytes at end (= op 0x13))]
-                  (if (and cie? (= op 0x2e))
-                    (set! message "cfa: DW_CFA_GNU_args_size in a CIE program")
-                    (begin
-                      (set! ok operand.ok?)
-                      (set! at operand.next))))]
-              [(= op 0x0a)
-                (cond
-                  [cie?
-                    (set! message "cfa: DW_CFA_remember_state in a CIE program")]
-                  [(>= depth max-depth)
-                    (set! message "cfa: remembered state depth limit exceeded")]
-                  [else (set! depth (+ depth 1))])]
-              [(= op 0x0b)
-                (cond
-                  [cie?
-                    (set! message "cfa: DW_CFA_restore_state in a CIE program")]
-                  [(= depth 0)
-                    (set!
-                      message
-                      "cfa: DW_CFA_restore_state without a remembered state")]
-                  [else (set! depth (- depth 1))])]
-              [(or (= op 0x0f) (= op 0x10) (= op 0x16))
-                (set!
-                  message
-                  "cfa: DWARF expression instructions are not admitted")]
-              [else (set! message "cfa: unknown or unadmitted CFA opcode")])
-            (cond
-              [(not (string.eq message "")) (set! fail-at op-at)]
-              [(not ok)
-                (begin
-                  (set!
-                    message
-                    "cfa: truncated or out-of-range instruction operand")
-                  (set! fail-at op-at))]
-              [(or
-                  (> register-a compiler-eh-frame-max-register)
-                  (> register-b compiler-eh-frame-max-register))
-                (begin
-                  (set!
-                    message
-                    "cfa: register operand outside the x86-64 DWARF register set")
-                  (set! fail-at op-at))]
-              [(>= advance 0)
-                (if cie?
-                  (begin
-                    (set! message "cfa: location advance in a CIE program")
-                    (set! fail-at op-at))
-                  (begin
-                    ;; delta < 2^32 and code-alignment < 2^32, so the product
-                    ;; and the sum stay far below 2^63.
-                    (set! location (+ location (* advance code-alignment)))
-                    (when
-                      (> location range)
-                      (begin
-                        (set!
-                          message
-                          "cfa: location advance past the FDE range")
-                        (set! fail-at op-at)))))]
-              [else unit])
-            (when
-              (and (string.eq message "") (!= op 0x00))
-              (set! canonical-end at)))))
-      (if (string.eq message "")
-        (CompilerEhFrameProgramCheck "" at canonical-end work)
-        (compiler-eh-frame-program-fail message fail-at)))))
+                  "cfa: DW_CFA_restore_state without a remembered state")]
+              [else (set! depth (- depth 1))])]
+          [(or (= op 0x0f) (= op 0x10) (= op 0x16))
+            (set! message "cfa: DWARF expression instructions are not admitted")]
+          [else (set! message "cfa: unknown or unadmitted CFA opcode")])
+        (cond
+          [(not (string.eq message "")) (set! fail-at op-at)]
+          [(not ok)
+            (set! message "cfa: truncated or out-of-range instruction operand")
+            (set! fail-at op-at)]
+          [(or
+            (> register-a compiler-eh-frame-max-register)
+            (> register-b compiler-eh-frame-max-register))
+            (set!
+              message
+              "cfa: register operand outside the x86-64 DWARF register set")
+            (set! fail-at op-at)]
+          [(>= advance 0)
+            (if cie?
+              (begin
+                (set! message "cfa: location advance in a CIE program")
+                (set! fail-at op-at))
+              (begin
+                ;; delta < 2^32 and code-alignment < 2^32, so the product
+                ;; and the sum stay far below 2^63.
+                (set! location (+ location (* advance code-alignment)))
+                (when
+                  (> location range)
+                  (set! message "cfa: location advance past the FDE range")
+                  (set! fail-at op-at))))]
+          [else unit])
+        (when (and (string.eq message "") (!= op 0x00)) (set! canonical-end at))))
+    (if (string.eq message "")
+      (CompilerEhFrameProgramCheck "" at canonical-end work)
+      (compiler-eh-frame-program-fail message fail-at))))
 
 ;; --- decoding ----------------------------------------------------------------
 ;; Record boundaries of `bytes`: the number of CIEs and FDEs and whether the
@@ -467,61 +447,54 @@
     [record : i64 -1]
     [offset : i64 0]
     [message : String ""]
-    (begin
-      (while (and (< at length) (= code 0))
-        (let
-          [record-length : i64
-            (if (> (+ at 4) length)
-              -1
-              (byte_le.read-u32 bytes at))]
-          (cond
-            [(< record-length 0)
+    (while (and (< at length) (= code 0))
+      (let
+        [record-length : i64
+          (if (> (+ at 4) length)
+            -1
+            (byte_le.read-u32 bytes at))]
+        (cond
+          [(< record-length 0)
+            (set! code compiler-eh-frame-error-truncated)
+            (set! record at)
+            (set! offset at)
+            (set! message "eh_frame: truncated record length")]
+          [(= record-length 0)
+            (if (= (+ at 4) length)
               (begin
-                (set! code compiler-eh-frame-error-truncated)
-                (set! record at)
-                (set! offset at)
-                (set! message "eh_frame: truncated record length"))]
-            [(= record-length 0)
-              (if (= (+ at 4) length)
-                (begin
-                  (set! terminated true)
-                  (set! at length))
-                (begin
-                  (set! code compiler-eh-frame-error-record)
-                  (set! record at)
-                  (set! offset (+ at 4))
-                  (set! message "eh_frame: bytes after the zero terminator")))]
-            [(= record-length 4294967295)
-              (begin
-                (set! code compiler-eh-frame-error-dwarf64)
-                (set! record at)
-                (set! offset at)
-                (set! message "eh_frame: DWARF64 records are not admitted"))]
-            [(> record-length (- length (+ at 4)))
-              (begin
-                (set! code compiler-eh-frame-error-truncated)
-                (set! record at)
-                (set! offset at)
-                (set! message "eh_frame: record extends past the section"))]
-            [(< record-length 4)
+                (set! terminated true)
+                (set! at length))
               (begin
                 (set! code compiler-eh-frame-error-record)
                 (set! record at)
-                (set! offset at)
-                (set! message "eh_frame: record too short for its CIE id"))]
-            [(>= (+ cies fdes) limits.max-records)
-              (begin
-                (set! code compiler-eh-frame-error-record-limit)
-                (set! record at)
-                (set! offset at)
-                (set! message "eh_frame: record limit exceeded"))]
-            [else
-              (begin
-                (if (= (byte_le.read-u32 bytes (+ at 4)) 0)
-                  (set! cies (+ cies 1))
-                  (set! fdes (+ fdes 1)))
-                (set! at (+ at (+ 4 record-length))))])))
-      (CompilerEhFrameFraming code record offset message cies fdes terminated))))
+                (set! offset (+ at 4))
+                (set! message "eh_frame: bytes after the zero terminator")))]
+          [(= record-length 4294967295)
+            (set! code compiler-eh-frame-error-dwarf64)
+            (set! record at)
+            (set! offset at)
+            (set! message "eh_frame: DWARF64 records are not admitted")]
+          [(> record-length (- length (+ at 4)))
+            (set! code compiler-eh-frame-error-truncated)
+            (set! record at)
+            (set! offset at)
+            (set! message "eh_frame: record extends past the section")]
+          [(< record-length 4)
+            (set! code compiler-eh-frame-error-record)
+            (set! record at)
+            (set! offset at)
+            (set! message "eh_frame: record too short for its CIE id")]
+          [(>= (+ cies fdes) limits.max-records)
+            (set! code compiler-eh-frame-error-record-limit)
+            (set! record at)
+            (set! offset at)
+            (set! message "eh_frame: record limit exceeded")]
+          [else
+            (if (= (byte_le.read-u32 bytes (+ at 4)) 0)
+              (set! cies (+ cies 1))
+              (set! fdes (+ fdes 1)))
+            (set! at (+ at (+ 4 record-length)))])))
+    (CompilerEhFrameFraming code record offset message cies fdes terminated)))
 
 ;; Index of the CIE decoded at `offset`, or -1.  CIEs are decoded in offset
 ;; order, so the first `count` entries are sorted.
@@ -532,16 +505,15 @@
   (let
     [low : i64 0]
     [high : i64 count]
-    (begin
-      (while (< low high)
-        (let
-          [middle : i64 (+ low (/ (- high low) 2))]
-          (if (< (array-ref cies middle).offset offset)
-            (set! low (+ middle 1))
-            (set! high middle))))
-      (if (and (< low count) (= (array-ref cies low).offset offset))
-        low
-        -1))))
+    (while (< low high)
+      (let
+        [middle : i64 (+ low (/ (- high low) 2))]
+        (if (< (array-ref cies middle).offset offset)
+          (set! low (+ middle 1))
+          (set! high middle))))
+    (if (and (< low count) (= (array-ref cies low).offset offset))
+      low
+      -1)))
 
 (define (compiler-eh-frame-copy-program!
   [programs : (&mut programs (__tl_dyn-array u8))]
@@ -552,11 +524,8 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (begin
-        (set!
-          (array-ref programs (+ at index))
-          (array-ref bytes (+ start index)))
-        (set! index (+ index 1))))))
+      (set! (array-ref programs (+ at index)) (array-ref bytes (+ start index)))
+      (set! index (+ index 1)))))
 
 ;; Decode the `.eh_frame` section `bytes`, which the caller identifies as
 ;; `input`.  Every record is checked against the admitted profile before any
@@ -567,262 +536,236 @@
   [limits : (& limits CompilerEhFrameLimits)]) : ResultCompilerEhFrameImage
   (let
     [length : i64 (array-length bytes)]
-    (begin
+    (when
+      (not (compiler-eh-frame-limits-valid? limits))
+      (return
+        (Err
+          (compiler-eh-frame-error
+            compiler-eh-frame-error-invalid-limits
+            input
+            -1
+            0
+            "eh_frame: invalid codec limits"))))
+    (when
+      (> length limits.max-input-bytes)
+      (return
+        (Err
+          (compiler-eh-frame-error
+            compiler-eh-frame-error-input-limit
+            input
+            -1
+            0
+            "eh_frame: input byte limit exceeded"))))
+    (let
+      [framing : CompilerEhFrameFraming
+        (compiler-eh-frame-framing bytes limits)]
       (when
-        (not (compiler-eh-frame-limits-valid? limits))
+        (!= framing.error-code 0)
         (return
           (Err
             (compiler-eh-frame-error
-              compiler-eh-frame-error-invalid-limits
+              framing.error-code
               input
-              -1
-              0
-              "eh_frame: invalid codec limits"))))
-      (when
-        (> length limits.max-input-bytes)
-        (return
-          (Err
-            (compiler-eh-frame-error
-              compiler-eh-frame-error-input-limit
-              input
-              -1
-              0
-              "eh_frame: input byte limit exceeded"))))
+              framing.error-record
+              framing.error-offset
+              framing.error-message))))
       (let
-        [framing : CompilerEhFrameFraming
-          (compiler-eh-frame-framing bytes limits)]
-        (begin
-          (when
-            (!= framing.error-code 0)
-            (return
-              (Err
-                (compiler-eh-frame-error
-                  framing.error-code
-                  input
-                  framing.error-record
-                  framing.error-offset
-                  framing.error-message))))
+        [cies : (__tl_dyn-array CompilerEhFrameCie)
+          (__tl_make-array CompilerEhFrameCie framing.cies)]
+        [fdes : (__tl_dyn-array CompilerEhFrameFde)
+          (__tl_make-array CompilerEhFrameFde framing.fdes)]
+        [programs : (__tl_dyn-array u8) (__tl_make-array u8 length)]
+        [program-bytes : i64 0]
+        [cie-count : i64 0]
+        [fde-count : i64 0]
+        [work : i64 0]
+        [at : i64 0]
+        (while (< (+ cie-count fde-count) (+ framing.cies framing.fdes))
           (let
-            [cies : (__tl_dyn-array CompilerEhFrameCie)
-              (__tl_make-array CompilerEhFrameCie framing.cies)]
-            [fdes : (__tl_dyn-array CompilerEhFrameFde)
-              (__tl_make-array CompilerEhFrameFde framing.fdes)]
-            [programs : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-            [program-bytes : i64 0]
-            [cie-count : i64 0]
-            [fde-count : i64 0]
-            [work : i64 0]
-            [at : i64 0]
-            (begin
-              (while (< (+ cie-count fde-count) (+ framing.cies framing.fdes))
-                (let
-                  [record : i64 at]
-                  [end : i64 (+ at (+ 4 (byte_le.read-u32 bytes at)))]
-                  [id : i64 (byte_le.read-u32 bytes (+ at 4))]
-                  (begin
-                    (set! at end)
-                    (if (= id 0)
-                      (match (compiler-eh-frame-decode-cie
+            [record : i64 at]
+            [end : i64 (+ at (+ 4 (byte_le.read-u32 bytes at)))]
+            [id : i64 (byte_le.read-u32 bytes (+ at 4))]
+            (set! at end)
+            (if (= id 0)
+              (match (compiler-eh-frame-decode-cie
+                bytes
+                input
+                record
+                end
+                limits)
+                [(Err error) (return (Err error))]
+                [(Ok parsed)
+                  (let
+                    [check : CompilerEhFrameProgramCheck
+                      (compiler-eh-frame-check-program
                         bytes
-                        input
-                        record
+                        parsed.program-start
                         end
-                        limits)
-                        [(Err error) (return (Err error))]
-                        [(Ok parsed)
-                          (let
-                            [check : CompilerEhFrameProgramCheck
-                              (compiler-eh-frame-check-program
-                                bytes
-                                parsed.program-start
-                                end
-                                parsed.code-alignment
-                                -1
-                                limits.max-state-depth)]
-                            [program-length : i64
-                              (- check.end parsed.program-start)]
-                            (begin
-                              (when
-                                (not (string.eq check.message ""))
-                                (return
-                                  (Err
-                                    (compiler-eh-frame-error
-                                      compiler-eh-frame-error-cfa
-                                      input
-                                      record
-                                      check.offset
-                                      check.message))))
-                              (set! work (+ work check.work))
-                              (compiler-eh-frame-copy-program!
-                                (&mut programs)
-                                program-bytes
-                                bytes
-                                parsed.program-start
-                                program-length)
-                              (set!
-                                (array-ref cies cie-count)
-                                (CompilerEhFrameCie
-                                  input
-                                  record
-                                  parsed.code-alignment
-                                  parsed.data-alignment
-                                  parsed.return-register
-                                  compiler-eh-frame-pe-pcrel-sdata4
-                                  program-bytes
-                                  program-length))
-                              (set!
-                                program-bytes
-                                (+ program-bytes program-length))
-                              (set! cie-count (+ cie-count 1))))])
-                      (let
-                        [cie-offset : i64 (- (+ record 4) id)]
-                        [cie : i64
-                          (if (< cie-offset 0)
-                            -1
-                            (compiler-eh-frame-cie-at
-                              (& cies)
-                              cie-count
-                              cie-offset))]
-                        (begin
-                          (when
-                            (< cie 0)
-                            (return
-                              (Err
-                                (compiler-eh-frame-error
-                                  compiler-eh-frame-error-cie-reference
-                                  input
-                                  record
-                                  (+ record 4)
-                                  "eh_frame: FDE CIE pointer does not name a preceding CIE"))))
-                          (when
-                            (< (- end record) 17)
-                            (return
-                              (Err
-                                (compiler-eh-frame-error
-                                  compiler-eh-frame-error-truncated
-                                  input
-                                  record
-                                  (+ record 8)
-                                  "eh_frame: FDE too short for its location, range and augmentation"))))
-                          (let
-                            [code-alignment : i64
-                              (array-ref cies cie).code-alignment]
-                            [raw : i64
-                              (compiler-eh-frame-read-i32 bytes (+ record 8))]
-                            [range : i64
-                              (compiler-eh-frame-read-i32 bytes (+ record 12))]
-                            [augmentation : leb128.Decoded
-                              (compiler-eh-frame-leb
-                                bytes
-                                (+ record 16)
-                                end
-                                false)]
-                            (begin
-                              (when
-                                (<= range 0)
-                                (return
-                                  (Err
-                                    (compiler-eh-frame-error
-                                      compiler-eh-frame-error-fde
-                                      input
-                                      record
-                                      (+ record 12)
-                                      "eh_frame: FDE address range is not positive"))))
-                              (when
-                                (not augmentation.ok?)
-                                (return
-                                  (Err
-                                    (compiler-eh-frame-error
-                                      compiler-eh-frame-error-leb
-                                      input
-                                      record
-                                      (+ record 16)
-                                      "eh_frame: malformed FDE augmentation length"))))
-                              (when
-                                (!= augmentation.value 0)
-                                (return
-                                  (Err
-                                    (compiler-eh-frame-error
-                                      compiler-eh-frame-error-fde
-                                      input
-                                      record
-                                      (+ record 16)
-                                      "eh_frame: FDE augmentation data is not admitted for zR"))))
-                              (when
-                                (>
-                                  (- end augmentation.next)
-                                  limits.max-program-bytes)
-                                (return
-                                  (Err
-                                    (compiler-eh-frame-error
-                                      compiler-eh-frame-error-cfa
-                                      input
-                                      record
-                                      augmentation.next
-                                      "eh_frame: CFA program byte limit exceeded"))))
-                              (let
-                                [check : CompilerEhFrameProgramCheck
-                                  (compiler-eh-frame-check-program
-                                    bytes
-                                    augmentation.next
-                                    end
-                                    code-alignment
-                                    range
-                                    limits.max-state-depth)]
-                                [program-length : i64
-                                  (- check.end augmentation.next)]
-                                (begin
-                                  (when
-                                    (not (string.eq check.message ""))
-                                    (return
-                                      (Err
-                                        (compiler-eh-frame-error
-                                          compiler-eh-frame-error-cfa
-                                          input
-                                          record
-                                          check.offset
-                                          check.message))))
-                                  (set! work (+ work check.work))
-                                  (compiler-eh-frame-copy-program!
-                                    (&mut programs)
-                                    program-bytes
-                                    bytes
-                                    augmentation.next
-                                    program-length)
-                                  (set!
-                                    (array-ref fdes fde-count)
-                                    (CompilerEhFrameFde
-                                      input
-                                      record
-                                      cie
-                                      (+ record 8)
-                                      4
-                                      raw
-                                      range
-                                      program-bytes
-                                      program-length))
-                                  (set!
-                                    program-bytes
-                                    (+ program-bytes program-length))
-                                  (set! fde-count (+ fde-count 1)))))))))
+                        parsed.code-alignment
+                        -1
+                        limits.max-state-depth)]
+                    [program-length : i64 (- check.end parsed.program-start)]
                     (when
-                      (> work limits.max-work)
+                      (not (string.eq check.message ""))
                       (return
                         (Err
                           (compiler-eh-frame-error
-                            compiler-eh-frame-error-work-limit
+                            compiler-eh-frame-error-cfa
                             input
                             record
+                            check.offset
+                            check.message))))
+                    (set! work (+ work check.work))
+                    (compiler-eh-frame-copy-program!
+                      (&mut programs)
+                      program-bytes
+                      bytes
+                      parsed.program-start
+                      program-length)
+                    (set!
+                      (array-ref cies cie-count)
+                      (CompilerEhFrameCie
+                        input
+                        record
+                        parsed.code-alignment
+                        parsed.data-alignment
+                        parsed.return-register
+                        compiler-eh-frame-pe-pcrel-sdata4
+                        program-bytes
+                        program-length))
+                    (set! program-bytes (+ program-bytes program-length))
+                    (set! cie-count (+ cie-count 1)))])
+              (let
+                [cie-offset : i64 (- (+ record 4) id)]
+                [cie : i64
+                  (if (< cie-offset 0)
+                    -1
+                    (compiler-eh-frame-cie-at (& cies) cie-count cie-offset))]
+                (when
+                  (< cie 0)
+                  (return
+                    (Err
+                      (compiler-eh-frame-error
+                        compiler-eh-frame-error-cie-reference
+                        input
+                        record
+                        (+ record 4)
+                        "eh_frame: FDE CIE pointer does not name a preceding CIE"))))
+                (when
+                  (< (- end record) 17)
+                  (return
+                    (Err
+                      (compiler-eh-frame-error
+                        compiler-eh-frame-error-truncated
+                        input
+                        record
+                        (+ record 8)
+                        "eh_frame: FDE too short for its location, range and augmentation"))))
+                (let
+                  [code-alignment : i64 (array-ref cies cie).code-alignment]
+                  [raw : i64 (compiler-eh-frame-read-i32 bytes (+ record 8))]
+                  [range : i64 (compiler-eh-frame-read-i32 bytes (+ record 12))]
+                  [augmentation : leb128.Decoded
+                    (compiler-eh-frame-leb bytes (+ record 16) end false)]
+                  (when
+                    (<= range 0)
+                    (return
+                      (Err
+                        (compiler-eh-frame-error
+                          compiler-eh-frame-error-fde
+                          input
+                          record
+                          (+ record 12)
+                          "eh_frame: FDE address range is not positive"))))
+                  (when
+                    (not augmentation.ok?)
+                    (return
+                      (Err
+                        (compiler-eh-frame-error
+                          compiler-eh-frame-error-leb
+                          input
+                          record
+                          (+ record 16)
+                          "eh_frame: malformed FDE augmentation length"))))
+                  (when
+                    (!= augmentation.value 0)
+                    (return
+                      (Err
+                        (compiler-eh-frame-error
+                          compiler-eh-frame-error-fde
+                          input
+                          record
+                          (+ record 16)
+                          "eh_frame: FDE augmentation data is not admitted for zR"))))
+                  (when
+                    (> (- end augmentation.next) limits.max-program-bytes)
+                    (return
+                      (Err
+                        (compiler-eh-frame-error
+                          compiler-eh-frame-error-cfa
+                          input
+                          record
+                          augmentation.next
+                          "eh_frame: CFA program byte limit exceeded"))))
+                  (let
+                    [check : CompilerEhFrameProgramCheck
+                      (compiler-eh-frame-check-program
+                        bytes
+                        augmentation.next
+                        end
+                        code-alignment
+                        range
+                        limits.max-state-depth)]
+                    [program-length : i64 (- check.end augmentation.next)]
+                    (when
+                      (not (string.eq check.message ""))
+                      (return
+                        (Err
+                          (compiler-eh-frame-error
+                            compiler-eh-frame-error-cfa
+                            input
                             record
-                            "eh_frame: work limit exceeded")))))))
-              (Ok
-                (CompilerEhFrameImage
-                  input
-                  cies
-                  fdes
-                  programs
-                  program-bytes
-                  framing.terminated?)))))))))
+                            check.offset
+                            check.message))))
+                    (set! work (+ work check.work))
+                    (compiler-eh-frame-copy-program!
+                      (&mut programs)
+                      program-bytes
+                      bytes
+                      augmentation.next
+                      program-length)
+                    (set!
+                      (array-ref fdes fde-count)
+                      (CompilerEhFrameFde
+                        input
+                        record
+                        cie
+                        (+ record 8)
+                        4
+                        raw
+                        range
+                        program-bytes
+                        program-length))
+                    (set! program-bytes (+ program-bytes program-length))
+                    (set! fde-count (+ fde-count 1))))))
+            (when
+              (> work limits.max-work)
+              (return
+                (Err
+                  (compiler-eh-frame-error
+                    compiler-eh-frame-error-work-limit
+                    input
+                    record
+                    record
+                    "eh_frame: work limit exceeded"))))))
+        (Ok
+          (CompilerEhFrameImage
+            input
+            cies
+            fdes
+            programs
+            program-bytes
+            framing.terminated?))))))
 
 ;; The fixed CIE fields and where its program starts.
 (defstruct CompilerEhFrameCieParse
@@ -843,139 +786,136 @@
   [limits : (& limits CompilerEhFrameLimits)]) : ResultCompilerEhFrameCieParse
   (let
     [at : i64 (+ record 8)]
-    (begin
-      ;; version, "zR\0", then at least one byte for each of the three
-      ;; alignment/register fields, the augmentation length and data.
+    ;; version, "zR\0", then at least one byte for each of the three
+    ;; alignment/register fields, the augmentation length and data.
+    (when
+      (> (+ at 9) end)
+      (return
+        (Err
+          (compiler-eh-frame-error
+            compiler-eh-frame-error-truncated
+            input
+            record
+            at
+            "eh_frame: CIE too short for its fixed fields"))))
+    (when
+      (!= (byte_le.byte-le-at bytes at) 1)
+      (return
+        (Err
+          (compiler-eh-frame-error
+            compiler-eh-frame-error-cie
+            input
+            record
+            at
+            "eh_frame: only CIE version 1 is admitted"))))
+    (when
+      (or
+        (!= (byte_le.byte-le-at bytes (+ at 1)) 122)
+        (!= (byte_le.byte-le-at bytes (+ at 2)) 82)
+        (!= (byte_le.byte-le-at bytes (+ at 3)) 0))
+      (return
+        (Err
+          (compiler-eh-frame-error
+            compiler-eh-frame-error-cie
+            input
+            record
+            (+ at 1)
+            "eh_frame: only CIE augmentation \"zR\" is admitted"))))
+    (let
+      [code : leb128.Decoded (compiler-eh-frame-leb bytes (+ at 4) end false)]
+      [data : leb128.Decoded (compiler-eh-frame-leb bytes code.next end true)]
       (when
-        (> (+ at 9) end)
+        (or (not code.ok?) (not data.ok?))
+        (return
+          (Err
+            (compiler-eh-frame-error
+              compiler-eh-frame-error-leb
+              input
+              record
+              (+ at 4)
+              "eh_frame: malformed CIE alignment factor"))))
+      ;; Factors scale advances and offsets; bounding them keeps every
+      ;; scaled operand representable.
+      (when
+        (or
+          (< code.value 1)
+          (> code.value 4294967295)
+          (= data.value 0)
+          (< data.value -4294967296)
+          (> data.value 4294967295))
+        (return
+          (Err
+            (compiler-eh-frame-error
+              compiler-eh-frame-error-cie
+              input
+              record
+              (+ at 4)
+              "eh_frame: CIE alignment factor outside the admitted range"))))
+      (when
+        (> (+ data.next 3) end)
         (return
           (Err
             (compiler-eh-frame-error
               compiler-eh-frame-error-truncated
               input
               record
-              at
-              "eh_frame: CIE too short for its fixed fields"))))
-      (when
-        (!= (byte_le.byte-le-at bytes at) 1)
-        (return
-          (Err
-            (compiler-eh-frame-error
-              compiler-eh-frame-error-cie
-              input
-              record
-              at
-              "eh_frame: only CIE version 1 is admitted"))))
-      (when
-        (or
-          (!= (byte_le.byte-le-at bytes (+ at 1)) 122)
-          (!= (byte_le.byte-le-at bytes (+ at 2)) 82)
-          (!= (byte_le.byte-le-at bytes (+ at 3)) 0))
-        (return
-          (Err
-            (compiler-eh-frame-error
-              compiler-eh-frame-error-cie
-              input
-              record
-              (+ at 1)
-              "eh_frame: only CIE augmentation \"zR\" is admitted"))))
+              data.next
+              "eh_frame: CIE too short for its augmentation data"))))
       (let
-        [code : leb128.Decoded (compiler-eh-frame-leb bytes (+ at 4) end false)]
-        [data : leb128.Decoded (compiler-eh-frame-leb bytes code.next end true)]
-        (begin
-          (when
-            (or (not code.ok?) (not data.ok?))
-            (return
-              (Err
-                (compiler-eh-frame-error
-                  compiler-eh-frame-error-leb
-                  input
-                  record
-                  (+ at 4)
-                  "eh_frame: malformed CIE alignment factor"))))
-          ;; Factors scale advances and offsets; bounding them keeps every
-          ;; scaled operand representable.
-          (when
-            (or
-              (< code.value 1)
-              (> code.value 4294967295)
-              (= data.value 0)
-              (< data.value -4294967296)
-              (> data.value 4294967295))
-            (return
-              (Err
-                (compiler-eh-frame-error
-                  compiler-eh-frame-error-cie
-                  input
-                  record
-                  (+ at 4)
-                  "eh_frame: CIE alignment factor outside the admitted range"))))
-          (when
-            (> (+ data.next 3) end)
-            (return
-              (Err
-                (compiler-eh-frame-error
-                  compiler-eh-frame-error-truncated
-                  input
-                  record
-                  data.next
-                  "eh_frame: CIE too short for its augmentation data"))))
-          (let
-            [return-register : i64 (byte_le.byte-le-at bytes data.next)]
-            [augmentation : leb128.Decoded
-              (compiler-eh-frame-leb bytes (+ data.next 1) end false)]
-            (begin
-              (when
-                (> return-register compiler-eh-frame-max-register)
-                (return
-                  (Err
-                    (compiler-eh-frame-error
-                      compiler-eh-frame-error-cie
-                      input
-                      record
-                      data.next
-                      "eh_frame: CIE return address register outside the x86-64 DWARF register set"))))
-              (when
-                (or
-                  (not augmentation.ok?)
-                  (!= augmentation.value 1)
-                  (>= augmentation.next end))
-                (return
-                  (Err
-                    (compiler-eh-frame-error
-                      compiler-eh-frame-error-cie
-                      input
-                      record
-                      (+ data.next 1)
-                      "eh_frame: \"zR\" CIE augmentation data must be one pointer-encoding byte"))))
-              (when
-                (!=
-                  (byte_le.byte-le-at bytes augmentation.next)
-                  compiler-eh-frame-pe-pcrel-sdata4)
-                (return
-                  (Err
-                    (compiler-eh-frame-error
-                      compiler-eh-frame-error-cie
-                      input
-                      record
-                      augmentation.next
-                      "eh_frame: only the pcrel|sdata4 FDE pointer encoding is admitted"))))
-              (when
-                (> (- end (+ augmentation.next 1)) limits.max-program-bytes)
-                (return
-                  (Err
-                    (compiler-eh-frame-error
-                      compiler-eh-frame-error-cfa
-                      input
-                      record
-                      (+ augmentation.next 1)
-                      "eh_frame: CFA program byte limit exceeded"))))
-              (Ok
-                (CompilerEhFrameCieParse
-                  code.value
-                  data.value
-                  return-register
-                  (+ augmentation.next 1))))))))))
+        [return-register : i64 (byte_le.byte-le-at bytes data.next)]
+        [augmentation : leb128.Decoded
+          (compiler-eh-frame-leb bytes (+ data.next 1) end false)]
+        (when
+          (> return-register compiler-eh-frame-max-register)
+          (return
+            (Err
+              (compiler-eh-frame-error
+                compiler-eh-frame-error-cie
+                input
+                record
+                data.next
+                "eh_frame: CIE return address register outside the x86-64 DWARF register set"))))
+        (when
+          (or
+            (not augmentation.ok?)
+            (!= augmentation.value 1)
+            (>= augmentation.next end))
+          (return
+            (Err
+              (compiler-eh-frame-error
+                compiler-eh-frame-error-cie
+                input
+                record
+                (+ data.next 1)
+                "eh_frame: \"zR\" CIE augmentation data must be one pointer-encoding byte"))))
+        (when
+          (!=
+            (byte_le.byte-le-at bytes augmentation.next)
+            compiler-eh-frame-pe-pcrel-sdata4)
+          (return
+            (Err
+              (compiler-eh-frame-error
+                compiler-eh-frame-error-cie
+                input
+                record
+                augmentation.next
+                "eh_frame: only the pcrel|sdata4 FDE pointer encoding is admitted"))))
+        (when
+          (> (- end (+ augmentation.next 1)) limits.max-program-bytes)
+          (return
+            (Err
+              (compiler-eh-frame-error
+                compiler-eh-frame-error-cfa
+                input
+                record
+                (+ augmentation.next 1)
+                "eh_frame: CFA program byte limit exceeded"))))
+        (Ok
+          (CompilerEhFrameCieParse
+            code.value
+            data.value
+            return-register
+            (+ augmentation.next 1)))))))
 
 ;; The final address an FDE of a linked section at `section-address` covers.
 (define (compiler-eh-frame-fde-initial-location
@@ -1011,26 +951,24 @@
   (let
     [index : i64 0]
     [result : i64 0]
-    (begin
-      (while (and (= result 0) (< index left-length) (< index right-length))
-        (begin
-          (set!
-            result
-            (compiler-eh-frame-compare-i64
-              (cast
-                (array-ref
-                  (array-ref images left-image).programs
-                  (+ left-start index))
-                : i64)
-              (cast
-                (array-ref
-                  (array-ref images right-image).programs
-                  (+ right-start index))
-                : i64)))
-          (set! index (+ index 1))))
-      (if (= result 0)
-        (compiler-eh-frame-compare-i64 left-length right-length)
-        result))))
+    (while (and (= result 0) (< index left-length) (< index right-length))
+      (set!
+        result
+        (compiler-eh-frame-compare-i64
+          (cast
+            (array-ref
+              (array-ref images left-image).programs
+              (+ left-start index))
+            : i64)
+          (cast
+            (array-ref
+              (array-ref images right-image).programs
+              (+ right-start index))
+            : i64)))
+      (set! index (+ index 1)))
+    (if (= result 0)
+      (compiler-eh-frame-compare-i64 left-length right-length)
+      result)))
 
 ;; Canonical CIE contract order: two CIEs compare equal exactly when their
 ;; encoded records are byte-identical.
@@ -1156,37 +1094,35 @@
         [left : i64 (+ (* node 2) 1)]
         [right : i64 (+ (* node 2) 2)]
         [largest : i64 node]
-        (begin
-          (when
-            (and
-              (< left count)
-              (compiler-eh-frame-before?
-                images
-                selections
-                cie-ids
-                fde-order?
-                (array-ref order largest)
-                (array-ref order left)))
-            (set! largest left))
-          (when
-            (and
-              (< right count)
-              (compiler-eh-frame-before?
-                images
-                selections
-                cie-ids
-                fde-order?
-                (array-ref order largest)
-                (array-ref order right)))
-            (set! largest right))
-          (if (= largest node)
-            (set! done true)
-            (let
-              [swap : i64 (array-ref order node)]
-              (begin
-                (set! (array-ref order node) (array-ref order largest))
-                (set! (array-ref order largest) swap)
-                (set! node largest)))))))))
+        (when
+          (and
+            (< left count)
+            (compiler-eh-frame-before?
+              images
+              selections
+              cie-ids
+              fde-order?
+              (array-ref order largest)
+              (array-ref order left)))
+          (set! largest left))
+        (when
+          (and
+            (< right count)
+            (compiler-eh-frame-before?
+              images
+              selections
+              cie-ids
+              fde-order?
+              (array-ref order largest)
+              (array-ref order right)))
+          (set! largest right))
+        (if (= largest node)
+          (set! done true)
+          (let
+            [swap : i64 (array-ref order node)]
+            (set! (array-ref order node) (array-ref order largest))
+            (set! (array-ref order largest) swap)
+            (set! node largest)))))))
 
 ;; Heapsort `order`, a permutation of selection indexes, in O(n log n)
 ;; comparisons without auxiliary storage.
@@ -1200,33 +1136,30 @@
     [count : i64 (array-length order)]
     [start : i64 (- (/ count 2) 1)]
     [end : i64 (- count 1)]
-    (begin
-      (while (>= start 0)
-        (begin
-          (compiler-eh-frame-sift!
-            images
-            selections
-            cie-ids
-            fde-order?
-            order
-            start
-            count)
-          (set! start (- start 1))))
-      (while (> end 0)
-        (let
-          [swap : i64 (array-ref order 0)]
-          (begin
-            (set! (array-ref order 0) (array-ref order end))
-            (set! (array-ref order end) swap)
-            (compiler-eh-frame-sift!
-              images
-              selections
-              cie-ids
-              fde-order?
-              order
-              0
-              end)
-            (set! end (- end 1))))))))
+    (while (>= start 0)
+      (compiler-eh-frame-sift!
+        images
+        selections
+        cie-ids
+        fde-order?
+        order
+        start
+        count)
+      (set! start (- start 1)))
+    (while (> end 0)
+      (let
+        [swap : i64 (array-ref order 0)]
+        (set! (array-ref order 0) (array-ref order end))
+        (set! (array-ref order end) swap)
+        (compiler-eh-frame-sift!
+          images
+          selections
+          cie-ids
+          fde-order?
+          order
+          0
+          end)
+        (set! end (- end 1))))))
 
 (define (compiler-eh-frame-align [size : i64]) : i64
   (* (/ (+ size 7) 8) 8))
@@ -1253,11 +1186,10 @@
   (let
     [index : i64 0]
     (while (< index length)
-      (begin
-        (byte_buf_core.byte-buf-builder-push
-          out
-          (array-ref (array-ref images image).programs (+ start index)))
-        (set! index (+ index 1))))))
+      (byte_buf_core.byte-buf-builder-push
+        out
+        (array-ref (array-ref images image).programs (+ start index)))
+      (set! index (+ index 1)))))
 
 (define (compiler-eh-frame-push-padding!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -1283,125 +1215,118 @@
   (let
     [count : i64 (array-length selections)]
     [index : i64 0]
-    (begin
-      (when
-        (not (compiler-eh-frame-limits-valid? limits))
-        (return
-          (compiler-eh-frame-encode-error
-            compiler-eh-frame-error-invalid-limits
-            "eh_frame: invalid codec limits")))
-      (when
-        (> count limits.max-records)
-        (return
-          (compiler-eh-frame-encode-error
-            compiler-eh-frame-error-record-limit
-            "eh_frame: record limit exceeded")))
-      (when
-        (not (compiler-eh-frame-address? section-address))
-        (return
-          (compiler-eh-frame-encode-error
-            compiler-eh-frame-error-address
-            "eh_frame: section address outside the supported range")))
+    (when
+      (not (compiler-eh-frame-limits-valid? limits))
+      (return
+        (compiler-eh-frame-encode-error
+          compiler-eh-frame-error-invalid-limits
+          "eh_frame: invalid codec limits")))
+    (when
+      (> count limits.max-records)
+      (return
+        (compiler-eh-frame-encode-error
+          compiler-eh-frame-error-record-limit
+          "eh_frame: record limit exceeded")))
+    (when
+      (not (compiler-eh-frame-address? section-address))
+      (return
+        (compiler-eh-frame-encode-error
+          compiler-eh-frame-error-address
+          "eh_frame: section address outside the supported range")))
+    (while (< index count)
+      (let
+        [selection : CompilerEhFrameSelection (array-ref selections index)]
+        (when
+          (or
+            (< selection.image 0)
+            (>= selection.image (array-length images))
+            (< selection.fde 0)
+            (>=
+              selection.fde
+              (array-length (array-ref images selection.image).fdes)))
+          (return
+            (compiler-eh-frame-encode-error
+              compiler-eh-frame-error-selection
+              "eh_frame: selection names no decoded FDE")))
+        (when
+          (or
+            (not (compiler-eh-frame-address? selection.initial-location))
+            (not
+              (compiler-eh-frame-address?
+                (+
+                  selection.initial-location
+                  (compiler-eh-frame-selected-fde images (& selection)).range))))
+          (return
+            (compiler-eh-frame-encode-error
+              compiler-eh-frame-error-address
+              "eh_frame: FDE code range outside the supported address range")))
+        (set! index (+ index 1))))
+    (let
+      [cie-order : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [fde-order : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [cie-ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+      [unique : i64 0]
+      (set! index 0)
+      (while (< index count)
+        (set! (array-ref cie-order index) index)
+        (set! (array-ref fde-order index) index)
+        (set! index (+ index 1)))
+      (compiler-eh-frame-sort!
+        images
+        selections
+        (& cie-ids)
+        false
+        (&mut cie-order))
+      ;; Number runs of equal contracts in contract order.
+      (set! index 0)
+      (while (< index count)
+        (when
+          (and
+            (> index 0)
+            (!=
+              (compiler-eh-frame-compare-cies
+                images
+                (& (array-ref selections (array-ref cie-order (- index 1))))
+                (& (array-ref selections (array-ref cie-order index))))
+              0))
+          (set! unique (+ unique 1)))
+        (set! (array-ref cie-ids (array-ref cie-order index)) unique)
+        (set! index (+ index 1)))
+      (compiler-eh-frame-sort!
+        images
+        selections
+        (& cie-ids)
+        true
+        (&mut fde-order))
+      ;; The same FDE selected twice, or two images claiming one identity.
+      (set! index 1)
       (while (< index count)
         (let
-          [selection : CompilerEhFrameSelection (array-ref selections index)]
-          (begin
-            (when
-              (or
-                (< selection.image 0)
-                (>= selection.image (array-length images))
-                (< selection.fde 0)
-                (>=
-                  selection.fde
-                  (array-length (array-ref images selection.image).fdes)))
-              (return
-                (compiler-eh-frame-encode-error
-                  compiler-eh-frame-error-selection
-                  "eh_frame: selection names no decoded FDE")))
-            (when
-              (or
-                (not (compiler-eh-frame-address? selection.initial-location))
-                (not
-                  (compiler-eh-frame-address?
-                    (+
-                      selection.initial-location
-                      (compiler-eh-frame-selected-fde images (& selection)).range))))
-              (return
-                (compiler-eh-frame-encode-error
-                  compiler-eh-frame-error-address
-                  "eh_frame: FDE code range outside the supported address range")))
-            (set! index (+ index 1)))))
-      (let
-        [cie-order : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-        [fde-order : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-        [cie-ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-        [unique : i64 0]
-        (begin
-          (set! index 0)
-          (while (< index count)
-            (begin
-              (set! (array-ref cie-order index) index)
-              (set! (array-ref fde-order index) index)
-              (set! index (+ index 1))))
-          (compiler-eh-frame-sort!
-            images
-            selections
-            (& cie-ids)
-            false
-            (&mut cie-order))
-          ;; Number runs of equal contracts in contract order.
-          (set! index 0)
-          (while (< index count)
-            (begin
-              (when
-                (and
-                  (> index 0)
-                  (!=
-                    (compiler-eh-frame-compare-cies
-                      images
-                      (&
-                        (array-ref selections (array-ref cie-order (- index 1))))
-                      (& (array-ref selections (array-ref cie-order index))))
-                    0))
-                (set! unique (+ unique 1)))
-              (set! (array-ref cie-ids (array-ref cie-order index)) unique)
-              (set! index (+ index 1))))
-          (compiler-eh-frame-sort!
-            images
-            selections
-            (& cie-ids)
-            true
-            (&mut fde-order))
-          ;; The same FDE selected twice, or two images claiming one identity.
-          (set! index 1)
-          (while (< index count)
-            (let
-              [previous : CompilerEhFrameSelection
-                (array-ref selections (array-ref fde-order (- index 1)))]
-              [current : CompilerEhFrameSelection
-                (array-ref selections (array-ref fde-order index))]
-              (begin
-                (when
-                  (=
-                    (compiler-eh-frame-compare-identity
-                      images
-                      (& previous)
-                      (& current)
-                      false)
-                    0)
-                  (return
-                    (compiler-eh-frame-encode-error
-                      compiler-eh-frame-error-selection
-                      "eh_frame: an FDE identity is selected more than once")))
-                (set! index (+ index 1)))))
-          (compiler-eh-frame-encode-layout
-            images
-            selections
-            (& cie-order)
-            (& fde-order)
-            (& cie-ids)
-            section-address
-            limits))))))
+          [previous : CompilerEhFrameSelection
+            (array-ref selections (array-ref fde-order (- index 1)))]
+          [current : CompilerEhFrameSelection
+            (array-ref selections (array-ref fde-order index))]
+          (when
+            (=
+              (compiler-eh-frame-compare-identity
+                images
+                (& previous)
+                (& current)
+                false)
+              0)
+            (return
+              (compiler-eh-frame-encode-error
+                compiler-eh-frame-error-selection
+                "eh_frame: an FDE identity is selected more than once")))
+          (set! index (+ index 1))))
+      (compiler-eh-frame-encode-layout
+        images
+        selections
+        (& cie-order)
+        (& fde-order)
+        (& cie-ids)
+        section-address
+        limits))))
 
 ;; Lay out and emit records in FDE order.  The representative of each CIE run
 ;; is its first member in contract order, recorded in `cie-order`.
@@ -1424,156 +1349,136 @@
     [index : i64 0]
     [total : i64 4]
     [previous-id : i64 -1]
-    (begin
-      (while (< index count)
-        (let
-          [selection : i64 (array-ref cie-order index)]
-          [id : i64 (array-ref cie-ids selection)]
-          (begin
-            (when
-              (!= id previous-id)
-              (begin
-                (set! (array-ref representatives id) selection)
-                (set! previous-id id)))
-            (set! index (+ index 1)))))
-      ;; Size every record before allocating the output.
-      (set! index 0)
-      (while (< index unique-count)
-        (let
-          [cie : CompilerEhFrameCie
-            (compiler-eh-frame-selected-cie
-              images
-              (& (array-ref selections (array-ref representatives index))))]
-          (begin
-            (set! total (+ total (compiler-eh-frame-cie-size (& cie))))
-            (set! index (+ index 1)))))
-      (set! index 0)
-      (while (< index count)
-        (let
-          [fde : CompilerEhFrameFde
-            (compiler-eh-frame-selected-fde
-              images
-              (& (array-ref selections (array-ref fde-order index))))]
-          (begin
-            (set! total (+ total (compiler-eh-frame-fde-size (& fde))))
-            (set! index (+ index 1)))))
-      (when
-        (> total limits.max-output-bytes)
-        (return
-          (compiler-eh-frame-encode-error
-            compiler-eh-frame-error-output-limit
-            "eh_frame: output byte limit exceeded")))
-      (when
-        (not (compiler-eh-frame-address? (+ section-address total)))
-        (return
-          (compiler-eh-frame-encode-error
-            compiler-eh-frame-error-address
-            "eh_frame: section end outside the supported address range")))
+    (while (< index count)
       (let
-        [out : byte_buf_core.ByteBufBuilder
-          (byte_buf_core.byte-buf-builder-with-capacity total)]
-        [rows : (__tl_dyn-array CompilerEhFrameRow)
-          (__tl_make-array CompilerEhFrameRow count)]
-        [current-id : i64 -1]
-        [cie-offset : i64 0]
-        (begin
-          (set! index 0)
-          (while (< index count)
+        [selection : i64 (array-ref cie-order index)]
+        [id : i64 (array-ref cie-ids selection)]
+        (when
+          (!= id previous-id)
+          (set! (array-ref representatives id) selection)
+          (set! previous-id id))
+        (set! index (+ index 1))))
+    ;; Size every record before allocating the output.
+    (set! index 0)
+    (while (< index unique-count)
+      (let
+        [cie : CompilerEhFrameCie
+          (compiler-eh-frame-selected-cie
+            images
+            (& (array-ref selections (array-ref representatives index))))]
+        (set! total (+ total (compiler-eh-frame-cie-size (& cie))))
+        (set! index (+ index 1))))
+    (set! index 0)
+    (while (< index count)
+      (let
+        [fde : CompilerEhFrameFde
+          (compiler-eh-frame-selected-fde
+            images
+            (& (array-ref selections (array-ref fde-order index))))]
+        (set! total (+ total (compiler-eh-frame-fde-size (& fde))))
+        (set! index (+ index 1))))
+    (when
+      (> total limits.max-output-bytes)
+      (return
+        (compiler-eh-frame-encode-error
+          compiler-eh-frame-error-output-limit
+          "eh_frame: output byte limit exceeded")))
+    (when
+      (not (compiler-eh-frame-address? (+ section-address total)))
+      (return
+        (compiler-eh-frame-encode-error
+          compiler-eh-frame-error-address
+          "eh_frame: section end outside the supported address range")))
+    (let
+      [out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.byte-buf-builder-with-capacity total)]
+      [rows : (__tl_dyn-array CompilerEhFrameRow)
+        (__tl_make-array CompilerEhFrameRow count)]
+      [current-id : i64 -1]
+      [cie-offset : i64 0]
+      (set! index 0)
+      (while (< index count)
+        (let
+          [selection : CompilerEhFrameSelection
+            (array-ref selections (array-ref fde-order index))]
+          [fde : CompilerEhFrameFde
+            (compiler-eh-frame-selected-fde images (& selection))]
+          [id : i64 (array-ref cie-ids (array-ref fde-order index))]
+          (when
+            (!= id current-id)
             (let
-              [selection : CompilerEhFrameSelection
-                (array-ref selections (array-ref fde-order index))]
-              [fde : CompilerEhFrameFde
-                (compiler-eh-frame-selected-fde images (& selection))]
-              [id : i64 (array-ref cie-ids (array-ref fde-order index))]
-              (begin
-                (when
-                  (!= id current-id)
-                  (let
-                    [representative : CompilerEhFrameSelection
-                      (array-ref selections (array-ref representatives id))]
-                    [cie : CompilerEhFrameCie
-                      (compiler-eh-frame-selected-cie images (& representative))]
-                    [size : i64 (compiler-eh-frame-cie-size (& cie))]
-                    (begin
-                      (set!
-                        cie-offset
-                        (byte_buf_core.byte-buf-builder-len (& out)))
-                      (set! current-id id)
-                      (byte_le.push-u32! (&mut out) (- size 4))
-                      (byte_le.push-u32! (&mut out) 0)
-                      (compiler-eh-frame-push-u8! (&mut out) 1)
-                      (compiler-eh-frame-push-u8! (&mut out) 122)
-                      (compiler-eh-frame-push-u8! (&mut out) 82)
-                      (compiler-eh-frame-push-u8! (&mut out) 0)
-                      (leb128.push-unsigned! (&mut out) cie.code-alignment)
-                      (leb128.push-signed! (&mut out) cie.data-alignment)
-                      (compiler-eh-frame-push-u8!
-                        (&mut out)
-                        cie.return-register)
-                      (compiler-eh-frame-push-u8! (&mut out) 1)
-                      (compiler-eh-frame-push-u8!
-                        (&mut out)
-                        cie.pointer-encoding)
-                      (compiler-eh-frame-push-program!
-                        (&mut out)
-                        images
-                        representative.image
-                        cie.program-start
-                        cie.program-length)
-                      (compiler-eh-frame-push-padding!
-                        (&mut out)
-                        (+ cie-offset size)))))
-                (let
-                  [fde-offset : i64
-                    (byte_buf_core.byte-buf-builder-len (& out))]
-                  [size : i64 (compiler-eh-frame-fde-size (& fde))]
-                  [field : i64 (+ (+ section-address fde-offset) 8)]
-                  [location : i64 (- selection.initial-location field)]
-                  [cie-pointer : i64 (- (+ fde-offset 4) cie-offset)]
-                  (begin
-                    (when
-                      (not (compiler-eh-frame-i32? location))
-                      (return
-                        (compiler-eh-frame-encode-error
-                          compiler-eh-frame-error-address
-                          "eh_frame: FDE initial location displacement overflows sdata4")))
-                    (when
-                      (> cie-pointer 4294967295)
-                      (return
-                        (compiler-eh-frame-encode-error
-                          compiler-eh-frame-error-address
-                          "eh_frame: CIE pointer overflows its 32-bit field")))
-                    (byte_le.push-u32! (&mut out) (- size 4))
-                    (byte_le.push-u32! (&mut out) cie-pointer)
-                    (byte_le.push-u32! (&mut out) location)
-                    (byte_le.push-u32! (&mut out) fde.range)
-                    (compiler-eh-frame-push-u8! (&mut out) 0)
-                    (compiler-eh-frame-push-program!
-                      (&mut out)
-                      images
-                      selection.image
-                      fde.program-start
-                      fde.program-length)
-                    (compiler-eh-frame-push-padding!
-                      (&mut out)
-                      (+ fde-offset size))
-                    (set!
-                      (array-ref rows index)
-                      (CompilerEhFrameRow
-                        selection.initial-location
-                        fde.range
-                        (+ section-address fde-offset)))))
-                (set! index (+ index 1)))))
-          (byte_le.push-u32! (&mut out) 0)
-          ;; Two FDEs claiming one code address leave an unwinder no way to
-          ;; choose, whether or not a search header is built.
-          (match (compiler-eh-frame-sorted-rows (& rows))
-            [(Err error) (Err error)]
-            [(Ok _)
-              (Ok
-                (CompilerEhFrameOutput
-                  (byte_buf_core.byte-buf-builder-finish-array (& out))
-                  rows))]))))))
+              [representative : CompilerEhFrameSelection
+                (array-ref selections (array-ref representatives id))]
+              [cie : CompilerEhFrameCie
+                (compiler-eh-frame-selected-cie images (& representative))]
+              [size : i64 (compiler-eh-frame-cie-size (& cie))]
+              (set! cie-offset (byte_buf_core.byte-buf-builder-len (& out)))
+              (set! current-id id)
+              (byte_le.push-u32! (&mut out) (- size 4))
+              (byte_le.push-u32! (&mut out) 0)
+              (compiler-eh-frame-push-u8! (&mut out) 1)
+              (compiler-eh-frame-push-u8! (&mut out) 122)
+              (compiler-eh-frame-push-u8! (&mut out) 82)
+              (compiler-eh-frame-push-u8! (&mut out) 0)
+              (leb128.push-unsigned! (&mut out) cie.code-alignment)
+              (leb128.push-signed! (&mut out) cie.data-alignment)
+              (compiler-eh-frame-push-u8! (&mut out) cie.return-register)
+              (compiler-eh-frame-push-u8! (&mut out) 1)
+              (compiler-eh-frame-push-u8! (&mut out) cie.pointer-encoding)
+              (compiler-eh-frame-push-program!
+                (&mut out)
+                images
+                representative.image
+                cie.program-start
+                cie.program-length)
+              (compiler-eh-frame-push-padding! (&mut out) (+ cie-offset size))))
+          (let
+            [fde-offset : i64 (byte_buf_core.byte-buf-builder-len (& out))]
+            [size : i64 (compiler-eh-frame-fde-size (& fde))]
+            [field : i64 (+ (+ section-address fde-offset) 8)]
+            [location : i64 (- selection.initial-location field)]
+            [cie-pointer : i64 (- (+ fde-offset 4) cie-offset)]
+            (when
+              (not (compiler-eh-frame-i32? location))
+              (return
+                (compiler-eh-frame-encode-error
+                  compiler-eh-frame-error-address
+                  "eh_frame: FDE initial location displacement overflows sdata4")))
+            (when
+              (> cie-pointer 4294967295)
+              (return
+                (compiler-eh-frame-encode-error
+                  compiler-eh-frame-error-address
+                  "eh_frame: CIE pointer overflows its 32-bit field")))
+            (byte_le.push-u32! (&mut out) (- size 4))
+            (byte_le.push-u32! (&mut out) cie-pointer)
+            (byte_le.push-u32! (&mut out) location)
+            (byte_le.push-u32! (&mut out) fde.range)
+            (compiler-eh-frame-push-u8! (&mut out) 0)
+            (compiler-eh-frame-push-program!
+              (&mut out)
+              images
+              selection.image
+              fde.program-start
+              fde.program-length)
+            (compiler-eh-frame-push-padding! (&mut out) (+ fde-offset size))
+            (set!
+              (array-ref rows index)
+              (CompilerEhFrameRow
+                selection.initial-location
+                fde.range
+                (+ section-address fde-offset))))
+          (set! index (+ index 1))))
+      (byte_le.push-u32! (&mut out) 0)
+      ;; Two FDEs claiming one code address leave an unwinder no way to
+      ;; choose, whether or not a search header is built.
+      (match (compiler-eh-frame-sorted-rows (& rows))
+        [(Err error) (Err error)]
+        [(Ok _)
+          (Ok
+            (CompilerEhFrameOutput
+              (byte_buf_core.byte-buf-builder-finish-array (& out))
+              rows))]))))
 
 ;; --- .eh_frame_hdr -----------------------------------------------------------
 (define (compiler-eh-frame-header-error
@@ -1610,31 +1515,29 @@
         [left : i64 (+ (* node 2) 1)]
         [right : i64 (+ (* node 2) 2)]
         [largest : i64 node]
-        (begin
-          (when
-            (and
-              (< left count)
-              (compiler-eh-frame-row-before?
-                rows
-                (array-ref order largest)
-                (array-ref order left)))
-            (set! largest left))
-          (when
-            (and
-              (< right count)
-              (compiler-eh-frame-row-before?
-                rows
-                (array-ref order largest)
-                (array-ref order right)))
-            (set! largest right))
-          (if (= largest node)
-            (set! done true)
-            (let
-              [swap : i64 (array-ref order node)]
-              (begin
-                (set! (array-ref order node) (array-ref order largest))
-                (set! (array-ref order largest) swap)
-                (set! node largest)))))))))
+        (when
+          (and
+            (< left count)
+            (compiler-eh-frame-row-before?
+              rows
+              (array-ref order largest)
+              (array-ref order left)))
+          (set! largest left))
+        (when
+          (and
+            (< right count)
+            (compiler-eh-frame-row-before?
+              rows
+              (array-ref order largest)
+              (array-ref order right)))
+          (set! largest right))
+        (if (= largest node)
+          (set! done true)
+          (let
+            [swap : i64 (array-ref order node)]
+            (set! (array-ref order node) (array-ref order largest))
+            (set! (array-ref order largest) swap)
+            (set! node largest)))))))
 
 ;; `rows` sorted by initial location, or the first row set a binary search
 ;; could not resolve: a range that is empty or leaves the address domain, two
@@ -1648,74 +1551,65 @@
     [sorted : (__tl_dyn-array CompilerEhFrameRow)
       (__tl_make-array CompilerEhFrameRow count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [row : CompilerEhFrameRow (array-ref rows index)]
-          (begin
-            (when
-              (or
-                (<= row.range 0)
-                (not (compiler-eh-frame-address? row.initial-location))
-                (not
-                  (compiler-eh-frame-address?
-                    (+ row.initial-location row.range)))
-                (not (compiler-eh-frame-address? row.fde-address)))
-              (return
-                (Err
-                  (compiler-eh-frame-header-error
-                    compiler-eh-frame-error-address
-                    -1
-                    "eh_frame: FDE range or address outside the supported range"))))
-            (set! (array-ref order index) index)
-            (set! index (+ index 1)))))
-      (set! index (- (/ count 2) 1))
-      (while (>= index 0)
-        (begin
-          (compiler-eh-frame-row-sift! rows (&mut order) index count)
-          (set! index (- index 1))))
-      (set! index (- count 1))
-      (while (> index 0)
-        (let
-          [swap : i64 (array-ref order 0)]
-          (begin
-            (set! (array-ref order 0) (array-ref order index))
-            (set! (array-ref order index) swap)
-            (compiler-eh-frame-row-sift! rows (&mut order) 0 index)
-            (set! index (- index 1)))))
-      (set! index 0)
-      (while (< index count)
-        (begin
-          (set!
-            (array-ref sorted index)
-            (array-ref rows (array-ref order index)))
-          (set! index (+ index 1))))
-      (set! index 1)
-      (while (< index count)
-        (let
-          [previous : CompilerEhFrameRow (array-ref sorted (- index 1))]
-          [current : CompilerEhFrameRow (array-ref sorted index)]
-          (begin
-            (when
-              (= previous.initial-location current.initial-location)
-              (return
-                (Err
-                  (compiler-eh-frame-header-error
-                    compiler-eh-frame-error-header-order
-                    -1
-                    "eh_frame: two FDEs share an initial location"))))
-            (when
-              (>
-                (+ previous.initial-location previous.range)
-                current.initial-location)
-              (return
-                (Err
-                  (compiler-eh-frame-header-error
-                    compiler-eh-frame-error-header-order
-                    -1
-                    "eh_frame: FDE code ranges overlap"))))
-            (set! index (+ index 1)))))
-      (Ok sorted))))
+    (while (< index count)
+      (let
+        [row : CompilerEhFrameRow (array-ref rows index)]
+        (when
+          (or
+            (<= row.range 0)
+            (not (compiler-eh-frame-address? row.initial-location))
+            (not
+              (compiler-eh-frame-address? (+ row.initial-location row.range)))
+            (not (compiler-eh-frame-address? row.fde-address)))
+          (return
+            (Err
+              (compiler-eh-frame-header-error
+                compiler-eh-frame-error-address
+                -1
+                "eh_frame: FDE range or address outside the supported range"))))
+        (set! (array-ref order index) index)
+        (set! index (+ index 1))))
+    (set! index (- (/ count 2) 1))
+    (while (>= index 0)
+      (compiler-eh-frame-row-sift! rows (&mut order) index count)
+      (set! index (- index 1)))
+    (set! index (- count 1))
+    (while (> index 0)
+      (let
+        [swap : i64 (array-ref order 0)]
+        (set! (array-ref order 0) (array-ref order index))
+        (set! (array-ref order index) swap)
+        (compiler-eh-frame-row-sift! rows (&mut order) 0 index)
+        (set! index (- index 1))))
+    (set! index 0)
+    (while (< index count)
+      (set! (array-ref sorted index) (array-ref rows (array-ref order index)))
+      (set! index (+ index 1)))
+    (set! index 1)
+    (while (< index count)
+      (let
+        [previous : CompilerEhFrameRow (array-ref sorted (- index 1))]
+        [current : CompilerEhFrameRow (array-ref sorted index)]
+        (when
+          (= previous.initial-location current.initial-location)
+          (return
+            (Err
+              (compiler-eh-frame-header-error
+                compiler-eh-frame-error-header-order
+                -1
+                "eh_frame: two FDEs share an initial location"))))
+        (when
+          (>
+            (+ previous.initial-location previous.range)
+            current.initial-location)
+          (return
+            (Err
+              (compiler-eh-frame-header-error
+                compiler-eh-frame-error-header-order
+                -1
+                "eh_frame: FDE code ranges overlap"))))
+        (set! index (+ index 1))))
+    (Ok sorted)))
 
 ;; Encode the version-1 search header at `header-address` for `rows` of a
 ;; final `.eh_frame` at `eh-frame-address`.  The eh_frame pointer is relative
@@ -1731,94 +1625,89 @@
   (let
     [count : i64 (array-length rows)]
     [size : i64 (+ compiler-eh-frame-header-size (* count 8))]
-    (begin
-      (when
-        (not (compiler-eh-frame-limits-valid? limits))
-        (return
-          (Err
-            (compiler-eh-frame-header-error
-              compiler-eh-frame-error-invalid-limits
-              -1
-              "eh_frame_hdr: invalid codec limits"))))
-      (when (= count 0) (return NoHeader))
-      (when
-        (or (> count 4294967295) (> count limits.max-records))
-        (return
-          (Err
-            (compiler-eh-frame-header-error
-              compiler-eh-frame-error-record-limit
-              -1
-              "eh_frame_hdr: FDE count exceeds the header or record limit"))))
-      (when
-        (> size limits.max-output-bytes)
-        (return
-          (Err
-            (compiler-eh-frame-header-error
-              compiler-eh-frame-error-output-limit
-              -1
-              "eh_frame_hdr: output byte limit exceeded"))))
-      (when
-        (or
-          (not (compiler-eh-frame-address? header-address))
-          (not (compiler-eh-frame-address? eh-frame-address)))
-        (return
-          (Err
-            (compiler-eh-frame-header-error
-              compiler-eh-frame-error-address
-              -1
-              "eh_frame_hdr: section address outside the supported range"))))
-      (match (compiler-eh-frame-sorted-rows rows)
-        [(Err error) (Err error)]
-        [(Ok sorted)
-          (let
-            [index : i64 0]
-            [out : byte_buf_core.ByteBufBuilder
-              (byte_buf_core.byte-buf-builder-with-capacity size)]
-            [pointer : i64 (- eh-frame-address (+ header-address 4))]
-            (begin
+    (when
+      (not (compiler-eh-frame-limits-valid? limits))
+      (return
+        (Err
+          (compiler-eh-frame-header-error
+            compiler-eh-frame-error-invalid-limits
+            -1
+            "eh_frame_hdr: invalid codec limits"))))
+    (when (= count 0) (return NoHeader))
+    (when
+      (or (> count 4294967295) (> count limits.max-records))
+      (return
+        (Err
+          (compiler-eh-frame-header-error
+            compiler-eh-frame-error-record-limit
+            -1
+            "eh_frame_hdr: FDE count exceeds the header or record limit"))))
+    (when
+      (> size limits.max-output-bytes)
+      (return
+        (Err
+          (compiler-eh-frame-header-error
+            compiler-eh-frame-error-output-limit
+            -1
+            "eh_frame_hdr: output byte limit exceeded"))))
+    (when
+      (or
+        (not (compiler-eh-frame-address? header-address))
+        (not (compiler-eh-frame-address? eh-frame-address)))
+      (return
+        (Err
+          (compiler-eh-frame-header-error
+            compiler-eh-frame-error-address
+            -1
+            "eh_frame_hdr: section address outside the supported range"))))
+    (match (compiler-eh-frame-sorted-rows rows)
+      [(Err error) (Err error)]
+      [(Ok sorted)
+        (let
+          [index : i64 0]
+          [out : byte_buf_core.ByteBufBuilder
+            (byte_buf_core.byte-buf-builder-with-capacity size)]
+          [pointer : i64 (- eh-frame-address (+ header-address 4))]
+          (when
+            (not (compiler-eh-frame-i32? pointer))
+            (return
+              (Err
+                (compiler-eh-frame-header-error
+                  compiler-eh-frame-error-address
+                  4
+                  "eh_frame_hdr: eh_frame pointer displacement overflows sdata4"))))
+          (compiler-eh-frame-push-u8!
+            (&mut out)
+            compiler-eh-frame-header-version)
+          (compiler-eh-frame-push-u8!
+            (&mut out)
+            compiler-eh-frame-pe-pcrel-sdata4)
+          (compiler-eh-frame-push-u8! (&mut out) compiler-eh-frame-pe-udata4)
+          (compiler-eh-frame-push-u8!
+            (&mut out)
+            compiler-eh-frame-pe-datarel-sdata4)
+          (byte_le.push-u32! (&mut out) pointer)
+          (byte_le.push-u32! (&mut out) count)
+          (set! index 0)
+          (while (< index count)
+            (let
+              [row : CompilerEhFrameRow (array-ref sorted index)]
+              [location : i64 (- row.initial-location header-address)]
+              [fde : i64 (- row.fde-address header-address)]
               (when
-                (not (compiler-eh-frame-i32? pointer))
+                (or
+                  (not (compiler-eh-frame-i32? location))
+                  (not (compiler-eh-frame-i32? fde)))
                 (return
                   (Err
                     (compiler-eh-frame-header-error
                       compiler-eh-frame-error-address
-                      4
-                      "eh_frame_hdr: eh_frame pointer displacement overflows sdata4"))))
-              (compiler-eh-frame-push-u8!
-                (&mut out)
-                compiler-eh-frame-header-version)
-              (compiler-eh-frame-push-u8!
-                (&mut out)
-                compiler-eh-frame-pe-pcrel-sdata4)
-              (compiler-eh-frame-push-u8!
-                (&mut out)
-                compiler-eh-frame-pe-udata4)
-              (compiler-eh-frame-push-u8!
-                (&mut out)
-                compiler-eh-frame-pe-datarel-sdata4)
-              (byte_le.push-u32! (&mut out) pointer)
-              (byte_le.push-u32! (&mut out) count)
-              (set! index 0)
-              (while (< index count)
-                (let
-                  [row : CompilerEhFrameRow (array-ref sorted index)]
-                  [location : i64 (- row.initial-location header-address)]
-                  [fde : i64 (- row.fde-address header-address)]
-                  (begin
-                    (when
-                      (or
-                        (not (compiler-eh-frame-i32? location))
-                        (not (compiler-eh-frame-i32? fde)))
-                      (return
-                        (Err
-                          (compiler-eh-frame-header-error
-                            compiler-eh-frame-error-address
-                            (+ compiler-eh-frame-header-size (* index 8))
-                            "eh_frame_hdr: table displacement overflows sdata4"))))
-                    (byte_le.push-u32! (&mut out) location)
-                    (byte_le.push-u32! (&mut out) fde)
-                    (set! index (+ index 1)))))
-              (Ok (byte_buf_core.byte-buf-builder-finish-array (& out)))))]))))
+                      (+ compiler-eh-frame-header-size (* index 8))
+                      "eh_frame_hdr: table displacement overflows sdata4"))))
+              (byte_le.push-u32! (&mut out) location)
+              (byte_le.push-u32! (&mut out) fde)
+              (set! index (+ index 1))))
+          (Ok (byte_buf_core.byte-buf-builder-finish-array (& out))))])))
 
 ;; Decode a version-1 search header at `header-address`: the eh_frame pointer
 ;; against its own field, each row against the header start.  The table must
@@ -1830,103 +1719,95 @@
   [limits : (& limits CompilerEhFrameLimits)]) : ResultCompilerEhFrameHeader
   (let
     [length : i64 (array-length bytes)]
-    (begin
+    (when
+      (not (compiler-eh-frame-limits-valid? limits))
+      (return
+        (Err
+          (compiler-eh-frame-header-error
+            compiler-eh-frame-error-invalid-limits
+            -1
+            "eh_frame_hdr: invalid codec limits"))))
+    (when
+      (> length limits.max-input-bytes)
+      (return
+        (Err
+          (compiler-eh-frame-header-error
+            compiler-eh-frame-error-input-limit
+            0
+            "eh_frame_hdr: input byte limit exceeded"))))
+    (when
+      (not (compiler-eh-frame-address? header-address))
+      (return
+        (Err
+          (compiler-eh-frame-header-error
+            compiler-eh-frame-error-address
+            -1
+            "eh_frame_hdr: section address outside the supported range"))))
+    (when
+      (< length compiler-eh-frame-header-size)
+      (return
+        (Err
+          (compiler-eh-frame-header-error
+            compiler-eh-frame-error-truncated
+            length
+            "eh_frame_hdr: truncated header"))))
+    (when
+      (or
+        (!= (byte_le.byte-le-at bytes 0) compiler-eh-frame-header-version)
+        (!= (byte_le.byte-le-at bytes 1) compiler-eh-frame-pe-pcrel-sdata4)
+        (!= (byte_le.byte-le-at bytes 2) compiler-eh-frame-pe-udata4)
+        (!= (byte_le.byte-le-at bytes 3) compiler-eh-frame-pe-datarel-sdata4))
+      (return
+        (Err
+          (compiler-eh-frame-header-error
+            compiler-eh-frame-error-header
+            0
+            "eh_frame_hdr: only version 1 with pcrel|sdata4, udata4 and datarel|sdata4 is admitted"))))
+    (let
+      [count : i64 (byte_le.read-u32 bytes 8)]
       (when
-        (not (compiler-eh-frame-limits-valid? limits))
+        (> count limits.max-records)
         (return
           (Err
             (compiler-eh-frame-header-error
-              compiler-eh-frame-error-invalid-limits
-              -1
-              "eh_frame_hdr: invalid codec limits"))))
+              compiler-eh-frame-error-record-limit
+              8
+              "eh_frame_hdr: FDE count exceeds the record limit"))))
       (when
-        (> length limits.max-input-bytes)
-        (return
-          (Err
-            (compiler-eh-frame-header-error
-              compiler-eh-frame-error-input-limit
-              0
-              "eh_frame_hdr: input byte limit exceeded"))))
-      (when
-        (not (compiler-eh-frame-address? header-address))
-        (return
-          (Err
-            (compiler-eh-frame-header-error
-              compiler-eh-frame-error-address
-              -1
-              "eh_frame_hdr: section address outside the supported range"))))
-      (when
-        (< length compiler-eh-frame-header-size)
-        (return
-          (Err
-            (compiler-eh-frame-header-error
-              compiler-eh-frame-error-truncated
-              length
-              "eh_frame_hdr: truncated header"))))
-      (when
-        (or
-          (!= (byte_le.byte-le-at bytes 0) compiler-eh-frame-header-version)
-          (!= (byte_le.byte-le-at bytes 1) compiler-eh-frame-pe-pcrel-sdata4)
-          (!= (byte_le.byte-le-at bytes 2) compiler-eh-frame-pe-udata4)
-          (!= (byte_le.byte-le-at bytes 3) compiler-eh-frame-pe-datarel-sdata4))
+        (!= length (+ compiler-eh-frame-header-size (* count 8)))
         (return
           (Err
             (compiler-eh-frame-header-error
               compiler-eh-frame-error-header
-              0
-              "eh_frame_hdr: only version 1 with pcrel|sdata4, udata4 and datarel|sdata4 is admitted"))))
+              8
+              "eh_frame_hdr: table size does not match the FDE count"))))
       (let
-        [count : i64 (byte_le.read-u32 bytes 8)]
-        (begin
-          (when
-            (> count limits.max-records)
-            (return
-              (Err
-                (compiler-eh-frame-header-error
-                  compiler-eh-frame-error-record-limit
-                  8
-                  "eh_frame_hdr: FDE count exceeds the record limit"))))
-          (when
-            (!= length (+ compiler-eh-frame-header-size (* count 8)))
-            (return
-              (Err
-                (compiler-eh-frame-header-error
-                  compiler-eh-frame-error-header
-                  8
-                  "eh_frame_hdr: table size does not match the FDE count"))))
+        [rows : (__tl_dyn-array CompilerEhFrameRow)
+          (__tl_make-array CompilerEhFrameRow count)]
+        [index : i64 0]
+        (while (< index count)
           (let
-            [rows : (__tl_dyn-array CompilerEhFrameRow)
-              (__tl_make-array CompilerEhFrameRow count)]
-            [index : i64 0]
-            (begin
-              (while (< index count)
-                (let
-                  [at : i64 (+ compiler-eh-frame-header-size (* index 8))]
-                  [location : i64
-                    (+ header-address (compiler-eh-frame-read-i32 bytes at))]
-                  (begin
-                    (when
-                      (and
-                        (> index 0)
-                        (<=
-                          location
-                          (array-ref rows (- index 1)).initial-location))
-                      (return
-                        (Err
-                          (compiler-eh-frame-header-error
-                            compiler-eh-frame-error-header-order
-                            at
-                            "eh_frame_hdr: table is not strictly sorted by initial location"))))
-                    (set!
-                      (array-ref rows index)
-                      (CompilerEhFrameRow
-                        location
-                        0
-                        (+
-                          header-address
-                          (compiler-eh-frame-read-i32 bytes (+ at 4)))))
-                    (set! index (+ index 1)))))
-              (Ok
-                (CompilerEhFrameHeader
-                  (+ (+ header-address 4) (compiler-eh-frame-read-i32 bytes 4))
-                  rows)))))))))
+            [at : i64 (+ compiler-eh-frame-header-size (* index 8))]
+            [location : i64
+              (+ header-address (compiler-eh-frame-read-i32 bytes at))]
+            (when
+              (and
+                (> index 0)
+                (<= location (array-ref rows (- index 1)).initial-location))
+              (return
+                (Err
+                  (compiler-eh-frame-header-error
+                    compiler-eh-frame-error-header-order
+                    at
+                    "eh_frame_hdr: table is not strictly sorted by initial location"))))
+            (set!
+              (array-ref rows index)
+              (CompilerEhFrameRow
+                location
+                0
+                (+ header-address (compiler-eh-frame-read-i32 bytes (+ at 4)))))
+            (set! index (+ index 1))))
+        (Ok
+          (CompilerEhFrameHeader
+            (+ (+ header-address 4) (compiler-eh-frame-read-i32 bytes 4))
+            rows))))))

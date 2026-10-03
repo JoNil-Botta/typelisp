@@ -139,26 +139,24 @@
         (let
           [storage : (__tl_dyn-array PointerProofStorage)
             (__tl_make-array PointerProofStorage 1)]
-          (begin
-            (set!
-              (array-ref storage 0)
-              (PointerProofStorage
-                owner
-                (use_vec.new)
-                (function_vec.new)
-                (symbol_map.with-capacity 8)
-                Missing
-                ""
-                ""
-                ""
-                No))
-            (unsafe
-              (ptr->int (__tl_array-data storage))))))]
-    (begin
-      (set! (array-ref control 0) address)
-      (PointerProofInput
-        (unsafe
-          (ptr->int (__tl_array-data control)))))))
+          (set!
+            (array-ref storage 0)
+            (PointerProofStorage
+              owner
+              (use_vec.new)
+              (function_vec.new)
+              (symbol_map.with-capacity 8)
+              Missing
+              ""
+              ""
+              ""
+              No))
+          (unsafe
+            (ptr->int (__tl_array-data storage)))))]
+    (set! (array-ref control 0) address)
+    (PointerProofInput
+      (unsafe
+        (ptr->int (__tl_array-data control))))))
 
 (define (pointer-proof-input-address [input : PointerProofInput]) : u64
   (if (= input.control (cast 0 : u64))
@@ -190,9 +188,8 @@
       (= (string.string-length (& storage.default-path)) 0)
       (in-arena
         (arena.Arena storage.arena)
-        (begin
-          (set! storage.default-path (string.copy (& path)))
-          (pointer-proof-input-store! input storage))))))
+        (set! storage.default-path (string.copy (& path)))
+        (pointer-proof-input-store! input storage)))))
 
 (define (pointer-proof-input-default-path [input : PointerProofInput]) : String
   (let
@@ -205,10 +202,9 @@
     (let
       [storage : PointerProofStorage (pointer-proof-input-storage input)]
       (unsafe
-        (begin
-          (ptr-write! (int->ptr input.control : (MutPtr u64)) (cast 0 : u64))
-          ;; lint-allow: raw-arena-op -- tombstone precedes retirement of the input's dedicated arena.
-          (arena.tl_arena_destroy storage.arena))))))
+        (ptr-write! (int->ptr input.control : (MutPtr u64)) (cast 0 : u64))
+        ;; lint-allow: raw-arena-op -- tombstone precedes retirement of the input's dedicated arena.
+        (arena.tl_arena_destroy storage.arena)))))
 
 (define (pointer-proof-input-fail!
   [input : PointerProofInput]
@@ -219,9 +215,8 @@
       (= (string.string-length (& storage.failure)) 0)
       (in-arena
         (arena.Arena storage.arena)
-        (begin
-          (set! storage.failure (string.copy (& message)))
-          (pointer-proof-input-store! input storage))))))
+        (set! storage.failure (string.copy (& message)))
+        (pointer-proof-input-store! input storage)))))
 
 (define (pointer-proof-input-fail-at!
   [input : PointerProofInput]
@@ -234,11 +229,10 @@
       (= (string.string-length (& storage.failure)) 0)
       (in-arena
         (arena.Arena storage.arena)
-        (begin
-          (set! storage.failure (string.copy (& message)))
-          (set! storage.failure-path (string.copy (& path)))
-          (set! storage.failure-span span)
-          (pointer-proof-input-store! input storage))))))
+        (set! storage.failure (string.copy (& message)))
+        (set! storage.failure-path (string.copy (& path)))
+        (set! storage.failure-span span)
+        (pointer-proof-input-store! input storage)))))
 
 (define (pointer-proof-input-diagnostic
   [input : PointerProofInput]
@@ -269,37 +263,36 @@
     [index : i64 (use_vec.len (& storage.uses))]
     (in-arena
       (arena.Arena storage.arena)
-      (begin
-        (match source-type
-          [(Missing)
+      (match source-type
+        [(Missing)
+          (pointer-proof-input-fail-at!
+            input
+            "pointer proof: missing source type"
+            (string.copy (& path))
+            span)]
+        [_ unit])
+      (match span
+        [(No)
+          (when
+            (pointer-proof-operation-conversion? operation)
             (pointer-proof-input-fail-at!
               input
-              "pointer proof: missing source type"
+              "pointer proof: missing conversion source location"
               (string.copy (& path))
-              span)]
-          [_ unit])
-        (match span
-          [(No)
-            (when
-              (pointer-proof-operation-conversion? operation)
-              (pointer-proof-input-fail-at!
-                input
-                "pointer proof: missing conversion source location"
-                (string.copy (& path))
-                span))]
-          [_ unit])
-        (set! storage (pointer-proof-input-storage input))
-        (use_vec.push-ref!
-          (&mut storage.uses)
-          (PointerProofUse
-            function
-            operation
-            source-type
-            operands
-            (string.copy (& path))
-            span))
-        (pointer-proof-input-store! input storage)
-        (PointerProofRef input.control index)))))
+              span))]
+        [_ unit])
+      (set! storage (pointer-proof-input-storage input))
+      (use_vec.push-ref!
+        (&mut storage.uses)
+        (PointerProofUse
+          function
+          operation
+          source-type
+          operands
+          (string.copy (& path))
+          span))
+      (pointer-proof-input-store! input storage)
+      (PointerProofRef input.control index))))
 
 (define (pointer-proof-input-add-function!
   [input : PointerProofInput]
@@ -308,13 +301,12 @@
     [storage : PointerProofStorage (pointer-proof-input-storage input)]
     (in-arena
       (arena.Arena storage.arena)
-      (begin
-        (symbol_map.insert-ref!
-          (&mut storage.function-indices)
-          (ir.compiler-ir-symbol-id-value function.symbol)
-          (function_vec.len (& storage.functions)))
-        (function_vec.push-ref! (&mut storage.functions) function)
-        (pointer-proof-input-store! input storage)))))
+      (symbol_map.insert-ref!
+        (&mut storage.function-indices)
+        (ir.compiler-ir-symbol-id-value function.symbol)
+        (function_vec.len (& storage.functions)))
+      (function_vec.push-ref! (&mut storage.functions) function)
+      (pointer-proof-input-store! input storage))))
 
 (define (pointer-proof-input-operands [input : PointerProofInput]) : ref_vec.Vec
   (let
@@ -361,40 +353,36 @@
   [spans : ir.CompilerSourceSpans]) : unit
   (let
     [storage : PointerProofStorage (pointer-proof-input-storage input)]
-    (begin
-      (match (unsafe
-        (ptr-read (ptr-addr-of program)))
-        [(Program _ functions _)
-          (let
-            [index : i64 0]
-            (begin
-              (unless
-                (= functions.len (function_vec.len (& storage.functions)))
-                (pointer-proof-input-fail!
-                  input
-                  "pointer proof: missing emitted-function metadata"))
-              (while (< index functions.len)
-                (match (unsafe
-                  (ptr-read
-                    (ptr-offset (__tl_array-data functions.slots) index)))
-                  [(Function symbol _ _ _ _ _)
-                    (begin
-                      (when
-                        (<
-                          (symbol_map.get-value-or
-                            (& storage.function-indices)
-                            symbol
-                            -1)
-                          0)
-                        (pointer-proof-input-fail!
-                          input
-                          "pointer proof: mismatched emitted-function identity"))
-                      (set! index (+ index 1)))]))))])
-      (set! storage (pointer-proof-input-storage input))
-      (set!
-        storage.binding
-        (Bound (pointer-proof-program-identity program spans)))
-      (pointer-proof-input-store! input storage))))
+    (match (unsafe
+      (ptr-read (ptr-addr-of program)))
+      [(Program _ functions _)
+        (let
+          [index : i64 0]
+          (unless
+            (= functions.len (function_vec.len (& storage.functions)))
+            (pointer-proof-input-fail!
+              input
+              "pointer proof: missing emitted-function metadata"))
+          (while (< index functions.len)
+            (match (unsafe
+              (ptr-read (ptr-offset (__tl_array-data functions.slots) index)))
+              [(Function symbol _ _ _ _ _)
+                (when
+                  (<
+                    (symbol_map.get-value-or
+                      (& storage.function-indices)
+                      symbol
+                      -1)
+                    0)
+                  (pointer-proof-input-fail!
+                    input
+                    "pointer proof: mismatched emitted-function identity"))
+                (set! index (+ index 1))])))])
+    (set! storage (pointer-proof-input-storage input))
+    (set!
+      storage.binding
+      (Bound (pointer-proof-program-identity program spans)))
+    (pointer-proof-input-store! input storage)))
 
 (define (pointer-proof-input-begin-error [input : PointerProofInput]) : String
   (if (= (pointer-proof-input-address input) (cast 0 : u64))

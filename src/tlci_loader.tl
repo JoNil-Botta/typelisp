@@ -107,9 +107,8 @@
   (define (tlci-loader-test-hooks-set!
     [fail-before-alloc : bool]
     [fail-after-alloc : bool]) : unit
-    (begin
-      (set! tlci-loader-test-fail-index-before-alloc fail-before-alloc)
-      (set! tlci-loader-test-fail-index-after-alloc fail-after-alloc))))
+    (set! tlci-loader-test-fail-index-before-alloc fail-before-alloc)
+    (set! tlci-loader-test-fail-index-after-alloc fail-after-alloc)))
 
 (cfg
   test
@@ -388,24 +387,22 @@
     [count : i64 (/ (array-length entries) tlci.tlci-section-entry-record-size)]
     [index : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< index count))
-        (let
-          [record-offset : i64 (* index tlci.tlci-section-entry-record-size)]
-          [name-offset : i64 (tlci.tlci-read-u64 entries record-offset)]
-          [name-len : i64 (tlci.tlci-read-u64 entries (+ record-offset 8))]
-          (begin
-            (if (and
-              (tlci-loader-symbol-range-ok? symbols name-offset name-len)
-              (tlci-loader-symbol-name-eq?
-                symbols
-                name-offset
-                name-len
-                (tlci.tlci-macro-table-symbol-shared-view)))
-              (set! found (tlci.tlci-read-u64 entries (+ record-offset 16)))
-              unit)
-            (set! index (+ index 1)))))
-      found)))
+    (while (and (< found 0) (< index count))
+      (let
+        [record-offset : i64 (* index tlci.tlci-section-entry-record-size)]
+        [name-offset : i64 (tlci.tlci-read-u64 entries record-offset)]
+        [name-len : i64 (tlci.tlci-read-u64 entries (+ record-offset 8))]
+        (if (and
+          (tlci-loader-symbol-range-ok? symbols name-offset name-len)
+          (tlci-loader-symbol-name-eq?
+            symbols
+            name-offset
+            name-len
+            (tlci.tlci-macro-table-symbol-shared-view)))
+          (set! found (tlci.tlci-read-u64 entries (+ record-offset 16)))
+          unit)
+        (set! index (+ index 1))))
+    found))
 
 (define (tlci-loader-native-image? [image : (& image tlci.TlciImage)]) : bool
   (>= (tlci-loader-native-table-offset image) 0))
@@ -489,16 +486,15 @@
   (let
     [items : (__tl_dyn-array i64)
       (tlci-loader-alloc-i64-array-in-arena owner-arena 8)]
-    (begin
-      (set! (array-ref items 0) table.magic)
-      (set! (array-ref items 1) table.abi-version)
-      (set! (array-ref items 2) table.byte-size)
-      (set! (array-ref items 3) table.host-context)
-      (set! (array-ref items 4) table.reserved0)
-      (set! (array-ref items 5) table.reserved1)
-      (set! (array-ref items 6) table.reserved2)
-      (set! (array-ref items 7) table.abort-callback)
-      items)))
+    (set! (array-ref items 0) table.magic)
+    (set! (array-ref items 1) table.abi-version)
+    (set! (array-ref items 2) table.byte-size)
+    (set! (array-ref items 3) table.host-context)
+    (set! (array-ref items 4) table.reserved0)
+    (set! (array-ref items 5) table.reserved1)
+    (set! (array-ref items 6) table.reserved2)
+    (set! (array-ref items 7) table.abort-callback)
+    items))
 
 (define (tlci-loader-registration-storage [owner-arena : i64]) : (__tl_dyn-array
     i64)
@@ -537,9 +533,8 @@
           (* index tlci.tlci-section-fixup-record-size))]
       [slot-addr : i64 (+ image-base slot-offset)]
       [current : i64 (tlci-loader-read-mapped-i64 slot-addr)]
-      (begin
-        (tlci-loader-write-mapped-i64! slot-addr (+ current image-base))
-        (tlci-loader-apply-fixups-at! image-base fixups (+ index 1) count)))))
+      (tlci-loader-write-mapped-i64! slot-addr (+ current image-base))
+      (tlci-loader-apply-fixups-at! image-base fixups (+ index 1) count))))
 
 (define (tlci-loader-apply-fixups!
   [image-base : i64]
@@ -559,14 +554,13 @@
     [index : i64 0]
     [count : i64 host-table.import-count]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< index count))
-        (if (string.eq (array-ref host-table.import-names index) name)
-          (set! found index)
-          (set! index (+ index 1))))
-      (if (< found 0)
-        (Err name)
-        (Ok (array-ref host-table.import-callbacks found))))))
+    (while (and (< found 0) (< index count))
+      (if (string.eq (array-ref host-table.import-names index) name)
+        (set! found index)
+        (set! index (+ index 1))))
+    (if (< found 0)
+      (Err name)
+      (Ok (array-ref host-table.import-callbacks found)))))
 
 ;; Bind each image import name to a raw host callback address, writing the GOT
 ;; slot while the image is still writable and before any comptime code runs.
@@ -599,15 +593,14 @@
                   "` has unresolved host import `"
                   (str_cat.str-cat missing "`")))))]
         [(Ok address)
-          (begin
-            (tlci-loader-write-mapped-i64! (+ image-base slot-offset) address)
-            (tlci-loader-bind-imports-at!
-              image-base
-              imports
-              image-identity
-              host-table
-              (+ index 1)
-              count))]))))
+          (tlci-loader-write-mapped-i64! (+ image-base slot-offset) address)
+          (tlci-loader-bind-imports-at!
+            image-base
+            imports
+            image-identity
+            host-table
+            (+ index 1)
+            count)]))))
 
 (define (tlci-loader-bind-imports!
   [image-base : i64]
@@ -672,11 +665,10 @@
       [index-arena : i64 loaded.macro-index-arena]
       [page-result : pages.ResultTlciPageUnit
         (pages.tlci-pages-release (tlci-loader-loaded-image-region loaded))]
-      (begin
-        (tlci-loader-destroy-index-arena index-arena)
-        (match page-result
-          [(Ok) (Ok)]
-          [(Err message) (Err message)])))))
+      (tlci-loader-destroy-index-arena index-arena)
+      (match page-result
+        [(Ok) (Ok)]
+        [(Err message) (Err message)]))))
 
 ;; Every failed load relinquishes its only mapping owner. The index arena is
 ;; destroyed by tlci-loader-release even when the host leaves pages mapped;
@@ -923,37 +915,36 @@
       (/ (array-length image.entries) tlci.tlci-section-entry-record-size)]
     [symbol-count : i64
       (/ (array-length image.symbols) tlci.tlci-section-symbol-record-size)]
-    (begin
-      (match (pages.tlci-pages-copy-from-array! image-region bytes)
-        [(Err message)
-          (return (tlci-loader-rollback-region image-region message))]
-        [(Ok) unit])
-      (tlci-loader-apply-fixups! image-base image)
-      (match (tlci-loader-bind-imports! image-base image host-table)
-        [(Err message)
-          (return (tlci-loader-rollback-region image-region message))]
-        [(Ok) unit])
-      (match (tlci-loader-protect-rodata image-base rodata-offset rodata-len)
-        [(Err message)
-          (return (tlci-loader-rollback-region image-region message))]
-        [(Ok) unit])
-      (match (tlci-loader-protect-code image-base code-offset code-len)
-        [(Err message)
-          (return (tlci-loader-rollback-region image-region message))]
-        [(Ok) unit])
-      (Ok
-        (tlci-loader-loaded-image
-          owner-arena
-          image-region
-          image-base
-          rodata-offset
-          rodata-len
-          code-offset
-          code-len
-          entry-code-offset
-          fixup-count
-          entry-count
-          symbol-count)))))
+    (match (pages.tlci-pages-copy-from-array! image-region bytes)
+      [(Err message)
+        (return (tlci-loader-rollback-region image-region message))]
+      [(Ok) unit])
+    (tlci-loader-apply-fixups! image-base image)
+    (match (tlci-loader-bind-imports! image-base image host-table)
+      [(Err message)
+        (return (tlci-loader-rollback-region image-region message))]
+      [(Ok) unit])
+    (match (tlci-loader-protect-rodata image-base rodata-offset rodata-len)
+      [(Err message)
+        (return (tlci-loader-rollback-region image-region message))]
+      [(Ok) unit])
+    (match (tlci-loader-protect-code image-base code-offset code-len)
+      [(Err message)
+        (return (tlci-loader-rollback-region image-region message))]
+      [(Ok) unit])
+    (Ok
+      (tlci-loader-loaded-image
+        owner-arena
+        image-region
+        image-base
+        rodata-offset
+        rodata-len
+        code-offset
+        code-len
+        entry-code-offset
+        fixup-count
+        entry-count
+        symbol-count))))
 
 (define (tlci-loader-load-parsed
   [owner-arena : i64]
@@ -1156,105 +1147,100 @@
   (let
     [index : i64 0]
     [value : i64 0]
-    (begin
-      (while (>= (- len index) 4)
-        (let
-          [h1 : i64
+    (while (>= (- len index) 4)
+      (let
+        [h1 : i64
+          (+
             (+
-              (+
-                (* value 131)
-                (cast
-                  (unsafe
-                    (ptr-read
-                      (ptr-offset (pages.tlci-pages-addr->ptr-u8 addr) index)))
-                  : i64))
-              1)]
-          [h2 : i64
+              (* value 131)
+              (cast
+                (unsafe
+                  (ptr-read
+                    (ptr-offset (pages.tlci-pages-addr->ptr-u8 addr) index)))
+                : i64))
+            1)]
+        [h2 : i64
+          (+
             (+
-              (+
-                (* h1 131)
-                (cast
-                  (unsafe
-                    (ptr-read
-                      (ptr-offset
-                        (pages.tlci-pages-addr->ptr-u8 addr)
-                        (+ index 1))))
-                  : i64))
-              1)]
-          [h3 : i64
+              (* h1 131)
+              (cast
+                (unsafe
+                  (ptr-read
+                    (ptr-offset
+                      (pages.tlci-pages-addr->ptr-u8 addr)
+                      (+ index 1))))
+                : i64))
+            1)]
+        [h3 : i64
+          (+
             (+
-              (+
-                (* h2 131)
-                (cast
-                  (unsafe
-                    (ptr-read
-                      (ptr-offset
-                        (pages.tlci-pages-addr->ptr-u8 addr)
-                        (+ index 2))))
-                  : i64))
-              1)]
-          [h4 : i64
+              (* h2 131)
+              (cast
+                (unsafe
+                  (ptr-read
+                    (ptr-offset
+                      (pages.tlci-pages-addr->ptr-u8 addr)
+                      (+ index 2))))
+                : i64))
+            1)]
+        [h4 : i64
+          (+
             (+
-              (+
-                (* h3 131)
-                (cast
-                  (unsafe
-                    (ptr-read
-                      (ptr-offset
-                        (pages.tlci-pages-addr->ptr-u8 addr)
-                        (+ index 3))))
-                  : i64))
-              1)]
-          [reduced : i64 (+ (bit-and h4 0x7fffffff) (shr h4 31))]
-          (begin
-            (set!
-              value
-              (if (>= reduced 0x7fffffff)
-                (- reduced 0x7fffffff)
-                reduced))
-            (set! index (+ index 4)))))
-      (while (< index len)
-        (let
-          [next : i64
+              (* h3 131)
+              (cast
+                (unsafe
+                  (ptr-read
+                    (ptr-offset
+                      (pages.tlci-pages-addr->ptr-u8 addr)
+                      (+ index 3))))
+                : i64))
+            1)]
+        [reduced : i64 (+ (bit-and h4 0x7fffffff) (shr h4 31))]
+        (set!
+          value
+          (if (>= reduced 0x7fffffff)
+            (- reduced 0x7fffffff)
+            reduced))
+        (set! index (+ index 4))))
+    (while (< index len)
+      (let
+        [next : i64
+          (+
             (+
-              (+
-                (* value 131)
-                (cast
-                  (unsafe
-                    (ptr-read
-                      (ptr-offset (pages.tlci-pages-addr->ptr-u8 addr) index)))
-                  : i64))
-              1)]
-          [reduced : i64 (+ (bit-and next 0x7fffffff) (shr next 31))]
-          (begin
-            (set!
-              value
-              (if (>= reduced 0x7fffffff)
-                (- reduced 0x7fffffff)
-                reduced))
-            (set! index (+ index 1)))))
-      value)))
+              (* value 131)
+              (cast
+                (unsafe
+                  (ptr-read
+                    (ptr-offset (pages.tlci-pages-addr->ptr-u8 addr) index)))
+                : i64))
+            1)]
+        [reduced : i64 (+ (bit-and next 0x7fffffff) (shr next 31))]
+        (set!
+          value
+          (if (>= reduced 0x7fffffff)
+            (- reduced 0x7fffffff)
+            reduced))
+        (set! index (+ index 1))))
+    value))
 
 (define (tlci-loader-macro-index-capacity [count : i64]) : i64
   (let
     [capacity : i64 1]
-    (begin
-      (while (< capacity (* count 2))
-        (set! capacity (* capacity 2)))
-      capacity)))
+    (while (< capacity (* count 2))
+      (set! capacity (* capacity 2)))
+    capacity))
 
 (define tlci-loader-macro-index-next-generation : i64
   0)
 
 (define (tlci-loader-macro-index-generation-next!) : i64
-  (begin
-    (set!
-      tlci-loader-macro-index-next-generation
-      (+ tlci-loader-macro-index-next-generation 1))
-    (if (<= tlci-loader-macro-index-next-generation 0)
-      (set! tlci-loader-macro-index-next-generation 1)
-      unit)
-    tlci-loader-macro-index-next-generation))
+  (set!
+    tlci-loader-macro-index-next-generation
+    (+ tlci-loader-macro-index-next-generation 1))
+  (if (<= tlci-loader-macro-index-next-generation 0)
+    (set! tlci-loader-macro-index-next-generation 1)
+    unit)
+  tlci-loader-macro-index-next-generation)
 
 (define (tlci-loader-loaded-image-with-macro-index
   [loaded : TlciLoadedImage]
@@ -1311,35 +1297,34 @@
     [probes : i64 0]
     [inserted : bool false]
     [duplicate : bool false]
-    (begin
-      (while (and (not inserted) (not duplicate) (< probes capacity))
-        (let
-          [marker : i64 (array-ref slots slot)]
-          (if (= marker 0)
-            (begin
-              (set! (array-ref name-addrs entry-index) entry.name-addr)
-              (set! (array-ref name-lens entry-index) entry.name-len)
-              (set! (array-ref function-addrs entry-index) entry.function-addr)
-              (set! (array-ref entry-states entry-index) 0)
-              (set! (array-ref slots slot) (+ entry-index 1))
-              (set! inserted true))
-            (let
-              [candidate : i64 (- marker 1)]
-              (if (and
-                (= (array-ref name-lens candidate) entry.name-len)
-                (tlci-loader-mapped-name-ranges-eq-at?
-                  (array-ref name-addrs candidate)
-                  entry.name-addr
-                  0
-                  entry.name-len))
-                (set! duplicate true)
-                (begin
-                  (set! slot (% (+ slot 1) capacity))
-                  (set! probes (+ probes 1))))))))
-      (cond
-        [duplicate (Err "tlci loader: duplicate macro entry name")]
-        [inserted (Ok)]
-        [else (Err "tlci loader: macro entry index is full")]))))
+    (while (and (not inserted) (not duplicate) (< probes capacity))
+      (let
+        [marker : i64 (array-ref slots slot)]
+        (if (= marker 0)
+          (begin
+            (set! (array-ref name-addrs entry-index) entry.name-addr)
+            (set! (array-ref name-lens entry-index) entry.name-len)
+            (set! (array-ref function-addrs entry-index) entry.function-addr)
+            (set! (array-ref entry-states entry-index) 0)
+            (set! (array-ref slots slot) (+ entry-index 1))
+            (set! inserted true))
+          (let
+            [candidate : i64 (- marker 1)]
+            (if (and
+              (= (array-ref name-lens candidate) entry.name-len)
+              (tlci-loader-mapped-name-ranges-eq-at?
+                (array-ref name-addrs candidate)
+                entry.name-addr
+                0
+                entry.name-len))
+              (set! duplicate true)
+              (begin
+                (set! slot (% (+ slot 1) capacity))
+                (set! probes (+ probes 1))))))))
+    (cond
+      [duplicate (Err "tlci loader: duplicate macro entry name")]
+      [inserted (Ok)]
+      [else (Err "tlci loader: macro entry index is full")])))
 
 (define (tlci-loader-build-macro-index
   [loaded : TlciLoadedImage]
@@ -1355,41 +1340,38 @@
     [index : i64 0]
     [failed : bool false]
     [message : String ""]
-    (begin
-      (while (and (not failed) (< index count))
-        (match (tlci-loader-read-macro-entry (& loaded) index)
-          [(Err entry-message)
-            (begin
+    (while (and (not failed) (< index count))
+      (match (tlci-loader-read-macro-entry (& loaded) index)
+        [(Err entry-message)
+          (set! failed true)
+          (set! message entry-message)]
+        [(Ok entry)
+          (match (tlci-loader-macro-index-insert!
+            (&mut slots)
+            (&mut name-addrs)
+            (&mut name-lens)
+            (&mut function-addrs)
+            (&mut entry-states)
+            entry
+            index)
+            [(Err index-message)
               (set! failed true)
-              (set! message entry-message))]
-          [(Ok entry)
-            (match (tlci-loader-macro-index-insert!
-              (&mut slots)
-              (&mut name-addrs)
-              (&mut name-lens)
-              (&mut function-addrs)
-              (&mut entry-states)
-              entry
-              index)
-              [(Err index-message)
-                (begin
-                  (set! failed true)
-                  (set! message index-message))]
-              [(Ok) (set! index (+ index 1))])]))
-      (if (cfg test tlci-loader-test-fail-index-after-alloc false)
-        (Err "tlci loader: injected macro index failure")
-        (if failed
-          (Err message)
-          (Ok
-            (tlci-loader-loaded-image-with-macro-index
-              loaded
-              (tlci-loader-macro-index-generation-next!)
-              slots
-              name-addrs
-              name-lens
-              function-addrs
-              entry-states
-              index-arena)))))))
+              (set! message index-message)]
+            [(Ok) (set! index (+ index 1))])]))
+    (if (cfg test tlci-loader-test-fail-index-after-alloc false)
+      (Err "tlci loader: injected macro index failure")
+      (if failed
+        (Err message)
+        (Ok
+          (tlci-loader-loaded-image-with-macro-index
+            loaded
+            (tlci-loader-macro-index-generation-next!)
+            slots
+            name-addrs
+            name-lens
+            function-addrs
+            entry-states
+            index-arena))))))
 
 (define (tlci-loader-index-macro-entries [loaded : TlciLoadedImage]) : ResultTlciLoadedImage
   (let
@@ -1431,18 +1413,16 @@
               (tlci-loader-build-macro-index loaded index-arena))]
           (match result
             [(Err message)
-              (begin
-                (tlci-loader-destroy-index-arena index-arena)
-                (Err message))]
+              (tlci-loader-destroy-index-arena index-arena)
+              (Err message)]
             [(Ok indexed) (Ok indexed)]))])))
 
 (define (tlci-loader-validate-macro-entries [loaded : TlciLoadedImage]) : ResultTlciLoaderUnit
   (match (tlci-loader-index-macro-entries loaded)
     [(Err message) (Err message)]
     [(Ok indexed)
-      (begin
-        (tlci-loader-destroy-index-arena indexed.macro-index-arena)
-        (Ok))]))
+      (tlci-loader-destroy-index-arena indexed.macro-index-arena)
+      (Ok)]))
 
 (define (tlci-loader-resolve-macro-entry
   [loaded : (& loaded TlciLoadedImage)]
@@ -1473,33 +1453,32 @@
           [probes : i64 0]
           [found : i64 -1]
           [done : bool false]
-          (begin
-            (while (and (not done) (< probes capacity))
-              (let
-                [marker : i64 (array-ref slots slot)]
-                (if (= marker 0)
-                  (set! done true)
-                  (let
-                    [candidate : i64 (- marker 1)]
-                    (if (tlci-loader-mapped-name-eq?
-                      loaded
-                      (array-ref name-addrs candidate)
-                      (array-ref name-lens candidate)
-                      name)
-                      (begin
-                        (set! found candidate)
-                        (set! done true))
-                      (begin
-                        (set! slot (% (+ slot 1) capacity))
-                        (set! probes (+ probes 1))))))))
-            (if (< found 0)
-              Missing
-              (let
-                [resolved : TlciResolvedMacroEntry
-                  (TlciResolvedMacroEntry generation found)]
-                (if (= (array-ref entry-states found) 1)
-                  (Shell resolved)
-                  (Resolved resolved))))))])))
+          (while (and (not done) (< probes capacity))
+            (let
+              [marker : i64 (array-ref slots slot)]
+              (if (= marker 0)
+                (set! done true)
+                (let
+                  [candidate : i64 (- marker 1)]
+                  (if (tlci-loader-mapped-name-eq?
+                    loaded
+                    (array-ref name-addrs candidate)
+                    (array-ref name-lens candidate)
+                    name)
+                    (begin
+                      (set! found candidate)
+                      (set! done true))
+                    (begin
+                      (set! slot (% (+ slot 1) capacity))
+                      (set! probes (+ probes 1))))))))
+          (if (< found 0)
+            Missing
+            (let
+              [resolved : TlciResolvedMacroEntry
+                (TlciResolvedMacroEntry generation found)]
+              (if (= (array-ref entry-states found) 1)
+                (Shell resolved)
+                (Resolved resolved)))))])))
 
 (define (tlci-loader-resolved-macro-entry
   [loaded : (& loaded TlciLoadedImage)]

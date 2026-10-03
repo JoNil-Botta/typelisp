@@ -63,33 +63,31 @@ Summary:
     [count : i64 (tlci_core.tlci-spmd-specializations-len items)]
     [index : i64 0]
     [out : String ""]
-    (begin
-      (while (< index count)
-        (let
-          [item : tlci_core.TlciSpmdSpecialization
-            (tlci_core.tlci-spmd-specializations-ref items index)]
-          (begin
-            (set!
-              out
-              (str_cat.str-cat
-                out
-                "    specialization: abi="
-                item.abi
-                " backend="
-                item.backend
-                " lanes="
-                (string.int->string item.lanes)
-                " args="
-                item.args
-                " result="
-                item.result
-                " index-param="
-                (string.int->string item.index-param)
-                " symbol="
-                item.symbol
-                "\n"))
-            (set! index (+ index 1)))))
-      out)))
+    (while (< index count)
+      (let
+        [item : tlci_core.TlciSpmdSpecialization
+          (tlci_core.tlci-spmd-specializations-ref items index)]
+        (set!
+          out
+          (str_cat.str-cat
+            out
+            "    specialization: abi="
+            item.abi
+            " backend="
+            item.backend
+            " lanes="
+            (string.int->string item.lanes)
+            " args="
+            item.args
+            " result="
+            item.result
+            " index-param="
+            (string.int->string item.index-param)
+            " symbol="
+            item.symbol
+            "\n"))
+        (set! index (+ index 1))))
+    out))
 
 (define (tlci-inspect-spmd-callables
   [items : (& items tlci_core.TlciSpmdCallables)]) : String
@@ -97,24 +95,22 @@ Summary:
     [count : i64 (tlci_core.tlci-spmd-callables-len items)]
     [index : i64 0]
     [out : String ""]
-    (begin
-      (while (< index count)
-        (let
-          [item : tlci_core.TlciSpmdCallable
-            (tlci_core.tlci-spmd-callables-ref items index)]
-          (begin
-            (set!
-              out
-              (str_cat.str-cat
-                out
-                "  helper: name="
-                item.name
-                " signature="
-                item.signature
-                "\n"
-                (tlci-inspect-spmd-specializations item.specializations)))
-            (set! index (+ index 1)))))
-      out)))
+    (while (< index count)
+      (let
+        [item : tlci_core.TlciSpmdCallable
+          (tlci_core.tlci-spmd-callables-ref items index)]
+        (set!
+          out
+          (str_cat.str-cat
+            out
+            "  helper: name="
+            item.name
+            " signature="
+            item.signature
+            "\n"
+            (tlci-inspect-spmd-specializations item.specializations)))
+        (set! index (+ index 1))))
+    out))
 
 (define (tlci-inspect-spmd-section
   [metadata : (& metadata tlci_core.TlciMetadata)]) : String
@@ -292,43 +288,38 @@ Summary:
   (match (tlci_core.tlci-parse-image
     (owned_view.compiler-owned-shared-view bytes))
     [(Err message)
-      (begin
-        (io.print-error (tlci-inspect-error path message))
-        1)]
+      (io.print-error (tlci-inspect-error path message))
+      1]
     [(Ok image)
-      (begin
-        (io.print-format "{}" (tlci-inspect-render bytes image))
-        0)]))
+      (io.print-format "{}" (tlci-inspect-render bytes image))
+      0]))
 
 (cfg
   (not embedded-stdlib-tlci)
   (define (tlci-inspect-embedded-stdlib) : i64
-    (begin
-      (io.print-error
-        (tlci-inspect-error
-          "embedded:stdlib.tlci"
-          "embedded stdlib tlci is unavailable in this compiler build"))
-      1)))
+    (io.print-error
+      (tlci-inspect-error
+        "embedded:stdlib.tlci"
+        "embedded stdlib tlci is unavailable in this compiler build"))
+    1))
 
 (cfg
   embedded-stdlib-tlci
   (define (tlci-inspect-embedded-stdlib) : i64
     (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-validate)
       [(Err message)
-        (begin
-          (io.print-error (tlci-inspect-error "embedded:stdlib.tlci" message))
-          1)]
+        (io.print-error (tlci-inspect-error "embedded:stdlib.tlci" message))
+        1]
       [(Ok count)
-        (begin
-          (io.print-format
-            "{}"
-            (str_cat.str-cat
-              "embedded-loader-macro-count: "
-              (string.int->string count)
-              "\n"))
-          (tlci-inspect-render-bytes
-            "embedded:stdlib.tlci"
-            (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)))])))
+        (io.print-format
+          "{}"
+          (str_cat.str-cat
+            "embedded-loader-macro-count: "
+            (string.int->string count)
+            "\n"))
+        (tlci-inspect-render-bytes
+          "embedded:stdlib.tlci"
+          (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy))])))
 
 (define (tlci-inspect-run-from [idx : i64] [count : i64]) : i64
   (if (not (= count (+ idx 1)))
@@ -341,9 +332,7 @@ Summary:
         (tlci-inspect-embedded-stdlib)
         (match (io.try-read-file (& path))
           [(ErrIoBytes error)
-            (begin
-              (io.print-error
-                (tlci-inspect-error path (io.error-message error)))
-              1)]
+            (io.print-error (tlci-inspect-error path (io.error-message error)))
+            1]
           [(OkIoBytes contents)
             (tlci-inspect-render-bytes path (byte_buf.to-array contents))])))))

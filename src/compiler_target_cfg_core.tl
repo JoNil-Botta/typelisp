@@ -57,11 +57,10 @@
 (define (compiler-target-cfgs
   [target : CompilerTargetCfg]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (match target
-      [(Linux) (compiler-target-enable-linux-cfgs cfgs)]
-      [(Windows) (compiler-target-enable-windows-cfgs cfgs)])))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (match target
+    [(Linux) (compiler-target-enable-linux-cfgs cfgs)]
+    [(Windows) (compiler-target-enable-windows-cfgs cfgs)]))
 
 (define (compiler-target-cfgs-with-names-from
   [target : CompilerTargetCfg]
@@ -79,13 +78,12 @@
 (define (compiler-target-cfgs-with-names
   [target : CompilerTargetCfg]
   [names : target_cfg_svec.Vec]) : sym_i64_env.SymI64Env
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (compiler-target-cfgs-with-names-from
-      target
-      names
-      0
-      (cfg_core.compiler-cfg-empty))))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (compiler-target-cfgs-with-names-from
+    target
+    names
+    0
+    (cfg_core.compiler-cfg-empty)))
 
 (define (compiler-target-enable-linux-cfgs-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]

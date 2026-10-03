@@ -143,17 +143,16 @@
 (define (compiler-backend-object-entry-xdata-bytes) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    (begin
-      ;; UNWIND_INFO: version 1, 4-byte prolog, one UWOP_ALLOC_SMALL(40).
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x01 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x04 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x01 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x04 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x42 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
-      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+    ;; UNWIND_INFO: version 1, 4-byte prolog, one UWOP_ALLOC_SMALL(40).
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x01 : u8))
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x04 : u8))
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x01 : u8))
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x04 : u8))
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x42 : u8))
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
+    (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0x00 : u8))
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 (define compiler-backend-object-manifest-label : String
   ".L_tl_manifest")

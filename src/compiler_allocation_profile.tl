@@ -45,39 +45,36 @@
             (ptr-read (ptr-offset (int->ptr root : (Ptr i64)) 4)))]
         [used : i64 0]
         [cursor : i64 active]
-        (begin
-          (while (not (= cursor 0))
-            (begin
-              (set!
-                used
-                (+
-                  used
-                  (-
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1))))))
-              (set!
-                cursor
+        (while (not (= cursor 0))
+          (set!
+            used
+            (+
+              used
+              (-
                 (unsafe
-                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 0))))))
-          (set! cursor retired)
-          (while (not (= cursor 0))
-            (begin
-              (set!
-                used
-                (+
-                  used
-                  (-
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1))))))
-              (set!
-                cursor
+                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
                 (unsafe
-                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 4))))))
-          used)))))
+                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1))))))
+          (set!
+            cursor
+            (unsafe
+              (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 0)))))
+        (set! cursor retired)
+        (while (not (= cursor 0))
+          (set!
+            used
+            (+
+              used
+              (-
+                (unsafe
+                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
+                (unsafe
+                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1))))))
+          (set!
+            cursor
+            (unsafe
+              (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 4)))))
+        used))))
 
 (define (compiler-allocation-profile-control!
   [action : i64]
@@ -90,17 +87,13 @@
         0
         1)]
     [1
-      (begin
-        (if (= compiler-allocation-profile-active 0)
-          (begin
-            (set!
-              compiler-allocation-profile-entry-arena
-              (arena.tl_arena_current))
-            (set! compiler-allocation-profile-active 1)
-            (io.print-error
-              "compile-allocation-profile|phase|owner|arena_root|bump_bytes|committed_bytes|reserved_bytes|segments\n"))
-          unit)
-        0)]
+      (when
+        (= compiler-allocation-profile-active 0)
+        (set! compiler-allocation-profile-entry-arena (arena.tl_arena_current))
+        (set! compiler-allocation-profile-active 1)
+        (io.print-error
+          "compile-allocation-profile|phase|owner|arena_root|bump_bytes|committed_bytes|reserved_bytes|segments\n"))
+      0]
     [2
       (if (= compiler-allocation-profile-active 0)
         0
@@ -136,100 +129,95 @@
           [reserved : i64 0]
           [segments : i64 0]
           [cursor : i64 active]
-          (begin
-            (while (not (= cursor 0))
-              (let
-                [segment-used : i64
-                  (-
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1))))]
-                [committed-end : i64
-                  (cfg
-                    windows
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 8)))
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 3))))]
-                [segment-committed : i64 (- committed-end cursor)]
-                [segment-reserved : i64
-                  (-
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 3)))
-                    cursor)]
-                (begin
-                  (if (> segment-used 0)
-                    (set! used (+ used segment-used))
-                    unit)
-                  (if (> segment-committed 0)
-                    (set! committed (+ committed segment-committed))
-                    unit)
-                  (if (> segment-reserved 0)
-                    (set! reserved (+ reserved segment-reserved))
-                    unit)
-                  (set! segments (+ segments 1))
-                  (set!
-                    cursor
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 0)))))))
-            (set! cursor retired)
-            (while (not (= cursor 0))
-              (let
-                [segment-used : i64
-                  (-
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1))))]
-                [committed-end : i64
-                  (cfg
-                    windows
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 8)))
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 3))))]
-                [segment-committed : i64 (- committed-end cursor)]
-                [segment-reserved : i64
-                  (-
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 3)))
-                    cursor)]
-                (begin
-                  (if (> segment-used 0)
-                    (set! used (+ used segment-used))
-                    unit)
-                  (if (> segment-committed 0)
-                    (set! committed (+ committed segment-committed))
-                    unit)
-                  (if (> segment-reserved 0)
-                    (set! reserved (+ reserved segment-reserved))
-                    unit)
-                  (set! segments (+ segments 1))
-                  (set!
-                    cursor
-                    (unsafe
-                      (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 4)))))))
-            (with-scratch
-              (begin
-                (io.print-error "compile-allocation-profile|")
-                (io.print-error phase)
-                (io.print-error "|")
-                (io.print-error owner)
-                (io.print-error "|")
-                (io.print-error (string.int->string root))
-                (io.print-error "|")
-                (io.print-error (string.int->string used))
-                (io.print-error "|")
-                (io.print-error (string.int->string committed))
-                (io.print-error "|")
-                (io.print-error (string.int->string reserved))
-                (io.print-error "|")
-                (io.print-error (string.int->string segments))
-                (io.print-error "\n")
-                0)))))]
+          (while (not (= cursor 0))
+            (let
+              [segment-used : i64
+                (-
+                  (unsafe
+                    (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
+                  (unsafe
+                    (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1))))]
+              [committed-end : i64
+                (cfg
+                  windows
+                  (unsafe
+                    (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 8)))
+                  (unsafe
+                    (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 3))))]
+              [segment-committed : i64 (- committed-end cursor)]
+              [segment-reserved : i64
+                (-
+                  (unsafe
+                    (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 3)))
+                  cursor)]
+              (if (> segment-used 0)
+                (set! used (+ used segment-used))
+                unit)
+              (if (> segment-committed 0)
+                (set! committed (+ committed segment-committed))
+                unit)
+              (if (> segment-reserved 0)
+                (set! reserved (+ reserved segment-reserved))
+                unit)
+              (set! segments (+ segments 1))
+              (set!
+                cursor
+                (unsafe
+                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 0))))))
+          (set! cursor retired)
+          (while (not (= cursor 0))
+            (let
+              [segment-used : i64
+                (-
+                  (unsafe
+                    (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 2)))
+                  (unsafe
+                    (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 1))))]
+              [committed-end : i64
+                (cfg
+                  windows
+                  (unsafe
+                    (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 8)))
+                  (unsafe
+                    (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 3))))]
+              [segment-committed : i64 (- committed-end cursor)]
+              [segment-reserved : i64
+                (-
+                  (unsafe
+                    (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 3)))
+                  cursor)]
+              (if (> segment-used 0)
+                (set! used (+ used segment-used))
+                unit)
+              (if (> segment-committed 0)
+                (set! committed (+ committed segment-committed))
+                unit)
+              (if (> segment-reserved 0)
+                (set! reserved (+ reserved segment-reserved))
+                unit)
+              (set! segments (+ segments 1))
+              (set!
+                cursor
+                (unsafe
+                  (ptr-read (ptr-offset (int->ptr cursor : (Ptr i64)) 4))))))
+          (with-scratch
+            (io.print-error "compile-allocation-profile|")
+            (io.print-error phase)
+            (io.print-error "|")
+            (io.print-error owner)
+            (io.print-error "|")
+            (io.print-error (string.int->string root))
+            (io.print-error "|")
+            (io.print-error (string.int->string used))
+            (io.print-error "|")
+            (io.print-error (string.int->string committed))
+            (io.print-error "|")
+            (io.print-error (string.int->string reserved))
+            (io.print-error "|")
+            (io.print-error (string.int->string segments))
+            (io.print-error "\n")
+            0)))]
     [_
-      (begin
-        (set! compiler-allocation-profile-active 0)
-        (set! compiler-allocation-profile-entry-arena 0)
-        0)]))
+      (set! compiler-allocation-profile-active 0)
+      (set! compiler-allocation-profile-entry-arena 0)
+      0]))

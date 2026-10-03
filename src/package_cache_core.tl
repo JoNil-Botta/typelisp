@@ -115,18 +115,14 @@
     [n : i64 (string.string-length text)]
     [i : i64 0]
     [out : String ""]
-    (begin
-      (while (< i n)
-        (let
-          [code : i64 (cast (string.string-ref text i) : i64)]
-          (begin
-            (if (package-cache-safe-code? code)
-              (set! out (str_cat.str-cat out (string.substring text i 1) ""))
-              (set!
-                out
-                (str_cat.str-cat out (package-cache-escape-code code) "")))
-            (set! i (+ i 1)))))
-      out)))
+    (while (< i n)
+      (let
+        [code : i64 (cast (string.string-ref text i) : i64)]
+        (if (package-cache-safe-code? code)
+          (set! out (str_cat.str-cat out (string.substring text i 1) ""))
+          (set! out (str_cat.str-cat out (package-cache-escape-code code) "")))
+        (set! i (+ i 1))))
+    out))
 
 (define (package-cache-unversioned-root [package-root : (& package-root str)]) : String
   (let

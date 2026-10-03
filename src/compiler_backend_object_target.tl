@@ -211,9 +211,8 @@
 (define (compiler-backend-object-bytes-from-hex [hex : String]) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    (begin
-      (layout.compiler-object-layout-push-hex! (&mut out) hex)
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+    (layout.compiler-object-layout-push-hex! (&mut out) hex)
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 (define (compiler-backend-object-add-text-bytes
   [parts : CompilerBackendObjectTargetParts]
@@ -252,27 +251,24 @@
   [target : x64_template.CompilerX64TemplateTarget]
   [entry-template : x64_template.CompilerX64ExecutableTemplateId]
   [macro-template : x64_template.CompilerX64ExecutableTemplateId]) : CompilerBackendObjectTargetParts
-  (begin
-    (x64_catalog.compiler-x64-template-assert-structured! entry-template target)
-    (when
-      macro-entry
-      (x64_catalog.compiler-x64-template-assert-structured!
-        macro-template
-        target))
-    (let
-      [with-image-entry : CompilerBackendObjectTargetParts
-        (compiler-backend-object-add-text-bytes
-          (compiler-backend-object-add-text
-            parts
-            (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
-          entry-bytes)]
-      (if macro-entry
-        (compiler-backend-object-add-text-bytes
-          (compiler-backend-object-add-text
-            with-image-entry
-            (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry"))
-          macro-entry-bytes)
-        with-image-entry))))
+  (x64_catalog.compiler-x64-template-assert-structured! entry-template target)
+  (when
+    macro-entry
+    (x64_catalog.compiler-x64-template-assert-structured! macro-template target))
+  (let
+    [with-image-entry : CompilerBackendObjectTargetParts
+      (compiler-backend-object-add-text-bytes
+        (compiler-backend-object-add-text
+          parts
+          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
+        entry-bytes)]
+    (if macro-entry
+      (compiler-backend-object-add-text-bytes
+        (compiler-backend-object-add-text
+          with-image-entry
+          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry"))
+        macro-entry-bytes)
+      with-image-entry)))
 
 (define (compiler-backend-object-empty-data-records) : cobj.CompilerObjectDataRecordList
   (cobj.compiler-object-data-record-builder-finish

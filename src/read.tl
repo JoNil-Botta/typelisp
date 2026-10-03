@@ -181,14 +181,12 @@
             [new-slots : (__tl_dyn-array SpannedSexpr)
               (__tl_make-array SpannedSexpr new-cap)]
             [i : i64 0]
-            (begin
-              (while (< i sp-node-pool-count)
-                (begin
-                  (set! (array-ref new-slots i) (sp-node-pool-shared-view i))
-                  (set! i (+ i 1))))
-              (set! sp-node-pool-retained-arena 0)
-              (set! sp-node-pool-base-arena storage-root)
-              (set! sp-node-pool-slots new-slots))))))))
+            (while (< i sp-node-pool-count)
+              (set! (array-ref new-slots i) (sp-node-pool-shared-view i))
+              (set! i (+ i 1)))
+            (set! sp-node-pool-retained-arena 0)
+            (set! sp-node-pool-base-arena storage-root)
+            (set! sp-node-pool-slots new-slots)))))))
 
 (define (sp-builder-grow!) : unit
   (let
@@ -208,28 +206,24 @@
         [new-slots : (__tl_dyn-array SpannedSexpr)
           (__tl_make-array SpannedSexpr new-cap)]
         [i : i64 0]
-        (begin
-          (while (< i sp-builder-count)
-            (begin
-              (set! (array-ref new-slots i) (sp-builder-shared-view i))
-              (set! i (+ i 1))))
-          (if (= base-arena 0)
-            (set! sp-node-pool-retained-arena 0)
-            unit)
-          (set! sp-node-pool-base-arena storage-root)
-          (set! sp-builder-slots new-slots))))))
+        (while (< i sp-builder-count)
+          (set! (array-ref new-slots i) (sp-builder-shared-view i))
+          (set! i (+ i 1)))
+        (if (= base-arena 0)
+          (set! sp-node-pool-retained-arena 0)
+          unit)
+        (set! sp-node-pool-base-arena storage-root)
+        (set! sp-builder-slots new-slots)))))
 
 (define (sp-node-push [node : SpannedSexpr]) : i64
-  (begin
-    (if (>= sp-node-pool-count (array-length sp-node-pool-slots))
-      (sp-node-pool-grow!)
-      unit)
-    (let
-      [id : i64 sp-node-pool-count]
-      (begin
-        (set! (array-ref sp-node-pool-slots id) node)
-        (set! sp-node-pool-count (+ id 1))
-        id))))
+  (if (>= sp-node-pool-count (array-length sp-node-pool-slots))
+    (sp-node-pool-grow!)
+    unit)
+  (let
+    [id : i64 sp-node-pool-count]
+    (set! (array-ref sp-node-pool-slots id) node)
+    (set! sp-node-pool-count (+ id 1))
+    id))
 
 ;; Reserve one contiguous range for cold parser metadata that already knows its
 ;; final row count. Callers fill the reserved rows with `sp-node-pool-fill!`;
@@ -239,11 +233,10 @@
   (let
     [start : i64 sp-node-pool-count]
     [required : i64 (+ start additional)]
-    (begin
-      (while (< (array-length sp-node-pool-slots) required)
-        (sp-node-pool-grow!))
-      (set! sp-node-pool-count required)
-      start)))
+    (while (< (array-length sp-node-pool-slots) required)
+      (sp-node-pool-grow!))
+    (set! sp-node-pool-count required)
+    start))
 
 ;; Write one row that `sp-node-pool-reserve!` already reserved (or an existing
 ;; row being rewritten in place). Only this module writes the pool globals.
@@ -274,11 +267,10 @@
   (set! sp-node-pool-count mark))
 
 (define (sp-node-pool-reset!) : unit
-  (begin
-    (sp-node-pool-truncate! 0)
-    (set! sp-builder-count 0)
-    (set! sp-node-pool-retained-arena 0)
-    (set! sp-node-pool-reset-generation (+ sp-node-pool-reset-generation 1))))
+  (sp-node-pool-truncate! 0)
+  (set! sp-builder-count 0)
+  (set! sp-node-pool-retained-arena 0)
+  (set! sp-node-pool-reset-generation (+ sp-node-pool-reset-generation 1)))
 
 ;; Row ids and builder ranges name indices, never backing-array addresses.
 ;; Payloads belong to source/interner owners; neither array owns their strings.
@@ -306,29 +298,25 @@
           (arena.Arena transfer-arena)
           (__tl_make-array SpannedSexpr builder-capacity)))]
     [index : i64 0]
-    (begin
-      (while (< index sp-node-pool-count)
-        (begin
-          (set! (array-ref next-slots index) (sp-node-pool-shared-view index))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index sp-builder-count)
-        (begin
-          (set! (array-ref next-builders index) (sp-builder-shared-view index))
-          (set! index (+ index 1))))
-      (set! sp-node-pool-slots next-slots)
-      (set! sp-builder-slots next-builders)
-      (set! sp-node-pool-base-arena transfer-arena)
-      (set! sp-node-pool-retained-arena transfer-arena)
-      ;; Normalize a current segment to its root before comparing owners. Even
-      ;; an empty transfer must detach a current retiring arena before destroy.
-      (unsafe
-        (begin
-          (arena.tl_arena_set (arena.tl_arena_current))
-          (if (= (arena.tl_arena_current) retire-arena)
-            (arena.tl_arena_set transfer-arena)
-            unit)
-          (unless (= retire-arena 0) (arena.tl_arena_destroy retire-arena)))))))
+    (while (< index sp-node-pool-count)
+      (set! (array-ref next-slots index) (sp-node-pool-shared-view index))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index sp-builder-count)
+      (set! (array-ref next-builders index) (sp-builder-shared-view index))
+      (set! index (+ index 1)))
+    (set! sp-node-pool-slots next-slots)
+    (set! sp-builder-slots next-builders)
+    (set! sp-node-pool-base-arena transfer-arena)
+    (set! sp-node-pool-retained-arena transfer-arena)
+    ;; Normalize a current segment to its root before comparing owners. Even
+    ;; an empty transfer must detach a current retiring arena before destroy.
+    (unsafe
+      (arena.tl_arena_set (arena.tl_arena_current))
+      (if (= (arena.tl_arena_current) retire-arena)
+        (arena.tl_arena_set transfer-arena)
+        unit)
+      (unless (= retire-arena 0) (arena.tl_arena_destroy retire-arena)))))
 
 (cfg
   compile-profile
@@ -392,13 +380,12 @@
 (define (spanned-sexpr-builder-push
   [builder : SpannedSexprBuilder]
   [item : SpannedSexpr]) : SpannedSexprBuilder
-  (begin
-    (if (>= sp-builder-count (array-length sp-builder-slots))
-      (sp-builder-grow!)
-      unit)
-    (set! (array-ref sp-builder-slots sp-builder-count) item)
-    (set! sp-builder-count (+ sp-builder-count 1))
-    builder))
+  (if (>= sp-builder-count (array-length sp-builder-slots))
+    (sp-builder-grow!)
+    unit)
+  (set! (array-ref sp-builder-slots sp-builder-count) item)
+  (set! sp-builder-count (+ sp-builder-count 1))
+  builder)
 
 (define (spanned-sexpr-list-from-builder
   [builder : SpannedSexprBuilder]
@@ -408,13 +395,11 @@
     [builder-start : i64 builder.start]
     [len : i64 (- sp-builder-count builder-start)]
     [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (sp-node-push (sp-builder-shared-view (+ builder-start i)))
-          (set! i (+ i 1))))
-      (set! sp-builder-count builder-start)
-      (List start len span))))
+    (while (< i len)
+      (sp-node-push (sp-builder-shared-view (+ builder-start i)))
+      (set! i (+ i 1)))
+    (set! sp-builder-count builder-start)
+    (List start len span)))
 
 (define (spanned-sexpr-builder-discard! [builder : SpannedSexprBuilder]) : unit
   (set! sp-builder-count builder.start))
@@ -427,14 +412,10 @@
       (let
         [out : SpannedSexprBuilder builder]
         [i : i64 0]
-        (begin
-          (while (< i length)
-            (begin
-              (set!
-                out
-                (spanned-sexpr-builder-push out (sp-node-get (+ start i))))
-              (set! i (+ i 1))))
-          out))]
+        (while (< i length)
+          (set! out (spanned-sexpr-builder-push out (sp-node-get (+ start i))))
+          (set! i (+ i 1)))
+        out)]
     [_ (io.panic "reader: list builder extend requires a proper list")]))
 
 (define (spanned-sexpr-list1 [a : SpannedSexpr] [span : token.SourceSpan]) : SpannedSexpr
@@ -494,14 +475,12 @@
         [builder : SpannedSexprBuilder
           (spanned-sexpr-builder-push (spanned-sexpr-builder-new) head)]
         [i : i64 0]
-        (begin
-          (while (< i length)
-            (begin
-              (set!
-                builder
-                (spanned-sexpr-builder-push builder (sp-node-get (+ start i))))
-              (set! i (+ i 1))))
-          (spanned-sexpr-list-from-builder builder span)))]
+        (while (< i length)
+          (set!
+            builder
+            (spanned-sexpr-builder-push builder (sp-node-get (+ start i))))
+          (set! i (+ i 1)))
+        (spanned-sexpr-list-from-builder builder span))]
     [_ (io.panic "reader: list prepend requires a proper list")]))
 
 (define (spanned-sexpr-bracket-list
@@ -678,59 +657,51 @@
         (let
           [value : i64 (token.int tok)]
           [text : String (token.int-text tok)]
-          (begin
-            (advance cur)
-            (Ok (Int value text span))))]
+          (advance cur)
+          (Ok (Int value text span)))]
       [(= t (token.tag-float))
         (let
           [text : String (token.float tok)]
-          (begin
-            (advance cur)
-            (Ok (Float text span))))]
+          (advance cur)
+          (Ok (Float text span)))]
       [(= t (token.tag-sym))
         (let
           [name-id : ci.InternId (token.sym-id tok)]
-          (begin
-            (advance cur)
-            (Ok (Sym (ci.intern-syntax-id-from-renderable name-id) span))))]
+          (advance cur)
+          (Ok (Sym (ci.intern-syntax-id-from-renderable name-id) span)))]
       [(= t (token.tag-str))
         (let
           [string-id : ci.InternId (token.str-id tok)]
-          (begin
-            (advance cur)
-            (Ok (Str string-id span))))]
+          (advance cur)
+          (Ok (Str string-id span)))]
       [(= t (token.tag-char))
         (let
           [value : char (token.char tok)]
-          (begin
-            (advance cur)
-            (Ok (Char value span))))]
+          (advance cur)
+          (Ok (Char value span)))]
       [(= t (token.tag-lparen))
-        (begin
-          (advance cur)
-          (form-spanned-compound-result
-            toks
-            cur
-            (list-spanned-result toks cur span)))]
+        (advance cur)
+        (form-spanned-compound-result
+          toks
+          cur
+          (list-spanned-result toks cur span))]
       [(= t (token.tag-lbracket))
-        (begin
-          (advance cur)
-          (form-spanned-compound-result
-            toks
-            cur
-            (bracket-list-spanned-result toks cur span)))]
+        (advance cur)
+        (form-spanned-compound-result
+          toks
+          cur
+          (bracket-list-spanned-result toks cur span))]
       [(prefix-tag? t)
         (let
           [name : ci.InternSyntaxId (prefix-symbol t)]
-          (begin
-            (advance cur)
-            (match (form-spanned-result toks cur)
-              [(Ok form)
-                (form-spanned-suffix-result
-                  toks
-                  cur
-                  (prefix-spanned-form name span form))]
-              [(Err err) (Err err)])))]
+          (advance cur)
+          (match (form-spanned-result toks cur)
+            [(Ok form)
+              (form-spanned-suffix-result
+                toks
+                cur
+                (prefix-spanned-form name span form))]
+            [(Err err) (Err err)]))]
       [(= t (token.tag-rparen))
         (Err (token.SourceError "reader: unexpected ')'" span))]
       [(= t (token.tag-rbracket))
@@ -755,10 +726,9 @@
   [length : i64]) : i64
   (let
     [end : i64 index]
-    (begin
-      (while (and (< end length) (!= (string.string-ref text end) '.'))
-        (set! end (+ end 1)))
-      end)))
+    (while (and (< end length) (!= (string.string-ref text end) '.'))
+      (set! end (+ end 1)))
+    end))
 
 (define (projection-suffix-error [message : String] [span : token.SourceSpan]) : ResultSpannedSexpr
   (Err (token.SourceError message span)))
@@ -852,12 +822,11 @@
     [t : i64 (token.tag-ref (token.spanned-token-token-ref st))]
     (cond
       [(= t close-tag)
-        (begin
-          (advance cur)
-          (Ok
-            (spanned-sexpr-list-from-builder
-              builder
-              (token.merge-spans open-span span))))]
+        (advance cur)
+        (Ok
+          (spanned-sexpr-list-from-builder
+            builder
+            (token.merge-spans open-span span)))]
       [(= t (token.tag-end))
         (Err
           (token.SourceError (unterminated-list-message close-tag) open-span))]
@@ -887,10 +856,9 @@
     (match result
       [(Ok form) (Ok form)]
       [(Err err)
-        (begin
-          (spanned-sexpr-builder-discard! builder)
-          (sp-node-pool-truncate! pool-mark)
-          (Err err))])))
+        (spanned-sexpr-builder-discard! builder)
+        (sp-node-pool-truncate! pool-mark)
+        (Err err)])))
 
 (define (bracket-list-spanned-result
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
@@ -915,18 +883,16 @@
                 (ptr-read (ptr-addr-of items))))]
           (Ok (spanned-sexpr-bracket-list items span)))]
       [(Err err)
-        (begin
-          (spanned-sexpr-builder-discard! builder)
-          (sp-node-pool-truncate! pool-mark)
-          (Err err))])))
+        (spanned-sexpr-builder-discard! builder)
+        (sp-node-pool-truncate! pool-mark)
+        (Err err)])))
 
 (define (spanned-result [toks : (__tl_dyn-array token.SpannedToken)]) : ResultSpannedSexpr
   (let
     [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (begin
-      (set! sp-builder-count 0)
-      (set! (array-ref cur 0) 0)
-      (form-spanned-result (& toks) (&mut cur)))))
+    (set! sp-builder-count 0)
+    (set! (array-ref cur 0) 0)
+    (form-spanned-result (& toks) (&mut cur))))
 
 ;; Read one plain data form from the front of `src` (a lockfile, TLCI
 ;; metadata): no projection suffixes, a stray closing delimiter is unexpected
@@ -939,14 +905,12 @@
     [(Ok toks)
       (let
         [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-        (begin
-          (set! (array-ref cur 0) 0)
-          (set! sp-reader-data-mode? true)
-          (let
-            [result : ResultSpannedSexpr
-              (form-spanned-result (& toks) (&mut cur))]
-            (begin
-              (set! sp-reader-data-mode? false)
-              (match result
-                [(Ok form) (Ok form)]
-                [(Err err) (Err (token.source-error-message err))])))))]))
+        (set! (array-ref cur 0) 0)
+        (set! sp-reader-data-mode? true)
+        (let
+          [result : ResultSpannedSexpr
+            (form-spanned-result (& toks) (&mut cur))]
+          (set! sp-reader-data-mode? false)
+          (match result
+            [(Ok form) (Ok form)]
+            [(Err err) (Err (token.source-error-message err))])))]))

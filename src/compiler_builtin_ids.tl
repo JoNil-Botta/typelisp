@@ -1739,159 +1739,153 @@
     [chunk : String ""]
     [count : i64 0]
     [index : i64 (- (comptime.expr-list-length rows) 1)]
-    (begin
-      ;; Walk back to front: prepending keeps every list in row order.
-      (while (>= index 0)
-        (begin
-          (match (comptime.expr-list-nth rows index)
-            [(comptime.Expr.Call _ fields)
-              (let
-                [field-count : i64 (comptime.expr-list-length fields)]
-                [slot : i64 -1]
-                [spelling : String ""]
-                [spelled? : bool false]
-                [field : i64 0]
-                (begin
-                  ;; A row's slot is its first integer field and its spelling,
-                  ;; if any, its string field.
-                  (while (< field field-count)
-                    (begin
-                      (match (comptime.expr-list-nth fields field)
-                        [(comptime.Expr.Int value)
-                          (if (< slot 0)
-                            (set! slot value)
-                            unit)]
-                        [_
-                          (if (comptime.expr-string?
-                            (comptime.expr-list-nth fields field))
-                            (begin
-                              (set!
-                                spelling
-                                (comptime.expr-string-value
-                                  (comptime.expr-list-nth fields field)))
-                              (set! spelled? true))
-                            unit)])
-                      (set! field (+ field 1))))
+    ;; Walk back to front: prepending keeps every list in row order.
+    (while (>= index 0)
+      (match (comptime.expr-list-nth rows index)
+        [(comptime.Expr.Call _ fields)
+          (let
+            [field-count : i64 (comptime.expr-list-length fields)]
+            [slot : i64 -1]
+            [spelling : String ""]
+            [spelled? : bool false]
+            [field : i64 0]
+            ;; A row's slot is its first integer field and its spelling,
+            ;; if any, its string field.
+            (while (< field field-count)
+              (match (comptime.expr-list-nth fields field)
+                [(comptime.Expr.Int value)
                   (if (< slot 0)
-                    (comptime.comptime-error
-                      "compiler-builtin-id-table: a row's slot is an integer")
-                    unit)
-                  (if (>= slot limit)
-                    (set! limit (+ slot 1))
-                    unit)
-                  (if fixed?
-                    (let
-                      [global : comptime.Expr (comptime.expr-list-nth fields 0)]
-                      [at : comptime.Expr
-                        `(ptr-offset
-                          compiler-builtin-ids-data
-                          ,(comptime.expr-int slot))]
-                      (begin
-                        (set!
-                          capture
-                          (comptime.expr-list-cons
-                            `(unsafe
-                              (ptr-write! ,at ,global))
-                            capture))
-                        (if spelled?
-                          (set!
-                            install
-                            (comptime.expr-list-cons
-                              `(set!
-                                ,global
-                                (unsafe
-                                  (ptr-read ,at)))
-                              install))
-                          unit)))
-                    (if (= field-count 2)
-                      (set!
-                        arms
-                        (comptime.expr-list-cons
-                          (comptime.expr-call
-                            (comptime.expr-string spelling)
-                            (comptime.expr-list-cons
-                              (comptime.expr-int slot)
-                              (comptime.expr-list-empty)))
-                          arms))
-                      unit))
-                  (if spelled?
+                    (set! slot value)
+                    unit)]
+                [_
+                  (if (comptime.expr-string?
+                    (comptime.expr-list-nth fields field))
                     (begin
                       (set!
-                        chunk
-                        (comptime.string-append
-                          (comptime.string-append
-                            (comptime.string-append (int->string slot) ":")
-                            (comptime.string-append spelling "|"))
-                          chunk))
-                      (set! count (+ count 1)))
-                    unit)
-                  (if (= count 16)
-                    (begin
-                      (set!
-                        loads
-                        (comptime.expr-list-cons
-                          `(compiler-builtin-load-id-rows!
-                            ,ids
-                            insert-missing
-                            ,(comptime.expr-string chunk))
-                          loads))
-                      (set! chunk "")
-                      (set! count 0))
-                    unit)))]
-            [_
+                        spelling
+                        (comptime.expr-string-value
+                          (comptime.expr-list-nth fields field)))
+                      (set! spelled? true))
+                    unit)])
+              (set! field (+ field 1)))
+            (if (< slot 0)
               (comptime.comptime-error
-                "compiler-builtin-id-table: a row is a call")])
-          (set! index (- index 1))))
-      (if (> count 0)
-        (set!
-          loads
-          (comptime.expr-list-cons
-            `(compiler-builtin-load-id-rows!
-              ,ids
-              insert-missing
-              ,(comptime.expr-string chunk))
-            loads))
-        unit)
-      (if fixed?
-        `(begin
-          (define compiler-builtin-id-slot-count : i64
-            ,(comptime.expr-int limit))
-          (define (state-capture-fixed-ids!
-            [state : (&mut state CompilerBuiltinIdsState)]) : unit
-            (let
-              [compiler-builtin-ids-data : (MutPtr i64)
-                (unsafe
-                  (__tl_array-data (__tl-project-field state ids)))]
+                "compiler-builtin-id-table: a row's slot is an integer")
+              unit)
+            (if (>= slot limit)
+              (set! limit (+ slot 1))
+              unit)
+            (if fixed?
+              (let
+                [global : comptime.Expr (comptime.expr-list-nth fields 0)]
+                [at : comptime.Expr
+                  `(ptr-offset
+                    compiler-builtin-ids-data
+                    ,(comptime.expr-int slot))]
+                (set!
+                  capture
+                  (comptime.expr-list-cons
+                    `(unsafe
+                      (ptr-write! ,at ,global))
+                    capture))
+                (if spelled?
+                  (set!
+                    install
+                    (comptime.expr-list-cons
+                      `(set!
+                        ,global
+                        (unsafe
+                          (ptr-read ,at)))
+                      install))
+                  unit))
+              (if (= field-count 2)
+                (set!
+                  arms
+                  (comptime.expr-list-cons
+                    (comptime.expr-call
+                      (comptime.expr-string spelling)
+                      (comptime.expr-list-cons
+                        (comptime.expr-int slot)
+                        (comptime.expr-list-empty)))
+                    arms))
+                unit))
+            (if spelled?
               (begin
-                ,@capture)))
-          (define (state-install-fixed-ids!
-            [state : (& state CompilerBuiltinIdsState)]) : unit
-            (let
-              [compiler-builtin-ids-data : (MutPtr i64)
-                (unsafe
-                  (__tl_array-data (__tl-project-field state ids)))]
+                (set!
+                  chunk
+                  (comptime.string-append
+                    (comptime.string-append
+                      (comptime.string-append (int->string slot) ":")
+                      (comptime.string-append spelling "|"))
+                    chunk))
+                (set! count (+ count 1)))
+              unit)
+            (if (= count 16)
               (begin
-                ,@install)))
-          (define (state-load-fixed-ids!
-            [state : (&mut state CompilerBuiltinIdsState)]
-            [insert-missing : bool]) : unit
+                (set!
+                  loads
+                  (comptime.expr-list-cons
+                    `(compiler-builtin-load-id-rows!
+                      ,ids
+                      insert-missing
+                      ,(comptime.expr-string chunk))
+                    loads))
+                (set! chunk "")
+                (set! count 0))
+              unit))]
+        [_
+          (comptime.comptime-error "compiler-builtin-id-table: a row is a call")])
+      (set! index (- index 1)))
+    (if (> count 0)
+      (set!
+        loads
+        (comptime.expr-list-cons
+          `(compiler-builtin-load-id-rows!
+            ,ids
+            insert-missing
+            ,(comptime.expr-string chunk))
+          loads))
+      unit)
+    (if fixed?
+      `(begin
+        (define compiler-builtin-id-slot-count : i64
+          ,(comptime.expr-int limit))
+        (define (state-capture-fixed-ids!
+          [state : (&mut state CompilerBuiltinIdsState)]) : unit
+          (let
+            [compiler-builtin-ids-data : (MutPtr i64)
+              (unsafe
+                (__tl_array-data (__tl-project-field state ids)))]
             (begin
-              ,@loads)))
-        `(begin
-          (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
-            (__tl_make-array i64 ,(comptime.expr-int limit)))
-          (defmacro (compiler-builtin-ctfe-slot [spelling : comptime.Expr]) : i64
-            (comptime.expr-int
-              ,(comptime.expr-call
-                (comptime.expr-var "match")
-                (comptime.expr-list-cons
-                  `(comptime.expr-string-value spelling)
-                  arms))))
-          (define (state-load-ctfe-ids!
-            [state : (&mut state CompilerBuiltinIdsState)]
-            [insert-missing : bool]) : unit
+              ,@capture)))
+        (define (state-install-fixed-ids!
+          [state : (& state CompilerBuiltinIdsState)]) : unit
+          (let
+            [compiler-builtin-ids-data : (MutPtr i64)
+              (unsafe
+                (__tl_array-data (__tl-project-field state ids)))]
             (begin
-              ,@loads)))))))
+              ,@install)))
+        (define (state-load-fixed-ids!
+          [state : (&mut state CompilerBuiltinIdsState)]
+          [insert-missing : bool]) : unit
+          (begin
+            ,@loads)))
+      `(begin
+        (define compiler-builtin-ctfe-ids : (__tl_dyn-array i64)
+          (__tl_make-array i64 ,(comptime.expr-int limit)))
+        (defmacro (compiler-builtin-ctfe-slot [spelling : comptime.Expr]) : i64
+          (comptime.expr-int
+            ,(comptime.expr-call
+              (comptime.expr-var "match")
+              (comptime.expr-list-cons
+                `(comptime.expr-string-value spelling)
+                arms))))
+        (define (state-load-ctfe-ids!
+          [state : (&mut state CompilerBuiltinIdsState)]
+          [insert-missing : bool]) : unit
+          (begin
+            ,@loads))))))
 
 (compiler-builtin-id-table fixed)
 
@@ -1905,21 +1899,18 @@
     [ctfe-ids : (__tl_dyn-array i64)
       (__tl_make-array i64 (array-length compiler-builtin-ctfe-ids))]
     [i : i64 0]
-    (begin
-      (set! (array-ref metadata 0) -1)
-      (set! (array-ref metadata 1) -1)
-      (set! (array-ref metadata 2) -1)
-      (set! (array-ref metadata 3) 0)
-      (while (< i (array-length ids))
-        (begin
-          (set! (array-ref ids i) -1)
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i (array-length ctfe-ids))
-        (begin
-          (set! (array-ref ctfe-ids i) -1)
-          (set! i (+ i 1))))
-      (CompilerBuiltinIdsState metadata ids ctfe-ids))))
+    (set! (array-ref metadata 0) -1)
+    (set! (array-ref metadata 1) -1)
+    (set! (array-ref metadata 2) -1)
+    (set! (array-ref metadata 3) 0)
+    (while (< i (array-length ids))
+      (set! (array-ref ids i) -1)
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i (array-length ctfe-ids))
+      (set! (array-ref ctfe-ids i) -1)
+      (set! i (+ i 1)))
+    (CompilerBuiltinIdsState metadata ids ctfe-ids)))
 
 (define (state-generation [state : (& state CompilerBuiltinIdsState)]) : i64
   (array-ref state.metadata 0))
@@ -1943,14 +1934,13 @@
   [table-id : i64]
   [pool-len : i64]
   [parse-initialized : bool]) : unit
-  (begin
-    (set! (array-ref state.metadata 1) table-id)
-    (set! (array-ref state.metadata 2) pool-len)
-    (set!
-      (array-ref state.metadata 3)
-      (if parse-initialized
-        1
-        0))))
+  (set! (array-ref state.metadata 1) table-id)
+  (set! (array-ref state.metadata 2) pool-len)
+  (set!
+    (array-ref state.metadata 3)
+    (if parse-initialized
+      1
+      0)))
 
 (define (state-ref [state : (& state CompilerBuiltinIdsState)] [index : i64]) : i64
   (array-ref state.ids index))
@@ -1991,17 +1981,15 @@
   (let
     [i : i64 0]
     (while (< i (array-length state.ctfe-ids))
-      (begin
-        (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
-        (set! i (+ i 1))))))
+      (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
+      (set! i (+ i 1)))))
 
 (define (state-install-ctfe-ids! [state : (& state CompilerBuiltinIdsState)]) : unit
   (let
     [i : i64 0]
     (while (< i (array-length state.ctfe-ids))
-      (begin
-        (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
-        (set! i (+ i 1))))))
+      (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
+      (set! i (+ i 1)))))
 
 ;; State-owned reset: the state's own metadata always clears so its next parse
 ;; re-derives the table. The compatibility-global metadata is invalidated only
@@ -2014,47 +2002,42 @@
       (and
         (>= (state-table-id state) 0)
         (= (state-table-id state) compiler-builtin-table-id))]
-    (begin
-      (state-set-generation! state -1)
-      (state-set-metadata! state -1 -1 false)
-      (if installed?
-        (compiler-builtin-reset!)
-        unit))))
+    (state-set-generation! state -1)
+    (state-set-metadata! state -1 -1 false)
+    (if installed?
+      (compiler-builtin-reset!)
+      unit)))
 
 (define (state-capture-from-globals!
   [state : (&mut state CompilerBuiltinIdsState)]) : unit
-  (begin
-    (state-set-generation! state compiler-builtin-generation)
-    (state-set-metadata!
-      state
-      compiler-builtin-table-id
-      compiler-builtin-pool-len
-      compiler-builtin-parse-initialized)
-    (state-capture-fixed-ids! state)
-    (state-capture-ctfe-ids! state)))
+  (state-set-generation! state compiler-builtin-generation)
+  (state-set-metadata!
+    state
+    compiler-builtin-table-id
+    compiler-builtin-pool-len
+    compiler-builtin-parse-initialized)
+  (state-capture-fixed-ids! state)
+  (state-capture-ctfe-ids! state))
 
 (define (state-capture) : CompilerBuiltinIdsState
   (let
     [state : CompilerBuiltinIdsState (state-new)]
-    (begin
-      (state-capture-from-globals! (&mut state))
-      state)))
+    (state-capture-from-globals! (&mut state))
+    state))
 
 (define (state-install! [state : (& state CompilerBuiltinIdsState)]) : unit
-  (begin
-    (state-install-ctfe-ids! state)
-    (set! compiler-builtin-generation (state-generation state))
-    (state-install-fixed-ids! state)
-    (set! compiler-builtin-table-id (state-table-id state))
-    (set! compiler-builtin-pool-len (state-pool-len state))
-    (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
+  (state-install-ctfe-ids! state)
+  (set! compiler-builtin-generation (state-generation state))
+  (state-install-fixed-ids! state)
+  (set! compiler-builtin-table-id (state-table-id state))
+  (set! compiler-builtin-pool-len (state-pool-len state))
+  (set! compiler-builtin-parse-initialized (state-parse-initialized? state)))
 
 (define (compiler-builtin-reset!) : unit
-  (begin
-    (set! compiler-builtin-generation -1)
-    (set! compiler-builtin-table-id -1)
-    (set! compiler-builtin-pool-len -1)
-    (set! compiler-builtin-parse-initialized false)))
+  (set! compiler-builtin-generation -1)
+  (set! compiler-builtin-table-id -1)
+  (set! compiler-builtin-pool-len -1)
+  (set! compiler-builtin-parse-initialized false))
 
 (define (compiler-builtin-resolve-name [insert-missing : bool] [name : String]) : i64
   (if insert-missing
@@ -2076,39 +2059,36 @@
     (while (< index (string.string-length rows))
       (let
         [c : char (string.string-ref rows index)]
-        (begin
-          (cond
-            [(< start 0)
-              (if (= c ':')
-                (set! start (+ index 1))
-                (set! slot (+ (* slot 10) (- (cast c : i64) 48))))]
-            [(= c '|')
-              (begin
-                (set!
-                  (array-ref ids slot)
-                  (if insert-missing
-                    (ci.intern-source-slice rows start (- index start))
-                    (io.panic
-                      "compiler builtin IDs must be installed with their intern table")))
-                (set! slot 0)
-                (set! start -1))]
-            [else unit])
-          (set! index (+ index 1)))))))
+        (cond
+          [(< start 0)
+            (if (= c ':')
+              (set! start (+ index 1))
+              (set! slot (+ (* slot 10) (- (cast c : i64) 48))))]
+          [(= c '|')
+            (set!
+              (array-ref ids slot)
+              (if insert-missing
+                (ci.intern-source-slice rows start (- index start))
+                (io.panic
+                  "compiler builtin IDs must be installed with their intern table")))
+            (set! slot 0)
+            (set! start -1)]
+          [else unit])
+        (set! index (+ index 1))))))
 
 ;; Interns the CTFE spellings in slot order, then the fixed ids' in table order,
 ;; into a fresh state, and installs it. Slots without a spelling stay -1.
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (let
     [state : CompilerBuiltinIdsState (state-new)]
-    (begin
-      (state-load-ctfe-ids! (&mut state) insert-missing)
-      (state-load-fixed-ids! (&mut state) insert-missing)
-      (state-install-ctfe-ids! (& state))
-      (state-install-fixed-ids! (& state))
-      (set! compiler-builtin-generation (ci.intern-generation))
-      (set! compiler-builtin-table-id (ci.intern-active-table-id))
-      (set! compiler-builtin-pool-len (ci.intern-pool-len))
-      (set! compiler-builtin-parse-initialized insert-missing))))
+    (state-load-ctfe-ids! (&mut state) insert-missing)
+    (state-load-fixed-ids! (&mut state) insert-missing)
+    (state-install-ctfe-ids! (& state))
+    (state-install-fixed-ids! (& state))
+    (set! compiler-builtin-generation (ci.intern-generation))
+    (set! compiler-builtin-table-id (ci.intern-active-table-id))
+    (set! compiler-builtin-pool-len (ci.intern-pool-len))
+    (set! compiler-builtin-parse-initialized insert-missing)))
 
 (define (compiler-builtin-table-current?) : bool
   (and
@@ -2160,17 +2140,16 @@
 (cfg
   test
   (define (compiler-builtin-comptime-structural-fields-reset-ok?) : bool
-    (begin
-      (ci.intern-reset!)
-      (compiler-builtin-reset!)
-      (compiler-builtin-initialize-for-parse!)
-      (unless
-        (compiler-builtin-comptime-structural-fields-current-ok?)
-        (return false))
-      (ci.intern-reset!)
-      (compiler-builtin-reset!)
-      (compiler-builtin-initialize-for-parse!)
-      (compiler-builtin-comptime-structural-fields-current-ok?))))
+    (ci.intern-reset!)
+    (compiler-builtin-reset!)
+    (compiler-builtin-initialize-for-parse!)
+    (unless
+      (compiler-builtin-comptime-structural-fields-current-ok?)
+      (return false))
+    (ci.intern-reset!)
+    (compiler-builtin-reset!)
+    (compiler-builtin-initialize-for-parse!)
+    (compiler-builtin-comptime-structural-fields-current-ok?)))
 
 (cfg
   test
@@ -2183,18 +2162,17 @@
 (cfg
   test
   (define (compiler-builtin-comptime-private-cons-slots-empty?) : bool
-    (begin
-      (compiler-builtin-initialize-for-parse!)
-      (and
-        (= (compiler-builtin-ctfe-ref 50) -1)
-        (= (compiler-builtin-ctfe-ref 52) -1)
-        (= (compiler-builtin-ctfe-ref 53) -1)
-        (= (compiler-builtin-ctfe-ref 55) -1)
-        (= (compiler-builtin-ctfe-ref 57) -1)
-        (= (compiler-builtin-ctfe-ref 58) -1)
-        (= (compiler-builtin-ctfe-ref 65) -1)
-        (= (compiler-builtin-ctfe-ref 67) -1)
-        (= (compiler-builtin-ctfe-ref 68) -1)))))
+    (compiler-builtin-initialize-for-parse!)
+    (and
+      (= (compiler-builtin-ctfe-ref 50) -1)
+      (= (compiler-builtin-ctfe-ref 52) -1)
+      (= (compiler-builtin-ctfe-ref 53) -1)
+      (= (compiler-builtin-ctfe-ref 55) -1)
+      (= (compiler-builtin-ctfe-ref 57) -1)
+      (= (compiler-builtin-ctfe-ref 58) -1)
+      (= (compiler-builtin-ctfe-ref 65) -1)
+      (= (compiler-builtin-ctfe-ref 67) -1)
+      (= (compiler-builtin-ctfe-ref 68) -1))))
 
 (cfg
   test
@@ -2207,34 +2185,31 @@
 (cfg
   test
   (define (compiler-builtin-comptime-type-info-slice-id-current-ok?) : bool
-    (begin
-      (compiler-builtin-refresh!)
-      (=
-        compiler-builtin-id-comptime-type-info-slice-variant
-        (ci.intern-source-slice "Slice" 0 5)))))
+    (compiler-builtin-refresh!)
+    (=
+      compiler-builtin-id-comptime-type-info-slice-variant
+      (ci.intern-source-slice "Slice" 0 5))))
 
 (cfg
   test
   (define (compiler-builtin-comptime-type-info-slice-id-reset-ok?) : bool
-    (begin
-      (ci.intern-reset!)
-      (compiler-builtin-reset!)
-      (compiler-builtin-initialize-for-parse!)
-      (unless
-        (compiler-builtin-comptime-type-info-slice-id-current-ok?)
-        (return false))
-      (let
-        [snapshot : CompilerBuiltinIdsState (state-capture)]
-        (begin
-          (set! compiler-builtin-id-comptime-type-info-slice-variant -1)
-          (state-install! snapshot)
-          (and
-            (=
-              compiler-builtin-id-comptime-type-info-slice-variant
-              (ci.intern-source-slice "Slice" 0 5))
-            (=
-              (state-ref snapshot 315)
-              compiler-builtin-id-comptime-type-info-slice-variant)))))))
+    (ci.intern-reset!)
+    (compiler-builtin-reset!)
+    (compiler-builtin-initialize-for-parse!)
+    (unless
+      (compiler-builtin-comptime-type-info-slice-id-current-ok?)
+      (return false))
+    (let
+      [snapshot : CompilerBuiltinIdsState (state-capture)]
+      (set! compiler-builtin-id-comptime-type-info-slice-variant -1)
+      (state-install! snapshot)
+      (and
+        (=
+          compiler-builtin-id-comptime-type-info-slice-variant
+          (ci.intern-source-slice "Slice" 0 5))
+        (=
+          (state-ref snapshot 315)
+          compiler-builtin-id-comptime-type-info-slice-variant)))))
 
 (cfg
   test
@@ -2473,47 +2448,43 @@
 (cfg
   test
   (define (compiler-builtin-parser-syntax-ids-reset-ok?) : bool
-    (begin
-      (ci.intern-reset!)
-      (compiler-builtin-reset!)
-      (compiler-builtin-initialize-for-parse!)
-      (unless (compiler-builtin-parser-syntax-ids-current-ok?) (return false))
-      (let
-        [snapshot : CompilerBuiltinIdsState (state-capture)]
-        (begin
-          (compiler-builtin-ctfe-set! 219 -1)
-          (compiler-builtin-ctfe-set! 233 -1)
-          (compiler-builtin-ctfe-set! 234 -1)
-          (compiler-builtin-ctfe-set! 271 -1)
-          (compiler-builtin-ctfe-set! 279 -1)
-          (compiler-builtin-ctfe-set! 280 -1)
-          (compiler-builtin-ctfe-set! 281 -1)
-          (compiler-builtin-ctfe-set! 282 -1)
-          (compiler-builtin-ctfe-set! 283 -1)
-          (compiler-builtin-ctfe-set! 284 -1)
-          (compiler-builtin-ctfe-set! 285 -1)
-          (compiler-builtin-ctfe-set! 286 -1)
-          (compiler-builtin-ctfe-set! 287 -1)
-          (compiler-builtin-ctfe-set! 288 -1)
-          (compiler-builtin-ctfe-set! 289 -1)
-          (compiler-builtin-ctfe-set! 290 -1)
-          (compiler-builtin-ctfe-set! 291 -1)
-          (compiler-builtin-ctfe-set! 292 -1)
-          (compiler-builtin-ctfe-set! 293 -1)
-          (compiler-builtin-ctfe-set! 294 -1)
-          (compiler-builtin-ctfe-set! 295 -1)
-          (compiler-builtin-ctfe-set! 296 -1)
-          (compiler-builtin-ctfe-set! 297 -1)
-          (compiler-builtin-ctfe-set! 298 -1)
-          (compiler-builtin-ctfe-set! 299 -1)
-          (state-install! snapshot)
-          (unless
-            (compiler-builtin-parser-syntax-ids-current-ok?)
-            (return false))))
-      (ci.intern-reset!)
-      (compiler-builtin-reset!)
-      (compiler-builtin-initialize-for-parse!)
-      (compiler-builtin-parser-syntax-ids-current-ok?))))
+    (ci.intern-reset!)
+    (compiler-builtin-reset!)
+    (compiler-builtin-initialize-for-parse!)
+    (unless (compiler-builtin-parser-syntax-ids-current-ok?) (return false))
+    (let
+      [snapshot : CompilerBuiltinIdsState (state-capture)]
+      (compiler-builtin-ctfe-set! 219 -1)
+      (compiler-builtin-ctfe-set! 233 -1)
+      (compiler-builtin-ctfe-set! 234 -1)
+      (compiler-builtin-ctfe-set! 271 -1)
+      (compiler-builtin-ctfe-set! 279 -1)
+      (compiler-builtin-ctfe-set! 280 -1)
+      (compiler-builtin-ctfe-set! 281 -1)
+      (compiler-builtin-ctfe-set! 282 -1)
+      (compiler-builtin-ctfe-set! 283 -1)
+      (compiler-builtin-ctfe-set! 284 -1)
+      (compiler-builtin-ctfe-set! 285 -1)
+      (compiler-builtin-ctfe-set! 286 -1)
+      (compiler-builtin-ctfe-set! 287 -1)
+      (compiler-builtin-ctfe-set! 288 -1)
+      (compiler-builtin-ctfe-set! 289 -1)
+      (compiler-builtin-ctfe-set! 290 -1)
+      (compiler-builtin-ctfe-set! 291 -1)
+      (compiler-builtin-ctfe-set! 292 -1)
+      (compiler-builtin-ctfe-set! 293 -1)
+      (compiler-builtin-ctfe-set! 294 -1)
+      (compiler-builtin-ctfe-set! 295 -1)
+      (compiler-builtin-ctfe-set! 296 -1)
+      (compiler-builtin-ctfe-set! 297 -1)
+      (compiler-builtin-ctfe-set! 298 -1)
+      (compiler-builtin-ctfe-set! 299 -1)
+      (state-install! snapshot)
+      (unless (compiler-builtin-parser-syntax-ids-current-ok?) (return false)))
+    (ci.intern-reset!)
+    (compiler-builtin-reset!)
+    (compiler-builtin-initialize-for-parse!)
+    (compiler-builtin-parser-syntax-ids-current-ok?)))
 
 (cfg
   test
@@ -2526,40 +2497,39 @@
 (cfg
   test
   (define (compiler-builtin-arena-identities-current-ok?) : bool
-    (begin
-      (compiler-builtin-refresh!)
-      (and
-        (=
-          compiler-builtin-id-arena-module
-          (ci.intern-source-slice "stdlib.arena" 0 12))
+    (compiler-builtin-refresh!)
+    (and
+      (=
+        compiler-builtin-id-arena-module
+        (ci.intern-source-slice "stdlib.arena" 0 12))
+      (=
+        compiler-builtin-id-arena-type
+        (ci.intern-source-slice "stdlib.arena/Arena" 0 18))
+      (=
+        compiler-builtin-id-arena-mark-type
+        (ci.intern-source-slice "stdlib.arena/ArenaMark" 0 22))
+      (=
+        compiler-builtin-id-arena-phase-type
+        (ci.intern-source-slice "stdlib.arena/ArenaPhase" 0 23))
+      (=
+        compiler-builtin-id-arena-make-base
+        (ci.intern-source-slice "make" 0 4))
+      (=
+        compiler-builtin-id-arena-make-atomic-base
+        (ci.intern-source-slice "make-atomic" 0 11))
+      (=
+        compiler-builtin-id-arena-phase-base
+        (ci.intern-source-slice "phase" 0 5))
+      (=
+        compiler-builtin-id-arena-rewind-safe-base
+        (ci.intern-source-slice "rewind-safe!" 0 12))
+      (=
+        compiler-builtin-id-arena-destroy-safe-base
+        (ci.intern-source-slice "destroy-safe!" 0 13))
+      (not
         (=
           compiler-builtin-id-arena-type
-          (ci.intern-source-slice "stdlib.arena/Arena" 0 18))
-        (=
-          compiler-builtin-id-arena-mark-type
-          (ci.intern-source-slice "stdlib.arena/ArenaMark" 0 22))
-        (=
-          compiler-builtin-id-arena-phase-type
-          (ci.intern-source-slice "stdlib.arena/ArenaPhase" 0 23))
-        (=
-          compiler-builtin-id-arena-make-base
-          (ci.intern-source-slice "make" 0 4))
-        (=
-          compiler-builtin-id-arena-make-atomic-base
-          (ci.intern-source-slice "make-atomic" 0 11))
-        (=
-          compiler-builtin-id-arena-phase-base
-          (ci.intern-source-slice "phase" 0 5))
-        (=
-          compiler-builtin-id-arena-rewind-safe-base
-          (ci.intern-source-slice "rewind-safe!" 0 12))
-        (=
-          compiler-builtin-id-arena-destroy-safe-base
-          (ci.intern-source-slice "destroy-safe!" 0 13))
-        (not
-          (=
-            compiler-builtin-id-arena-type
-            (ci.intern-generated-canonical-name "stdlib.arena/Arena")))))))
+          (ci.intern-generated-canonical-name "stdlib.arena/Arena"))))))
 
 (cfg
   test
@@ -2567,12 +2537,11 @@
     (let
       [expected : i64 compiler-builtin-id-arena-module]
       [snapshot : CompilerBuiltinIdsState (state-capture)]
-      (begin
-        (set! compiler-builtin-id-arena-module -1)
-        (state-install! snapshot)
-        (and
-          (= compiler-builtin-id-arena-module expected)
-          (compiler-builtin-arena-identities-current-ok?))))))
+      (set! compiler-builtin-id-arena-module -1)
+      (state-install! snapshot)
+      (and
+        (= compiler-builtin-id-arena-module expected)
+        (compiler-builtin-arena-identities-current-ok?)))))
 
 (cfg
   test
@@ -2589,32 +2558,31 @@
       [builtins-b : CompilerBuiltinIdsState (state-new)]
       [arena-a : i64 -1]
       [arena-b : i64 -1]
-      (begin
-        (ci.intern-compat-state-install! intern-a)
-        (compiler-builtin-reset!)
-        (compiler-builtin-initialize-for-parse!)
-        (set! arena-a compiler-builtin-id-arena-module)
-        (state-capture-from-globals! (&mut builtins-a))
-        (ci.intern-compat-state-capture-from-globals! (&mut intern-a))
-        (ci.intern-compat-state-install! intern-b)
-        (compiler-builtin-reset!)
-        (compiler-builtin-initialize-for-parse!)
-        (set! arena-b compiler-builtin-id-arena-module)
-        (state-capture-from-globals! (&mut builtins-b))
-        (ci.intern-compat-state-capture-from-globals! (&mut intern-b))
-        (unless (not (= arena-a arena-b)) (return false))
-        (ci.intern-compat-state-install! intern-a)
-        (state-install! (& builtins-a))
-        (unless
-          (and
-            (= compiler-builtin-id-arena-module arena-a)
-            (compiler-builtin-arena-identities-current-ok?))
-          (return false))
-        (ci.intern-compat-state-install! intern-b)
-        (state-install! (& builtins-b))
+      (ci.intern-compat-state-install! intern-a)
+      (compiler-builtin-reset!)
+      (compiler-builtin-initialize-for-parse!)
+      (set! arena-a compiler-builtin-id-arena-module)
+      (state-capture-from-globals! (&mut builtins-a))
+      (ci.intern-compat-state-capture-from-globals! (&mut intern-a))
+      (ci.intern-compat-state-install! intern-b)
+      (compiler-builtin-reset!)
+      (compiler-builtin-initialize-for-parse!)
+      (set! arena-b compiler-builtin-id-arena-module)
+      (state-capture-from-globals! (&mut builtins-b))
+      (ci.intern-compat-state-capture-from-globals! (&mut intern-b))
+      (unless (not (= arena-a arena-b)) (return false))
+      (ci.intern-compat-state-install! intern-a)
+      (state-install! (& builtins-a))
+      (unless
         (and
-          (= compiler-builtin-id-arena-module arena-b)
-          (compiler-builtin-arena-identities-current-ok?))))))
+          (= compiler-builtin-id-arena-module arena-a)
+          (compiler-builtin-arena-identities-current-ok?))
+        (return false))
+      (ci.intern-compat-state-install! intern-b)
+      (state-install! (& builtins-b))
+      (and
+        (= compiler-builtin-id-arena-module arena-b)
+        (compiler-builtin-arena-identities-current-ok?)))))
 
 (cfg
   test
@@ -2632,372 +2600,326 @@
         (io.panic "compiler builtin arena identity lifecycle failed")))))
 
 (define (compiler-builtin-backend-runtime-core-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (or
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-tl-alloc
-        compiler-builtin-id-tl-region-mark
-        compiler-builtin-id-tl-region-reset
-        compiler-builtin-id-tl-arena-make)
-      (= name-id compiler-builtin-id-tl-alloc-aligned)
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-tl-arena-make-small
-        compiler-builtin-id-tl-arena-make-atomic
-        compiler-builtin-id-tl-arena-current
-        compiler-builtin-id-tl-arena-set)
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-tl-arena-destroy
-        compiler-builtin-id-tl-arena-poison-enable
-        compiler-builtin-id-tl-thread-entry-ptr
-        compiler-builtin-id-tl-thread-init)
-      (compiler-builtin-id-any3?
-        name-id
-        compiler-builtin-id-tl-arena-debug-protect-never-reset
-        compiler-builtin-id-tl-arena-debug-assert-pool-install
-        compiler-builtin-id-tl-arena-debug-retire-protected))))
-
-(define (compiler-builtin-backend-runtime-arena-debug-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
+  (compiler-builtin-refresh!)
+  (or
+    (compiler-builtin-id-any4?
+      name-id
+      compiler-builtin-id-tl-alloc
+      compiler-builtin-id-tl-region-mark
+      compiler-builtin-id-tl-region-reset
+      compiler-builtin-id-tl-arena-make)
+    (= name-id compiler-builtin-id-tl-alloc-aligned)
+    (compiler-builtin-id-any4?
+      name-id
+      compiler-builtin-id-tl-arena-make-small
+      compiler-builtin-id-tl-arena-make-atomic
+      compiler-builtin-id-tl-arena-current
+      compiler-builtin-id-tl-arena-set)
+    (compiler-builtin-id-any4?
+      name-id
+      compiler-builtin-id-tl-arena-destroy
+      compiler-builtin-id-tl-arena-poison-enable
+      compiler-builtin-id-tl-thread-entry-ptr
+      compiler-builtin-id-tl-thread-init)
     (compiler-builtin-id-any3?
       name-id
       compiler-builtin-id-tl-arena-debug-protect-never-reset
       compiler-builtin-id-tl-arena-debug-assert-pool-install
       compiler-builtin-id-tl-arena-debug-retire-protected)))
 
+(define (compiler-builtin-backend-runtime-arena-debug-id? [name-id : i64]) : bool
+  (compiler-builtin-refresh!)
+  (compiler-builtin-id-any3?
+    name-id
+    compiler-builtin-id-tl-arena-debug-protect-never-reset
+    compiler-builtin-id-tl-arena-debug-assert-pool-install
+    compiler-builtin-id-tl-arena-debug-retire-protected))
+
 (define (compiler-builtin-backend-runtime-atomic-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (or
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-tl-atomic-i64-load-ptr
-        compiler-builtin-id-tl-atomic-i64-store-ptr
-        compiler-builtin-id-tl-atomic-i64-add-ptr
-        compiler-builtin-id-tl-atomic-i64-fetch-add-ptr)
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-tl-atomic-i32-load-ptr
-        compiler-builtin-id-tl-atomic-i32-store-ptr
-        compiler-builtin-id-tl-atomic-i32-add-ptr
-        compiler-builtin-id-tl-atomic-i32-fetch-add-ptr)
-      (compiler-builtin-id-any2?
-        name-id
-        compiler-builtin-id-tl-atomic-i64-cas-ptr
-        compiler-builtin-id-tl-atomic-i32-cas-ptr))))
+  (compiler-builtin-refresh!)
+  (or
+    (compiler-builtin-id-any4?
+      name-id
+      compiler-builtin-id-tl-atomic-i64-load-ptr
+      compiler-builtin-id-tl-atomic-i64-store-ptr
+      compiler-builtin-id-tl-atomic-i64-add-ptr
+      compiler-builtin-id-tl-atomic-i64-fetch-add-ptr)
+    (compiler-builtin-id-any4?
+      name-id
+      compiler-builtin-id-tl-atomic-i32-load-ptr
+      compiler-builtin-id-tl-atomic-i32-store-ptr
+      compiler-builtin-id-tl-atomic-i32-add-ptr
+      compiler-builtin-id-tl-atomic-i32-fetch-add-ptr)
+    (compiler-builtin-id-any2?
+      name-id
+      compiler-builtin-id-tl-atomic-i64-cas-ptr
+      compiler-builtin-id-tl-atomic-i32-cas-ptr)))
 
 (define (compiler-builtin-backend-runtime-stdlib-ffi-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (compiler-builtin-id-any4?
-      name-id
-      compiler-builtin-id-tl-profile-alloc-total
-      compiler-builtin-id-tl-profile-alloc-live
-      compiler-builtin-id-tl-profile-alloc-peak
-      compiler-builtin-id-tl-profile-alloc-reset-peak)))
+  (compiler-builtin-refresh!)
+  (compiler-builtin-id-any4?
+    name-id
+    compiler-builtin-id-tl-profile-alloc-total
+    compiler-builtin-id-tl-profile-alloc-live
+    compiler-builtin-id-tl-profile-alloc-peak
+    compiler-builtin-id-tl-profile-alloc-reset-peak))
 
 (define (compiler-builtin-backend-runtime-stdlib-type-lisp-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (or
-      (compiler-builtin-backend-runtime-atomic-id? name-id)
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-tl-substring
-        compiler-builtin-id-tl-str-view
-        compiler-builtin-id-tl-string-concat
-        compiler-builtin-id-tl-string-concat3)
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-tl-string-concat4
-        compiler-builtin-id-tl-string-concat5
-        compiler-builtin-id-tl-int-to-string
-        -1))))
-
-(define (compiler-builtin-backend-runtime-concat-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
+  (compiler-builtin-refresh!)
+  (or
+    (compiler-builtin-backend-runtime-atomic-id? name-id)
     (compiler-builtin-id-any4?
       name-id
+      compiler-builtin-id-tl-substring
+      compiler-builtin-id-tl-str-view
       compiler-builtin-id-tl-string-concat
-      compiler-builtin-id-tl-string-concat3
+      compiler-builtin-id-tl-string-concat3)
+    (compiler-builtin-id-any4?
+      name-id
       compiler-builtin-id-tl-string-concat4
-      compiler-builtin-id-tl-string-concat5)))
+      compiler-builtin-id-tl-string-concat5
+      compiler-builtin-id-tl-int-to-string
+      -1)))
+
+(define (compiler-builtin-backend-runtime-concat-id? [name-id : i64]) : bool
+  (compiler-builtin-refresh!)
+  (compiler-builtin-id-any4?
+    name-id
+    compiler-builtin-id-tl-string-concat
+    compiler-builtin-id-tl-string-concat3
+    compiler-builtin-id-tl-string-concat4
+    compiler-builtin-id-tl-string-concat5))
 
 (define (compiler-builtin-backend-runtime-profile-id? [name-id : i64]) : bool
   (compiler-builtin-backend-runtime-stdlib-ffi-id? name-id))
 
 (define (compiler-builtin-backend-runtime-always-provided-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (or
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-tl-arena-poison-enable
-        compiler-builtin-id-tl-arena-make
-        compiler-builtin-id-tl-arena-make-small
-        compiler-builtin-id-tl-arena-make-atomic)
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-tl-arena-current
-        compiler-builtin-id-tl-arena-set
-        compiler-builtin-id-tl-thread-entry-ptr
-        compiler-builtin-id-tl-thread-init)
-      (compiler-builtin-backend-runtime-atomic-id? name-id))))
+  (compiler-builtin-refresh!)
+  (or
+    (compiler-builtin-id-any4?
+      name-id
+      compiler-builtin-id-tl-arena-poison-enable
+      compiler-builtin-id-tl-arena-make
+      compiler-builtin-id-tl-arena-make-small
+      compiler-builtin-id-tl-arena-make-atomic)
+    (compiler-builtin-id-any4?
+      name-id
+      compiler-builtin-id-tl-arena-current
+      compiler-builtin-id-tl-arena-set
+      compiler-builtin-id-tl-thread-entry-ptr
+      compiler-builtin-id-tl-thread-init)
+    (compiler-builtin-backend-runtime-atomic-id? name-id)))
 
 (define (compiler-builtin-backend-runtime-always-provided-tail-id?
   [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-arena-destroy)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-arena-destroy))
 
 (define (compiler-builtin-backend-tl-alloc-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (or
-      (= name-id compiler-builtin-id-tl-alloc)
-      (= name-id compiler-builtin-id-tl-alloc-aligned))))
+  (compiler-builtin-refresh!)
+  (or
+    (= name-id compiler-builtin-id-tl-alloc)
+    (= name-id compiler-builtin-id-tl-alloc-aligned)))
 
 (define (compiler-builtin-backend-tl-region-mark-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-region-mark)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-region-mark))
 
 (define (compiler-builtin-backend-tl-region-reset-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-region-reset)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-region-reset))
 
 (define (compiler-builtin-backend-tl-oob-abort-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-oob-abort)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-oob-abort))
 
 (define (compiler-builtin-backend-tl-substring-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-substring)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-substring))
 
 (define (compiler-builtin-backend-tl-str-view-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-str-view)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-str-view))
 
 (define (compiler-builtin-backend-tl-int-to-string-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-int-to-string)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-int-to-string))
 
 (define (compiler-builtin-backend-fixed-fault-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (or
-      (compiler-builtin-id-any3?
-        name-id
-        compiler-builtin-id-tl-oob-abort
-        compiler-builtin-id-tl-div-abort
-        compiler-builtin-id-tl-shift-abort)
-      (compiler-builtin-id-any3?
-        name-id
-        compiler-builtin-id-tl-array-fill8
-        compiler-builtin-id-tl-array-zero
-        compiler-builtin-id-tl-mem-fill8)
-      (compiler-builtin-id-any2?
-        name-id
-        compiler-builtin-id-tl-mem-copy-fwd
-        compiler-builtin-id-tl-mem-copy8-fwd))))
+  (compiler-builtin-refresh!)
+  (or
+    (compiler-builtin-id-any3?
+      name-id
+      compiler-builtin-id-tl-oob-abort
+      compiler-builtin-id-tl-div-abort
+      compiler-builtin-id-tl-shift-abort)
+    (compiler-builtin-id-any3?
+      name-id
+      compiler-builtin-id-tl-array-fill8
+      compiler-builtin-id-tl-array-zero
+      compiler-builtin-id-tl-mem-fill8)
+    (compiler-builtin-id-any2?
+      name-id
+      compiler-builtin-id-tl-mem-copy-fwd
+      compiler-builtin-id-tl-mem-copy8-fwd)))
 
 (define (compiler-builtin-backend-tl-array-fill8-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-array-fill8)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-array-fill8))
 
 (define (compiler-builtin-backend-tl-array-zero-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-array-zero)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-array-zero))
 
 (define (compiler-builtin-backend-tl-mem-fill8-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-mem-fill8)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-mem-fill8))
 
 (define (compiler-builtin-backend-tl-mem-copy-fwd-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-mem-copy-fwd)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-mem-copy-fwd))
 
 (define (compiler-builtin-backend-tl-mem-copy8-fwd-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-mem-copy8-fwd)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-mem-copy8-fwd))
 
 (define (compiler-builtin-backend-tlci-call-macro-entry-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-tlci-call-macro-entry)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-tlci-call-macro-entry))
 
 (define (compiler-builtin-backend-tls-current-arena-call-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (compiler-builtin-id-any2?
-      name-id
-      compiler-builtin-id-tl-tls-current-arena-load
-      compiler-builtin-id-tl-tls-current-arena-store)))
+  (compiler-builtin-refresh!)
+  (compiler-builtin-id-any2?
+    name-id
+    compiler-builtin-id-tl-tls-current-arena-load
+    compiler-builtin-id-tl-tls-current-arena-store))
 
 (define (compiler-builtin-backend-tls-current-arena-load-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-tls-current-arena-load)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-tls-current-arena-load))
 
 (define (compiler-builtin-backend-tls-current-arena-store-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-tls-current-arena-store)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-tls-current-arena-store))
 
 (define (compiler-builtin-lower-bootstrap-runtime-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (compiler-builtin-id-any2?
-      name-id
-      compiler-builtin-id-tl-private-string-eq
-      compiler-builtin-id-tl-private-string-to-int)))
+  (compiler-builtin-refresh!)
+  (compiler-builtin-id-any2?
+    name-id
+    compiler-builtin-id-tl-private-string-eq
+    compiler-builtin-id-tl-private-string-to-int))
 
 (define (compiler-builtin-lower-arena-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (or
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-arena-make
-        compiler-builtin-id-arena-make-atomic
-        compiler-builtin-id-arena-current
-        compiler-builtin-id-arena-mark)
-      (compiler-builtin-id-any3?
-        name-id
-        compiler-builtin-id-arena-set-bang
-        compiler-builtin-id-arena-destroy
-        compiler-builtin-id-arena-rewind))))
-
-(define (compiler-builtin-lower-arena-nullary-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
+  (compiler-builtin-refresh!)
+  (or
     (compiler-builtin-id-any4?
       name-id
       compiler-builtin-id-arena-make
       compiler-builtin-id-arena-make-atomic
       compiler-builtin-id-arena-current
-      compiler-builtin-id-arena-mark)))
+      compiler-builtin-id-arena-mark)
+    (compiler-builtin-id-any3?
+      name-id
+      compiler-builtin-id-arena-set-bang
+      compiler-builtin-id-arena-destroy
+      compiler-builtin-id-arena-rewind)))
+
+(define (compiler-builtin-lower-arena-nullary-id? [name-id : i64]) : bool
+  (compiler-builtin-refresh!)
+  (compiler-builtin-id-any4?
+    name-id
+    compiler-builtin-id-arena-make
+    compiler-builtin-id-arena-make-atomic
+    compiler-builtin-id-arena-current
+    compiler-builtin-id-arena-mark))
 
 (define (compiler-builtin-lower-arena-make-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-arena-make)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-arena-make))
 
 (define (compiler-builtin-lower-arena-make-atomic-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-arena-make-atomic)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-arena-make-atomic))
 
 (define (compiler-builtin-lower-arena-current-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-arena-current)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-arena-current))
 
 (define (compiler-builtin-lower-arena-mark-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-arena-mark)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-arena-mark))
 
 (define (compiler-builtin-lower-arena-set-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-arena-set-bang)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-arena-set-bang))
 
 (define (compiler-builtin-lower-arena-destroy-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-arena-destroy)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-arena-destroy))
 
 (define (compiler-builtin-lower-tls-current-arena-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (compiler-builtin-id-any2?
-      name-id
-      compiler-builtin-id-tls-current-arena
-      compiler-builtin-id-tls-current-arena-set-bang)))
+  (compiler-builtin-refresh!)
+  (compiler-builtin-id-any2?
+    name-id
+    compiler-builtin-id-tls-current-arena
+    compiler-builtin-id-tls-current-arena-set-bang))
 
 (define (compiler-builtin-lower-tls-current-arena-read-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tls-current-arena)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tls-current-arena))
 
 (define (compiler-builtin-lower-string-ref-call-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-private-string-ref)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-private-string-ref))
 
 (define (compiler-builtin-lower-length-call-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (or
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-array-length
-        compiler-builtin-id-length
-        compiler-builtin-id-string-length
-        compiler-builtin-id-private-array-length)
-      (= name-id compiler-builtin-id-tl-private-string-length))))
-
-(define (compiler-builtin-lower-array-length-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (compiler-builtin-id-any2?
+  (compiler-builtin-refresh!)
+  (or
+    (compiler-builtin-id-any4?
       name-id
       compiler-builtin-id-array-length
-      compiler-builtin-id-private-array-length)))
+      compiler-builtin-id-length
+      compiler-builtin-id-string-length
+      compiler-builtin-id-private-array-length)
+    (= name-id compiler-builtin-id-tl-private-string-length)))
+
+(define (compiler-builtin-lower-array-length-id? [name-id : i64]) : bool
+  (compiler-builtin-refresh!)
+  (compiler-builtin-id-any2?
+    name-id
+    compiler-builtin-id-array-length
+    compiler-builtin-id-private-array-length))
 
 (define (compiler-builtin-lower-string-length-load-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (compiler-builtin-id-any2?
-      name-id
-      compiler-builtin-id-length
-      compiler-builtin-id-tl-private-string-length)))
+  (compiler-builtin-refresh!)
+  (compiler-builtin-id-any2?
+    name-id
+    compiler-builtin-id-length
+    compiler-builtin-id-tl-private-string-length))
 
 (define (compiler-builtin-lower-cpuid-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-cpuid)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-cpuid))
 
 (define (compiler-builtin-lower-xgetbv-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-xgetbv)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-xgetbv))
 
 (define (compiler-builtin-lower-clone-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-clone)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-clone))
 
 (define (compiler-builtin-lower-float-sqrt-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-private-float-sqrt)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-private-float-sqrt))
 
 (define (compiler-builtin-lower-float-to-bits-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-private-float-to-bits)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-private-float-to-bits))
 
 (define (compiler-builtin-lower-float-from-bits-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-private-float-from-bits)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-private-float-from-bits))
 
 (define (compiler-builtin-lower-float-bitcast-id? [name-id : i64]) : bool
   (or
@@ -3009,30 +2931,27 @@
 ;: set in the fixed-id registry lets typechecking and lowering share the exact
 ;: same provenance rule.
 (define (compiler-builtin-private-intrinsic-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (or
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-tl-private-string-length
-        compiler-builtin-id-tl-private-string-ref
-        compiler-builtin-id-tl-private-string-eq
-        compiler-builtin-id-tl-private-string-to-int)
-      (compiler-builtin-id-any3?
-        name-id
-        compiler-builtin-id-tl-private-float-sqrt
-        compiler-builtin-id-tl-private-float-to-bits
-        compiler-builtin-id-tl-private-float-from-bits))))
+  (compiler-builtin-refresh!)
+  (or
+    (compiler-builtin-id-any4?
+      name-id
+      compiler-builtin-id-tl-private-string-length
+      compiler-builtin-id-tl-private-string-ref
+      compiler-builtin-id-tl-private-string-eq
+      compiler-builtin-id-tl-private-string-to-int)
+    (compiler-builtin-id-any3?
+      name-id
+      compiler-builtin-id-tl-private-float-sqrt
+      compiler-builtin-id-tl-private-float-to-bits
+      compiler-builtin-id-tl-private-float-from-bits)))
 
 (define (compiler-builtin-typecheck-string-length-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-private-string-length)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-private-string-length))
 
 (define (compiler-builtin-typecheck-public-string-length-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-string-length)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-string-length))
 
 (define (compiler-builtin-typecheck-array-length-id? [name-id : i64]) : bool
   (compiler-builtin-lower-array-length-id? name-id))
@@ -3044,17 +2963,15 @@
   (compiler-builtin-lower-string-ref-call-id? name-id))
 
 (define (compiler-builtin-typecheck-public-string-ref-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (compiler-builtin-id-any2?
-      name-id
-      compiler-builtin-id-string-ref
-      compiler-builtin-id-char-at)))
+  (compiler-builtin-refresh!)
+  (compiler-builtin-id-any2?
+    name-id
+    compiler-builtin-id-string-ref
+    compiler-builtin-id-char-at))
 
 (define (compiler-builtin-typecheck-public-char-at-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-char-at)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-char-at))
 
 (define (compiler-builtin-typecheck-clone-id? [name-id : i64]) : bool
   (compiler-builtin-lower-clone-id? name-id))
@@ -3093,35 +3010,31 @@
       (not (compiler-builtin-typecheck-tls-current-arena-read-id? name-id)))))
 
 (define (compiler-builtin-typecheck-region-arg-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (or
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-tl-private-string-length
-        compiler-builtin-id-length
-        compiler-builtin-id-array-length
-        compiler-builtin-id-tl-private-string-eq)
-      (= name-id compiler-builtin-id-tl-private-string-to-int))))
+  (compiler-builtin-refresh!)
+  (or
+    (compiler-builtin-id-any4?
+      name-id
+      compiler-builtin-id-tl-private-string-length
+      compiler-builtin-id-length
+      compiler-builtin-id-array-length
+      compiler-builtin-id-tl-private-string-eq)
+    (= name-id compiler-builtin-id-tl-private-string-to-int)))
 
 (define (compiler-builtin-typecheck-string-eq-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-private-string-eq)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-private-string-eq))
 
 (define (compiler-builtin-typecheck-public-string-eq-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (compiler-builtin-id-any2?
-      name-id
-      compiler-builtin-id-string-eq
-      compiler-builtin-id-string-eq-question)))
+  (compiler-builtin-refresh!)
+  (compiler-builtin-id-any2?
+    name-id
+    compiler-builtin-id-string-eq
+    compiler-builtin-id-string-eq-question))
 
 (define (compiler-builtin-typecheck-public-string-eq-question-id?
   [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-string-eq-question)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-string-eq-question))
 
 ;: Bare public helper spellings whose fallback becomes visible only when the
 ;: current module imports `stdlib.string`. The typechecker and syntax-only
@@ -3129,21 +3042,20 @@
 ;: dotted imports never become general flat imports.
 (define (compiler-builtin-typecheck-stdlib-string-bare-helper-id?
   [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (or
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-string-length
-        compiler-builtin-id-string-ref
-        compiler-builtin-id-char-at
-        compiler-builtin-id-eq)
-      (compiler-builtin-id-any4?
-        name-id
-        compiler-builtin-id-string-eq
-        compiler-builtin-id-string-eq-question
-        compiler-builtin-id-string-append
-        compiler-builtin-id-string-concat))))
+  (compiler-builtin-refresh!)
+  (or
+    (compiler-builtin-id-any4?
+      name-id
+      compiler-builtin-id-string-length
+      compiler-builtin-id-string-ref
+      compiler-builtin-id-char-at
+      compiler-builtin-id-eq)
+    (compiler-builtin-id-any4?
+      name-id
+      compiler-builtin-id-string-eq
+      compiler-builtin-id-string-eq-question
+      compiler-builtin-id-string-append
+      compiler-builtin-id-string-concat)))
 
 (cfg
   test
@@ -3178,21 +3090,18 @@
         (io.panic "compiler builtin stdlib.string bare helper catalog failed")))))
 
 (define (compiler-builtin-typecheck-string-to-int-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-tl-private-string-to-int)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-tl-private-string-to-int))
 
 (define (compiler-builtin-typecheck-borrowed-string-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (or
-      (compiler-builtin-typecheck-string-eq-id? name-id)
-      (compiler-builtin-typecheck-string-to-int-id? name-id))))
+  (compiler-builtin-refresh!)
+  (or
+    (compiler-builtin-typecheck-string-eq-id? name-id)
+    (compiler-builtin-typecheck-string-to-int-id? name-id)))
 
 (define (compiler-builtin-c-fn-check-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (= name-id compiler-builtin-id-c-fn-check)))
+  (compiler-builtin-refresh!)
+  (= name-id compiler-builtin-id-c-fn-check))
 
 (cfg
   test
@@ -3207,17 +3116,16 @@
         [snapshot : CompilerBuiltinIdsState (state-capture)]
         [check-id : i64 compiler-builtin-id-c-fn-check]
         [abort-id : i64 compiler-builtin-id-tl-c-fn-null-abort]
-        (begin
-          (set! compiler-builtin-id-c-fn-check -1)
-          (set! compiler-builtin-id-tl-c-fn-null-abort -1)
-          (state-install! snapshot)
-          (if (and
-            (compiler-builtin-c-fn-check-id? check-id)
-            (= compiler-builtin-id-tl-c-fn-null-abort abort-id)
-            (= (state-ref snapshot 321) check-id)
-            (= (state-ref snapshot 322) abort-id)
-            (string.eq (ci.intern-str check-id) "c-fn-check")
-            (string.eq (ci.intern-str abort-id) "tl_c_fn_null_abort"))
-            unit
-            (io.panic
-              "compiler C function check builtin identity lifecycle failed")))))))
+        (set! compiler-builtin-id-c-fn-check -1)
+        (set! compiler-builtin-id-tl-c-fn-null-abort -1)
+        (state-install! snapshot)
+        (if (and
+          (compiler-builtin-c-fn-check-id? check-id)
+          (= compiler-builtin-id-tl-c-fn-null-abort abort-id)
+          (= (state-ref snapshot 321) check-id)
+          (= (state-ref snapshot 322) abort-id)
+          (string.eq (ci.intern-str check-id) "c-fn-check")
+          (string.eq (ci.intern-str abort-id) "tl_c_fn_null_abort"))
+          unit
+          (io.panic
+            "compiler C function check builtin identity lifecycle failed"))))))

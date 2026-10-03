@@ -35,6 +35,5 @@
           (CompilerEmbeddedStdlibSomeSource
             (compiler-embedded-stdlib-bytes->string bytes))]
         [(Err _)
-          (begin
-            (string.tl_oob_abort)
-            (CompilerEmbeddedStdlibNoSource))])]))
+          (string.tl_oob_abort)
+          (CompilerEmbeddedStdlibNoSource)])]))

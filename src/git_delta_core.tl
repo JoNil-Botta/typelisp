@@ -132,35 +132,28 @@
     [shift : i64 0]
     [count : i64 0]
     [value : i64 0]
-    (begin
-      (when
-        (or (< start 0) (> start length))
-        (return (Err "git delta: invalid varint start")))
-      (while true
-        (begin
-          (when
-            (>= index length)
-            (return (Err "git delta: truncated size varint")))
-          (let
-            [octet : i64 (git-delta-byte bytes index)]
-            [chunk : i64 (bit-and octet 127)]
-            (begin
-              ;; Signed i64 is the module's size domain. At shift 63 even a
-              ;; single payload bit would exceed that domain.
-              (when
-                (or (> shift 63) (> chunk (shr 9223372036854775807 shift)))
-                (return (Err "git delta: size varint overflows i64")))
-              (set! value (bit-or value (shl chunk shift)))
-              (set! index (+ index 1))
-              (set! count (+ count 1))
-              (when
-                (= (bit-and octet 128) 0)
-                (return (Ok (GitDeltaVarint value index))))
-              (when
-                (>= count 9)
-                (return (Err "git delta: excessive size varint")))
-              (set! shift (+ shift 7))))))
-      (Err "git delta: unreachable size varint state"))))
+    (when
+      (or (< start 0) (> start length))
+      (return (Err "git delta: invalid varint start")))
+    (while true
+      (when (>= index length) (return (Err "git delta: truncated size varint")))
+      (let
+        [octet : i64 (git-delta-byte bytes index)]
+        [chunk : i64 (bit-and octet 127)]
+        ;; Signed i64 is the module's size domain. At shift 63 even a
+        ;; single payload bit would exceed that domain.
+        (when
+          (or (> shift 63) (> chunk (shr 9223372036854775807 shift)))
+          (return (Err "git delta: size varint overflows i64")))
+        (set! value (bit-or value (shl chunk shift)))
+        (set! index (+ index 1))
+        (set! count (+ count 1))
+        (when
+          (= (bit-and octet 128) 0)
+          (return (Ok (GitDeltaVarint value index))))
+        (when (>= count 9) (return (Err "git delta: excessive size varint")))
+        (set! shift (+ shift 7))))
+    (Err "git delta: unreachable size varint state")))
 
 ;: Decode Git's biased, big-endian OFS_DELTA distance and check that it points
 ;: strictly backward from `object-offset` without crossing offset zero.
@@ -173,48 +166,43 @@
     [index : i64 start]
     [count : i64 0]
     [value : i64 0]
-    (begin
-      (when
-        (or (< start 0) (> start length))
-        (return (Err "git delta: invalid OFS_DELTA start")))
-      (when
-        (<= object-offset 0)
-        (return (Err "git delta: invalid object offset")))
-      (when
-        (>= index length)
-        (return (Err "git delta: truncated OFS_DELTA offset")))
-      (let
-        [first : i64 (git-delta-byte bytes index)]
-        (begin
-          (set! value (bit-and first 127))
+    (when
+      (or (< start 0) (> start length))
+      (return (Err "git delta: invalid OFS_DELTA start")))
+    (when
+      (<= object-offset 0)
+      (return (Err "git delta: invalid object offset")))
+    (when
+      (>= index length)
+      (return (Err "git delta: truncated OFS_DELTA offset")))
+    (let
+      [first : i64 (git-delta-byte bytes index)]
+      (set! value (bit-and first 127))
+      (set! index (+ index 1))
+      (set! count 1)
+      (while (!= (bit-and (git-delta-byte bytes (- index 1)) 128) 0)
+        (when
+          (>= index length)
+          (return (Err "git delta: truncated OFS_DELTA offset")))
+        (when
+          (>= count 9)
+          (return (Err "git delta: excessive OFS_DELTA offset")))
+        (let
+          [next : i64 (git-delta-byte bytes index)]
+          [chunk : i64 (bit-and next 127)]
+          ;; value = ((value + 1) << 7) | chunk
+          (when
+            (or
+              (= value 9223372036854775807)
+              (> (+ value 1) (shr 9223372036854775807 7)))
+            (return (Err "git delta: OFS_DELTA offset overflows i64")))
+          (set! value (bit-or (shl (+ value 1) 7) chunk))
           (set! index (+ index 1))
-          (set! count 1)
-          (while (!= (bit-and (git-delta-byte bytes (- index 1)) 128) 0)
-            (begin
-              (when
-                (>= index length)
-                (return (Err "git delta: truncated OFS_DELTA offset")))
-              (when
-                (>= count 9)
-                (return (Err "git delta: excessive OFS_DELTA offset")))
-              (let
-                [next : i64 (git-delta-byte bytes index)]
-                [chunk : i64 (bit-and next 127)]
-                (begin
-                  ;; value = ((value + 1) << 7) | chunk
-                  (when
-                    (or
-                      (= value 9223372036854775807)
-                      (> (+ value 1) (shr 9223372036854775807 7)))
-                    (return (Err "git delta: OFS_DELTA offset overflows i64")))
-                  (set! value (bit-or (shl (+ value 1) 7) chunk))
-                  (set! index (+ index 1))
-                  (set! count (+ count 1)))))))
-        (cond
-          [(<= value 0) (Err "git delta: zero OFS_DELTA distance")]
-          [(> value object-offset)
-            (Err "git delta: OFS_DELTA offset underflow")]
-          [else (Ok (GitDeltaOfsBase value (- object-offset value) index))])))))
+          (set! count (+ count 1))))
+      (cond
+        [(<= value 0) (Err "git delta: zero OFS_DELTA distance")]
+        [(> value object-offset) (Err "git delta: OFS_DELTA offset underflow")]
+        [else (Ok (GitDeltaOfsBase value (- object-offset value) index))]))))
 
 (define (git-delta-expansion-within-limit?
   [result-bytes : i64]
@@ -240,9 +228,8 @@
   [index : (&mut index i64)]) : i64
   (let
     [value : i64 (git-delta-byte delta (deref index))]
-    (begin
-      (set! (deref index) (+ (deref index) 1))
-      value)))
+    (set! (deref index) (+ (deref index) 1))
+    value))
 
 (define (git-delta-append-range!
   [out : (&mut out byte_buf.ByteBufBuilder)]
@@ -252,11 +239,10 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (begin
-        (byte_buf.byte-buf-builder-push
-          out
-          (cast (git-delta-byte bytes (+ start index)) : u8))
-        (set! index (+ index 1))))))
+      (byte_buf.byte-buf-builder-push
+        out
+        (cast (git-delta-byte bytes (+ start index)) : u8))
+      (set! index (+ index 1)))))
 
 ;: Apply one complete, already-inflated Git delta instruction stream.
 ;: `budget` is shared by a whole resolver run when aggregate limits matter.
@@ -271,234 +257,192 @@
     [index : i64 0]
     [declared-base : i64 0]
     [result-length : i64 0]
-    (begin
-      (unless
-        (git-delta-limits-valid? limits)
-        (return (Err "git delta: invalid limits")))
-      (unless
-        (git-delta-budget-valid? budget limits)
-        (return (Err "git delta: invalid budget state")))
-      (when
-        (> base-length limits.max-object-bytes)
-        (return (Err "git delta: base exceeds object limit")))
-      (when
-        (> delta-length limits.max-delta-bytes)
-        (return (Err "git delta: delta exceeds byte limit")))
-      (unless
-        (git-delta-budget-charge-work! budget limits delta-length)
-        (return (Err "git delta: total work limit exceeded")))
-      (match (git-delta-read-size-varint delta index)
-        [(Err message) (return (Err message))]
-        [(Ok decoded)
-          (begin
-            (set! declared-base decoded.value)
-            (set! index decoded.next))])
-      (when
-        (!= declared-base base-length)
-        (return (Err "git delta: base length mismatch")))
-      (match (git-delta-read-size-varint delta index)
-        [(Err message) (return (Err message))]
-        [(Ok decoded)
-          (begin
-            (set! result-length decoded.value)
-            (set! index decoded.next))])
-      (when
-        (> result-length limits.max-object-bytes)
-        (return (Err "git delta: result exceeds object limit")))
-      (unless
-        (git-delta-expansion-within-limit?
-          result-length
-          delta-length
-          limits.max-expansion-ratio)
-        (return (Err "git delta: expansion ratio exceeded")))
-      ;; Allocation happens only after both length headers and all caller caps
-      ;; have been checked.
-      (let
-        [out : byte_buf.ByteBufBuilder
-          (byte_buf.byte-buf-builder-with-capacity result-length)]
-        [valid : bool true]
-        [error : String ""]
-        (begin
-          (while (and valid (< index delta-length))
-            (let
-              [opcode : i64 (git-delta-byte delta index)]
-              [produced : i64 (byte_buf.byte-buf-builder-len (& out))]
-              (begin
-                (set! index (+ index 1))
-                (if (not (git-delta-budget-charge-instruction! budget limits))
+    (unless
+      (git-delta-limits-valid? limits)
+      (return (Err "git delta: invalid limits")))
+    (unless
+      (git-delta-budget-valid? budget limits)
+      (return (Err "git delta: invalid budget state")))
+    (when
+      (> base-length limits.max-object-bytes)
+      (return (Err "git delta: base exceeds object limit")))
+    (when
+      (> delta-length limits.max-delta-bytes)
+      (return (Err "git delta: delta exceeds byte limit")))
+    (unless
+      (git-delta-budget-charge-work! budget limits delta-length)
+      (return (Err "git delta: total work limit exceeded")))
+    (match (git-delta-read-size-varint delta index)
+      [(Err message) (return (Err message))]
+      [(Ok decoded)
+        (set! declared-base decoded.value)
+        (set! index decoded.next)])
+    (when
+      (!= declared-base base-length)
+      (return (Err "git delta: base length mismatch")))
+    (match (git-delta-read-size-varint delta index)
+      [(Err message) (return (Err message))]
+      [(Ok decoded)
+        (set! result-length decoded.value)
+        (set! index decoded.next)])
+    (when
+      (> result-length limits.max-object-bytes)
+      (return (Err "git delta: result exceeds object limit")))
+    (unless
+      (git-delta-expansion-within-limit?
+        result-length
+        delta-length
+        limits.max-expansion-ratio)
+      (return (Err "git delta: expansion ratio exceeded")))
+    ;; Allocation happens only after both length headers and all caller caps
+    ;; have been checked.
+    (let
+      [out : byte_buf.ByteBufBuilder
+        (byte_buf.byte-buf-builder-with-capacity result-length)]
+      [valid : bool true]
+      [error : String ""]
+      (while (and valid (< index delta-length))
+        (let
+          [opcode : i64 (git-delta-byte delta index)]
+          [produced : i64 (byte_buf.byte-buf-builder-len (& out))]
+          (set! index (+ index 1))
+          (if (not (git-delta-budget-charge-instruction! budget limits))
+            (begin
+              (set! valid false)
+              (set! error "git delta: instruction limit exceeded"))
+            (if (!= (bit-and opcode 128) 0)
+              (let
+                [needed : i64
+                  (+
+                    (+
+                      (+
+                        (if (!= (bit-and opcode 1) 0)
+                          1
+                          0)
+                        (if (!= (bit-and opcode 2) 0)
+                          1
+                          0))
+                      (+
+                        (if (!= (bit-and opcode 4) 0)
+                          1
+                          0)
+                        (if (!= (bit-and opcode 8) 0)
+                          1
+                          0)))
+                    (+
+                      (+
+                        (if (!= (bit-and opcode 16) 0)
+                          1
+                          0)
+                        (if (!= (bit-and opcode 32) 0)
+                          1
+                          0))
+                      (if (!= (bit-and opcode 64) 0)
+                        1
+                        0)))]
+                [copy-offset : i64 0]
+                [copy-size : i64 0]
+                (if (> needed (- delta-length index))
                   (begin
                     (set! valid false)
-                    (set! error "git delta: instruction limit exceeded"))
-                  (if (!= (bit-and opcode 128) 0)
-                    (let
-                      [needed : i64
-                        (+
-                          (+
-                            (+
-                              (if (!= (bit-and opcode 1) 0)
-                                1
-                                0)
-                              (if (!= (bit-and opcode 2) 0)
-                                1
-                                0))
-                            (+
-                              (if (!= (bit-and opcode 4) 0)
-                                1
-                                0)
-                              (if (!= (bit-and opcode 8) 0)
-                                1
-                                0)))
-                          (+
-                            (+
-                              (if (!= (bit-and opcode 16) 0)
-                                1
-                                0)
-                              (if (!= (bit-and opcode 32) 0)
-                                1
-                                0))
-                            (if (!= (bit-and opcode 64) 0)
-                              1
-                              0)))]
-                      [copy-offset : i64 0]
-                      [copy-size : i64 0]
-                      (if (> needed (- delta-length index))
-                        (begin
-                          (set! valid false)
-                          (set! error "git delta: truncated copy instruction"))
-                        (begin
-                          (if (!= (bit-and opcode 1) 0)
-                            (set!
-                              copy-offset
-                              (bit-or
-                                copy-offset
-                                (git-delta-read-copy-byte delta (&mut index))))
-                            unit)
-                          (if (!= (bit-and opcode 2) 0)
-                            (set!
-                              copy-offset
-                              (bit-or
-                                copy-offset
-                                (shl
-                                  (git-delta-read-copy-byte delta (&mut index))
-                                  8)))
-                            unit)
-                          (if (!= (bit-and opcode 4) 0)
-                            (set!
-                              copy-offset
-                              (bit-or
-                                copy-offset
-                                (shl
-                                  (git-delta-read-copy-byte delta (&mut index))
-                                  16)))
-                            unit)
-                          (if (!= (bit-and opcode 8) 0)
-                            (set!
-                              copy-offset
-                              (bit-or
-                                copy-offset
-                                (shl
-                                  (git-delta-read-copy-byte delta (&mut index))
-                                  24)))
-                            unit)
-                          (if (!= (bit-and opcode 16) 0)
-                            (set!
-                              copy-size
-                              (bit-or
-                                copy-size
-                                (git-delta-read-copy-byte delta (&mut index))))
-                            unit)
-                          (if (!= (bit-and opcode 32) 0)
-                            (set!
-                              copy-size
-                              (bit-or
-                                copy-size
-                                (shl
-                                  (git-delta-read-copy-byte delta (&mut index))
-                                  8)))
-                            unit)
-                          (if (!= (bit-and opcode 64) 0)
-                            (set!
-                              copy-size
-                              (bit-or
-                                copy-size
-                                (shl
-                                  (git-delta-read-copy-byte delta (&mut index))
-                                  16)))
-                            unit)
-                          (if (= copy-size 0)
-                            (set! copy-size 65536)
-                            unit)
-                          (cond
-                            [(or
-                                (> copy-offset base-length)
-                                (> copy-size (- base-length copy-offset)))
-                              (begin
-                                (set! valid false)
-                                (set! error "git delta: copy outside base"))]
-                            [(> copy-size (- result-length produced))
-                              (begin
-                                (set! valid false)
-                                (set!
-                                  error
-                                  "git delta: copy exceeds result length"))]
-                            [(not
-                                (git-delta-budget-charge-copy!
-                                  budget
-                                  limits
-                                  copy-size))
-                              (begin
-                                (set! valid false)
-                                (set!
-                                  error
-                                  "git delta: copied-byte limit exceeded"))]
-                            [else
-                              (git-delta-append-range!
-                                (&mut out)
-                                base
-                                copy-offset
-                                copy-size)]))))
-                    (let
-                      [insert-size : i64 (bit-and opcode 127)]
-                      (cond
-                        [(= insert-size 0)
-                          (begin
-                            (set! valid false)
-                            (set! error "git delta: reserved zero opcode"))]
-                        [(> insert-size (- delta-length index))
-                          (begin
-                            (set! valid false)
-                            (set!
-                              error
-                              "git delta: truncated insert instruction"))]
-                        [(> insert-size (- result-length produced))
-                          (begin
-                            (set! valid false)
-                            (set!
-                              error
-                              "git delta: insert exceeds result length"))]
-                        [(not
-                            (git-delta-budget-charge-work!
-                              budget
-                              limits
-                              insert-size))
-                          (begin
-                            (set! valid false)
-                            (set! error "git delta: total work limit exceeded"))]
-                        [else
-                          (begin
-                            (git-delta-append-range!
-                              (&mut out)
-                              delta
-                              index
-                              insert-size)
-                            (set! index (+ index insert-size)))])))))))
-          (cond
-            [(not valid) (Err error)]
-            [(!= (byte_buf.byte-buf-builder-len (& out)) result-length)
-              (Err "git delta: result length mismatch")]
-            [(!= index delta-length)
-              (Err "git delta: trailing instruction bytes")]
-            [else (Ok (byte_buf.byte-buf-builder-finish-string (& out)))]))))))
+                    (set! error "git delta: truncated copy instruction"))
+                  (begin
+                    (if (!= (bit-and opcode 1) 0)
+                      (set!
+                        copy-offset
+                        (bit-or
+                          copy-offset
+                          (git-delta-read-copy-byte delta (&mut index))))
+                      unit)
+                    (if (!= (bit-and opcode 2) 0)
+                      (set!
+                        copy-offset
+                        (bit-or
+                          copy-offset
+                          (shl (git-delta-read-copy-byte delta (&mut index)) 8)))
+                      unit)
+                    (if (!= (bit-and opcode 4) 0)
+                      (set!
+                        copy-offset
+                        (bit-or
+                          copy-offset
+                          (shl (git-delta-read-copy-byte delta (&mut index)) 16)))
+                      unit)
+                    (if (!= (bit-and opcode 8) 0)
+                      (set!
+                        copy-offset
+                        (bit-or
+                          copy-offset
+                          (shl (git-delta-read-copy-byte delta (&mut index)) 24)))
+                      unit)
+                    (if (!= (bit-and opcode 16) 0)
+                      (set!
+                        copy-size
+                        (bit-or
+                          copy-size
+                          (git-delta-read-copy-byte delta (&mut index))))
+                      unit)
+                    (if (!= (bit-and opcode 32) 0)
+                      (set!
+                        copy-size
+                        (bit-or
+                          copy-size
+                          (shl (git-delta-read-copy-byte delta (&mut index)) 8)))
+                      unit)
+                    (if (!= (bit-and opcode 64) 0)
+                      (set!
+                        copy-size
+                        (bit-or
+                          copy-size
+                          (shl (git-delta-read-copy-byte delta (&mut index)) 16)))
+                      unit)
+                    (if (= copy-size 0)
+                      (set! copy-size 65536)
+                      unit)
+                    (cond
+                      [(or
+                        (> copy-offset base-length)
+                        (> copy-size (- base-length copy-offset)))
+                        (set! valid false)
+                        (set! error "git delta: copy outside base")]
+                      [(> copy-size (- result-length produced))
+                        (set! valid false)
+                        (set! error "git delta: copy exceeds result length")]
+                      [(not
+                        (git-delta-budget-charge-copy! budget limits copy-size))
+                        (set! valid false)
+                        (set! error "git delta: copied-byte limit exceeded")]
+                      [else
+                        (git-delta-append-range!
+                          (&mut out)
+                          base
+                          copy-offset
+                          copy-size)]))))
+              (let
+                [insert-size : i64 (bit-and opcode 127)]
+                (cond
+                  [(= insert-size 0)
+                    (set! valid false)
+                    (set! error "git delta: reserved zero opcode")]
+                  [(> insert-size (- delta-length index))
+                    (set! valid false)
+                    (set! error "git delta: truncated insert instruction")]
+                  [(> insert-size (- result-length produced))
+                    (set! valid false)
+                    (set! error "git delta: insert exceeds result length")]
+                  [(not
+                    (git-delta-budget-charge-work! budget limits insert-size))
+                    (set! valid false)
+                    (set! error "git delta: total work limit exceeded")]
+                  [else
+                    (git-delta-append-range! (&mut out) delta index insert-size)
+                    (set! index (+ index insert-size))]))))))
+      (cond
+        [(not valid) (Err error)]
+        [(!= (byte_buf.byte-buf-builder-len (& out)) result-length)
+          (Err "git delta: result length mismatch")]
+        [(!= index delta-length) (Err "git delta: trailing instruction bytes")]
+        [else (Ok (byte_buf.byte-buf-builder-finish-string (& out)))]))))
 
 ;: Convenience boundary for one independent delta application.
 (define (git-delta-apply
@@ -627,36 +571,32 @@
     [index : i64 0]
     [matches : i64 0]
     [target : i64 -1]
-    (begin
-      (when
-        (or (< base-offset 0) (<= current-offset base-offset))
-        (return (Err "git delta: OFS dependency is not strictly backward")))
+    (when
+      (or (< base-offset 0) (<= current-offset base-offset))
+      (return (Err "git delta: OFS dependency is not strictly backward")))
+    (unless
+      (git-delta-budget-charge-lookup! budget limits)
+      (return (Err "git delta: lookup limit exceeded")))
+    (while (< index (array-length lookups))
       (unless
-        (git-delta-budget-charge-lookup! budget limits)
-        (return (Err "git delta: lookup limit exceeded")))
-      (while (< index (array-length lookups))
-        (begin
-          (unless
-            (git-delta-budget-charge-work! budget limits 1)
-            (return (Err "git delta: total work limit exceeded")))
-          (let
-            [candidate : (& lookups GitDeltaOffsetLookup)
-              (& (array-ref lookups index))]
-            (begin
-              (if (= candidate.offset base-offset)
-                (begin
-                  (set! matches (+ matches 1))
-                  (set! target candidate.entry-index))
-                unit)
-              (set! index (+ index 1))))))
-      (cond
-        [(= matches 0) (Err "git delta: missing OFS base")]
-        [(> matches 1) (Err "git delta: ambiguous OFS base")]
-        [(or (< target 0) (>= target (array-length entries)))
-          (Err "git delta: invalid OFS lookup target")]
-        [(!= (git-delta-entry-at entries target).offset base-offset)
-          (Err "git delta: inconsistent OFS lookup")]
-        [else (Ok target)]))))
+        (git-delta-budget-charge-work! budget limits 1)
+        (return (Err "git delta: total work limit exceeded")))
+      (let
+        [candidate : (& lookups GitDeltaOffsetLookup)
+          (& (array-ref lookups index))]
+        (when
+          (= candidate.offset base-offset)
+          (set! matches (+ matches 1))
+          (set! target candidate.entry-index))
+        (set! index (+ index 1))))
+    (cond
+      [(= matches 0) (Err "git delta: missing OFS base")]
+      [(> matches 1) (Err "git delta: ambiguous OFS base")]
+      [(or (< target 0) (>= target (array-length entries)))
+        (Err "git delta: invalid OFS lookup target")]
+      [(!= (git-delta-entry-at entries target).offset base-offset)
+        (Err "git delta: inconsistent OFS lookup")]
+      [else (Ok target)])))
 
 (define (git-delta-resolve-id-lookup!
   [entries : (& entries (__tl_dyn-array GitDeltaEntry))]
@@ -670,58 +610,49 @@
     [matches : i64 0]
     [target-kind : i64 -1]
     [target-index : i64 -1]
-    (begin
-      (when
-        (= (string.string-length object-id) 0)
-        (return (Err "git delta: empty REF object id")))
+    (when
+      (= (string.string-length object-id) 0)
+      (return (Err "git delta: empty REF object id")))
+    (unless
+      (git-delta-budget-charge-lookup! budget limits)
+      (return (Err "git delta: lookup limit exceeded")))
+    (while (< index (array-length lookups))
       (unless
-        (git-delta-budget-charge-lookup! budget limits)
-        (return (Err "git delta: lookup limit exceeded")))
-      (while (< index (array-length lookups))
-        (begin
-          (unless
-            (git-delta-budget-charge-work! budget limits 1)
-            (return (Err "git delta: total work limit exceeded")))
-          (let
-            [candidate : (& lookups GitDeltaIdLookup)
-              (& (array-ref lookups index))]
-            (begin
-              (if (string.eq candidate.object-id object-id)
-                (begin
-                  (set! matches (+ matches 1))
-                  (match (& candidate.target)
-                    [(Entry entry-index)
-                      (begin
-                        (set! target-kind 0)
-                        (set! target-index (deref entry-index)))]
-                    [(Thin thin-index)
-                      (begin
-                        (set! target-kind 1)
-                        (set! target-index (deref thin-index)))]))
-                unit)
-              (set! index (+ index 1))))))
-      (cond
-        [(= matches 0) (Err "git delta: missing REF base")]
-        [(> matches 1) (Err "git delta: ambiguous REF base")]
-        [(= target-kind 0)
-          (if (or (< target-index 0) (>= target-index (array-length entries)))
-            (Err "git delta: invalid REF entry target")
-            (if (string.eq
-              (git-delta-entry-at entries target-index).object-id
-              object-id)
-              (Ok target-index)
-              (Err "git delta: inconsistent REF entry lookup")))]
-        [(= target-kind 1)
-          (if (or
-            (< target-index 0)
-            (>= target-index (array-length thin-bases)))
-            (Err "git delta: invalid thin base target")
-            (if (string.eq
-              (git-delta-thin-at thin-bases target-index).object-id
-              object-id)
-              (Ok (- 0 (+ target-index 1)))
-              (Err "git delta: inconsistent thin base lookup")))]
-        [else (Err "git delta: invalid REF lookup target")]))))
+        (git-delta-budget-charge-work! budget limits 1)
+        (return (Err "git delta: total work limit exceeded")))
+      (let
+        [candidate : (& lookups GitDeltaIdLookup) (& (array-ref lookups index))]
+        (when
+          (string.eq candidate.object-id object-id)
+          (set! matches (+ matches 1))
+          (match (& candidate.target)
+            [(Entry entry-index)
+              (set! target-kind 0)
+              (set! target-index (deref entry-index))]
+            [(Thin thin-index)
+              (set! target-kind 1)
+              (set! target-index (deref thin-index))]))
+        (set! index (+ index 1))))
+    (cond
+      [(= matches 0) (Err "git delta: missing REF base")]
+      [(> matches 1) (Err "git delta: ambiguous REF base")]
+      [(= target-kind 0)
+        (if (or (< target-index 0) (>= target-index (array-length entries)))
+          (Err "git delta: invalid REF entry target")
+          (if (string.eq
+            (git-delta-entry-at entries target-index).object-id
+            object-id)
+            (Ok target-index)
+            (Err "git delta: inconsistent REF entry lookup")))]
+      [(= target-kind 1)
+        (if (or (< target-index 0) (>= target-index (array-length thin-bases)))
+          (Err "git delta: invalid thin base target")
+          (if (string.eq
+            (git-delta-thin-at thin-bases target-index).object-id
+            object-id)
+            (Ok (- 0 (+ target-index 1)))
+            (Err "git delta: inconsistent thin base lookup")))]
+      [else (Err "git delta: invalid REF lookup target")])))
 
 (define (git-delta-copy-owned [value : (& value str)]) : String
   (string.substring value 0 (string.string-length value)))
@@ -744,250 +675,184 @@
     [budget : GitDeltaBudget (git-delta-budget-new)]
     [reconstructed : i64 0]
     [root : i64 0]
-    (begin
-      (unless
-        (git-delta-limits-valid? limits)
-        (return (Err "git delta: invalid limits")))
-      (while (< root count)
-        (begin
-          (if (!= (array-ref states root) 2)
+    (unless
+      (git-delta-limits-valid? limits)
+      (return (Err "git delta: invalid limits")))
+    (while (< root count)
+      (if (!= (array-ref states root) 2)
+        (let
+          [stack-count : i64 1]
+          (set! (array-ref stack 0) root)
+          (while (> stack-count 0)
             (let
-              [stack-count : i64 1]
-              (begin
-                (set! (array-ref stack 0) root)
-                (while (> stack-count 0)
+              [slot : i64 (array-ref stack (- stack-count 1))]
+              [entry : (& entries GitDeltaEntry)
+                (git-delta-entry-at entries slot)]
+              [state : i64 (array-ref states slot)]
+              (cond
+                [(= state 0)
+                  (unless
+                    (git-delta-budget-charge-work! (&mut budget) limits 1)
+                    (return (Err "git delta: total work limit exceeded")))
+                  (set! (array-ref states slot) 1)
+                  (match (& entry.body)
+                    [(Stored kind bytes)
+                      (let
+                        [length : i64 (string.string-length bytes)]
+                        (when
+                          (> length limits.max-object-bytes)
+                          (return
+                            (Err "git delta: stored object exceeds limit")))
+                        (unless
+                          (git-delta-budget-charge-work!
+                            (&mut budget)
+                            limits
+                            length)
+                          (return (Err "git delta: total work limit exceeded")))
+                        (set!
+                          (array-ref objects slot)
+                          (git-delta-copy-owned bytes))
+                        (set!
+                          (array-ref kinds slot)
+                          (git-delta-kind-owned-copy kind))
+                        (set! (array-ref states slot) 2)
+                        (set! stack-count (- stack-count 1)))]
+                    [(Ofs base-offset _ _)
+                      (when
+                        (> stack-count limits.max-depth)
+                        (return (Err "git delta: chain depth limit exceeded")))
+                      (match (git-delta-resolve-offset-lookup!
+                        entries
+                        tables.offsets
+                        entry.offset
+                        (deref base-offset)
+                        limits
+                        (&mut budget))
+                        [(Err message) (return (Err message))]
+                        [(Ok dependency)
+                          (set! (array-ref dependencies slot) dependency)
+                          (cond
+                            [(= (array-ref states dependency) 1)
+                              (return (Err "git delta: dependency cycle"))]
+                            [(= (array-ref states dependency) 0)
+                              (when
+                                (>= stack-count count)
+                                (return
+                                  (Err "git delta: dependency stack overflow")))
+                              (set! (array-ref stack stack-count) dependency)
+                              (set! stack-count (+ stack-count 1))]
+                            [else unit])])]
+                    [(Ref object-id _ _)
+                      (when
+                        (> stack-count limits.max-depth)
+                        (return (Err "git delta: chain depth limit exceeded")))
+                      (match (git-delta-resolve-id-lookup!
+                        entries
+                        tables.ids
+                        tables.thin-bases
+                        object-id
+                        limits
+                        (&mut budget))
+                        [(Err message) (return (Err message))]
+                        [(Ok dependency)
+                          (set! (array-ref dependencies slot) dependency)
+                          (if (>= dependency 0)
+                            (cond
+                              [(= (array-ref states dependency) 1)
+                                (return (Err "git delta: dependency cycle"))]
+                              [(= (array-ref states dependency) 0)
+                                (when
+                                  (>= stack-count count)
+                                  (return
+                                    (Err "git delta: dependency stack overflow")))
+                                (set! (array-ref stack stack-count) dependency)
+                                (set! stack-count (+ stack-count 1))]
+                              [else unit])
+                            unit)])])]
+                [(= state 1)
                   (let
-                    [slot : i64 (array-ref stack (- stack-count 1))]
-                    [entry : (& entries GitDeltaEntry)
-                      (git-delta-entry-at entries slot)]
-                    [state : i64 (array-ref states slot)]
-                    (cond
-                      [(= state 0)
-                        (begin
+                    [dependency : i64 (array-ref dependencies slot)]
+                    [base-kind : GitDeltaObjectKind (Blob)]
+                    [base-bytes : String ""]
+                    [base-depth : i64 0]
+                    (if (>= dependency 0)
+                      (begin
+                        (when
+                          (!= (array-ref states dependency) 2)
+                          (return
+                            (Err "git delta: unresolved dependency state")))
+                        (unless
+                          (git-delta-budget-charge-work!
+                            (&mut budget)
+                            limits
+                            (string.string-length
+                              (& (array-ref objects dependency))))
+                          (return (Err "git delta: total work limit exceeded")))
+                        (set!
+                          base-bytes
+                          (git-delta-copy-owned
+                            (& (array-ref objects dependency))))
+                        (set! base-kind (array-ref kinds dependency))
+                        (set! base-depth (array-ref depths dependency)))
+                      (let
+                        [thin-index : i64 (- (- 0 dependency) 1)]
+                        (when
+                          (or
+                            (< thin-index 0)
+                            (>= thin-index (array-length tables.thin-bases)))
+                          (return (Err "git delta: invalid thin dependency")))
+                        (let
+                          [thin : (& tables GitDeltaThinBase)
+                            (git-delta-thin-at tables.thin-bases thin-index)]
+                          [thin-length : i64 (string.string-length thin.bytes)]
+                          (when
+                            (> thin-length limits.max-object-bytes)
+                            (return
+                              (Err "git delta: thin base exceeds object limit")))
                           (unless
                             (git-delta-budget-charge-work!
                               (&mut budget)
                               limits
-                              1)
+                              thin-length)
                             (return
                               (Err "git delta: total work limit exceeded")))
-                          (set! (array-ref states slot) 1)
-                          (match (& entry.body)
-                            [(Stored kind bytes)
-                              (let
-                                [length : i64 (string.string-length bytes)]
-                                (begin
-                                  (when
-                                    (> length limits.max-object-bytes)
-                                    (return
-                                      (Err
-                                        "git delta: stored object exceeds limit")))
-                                  (unless
-                                    (git-delta-budget-charge-work!
-                                      (&mut budget)
-                                      limits
-                                      length)
-                                    (return
-                                      (Err
-                                        "git delta: total work limit exceeded")))
-                                  (set!
-                                    (array-ref objects slot)
-                                    (git-delta-copy-owned bytes))
-                                  (set!
-                                    (array-ref kinds slot)
-                                    (git-delta-kind-owned-copy kind))
-                                  (set! (array-ref states slot) 2)
-                                  (set! stack-count (- stack-count 1))))]
-                            [(Ofs base-offset _ _)
-                              (begin
-                                (when
-                                  (> stack-count limits.max-depth)
-                                  (return
-                                    (Err
-                                      "git delta: chain depth limit exceeded")))
-                                (match (git-delta-resolve-offset-lookup!
-                                  entries
-                                  tables.offsets
-                                  entry.offset
-                                  (deref base-offset)
-                                  limits
-                                  (&mut budget))
-                                  [(Err message) (return (Err message))]
-                                  [(Ok dependency)
-                                    (begin
-                                      (set!
-                                        (array-ref dependencies slot)
-                                        dependency)
-                                      (cond
-                                        [(= (array-ref states dependency) 1)
-                                          (return
-                                            (Err "git delta: dependency cycle"))]
-                                        [(= (array-ref states dependency) 0)
-                                          (begin
-                                            (when
-                                              (>= stack-count count)
-                                              (return
-                                                (Err
-                                                  "git delta: dependency stack overflow")))
-                                            (set!
-                                              (array-ref stack stack-count)
-                                              dependency)
-                                            (set! stack-count (+ stack-count 1)))]
-                                        [else unit]))]))]
-                            [(Ref object-id _ _)
-                              (begin
-                                (when
-                                  (> stack-count limits.max-depth)
-                                  (return
-                                    (Err
-                                      "git delta: chain depth limit exceeded")))
-                                (match (git-delta-resolve-id-lookup!
-                                  entries
-                                  tables.ids
-                                  tables.thin-bases
-                                  object-id
-                                  limits
-                                  (&mut budget))
-                                  [(Err message) (return (Err message))]
-                                  [(Ok dependency)
-                                    (begin
-                                      (set!
-                                        (array-ref dependencies slot)
-                                        dependency)
-                                      (if (>= dependency 0)
-                                        (cond
-                                          [(= (array-ref states dependency) 1)
-                                            (return
-                                              (Err
-                                                "git delta: dependency cycle"))]
-                                          [(= (array-ref states dependency) 0)
-                                            (begin
-                                              (when
-                                                (>= stack-count count)
-                                                (return
-                                                  (Err
-                                                    "git delta: dependency stack overflow")))
-                                              (set!
-                                                (array-ref stack stack-count)
-                                                dependency)
-                                              (set!
-                                                stack-count
-                                                (+ stack-count 1)))]
-                                          [else unit])
-                                        unit))]))]))]
-                      [(= state 1)
-                        (let
-                          [dependency : i64 (array-ref dependencies slot)]
-                          [base-kind : GitDeltaObjectKind (Blob)]
-                          [base-bytes : String ""]
-                          [base-depth : i64 0]
-                          (begin
-                            (if (>= dependency 0)
-                              (begin
-                                (when
-                                  (!= (array-ref states dependency) 2)
-                                  (return
-                                    (Err
-                                      "git delta: unresolved dependency state")))
-                                (unless
-                                  (git-delta-budget-charge-work!
-                                    (&mut budget)
-                                    limits
-                                    (string.string-length
-                                      (& (array-ref objects dependency))))
-                                  (return
-                                    (Err "git delta: total work limit exceeded")))
-                                (set!
-                                  base-bytes
-                                  (git-delta-copy-owned
-                                    (& (array-ref objects dependency))))
-                                (set! base-kind (array-ref kinds dependency))
-                                (set! base-depth (array-ref depths dependency)))
-                              (let
-                                [thin-index : i64 (- (- 0 dependency) 1)]
-                                (begin
-                                  (when
-                                    (or
-                                      (< thin-index 0)
-                                      (>=
-                                        thin-index
-                                        (array-length tables.thin-bases)))
-                                    (return
-                                      (Err "git delta: invalid thin dependency")))
-                                  (let
-                                    [thin : (& tables GitDeltaThinBase)
-                                      (git-delta-thin-at
-                                        tables.thin-bases
-                                        thin-index)]
-                                    [thin-length : i64
-                                      (string.string-length thin.bytes)]
-                                    (begin
-                                      (when
-                                        (> thin-length limits.max-object-bytes)
-                                        (return
-                                          (Err
-                                            "git delta: thin base exceeds object limit")))
-                                      (unless
-                                        (git-delta-budget-charge-work!
-                                          (&mut budget)
-                                          limits
-                                          thin-length)
-                                        (return
-                                          (Err
-                                            "git delta: total work limit exceeded")))
-                                      (set!
-                                        base-bytes
-                                        (git-delta-copy-owned thin.bytes))
-                                      (set!
-                                        base-kind
-                                        (git-delta-kind-owned-copy thin.kind)))))))
-                            (when
-                              (>= base-depth limits.max-depth)
-                              (return
-                                (Err "git delta: chain depth limit exceeded")))
-                            (match (& entry.body)
-                              [(Stored _ _)
-                                (return
-                                  (Err "git delta: invalid stored entry state"))]
-                              [(Ofs _ expected delta)
-                                (begin
-                                  (unless
-                                    (git-delta-expected-kind-matches?
-                                      expected
-                                      base-kind)
-                                    (return
-                                      (Err "git delta: object type mismatch")))
-                                  (match (git-delta-apply-with-budget
-                                    (& base-bytes)
-                                    delta
-                                    limits
-                                    (&mut budget))
-                                    [(Err message) (return (Err message))]
-                                    [(Ok object)
-                                      (set! (array-ref objects slot) object)]))]
-                              [(Ref _ expected delta)
-                                (begin
-                                  (unless
-                                    (git-delta-expected-kind-matches?
-                                      expected
-                                      base-kind)
-                                    (return
-                                      (Err "git delta: object type mismatch")))
-                                  (match (git-delta-apply-with-budget
-                                    (& base-bytes)
-                                    delta
-                                    limits
-                                    (&mut budget))
-                                    [(Err message) (return (Err message))]
-                                    [(Ok object)
-                                      (set! (array-ref objects slot) object)]))])
-                            (set! (array-ref kinds slot) base-kind)
-                            (set! (array-ref depths slot) (+ base-depth 1))
-                            (set! (array-ref states slot) 2)
-                            (set! reconstructed (+ reconstructed 1))
-                            (set! stack-count (- stack-count 1))))]
-                      [else (set! stack-count (- stack-count 1))])))
-                unit))
-            unit)
-          (set! root (+ root 1))))
-      (Ok (GitDeltaResolvedSet objects kinds budget reconstructed)))))
+                          (set! base-bytes (git-delta-copy-owned thin.bytes))
+                          (set! base-kind (git-delta-kind-owned-copy thin.kind)))))
+                    (when
+                      (>= base-depth limits.max-depth)
+                      (return (Err "git delta: chain depth limit exceeded")))
+                    (match (& entry.body)
+                      [(Stored _ _)
+                        (return (Err "git delta: invalid stored entry state"))]
+                      [(Ofs _ expected delta)
+                        (unless
+                          (git-delta-expected-kind-matches? expected base-kind)
+                          (return (Err "git delta: object type mismatch")))
+                        (match (git-delta-apply-with-budget
+                          (& base-bytes)
+                          delta
+                          limits
+                          (&mut budget))
+                          [(Err message) (return (Err message))]
+                          [(Ok object) (set! (array-ref objects slot) object)])]
+                      [(Ref _ expected delta)
+                        (unless
+                          (git-delta-expected-kind-matches? expected base-kind)
+                          (return (Err "git delta: object type mismatch")))
+                        (match (git-delta-apply-with-budget
+                          (& base-bytes)
+                          delta
+                          limits
+                          (&mut budget))
+                          [(Err message) (return (Err message))]
+                          [(Ok object) (set! (array-ref objects slot) object)])])
+                    (set! (array-ref kinds slot) base-kind)
+                    (set! (array-ref depths slot) (+ base-depth 1))
+                    (set! (array-ref states slot) 2)
+                    (set! reconstructed (+ reconstructed 1))
+                    (set! stack-count (- stack-count 1)))]
+                [else (set! stack-count (- stack-count 1))])))
+          unit)
+        unit)
+      (set! root (+ root 1)))
+    (Ok (GitDeltaResolvedSet objects kinds budget reconstructed))))

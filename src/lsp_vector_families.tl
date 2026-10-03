@@ -234,9 +234,8 @@
   (let
     [i : i64 0]
     (while (< i count)
-      (begin
-        (set! (array-ref dst i) (array-ref src i))
-        (set! i (+ i 1))))))
+      (set! (array-ref dst i) (array-ref src i))
+      (set! i (+ i 1)))))
 
 (define (lsp-call-frames-grow! [frames : (&mut frames LspCallFrames)]) : unit
   (let
@@ -247,19 +246,17 @@
         (* old-cap 2))]
     [bigger : (__tl_dyn-array LspCallFrame)
       (__tl_make-array LspCallFrame new-cap)]
-    (begin
-      (lsp-call-frames-copy-range! (&mut bigger) (& frames.slots) frames.len)
-      (set! frames.slots bigger))))
+    (lsp-call-frames-copy-range! (&mut bigger) (& frames.slots) frames.len)
+    (set! frames.slots bigger)))
 
 (define (lsp-call-frames-push!
   [frames : (&mut frames LspCallFrames)]
   [value : LspCallFrame]) : unit
-  (begin
-    (if (>= frames.len (array-length frames.slots))
-      (lsp-call-frames-grow! frames)
-      unit)
-    (set! (array-ref frames.slots frames.len) value)
-    (set! frames.len (+ frames.len 1))))
+  (if (>= frames.len (array-length frames.slots))
+    (lsp-call-frames-grow! frames)
+    unit)
+  (set! (array-ref frames.slots frames.len) value)
+  (set! frames.len (+ frames.len 1)))
 
 (define (lsp-call-frames-pop! [frames : (&mut frames LspCallFrames)]) : unit
   (if (> frames.len 0)
@@ -296,11 +293,10 @@
   [src : (& src (__tl_dyn-array LspFoldRange))]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (lsp-fold-ranges-copy-range! dst src (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set! (array-ref dst index) (array-ref src index))
+    (lsp-fold-ranges-copy-range! dst src (+ index 1) count)))
 
 (define (lsp-fold-ranges-grow! [folds : (&mut folds LspFoldRanges)]) : unit
   (let
@@ -311,19 +307,17 @@
         (* old-cap 2))]
     [bigger : (__tl_dyn-array LspFoldRange)
       (__tl_make-array LspFoldRange new-cap)]
-    (begin
-      (lsp-fold-ranges-copy-range! (&mut bigger) (& folds.slots) 0 folds.len)
-      (set! folds.slots bigger))))
+    (lsp-fold-ranges-copy-range! (&mut bigger) (& folds.slots) 0 folds.len)
+    (set! folds.slots bigger)))
 
 (define (lsp-fold-ranges-push!
   [folds : (&mut folds LspFoldRanges)]
   [value : LspFoldRange]) : unit
-  (begin
-    (if (>= folds.len (array-length folds.slots))
-      (lsp-fold-ranges-grow! folds)
-      unit)
-    (set! (array-ref folds.slots folds.len) value)
-    (set! folds.len (+ folds.len 1))))
+  (if (>= folds.len (array-length folds.slots))
+    (lsp-fold-ranges-grow! folds)
+    unit)
+  (set! (array-ref folds.slots folds.len) value)
+  (set! folds.len (+ folds.len 1)))
 
 (define (lsp-documents-drop-last! [docs : (&mut docs lsp_document_vec.Vec)]) : unit
   (if (> docs.len 0)

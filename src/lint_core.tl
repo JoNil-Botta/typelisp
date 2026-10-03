@@ -566,11 +566,10 @@
   [src : (__tl_dyn-array LintFinding)]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (lint-findings-copy-range dst src (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set! (array-ref dst index) (array-ref src index))
+    (lint-findings-copy-range dst src (+ index 1) count)))
 
 (define (lint-findings-grow [items : LintFindings]) : LintFindings
   (let
@@ -582,9 +581,8 @@
         (*
           (lint-findings-capacity (owned_view.compiler-owned-shared-view items))
           2))]
-    (begin
-      (lint-findings-copy-range (&mut bigger) (lint-findings-slots items) 0 n)
-      (LintFindings bigger n))))
+    (lint-findings-copy-range (&mut bigger) (lint-findings-slots items) 0 n)
+    (LintFindings bigger n)))
 
 ;: Append `finding` to the discoveries, growing the backing array as needed.
 (define (lint-findings-add [finding : LintFinding] [items : LintFindings]) : LintFindings
@@ -595,9 +593,8 @@
       [slots : (__tl_dyn-array LintFinding)
         (lint-findings-slots (owned_view.compiler-owned-shared-view items))]
       [n : i64 (lint-findings-count items)]
-      (begin
-        (set! (array-ref slots n) finding)
-        (LintFindings slots (+ n 1))))
+      (set! (array-ref slots n) finding)
+      (LintFindings slots (+ n 1)))
     (lint-findings-add finding (lint-findings-grow items))))
 
 (define (lint-findings-ref [items : (& items LintFindings)] [index : i64]) : LintFinding
@@ -1095,12 +1092,11 @@
     [n : i64 (string.string-length name)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (< index n) (not found))
-        (if (lint-name-case-ascii-letter? (string.string-ref name index))
-          (set! found true)
-          (set! index (+ index 1))))
-      found)))
+    (while (and (< index n) (not found))
+      (if (lint-name-case-ascii-letter? (string.string-ref name index))
+        (set! found true)
+        (set! index (+ index 1))))
+    found))
 
 (define (lint-name-case-terminal-suffix-start [name : (& name str)]) : i64
   (let
@@ -1121,33 +1117,31 @@
     [index : i64 start]
     [segment-start : bool true]
     [ok : bool (< start end)]
-    (begin
-      (while (and ok (< index end))
-        (let
-          [c : char (string.string-ref name index)]
-          (cond
-            [(lint-name-case-ascii-lower? c)
+    (while (and ok (< index end))
+      (let
+        [c : char (string.string-ref name index)]
+        (cond
+          [(lint-name-case-ascii-lower? c)
+            (set! segment-start false)
+            (set! index (+ index 1))]
+          [(lint-name-case-ascii-digit? c)
+            (if (= index start)
+              (set! ok false)
               (begin
                 (set! segment-start false)
-                (set! index (+ index 1)))]
-            [(lint-name-case-ascii-digit? c)
-              (if (= index start)
-                (set! ok false)
-                (begin
-                  (set! segment-start false)
-                  (set! index (+ index 1))))]
-            [(= c '-')
-              (if segment-start
-                (set! ok false)
-                (begin
-                  (set! segment-start true)
-                  (if (and
-                    (< (+ index 1) end)
-                    (= (string.string-ref name (+ index 1)) '>'))
-                    (set! index (+ index 2))
-                    (set! index (+ index 1)))))]
-            [else (set! ok false)])))
-      (and ok (not segment-start)))))
+                (set! index (+ index 1))))]
+          [(= c '-')
+            (if segment-start
+              (set! ok false)
+              (begin
+                (set! segment-start true)
+                (if (and
+                  (< (+ index 1) end)
+                  (= (string.string-ref name (+ index 1)) '>'))
+                  (set! index (+ index 2))
+                  (set! index (+ index 1)))))]
+          [else (set! ok false)])))
+    (and ok (not segment-start))))
 
 ;: True for project kebab-case. Predicate/mutator suffixes and the `->`
 ;: conversion separator are accepted. Names without ASCII letters are operator
@@ -1188,16 +1182,15 @@
       [index : i64 1]
       [ok : bool
         (and (> n 0) (lint-name-case-ascii-upper? (string.string-ref name 0)))]
-      (begin
-        (while (and ok (< index n))
-          (let
-            [c : char (string.string-ref name index)]
-            (if (or
-              (lint-name-case-ascii-letter? c)
-              (lint-name-case-ascii-digit? c))
-              (set! index (+ index 1))
-              (set! ok false))))
-        ok))))
+      (while (and ok (< index n))
+        (let
+          [c : char (string.string-ref name index)]
+          (if (or
+            (lint-name-case-ascii-letter? c)
+            (lint-name-case-ascii-digit? c))
+            (set! index (+ index 1))
+            (set! ok false))))
+      ok)))
 
 ;: One-letter type operands conventionally use an uppercase type variable.
 ;: Descriptive operands continue to use normal local kebab-case.
@@ -1222,12 +1215,11 @@
     [n : i64 (string.string-length name)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (< index n) (not found))
-        (if (= (string.string-ref name index) '.')
-          (set! found true)
-          (set! index (+ index 1))))
-      found)))
+    (while (and (< index n) (not found))
+      (if (= (string.string-ref name index) '.')
+        (set! found true)
+        (set! index (+ index 1))))
+    found))
 
 (define (lint-name-case-lower-char-string [c : char]) : String
   (if (lint-name-case-ascii-upper? c)
@@ -1982,70 +1974,65 @@
         [loop-stack : (__tl_dyn-array bool) (__tl_make-array bool stack-cap)]
         [concat-stack : (__tl_dyn-array bool) (__tl_make-array bool stack-cap)]
         [findings : LintFindings acc]
-        (begin
-          (while (not done)
-            (begin
-              (let
-                [spanned : token.SpannedToken
-                  (owned_view.compiler-owned-array-element-shared-view toks i)]
-                [tok : token.Token (token.spanned-token-tok spanned)]
-                [tag : i64 (token.tag tok)]
-                (cond
-                  [(= tag (token.tag-end)) (set! done true)]
-                  [(= tag (token.tag-lparen))
-                    (let
-                      [head-spanned : token.SpannedToken
-                        (owned_view.compiler-owned-array-element-shared-view
-                          toks
-                          (+ i 1))]
-                      [head : token.Token
-                        (token.spanned-token-tok
-                          (owned_view.compiler-owned-shared-view head-spanned))]
-                      [name : String (lint-token-name head)]
-                      [is-loop : bool
-                        (lint-deprecated-string-concat-loop-form? name)]
-                      [is-concat : bool
-                        (lint-deprecated-string-concat-name? name)]
-                      (begin
-                        (set! depth (+ depth 1))
-                        (set! (array-ref loop-stack depth) is-loop)
-                        (set! (array-ref concat-stack depth) is-concat)
-                        (if is-concat
-                          (set!
-                            findings
-                            (lint-findings-add
-                              (lint-deprecated-string-concat-finding
-                                (> loop-depth 0)
-                                (> concat-depth 0)
-                                (lint-deprecated-string-concat-token-span
-                                  head-spanned
-                                  name))
-                              findings))
-                          unit)
-                        (if is-loop
-                          (set! loop-depth (+ loop-depth 1))
-                          unit)
-                        (if is-concat
-                          (set! concat-depth (+ concat-depth 1))
-                          unit)))]
-                  [(= tag (token.tag-rparen))
-                    (if (> depth 0)
-                      (begin
-                        (if (owned_view.compiler-owned-array-element-shared-view
-                          loop-stack
-                          depth)
-                          (set! loop-depth (- loop-depth 1))
-                          unit)
-                        (if (owned_view.compiler-owned-array-element-shared-view
-                          concat-stack
-                          depth)
-                          (set! concat-depth (- concat-depth 1))
-                          unit)
-                        (set! depth (- depth 1)))
-                      unit)]
-                  [else unit]))
-              (set! i (+ i 1))))
-          findings))]))
+        (while (not done)
+          (let
+            [spanned : token.SpannedToken
+              (owned_view.compiler-owned-array-element-shared-view toks i)]
+            [tok : token.Token (token.spanned-token-tok spanned)]
+            [tag : i64 (token.tag tok)]
+            (cond
+              [(= tag (token.tag-end)) (set! done true)]
+              [(= tag (token.tag-lparen))
+                (let
+                  [head-spanned : token.SpannedToken
+                    (owned_view.compiler-owned-array-element-shared-view
+                      toks
+                      (+ i 1))]
+                  [head : token.Token
+                    (token.spanned-token-tok
+                      (owned_view.compiler-owned-shared-view head-spanned))]
+                  [name : String (lint-token-name head)]
+                  [is-loop : bool
+                    (lint-deprecated-string-concat-loop-form? name)]
+                  [is-concat : bool (lint-deprecated-string-concat-name? name)]
+                  (set! depth (+ depth 1))
+                  (set! (array-ref loop-stack depth) is-loop)
+                  (set! (array-ref concat-stack depth) is-concat)
+                  (if is-concat
+                    (set!
+                      findings
+                      (lint-findings-add
+                        (lint-deprecated-string-concat-finding
+                          (> loop-depth 0)
+                          (> concat-depth 0)
+                          (lint-deprecated-string-concat-token-span
+                            head-spanned
+                            name))
+                        findings))
+                    unit)
+                  (if is-loop
+                    (set! loop-depth (+ loop-depth 1))
+                    unit)
+                  (if is-concat
+                    (set! concat-depth (+ concat-depth 1))
+                    unit))]
+              [(= tag (token.tag-rparen))
+                (when
+                  (> depth 0)
+                  (if (owned_view.compiler-owned-array-element-shared-view
+                    loop-stack
+                    depth)
+                    (set! loop-depth (- loop-depth 1))
+                    unit)
+                  (if (owned_view.compiler-owned-array-element-shared-view
+                    concat-stack
+                    depth)
+                    (set! concat-depth (- concat-depth 1))
+                    unit)
+                  (set! depth (- depth 1)))]
+              [else unit]))
+          (set! i (+ i 1)))
+        findings)]))
 
 ;; ---- redundant-begin ----
 ;;
@@ -2150,24 +2137,20 @@
     [stack : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
     [depth : i64 0]
     [index : i64 0]
-    (begin
-      (while (<= index count)
-        (let
-          [tag : i64 (lint-token-tag-at toks index)]
-          (begin
-            (set! (array-ref close-of index) -1)
-            (cond
-              [(lint-token-open-tag? tag)
-                (begin
-                  (set! (array-ref stack depth) index)
-                  (set! depth (+ depth 1)))]
-              [(and (lint-token-close-tag? tag) (> depth 0))
-                (begin
-                  (set! depth (- depth 1))
-                  (set! (array-ref close-of (array-ref stack depth)) index))]
-              [else unit])
-            (set! index (+ index 1)))))
-      close-of)))
+    (while (<= index count)
+      (let
+        [tag : i64 (lint-token-tag-at toks index)]
+        (set! (array-ref close-of index) -1)
+        (cond
+          [(lint-token-open-tag? tag)
+            (set! (array-ref stack depth) index)
+            (set! depth (+ depth 1))]
+          [(and (lint-token-close-tag? tag) (> depth 0))
+            (set! depth (- depth 1))
+            (set! (array-ref close-of (array-ref stack depth)) index)]
+          [else unit])
+        (set! index (+ index 1))))
+    close-of))
 
 ;: Index just past the form at `index`, reader prefixes included.
 (define (lint-token-form-end
@@ -2176,16 +2159,15 @@
   [index : i64]) : i64
   (let
     [at : i64 index]
-    (begin
-      (while (lint-token-prefix-tag? (lint-token-tag-at toks at))
-        (set! at (+ at 1)))
-      (cond
-        [(and
-            (lint-token-open-tag? (lint-token-tag-at toks at))
-            (>= (array-ref close-of at) 0))
-          (+ (array-ref close-of at) 1)]
-        [(= (lint-token-tag-at toks at) (token.tag-end)) at]
-        [else (+ at 1)]))))
+    (while (lint-token-prefix-tag? (lint-token-tag-at toks at))
+      (set! at (+ at 1)))
+    (cond
+      [(and
+          (lint-token-open-tag? (lint-token-tag-at toks at))
+          (>= (array-ref close-of at) 0))
+        (+ (array-ref close-of at) 1)]
+      [(= (lint-token-tag-at toks at) (token.tag-end)) at]
+      [else (+ at 1)])))
 
 ;: Start of the last child form of the list opened at `open`, or -1 when the
 ;: list has no form after its head.
@@ -2197,12 +2179,10 @@
     [close : i64 (array-ref close-of open)]
     [at : i64 (lint-token-form-end toks close-of (+ open 1))]
     [last : i64 -1]
-    (begin
-      (while (< at close)
-        (begin
-          (set! last at)
-          (set! at (lint-token-form-end toks close-of at))))
-      last)))
+    (while (< at close)
+      (set! last at)
+      (set! at (lint-token-form-end toks close-of at)))
+    last))
 
 (define (lint-token-paren-head
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
@@ -2259,22 +2239,20 @@
     [close : i64 (array-ref close-of open)]
     [at : i64 (lint-token-form-end toks close-of (+ open 1))]
     [ok : bool true]
-    (begin
-      (while (and ok (< at close))
-        (let
-          [next : i64 (lint-token-form-end toks close-of at)]
-          [last : bool (and final (= next close))]
-          (begin
-            (set!
-              ok
-              (cond
-                [(lint-token-prefix-tag? (lint-token-tag-at toks at)) false]
-                [(string.eq (lint-token-paren-head toks at) "begin")
-                  (lint-redundant-begin-unit-safe? toks close-of at last)]
-                [last true]
-                [else (lint-redundant-begin-unit-form? toks close-of at)]))
-            (set! at next))))
-      ok)))
+    (while (and ok (< at close))
+      (let
+        [next : i64 (lint-token-form-end toks close-of at)]
+        [last : bool (and final (= next close))]
+        (set!
+          ok
+          (cond
+            [(lint-token-prefix-tag? (lint-token-tag-at toks at)) false]
+            [(string.eq (lint-token-paren-head toks at) "begin")
+              (lint-redundant-begin-unit-safe? toks close-of at last)]
+            [last true]
+            [else (lint-redundant-begin-unit-form? toks close-of at)]))
+        (set! at next)))
+    ok))
 
 ;: Whether the begin opened at `open` has at least two forms and no bracket
 ;: form among them.
@@ -2287,15 +2265,13 @@
     [at : i64 (lint-token-form-end toks close-of (+ open 1))]
     [count : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< at close))
-        (begin
-          (when
-            (= (lint-token-tag-at toks at) (token.tag-lbracket))
-            (set! ok false))
-          (set! count (+ count 1))
-          (set! at (lint-token-form-end toks close-of at))))
-      (and ok (>= count 2)))))
+    (while (and ok (< at close))
+      (when
+        (= (lint-token-tag-at toks at) (token.tag-lbracket))
+        (set! ok false))
+      (set! count (+ count 1))
+      (set! at (lint-token-form-end toks close-of at)))
+    (and ok (>= count 2))))
 
 ;: A `.field` projection written directly after the close token at `close`.
 (define (lint-token-projected?
@@ -2345,48 +2321,47 @@
     [close-col : i64 (lint-token-col-at toks close)]
     [edits : (__tl_dyn-array cdiag.CompilerDiagnosticTextEdit)
       (__tl_make-array cdiag.CompilerDiagnosticTextEdit 2)]
-    (begin
-      (while (and
+    (while (and
+      (< blank-end source-len)
+      (or
+        (= (string.string-ref source blank-end) ' ')
+        (= (string.string-ref source blank-end) '\t')))
+      (set! blank-end (+ blank-end 1)))
+    (set!
+      (array-ref edits 0)
+      (if (and
+        (= line head-line)
+        (lint-source-blank-range? source line-start (+ line-start (- col 1)))
         (< blank-end source-len)
         (or
-          (= (string.string-ref source blank-end) ' ')
-          (= (string.string-ref source blank-end) '\t')))
-        (set! blank-end (+ blank-end 1)))
-      (set!
-        (array-ref edits 0)
-        (if (and
-          (= line head-line)
-          (lint-source-blank-range? source line-start (+ line-start (- col 1)))
-          (< blank-end source-len)
-          (or
-            (= (string.string-ref source blank-end) '\n')
-            (and
-              (= (string.string-ref source blank-end) '\r')
-              (< (+ blank-end 1) source-len)
-              (= (string.string-ref source (+ blank-end 1)) '\n'))))
-          (lint-redundant-begin-delete line 1 (+ line 1) 1)
-          (lint-redundant-begin-delete
-            line
-            col
-            head-line
-            (+ head-end (- blank-end after)))))
-      (set!
-        (array-ref edits 1)
+          (= (string.string-ref source blank-end) '\n')
+          (and
+            (= (string.string-ref source blank-end) '\r')
+            (< (+ blank-end 1) source-len)
+            (= (string.string-ref source (+ blank-end 1)) '\n'))))
+        (lint-redundant-begin-delete line 1 (+ line 1) 1)
         (lint-redundant-begin-delete
-          close-line
-          close-col
-          close-line
-          (+ close-col 1)))
-      (LintFinding
-        (lint-rule-redundant-begin-message)
-        (lint-rule-redundant-begin-id)
-        0
-        (ast.ast-source-span line col head-line head-end)
-        (LintFixAvailable
-          (cdiag.compiler-diagnostic-fix-new
-            "splice the begin forms into the enclosing body"
-            CompilerDiagnosticMachineApplicable
-            (cdiag.CompilerDiagnosticTextEditSeq edits 2)))))))
+          line
+          col
+          head-line
+          (+ head-end (- blank-end after)))))
+    (set!
+      (array-ref edits 1)
+      (lint-redundant-begin-delete
+        close-line
+        close-col
+        close-line
+        (+ close-col 1)))
+    (LintFinding
+      (lint-rule-redundant-begin-message)
+      (lint-rule-redundant-begin-id)
+      0
+      (ast.ast-source-span line col head-line head-end)
+      (LintFixAvailable
+        (cdiag.compiler-diagnostic-fix-new
+          "splice the begin forms into the enclosing body"
+          CompilerDiagnosticMachineApplicable
+          (cdiag.CompilerDiagnosticTextEditSeq edits 2))))))
 
 (define (lint-source-blank-range?
   [source : (& source str)]
@@ -2394,14 +2369,13 @@
   [end : i64]) : bool
   (let
     [at : i64 start]
-    (begin
-      (while (and
-        (< at end)
-        (or
-          (= (string.string-ref source at) ' ')
-          (= (string.string-ref source at) '\t')))
-        (set! at (+ at 1)))
-      (>= at end))))
+    (while (and
+      (< at end)
+      (or
+        (= (string.string-ref source at) ' ')
+        (= (string.string-ref source at) '\t')))
+      (set! at (+ at 1)))
+    (>= at end)))
 
 ;: Whether the begin opened at `open`, child `position` of the frame at
 ;: `depth`, sits in a body sequence that it can be spliced into.
@@ -2452,95 +2426,89 @@
     [(Ok toks)
       (let
         [count : i64 0]
-        (begin
-          (while (not (= (lint-token-tag-at (& toks) count) (token.tag-end)))
-            (set! count (+ count 1)))
-          (let
-            [close-of : (__tl_dyn-array i64)
-              (lint-token-close-indexes (& toks) count)]
-            [line-starts : (__tl_dyn-array i64)
-              (source_text.source-text-line-starts (& source))]
-            [frames : i64 (+ count 2)]
-            ;; Open frames: the open token, its head name, the children seen
-            ;; so far, its child position in the enclosing frame, and whether
-            ;; it is quoted data. Frame 0 is the top level.
-            [frame-open : (__tl_dyn-array i64) (__tl_make-array i64 frames)]
-            [frame-head : (__tl_dyn-array String)
-              (__tl_make-array String frames)]
-            [frame-count : (__tl_dyn-array i64) (__tl_make-array i64 frames)]
-            [frame-position : (__tl_dyn-array i64) (__tl_make-array i64 frames)]
-            [frame-quoted : (__tl_dyn-array bool) (__tl_make-array bool frames)]
-            [depth : i64 0]
-            [prefix : i64 0]
-            [index : i64 0]
-            [findings : LintFindings acc]
-            (begin
-              (set! (array-ref frame-open 0) -1)
-              (set! (array-ref frame-head 0) "")
-              (set! (array-ref frame-count 0) 0)
-              (set! (array-ref frame-position 0) 0)
-              (set! (array-ref frame-quoted 0) false)
-              (while (< index count)
-                (let
-                  [tag : i64 (lint-token-tag-at (& toks) index)]
-                  (begin
-                    (cond
-                      [(lint-token-prefix-tag? tag) (set! prefix tag)]
-                      [(and
-                          (lint-token-open-tag? tag)
-                          (>= (array-ref close-of index) 0))
-                        (let
-                          [position : i64 (array-ref frame-count depth)]
-                          [head : String (lint-token-paren-head (& toks) index)]
-                          [quoted : bool
-                            (or
-                              (array-ref frame-quoted depth)
-                              (= prefix (token.tag-quote))
-                              (string.eq head "quote"))]
-                          (begin
-                            (set! (array-ref frame-count depth) (+ position 1))
-                            (when
-                              (and
-                                (string.eq head "begin")
-                                (not quoted)
-                                (= prefix 0)
-                                (> depth 0)
-                                (lint-redundant-begin-context?
-                                  (& toks)
-                                  (& close-of)
-                                  index
-                                  position
-                                  depth
-                                  (& frame-open)
-                                  (& frame-head)
-                                  (& frame-position)))
-                              (set!
-                                findings
-                                (lint-findings-add
-                                  (lint-redundant-begin-finding
-                                    (& source)
-                                    (& line-starts)
-                                    (& toks)
-                                    index
-                                    (array-ref close-of index))
-                                  findings)))
-                            (set! depth (+ depth 1))
-                            (set! (array-ref frame-open depth) index)
-                            (set! (array-ref frame-head depth) head)
-                            (set! (array-ref frame-count depth) 0)
-                            (set! (array-ref frame-position depth) position)
-                            (set! (array-ref frame-quoted depth) quoted)
-                            (set! prefix 0)))]
-                      [(lint-token-close-tag? tag)
-                        (when (> depth 0) (set! depth (- depth 1)))]
-                      [else
-                        (begin
-                          (set!
-                            (array-ref frame-count depth)
-                            (+ (array-ref frame-count depth) 1))
-                          (set! prefix 0))])
-                    (set! index (+ index 1)))))
-              findings))))]))
+        (while (not (= (lint-token-tag-at (& toks) count) (token.tag-end)))
+          (set! count (+ count 1)))
+        (let
+          [close-of : (__tl_dyn-array i64)
+            (lint-token-close-indexes (& toks) count)]
+          [line-starts : (__tl_dyn-array i64)
+            (source_text.source-text-line-starts (& source))]
+          [frames : i64 (+ count 2)]
+          ;; Open frames: the open token, its head name, the children seen
+          ;; so far, its child position in the enclosing frame, and whether
+          ;; it is quoted data. Frame 0 is the top level.
+          [frame-open : (__tl_dyn-array i64) (__tl_make-array i64 frames)]
+          [frame-head : (__tl_dyn-array String) (__tl_make-array String frames)]
+          [frame-count : (__tl_dyn-array i64) (__tl_make-array i64 frames)]
+          [frame-position : (__tl_dyn-array i64) (__tl_make-array i64 frames)]
+          [frame-quoted : (__tl_dyn-array bool) (__tl_make-array bool frames)]
+          [depth : i64 0]
+          [prefix : i64 0]
+          [index : i64 0]
+          [findings : LintFindings acc]
+          (set! (array-ref frame-open 0) -1)
+          (set! (array-ref frame-head 0) "")
+          (set! (array-ref frame-count 0) 0)
+          (set! (array-ref frame-position 0) 0)
+          (set! (array-ref frame-quoted 0) false)
+          (while (< index count)
+            (let
+              [tag : i64 (lint-token-tag-at (& toks) index)]
+              (cond
+                [(lint-token-prefix-tag? tag) (set! prefix tag)]
+                [(and
+                    (lint-token-open-tag? tag)
+                    (>= (array-ref close-of index) 0))
+                  (let
+                    [position : i64 (array-ref frame-count depth)]
+                    [head : String (lint-token-paren-head (& toks) index)]
+                    [quoted : bool
+                      (or
+                        (array-ref frame-quoted depth)
+                        (= prefix (token.tag-quote))
+                        (string.eq head "quote"))]
+                    (set! (array-ref frame-count depth) (+ position 1))
+                    (when
+                      (and
+                        (string.eq head "begin")
+                        (not quoted)
+                        (= prefix 0)
+                        (> depth 0)
+                        (lint-redundant-begin-context?
+                          (& toks)
+                          (& close-of)
+                          index
+                          position
+                          depth
+                          (& frame-open)
+                          (& frame-head)
+                          (& frame-position)))
+                      (set!
+                        findings
+                        (lint-findings-add
+                          (lint-redundant-begin-finding
+                            (& source)
+                            (& line-starts)
+                            (& toks)
+                            index
+                            (array-ref close-of index))
+                          findings)))
+                    (set! depth (+ depth 1))
+                    (set! (array-ref frame-open depth) index)
+                    (set! (array-ref frame-head depth) head)
+                    (set! (array-ref frame-count depth) 0)
+                    (set! (array-ref frame-position depth) position)
+                    (set! (array-ref frame-quoted depth) quoted)
+                    (set! prefix 0))]
+                [(lint-token-close-tag? tag)
+                  (when (> depth 0) (set! depth (- depth 1)))]
+                [else
+                  (set!
+                    (array-ref frame-count depth)
+                    (+ (array-ref frame-count depth) 1))
+                  (set! prefix 0)])
+              (set! index (+ index 1))))
+          findings))]))
 
 (define (lint-name-qualified-by-separator?
   [name : (& name str)]
@@ -2630,21 +2598,18 @@
     [dead-code? : bool names.dead-code?]
     [n : i64 names.len]
     [ids : (__tl_dyn-array i64) names.ids]
-    (begin
-      (if (< n (array-length ids))
-        unit
-        (let
-          [bigger : (__tl_dyn-array i64)
-            (__tl_make-array i64 (lint-grown-capacity (array-length ids)))]
-          [index : i64 0]
-          (begin
-            (while (< index n)
-              (begin
-                (set! (array-ref bigger index) (array-ref ids index))
-                (set! index (+ index 1))))
-            (set! ids bigger))))
-      (set! (array-ref ids n) name)
-      (LintNames ids (+ n 1) dead-code?))))
+    (if (< n (array-length ids))
+      unit
+      (let
+        [bigger : (__tl_dyn-array i64)
+          (__tl_make-array i64 (lint-grown-capacity (array-length ids)))]
+        [index : i64 0]
+        (while (< index n)
+          (set! (array-ref bigger index) (array-ref ids index))
+          (set! index (+ index 1)))
+        (set! ids bigger)))
+    (set! (array-ref ids n) name)
+    (LintNames ids (+ n 1) dead-code?)))
 
 (define (lint-names-use-import?
   [names : (& names LintNames)]
@@ -2652,14 +2617,12 @@
   (let
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index names.len))
-        (begin
-          (set!
-            found
-            (lint-name-id-uses-import? (array-ref names.ids index) import-ref))
-          (set! index (+ index 1))))
-      found)))
+    (while (and (not found) (< index names.len))
+      (set!
+        found
+        (lint-name-id-uses-import? (array-ref names.ids index) import-ref))
+      (set! index (+ index 1)))
+    found))
 
 (define (lint-maybe-type-names
   [maybe-ty : ast.AstMaybeType]
@@ -3138,16 +3101,15 @@
   (lint-unused-unsafe-block-stack-empty))
 
 (define (lint-unused-unsafe-classifier-reset!) : unit
-  (begin
-    (set! lint-unused-unsafe-exact-names (lint-unused-unsafe-exact-names-empty))
-    (set!
-      lint-unused-unsafe-unknown-roots
-      (lint-unused-unsafe-unknown-roots-empty))
-    (set! lint-unused-unsafe-classified-required-count 0)
-    (set! lint-unused-unsafe-classified-unused-count 0)
-    (set! lint-unused-unsafe-classified-unknown-count 0)
-    (set! lint-unused-unsafe-block-stack (lint-unused-unsafe-block-stack-empty))
-    (set! lint-unused-unsafe-classifier-enabled false)))
+  (set! lint-unused-unsafe-exact-names (lint-unused-unsafe-exact-names-empty))
+  (set!
+    lint-unused-unsafe-unknown-roots
+    (lint-unused-unsafe-unknown-roots-empty))
+  (set! lint-unused-unsafe-classified-required-count 0)
+  (set! lint-unused-unsafe-classified-unused-count 0)
+  (set! lint-unused-unsafe-classified-unknown-count 0)
+  (set! lint-unused-unsafe-block-stack (lint-unused-unsafe-block-stack-empty))
+  (set! lint-unused-unsafe-classifier-enabled false))
 
 (define (lint-unused-unsafe-classifier-enable!) : unit
   (set! lint-unused-unsafe-classifier-enabled true))
@@ -3185,21 +3147,19 @@
               (array-length
                 (__tl-project-field lint-unused-unsafe-exact-names slots))))]
         [index : i64 0]
-        (begin
-          (while (< index n)
-            (begin
-              (set!
-                (array-ref bigger index)
-                (array-ref
-                  (__tl-project-field lint-unused-unsafe-exact-names slots)
-                  index))
-              (set! index (+ index 1))))
+        (while (< index n)
           (set!
-            (array-ref bigger n)
-            (LintUnusedUnsafeExactName name requires-unsafe))
-          (set!
-            lint-unused-unsafe-exact-names
-            (LintUnusedUnsafeExactNames bigger (+ n 1))))))))
+            (array-ref bigger index)
+            (array-ref
+              (__tl-project-field lint-unused-unsafe-exact-names slots)
+              index))
+          (set! index (+ index 1)))
+        (set!
+          (array-ref bigger n)
+          (LintUnusedUnsafeExactName name requires-unsafe))
+        (set!
+          lint-unused-unsafe-exact-names
+          (LintUnusedUnsafeExactNames bigger (+ n 1)))))))
 
 (define (lint-unused-unsafe-classifier-add-unknown-root! [name : String]) : unit
   (let
@@ -3222,19 +3182,17 @@
               (array-length
                 (__tl-project-field lint-unused-unsafe-unknown-roots slots))))]
         [index : i64 0]
-        (begin
-          (while (< index n)
-            (begin
-              (set!
-                (array-ref bigger index)
-                (array-ref
-                  (__tl-project-field lint-unused-unsafe-unknown-roots slots)
-                  index))
-              (set! index (+ index 1))))
-          (set! (array-ref bigger n) name)
+        (while (< index n)
           (set!
-            lint-unused-unsafe-unknown-roots
-            (LintUnusedUnsafeUnknownRoots bigger (+ n 1))))))))
+            (array-ref bigger index)
+            (array-ref
+              (__tl-project-field lint-unused-unsafe-unknown-roots slots)
+              index))
+          (set! index (+ index 1)))
+        (set! (array-ref bigger n) name)
+        (set!
+          lint-unused-unsafe-unknown-roots
+          (LintUnusedUnsafeUnknownRoots bigger (+ n 1)))))))
 
 (define (lint-unused-unsafe-classifier-unknown-count) : i64
   lint-unused-unsafe-classified-unknown-count)
@@ -3269,21 +3227,19 @@
                 (array-length
                   (__tl-project-field lint-unused-unsafe-block-stack slots))))]
           [index : i64 0]
-          (begin
-            (while (< index n)
-              (begin
-                (set!
-                  (array-ref bigger index)
-                  (array-ref
-                    (__tl-project-field lint-unused-unsafe-block-stack slots)
-                    index))
-                (set! index (+ index 1))))
+          (while (< index n)
             (set!
-              (array-ref bigger n)
-              (LintUnusedUnsafeBlock span required false))
-            (set!
-              lint-unused-unsafe-block-stack
-              (LintUnusedUnsafeBlockStack bigger (+ n 1)))))))
+              (array-ref bigger index)
+              (array-ref
+                (__tl-project-field lint-unused-unsafe-block-stack slots)
+                index))
+            (set! index (+ index 1)))
+          (set!
+            (array-ref bigger n)
+            (LintUnusedUnsafeBlock span required false))
+          (set!
+            lint-unused-unsafe-block-stack
+            (LintUnusedUnsafeBlockStack bigger (+ n 1))))))
     unit))
 
 (define (lint-unused-unsafe-block-top-index) : i64
@@ -3442,16 +3398,14 @@
     [n : i64 (string.string-length module-name)]
     [i : i64 0]
     [start : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (if (or
-            (= (string.string-ref module-name i) '.')
-            (= (string.string-ref module-name i) '/'))
-            (set! start (+ i 1))
-            unit)
-          (set! i (+ i 1))))
-      (string.substring module-name start (- n start)))))
+    (while (< i n)
+      (if (or
+        (= (string.string-ref module-name i) '.')
+        (= (string.string-ref module-name i) '/'))
+        (set! start (+ i 1))
+        unit)
+      (set! i (+ i 1)))
+    (string.substring module-name start (- n start))))
 
 (define (lint-source-span-end-index
   [source : (& source str)]
@@ -3707,23 +3661,18 @@
     (let
       [n : i64 items.len]
       [slots : (__tl_dyn-array String) items.slots]
-      (begin
-        (if (< n (array-length slots))
-          unit
-          (let
-            [bigger : (__tl_dyn-array String)
-              (__tl_make-array
-                String
-                (lint-grown-capacity (array-length slots)))]
-            [index : i64 0]
-            (begin
-              (while (< index n)
-                (begin
-                  (set! (array-ref bigger index) (array-ref slots index))
-                  (set! index (+ index 1))))
-              (set! slots bigger))))
-        (set! (array-ref slots n) name)
-        (LintNameSet slots (+ n 1))))))
+      (if (< n (array-length slots))
+        unit
+        (let
+          [bigger : (__tl_dyn-array String)
+            (__tl_make-array String (lint-grown-capacity (array-length slots)))]
+          [index : i64 0]
+          (while (< index n)
+            (set! (array-ref bigger index) (array-ref slots index))
+            (set! index (+ index 1)))
+          (set! slots bigger)))
+      (set! (array-ref slots n) name)
+      (LintNameSet slots (+ n 1)))))
 
 (define (lint-name-set-count [items : (& items LintNameSet)]) : i64
   items.len)
@@ -4429,18 +4378,16 @@
         [slots : (__tl_dyn-array LintCopyOnUpdateLocal)
           (__tl_make-array LintCopyOnUpdateLocal n)]
         [index : i64 0]
-        (begin
-          (while (< index n)
-            (begin
-              (set!
-                (array-ref slots index)
-                (array-ref
-                  locals.slots
-                  (if (< index found)
-                    index
-                    (+ index 1))))
-              (set! index (+ index 1))))
-          (LintCopyOnUpdateLocalList slots n))))))
+        (while (< index n)
+          (set!
+            (array-ref slots index)
+            (array-ref
+              locals.slots
+              (if (< index found)
+                index
+                (+ index 1))))
+          (set! index (+ index 1)))
+        (LintCopyOnUpdateLocalList slots n)))))
 
 (define (lint-copy-on-update-local-add
   [locals : LintCopyOnUpdateLocalList]
@@ -4458,13 +4405,11 @@
         [slots : (__tl_dyn-array LintCopyOnUpdateLocal)
           (__tl_make-array LintCopyOnUpdateLocal (+ n 1))]
         [index : i64 0]
-        (begin
-          (while (< index n)
-            (begin
-              (set! (array-ref slots index) (array-ref without.slots index))
-              (set! index (+ index 1))))
-          (set! (array-ref slots n) (LintCopyOnUpdateLocal name type-name))
-          (LintCopyOnUpdateLocalList slots (+ n 1)))))))
+        (while (< index n)
+          (set! (array-ref slots index) (array-ref without.slots index))
+          (set! index (+ index 1)))
+        (set! (array-ref slots n) (LintCopyOnUpdateLocal name type-name))
+        (LintCopyOnUpdateLocalList slots (+ n 1))))))
 
 (define (lint-copy-on-update-local-type
   [locals : (& locals LintCopyOnUpdateLocalList)]
@@ -5029,28 +4974,25 @@
     [names : LintNameSet (lint-copy-on-update-field-names fields)]
     [n : i64 shapes.len]
     [slots : (__tl_dyn-array LintCopyOnUpdateStructShape) shapes.slots]
-    (begin
-      (if (< n (array-length slots))
-        unit
-        (let
-          [bigger : (__tl_dyn-array LintCopyOnUpdateStructShape)
-            (__tl_make-array
-              LintCopyOnUpdateStructShape
-              (lint-grown-capacity (array-length slots)))]
-          [index : i64 0]
-          (begin
-            (while (< index n)
-              (begin
-                (set! (array-ref bigger index) (array-ref slots index))
-                (set! index (+ index 1))))
-            (set! slots bigger))))
-      (set!
-        (array-ref slots n)
-        (LintCopyOnUpdateStructShape
-          (ci.intern-str name)
-          (owned_view.compiler-owned-shared-view names)
-          (lint-name-set-count names)))
-      (LintCopyOnUpdateStructList slots (+ n 1)))))
+    (if (< n (array-length slots))
+      unit
+      (let
+        [bigger : (__tl_dyn-array LintCopyOnUpdateStructShape)
+          (__tl_make-array
+            LintCopyOnUpdateStructShape
+            (lint-grown-capacity (array-length slots)))]
+        [index : i64 0]
+        (while (< index n)
+          (set! (array-ref bigger index) (array-ref slots index))
+          (set! index (+ index 1)))
+        (set! slots bigger)))
+    (set!
+      (array-ref slots n)
+      (LintCopyOnUpdateStructShape
+        (ci.intern-str name)
+        (owned_view.compiler-owned-shared-view names)
+        (lint-name-set-count names)))
+    (LintCopyOnUpdateStructList slots (+ n 1))))
 
 (define (lint-copy-on-update-collect-structs-in-decl
   [decl : ast.AstDecl]
@@ -5197,18 +5139,16 @@
         [slots : (__tl_dyn-array LintSingleElementArrayCandidate)
           (__tl_make-array LintSingleElementArrayCandidate n)]
         [index : i64 0]
-        (begin
-          (while (< index n)
-            (begin
-              (set!
-                (array-ref slots index)
-                (array-ref
-                  items.slots
-                  (if (< index found)
-                    index
-                    (+ index 1))))
-              (set! index (+ index 1))))
-          (LintSingleElementArrayCandidateList slots n))))))
+        (while (< index n)
+          (set!
+            (array-ref slots index)
+            (array-ref
+              items.slots
+              (if (< index found)
+                index
+                (+ index 1))))
+          (set! index (+ index 1)))
+        (LintSingleElementArrayCandidateList slots n)))))
 
 (define (lint-single-element-array-candidate-add
   [items : LintSingleElementArrayCandidateList]
@@ -5223,15 +5163,13 @@
     [slots : (__tl_dyn-array LintSingleElementArrayCandidate)
       (__tl_make-array LintSingleElementArrayCandidate (+ n 1))]
     [index : i64 0]
-    (begin
-      (while (< index n)
-        (begin
-          (set! (array-ref slots index) (array-ref without.slots index))
-          (set! index (+ index 1))))
-      (set!
-        (array-ref slots n)
-        (LintSingleElementArrayCandidate name span true false))
-      (LintSingleElementArrayCandidateList slots (+ n 1)))))
+    (while (< index n)
+      (set! (array-ref slots index) (array-ref without.slots index))
+      (set! index (+ index 1)))
+    (set!
+      (array-ref slots n)
+      (LintSingleElementArrayCandidate name span true false))
+    (LintSingleElementArrayCandidateList slots (+ n 1))))
 
 (define (lint-single-element-array-candidate-replace
   [items : LintSingleElementArrayCandidateList]
@@ -5242,13 +5180,11 @@
     [slots : (__tl_dyn-array LintSingleElementArrayCandidate)
       (__tl_make-array LintSingleElementArrayCandidate n)]
     [index : i64 0]
-    (begin
-      (while (< index n)
-        (begin
-          (set! (array-ref slots index) (array-ref items.slots index))
-          (set! index (+ index 1))))
-      (set! (array-ref slots found) item)
-      (LintSingleElementArrayCandidateList slots n))))
+    (while (< index n)
+      (set! (array-ref slots index) (array-ref items.slots index))
+      (set! index (+ index 1)))
+    (set! (array-ref slots found) item)
+    (LintSingleElementArrayCandidateList slots n)))
 
 (define (lint-single-element-array-candidate-mark-use
   [items : LintSingleElementArrayCandidateList]
@@ -6087,18 +6023,16 @@
         [slots : (__tl_dyn-array LintPendingAssignment)
           (__tl_make-array LintPendingAssignment n)]
         [index : i64 0]
-        (begin
-          (while (< index n)
-            (begin
-              (set!
-                (array-ref slots index)
-                (array-ref
-                  items.slots
-                  (if (< index found)
-                    index
-                    (+ index 1))))
-              (set! index (+ index 1))))
-          (LintPendingAssignmentList slots n))))))
+        (while (< index n)
+          (set!
+            (array-ref slots index)
+            (array-ref
+              items.slots
+              (if (< index found)
+                index
+                (+ index 1))))
+          (set! index (+ index 1)))
+        (LintPendingAssignmentList slots n)))))
 
 (define (lint-pending-assignment-add
   [items : LintPendingAssignmentList]
@@ -6113,13 +6047,11 @@
     [slots : (__tl_dyn-array LintPendingAssignment)
       (__tl_make-array LintPendingAssignment (+ n 1))]
     [index : i64 0]
-    (begin
-      (while (< index n)
-        (begin
-          (set! (array-ref slots index) (array-ref without.slots index))
-          (set! index (+ index 1))))
-      (set! (array-ref slots n) (LintPendingAssignment name span))
-      (LintPendingAssignmentList slots (+ n 1)))))
+    (while (< index n)
+      (set! (array-ref slots index) (array-ref without.slots index))
+      (set! index (+ index 1)))
+    (set! (array-ref slots n) (LintPendingAssignment name span))
+    (LintPendingAssignmentList slots (+ n 1))))
 
 (define (lint-unused-assignment-state-with
   [state : LintUnusedAssignmentState]
@@ -6193,28 +6125,26 @@
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
   (let
     [next : LintUnusedAssignmentState state]
-    (begin
-      (ast.ast-expr-list-fold
-        exprs
-        ast.ast-fold-seq
-        unit
-        lint-unused-assignment-child!
-        next)
-      next)))
+    (ast.ast-expr-list-fold
+      exprs
+      ast.ast-fold-seq
+      unit
+      lint-unused-assignment-child!
+      next)
+    next))
 
 (define (lint-unused-assignment-note-reads-resource-bindings
   [bindings : ast.AstResourceBindingList]
   [state : LintUnusedAssignmentState]) : LintUnusedAssignmentState
   (let
     [next : LintUnusedAssignmentState state]
-    (begin
-      (ast.ast-resource-binding-list-fold
-        bindings
-        ast.ast-fold-seq
-        unit
-        lint-unused-assignment-child!
-        next)
-      next)))
+    (ast.ast-resource-binding-list-fold
+      bindings
+      ast.ast-fold-seq
+      unit
+      lint-unused-assignment-child!
+      next)
+    next))
 
 ;; List fold hook: note the reads of an expression, threading `state`.
 (defmacro (lint-unused-assignment-child! [state : Expr] [child : Expr]) : Expr
@@ -6587,14 +6517,13 @@
     [len : i64 (string.string-length name)]
     [index : i64 0]
     [found : i64 (- 0 1)]
-    (begin
-      (while (and (< found 0) (< index len))
-        (let
-          [ch : char (string.string-ref name index)]
-          (if (or (= ch '.') (= ch '/'))
-            (set! found index)
-            (set! index (+ index 1)))))
-      found)))
+    (while (and (< found 0) (< index len))
+      (let
+        [ch : char (string.string-ref name index)]
+        (if (or (= ch '.') (= ch '/'))
+          (set! found index)
+          (set! index (+ index 1)))))
+    found))
 
 (define (lint-unused-unsafe-name-root [name : String]) : String
   (let
@@ -6733,14 +6662,13 @@
         (let
           [ok : bool true]
           [idx : i64 0]
-          (begin
-            (while (and ok (< idx needle-len))
-              (if (=
-                (string.string-ref source (+ start idx))
-                (string.string-ref needle idx))
-                (set! idx (+ idx 1))
-                (set! ok false)))
-            ok))))))
+          (while (and ok (< idx needle-len))
+            (if (=
+              (string.string-ref source (+ start idx))
+              (string.string-ref needle idx))
+              (set! idx (+ idx 1))
+              (set! ok false)))
+          ok)))))
 
 (define (lint-source-find-prefix-backward-from
   [source : (& source str)]
@@ -6754,12 +6682,11 @@
         idx
         last-start)]
     [found : i64 (- 0 1)]
-    (begin
-      (while (and (< found 0) (>= cursor 0))
-        (if (lint-source-prefix-at? source cursor needle)
-          (set! found cursor)
-          (set! cursor (- cursor 1))))
-      found)))
+    (while (and (< found 0) (>= cursor 0))
+      (if (lint-source-prefix-at? source cursor needle)
+        (set! found cursor)
+        (set! cursor (- cursor 1))))
+    found))
 
 (define (lint-source-symbol-boundary? [source : (& source str)] [idx : i64]) : bool
   (let
@@ -6789,12 +6716,11 @@
     [source-len : i64 (string.string-length source)]
     [found : i64 (- 0 1)]
     [i : i64 idx]
-    (begin
-      (while (and (< found 0) (< i source-len))
-        (if (lint-source-name-at? source i name)
-          (set! found i)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< found 0) (< i source-len))
+      (if (lint-source-name-at? source i name)
+        (set! found i)
+        (set! i (+ i 1))))
+    found))
 
 (define (lint-source-index-line [target : i64]) : i64
   (+ (lint-source-index-line-index target) 1))
@@ -7038,32 +6964,26 @@
     [n : i64 (string.string-length source)]
     [index : i64 start]
     [again : bool true]
-    (begin
-      (while (and again (< index n))
-        (begin
-          (set! again false)
-          (while (and
-            (< index n)
-            (lint-name-case-space? (string.string-ref source index)))
-            (set! index (+ index 1)))
-          (if (and (< index n) (= (string.string-ref source index) ';'))
-            (begin
-              (while (and
-                (< index n)
-                (not (= (string.string-ref source index) '\n')))
-                (set! index (+ index 1)))
-              (set! again true))
-            unit)))
-      index)))
+    (while (and again (< index n))
+      (set! again false)
+      (while (and
+        (< index n)
+        (lint-name-case-space? (string.string-ref source index)))
+        (set! index (+ index 1)))
+      (when
+        (and (< index n) (= (string.string-ref source index) ';'))
+        (while (and (< index n) (not (= (string.string-ref source index) '\n')))
+          (set! index (+ index 1)))
+        (set! again true)))
+    index))
 
 (define (lint-name-case-skip-line [source : (& source str)] [start : i64]) : i64
   (let
     [n : i64 (string.string-length source)]
     [index : i64 start]
-    (begin
-      (while (and (< index n) (not (= (string.string-ref source index) '\n')))
-        (set! index (+ index 1)))
-      index)))
+    (while (and (< index n) (not (= (string.string-ref source index) '\n')))
+      (set! index (+ index 1)))
+    index))
 
 (define (lint-name-case-skip-quoted
   [source : (& source str)]
@@ -7073,18 +6993,16 @@
     [n : i64 (string.string-length source)]
     [index : i64 (+ start 1)]
     [done : bool false]
-    (begin
-      (while (and (< index n) (not done))
-        (let
-          [c : char (string.string-ref source index)]
-          (cond
-            [(= c '\\') (set! index (+ index 2))]
-            [(= c delimiter)
-              (begin
-                (set! index (+ index 1))
-                (set! done true))]
-            [else (set! index (+ index 1))])))
-      index)))
+    (while (and (< index n) (not done))
+      (let
+        [c : char (string.string-ref source index)]
+        (cond
+          [(= c '\\') (set! index (+ index 2))]
+          [(= c delimiter)
+            (set! index (+ index 1))
+            (set! done true)]
+          [else (set! index (+ index 1))])))
+    index))
 
 ;; Find a form head in source code, excluding text in comments and literals.
 (define (lint-name-case-find-code-prefix-from
@@ -7095,19 +7013,17 @@
     [n : i64 (string.string-length source)]
     [index : i64 start]
     [found : i64 (- 0 1)]
-    (begin
-      (while (and (< found 0) (< index n))
-        (let
-          [c : char (string.string-ref source index)]
-          (cond
-            [(= c ';') (set! index (lint-name-case-skip-line source index))]
-            [(= c '"')
-              (set! index (lint-name-case-skip-quoted source index '"'))]
-            [(= c '\'')
-              (set! index (lint-name-case-skip-quoted source index '\''))]
-            [(lint-source-prefix-at? source index needle) (set! found index)]
-            [else (set! index (+ index 1))])))
-      found)))
+    (while (and (< found 0) (< index n))
+      (let
+        [c : char (string.string-ref source index)]
+        (cond
+          [(= c ';') (set! index (lint-name-case-skip-line source index))]
+          [(= c '"') (set! index (lint-name-case-skip-quoted source index '"'))]
+          [(= c '\'')
+            (set! index (lint-name-case-skip-quoted source index '\''))]
+          [(lint-source-prefix-at? source index needle) (set! found index)]
+          [else (set! index (+ index 1))])))
+    found))
 
 (define (lint-name-case-find-decl-name-from
   [source : (& source str)]
@@ -7120,43 +7036,42 @@
     [n : i64 (string.string-length source)]
     [search : i64 cursor]
     [found : i64 (- 0 1)]
-    (begin
-      (while (and (< found 0) (< search n))
-        (let
-          [form-index : i64
-            (lint-name-case-find-code-prefix-from source needle search)]
-          (if (< form-index 0)
-            (set! search n)
-            (let
-              [after-form : i64
-                (lint-name-case-skip-space-comments
-                  source
-                  (+ form-index (string.string-length needle)))]
-              [name-index : i64
-                (if function-head
-                  (if (and
-                    (< after-form n)
-                    (= (string.string-ref source after-form) '('))
-                    (lint-name-case-skip-space-comments source (+ after-form 1))
-                    (- 0 1))
-                  (if (and
-                    (< after-form n)
-                    (= (string.string-ref source after-form) '('))
-                    (- 0 1)
-                    after-form))]
-              (if (and
-                (>= name-index 0)
-                (lint-source-name-at? source name-index name))
-                (set! found name-index)
-                (set! search (+ form-index 1)))))))
-      (if (< found 0)
-        (LintSourceNameSpan (lint-no-span) cursor)
-        (LintSourceNameSpan
-          (lint-source-index-span
-            found
-            (string.string-length name)
-            (lint-no-span))
-          (+ found (string.string-length name)))))))
+    (while (and (< found 0) (< search n))
+      (let
+        [form-index : i64
+          (lint-name-case-find-code-prefix-from source needle search)]
+        (if (< form-index 0)
+          (set! search n)
+          (let
+            [after-form : i64
+              (lint-name-case-skip-space-comments
+                source
+                (+ form-index (string.string-length needle)))]
+            [name-index : i64
+              (if function-head
+                (if (and
+                  (< after-form n)
+                  (= (string.string-ref source after-form) '('))
+                  (lint-name-case-skip-space-comments source (+ after-form 1))
+                  (- 0 1))
+                (if (and
+                  (< after-form n)
+                  (= (string.string-ref source after-form) '('))
+                  (- 0 1)
+                  after-form))]
+            (if (and
+              (>= name-index 0)
+              (lint-source-name-at? source name-index name))
+              (set! found name-index)
+              (set! search (+ form-index 1)))))))
+    (if (< found 0)
+      (LintSourceNameSpan (lint-no-span) cursor)
+      (LintSourceNameSpan
+        (lint-source-index-span
+          found
+          (string.string-length name)
+          (lint-no-span))
+        (+ found (string.string-length name))))))
 
 (define (lint-name-case-decl-state-add
   [state : LintNameCaseDeclState]
@@ -7654,23 +7569,20 @@
   (let
     [n : i64 bindings.len]
     [slots : (__tl_dyn-array LintUnusedVariableBinding) bindings.slots]
-    (begin
-      (if (< n (array-length slots))
-        unit
-        (let
-          [bigger : (__tl_dyn-array LintUnusedVariableBinding)
-            (__tl_make-array
-              LintUnusedVariableBinding
-              (lint-grown-capacity (array-length slots)))]
-          [index : i64 0]
-          (begin
-            (while (< index n)
-              (begin
-                (set! (array-ref bigger index) (array-ref slots index))
-                (set! index (+ index 1))))
-            (set! slots bigger))))
-      (set! (array-ref slots n) binding)
-      (LintUnusedVariableBindingList slots (+ n 1)))))
+    (if (< n (array-length slots))
+      unit
+      (let
+        [bigger : (__tl_dyn-array LintUnusedVariableBinding)
+          (__tl_make-array
+            LintUnusedVariableBinding
+            (lint-grown-capacity (array-length slots)))]
+        [index : i64 0]
+        (while (< index n)
+          (set! (array-ref bigger index) (array-ref slots index))
+          (set! index (+ index 1)))
+        (set! slots bigger)))
+    (set! (array-ref slots n) binding)
+    (LintUnusedVariableBindingList slots (+ n 1))))
 
 (define (lint-unused-variable-frame-push
   [frames : LintUnusedVariableFrameList]
@@ -7678,23 +7590,20 @@
   (let
     [n : i64 frames.len]
     [slots : (__tl_dyn-array LintUnusedVariableBindingList) frames.slots]
-    (begin
-      (if (< n (array-length slots))
-        unit
-        (let
-          [bigger : (__tl_dyn-array LintUnusedVariableBindingList)
-            (__tl_make-array
-              LintUnusedVariableBindingList
-              (lint-grown-capacity (array-length slots)))]
-          [index : i64 0]
-          (begin
-            (while (< index n)
-              (begin
-                (set! (array-ref bigger index) (array-ref slots index))
-                (set! index (+ index 1))))
-            (set! slots bigger))))
-      (set! (array-ref slots n) bindings)
-      (LintUnusedVariableFrameList slots (+ n 1)))))
+    (if (< n (array-length slots))
+      unit
+      (let
+        [bigger : (__tl_dyn-array LintUnusedVariableBindingList)
+          (__tl_make-array
+            LintUnusedVariableBindingList
+            (lint-grown-capacity (array-length slots)))]
+        [index : i64 0]
+        (while (< index n)
+          (set! (array-ref bigger index) (array-ref slots index))
+          (set! index (+ index 1)))
+        (set! slots bigger)))
+    (set! (array-ref slots n) bindings)
+    (LintUnusedVariableFrameList slots (+ n 1))))
 
 (define (lint-unused-variable-state-with
   [state : LintUnusedVariableState]
@@ -7855,12 +7764,11 @@
     [n : i64 (string.string-length text)]
     [idx : i64 0]
     [found : i64 (- 0 1)]
-    (begin
-      (while (and (< found 0) (< idx n))
-        (if (= (string.string-ref text idx) '.')
-          (set! found idx)
-          (set! idx (+ idx 1))))
-      found)))
+    (while (and (< found 0) (< idx n))
+      (if (= (string.string-ref text idx) '.')
+        (set! found idx)
+        (set! idx (+ idx 1))))
+    found))
 
 (define (lint-unused-variable-read-var-name
   [state : LintUnusedVariableState]
@@ -7999,27 +7907,25 @@
           [text : String (ci.intern-str name)]
           [found : LintSourceNameSpan
             (lint-source-name-span-from source text cursor fallback)]
-          (begin
-            (set!
-              (array-ref slots (- (array-length slots) (+ index 1)))
-              (lint-unused-variable-binding
-                text
-                found.span
-                reportable
-                (and
-                  is-comptime
-                  (match ty
-                    [(Var type-name)
-                      (string.eq (ci.intern-str type-name) "type")]
-                    [_ false]))))
-            (lint-unused-variable-param-bindings-at
-              params
-              source
-              found.next-index
-              fallback
+          (set!
+            (array-ref slots (- (array-length slots) (+ index 1)))
+            (lint-unused-variable-binding
+              text
+              found.span
               reportable
-              slots
-              (+ index 1))))])))
+              (and
+                is-comptime
+                (match ty
+                  [(Var type-name) (string.eq (ci.intern-str type-name) "type")]
+                  [_ false]))))
+          (lint-unused-variable-param-bindings-at
+            params
+            source
+            found.next-index
+            fallback
+            reportable
+            slots
+            (+ index 1)))])))
 
 (define (lint-unused-variable-macro-param-bindings
   [params : (& params ast.AstMacroParamList)]
@@ -8061,24 +7967,23 @@
           [text : String (ci.intern-str name)]
           [found : LintSourceNameSpan
             (lint-source-name-span-from source text cursor fallback)]
-          (begin
-            (set!
-              (array-ref slots (- (array-length slots) (+ index 1)))
-              (lint-unused-variable-binding
-                text
-                found.span
-                reportable
-                (match ty
-                  [(Var type-name) (string.eq (ci.intern-str type-name) "type")]
-                  [_ false])))
-            (lint-unused-variable-macro-param-bindings-at
-              params
-              source
-              found.next-index
-              fallback
+          (set!
+            (array-ref slots (- (array-length slots) (+ index 1)))
+            (lint-unused-variable-binding
+              text
+              found.span
               reportable
-              slots
-              (+ index 1))))])))
+              (match ty
+                [(Var type-name) (string.eq (ci.intern-str type-name) "type")]
+                [_ false])))
+          (lint-unused-variable-macro-param-bindings-at
+            params
+            source
+            found.next-index
+            fallback
+            reportable
+            slots
+            (+ index 1)))])))
 
 (define (lint-unused-variable-pattern-list-bindings
   [patterns : ast.AstPatternList]
@@ -8732,15 +8637,13 @@
     [(Spanned inner inner-span)
       (lint-unused-variable-expr inner state inner-span)]
     [(Var name)
-      (begin
-        (lint-unused-unsafe-note-value-name! state (ci.intern-str name))
-        (lint-unused-variable-read-var-id state name))]
+      (lint-unused-unsafe-note-value-name! state (ci.intern-str name))
+      (lint-unused-variable-read-var-id state name)]
     [(Call func args)
-      (begin
-        (lint-unused-unsafe-note-call-target! state (ast.ast-node-get func))
-        (lint-unused-variable-expr-list
-          args
-          (lint-unused-variable-expr func state span)))]
+      (lint-unused-unsafe-note-call-target! state (ast.ast-node-get func))
+      (lint-unused-variable-expr-list
+        args
+        (lint-unused-variable-expr func state span))]
     [(Let let-box)
       (match (__tl-box-place let-box)
         [(Let bindings body)
@@ -8790,21 +8693,18 @@
           [_ (lint-unused-variable-expr body read-state span)]))]
     [(Begin exprs) (lint-unused-variable-expr-list exprs state)]
     [(Unsafe exprs)
-      (begin
-        (lint-unused-unsafe-block-push!
-          span
-          (lint-expr-list-requires-enclosing-unsafe? exprs))
-        (lint-unused-unsafe-finish-state
-          (lint-unused-variable-expr-list exprs state)))]
+      (lint-unused-unsafe-block-push!
+        span
+        (lint-expr-list-requires-enclosing-unsafe? exprs))
+      (lint-unused-unsafe-finish-state
+        (lint-unused-variable-expr-list exprs state))]
     [(Cast _ _)
-      (begin
-        (lint-unused-unsafe-block-mark-unknown!)
-        (lint-unused-variable-children node-id state span))]
+      (lint-unused-unsafe-block-mark-unknown!)
+      (lint-unused-variable-children node-id state span)]
     ;; A `deref` needs unsafe only through a raw pointer, which takes types.
     [(BoxTake _)
-      (begin
-        (lint-unused-unsafe-block-mark-unknown!)
-        (lint-unused-variable-children node-id state span))]
+      (lint-unused-unsafe-block-mark-unknown!)
+      (lint-unused-variable-children node-id state span)]
     [(Borrow _ lifetime-id _)
       (lint-unused-variable-children
         node-id
@@ -8984,13 +8884,11 @@
     [(Quasiquote inner) (lint-unused-variable-quasiquote-expr inner state)]
     [(BracketClause items) (lint-unused-variable-expr-list items state)]
     [(ProgramArgv)
-      (begin
-        (lint-unused-unsafe-block-mark-unknown!)
-        state)]
+      (lint-unused-unsafe-block-mark-unknown!)
+      state]
     [(ProgramEnvp)
-      (begin
-        (lint-unused-unsafe-block-mark-unknown!)
-        state)]
+      (lint-unused-unsafe-block-mark-unknown!)
+      state]
     [(Syscall args) (lint-unused-variable-expr-list args state)]
     [(ForeachActive lane body)
       (let
@@ -9015,26 +8913,25 @@
     [fallback-start : i64 (lint-source-span-start-index source fallback)]
     [found : i64 (- 0 1)]
     [cursor : i64 fallback-start]
-    (begin
-      ;; The body span is inside this declaration. Searching backward finds the
-      ;; nearest declaration head in work proportional to its signature; a
-      ;; forward scan would restart at byte zero for every declaration.
-      (while (and (< found 0) (>= cursor 0))
-        (let
-          [candidate : i64
-            (lint-source-find-prefix-backward-from source needle cursor)]
-          (if (< candidate 0)
-            (set! cursor (- 0 1))
-            (let
-              [end : i64 (+ candidate (string.string-length needle))]
-              (if (lint-source-symbol-boundary? source end)
-                (set! found candidate)
-                (set! cursor (- candidate 1)))))))
-      (if (< found 0)
-        (if (< fallback-start 0)
-          0
-          fallback-start)
-        (+ found (string.string-length needle))))))
+    ;; The body span is inside this declaration. Searching backward finds the
+    ;; nearest declaration head in work proportional to its signature; a
+    ;; forward scan would restart at byte zero for every declaration.
+    (while (and (< found 0) (>= cursor 0))
+      (let
+        [candidate : i64
+          (lint-source-find-prefix-backward-from source needle cursor)]
+        (if (< candidate 0)
+          (set! cursor (- 0 1))
+          (let
+            [end : i64 (+ candidate (string.string-length needle))]
+            (if (lint-source-symbol-boundary? source end)
+              (set! found candidate)
+              (set! cursor (- candidate 1)))))))
+    (if (< found 0)
+      (if (< fallback-start 0)
+        0
+        fallback-start)
+      (+ found (string.string-length needle)))))
 
 (define (lint-unused-variable-decl-with-param-frame
   [source : String]

@@ -46,35 +46,29 @@
     [n : i64 (string.string-length text)]
     [count : i64 1]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (if (= (string.char-at text i) '\n')
-            (set! count (+ count 1))
-            unit)
-          (set! i (+ i 1))))
-      (let
-        [lines : (__tl_dyn-array String) (__tl_make-array String count)]
-        [kept : i64 0]
-        [start : i64 0]
-        (begin
-          (set! i 0)
-          (while (<= i n)
-            (begin
-              (if (or (= i n) (= (string.char-at text i) '\n'))
-                (let
-                  [line : String
-                    (string.trim (string.substring text start (- i start)))]
-                  (begin
-                    (if (> (string.string-length line) 0)
-                      (begin
-                        (set! (array-ref lines kept) line)
-                        (set! kept (+ kept 1)))
-                      unit)
-                    (set! start (+ i 1))))
-                unit)
-              (set! i (+ i 1))))
-          (IrTextLines lines kept 0))))))
+    (while (< i n)
+      (if (= (string.char-at text i) '\n')
+        (set! count (+ count 1))
+        unit)
+      (set! i (+ i 1)))
+    (let
+      [lines : (__tl_dyn-array String) (__tl_make-array String count)]
+      [kept : i64 0]
+      [start : i64 0]
+      (set! i 0)
+      (while (<= i n)
+        (if (or (= i n) (= (string.char-at text i) '\n'))
+          (let
+            [line : String
+              (string.trim (string.substring text start (- i start)))]
+            (when
+              (> (string.string-length line) 0)
+              (set! (array-ref lines kept) line)
+              (set! kept (+ kept 1)))
+            (set! start (+ i 1)))
+          unit)
+        (set! i (+ i 1)))
+      (IrTextLines lines kept 0))))
 
 (define (ir-text-lines-more? [doc : (& doc IrTextLines)]) : bool
   (< doc.next doc.count))
@@ -87,9 +81,8 @@
 (define (ir-text-lines-take! [doc : (&mut doc IrTextLines)]) : String
   (let
     [line : String (ir-text-lines-peek doc)]
-    (begin
-      (set! doc.next (+ doc.next 1))
-      line)))
+    (set! doc.next (+ doc.next 1))
+    line))
 
 (define (ir-text-lines-done! [doc : (& doc IrTextLines)]) : unit
   (if (ir-text-lines-more? doc)
@@ -102,14 +95,12 @@
   (let
     [count : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i doc.count)
-        (begin
-          (if (string.is-string-prefix-at (& (array-ref doc.lines i)) prefix 0)
-            (set! count (+ count 1))
-            unit)
-          (set! i (+ i 1))))
-      count)))
+    (while (< i doc.count)
+      (if (string.is-string-prefix-at (& (array-ref doc.lines i)) prefix 0)
+        (set! count (+ count 1))
+        unit)
+      (set! i (+ i 1)))
+    count))
 
 (define (ir-text-label-line? [line : (& line str)]) : bool
   (let
@@ -132,18 +123,16 @@
     (set! cur.pos (+ cur.pos 1))))
 
 (define (ir-text-at-end? [cur : (&mut cur IrTextCursor)]) : bool
-  (begin
-    (ir-text-skip-blanks! cur)
-    (>= cur.pos (string.string-length cur.line))))
+  (ir-text-skip-blanks! cur)
+  (>= cur.pos (string.string-length cur.line)))
 
 (define (ir-text-accept! [cur : (&mut cur IrTextCursor)] [lit : (& lit str)]) : bool
-  (begin
-    (ir-text-skip-blanks! cur)
-    (if (string.is-string-prefix-at cur.line lit cur.pos)
-      (begin
-        (set! cur.pos (+ cur.pos (string.string-length lit)))
-        true)
-      false)))
+  (ir-text-skip-blanks! cur)
+  (if (string.is-string-prefix-at cur.line lit cur.pos)
+    (begin
+      (set! cur.pos (+ cur.pos (string.string-length lit)))
+      true)
+    false))
 
 (define (ir-text-expect! [cur : (&mut cur IrTextCursor)] [lit : (& lit str)]) : unit
   (if (ir-text-accept! cur lit)
@@ -152,35 +141,29 @@
 
 ;; The next blank-delimited word, also ending before any character of `stops`.
 (define (ir-text-word! [cur : (&mut cur IrTextCursor)] [stops : (& stops str)]) : String
-  (begin
-    (ir-text-skip-blanks! cur)
-    (let
-      [start : i64 cur.pos]
-      (begin
-        (while (and
-          (< cur.pos (string.string-length cur.line))
-          (not (= (string.char-at cur.line cur.pos) ' '))
-          (not (string.contains-char stops (string.char-at cur.line cur.pos))))
-          (set! cur.pos (+ cur.pos 1)))
-        (if (= cur.pos start)
-          (ir-text-error cur "expected a word")
-          (string.substring cur.line start (- cur.pos start)))))))
+  (ir-text-skip-blanks! cur)
+  (let
+    [start : i64 cur.pos]
+    (while (and
+      (< cur.pos (string.string-length cur.line))
+      (not (= (string.char-at cur.line cur.pos) ' '))
+      (not (string.contains-char stops (string.char-at cur.line cur.pos))))
+      (set! cur.pos (+ cur.pos 1)))
+    (if (= cur.pos start)
+      (ir-text-error cur "expected a word")
+      (string.substring cur.line start (- cur.pos start)))))
 
 (define (ir-text-digits? [text : (& text str)] [start : i64]) : bool
   (let
     [n : i64 (string.string-length text)]
     [i : i64 start]
     [ok : bool (< start n)]
-    (begin
-      (while (and ok (< i n))
-        (let
-          [code : i64 (cast (string.char-at text i) : i64)]
-          (begin
-            (set!
-              ok
-              (and (>= code (cast '0' : i64)) (<= code (cast '9' : i64))))
-            (set! i (+ i 1)))))
-      ok)))
+    (while (and ok (< i n))
+      (let
+        [code : i64 (cast (string.char-at text i) : i64)]
+        (set! ok (and (>= code (cast '0' : i64)) (<= code (cast '9' : i64))))
+        (set! i (+ i 1))))
+    ok))
 
 (define (ir-text-int? [text : (& text str)]) : bool
   (if (string.is-string-prefix-at text "-" 0)
@@ -198,20 +181,17 @@
   (ir-text-int-of cur (ir-text-word! cur ",()[]:")))
 
 (define (ir-text-var! [cur : (&mut cur IrTextCursor)]) : i64
-  (begin
-    (ir-text-expect! cur "%")
-    (ir-text-int! cur)))
+  (ir-text-expect! cur "%")
+  (ir-text-int! cur))
 
 (define (ir-text-lanes! [cur : (&mut cur IrTextCursor)]) : i64
-  (begin
-    (ir-text-expect! cur "lanes")
-    (ir-text-int! cur)))
+  (ir-text-expect! cur "lanes")
+  (ir-text-int! cur))
 
 ;; --- names ------------------------------------------------------------------
 (define (ir-text-symbol [name : String]) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (ir.compiler-ir-test-symbol name)))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (ir.compiler-ir-test-symbol name))
 
 (define (ir-text-label! [cur : (&mut cur IrTextCursor)]) : i64
   (ir.compiler-ir-label (ir-text-word! cur ",()[]")))
@@ -254,10 +234,9 @@
 (define (ir-text-type-list! [cur : (&mut cur IrTextCursor)]) : ast.AstTypeList
   (let
     [types : ast.AstTypeList (ast.ast-type-list-new)]
-    (begin
-      (while (not (ir-text-accept! cur ")"))
-        (ast.ast-type-list-push (&mut types) (ir-text-type-id! cur)))
-      types)))
+    (while (not (ir-text-accept! cur ")"))
+      (ast.ast-type-list-push (&mut types) (ir-text-type-id! cur)))
+    types))
 
 (define (ir-text-c-function-mode
   [cur : (& cur IrTextCursor)]
@@ -283,38 +262,34 @@
         [count : i64 (ast.ast-type-list-len (& types))]
         [args : ast.AstTypeList (ast.ast-type-list-new)]
         [i : i64 0]
-        (begin
-          (if (= count 0)
-            (ir-text-error cur "a function type needs a return type")
-            unit)
-          (while (< i (- count 1))
-            (begin
-              (ast.ast-type-list-push
-                (&mut args)
-                (ast.ast-type-list-get (& types) i (ast.ast-type-id-fallback)))
-              (set! i (+ i 1))))
-          (Func
-            (box args)
-            (ast.ast-type-list-get
-              (& types)
-              (- count 1)
-              (ast.ast-type-id-fallback)))))]
+        (if (= count 0)
+          (ir-text-error cur "a function type needs a return type")
+          unit)
+        (while (< i (- count 1))
+          (ast.ast-type-list-push
+            (&mut args)
+            (ast.ast-type-list-get (& types) i (ast.ast-type-id-fallback)))
+          (set! i (+ i 1)))
+        (Func
+          (box args)
+          (ast.ast-type-list-get
+            (& types)
+            (- count 1)
+            (ast.ast-type-id-fallback))))]
     [(string.eq head "Tuple") (ast.ast-ty-tuple (ir-text-type-list! cur))]
     [(string.eq head "CFunc")
       (let
         [mode : ast.AstCFunctionMode
           (ir-text-c-function-mode cur (ir-text-word! cur "()"))]
         [signature : i64 (ir-text-type-id! cur)]
-        (begin
-          (ir-text-expect! cur ")")
-          (CFunc signature mode)))]
+        (ir-text-expect! cur ")")
+        (CFunc signature mode))]
     [(string.eq head "Array")
       (let
         [elem : ast.AstType (ir-text-type! cur)]
         [count : i64 (ir-text-int! cur)]
-        (begin
-          (ir-text-expect! cur ")")
-          (ast.ast-ty-array elem count)))]
+        (ir-text-expect! cur ")")
+        (ast.ast-ty-array elem count))]
     [(or
         (string.eq head "Region")
         (string.eq head "Invalidate")
@@ -323,13 +298,12 @@
       (let
         [region : i64 (ir-text-lifetime! cur)]
         [inner : ast.AstType (ir-text-type! cur)]
-        (begin
-          (ir-text-expect! cur ")")
-          (cond
-            [(string.eq head "Region") (ast.ast-ty-region region inner)]
-            [(string.eq head "Invalidate") (ast.ast-ty-invalidate region inner)]
-            [(string.eq head "&") (ast.ast-ty-ref region inner)]
-            [else (ast.ast-ty-mut-ref region inner)])))]
+        (ir-text-expect! cur ")")
+        (cond
+          [(string.eq head "Region") (ast.ast-ty-region region inner)]
+          [(string.eq head "Invalidate") (ast.ast-ty-invalidate region inner)]
+          [(string.eq head "&") (ast.ast-ty-ref region inner)]
+          [else (ast.ast-ty-mut-ref region inner)]))]
     [(or
         (string.eq head "__tl_dyn-array")
         (string.eq head "Slice")
@@ -338,23 +312,19 @@
         (string.eq head "MutPtr"))
       (let
         [elem : ast.AstType (ir-text-type! cur)]
-        (begin
-          (ir-text-expect! cur ")")
-          (cond
-            [(string.eq head "__tl_dyn-array") (ast.ast-ty-dyn-array elem)]
-            [(string.eq head "Slice") (ast.ast-ty-slice elem)]
-            [(string.eq head "Box") (ast.ast-ty-box elem)]
-            [(string.eq head "Ptr") (ast.ast-ty-ptr elem)]
-            [else (ast.ast-ty-mut-ptr elem)])))]
+        (ir-text-expect! cur ")")
+        (cond
+          [(string.eq head "__tl_dyn-array") (ast.ast-ty-dyn-array elem)]
+          [(string.eq head "Slice") (ast.ast-ty-slice elem)]
+          [(string.eq head "Box") (ast.ast-ty-box elem)]
+          [(string.eq head "Ptr") (ast.ast-ty-ptr elem)]
+          [else (ast.ast-ty-mut-ptr elem)]))]
     [else
       (let
         [lifetimes : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
-        (begin
-          (while (not (ir-text-accept! cur ")"))
-            (ast.ast-lifetime-list-push
-              (&mut lifetimes)
-              (ir-text-lifetime! cur)))
-          (ast.ast-ty-struct-args (ci.intern (string.copy head)) lifetimes)))]))
+        (while (not (ir-text-accept! cur ")"))
+          (ast.ast-lifetime-list-push (&mut lifetimes) (ir-text-lifetime! cur)))
+        (ast.ast-ty-struct-args (ci.intern (string.copy head)) lifetimes))]))
 
 (define (ir-text-type! [cur : (&mut cur IrTextCursor)]) : ast.AstType
   (if (ir-text-accept! cur "(")
@@ -362,9 +332,8 @@
     (ir-text-named-type (ir-text-word! cur ",()[]@"))))
 
 (define (ir-text-typed! [cur : (&mut cur IrTextCursor)]) : ast.AstType
-  (begin
-    (ir-text-expect! cur ":")
-    (ir-text-type! cur)))
+  (ir-text-expect! cur ":")
+  (ir-text-type! cur))
 
 ;; --- values -----------------------------------------------------------------
 (define (ir-text-after [text : (& text str)] [prefix : (& prefix str)]) : String
@@ -398,9 +367,8 @@
     (ir-text-value-of cur word)))
 
 (define (ir-text-comma-value! [cur : (&mut cur IrTextCursor)]) : ir.CompilerIrValue
-  (begin
-    (ir-text-expect! cur ",")
-    (ir-text-value! cur)))
+  (ir-text-expect! cur ",")
+  (ir-text-value! cur))
 
 ;; Comma-separated values up to the closing `close`, which is consumed.
 (define (ir-text-values!
@@ -409,33 +377,26 @@
   (let
     [builder : ir.CompilerIrValueBuilder
       (ir.compiler-ir-value-builder-with-capacity 4)]
-    (begin
-      (if (ir-text-accept! cur close)
-        unit
-        (begin
+    (if (ir-text-accept! cur close)
+      unit
+      (begin
+        (ir.compiler-ir-value-builder-push! (&mut builder) (ir-text-value! cur))
+        (while (ir-text-accept! cur ",")
           (ir.compiler-ir-value-builder-push!
             (&mut builder)
-            (ir-text-value! cur))
-          (while (ir-text-accept! cur ",")
-            (ir.compiler-ir-value-builder-push!
-              (&mut builder)
-              (ir-text-value! cur)))
-          (ir-text-expect! cur close)))
-      (ir.compiler-ir-value-builder-to-seq builder))))
+            (ir-text-value! cur)))
+        (ir-text-expect! cur close)))
+    (ir.compiler-ir-value-builder-to-seq builder)))
 
 ;; `(args)` or `([sret arg N] args)`, through the closing `)`.
 (define (ir-text-call-args! [cur : (&mut cur IrTextCursor)]) : ir.CompilerIrCallArgs
-  (begin
-    (ir-text-expect! cur "(")
-    (if (ir-text-accept! cur "[sret arg")
-      (let
-        [index : i64 (ir-text-int! cur)]
-        (begin
-          (ir-text-expect! cur "]")
-          (ir.compiler-ir-call-args-sret-from-seq
-            (ir-text-values! cur ")")
-            index)))
-      (ir.compiler-ir-call-args-from-seq (ir-text-values! cur ")")))))
+  (ir-text-expect! cur "(")
+  (if (ir-text-accept! cur "[sret arg")
+    (let
+      [index : i64 (ir-text-int! cur)]
+      (ir-text-expect! cur "]")
+      (ir.compiler-ir-call-args-sret-from-seq (ir-text-values! cur ")") index))
+    (ir.compiler-ir-call-args-from-seq (ir-text-values! cur ")"))))
 
 (define (ir-text-maybe-value! [cur : (&mut cur IrTextCursor)]) : ir.CompilerIrMaybeValue
   (if (ir-text-at-end? cur)
@@ -475,16 +436,14 @@
     [ops : (__tl_dyn-array ir.CompilerIrBinOp) (ir-text-binops (I64))]
     [i : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< i (array-length ops)))
-        (begin
-          (if (string.eq
-            name
-            (ir.compiler-ir-bin-op-render (clone (array-ref ops i))))
-            (set! found i)
-            unit)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< found 0) (< i (array-length ops)))
+      (if (string.eq
+        name
+        (ir.compiler-ir-bin-op-render (clone (array-ref ops i))))
+        (set! found i)
+        unit)
+      (set! i (+ i 1)))
+    found))
 
 (define (ir-text-binop [index : i64] [shift-ty : ast.AstType]) : ir.CompilerIrBinOp
   (clone (array-ref (ir-text-binops shift-ty) index)))
@@ -557,66 +516,58 @@
   (let
     [builder : ir.CompilerIrPhiInputBuilder
       (ir.compiler-ir-phi-input-builder-with-capacity 2)]
-    (begin
-      (while (ir-text-accept! cur "[")
-        (let
-          [value : ir.CompilerIrValue (ir-text-value! cur)]
-          (begin
-            (ir-text-expect! cur ",")
-            (ir.compiler-ir-phi-input-builder-push!
-              (&mut builder)
-              (ir.compiler-ir-phi-input-of value (ir-text-label! cur)))
-            (ir-text-expect! cur "]")
-            (ir-text-accept! cur ",")
-            unit)))
-      (ir.compiler-ir-phi-input-builder-to-seq builder))))
+    (while (ir-text-accept! cur "[")
+      (let
+        [value : ir.CompilerIrValue (ir-text-value! cur)]
+        (ir-text-expect! cur ",")
+        (ir.compiler-ir-phi-input-builder-push!
+          (&mut builder)
+          (ir.compiler-ir-phi-input-of value (ir-text-label! cur)))
+        (ir-text-expect! cur "]")
+        (ir-text-accept! cur ",")
+        unit))
+    (ir.compiler-ir-phi-input-builder-to-seq builder)))
 
 (define (ir-text-switch-cases! [cur : (&mut cur IrTextCursor)]) : ir.CompilerIrSwitchCaseSeq
   (let
     [builder : ir.CompilerIrSwitchCaseBuilder
       (ir.compiler-ir-switch-case-builder-with-capacity 4)]
-    (begin
-      (ir-text-expect! cur "[")
-      (while (not (ir-text-accept! cur "]"))
-        (let
-          [tag : i64 (ir-text-int! cur)]
-          (begin
-            (ir-text-expect! cur ":")
-            (ir.compiler-ir-switch-case-builder-push!
-              (&mut builder)
-              (ir.CompilerIrSwitchCase.Case tag (ir-text-label! cur)))
-            (ir-text-accept! cur ",")
-            unit)))
-      (ir.compiler-ir-switch-case-builder-to-seq builder))))
+    (ir-text-expect! cur "[")
+    (while (not (ir-text-accept! cur "]"))
+      (let
+        [tag : i64 (ir-text-int! cur)]
+        (ir-text-expect! cur ":")
+        (ir.compiler-ir-switch-case-builder-push!
+          (&mut builder)
+          (ir.CompilerIrSwitchCase.Case tag (ir-text-label! cur)))
+        (ir-text-accept! cur ",")
+        unit))
+    (ir.compiler-ir-switch-case-builder-to-seq builder)))
 
 (define (ir-text-c-abi-slots! [cur : (&mut cur IrTextCursor)]) : ir.CompilerIrCAbiReturnSlotSeq
   (let
     [slots : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
       (__tl_make-array ir.CompilerIrCAbiReturnSlot 8)]
     [count : i64 0]
-    (begin
-      (ir-text-expect! cur "[")
-      (while (not (ir-text-accept! cur "]"))
-        (let
-          [ty : ast.AstType (ir-text-type! cur)]
-          (begin
-            (ir-text-expect! cur "@")
-            (set!
-              (array-ref slots count)
-              (ir.CompilerIrCAbiReturnSlot.Slot ty (ir-text-int! cur)))
-            (set! count (+ count 1))
-            (ir-text-accept! cur ",")
-            unit)))
+    (ir-text-expect! cur "[")
+    (while (not (ir-text-accept! cur "]"))
       (let
-        [exact : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
-          (__tl_make-array ir.CompilerIrCAbiReturnSlot count)]
-        [i : i64 0]
-        (begin
-          (while (< i count)
-            (begin
-              (set! (array-ref exact i) (clone (array-ref slots i)))
-              (set! i (+ i 1))))
-          (ir.compiler-ir-c-abi-return-slot-seq-of exact count))))))
+        [ty : ast.AstType (ir-text-type! cur)]
+        (ir-text-expect! cur "@")
+        (set!
+          (array-ref slots count)
+          (ir.CompilerIrCAbiReturnSlot.Slot ty (ir-text-int! cur)))
+        (set! count (+ count 1))
+        (ir-text-accept! cur ",")
+        unit))
+    (let
+      [exact : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
+        (__tl_make-array ir.CompilerIrCAbiReturnSlot count)]
+      [i : i64 0]
+      (while (< i count)
+        (set! (array-ref exact i) (clone (array-ref slots i)))
+        (set! i (+ i 1)))
+      (ir.compiler-ir-c-abi-return-slot-seq-of exact count))))
 
 ;; `name(args)` of a direct call.
 (define (ir-text-callee-symbol! [cur : (&mut cur IrTextCursor)]) : i64
@@ -839,9 +790,8 @@
                 (No)
                 (let
                   [high : ir.CompilerIrValue (ir-text-value! cur)]
-                  (begin
-                    (ir-text-expect! cur "active")
-                    (Some high)))))]
+                  (ir-text-expect! cur "active")
+                  (Some high))))]
           [active-lanes : ir.CompilerIrValue (ir-text-value! cur)]
           [lanes : i64 (ir-text-lanes! cur)]
           (VectorShuffle
@@ -870,9 +820,8 @@
         (let
           [leaf : ir.CompilerIrValue (ir-text-value! cur)]
           [subleaf : ir.CompilerIrValue (ir-text-comma-value! cur)]
-          (begin
-            (ir-text-expect! cur "word")
-            (CpuId dst leaf subleaf (ir-text-int! cur))))]
+          (ir-text-expect! cur "word")
+          (CpuId dst leaf subleaf (ir-text-int! cur)))]
       [(string.eq op "xgetbv") (Xgetbv dst (ir-text-value! cur))]
       [(string.eq op "syscall") (Syscall dst (ir-text-call-args! cur))]
       [(string.eq op "call")
@@ -893,11 +842,10 @@
           [inputs : ir.CompilerIrPhiInputSeq (ir-text-phi-inputs! cur)]
           (Phi dst inputs (ir-text-typed! cur)))]
       [(string.eq op "pack")
-        (begin
-          (ir-text-expect! cur "[")
-          (let
-            [values : ir.CompilerIrValueSeq (ir-text-values! cur "]")]
-            (Pack dst values (ir-text-typed! cur))))]
+        (ir-text-expect! cur "[")
+        (let
+          [values : ir.CompilerIrValueSeq (ir-text-values! cur "]")]
+          (Pack dst values (ir-text-typed! cur)))]
       [(string.eq op "word")
         (let
           [value : ir.CompilerIrValue (ir-text-value! cur)]
@@ -955,27 +903,25 @@
       (let
         [dst : ir.CompilerIrValue (ir-text-value! cur)]
         [src : ir.CompilerIrValue (ir-text-comma-value! cur)]
-        (begin
-          (ir-text-expect! cur ",")
-          (CopyBytes dst src (ir-text-int! cur))))]
+        (ir-text-expect! cur ",")
+        (CopyBytes dst src (ir-text-int! cur)))]
     [(string.eq op "bounds_check")
       (let
         [index : ir.CompilerIrValue (ir-text-value! cur)]
         [length : ir.CompilerIrValue (ir-text-comma-value! cur)]
-        (begin
-          (ir-text-expect! cur "message \"")
-          (let
-            [start : i64 cur.pos]
-            [end : i64 (- (string.string-length cur.line) 1)]
-            (if (and (> end start) (= (string.char-at cur.line end) '"'))
-              (begin
-                (set! cur.pos (+ end 1))
-                (BoundsCheck
-                  index
-                  length
-                  (ir.compiler-ir-label
-                    (string.substring cur.line start (- end start)))))
-              (ir-text-error cur "expected a quoted message")))))]
+        (ir-text-expect! cur "message \"")
+        (let
+          [start : i64 cur.pos]
+          [end : i64 (- (string.string-length cur.line) 1)]
+          (if (and (> end start) (= (string.char-at cur.line end) '"'))
+            (begin
+              (set! cur.pos (+ end 1))
+              (BoundsCheck
+                index
+                length
+                (ir.compiler-ir-label
+                  (string.substring cur.line start (- end start)))))
+            (ir-text-error cur "expected a quoted message"))))]
     [(or (string.eq op "vector_store") (string.eq op "predicated_store"))
       (let
         [base : ir.CompilerIrValue (ir-text-value! cur)]
@@ -1055,9 +1001,8 @@
             (ir-text-expect! cur "base")
             (ir-text-int! cur))]
         [cases : ir.CompilerIrSwitchCaseSeq (ir-text-switch-cases! cur)]
-        (begin
-          (ir-text-expect! cur "default")
-          (Switch index base cases (ir-text-label! cur))))]
+        (ir-text-expect! cur "default")
+        (Switch index base cases (ir-text-label! cur)))]
     [else
       (ir-text-error
         cur
@@ -1086,24 +1031,21 @@
 (define (ir-text-instr-lines! [doc : (&mut doc IrTextLines)]) : ir.CompilerIrInstrSeq
   (let
     [count : i64 0]
-    (begin
-      (while (and
-        (< (+ doc.next count) doc.count)
-        (not (ir-text-label-line? (& (array-ref doc.lines (+ doc.next count)))))
-        (not (string.eq (& (array-ref doc.lines (+ doc.next count))) "}")))
-        (set! count (+ count 1)))
-      (let
-        [builder : ir.CompilerIrInstrBuilder
-          (ir.compiler-ir-instr-builder-with-capacity count)]
-        [i : i64 0]
-        (begin
-          (while (< i count)
-            (begin
-              (ir.compiler-ir-instr-builder-push!
-                (&mut builder)
-                (ir-text-instr-line (ir-text-lines-take! doc)))
-              (set! i (+ i 1))))
-          (ir.compiler-ir-instr-builder-to-seq builder))))))
+    (while (and
+      (< (+ doc.next count) doc.count)
+      (not (ir-text-label-line? (& (array-ref doc.lines (+ doc.next count)))))
+      (not (string.eq (& (array-ref doc.lines (+ doc.next count))) "}")))
+      (set! count (+ count 1)))
+    (let
+      [builder : ir.CompilerIrInstrBuilder
+        (ir.compiler-ir-instr-builder-with-capacity count)]
+      [i : i64 0]
+      (while (< i count)
+        (ir.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (ir-text-instr-line (ir-text-lines-take! doc)))
+        (set! i (+ i 1)))
+      (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (ir-text-block! [doc : (&mut doc IrTextLines)]) : ir.CompilerIrBlock
   (let
@@ -1119,12 +1061,11 @@
 (define (ir-text-blocks! [doc : (&mut doc IrTextLines)]) : ir.CompilerIrBlockList
   (let
     [out : ir.CompilerIrBlockBuilder (ir.compiler-ir-block-builder-new)]
-    (begin
-      (while (and
-        (ir-text-lines-more? doc)
-        (ir-text-label-line? (& (array-ref doc.lines doc.next))))
-        (ir.compiler-ir-block-builder-push! (&mut out) (ir-text-block! doc)))
-      (ir.compiler-ir-block-builder-to-list out))))
+    (while (and
+      (ir-text-lines-more? doc)
+      (ir-text-label-line? (& (array-ref doc.lines doc.next))))
+      (ir.compiler-ir-block-builder-push! (&mut out) (ir-text-block! doc)))
+    (ir.compiler-ir-block-builder-to-list out)))
 
 ;; `name=%var:type`, comma separated, up to the closing `close`.
 (define (ir-text-count-from
@@ -1134,14 +1075,12 @@
   (let
     [count : i64 0]
     [i : i64 start]
-    (begin
-      (while (< i (string.string-length text))
-        (begin
-          (if (string.is-string-prefix-at text needle i)
-            (set! count (+ count 1))
-            unit)
-          (set! i (+ i 1))))
-      count)))
+    (while (< i (string.string-length text))
+      (if (string.is-string-prefix-at text needle i)
+        (set! count (+ count 1))
+        unit)
+      (set! i (+ i 1)))
+    count))
 
 ;; `name=%var:type`, comma separated, up to the closing `close` or, when
 ;; `close` is empty, the end of the line.
@@ -1152,25 +1091,23 @@
     [builder : ir.CompilerIrParamBuilder
       (ir.compiler-ir-param-builder-with-capacity
         (ir-text-count-from cur.line "=%" cur.pos))]
-    (begin
-      (while (not
-        (if (= (string.string-length close) 0)
-          (ir-text-at-end? cur)
-          (ir-text-accept! cur close)))
-        (let
-          [name : String (ir-text-word! cur "=")]
-          [var : i64
-            (begin
-              (ir-text-expect! cur "=%")
-              (ir-text-int! cur))]
+    (while (not
+      (if (= (string.string-length close) 0)
+        (ir-text-at-end? cur)
+        (ir-text-accept! cur close)))
+      (let
+        [name : String (ir-text-word! cur "=")]
+        [var : i64
           (begin
-            (ir-text-expect! cur ":")
-            (ir.compiler-ir-param-builder-push!
-              (&mut builder)
-              (ir.CompilerIrParam.Param name (ir-text-type! cur) var))
-            (ir-text-accept! cur ",")
-            unit)))
-      (ir.compiler-ir-param-builder-to-seq builder))))
+            (ir-text-expect! cur "=%")
+            (ir-text-int! cur))]
+        (ir-text-expect! cur ":")
+        (ir.compiler-ir-param-builder-push!
+          (&mut builder)
+          (ir.CompilerIrParam.Param name (ir-text-type! cur) var))
+        (ir-text-accept! cur ",")
+        unit))
+    (ir.compiler-ir-param-builder-to-seq builder)))
 
 (define (ir-text-function! [doc : (&mut doc IrTextLines)]) : ir.CompilerIrFunction
   (let
@@ -1191,16 +1128,15 @@
       (begin
         (ir-text-expect! (&mut cur) "vars")
         (ir-text-int! (&mut cur)))]
-    (begin
-      (ir-text-expect! (&mut cur) "{")
-      (if (ir-text-at-end? (&mut cur))
-        unit
-        (ir-text-error (& cur) "only ordinary functions have a text form"))
-      (let
-        [blocks : ir.CompilerIrBlockList (ir-text-blocks! doc)]
-        (if (string.eq (ir-text-lines-take! doc) "}")
-          (Function name params ret vars blocks Ordinary)
-          (ir-text-fail cur.line "function without a closing `}`"))))))
+    (ir-text-expect! (&mut cur) "{")
+    (if (ir-text-at-end? (&mut cur))
+      unit
+      (ir-text-error (& cur) "only ordinary functions have a text form"))
+    (let
+      [blocks : ir.CompilerIrBlockList (ir-text-blocks! doc)]
+      (if (string.eq (ir-text-lines-take! doc) "}")
+        (Function name params ret vars blocks Ordinary)
+        (ir-text-fail cur.line "function without a closing `}`")))))
 
 (define (ir-text-global-line [line : String]) : ir.CompilerIrGlobal
   (let
@@ -1210,9 +1146,8 @@
         (ir-text-expect! (&mut cur) "global @")
         (ir-text-symbol (ir-text-word! (&mut cur) "")))]
     [ty : ast.AstType (ir-text-typed! (&mut cur))]
-    (begin
-      (ir-text-expect! (&mut cur) "=")
-      (Global name ty (ir-text-value! (&mut cur))))))
+    (ir-text-expect! (&mut cur) "=")
+    (Global name ty (ir-text-value! (&mut cur)))))
 
 ;; --- entry points -----------------------------------------------------------
 ;: Read one instruction line, such as `%3 = add %1, %2 : i64`.
@@ -1224,27 +1159,24 @@
   (let
     [doc : IrTextLines (ir-text-lines text)]
     [seq : ir.CompilerIrInstrSeq (ir-text-instr-lines! (&mut doc))]
-    (begin
-      (ir-text-lines-done! (& doc))
-      seq)))
+    (ir-text-lines-done! (& doc))
+    seq))
 
 ;: Read one labelled block.
 (define (block [text : String]) : ir.CompilerIrBlock
   (let
     [doc : IrTextLines (ir-text-lines text)]
     [one : ir.CompilerIrBlock (ir-text-block! (&mut doc))]
-    (begin
-      (ir-text-lines-done! (& doc))
-      one)))
+    (ir-text-lines-done! (& doc))
+    one))
 
 ;: Read labelled blocks into a cons block list.
 (define (blocks [text : String]) : ir.CompilerIrBlockList
   (let
     [doc : IrTextLines (ir-text-lines text)]
     [list : ir.CompilerIrBlockList (ir-text-blocks! (&mut doc))]
-    (begin
-      (ir-text-lines-done! (& doc))
-      list)))
+    (ir-text-lines-done! (& doc))
+    list))
 
 ;: Read a parameter list such as `a=%0:i64, b=%1:i64`.
 (define (params [text : String]) : ir.CompilerIrParamSeq
@@ -1257,9 +1189,8 @@
   (let
     [doc : IrTextLines (ir-text-lines text)]
     [one : ir.CompilerIrFunction (ir-text-function! (&mut doc))]
-    (begin
-      (ir-text-lines-done! (& doc))
-      one)))
+    (ir-text-lines-done! (& doc))
+    one))
 
 ;: Read a whole program: the optional `typelisp-ir v1` header, `global` lines
 ;: and functions.
@@ -1272,27 +1203,26 @@
     [functions : ir.CompilerIrFunctionBuilder
       (ir.compiler-ir-function-builder-with-capacity
         (ir-text-lines-count-prefix (& doc) "function @"))]
-    (begin
-      (if (string.eq (ir-text-lines-peek (& doc)) "typelisp-ir v1")
-        (begin
-          (ir-text-lines-take! (&mut doc))
-          unit)
+    (if (string.eq (ir-text-lines-peek (& doc)) "typelisp-ir v1")
+      (begin
+        (ir-text-lines-take! (&mut doc))
         unit)
-      (while (string.is-string-prefix-at
-        (ir-text-lines-peek (& doc))
-        "global @"
-        0)
-        (ir.compiler-ir-global-builder-push!
-          (&mut globals)
-          (ir-text-global-line (ir-text-lines-take! (&mut doc)))))
-      (while (ir-text-lines-more? (& doc))
-        (ir.compiler-ir-function-builder-push!
-          (&mut functions)
-          (ir-text-function! (&mut doc))))
-      (Program
-        (ir.compiler-ir-global-builder-to-seq globals)
-        (ir.compiler-ir-function-builder-to-seq functions)
-        (ir.compiler-ir-extern-seq-empty)))))
+      unit)
+    (while (string.is-string-prefix-at
+      (ir-text-lines-peek (& doc))
+      "global @"
+      0)
+      (ir.compiler-ir-global-builder-push!
+        (&mut globals)
+        (ir-text-global-line (ir-text-lines-take! (&mut doc)))))
+    (while (ir-text-lines-more? (& doc))
+      (ir.compiler-ir-function-builder-push!
+        (&mut functions)
+        (ir-text-function! (&mut doc))))
+    (Program
+      (ir.compiler-ir-global-builder-to-seq globals)
+      (ir.compiler-ir-function-builder-to-seq functions)
+      (ir.compiler-ir-extern-seq-empty))))
 
 (define (ir-text-session) : cis.InternStructuralSessionHandle
   (cis.InternStructuralSessionHandle 0))

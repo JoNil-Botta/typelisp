@@ -380,9 +380,8 @@
   [value : i64]) : build_string_i64_map.Map
   (let
     [out : build_string_i64_map.Map map]
-    (begin
-      (build_string_i64_map.insert-ref! (&mut out) key value)
-      out)))
+    (build_string_i64_map.insert-ref! (&mut out) key value)
+    out))
 
 (define (build-string-index-map-put!
   [map : (&mut map build_string_i64_map.Map)]
@@ -500,128 +499,123 @@
     [has-opt-level : bool false]
     [lock-policy : BuildPackageLockPolicy (Default)]
     [stdlib-roots : cli_svec.Vec (cli_svec.new)]
-    (begin
-      (while (cli_option.cli-args-next! (&mut args))
-        (cond
-          [(string.eq args.name "--stdlib-root")
-            (cli_svec.push-ref!
-              (&mut stdlib-roots)
-              (cli_option.cli-args-value (& args)))]
-          [(string.eq args.name "--target")
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              (match (build-parse-target (string.copy (& value)))
-                [(Ok _)
-                  (begin
-                    (set! target value)
-                    (set! has-target true))]
-                [(Err _)
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    (build-unknown-target value))]))]
-          [(string.eq args.name "--opt-level")
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              [level : i64 (cli_option.cli-option-opt-level (& value))]
-              (cond
-                [has-opt-level
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    "build: --opt-level was provided more than once")]
-                [(< level 0)
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    (build-unknown-opt-level value))]
-                [else
-                  (begin
-                    (set! opt-level level)
-                    (set! has-opt-level true))]))]
-          [(string.eq args.name "--debug")
-            (ir.compiler-debug-info-set-enabled! true)]
-          [(string.eq args.name "-o")
-            (if has-output
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "build: -o was provided more than once")
-              (set! has-output true))]
-          [(string.eq args.name "--manifest-path")
-            (if has-manifest
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "build: --manifest-path was provided more than once")
-              (begin
-                (set! manifest (cli_option.cli-args-value (& args)))
-                (set! has-manifest true)))]
-          [(string.eq args.name "--backend-mode")
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              (match (build_run_core.source-tool-backend-mode
-                "build"
-                (string.copy (& value)))
-                [(Ok _) (set! mode value)]
-                [(Err _)
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    (build-unknown-mode value))]))]
-          [(and
-              has-profile
-              (or
-                (string.eq args.name "--profile")
-                (string.eq args.name "--release")))
-            (cli_option.cli-args-fail!
-              (&mut args)
-              "build: profile was provided more than once")]
-          [(string.eq args.name "--profile")
-            (match (build-parse-profile (cli_option.cli-args-value (& args)))
-              [(Err message) (cli_option.cli-args-fail! (&mut args) message)]
-              [(Ok parsed-profile)
-                (begin
-                  (set! profile parsed-profile)
-                  (set! has-profile true))])]
-          [(string.eq args.name "--release")
-            (begin
-              (set! profile (Release))
-              (set! has-profile true))]
-          [(or
-              (string.eq args.name "--locked")
-              (string.eq args.name "--update-lock"))
-            (if (build-package-lock-policy-provided? lock-policy)
-              (cli_option.cli-args-fail!
-                (&mut args)
-                (build-package-lock-policy-option-error))
-              (set!
-                lock-policy
-                (if (string.eq args.name "--locked")
-                  (Locked)
-                  (Update))))]
-          [(cli_option.cli-flag? args.arg)
-            (cli_option.cli-args-fail-arg! (&mut args) "build: unknown flag ")]
-          [has-source
-            (cli_option.cli-args-fail!
-              (&mut args)
-              "build: accepts only one source file")]
-          [else (set! has-source true)]))
+    (while (cli_option.cli-args-next! (&mut args))
       (cond
-        [args.failed (Err args.error)]
-        [(and has-source has-manifest)
-          (Err "build: cannot combine a source file with --manifest-path")]
-        [has-source (Ok (Source))]
-        [has-output (Err "build: -o requires a source file argument")]
-        [else
-          (Ok
-            (BuildConfig.Package
-              manifest
-              has-manifest
-              target
-              has-target
-              mode
-              profile
-              has-opt-level
-              (if has-opt-level
-                opt-level
-                (build-profile-default-opt-level profile))
+        [(string.eq args.name "--stdlib-root")
+          (cli_svec.push-ref!
+            (&mut stdlib-roots)
+            (cli_option.cli-args-value (& args)))]
+        [(string.eq args.name "--target")
+          (let
+            [value : String (cli_option.cli-args-value (& args))]
+            (match (build-parse-target (string.copy (& value)))
+              [(Ok _)
+                (set! target value)
+                (set! has-target true)]
+              [(Err _)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  (build-unknown-target value))]))]
+        [(string.eq args.name "--opt-level")
+          (let
+            [value : String (cli_option.cli-args-value (& args))]
+            [level : i64 (cli_option.cli-option-opt-level (& value))]
+            (cond
+              [has-opt-level
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  "build: --opt-level was provided more than once")]
+              [(< level 0)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  (build-unknown-opt-level value))]
+              [else
+                (set! opt-level level)
+                (set! has-opt-level true)]))]
+        [(string.eq args.name "--debug")
+          (ir.compiler-debug-info-set-enabled! true)]
+        [(string.eq args.name "-o")
+          (if has-output
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "build: -o was provided more than once")
+            (set! has-output true))]
+        [(string.eq args.name "--manifest-path")
+          (if has-manifest
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "build: --manifest-path was provided more than once")
+            (begin
+              (set! manifest (cli_option.cli-args-value (& args)))
+              (set! has-manifest true)))]
+        [(string.eq args.name "--backend-mode")
+          (let
+            [value : String (cli_option.cli-args-value (& args))]
+            (match (build_run_core.source-tool-backend-mode
+              "build"
+              (string.copy (& value)))
+              [(Ok _) (set! mode value)]
+              [(Err _)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  (build-unknown-mode value))]))]
+        [(and
+            has-profile
+            (or
+              (string.eq args.name "--profile")
+              (string.eq args.name "--release")))
+          (cli_option.cli-args-fail!
+            (&mut args)
+            "build: profile was provided more than once")]
+        [(string.eq args.name "--profile")
+          (match (build-parse-profile (cli_option.cli-args-value (& args)))
+            [(Err message) (cli_option.cli-args-fail! (&mut args) message)]
+            [(Ok parsed-profile)
+              (set! profile parsed-profile)
+              (set! has-profile true)])]
+        [(string.eq args.name "--release")
+          (set! profile (Release))
+          (set! has-profile true)]
+        [(or
+            (string.eq args.name "--locked")
+            (string.eq args.name "--update-lock"))
+          (if (build-package-lock-policy-provided? lock-policy)
+            (cli_option.cli-args-fail!
+              (&mut args)
+              (build-package-lock-policy-option-error))
+            (set!
               lock-policy
-              stdlib-roots))]))))
+              (if (string.eq args.name "--locked")
+                (Locked)
+                (Update))))]
+        [(cli_option.cli-flag? args.arg)
+          (cli_option.cli-args-fail-arg! (&mut args) "build: unknown flag ")]
+        [has-source
+          (cli_option.cli-args-fail!
+            (&mut args)
+            "build: accepts only one source file")]
+        [else (set! has-source true)]))
+    (cond
+      [args.failed (Err args.error)]
+      [(and has-source has-manifest)
+        (Err "build: cannot combine a source file with --manifest-path")]
+      [has-source (Ok (Source))]
+      [has-output (Err "build: -o requires a source file argument")]
+      [else
+        (Ok
+          (BuildConfig.Package
+            manifest
+            has-manifest
+            target
+            has-target
+            mode
+            profile
+            has-opt-level
+            (if has-opt-level
+              opt-level
+              (build-profile-default-opt-level profile))
+            lock-policy
+            stdlib-roots))])))
 
 ;; Parse the private `--package-worker` / `--package-doctest-worker` protocol.
 (define (build-package-worker-config-from [idx : i64] [count : i64]) : ResultBuildPackageWorkerConfig
@@ -645,114 +639,110 @@
     [lock-policy : BuildPackageLockPolicy (Default)]
     [stdlib-roots : cli_svec.Vec (cli_svec.new)]
     [resolved-deps : load.CompilerPkgDepList (load.compiler-pkg-dep-list-empty)]
-    (begin
-      (while (cli_option.cli-args-next! (&mut args))
-        (cond
-          [(string.eq args.name "--stdlib-root")
-            (cli_svec.push-ref!
-              (&mut stdlib-roots)
-              (cli_option.cli-args-value (& args)))]
-          [(string.eq args.name "--target")
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              (match (build_run_core.source-tool-target (string.copy (& value)))
-                [(Ok parsed-target) (set! target parsed-target)]
-                [(Err _)
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    (build-cli-unknown-target value))]))]
-          [(string.eq args.name "--opt-level")
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              [level : i64 (cli_option.cli-option-opt-level (& value))]
-              (if (< level 0)
+    (while (cli_option.cli-args-next! (&mut args))
+      (cond
+        [(string.eq args.name "--stdlib-root")
+          (cli_svec.push-ref!
+            (&mut stdlib-roots)
+            (cli_option.cli-args-value (& args)))]
+        [(string.eq args.name "--target")
+          (let
+            [value : String (cli_option.cli-args-value (& args))]
+            (match (build_run_core.source-tool-target (string.copy (& value)))
+              [(Ok parsed-target) (set! target parsed-target)]
+              [(Err _)
                 (cli_option.cli-args-fail!
                   (&mut args)
-                  (build-unknown-opt-level value))
-                (begin
-                  (set! opt-level level)
-                  (set! has-opt-level true))))]
-          [(string.eq args.name "--debug")
-            (ir.compiler-debug-info-set-enabled! true)]
-          [(string.eq args.name "--manifest-path")
-            (begin
-              (set! manifest-path (cli_option.cli-args-value (& args)))
-              (set! has-manifest true))]
-          [(string.eq args.name "--backend-mode")
-            (match (build_run_core.source-tool-backend-mode
-              "build"
-              (cli_option.cli-args-value (& args)))
-              [(Ok parsed-mode) (set! mode parsed-mode)]
-              [(Err message) (cli_option.cli-args-fail! (&mut args) message)])]
-          ;; A profile also selects its default opt level unless --opt-level
-          ;; already chose one.
-          [(string.eq args.name "--profile")
-            (match (build-parse-profile (cli_option.cli-args-value (& args)))
-              [(Err message) (cli_option.cli-args-fail! (&mut args) message)]
-              [(Ok parsed-profile)
-                (begin
-                  (unless
-                    has-opt-level
-                    (set!
-                      opt-level
-                      (build-profile-default-opt-level parsed-profile)))
-                  (set! profile parsed-profile))])]
-          [(string.eq args.name "--release")
-            (begin
+                  (build-cli-unknown-target value))]))]
+        [(string.eq args.name "--opt-level")
+          (let
+            [value : String (cli_option.cli-args-value (& args))]
+            [level : i64 (cli_option.cli-option-opt-level (& value))]
+            (if (< level 0)
+              (cli_option.cli-args-fail!
+                (&mut args)
+                (build-unknown-opt-level value))
+              (begin
+                (set! opt-level level)
+                (set! has-opt-level true))))]
+        [(string.eq args.name "--debug")
+          (ir.compiler-debug-info-set-enabled! true)]
+        [(string.eq args.name "--manifest-path")
+          (set! manifest-path (cli_option.cli-args-value (& args)))
+          (set! has-manifest true)]
+        [(string.eq args.name "--backend-mode")
+          (match (build_run_core.source-tool-backend-mode
+            "build"
+            (cli_option.cli-args-value (& args)))
+            [(Ok parsed-mode) (set! mode parsed-mode)]
+            [(Err message) (cli_option.cli-args-fail! (&mut args) message)])]
+        ;; A profile also selects its default opt level unless --opt-level
+        ;; already chose one.
+        [(string.eq args.name "--profile")
+          (match (build-parse-profile (cli_option.cli-args-value (& args)))
+            [(Err message) (cli_option.cli-args-fail! (&mut args) message)]
+            [(Ok parsed-profile)
               (unless
                 has-opt-level
-                (set! opt-level (build-profile-default-opt-level (Release))))
-              (set! profile (Release)))]
-          [(or
-              (string.eq args.name "--locked")
-              (string.eq args.name "--update-lock"))
-            (if (build-package-lock-policy-provided? lock-policy)
-              (cli_option.cli-args-fail!
-                (&mut args)
-                (build-package-lock-policy-option-error))
-              (set!
-                lock-policy
-                (if (string.eq args.name "--locked")
-                  (Locked)
-                  (Update))))]
-          ;; Takes an alias and a path, with its own missing-value wording.
-          [(string.eq args.name "--resolved-dep")
-            (if (>= (+ args.index 2) count)
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "build: --resolved-dep requires alias and path")
-              (begin
                 (set!
-                  resolved-deps
-                  (load.compiler-pkg-dep-list-push
-                    resolved-deps
-                    (load.CompilerPkgDep
-                      (cli_option.cli-args-value-at (& args) 1)
-                      (cli_option.cli-args-value-at (& args) 2))))
-                (set! args.next (+ args.index 3))))]
-          [(cli_option.cli-flag? args.arg)
-            (cli_option.cli-args-fail-arg!
+                  opt-level
+                  (build-profile-default-opt-level parsed-profile)))
+              (set! profile parsed-profile)])]
+        [(string.eq args.name "--release")
+          (unless
+            has-opt-level
+            (set! opt-level (build-profile-default-opt-level (Release))))
+          (set! profile (Release))]
+        [(or
+            (string.eq args.name "--locked")
+            (string.eq args.name "--update-lock"))
+          (if (build-package-lock-policy-provided? lock-policy)
+            (cli_option.cli-args-fail!
               (&mut args)
-              "build: unknown package worker flag ")]
-          [else
-            (cli_option.cli-args-fail-arg!
-              (&mut args)
-              "build: unexpected package worker argument ")]))
-      (cond
-        [args.failed (Err args.error)]
-        [has-manifest
-          (Ok
-            (BuildPackageWorkerConfig
-              manifest-path
-              has-manifest
-              target
-              mode
-              profile
-              opt-level
+              (build-package-lock-policy-option-error))
+            (set!
               lock-policy
-              stdlib-roots
-              resolved-deps))]
-        [else (Err "build: --package-worker requires --manifest-path")]))))
+              (if (string.eq args.name "--locked")
+                (Locked)
+                (Update))))]
+        ;; Takes an alias and a path, with its own missing-value wording.
+        [(string.eq args.name "--resolved-dep")
+          (if (>= (+ args.index 2) count)
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "build: --resolved-dep requires alias and path")
+            (begin
+              (set!
+                resolved-deps
+                (load.compiler-pkg-dep-list-push
+                  resolved-deps
+                  (load.CompilerPkgDep
+                    (cli_option.cli-args-value-at (& args) 1)
+                    (cli_option.cli-args-value-at (& args) 2))))
+              (set! args.next (+ args.index 3))))]
+        [(cli_option.cli-flag? args.arg)
+          (cli_option.cli-args-fail-arg!
+            (&mut args)
+            "build: unknown package worker flag ")]
+        [else
+          (cli_option.cli-args-fail-arg!
+            (&mut args)
+            "build: unexpected package worker argument ")]))
+    (cond
+      [args.failed (Err args.error)]
+      [has-manifest
+        (Ok
+          (BuildPackageWorkerConfig
+            manifest-path
+            has-manifest
+            target
+            mode
+            profile
+            opt-level
+            lock-policy
+            stdlib-roots
+            resolved-deps))]
+      [else (Err "build: --package-worker requires --manifest-path")])))
 
 (define (build-discover-manifest-up [prefix : String] [fuel : i64]) : load.CompilerLoadMaybePath
   (if (<= fuel 0)
@@ -2003,9 +1993,8 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (begin
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
+      (set! (array-ref dst index) (array-ref src index))
+      (set! index (+ index 1)))))
 
 (define (build-package-graph-node-vec-grow [v : BuildPackageGraphNodeVec]) : BuildPackageGraphNodeVec
   (let
@@ -2014,9 +2003,8 @@
       (__tl_make-array
         BuildPackageGraphNode
         (* (build-package-graph-node-vec-capacity v) 2))]
-    (begin
-      (build-package-graph-node-vec-copy-range! (&mut bigger) v.slots count)
-      (BuildPackageGraphNodeVec bigger count))))
+    (build-package-graph-node-vec-copy-range! (&mut bigger) v.slots count)
+    (BuildPackageGraphNodeVec bigger count)))
 
 (define (build-package-graph-node-vec-push
   [v : BuildPackageGraphNodeVec]
@@ -2027,11 +2015,10 @@
     (let
       [slots : (__tl_dyn-array BuildPackageGraphNode)
         (owned_view.compiler-owned-shared-view v.slots)]
-      (begin
-        (set! (array-ref slots (build-package-graph-node-vec-len v)) node)
-        (BuildPackageGraphNodeVec
-          slots
-          (+ (build-package-graph-node-vec-len v) 1))))
+      (set! (array-ref slots (build-package-graph-node-vec-len v)) node)
+      (BuildPackageGraphNodeVec
+        slots
+        (+ (build-package-graph-node-vec-len v) 1)))
     (build-package-graph-node-vec-push
       (build-package-graph-node-vec-grow v)
       node)))
@@ -2319,26 +2306,24 @@
   (let
     [out : build_run_core.SourceToolLinkInputs inputs]
     [index : i64 0]
-    (begin
-      (while (< index (fs.string-vector-len vec))
-        (let
-          [value : String (fs.string-vector-get vec index "")]
-          (begin
-            (set!
-              out
-              (build_run_core.source-tool-link-inputs-add-origin
-                out
-                (owned_view.compiler-owned-shared-view kind)
-                (if (string.eq (& kind) "search-path")
-                  (build-package-link-resolve-search-path
-                    (owned_view.compiler-owned-shared-view manifest-dir)
-                    value)
-                  value)
-                (build-package-link-declared-by
-                  (owned_view.compiler-owned-shared-view owner)
-                  (owned_view.compiler-owned-shared-view field))))
-            (set! index (+ index 1)))))
-      out)))
+    (while (< index (fs.string-vector-len vec))
+      (let
+        [value : String (fs.string-vector-get vec index "")]
+        (set!
+          out
+          (build_run_core.source-tool-link-inputs-add-origin
+            out
+            (owned_view.compiler-owned-shared-view kind)
+            (if (string.eq (& kind) "search-path")
+              (build-package-link-resolve-search-path
+                (owned_view.compiler-owned-shared-view manifest-dir)
+                value)
+              value)
+            (build-package-link-declared-by
+              (owned_view.compiler-owned-shared-view owner)
+              (owned_view.compiler-owned-shared-view field))))
+        (set! index (+ index 1))))
+    out))
 
 (define (build-package-link-add-set-origins
   [inputs : build_run_core.SourceToolLinkInputs]
@@ -2646,15 +2631,13 @@
     emit-entry
     crt-entry)
     [(Err diag advisories)
-      (begin
-        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
-        (Err
-          (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (deref diag))))]
+      (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+      (Err
+        (compiler_driver_core.compiler-driver-render-source-diagnostic
+          (deref diag)))]
     [(Ok asm advisories)
-      (begin
-        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
-        (Assembly asm reason))]))
+      (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+      (Assembly asm reason)]))
 
 ;; Route policy is resolved while source declarations are live. Emission owns
 ;; one lowered result and cannot re-enter package loading or lowering.
@@ -2681,24 +2664,21 @@
             emit-entry
             crt-entry)
             [(Object image asm advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (match (build-package-render-linux-direct-object kind image)
-                  [(Ok object) (DirectObject object asm)]
-                  [(Fallback reason) (Assembly asm reason)]))]
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (match (build-package-render-linux-direct-object kind image)
+                [(Ok object) (DirectObject object asm)]
+                [(Fallback reason) (Assembly asm reason)])]
             [(Assembly asm category advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (Assembly asm category))]
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (Assembly asm category)]
             [(Err diag advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (Err
-                  (compiler_driver_core.compiler-driver-render-source-diagnostic
-                    (deref diag))))])]
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (Err
+                (compiler_driver_core.compiler-driver-render-source-diagnostic
+                  (deref diag)))])]
         [(Windows)
           ;; The shared Windows batch emitter owns the semantic gate as well as
           ;; the COFF encoding/linkability checks. Its Assembly result is an
@@ -2712,26 +2692,23 @@
             false
             true)
             [(CoffObject object side-assembly advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (match side-assembly
-                  [(None)
-                    (Err
-                      "build: package COFF preparation omitted required side assembly")]
-                  [(Some asm) (DirectObject object asm)]))]
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (match side-assembly
+                [(None)
+                  (Err
+                    "build: package COFF preparation omitted required side assembly")]
+                [(Some asm) (DirectObject object asm)])]
             [(Assembly asm category advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (Assembly (text_buf.render asm) category))]
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (Assembly (text_buf.render asm) category)]
             [(Err diag advisories)
-              (begin
-                (compiler_driver_core.compiler-driver-print-advisories
-                  (& advisories))
-                (Err
-                  (compiler_driver_core.compiler-driver-render-source-diagnostic
-                    (deref diag))))])])]
+              (compiler_driver_core.compiler-driver-print-advisories
+                (& advisories))
+              (Err
+                (compiler_driver_core.compiler-driver-render-source-diagnostic
+                  (deref diag)))])])]
     [(Fallback reason)
       (build-package-emit-assembly-fallback
         entry-path
@@ -2791,26 +2768,23 @@
       (let
         [index : i64 0]
         [result : ResultBuildString (Ok "")]
-        (begin
-          (while (< index (fs.string-vector-len vec))
-            (let
-              [value : String (fs.string-vector-get vec index "")]
-              (begin
-                (if (load.compiler-load-absolute-path? value)
-                  unit
-                  (match (package_source_core.package-source-confined-existing-path
-                    (owned_view.compiler-owned-shared-view node.manifest.name)
-                    (owned_view.compiler-owned-shared-view field)
-                    value
-                    (owned_view.compiler-owned-shared-view checkout-root)
-                    (Directory))
-                    [(Err message)
-                      (begin
-                        (set! result (Err message))
-                        (set! index (fs.string-vector-len vec)))]
-                    [(Ok _) unit]))
-                (set! index (+ index 1)))))
-          result))]))
+        (while (< index (fs.string-vector-len vec))
+          (let
+            [value : String (fs.string-vector-get vec index "")]
+            (if (load.compiler-load-absolute-path? value)
+              unit
+              (match (package_source_core.package-source-confined-existing-path
+                (owned_view.compiler-owned-shared-view node.manifest.name)
+                (owned_view.compiler-owned-shared-view field)
+                value
+                (owned_view.compiler-owned-shared-view checkout-root)
+                (Directory))
+                [(Err message)
+                  (set! result (Err message))
+                  (set! index (fs.string-vector-len vec))]
+                [(Ok _) unit]))
+            (set! index (+ index 1))))
+        result)]))
 
 ;; The dependency section of a binary's link (#6982): every direct
 ;; dependency's static archive, and the native requirements its `(link ...)`
@@ -2826,67 +2800,65 @@
     [out : build_run_core.SourceToolLinkInputs
       (build_run_core.source-tool-link-inputs-empty)]
     [error : String ""]
-    (begin
-      (while (>= index 0)
-        (let
-          [node : BuildPackageGraphNode
-            (build-package-graph-node-vec-at nodes index)]
-          [link : load.CompilerPkgLink node.manifest.link]
-          [selected : load.CompilerPkgLinkSet
-            (match target
-              [(Linux) (owned_view.compiler-owned-shared-view link.linux)]
-              [(Windows) (owned_view.compiler-owned-shared-view link.windows)])]
-          [owner : String
-            (build-package-link-owner
-              (owned_view.compiler-owned-shared-view node.manifest.name)
-              (owned_view.compiler-owned-shared-view node.manifest-path))]
-          [archive : String
-            (build-package-graph-node-artifact-path
-              (owned_view.compiler-owned-shared-view node)
-              profile
-              target)]
-          (begin
+    (while (>= index 0)
+      (let
+        [node : BuildPackageGraphNode
+          (build-package-graph-node-vec-at nodes index)]
+        [link : load.CompilerPkgLink node.manifest.link]
+        [selected : load.CompilerPkgLinkSet
+          (match target
+            [(Linux) (owned_view.compiler-owned-shared-view link.linux)]
+            [(Windows) (owned_view.compiler-owned-shared-view link.windows)])]
+        [owner : String
+          (build-package-link-owner
+            (owned_view.compiler-owned-shared-view node.manifest.name)
+            (owned_view.compiler-owned-shared-view node.manifest-path))]
+        [archive : String
+          (build-package-graph-node-artifact-path
+            (owned_view.compiler-owned-shared-view node)
+            profile
+            target)]
+        (match (build-package-link-confine-search-paths
+          (owned_view.compiler-owned-shared-view node)
+          "search-paths"
+          (& link.all.search-paths))
+          [(Err message) (set! error message)]
+          [(Ok _)
             (match (build-package-link-confine-search-paths
               (owned_view.compiler-owned-shared-view node)
-              "search-paths"
-              (& link.all.search-paths))
+              (match target
+                [(Linux) "linux-search-paths"]
+                [(Windows) "windows-search-paths"])
+              (& selected.search-paths))
               [(Err message) (set! error message)]
-              [(Ok _)
-                (match (build-package-link-confine-search-paths
-                  (owned_view.compiler-owned-shared-view node)
-                  (match target
-                    [(Linux) "linux-search-paths"]
-                    [(Windows) "windows-search-paths"])
-                  (& selected.search-paths))
-                  [(Err message) (set! error message)]
-                  [(Ok _) unit])])
-            (set!
-              out
-              (build_run_core.source-tool-link-inputs-merge-with
-                out
-                (build_run_core.source-tool-link-inputs-merge
-                  (build_run_core.source-tool-link-inputs-add-origin
-                    (build_run_core.source-tool-link-inputs-from-archives
-                      (process.args-single
-                        (owned_view.compiler-owned-shared-view archive)))
-                    "archive"
-                    archive
-                    (owned_view.compiler-owned-shared-view owner))
-                  (build-package-manifest-link-inputs
-                    link
-                    (load.compiler-load-dirname
-                      (owned_view.compiler-owned-shared-view node.manifest-path))
-                    owner
-                    target))
-                false))
-            (set!
-              index
-              (if (> (string.string-length error) 0)
-                -1
-                (- index 1))))))
-      (if (> (string.string-length error) 0)
-        (Err error)
-        (Ok out)))))
+              [(Ok _) unit])])
+        (set!
+          out
+          (build_run_core.source-tool-link-inputs-merge-with
+            out
+            (build_run_core.source-tool-link-inputs-merge
+              (build_run_core.source-tool-link-inputs-add-origin
+                (build_run_core.source-tool-link-inputs-from-archives
+                  (process.args-single
+                    (owned_view.compiler-owned-shared-view archive)))
+                "archive"
+                archive
+                (owned_view.compiler-owned-shared-view owner))
+              (build-package-manifest-link-inputs
+                link
+                (load.compiler-load-dirname
+                  (owned_view.compiler-owned-shared-view node.manifest-path))
+                owner
+                target))
+            false))
+        (set!
+          index
+          (if (> (string.string-length error) 0)
+            -1
+            (- index 1)))))
+    (if (> (string.string-length error) 0)
+      (Err error)
+      (Ok out))))
 
 (define (build-package-catalog-dep-root
   [manifest-dir : String]
@@ -2906,18 +2878,16 @@
   (let
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (< index count)
-        (begin
-          (if (string.eq
-            (build-package-catalog-dep-root
-              (owned_view.compiler-owned-shared-view manifest-dir)
-              (load.compiler-pkg-dep-list-at (& deps) index))
-            root)
-            (set! found true)
-            unit)
-          (set! index (+ index 1))))
-      found)))
+    (while (< index count)
+      (if (string.eq
+        (build-package-catalog-dep-root
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (load.compiler-pkg-dep-list-at (& deps) index))
+        root)
+        (set! found true)
+        unit)
+      (set! index (+ index 1)))
+    found))
 
 (define (build-package-graph-catalog-deps
   [nodes : BuildPackageGraphNodeVec]
@@ -2928,31 +2898,29 @@
     [count : i64 (build-package-graph-node-vec-len nodes)]
     [direct-count : i64 (load.compiler-pkg-dep-list-count (& direct-deps))]
     [deps : load.CompilerPkgDepList direct-deps]
-    (begin
-      (while (< index count)
-        (let
-          [node : BuildPackageGraphNode
-            (build-package-graph-node-vec-at nodes index)]
-          [root : String
-            (load.compiler-load-canonical-path
-              (load.compiler-load-dirname node.manifest-path))]
-          (begin
-            ;; Graph construction already canonicalizes and deduplicates node
-            ;; roots. Only direct manifest requests need comparison here so
-            ;; their aliases and duplicate request telemetry stay intact.
-            (if (build-package-catalog-deps-contain-root?
+    (while (< index count)
+      (let
+        [node : BuildPackageGraphNode
+          (build-package-graph-node-vec-at nodes index)]
+        [root : String
+          (load.compiler-load-canonical-path
+            (load.compiler-load-dirname node.manifest-path))]
+        ;; Graph construction already canonicalizes and deduplicates node
+        ;; roots. Only direct manifest requests need comparison here so
+        ;; their aliases and duplicate request telemetry stay intact.
+        (if (build-package-catalog-deps-contain-root?
+          deps
+          direct-count
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          root)
+          unit
+          (set!
+            deps
+            (load.compiler-pkg-dep-list-push
               deps
-              direct-count
-              (owned_view.compiler-owned-shared-view manifest-dir)
-              root)
-              unit
-              (set!
-                deps
-                (load.compiler-pkg-dep-list-push
-                  deps
-                  (load.CompilerPkgDep node.manifest.name root))))
-            (set! index (+ index 1)))))
-      deps)))
+              (load.CompilerPkgDep node.manifest.name root))))
+        (set! index (+ index 1))))
+    deps))
 
 (define (build-package-tlci-owner-stdlib-path?
   [owner : String]
@@ -2992,44 +2960,38 @@
     [position : i64 count]
     [scan : i64 0]
     [duplicate : bool false]
-    (begin
-      (while (< scan count)
-        (let
-          [order : i64
-            (tlci.tlci-spmd-specialization-compare
-              item
-              (tlci.tlci-spmd-specializations-ref items scan))]
-          (cond
-            [(= order 0)
-              (begin
-                (set! duplicate true)
-                (set! scan count))]
-            [(< order 0)
-              (begin
-                (set! position scan)
-                (set! scan count))]
-            [else (set! scan (+ scan 1))])))
-      (if duplicate
-        items
-        (let
-          [dst : tlci.TlciSpmdSpecializations
-            (tlci.tlci-spmd-specializations-with-capacity (+ count 1))]
-          [cursor : i64 0]
-          (begin
-            (while (< cursor position)
-              (begin
-                (tlci.tlci-spmd-specializations-push!
-                  (&mut dst)
-                  (tlci.tlci-spmd-specializations-ref items cursor))
-                (set! cursor (+ cursor 1))))
-            (tlci.tlci-spmd-specializations-push! (&mut dst) item)
-            (while (< cursor count)
-              (begin
-                (tlci.tlci-spmd-specializations-push!
-                  (&mut dst)
-                  (tlci.tlci-spmd-specializations-ref items cursor))
-                (set! cursor (+ cursor 1))))
-            dst))))))
+    (while (< scan count)
+      (let
+        [order : i64
+          (tlci.tlci-spmd-specialization-compare
+            item
+            (tlci.tlci-spmd-specializations-ref items scan))]
+        (cond
+          [(= order 0)
+            (set! duplicate true)
+            (set! scan count)]
+          [(< order 0)
+            (set! position scan)
+            (set! scan count)]
+          [else (set! scan (+ scan 1))])))
+    (if duplicate
+      items
+      (let
+        [dst : tlci.TlciSpmdSpecializations
+          (tlci.tlci-spmd-specializations-with-capacity (+ count 1))]
+        [cursor : i64 0]
+        (while (< cursor position)
+          (tlci.tlci-spmd-specializations-push!
+            (&mut dst)
+            (tlci.tlci-spmd-specializations-ref items cursor))
+          (set! cursor (+ cursor 1)))
+        (tlci.tlci-spmd-specializations-push! (&mut dst) item)
+        (while (< cursor count)
+          (tlci.tlci-spmd-specializations-push!
+            (&mut dst)
+            (tlci.tlci-spmd-specializations-ref items cursor))
+          (set! cursor (+ cursor 1)))
+        dst))))
 
 (define (build-package-tlci-callable-insert
   [item : tlci.TlciSpmdCallable]
@@ -3041,31 +3003,28 @@
     [dst : tlci.TlciSpmdCallables
       (tlci.tlci-spmd-callables-with-capacity (+ count 1))]
     [cursor : i64 0]
-    (begin
-      (while (< scan count)
-        (if (<
-          (tlci.tlci-spmd-callable-compare
-            item
-            (tlci.tlci-spmd-callables-ref items scan))
-          0)
-          (begin
-            (set! position scan)
-            (set! scan count))
-          (set! scan (+ scan 1))))
-      (while (< cursor position)
+    (while (< scan count)
+      (if (<
+        (tlci.tlci-spmd-callable-compare
+          item
+          (tlci.tlci-spmd-callables-ref items scan))
+        0)
         (begin
-          (tlci.tlci-spmd-callables-push!
-            (&mut dst)
-            (tlci.tlci-spmd-callables-ref items cursor))
-          (set! cursor (+ cursor 1))))
-      (tlci.tlci-spmd-callables-push! (&mut dst) item)
-      (while (< cursor count)
-        (begin
-          (tlci.tlci-spmd-callables-push!
-            (&mut dst)
-            (tlci.tlci-spmd-callables-ref items cursor))
-          (set! cursor (+ cursor 1))))
-      dst)))
+          (set! position scan)
+          (set! scan count))
+        (set! scan (+ scan 1))))
+    (while (< cursor position)
+      (tlci.tlci-spmd-callables-push!
+        (&mut dst)
+        (tlci.tlci-spmd-callables-ref items cursor))
+      (set! cursor (+ cursor 1)))
+    (tlci.tlci-spmd-callables-push! (&mut dst) item)
+    (while (< cursor count)
+      (tlci.tlci-spmd-callables-push!
+        (&mut dst)
+        (tlci.tlci-spmd-callables-ref items cursor))
+      (set! cursor (+ cursor 1)))
+    dst))
 
 (define (build-package-tlci-backend [mode : backend.CompilerBackendMode]) : ir.CompilerIrSpmdBackend
   (match mode
@@ -3222,16 +3181,15 @@
   (let
     [index : i64 0]
     [present : bool false]
-    (begin
-      (while (and (not present) (< index (cli_svec.len out)))
-        (if (string.eq (cli_svec.get out index "") name)
-          (set! present true)
-          (set! index (+ index 1))))
-      (if present
-        false
-        (begin
-          (cli_svec.push-ref! out name)
-          true)))))
+    (while (and (not present) (< index (cli_svec.len out)))
+      (if (string.eq (cli_svec.get out index "") name)
+        (set! present true)
+        (set! index (+ index 1))))
+    (if present
+      false
+      (begin
+        (cli_svec.push-ref! out name)
+        true))))
 
 (defstruct BuildPackageTlciMacroCollector
   (names (__tl_dyn-array String))
@@ -3246,19 +3204,17 @@
       (let
         [value : String (string.copy (array-ref catalog index))]
         [slot : i64 index]
-        (begin
-          (while (if (> slot 0)
-            (package_source_core.package-source-string-less?
-              (string.copy value)
-              (string.copy (array-ref catalog (- slot 1))))
-            false)
-            (begin
-              (set!
-                (array-ref catalog slot)
-                (string.copy (array-ref catalog (- slot 1))))
-              (set! slot (- slot 1))))
-          (set! (array-ref catalog slot) value)
-          (set! index (+ index 1)))))))
+        (while (if (> slot 0)
+          (package_source_core.package-source-string-less?
+            (string.copy value)
+            (string.copy (array-ref catalog (- slot 1))))
+          false)
+          (set!
+            (array-ref catalog slot)
+            (string.copy (array-ref catalog (- slot 1))))
+          (set! slot (- slot 1)))
+        (set! (array-ref catalog slot) value)
+        (set! index (+ index 1))))))
 
 (define (build-package-tlci-finish-macro-collector
   [names : (&mut names cli_svec.Vec)]
@@ -3267,13 +3223,11 @@
     [count : i64 (cli_svec.len names)]
     [catalog (__tl_make-array String count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! (array-ref catalog index) (cli_svec.get names index ""))
-          (set! index (+ index 1))))
-      (build-package-tlci-sort-macro-catalog! (&mut catalog))
-      (BuildPackageTlciMacroCollector catalog captures))))
+    (while (< index count)
+      (set! (array-ref catalog index) (cli_svec.get names index ""))
+      (set! index (+ index 1)))
+    (build-package-tlci-sort-macro-catalog! (&mut catalog))
+    (BuildPackageTlciMacroCollector catalog captures)))
 
 (define (build-package-tlci-collect-decl-macro!
   [decl : ast.AstDecl]
@@ -3334,16 +3288,13 @@
       (build_string_i64_map.with-capacity
         (+ (* (cli_svec.len (& sources)) 2) 4))]
     [index : i64 0]
-    (begin
-      (while (< index (cli_svec.len (& sources)))
-        (begin
-          (build_string_i64_map.insert-ref!
-            (&mut out)
-            (load.compiler-load-normalize-path
-              (cli_svec.get (& sources) index ""))
-            1)
-          (set! index (+ index 1))))
-      out)))
+    (while (< index (cli_svec.len (& sources)))
+      (build_string_i64_map.insert-ref!
+        (&mut out)
+        (load.compiler-load-normalize-path (cli_svec.get (& sources) index ""))
+        1)
+      (set! index (+ index 1)))
+    out))
 
 (define (build-package-tlci-source-owned?
   [owned-sources : (& owned-sources build_string_i64_map.Map)]
@@ -3382,22 +3333,21 @@
               (if (build-package-tlci-source-owned? owned-sources decl-path)
                 decl-path
                 "")]
-            (begin
-              (match (owned_view.compiler-owned-shared-view decl)
-                [(Module name) (set! module (ci.intern-str name))]
-                [_
-                  (build-package-tlci-collect-decl-macro!
-                    decl
-                    owned-path
-                    (owned_view.compiler-owned-shared-view module)
-                    (owned_view.compiler-owned-shared-view package-name)
-                    owned-sources
-                    out
-                    captures)])
-              (set! decl-cursor rest)
-              (match (ast.ast-decl-path-list-step path-cursor)
-                [(Nil) unit]
-                [(Cons _ path-rest) (set! path-cursor path-rest)])))]))))
+            (match (owned_view.compiler-owned-shared-view decl)
+              [(Module name) (set! module (ci.intern-str name))]
+              [_
+                (build-package-tlci-collect-decl-macro!
+                  decl
+                  owned-path
+                  (owned_view.compiler-owned-shared-view module)
+                  (owned_view.compiler-owned-shared-view package-name)
+                  owned-sources
+                  out
+                  captures)])
+            (set! decl-cursor rest)
+            (match (ast.ast-decl-path-list-step path-cursor)
+              [(Nil) unit]
+              [(Cons _ path-rest) (set! path-cursor path-rest)]))]))))
 
 (define (build-package-tlci-macro-collector
   [source-set : (& source-set package_source_core.PackageSourceSet)]
@@ -3410,17 +3360,16 @@
       (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
     [owned-sources : build_string_i64_map.Map
       (build-package-tlci-source-map source-set.sources)]
-    (begin
-      (build-package-tlci-collect-macros-into!
-        decls
-        paths
-        ""
-        ""
-        manifest.name
-        owned-sources
-        (&mut out)
-        (&mut captures))
-      (build-package-tlci-finish-macro-collector (&mut out) captures))))
+    (build-package-tlci-collect-macros-into!
+      decls
+      paths
+      ""
+      ""
+      manifest.name
+      owned-sources
+      (&mut out)
+      (&mut captures))
+    (build-package-tlci-finish-macro-collector (&mut out) captures)))
 
 (define (build-package-tlci-collect-callables-into!
   [decls : ast.AstDeclList]
@@ -3437,50 +3386,48 @@
     [module : String initial-module]
     [done : bool false]
     [current : BuildPackageTlciCallableCollector collector]
-    (begin
-      (while (and (not done) (= (string.string-length current.error) 0))
-        (match (ast.ast-decl-list-step decl-cursor)
-          [(Nil) (set! done true)]
-          [(Cons decl rest)
-            (let
-              [decl-path : String
-                (match (ast.ast-decl-path-list-step path-cursor)
-                  [(Nil) (owned_view.compiler-owned-shared-view fallback-path)]
-                  [(Cons path _) path])]
-              [owned-path : String
-                (if (build-package-tlci-source-owned? owned-sources decl-path)
-                  decl-path
-                  "")]
-              (begin
-                (match (owned_view.compiler-owned-shared-view decl)
-                  [(Module name) (set! module (ci.intern-str name))]
-                  [(ModuleBody nested-module body-box)
-                    (set!
-                      current
-                      (build-package-tlci-collect-callables-into!
-                        (ast.ast-decl-list-box-shared-view body-box)
-                        (ast.ast-decl-path-list-new)
-                        owned-path
-                        (ci.intern-str nested-module)
-                        (owned_view.compiler-owned-shared-view package-name)
-                        mode
-                        owned-sources
-                        current))]
-                  [_
-                    (set!
-                      current
-                      (build-package-tlci-collect-decl-callable
-                        decl
-                        owned-path
-                        (owned_view.compiler-owned-shared-view module)
-                        (owned_view.compiler-owned-shared-view package-name)
-                        mode
-                        current))])
-                (set! decl-cursor rest)
-                (match (ast.ast-decl-path-list-step path-cursor)
-                  [(Nil) unit]
-                  [(Cons _ path-rest) (set! path-cursor path-rest)])))]))
-      current)))
+    (while (and (not done) (= (string.string-length current.error) 0))
+      (match (ast.ast-decl-list-step decl-cursor)
+        [(Nil) (set! done true)]
+        [(Cons decl rest)
+          (let
+            [decl-path : String
+              (match (ast.ast-decl-path-list-step path-cursor)
+                [(Nil) (owned_view.compiler-owned-shared-view fallback-path)]
+                [(Cons path _) path])]
+            [owned-path : String
+              (if (build-package-tlci-source-owned? owned-sources decl-path)
+                decl-path
+                "")]
+            (match (owned_view.compiler-owned-shared-view decl)
+              [(Module name) (set! module (ci.intern-str name))]
+              [(ModuleBody nested-module body-box)
+                (set!
+                  current
+                  (build-package-tlci-collect-callables-into!
+                    (ast.ast-decl-list-box-shared-view body-box)
+                    (ast.ast-decl-path-list-new)
+                    owned-path
+                    (ci.intern-str nested-module)
+                    (owned_view.compiler-owned-shared-view package-name)
+                    mode
+                    owned-sources
+                    current))]
+              [_
+                (set!
+                  current
+                  (build-package-tlci-collect-decl-callable
+                    decl
+                    owned-path
+                    (owned_view.compiler-owned-shared-view module)
+                    (owned_view.compiler-owned-shared-view package-name)
+                    mode
+                    current))])
+            (set! decl-cursor rest)
+            (match (ast.ast-decl-path-list-step path-cursor)
+              [(Nil) unit]
+              [(Cons _ path-rest) (set! path-cursor path-rest)]))]))
+    current))
 
 (define (build-package-tlci-callable-collector
   [source-set : (& source-set package_source_core.PackageSourceSet)]
@@ -3584,14 +3531,12 @@
               [count : i64 (array-length names)]
               [copied : (__tl_dyn-array String) (__tl_make-array String count)]
               [index : i64 0]
-              (begin
-                (while (< index count)
-                  (begin
-                    (set!
-                      (array-ref copied index)
-                      (string.copy (array-ref names index)))
-                    (set! index (+ index 1))))
-                (Ok (string.copy metadata) copied (string.copy native-source)))))]))))
+              (while (< index count)
+                (set!
+                  (array-ref copied index)
+                  (string.copy (array-ref names index)))
+                (set! index (+ index 1)))
+              (Ok (string.copy metadata) copied (string.copy native-source))))]))))
 
 (define (build-package-tlci-collect-exports
   [manifest : load.CompilerPkgManifest]
@@ -3773,41 +3718,36 @@
               [last : (__tl_dyn-array u8) (__tl_make-array u8 0)]
               [ok : bool true]
               [error-message : String ""]
-              (begin
-                (match (io.file-read-chunk handle sample-size)
-                  [(ErrIoRead error)
-                    (begin
+              (match (io.file-read-chunk handle sample-size)
+                [(ErrIoRead error)
+                  (set! ok false)
+                  (set! error-message (io.error-message error))]
+                [(OkIoRead read)
+                  (set! first (byte_buf.to-array (io.file-read-bytes read)))])
+              (if (and ok (> size sample-size))
+                (if (<
+                  (unsafe
+                    (io.platform-lseek
+                      (io_core.io-file-i64-ref
+                        (io_core.io-file-fds-ptr)
+                        handle.id)
+                      (- size sample-size)
+                      0))
+                  0)
+                  (begin
+                    (set! ok false)
+                    (set! error-message "seek failed"))
+                  (match (io.file-read-chunk handle sample-size)
+                    [(ErrIoRead error)
                       (set! ok false)
-                      (set! error-message (io.error-message error)))]
-                  [(OkIoRead read)
-                    (set! first (byte_buf.to-array (io.file-read-bytes read)))])
-                (if (and ok (> size sample-size))
-                  (if (<
-                    (unsafe
-                      (io.platform-lseek
-                        (io_core.io-file-i64-ref
-                          (io_core.io-file-fds-ptr)
-                          handle.id)
-                        (- size sample-size)
-                        0))
-                    0)
-                    (begin
-                      (set! ok false)
-                      (set! error-message "seek failed"))
-                    (match (io.file-read-chunk handle sample-size)
-                      [(ErrIoRead error)
-                        (begin
-                          (set! ok false)
-                          (set! error-message (io.error-message error)))]
-                      [(OkIoRead read)
-                        (set!
-                          last
-                          (byte_buf.to-array (io.file-read-bytes read)))]))
-                  unit)
-                (io.file-close handle)
-                (if ok
-                  (Ok (build-package-sampled-file-digest-text size first last))
-                  (Err (str_cat.str-cat context ": " error-message)))))]))]))
+                      (set! error-message (io.error-message error))]
+                    [(OkIoRead read)
+                      (set! last (byte_buf.to-array (io.file-read-bytes read)))]))
+                unit)
+              (io.file-close handle)
+              (if ok
+                (Ok (build-package-sampled-file-digest-text size first last))
+                (Err (str_cat.str-cat context ": " error-message))))]))]))
 
 (define (build-package-transcript-field [name : String] [value : String]) : String
   (str_cat.str-cat
@@ -3825,18 +3765,14 @@
     [count : i64 (process.args-count args)]
     [out : String
       (build-package-transcript-field "argc" (string.int->string count))]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              (build-package-transcript-field
-                "arg"
-                (process.args-ref args index))))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set!
+        out
+        (str_cat.str-cat
+          out
+          (build-package-transcript-field "arg" (process.args-ref args index))))
+      (set! index (+ index 1)))
+    out))
 
 (define (build-package-command-env-transcript [items : process.ProcessEnvList]) : String
   (let
@@ -3844,21 +3780,19 @@
     [count : i64 (process.env-count items)]
     [out : String
       (build-package-transcript-field "envc" (string.int->string count))]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              (build-package-transcript-field
-                "env-name"
-                (process.env-name-ref items index))
-              (build-package-transcript-field
-                "env-value"
-                (process.env-value-ref items index))))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set!
+        out
+        (str_cat.str-cat
+          out
+          (build-package-transcript-field
+            "env-name"
+            (process.env-name-ref items index))
+          (build-package-transcript-field
+            "env-value"
+            (process.env-value-ref items index))))
+      (set! index (+ index 1)))
+    out))
 
 (define (build-package-command-transcript
   [role : String]
@@ -3943,21 +3877,18 @@
     [out : String ""]
     [ok : bool true]
     [error : String ""]
-    (begin
-      (while (and ok (< index count))
-        (let
-          [path : String (process.args-ref args index)]
-          (begin
-            (match (build-package-link-path-transcript path)
-              [(Err message)
-                (begin
-                  (set! ok false)
-                  (set! error message))]
-              [(Ok text) (set! out (str_cat.str-cat out text))])
-            (set! index (+ index 1)))))
-      (if ok
-        (Ok out)
-        (Err error)))))
+    (while (and ok (< index count))
+      (let
+        [path : String (process.args-ref args index)]
+        (match (build-package-link-path-transcript path)
+          [(Err message)
+            (set! ok false)
+            (set! error message)]
+          [(Ok text) (set! out (str_cat.str-cat out text))])
+        (set! index (+ index 1))))
+    (if ok
+      (Ok out)
+      (Err error))))
 
 (define (build-package-link-library-candidate [dir : String] [name : String]) : String
   (if (= (string.string-length dir) 0)
@@ -4018,39 +3949,31 @@
     [out : String ""]
     [ok : bool true]
     [error : String ""]
-    (begin
-      (while (and ok (< library-index library-count))
-        (let
-          [library : String (process.args-ref libraries library-index)]
-          [dir-index : i64 0]
-          [dir-count : i64 (process.args-count dirs)]
-          (begin
-            (if (= dir-count 0)
-              (match (build-package-link-library-file-transcript
-                target
-                ""
-                library)
-                [(Err message)
-                  (begin
-                    (set! ok false)
-                    (set! error message))]
-                [(Ok text) (set! out (str_cat.str-cat out text))])
-              (while (and ok (< dir-index dir-count))
-                (begin
-                  (match (build-package-link-library-file-transcript
-                    target
-                    (process.args-ref dirs dir-index)
-                    (owned_view.compiler-owned-shared-view library))
-                    [(Err message)
-                      (begin
-                        (set! ok false)
-                        (set! error message))]
-                    [(Ok text) (set! out (str_cat.str-cat out text))])
-                  (set! dir-index (+ dir-index 1)))))
-            (set! library-index (+ library-index 1)))))
-      (if ok
-        (Ok out)
-        (Err error)))))
+    (while (and ok (< library-index library-count))
+      (let
+        [library : String (process.args-ref libraries library-index)]
+        [dir-index : i64 0]
+        [dir-count : i64 (process.args-count dirs)]
+        (if (= dir-count 0)
+          (match (build-package-link-library-file-transcript target "" library)
+            [(Err message)
+              (set! ok false)
+              (set! error message)]
+            [(Ok text) (set! out (str_cat.str-cat out text))])
+          (while (and ok (< dir-index dir-count))
+            (match (build-package-link-library-file-transcript
+              target
+              (process.args-ref dirs dir-index)
+              (owned_view.compiler-owned-shared-view library))
+              [(Err message)
+                (set! ok false)
+                (set! error message)]
+              [(Ok text) (set! out (str_cat.str-cat out text))])
+            (set! dir-index (+ dir-index 1))))
+        (set! library-index (+ library-index 1))))
+    (if ok
+      (Ok out)
+      (Err error))))
 
 (define (build-package-link-file-transcript
   [target : backend.CompilerBackendTarget]
@@ -4079,24 +4002,22 @@
       (build_run_core.source-tool-link-inputs-origins inputs)]
     [index : i64 0]
     [out : String ""]
-    (begin
-      (while (< index (process.args-count origins.kinds))
-        (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              (build-package-transcript-field
-                "native-link"
-                (process.args-ref origins.kinds index))
-              (build-package-transcript-field
-                "native-link-value"
-                (process.args-ref origins.values index))
-              (build-package-transcript-field
-                "native-link-declared-by"
-                (process.args-ref origins.declared-by index))))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index (process.args-count origins.kinds))
+      (set!
+        out
+        (str_cat.str-cat
+          out
+          (build-package-transcript-field
+            "native-link"
+            (process.args-ref origins.kinds index))
+          (build-package-transcript-field
+            "native-link-value"
+            (process.args-ref origins.values index))
+          (build-package-transcript-field
+            "native-link-declared-by"
+            (process.args-ref origins.declared-by index))))
+      (set! index (+ index 1)))
+    out))
 
 (define (build-package-assembler-command-for
   [target : backend.CompilerBackendTarget]
@@ -4410,24 +4331,22 @@
           (build-package-stage-file dir "t" tlci-path)))]))
 
 (define (build-package-remove-staged-file [path : String]) : unit
-  (begin
-    (fs.try-remove-file-if-exists (& path))
-    (let
-      [backup : String (str_cat.str-cat path ".previous")]
-      (fs.try-remove-file-if-exists (& backup)))
-    unit))
+  (fs.try-remove-file-if-exists (& path))
+  (let
+    [backup : String (str_cat.str-cat path ".previous")]
+    (fs.try-remove-file-if-exists (& backup)))
+  unit)
 
 (define (build-package-clean-stage [paths : BuildPackageStagePaths]) : unit
-  (begin
-    (build-package-remove-staged-file paths.asm)
-    (build-package-remove-staged-file paths.obj)
-    (build-package-remove-staged-file paths.artifact)
-    (build-package-remove-staged-file paths.fingerprint)
-    (build-package-remove-staged-file paths.tlci)
-    (let
-      [dir : String paths.dir]
-      (fs.try-remove-dir-if-exists (& dir)))
-    unit))
+  (build-package-remove-staged-file paths.asm)
+  (build-package-remove-staged-file paths.obj)
+  (build-package-remove-staged-file paths.artifact)
+  (build-package-remove-staged-file paths.fingerprint)
+  (build-package-remove-staged-file paths.tlci)
+  (let
+    [dir : String paths.dir]
+    (fs.try-remove-dir-if-exists (& dir)))
+  unit)
 
 (define (build-package-rollback-preserves-backup?
   [rollback : (& rollback BuildPackageRollbackDisposition)]
@@ -4435,31 +4354,27 @@
   (let
     [index : i64 0]
     [preserve : bool false]
-    (begin
-      (while (and (not preserve) (< index rollback.len))
-        (begin
-          (match (owned_view.compiler-owned-array-element-shared-view
-            rollback.backups
-            index)
-            [(Retained backup _ _)
-              (set! preserve (string.eq backup backup-path))]
-            [_ unit])
-          (set! index (+ index 1))))
-      preserve)))
+    (while (and (not preserve) (< index rollback.len))
+      (match (owned_view.compiler-owned-array-element-shared-view
+        rollback.backups
+        index)
+        [(Retained backup _ _) (set! preserve (string.eq backup backup-path))]
+        [_ unit])
+      (set! index (+ index 1)))
+    preserve))
 
 (define (build-package-remove-staged-file-after-rollback
   [path : String]
   [rollback : (& rollback BuildPackageRollbackDisposition)]) : unit
-  (begin
-    (fs.try-remove-file-if-exists (& path))
-    (let
-      [backup : String (str_cat.str-cat path ".previous")]
-      (if (build-package-rollback-preserves-backup? rollback backup)
-        unit
-        (let
-          [_ : io.ResultIoUnit (fs.try-remove-file-if-exists (& backup))]
-          unit)))
-    unit))
+  (fs.try-remove-file-if-exists (& path))
+  (let
+    [backup : String (str_cat.str-cat path ".previous")]
+    (if (build-package-rollback-preserves-backup? rollback backup)
+      unit
+      (let
+        [_ : io.ResultIoUnit (fs.try-remove-file-if-exists (& backup))]
+        unit)))
+  unit)
 
 (define (build-package-clean-stage-after-rollback
   [paths : (& paths BuildPackageStagePaths)]
@@ -4469,22 +4384,19 @@
   (let
     [paths : BuildPackageStagePaths
       (owned_view.compiler-owned-reference-shared-view paths)]
-    (begin
-      (build-package-remove-staged-file-after-rollback paths.asm rollback)
-      (build-package-remove-staged-file-after-rollback paths.obj rollback)
-      (build-package-remove-staged-file-after-rollback paths.artifact rollback)
-      (build-package-remove-staged-file-after-rollback
-        paths.fingerprint
-        rollback)
-      (build-package-remove-staged-file-after-rollback paths.tlci rollback)
-      (let
-        [dir : String paths.dir]
-        (if (build-package-rollback-recovery-required? rollback)
-          unit
-          (let
-            [_ : io.ResultIoUnit (fs.try-remove-dir-if-exists (& dir))]
-            unit)))
-      unit)))
+    (build-package-remove-staged-file-after-rollback paths.asm rollback)
+    (build-package-remove-staged-file-after-rollback paths.obj rollback)
+    (build-package-remove-staged-file-after-rollback paths.artifact rollback)
+    (build-package-remove-staged-file-after-rollback paths.fingerprint rollback)
+    (build-package-remove-staged-file-after-rollback paths.tlci rollback)
+    (let
+      [dir : String paths.dir]
+      (if (build-package-rollback-recovery-required? rollback)
+        unit
+        (let
+          [_ : io.ResultIoUnit (fs.try-remove-dir-if-exists (& dir))]
+          unit)))
+    unit))
 
 (define (build-package-commit-plan-new) : BuildPackageCommitPlan
   (BuildPackageCommitPlan
@@ -4498,15 +4410,14 @@
   (let
     [files : (__tl_dyn-array BuildPackageCommitFile) plan.files]
     [index : i64 plan.len]
-    (begin
-      (set!
-        (array-ref files index)
-        (BuildPackageCommitFile
-          final-path
-          (owned_view.compiler-owned-shared-view staged-path)
-          (str_cat.str-cat staged-path ".previous")
-          false))
-      (BuildPackageCommitPlan files (+ index 1)))))
+    (set!
+      (array-ref files index)
+      (BuildPackageCommitFile
+        final-path
+        (owned_view.compiler-owned-shared-view staged-path)
+        (str_cat.str-cat staged-path ".previous")
+        false))
+    (BuildPackageCommitPlan files (+ index 1))))
 
 (define (build-package-commit-plan-set-had-old!
   [plan : BuildPackageCommitPlan]
@@ -4537,9 +4448,8 @@
   (let
     [backups : (__tl_dyn-array BuildPackageBackupRollback) rollback.backups]
     [index : i64 rollback.len]
-    (begin
-      (set! (array-ref backups index) backup)
-      (BuildPackageRollbackDisposition backups (+ index 1) rollback.errors))))
+    (set! (array-ref backups index) backup)
+    (BuildPackageRollbackDisposition backups (+ index 1) rollback.errors)))
 
 (define (build-package-rollback-disposition-add-error
   [rollback : BuildPackageRollbackDisposition]
@@ -4556,16 +4466,14 @@
   (let
     [index : i64 0]
     [required : bool false]
-    (begin
-      (while (and (not required) (< index rollback.len))
-        (begin
-          (match (owned_view.compiler-owned-array-element-shared-view
-            rollback.backups
-            index)
-            [(Retained _ _ _) (set! required true)]
-            [_ unit])
-          (set! index (+ index 1))))
-      required)))
+    (while (and (not required) (< index rollback.len))
+      (match (owned_view.compiler-owned-array-element-shared-view
+        rollback.backups
+        index)
+        [(Retained _ _ _) (set! required true)]
+        [_ unit])
+      (set! index (+ index 1)))
+    required))
 
 (define (build-package-commit-error-message
   [primary : String]
@@ -4594,43 +4502,38 @@
     [count : i64 plan.len]
     [ok : bool true]
     [error : String ""]
-    (begin
-      (while (and ok (< index count))
-        (let
-          [item : BuildPackageCommitFile
-            (owned_view.compiler-owned-array-element-shared-view
-              plan.files
-              index)]
-          [final-state : BuildPackageArtifactState
-            (build-package-artifact-file-state
-              (owned_view.compiler-owned-shared-view item.final-path))]
+    (while (and ok (< index count))
+      (let
+        [item : BuildPackageCommitFile
+          (owned_view.compiler-owned-array-element-shared-view plan.files index)]
+        [final-state : BuildPackageArtifactState
+          (build-package-artifact-file-state
+            (owned_view.compiler-owned-shared-view item.final-path))]
+        (if (not
+          (build-package-file-regular?
+            (owned_view.compiler-owned-shared-view item.staged-path)))
           (begin
-            (if (not
-              (build-package-file-regular?
-                (owned_view.compiler-owned-shared-view item.staged-path)))
-              (begin
-                (set! ok false)
-                (set!
-                  error
-                  (str_cat.str-cat
-                    "build: staged package artifact is missing or non-regular: "
-                    item.staged-path)))
-              (match final-state
-                [(Stale reason)
-                  (begin
-                    (set! ok false)
-                    (set!
-                      error
-                      (str_cat.str-cat
-                        "build: cannot replace package artifact "
-                        item.final-path
-                        ": "
-                        reason)))]
-                [_ unit]))
-            (set! index (+ index 1)))))
-      (if ok
-        (Ok "")
-        (Err error)))))
+            (set! ok false)
+            (set!
+              error
+              (str_cat.str-cat
+                "build: staged package artifact is missing or non-regular: "
+                item.staged-path)))
+          (match final-state
+            [(Stale reason)
+              (set! ok false)
+              (set!
+                error
+                (str_cat.str-cat
+                  "build: cannot replace package artifact "
+                  item.final-path
+                  ": "
+                  reason))]
+            [_ unit]))
+        (set! index (+ index 1))))
+    (if ok
+      (Ok "")
+      (Err error))))
 
 (define (build-package-commit-plan-rollback
   [plan : BuildPackageCommitPlan]
@@ -4640,73 +4543,65 @@
     [index : i64 (- installed 1)]
     [rollback : BuildPackageRollbackDisposition
       (build-package-rollback-disposition-new)]
-    (begin
-      (while (>= index 0)
+    (while (>= index 0)
+      (let
+        [item : BuildPackageCommitFile
+          (owned_view.compiler-owned-array-element-shared-view plan.files index)]
         (let
-          [item : BuildPackageCommitFile
-            (owned_view.compiler-owned-array-element-shared-view
-              plan.files
-              index)]
-          (begin
-            (let
-              [path : String item.final-path]
-              (match (fs.try-remove-file-if-exists (& path))
-                [(OkIoUnit) unit]
-                [(ErrIoUnit io-error)
+          [path : String item.final-path]
+          (match (fs.try-remove-file-if-exists (& path))
+            [(OkIoUnit) unit]
+            [(ErrIoUnit io-error)
+              (set!
+                rollback
+                (build-package-rollback-disposition-add-error
+                  rollback
+                  (str_cat.str-cat
+                    "build: rollback failed to remove installed package artifact "
+                    path
+                    ": "
+                    (io.error-message io-error))))]))
+        (set! index (- index 1))))
+    (set! index (- backed-up 1))
+    (while (>= index 0)
+      (let
+        [item : BuildPackageCommitFile
+          (owned_view.compiler-owned-array-element-shared-view plan.files index)]
+        (if item.had-old
+          (let
+            [backup : String item.backup-path]
+            [final-path : String item.final-path]
+            (match (fs.try-rename (& backup) (& final-path))
+              [(OkIoUnit)
+                (set!
+                  rollback
+                  (build-package-rollback-disposition-add-backup
+                    rollback
+                    (Restored backup final-path)))]
+              [(ErrIoUnit io-error)
+                (let
+                  [io-message : String (io.error-message io-error)]
+                  [failure : String
+                    (str_cat.str-cat
+                      "build: rollback failed to restore previous package artifact "
+                      (owned_view.compiler-owned-shared-view backup)
+                      " -> "
+                      (owned_view.compiler-owned-shared-view final-path)
+                      ": "
+                      (owned_view.compiler-owned-shared-view io-message))]
                   (set!
                     rollback
                     (build-package-rollback-disposition-add-error
                       rollback
-                      (str_cat.str-cat
-                        "build: rollback failed to remove installed package artifact "
-                        path
-                        ": "
-                        (io.error-message io-error))))]))
-            (set! index (- index 1)))))
-      (set! index (- backed-up 1))
-      (while (>= index 0)
-        (let
-          [item : BuildPackageCommitFile
-            (owned_view.compiler-owned-array-element-shared-view
-              plan.files
-              index)]
-          (begin
-            (if item.had-old
-              (let
-                [backup : String item.backup-path]
-                [final-path : String item.final-path]
-                (match (fs.try-rename (& backup) (& final-path))
-                  [(OkIoUnit)
-                    (set!
+                      failure))
+                  (set!
+                    rollback
+                    (build-package-rollback-disposition-add-backup
                       rollback
-                      (build-package-rollback-disposition-add-backup
-                        rollback
-                        (Restored backup final-path)))]
-                  [(ErrIoUnit io-error)
-                    (let
-                      [io-message : String (io.error-message io-error)]
-                      [failure : String
-                        (str_cat.str-cat
-                          "build: rollback failed to restore previous package artifact "
-                          (owned_view.compiler-owned-shared-view backup)
-                          " -> "
-                          (owned_view.compiler-owned-shared-view final-path)
-                          ": "
-                          (owned_view.compiler-owned-shared-view io-message))]
-                      (begin
-                        (set!
-                          rollback
-                          (build-package-rollback-disposition-add-error
-                            rollback
-                            failure))
-                        (set!
-                          rollback
-                          (build-package-rollback-disposition-add-backup
-                            rollback
-                            (Retained backup final-path io-message)))))]))
-              unit)
-            (set! index (- index 1)))))
-      rollback)))
+                      (Retained backup final-path io-message))))]))
+          unit)
+        (set! index (- index 1))))
+    rollback))
 
 (define (build-package-commit-plan-run [plan : BuildPackageCommitPlan]) : ResultBuildPackageCommit
   (match (build-package-commit-plan-preflight plan)
@@ -4719,85 +4614,78 @@
         [installed : i64 0]
         [ok : bool true]
         [error : String ""]
-        (begin
-          (while (and ok (< index count))
-            (let
-              [item : BuildPackageCommitFile
-                (owned_view.compiler-owned-array-element-shared-view
-                  plan.files
-                  index)]
-              [state : BuildPackageArtifactState
-                (build-package-artifact-file-state
-                  (owned_view.compiler-owned-shared-view item.final-path))]
-              (begin
-                (match state
-                  [(Clean)
-                    (let
-                      [from : String item.final-path]
-                      [to : String item.backup-path]
-                      (match (fs.try-rename (& from) (& to))
-                        [(OkIoUnit)
-                          (build-package-commit-plan-set-had-old!
-                            (owned_view.compiler-owned-shared-view plan)
-                            index)]
-                        [(ErrIoUnit io-error)
-                          (begin
-                            (set! ok false)
-                            (set!
-                              error
-                              (str_cat.str-cat
-                                "build: failed to stage previous package artifact: "
-                                (io.error-message io-error))))]))]
-                  [(Missing) unit]
-                  [(Stale reason)
-                    (begin
-                      (set! ok false)
-                      (set! error reason))])
-                (if ok
-                  (set! backed-up (+ backed-up 1))
-                  unit)
-                (set! index (+ index 1)))))
-          (set! index 0)
-          (while (and ok (< index count))
-            (let
-              [item : BuildPackageCommitFile
-                (owned_view.compiler-owned-array-element-shared-view
-                  plan.files
-                  index)]
-              [from : String item.staged-path]
-              [to : String item.final-path]
-              (begin
-                (match (fs.try-rename (& from) (& to))
-                  [(OkIoUnit) (set! installed (+ installed 1))]
-                  [(ErrIoUnit io-error)
-                    (begin
+        (while (and ok (< index count))
+          (let
+            [item : BuildPackageCommitFile
+              (owned_view.compiler-owned-array-element-shared-view
+                plan.files
+                index)]
+            [state : BuildPackageArtifactState
+              (build-package-artifact-file-state
+                (owned_view.compiler-owned-shared-view item.final-path))]
+            (match state
+              [(Clean)
+                (let
+                  [from : String item.final-path]
+                  [to : String item.backup-path]
+                  (match (fs.try-rename (& from) (& to))
+                    [(OkIoUnit)
+                      (build-package-commit-plan-set-had-old!
+                        (owned_view.compiler-owned-shared-view plan)
+                        index)]
+                    [(ErrIoUnit io-error)
                       (set! ok false)
                       (set!
                         error
                         (str_cat.str-cat
-                          "build: failed to commit package artifact: "
-                          (io.error-message io-error))))])
-                (set! index (+ index 1)))))
-          (if ok
-            (begin
-              (set! index 0)
-              (while (< index count)
-                (let
-                  [item : BuildPackageCommitFile
-                    (owned_view.compiler-owned-array-element-shared-view
-                      plan.files
-                      index)]
-                  (begin
-                    (if item.had-old
-                      (let
-                        [backup : String item.backup-path]
-                        (fs.try-remove-file-if-exists (& backup)))
-                      io.OkIoUnit)
-                    (set! index (+ index 1)))))
-              (Ok))
-            (Err
-              error
-              (build-package-commit-plan-rollback plan installed backed-up)))))]))
+                          "build: failed to stage previous package artifact: "
+                          (io.error-message io-error)))]))]
+              [(Missing) unit]
+              [(Stale reason)
+                (set! ok false)
+                (set! error reason)])
+            (if ok
+              (set! backed-up (+ backed-up 1))
+              unit)
+            (set! index (+ index 1))))
+        (set! index 0)
+        (while (and ok (< index count))
+          (let
+            [item : BuildPackageCommitFile
+              (owned_view.compiler-owned-array-element-shared-view
+                plan.files
+                index)]
+            [from : String item.staged-path]
+            [to : String item.final-path]
+            (match (fs.try-rename (& from) (& to))
+              [(OkIoUnit) (set! installed (+ installed 1))]
+              [(ErrIoUnit io-error)
+                (set! ok false)
+                (set!
+                  error
+                  (str_cat.str-cat
+                    "build: failed to commit package artifact: "
+                    (io.error-message io-error)))])
+            (set! index (+ index 1))))
+        (if ok
+          (begin
+            (set! index 0)
+            (while (< index count)
+              (let
+                [item : BuildPackageCommitFile
+                  (owned_view.compiler-owned-array-element-shared-view
+                    plan.files
+                    index)]
+                (if item.had-old
+                  (let
+                    [backup : String item.backup-path]
+                    (fs.try-remove-file-if-exists (& backup)))
+                  io.OkIoUnit)
+                (set! index (+ index 1))))
+            (Ok))
+          (Err
+            error
+            (build-package-commit-plan-rollback plan installed backed-up))))]))
 
 (define (build-package-write-tlci [path : (& path str)] [text : String]) : build_run_core.SourceToolCommandStatus
   (build_run_core.source-tool-write-file
@@ -4874,90 +4762,83 @@
     [ok : bool true]
     [error : String ""]
     [plan : BuildPackageCommitPlan (build-package-commit-plan-new)]
-    (begin
-      (if runtime-dirty
-        (match (build-package-runtime-output-fingerprint
-          input-transcript
-          stage.asm
-          stage.obj
-          stage.artifact)
-          [(Err message)
-            (begin
+    (if runtime-dirty
+      (match (build-package-runtime-output-fingerprint
+        input-transcript
+        stage.asm
+        stage.obj
+        stage.artifact)
+        [(Err message)
+          (set! ok false)
+          (set! error message)]
+        [(Ok fingerprint)
+          (match (build_run_core.source-tool-write-file
+            stage.fingerprint
+            fingerprint
+            "build: failed to stage package runtime fingerprint")
+            [(Err message)
               (set! ok false)
-              (set! error message))]
-          [(Ok fingerprint)
-            (match (build_run_core.source-tool-write-file
-              stage.fingerprint
-              fingerprint
-              "build: failed to stage package runtime fingerprint")
-              [(Err message)
-                (begin
-                  (set! ok false)
-                  (set! error message))]
-              [(Ok)
-                (begin
-                  (set!
-                    plan
-                    (build-package-commit-plan-add
-                      plan
-                      asm-path
-                      (owned_view.compiler-owned-shared-view stage.asm)))
-                  (set!
-                    plan
-                    (build-package-commit-plan-add
-                      plan
-                      obj-path
-                      (owned_view.compiler-owned-shared-view stage.obj)))
-                  (set!
-                    plan
-                    (build-package-commit-plan-add
-                      plan
-                      (owned_view.compiler-owned-shared-view artifact-path)
-                      (owned_view.compiler-owned-shared-view stage.artifact)))
-                  (set!
-                    plan
-                    (build-package-commit-plan-add
-                      plan
-                      fingerprint-path
-                      (owned_view.compiler-owned-shared-view stage.fingerprint))))])])
-        unit)
-      (if (and ok tlci-dirty)
-        (match (build-package-write-tlci stage.tlci tlci-text)
-          [(Err message)
-            (begin
-              (set! ok false)
-              (set! error message))]
-          [(Ok)
-            (set!
-              plan
-              (build-package-commit-plan-add
+              (set! error message)]
+            [(Ok)
+              (set!
                 plan
-                (owned_view.compiler-owned-shared-view tlci-path)
-                (owned_view.compiler-owned-shared-view stage.tlci)))])
-        unit)
-      (if ok
-        (match (build-package-commit-plan-run plan)
-          [(Err message rollback)
-            (begin
-              (build-package-clean-stage-after-rollback
-                stage
-                (owned_view.compiler-owned-shared-view rollback))
-              (io.print-error
-                (build-package-commit-error-message message rollback stage.dir))
-              1)]
-          [(Ok)
-            (begin
-              (build-package-clean-stage stage)
-              (build-package-announce-freshness
-                artifact-path
-                tlci-path
-                runtime-dirty
-                tlci-dirty
-                announce))])
-        (begin
+                (build-package-commit-plan-add
+                  plan
+                  asm-path
+                  (owned_view.compiler-owned-shared-view stage.asm)))
+              (set!
+                plan
+                (build-package-commit-plan-add
+                  plan
+                  obj-path
+                  (owned_view.compiler-owned-shared-view stage.obj)))
+              (set!
+                plan
+                (build-package-commit-plan-add
+                  plan
+                  (owned_view.compiler-owned-shared-view artifact-path)
+                  (owned_view.compiler-owned-shared-view stage.artifact)))
+              (set!
+                plan
+                (build-package-commit-plan-add
+                  plan
+                  fingerprint-path
+                  (owned_view.compiler-owned-shared-view stage.fingerprint)))])])
+      unit)
+    (if (and ok tlci-dirty)
+      (match (build-package-write-tlci stage.tlci tlci-text)
+        [(Err message)
+          (set! ok false)
+          (set! error message)]
+        [(Ok)
+          (set!
+            plan
+            (build-package-commit-plan-add
+              plan
+              (owned_view.compiler-owned-shared-view tlci-path)
+              (owned_view.compiler-owned-shared-view stage.tlci)))])
+      unit)
+    (if ok
+      (match (build-package-commit-plan-run plan)
+        [(Err message rollback)
+          (build-package-clean-stage-after-rollback
+            stage
+            (owned_view.compiler-owned-shared-view rollback))
+          (io.print-error
+            (build-package-commit-error-message message rollback stage.dir))
+          1]
+        [(Ok)
           (build-package-clean-stage stage)
-          (io.print-error error)
-          1)))))
+          (build-package-announce-freshness
+            artifact-path
+            tlci-path
+            runtime-dirty
+            tlci-dirty
+            announce)])
+      (begin
+        (build-package-clean-stage stage)
+        (io.print-error error)
+        1))))
 
 (define (build-package-finish-direct-fresh-artifacts
   [name : String]
@@ -4999,9 +4880,8 @@
       (owned_view.compiler-owned-shared-view link-inputs)
       true)
       [(Err message)
-        (begin
-          (io.print-error message)
-          1)]
+        (io.print-error message)
+        1]
       [(Ok input-transcript)
         (let
           [runtime-dirty : bool
@@ -5032,9 +4912,8 @@
               fingerprint-path
               tlci-path)
               [(Err message)
-                (begin
-                  (io.print-error message)
-                  1)]
+                (io.print-error message)
+                1]
               [(Ok stage)
                 (let
                   [runtime-status : build_run_core.SourceToolDirectObjectStatus
@@ -5049,15 +4928,13 @@
                       Ok)]
                   (match runtime-status
                     [(Err message)
-                      (begin
-                        (build-package-clean-stage stage)
-                        (io.print-error message)
-                        1)]
+                      (build-package-clean-stage stage)
+                      (io.print-error message)
+                      1]
                     [(Unavailable message)
-                      (begin
-                        (build-package-clean-stage stage)
-                        (io.print-error message)
-                        1)]
+                      (build-package-clean-stage stage)
+                      (io.print-error message)
+                      1]
                     [(Ok)
                       (let
                         [asm-status : build_run_core.SourceToolCommandStatus
@@ -5069,28 +4946,26 @@
                             Ok)]
                         (match asm-status
                           [(Err message)
-                            (begin
-                              (build-package-clean-stage stage)
-                              (io.print-error message)
-                              1)]
+                            (build-package-clean-stage stage)
+                            (io.print-error message)
+                            1]
                           [(Ok)
-                            (begin
-                              (if runtime-dirty
-                                unit
-                                (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!))
-                              (compiler_driver_core.compiler-driver-reset-file-state!)
-                              (build-package-commit-generated-artifacts
-                                stage
-                                asm-path
-                                obj-path
-                                artifact-path
-                                fingerprint-path
-                                tlci-path
-                                tlci-text
-                                input-transcript
-                                runtime-dirty
-                                tlci-dirty
-                                announce))]))]))])))])))
+                            (if runtime-dirty
+                              unit
+                              (compiler_driver_core.compiler-driver-release-lower-arenas-after-emit!))
+                            (compiler_driver_core.compiler-driver-reset-file-state!)
+                            (build-package-commit-generated-artifacts
+                              stage
+                              asm-path
+                              obj-path
+                              artifact-path
+                              fingerprint-path
+                              tlci-path
+                              tlci-text
+                              input-transcript
+                              runtime-dirty
+                              tlci-dirty
+                              announce)]))]))])))])))
 
 (define (build-package-finish-assembly-fresh-artifacts
   [name : String]
@@ -5135,9 +5010,8 @@
       (owned_view.compiler-owned-shared-view link-inputs)
       false)
       [(Err message)
-        (begin
-          (io.print-error message)
-          1)]
+        (io.print-error message)
+        1]
       [(Ok input-transcript)
         (let
           [runtime-dirty : bool
@@ -5167,9 +5041,8 @@
               fingerprint-path
               tlci-path)
               [(Err message)
-                (begin
-                  (io.print-error message)
-                  1)]
+                (io.print-error message)
+                1]
               [(Ok stage)
                 (let
                   [runtime-status : build_run_core.SourceToolCommandStatus
@@ -5192,25 +5065,23 @@
                       Ok)]
                   (match runtime-status
                     [(Err message)
-                      (begin
-                        (build-package-clean-stage stage)
-                        (io.print-error message)
-                        1)]
+                      (build-package-clean-stage stage)
+                      (io.print-error message)
+                      1]
                     [(Ok)
-                      (begin
-                        (compiler_driver_core.compiler-driver-reset-file-state!)
-                        (build-package-commit-generated-artifacts
-                          stage
-                          asm-path
-                          obj-path
-                          artifact-path
-                          fingerprint-path
-                          tlci-path
-                          tlci-text
-                          input-transcript
-                          runtime-dirty
-                          tlci-dirty
-                          announce))]))])))])))
+                      (compiler_driver_core.compiler-driver-reset-file-state!)
+                      (build-package-commit-generated-artifacts
+                        stage
+                        asm-path
+                        obj-path
+                        artifact-path
+                        fingerprint-path
+                        tlci-path
+                        tlci-text
+                        input-transcript
+                        runtime-dirty
+                        tlci-dirty
+                        announce)]))])))])))
 
 (define (build-package-finish-prepared-runtime
   [prepared : ResultBuildPackagePreparedRuntime]
@@ -5268,9 +5139,8 @@
         asm
         announce)]
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]))
+      (io.print-error message)
+      1]))
 
 (define (build-package-require-direct-object
   [prepared : ResultBuildPackagePreparedRuntime]) : ResultBuildPackagePreparedRuntime
@@ -5367,88 +5237,84 @@
     [tlci-path : String]
     [announce : bool]
     [cfgs : sym_i64_env.SymI64Env]) : i64
-    (begin
-      (package_surface.package-surface-capture-start!
-        (package_surface.package-surface-identity-key
-          (owned_view.compiler-owned-shared-view name)
-          (owned_view.compiler-owned-shared-view owned-paths)
-          source-inputs.digest
-          (owned_view.compiler-owned-shared-view producer-identity)
-          (build_run_core.source-tool-target-name target))
-        (sym_i64_env.sym-i64-copy seen))
-      (let
-        [exports : ResultBuildPackageTlciExports
-          (build-package-tlci-capture-exports
-            manifest
+    (package_surface.package-surface-capture-start!
+      (package_surface.package-surface-identity-key
+        (owned_view.compiler-owned-shared-view name)
+        (owned_view.compiler-owned-shared-view owned-paths)
+        source-inputs.digest
+        (owned_view.compiler-owned-shared-view producer-identity)
+        (build_run_core.source-tool-target-name target))
+      (sym_i64_env.sym-i64-copy seen))
+    (let
+      [exports : ResultBuildPackageTlciExports
+        (build-package-tlci-capture-exports
+          manifest
+          mode
+          (owned_view.compiler-owned-shared-view decls)
+          source-paths
+          source-inputs.source-set)]
+      [prepared : ResultBuildPackagePreparedRuntime
+        (build-package-prepare-owned-runtime
+          (owned_view.compiler-owned-shared-view scope)
+          (build-package-direct-object-default-request
+            (owned_view.compiler-owned-shared-view name)
+            kind
+            target
+            opt-level
             mode
-            (owned_view.compiler-owned-shared-view decls)
-            source-paths
-            source-inputs.source-set)]
-        [prepared : ResultBuildPackagePreparedRuntime
-          (build-package-prepare-owned-runtime
-            (owned_view.compiler-owned-shared-view scope)
-            (build-package-direct-object-default-request
-              (owned_view.compiler-owned-shared-view name)
-              kind
-              target
-              opt-level
-              mode
-              emit-entry
-              crt-entry
-              decls
-              owned-paths
-              cfgs
-              (owned_view.compiler-owned-shared-view entry-path)))]
-        [_abort : unit
-          (match (owned_view.compiler-owned-shared-view prepared)
-            [(Err message)
-              (package_surface.package-surface-capture-abort! message)]
-            [_ unit])]
-        [captured : package_surface.ResultPackageSurfacePayloads
-          (package_surface.package-surface-capture-take)]
-        [_release : unit (build-package-runtime-scope-release! scope)]
+            emit-entry
+            crt-entry
+            decls
+            owned-paths
+            cfgs
+            (owned_view.compiler-owned-shared-view entry-path)))]
+      [_abort : unit
         (match (owned_view.compiler-owned-shared-view prepared)
           [(Err message)
-            (begin
-              (io.print-error message)
-              1)]
-          [_
-            (match captured
-              [(Err message)
-                (begin
-                  (io.print-error
-                    (str_cat.str-cat
-                      "build: failed to capture package frontend surface: "
-                      message))
-                  1)]
-              [(Ok surface)
-                (match (build-package-tlci-text-with-surface
-                  exports
-                  (owned_view.compiler-owned-shared-view producer-identity)
-                  source-inputs
-                  surface)
-                  [(Err message)
-                    (begin
-                      (io.print-error message)
-                      1)]
-                  [(Ok tlci-text)
-                    (build-package-finish-prepared-runtime
-                      prepared
-                      name
-                      kind
-                      target
-                      opt-level
-                      profile
-                      mode
-                      producer-identity
-                      output-dir
-                      asm-path
-                      obj-path
-                      artifact-path
-                      link-inputs
-                      tlci-path
-                      tlci-text
-                      announce)])])])))))
+            (package_surface.package-surface-capture-abort! message)]
+          [_ unit])]
+      [captured : package_surface.ResultPackageSurfacePayloads
+        (package_surface.package-surface-capture-take)]
+      [_release : unit (build-package-runtime-scope-release! scope)]
+      (match (owned_view.compiler-owned-shared-view prepared)
+        [(Err message)
+          (io.print-error message)
+          1]
+        [_
+          (match captured
+            [(Err message)
+              (io.print-error
+                (str_cat.str-cat
+                  "build: failed to capture package frontend surface: "
+                  message))
+              1]
+            [(Ok surface)
+              (match (build-package-tlci-text-with-surface
+                exports
+                (owned_view.compiler-owned-shared-view producer-identity)
+                source-inputs
+                surface)
+                [(Err message)
+                  (io.print-error message)
+                  1]
+                [(Ok tlci-text)
+                  (build-package-finish-prepared-runtime
+                    prepared
+                    name
+                    kind
+                    target
+                    opt-level
+                    profile
+                    mode
+                    producer-identity
+                    output-dir
+                    asm-path
+                    obj-path
+                    artifact-path
+                    link-inputs
+                    tlci-path
+                    tlci-text
+                    announce)])])]))))
 
 (define (build-package-doctest-paths
   [owner : String]
@@ -5496,11 +5362,10 @@
     (owned_view.compiler-owned-shared-view deps)
     emit-entry)
     [(Err diag)
-      (begin
-        (io.print-error
-          (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (deref diag)))
-        1)]
+      (io.print-error
+        (compiler_driver_core.compiler-driver-render-source-diagnostic
+          (deref diag)))
+      1]
     [(Ok paths)
       (doc_test.doc-test-report-status
         (doc_test.doc-test-typecheck-package-paths-with-roots
@@ -5521,9 +5386,8 @@
     manifest-path
     true)
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]
+      (io.print-error message)
+      1]
     [(Ok source-set)
       (test_cli_core.tltest-inline-typecheck-package-sources-with-cfg
         source-set.sources
@@ -5591,9 +5455,8 @@
                 emit-entry
                 (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
                 announce))]
-          (begin
-            (build-package-runtime-scope-release! scope)
-            status))))))
+          (build-package-runtime-scope-release! scope)
+          status)))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -5621,9 +5484,8 @@
     [announce : bool]) : i64
     (match (build-package-tlci-source-inputs manifest-path producer-identity)
       [(Err message)
-        (begin
-          (io.print-error message)
-          1)]
+        (io.print-error message)
+        1]
       [(Ok source-inputs)
         (match (compiler_driver_core.compiler-driver-package-runtime-load
           (owned_view.compiler-owned-shared-view scope)
@@ -5634,11 +5496,10 @@
           emit-entry
           compile-cfgs)
           [(Err diag)
-            (begin
-              (io.print-error
-                (compiler_driver_core.compiler-driver-render-source-diagnostic
-                  (deref diag)))
-              1)]
+            (io.print-error
+              (compiler_driver_core.compiler-driver-render-source-diagnostic
+                (deref diag)))
+            1]
           [(Ok decls paths _ seen)
             (let
               [owned-paths : ast.AstDeclPathList
@@ -5779,9 +5640,8 @@
               (str_cat.str-cat
                 "build: failed to create package output directory "
                 (build-package-output-dir-profile manifest-dir name profile)))]
-          (begin
-            (io.print-error message)
-            1))
+          (io.print-error message)
+          1)
         (let
           [manifest-link-inputs : build_run_core.SourceToolLinkInputs
             (build-package-manifest-link-inputs
@@ -5871,30 +5731,26 @@
     [_catalog-deps : load.CompilerPkgDepList]
     [_producer-identity : String]
     [_announce : bool]) : i64
-    (begin
-      (io.print-error
-        "build: package emission requires checked frontend surface support")
-      1)))
+    (io.print-error
+      "build: package emission requires checked frontend surface support")
+    1))
 
 (define (build-package-dependency-catalog-finish [status : i64]) : i64
   (let
     [state : load.CompilerLoadSessionState
       (load.compiler-load-serial-test-session-state)]
-    (begin
-      (compiler_dependency_tlci.compiler-dependency-tlci-verification-finish!
-        (owned_view.compiler-owned-shared-view state))
-      (match (load.compiler-load-session-state-dependency-catalog-release!
-        state)
-        [(Ok) status]
-        [(Err message)
-          (begin
-            (io.print-error
-              (str_cat.str-cat
-                "build: failed to release dependency catalog mapping: "
-                message))
-            (if (= status 0)
-              1
-              status))]))))
+    (compiler_dependency_tlci.compiler-dependency-tlci-verification-finish!
+      (owned_view.compiler-owned-shared-view state))
+    (match (load.compiler-load-session-state-dependency-catalog-release! state)
+      [(Ok) status]
+      [(Err message)
+        (io.print-error
+          (str_cat.str-cat
+            "build: failed to release dependency catalog mapping: "
+            message))
+        (if (= status 0)
+          1
+          status)])))
 
 (define (build-package-worker-unified-cli?) : bool
   (and
@@ -5921,17 +5777,15 @@
     [i : i64 0]
     [n : i64 (cli_svec.len (& roots))]
     [out : process.ProcessStringList args]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            out
-            (build-package-worker-append-option
-              out
-              "--stdlib-root"
-              (cli_svec.get (& roots) i "")))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i n)
+      (set!
+        out
+        (build-package-worker-append-option
+          out
+          "--stdlib-root"
+          (cli_svec.get (& roots) i "")))
+      (set! i (+ i 1)))
+    out))
 
 (define (build-package-worker-append-resolved-deps
   [args : process.ProcessStringList]
@@ -6090,9 +5944,8 @@
       resolved-deps
       stdlib-roots))
     [(OkProcessOutput output)
-      (begin
-        (build_run_core.source-tool-forward-output output)
-        (process.output-status output))]
+      (build_run_core.source-tool-forward-output output)
+      (process.output-status output)]
     [(ErrProcessOutput error)
       (if (or
         (process.error-spawn-failed?
@@ -6122,9 +5975,8 @@
   [producer-identity : String]) : i64
   (match (build-package-worker-config-from idx count)
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]
+      (io.print-error message)
+      1]
     [(Ok config)
       (let
         [manifest-path : String config.manifest-path]
@@ -6133,9 +5985,8 @@
         (match (build-load-manifest
           (owned_view.compiler-owned-shared-view normalized-path))
           [(Err message)
-            (begin
-              (io.print-error (str_cat.str-cat "Error: " message))
-              1)]
+            (io.print-error (str_cat.str-cat "Error: " message))
+            1]
           [(Ok manifest)
             (let
               [resolved-deps : load.CompilerPkgDepList config.resolved-deps]
@@ -6155,9 +6006,8 @@
                       manifest.link)))]
               (match resolved-manifest-result
                 [(Err message)
-                  (begin
-                    (io.print-error message)
-                    1)]
+                  (io.print-error message)
+                  1]
                 [(Ok resolved-manifest)
                   (if (build-package-kind-lib? resolved-manifest.kind)
                     (build-package-dependency-catalog-finish
@@ -6183,9 +6033,8 @@
 (define (build-package-doctest-worker-run-from [idx : i64] [count : i64]) : i64
   (match (build-package-worker-config-from idx count)
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]
+      (io.print-error message)
+      1]
     [(Ok config)
       (let
         [manifest-path : String config.manifest-path]
@@ -6194,9 +6043,8 @@
         (match (build-load-manifest
           (owned_view.compiler-owned-shared-view normalized-path))
           [(Err message)
-            (begin
-              (io.print-error (str_cat.str-cat "Error: " message))
-              1)]
+            (io.print-error (str_cat.str-cat "Error: " message))
+            1]
           [(Ok manifest)
             (let
               [resolved-deps : load.CompilerPkgDepList config.resolved-deps]
@@ -6216,9 +6064,8 @@
                       manifest.link)))]
               (match resolved-manifest-result
                 [(Err message)
-                  (begin
-                    (io.print-error message)
-                    1)]
+                  (io.print-error message)
+                  1]
                 [(Ok resolved-manifest)
                   (let
                     [manifest-dir : String
@@ -6394,21 +6241,20 @@
           stdlib-roots)
           [(Err message) (Err message)]
           [(Ok worker)
-            (begin
-              (build-string-index-map-put! (&mut scheduled) manifest-path 1)
-              (build-package-schedule-pass-with
-                nodes
-                scheduled
-                built
-                target
-                opt-level
-                profile
-                mode
-                lock-policy
-                stdlib-roots
-                (More worker (box workers))
-                (+ index 1)
-                count))])))))
+            (build-string-index-map-put! (&mut scheduled) manifest-path 1)
+            (build-package-schedule-pass-with
+              nodes
+              scheduled
+              built
+              target
+              opt-level
+              profile
+              mode
+              lock-policy
+              stdlib-roots
+              (More worker (box workers))
+              (+ index 1)
+              count)])))))
 
 (define (build-package-schedule-pass
   [nodes : BuildPackageGraphNodeVec]
@@ -6443,18 +6289,16 @@
     [index : i64 0]
     [count : i64 (build-package-graph-node-vec-len nodes)]
     [all-built : bool true]
-    (begin
-      (while (and all-built (< index count))
-        (let
-          [node : BuildPackageGraphNode
-            (build-package-graph-node-vec-at nodes index)]
-          [manifest-path : String node.manifest-path]
-          (begin
-            (match (build_string_i64_map.get (& built) manifest-path)
-              [(LookupFound _) unit]
-              [(LookupMissing) (set! all-built false)])
-            (set! index (+ index 1)))))
-      all-built)))
+    (while (and all-built (< index count))
+      (let
+        [node : BuildPackageGraphNode
+          (build-package-graph-node-vec-at nodes index)]
+        [manifest-path : String node.manifest-path]
+        (match (build_string_i64_map.get (& built) manifest-path)
+          [(LookupFound _) unit]
+          [(LookupMissing) (set! all-built false)])
+        (set! index (+ index 1))))
+    all-built))
 
 (define (build-package-failure-status [failed-status : i64] [status : i64]) : i64
   (if (= failed-status 0)
@@ -6474,67 +6318,64 @@
     [result : process.ResultProcessOutput (process.wait (&mut worker.child))]
     (match result
       [(OkProcessOutput output)
-        (begin
-          (if (or announce (not (process.success? output)))
-            (build_run_core.source-tool-forward-output output)
-            unit)
-          (if (process.success? output)
-            (let
-              [runtime-state : BuildPackageArtifactState
-                (build-package-artifact-file-state
-                  (owned_view.compiler-owned-shared-view runtime-path))]
-              (if (build-package-artifact-state-dirty?
-                (owned_view.compiler-owned-shared-view runtime-state))
-                (begin
-                  (io.print-error
-                    (build-package-artifact-status-error-message
-                      name
-                      "target runtime"
-                      runtime-path
-                      runtime-state))
-                  (set!
-                    (deref failed-status)
-                    (build-package-failure-status (deref failed-status) 1)))
-                (let
-                  [tlci-state : BuildPackageArtifactState
-                    (build-package-artifact-file-state
-                      (owned_view.compiler-owned-shared-view tlci-path))]
-                  (if (build-package-artifact-state-dirty?
-                    (owned_view.compiler-owned-shared-view tlci-state))
-                    (begin
-                      (io.print-error
-                        (build-package-artifact-status-error-message
-                          name
-                          "host tlci"
-                          tlci-path
-                          tlci-state))
-                      (set!
-                        (deref failed-status)
-                        (build-package-failure-status (deref failed-status) 1)))
-                    (build-string-index-map-put! built manifest-path 1)))))
-            (let
-              [status : i64 (process.output-status output)]
+        (if (or announce (not (process.success? output)))
+          (build_run_core.source-tool-forward-output output)
+          unit)
+        (if (process.success? output)
+          (let
+            [runtime-state : BuildPackageArtifactState
+              (build-package-artifact-file-state
+                (owned_view.compiler-owned-shared-view runtime-path))]
+            (if (build-package-artifact-state-dirty?
+              (owned_view.compiler-owned-shared-view runtime-state))
               (begin
                 (io.print-error
-                  (str_cat.str-cat
-                    "build: package dependency `"
+                  (build-package-artifact-status-error-message
                     name
-                    "` failed with status "
-                    (string.int->string status)))
+                    "target runtime"
+                    runtime-path
+                    runtime-state))
                 (set!
                   (deref failed-status)
-                  (build-package-failure-status (deref failed-status) status))))))]
+                  (build-package-failure-status (deref failed-status) 1)))
+              (let
+                [tlci-state : BuildPackageArtifactState
+                  (build-package-artifact-file-state
+                    (owned_view.compiler-owned-shared-view tlci-path))]
+                (if (build-package-artifact-state-dirty?
+                  (owned_view.compiler-owned-shared-view tlci-state))
+                  (begin
+                    (io.print-error
+                      (build-package-artifact-status-error-message
+                        name
+                        "host tlci"
+                        tlci-path
+                        tlci-state))
+                    (set!
+                      (deref failed-status)
+                      (build-package-failure-status (deref failed-status) 1)))
+                  (build-string-index-map-put! built manifest-path 1)))))
+          (let
+            [status : i64 (process.output-status output)]
+            (io.print-error
+              (str_cat.str-cat
+                "build: package dependency `"
+                name
+                "` failed with status "
+                (string.int->string status)))
+            (set!
+              (deref failed-status)
+              (build-package-failure-status (deref failed-status) status))))]
       [(ErrProcessOutput error)
-        (begin
-          (io.print-error
-            (str_cat.str-cat
-              "build: failed to wait for package dependency `"
-              name
-              "`: "
-              (process.error-message error)))
-          (set!
-            (deref failed-status)
-            (build-package-failure-status (deref failed-status) 1)))])))
+        (io.print-error
+          (str_cat.str-cat
+            "build: failed to wait for package dependency `"
+            name
+            "`: "
+            (process.error-message error)))
+        (set!
+          (deref failed-status)
+          (build-package-failure-status (deref failed-status) 1))])))
 
 (define (build-package-wait-workers-with
   [workers : BuildPackageGraphWorkerList]
@@ -6550,17 +6391,16 @@
       (let
         [next-built : build_string_i64_map.Map built]
         [next-failed-status : i64 failed-status]
-        (begin
-          (build-package-wait-worker
-            (&mut worker)
-            (&mut next-built)
-            announce
-            (&mut next-failed-status))
-          (build-package-wait-workers-with
-            (deref tail)
-            next-built
-            announce
-            next-failed-status)))]))
+        (build-package-wait-worker
+          (&mut worker)
+          (&mut next-built)
+          announce
+          (&mut next-failed-status))
+        (build-package-wait-workers-with
+          (deref tail)
+          next-built
+          announce
+          next-failed-status))]))
 
 (define (build-package-wait-workers
   [workers : BuildPackageGraphWorkerList]
@@ -6594,9 +6434,8 @@
       lock-policy
       (owned_view.compiler-owned-shared-view stdlib-roots))
       [(Err message)
-        (begin
-          (io.print-error message)
-          1)]
+        (io.print-error message)
+        1]
       [(Ok pass)
         (if (build-package-graph-worker-list-empty? (& pass.workers))
           (begin
@@ -6653,47 +6492,45 @@
     [index : i64 0]
     [count : i64 (build-package-graph-node-vec-len nodes)]
     [status : i64 0]
-    (begin
-      (while (and (= status 0) (< index count))
-        (let
-          [node : BuildPackageGraphNode
-            (build-package-graph-node-vec-at nodes index)]
-          [validation : ResultBuildString
-            (build-package-validate-graph-node-checkout
-              (owned_view.compiler-owned-shared-view node))]
-          [manifest-path : String node.manifest-path]
-          [manifest : load.CompilerPkgManifest node.manifest]
-          [node-status : i64
-            (match validation
-              [(Err message)
-                (begin
-                  (io.print-error message)
-                  1)]
-              [(Ok _)
-                (build-package-emit-one
-                  manifest-path
-                  (owned_view.compiler-owned-shared-view manifest)
-                  target
-                  opt-level
-                  profile
-                  mode
-                  lock-policy
-                  (owned_view.compiler-owned-shared-view stdlib-roots)
-                  (build_run_core.source-tool-link-inputs-empty)
-                  (load.compiler-pkg-deps-list manifest.deps)
-                  (owned_view.compiler-owned-shared-view producer-identity)
-                  announce)])]
-          (if (= node-status 0)
-            (set! index (+ index 1))
-            (begin
-              (io.print-error
-                (str_cat.str-cat
-                  "build: package dependency `"
-                  manifest.name
-                  "` failed with status "
-                  (string.int->string node-status)))
-              (set! status node-status)))))
-      status)))
+    (while (and (= status 0) (< index count))
+      (let
+        [node : BuildPackageGraphNode
+          (build-package-graph-node-vec-at nodes index)]
+        [validation : ResultBuildString
+          (build-package-validate-graph-node-checkout
+            (owned_view.compiler-owned-shared-view node))]
+        [manifest-path : String node.manifest-path]
+        [manifest : load.CompilerPkgManifest node.manifest]
+        [node-status : i64
+          (match validation
+            [(Err message)
+              (io.print-error message)
+              1]
+            [(Ok _)
+              (build-package-emit-one
+                manifest-path
+                (owned_view.compiler-owned-shared-view manifest)
+                target
+                opt-level
+                profile
+                mode
+                lock-policy
+                (owned_view.compiler-owned-shared-view stdlib-roots)
+                (build_run_core.source-tool-link-inputs-empty)
+                (load.compiler-pkg-deps-list manifest.deps)
+                (owned_view.compiler-owned-shared-view producer-identity)
+                announce)])]
+        (if (= node-status 0)
+          (set! index (+ index 1))
+          (begin
+            (io.print-error
+              (str_cat.str-cat
+                "build: package dependency `"
+                manifest.name
+                "` failed with status "
+                (string.int->string node-status)))
+            (set! status node-status)))))
+    status))
 
 (define (build-package-emit-graph-nodes
   [nodes : BuildPackageGraphNodeVec]
@@ -6781,9 +6618,8 @@
   [announce : bool]) : i64
   (match (build-parse-target target-text)
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]
+      (io.print-error message)
+      1]
     [(Ok target)
       (let
         [normalized-path : String
@@ -6793,18 +6629,16 @@
           (owned_view.compiler-owned-shared-view manifest)
           lock-policy)
           [(Err message)
-            (begin
-              (io.print-error message)
-              1)]
+            (io.print-error message)
+            1]
           [(Ok resolved-manifest)
             (match (build-package-dependency-graph
               (owned_view.compiler-owned-shared-view normalized-path)
               manifest
               (owned_view.compiler-owned-shared-view resolved-manifest))
               [(Err message)
-                (begin
-                  (io.print-error message)
-                  1)]
+                (io.print-error message)
+                1]
               [(Ok graph)
                 (let
                   [nodes : BuildPackageGraphNodeVec graph.order]
@@ -6823,18 +6657,16 @@
                     (match (build-package-validate-graph-checkouts
                       (owned_view.compiler-owned-shared-view nodes))
                       [(Err message)
-                        (begin
-                          (io.print-error message)
-                          1)]
+                        (io.print-error message)
+                        1]
                       [(Ok _)
                         (match (build-package-graph-link-inputs
                           (owned_view.compiler-owned-shared-view nodes)
                           profile
                           target)
                           [(Err message)
-                            (begin
-                              (io.print-error message)
-                              1)]
+                            (io.print-error message)
+                            1]
                           [(Ok dep-link-inputs)
                             (build-package-emit-one
                               (owned_view.compiler-owned-shared-view
@@ -6896,16 +6728,14 @@
   [announce : bool]) : i64
   (match (build_run_core.source-tool-backend-mode "build" mode)
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]
+      (io.print-error message)
+      1]
     [(Ok backend-mode)
       (match (build-load-manifest
         (owned_view.compiler-owned-shared-view manifest-path))
         [(Err message)
-          (begin
-            (io.print-error (str_cat.str-cat "Error: " message))
-            1)]
+          (io.print-error (str_cat.str-cat "Error: " message))
+          1]
         [(Ok manifest)
           (build-package-emit
             manifest-path
@@ -6962,10 +6792,9 @@
             (build-discover-manifest-up "" 256))]
         (match resolved-manifest
           [(CompilerLoadNoPath)
-            (begin
-              (io.print-error
-                "could not find typelisp.pkg from '.' or any parent directory")
-              1)]
+            (io.print-error
+              "could not find typelisp.pkg from '.' or any parent directory")
+            1]
           [(CompilerLoadSomePath path)
             (build-package-from-path
               path
@@ -6986,9 +6815,8 @@
         [(Source) (build-source-direct-from idx (io.arg-count))]
         [(Package _ _ _ _ _ _ _ _ _ _) (build-package config producer-identity)])]
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]))
+      (io.print-error message)
+      1]))
 
 (define (build-args-contain-manifest? [idx : i64] [count : i64]) : bool
   (if (>= idx count)
@@ -7015,17 +6843,16 @@
       (str_cat.str-cat (build-package-cli-options) " " (build-link-cli-options))]
     [i : i64 idx]
     [found : bool false]
-    (begin
-      (while (and (not found) (< i count))
-        (let
-          [current : String (io.arg i)]
-          (match (cli_option.cli-option-lookup (& specs) (& current))
-            [(Found _ arity) (set! i (+ i (+ arity 1)))]
-            [(None)
-              (if (cli_option.cli-flag? (& current))
-                (set! i (+ i 1))
-                (set! found true))])))
-      found)))
+    (while (and (not found) (< i count))
+      (let
+        [current : String (io.arg i)]
+        (match (cli_option.cli-option-lookup (& specs) (& current))
+          [(Found _ arity) (set! i (+ i (+ arity 1)))]
+          [(None)
+            (if (cli_option.cli-flag? (& current))
+              (set! i (+ i 1))
+              (set! found true))])))
+    found))
 
 (define (build-cli-config-from [idx : i64] [count : i64]) : ResultBuildCliConfig
   (let
@@ -7050,104 +6877,102 @@
     [opt-level : i64 (opt.compiler-optimize-default-level)]
     [link-inputs : build_run_core.SourceToolLinkInputs
       (build_run_core.source-tool-link-inputs-empty)]
-    (begin
-      (while (cli_option.cli-args-next! (&mut args))
-        (cond
-          [(string.eq args.name "--stdlib-root")
-            (cli_svec.push-ref!
-              (&mut stdlib-roots)
-              (cli_option.cli-args-value (& args)))]
-          [(string.eq args.name "--target")
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              (match (build_run_core.source-tool-target (string.copy (& value)))
-                [(Ok parsed-target) (set! target parsed-target)]
-                [(Err _)
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    (build-cli-unknown-target value))]))]
-          [(string.eq args.name "--opt-level")
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              [level : i64 (cli_option.cli-option-opt-level (& value))]
-              (if (< level 0)
+    (while (cli_option.cli-args-next! (&mut args))
+      (cond
+        [(string.eq args.name "--stdlib-root")
+          (cli_svec.push-ref!
+            (&mut stdlib-roots)
+            (cli_option.cli-args-value (& args)))]
+        [(string.eq args.name "--target")
+          (let
+            [value : String (cli_option.cli-args-value (& args))]
+            (match (build_run_core.source-tool-target (string.copy (& value)))
+              [(Ok parsed-target) (set! target parsed-target)]
+              [(Err _)
                 (cli_option.cli-args-fail!
                   (&mut args)
-                  (build-cli-unknown-opt-level value))
-                (set! opt-level level)))]
-          [(string.eq args.name "--debug")
-            (ir.compiler-debug-info-set-enabled! true)]
-          [(string.eq args.name "-o")
-            (if has-output
+                  (build-cli-unknown-target value))]))]
+        [(string.eq args.name "--opt-level")
+          (let
+            [value : String (cli_option.cli-args-value (& args))]
+            [level : i64 (cli_option.cli-option-opt-level (& value))]
+            (if (< level 0)
               (cli_option.cli-args-fail!
                 (&mut args)
-                "build: -o was provided more than once")
-              (begin
-                (set! output (cli_option.cli-args-value (& args)))
-                (set! has-output true)))]
-          [(string.eq args.name "--backend-mode")
-            (match (build_run_core.source-tool-backend-mode
-              "build"
-              (cli_option.cli-args-value (& args)))
-              [(Ok parsed-mode) (set! mode parsed-mode)]
-              [(Err message) (cli_option.cli-args-fail! (&mut args) message)])]
-          [(string.eq args.name "--link-lib")
-            (set!
-              link-inputs
-              (build_run_core.source-tool-link-inputs-add-lib
-                link-inputs
-                (cli_option.cli-args-value (& args))))]
-          [(string.eq args.name "--link-search")
-            (set!
-              link-inputs
-              (build_run_core.source-tool-link-inputs-add-search-dir
-                link-inputs
-                (cli_option.cli-args-value (& args))))]
-          [(string.eq args.name "--link-arg")
-            (set!
-              link-inputs
-              (build_run_core.source-tool-link-inputs-add-raw-arg
-                link-inputs
-                (cli_option.cli-args-value (& args))))]
-          [(string.eq args.name "--manifest-path")
+                (build-cli-unknown-opt-level value))
+              (set! opt-level level)))]
+        [(string.eq args.name "--debug")
+          (ir.compiler-debug-info-set-enabled! true)]
+        [(string.eq args.name "-o")
+          (if has-output
             (cli_option.cli-args-fail!
               (&mut args)
-              "build: cannot combine a source file with --manifest-path")]
-          ;; Package-only options.
-          [(> (string.string-length args.name) 0)
-            (let
-              [message : String
-                (string.concat3-borrowed
-                  "build: "
-                  (& args.name)
-                  " is only valid for package builds")]
-              (cli_option.cli-args-fail! (&mut args) message))]
-          [(cli_option.cli-flag? args.arg)
-            (cli_option.cli-args-fail-arg! (&mut args) "build: unknown flag ")]
-          [has-source
-            (cli_option.cli-args-fail!
-              (&mut args)
-              "build: accepts only one source file")]
-          [else
+              "build: -o was provided more than once")
             (begin
-              (set! source (string.copy (& args.arg)))
-              (set! has-source true))]))
-      (cond
-        [args.failed (Err args.error)]
+              (set! output (cli_option.cli-args-value (& args)))
+              (set! has-output true)))]
+        [(string.eq args.name "--backend-mode")
+          (match (build_run_core.source-tool-backend-mode
+            "build"
+            (cli_option.cli-args-value (& args)))
+            [(Ok parsed-mode) (set! mode parsed-mode)]
+            [(Err message) (cli_option.cli-args-fail! (&mut args) message)])]
+        [(string.eq args.name "--link-lib")
+          (set!
+            link-inputs
+            (build_run_core.source-tool-link-inputs-add-lib
+              link-inputs
+              (cli_option.cli-args-value (& args))))]
+        [(string.eq args.name "--link-search")
+          (set!
+            link-inputs
+            (build_run_core.source-tool-link-inputs-add-search-dir
+              link-inputs
+              (cli_option.cli-args-value (& args))))]
+        [(string.eq args.name "--link-arg")
+          (set!
+            link-inputs
+            (build_run_core.source-tool-link-inputs-add-raw-arg
+              link-inputs
+              (cli_option.cli-args-value (& args))))]
+        [(string.eq args.name "--manifest-path")
+          (cli_option.cli-args-fail!
+            (&mut args)
+            "build: cannot combine a source file with --manifest-path")]
+        ;; Package-only options.
+        [(> (string.string-length args.name) 0)
+          (let
+            [message : String
+              (string.concat3-borrowed
+                "build: "
+                (& args.name)
+                " is only valid for package builds")]
+            (cli_option.cli-args-fail! (&mut args) message))]
+        [(cli_option.cli-flag? args.arg)
+          (cli_option.cli-args-fail-arg! (&mut args) "build: unknown flag ")]
         [has-source
-          (Ok
-            (BuildCliConfig.Config
-              source
-              has-source
-              output
-              has-output
-              target
-              mode
-              stdlib-roots
-              opt-level
-              link-inputs))]
-        [has-output (Err "build: -o requires a source file argument")]
-        [else (Err "build: expected source path")]))))
+          (cli_option.cli-args-fail!
+            (&mut args)
+            "build: accepts only one source file")]
+        [else
+          (set! source (string.copy (& args.arg)))
+          (set! has-source true)]))
+    (cond
+      [args.failed (Err args.error)]
+      [has-source
+        (Ok
+          (BuildCliConfig.Config
+            source
+            has-source
+            output
+            has-output
+            target
+            mode
+            stdlib-roots
+            opt-level
+            link-inputs))]
+      [has-output (Err "build: -o requires a source file argument")]
+      [else (Err "build: expected source path")])))
 
 ;; Build a source file directly. Manifest builds go through the package parser
 ;; (`build-main-from`) so `typelisp build` discovers `typelisp.pkg` from the
@@ -7176,9 +7001,8 @@
             mode
             link-inputs)])]
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]))
+      (io.print-error message)
+      1]))
 
 (define (build-direct-from
   [start : i64]
@@ -7197,16 +7021,13 @@
   [start : i64]
   [count : i64]
   [producer-identity : String]) : i64
-  (begin
-    (ir.compiler-debug-info-set-enabled! false)
-    (ir.compiler-debug-path-remap-clear!)
-    (cond
-      [(and (> count start) (string.eq (io.arg start) "--package-worker"))
-        (build-package-worker-run-from (+ start 1) count producer-identity)]
-      [(and
-          (> count start)
-          (string.eq (io.arg start) "--package-doctest-worker"))
-        (build-package-doctest-worker-run-from (+ start 1) count)]
-      [(and (> count start) (string.eq (io.arg start) "--direct"))
-        (build-direct-from (+ start 1) count producer-identity)]
-      [else (build-direct-from start count producer-identity)])))
+  (ir.compiler-debug-info-set-enabled! false)
+  (ir.compiler-debug-path-remap-clear!)
+  (cond
+    [(and (> count start) (string.eq (io.arg start) "--package-worker"))
+      (build-package-worker-run-from (+ start 1) count producer-identity)]
+    [(and (> count start) (string.eq (io.arg start) "--package-doctest-worker"))
+      (build-package-doctest-worker-run-from (+ start 1) count)]
+    [(and (> count start) (string.eq (io.arg start) "--direct"))
+      (build-direct-from (+ start 1) count producer-identity)]
+    [else (build-direct-from start count producer-identity)]))

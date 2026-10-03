@@ -54,12 +54,11 @@
     [code-protect? : bool]
     [data-protect? : bool]
     [release? : bool]) : unit
-    (begin
-      (set! tlci-pages-test-fail-copy copy?)
-      (set! tlci-pages-test-fail-code-protect code-protect?)
-      (set! tlci-pages-test-fail-data-protect data-protect?)
-      (set! tlci-pages-test-fail-release release?)
-      (set! tlci-pages-test-release-attempts 0))))
+    (set! tlci-pages-test-fail-copy copy?)
+    (set! tlci-pages-test-fail-code-protect code-protect?)
+    (set! tlci-pages-test-fail-data-protect data-protect?)
+    (set! tlci-pages-test-fail-release release?)
+    (set! tlci-pages-test-release-attempts 0)))
 
 (define tlci-pages-page-size : i64
   4096)
@@ -276,12 +275,11 @@
       [(> count region.size)
         (Err "tlci pages: byte buffer exceeds mapped region")]
       [else
-        (begin
-          (tlci-pages-copy-bytes!
-            (tlci-pages-addr->mut-u8 region.addr)
-            (tlci-pages-array-ptr bytes)
-            count)
-          (Ok))])))
+        (tlci-pages-copy-bytes!
+          (tlci-pages-addr->mut-u8 region.addr)
+          (tlci-pages-array-ptr bytes)
+          count)
+        (Ok)])))
 
 (define (tlci-pages-protect-code-executable [region : TlciPageRegion]) : ResultTlciPageRegion
   (cond
@@ -481,11 +479,10 @@
               [(Err _) true]
               [(Ok _) false])]
           [release-ok : bool (tlci-pages-test-release-ok? region)]
-          (begin
-            (tlci-pages-test-panic-if
-              (not (and content-ok flags-ok exec-rejected release-ok))
-              "tlci pages: data mapping failed")
-            unit))])))
+          (tlci-pages-test-panic-if
+            (not (and content-ok flags-ok exec-rejected release-ok))
+            "tlci pages: data mapping failed")
+          unit)])))
 
 (test
   tlci-pages-map-code-rx
@@ -508,8 +505,7 @@
               [(Err _) true]
               [(Ok) false])]
           [release-ok : bool (tlci-pages-test-release-ok? region)]
-          (begin
-            (tlci-pages-test-panic-if
-              (not (and content-ok flags-ok copy-rejected release-ok))
-              "tlci pages: code mapping failed")
-            unit))])))
+          (tlci-pages-test-panic-if
+            (not (and content-ok flags-ok copy-rejected release-ok))
+            "tlci pages: code mapping failed")
+          unit)])))

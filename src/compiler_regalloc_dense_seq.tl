@@ -66,20 +66,17 @@
         (let
           [slots : (__tl_dyn-array ,T) items.slots]
           [len : i64 items.len]
-          (begin
-            (if (< len (array-length slots))
-              unit
-              (let
-                [bigger : (__tl_dyn-array ,T)
-                  (__tl_make-array
-                    ,T
-                    (compiler-reg-seq-grown-capacity (array-length slots)))]
-                [index : i64 0]
-                (begin
-                  (while (< index len)
-                    (begin
-                      (set! (array-ref bigger index) (array-ref slots index))
-                      (set! index (+ index 1))))
-                  (set! slots bigger))))
-            (set! (array-ref slots len) item)
-            (,seq slots (+ len 1))))))))
+          (if (< len (array-length slots))
+            unit
+            (let
+              [bigger : (__tl_dyn-array ,T)
+                (__tl_make-array
+                  ,T
+                  (compiler-reg-seq-grown-capacity (array-length slots)))]
+              [index : i64 0]
+              (while (< index len)
+                (set! (array-ref bigger index) (array-ref slots index))
+                (set! index (+ index 1)))
+              (set! slots bigger)))
+          (set! (array-ref slots len) item)
+          (,seq slots (+ len 1)))))))

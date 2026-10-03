@@ -12,12 +12,11 @@
   (let
     [index : i64 0]
     [present : bool false]
-    (begin
-      (while (and (not present) (< index (surface_svec.len items)))
-        (if (string.eq (surface_svec.get items index "") path)
-          (set! present true)
-          (set! index (+ index 1))))
-      present)))
+    (while (and (not present) (< index (surface_svec.len items)))
+      (if (string.eq (surface_svec.get items index "") path)
+        (set! present true)
+        (set! index (+ index 1))))
+    present))
 
 (define (prelude-surface-module-set [paths : ast.AstDeclPathList]) : (__tl_dyn-array
     String)
@@ -25,42 +24,36 @@
     [items : surface_svec.Vec (surface_svec.new)]
     [index : i64 0]
     [count : i64 (ast.ast-decl-path-list-len (& paths))]
-    (begin
-      (while (< index count)
-        (let
-          [path : String
-            (ast.ast-array-shared-view paths.slots (+ paths.offset index))]
-          (begin
-            (if (prelude-surface-path-present? (& items) (& path))
-              unit
-              (surface_svec.push-ref! (&mut items) path))
-            (set! index (+ index 1)))))
+    (while (< index count)
       (let
-        [out (__tl_make-array String (surface_svec.len (& items)))]
-        [copy-index : i64 0]
-        [sort-index : i64 1]
-        (begin
-          (while (< copy-index (surface_svec.len (& items)))
-            (begin
-              (set!
-                (array-ref out copy-index)
-                (surface_svec.get (& items) copy-index ""))
-              (set! copy-index (+ copy-index 1))))
-          (while (< sort-index (array-length out))
-            (let
-              [value : String (ast.ast-array-shared-view out sort-index)]
-              [scan : i64 sort-index]
-              (begin
-                (while (and
-                  (> scan 0)
-                  (surface_identity.surface-identity-string-less?
-                    value
-                    (ast.ast-array-shared-view out (- scan 1))))
-                  (begin
-                    (set!
-                      (array-ref out scan)
-                      (ast.ast-array-shared-view out (- scan 1)))
-                    (set! scan (- scan 1))))
-                (set! (array-ref out scan) value)
-                (set! sort-index (+ sort-index 1)))))
-          out)))))
+        [path : String
+          (ast.ast-array-shared-view paths.slots (+ paths.offset index))]
+        (if (prelude-surface-path-present? (& items) (& path))
+          unit
+          (surface_svec.push-ref! (&mut items) path))
+        (set! index (+ index 1))))
+    (let
+      [out (__tl_make-array String (surface_svec.len (& items)))]
+      [copy-index : i64 0]
+      [sort-index : i64 1]
+      (while (< copy-index (surface_svec.len (& items)))
+        (set!
+          (array-ref out copy-index)
+          (surface_svec.get (& items) copy-index ""))
+        (set! copy-index (+ copy-index 1)))
+      (while (< sort-index (array-length out))
+        (let
+          [value : String (ast.ast-array-shared-view out sort-index)]
+          [scan : i64 sort-index]
+          (while (and
+            (> scan 0)
+            (surface_identity.surface-identity-string-less?
+              value
+              (ast.ast-array-shared-view out (- scan 1))))
+            (set!
+              (array-ref out scan)
+              (ast.ast-array-shared-view out (- scan 1)))
+            (set! scan (- scan 1)))
+          (set! (array-ref out scan) value)
+          (set! sort-index (+ sort-index 1))))
+      out)))

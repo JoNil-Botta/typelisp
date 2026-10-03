@@ -35,17 +35,16 @@
   (let
     [line : i64 0]
     [start : i64 0]
-    (begin
-      ;; Row zero is the checked-in schema header.
-      (while (<= line index)
-        (let
-          [end : i64 (string.index-of-byte data start (cast '\n' : u8))]
-          (if (< end 0)
-            (io.panic "x64 executable template: catalog row is missing")
-            (begin
-              (set! start (+ end 1))
-              (set! line (+ line 1))))))
-      start)))
+    ;; Row zero is the checked-in schema header.
+    (while (<= line index)
+      (let
+        [end : i64 (string.index-of-byte data start (cast '\n' : u8))]
+        (if (< end 0)
+          (io.panic "x64 executable template: catalog row is missing")
+          (begin
+            (set! start (+ end 1))
+            (set! line (+ line 1))))))
+    start))
 
 (define (compiler-x64-template-catalog-row-end
   [data : (& data str)]
@@ -71,22 +70,21 @@
   (let
     [field : i64 0]
     [start : i64 row-start]
-    (begin
-      (while (< field field-index)
-        (let
-          [end : i64 (string.index-of-byte data start (cast '\t' : u8))]
-          (if (or (< end 0) (>= end row-end))
-            (io.panic "x64 executable template: catalog field is missing")
-            (begin
-              (set! start (+ end 1))
-              (set! field (+ field 1))))))
+    (while (< field field-index)
       (let
-        [tab : i64 (string.index-of-byte data start (cast '\t' : u8))]
-        [end : i64
-          (if (or (< tab 0) (> tab row-end))
-            row-end
-            tab)]
-        (string.substring data start (- end start))))))
+        [end : i64 (string.index-of-byte data start (cast '\t' : u8))]
+        (if (or (< end 0) (>= end row-end))
+          (io.panic "x64 executable template: catalog field is missing")
+          (begin
+            (set! start (+ end 1))
+            (set! field (+ field 1))))))
+    (let
+      [tab : i64 (string.index-of-byte data start (cast '\t' : u8))]
+      [end : i64
+        (if (or (< tab 0) (> tab row-end))
+          row-end
+          tab)]
+      (string.substring data start (- end start)))))
 
 ;; The checked-in TSV uses only `\n` and `\\` escapes inside fields. Keeping
 ;; physical rows single-line makes shell CI able to verify the schema and exact
@@ -118,23 +116,21 @@
         start)]
     [digits : i64 0]
     [value : i64 0]
-    (begin
-      (when
-        (or (< start 0) (> end length) (>= at end))
-        (io.panic "x64 executable template: malformed catalog integer"))
-      (while (< at end)
-        (let
-          [byte : i64 (cast (string.string-ref text at) : i64)]
-          (begin
-            (when
-              (or (< byte 48) (> byte 57) (>= digits 10))
-              (io.panic "x64 executable template: malformed catalog integer"))
-            (set! value (+ (* value 10) (- byte 48)))
-            (set! digits (+ digits 1))
-            (set! at (+ at 1)))))
-      (if negative
-        (- 0 value)
-        value))))
+    (when
+      (or (< start 0) (> end length) (>= at end))
+      (io.panic "x64 executable template: malformed catalog integer"))
+    (while (< at end)
+      (let
+        [byte : i64 (cast (string.string-ref text at) : i64)]
+        (when
+          (or (< byte 48) (> byte 57) (>= digits 10))
+          (io.panic "x64 executable template: malformed catalog integer"))
+        (set! value (+ (* value 10) (- byte 48)))
+        (set! digits (+ digits 1))
+        (set! at (+ at 1))))
+    (if negative
+      (- 0 value)
+      value)))
 
 (define (compiler-x64-template-target-from-catalog [value : (& value str)]) : x64.CompilerX64TemplateTarget
   (let
@@ -230,10 +226,9 @@
   (let
     [row : CompilerX64ExecutableTemplateGate
       (compiler-x64-template-registry-gate id)]
-    (begin
-      (compiler-x64-template-require-kind! row target (Assembly))
-      (compiler-x64-template-require-rendered-payload! row (& rendered))
-      rendered)))
+    (compiler-x64-template-require-kind! row target (Assembly))
+    (compiler-x64-template-require-rendered-payload! row (& rendered))
+    rendered))
 
 (define (compiler-x64-template-render-bytes
   [id : x64.CompilerX64ExecutableTemplateId]
@@ -242,10 +237,9 @@
   (let
     [row : CompilerX64ExecutableTemplateGate
       (compiler-x64-template-registry-gate id)]
-    (begin
-      (compiler-x64-template-require-kind! row target (OpaqueBytes))
-      (compiler-x64-template-require-rendered-payload! row (& rendered))
-      rendered)))
+    (compiler-x64-template-require-kind! row target (OpaqueBytes))
+    (compiler-x64-template-require-rendered-payload! row (& rendered))
+    rendered))
 
 (define (compiler-x64-template-assert-structured!
   [id : x64.CompilerX64ExecutableTemplateId]

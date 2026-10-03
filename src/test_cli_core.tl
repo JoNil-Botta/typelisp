@@ -140,14 +140,12 @@
   0)
 
 (define (tltest-user-cfg-reset!) : unit
-  (begin
-    (set! tltest-user-cfg-slots (cli_svec.new))
-    (set! tltest-user-cfg-len 0)))
+  (set! tltest-user-cfg-slots (cli_svec.new))
+  (set! tltest-user-cfg-len 0))
 
 (define (tltest-user-cfg-push! [name : String]) : unit
-  (begin
-    (cli_svec.push-ref! (&mut tltest-user-cfg-slots) name)
-    (set! tltest-user-cfg-len (+ tltest-user-cfg-len 1))))
+  (cli_svec.push-ref! (&mut tltest-user-cfg-slots) name)
+  (set! tltest-user-cfg-len (+ tltest-user-cfg-len 1)))
 
 (define (tltest-selection-set?) : bool
   (or tltest-name-filter-set tltest-name-exact-set))
@@ -162,21 +160,20 @@
     [value : u64 (cast 0 : u64)]
     [max-value : u64 (bit-not (cast 0 : u64))]
     [ok : bool (> count 0)]
-    (begin
-      (while (and ok (< index count))
-        (let
-          [c : char (string.string-ref text index)]
-          (if (tltest-seed-digit? c)
-            (let
-              [digit : u64 (cast (- (cast c : i64) (cast '0' : i64)) : u64)]
-              (if (> value (/ (- max-value digit) (cast 10 : u64)))
-                (set! ok false)
-                (set! value (+ (* value (cast 10 : u64)) digit))))
-            (set! ok false)))
-        (set! index (+ index 1)))
-      (if ok
-        (Ok value)
-        (Err "test: --seed expects an unsigned 64-bit decimal integer")))))
+    (while (and ok (< index count))
+      (let
+        [c : char (string.string-ref text index)]
+        (if (tltest-seed-digit? c)
+          (let
+            [digit : u64 (cast (- (cast c : i64) (cast '0' : i64)) : u64)]
+            (if (> value (/ (- max-value digit) (cast 10 : u64)))
+              (set! ok false)
+              (set! value (+ (* value (cast 10 : u64)) digit))))
+          (set! ok false)))
+      (set! index (+ index 1)))
+    (if ok
+      (Ok value)
+      (Err "test: --seed expects an unsigned 64-bit decimal integer"))))
 
 (define (tltest-u64-decimal [value : u64]) : String
   (let
@@ -184,23 +181,19 @@
     [cursor : u64 value]
     [start : i64 20]
     [done : bool false]
-    (begin
-      (while (not done)
-        (let
-          [digit : u64 (% cursor (cast 10 : u64))]
-          (begin
-            (set! start (- start 1))
-            (set!
-              (array-ref digits start)
-              (cast (+ digit (cast 48 : u64)) : u8))
-            (set! cursor (/ cursor (cast 10 : u64)))
-            (if (= cursor (cast 0 : u64))
-              (set! done true)
-              unit))))
-      (unsafe
-        (string-from-bytes
-          (ptr-offset (ptr-cast (__tl_array-data digits) : (Ptr u8)) start)
-          (- 20 start))))))
+    (while (not done)
+      (let
+        [digit : u64 (% cursor (cast 10 : u64))]
+        (set! start (- start 1))
+        (set! (array-ref digits start) (cast (+ digit (cast 48 : u64)) : u8))
+        (set! cursor (/ cursor (cast 10 : u64)))
+        (if (= cursor (cast 0 : u64))
+          (set! done true)
+          unit)))
+    (unsafe
+      (string-from-bytes
+        (ptr-offset (ptr-cast (__tl_array-data digits) : (Ptr u8)) start)
+        (- 20 start)))))
 
 ;; The generated harness is built after parsing, so its private helper/local
 ;; identities must not enter the source-symbol hash table. Cache one opaque id
@@ -236,93 +229,77 @@
     (= tltest-synthetic-id-table-id (ci.intern-active-table-id))))
 
 (define (tltest-synthetic-ids-refresh!) : unit
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    (if (tltest-synthetic-ids-current?)
-      unit
-      (begin
-        (set!
-          tltest-print-error-id-cache
-          (ci.intern-generated-name "__tl_test_print_error"))
-        (set!
-          tltest-write-id-cache
-          (ci.intern-generated-name "__tl_test_write"))
-        (set!
-          tltest-get-std-handle-id-cache
-          (ci.intern-generated-name "__tl_test_get_std_handle"))
-        (set!
-          tltest-write-file-id-cache
-          (ci.intern-generated-name "__tl_test_write_file"))
-        (set! tltest-fd-id-cache (ci.intern-generated-name "fd"))
-        (set! tltest-buf-id-cache (ci.intern-generated-name "buf"))
-        (set! tltest-handle-id-cache (ci.intern-generated-name "handle"))
-        (set! tltest-ok-id-cache (ci.intern-generated-name "ok"))
-        (set! tltest-text-id-cache (ci.intern-generated-name "text"))
-        (set!
-          tltest-runtime-import-alias-id-cache
-          (ci.intern-generated-name "__tl_test_runtime"))
-        (set! tltest-synthetic-id-generation (ci.intern-generation))
-        (set! tltest-synthetic-id-table-id (ci.intern-active-table-id))))))
+  (cbi.compiler-builtin-refresh!)
+  (unless
+    (tltest-synthetic-ids-current?)
+    (set!
+      tltest-print-error-id-cache
+      (ci.intern-generated-name "__tl_test_print_error"))
+    (set! tltest-write-id-cache (ci.intern-generated-name "__tl_test_write"))
+    (set!
+      tltest-get-std-handle-id-cache
+      (ci.intern-generated-name "__tl_test_get_std_handle"))
+    (set!
+      tltest-write-file-id-cache
+      (ci.intern-generated-name "__tl_test_write_file"))
+    (set! tltest-fd-id-cache (ci.intern-generated-name "fd"))
+    (set! tltest-buf-id-cache (ci.intern-generated-name "buf"))
+    (set! tltest-handle-id-cache (ci.intern-generated-name "handle"))
+    (set! tltest-ok-id-cache (ci.intern-generated-name "ok"))
+    (set! tltest-text-id-cache (ci.intern-generated-name "text"))
+    (set!
+      tltest-runtime-import-alias-id-cache
+      (ci.intern-generated-name "__tl_test_runtime"))
+    (set! tltest-synthetic-id-generation (ci.intern-generation))
+    (set! tltest-synthetic-id-table-id (ci.intern-active-table-id))))
 
 (define (tltest-main-id) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-fix-main))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-fix-main)
 
 (define (tltest-empty-name-id) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-fix-empty))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-fix-empty)
 
 (define (tltest-n-id) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    cbi.compiler-builtin-id-fix-n))
+  (cbi.compiler-builtin-refresh!)
+  cbi.compiler-builtin-id-fix-n)
 
 (define (tltest-print-error-id) : i64
-  (begin
-    (tltest-synthetic-ids-refresh!)
-    tltest-print-error-id-cache))
+  (tltest-synthetic-ids-refresh!)
+  tltest-print-error-id-cache)
 
 (define (tltest-write-id) : i64
-  (begin
-    (tltest-synthetic-ids-refresh!)
-    tltest-write-id-cache))
+  (tltest-synthetic-ids-refresh!)
+  tltest-write-id-cache)
 
 (define (tltest-get-std-handle-id) : i64
-  (begin
-    (tltest-synthetic-ids-refresh!)
-    tltest-get-std-handle-id-cache))
+  (tltest-synthetic-ids-refresh!)
+  tltest-get-std-handle-id-cache)
 
 (define (tltest-write-file-id) : i64
-  (begin
-    (tltest-synthetic-ids-refresh!)
-    tltest-write-file-id-cache))
+  (tltest-synthetic-ids-refresh!)
+  tltest-write-file-id-cache)
 
 (define (tltest-fd-id) : i64
-  (begin
-    (tltest-synthetic-ids-refresh!)
-    tltest-fd-id-cache))
+  (tltest-synthetic-ids-refresh!)
+  tltest-fd-id-cache)
 
 (define (tltest-buf-id) : i64
-  (begin
-    (tltest-synthetic-ids-refresh!)
-    tltest-buf-id-cache))
+  (tltest-synthetic-ids-refresh!)
+  tltest-buf-id-cache)
 
 (define (tltest-handle-id) : i64
-  (begin
-    (tltest-synthetic-ids-refresh!)
-    tltest-handle-id-cache))
+  (tltest-synthetic-ids-refresh!)
+  tltest-handle-id-cache)
 
 (define (tltest-ok-id) : i64
-  (begin
-    (tltest-synthetic-ids-refresh!)
-    tltest-ok-id-cache))
+  (tltest-synthetic-ids-refresh!)
+  tltest-ok-id-cache)
 
 (define (tltest-text-id) : i64
-  (begin
-    (tltest-synthetic-ids-refresh!)
-    tltest-text-id-cache))
+  (tltest-synthetic-ids-refresh!)
+  tltest-text-id-cache)
 
 (define (tltest-runtime-suite-begin-id) : i64
   (ci.intern "runtime-test-suite-begin!"))
@@ -337,19 +314,17 @@
   (ci.intern "runtime-test-suite-finish-with-skips"))
 
 (define (tltest-runtime-import-alias-id) : i64
-  (begin
-    (tltest-synthetic-ids-refresh!)
-    tltest-runtime-import-alias-id-cache))
+  (tltest-synthetic-ids-refresh!)
+  tltest-runtime-import-alias-id-cache)
 
 (define (tltest-runtime-call-id [leaf-id : i64]) : i64
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    (ci.intern-generated-canonical-qualified-name
-      (tc_core.tc-hygiene-global-context-name
-        (ci.intern-str cbi.compiler-builtin-id-runtime-module)
-        (ci.intern-str leaf-id))
-      cbi.compiler-builtin-id-runtime-module
-      leaf-id)))
+  (cbi.compiler-builtin-refresh!)
+  (ci.intern-generated-canonical-qualified-name
+    (tc_core.tc-hygiene-global-context-name
+      (ci.intern-str cbi.compiler-builtin-id-runtime-module)
+      (ci.intern-str leaf-id))
+    cbi.compiler-builtin-id-runtime-module
+    leaf-id))
 
 (define (tltest-unknown-target [value : String]) : String
   (str_cat.str-cat "test: unknown target " value ""))
@@ -375,11 +350,10 @@
           n
           (let
             [next-paths : cli_svec.Vec paths]
-            (begin
-              (cli_svec.push-ref!
-                (&mut next-paths)
-                (string.substring text start (- line-end start)))
-              next-paths)))))))
+            (cli_svec.push-ref!
+              (&mut next-paths)
+              (string.substring text start (- line-end start)))
+            next-paths))))))
 
 (define (tltest-batch-paths-from-text [text : String]) : cli_svec.Vec
   (tltest-batch-paths-from-text-from
@@ -481,189 +455,175 @@
     [opt-level : i64 (compiler_optimize.compiler-optimize-default-level)]
     [test-mode : TestMode Run]
     [batch-list : TestMaybeString (No)]
-    (begin
-      (set! tltest-prefix-cache-stats false)
-      (set! tltest-list-only false)
-      (set! tltest-name-filter-set false)
-      (set! tltest-name-filter "")
-      (set! tltest-name-exact-set false)
-      (set! tltest-name-exact "")
-      (set! tltest-include-ignored false)
-      (set! tltest-include-slow false)
-      (set! tltest-shuffle false)
-      (set! tltest-seed-set false)
-      (set! tltest-seed (cast 0 : u64))
-      (tltest-user-cfg-reset!)
-      (while (cli_option.cli-args-next! (&mut args))
-        (cond
-          [(string.eq args.name "--stdlib-root")
-            (cli_svec.push-ref!
-              (&mut roots)
-              (cli_option.cli-args-value (& args)))]
-          [(string.eq args.name "--target")
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              (match (build_run_core.source-tool-target (string.copy (& value)))
-                [(Ok _) (set! target value)]
-                [(Err _)
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    (tltest-unknown-target value))]))]
-          [(string.eq args.name "--opt-level")
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              [level : i64 (cli_option.cli-option-opt-level (& value))]
-              (cond
-                [has-opt-level
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    "test: --opt-level was provided more than once")]
-                [(< level 0)
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    (tltest-invalid-opt-level value))]
-                [else
-                  (begin
-                    (set! has-opt-level true)
-                    (set! opt-level level))]))]
-          [(string.eq args.name "--cfg")
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              (if (= (string.string-length value) 0)
+    (set! tltest-prefix-cache-stats false)
+    (set! tltest-list-only false)
+    (set! tltest-name-filter-set false)
+    (set! tltest-name-filter "")
+    (set! tltest-name-exact-set false)
+    (set! tltest-name-exact "")
+    (set! tltest-include-ignored false)
+    (set! tltest-include-slow false)
+    (set! tltest-shuffle false)
+    (set! tltest-seed-set false)
+    (set! tltest-seed (cast 0 : u64))
+    (tltest-user-cfg-reset!)
+    (while (cli_option.cli-args-next! (&mut args))
+      (cond
+        [(string.eq args.name "--stdlib-root")
+          (cli_svec.push-ref! (&mut roots) (cli_option.cli-args-value (& args)))]
+        [(string.eq args.name "--target")
+          (let
+            [value : String (cli_option.cli-args-value (& args))]
+            (match (build_run_core.source-tool-target (string.copy (& value)))
+              [(Ok _) (set! target value)]
+              [(Err _)
                 (cli_option.cli-args-fail!
                   (&mut args)
-                  "test: --cfg requires a non-empty value")
-                (tltest-user-cfg-push! value)))]
-          [(string.eq args.name "--check")
-            (if tltest-list-only
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "test: cannot combine --check with --list")
-              (set! test-mode Check))]
-          [(string.eq args.name "--list")
+                  (tltest-unknown-target value))]))]
+        [(string.eq args.name "--opt-level")
+          (let
+            [value : String (cli_option.cli-args-value (& args))]
+            [level : i64 (cli_option.cli-option-opt-level (& value))]
             (cond
-              [tltest-list-only
-                (cli_option.cli-args-fail! (&mut args) "test: duplicate --list")]
-              [(tltest-check-mode? test-mode)
+              [has-opt-level
                 (cli_option.cli-args-fail!
                   (&mut args)
-                  "test: cannot combine --check with --list")]
-              [else (set! tltest-list-only true)])]
-          [(or (string.eq args.name "--filter") (string.eq args.name "--exact"))
-            (let
-              [value : String (cli_option.cli-args-value (& args))]
-              (cond
-                [(tltest-selection-set?)
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    "test: --filter and --exact are mutually exclusive and may appear only once")]
-                [(string.eq args.name "--filter")
-                  (if (= (string.string-length value) 0)
-                    (cli_option.cli-args-fail!
-                      (&mut args)
-                      "test: --filter requires a non-empty value")
-                    (begin
-                      (set! tltest-name-filter-set true)
-                      (set! tltest-name-filter value)))]
-                [(= (string.string-length value) 0)
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    "test: --exact requires a non-empty value")]
-                [else
-                  (begin
-                    (set! tltest-name-exact-set true)
-                    (set! tltest-name-exact value))]))]
-          [(string.eq args.name "--include-ignored")
-            (if tltest-include-ignored
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "test: duplicate --include-ignored")
-              (set! tltest-include-ignored true))]
-          [(string.eq args.name "--include-slow")
-            (if tltest-include-slow
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "test: duplicate --include-slow")
-              (set! tltest-include-slow true))]
-          [(string.eq args.name "--shuffle")
-            (if tltest-shuffle
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "test: duplicate --shuffle")
-              (set! tltest-shuffle true))]
-          [(string.eq args.name "--seed")
-            (if tltest-seed-set
-              (cli_option.cli-args-fail! (&mut args) "test: duplicate --seed")
-              (match (tltest-parse-seed (cli_option.cli-args-value (& args)))
-                [(Err message) (cli_option.cli-args-fail! (&mut args) message)]
-                [(Ok seed)
-                  (begin
-                    (set! tltest-seed-set true)
-                    (set! tltest-seed seed))]))]
-          [(string.eq args.name "--backend-mode")
-            ;; The shared source-tool parser owns the accepted spellings, so
-            ;; `test` cannot drift from build and run.
-            (match (build_run_core.source-tool-backend-mode
-              "test"
-              (cli_option.cli-args-value (& args)))
-              [(Ok selected-mode) (set! mode selected-mode)]
-              [(Err message) (cli_option.cli-args-fail! (&mut args) message)])]
-          [(string.eq args.name "--manifest-path")
-            (if has-manifest
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "test: duplicate --manifest-path")
-              (begin
-                (set! manifest-path (cli_option.cli-args-value (& args)))
-                (set! has-manifest true)))]
-          [(string.eq args.name "--batch")
-            (match batch-list
-              [(Some _)
+                  "test: --opt-level was provided more than once")]
+              [(< level 0)
                 (cli_option.cli-args-fail!
                   (&mut args)
-                  "test: duplicate --batch")]
-              [(No)
-                (set! batch-list (Some (cli_option.cli-args-value (& args))))])]
-          [(string.eq args.name "--prefix-cache-stats")
-            (set! tltest-prefix-cache-stats true)]
-          [(cli_option.cli-flag? args.arg)
-            (cli_option.cli-args-fail-arg! (&mut args) "test: unknown flag ")]
-          [has-source
+                  (tltest-invalid-opt-level value))]
+              [else
+                (set! has-opt-level true)
+                (set! opt-level level)]))]
+        [(string.eq args.name "--cfg")
+          (let
+            [value : String (cli_option.cli-args-value (& args))]
+            (if (= (string.string-length value) 0)
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "test: --cfg requires a non-empty value")
+              (tltest-user-cfg-push! value)))]
+        [(string.eq args.name "--check")
+          (if tltest-list-only
             (cli_option.cli-args-fail!
               (&mut args)
-              "test: accepts only one source file")]
-          [else
+              "test: cannot combine --check with --list")
+            (set! test-mode Check))]
+        [(string.eq args.name "--list")
+          (cond
+            [tltest-list-only
+              (cli_option.cli-args-fail! (&mut args) "test: duplicate --list")]
+            [(tltest-check-mode? test-mode)
+              (cli_option.cli-args-fail!
+                (&mut args)
+                "test: cannot combine --check with --list")]
+            [else (set! tltest-list-only true)])]
+        [(or (string.eq args.name "--filter") (string.eq args.name "--exact"))
+          (let
+            [value : String (cli_option.cli-args-value (& args))]
+            (cond
+              [(tltest-selection-set?)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  "test: --filter and --exact are mutually exclusive and may appear only once")]
+              [(string.eq args.name "--filter")
+                (if (= (string.string-length value) 0)
+                  (cli_option.cli-args-fail!
+                    (&mut args)
+                    "test: --filter requires a non-empty value")
+                  (begin
+                    (set! tltest-name-filter-set true)
+                    (set! tltest-name-filter value)))]
+              [(= (string.string-length value) 0)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  "test: --exact requires a non-empty value")]
+              [else
+                (set! tltest-name-exact-set true)
+                (set! tltest-name-exact value)]))]
+        [(string.eq args.name "--include-ignored")
+          (if tltest-include-ignored
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "test: duplicate --include-ignored")
+            (set! tltest-include-ignored true))]
+        [(string.eq args.name "--include-slow")
+          (if tltest-include-slow
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "test: duplicate --include-slow")
+            (set! tltest-include-slow true))]
+        [(string.eq args.name "--shuffle")
+          (if tltest-shuffle
+            (cli_option.cli-args-fail! (&mut args) "test: duplicate --shuffle")
+            (set! tltest-shuffle true))]
+        [(string.eq args.name "--seed")
+          (if tltest-seed-set
+            (cli_option.cli-args-fail! (&mut args) "test: duplicate --seed")
+            (match (tltest-parse-seed (cli_option.cli-args-value (& args)))
+              [(Err message) (cli_option.cli-args-fail! (&mut args) message)]
+              [(Ok seed)
+                (set! tltest-seed-set true)
+                (set! tltest-seed seed)]))]
+        [(string.eq args.name "--backend-mode")
+          ;; The shared source-tool parser owns the accepted spellings, so
+          ;; `test` cannot drift from build and run.
+          (match (build_run_core.source-tool-backend-mode
+            "test"
+            (cli_option.cli-args-value (& args)))
+            [(Ok selected-mode) (set! mode selected-mode)]
+            [(Err message) (cli_option.cli-args-fail! (&mut args) message)])]
+        [(string.eq args.name "--manifest-path")
+          (if has-manifest
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "test: duplicate --manifest-path")
             (begin
-              (set! source (string.copy (& args.arg)))
-              (set! has-source true))]))
-      (if args.failed
-        (Err args.error)
-        (tltest-config-finish
-          source
-          has-source
-          manifest-path
-          has-manifest
-          target
-          mode
-          roots
-          opt-level
-          test-mode
-          batch-list)))))
+              (set! manifest-path (cli_option.cli-args-value (& args)))
+              (set! has-manifest true)))]
+        [(string.eq args.name "--batch")
+          (match batch-list
+            [(Some _)
+              (cli_option.cli-args-fail! (&mut args) "test: duplicate --batch")]
+            [(No) (set! batch-list (Some (cli_option.cli-args-value (& args))))])]
+        [(string.eq args.name "--prefix-cache-stats")
+          (set! tltest-prefix-cache-stats true)]
+        [(cli_option.cli-flag? args.arg)
+          (cli_option.cli-args-fail-arg! (&mut args) "test: unknown flag ")]
+        [has-source
+          (cli_option.cli-args-fail!
+            (&mut args)
+            "test: accepts only one source file")]
+        [else
+          (set! source (string.copy (& args.arg)))
+          (set! has-source true)]))
+    (if args.failed
+      (Err args.error)
+      (tltest-config-finish
+        source
+        has-source
+        manifest-path
+        has-manifest
+        target
+        mode
+        roots
+        opt-level
+        test-mode
+        batch-list))))
 
 (define (tltest-decl-list-count [items : ast.AstDeclList]) : i64
   (let
     [cur : ast.AstDeclList items]
     [count : i64 0]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cur)
-          [(Nil) (set! done true)]
-          [(Cons _ rest)
-            (begin
-              (set! count (+ count 1))
-              (set! cur rest))]))
-      count)))
+    (while (not done)
+      (match (ast.ast-decl-list-step cur)
+        [(Nil) (set! done true)]
+        [(Cons _ rest)
+          (set! count (+ count 1))
+          (set! cur rest)]))
+    count))
 
 (define (tltest-main-decl? [decl : ast.AstDecl]) : bool
   (match decl
@@ -752,16 +712,14 @@
         (let
           [next-state : u64 (tltest-xorshift64-next state)]
           [other : i64 (cast (% next-state (cast (+ index 1) : u64)) : i64)]
-          (begin
-            (set! state next-state)
-            (if (= index other)
-              unit
-              (let
-                [saved : InlineTest (clone (array-ref tests index))]
-                (begin
-                  (set! (array-ref tests index) (clone (array-ref tests other)))
-                  (set! (array-ref tests other) saved))))
-            (set! index (- index 1))))))
+          (set! state next-state)
+          (if (= index other)
+            unit
+            (let
+              [saved : InlineTest (clone (array-ref tests index))]
+              (set! (array-ref tests index) (clone (array-ref tests other)))
+              (set! (array-ref tests other) saved)))
+          (set! index (- index 1)))))
     unit))
 
 (define (tltest-shuffle-string-vec! [items : (&mut items cli_svec.Vec)]) : unit
@@ -774,14 +732,10 @@
           [next-state : u64 (tltest-xorshift64-next state)]
           [other : i64 (cast (% next-state (cast (+ index 1) : u64)) : i64)]
           [saved : String (clone (cli_svec.get items index ""))]
-          (begin
-            (set! state next-state)
-            (cli_svec.set-ref!
-              items
-              index
-              (clone (cli_svec.get items other "")))
-            (cli_svec.set-ref! items other saved)
-            (set! index (- index 1))))))
+          (set! state next-state)
+          (cli_svec.set-ref! items index (clone (cli_svec.get items other "")))
+          (cli_svec.set-ref! items other saved)
+          (set! index (- index 1)))))
     unit))
 
 (define (tltest-collect-in
@@ -799,84 +753,79 @@
     [test-items : (__tl_dyn-array InlineTest) tests]
     [current-module : i64 (tltest-empty-name-id)]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cur-decls)
-          [(Nil) (set! done true)]
-          [(Cons decl rest)
-            (let
-              [rest-decls : ast.AstDeclList rest]
-              [decl-path : String
-                (match (ast.ast-decl-path-list-step cur-paths)
-                  [(Cons path _) path]
-                  [(Nil) ""])]
-              [decl-owner-id : i64
-                (ast.ast-decl-path-list-owner-id (& cur-paths) 0 current-module)]
-              [rest-paths : ast.AstDeclPathList
-                (match (ast.ast-decl-path-list-step cur-paths)
-                  [(Cons _ path-rest)
-                    (let
-                      [path-rest : ast.AstDeclPathList path-rest]
-                      path-rest)]
-                  [(Nil) (ast.ast-decl-path-list-new)])]
-              (begin
-                (match (owned_view.compiler-owned-shared-view decl)
-                  [(Test name body-box metadata span)
-                    (if (and
-                      (tltest-owned-test-path? target-path decl-path)
-                      (tltest-test-name-selected? (ci.intern-str name)))
-                      (let
-                        [body : i64 body-box]
-                        [test-count : i64 (array-length test-items)]
-                        [private-name : String (tltest-private-name test-count)]
-                        [private-id : i64
-                          (ci.intern-generated-name
-                            (owned_view.compiler-owned-shared-view private-name))]
-                        (__tl_array-push!
-                          test-items
-                          (Case
-                            (ci.intern-str name)
-                            decl-path
-                            current-module
-                            (tltest-source-line span)
-                            body
-                            private-name
-                            private-id
-                            (tltest-private-call-id current-module private-id)
-                            (tltest-test-selection metadata))))
-                      unit)]
-                  [(Module name)
-                    (begin
-                      (set! current-module name)
-                      (ast.ast-decl-list-push (&mut runtime-decls-out) decl)
-                      (ast.ast-decl-path-list-push-with-owner-id
-                        (&mut runtime-paths-out)
+    (while (not done)
+      (match (ast.ast-decl-list-step cur-decls)
+        [(Nil) (set! done true)]
+        [(Cons decl rest)
+          (let
+            [rest-decls : ast.AstDeclList rest]
+            [decl-path : String
+              (match (ast.ast-decl-path-list-step cur-paths)
+                [(Cons path _) path]
+                [(Nil) ""])]
+            [decl-owner-id : i64
+              (ast.ast-decl-path-list-owner-id (& cur-paths) 0 current-module)]
+            [rest-paths : ast.AstDeclPathList
+              (match (ast.ast-decl-path-list-step cur-paths)
+                [(Cons _ path-rest)
+                  (let
+                    [path-rest : ast.AstDeclPathList path-rest]
+                    path-rest)]
+                [(Nil) (ast.ast-decl-path-list-new)])]
+            (match (owned_view.compiler-owned-shared-view decl)
+              [(Test name body-box metadata span)
+                (if (and
+                  (tltest-owned-test-path? target-path decl-path)
+                  (tltest-test-name-selected? (ci.intern-str name)))
+                  (let
+                    [body : i64 body-box]
+                    [test-count : i64 (array-length test-items)]
+                    [private-name : String (tltest-private-name test-count)]
+                    [private-id : i64
+                      (ci.intern-generated-name
+                        (owned_view.compiler-owned-shared-view private-name))]
+                    (__tl_array-push!
+                      test-items
+                      (Case
+                        (ci.intern-str name)
                         decl-path
-                        decl-owner-id))]
-                  [(Import decl-meta _)
-                    (begin
-                      (ast.ast-decl-list-push (&mut runtime-decls-out) decl)
-                      (ast.ast-decl-path-list-push-with-owner-id
-                        (&mut runtime-paths-out)
-                        decl-path
-                        decl-owner-id))]
-                  [(IncludeStr _ _) unit]
-                  [(IncludeStrComptime _ _) unit]
-                  [(IncludeStrLzss _ _) unit]
-                  [(IncludeBin _ _) unit]
-                  [_
-                    (if (tltest-main-decl?
-                      (owned_view.compiler-owned-shared-view decl))
-                      unit
-                      (begin
-                        (ast.ast-decl-list-push (&mut runtime-decls-out) decl)
-                        (ast.ast-decl-path-list-push-with-owner-id
-                          (&mut runtime-paths-out)
-                          decl-path
-                          decl-owner-id)))])
-                (set! cur-decls rest-decls)
-                (set! cur-paths rest-paths)))]))
-      (Collect runtime-decls-out runtime-paths-out test-items))))
+                        current-module
+                        (tltest-source-line span)
+                        body
+                        private-name
+                        private-id
+                        (tltest-private-call-id current-module private-id)
+                        (tltest-test-selection metadata))))
+                  unit)]
+              [(Module name)
+                (set! current-module name)
+                (ast.ast-decl-list-push (&mut runtime-decls-out) decl)
+                (ast.ast-decl-path-list-push-with-owner-id
+                  (&mut runtime-paths-out)
+                  decl-path
+                  decl-owner-id)]
+              [(Import decl-meta _)
+                (ast.ast-decl-list-push (&mut runtime-decls-out) decl)
+                (ast.ast-decl-path-list-push-with-owner-id
+                  (&mut runtime-paths-out)
+                  decl-path
+                  decl-owner-id)]
+              [(IncludeStr _ _) unit]
+              [(IncludeStrComptime _ _) unit]
+              [(IncludeStrLzss _ _) unit]
+              [(IncludeBin _ _) unit]
+              [_
+                (unless
+                  (tltest-main-decl?
+                    (owned_view.compiler-owned-shared-view decl))
+                  (ast.ast-decl-list-push (&mut runtime-decls-out) decl)
+                  (ast.ast-decl-path-list-push-with-owner-id
+                    (&mut runtime-paths-out)
+                    decl-path
+                    decl-owner-id))])
+            (set! cur-decls rest-decls)
+            (set! cur-paths rest-paths))]))
+    (Collect runtime-decls-out runtime-paths-out test-items)))
 
 (define (tltest-collect
   [source : (& source str)]
@@ -892,9 +841,8 @@
       (ast.ast-decl-path-list-new)
       (__tl_make-array InlineTest 0))
       [(Collect runtime-decls runtime-paths tests)
-        (begin
-          (tltest-shuffle-tests! (&mut tests))
-          (Collect runtime-decls runtime-paths tests))])))
+        (tltest-shuffle-tests! (&mut tests))
+        (Collect runtime-decls runtime-paths tests)])))
 
 (define (tltest-list-line [test : InlineTest]) : String
   (match test
@@ -1252,22 +1200,20 @@
   (let
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index (array-length tests))
-        (begin
-          (match (array-ref tests index)
-            [(Case _ _ _ _ _ _ _ _ selection)
-              (let
-                [kind : i64
-                  (match selection
-                    [(Run) 0]
-                    [(Ignored _) 1]
-                    [(SlowSkipped) 2])]
-                (if (= kind wanted)
-                  (set! count (+ count 1))
-                  unit))])
-          (set! index (+ index 1))))
-      count)))
+    (while (< index (array-length tests))
+      (match (array-ref tests index)
+        [(Case _ _ _ _ _ _ _ _ selection)
+          (let
+            [kind : i64
+              (match selection
+                [(Run) 0]
+                [(Ignored _) 1]
+                [(SlowSkipped) 2])]
+            (if (= kind wanted)
+              (set! count (+ count 1))
+              unit))])
+      (set! index (+ index 1)))
+    count))
 
 (define (tltest-ignored-count [tests : (& tests (__tl_dyn-array InlineTest))]) : i64
   (tltest-selection-counts tests 1))
@@ -1737,15 +1683,13 @@
     [cur : ast.AstDeclList decls]
     [result : tltest_name_map.Map names]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cur)
-          [(Nil) (set! done true)]
-          [(Cons decl rest)
-            (begin
-              (set! result (tltest-reach-mark-runtime-helper-root decl result))
-              (set! cur rest))]))
-      result)))
+    (while (not done)
+      (match (ast.ast-decl-list-step cur)
+        [(Nil) (set! done true)]
+        [(Cons decl rest)
+          (set! result (tltest-reach-mark-runtime-helper-root decl result))
+          (set! cur rest)]))
+    result))
 
 (define (tltest-reach-mark-test-harness-runtime [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-name-id
@@ -1909,15 +1853,13 @@
     [cur : ast.AstDeclList decls]
     [result : tltest_name_map.Map names]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cur)
-          [(Nil) (set! done true)]
-          [(Cons decl rest)
-            (begin
-              (set! result (tltest-reach-mark-decl session decl result))
-              (set! cur rest))]))
-      result)))
+    (while (not done)
+      (match (ast.ast-decl-list-step cur)
+        [(Nil) (set! done true)]
+        [(Cons decl rest)
+          (set! result (tltest-reach-mark-decl session decl result))
+          (set! cur rest)]))
+    result))
 
 ;; Iterate the reachability marker to a fixpoint. The reachable-name set only
 ;; ever grows (marking is monotonic and dedup'd), so a pass that adds no new
@@ -1933,21 +1875,19 @@
     [remaining : i64 fuel]
     [result : tltest_name_map.Map names]
     [done : bool false]
-    (begin
-      (while (and (not done) (> remaining 0))
-        (let
-          [before : i64 (tltest_name_map.len (& result))]
-          [next : tltest_name_map.Map
-            (tltest-reach-mark-decls-from
-              session
-              (owned_view.compiler-owned-shared-view decls)
-              (owned_view.compiler-owned-shared-view result))]
-          (begin
-            (set! result next)
-            (if (= (tltest_name_map.len (& result)) before)
-              (set! done true)
-              (set! remaining (- remaining 1))))))
-      result)))
+    (while (and (not done) (> remaining 0))
+      (let
+        [before : i64 (tltest_name_map.len (& result))]
+        [next : tltest_name_map.Map
+          (tltest-reach-mark-decls-from
+            session
+            (owned_view.compiler-owned-shared-view decls)
+            (owned_view.compiler-owned-shared-view result))]
+        (set! result next)
+        (if (= (tltest_name_map.len (& result)) before)
+          (set! done true)
+          (set! remaining (- remaining 1)))))
+    result))
 
 (define (tltest-reachable-names
   [session : cis.InternStructuralSessionHandle]
@@ -2004,48 +1944,44 @@
     [result-decls : ast.AstDeclList out-decls]
     [result-paths : ast.AstDeclPathList out-paths]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cur-decls)
-          [(Nil) (set! done true)]
-          [(Cons decl rest)
-            (match (ast.ast-decl-path-list-step cur-paths)
-              [(Nil)
-                (begin
-                  (set! cur-decls rest)
-                  (set! cur-paths (ast.ast-decl-path-list-new)))]
-              [(Cons decl-path path-rest)
-                (let
-                  [decl-owner-id : i64
-                    (ast.ast-decl-path-list-owner-id
-                      (& cur-paths)
-                      0
-                      cbi.compiler-builtin-id-fix-empty)]
-                  (begin
-                    ;; Keep imported generated helpers: macro-expanded bodies can
-                    ;; reference them in ways the lightweight source reachability walk
-                    ;; cannot always see. Local generated helpers and ordinary imported
-                    ;; functions/values still go through reachability pruning so tiny
-                    ;; inline harnesses stay small.
-                    (if (or
-                      (tltest-reachable-runtime-decl?
-                        session
-                        (owned_view.compiler-owned-shared-view decl)
-                        names)
-                      (and
-                        (not (tltest-owned-test-path? target-path decl-path))
-                        (tltest-generated-comptime-decl?
-                          (owned_view.compiler-owned-shared-view decl))))
-                      (begin
-                        (ast.ast-decl-list-push (&mut result-decls) decl)
-                        (ast.ast-decl-path-list-push-with-owner-id
-                          (&mut result-paths)
-                          decl-path
-                          decl-owner-id))
-                      unit)
-                    (set! cur-decls rest)
-                    (set! cur-paths path-rest)))])]))
-      (Decls result-decls result-paths))))
+    (while (not done)
+      (match (ast.ast-decl-list-step cur-decls)
+        [(Nil) (set! done true)]
+        [(Cons decl rest)
+          (match (ast.ast-decl-path-list-step cur-paths)
+            [(Nil)
+              (set! cur-decls rest)
+              (set! cur-paths (ast.ast-decl-path-list-new))]
+            [(Cons decl-path path-rest)
+              (let
+                [decl-owner-id : i64
+                  (ast.ast-decl-path-list-owner-id
+                    (& cur-paths)
+                    0
+                    cbi.compiler-builtin-id-fix-empty)]
+                ;; Keep imported generated helpers: macro-expanded bodies can
+                ;; reference them in ways the lightweight source reachability walk
+                ;; cannot always see. Local generated helpers and ordinary imported
+                ;; functions/values still go through reachability pruning so tiny
+                ;; inline harnesses stay small.
+                (when
+                  (or
+                    (tltest-reachable-runtime-decl?
+                      session
+                      (owned_view.compiler-owned-shared-view decl)
+                      names)
+                    (and
+                      (not (tltest-owned-test-path? target-path decl-path))
+                      (tltest-generated-comptime-decl?
+                        (owned_view.compiler-owned-shared-view decl))))
+                  (ast.ast-decl-list-push (&mut result-decls) decl)
+                  (ast.ast-decl-path-list-push-with-owner-id
+                    (&mut result-paths)
+                    decl-path
+                    decl-owner-id))
+                (set! cur-decls rest)
+                (set! cur-paths path-rest))])]))
+    (Decls result-decls result-paths)))
 
 (define (tltest-prune-runtime-decls
   [session : cis.InternStructuralSessionHandle]
@@ -2159,13 +2095,12 @@
                     cfgs))
                   [(ResultCompilerTypecheck.Ok _) 0]
                   [(ResultCompilerTypecheck.Err diag)
-                    (begin
-                      (io.print-error
-                        (driver.compiler-driver-render-source-diagnostic
-                          (tltest-diagnostic-with-source-fallback
-                            source
-                            (cdiag.compiler-diagnostic-list-first (deref diag)))))
-                      1)]))])))]))
+                    (io.print-error
+                      (driver.compiler-driver-render-source-diagnostic
+                        (tltest-diagnostic-with-source-fallback
+                          source
+                          (cdiag.compiler-diagnostic-list-first (deref diag)))))
+                    1]))])))]))
 
 (define (tltest-inline-stdlib-source?
   [source : (& source str)]
@@ -2181,26 +2116,23 @@
     (compiler_load.compiler-load-stdlib-import? stdlib-path)))
 
 (define (tltest-inline-clear-load-only-caches!) : unit
-  (begin
-    (compiler_load.compiler-load-program-cache-clear!)
-    (compiler_load.compiler-load-runtime-prelude-cache-clear!)
-    (tc_core.tc-prefix-snapshot-cache-clear!)))
+  (compiler_load.compiler-load-program-cache-clear!)
+  (compiler_load.compiler-load-runtime-prelude-cache-clear!)
+  (tc_core.tc-prefix-snapshot-cache-clear!))
 
 (define (tltest-inline-clear-load-caches!) : unit
-  (begin
-    (tltest-inline-clear-load-only-caches!)
-    (driver.compiler-driver-reset-analysis-state!)))
+  (tltest-inline-clear-load-only-caches!)
+  (driver.compiler-driver-reset-analysis-state!))
 
 (define (tltest-inline-reset-load-state!) : unit
-  (begin
-    ;; Inline preflight runs after ordinary check/doctest phases in some CLI
-    ;; commands. Drop cached loaded ASTs so the test-cfg load cannot reuse decl
-    ;; nodes owned by a previous phase. Reset AST/type pools between package
-    ;; sources to keep large packages bounded, but keep interns live because
-    ;; callers may have already constructed cfg maps and path strings.
-    (tltest-inline-clear-load-caches!)
-    (compiler_load.compiler-load-session-reset-pools!)
-    (driver.compiler-driver-reset-analysis-state!)))
+  ;; Inline preflight runs after ordinary check/doctest phases in some CLI
+  ;; commands. Drop cached loaded ASTs so the test-cfg load cannot reuse decl
+  ;; nodes owned by a previous phase. Reset AST/type pools between package
+  ;; sources to keep large packages bounded, but keep interns live because
+  ;; callers may have already constructed cfg maps and path strings.
+  (tltest-inline-clear-load-caches!)
+  (compiler_load.compiler-load-session-reset-pools!)
+  (driver.compiler-driver-reset-analysis-state!))
 
 (define (tltest-inline-typecheck-file-with-cfg
   [source : String]
@@ -2217,26 +2149,24 @@
     (let
       [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
       [legacy-roots : cli_svec.Vec (clone roots)]
-      (begin
-        (tltest-inline-reset-load-state!)
-        (match (driver.compiler-driver-load-file-with-runtime
-          (owned_view.compiler-owned-shared-view source)
-          legacy-roots
-          test-cfgs)
-          [(Ok decls paths _ _)
-            (tltest-inline-typecheck-loaded
-              source
-              decls
-              paths
-              roots
-              test-cfgs
-              cache-scope-prefix)]
-          [(Err diag)
-            (begin
-              (io.print-error
-                (driver.compiler-driver-render-source-diagnostic
-                  (tltest-diagnostic-with-source-fallback source (deref diag))))
-              1)])))))
+      (tltest-inline-reset-load-state!)
+      (match (driver.compiler-driver-load-file-with-runtime
+        (owned_view.compiler-owned-shared-view source)
+        legacy-roots
+        test-cfgs)
+        [(Ok decls paths _ _)
+          (tltest-inline-typecheck-loaded
+            source
+            decls
+            paths
+            roots
+            test-cfgs
+            cache-scope-prefix)]
+        [(Err diag)
+          (io.print-error
+            (driver.compiler-driver-render-source-diagnostic
+              (tltest-diagnostic-with-source-fallback source (deref diag))))
+          1]))))
 
 (define (tltest-inline-typecheck-package-source-with-cfg
   [source : String]
@@ -2272,11 +2202,10 @@
             test-cfgs
             cache-scope-prefix)]
         [(Err diag)
-          (begin
-            (io.print-error
-              (driver.compiler-driver-render-source-diagnostic
-                (tltest-diagnostic-with-source-fallback source (deref diag))))
-            1)]))
+          (io.print-error
+            (driver.compiler-driver-render-source-diagnostic
+              (tltest-diagnostic-with-source-fallback source (deref diag))))
+          1]))
     0))
 
 (define (tltest-inline-typecheck-package-source-scoped
@@ -2290,43 +2219,39 @@
   (let
     [home : arena.Arena (arena.current)]
     (with-scratch
-      (begin
-        (tltest-inline-clear-load-only-caches!)
-        (driver.compiler-driver-reset-file-state!)
-        (compiler_load.compiler-load-session-state-dependency-surfaces-release!
-          (compiler_load.compiler-load-active-session-state-shared-view))
-        (ci.intern-persistent-arena-reset!)
-        (compiler_load.compiler-load-transfer-frontend-handoff!)
-        (let
-          [pools : ast.AstNodePoolContext
-            (driver.compiler-driver-state-new-checked-lower-pools)]
-          [_install : unit (ast.ast-node-pool-context-install! pools)]
-          [status : i64
-            (tltest-inline-typecheck-package-source-with-cfg
-              source
-              roots
-              manifest-dir
-              package-owner
-              deps
-              (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
-              cache-scope-prefix)]
-          [retired : ast.AstNodePoolContext
-            (ast.ast-node-pool-context-capture-active)]
-          (begin
-            ;; Retire all references before returning pool storage. Replacement
-            ;; session/cache carriers must live outside the entry scratch arena.
-            (in-arena
-              home
-              (begin
-                (tltest-inline-clear-load-only-caches!)
-                (driver.compiler-driver-reset-file-state!)
-                (compiler_load.compiler-load-session-state-dependency-surfaces-release!
-                  (compiler_load.compiler-load-active-session-state-shared-view))
-                (driver.compiler-driver-state-destroy-uncommitted-pools!
-                  retired)
-                (ci.intern-persistent-arena-reset!)
-                (compiler_load.compiler-load-transfer-frontend-handoff!)))
-            status))))))
+      (tltest-inline-clear-load-only-caches!)
+      (driver.compiler-driver-reset-file-state!)
+      (compiler_load.compiler-load-session-state-dependency-surfaces-release!
+        (compiler_load.compiler-load-active-session-state-shared-view))
+      (ci.intern-persistent-arena-reset!)
+      (compiler_load.compiler-load-transfer-frontend-handoff!)
+      (let
+        [pools : ast.AstNodePoolContext
+          (driver.compiler-driver-state-new-checked-lower-pools)]
+        [_install : unit (ast.ast-node-pool-context-install! pools)]
+        [status : i64
+          (tltest-inline-typecheck-package-source-with-cfg
+            source
+            roots
+            manifest-dir
+            package-owner
+            deps
+            (cfg_core.compiler-cfg-snapshot-to-env cfg-names)
+            cache-scope-prefix)]
+        [retired : ast.AstNodePoolContext
+          (ast.ast-node-pool-context-capture-active)]
+        ;; Retire all references before returning pool storage. Replacement
+        ;; session/cache carriers must live outside the entry scratch arena.
+        (in-arena
+          home
+          (tltest-inline-clear-load-only-caches!)
+          (driver.compiler-driver-reset-file-state!)
+          (compiler_load.compiler-load-session-state-dependency-surfaces-release!
+            (compiler_load.compiler-load-active-session-state-shared-view))
+          (driver.compiler-driver-state-destroy-uncommitted-pools! retired)
+          (ci.intern-persistent-arena-reset!)
+          (compiler_load.compiler-load-transfer-frontend-handoff!))
+        status))))
 
 (define (tltest-inline-typecheck-package-sources-from
   [sources : cli_svec.Vec]
@@ -2343,38 +2268,32 @@
     [status : i64 0]
     [cfg-names : cfg_core.CompilerCfgSnapshot
       (cfg_core.compiler-cfg-snapshot-from-env cfgs)]
-    (begin
-      (while (and (= status 0) (< cursor count))
-        (let
-          [source : String (cli_svec.get (& sources) cursor "")]
-          [has-inline-tests : bool
-            (tltest-source-has-inline-tests?
-              (owned_view.compiler-owned-shared-view source))]
-          (begin
-            (if has-inline-tests
-              (set!
-                status
-                (tltest-inline-typecheck-package-source-scoped
-                  (owned_view.compiler-owned-shared-view source)
-                  (owned_view.compiler-owned-shared-view roots)
-                  (owned_view.compiler-owned-shared-view manifest-dir)
-                  (owned_view.compiler-owned-shared-view package-owner)
-                  (owned_view.compiler-owned-shared-view deps)
-                  (owned_view.compiler-owned-shared-view cfg-names)
-                  (owned_view.compiler-owned-shared-view cache-scope-prefix)))
-              (set! status 0))
-            (if (= status 0)
-              unit
-              (io.print-error
-                (str_cat.str-cat
-                  "test: package inline preflight failed: "
-                  source)))
-            (set! cursor (+ cursor 1)))))
-      (begin
-        (begin
-          (tltest-inline-clear-load-only-caches!)
-          (driver.compiler-driver-reset-file-state!))
-        status))))
+    (while (and (= status 0) (< cursor count))
+      (let
+        [source : String (cli_svec.get (& sources) cursor "")]
+        [has-inline-tests : bool
+          (tltest-source-has-inline-tests?
+            (owned_view.compiler-owned-shared-view source))]
+        (if has-inline-tests
+          (set!
+            status
+            (tltest-inline-typecheck-package-source-scoped
+              (owned_view.compiler-owned-shared-view source)
+              (owned_view.compiler-owned-shared-view roots)
+              (owned_view.compiler-owned-shared-view manifest-dir)
+              (owned_view.compiler-owned-shared-view package-owner)
+              (owned_view.compiler-owned-shared-view deps)
+              (owned_view.compiler-owned-shared-view cfg-names)
+              (owned_view.compiler-owned-shared-view cache-scope-prefix)))
+          (set! status 0))
+        (if (= status 0)
+          unit
+          (io.print-error
+            (str_cat.str-cat "test: package inline preflight failed: " source)))
+        (set! cursor (+ cursor 1))))
+    (tltest-inline-clear-load-only-caches!)
+    (driver.compiler-driver-reset-file-state!)
+    status))
 
 (define (tltest-inline-typecheck-package-sources-with-cfg
   [sources : cli_svec.Vec]
@@ -2430,20 +2349,18 @@
         legacy-roots
         (tltest-cfgs target)))
       [(ResultCompilerTypecheck.Ok _)
-        (begin
-          (io.print-format
-            "{}"
-            (str_cat.str-cat
-              "TypeLisp test typecheck passed: "
-              (string.int->string count)
-              " test(s)\n"))
-          0)]
+        (io.print-format
+          "{}"
+          (str_cat.str-cat
+            "TypeLisp test typecheck passed: "
+            (string.int->string count)
+            " test(s)\n"))
+        0]
       [(ResultCompilerTypecheck.Err diag)
-        (begin
-          (io.print-error
-            (driver.compiler-driver-render-source-diagnostic
-              (cdiag.compiler-diagnostic-list-first (deref diag))))
-          1)])))
+        (io.print-error
+          (driver.compiler-driver-render-source-diagnostic
+            (cdiag.compiler-diagnostic-list-first (deref diag))))
+        1])))
 
 (define (tltest-stderr-ends-with-newline? [text : String]) : bool
   (let
@@ -2455,15 +2372,14 @@
         (or (= last '\n') (= last '\r'))))))
 
 (define (tltest-report-child-status [output : process.ProcessOutput]) : unit
-  (begin
-    (if (tltest-stderr-ends-with-newline? (process.output-stderr output))
-      unit
-      (io.print-error "\n"))
-    (io.print-error
-      (str_cat.str-cat
-        "typelisp test: test executable exited with exit status: "
-        (string.int->string (process.output-status output))
-        "\n"))))
+  (if (tltest-stderr-ends-with-newline? (process.output-stderr output))
+    unit
+    (io.print-error "\n"))
+  (io.print-error
+    (str_cat.str-cat
+      "typelisp test: test executable exited with exit status: "
+      (string.int->string (process.output-status output))
+      "\n")))
 
 (define (tltest-diagnostic-with-source-fallback
   [source : String]
@@ -2583,38 +2499,34 @@
             (process.env-empty))
           false)
           [(LinkFailed message)
-            (begin
-              (io.print-error message)
-              (build_run_core.source-tool-clean-temp-files files true)
-              failed)]
+            (io.print-error message)
+            (build_run_core.source-tool-clean-temp-files files true)
+            failed]
           [(Ran output)
             (let
               [status : i64 (process.output-status output)]
-              (begin
-                (driver.compiler-driver-reset-analysis-state!)
-                (build_run_core.source-tool-forward-output output)
-                (if (or (= status 0) (and inline-harness (= status 1)))
-                  unit
-                  (tltest-report-child-status output))
-                (build_run_core.source-tool-clean-temp-files files true)
-                (cond
-                  [(= status 0) 0]
-                  [(and inline-harness (= status 1)) 1]
-                  [else failed])))]
+              (driver.compiler-driver-reset-analysis-state!)
+              (build_run_core.source-tool-forward-output output)
+              (if (or (= status 0) (and inline-harness (= status 1)))
+                unit
+                (tltest-report-child-status output))
+              (build_run_core.source-tool-clean-temp-files files true)
+              (cond
+                [(= status 0) 0]
+                [(and inline-harness (= status 1)) 1]
+                [else failed]))]
           ;; Keep the artifacts of a harness that would not start.
           [(SpawnFailed error)
-            (begin
-              (driver.compiler-driver-reset-analysis-state!)
-              (io.print-error
-                (tltest-run-executable-error-message files.bin files.dir error))
-              failed)])]
+            (driver.compiler-driver-reset-analysis-state!)
+            (io.print-error
+              (tltest-run-executable-error-message files.bin files.dir error))
+            failed])]
       [(Err diag)
-        (begin
-          (io.print-error
-            (driver.compiler-driver-render-source-diagnostic
-              (tltest-diagnostic-with-source-fallback source (deref diag))))
-          (build_run_core.source-tool-clean-temp-files files true)
-          failed)])))
+        (io.print-error
+          (driver.compiler-driver-render-source-diagnostic
+            (tltest-diagnostic-with-source-fallback source (deref diag))))
+        (build_run_core.source-tool-clean-temp-files files true)
+        failed])))
 
 (define (tltest-run-harness-in-temp
   [source : String]
@@ -2642,11 +2554,10 @@
         backend-mode
         inline-harness
         temp-dir)]
-    (begin
-      (lower.compiler-lower-state-reset! lower-state)
-      (lower.compiler-lower-arena-state-release!
-        (lower.compiler-lower-state-arenas lower-state))
-      status)))
+    (lower.compiler-lower-state-reset! lower-state)
+    (lower.compiler-lower-arena-state-release!
+      (lower.compiler-lower-state-arenas lower-state))
+    status))
 
 (define (tltest-run-direct-with-entry
   [source : String]
@@ -2661,9 +2572,8 @@
   (match (build_run_core.source-tool-target
     (owned_view.compiler-owned-shared-view target))
     [(Err _)
-      (begin
-        (io.print-error (tltest-unknown-target target))
-        1)]
+      (io.print-error (tltest-unknown-target target))
+      1]
     [(Ok backend-target)
       (match (build_run_core.source-tool-create-temp-dir "typelisp-test")
         [(Ok temp-dir)
@@ -2679,10 +2589,9 @@
             inline-harness
             temp-dir)]
         [(Err message)
-          (begin
-            (io.print-error
-              (str_cat.str-cat "test: failed to create temp dir: " message))
-            1)])]))
+          (io.print-error
+            (str_cat.str-cat "test: failed to create temp dir: " message))
+          1])]))
 
 (define (tltest-run-direct
   [source : String]
@@ -2720,15 +2629,13 @@
         legacy-roots
         (tltest-cfgs target)))
       [(ResultCompilerTypecheck.Ok _)
-        (begin
-          (io.print-format "{}" "TypeLisp test typecheck passed: 0 test(s)\n")
-          0)]
+        (io.print-format "{}" "TypeLisp test typecheck passed: 0 test(s)\n")
+        0]
       [(ResultCompilerTypecheck.Err diag)
-        (begin
-          (io.print-error
-            (driver.compiler-driver-render-source-diagnostic
-              (cdiag.compiler-diagnostic-list-first (deref diag))))
-          1)])))
+        (io.print-error
+          (driver.compiler-driver-render-source-diagnostic
+            (cdiag.compiler-diagnostic-list-first (deref diag))))
+        1])))
 
 (define (tltest-no-tests-run
   [source : String]
@@ -2785,29 +2692,24 @@
     [i : i64 idx]
     [open : bool line-open]
     [found : bool false]
-    (begin
-      (while (and (not found) (< i n))
-        (let
-          [c : char (string.string-ref source i)]
-          (cond
-            [(and open (tltest-source-line-break? c))
-              (begin
-                (set! i (+ i 1))
-                (set! open true))]
-            [(and open (tltest-source-prefix-space? c))
-              (begin
-                (set! i (+ i 1))
-                (set! open true))]
-            [(and open (tltest-inline-marker-at? source i n)) (set! found true)]
-            [(tltest-source-line-break? c)
-              (begin
-                (set! i (+ i 1))
-                (set! open true))]
-            [else
-              (begin
-                (set! i (+ i 1))
-                (set! open false))])))
-      found)))
+    (while (and (not found) (< i n))
+      (let
+        [c : char (string.string-ref source i)]
+        (cond
+          [(and open (tltest-source-line-break? c))
+            (set! i (+ i 1))
+            (set! open true)]
+          [(and open (tltest-source-prefix-space? c))
+            (set! i (+ i 1))
+            (set! open true)]
+          [(and open (tltest-inline-marker-at? source i n)) (set! found true)]
+          [(tltest-source-line-break? c)
+            (set! i (+ i 1))
+            (set! open true)]
+          [else
+            (set! i (+ i 1))
+            (set! open false)])))
+    found))
 
 (define (tltest-source-has-inline-tests? [source : String]) : bool
   (with-scratch
@@ -3039,21 +2941,19 @@
   (let
     [selected : cli_svec.Vec (cli_svec.new)]
     [index : i64 0]
-    (begin
-      (while (< index (cli_svec.len (& sources)))
-        (let
-          [source : String (cli_svec.get (& sources) index "")]
-          (begin
-            (if (and
-              (tltest-package-integration-source?
-                (owned_view.compiler-owned-shared-view source)
-                (owned_view.compiler-owned-shared-view tests-prefix))
-              (tltest-package-integration-selected? source))
-              (cli_svec.push-ref! (&mut selected) source)
-              unit)
-            (set! index (+ index 1)))))
-      (tltest-shuffle-string-vec! (&mut selected))
-      selected)))
+    (while (< index (cli_svec.len (& sources)))
+      (let
+        [source : String (cli_svec.get (& sources) index "")]
+        (if (and
+          (tltest-package-integration-source?
+            (owned_view.compiler-owned-shared-view source)
+            (owned_view.compiler-owned-shared-view tests-prefix))
+          (tltest-package-integration-selected? source))
+          (cli_svec.push-ref! (&mut selected) source)
+          unit)
+        (set! index (+ index 1))))
+    (tltest-shuffle-string-vec! (&mut selected))
+    selected))
 
 (define (tltest-package-integration-missing-main [source : String]) : String
   (str_cat.str-cat "test: integration test file has no main: " source "\n"))
@@ -3064,33 +2964,31 @@
   [paths : ast.AstDeclPathList]
   [roots : cli_svec.Vec]
   [target : compiler_backend.CompilerBackendTarget]) : ResultTestPackageTotals
-  (begin
-    (io.print-format
-      "{}"
-      (tltest-package-integration-line
-        (owned_view.compiler-owned-shared-view source)))
-    (if (tltest-decls-have-main? (owned_view.compiler-owned-shared-view decls))
-      (let
-        [legacy-roots : cli_svec.Vec (clone roots)]
-        (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
-          (ast.ast-program decls)
-          paths
-          (owned_view.compiler-owned-shared-view legacy-roots)
-          (tltest-cfgs target)
-          (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
-            "typecheck-prefix-test-cli"
-            legacy-roots
-            (tltest-cfgs target)))
-          [(ResultCompilerTypecheck.Ok _) (Ok 1 1)]
-          [(ResultCompilerTypecheck.Err diag)
-            (begin
-              (io.print-error
-                (driver.compiler-driver-render-source-diagnostic
-                  (cdiag.compiler-diagnostic-list-first (deref diag))))
-              (Err 1))]))
-      (begin
-        (io.print-error (tltest-package-integration-missing-main source))
-        (Err 1)))))
+  (io.print-format
+    "{}"
+    (tltest-package-integration-line
+      (owned_view.compiler-owned-shared-view source)))
+  (if (tltest-decls-have-main? (owned_view.compiler-owned-shared-view decls))
+    (let
+      [legacy-roots : cli_svec.Vec (clone roots)]
+      (match (compiler_typecheck_api.typecheck-compiler-program-with-paths-cache
+        (ast.ast-program decls)
+        paths
+        (owned_view.compiler-owned-shared-view legacy-roots)
+        (tltest-cfgs target)
+        (compiler_typecheck_api.compiler-typecheck-prefix-cache-scope
+          "typecheck-prefix-test-cli"
+          legacy-roots
+          (tltest-cfgs target)))
+        [(ResultCompilerTypecheck.Ok _) (Ok 1 1)]
+        [(ResultCompilerTypecheck.Err diag)
+          (io.print-error
+            (driver.compiler-driver-render-source-diagnostic
+              (cdiag.compiler-diagnostic-list-first (deref diag))))
+          (Err 1)]))
+    (begin
+      (io.print-error (tltest-package-integration-missing-main source))
+      (Err 1))))
 
 (define (tltest-package-integration-run
   [source : String]
@@ -3100,30 +2998,29 @@
   [backend-mode : compiler_backend.CompilerBackendMode]
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]) : ResultTestPackageTotals
-  (begin
-    (io.print-format
-      "{}"
-      (tltest-package-integration-line
-        (owned_view.compiler-owned-shared-view source)))
-    (if (tltest-decls-have-main? (owned_view.compiler-owned-shared-view decls))
-      (let
-        [status : i64
-          (tltest-run-direct-with-entry
-            source
-            ""
-            (ast.ast-program decls)
-            paths
-            roots
-            target
-            opt-level
-            backend-mode
-            false)]
-        (if (= status 0)
-          (Ok 1 1)
-          (Err status)))
-      (begin
-        (io.print-error (tltest-package-integration-missing-main source))
-        (Err 1)))))
+  (io.print-format
+    "{}"
+    (tltest-package-integration-line
+      (owned_view.compiler-owned-shared-view source)))
+  (if (tltest-decls-have-main? (owned_view.compiler-owned-shared-view decls))
+    (let
+      [status : i64
+        (tltest-run-direct-with-entry
+          source
+          ""
+          (ast.ast-program decls)
+          paths
+          roots
+          target
+          opt-level
+          backend-mode
+          false)]
+      (if (= status 0)
+        (Ok 1 1)
+        (Err status)))
+    (begin
+      (io.print-error (tltest-package-integration-missing-main source))
+      (Err 1))))
 
 (define (tltest-package-run-integration-source
   [source : String]
@@ -3168,12 +3065,11 @@
                 decls
                 paths)])]
         [(Err diag)
-          (begin
-            (io.print-error
-              (str_cat.str-cat "test: integration test source failed: " source))
-            (io.print-error
-              (driver.compiler-driver-render-source-diagnostic (deref diag)))
-            (Err 1))]))
+          (io.print-error
+            (str_cat.str-cat "test: integration test source failed: " source))
+          (io.print-error
+            (driver.compiler-driver-render-source-diagnostic (deref diag)))
+          (Err 1)]))
     (Ok 0 0)))
 
 ;; A test entry borrows its inputs from the caller and owns every temporary
@@ -3202,47 +3098,42 @@
     [entry-job : tc_core.TcJobState (in-arena owner (tc_core.tc-job-state-new))]
     [pools : ast.AstNodePoolContext
       (driver.compiler-driver-state-new-checked-lower-pools)]
-    (begin
-      (compiler_load.compiler-load-default-session-state-set!
-        (owned_view.compiler-owned-shared-view entry-load))
-      (compiler_load.compiler-load-session-state-use! entry-load)
-      (compiler_load.compiler-load-session-cache-enable!)
-      (compiler_load.compiler-load-session-program-cache-disable!)
-      (tc_core.tc-serial-job-state-set!
-        (owned_view.compiler-owned-shared-view entry-job))
-      (ast.ast-node-pool-context-install! pools)
-      (TlTestEntry owner parent-load parent-default parent-job))))
+    (compiler_load.compiler-load-default-session-state-set!
+      (owned_view.compiler-owned-shared-view entry-load))
+    (compiler_load.compiler-load-session-state-use! entry-load)
+    (compiler_load.compiler-load-session-cache-enable!)
+    (compiler_load.compiler-load-session-program-cache-disable!)
+    (tc_core.tc-serial-job-state-set!
+      (owned_view.compiler-owned-shared-view entry-job))
+    (ast.ast-node-pool-context-install! pools)
+    (TlTestEntry owner parent-load parent-default parent-job)))
 
 (define (tltest-entry-finish [entry : TlTestEntry] [result : i64]) : i64
-  (begin
-    (in-arena
-      entry.owner
-      (let
-        [pools : ast.AstNodePoolContext
-          (ast.ast-node-pool-context-capture-active)]
-        (begin
-          ;; Reset walkers can inspect entry-owned values. Their replacement
-          ;; empty carriers also belong here; no selector retains them below.
-          (driver.compiler-driver-reset-file-state!)
-          (compiler_load.compiler-load-session-state-dotted-path-cache-reset!
-            (compiler_load.compiler-load-serial-test-session-state))
-          (compiler_load.compiler-load-session-fresh-reset!)
-          (tc_core.tc-job-state-retire-owned-storage!
-            (tc_core.tc-serial-job-state))
-          (driver.compiler-driver-state-destroy-uncommitted-pools! pools))))
-    (tc_core.tc-serial-job-state-set! entry.parent-job)
-    (compiler_load.compiler-load-default-session-state-set!
-      entry.parent-default)
-    (if (array-ref entry.parent-load.intern-state-ready 0)
-      (compiler_load.compiler-load-session-state-use-with-intern-state!
-        entry.parent-load
-        (owned_view.compiler-owned-array-element-shared-view
-          entry.parent-load.intern-state
-          0))
-      (compiler_load.compiler-load-session-state-use! entry.parent-load))
-    (unsafe
-      (arena.destroy entry.owner))
-    result))
+  (in-arena
+    entry.owner
+    (let
+      [pools : ast.AstNodePoolContext
+        (ast.ast-node-pool-context-capture-active)]
+      ;; Reset walkers can inspect entry-owned values. Their replacement
+      ;; empty carriers also belong here; no selector retains them below.
+      (driver.compiler-driver-reset-file-state!)
+      (compiler_load.compiler-load-session-state-dotted-path-cache-reset!
+        (compiler_load.compiler-load-serial-test-session-state))
+      (compiler_load.compiler-load-session-fresh-reset!)
+      (tc_core.tc-job-state-retire-owned-storage! (tc_core.tc-serial-job-state))
+      (driver.compiler-driver-state-destroy-uncommitted-pools! pools)))
+  (tc_core.tc-serial-job-state-set! entry.parent-job)
+  (compiler_load.compiler-load-default-session-state-set! entry.parent-default)
+  (if (array-ref entry.parent-load.intern-state-ready 0)
+    (compiler_load.compiler-load-session-state-use-with-intern-state!
+      entry.parent-load
+      (owned_view.compiler-owned-array-element-shared-view
+        entry.parent-load.intern-state
+        0))
+    (compiler_load.compiler-load-session-state-use! entry.parent-load))
+  (unsafe
+    (arena.destroy entry.owner))
+  result)
 
 (define (tltest-package-run-integration-source-isolated-count
   [source : String]
@@ -3260,22 +3151,21 @@
     [entry-result : i64
       (in-arena
         entry.owner
-        (begin
-          (driver.compiler-driver-reset-file-state!)
-          (match (tltest-package-run-integration-source
-            source
-            target
-            roots
-            opt-level
-            backend-mode
-            test-mode
-            backend-target
-            manifest-dir
-            package-owner
-            deps)
-            [(Err status) (- 0 status)]
-            [(Failed _ tests _) (- 0 (+ tltest-failed-count-offset tests))]
-            [(Ok _ tests) tests])))]
+        (driver.compiler-driver-reset-file-state!)
+        (match (tltest-package-run-integration-source
+          source
+          target
+          roots
+          opt-level
+          backend-mode
+          test-mode
+          backend-target
+          manifest-dir
+          package-owner
+          deps)
+          [(Err status) (- 0 status)]
+          [(Failed _ tests _) (- 0 (+ tltest-failed-count-offset tests))]
+          [(Ok _ tests) tests]))]
     (tltest-entry-finish entry entry-result)))
 
 (define (tltest-package-run-source
@@ -3320,12 +3210,11 @@
               decls
               paths))]
         [(Err diag)
-          (begin
-            (io.print-error
-              (str_cat.str-cat "test: package source failed: " source))
-            (io.print-error
-              (driver.compiler-driver-render-source-diagnostic (deref diag)))
-            (Err 1))]))
+          (io.print-error
+            (str_cat.str-cat "test: package source failed: " source))
+          (io.print-error
+            (driver.compiler-driver-render-source-diagnostic (deref diag)))
+          (Err 1)]))
     (Ok 0 0)))
 
 (define (tltest-package-run-source-isolated-count
@@ -3344,22 +3233,21 @@
     [entry-result : i64
       (in-arena
         entry.owner
-        (begin
-          (driver.compiler-driver-reset-file-state!)
-          (match (tltest-package-run-source
-            source
-            target
-            roots
-            opt-level
-            backend-mode
-            test-mode
-            backend-target
-            manifest-dir
-            package-owner
-            deps)
-            [(Err status) (- 0 status)]
-            [(Failed _ tests _) (- 0 (+ tltest-failed-count-offset tests))]
-            [(Ok _ tests) tests])))]
+        (driver.compiler-driver-reset-file-state!)
+        (match (tltest-package-run-source
+          source
+          target
+          roots
+          opt-level
+          backend-mode
+          test-mode
+          backend-target
+          manifest-dir
+          package-owner
+          deps)
+          [(Err status) (- 0 status)]
+          [(Failed _ tests _) (- 0 (+ tltest-failed-count-offset tests))]
+          [(Ok _ tests) tests]))]
     (tltest-entry-finish entry entry-result)))
 
 (define (tltest-package-run-sources-from
@@ -3707,18 +3595,16 @@
   (match (build_run_core.source-tool-target
     (owned_view.compiler-owned-shared-view target))
     [(Err _)
-      (begin
-        (io.print-error (tltest-unknown-target target))
-        1)]
+      (io.print-error (tltest-unknown-target target))
+      1]
     [(Ok backend-target)
       (match (package_source_core.package-source-discover-for
         "test"
         manifest-path
         has-manifest)
         [(Err message)
-          (begin
-            (io.print-error message)
-            1)]
+          (io.print-error message)
+          1]
         [(Ok source-set)
           (let
             [manifest : compiler_load.CompilerPkgManifest
@@ -3733,9 +3619,8 @@
               "test"
               (owned_view.compiler-owned-shared-view source-set))
               [(Err message)
-                (begin
-                  (io.print-error message)
-                  1)]
+                (io.print-error message)
+                1]
               [(Ok integration-sources)
                 (match (tltest-package-run-sources
                   source-set.sources
@@ -3799,27 +3684,26 @@
     (owned_view.compiler-owned-shared-view decls)
     (owned_view.compiler-owned-shared-view paths))
     [(Harness program harness-paths count)
-      (begin
-        (io.print-format
-          "{}"
-          (tltest-package-source-line
-            (owned_view.compiler-owned-shared-view source)
-            count))
-        (if tltest-list-only
-          (Ok (tltest-list-loaded source decls paths))
-          (let
-            [status : i64
-              (if (= count 0)
-                (tltest-no-tests-check decls paths roots backend-target)
-                (tltest-check-only
-                  program
-                  harness-paths
-                  count
-                  backend-target
-                  roots))]
-            (if (= status 0)
-              (Ok count)
-              (Err status)))))]))
+      (io.print-format
+        "{}"
+        (tltest-package-source-line
+          (owned_view.compiler-owned-shared-view source)
+          count))
+      (if tltest-list-only
+        (Ok (tltest-list-loaded source decls paths))
+        (let
+          [status : i64
+            (if (= count 0)
+              (tltest-no-tests-check decls paths roots backend-target)
+              (tltest-check-only
+                program
+                harness-paths
+                count
+                backend-target
+                roots))]
+          (if (= status 0)
+            (Ok count)
+            (Err status))))]))
 
 (define (tltest-check-file-source
   [source : String]
@@ -3832,10 +3716,9 @@
     [(Ok decls paths _ _)
       (tltest-check-file-loaded source decls paths backend-target roots)]
     [(Err diag)
-      (begin
-        (io.print-error
-          (driver.compiler-driver-render-source-diagnostic (deref diag)))
-        (Err 1))]))
+      (io.print-error
+        (driver.compiler-driver-render-source-diagnostic (deref diag)))
+      (Err 1)]))
 
 (define (tltest-run-file-loaded
   [source : String]
@@ -3850,36 +3733,35 @@
     decls
     paths)
     [(Harness program harness-paths count)
-      (begin
-        (io.print-format
-          "{}"
-          (tltest-package-source-line
-            (owned_view.compiler-owned-shared-view source)
-            count))
-        (let
-          [status : i64
-            (if (= count 0)
-              (tltest-no-tests-run
-                source
-                target
-                program
-                harness-paths
-                roots
-                opt-level
-                backend-mode)
-              (tltest-run-direct
-                source
-                program
-                harness-paths
-                roots
-                target
-                opt-level
-                backend-mode))]
-          (if (= status 0)
-            (Ok count)
-            (if (and (> count 0) (= status 1))
-              (Failed count)
-              (Err status)))))]))
+      (io.print-format
+        "{}"
+        (tltest-package-source-line
+          (owned_view.compiler-owned-shared-view source)
+          count))
+      (let
+        [status : i64
+          (if (= count 0)
+            (tltest-no-tests-run
+              source
+              target
+              program
+              harness-paths
+              roots
+              opt-level
+              backend-mode)
+            (tltest-run-direct
+              source
+              program
+              harness-paths
+              roots
+              target
+              opt-level
+              backend-mode))]
+        (if (= status 0)
+          (Ok count)
+          (if (and (> count 0) (= status 1))
+            (Failed count)
+            (Err status))))]))
 
 (define (tltest-run-file-source
   [source : String]
@@ -3902,10 +3784,9 @@
         decls
         paths)]
     [(Err diag)
-      (begin
-        (io.print-error
-          (driver.compiler-driver-render-source-diagnostic (deref diag)))
-        (Err 1))]))
+      (io.print-error
+        (driver.compiler-driver-render-source-diagnostic (deref diag)))
+      (Err 1)]))
 
 (define (tltest-batch-summary-line [file-count : i64] [test-count : i64]) : String
   (if tltest-list-only
@@ -3970,34 +3851,33 @@
     [files : i64 file-count]
     [tests : i64 test-count]
     [status : i64 0]
-    (begin
-      (while (and (= status 0) (< cursor count))
-        (let
-          [source : String (cli_svec.get (& paths) cursor "")]
-          ;; Match compile --batch: isolate each entry in a destroyable scratch
-          ;; arena. Lexical arena rewind keeps overflow chunks retired until the
-          ;; owning arena is destroyed, so destroying the entry arena is
-          ;; required for long one-process batches to stay bounded.
-          [entry-result : i64
-            (tltest-run-batch-check-path
-              (owned_view.compiler-owned-shared-view source)
-              (owned_view.compiler-owned-shared-view roots)
-              backend-target)]
-          (if (< entry-result 0)
-            (begin
-              (io.print-error
-                (str_cat.str-cat "test: batch source failed: " source))
-              (io.print-error "\n")
-              (set! status (- 0 entry-result)))
-            (begin
-              (set! files (+ files 1))
-              (set! tests (+ tests entry-result))
-              (set! cursor (+ cursor 1))))))
-      (if (= status 0)
-        (begin
-          (io.print-format "{}" (tltest-batch-summary-line files tests))
-          0)
-        status))))
+    (while (and (= status 0) (< cursor count))
+      (let
+        [source : String (cli_svec.get (& paths) cursor "")]
+        ;; Match compile --batch: isolate each entry in a destroyable scratch
+        ;; arena. Lexical arena rewind keeps overflow chunks retired until the
+        ;; owning arena is destroyed, so destroying the entry arena is
+        ;; required for long one-process batches to stay bounded.
+        [entry-result : i64
+          (tltest-run-batch-check-path
+            (owned_view.compiler-owned-shared-view source)
+            (owned_view.compiler-owned-shared-view roots)
+            backend-target)]
+        (if (< entry-result 0)
+          (begin
+            (io.print-error
+              (str_cat.str-cat "test: batch source failed: " source))
+            (io.print-error "\n")
+            (set! status (- 0 entry-result)))
+          (begin
+            (set! files (+ files 1))
+            (set! tests (+ tests entry-result))
+            (set! cursor (+ cursor 1))))))
+    (if (= status 0)
+      (begin
+        (io.print-format "{}" (tltest-batch-summary-line files tests))
+        0)
+      status)))
 
 (define (tltest-run-batch-check-paths
   [paths : cli_svec.Vec]
@@ -4017,29 +3897,26 @@
   [paths : cli_svec.Vec]
   [target : String]
   [roots : cli_svec.Vec]) : i64
-  (begin
-    (compiler_load.compiler-load-session-cache-enable!)
-    (compiler_load.compiler-load-session-program-cache-disable!)
-    (driver.compiler-driver-reset-file-state!)
-    (match (build_run_core.source-tool-target
-      (owned_view.compiler-owned-shared-view target))
-      [(Err _)
-        (begin
-          (io.print-error (tltest-unknown-target target))
-          1)]
-      [(Ok backend-target)
-        (let
-          [status : i64
-            (begin
-              (if tltest-prefix-cache-stats
-                (tc_core.tc-prefix-snapshot-cache-clear!)
-                unit)
-              (tltest-run-batch-check-paths paths roots backend-target 0 0))]
+  (compiler_load.compiler-load-session-cache-enable!)
+  (compiler_load.compiler-load-session-program-cache-disable!)
+  (driver.compiler-driver-reset-file-state!)
+  (match (build_run_core.source-tool-target
+    (owned_view.compiler-owned-shared-view target))
+    [(Err _)
+      (io.print-error (tltest-unknown-target target))
+      1]
+    [(Ok backend-target)
+      (let
+        [status : i64
           (begin
             (if tltest-prefix-cache-stats
-              (tc_core.tc-prefix-snapshot-cache-print-stats "test-check-batch")
+              (tc_core.tc-prefix-snapshot-cache-clear!)
               unit)
-            status))])))
+            (tltest-run-batch-check-paths paths roots backend-target 0 0))]
+        (if tltest-prefix-cache-stats
+          (tc_core.tc-prefix-snapshot-cache-print-stats "test-check-batch")
+          unit)
+        status)]))
 
 (define (tltest-run-batch-run-path
   [source : String]
@@ -4082,45 +3959,44 @@
     [tests : i64 0]
     [failed-files : i64 0]
     [fatal-status : i64 0]
-    (begin
-      (while (and (= fatal-status 0) (< cursor count))
-        (let
-          [source : String (cli_svec.get (& paths) cursor "")]
-          [entry-result : i64
-            (tltest-run-batch-run-path
-              (owned_view.compiler-owned-shared-view source)
-              (owned_view.compiler-owned-shared-view target)
-              (owned_view.compiler-owned-shared-view roots)
-              opt-level
-              backend-mode
-              backend-target)]
-          (if (<= entry-result (- 0 tltest-failed-count-offset))
+    (while (and (= fatal-status 0) (< cursor count))
+      (let
+        [source : String (cli_svec.get (& paths) cursor "")]
+        [entry-result : i64
+          (tltest-run-batch-run-path
+            (owned_view.compiler-owned-shared-view source)
+            (owned_view.compiler-owned-shared-view target)
+            (owned_view.compiler-owned-shared-view roots)
+            opt-level
+            backend-mode
+            backend-target)]
+        (if (<= entry-result (- 0 tltest-failed-count-offset))
+          (begin
+            (set! files (+ files 1))
+            (set!
+              tests
+              (+ tests (- (- 0 entry-result) tltest-failed-count-offset)))
+            (set! failed-files (+ failed-files 1))
+            (set! cursor (+ cursor 1)))
+          (if (< entry-result 0)
+            (begin
+              (io.print-error
+                (str_cat.str-cat "\ntest: batch source failed: " source))
+              (io.print-error "\n")
+              (set! fatal-status (- 0 entry-result)))
             (begin
               (set! files (+ files 1))
-              (set!
-                tests
-                (+ tests (- (- 0 entry-result) tltest-failed-count-offset)))
-              (set! failed-files (+ failed-files 1))
-              (set! cursor (+ cursor 1)))
-            (if (< entry-result 0)
-              (begin
-                (io.print-error
-                  (str_cat.str-cat "\ntest: batch source failed: " source))
-                (io.print-error "\n")
-                (set! fatal-status (- 0 entry-result)))
-              (begin
-                (set! files (+ files 1))
-                (set! tests (+ tests entry-result))
-                (set! cursor (+ cursor 1)))))))
-      (if (= fatal-status 0)
-        (begin
-          (io.print-format
-            "{}"
-            (tltest-batch-run-summary-line files tests failed-files))
-          (if (= failed-files 0)
-            0
-            1))
-        fatal-status))))
+              (set! tests (+ tests entry-result))
+              (set! cursor (+ cursor 1)))))))
+    (if (= fatal-status 0)
+      (begin
+        (io.print-format
+          "{}"
+          (tltest-batch-run-summary-line files tests failed-files))
+        (if (= failed-files 0)
+          0
+          1))
+      fatal-status)))
 
 (define (tltest-run-batch-run
   [paths : cli_svec.Vec]
@@ -4128,35 +4004,31 @@
   [roots : cli_svec.Vec]
   [opt-level : i64]
   [backend-mode : compiler_backend.CompilerBackendMode]) : i64
-  (begin
-    (compiler_load.compiler-load-session-cache-enable!)
-    (compiler_load.compiler-load-session-program-cache-disable!)
-    (driver.compiler-driver-reset-file-state!)
-    (match (build_run_core.source-tool-target
-      (owned_view.compiler-owned-shared-view target))
-      [(Err _)
-        (begin
-          (io.print-error (tltest-unknown-target target))
-          1)]
-      [(Ok backend-target)
-        (begin
-          (if tltest-prefix-cache-stats
-            (tc_core.tc-prefix-snapshot-cache-clear!)
-            unit)
-          (let
-            [status : i64
-              (tltest-run-batch-run-paths
-                paths
-                target
-                roots
-                opt-level
-                backend-mode
-                backend-target)]
-            (begin
-              (if tltest-prefix-cache-stats
-                (tc_core.tc-prefix-snapshot-cache-print-stats "test-run-batch")
-                unit)
-              status)))])))
+  (compiler_load.compiler-load-session-cache-enable!)
+  (compiler_load.compiler-load-session-program-cache-disable!)
+  (driver.compiler-driver-reset-file-state!)
+  (match (build_run_core.source-tool-target
+    (owned_view.compiler-owned-shared-view target))
+    [(Err _)
+      (io.print-error (tltest-unknown-target target))
+      1]
+    [(Ok backend-target)
+      (if tltest-prefix-cache-stats
+        (tc_core.tc-prefix-snapshot-cache-clear!)
+        unit)
+      (let
+        [status : i64
+          (tltest-run-batch-run-paths
+            paths
+            target
+            roots
+            opt-level
+            backend-mode
+            backend-target)]
+        (if tltest-prefix-cache-stats
+          (tc_core.tc-prefix-snapshot-cache-print-stats "test-run-batch")
+          unit)
+        status)]))
 
 (define (tltest-prepare-shuffle!) : bool
   (if tltest-shuffle
@@ -4165,17 +4037,15 @@
         unit
         (match (random.system-seed)
           [(OkSystemSeed seed)
-            (begin
-              (set! tltest-seed (cast seed : u64))
-              (set! tltest-seed-set true))]
+            (set! tltest-seed (cast seed : u64))
+            (set! tltest-seed-set true)]
           [(ErrSystemSeed error)
-            (begin
-              (match error
-                [(RandomSystemSeedUnavailable message)
-                  (let
-                    [rendered : String (str_cat.str-cat "test: " message "\n")]
-                    (io.print-error (& rendered)))])
-              (return false))]))
+            (match error
+              [(RandomSystemSeedUnavailable message)
+                (let
+                  [rendered : String (str_cat.str-cat "test: " message "\n")]
+                  (io.print-error (& rendered)))])
+            (return false)]))
       (io.print-format
         "{}"
         (str_cat.str-cat
@@ -4191,9 +4061,8 @@
       (match (build_run_core.source-tool-target
         (owned_view.compiler-owned-shared-view target))
         [(Err _)
-          (begin
-            (io.print-error (tltest-unknown-target target))
-            1)]
+          (io.print-error (tltest-unknown-target target))
+          1]
         [(Ok backend-target)
           (match (driver.compiler-driver-load-file-with-runtime
             (owned_view.compiler-owned-shared-view source)
@@ -4203,9 +4072,8 @@
               (if tltest-list-only
                 (let
                   [count : i64 (tltest-list-loaded source decls paths)]
-                  (begin
-                    (io.print-format "{}" (tltest-list-summary-line count))
-                    0))
+                  (io.print-format "{}" (tltest-list-summary-line count))
+                  0)
                 (match (tltest-build-harness
                   (owned_view.compiler-owned-shared-view source)
                   (owned_view.compiler-owned-shared-view decls)
@@ -4246,10 +4114,9 @@
                             opt-level
                             backend-mode)]))]))]
             [(Err diag)
-              (begin
-                (io.print-error
-                  (driver.compiler-driver-render-source-diagnostic (deref diag)))
-                1)])])]
+              (io.print-error
+                (driver.compiler-driver-render-source-diagnostic (deref diag)))
+              1])])]
     [(Batch paths target backend-mode roots opt-level test-mode)
       (if tltest-list-only
         (tltest-run-batch-check paths target roots)
@@ -4317,9 +4184,8 @@
       (cpu.runs-avx512?))
       [(No) true]
       [(Some message)
-        (begin
-          (io.print-error message)
-          false)])
+        (io.print-error message)
+        false])
     true))
 
 (define (tltest-config-host-isa-permits? [config : TestConfig]) : bool
@@ -4344,6 +4210,5 @@
   (match (tltest-config-from start count)
     [(Ok config) (tltest-run-config config)]
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]))
+      (io.print-error message)
+      1]))

@@ -51,15 +51,14 @@
   [new : String]) : String
   (let
     [out : String text]
-    (begin
-      (while (string.contains (& out) (& old))
-        (set!
+    (while (string.contains (& out) (& old))
+      (set!
+        out
+        (string.replace
           out
-          (string.replace
-            out
-            (owned_view.compiler-owned-shared-view old)
-            (owned_view.compiler-owned-shared-view new))))
-      out)))
+          (owned_view.compiler-owned-shared-view old)
+          (owned_view.compiler-owned-shared-view new))))
+    out))
 
 ;; The arena-debug root registry and its checked entry points for one target:
 ;; ARG is the first argument register, IDX the slot index, and SUFFIX tells the
@@ -510,24 +509,22 @@ tl_startup_profile_process_entry_tick:
   (let
     [out : String ""]
     [size : i64 8]
-    (begin
-      (while (<= size 64)
-        (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              (compiler-backend-runtime-fast-alloc-function
-                current-arena-load
-                usable-end-offset
-                size
-                size-reg
-                next-reg
-                profile)
-              ""
-              ""))
-          (set! size (+ size 8))))
-      out)))
+    (while (<= size 64)
+      (set!
+        out
+        (str_cat.str-cat
+          out
+          (compiler-backend-runtime-fast-alloc-function
+            current-arena-load
+            usable-end-offset
+            size
+            size-reg
+            next-reg
+            profile)
+          ""
+          ""))
+      (set! size (+ size 8)))
+    out))
 
 (define (compiler-backend-runtime-region-mark-functions
   [current-arena-load : String]) : String

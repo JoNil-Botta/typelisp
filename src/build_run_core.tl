@@ -75,14 +75,12 @@
   (let
     [env : sym_i64_env.SymI64Env (cfg_core.compiler-cfg-empty)]
     [index : i64 0]
-    (begin
-      (while (< index (cli_svec.len (& names)))
-        (begin
-          (set!
-            env
-            (cfg_core.compiler-cfg-enable env (cli_svec.get (& names) index "")))
-          (set! index (+ index 1))))
-      env)))
+    (while (< index (cli_svec.len (& names)))
+      (set!
+        env
+        (cfg_core.compiler-cfg-enable env (cli_svec.get (& names) index "")))
+      (set! index (+ index 1)))
+    env))
 
 (define (source-tool-target-name [target : backend.CompilerBackendTarget]) : String
   (backend.compiler-backend-target-triple target))
@@ -364,14 +362,12 @@
     [n : i64 (process.args-count items)]
     [i : i64 0]
     [found : bool false]
-    (begin
-      (while (and (< i n) (not found))
-        (begin
-          (if (string.eq (process.args-ref items i) value)
-            (set! found true)
-            unit)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< i n) (not found))
+      (if (string.eq (process.args-ref items i) value)
+        (set! found true)
+        unit)
+      (set! i (+ i 1)))
+    found))
 
 (define (source-tool-args-append-unique
   [items : process.ProcessStringList]
@@ -389,14 +385,10 @@
     [n : i64 (process.args-count right)]
     [i : i64 0]
     [out : process.ProcessStringList left]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            out
-            (source-tool-args-append-unique out (process.args-ref right i)))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i n)
+      (set! out (source-tool-args-append-unique out (process.args-ref right i)))
+      (set! i (+ i 1)))
+    out))
 
 ;; Libraries, search directories and archives merge first-seen with exact
 ;; duplicates removed, which never changes what the linker resolves: a search
@@ -533,14 +525,12 @@
     [n : i64 (string.string-length path)]
     [i : i64 0]
     [found : bool false]
-    (begin
-      (while (and (< i n) (not found))
-        (begin
-          (if (source-tool-path-separator? (string.string-ref path i))
-            (set! found true)
-            unit)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< i n) (not found))
+      (if (source-tool-path-separator? (string.string-ref path i))
+        (set! found true)
+        unit)
+      (set! i (+ i 1)))
+    found))
 
 (define (source-tool-path-entry-command [dir : String] [tool : String]) : String
   (if (= (string.string-length dir) 0)
@@ -653,21 +643,19 @@
     [i : i64 0]
     [last-dot : i64 -1]
     [last-sep : i64 -1]
-    (begin
-      (while (< i n)
-        (let
-          [c : char (string.string-ref input-path i)]
-          (begin
-            (if (= c '.')
-              (set! last-dot i)
-              (set! last-dot last-dot))
-            (if (source-tool-path-separator? c)
-              (set! last-sep i)
-              (set! last-sep last-sep))
-            (set! i (+ i 1)))))
-      (if (> last-dot last-sep)
-        (str_cat.str-cat (string.substring input-path 0 last-dot) extension)
-        (str_cat.str-cat input-path extension)))))
+    (while (< i n)
+      (let
+        [c : char (string.string-ref input-path i)]
+        (if (= c '.')
+          (set! last-dot i)
+          (set! last-dot last-dot))
+        (if (source-tool-path-separator? c)
+          (set! last-sep i)
+          (set! last-sep last-sep))
+        (set! i (+ i 1))))
+    (if (> last-dot last-sep)
+      (str_cat.str-cat (string.substring input-path 0 last-dot) extension)
+      (str_cat.str-cat input-path extension))))
 
 (define (source-tool-default-output
   [source : String]
@@ -769,17 +757,13 @@
         cfgs
         (source-tool-linux-crt-entry? target link-inputs))
         [(Ok asm advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (Ok (source-tool-augment-assembly-for-target asm target)))]
+          (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+          (Ok (source-tool-augment-assembly-for-target asm target))]
         [(Err diag advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (Err
-              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (deref diag))))])]))
+          (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+          (Err
+            (compiler_driver_core.compiler-driver-render-source-diagnostic
+              (deref diag)))])]))
 
 (define (source-tool-linux-direct-object-env-name) : String
   "TYPELISP_LINUX_DIRECT_OBJECT")
@@ -918,9 +902,8 @@
       (Err (str_cat.str-cat context ": " (io.error-message error)))]))
 
 (define (source-tool-forward-output [output : (& output process.ProcessOutput)]) : unit
-  (begin
-    (source-tool-stdout-write (process.output-stdout output))
-    (source-tool-stderr-write (process.output-stderr output))))
+  (source-tool-stdout-write (process.output-stdout output))
+  (source-tool-stderr-write (process.output-stderr output)))
 
 ;; The library a linker reported missing in `line`, or "": GNU ld's
 ;; `cannot find -lNAME`, lld's `unable to find library -lNAME`, and link.exe's
@@ -976,18 +959,16 @@
     [n : i64 (string.string-length value)]
     [index : i64 0]
     [out : String "'"]
-    (begin
-      (while (< index n)
-        (let
-          [c : char (string.string-ref value index)]
-          (begin
-            (set!
-              out
-              (if (= c '\'')
-                (str_cat.str-cat out "'\\''")
-                (str_cat.str-cat out (string.substring value index 1))))
-            (set! index (+ index 1)))))
-      (str_cat.str-cat out "'"))))
+    (while (< index n)
+      (let
+        [c : char (string.string-ref value index)]
+        (set!
+          out
+          (if (= c '\'')
+            (str_cat.str-cat out "'\\''")
+            (str_cat.str-cat out (string.substring value index 1))))
+        (set! index (+ index 1))))
+    (str_cat.str-cat out "'")))
 
 ;; For each library the linker reported missing, the declarations that
 ;; requested it and the search paths it was looked for in.
@@ -1001,73 +982,64 @@
     [n : i64 (string.string-length stderr)]
     [line-start : i64 0]
     [out : String ""]
-    (begin
-      (while (< line-start n)
-        (let
-          [newline : i64 (string.index-of-byte stderr line-start 10)]
-          [line-end : i64
-            (if (< newline 0)
-              n
-              newline)]
-          [line : String
-            (string.substring stderr line-start (- line-end line-start))]
-          [name : String (source-tool-missing-library-in-line (& line))]
-          [origin-index : i64 0]
-          [named : bool false]
-          (begin
-            (if (= (string.string-length name) 0)
-              unit
-              (begin
-                (while (< origin-index (process.args-count origins.kinds))
-                  (begin
-                    (if (and
-                      (string.eq
-                        (process.args-ref origins.kinds origin-index)
-                        "library")
-                      (string.eq
-                        (process.args-ref origins.values origin-index)
-                        (owned_view.compiler-owned-shared-view name)))
-                      (begin
-                        (set!
-                          out
-                          (str_cat.str-cat
-                            out
-                            "\nnote: native library `"
-                            (owned_view.compiler-owned-shared-view name)
-                            "` is required by "
-                            (process.args-ref origins.declared-by origin-index)))
-                        (set! named true))
-                      unit)
-                    (set! origin-index (+ origin-index 1))))
-                (if named
-                  (let
-                    [dir-index : i64 0]
-                    [searched : String ""]
-                    (begin
-                      (while (< dir-index (process.args-count dirs))
-                        (begin
-                          (set!
-                            searched
-                            (str_cat.str-cat
-                              searched
-                              " "
-                              (let
-                                [dir : String (process.args-ref dirs dir-index)]
-                                (source-tool-quote (& dir)))))
-                          (set! dir-index (+ dir-index 1))))
-                      (set!
-                        out
-                        (str_cat.str-cat
-                          out
-                          "\nnote: search paths:"
-                          (if (= (string.string-length searched) 0)
-                            " none besides the linker's defaults"
-                            (str_cat.str-cat
-                              searched
-                              " and the linker's defaults"))))))
-                  unit)))
-            (set! line-start (+ line-end 1)))))
-      out)))
+    (while (< line-start n)
+      (let
+        [newline : i64 (string.index-of-byte stderr line-start 10)]
+        [line-end : i64
+          (if (< newline 0)
+            n
+            newline)]
+        [line : String
+          (string.substring stderr line-start (- line-end line-start))]
+        [name : String (source-tool-missing-library-in-line (& line))]
+        [origin-index : i64 0]
+        [named : bool false]
+        (unless
+          (= (string.string-length name) 0)
+          (while (< origin-index (process.args-count origins.kinds))
+            (when
+              (and
+                (string.eq
+                  (process.args-ref origins.kinds origin-index)
+                  "library")
+                (string.eq
+                  (process.args-ref origins.values origin-index)
+                  (owned_view.compiler-owned-shared-view name)))
+              (set!
+                out
+                (str_cat.str-cat
+                  out
+                  "\nnote: native library `"
+                  (owned_view.compiler-owned-shared-view name)
+                  "` is required by "
+                  (process.args-ref origins.declared-by origin-index)))
+              (set! named true))
+            (set! origin-index (+ origin-index 1)))
+          (if named
+            (let
+              [dir-index : i64 0]
+              [searched : String ""]
+              (while (< dir-index (process.args-count dirs))
+                (set!
+                  searched
+                  (str_cat.str-cat
+                    searched
+                    " "
+                    (let
+                      [dir : String (process.args-ref dirs dir-index)]
+                      (source-tool-quote (& dir)))))
+                (set! dir-index (+ dir-index 1)))
+              (set!
+                out
+                (str_cat.str-cat
+                  out
+                  "\nnote: search paths:"
+                  (if (= (string.string-length searched) 0)
+                    " none besides the linker's defaults"
+                    (str_cat.str-cat searched " and the linker's defaults")))))
+            unit))
+        (set! line-start (+ line-end 1))))
+    out))
 
 (define (source-tool-run-command
   [role : String]
@@ -1092,23 +1064,22 @@
       (source-tool-command-for-target target command)]
     (match (process.output command-to-run)
       [(OkProcessOutput output)
-        (begin
-          (source-tool-forward-output output)
-          (if (process.success? output)
-            Ok
-            (Err
-              (str_cat.str-cat
-                "Error: "
-                role
-                " '"
-                tool
-                "' failed for target "
-                (source-tool-target-name target)
-                " with status "
-                (string.int->string (process.output-status output))
-                (let
-                  [stderr : String (process.output-stderr output)]
-                  (source-tool-link-failure-notes (& stderr) (& link-inputs)))))))]
+        (source-tool-forward-output output)
+        (if (process.success? output)
+          Ok
+          (Err
+            (str_cat.str-cat
+              "Error: "
+              role
+              " '"
+              tool
+              "' failed for target "
+              (source-tool-target-name target)
+              " with status "
+              (string.int->string (process.output-status output))
+              (let
+                [stderr : String (process.output-stderr output)]
+                (source-tool-link-failure-notes (& stderr) (& link-inputs))))))]
       [(ErrProcessOutput error)
         (Err
           (str_cat.str-cat
@@ -1381,16 +1352,14 @@
     [right-n : i64 (string.string-length right)]
     [i : i64 0]
     [same : bool (= left-n right-n)]
-    (begin
-      (while (and same (< i left-n))
-        (begin
-          (if (=
-            (source-tool-ascii-fold-char (string.string-ref left i))
-            (source-tool-ascii-fold-char (string.string-ref right i)))
-            unit
-            (set! same false))
-          (set! i (+ i 1))))
-      same)))
+    (while (and same (< i left-n))
+      (if (=
+        (source-tool-ascii-fold-char (string.string-ref left i))
+        (source-tool-ascii-fold-char (string.string-ref right i)))
+        unit
+        (set! same false))
+      (set! i (+ i 1)))
+    same))
 
 (define (source-tool-windows-llvm-archiver-name? [command : (& command str)]) : bool
   (let
@@ -1468,14 +1437,13 @@
   [obj-path : String]
   [bin-path : String]
   [remove-bin : bool]) : unit
-  (begin
-    (source-tool-try-remove-file-if-exists asm-path)
-    (source-tool-try-remove-file-if-exists obj-path)
-    (if remove-bin
-      (source-tool-try-remove-file-if-exists bin-path)
-      io.OkIoUnit)
-    (source-tool-try-remove-dir-if-exists temp-dir)
-    unit))
+  (source-tool-try-remove-file-if-exists asm-path)
+  (source-tool-try-remove-file-if-exists obj-path)
+  (if remove-bin
+    (source-tool-try-remove-file-if-exists bin-path)
+    io.OkIoUnit)
+  (source-tool-try-remove-dir-if-exists temp-dir)
+  unit)
 
 (define (source-tool-assemble
   [target : backend.CompilerBackendTarget]
@@ -1653,19 +1621,17 @@
   [result : compiler_driver_core.ResultCompilerDriverObject]) : ResultSourceToolString
   (match result
     [(Ok image advisories)
-      (begin
-        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
-        (match target
-          [(Linux) (source-tool-render-linkable-linux-elf-object image)]
-          [(Windows) (source-tool-render-linkable-windows-coff-object image)]))]
+      (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+      (match target
+        [(Linux) (source-tool-render-linkable-linux-elf-object image)]
+        [(Windows) (source-tool-render-linkable-windows-coff-object image)])]
     [(Unavailable category _)
       (Err (backend.compiler-direct-object-fallback-category category))]
     [(Err diag advisories)
-      (begin
-        (compiler_driver_core.compiler-driver-print-advisories (& advisories))
-        (Err
-          (compiler_driver_core.compiler-driver-render-source-diagnostic
-            (deref diag))))]))
+      (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+      (Err
+        (compiler_driver_core.compiler-driver-render-source-diagnostic
+          (deref diag)))]))
 
 ;; Emit a source or lowered program as a direct object. The lowered emitter
 ;; encodes scalar IR.
@@ -1775,17 +1741,13 @@
         mode
         opt-level)
         [(Ok asm advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (Ok (source-tool-augment-assembly-for-target asm target)))]
+          (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+          (Ok (source-tool-augment-assembly-for-target asm target))]
         [(Err diag advisories)
-          (begin
-            (compiler_driver_core.compiler-driver-print-advisories
-              (& advisories))
-            (Err
-              (compiler_driver_core.compiler-driver-render-source-diagnostic
-                (deref diag))))])]
+          (compiler_driver_core.compiler-driver-print-advisories (& advisories))
+          (Err
+            (compiler_driver_core.compiler-driver-render-source-diagnostic
+              (deref diag)))])]
     [(Assembly asm) (Ok asm)]))
 
 ;; Compile `request`'s program and link it into `request.files.bin`: through a
@@ -1879,40 +1841,35 @@
             (cfg_core.compiler-cfg-empty))
           link-inputs)
           [(Err message)
-            (begin
-              (io.print-error message)
-              1)]
+            (io.print-error message)
+            1]
           [(Ok effective-link-inputs)
-            (begin
-              (compiler_driver_core.compiler-driver-reset-file-state!)
-              (match (source-tool-link-program
-                (SourceToolLinkRequest
-                  source
-                  (SourceToolProgram.Source
-                    stdlib-roots
-                    (cfg_core.compiler-cfg-empty))
-                  target
-                  opt-level
-                  mode
-                  effective-link-inputs
-                  (owned_view.compiler-owned-shared-view files)
-                  "build: failed to write assembly artifact"))
-                [(Err message)
-                  (begin
-                    (io.print-error message)
-                    1)]
-                [(Ok)
-                  (begin
-                    (io.print-format
-                      "{}"
-                      (str_cat.str-cat
-                        "Built "
-                        (owned_view.compiler-owned-shared-view files.bin)
-                        "\n"))
-                    0)]))]))]
-    (begin
-      (source-tool-clean-temp-files files false)
-      status)))
+            (compiler_driver_core.compiler-driver-reset-file-state!)
+            (match (source-tool-link-program
+              (SourceToolLinkRequest
+                source
+                (SourceToolProgram.Source
+                  stdlib-roots
+                  (cfg_core.compiler-cfg-empty))
+                target
+                opt-level
+                mode
+                effective-link-inputs
+                (owned_view.compiler-owned-shared-view files)
+                "build: failed to write assembly artifact"))
+              [(Err message)
+                (io.print-error message)
+                1]
+              [(Ok)
+                (io.print-format
+                  "{}"
+                  (str_cat.str-cat
+                    "Built "
+                    (owned_view.compiler-owned-shared-view files.bin)
+                    "\n"))
+                0])]))]
+    (source-tool-clean-temp-files files false)
+    status))
 
 (define (source-tool-build-source
   [source : String]
@@ -1936,10 +1893,9 @@
         link-inputs
         temp-dir)]
     [(Err message)
-      (begin
-        (io.print-error
-          (str_cat.str-cat "build: failed to create temp dir: " message))
-        1)]))
+      (io.print-error
+        (str_cat.str-cat "build: failed to create temp dir: " message))
+      1]))
 
 ;: Run a user-facing executable while leaving child stdout/stderr connected to
 ;: the caller for live progress output.
@@ -1976,51 +1932,45 @@
             (owned_view.compiler-owned-shared-view cfg-names)))
         link-inputs)
         [(Err message)
-          (begin
-            (io.print-error message)
-            1)]
+          (io.print-error message)
+          1]
         [(Ok effective-link-inputs)
-          (begin
-            (compiler_driver_core.compiler-driver-reset-file-state!)
-            (match (source-tool-link-and-run
-              (SourceToolLinkRequest
-                source
-                (SourceToolProgram.Source
-                  stdlib-roots
-                  (source-tool-cfg-names-to-env cfg-names))
-                target
-                opt-level
-                mode
-                effective-link-inputs
-                (owned_view.compiler-owned-shared-view files)
-                "run: failed to write assembly artifact")
-              runtime-args
-              (process.env-empty)
-              stream-output)
-              [(LinkFailed message)
-                (begin
-                  (io.print-error message)
-                  1)]
-              [(Ran output)
-                (let
-                  [status : i64 (process.output-status output)]
-                  (begin
-                    (unless stream-output (source-tool-forward-output output))
-                    status))]
-              [(SpawnFailed error)
-                (begin
-                  (io.print-error
-                    (str_cat.str-cat
-                      "Error: failed to run executable '"
-                      (owned_view.compiler-owned-shared-view files.bin)
-                      "' for target "
-                      (source-tool-target-name target)
-                      ": "
-                      (process.error-message error)))
-                  1)]))])]
-    (begin
-      (source-tool-clean-temp-files files true)
-      status)))
+          (compiler_driver_core.compiler-driver-reset-file-state!)
+          (match (source-tool-link-and-run
+            (SourceToolLinkRequest
+              source
+              (SourceToolProgram.Source
+                stdlib-roots
+                (source-tool-cfg-names-to-env cfg-names))
+              target
+              opt-level
+              mode
+              effective-link-inputs
+              (owned_view.compiler-owned-shared-view files)
+              "run: failed to write assembly artifact")
+            runtime-args
+            (process.env-empty)
+            stream-output)
+            [(LinkFailed message)
+              (io.print-error message)
+              1]
+            [(Ran output)
+              (let
+                [status : i64 (process.output-status output)]
+                (unless stream-output (source-tool-forward-output output))
+                status)]
+            [(SpawnFailed error)
+              (io.print-error
+                (str_cat.str-cat
+                  "Error: failed to run executable '"
+                  (owned_view.compiler-owned-shared-view files.bin)
+                  "' for target "
+                  (source-tool-target-name target)
+                  ": "
+                  (process.error-message error)))
+              1])])]
+    (source-tool-clean-temp-files files true)
+    status))
 
 (define (source-tool-run-source
   [source : String]
@@ -2046,7 +1996,6 @@
         stream-output
         temp-dir)]
     [(Err message)
-      (begin
-        (io.print-error
-          (str_cat.str-cat "run: failed to create temp dir: " message))
-        1)]))
+      (io.print-error
+        (str_cat.str-cat "run: failed to create temp dir: " message))
+      1]))

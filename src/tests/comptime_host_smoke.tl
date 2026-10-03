@@ -66,9 +66,8 @@
     (ctfe.ctfe-reflect-info-list-empty)))
 
 (define (host-smoke-close [ok : bool]) : bool
-  (begin
-    (host.compiler-comptime-host-session-close!)
-    ok))
+  (host.compiler-comptime-host-session-close!)
+  ok)
 
 (define (host-smoke-var [pools : ast.AstNodePoolContext] [name : String]) : i64
   (ast.ast-node-pool-context-expr-push pools (Var (ci.intern name))))
@@ -97,28 +96,21 @@
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
     [callee-name : String "__tl_array-length"]
-    (begin
-      (set! (array-ref operands 0) (host-smoke-expr operand-node))
-      (host-smoke-open! pools operands 1 8)
-      (and
-        (host-smoke-ok? host.compiler-comptime-host-callback-fuel-check 0 0)
-        (host-smoke-ok?
-          host.compiler-comptime-host-callback-expr-var
-          (host-smoke-name-ptr callee-name)
-          (string.string-length callee-name))
-        (host-smoke-ok?
-          host.compiler-comptime-host-callback-expr-list-empty
-          0
-          0)
-        (host-smoke-push? 0)
-        (host-smoke-ok?
-          host.compiler-comptime-host-callback-expr-list-append
-          0
-          0)
-        (host-smoke-ok? host.compiler-comptime-host-callback-expr-call 0 0)
-        (host-smoke-commit?)
-        (host.compiler-comptime-host-result-ready?)
-        (host-smoke-result-shape-ok? pools operand-node)))))
+    (set! (array-ref operands 0) (host-smoke-expr operand-node))
+    (host-smoke-open! pools operands 1 8)
+    (and
+      (host-smoke-ok? host.compiler-comptime-host-callback-fuel-check 0 0)
+      (host-smoke-ok?
+        host.compiler-comptime-host-callback-expr-var
+        (host-smoke-name-ptr callee-name)
+        (string.string-length callee-name))
+      (host-smoke-ok? host.compiler-comptime-host-callback-expr-list-empty 0 0)
+      (host-smoke-push? 0)
+      (host-smoke-ok? host.compiler-comptime-host-callback-expr-list-append 0 0)
+      (host-smoke-ok? host.compiler-comptime-host-callback-expr-call 0 0)
+      (host-smoke-commit?)
+      (host.compiler-comptime-host-result-ready?)
+      (host-smoke-result-shape-ok? pools operand-node))))
 
 ;; A batch integer, in the encoding the producer writes.
 (define (host-smoke-int [value : i64]) : String
@@ -196,17 +188,16 @@
         (host-smoke-zero-record 2)
         (host-smoke-zero-record 3)
         (host-smoke-zero-record 4))]
-    (begin
-      (set! (array-ref operands 0) (host-smoke-expr operand-node))
-      (host-smoke-open! pools operands 1 8)
-      (and
-        (host-smoke-ok?
-          host.compiler-comptime-host-callback-run-ops
-          (host-smoke-name-ptr batch)
-          (string.string-length batch))
-        (host-smoke-commit?)
-        (host.compiler-comptime-host-result-ready?)
-        (host-smoke-result-shape-ok? pools operand-node)))))
+    (set! (array-ref operands 0) (host-smoke-expr operand-node))
+    (host-smoke-open! pools operands 1 8)
+    (and
+      (host-smoke-ok?
+        host.compiler-comptime-host-callback-run-ops
+        (host-smoke-name-ptr batch)
+        (string.string-length batch))
+      (host-smoke-commit?)
+      (host.compiler-comptime-host-result-ready?)
+      (host-smoke-result-shape-ok? pools operand-node))))
 
 ;; Run `batch` in a fresh one-operand session; the status and the value-stack
 ;; depth it left, as `status * 1000 + depth`.
@@ -215,19 +206,17 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
-    (begin
-      (set! (array-ref operands 0) (host-smoke-expr (host-smoke-var pools "x")))
-      (host-smoke-open! pools operands 1 8)
-      (let
-        [status : i64
-          (host-smoke-invoke
-            host.compiler-comptime-host-callback-run-ops
-            (host-smoke-name-ptr batch)
-            (string.string-length batch))]
-        [depth : i64 host.compiler-comptime-host-stack-len]
-        (begin
-          (host.compiler-comptime-host-session-close!)
-          (+ (* status 1000) depth))))))
+    (set! (array-ref operands 0) (host-smoke-expr (host-smoke-var pools "x")))
+    (host-smoke-open! pools operands 1 8)
+    (let
+      [status : i64
+        (host-smoke-invoke
+          host.compiler-comptime-host-callback-run-ops
+          (host-smoke-name-ptr batch)
+          (string.string-length batch))]
+      [depth : i64 host.compiler-comptime-host-stack-len]
+      (host.compiler-comptime-host-session-close!)
+      (+ (* status 1000) depth))))
 
 ;; A malformed batch is a bad request at the malformed token: the header
 ;; tokens resolve before any op runs, an earlier op in the same batch has
@@ -406,36 +395,35 @@
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
     [i64-kind : String "i64"]
     [string-kind : String "string"]
-    (begin
-      (set! (array-ref operands 0) (ctfe.CompilerCtfeValue.Type (I64)))
-      (host-smoke-open! pools operands 1 8)
-      (host-smoke-close
-        (and
-          (=
-            (host.compiler-comptime-host-callback-operand-type-kind-eq
-              host-smoke-cookie
-              0
-              (host-smoke-name-ptr i64-kind)
-              (string.string-length i64-kind))
-            1)
-          (=
-            (host.compiler-comptime-host-callback-operand-type-kind-eq
-              host-smoke-cookie
-              0
-              (host-smoke-name-ptr string-kind)
-              (string.string-length string-kind))
-            0)
-          (<
-            (host.compiler-comptime-host-callback-operand-type-kind-eq
-              host-smoke-cookie
-              1
-              (host-smoke-name-ptr i64-kind)
-              (string.string-length i64-kind))
-            0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-bool-literal
+    (set! (array-ref operands 0) (ctfe.CompilerCtfeValue.Type (I64)))
+    (host-smoke-open! pools operands 1 8)
+    (host-smoke-close
+      (and
+        (=
+          (host.compiler-comptime-host-callback-operand-type-kind-eq
+            host-smoke-cookie
+            0
+            (host-smoke-name-ptr i64-kind)
+            (string.string-length i64-kind))
+          1)
+        (=
+          (host.compiler-comptime-host-callback-operand-type-kind-eq
+            host-smoke-cookie
+            0
+            (host-smoke-name-ptr string-kind)
+            (string.string-length string-kind))
+          0)
+        (<
+          (host.compiler-comptime-host-callback-operand-type-kind-eq
+            host-smoke-cookie
             1
-            0))))))
+            (host-smoke-name-ptr i64-kind)
+            (string.string-length i64-kind))
+          0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-expr-bool-literal
+          1
+          0)))))
 
 ;; Reflection result callbacks and their computed expression/pattern consumers
 ;; are the shared host surface used by the eight eq/hash fold bodies in #5626.
@@ -452,51 +440,49 @@
       (ctfe.ctfe-reflect-variant-list-with-capacity 2)]
     [infos : ctfe.CtfeReflectInfoList
       (ctfe.ctfe-reflect-info-list-with-capacity 2)]
-    (begin
-      (set!
+    (set!
+      fields
+      (ctfe.ctfe-reflect-field-list-push
         fields
-        (ctfe.ctfe-reflect-field-list-push
-          fields
-          (Field (ci.intern "alpha") (I64))))
-      (set!
+        (Field (ci.intern "alpha") (I64))))
+    (set!
+      fields
+      (ctfe.ctfe-reflect-field-list-push
         fields
-        (ctfe.ctfe-reflect-field-list-push
-          fields
-          (Field (ci.intern "beta") (Bool))))
-      (ast.ast-type-list-push
-        (&mut payloads)
-        (ast.ast-node-pool-context-type-push pools (I64)))
-      (ast.ast-type-list-push
-        (&mut payloads)
-        (ast.ast-node-pool-context-type-push pools (Bool)))
-      (set!
+        (Field (ci.intern "beta") (Bool))))
+    (ast.ast-type-list-push
+      (&mut payloads)
+      (ast.ast-node-pool-context-type-push pools (I64)))
+    (ast.ast-type-list-push
+      (&mut payloads)
+      (ast.ast-node-pool-context-type-push pools (Bool)))
+    (set!
+      variants
+      (ctfe.ctfe-reflect-variant-list-push
         variants
-        (ctfe.ctfe-reflect-variant-list-push
-          variants
-          (Variant (ci.intern "Some") payloads)))
-      (set!
+        (Variant (ci.intern "Some") payloads)))
+    (set!
+      variants
+      (ctfe.ctfe-reflect-variant-list-push
         variants
-        (ctfe.ctfe-reflect-variant-list-push
-          variants
-          (Variant (ci.intern "None") (ast.ast-type-list-new))))
-      (set!
-        infos
-        (ctfe.ctfe-reflect-info-list-push-id
-          infos
-          (Struct "HostSmokePair" "" "HostSmokePair" pair-id (No) fields 0)
-          pair-id))
+        (Variant (ci.intern "None") (ast.ast-type-list-new))))
+    (set!
+      infos
       (ctfe.ctfe-reflect-info-list-push-id
         infos
-        (Enum "HostSmokeChoice" "" "HostSmokeChoice" choice-id (No) variants 0)
-        choice-id))))
+        (Struct "HostSmokePair" "" "HostSmokePair" pair-id (No) fields 0)
+        pair-id))
+    (ctfe.ctfe-reflect-info-list-push-id
+      infos
+      (Enum "HostSmokeChoice" "" "HostSmokeChoice" choice-id (No) variants 0)
+      choice-id)))
 
 ;; The reflection builder test below batches several independent logical
 ;; invocations under one expensive metadata setup. Consume its synthetic result
 ;; between probes; real macro entries never receive this reset capability.
 (define (host-smoke-consume-test-result!) : bool
-  (begin
-    (host.compiler-comptime-host-result-consume-for-test!)
-    true))
+  (host.compiler-comptime-host-result-consume-for-test!)
+  true)
 
 (define (host-smoke-result-name? [expected : String]) : bool
   (match (host.compiler-comptime-host-result-value)
@@ -532,14 +518,13 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 0)]
-    (begin
-      (host-smoke-open! pools operands 0 8)
-      (host-smoke-close
-        (and
-          (host-smoke-ok? host.compiler-comptime-host-callback-type-scalar 0 0)
-          (host-smoke-ok? host.compiler-comptime-host-callback-type-slice 0 0)
-          (host-smoke-commit?)
-          (host-smoke-result-slice-i64? pools))))))
+    (host-smoke-open! pools operands 0 8)
+    (host-smoke-close
+      (and
+        (host-smoke-ok? host.compiler-comptime-host-callback-type-scalar 0 0)
+        (host-smoke-ok? host.compiler-comptime-host-callback-type-slice 0 0)
+        (host-smoke-commit?)
+        (host-smoke-result-slice-i64? pools)))))
 
 (define (host-smoke-result-tuple-bool-t?
   [pools : (& pools ast.AstNodePoolContext)]) : bool
@@ -570,35 +555,31 @@
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 0)]
     [type-name : String "T"]
-    (begin
-      (host-smoke-open! pools (ast.ast-place-shared-view operands) 0 16)
-      (and
+    (host-smoke-open! pools (ast.ast-place-shared-view operands) 0 16)
+    (and
+      (host-smoke-close
+        (and
+          (host-smoke-ok? host.compiler-comptime-host-callback-type-scalar 10 0)
+          (host-smoke-ok?
+            host.compiler-comptime-host-callback-type-var
+            (host-smoke-name-ptr type-name)
+            (string.string-length type-name))
+          (host-smoke-ok? host.compiler-comptime-host-callback-type-tuple 2 0)
+          (host-smoke-commit?)
+          (host-smoke-result-tuple-bool-t? pools)))
+      (begin
+        (host-smoke-open! pools operands 0 8)
         (host-smoke-close
           (and
             (host-smoke-ok?
-              host.compiler-comptime-host-callback-type-scalar
-              10
+              host.compiler-comptime-host-callback-expr-bool-literal
+              1
               0)
-            (host-smoke-ok?
-              host.compiler-comptime-host-callback-type-var
-              (host-smoke-name-ptr type-name)
-              (string.string-length type-name))
-            (host-smoke-ok? host.compiler-comptime-host-callback-type-tuple 2 0)
-            (host-smoke-commit?)
-            (host-smoke-result-tuple-bool-t? pools)))
-        (begin
-          (host-smoke-open! pools operands 0 8)
-          (host-smoke-close
-            (and
-              (host-smoke-ok?
-                host.compiler-comptime-host-callback-expr-bool-literal
+            (host-smoke-rejected?
+              (host-smoke-invoke
+                host.compiler-comptime-host-callback-type-tuple
                 1
-                0)
-              (host-smoke-rejected?
-                (host-smoke-invoke
-                  host.compiler-comptime-host-callback-type-tuple
-                  1
-                  0)))))))))
+                0))))))))
 
 (define (host-smoke-result-var-args?
   [expected-name : String]
@@ -643,34 +624,33 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 0)]
-    (begin
-      (host-smoke-open! pools (ast.ast-place-shared-view operands) 0 8)
-      (and
+    (host-smoke-open! pools (ast.ast-place-shared-view operands) 0 8)
+    (and
+      (host-smoke-close
+        (and
+          (=
+            (host-smoke-type-var-args 1 "Borrowed\ntext")
+            tlci.tlci-host-callback-status-ok)
+          (host-smoke-commit?)
+          (host-smoke-result-var-args? "Borrowed" "text" "" 1)))
+      (begin
+        (host-smoke-open! pools (ast.ast-place-shared-view operands) 0 8)
         (host-smoke-close
           (and
             (=
-              (host-smoke-type-var-args 1 "Borrowed\ntext")
+              (host-smoke-type-var-args 2 "LifetimePair\nleft\nright")
               tlci.tlci-host-callback-status-ok)
             (host-smoke-commit?)
-            (host-smoke-result-var-args? "Borrowed" "text" "" 1)))
-        (begin
-          (host-smoke-open! pools (ast.ast-place-shared-view operands) 0 8)
-          (host-smoke-close
-            (and
-              (=
-                (host-smoke-type-var-args 2 "LifetimePair\nleft\nright")
-                tlci.tlci-host-callback-status-ok)
-              (host-smoke-commit?)
-              (host-smoke-result-var-args? "LifetimePair" "left" "right" 2))))
-        (begin
-          (host-smoke-open! pools operands 0 8)
-          (host-smoke-close
-            (and
-              (host-smoke-ok?
-                host.compiler-comptime-host-callback-type-scalar
-                0
-                0)
-              (host-smoke-rejected? (host-smoke-type-var-args 2 "Broken\nonly")))))))))
+            (host-smoke-result-var-args? "LifetimePair" "left" "right" 2))))
+      (begin
+        (host-smoke-open! pools operands 0 8)
+        (host-smoke-close
+          (and
+            (host-smoke-ok?
+              host.compiler-comptime-host-callback-type-scalar
+              0
+              0)
+            (host-smoke-rejected? (host-smoke-type-var-args 2 "Broken\nonly"))))))))
 
 (define (host-smoke-result-array-take?
   [pools : (& pools ast.AstNodePoolContext)]
@@ -698,33 +678,32 @@
     [index : i64 (host-smoke-var pools "index")]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 3)]
-    (begin
-      (set! (array-ref operands 0) (host-smoke-expr target))
-      (set! (array-ref operands 1) (host-smoke-expr live))
-      (set! (array-ref operands 2) (host-smoke-expr index))
-      (host-smoke-open! pools (ast.ast-place-shared-view operands) 3 16)
-      (and
+    (set! (array-ref operands 0) (host-smoke-expr target))
+    (set! (array-ref operands 1) (host-smoke-expr live))
+    (set! (array-ref operands 2) (host-smoke-expr index))
+    (host-smoke-open! pools (ast.ast-place-shared-view operands) 3 16)
+    (and
+      (host-smoke-close
+        (and
+          (host-smoke-push? 0)
+          (host-smoke-push? 1)
+          (host-smoke-push? 2)
+          (host-smoke-ok?
+            host.compiler-comptime-host-callback-expr-array-take
+            0
+            0)
+          (host-smoke-commit?)
+          (host-smoke-result-array-take? pools target live index)))
+      (begin
+        (host-smoke-open! pools operands 3 8)
         (host-smoke-close
           (and
             (host-smoke-push? 0)
-            (host-smoke-push? 1)
-            (host-smoke-push? 2)
-            (host-smoke-ok?
-              host.compiler-comptime-host-callback-expr-array-take
-              0
-              0)
-            (host-smoke-commit?)
-            (host-smoke-result-array-take? pools target live index)))
-        (begin
-          (host-smoke-open! pools operands 3 8)
-          (host-smoke-close
-            (and
-              (host-smoke-push? 0)
-              (host-smoke-rejected?
-                (host-smoke-invoke
-                  host.compiler-comptime-host-callback-expr-array-take
-                  0
-                  0)))))))))
+            (host-smoke-rejected?
+              (host-smoke-invoke
+                host.compiler-comptime-host-callback-expr-array-take
+                0
+                0))))))))
 
 (define (host-smoke-result-expr-typed-binding? [expected-init : i64]) : bool
   (match (host.compiler-comptime-host-result-value)
@@ -751,38 +730,37 @@
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 3)]
     [binding-name : String "out"]
-    (begin
-      (set! (array-ref operands 0) (host-smoke-expr init-node))
-      (set! (array-ref operands 1) (host-smoke-expr type-node))
-      (set! (array-ref operands 2) (host-smoke-expr bad-type-node))
-      (host-smoke-open! pools (ast.ast-place-shared-view operands) 3 16)
-      (and
+    (set! (array-ref operands 0) (host-smoke-expr init-node))
+    (set! (array-ref operands 1) (host-smoke-expr type-node))
+    (set! (array-ref operands 2) (host-smoke-expr bad-type-node))
+    (host-smoke-open! pools (ast.ast-place-shared-view operands) 3 16)
+    (and
+      (host-smoke-close
+        (and
+          (host-smoke-push? 0)
+          (host-smoke-push? 1)
+          (host-smoke-ok?
+            host.compiler-comptime-host-callback-let-binding-typed
+            (host-smoke-name-ptr binding-name)
+            (string.string-length binding-name))
+          (host-smoke-commit?)
+          (host-smoke-result-expr-typed-binding? init-node)))
+      (begin
+        (host-smoke-open! pools operands 3 16)
         (host-smoke-close
           (and
             (host-smoke-push? 0)
-            (host-smoke-push? 1)
-            (host-smoke-ok?
-              host.compiler-comptime-host-callback-let-binding-typed
-              (host-smoke-name-ptr binding-name)
-              (string.string-length binding-name))
-            (host-smoke-commit?)
-            (host-smoke-result-expr-typed-binding? init-node)))
-        (begin
-          (host-smoke-open! pools operands 3 16)
-          (host-smoke-close
-            (and
-              (host-smoke-push? 0)
-              (host-smoke-push? 2)
-              (=
-                (host-smoke-invoke
-                  host.compiler-comptime-host-callback-let-binding-typed
-                  (host-smoke-name-ptr binding-name)
-                  (string.string-length binding-name))
-                tlci.tlci-host-callback-status-diagnostic)
-              (string.eq
-                (host.compiler-comptime-host-diagnostic-text)
-                "type unquote expects a type expression")
-              (not (host.compiler-comptime-host-result-ready?)))))))))
+            (host-smoke-push? 2)
+            (=
+              (host-smoke-invoke
+                host.compiler-comptime-host-callback-let-binding-typed
+                (host-smoke-name-ptr binding-name)
+                (string.string-length binding-name))
+              tlci.tlci-host-callback-status-diagnostic)
+            (string.eq
+              (host.compiler-comptime-host-diagnostic-text)
+              "type unquote expects a type expression")
+            (not (host.compiler-comptime-host-result-ready?))))))))
 
 (define (host-smoke-result-bool? [expected : bool]) : bool
   (match (host.compiler-comptime-host-result-value)
@@ -816,133 +794,124 @@
     [begin-node : i64 0]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 4)]
-    (begin
-      (ast.ast-expr-list-push (&mut items) item-node)
-      (set!
-        begin-node
-        (ast.ast-node-pool-context-expr-push pools (Begin items)))
-      (set! (array-ref operands 0) (host-smoke-expr var-node))
-      (set!
-        (array-ref operands 1)
-        (ctfe.CompilerCtfeValue.CapturedExpr begin-node (Expr) pools))
-      (set! (array-ref operands 2) (ctfe.CompilerCtfeValue.Bool true))
-      (set! (array-ref operands 3) (host-smoke-expr int-node))
-      (host-smoke-open! pools (ast.ast-place-shared-view operands) 4 32)
-      (and
+    (ast.ast-expr-list-push (&mut items) item-node)
+    (set! begin-node (ast.ast-node-pool-context-expr-push pools (Begin items)))
+    (set! (array-ref operands 0) (host-smoke-expr var-node))
+    (set!
+      (array-ref operands 1)
+      (ctfe.CompilerCtfeValue.CapturedExpr begin-node (Expr) pools))
+    (set! (array-ref operands 2) (ctfe.CompilerCtfeValue.Bool true))
+    (set! (array-ref operands 3) (host-smoke-expr int-node))
+    (host-smoke-open! pools (ast.ast-place-shared-view operands) 4 32)
+    (and
+      (host-smoke-close
+        (and
+          (host-smoke-push? 0)
+          (host-smoke-ok? host.compiler-comptime-host-callback-local-set 0 0)
+          (host-smoke-push? 1)
+          (host-smoke-ok? host.compiler-comptime-host-callback-local-set 1 0)
+          (host-smoke-push? 2)
+          (host-smoke-ok? host.compiler-comptime-host-callback-local-set 2 0)
+          (host-smoke-push? 3)
+          (host-smoke-ok? host.compiler-comptime-host-callback-local-set 3 0)
+          (=
+            (host-smoke-invoke
+              host.compiler-comptime-host-callback-local-expr-var?
+              0
+              0)
+            1)
+          (host-smoke-ok?
+            host.compiler-comptime-host-callback-local-expr-var-name
+            0
+            0)
+          (host-smoke-commit?)
+          (host-smoke-result-name? "core")
+          (host-smoke-consume-test-result!)
+          (=
+            (host-smoke-invoke
+              host.compiler-comptime-host-callback-local-expr-begin?
+              1
+              0)
+            1)
+          (host-smoke-ok?
+            host.compiler-comptime-host-callback-local-expr-begin-items
+            1
+            0)
+          (host-smoke-commit?)
+          (host-smoke-result-captured-begin-items? item-node)
+          (host-smoke-consume-test-result!)
+          (=
+            (host-smoke-invoke
+              host.compiler-comptime-host-callback-local-expr-int?
+              3
+              0)
+            1)
+          (=
+            (host-smoke-invoke
+              host.compiler-comptime-host-callback-local-expr-int-value
+              3
+              0)
+            73)
+          (=
+            (host-smoke-invoke
+              host.compiler-comptime-host-callback-local-expr-int?
+              0
+              0)
+            0)
+          (=
+            (host-smoke-invoke
+              host.compiler-comptime-host-callback-local-bool-value
+              2
+              0)
+            1)
+          (host-smoke-ok? host.compiler-comptime-host-callback-value-bool 0 0)
+          (host-smoke-commit?)
+          (host-smoke-result-bool? false)
+          (host-smoke-consume-test-result!)
+          (=
+            (host-smoke-invoke
+              host.compiler-comptime-host-callback-local-bool-value
+              0
+              0)
+            -3)
+          (=
+            (host-smoke-invoke
+              host.compiler-comptime-host-callback-local-expr-begin?
+              0
+              0)
+            0)))
+      (begin
+        (host-smoke-open! pools (ast.ast-place-shared-view operands) 4 8)
+        (host-smoke-close
+          (host-smoke-rejected?
+            (host-smoke-invoke
+              host.compiler-comptime-host-callback-value-bool
+              2
+              0))))
+      (begin
+        (host-smoke-open! pools (ast.ast-place-shared-view operands) 4 8)
+        (host-smoke-close
+          (and
+            (host-smoke-push? 2)
+            (host-smoke-ok? host.compiler-comptime-host-callback-local-set 0 0)
+            (=
+              (host-smoke-invoke
+                host.compiler-comptime-host-callback-local-expr-var-name
+                0
+                0)
+              tlci.tlci-host-callback-status-bad-request))))
+      (begin
+        (host-smoke-open! pools operands 4 8)
         (host-smoke-close
           (and
             (host-smoke-push? 0)
             (host-smoke-ok? host.compiler-comptime-host-callback-local-set 0 0)
-            (host-smoke-push? 1)
-            (host-smoke-ok? host.compiler-comptime-host-callback-local-set 1 0)
-            (host-smoke-push? 2)
-            (host-smoke-ok? host.compiler-comptime-host-callback-local-set 2 0)
-            (host-smoke-push? 3)
-            (host-smoke-ok? host.compiler-comptime-host-callback-local-set 3 0)
             (=
               (host-smoke-invoke
-                host.compiler-comptime-host-callback-local-expr-var?
+                host.compiler-comptime-host-callback-local-expr-begin-items
                 0
                 0)
-              1)
-            (host-smoke-ok?
-              host.compiler-comptime-host-callback-local-expr-var-name
-              0
-              0)
-            (host-smoke-commit?)
-            (host-smoke-result-name? "core")
-            (host-smoke-consume-test-result!)
-            (=
-              (host-smoke-invoke
-                host.compiler-comptime-host-callback-local-expr-begin?
-                1
-                0)
-              1)
-            (host-smoke-ok?
-              host.compiler-comptime-host-callback-local-expr-begin-items
-              1
-              0)
-            (host-smoke-commit?)
-            (host-smoke-result-captured-begin-items? item-node)
-            (host-smoke-consume-test-result!)
-            (=
-              (host-smoke-invoke
-                host.compiler-comptime-host-callback-local-expr-int?
-                3
-                0)
-              1)
-            (=
-              (host-smoke-invoke
-                host.compiler-comptime-host-callback-local-expr-int-value
-                3
-                0)
-              73)
-            (=
-              (host-smoke-invoke
-                host.compiler-comptime-host-callback-local-expr-int?
-                0
-                0)
-              0)
-            (=
-              (host-smoke-invoke
-                host.compiler-comptime-host-callback-local-bool-value
-                2
-                0)
-              1)
-            (host-smoke-ok? host.compiler-comptime-host-callback-value-bool 0 0)
-            (host-smoke-commit?)
-            (host-smoke-result-bool? false)
-            (host-smoke-consume-test-result!)
-            (=
-              (host-smoke-invoke
-                host.compiler-comptime-host-callback-local-bool-value
-                0
-                0)
-              -3)
-            (=
-              (host-smoke-invoke
-                host.compiler-comptime-host-callback-local-expr-begin?
-                0
-                0)
-              0)))
-        (begin
-          (host-smoke-open! pools (ast.ast-place-shared-view operands) 4 8)
-          (host-smoke-close
-            (host-smoke-rejected?
-              (host-smoke-invoke
-                host.compiler-comptime-host-callback-value-bool
-                2
-                0))))
-        (begin
-          (host-smoke-open! pools (ast.ast-place-shared-view operands) 4 8)
-          (host-smoke-close
-            (and
-              (host-smoke-push? 2)
-              (host-smoke-ok?
-                host.compiler-comptime-host-callback-local-set
-                0
-                0)
-              (=
-                (host-smoke-invoke
-                  host.compiler-comptime-host-callback-local-expr-var-name
-                  0
-                  0)
-                tlci.tlci-host-callback-status-bad-request))))
-        (begin
-          (host-smoke-open! pools operands 4 8)
-          (host-smoke-close
-            (and
-              (host-smoke-push? 0)
-              (host-smoke-ok?
-                host.compiler-comptime-host-callback-local-set
-                0
-                0)
-              (=
-                (host-smoke-invoke
-                  host.compiler-comptime-host-callback-local-expr-begin-items
-                  0
-                  0)
-                tlci.tlci-host-callback-status-bad-request))))))))
+              tlci.tlci-host-callback-status-bad-request)))))))
 
 ;; Large module generators address locals by immediate slot. Pin the high end
 ;; of vector's 64-slot producer/host budget and reject the first slot beyond it.
@@ -951,28 +920,27 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
-    (begin
-      (set! (array-ref operands 0) (ctfe.CompilerCtfeValue.Bool true))
-      (host-smoke-open! pools (ast.ast-place-shared-view operands) 1 8)
-      (and
+    (set! (array-ref operands 0) (ctfe.CompilerCtfeValue.Bool true))
+    (host-smoke-open! pools (ast.ast-place-shared-view operands) 1 8)
+    (and
+      (host-smoke-close
+        (and
+          (host-smoke-push? 0)
+          (host-smoke-ok? host.compiler-comptime-host-callback-local-set 63 0)
+          (host-smoke-ok? host.compiler-comptime-host-callback-local-get 63 0)
+          (host-smoke-commit?)
+          (host-smoke-result-bool? true)))
+      (begin
+        (host-smoke-open! pools operands 1 8)
         (host-smoke-close
           (and
             (host-smoke-push? 0)
-            (host-smoke-ok? host.compiler-comptime-host-callback-local-set 63 0)
-            (host-smoke-ok? host.compiler-comptime-host-callback-local-get 63 0)
-            (host-smoke-commit?)
-            (host-smoke-result-bool? true)))
-        (begin
-          (host-smoke-open! pools operands 1 8)
-          (host-smoke-close
-            (and
-              (host-smoke-push? 0)
-              (=
-                (host-smoke-invoke
-                  host.compiler-comptime-host-callback-local-set
-                  64
-                  0)
-                tlci.tlci-host-callback-status-bad-request))))))))
+            (=
+              (host-smoke-invoke
+                host.compiler-comptime-host-callback-local-set
+                64
+                0)
+              tlci.tlci-host-callback-status-bad-request)))))))
 
 ;; The native callback value stack is fuel-bounded rather than carrying a
 ;; second, lower fixed ceiling. Formatting a long variadic argument list is one
@@ -984,18 +952,16 @@
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (set! (array-ref operands 0) (ctfe.CompilerCtfeValue.Bool true))
-      (host-smoke-open! pools operands 1 128)
-      (while (and ok (< index 65))
-        (begin
-          (set! ok (host-smoke-push? 0))
-          (set! index (+ index 1))))
-      (host-smoke-close
-        (and
-          ok
-          (= host.compiler-comptime-host-stack-len 65)
-          (>= (array-length host.compiler-comptime-host-stack) 128))))))
+    (set! (array-ref operands 0) (ctfe.CompilerCtfeValue.Bool true))
+    (host-smoke-open! pools operands 1 128)
+    (while (and ok (< index 65))
+      (set! ok (host-smoke-push? 0))
+      (set! index (+ index 1)))
+    (host-smoke-close
+      (and
+        ok
+        (= host.compiler-comptime-host-stack-len 65)
+        (>= (array-length host.compiler-comptime-host-stack) 128)))))
 
 (define (host-smoke-result-shared-let-scope?
   [pools : (& pools ast.AstNodePoolContext)]
@@ -1045,29 +1011,28 @@
       (ast.ast-node-pool-context-expr-push pools (Var binding-name))]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 3)]
-    (begin
-      (set!
-        (array-ref operands 0)
-        (ctfe.CompilerCtfeValue.Name "shared" binding-name))
-      (set! (array-ref operands 1) (host-smoke-expr init-node))
-      (set! (array-ref operands 2) (host-smoke-expr body-node))
-      (host-smoke-open! pools operands 3 16)
-      (host-smoke-close
-        (and
-          (= (array-length host.compiler-comptime-host-stack) 64)
-          (host-smoke-push? 0)
-          (host-smoke-push? 1)
-          (host-smoke-push? 2)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-shared-let-scope
-            0
-            0)
-          (host-smoke-commit?)
-          (host-smoke-result-shared-let-scope?
-            pools
-            binding-name
-            init-node
-            body-node))))))
+    (set!
+      (array-ref operands 0)
+      (ctfe.CompilerCtfeValue.Name "shared" binding-name))
+    (set! (array-ref operands 1) (host-smoke-expr init-node))
+    (set! (array-ref operands 2) (host-smoke-expr body-node))
+    (host-smoke-open! pools operands 3 16)
+    (host-smoke-close
+      (and
+        (= (array-length host.compiler-comptime-host-stack) 64)
+        (host-smoke-push? 0)
+        (host-smoke-push? 1)
+        (host-smoke-push? 2)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-expr-shared-let-scope
+          0
+          0)
+        (host-smoke-commit?)
+        (host-smoke-result-shared-let-scope?
+          pools
+          binding-name
+          init-node
+          body-node)))))
 
 (define (host-smoke-result-struct-get?
   [pools : (& pools ast.AstNodePoolContext)]
@@ -1109,38 +1074,37 @@
     [name-id : i64 (ci.intern "name-field")]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 4)]
-    (begin
-      (set! (array-ref operands 0) (host-smoke-expr target-node))
-      (set!
-        (array-ref operands 1)
-        (ctfe.CompilerCtfeValue.Name "name-field" name-id))
-      (set! (array-ref operands 2) (host-smoke-expr value-node))
-      (set! (array-ref operands 3) (ctfe.CompilerCtfeValue.Bool false))
-      (host-smoke-open! pools (ast.ast-place-shared-view operands) 4 16)
-      (and
+    (set! (array-ref operands 0) (host-smoke-expr target-node))
+    (set!
+      (array-ref operands 1)
+      (ctfe.CompilerCtfeValue.Name "name-field" name-id))
+    (set! (array-ref operands 2) (host-smoke-expr value-node))
+    (set! (array-ref operands 3) (ctfe.CompilerCtfeValue.Bool false))
+    (host-smoke-open! pools (ast.ast-place-shared-view operands) 4 16)
+    (and
+      (host-smoke-close
+        (and
+          (host-smoke-push? 0)
+          (host-smoke-push? 1)
+          (host-smoke-push? 2)
+          (host-smoke-ok?
+            host.compiler-comptime-host-callback-expr-struct-set-from-value
+            0
+            0)
+          (host-smoke-commit?)
+          (host-smoke-result-struct-set? pools target-node name-id value-node)))
+      (begin
+        (host-smoke-open! pools operands 4 16)
         (host-smoke-close
           (and
             (host-smoke-push? 0)
-            (host-smoke-push? 1)
+            (host-smoke-push? 3)
             (host-smoke-push? 2)
-            (host-smoke-ok?
-              host.compiler-comptime-host-callback-expr-struct-set-from-value
-              0
-              0)
-            (host-smoke-commit?)
-            (host-smoke-result-struct-set? pools target-node name-id value-node)))
-        (begin
-          (host-smoke-open! pools operands 4 16)
-          (host-smoke-close
-            (and
-              (host-smoke-push? 0)
-              (host-smoke-push? 3)
-              (host-smoke-push? 2)
-              (host-smoke-rejected?
-                (host-smoke-invoke
-                  host.compiler-comptime-host-callback-expr-struct-set-from-value
-                  0
-                  0)))))))))
+            (host-smoke-rejected?
+              (host-smoke-invoke
+                host.compiler-comptime-host-callback-expr-struct-set-from-value
+                0
+                0))))))))
 
 (define (host-smoke-result-tuple-ref?
   [pools : (& pools ast.AstNodePoolContext)]
@@ -1213,176 +1177,163 @@
       (__tl_make-array ctfe.CompilerCtfeValue 5)]
     [dot : String "."]
     [prefix : String "p"]
-    (begin
-      (ast.ast-type-list-push
-        (&mut tuple-items)
-        (ast.ast-node-pool-context-type-push pools (I64)))
-      (ast.ast-type-list-push
-        (&mut tuple-items)
-        (ast.ast-node-pool-context-type-push pools (Bool)))
-      (set!
-        (array-ref operands 0)
-        (ctfe.CompilerCtfeValue.Type (Struct pair-id)))
-      (set!
-        (array-ref operands 1)
-        (ctfe.CompilerCtfeValue.Type (Enum choice-id)))
-      (set!
-        (array-ref operands 2)
-        (ctfe.CompilerCtfeValue.Type (Tuple (box tuple-items))))
-      (set! (array-ref operands 3) (host-smoke-expr value-node))
-      (set!
-        (array-ref operands 4)
-        (ctfe.CompilerCtfeValue.Expr body-node (Bool)))
-      (host.compiler-comptime-host-session-open!
-        pools
-        operands
-        5
-        64
-        host-smoke-cookie
-        (host-smoke-reflections pools))
-      (host-smoke-close
-        (and
-          (host-smoke-push? 0)
-          (=
-            (host-smoke-invoke
-              host.compiler-comptime-host-callback-struct-field-count
-              0
-              0)
-            2)
-          (host-smoke-push? 2)
-          (=
-            (host-smoke-invoke
-              host.compiler-comptime-host-callback-tuple-element-count
-              0
-              0)
-            2)
-          (host-smoke-push? 1)
-          (=
-            (host-smoke-invoke
-              host.compiler-comptime-host-callback-enum-variant-count
-              0
-              0)
-            2)
-          (host-smoke-push? 1)
-          (=
-            (host-smoke-invoke
-              host.compiler-comptime-host-callback-enum-variant-payload-count
-              0
-              0)
-            2)
-          (host-smoke-push? 0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-struct-field-name
-            1
-            0)
-          (host-smoke-commit?)
-          (host-smoke-result-name? "beta")
-          (host-smoke-consume-test-result!)
-          ;; A computed String and a reflected Name append in stack order;
-          ;; struct hashing builds this `"." + field-name` key.
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-string-value
-            (host-smoke-name-ptr dot)
-            1)
-          (host-smoke-push? 0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-struct-field-name
+    (ast.ast-type-list-push
+      (&mut tuple-items)
+      (ast.ast-node-pool-context-type-push pools (I64)))
+    (ast.ast-type-list-push
+      (&mut tuple-items)
+      (ast.ast-node-pool-context-type-push pools (Bool)))
+    (set! (array-ref operands 0) (ctfe.CompilerCtfeValue.Type (Struct pair-id)))
+    (set! (array-ref operands 1) (ctfe.CompilerCtfeValue.Type (Enum choice-id)))
+    (set!
+      (array-ref operands 2)
+      (ctfe.CompilerCtfeValue.Type (Tuple (box tuple-items))))
+    (set! (array-ref operands 3) (host-smoke-expr value-node))
+    (set! (array-ref operands 4) (ctfe.CompilerCtfeValue.Expr body-node (Bool)))
+    (host.compiler-comptime-host-session-open!
+      pools
+      operands
+      5
+      64
+      host-smoke-cookie
+      (host-smoke-reflections pools))
+    (host-smoke-close
+      (and
+        (host-smoke-push? 0)
+        (=
+          (host-smoke-invoke
+            host.compiler-comptime-host-callback-struct-field-count
             0
             0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-string-append
+          2)
+        (host-smoke-push? 2)
+        (=
+          (host-smoke-invoke
+            host.compiler-comptime-host-callback-tuple-element-count
             0
             0)
-          (host-smoke-commit?)
-          (host-smoke-result-name? ".alpha")
-          (host-smoke-consume-test-result!)
-          (host-smoke-push? 0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-struct-field-type
+          2)
+        (host-smoke-push? 1)
+        (=
+          (host-smoke-invoke
+            host.compiler-comptime-host-callback-enum-variant-count
             0
             0)
-          (host-smoke-commit?)
-          (host-smoke-result-type? false)
-          (host-smoke-consume-test-result!)
-          (host-smoke-push? 2)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-tuple-element-type
-            1
-            0)
-          (host-smoke-commit?)
-          (host-smoke-result-type? true)
-          (host-smoke-consume-test-result!)
-          (host-smoke-push? 1)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-enum-variant-name
+          2)
+        (host-smoke-push? 1)
+        (=
+          (host-smoke-invoke
+            host.compiler-comptime-host-callback-enum-variant-payload-count
             0
             0)
-          (host-smoke-commit?)
-          (host-smoke-result-name? "Some")
-          (host-smoke-consume-test-result!)
-          (host-smoke-push? 1)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-enum-variant-payload-type
-            0
-            1)
-          (host-smoke-commit?)
-          (host-smoke-result-type? true)
-          (host-smoke-consume-test-result!)
-          ;; Dynamic projections consume reflected names/indexes.
-          (host-smoke-push? 3)
-          (host-smoke-push? 0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-struct-field-name
-            0
-            0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-struct-get-from-value
-            0
-            0)
-          (host-smoke-commit?)
-          (host-smoke-result-struct-get? pools value-node)
-          (host-smoke-consume-test-result!)
-          (host-smoke-push? 3)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-tuple-ref
-            1
-            0)
-          (host-smoke-commit?)
-          (host-smoke-result-tuple-ref? pools value-node)
-          (host-smoke-consume-test-result!)
-          ;; Assemble a variant match from a reflected name and dense
-          ;; generated payload bindings.
-          (host-smoke-push? 3)
-          (host-smoke-push? 1)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-enum-variant-name
-            0
-            0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-string-value
-            (host-smoke-name-ptr prefix)
-            (string.string-length prefix))
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-pattern-list-bindings
-            2
-            0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-pattern-variant-from-value
-            0
-            0)
-          (host-smoke-push? 4)
-          (host-smoke-ok? host.compiler-comptime-host-callback-match-arm 0 0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-match-arm-list-empty
-            0
-            0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-match-arm-list-cons-from-values
-            0
-            0)
-          (host-smoke-ok? host.compiler-comptime-host-callback-expr-match 0 0)
-          (host-smoke-commit?)
-          (host-smoke-result-reflected-match? pools value-node body-node))))))
+          2)
+        (host-smoke-push? 0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-struct-field-name
+          1
+          0)
+        (host-smoke-commit?)
+        (host-smoke-result-name? "beta")
+        (host-smoke-consume-test-result!)
+        ;; A computed String and a reflected Name append in stack order;
+        ;; struct hashing builds this `"." + field-name` key.
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-string-value
+          (host-smoke-name-ptr dot)
+          1)
+        (host-smoke-push? 0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-struct-field-name
+          0
+          0)
+        (host-smoke-ok? host.compiler-comptime-host-callback-string-append 0 0)
+        (host-smoke-commit?)
+        (host-smoke-result-name? ".alpha")
+        (host-smoke-consume-test-result!)
+        (host-smoke-push? 0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-struct-field-type
+          0
+          0)
+        (host-smoke-commit?)
+        (host-smoke-result-type? false)
+        (host-smoke-consume-test-result!)
+        (host-smoke-push? 2)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-tuple-element-type
+          1
+          0)
+        (host-smoke-commit?)
+        (host-smoke-result-type? true)
+        (host-smoke-consume-test-result!)
+        (host-smoke-push? 1)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-enum-variant-name
+          0
+          0)
+        (host-smoke-commit?)
+        (host-smoke-result-name? "Some")
+        (host-smoke-consume-test-result!)
+        (host-smoke-push? 1)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-enum-variant-payload-type
+          0
+          1)
+        (host-smoke-commit?)
+        (host-smoke-result-type? true)
+        (host-smoke-consume-test-result!)
+        ;; Dynamic projections consume reflected names/indexes.
+        (host-smoke-push? 3)
+        (host-smoke-push? 0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-struct-field-name
+          0
+          0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-expr-struct-get-from-value
+          0
+          0)
+        (host-smoke-commit?)
+        (host-smoke-result-struct-get? pools value-node)
+        (host-smoke-consume-test-result!)
+        (host-smoke-push? 3)
+        (host-smoke-ok? host.compiler-comptime-host-callback-expr-tuple-ref 1 0)
+        (host-smoke-commit?)
+        (host-smoke-result-tuple-ref? pools value-node)
+        (host-smoke-consume-test-result!)
+        ;; Assemble a variant match from a reflected name and dense
+        ;; generated payload bindings.
+        (host-smoke-push? 3)
+        (host-smoke-push? 1)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-enum-variant-name
+          0
+          0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-string-value
+          (host-smoke-name-ptr prefix)
+          (string.string-length prefix))
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-pattern-list-bindings
+          2
+          0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-pattern-variant-from-value
+          0
+          0)
+        (host-smoke-push? 4)
+        (host-smoke-ok? host.compiler-comptime-host-callback-match-arm 0 0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-match-arm-list-empty
+          0
+          0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-match-arm-list-cons-from-values
+          0
+          0)
+        (host-smoke-ok? host.compiler-comptime-host-callback-expr-match 0 0)
+        (host-smoke-commit?)
+        (host-smoke-result-reflected-match? pools value-node body-node)))))
 
 ;; Dense binding construction charges one unit per generated payload binding
 ;; and rejects the request before allocating when the shared session budget is
@@ -1393,20 +1344,19 @@
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
     [prefix : String "p"]
-    (begin
-      (host-smoke-open! pools operands 0 1)
-      (host-smoke-close
-        (and
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-string-value
-            (host-smoke-name-ptr prefix)
-            (string.string-length prefix))
-          (=
-            (host-smoke-invoke
-              host.compiler-comptime-host-callback-pattern-list-bindings
-              2
-              0)
-            tlci.tlci-host-callback-status-fuel-exhausted))))))
+    (host-smoke-open! pools operands 0 1)
+    (host-smoke-close
+      (and
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-string-value
+          (host-smoke-name-ptr prefix)
+          (string.string-length prefix))
+        (=
+          (host-smoke-invoke
+            host.compiler-comptime-host-callback-pattern-list-bindings
+            2
+            0)
+          tlci.tlci-host-callback-status-fuel-exhausted)))))
 
 ;; Native sequence folds must publish the same exact-root hygiene exemption as
 ;; their interpreted CTFE counterparts. Otherwise a later handoff clones and
@@ -1417,29 +1367,28 @@
     [condition-node : i64 (host-smoke-var pools "flag")]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
-    (begin
-      (set!
-        (array-ref operands 0)
-        (ctfe.CompilerCtfeValue.ExprList
-          (ast.ast-expr-cons condition-node (ast.ast-expr-list-new))))
-      (ctfe.ctfe-result-hygiene-free-reset!)
-      (host-smoke-open! pools operands 1 8)
-      (host-smoke-close
-        (and
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-bool-literal
-            1
-            0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-bool-literal
-            0
-            0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-list-fold-if
-            0
-            1)
-          (host-smoke-commit?)
-          (host-smoke-result-is-hygiene-free?))))))
+    (set!
+      (array-ref operands 0)
+      (ctfe.CompilerCtfeValue.ExprList
+        (ast.ast-expr-cons condition-node (ast.ast-expr-list-new))))
+    (ctfe.ctfe-result-hygiene-free-reset!)
+    (host-smoke-open! pools operands 1 8)
+    (host-smoke-close
+      (and
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-expr-bool-literal
+          1
+          0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-expr-bool-literal
+          0
+          0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-expr-list-fold-if
+          0
+          1)
+        (host-smoke-commit?)
+        (host-smoke-result-is-hygiene-free?)))))
 
 (define (host-smoke-clause-list-fold-hygiene-ok?) : bool
   (let
@@ -1451,34 +1400,33 @@
     [clauses : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
-    (begin
-      (ast.ast-expr-clause-list-push
-        (&mut clauses)
-        (ast.ast-expr-clause condition-node result-node))
-      (ast.ast-expr-clause-list-push
-        (&mut clauses)
-        (ast.ast-expr-clause else-node result-node))
-      (set!
-        (array-ref operands 0)
-        (ctfe.CompilerCtfeValue.ExprClauseList clauses))
-      (ctfe.ctfe-result-hygiene-free-reset!)
-      (host-smoke-open! pools operands 1 8)
-      (host-smoke-close
-        (and
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-bool-literal
-            0
-            0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-bool-literal
-            0
-            0)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-clause-list-fold-if
-            0
-            0)
-          (host-smoke-commit?)
-          (host-smoke-result-is-hygiene-free?))))))
+    (ast.ast-expr-clause-list-push
+      (&mut clauses)
+      (ast.ast-expr-clause condition-node result-node))
+    (ast.ast-expr-clause-list-push
+      (&mut clauses)
+      (ast.ast-expr-clause else-node result-node))
+    (set!
+      (array-ref operands 0)
+      (ctfe.CompilerCtfeValue.ExprClauseList clauses))
+    (ctfe.ctfe-result-hygiene-free-reset!)
+    (host-smoke-open! pools operands 1 8)
+    (host-smoke-close
+      (and
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-expr-bool-literal
+          0
+          0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-expr-bool-literal
+          0
+          0)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-expr-clause-list-fold-if
+          0
+          0)
+        (host-smoke-commit?)
+        (host-smoke-result-is-hygiene-free?)))))
 
 (define (host-smoke-call-provenance-ok?) : bool
   (let
@@ -1486,24 +1434,23 @@
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
     [macro-name : String "nested-macro"]
-    (begin
-      (ctfe.ctfe-visible-macro-names-reset!)
-      (ctfe.ctfe-visible-macro-name-add!
-        (ci.intern (ast.ast-place-shared-view macro-name)))
-      (ctfe.ctfe-result-macro-provenance-reset!)
-      (host-smoke-open! pools operands 0 8)
-      (host-smoke-close
-        (and
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-var
-            (host-smoke-name-ptr macro-name)
-            (string.string-length macro-name))
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-list-empty
-            0
-            0)
-          (host-smoke-ok? host.compiler-comptime-host-callback-expr-call 0 0)
-          (ctfe.ctfe-result-may-contain-macro?))))))
+    (ctfe.ctfe-visible-macro-names-reset!)
+    (ctfe.ctfe-visible-macro-name-add!
+      (ci.intern (ast.ast-place-shared-view macro-name)))
+    (ctfe.ctfe-result-macro-provenance-reset!)
+    (host-smoke-open! pools operands 0 8)
+    (host-smoke-close
+      (and
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-expr-var
+          (host-smoke-name-ptr macro-name)
+          (string.string-length macro-name))
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-expr-list-empty
+          0
+          0)
+        (host-smoke-ok? host.compiler-comptime-host-callback-expr-call 0 0)
+        (ctfe.ctfe-result-may-contain-macro?)))))
 
 ;; One invocation owns one public result slot. A buggy native entry must not
 ;; overwrite its first committed handle; the second commit is a bad request,
@@ -1513,30 +1460,29 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
-    (begin
-      (set! (array-ref operands 0) (ctfe.CompilerCtfeValue.Bool true))
-      (host-smoke-open! pools operands 1 8)
-      (host-smoke-close
-        (and
-          (host-smoke-push? 0)
-          (host-smoke-commit?)
-          (host-smoke-ok?
-            host.compiler-comptime-host-callback-expr-bool-literal
+    (set! (array-ref operands 0) (ctfe.CompilerCtfeValue.Bool true))
+    (host-smoke-open! pools operands 1 8)
+    (host-smoke-close
+      (and
+        (host-smoke-push? 0)
+        (host-smoke-commit?)
+        (host-smoke-ok?
+          host.compiler-comptime-host-callback-expr-bool-literal
+          0
+          0)
+        (=
+          (host-smoke-invoke
+            host.compiler-comptime-host-callback-commit-result
             0
             0)
-          (=
-            (host-smoke-invoke
-              host.compiler-comptime-host-callback-commit-result
-              0
-              0)
-            tlci.tlci-host-callback-status-bad-request)
-          (host-smoke-result-bool? true)
-          (=
-            (host-smoke-invoke
-              host.compiler-comptime-host-callback-expr-unit-literal
-              0
-              0)
-            tlci.tlci-host-callback-status-bad-request))))))
+          tlci.tlci-host-callback-status-bad-request)
+        (host-smoke-result-bool? true)
+        (=
+          (host-smoke-invoke
+            host.compiler-comptime-host-callback-expr-unit-literal
+            0
+            0)
+          tlci.tlci-host-callback-status-bad-request)))))
 
 ;; Statuses: stale cookie, empty-stack commit, and fuel exhaustion all answer
 ;; without committing state.
@@ -1545,42 +1491,35 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
-    (begin
-      (host-smoke-open! pools (ast.ast-place-shared-view operands) 0 1)
-      (and
-        (=
-          (host.compiler-comptime-host-callback-expr-list-empty 0x9999 0 0 0)
-          tlci.tlci-host-callback-status-bad-request)
-        (=
-          (host-smoke-invoke
-            host.compiler-comptime-host-callback-commit-result
-            0
-            0)
-          tlci.tlci-host-callback-status-bad-request)
-        (=
-          (host-smoke-invoke
-            host.compiler-comptime-host-callback-fuel-check
-            0
-            0)
-          tlci.tlci-host-callback-status-bad-request)
-        (begin
-          (host.compiler-comptime-host-session-close!)
-          (host-smoke-open! pools operands 0 1)
-          true)
-        (host-smoke-ok? host.compiler-comptime-host-callback-fuel-check 0 0)
-        (=
-          (host-smoke-invoke
-            host.compiler-comptime-host-callback-fuel-check
-            0
-            0)
-          tlci.tlci-host-callback-status-fuel-exhausted)
-        (=
-          (host-smoke-invoke
-            host.compiler-comptime-host-callback-expr-list-empty
-            0
-            0)
-          tlci.tlci-host-callback-status-fuel-exhausted)
-        (not (host.compiler-comptime-host-result-ready?))))))
+    (host-smoke-open! pools (ast.ast-place-shared-view operands) 0 1)
+    (and
+      (=
+        (host.compiler-comptime-host-callback-expr-list-empty 0x9999 0 0 0)
+        tlci.tlci-host-callback-status-bad-request)
+      (=
+        (host-smoke-invoke
+          host.compiler-comptime-host-callback-commit-result
+          0
+          0)
+        tlci.tlci-host-callback-status-bad-request)
+      (=
+        (host-smoke-invoke host.compiler-comptime-host-callback-fuel-check 0 0)
+        tlci.tlci-host-callback-status-bad-request)
+      (begin
+        (host.compiler-comptime-host-session-close!)
+        (host-smoke-open! pools operands 0 1)
+        true)
+      (host-smoke-ok? host.compiler-comptime-host-callback-fuel-check 0 0)
+      (=
+        (host-smoke-invoke host.compiler-comptime-host-callback-fuel-check 0 0)
+        tlci.tlci-host-callback-status-fuel-exhausted)
+      (=
+        (host-smoke-invoke
+          host.compiler-comptime-host-callback-expr-list-empty
+          0
+          0)
+        tlci.tlci-host-callback-status-fuel-exhausted)
+      (not (host.compiler-comptime-host-result-ready?)))))
 
 ;; The fixed abort-table callback latches status 3 after an entry has staged a
 ;; value but before commit. The attempted commit must return that status and
@@ -1591,36 +1530,31 @@
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue 1)]
     [message : String "native comptime abort control"]
-    (begin
-      (set! (array-ref operands 0) (ctfe.CompilerCtfeValue.Bool true))
-      (host-smoke-open! pools operands 1 8)
-      (and
-        (host-smoke-push? 0)
-        (=
-          (host.compiler-comptime-host-callback-abort
-            host-smoke-cookie
-            7
-            (host-smoke-name-ptr message)
-            (string.string-length message)
-            0)
-          tlci.tlci-host-callback-status-ok)
-        (=
-          (host-smoke-invoke
-            host.compiler-comptime-host-callback-commit-result
-            0
-            0)
-          tlci.tlci-host-callback-status-abort)
-        (not (host.compiler-comptime-host-result-ready?))))))
+    (set! (array-ref operands 0) (ctfe.CompilerCtfeValue.Bool true))
+    (host-smoke-open! pools operands 1 8)
+    (and
+      (host-smoke-push? 0)
+      (=
+        (host.compiler-comptime-host-callback-abort
+          host-smoke-cookie
+          7
+          (host-smoke-name-ptr message)
+          (string.string-length message)
+          0)
+        tlci.tlci-host-callback-status-ok)
+      (=
+        (host-smoke-invoke
+          host.compiler-comptime-host-callback-commit-result
+          0
+          0)
+        tlci.tlci-host-callback-status-abort)
+      (not (host.compiler-comptime-host-result-ready?)))))
 
 (define (host-smoke-closed-session-ok?) : bool
-  (begin
-    (host.compiler-comptime-host-session-close!)
-    (=
-      (host-smoke-invoke
-        host.compiler-comptime-host-callback-expr-list-empty
-        0
-        0)
-      tlci.tlci-host-callback-status-bad-request)))
+  (host.compiler-comptime-host-session-close!)
+  (=
+    (host-smoke-invoke host.compiler-comptime-host-callback-expr-list-empty 0 0)
+    tlci.tlci-host-callback-status-bad-request))
 
 (define (host-smoke-table-ok?) : bool
   (match (tlci.tlci-validate-host-callback-table

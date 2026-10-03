@@ -32,20 +32,19 @@
     [line : i64 1]
     [col : i64 1]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< idx source-len))
-        (if (and (= line target-line) (= col target-col))
-          (set! found idx)
-          (begin
-            (if (= (string.string-ref source idx) '\n')
-              (begin
-                (set! line (+ line 1))
-                (set! col 1))
-              (set! col (+ col 1)))
-            (set! idx (+ idx 1)))))
-      (if (and (< found 0) (= line target-line) (= col target-col))
-        source-len
-        found))))
+    (while (and (< found 0) (< idx source-len))
+      (if (and (= line target-line) (= col target-col))
+        (set! found idx)
+        (begin
+          (if (= (string.string-ref source idx) '\n')
+            (begin
+              (set! line (+ line 1))
+              (set! col 1))
+            (set! col (+ col 1)))
+          (set! idx (+ idx 1)))))
+    (if (and (< found 0) (= line target-line) (= col target-col))
+      source-len
+      found)))
 
 (define (compiler-check-fix-test-apply
   [source : (& source str)]
@@ -614,15 +613,13 @@
                         Use
                         0)
                       0)]
-                  (begin
-                    (semantic_index.compiler-semantic-source-index-release!
-                      (&mut partial))
-                    ok))]
-              [(Ok _ complete)
-                (begin
                   (semantic_index.compiler-semantic-source-index-release!
-                    (&mut complete))
-                  false)]
+                    (&mut partial))
+                  ok)]
+              [(Ok _ complete)
+                (semantic_index.compiler-semantic-source-index-release!
+                  (&mut complete))
+                false]
               [(Err _) false])]
           [ok : bool
             (and
@@ -709,15 +706,11 @@
                 generated-definition
                 0)
               unknown-ok)]
-          (begin
-            (semantic_index.compiler-semantic-source-index-release!
-              (&mut index))
-            ok))]
+          (semantic_index.compiler-semantic-source-index-release! (&mut index))
+          ok)]
       [(Partial _ partial)
-        (begin
-          (semantic_index.compiler-semantic-source-index-release!
-            (&mut partial))
-          false)]
+        (semantic_index.compiler-semantic-source-index-release! (&mut partial))
+        false]
       [(Err _) false])))
 
 (define (compiler-check-advisory-result-ok?) : bool
@@ -760,33 +753,29 @@
           [(Ok _ _) false]
           [(Err _ advisories)
             (= (cdiag.compiler-advisory-list-count (& advisories)) 1)]))]
-    (begin
-      (tc_core.tc-job-state-reset-file-state! job)
-      (let
-        [after-reset : cdiag.CompilerAdvisoryList
-          (check_core.compiler-check-advisories-for-job job)]
-        (and
-          carried?
-          (= (cdiag.compiler-advisory-list-count (& after-reset)) 0))))))
+    (tc_core.tc-job-state-reset-file-state! job)
+    (let
+      [after-reset : cdiag.CompilerAdvisoryList
+        (check_core.compiler-check-advisories-for-job job)]
+      (and carried? (= (cdiag.compiler-advisory-list-count (& after-reset)) 0)))))
 
 (define (compiler-check-tests-ok?) : bool
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (and
-      (= (compiler-check-self-test) 42)
-      (compiler-check-near-miss-fix-ok?)
-      (compiler-check-stdlib-import-help-not-machine-fix-ok?)
-      (compiler-check-duplicate-type-location-ok?)
-      (compiler-check-independent-diagnostics-ok?)
-      (compiler-check-parser-recovery-diagnostics-ok?)
-      (compiler-check-poison-suppresses-derived-diagnostics-ok?)
-      (sem_tests.compiler-check-semantic-index-ok?)
-      (compiler-check-semantic-access-ok?)
-      (compiler-check-advisory-result-ok?)
-      (compiler-check-subform-diagnostic-spans-ok?)
-      (compiler-check-qualified-near-miss-ok?)
-      (compiler-check-qualified-unbound-display-ok?)
-      (overlay_tests.compiler-source-overlay-tests-ok?))))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (and
+    (= (compiler-check-self-test) 42)
+    (compiler-check-near-miss-fix-ok?)
+    (compiler-check-stdlib-import-help-not-machine-fix-ok?)
+    (compiler-check-duplicate-type-location-ok?)
+    (compiler-check-independent-diagnostics-ok?)
+    (compiler-check-parser-recovery-diagnostics-ok?)
+    (compiler-check-poison-suppresses-derived-diagnostics-ok?)
+    (sem_tests.compiler-check-semantic-index-ok?)
+    (compiler-check-semantic-access-ok?)
+    (compiler-check-advisory-result-ok?)
+    (compiler-check-subform-diagnostic-spans-ok?)
+    (compiler-check-qualified-near-miss-ok?)
+    (compiler-check-qualified-unbound-display-ok?)
+    (overlay_tests.compiler-source-overlay-tests-ok?)))
 
 (define (compiler-check-source-ok? [path : String] [source : String]) : bool
   (match (check_core.compiler-check-source path source)
@@ -817,31 +806,30 @@
     [_ 0]))")
 
 (define (compiler-check-direct-source [path : String] [source : String]) : check_core.ResultCompilerCheck
-  (begin
-    (check_core.compiler-check-reset-pools!)
-    (tc_core.tc-job-state-reset-advisories! (tc_core.tc-serial-job-state))
-    (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
-      (owned_view.compiler-owned-shared-view path)
-      source
-      (check_core.compiler-check-language-cfgs))
-      [(Parsed program diagnostics)
-        (check_core.compiler-check-result-with-parse-diagnostics
-          (deref diagnostics)
-          (match program
-            [(Program decls-box)
-              (check_core.compiler-check-program
-                path
-                (ast.ast-decl-list-box-shared-view decls-box)
-                (ast.ast-decl-path-list-new)
+  (check_core.compiler-check-reset-pools!)
+  (tc_core.tc-job-state-reset-advisories! (tc_core.tc-serial-job-state))
+  (match (parser.parse-ast-source-recovery-diagnostic-with-cfg
+    (owned_view.compiler-owned-shared-view path)
+    source
+    (check_core.compiler-check-language-cfgs))
+    [(Parsed program diagnostics)
+      (check_core.compiler-check-result-with-parse-diagnostics
+        (deref diagnostics)
+        (match program
+          [(Program decls-box)
+            (check_core.compiler-check-program
+              path
+              (ast.ast-decl-list-box-shared-view decls-box)
+              (ast.ast-decl-path-list-new)
+              (svec.new)
+              (check_core.compiler-check-language-cfgs)
+              (tc_api.compiler-typecheck-prefix-cache-scope
+                "typecheck-prefix-check"
                 (svec.new)
-                (check_core.compiler-check-language-cfgs)
-                (tc_api.compiler-typecheck-prefix-cache-scope
-                  "typecheck-prefix-check"
-                  (svec.new)
-                  (check_core.compiler-check-language-cfgs))
-                (tc_core.tc-serial-job-state))]))]
-      [(Fatal diagnostics)
-        (Err diagnostics (check_core.compiler-check-serial-advisories))])))
+                (check_core.compiler-check-language-cfgs))
+              (tc_core.tc-serial-job-state))]))]
+    [(Fatal diagnostics)
+      (Err diagnostics (check_core.compiler-check-serial-advisories))]))
 
 (define (compiler-check-direct-source-ok? [path : String] [source : String]) : bool
   (match (compiler-check-direct-source path source)
@@ -889,47 +877,34 @@
         [decls : ast.AstDeclList (deref decls-box)]
         [index : i64 0]
         [name-id : i64 -1]
-        (begin
-          (while (and (< name-id 0) (< index decls.len))
-            (let
-              [decl : ast.AstDecl
-                (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
-              (begin
-                (match decl
-                  [(DefStruct decl-meta candidate _ _ _)
-                    (if (string.eq
-                      (tc_core.tc-env-key-name-text candidate)
-                      name)
-                      (set! name-id candidate)
-                      unit)]
-                  [(DefStructLifetimes decl-meta candidate _ _ _ _)
-                    (if (string.eq
-                      (tc_core.tc-env-key-name-text candidate)
-                      name)
-                      (set! name-id candidate)
-                      unit)]
-                  [(DefEnum decl-meta candidate _ _)
-                    (if (string.eq
-                      (tc_core.tc-env-key-name-text candidate)
-                      name)
-                      (set! name-id candidate)
-                      unit)]
-                  [(DefEnumLifetimes decl-meta candidate _ _ _)
-                    (if (string.eq
-                      (tc_core.tc-env-key-name-text candidate)
-                      name)
-                      (set! name-id candidate)
-                      unit)]
-                  [_ unit])
-                (set! index (+ index 1)))))
-          (if (< name-id 0)
-            false
-            (match (tc_core.tc-inline-aggregate-layout-finite-ok
-              ctx
-              name
-              name-id)
-              [(Ok) true]
-              [(Err _) false]))))]))
+        (while (and (< name-id 0) (< index decls.len))
+          (let
+            [decl : ast.AstDecl
+              (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
+            (match decl
+              [(DefStruct decl-meta candidate _ _ _)
+                (if (string.eq (tc_core.tc-env-key-name-text candidate) name)
+                  (set! name-id candidate)
+                  unit)]
+              [(DefStructLifetimes decl-meta candidate _ _ _ _)
+                (if (string.eq (tc_core.tc-env-key-name-text candidate) name)
+                  (set! name-id candidate)
+                  unit)]
+              [(DefEnum decl-meta candidate _ _)
+                (if (string.eq (tc_core.tc-env-key-name-text candidate) name)
+                  (set! name-id candidate)
+                  unit)]
+              [(DefEnumLifetimes decl-meta candidate _ _ _)
+                (if (string.eq (tc_core.tc-env-key-name-text candidate) name)
+                  (set! name-id candidate)
+                  unit)]
+              [_ unit])
+            (set! index (+ index 1))))
+        (if (< name-id 0)
+          false
+          (match (tc_core.tc-inline-aggregate-layout-finite-ok ctx name name-id)
+            [(Ok) true]
+            [(Err _) false])))]))
 
 (define (compiler-check-virtual-import-inline-layout-ok?) : bool
   (match (compiler_load.compiler-load-source-with-paths
@@ -1082,23 +1057,22 @@
 (define (compiler-check-pool-reset-ok?) : bool
   (let
     [source : String "(define (main) : i64 0)"]
-    (begin
-      (ast.ty-node-pool-reset!)
-      (match (check_core.compiler-check-source
-        "tests/pool_reset_a.tl"
-        (owned_view.compiler-owned-shared-view source))
-        [(Ok _ _)
-          (let
-            [first-len : i64 (ast.ty-node-pool-len)]
-            (match (check_core.compiler-check-source
-              "tests/pool_reset_b.tl"
-              source)
-              [(Ok _ _)
-                (let
-                  [second-len : i64 (ast.ty-node-pool-len)]
-                  (and (> first-len 0) (= first-len second-len)))]
-              [(Err _ _) false]))]
-        [(Err _ _) false]))))
+    (ast.ty-node-pool-reset!)
+    (match (check_core.compiler-check-source
+      "tests/pool_reset_a.tl"
+      (owned_view.compiler-owned-shared-view source))
+      [(Ok _ _)
+        (let
+          [first-len : i64 (ast.ty-node-pool-len)]
+          (match (check_core.compiler-check-source
+            "tests/pool_reset_b.tl"
+            source)
+            [(Ok _ _)
+              (let
+                [second-len : i64 (ast.ty-node-pool-len)]
+                (and (> first-len 0) (= first-len second-len)))]
+            [(Err _ _) false]))]
+      [(Err _ _) false])))
 
 (define (compiler-check-target-cfg-ok?) : bool
   (let
@@ -1108,57 +1082,55 @@
 (cfg tooling-feature (define cfg-value : i64 2))
 (define (main) : i64 (+ platform-value cfg-value))"]
     [names : svec.Vec (svec.new)]
-    (begin
-      (svec.push-ref! (&mut names) "tooling-feature")
-      (and
-        (match (check_core.compiler-check-source-with-roots-and-cfg
-          "tests/check_cfg_linux.tl"
-          (owned_view.compiler-owned-shared-view source)
-          (svec.new)
-          (target_cfg.compiler-target-cfgs-with-names
-            Linux
-            (owned_view.compiler-owned-shared-view names)))
-          [(Ok _ _) true]
-          [(Err _ _) false])
-        (match (check_core.compiler-check-source-with-roots-and-cfg
-          "tests/check_cfg_windows.tl"
-          source
-          (svec.new)
-          (target_cfg.compiler-target-cfgs-with-names Windows names))
-          [(Ok _ _) true]
-          [(Err _ _) false])))))
+    (svec.push-ref! (&mut names) "tooling-feature")
+    (and
+      (match (check_core.compiler-check-source-with-roots-and-cfg
+        "tests/check_cfg_linux.tl"
+        (owned_view.compiler-owned-shared-view source)
+        (svec.new)
+        (target_cfg.compiler-target-cfgs-with-names
+          Linux
+          (owned_view.compiler-owned-shared-view names)))
+        [(Ok _ _) true]
+        [(Err _ _) false])
+      (match (check_core.compiler-check-source-with-roots-and-cfg
+        "tests/check_cfg_windows.tl"
+        source
+        (svec.new)
+        (target_cfg.compiler-target-cfgs-with-names Windows names))
+        [(Ok _ _) true]
+        [(Err _ _) false]))))
 
 (define (compiler-check-self-test) : i64
-  (begin
-    (unless
-      (= (load_tests.compiler-load-self-test) 42)
-      (return (io.panic "compiler-check: loader smoke mismatch")))
-    (unless
-      (compiler-check-virtual-import-ok?)
-      (return (io.panic "compiler-check: virtual import smoke mismatch")))
-    (unless
-      (compiler-check-virtual-import-inline-layout-ok?)
-      (return
-        (io.panic "compiler-check: virtual import inline layout smoke mismatch")))
-    (unless
-      (compiler-check-export-ok?)
-      (return (io.panic "compiler-check: export smoke mismatch")))
-    (unless
-      (compiler-check-qualified-export-cache-reset-ok?)
-      (return
-        (io.panic "compiler-check: qualified export cache reset smoke mismatch")))
-    (unless
-      (compiler-check-virtual-error-ok?)
-      (return (io.panic "compiler-check: virtual diagnostic smoke mismatch")))
-    (unless
-      (compiler-check-runtime-stdlib-boundary-no-import-ok?)
-      (return
-        (io.panic
-          "compiler-check: runtime stdlib boundary no-import smoke mismatch")))
-    (unless
-      (compiler-check-source-ok?
-        "tests/runtime_boundary_tl"
-        "(import stdlib.io)
+  (unless
+    (= (load_tests.compiler-load-self-test) 42)
+    (return (io.panic "compiler-check: loader smoke mismatch")))
+  (unless
+    (compiler-check-virtual-import-ok?)
+    (return (io.panic "compiler-check: virtual import smoke mismatch")))
+  (unless
+    (compiler-check-virtual-import-inline-layout-ok?)
+    (return
+      (io.panic "compiler-check: virtual import inline layout smoke mismatch")))
+  (unless
+    (compiler-check-export-ok?)
+    (return (io.panic "compiler-check: export smoke mismatch")))
+  (unless
+    (compiler-check-qualified-export-cache-reset-ok?)
+    (return
+      (io.panic "compiler-check: qualified export cache reset smoke mismatch")))
+  (unless
+    (compiler-check-virtual-error-ok?)
+    (return (io.panic "compiler-check: virtual diagnostic smoke mismatch")))
+  (unless
+    (compiler-check-runtime-stdlib-boundary-no-import-ok?)
+    (return
+      (io.panic
+        "compiler-check: runtime stdlib boundary no-import smoke mismatch")))
+  (unless
+    (compiler-check-source-ok?
+      "tests/runtime_boundary_tl"
+      "(import stdlib.io)
 (import stdlib.byte_buf)
 (define (main [path : String]) : i64
   (let
@@ -1168,64 +1140,62 @@
       (io.flush-stdout)
       (+ (byte_buf.len (& data))
          (unsafe (io.file-open-status path 0))))))")
-      (return
-        (io.panic "compiler-check: runtime stdlib io boundary smoke mismatch")))
-    (unless
-      (compiler-check-source-ok?
-        "tests/runtime_boundary_env.tl"
-        "(import stdlib.env)
+    (return
+      (io.panic "compiler-check: runtime stdlib io boundary smoke mismatch")))
+  (unless
+    (compiler-check-source-ok?
+      "tests/runtime_boundary_env.tl"
+      "(import stdlib.env)
 (import stdlib.string)
 (define (main [name : String]) : i64
   (+ (if (env.var-exists? name) 1 0)
      (+ (string.string-length (env.var-value name))
         (string.string-length (env.path-separator)))))")
-      (return
-        (io.panic "compiler-check: runtime stdlib env boundary smoke mismatch")))
-    (unless
-      (compiler-check-source-ok?
-        "tests/runtime_boundary_fs.tl"
-        "(import stdlib.fs)
+    (return
+      (io.panic "compiler-check: runtime stdlib env boundary smoke mismatch")))
+  (unless
+    (compiler-check-source-ok?
+      "tests/runtime_boundary_fs.tl"
+      "(import stdlib.fs)
 (import stdlib.string)
 (define (main [path : String]) : i64
   (+ (fs.process-id)
      (+ (fs.current-dir-status)
         (+ (string.string-length (fs.current-dir))
            (fs.file-size-status path)))))")
-      (return
-        (io.panic "compiler-check: runtime stdlib fs boundary smoke mismatch")))
-    (unless
-      (compiler-check-source-ok?
-        "tests/runtime_boundary_profile.tl"
-        "(import stdlib.profile)
+    (return
+      (io.panic "compiler-check: runtime stdlib fs boundary smoke mismatch")))
+  (unless
+    (compiler-check-source-ok?
+      "tests/runtime_boundary_profile.tl"
+      "(import stdlib.profile)
 (define (main) : i64
   (begin
     (profile.alloc-reset-peak)
     (+ (profile.now-ms)
        (+ (profile.alloc-total)
           (+ (profile.alloc-live) (profile.alloc-peak))))))")
-      (return
-        (io.panic
-          "compiler-check: runtime stdlib profile boundary smoke mismatch")))
-    (unless
-      (compiler-check-private-dynamic-buffer-vector-ok?)
-      (return
-        (io.panic
-          "compiler-check: private dynamic-buffer vector smoke mismatch")))
-    (unless
-      (compiler-check-private-dynamic-buffer-accepted-ok?)
-      (return
-        (io.panic
-          "compiler-check: private dynamic-buffer public smoke mismatch")))
-    (unless
-      (compiler-check-implicit-core-prelude-ok?)
-      (return (io.panic "compiler-check: implicit core prelude smoke mismatch")))
-    (unless
-      (compiler-check-seen-root-ok?)
-      (return (io.panic "compiler-check: seen root smoke mismatch")))
-    (unless
-      (compiler-check-pool-reset-ok?)
-      (return (io.panic "compiler-check: pool reset smoke mismatch")))
-    (unless
-      (compiler-check-target-cfg-ok?)
-      (return (io.panic "compiler-check: target/cfg smoke mismatch")))
-    42))
+    (return
+      (io.panic
+        "compiler-check: runtime stdlib profile boundary smoke mismatch")))
+  (unless
+    (compiler-check-private-dynamic-buffer-vector-ok?)
+    (return
+      (io.panic "compiler-check: private dynamic-buffer vector smoke mismatch")))
+  (unless
+    (compiler-check-private-dynamic-buffer-accepted-ok?)
+    (return
+      (io.panic "compiler-check: private dynamic-buffer public smoke mismatch")))
+  (unless
+    (compiler-check-implicit-core-prelude-ok?)
+    (return (io.panic "compiler-check: implicit core prelude smoke mismatch")))
+  (unless
+    (compiler-check-seen-root-ok?)
+    (return (io.panic "compiler-check: seen root smoke mismatch")))
+  (unless
+    (compiler-check-pool-reset-ok?)
+    (return (io.panic "compiler-check: pool reset smoke mismatch")))
+  (unless
+    (compiler-check-target-cfg-ok?)
+    (return (io.panic "compiler-check: target/cfg smoke mismatch")))
+  42)

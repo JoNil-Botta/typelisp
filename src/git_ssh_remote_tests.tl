@@ -10,14 +10,12 @@
     [right-length : i64 (string.string-length right)]
     [index : i64 0]
     [same : bool (= left-length right-length)]
-    (begin
-      (while (and same (< index left-length))
-        (begin
-          (if (= (string.string-ref left index) (string.string-ref right index))
-            unit
-            (set! same false))
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index left-length))
+      (if (= (string.string-ref left index) (string.string-ref right index))
+        unit
+        (set! same false))
+      (set! index (+ index 1)))
+    same))
 
 (define (git-ssh-test-syntax-code
   [syntax : (& syntax git_ssh.GitSshRemoteSyntax)]) : i64
@@ -62,16 +60,14 @@
     [prefix-length : i64 (string.string-length (& prefix))]
     [index : i64 0]
     [same : bool (>= (string.string-length command) (+ prefix-length 2))]
-    (begin
-      (while (and same (< index prefix-length))
-        (begin
-          (if (=
-            (string.string-ref command index)
-            (string.string-ref (& prefix) index))
-            unit
-            (set! same false))
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index prefix-length))
+      (if (=
+        (string.string-ref command index)
+        (string.string-ref (& prefix) index))
+        unit
+        (set! same false))
+      (set! index (+ index 1)))
+    same))
 
 ;; Decode the deliberately tiny grammar emitted by git-ssh-upload-pack-command:
 ;; one fixed service name, one space, then one Git sq-quoted repository path.
@@ -89,34 +85,28 @@
         (git-ssh-test-command-prefix? command)
         (= (cast (string.string-ref command 16) : i64) 39)
         (= (cast (string.string-ref command (- length 1)) : i64) 39))]
-    (begin
-      (while (and valid (< index (- length 1)))
-        (let
-          [code : i64 (cast (string.string-ref command index) : i64)]
-          (begin
-            (if (= code 39)
-              (if (and
-                (< (+ index 3) length)
-                (= (cast (string.string-ref command (+ index 1)) : i64) 92)
-                (or
-                  (= (cast (string.string-ref command (+ index 2)) : i64) 39)
-                  (= (cast (string.string-ref command (+ index 2)) : i64) 33))
-                (= (cast (string.string-ref command (+ index 3)) : i64) 39))
-                (begin
-                  (set!
-                    code
-                    (cast (string.string-ref command (+ index 2)) : i64))
-                  (set! index (+ index 4)))
-                (set! valid false))
-              (set! index (+ index 1)))
-            (if (and valid (< expected-index expected-length))
-              (if (=
-                code
-                (cast (string.string-ref expected expected-index) : i64))
-                (set! expected-index (+ expected-index 1))
-                (set! valid false))
-              (set! valid false)))))
-      (and valid (= index (- length 1)) (= expected-index expected-length)))))
+    (while (and valid (< index (- length 1)))
+      (let
+        [code : i64 (cast (string.string-ref command index) : i64)]
+        (if (= code 39)
+          (if (and
+            (< (+ index 3) length)
+            (= (cast (string.string-ref command (+ index 1)) : i64) 92)
+            (or
+              (= (cast (string.string-ref command (+ index 2)) : i64) 39)
+              (= (cast (string.string-ref command (+ index 2)) : i64) 33))
+            (= (cast (string.string-ref command (+ index 3)) : i64) 39))
+            (begin
+              (set! code (cast (string.string-ref command (+ index 2)) : i64))
+              (set! index (+ index 4)))
+            (set! valid false))
+          (set! index (+ index 1)))
+        (if (and valid (< expected-index expected-length))
+          (if (= code (cast (string.string-ref expected expected-index) : i64))
+            (set! expected-index (+ expected-index 1))
+            (set! valid false))
+          (set! valid false))))
+    (and valid (= index (- length 1)) (= expected-index expected-length))))
 
 (define (git-ssh-test-remote-fixture?
   [input : (& input str)]
@@ -333,53 +323,48 @@
 (define (git-ssh-test-path-with-byte [code : i64]) : String
   (let
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity 6)]
-    (begin
-      (byte_buf.byte-buf-builder-append-string (&mut out) "repo/")
-      (byte_buf.byte-buf-builder-push (&mut out) (cast code : u8))
-      (byte_buf.byte-buf-builder-finish-string (& out)))))
+    (byte_buf.byte-buf-builder-append-string (&mut out) "repo/")
+    (byte_buf.byte-buf-builder-push (&mut out) (cast code : u8))
+    (byte_buf.byte-buf-builder-finish-string (& out))))
 
 (define (git-ssh-test-all-non-control-bytes?) : bool
   (let
     [code : i64 32]
     [valid : bool true]
-    (begin
-      (while (and valid (<= code 255))
-        (begin
-          (if (= code 127)
+    (while (and valid (<= code 255))
+      (if (= code 127)
+        unit
+        (let
+          [path : String (git-ssh-test-path-with-byte code)]
+          (if (git-ssh-test-command-roundtrip? (& path))
             unit
-            (let
-              [path : String (git-ssh-test-path-with-byte code)]
-              (if (git-ssh-test-command-roundtrip? (& path))
-                unit
-                (set! valid false))))
-          (set! code (+ code 1))))
-      valid)))
+            (set! valid false))))
+      (set! code (+ code 1)))
+    valid))
 
 (define (git-ssh-test-control-bytes-rejected?) : bool
   (let
     [code : i64 0]
     [valid : bool true]
-    (begin
-      (while (and valid (< code 32))
-        (let
-          [path : String (git-ssh-test-path-with-byte code)]
-          [remote : git_ssh.GitSshRemote (git-ssh-test-structured-remote path)]
-          (begin
-            (match (git_ssh.git-ssh-upload-pack-command (& remote))
-              [(Err error)
-                (if (= (git-ssh-test-error-code (& error)) 3)
-                  unit
-                  (set! valid false))]
-              [(Ok _) (set! valid false)])
-            (set! code (+ code 1)))))
+    (while (and valid (< code 32))
       (let
-        [path : String (git-ssh-test-path-with-byte 127)]
+        [path : String (git-ssh-test-path-with-byte code)]
         [remote : git_ssh.GitSshRemote (git-ssh-test-structured-remote path)]
-        (and
-          valid
-          (match (git_ssh.git-ssh-upload-pack-command (& remote))
-            [(Err error) (= (git-ssh-test-error-code (& error)) 3)]
-            [(Ok _) false]))))))
+        (match (git_ssh.git-ssh-upload-pack-command (& remote))
+          [(Err error)
+            (if (= (git-ssh-test-error-code (& error)) 3)
+              unit
+              (set! valid false))]
+          [(Ok _) (set! valid false)])
+        (set! code (+ code 1))))
+    (let
+      [path : String (git-ssh-test-path-with-byte 127)]
+      [remote : git_ssh.GitSshRemote (git-ssh-test-structured-remote path)]
+      (and
+        valid
+        (match (git_ssh.git-ssh-upload-pack-command (& remote))
+          [(Err error) (= (git-ssh-test-error-code (& error)) 3)]
+          [(Ok _) false])))))
 
 (define (git-ssh-test-injection-corpus?) : bool
   (and

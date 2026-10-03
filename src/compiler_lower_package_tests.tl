@@ -31,34 +31,32 @@
   (let
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index functions.len)
-        (begin
-          (match (ir.compiler-ir-function-seq-ref functions index)
-            [(Function name _ _ _ _ _)
-              (let
-                [name-text : String (ir.compiler-ir-symbol-text name)]
-                (if (or
-                  (lower.lower-string-prefix-at?
-                    (ir.compiler-ir-global-shared-view name-text)
-                    "__tl_spmd_pkg_"
-                    0)
-                  (lower.lower-string-prefix-at?
-                    (ir.compiler-ir-global-shared-view name-text)
-                    "__tl_spmd_ret_uniform___tl_spmd_pkg_"
-                    0)
-                  (lower.lower-string-prefix-at?
-                    (ir.compiler-ir-global-shared-view name-text)
-                    "__tl_spmd_ret_varying___tl_spmd_pkg_"
-                    0)
-                  (lower.lower-string-prefix-at?
-                    name-text
-                    "__tl_spmd_ret_mask___tl_spmd_pkg_"
-                    0))
-                  (set! count (+ count 1))
-                  unit))])
-          (set! index (+ index 1))))
-      count)))
+    (while (< index functions.len)
+      (match (ir.compiler-ir-function-seq-ref functions index)
+        [(Function name _ _ _ _ _)
+          (let
+            [name-text : String (ir.compiler-ir-symbol-text name)]
+            (if (or
+              (lower.lower-string-prefix-at?
+                (ir.compiler-ir-global-shared-view name-text)
+                "__tl_spmd_pkg_"
+                0)
+              (lower.lower-string-prefix-at?
+                (ir.compiler-ir-global-shared-view name-text)
+                "__tl_spmd_ret_uniform___tl_spmd_pkg_"
+                0)
+              (lower.lower-string-prefix-at?
+                (ir.compiler-ir-global-shared-view name-text)
+                "__tl_spmd_ret_varying___tl_spmd_pkg_"
+                0)
+              (lower.lower-string-prefix-at?
+                name-text
+                "__tl_spmd_ret_mask___tl_spmd_pkg_"
+                0))
+              (set! count (+ count 1))
+              unit))])
+      (set! index (+ index 1)))
+    count))
 
 (define (compiler-lower-spmd-package-helper-count-ok?
   [source : String]
@@ -303,10 +301,9 @@
   [second : ast.AstSpmdParamClass]) : ast.AstSpmdParamClassList
   (let
     [classes : ast.AstSpmdParamClassList (ast.ast-spmd-param-class-list-new)]
-    (begin
-      (ast.ast-spmd-param-class-list-push (&mut classes) first)
-      (ast.ast-spmd-param-class-list-push (&mut classes) second)
-      classes)))
+    (ast.ast-spmd-param-class-list-push (&mut classes) first)
+    (ast.ast-spmd-param-class-list-push (&mut classes) second)
+    classes))
 
 (define (compiler-lower-spmd-test-identity
   [state : lower.CompilerLowerState]
@@ -508,95 +505,91 @@
           (string.string-length
             (ci.intern-compat-state-str intern-a private-helper))
           0))]
-    (begin
-      (lower.lower-materialize-generated-role-symbols! state-a)
-      (lower.lower-materialize-generated-role-symbols! state-b)
-      (let
-        [old-other-symbol : i64
-          (compiler-lower-spmd-test-symbol state-b other-state)]
-        [other-rendered-ok : bool
-          (string.eq
-            (ci.intern-compat-state-str
-              intern-b
-              (compiler-lower-spmd-test-symbol state-b other-state))
-            expected-symbol)]
-        (begin
-          (lower.compiler-lower-state-reset! state-b)
-          (ci.intern-compat-state-reset! (&mut intern-b))
+    (lower.lower-materialize-generated-role-symbols! state-a)
+    (lower.lower-materialize-generated-role-symbols! state-b)
+    (let
+      [old-other-symbol : i64
+        (compiler-lower-spmd-test-symbol state-b other-state)]
+      [other-rendered-ok : bool
+        (string.eq
+          (ci.intern-compat-state-str
+            intern-b
+            (compiler-lower-spmd-test-symbol state-b other-state))
+          expected-symbol)]
+      (lower.compiler-lower-state-reset! state-b)
+      (ci.intern-compat-state-reset! (&mut intern-b))
+      (and
+        unrendered
+        (=
+          (compiler-lower-spmd-test-identity state-a base)
+          (compiler-lower-spmd-test-identity state-a repeat))
+        (=
+          (compiler-lower-spmd-test-symbol state-a base)
+          (compiler-lower-spmd-test-symbol state-a repeat))
+        (=
+          (compiler-lower-spmd-test-registration-key state-a base)
+          (compiler-lower-spmd-test-registration-key state-a repeat))
+        (not
+          (=
+            (compiler-lower-spmd-test-identity state-a base)
+            (compiler-lower-spmd-test-identity state-a different-lanes)))
+        (not
+          (=
+            (compiler-lower-spmd-test-identity state-a base)
+            (compiler-lower-spmd-test-identity state-a different-args)))
+        (not
+          (=
+            (compiler-lower-spmd-test-identity state-a base)
+            (compiler-lower-spmd-test-identity state-a different-result)))
+        (not
+          (=
+            (compiler-lower-spmd-test-identity-components state-a base)
+            (compiler-lower-spmd-test-identity-components state-b other-state)))
+        (= private-param private-param-repeat)
+        (not (= private-param private-param-mask))
+        (string.eq private-param-text "__tl_spmd_varying_arg_avx2_value")
+        (string.eq
+          (ci.intern-compat-state-str intern-a private-helper)
+          "__tl_spmd_ret_mask___tl_lambda_fixture_0")
+        (string.eq
+          (ci.intern-compat-state-str
+            intern-a
+            (compiler-lower-spmd-test-identity state-a base))
+          expected-identity)
+        (string.eq
+          (ci.intern-compat-state-str
+            intern-a
+            (compiler-lower-spmd-test-symbol state-a base))
+          expected-symbol)
+        other-rendered-ok
+        (cfg
+          test
           (and
-            unrendered
             (=
-              (compiler-lower-spmd-test-identity state-a base)
-              (compiler-lower-spmd-test-identity state-a repeat))
+              (lower.compiler-lower-profile-value
+                state-a
+                lower.compiler-lower-profile-spmd-identity-serializations-metric)
+              4)
             (=
-              (compiler-lower-spmd-test-symbol state-a base)
-              (compiler-lower-spmd-test-symbol state-a repeat))
+              (lower.compiler-lower-profile-value
+                state-a
+                lower.compiler-lower-profile-spmd-stable-hash-computations-metric)
+              4)
             (=
-              (compiler-lower-spmd-test-registration-key state-a base)
-              (compiler-lower-spmd-test-registration-key state-a repeat))
-            (not
-              (=
-                (compiler-lower-spmd-test-identity state-a base)
-                (compiler-lower-spmd-test-identity state-a different-lanes)))
-            (not
-              (=
-                (compiler-lower-spmd-test-identity state-a base)
-                (compiler-lower-spmd-test-identity state-a different-args)))
-            (not
-              (=
-                (compiler-lower-spmd-test-identity state-a base)
-                (compiler-lower-spmd-test-identity state-a different-result)))
-            (not
-              (=
-                (compiler-lower-spmd-test-identity-components state-a base)
-                (compiler-lower-spmd-test-identity-components
-                  state-b
-                  other-state)))
-            (= private-param private-param-repeat)
-            (not (= private-param private-param-mask))
-            (string.eq private-param-text "__tl_spmd_varying_arg_avx2_value")
-            (string.eq
-              (ci.intern-compat-state-str intern-a private-helper)
-              "__tl_spmd_ret_mask___tl_lambda_fixture_0")
-            (string.eq
-              (ci.intern-compat-state-str
-                intern-a
-                (compiler-lower-spmd-test-identity state-a base))
-              expected-identity)
-            (string.eq
-              (ci.intern-compat-state-str
-                intern-a
-                (compiler-lower-spmd-test-symbol state-a base))
-              expected-symbol)
-            other-rendered-ok
-            (cfg
-              test
-              (and
-                (=
-                  (lower.compiler-lower-profile-value
-                    state-a
-                    lower.compiler-lower-profile-spmd-identity-serializations-metric)
-                  4)
-                (=
-                  (lower.compiler-lower-profile-value
-                    state-a
-                    lower.compiler-lower-profile-spmd-stable-hash-computations-metric)
-                  4)
-                (=
-                  (lower.compiler-lower-profile-value
-                    state-a
-                    lower.compiler-lower-profile-spmd-render-cache-misses-metric)
-                  4)
-                (>=
-                  (lower.compiler-lower-profile-value
-                    state-a
-                    lower.compiler-lower-profile-spmd-render-cache-hits-metric)
-                  5))
-              true)
-            (not
-              (ci.intern-compat-state-generated-id-active?
-                intern-b
-                old-other-symbol))))))))
+              (lower.compiler-lower-profile-value
+                state-a
+                lower.compiler-lower-profile-spmd-render-cache-misses-metric)
+              4)
+            (>=
+              (lower.compiler-lower-profile-value
+                state-a
+                lower.compiler-lower-profile-spmd-render-cache-hits-metric)
+              5))
+          true)
+        (not
+          (ci.intern-compat-state-generated-id-active?
+            intern-b
+            old-other-symbol))))))
 
 (define (compiler-lower-spmd-package-callable-validation-errors-ok?) : bool
   (and

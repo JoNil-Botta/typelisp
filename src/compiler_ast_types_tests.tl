@@ -80,15 +80,13 @@
     [source : (Ptr i64)
       (unsafe
         (ptr-cast (ptr-addr-of persistent) : (Ptr i64)))]
-    (begin
-      (unsafe
-        (begin
-          (ptr-write! dest (ptr-read source))
-          (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
-          (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2)))))
-      ;; Overwriting an existing id can make hash entries stale. Clear the
-      ;; private table and let future pushes repopulate it from new candidates.
-      (ast.ast-type-node-pool-state-dedup-clear pool))))
+    (unsafe
+      (ptr-write! dest (ptr-read source))
+      (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
+      (ptr-write! (ptr-offset dest 2) (ptr-read (ptr-offset source 2))))
+    ;; Overwriting an existing id can make hash entries stale. Clear the
+    ;; private table and let future pushes repopulate it from new candidates.
+    (ast.ast-type-node-pool-state-dedup-clear pool)))
 
 (define (ast-node-pool-context-expr-canonical-span
   [pools : (& pools ast.AstNodePoolContext)]
@@ -108,17 +106,15 @@
     [out : ast.AstExprClauseList
       (ast.ast-expr-clause-list-with-capacity (- items.len 1))]
     [index : i64 1]
-    (begin
-      (while (< index items.len)
-        (begin
-          (ast.ast-expr-clause-list-push
-            (&mut out)
-            (ast.ast-expr-clause-list-get
-              (& items)
-              index
-              (ast.ast-expr-clause-fallback)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index items.len)
+      (ast.ast-expr-clause-list-push
+        (&mut out)
+        (ast.ast-expr-clause-list-get
+          (& items)
+          index
+          (ast.ast-expr-clause-fallback)))
+      (set! index (+ index 1)))
+    out))
 
 (define (ast-expr-binding-clause-list-tail
   [items : ast.AstExprBindingClauseList]) : ast.AstExprBindingClauseList
@@ -126,17 +122,15 @@
     [out : ast.AstExprBindingClauseList
       (ast.ast-expr-binding-clause-list-with-capacity (- items.len 1))]
     [index : i64 1]
-    (begin
-      (while (< index items.len)
-        (begin
-          (ast.ast-expr-binding-clause-list-push
-            (&mut out)
-            (ast.ast-expr-binding-clause-list-get
-              (& items)
-              index
-              (ast.ast-expr-binding-clause-fallback)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index items.len)
+      (ast.ast-expr-binding-clause-list-push
+        (&mut out)
+        (ast.ast-expr-binding-clause-list-get
+          (& items)
+          index
+          (ast.ast-expr-binding-clause-fallback)))
+      (set! index (+ index 1)))
+    out))
 
 ;; The AstType-taking constructors intern the type themselves, so call sites
 ;; can pass a literal type directly.
@@ -501,124 +495,116 @@
 (define (compiler-ast-type-pool-exhaustion-smoke?) : bool
   (let
     [capacity : i64 (ty-node-pool-capacity)]
-    (begin
+    (ast.ty-node-pool-reset!)
+    (ast.ty-node-pool-truncate! capacity)
+    (let
+      [id : i64 (ast.ty-node-push (I64))]
+      [len : i64 (ast.ty-node-pool-len)]
+      [exhausted : bool (ast.ty-node-pool-exhausted?)]
+      [grew : bool (> (ty-node-pool-capacity) capacity)]
       (ast.ty-node-pool-reset!)
-      (ast.ty-node-pool-truncate! capacity)
-      (let
-        [id : i64 (ast.ty-node-push (I64))]
-        [len : i64 (ast.ty-node-pool-len)]
-        [exhausted : bool (ast.ty-node-pool-exhausted?)]
-        [grew : bool (> (ty-node-pool-capacity) capacity)]
-        (begin
-          (ast.ty-node-pool-reset!)
-          (and (not exhausted) (= id capacity) (= len (+ capacity 1)) grew))))))
+      (and (not exhausted) (= id capacity) (= len (+ capacity 1)) grew))))
 
 (define (compiler-ast-type-dedup-smoke?) : bool
-  (begin
+  (ast.ty-node-pool-reset!)
+  (let
+    [first-i64 : i64 (ast.ty-node-push (I64))]
+    [first-len : i64 (ast.ty-node-pool-len)]
+    [second-i64 : i64 (ast.ty-node-push (I64))]
+    [second-len : i64 (ast.ty-node-pool-len)]
+    [first-array : i64 (ast.ty-node-push (ast.ast-ty-array (I64) 4))]
+    [array-len : i64 (ast.ty-node-pool-len)]
+    [second-array : i64 (ast.ty-node-push (ast.ast-ty-array (I64) 4))]
+    [final-len : i64 (ast.ty-node-pool-len)]
+    [first-bytes : i64 (ast.ty-node-push (Bytes))]
+    [bytes-len : i64 (ast.ty-node-pool-len)]
+    [second-bytes : i64 (ast.ty-node-push (Bytes))]
+    [second-bytes-len : i64 (ast.ty-node-pool-len)]
+    [str-ty : i64 (ast.ty-node-push (Str))]
+    [str-len : i64 (ast.ty-node-pool-len)]
+    [first-slice : i64 (ast.ty-node-push (ast.ast-ty-slice (I64)))]
+    [slice-len : i64 (ast.ty-node-pool-len)]
+    [second-slice : i64 (ast.ty-node-push (ast.ast-ty-slice (I64)))]
+    [second-slice-len : i64 (ast.ty-node-pool-len)]
+    [first-dyn-array : i64 (ast.ty-node-push (ast.ast-ty-dyn-array (I64)))]
+    [dyn-array-len : i64 (ast.ty-node-pool-len)]
+    [nested-slice : i64
+      (ast.ty-node-push (ast.ast-ty-slice (ast.ast-ty-slice (I64))))]
+    [nested-slice-again : i64
+      (ast.ty-node-push (ast.ast-ty-slice (ast.ast-ty-slice (I64))))]
+    [ok : bool
+      (and
+        (= first-i64 second-i64)
+        (= first-len 1)
+        (= second-len 1)
+        (= first-array second-array)
+        (= array-len 2)
+        (= final-len 2)
+        (= first-bytes second-bytes)
+        (= bytes-len 3)
+        (= second-bytes-len 3)
+        (not (= first-bytes str-ty))
+        (= str-len 4)
+        (= first-slice second-slice)
+        (= slice-len 5)
+        (= second-slice-len 5)
+        (not (= first-slice first-dyn-array))
+        (= dyn-array-len 6)
+        (= nested-slice nested-slice-again)
+        (= (ast.ast-type-tag (ast.ty-node-get first-slice)) 37)
+        (not
+          (=
+            (ast.ty-node-hash-value (ast.ty-node-get first-slice))
+            (ast.ty-node-hash-value (ast.ty-node-get first-dyn-array)))))]
     (ast.ty-node-pool-reset!)
-    (let
-      [first-i64 : i64 (ast.ty-node-push (I64))]
-      [first-len : i64 (ast.ty-node-pool-len)]
-      [second-i64 : i64 (ast.ty-node-push (I64))]
-      [second-len : i64 (ast.ty-node-pool-len)]
-      [first-array : i64 (ast.ty-node-push (ast.ast-ty-array (I64) 4))]
-      [array-len : i64 (ast.ty-node-pool-len)]
-      [second-array : i64 (ast.ty-node-push (ast.ast-ty-array (I64) 4))]
-      [final-len : i64 (ast.ty-node-pool-len)]
-      [first-bytes : i64 (ast.ty-node-push (Bytes))]
-      [bytes-len : i64 (ast.ty-node-pool-len)]
-      [second-bytes : i64 (ast.ty-node-push (Bytes))]
-      [second-bytes-len : i64 (ast.ty-node-pool-len)]
-      [str-ty : i64 (ast.ty-node-push (Str))]
-      [str-len : i64 (ast.ty-node-pool-len)]
-      [first-slice : i64 (ast.ty-node-push (ast.ast-ty-slice (I64)))]
-      [slice-len : i64 (ast.ty-node-pool-len)]
-      [second-slice : i64 (ast.ty-node-push (ast.ast-ty-slice (I64)))]
-      [second-slice-len : i64 (ast.ty-node-pool-len)]
-      [first-dyn-array : i64 (ast.ty-node-push (ast.ast-ty-dyn-array (I64)))]
-      [dyn-array-len : i64 (ast.ty-node-pool-len)]
-      [nested-slice : i64
-        (ast.ty-node-push (ast.ast-ty-slice (ast.ast-ty-slice (I64))))]
-      [nested-slice-again : i64
-        (ast.ty-node-push (ast.ast-ty-slice (ast.ast-ty-slice (I64))))]
-      [ok : bool
-        (and
-          (= first-i64 second-i64)
-          (= first-len 1)
-          (= second-len 1)
-          (= first-array second-array)
-          (= array-len 2)
-          (= final-len 2)
-          (= first-bytes second-bytes)
-          (= bytes-len 3)
-          (= second-bytes-len 3)
-          (not (= first-bytes str-ty))
-          (= str-len 4)
-          (= first-slice second-slice)
-          (= slice-len 5)
-          (= second-slice-len 5)
-          (not (= first-slice first-dyn-array))
-          (= dyn-array-len 6)
-          (= nested-slice nested-slice-again)
-          (= (ast.ast-type-tag (ast.ty-node-get first-slice)) 37)
-          (not
-            (=
-              (ast.ty-node-hash-value (ast.ty-node-get first-slice))
-              (ast.ty-node-hash-value (ast.ty-node-get first-dyn-array)))))]
-      (begin
-        (ast.ty-node-pool-reset!)
-        ok))))
+    ok))
 
 (define (compiler-ast-spmd-metadata-clone-smoke?) : bool
   (let
     [classes : ast.AstSpmdParamClassList (ast.ast-spmd-param-class-list-new)]
     [specializations : ast.AstSpmdSpecializationList
       (ast.ast-spmd-specialization-list-new)]
-    (begin
-      (ast.ast-spmd-param-class-list-push (&mut classes) Varying)
-      (ast.ast-spmd-param-class-list-push (&mut classes) Uniform)
-      (ast.ast-spmd-specialization-list-push
-        (&mut specializations)
-        (ast.AstSpmdSpecialization 8 (box classes) Varying 0))
-      (let
-        [copied : ast.AstFnMetadata
-          (ast.ast-fn-metadata-clone (SpmdCallable (box specializations)))]
-        (match (ast.ast-fn-metadata-spmd-callable copied)
-          [(Callable copied-items)
-            (let
-              [fallback : ast.AstSpmdSpecialization
-                (ast.AstSpmdSpecialization
-                  2
-                  (box (ast.ast-spmd-param-class-list-new))
-                  Unit
-                  -1)]
-              [item : ast.AstSpmdSpecialization
-                (ast.ast-spmd-specialization-list-get
-                  (& copied-items)
-                  0
-                  fallback)]
-              [copied-classes : ast.AstSpmdParamClassList
-                (ast-spmd-param-class-list-box-shared-view item.args)]
-              (and
-                (= (ast.ast-spmd-specialization-list-len (& copied-items)) 1)
-                (= item.lanes 8)
-                (= item.index-param 0)
-                (match item.result
-                  [(Varying) true]
-                  [_ false])
-                (match (ast.ast-spmd-param-class-list-get
-                  (& copied-classes)
-                  0
-                  Uniform)
-                  [(Varying) true]
-                  [_ false])
-                (match (ast.ast-spmd-param-class-list-get
-                  (& copied-classes)
-                  1
-                  Varying)
-                  [(Uniform) true]
-                  [_ false])))]
-          [_ false])))))
+    (ast.ast-spmd-param-class-list-push (&mut classes) Varying)
+    (ast.ast-spmd-param-class-list-push (&mut classes) Uniform)
+    (ast.ast-spmd-specialization-list-push
+      (&mut specializations)
+      (ast.AstSpmdSpecialization 8 (box classes) Varying 0))
+    (let
+      [copied : ast.AstFnMetadata
+        (ast.ast-fn-metadata-clone (SpmdCallable (box specializations)))]
+      (match (ast.ast-fn-metadata-spmd-callable copied)
+        [(Callable copied-items)
+          (let
+            [fallback : ast.AstSpmdSpecialization
+              (ast.AstSpmdSpecialization
+                2
+                (box (ast.ast-spmd-param-class-list-new))
+                Unit
+                -1)]
+            [item : ast.AstSpmdSpecialization
+              (ast.ast-spmd-specialization-list-get (& copied-items) 0 fallback)]
+            [copied-classes : ast.AstSpmdParamClassList
+              (ast-spmd-param-class-list-box-shared-view item.args)]
+            (and
+              (= (ast.ast-spmd-specialization-list-len (& copied-items)) 1)
+              (= item.lanes 8)
+              (= item.index-param 0)
+              (match item.result
+                [(Varying) true]
+                [_ false])
+              (match (ast.ast-spmd-param-class-list-get
+                (& copied-classes)
+                0
+                Uniform)
+                [(Varying) true]
+                [_ false])
+              (match (ast.ast-spmd-param-class-list-get
+                (& copied-classes)
+                1
+                Varying)
+                [(Uniform) true]
+                [_ false])))]
+        [_ false]))))
 
 (define (compiler-ast-imported-spmd-metadata-clone-smoke?) : bool
   (let
@@ -633,43 +619,42 @@
       (ast.ast-imported-spmd-specialization-list-new)]
     [callables : ast.AstImportedSpmdCallableList
       (ast.ast-imported-spmd-callable-list-new)]
-    (begin
-      (ast.ast-imported-spmd-specialization-list-push
-        (&mut specializations)
-        (ast.AstImportedSpmdSpecialization abi backend 8 args result 0 symbol))
-      (ast.ast-imported-spmd-callable-list-push
-        (&mut callables)
-        (ast.AstImportedSpmdCallable signature specializations))
-      (match (ast.ast-imported-spmd-metadata-clone
-        (Package "fixture" "1.0.0" name-id (box callables)))
-        [(Package owner version name copied-callables)
-          (let
-            [copied : ast.AstImportedSpmdCallableList (deref copied-callables)]
-            [callable : ast.AstImportedSpmdCallable
-              (ast.ast-imported-spmd-callable-list-get
-                (& copied)
-                0
-                (ast.ast-imported-spmd-callable-fallback))]
-            [copied-specializations : ast.AstImportedSpmdSpecializationList
-              callable.specializations]
-            [item : ast.AstImportedSpmdSpecialization
-              (ast.ast-imported-spmd-specialization-list-get
-                (& copied-specializations)
-                0
-                (ast.ast-imported-spmd-specialization-fallback))]
-            (and
-              (string.eq owner "fixture")
-              (string.eq version "1.0.0")
-              (ci.intern-id-eq? name name-id)
-              (= (ast.ast-imported-spmd-callable-list-len (& copied)) 1)
-              (ci.intern-id-eq? callable.signature signature)
-              (=
-                (ast.ast-imported-spmd-specialization-list-len
-                  (& copied-specializations))
-                1)
-              (= item.lanes 8)
-              (ci.intern-id-eq? item.symbol symbol)))]
-        [(No) false]))))
+    (ast.ast-imported-spmd-specialization-list-push
+      (&mut specializations)
+      (ast.AstImportedSpmdSpecialization abi backend 8 args result 0 symbol))
+    (ast.ast-imported-spmd-callable-list-push
+      (&mut callables)
+      (ast.AstImportedSpmdCallable signature specializations))
+    (match (ast.ast-imported-spmd-metadata-clone
+      (Package "fixture" "1.0.0" name-id (box callables)))
+      [(Package owner version name copied-callables)
+        (let
+          [copied : ast.AstImportedSpmdCallableList (deref copied-callables)]
+          [callable : ast.AstImportedSpmdCallable
+            (ast.ast-imported-spmd-callable-list-get
+              (& copied)
+              0
+              (ast.ast-imported-spmd-callable-fallback))]
+          [copied-specializations : ast.AstImportedSpmdSpecializationList
+            callable.specializations]
+          [item : ast.AstImportedSpmdSpecialization
+            (ast.ast-imported-spmd-specialization-list-get
+              (& copied-specializations)
+              0
+              (ast.ast-imported-spmd-specialization-fallback))]
+          (and
+            (string.eq owner "fixture")
+            (string.eq version "1.0.0")
+            (ci.intern-id-eq? name name-id)
+            (= (ast.ast-imported-spmd-callable-list-len (& copied)) 1)
+            (ci.intern-id-eq? callable.signature signature)
+            (=
+              (ast.ast-imported-spmd-specialization-list-len
+                (& copied-specializations))
+              1)
+            (= item.lanes 8)
+            (ci.intern-id-eq? item.symbol symbol)))]
+      [(No) false])))
 
 ;; Pin `ast-expr-node-bytes` / `ast-type-node-bytes` to the compiler's REAL
 ;; inline array stride.

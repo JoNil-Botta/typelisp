@@ -41,69 +41,68 @@
         (profile_state.compiler-profile-state-metrics left)]
       [right-metrics : profile_state.CompilerProfileMetrics
         (profile_state.compiler-profile-state-metrics right)]
-      (begin
-        (spec.spec-profile-reset! left)
-        (spec.spec-profile-reset! right)
-        (spec.spec-profile-note-structural-key
-          (profile_state.compiler-profile-state-shared-view left-metrics)
-          true)
-        (spec.spec-profile-note-structural-key
-          (profile_state.compiler-profile-state-shared-view right-metrics)
-          false)
-        (spec.spec-profile-note-name-render
-          (profile_state.compiler-profile-state-shared-view left-metrics)
-          true)
-        (spec.spec-profile-note-name-render right-metrics false)
-        (spec.spec-profile-note-generated-text-materialized left-metrics)
-        (spec.spec-profile-reset! right)
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            spec.spec-profile-structural-key-created-metric)
-          1
-          "left job retains structural-key creation")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            spec.spec-profile-structural-key-reused-metric)
-          0
-          "left job does not inherit right structural-key reuse")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            spec.spec-profile-name-render-calls-metric)
-          1
-          "left job retains render calls")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            spec.spec-profile-name-render-cache-hits-metric)
-          1
-          "left job retains render cache hits")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            spec.spec-profile-name-render-cache-misses-metric)
-          0
-          "left job does not inherit right render cache misses")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            spec.spec-profile-generated-text-materialized-metric)
-          1
-          "left job retains generated text materialization")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            right
-            spec.spec-profile-structural-key-created-metric)
-          0
-          "right reset is isolated from left")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            right
-            spec.spec-profile-name-render-calls-metric)
-          0
-          "right render counters reset independently")))))
+      (spec.spec-profile-reset! left)
+      (spec.spec-profile-reset! right)
+      (spec.spec-profile-note-structural-key
+        (profile_state.compiler-profile-state-shared-view left-metrics)
+        true)
+      (spec.spec-profile-note-structural-key
+        (profile_state.compiler-profile-state-shared-view right-metrics)
+        false)
+      (spec.spec-profile-note-name-render
+        (profile_state.compiler-profile-state-shared-view left-metrics)
+        true)
+      (spec.spec-profile-note-name-render right-metrics false)
+      (spec.spec-profile-note-generated-text-materialized left-metrics)
+      (spec.spec-profile-reset! right)
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          left
+          spec.spec-profile-structural-key-created-metric)
+        1
+        "left job retains structural-key creation")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          left
+          spec.spec-profile-structural-key-reused-metric)
+        0
+        "left job does not inherit right structural-key reuse")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          left
+          spec.spec-profile-name-render-calls-metric)
+        1
+        "left job retains render calls")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          left
+          spec.spec-profile-name-render-cache-hits-metric)
+        1
+        "left job retains render cache hits")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          left
+          spec.spec-profile-name-render-cache-misses-metric)
+        0
+        "left job does not inherit right render cache misses")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          left
+          spec.spec-profile-generated-text-materialized-metric)
+        1
+        "left job retains generated text materialization")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          right
+          spec.spec-profile-structural-key-created-metric)
+        0
+        "right reset is isolated from left")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          right
+          spec.spec-profile-name-render-calls-metric)
+        0
+        "right render counters reset independently"))))
 
 (define (spec-cache-lookup [cache : spec_id_i64_map.Map] [name-id : i64]) : spec.SpecMaybeId
   (match (spec_id_i64_map.get (& cache) name-id)
@@ -313,16 +312,14 @@
       (spec_ci.intern-compat-state-capture-active)]
     [owner : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools intern-state)]
-    (begin
+    (ast.ast-node-pool-context-install! pools)
+    (spec_ci.intern-compat-state-install! intern-state)
+    (let
+      [result : ast.AstType
+        (spec.spec-substitute-type-with-owner owner ty subs)]
       (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install! intern-state)
-      (let
-        [result : ast.AstType
-          (spec.spec-substitute-type-with-owner owner ty subs)]
-        (begin
-          (ast.ast-node-pool-context-install! pools)
-          (spec_ci.intern-compat-state-install! intern-state)
-          result)))))
+      result)))
 
 ;; AstDecl names carry generated ids allocated outside the source-name table.
 (define (spec-materialize-generated-name-id [name : String]) : i64
@@ -339,16 +336,14 @@
       (spec_ci.intern-compat-state-capture-active)]
     [owner : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools intern-state)]
-    (begin
+    (ast.ast-node-pool-context-install! pools)
+    (spec_ci.intern-compat-state-install! intern-state)
+    (let
+      [result : spec.ResultSpecSubExpr
+        (spec.spec-substitute-values-expr-with-owner owner expr subs)]
       (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install! intern-state)
-      (let
-        [result : spec.ResultSpecSubExpr
-          (spec.spec-substitute-values-expr-with-owner owner expr subs)]
-        (begin
-          (ast.ast-node-pool-context-install! pools)
-          (spec_ci.intern-compat-state-install! intern-state)
-          result)))))
+      result)))
 
 (define (compiler-specialize-program-with-paths
   [program : ast.AstProgram]
@@ -362,9 +357,8 @@
         paths
         fallback-path
         pools)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      result)))
+    (ast.ast-node-pool-context-install! pools)
+    result))
 
 (define (compiler-specialize-needed? [program : ast.AstProgram]) : bool
   (spec.compiler-specialize-needed-with-pools
@@ -538,122 +532,118 @@
     [wide : spec.SpecTemplateEnv (spec.spec-template-env-from-list items)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      ;; Cross multiple dense-record growth boundaries with repeated names.
-      (while (< index 64)
-        (begin
-          (set!
-            wide
-            (spec.spec-template-env-shadow-name
-              wide
-              (if (= (bit-and index 1) 0)
-                cbi.compiler-builtin-id-fix-x
-                cbi.compiler-builtin-id-fix-second)))
-          (set! index (+ index 1))))
-      ;; Alternate retained parents, siblings, duplicates, and nested snapshots
-      ;; so the activated dense counts must roll backward and forward exactly.
+    ;; Cross multiple dense-record growth boundaries with repeated names.
+    (while (< index 64)
       (set!
-        ok
-        (and
-          ok
-          (spec-template-env-has-template? base cbi.compiler-builtin-id-fix-x)
-          (spec-template-env-has-template?
-            base
-            cbi.compiler-builtin-id-fix-second)
-          (not
-            (spec-template-env-has-template?
-              shadow-x
-              cbi.compiler-builtin-id-fix-x))
-          (spec-template-env-has-template?
-            shadow-x
-            cbi.compiler-builtin-id-fix-second)
-          (not
-            (spec-template-env-has-template?
-              duplicate-x
-              cbi.compiler-builtin-id-fix-x))
-          (spec-template-env-has-template?
-            duplicate-x
-            cbi.compiler-builtin-id-fix-second)
-          (spec-template-env-has-template?
-            sibling-second
-            cbi.compiler-builtin-id-fix-x)
-          (not
-            (spec-template-env-has-template?
-              sibling-second
-              cbi.compiler-builtin-id-fix-second))
-          (not
-            (spec-template-env-has-template?
-              nested-both
-              cbi.compiler-builtin-id-fix-x))
-          (not
-            (spec-template-env-has-template?
-              nested-both
-              cbi.compiler-builtin-id-fix-second))
-          (not
-            (spec-template-env-has-template?
-              pattern-both
-              cbi.compiler-builtin-id-fix-x))
-          (not
-            (spec-template-env-has-template?
-              pattern-both
-              cbi.compiler-builtin-id-fix-second))
-          (not
-            (spec-template-env-has-template?
-              param-both
-              cbi.compiler-builtin-id-fix-x))
-          (not
-            (spec-template-env-has-template?
-              param-both
-              cbi.compiler-builtin-id-fix-second))
-          (not
-            (spec-template-env-has-template?
-              binding-both
-              cbi.compiler-builtin-id-fix-x))
-          (not
-            (spec-template-env-has-template?
-              binding-both
-              cbi.compiler-builtin-id-fix-second))
-          (not
-            (spec-template-env-has-template?
-              param-then-binding
-              cbi.compiler-builtin-id-fix-x))
-          (not
-            (spec-template-env-has-template?
-              param-then-binding
-              cbi.compiler-builtin-id-fix-second))
-          (spec-template-env-has-template?
-            unrelated
-            cbi.compiler-builtin-id-fix-x)
-          (not
-            (spec-template-env-has-template? wide cbi.compiler-builtin-id-fix-x))
-          (not
-            (spec-template-env-has-template?
-              wide
-              cbi.compiler-builtin-id-fix-second))
-          ;; A missing-template name creates no record; all real shadows are
-          ;; dense slots, and the state grew beyond its initial capacity.
-          (=
-            (spec.spec-template-shadow-state-data
-              (spec-template-env-shadow-state base)).len
-            18)
-          (=
-            (spec.spec-template-shadow-state-data
-              (spec-template-env-shadow-state wide)).len
-            64)
-          (>
-            (array-length
-              (spec.spec-template-shadow-state-data
-                (spec-template-env-shadow-state wide)).slots)
-            8)
-          (= (comptime (size-of (type SpecTemplateShadowState))) 8)
-          (= (comptime (size-of (type SpecTemplateShadowStateData))) 56)))
-      ;; Revisit the root after the deepest snapshot to catch leaked counts.
+        wide
+        (spec.spec-template-env-shadow-name
+          wide
+          (if (= (bit-and index 1) 0)
+            cbi.compiler-builtin-id-fix-x
+            cbi.compiler-builtin-id-fix-second)))
+      (set! index (+ index 1)))
+    ;; Alternate retained parents, siblings, duplicates, and nested snapshots
+    ;; so the activated dense counts must roll backward and forward exactly.
+    (set!
+      ok
       (and
         ok
         (spec-template-env-has-template? base cbi.compiler-builtin-id-fix-x)
         (spec-template-env-has-template?
           base
-          cbi.compiler-builtin-id-fix-second)))))
+          cbi.compiler-builtin-id-fix-second)
+        (not
+          (spec-template-env-has-template?
+            shadow-x
+            cbi.compiler-builtin-id-fix-x))
+        (spec-template-env-has-template?
+          shadow-x
+          cbi.compiler-builtin-id-fix-second)
+        (not
+          (spec-template-env-has-template?
+            duplicate-x
+            cbi.compiler-builtin-id-fix-x))
+        (spec-template-env-has-template?
+          duplicate-x
+          cbi.compiler-builtin-id-fix-second)
+        (spec-template-env-has-template?
+          sibling-second
+          cbi.compiler-builtin-id-fix-x)
+        (not
+          (spec-template-env-has-template?
+            sibling-second
+            cbi.compiler-builtin-id-fix-second))
+        (not
+          (spec-template-env-has-template?
+            nested-both
+            cbi.compiler-builtin-id-fix-x))
+        (not
+          (spec-template-env-has-template?
+            nested-both
+            cbi.compiler-builtin-id-fix-second))
+        (not
+          (spec-template-env-has-template?
+            pattern-both
+            cbi.compiler-builtin-id-fix-x))
+        (not
+          (spec-template-env-has-template?
+            pattern-both
+            cbi.compiler-builtin-id-fix-second))
+        (not
+          (spec-template-env-has-template?
+            param-both
+            cbi.compiler-builtin-id-fix-x))
+        (not
+          (spec-template-env-has-template?
+            param-both
+            cbi.compiler-builtin-id-fix-second))
+        (not
+          (spec-template-env-has-template?
+            binding-both
+            cbi.compiler-builtin-id-fix-x))
+        (not
+          (spec-template-env-has-template?
+            binding-both
+            cbi.compiler-builtin-id-fix-second))
+        (not
+          (spec-template-env-has-template?
+            param-then-binding
+            cbi.compiler-builtin-id-fix-x))
+        (not
+          (spec-template-env-has-template?
+            param-then-binding
+            cbi.compiler-builtin-id-fix-second))
+        (spec-template-env-has-template?
+          unrelated
+          cbi.compiler-builtin-id-fix-x)
+        (not
+          (spec-template-env-has-template? wide cbi.compiler-builtin-id-fix-x))
+        (not
+          (spec-template-env-has-template?
+            wide
+            cbi.compiler-builtin-id-fix-second))
+        ;; A missing-template name creates no record; all real shadows are
+        ;; dense slots, and the state grew beyond its initial capacity.
+        (=
+          (spec.spec-template-shadow-state-data
+            (spec-template-env-shadow-state base)).len
+          18)
+        (=
+          (spec.spec-template-shadow-state-data
+            (spec-template-env-shadow-state wide)).len
+          64)
+        (>
+          (array-length
+            (spec.spec-template-shadow-state-data
+              (spec-template-env-shadow-state wide)).slots)
+          8)
+        (= (comptime (size-of (type SpecTemplateShadowState))) 8)
+        (= (comptime (size-of (type SpecTemplateShadowStateData))) 56)))
+    ;; Revisit the root after the deepest snapshot to catch leaked counts.
+    (and
+      ok
+      (spec-template-env-has-template? base cbi.compiler-builtin-id-fix-x)
+      (spec-template-env-has-template? base cbi.compiler-builtin-id-fix-second))))
 
 (define (compiler-specialize-type-shadow-ok?) : bool
   (match (parser.parse-ast-source
@@ -1063,37 +1053,35 @@
     [templates : spec.SpecTemplateList
       (let
         [out : spec.SpecTemplateList (spec.spec-template-list-new)]
-        (begin
-          (spec.spec-template-list-push
-            (&mut out)
-            (Item
-              cbi.compiler-builtin-id-fix-x
-              (ast.ast-param-list-new)
-              (I64)
-              (Literal (ast.ast-lit-int 1))))
-          (spec.spec-template-list-push
-            (&mut out)
-            (Item
-              cbi.compiler-builtin-id-fix-second
-              (ast.ast-param-list-new)
-              (Bool)
-              (Literal (Bool true))))
-          out))]
+        (spec.spec-template-list-push
+          (&mut out)
+          (Item
+            cbi.compiler-builtin-id-fix-x
+            (ast.ast-param-list-new)
+            (I64)
+            (Literal (ast.ast-lit-int 1))))
+        (spec.spec-template-list-push
+          (&mut out)
+          (Item
+            cbi.compiler-builtin-id-fix-second
+            (ast.ast-param-list-new)
+            (Bool)
+            (Literal (Bool true))))
+        out)]
     [template-env : spec.SpecTemplateEnv
       (spec.spec-template-env-from-list templates)]
     [cache : spec_id_i64_map.Map
       (let
         [seed-cache : spec_id_i64_map.Map (spec_id_i64_map.with-capacity 8)]
-        (begin
-          (spec_id_i64_map.insert-ref!
-            (&mut seed-cache)
-            cbi.compiler-builtin-id-fix-second
-            cbi.compiler-builtin-id-fix-second)
-          (spec_id_i64_map.insert-ref!
-            (&mut seed-cache)
-            cbi.compiler-builtin-id-fix-x
-            cbi.compiler-builtin-id-fix-x)
-          seed-cache))]
+        (spec_id_i64_map.insert-ref!
+          (&mut seed-cache)
+          cbi.compiler-builtin-id-fix-second
+          cbi.compiler-builtin-id-fix-second)
+        (spec_id_i64_map.insert-ref!
+          (&mut seed-cache)
+          cbi.compiler-builtin-id-fix-x
+          cbi.compiler-builtin-id-fix-x)
+        seed-cache)]
     [values : spec.SpecValueList
       (spec.spec-value-cons
         (I64 1)
@@ -1189,15 +1177,14 @@
           [decls : ast.AstDeclList
             (ast.ast-decl-list-box-shared-view decls-box)]
           [args : ast.AstExprList (ast.ast-expr-list-new)]
-          (begin
-            (ast.ast-expr-list-push
-              (&mut args)
-              (ast.ast-node-push (Literal (ast.ast-lit-generated-string arg))))
-            (set!
-              (array-ref decls.slots (+ decls.offset index))
-              (ast.ast-decl-comptime-decl-with-meta
-                (Some generator item args "")
-                (spec.spec-array-shared-view decls.slots (+ decls.offset index))))))])))
+          (ast.ast-expr-list-push
+            (&mut args)
+            (ast.ast-node-push (Literal (ast.ast-lit-generated-string arg))))
+          (set!
+            (array-ref decls.slots (+ decls.offset index))
+            (ast.ast-decl-comptime-decl-with-meta
+              (Some generator item args "")
+              (spec.spec-array-shared-view decls.slots (+ decls.offset index)))))])))
 
 (define (compiler-generated-decl-pair
   [source : String]
@@ -1209,20 +1196,19 @@
   [second-arg : String]) : parser.ResultAstProgram
   (match (parser.parse-ast-source source)
     [(Ok program)
-      (begin
-        (compiler-generated-decl-mark!
-          (ast.ast-place-shared-view program)
-          first-index
-          (spec.spec-place-shared-view generator)
-          (spec.spec-place-shared-view item)
-          first-arg)
-        (compiler-generated-decl-mark!
-          (ast.ast-place-shared-view program)
-          second-index
-          generator
-          item
-          second-arg)
-        (Ok program))]
+      (compiler-generated-decl-mark!
+        (ast.ast-place-shared-view program)
+        first-index
+        (spec.spec-place-shared-view generator)
+        (spec.spec-place-shared-view item)
+        first-arg)
+      (compiler-generated-decl-mark!
+        (ast.ast-place-shared-view program)
+        second-index
+        generator
+        item
+        second-arg)
+      (Ok program)]
     [(Err message) (Err message)]))
 
 (define (compiler-generated-decl-reuse-program) : parser.ResultAstProgram
@@ -1508,29 +1494,28 @@
       (ast.ast-spmd-specialization-list-new)]
     [generated-id : i64 (spec_ci.intern-generated-canonical-name "generated")]
     [body : i64 (ast.ast-node-push (Literal (ast.ast-lit-int 0)))]
-    (begin
-      (ast.ast-spmd-param-class-list-push (&mut a-classes) Varying)
-      (ast.ast-spmd-param-class-list-push (&mut b-classes) Varying)
-      (ast.ast-spmd-specialization-list-push
-        (&mut a-items)
-        (ast.AstSpmdSpecialization 8 (box a-classes) Varying 0))
-      (ast.ast-spmd-specialization-list-push
-        (&mut b-items)
-        (ast.AstSpmdSpecialization 16 (box b-classes) Varying 0))
-      (not
-        (spec.gen-decl-eq?
-          (ast.ast-decl-def-fn-metadata-id
-            generated-id
-            (ast.ast-param-list-new)
-            (I64)
-            body
-            (ast.ast-fn-metadata-full No (Callable a-items)))
-          (ast.ast-decl-def-fn-metadata-id
-            generated-id
-            (ast.ast-param-list-new)
-            (I64)
-            body
-            (ast.ast-fn-metadata-full No (Callable b-items))))))))
+    (ast.ast-spmd-param-class-list-push (&mut a-classes) Varying)
+    (ast.ast-spmd-param-class-list-push (&mut b-classes) Varying)
+    (ast.ast-spmd-specialization-list-push
+      (&mut a-items)
+      (ast.AstSpmdSpecialization 8 (box a-classes) Varying 0))
+    (ast.ast-spmd-specialization-list-push
+      (&mut b-items)
+      (ast.AstSpmdSpecialization 16 (box b-classes) Varying 0))
+    (not
+      (spec.gen-decl-eq?
+        (ast.ast-decl-def-fn-metadata-id
+          generated-id
+          (ast.ast-param-list-new)
+          (I64)
+          body
+          (ast.ast-fn-metadata-full No (Callable a-items)))
+        (ast.ast-decl-def-fn-metadata-id
+          generated-id
+          (ast.ast-param-list-new)
+          (I64)
+          body
+          (ast.ast-fn-metadata-full No (Callable b-items)))))))
 
 (define (compiler-generated-test-metadata-distinct-ok?) : bool
   (let
@@ -1569,52 +1554,47 @@
     [handles : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      ;; Cross several recipe-buffer growth boundaries while every generated
-      ;; handle still has no rendered spelling.
-      (while (< index count)
-        (let
-          [values : spec.SpecValueList
-            (spec.spec-value-cons (I64 index) (spec.spec-value-list-new))]
-          [key : spec.SpecStructuralKey
-            (spec.spec-specialization-structural-key-with-owner
-              owner
-              "wide"
-              values)]
-          [handle : i64
-            (spec.spec-reserve-specialized-symbol-with-owner
-              owner
-              key
-              "wide"
-              values)]
-          (begin
-            (set! (array-ref handles index) handle)
-            (if (string.eq
-              (spec_ci.intern-compat-state-str intern-state handle)
-              "")
-              unit
-              (set! ok false))
-            (set! index (+ index 1)))))
-      (spec.spec-materialize-owner-generated-symbols! owner)
-      (set! index 0)
-      (while (and ok (< index count))
-        (let
-          [values : spec.SpecValueList
-            (spec.spec-value-cons (I64 index) (spec.spec-value-list-new))]
-          (begin
-            (if (string.eq
-              (spec_ci.intern-compat-state-str
-                intern-state
-                (array-ref handles index))
-              (spec.spec-specialized-name-with-owner owner "wide" values))
-              unit
-              (set! ok false))
-            (set! index (+ index 1)))))
-      (and
-        ok
-        (=
-          (__tl-project-field (array-ref owner.generated-symbol-records 0) len)
-          0)))))
+    ;; Cross several recipe-buffer growth boundaries while every generated
+    ;; handle still has no rendered spelling.
+    (while (< index count)
+      (let
+        [values : spec.SpecValueList
+          (spec.spec-value-cons (I64 index) (spec.spec-value-list-new))]
+        [key : spec.SpecStructuralKey
+          (spec.spec-specialization-structural-key-with-owner
+            owner
+            "wide"
+            values)]
+        [handle : i64
+          (spec.spec-reserve-specialized-symbol-with-owner
+            owner
+            key
+            "wide"
+            values)]
+        (set! (array-ref handles index) handle)
+        (if (string.eq (spec_ci.intern-compat-state-str intern-state handle) "")
+          unit
+          (set! ok false))
+        (set! index (+ index 1))))
+    (spec.spec-materialize-owner-generated-symbols! owner)
+    (set! index 0)
+    (while (and ok (< index count))
+      (let
+        [values : spec.SpecValueList
+          (spec.spec-value-cons (I64 index) (spec.spec-value-list-new))]
+        (if (string.eq
+          (spec_ci.intern-compat-state-str
+            intern-state
+            (array-ref handles index))
+          (spec.spec-specialized-name-with-owner owner "wide" values))
+          unit
+          (set! ok false))
+        (set! index (+ index 1))))
+    (and
+      ok
+      (=
+        (__tl-project-field (array-ref owner.generated-symbol-records 0) len)
+        0))))
 
 ;; Resource cleanup expressions are constrained further by the typechecker;
 ;; these source-local tests isolate the specialization traversal itself.
@@ -1651,53 +1631,52 @@
     [body : ast.AstExprList (ast.ast-expr-list-new)]
     [subs : spec.SpecValueSubst
       (spec.spec-value-subst-cons name (I64 5) (spec.spec-value-subst-new))]
-    (begin
-      (ast.ast-resource-binding-list-push
-        (&mut bindings)
-        (ast.AstResourceBinding.Binding name var var true))
-      (ast.ast-resource-binding-list-push
-        (&mut bindings)
-        (ast.AstResourceBinding.Binding
-          cbi.compiler-builtin-id-fix-y
-          var
-          var
-          false))
-      (ast.ast-expr-list-push (&mut body) var)
-      (match (spec-substitute-values-expr
-        (WithResource (box (ast.AstWithResource.WithResource bindings body)))
-        subs)
-        [(Ok rewritten)
-          (match (ast.ast-node-get rewritten)
-            [(WithResource resource)
-              (match (ast.ast-with-resource-box-shared-view resource)
-                [(WithResource bindings body)
-                  (and
-                    (= bindings.len 2)
-                    (= body.len 1)
-                    (match (ast.ast-resource-binding-list-get
-                      (& bindings)
-                      0
-                      (ast.ast-resource-binding-fallback))
-                      [(Binding actual init cleanup move-aware?)
-                        (and
-                          (= actual name)
-                          move-aware?
-                          (compiler-specialize-resource-literal? init)
-                          (compiler-specialize-resource-literal? cleanup))])
-                    (match (ast.ast-resource-binding-list-get
-                      (& bindings)
-                      1
-                      (ast.ast-resource-binding-fallback))
-                      [(Binding actual init cleanup move-aware?)
-                        (and
-                          (= actual cbi.compiler-builtin-id-fix-y)
-                          (not move-aware?)
-                          (compiler-specialize-resource-var? init)
-                          (compiler-specialize-resource-var? cleanup))])
-                    (compiler-specialize-resource-var?
-                      (ast.ast-expr-list-get (& body) 0 0)))])]
-            [_ false])]
-        [_ false]))))
+    (ast.ast-resource-binding-list-push
+      (&mut bindings)
+      (ast.AstResourceBinding.Binding name var var true))
+    (ast.ast-resource-binding-list-push
+      (&mut bindings)
+      (ast.AstResourceBinding.Binding
+        cbi.compiler-builtin-id-fix-y
+        var
+        var
+        false))
+    (ast.ast-expr-list-push (&mut body) var)
+    (match (spec-substitute-values-expr
+      (WithResource (box (ast.AstWithResource.WithResource bindings body)))
+      subs)
+      [(Ok rewritten)
+        (match (ast.ast-node-get rewritten)
+          [(WithResource resource)
+            (match (ast.ast-with-resource-box-shared-view resource)
+              [(WithResource bindings body)
+                (and
+                  (= bindings.len 2)
+                  (= body.len 1)
+                  (match (ast.ast-resource-binding-list-get
+                    (& bindings)
+                    0
+                    (ast.ast-resource-binding-fallback))
+                    [(Binding actual init cleanup move-aware?)
+                      (and
+                        (= actual name)
+                        move-aware?
+                        (compiler-specialize-resource-literal? init)
+                        (compiler-specialize-resource-literal? cleanup))])
+                  (match (ast.ast-resource-binding-list-get
+                    (& bindings)
+                    1
+                    (ast.ast-resource-binding-fallback))
+                    [(Binding actual init cleanup move-aware?)
+                      (and
+                        (= actual cbi.compiler-builtin-id-fix-y)
+                        (not move-aware?)
+                        (compiler-specialize-resource-var? init)
+                        (compiler-specialize-resource-var? cleanup))])
+                  (compiler-specialize-resource-var?
+                    (ast.ast-expr-list-get (& body) 0 0)))])]
+          [_ false])]
+      [_ false])))
 
 (define (compiler-specialize-resource-ok?) : bool
   (and
@@ -1720,38 +1699,35 @@
       [_ false])))
 
 (define (compiler-specialize-self-test) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (unless (compiler-specialize-type-param-ok?) (return 0))
-    (unless (compiler-specialize-runtime-type-use-rejected?) (return 0))
-    (unless (compiler-specialize-template-shadow-ok?) (return 0))
-    (unless (compiler-specialize-template-shadow-sibling-ok?) (return 0))
-    (unless (compiler-specialize-dense-template-shadow-state-ok?) (return 0))
-    (unless (compiler-specialize-type-shadow-ok?) (return 0))
-    (unless (compiler-specialize-raw-pointer-type-ok?) (return 0))
-    (unless (compiler-specialize-owner-slice-type-ok?) (return 0))
-    (unless (compiler-specialize-name-key-ok?) (return 0))
-    (unless (compiler-specialize-structural-key-ok?) (return 0))
-    (unless (compiler-specialize-reuse-ok?) (return 0))
-    (unless (compiler-specialize-subst-ok?) (return 0))
-    (unless (compiler-specialize-value-subst-ok?) (return 0))
-    (unless (compiler-specialize-resource-ok?) (return 0))
-    (unless (compiler-specialize-boxed-tails-ok?) (return 0))
-    (unless (compiler-specialize-reflection-string-param-ok?) (return 0))
-    (unless (compiler-generated-decl-reuse-ok?) (return 0))
-    (unless (compiler-generated-decl-markers-distinct-ok?) (return 0))
-    (unless (compiler-generated-decl-function-reuse-ok?) (return 0))
-    (unless (compiler-generated-decl-incompatible-rejected?) (return 0))
-    (unless (compiler-generated-decl-incompatible-note-ok?) (return 0))
-    (unless (compiler-generated-decl-incompatible-path-ok?) (return 0))
-    (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
-    (unless (compiler-generated-registry-map-ok?) (return 0))
-    (unless (compiler-generated-decl-spmd-metadata-distinct-ok?) (return 0))
-    (unless (compiler-generated-test-metadata-distinct-ok?) (return 0))
-    (unless
-      (compiler-specialize-generated-symbol-records-growth-ok?)
-      (return 0))
-    1))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (unless (compiler-specialize-type-param-ok?) (return 0))
+  (unless (compiler-specialize-runtime-type-use-rejected?) (return 0))
+  (unless (compiler-specialize-template-shadow-ok?) (return 0))
+  (unless (compiler-specialize-template-shadow-sibling-ok?) (return 0))
+  (unless (compiler-specialize-dense-template-shadow-state-ok?) (return 0))
+  (unless (compiler-specialize-type-shadow-ok?) (return 0))
+  (unless (compiler-specialize-raw-pointer-type-ok?) (return 0))
+  (unless (compiler-specialize-owner-slice-type-ok?) (return 0))
+  (unless (compiler-specialize-name-key-ok?) (return 0))
+  (unless (compiler-specialize-structural-key-ok?) (return 0))
+  (unless (compiler-specialize-reuse-ok?) (return 0))
+  (unless (compiler-specialize-subst-ok?) (return 0))
+  (unless (compiler-specialize-value-subst-ok?) (return 0))
+  (unless (compiler-specialize-resource-ok?) (return 0))
+  (unless (compiler-specialize-boxed-tails-ok?) (return 0))
+  (unless (compiler-specialize-reflection-string-param-ok?) (return 0))
+  (unless (compiler-generated-decl-reuse-ok?) (return 0))
+  (unless (compiler-generated-decl-markers-distinct-ok?) (return 0))
+  (unless (compiler-generated-decl-function-reuse-ok?) (return 0))
+  (unless (compiler-generated-decl-incompatible-rejected?) (return 0))
+  (unless (compiler-generated-decl-incompatible-note-ok?) (return 0))
+  (unless (compiler-generated-decl-incompatible-path-ok?) (return 0))
+  (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
+  (unless (compiler-generated-registry-map-ok?) (return 0))
+  (unless (compiler-generated-decl-spmd-metadata-distinct-ok?) (return 0))
+  (unless (compiler-generated-test-metadata-distinct-ok?) (return 0))
+  (unless (compiler-specialize-generated-symbol-records-growth-ok?) (return 0))
+  1)
 
 (cfg
   test

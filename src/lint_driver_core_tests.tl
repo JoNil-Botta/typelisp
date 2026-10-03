@@ -816,69 +816,68 @@ end
       (compiler_load.compiler-load-join-root-path
         (owned_view.compiler-owned-shared-view test-dir)
         "second_imported_smoke.tl")]
-    (begin
-      (compiler_load.compiler-load-test-mkdir root)
-      (compiler_load.compiler-load-test-mkdir
-        (owned_view.compiler-owned-shared-view src-dir))
-      (compiler_load.compiler-load-test-mkdir test-dir)
-      (selfhost-lint-write-text
-        manifest-path
-        "(package
+    (compiler_load.compiler-load-test-mkdir root)
+    (compiler_load.compiler-load-test-mkdir
+      (owned_view.compiler-owned-shared-view src-dir))
+    (compiler_load.compiler-load-test-mkdir test-dir)
+    (selfhost-lint-write-text
+      manifest-path
+      "(package
   (name \"lint-dead-root-import-closure\")
   (version \"1\")
   (kind \"bin\"))")
-      (selfhost-lint-write-text
-        main-path
-        "(import core)
+    (selfhost-lint-write-text
+      main-path
+      "(import core)
 (define (main) : i64
   (core.core-entry))")
-      (selfhost-lint-write-text
-        core-path
-        "(define (core-entry) : i64 7)
+    (selfhost-lint-write-text
+      core-path
+      "(define (core-entry) : i64 7)
 (define (core-test-helper) : i64 42)
 (define (core-second-test-helper) : i64 43)
 (define (core-unused) : i64 13)")
-      (selfhost-lint-write-text
-        test-path
-        "(import core)
+    (selfhost-lint-write-text
+      test-path
+      "(import core)
 (define (main) : i64
   (core.core-test-helper))")
-      (selfhost-lint-write-text
-        second-test-path
-        "(import core)
+    (selfhost-lint-write-text
+      second-test-path
+      "(import core)
 (define (main) : i64
   (core.core-second-test-helper))")
-      (match (package_source_core.package-source-discover-for
-        "lint"
-        manifest-path
-        true)
-        [(Err _) false]
-        [(Ok source-set)
-          (match (lint_driver.selfhost-lint-package-dead-sources
-            (owned_view.compiler-owned-shared-view source-set)
-            (lint_svec.new))
-            [(Err _) false]
-            [(Ok dead-source-set)
-              (let
-                [roots : lint_svec.Vec
-                  (lint_driver.selfhost-lint-package-import-roots
-                    (owned_view.compiler-owned-shared-view source-set)
-                    (lint_svec.new))]
-                [dead-decls : lint_driver.SelfhostLintDeadDecls
-                  (lint_driver.selfhost-lint-package-dead-code
-                    dead-source-set
-                    (owned_view.compiler-owned-shared-view roots)
-                    source-set.manifest.kind)]
-                [core-count : i64
-                  (selfhost-lint-package-dead-count-for-source
-                    (compiler_load.compiler-load-normalize-path core-path)
-                    (byte_buf.to-string (io.read-file core-path))
-                    dead-decls)]
-                (and
-                  (lint_svec.contains?
-                    (& roots)
-                    (compiler_load.compiler-load-normalize-path src-dir))
-                  (= core-count 1)))])]))))
+    (match (package_source_core.package-source-discover-for
+      "lint"
+      manifest-path
+      true)
+      [(Err _) false]
+      [(Ok source-set)
+        (match (lint_driver.selfhost-lint-package-dead-sources
+          (owned_view.compiler-owned-shared-view source-set)
+          (lint_svec.new))
+          [(Err _) false]
+          [(Ok dead-source-set)
+            (let
+              [roots : lint_svec.Vec
+                (lint_driver.selfhost-lint-package-import-roots
+                  (owned_view.compiler-owned-shared-view source-set)
+                  (lint_svec.new))]
+              [dead-decls : lint_driver.SelfhostLintDeadDecls
+                (lint_driver.selfhost-lint-package-dead-code
+                  dead-source-set
+                  (owned_view.compiler-owned-shared-view roots)
+                  source-set.manifest.kind)]
+              [core-count : i64
+                (selfhost-lint-package-dead-count-for-source
+                  (compiler_load.compiler-load-normalize-path core-path)
+                  (byte_buf.to-string (io.read-file core-path))
+                  dead-decls)]
+              (and
+                (lint_svec.contains?
+                  (& roots)
+                  (compiler_load.compiler-load-normalize-path src-dir))
+                (= core-count 1)))])])))
 
 (define (selfhost-lint-package-dead-code-self-test) : i64
   (let

@@ -53,9 +53,8 @@
         selectors-ok
         (array-ref restored.intern-state-ready 0)
         (= table-id (ci.intern-compat-state-table-id (& restored-interns))))]
-    (begin
-      (load.compiler-load-session-state-use! home)
-      ok)))
+    (load.compiler-load-session-state-use! home)
+    ok))
 
 (define (loader-cache-lifetime-ok?) : bool
   (let
@@ -93,11 +92,10 @@
       (= (array-ref state.dotted-path-cache-owner-arena 0) 0))))
 
 (define (main) : i64
-  (begin
-    (unless
-      (and
-        (entry-selectors-restored? 42)
-        (entry-bound-load-restored?)
-        (loader-cache-lifetime-ok?))
-      (io.panic "test CLI entry state: lifetime boundary failed"))
-    42))
+  (unless
+    (and
+      (entry-selectors-restored? 42)
+      (entry-bound-load-restored?)
+      (loader-cache-lifetime-ok?))
+    (io.panic "test CLI entry state: lifetime boundary failed"))
+  42)

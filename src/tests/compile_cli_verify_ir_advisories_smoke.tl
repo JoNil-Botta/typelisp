@@ -12,20 +12,19 @@
 (define (advisories [first : String] [second : String]) : diag.CompilerAdvisoryList
   (let
     [items : diag.CompilerAdvisoryList (diag.compiler-advisory-list-empty)]
-    (begin
-      (if (string.eq first "")
-        unit
-        (diag_tests.compiler-advisory-list-push!
-          (&mut items)
-          (Semantic)
-          (diag.compiler-diagnostic-at-start "" first)))
-      (if (string.eq second "")
-        unit
-        (diag_tests.compiler-advisory-list-push!
-          (&mut items)
-          (Backend)
-          (diag.compiler-diagnostic-at-start "" second)))
-      items)))
+    (if (string.eq first "")
+      unit
+      (diag_tests.compiler-advisory-list-push!
+        (&mut items)
+        (Semantic)
+        (diag.compiler-diagnostic-at-start "" first)))
+    (if (string.eq second "")
+      unit
+      (diag_tests.compiler-advisory-list-push!
+        (&mut items)
+        (Backend)
+        (diag.compiler-diagnostic-at-start "" second)))
+    items))
 
 (define (windows-rejected? [result : cli.ResultCompileCliWindowsBatchEntry]) : bool
   (match result

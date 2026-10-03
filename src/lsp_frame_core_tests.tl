@@ -128,89 +128,78 @@
         "cached.tl"
         "same"
         (lsp.lsp-diagnostic-uris-empty))]
-    (begin
-      (lsp.lsp-documents-set-check-cache! (&mut docs) uri LspCheckCacheOk)
-      (let
-        [preserved-docs : lsp_document_vec.Vec
-          (lsp.lsp-documents-set
-            docs
-            (owned_view.compiler-owned-shared-view uri)
-            "cached.tl"
-            "same"
-            (lsp.lsp-diagnostic-uris-empty))]
-        (if (not (lsp-documents-smoke-check-cache-ok? preserved-docs uri))
-          false
-          (let
-            [invalidated-docs : lsp_document_vec.Vec
-              (lsp.lsp-documents-set
-                preserved-docs
-                (owned_view.compiler-owned-shared-view uri)
-                "cached.tl"
-                "changed"
-                (lsp.lsp-diagnostic-uris-empty))]
-            (lsp-documents-smoke-check-cache-invalid? invalidated-docs uri)))))))
+    (lsp.lsp-documents-set-check-cache! (&mut docs) uri LspCheckCacheOk)
+    (let
+      [preserved-docs : lsp_document_vec.Vec
+        (lsp.lsp-documents-set
+          docs
+          (owned_view.compiler-owned-shared-view uri)
+          "cached.tl"
+          "same"
+          (lsp.lsp-diagnostic-uris-empty))]
+      (if (not (lsp-documents-smoke-check-cache-ok? preserved-docs uri))
+        false
+        (let
+          [invalidated-docs : lsp_document_vec.Vec
+            (lsp.lsp-documents-set
+              preserved-docs
+              (owned_view.compiler-owned-shared-view uri)
+              "cached.tl"
+              "changed"
+              (lsp.lsp-diagnostic-uris-empty))]
+          (lsp-documents-smoke-check-cache-invalid? invalidated-docs uri))))))
 
 (define (lsp-documents-open-retention-smoke-ok?) : bool
   (let
     [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
     [empty-docs : lsp_document_vec.Vec (lsp_document_vec.new)]
-    (begin
-      ;; Dropping an empty canonical vector is a no-op; removing below covers
-      ;; the non-empty direct-len path after shift-left mutation.
-      (lvf.lsp-documents-drop-last! (&mut empty-docs))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc00.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc01.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc02.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc03.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc04.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc05.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc06.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc07.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc08.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc09.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc10.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc11.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc12.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc13.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc14.tl"))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc15.tl"))
-      (set!
+    ;; Dropping an empty canonical vector is a no-op; removing below covers
+    ;; the non-empty direct-len path after shift-left mutation.
+    (lvf.lsp-documents-drop-last! (&mut empty-docs))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc00.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc01.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc02.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc03.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc04.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc05.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc06.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc07.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc08.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc09.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc10.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc11.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc12.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc13.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc14.tl"))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc15.tl"))
+    (set!
+      docs
+      (lsp.lsp-documents-set
         docs
-        (lsp.lsp-documents-set
-          docs
-          "file:///doc10.tl"
-          "doc10.tl"
-          "updated"
-          (lsp-diagnostic-uris-single "diag10")))
-      (set! docs (lsp-documents-smoke-add docs "file:///doc16.tl"))
-      (and
-        (= (lsp_document_vec.len (& docs)) 17)
-        (lsp-documents-smoke-text-eq?
-          docs
-          "file:///doc00.tl"
-          "file:///doc00.tl")
-        (lsp-documents-smoke-text-eq?
-          docs
-          "file:///doc01.tl"
-          "file:///doc01.tl")
-        (lsp-documents-smoke-text-eq? docs "file:///doc10.tl" "updated")
-        (lsp-documents-smoke-text-eq?
-          docs
-          "file:///doc16.tl"
-          "file:///doc16.tl")
-        (= (lsp_document_vec.len (& empty-docs)) 0)
-        (let
-          [trimmed : lsp_document_vec.Vec
-            (lsp.lsp-documents-remove docs "file:///doc08.tl")]
-          [shifted : lvf.LspDocument
-            (lsp_document_vec.get (& trimmed) 8 (lsp.lsp-document-fallback))]
-          [last : lvf.LspDocument
-            (lsp_document_vec.get (& trimmed) 15 (lsp.lsp-document-fallback))]
-          (and
-            (= (lsp_document_vec.len (& trimmed)) 16)
-            (lsp-documents-smoke-missing? trimmed "file:///doc08.tl")
-            (string.eq shifted.uri "file:///doc09.tl")
-            (string.eq last.uri "file:///doc16.tl")))))))
+        "file:///doc10.tl"
+        "doc10.tl"
+        "updated"
+        (lsp-diagnostic-uris-single "diag10")))
+    (set! docs (lsp-documents-smoke-add docs "file:///doc16.tl"))
+    (and
+      (= (lsp_document_vec.len (& docs)) 17)
+      (lsp-documents-smoke-text-eq? docs "file:///doc00.tl" "file:///doc00.tl")
+      (lsp-documents-smoke-text-eq? docs "file:///doc01.tl" "file:///doc01.tl")
+      (lsp-documents-smoke-text-eq? docs "file:///doc10.tl" "updated")
+      (lsp-documents-smoke-text-eq? docs "file:///doc16.tl" "file:///doc16.tl")
+      (= (lsp_document_vec.len (& empty-docs)) 0)
+      (let
+        [trimmed : lsp_document_vec.Vec
+          (lsp.lsp-documents-remove docs "file:///doc08.tl")]
+        [shifted : lvf.LspDocument
+          (lsp_document_vec.get (& trimmed) 8 (lsp.lsp-document-fallback))]
+        [last : lvf.LspDocument
+          (lsp_document_vec.get (& trimmed) 15 (lsp.lsp-document-fallback))]
+        (and
+          (= (lsp_document_vec.len (& trimmed)) 16)
+          (lsp-documents-smoke-missing? trimmed "file:///doc08.tl")
+          (string.eq shifted.uri "file:///doc09.tl")
+          (string.eq last.uri "file:///doc16.tl"))))))
 
 (cfg
   test
@@ -270,43 +259,41 @@
           [use-byte : i64 use-record.span.start-byte]
           [query-ok : bool true]
           [iteration : i64 0]
-          (begin
-            ;; Warm navigation is a pure read of the retained owner. Repeating
-            ;; the shared query catches accidental rechecks, file reads, or
-            ;; per-request semantic-index ownership changes.
-            (while (and query-ok (< iteration 1000))
-              (begin
-                (match (lsp.lsp-document-semantic-symbol-query (& doc) use-byte)
-                  [(Found cursor definition)
-                    (unless
-                      (and
-                        (sem.compiler-semantic-symbol-id-eq?
-                          cursor.symbol
-                          definition.symbol)
-                        (lsp.lsp-semantic-record-exact-editable? cursor)
-                        (lsp.lsp-semantic-record-exact-editable? definition)
-                        (not (string.eq definition.span.path path)))
-                      (set! query-ok false))]
-                  [(Missing) (set! query-ok false)])
-                (let
-                  [highlights : lsp.LspDocumentHighlightResults
-                    (lsp.lsp-document-highlights-at (& doc) use-byte)]
-                  (unless
-                    (and
-                      (= highlights.len 1)
-                      (=
-                        highlights.record-visits
-                        (sem.compiler-semantic-source-index-len (& index)))
-                      (= (array-ref highlights.slots 0).kind 2))
-                    (set! query-ok false)))
-                (set! iteration (+ iteration 1))))
-            (and
-              (if complete
-                (lsp-semantic-smoke-current? (& doc) version)
-                (lsp-semantic-smoke-current-partial? (& doc) version))
-              (>= use-index 0)
-              query-ok
-              (= iteration 1000))))))))
+          ;; Warm navigation is a pure read of the retained owner. Repeating
+          ;; the shared query catches accidental rechecks, file reads, or
+          ;; per-request semantic-index ownership changes.
+          (while (and query-ok (< iteration 1000))
+            (match (lsp.lsp-document-semantic-symbol-query (& doc) use-byte)
+              [(Found cursor definition)
+                (unless
+                  (and
+                    (sem.compiler-semantic-symbol-id-eq?
+                      cursor.symbol
+                      definition.symbol)
+                    (lsp.lsp-semantic-record-exact-editable? cursor)
+                    (lsp.lsp-semantic-record-exact-editable? definition)
+                    (not (string.eq definition.span.path path)))
+                  (set! query-ok false))]
+              [(Missing) (set! query-ok false)])
+            (let
+              [highlights : lsp.LspDocumentHighlightResults
+                (lsp.lsp-document-highlights-at (& doc) use-byte)]
+              (unless
+                (and
+                  (= highlights.len 1)
+                  (=
+                    highlights.record-visits
+                    (sem.compiler-semantic-source-index-len (& index)))
+                  (= (array-ref highlights.slots 0).kind 2))
+                (set! query-ok false)))
+            (set! iteration (+ iteration 1)))
+          (and
+            (if complete
+              (lsp-semantic-smoke-current? (& doc) version)
+              (lsp-semantic-smoke-current-partial? (& doc) version))
+            (>= use-index 0)
+            query-ok
+            (= iteration 1000)))))))
 
 (cfg
   test
@@ -347,9 +334,8 @@
         (lsp.LspDocumentHandleResult.Continue docs)
         false)
         [(Exit unexpected)
-          (begin
-            (lsp.lsp-server-state-destroy! unexpected)
-            false)]
+          (lsp.lsp-server-state-destroy! unexpected)
+          false]
         [(Continue first-state)
           (let
             [first-docs : lsp_document_vec.Vec
@@ -370,9 +356,8 @@
               (lsp.LspDocumentHandleResult.Continue first-docs)
               false)
               [(Exit unexpected)
-                (begin
-                  (lsp.lsp-server-state-destroy! unexpected)
-                  false)]
+                (lsp.lsp-server-state-destroy! unexpected)
+                false]
               [(Continue second-state)
                 (let
                   [second-docs : lsp_document_vec.Vec
@@ -385,14 +370,13 @@
                       path
                       version
                       true)]
-                  (begin
-                    (lsp.lsp-server-state-destroy! second-state)
-                    (and
-                      first-ok
-                      second-ok
-                      (=
-                        (sem_tests.compiler-semantic-source-index-live-owner-count)
-                        baseline))))]))]))))
+                  (lsp.lsp-server-state-destroy! second-state)
+                  (and
+                    first-ok
+                    second-ok
+                    (=
+                      (sem_tests.compiler-semantic-source-index-live-owner-count)
+                      baseline)))]))]))))
 
 (cfg
   test
@@ -419,211 +403,194 @@
         (lsp.lsp-language-cfgs))
         [(Err _) false]
         [(Partial _ unexpected)
-          (begin
-            (sem.compiler-semantic-source-index-release! (&mut unexpected))
-            false)]
+          (sem.compiler-semantic-source-index-release! (&mut unexpected))
+          false]
         [(Ok _ first)
-          (begin
+          (set!
+            docs
+            (lsp-semantic-smoke-install
+              docs
+              (owned_view.compiler-owned-shared-view uri)
+              (owned_view.compiler-owned-shared-view path)
+              source1
+              1
+              first))
+          (let
+            [first-ok : bool
+              (and
+                (=
+                  (sem_tests.compiler-semantic-source-index-live-owner-count)
+                  (+ baseline 1))
+                (lsp-semantic-smoke-query-ok?
+                  docs
+                  uri
+                  (owned_view.compiler-owned-shared-view path)
+                  1
+                  true))]
             (set!
               docs
-              (lsp-semantic-smoke-install
+              (lsp.lsp-documents-set-versioned
                 docs
                 (owned_view.compiler-owned-shared-view uri)
                 (owned_view.compiler-owned-shared-view path)
-                source1
-                1
-                first))
+                (owned_view.compiler-owned-shared-view invalid-source)
+                2
+                (lsp.lsp-diagnostic-uris-empty)))
             (let
-              [first-ok : bool
+              [stale-doc-index : i64 (lsp.lsp-documents-find-index docs uri)]
+              [stale-doc : lvf.LspDocument
+                (lsp_document_vec.get
+                  (& docs)
+                  stale-doc-index
+                  (lsp.lsp-document-fallback))]
+              [stale-highlights : lsp.LspDocumentHighlightResults
+                (lsp.lsp-document-highlights-at (& stale-doc) 1)]
+              [stale-ok : bool
                 (and
+                  (lsp-semantic-smoke-stale? (& stale-doc) 1)
+                  (= (lsp.lsp-document-semantic-record-at (& stale-doc) 0) -1)
+                  (= stale-highlights.len 0)
+                  (= stale-highlights.record-visits 0)
                   (=
                     (sem_tests.compiler-semantic-source-index-live-owner-count)
-                    (+ baseline 1))
-                  (lsp-semantic-smoke-query-ok?
+                    (+ baseline 1)))]
+              [invalid-ok : bool
+                (match (sem.compiler-check-source-index-with-roots-and-cfg
+                  (owned_view.compiler-owned-shared-view path)
+                  invalid-source
+                  (owned_view.compiler-owned-shared-view roots)
+                  (lsp.lsp-language-cfgs))
+                  [(Err _) false]
+                  [(Partial diagnostics current)
+                    (let
+                      [diagnostic-list : cdiag.CompilerDiagnosticList
+                        (deref diagnostics)]
+                      [first-diagnostic : cdiag.CompilerDiagnostic
+                        (cdiag.compiler-diagnostic-list-first diagnostic-list)]
+                      (set!
+                        docs
+                        (lsp.lsp-documents-set-semantic-index
+                          (lsp.lsp-documents-set-check-cache
+                            docs
+                            uri
+                            (LspCheckCacheErr
+                              (cdiag.compiler-diagnostic-message
+                                first-diagnostic)))
+                          uri
+                          2
+                          current))
+                      (let
+                        [partial-doc-index : i64
+                          (lsp.lsp-documents-find-index docs uri)]
+                        [partial-doc : lvf.LspDocument
+                          (lsp_document_vec.get
+                            (& docs)
+                            partial-doc-index
+                            (lsp.lsp-document-fallback))]
+                        (and
+                          (lsp-semantic-smoke-current-partial?
+                            (& partial-doc)
+                            2)
+                          (lsp-semantic-smoke-query-ok?
+                            docs
+                            uri
+                            (owned_view.compiler-owned-shared-view path)
+                            2
+                            false)
+                          (=
+                            (sem_tests.compiler-semantic-source-index-live-owner-count)
+                            (+ baseline 1)))))]
+                  [(Ok _ unexpected)
+                    (sem.compiler-semantic-source-index-release!
+                      (&mut unexpected))
+                    false])]
+              (match (sem.compiler-check-source-index-with-roots-and-cfg
+                (owned_view.compiler-owned-shared-view path)
+                (owned_view.compiler-owned-shared-view source2)
+                (owned_view.compiler-owned-shared-view roots)
+                (lsp.lsp-language-cfgs))
+                [(Err _)
+                  (lsp.lsp-documents-release-all! (&mut docs))
+                  false]
+                [(Partial _ unexpected)
+                  (sem.compiler-semantic-source-index-release!
+                    (&mut unexpected))
+                  (lsp.lsp-documents-release-all! (&mut docs))
+                  false]
+                [(Ok _ second)
+                  (set!
                     docs
-                    uri
-                    (owned_view.compiler-owned-shared-view path)
-                    1
-                    true))]
-              (begin
-                (set!
-                  docs
-                  (lsp.lsp-documents-set-versioned
-                    docs
-                    (owned_view.compiler-owned-shared-view uri)
-                    (owned_view.compiler-owned-shared-view path)
-                    (owned_view.compiler-owned-shared-view invalid-source)
-                    2
-                    (lsp.lsp-diagnostic-uris-empty)))
-                (let
-                  [stale-doc-index : i64
-                    (lsp.lsp-documents-find-index docs uri)]
-                  [stale-doc : lvf.LspDocument
-                    (lsp_document_vec.get
-                      (& docs)
-                      stale-doc-index
-                      (lsp.lsp-document-fallback))]
-                  [stale-highlights : lsp.LspDocumentHighlightResults
-                    (lsp.lsp-document-highlights-at (& stale-doc) 1)]
-                  [stale-ok : bool
-                    (and
-                      (lsp-semantic-smoke-stale? (& stale-doc) 1)
-                      (=
-                        (lsp.lsp-document-semantic-record-at (& stale-doc) 0)
-                        -1)
-                      (= stale-highlights.len 0)
-                      (= stale-highlights.record-visits 0)
-                      (=
-                        (sem_tests.compiler-semantic-source-index-live-owner-count)
-                        (+ baseline 1)))]
-                  [invalid-ok : bool
-                    (match (sem.compiler-check-source-index-with-roots-and-cfg
+                    (lsp-semantic-smoke-install
+                      docs
+                      (owned_view.compiler-owned-shared-view uri)
                       (owned_view.compiler-owned-shared-view path)
-                      invalid-source
-                      (owned_view.compiler-owned-shared-view roots)
-                      (lsp.lsp-language-cfgs))
-                      [(Err _) false]
-                      [(Partial diagnostics current)
-                        (let
-                          [diagnostic-list : cdiag.CompilerDiagnosticList
-                            (deref diagnostics)]
-                          [first-diagnostic : cdiag.CompilerDiagnostic
-                            (cdiag.compiler-diagnostic-list-first
-                              diagnostic-list)]
-                          (begin
-                            (set!
-                              docs
-                              (lsp.lsp-documents-set-semantic-index
-                                (lsp.lsp-documents-set-check-cache
-                                  docs
-                                  uri
-                                  (LspCheckCacheErr
-                                    (cdiag.compiler-diagnostic-message
-                                      first-diagnostic)))
-                                uri
-                                2
-                                current))
-                            (let
-                              [partial-doc-index : i64
-                                (lsp.lsp-documents-find-index docs uri)]
-                              [partial-doc : lvf.LspDocument
-                                (lsp_document_vec.get
-                                  (& docs)
-                                  partial-doc-index
-                                  (lsp.lsp-document-fallback))]
-                              (and
-                                (lsp-semantic-smoke-current-partial?
-                                  (& partial-doc)
-                                  2)
-                                (lsp-semantic-smoke-query-ok?
-                                  docs
-                                  uri
-                                  (owned_view.compiler-owned-shared-view path)
-                                  2
-                                  false)
-                                (=
-                                  (sem_tests.compiler-semantic-source-index-live-owner-count)
-                                  (+ baseline 1))))))]
-                      [(Ok _ unexpected)
-                        (begin
+                      source2
+                      3
+                      second))
+                  (let
+                    [replacement-ok : bool
+                      (and
+                        (=
+                          (sem_tests.compiler-semantic-source-index-live-owner-count)
+                          (+ baseline 1))
+                        (lsp-semantic-smoke-query-ok?
+                          docs
+                          uri
+                          (owned_view.compiler-owned-shared-view path)
+                          3
+                          true))]
+                    (set!
+                      docs
+                      (lsp.lsp-documents-remove
+                        docs
+                        (owned_view.compiler-owned-shared-view uri)))
+                    (let
+                      [close-ok : bool
+                        (and
+                          (lsp-documents-smoke-missing?
+                            docs
+                            (owned_view.compiler-owned-shared-view uri))
+                          (=
+                            (sem_tests.compiler-semantic-source-index-live-owner-count)
+                            baseline))]
+                      (match (sem.compiler-check-source-index-with-roots-and-cfg
+                        (owned_view.compiler-owned-shared-view path)
+                        (owned_view.compiler-owned-shared-view source3)
+                        roots
+                        (lsp.lsp-language-cfgs))
+                        [(Err _) false]
+                        [(Partial _ unexpected)
                           (sem.compiler-semantic-source-index-release!
                             (&mut unexpected))
-                          false)])]
-                  (match (sem.compiler-check-source-index-with-roots-and-cfg
-                    (owned_view.compiler-owned-shared-view path)
-                    (owned_view.compiler-owned-shared-view source2)
-                    (owned_view.compiler-owned-shared-view roots)
-                    (lsp.lsp-language-cfgs))
-                    [(Err _)
-                      (begin
-                        (lsp.lsp-documents-release-all! (&mut docs))
-                        false)]
-                    [(Partial _ unexpected)
-                      (begin
-                        (sem.compiler-semantic-source-index-release!
-                          (&mut unexpected))
-                        (lsp.lsp-documents-release-all! (&mut docs))
-                        false)]
-                    [(Ok _ second)
-                      (begin
-                        (set!
-                          docs
-                          (lsp-semantic-smoke-install
+                          false]
+                        [(Ok _ third)
+                          (set!
                             docs
-                            (owned_view.compiler-owned-shared-view uri)
-                            (owned_view.compiler-owned-shared-view path)
-                            source2
-                            3
-                            second))
-                        (let
-                          [replacement-ok : bool
-                            (and
-                              (=
-                                (sem_tests.compiler-semantic-source-index-live-owner-count)
-                                (+ baseline 1))
-                              (lsp-semantic-smoke-query-ok?
+                            (lsp-semantic-smoke-install
+                              docs
+                              (owned_view.compiler-owned-shared-view uri)
+                              (owned_view.compiler-owned-shared-view path)
+                              source3
+                              4
+                              third))
+                          (let
+                            [server-transfer-ok : bool
+                              (lsp-semantic-smoke-server-transfer-ok?
                                 docs
                                 uri
-                                (owned_view.compiler-owned-shared-view path)
-                                3
-                                true))]
-                          (begin
-                            (set!
-                              docs
-                              (lsp.lsp-documents-remove
-                                docs
-                                (owned_view.compiler-owned-shared-view uri)))
-                            (let
-                              [close-ok : bool
-                                (and
-                                  (lsp-documents-smoke-missing?
-                                    docs
-                                    (owned_view.compiler-owned-shared-view uri))
-                                  (=
-                                    (sem_tests.compiler-semantic-source-index-live-owner-count)
-                                    baseline))]
-                              (match (sem.compiler-check-source-index-with-roots-and-cfg
-                                (owned_view.compiler-owned-shared-view path)
-                                (owned_view.compiler-owned-shared-view source3)
-                                roots
-                                (lsp.lsp-language-cfgs))
-                                [(Err _) false]
-                                [(Partial _ unexpected)
-                                  (begin
-                                    (sem.compiler-semantic-source-index-release!
-                                      (&mut unexpected))
-                                    false)]
-                                [(Ok _ third)
-                                  (begin
-                                    (set!
-                                      docs
-                                      (lsp-semantic-smoke-install
-                                        docs
-                                        (owned_view.compiler-owned-shared-view
-                                          uri)
-                                        (owned_view.compiler-owned-shared-view
-                                          path)
-                                        source3
-                                        4
-                                        third))
-                                    (let
-                                      [server-transfer-ok : bool
-                                        (lsp-semantic-smoke-server-transfer-ok?
-                                          docs
-                                          uri
-                                          path
-                                          4
-                                          baseline)]
-                                      (and
-                                        first-ok
-                                        stale-ok
-                                        invalid-ok
-                                        replacement-ok
-                                        close-ok
-                                        server-transfer-ok
-                                        (=
-                                          (sem_tests.compiler-semantic-source-index-live-owner-count)
-                                          baseline))))])))))])))))]))))
+                                path
+                                4
+                                baseline)]
+                            (and
+                              first-ok
+                              stale-ok
+                              invalid-ok
+                              replacement-ok
+                              close-ok
+                              server-transfer-ok
+                              (=
+                                (sem_tests.compiler-semantic-source-index-live-owner-count)
+                                baseline)))])))])))]))))
 
 (define (lsp-compiler-diagnostic
   [fallback-path : String]
@@ -1184,74 +1151,73 @@
       [utf8-ok : bool false]
       [middle-missing : bool false]
       [crlf-ok : bool false]
-      (begin
-        (lsp.lsp-position-encoding-use-utf16!)
-        (set!
-          utf16-ok
-          (lsp-completion-context-is?
+      (lsp.lsp-position-encoding-use-utf16!)
+      (set!
+        utf16-ok
+        (lsp-completion-context-is?
+          (lsp.lsp-completion-context-at-position
+            (owned_view.compiler-owned-shared-view unicode)
+            0
+            6)
+          1
+          8
+          6
+          6
+          "fo"
+          "fo"
+          ""
+          "fo"
+          5
+          0))
+      (set!
+        middle-missing
+        (and
+          (lsp-completion-context-missing?
             (lsp.lsp-completion-context-at-position
               (owned_view.compiler-owned-shared-view unicode)
               0
-              6)
-            1
-            8
-            6
-            6
-            "fo"
-            "fo"
-            ""
-            "fo"
-            5
-            0))
-        (set!
-          middle-missing
-          (and
-            (lsp-completion-context-missing?
-              (lsp.lsp-completion-context-at-position
-                (owned_view.compiler-owned-shared-view unicode)
-                0
-                1))
-            (lsp-completion-context-missing?
-              (lsp.lsp-completion-context-at-position
-                (owned_view.compiler-owned-shared-view unicode)
-                0
-                7))
-            (lsp-completion-context-missing?
-              (lsp.lsp-completion-context-at-position
-                (owned_view.compiler-owned-shared-view unicode)
-                1
-                0))))
-        (set!
-          crlf-ok
-          (lsp-completion-context-is?
-            (lsp.lsp-completion-context-at-position crlf 1 3)
-            1
-            6
-            4
-            4
-            "fo"
-            "fo"
-            ""
-            "fo"
-            3
-            0))
-        (lsp.lsp-position-encoding-use-utf8!)
-        (set!
-          utf8-ok
-          (lsp-completion-context-is?
-            (lsp.lsp-completion-context-at-position unicode 0 8)
-            1
-            8
-            6
-            6
-            "fo"
-            "fo"
-            ""
-            "fo"
-            5
-            0))
-        (lsp.lsp-position-encoding-use-utf16!)
-        (and utf16-ok utf8-ok middle-missing crlf-ok)))
+              1))
+          (lsp-completion-context-missing?
+            (lsp.lsp-completion-context-at-position
+              (owned_view.compiler-owned-shared-view unicode)
+              0
+              7))
+          (lsp-completion-context-missing?
+            (lsp.lsp-completion-context-at-position
+              (owned_view.compiler-owned-shared-view unicode)
+              1
+              0))))
+      (set!
+        crlf-ok
+        (lsp-completion-context-is?
+          (lsp.lsp-completion-context-at-position crlf 1 3)
+          1
+          6
+          4
+          4
+          "fo"
+          "fo"
+          ""
+          "fo"
+          3
+          0))
+      (lsp.lsp-position-encoding-use-utf8!)
+      (set!
+        utf8-ok
+        (lsp-completion-context-is?
+          (lsp.lsp-completion-context-at-position unicode 0 8)
+          1
+          8
+          6
+          6
+          "fo"
+          "fo"
+          ""
+          "fo"
+          5
+          0))
+      (lsp.lsp-position-encoding-use-utf16!)
+      (and utf16-ok utf8-ok middle-missing crlf-ok))
     (io.panic "lsp-completion-context-position failed")))
 
 (test
@@ -1465,18 +1431,17 @@
   (unless
     (let
       [labels : lsp_svec.Vec (lsp_svec.new)]
-      (begin
-        (lsp_svec.push-ref! (&mut labels) "[λ : i64]")
-        (lsp_svec.push-ref! (&mut labels) "(Tuple i64 bool)")
-        (let
-          [rendered : String
-            (json.stringify
-              (lsp.lsp-json-array
-                (lsp.lsp-signature-parameter-information-list
-                  (& labels)
-                  0
-                  (lsp.lsp-signature-utf16-length "(λ-call"))))]
-          (string.eq rendered "[{\"label\":[8,17]},{\"label\":[18,34]}]"))))
+      (lsp_svec.push-ref! (&mut labels) "[λ : i64]")
+      (lsp_svec.push-ref! (&mut labels) "(Tuple i64 bool)")
+      (let
+        [rendered : String
+          (json.stringify
+            (lsp.lsp-json-array
+              (lsp.lsp-signature-parameter-information-list
+                (& labels)
+                0
+                (lsp.lsp-signature-utf16-length "(λ-call"))))]
+        (string.eq rendered "[{\"label\":[8,17]},{\"label\":[18,34]}]")))
     (io.panic "lsp-signature-label-offsets failed")))
 
 (test
@@ -1489,42 +1454,41 @@
         (sem.compiler-semantic-record-fallback)]
       [two : lsp_svec.Vec (lsp_svec.new)]
       [zero : lsp_svec.Vec (lsp_svec.new)]
-      (begin
-        (lsp_svec.push-ref! (&mut two) "i64")
-        (lsp_svec.push-ref! (&mut two) "bool")
-        (lsp_svec.push-ref! (&mut two) "unit")
-        (lsp_svec.push-ref! (&mut zero) "i64")
-        (let
-          [active : String
-            (json.stringify
-              (lsp.lsp-signature-help-result
-                (& index)
-                "(call"
-                (lsp.LspCallContext 0 1 5 1)
-                (lsp.lsp-global-shared-view definition)
-                (& two)))]
-          [excess : String
-            (json.stringify
-              (lsp.lsp-signature-help-result
-                (& index)
-                "(call"
-                (lsp.LspCallContext 0 1 5 2)
-                (lsp.lsp-global-shared-view definition)
-                (& two)))]
-          [empty : String
-            (json.stringify
-              (lsp.lsp-signature-help-result
-                (& index)
-                "(zero"
-                (lsp.LspCallContext 0 1 5 0)
-                definition
-                (& zero)))]
-          [active-needle : String "\"activeParameter\":1"]
-          [field-needle : String "activeParameter"]
-          (and
-            (string.contains (& active) (& active-needle))
-            (not (string.contains (& excess) (& field-needle)))
-            (not (string.contains (& empty) (& field-needle)))))))
+      (lsp_svec.push-ref! (&mut two) "i64")
+      (lsp_svec.push-ref! (&mut two) "bool")
+      (lsp_svec.push-ref! (&mut two) "unit")
+      (lsp_svec.push-ref! (&mut zero) "i64")
+      (let
+        [active : String
+          (json.stringify
+            (lsp.lsp-signature-help-result
+              (& index)
+              "(call"
+              (lsp.LspCallContext 0 1 5 1)
+              (lsp.lsp-global-shared-view definition)
+              (& two)))]
+        [excess : String
+          (json.stringify
+            (lsp.lsp-signature-help-result
+              (& index)
+              "(call"
+              (lsp.LspCallContext 0 1 5 2)
+              (lsp.lsp-global-shared-view definition)
+              (& two)))]
+        [empty : String
+          (json.stringify
+            (lsp.lsp-signature-help-result
+              (& index)
+              "(zero"
+              (lsp.LspCallContext 0 1 5 0)
+              definition
+              (& zero)))]
+        [active-needle : String "\"activeParameter\":1"]
+        [field-needle : String "activeParameter"]
+        (and
+          (string.contains (& active) (& active-needle))
+          (not (string.contains (& excess) (& field-needle)))
+          (not (string.contains (& empty) (& field-needle))))))
     (io.panic "lsp-signature-active-parameter failed")))
 
 (test
@@ -1565,72 +1529,69 @@
     [ordered : lsp.LspCompletionResults (lsp.lsp-completion-results-new)]
     [capped : lsp.LspCompletionResults (lsp.lsp-completion-results-new)]
     [index : i64 0]
-    (begin
+    (lsp.lsp-completion-results-insert!
+      (&mut ordered)
+      (lsp-completion-test-candidate "beta" 1 1 0 "beta"))
+    (lsp.lsp-completion-results-insert!
+      (&mut ordered)
+      (lsp-completion-test-candidate "alpha" 1 2 0 "alpha-import"))
+    (lsp.lsp-completion-results-insert!
+      (&mut ordered)
+      (lsp-completion-test-candidate "alpha" 1 0 0 "alpha-local"))
+    ;; A repeated stable semantic identity never produces another item.
+    (lsp.lsp-completion-results-insert!
+      (&mut ordered)
+      (lsp-completion-test-candidate "duplicate-label" 0 0 0 "alpha-local"))
+    (while (< index (+ lsp.lsp-completion-result-limit 1))
       (lsp.lsp-completion-results-insert!
-        (&mut ordered)
-        (lsp-completion-test-candidate "beta" 1 1 0 "beta"))
-      (lsp.lsp-completion-results-insert!
-        (&mut ordered)
-        (lsp-completion-test-candidate "alpha" 1 2 0 "alpha-import"))
-      (lsp.lsp-completion-results-insert!
-        (&mut ordered)
-        (lsp-completion-test-candidate "alpha" 1 0 0 "alpha-local"))
-      ;; A repeated stable semantic identity never produces another item.
-      (lsp.lsp-completion-results-insert!
-        (&mut ordered)
-        (lsp-completion-test-candidate "duplicate-label" 0 0 0 "alpha-local"))
-      (while (< index (+ lsp.lsp-completion-result-limit 1))
-        (begin
-          (lsp.lsp-completion-results-insert!
-            (&mut capped)
-            (lsp-completion-test-candidate
-              (lsp.lsp-str3 "item-" (string.int->string index) "")
-              1
-              4
-              0
-              (lsp.lsp-str3 "cap-" (string.int->string index) "")))
-          (set! index (+ index 1))))
-      (and
-        (= ordered.len 3)
-        (string.eq
-          (lsp.lsp-completion-results-get (& ordered) 0).stable-key
-          "alpha-local")
-        (string.eq
-          (lsp.lsp-completion-results-get (& ordered) 1).stable-key
-          "beta")
-        (string.eq
-          (lsp.lsp-completion-results-get (& ordered) 2).stable-key
-          "alpha-import")
-        (= capped.len lsp.lsp-completion-result-limit)
-        capped.incomplete
-        (string.eq
-          (lsp.lsp-completion-module-next-segment "stdlib.string" "")
-          "stdlib")
-        (string.eq
-          (lsp.lsp-completion-module-next-segment "stdlib.string" "stdlib")
-          "string")
-        (string.eq
-          (lsp.lsp-completion-module-next-segment
-            "compiler.parse.core"
-            "compiler")
-          "parse")
-        (string.eq
-          (lsp.lsp-completion-module-next-segment "stdlib.string" "compiler")
-          "")
-        (string.eq
-          (lsp.lsp-completion-rendered-type-owner-name "app.main/AB")
-          "app.main/AB")
-        (string.eq
-          (lsp.lsp-completion-rendered-type-owner-name "(& app.main/AB)")
-          "app.main/AB")
-        (string.eq
-          (lsp.lsp-completion-rendered-type-owner-name
-            "(& lifetime app.main/AB)")
-          "app.main/AB")
-        (string.eq
-          (lsp.lsp-completion-rendered-type-owner-name
-            "(Region phase (& lifetime (app.main/RefBox lifetime)))")
-          "app.main/RefBox")))))
+        (&mut capped)
+        (lsp-completion-test-candidate
+          (lsp.lsp-str3 "item-" (string.int->string index) "")
+          1
+          4
+          0
+          (lsp.lsp-str3 "cap-" (string.int->string index) "")))
+      (set! index (+ index 1)))
+    (and
+      (= ordered.len 3)
+      (string.eq
+        (lsp.lsp-completion-results-get (& ordered) 0).stable-key
+        "alpha-local")
+      (string.eq
+        (lsp.lsp-completion-results-get (& ordered) 1).stable-key
+        "beta")
+      (string.eq
+        (lsp.lsp-completion-results-get (& ordered) 2).stable-key
+        "alpha-import")
+      (= capped.len lsp.lsp-completion-result-limit)
+      capped.incomplete
+      (string.eq
+        (lsp.lsp-completion-module-next-segment "stdlib.string" "")
+        "stdlib")
+      (string.eq
+        (lsp.lsp-completion-module-next-segment "stdlib.string" "stdlib")
+        "string")
+      (string.eq
+        (lsp.lsp-completion-module-next-segment
+          "compiler.parse.core"
+          "compiler")
+        "parse")
+      (string.eq
+        (lsp.lsp-completion-module-next-segment "stdlib.string" "compiler")
+        "")
+      (string.eq
+        (lsp.lsp-completion-rendered-type-owner-name "app.main/AB")
+        "app.main/AB")
+      (string.eq
+        (lsp.lsp-completion-rendered-type-owner-name "(& app.main/AB)")
+        "app.main/AB")
+      (string.eq
+        (lsp.lsp-completion-rendered-type-owner-name "(& lifetime app.main/AB)")
+        "app.main/AB")
+      (string.eq
+        (lsp.lsp-completion-rendered-type-owner-name
+          "(Region phase (& lifetime (app.main/RefBox lifetime)))")
+        "app.main/RefBox"))))
 
 (test
   lsp-completion-provider-ranking-dedup-cap
@@ -1721,15 +1682,13 @@
   (let
     [source-index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< source-index (lsp.lsp-workspace-sources-len (& index.sources)))
-        (let
-          [source : lvf.LspWorkspaceSource
-            (lsp.lsp-workspace-sources-get (& index.sources) source-index)]
-          (begin
-            (set! count (+ count (lsp_decl_vec.len (& source.decls))))
-            (set! source-index (+ source-index 1)))))
-      count)))
+    (while (< source-index (lsp.lsp-workspace-sources-len (& index.sources)))
+      (let
+        [source : lvf.LspWorkspaceSource
+          (lsp.lsp-workspace-sources-get (& index.sources) source-index)]
+        (set! count (+ count (lsp_decl_vec.len (& source.decls))))
+        (set! source-index (+ source-index 1))))
+    count))
 
 (define (lsp-workspace-index-declaration-at
   [index : (& index lvf.LspWorkspaceIndex)]
@@ -1741,37 +1700,36 @@
       [offset : i64 wanted]
       [result : lvf.LspWorkspaceDeclLookup Missing]
       [done : bool false]
-      (begin
-        (while (and
-          (< source-index (lsp.lsp-workspace-sources-len (& index.sources)))
-          (not done))
-          (let
-            [source : lvf.LspWorkspaceSource
-              (lsp.lsp-workspace-sources-get (& index.sources) source-index)]
-            [decls : lsp_decl_vec.Vec source.decls]
-            [count : i64 (lsp_decl_vec.len (& decls))]
-            (if (< offset count)
-              (begin
-                (set!
-                  result
-                  (Found
-                    (lvf.LspWorkspaceDeclRow
-                      source.root-uri
-                      source.root-path
-                      source.uri
-                      source.path
-                      source.module
-                      source.explicit-module
-                      source.overlay
-                      (lsp_decl_vec.get
-                        (& decls)
-                        offset
-                        (lsp.lsp-decl-entry-fallback)))))
-                (set! done true))
-              (begin
-                (set! offset (- offset count))
-                (set! source-index (+ source-index 1))))))
-        result))))
+      (while (and
+        (< source-index (lsp.lsp-workspace-sources-len (& index.sources)))
+        (not done))
+        (let
+          [source : lvf.LspWorkspaceSource
+            (lsp.lsp-workspace-sources-get (& index.sources) source-index)]
+          [decls : lsp_decl_vec.Vec source.decls]
+          [count : i64 (lsp_decl_vec.len (& decls))]
+          (if (< offset count)
+            (begin
+              (set!
+                result
+                (Found
+                  (lvf.LspWorkspaceDeclRow
+                    source.root-uri
+                    source.root-path
+                    source.uri
+                    source.path
+                    source.module
+                    source.explicit-module
+                    source.overlay
+                    (lsp_decl_vec.get
+                      (& decls)
+                      offset
+                      (lsp.lsp-decl-entry-fallback)))))
+              (set! done true))
+            (begin
+              (set! offset (- offset count))
+              (set! source-index (+ source-index 1))))))
+      result)))
 
 (define (lsp-server-state-declaration-count
   [state : (& state lvf.LspServerState)]) : i64
@@ -1786,35 +1744,30 @@
   (lsp.lsp-document-symbols-json (lsp.lsp-scan-decls text)))
 
 (define (lsp-typecheck-tool-session-preserves-program-cache-ok?) : bool
-  (begin
-    (compiler_load.compiler-load-session-cache-disable-for-test!)
-    (compiler_load.compiler-load-session-cache-enable!)
-    (compiler_load.compiler-load-session-program-cache-enable!)
+  (compiler_load.compiler-load-session-cache-disable-for-test!)
+  (compiler_load.compiler-load-session-cache-enable!)
+  (compiler_load.compiler-load-session-program-cache-enable!)
+  (lsp.lsp-typecheck-tool-session-before!)
+  (lsp.lsp-typecheck-tool-session-after!)
+  (let
+    [enabled-ok : bool
+      (compiler_load.compiler-load-session-program-cache-enabled?)]
+    (compiler_load.compiler-load-session-program-cache-disable!)
     (lsp.lsp-typecheck-tool-session-before!)
     (lsp.lsp-typecheck-tool-session-after!)
     (let
-      [enabled-ok : bool
-        (compiler_load.compiler-load-session-program-cache-enabled?)]
-      (begin
-        (compiler_load.compiler-load-session-program-cache-disable!)
-        (lsp.lsp-typecheck-tool-session-before!)
-        (lsp.lsp-typecheck-tool-session-after!)
-        (let
-          [disabled-ok : bool
-            (not (compiler_load.compiler-load-session-program-cache-enabled?))]
-          (begin
-            (compiler_load.compiler-load-session-cache-disable-for-test!)
-            (and enabled-ok disabled-ok)))))))
+      [disabled-ok : bool
+        (not (compiler_load.compiler-load-session-program-cache-enabled?))]
+      (compiler_load.compiler-load-session-cache-disable-for-test!)
+      (and enabled-ok disabled-ok))))
 
 (define (lsp-frame-session-cache-smoke-ok?) : bool
-  (begin
+  (compiler_load.compiler-load-session-cache-disable-for-test!)
+  (lsp.lsp-frame-session-cache-enable!)
+  (let
+    [ok : bool (compiler_load.compiler-load-session-cache-enabled?)]
     (compiler_load.compiler-load-session-cache-disable-for-test!)
-    (lsp.lsp-frame-session-cache-enable!)
-    (let
-      [ok : bool (compiler_load.compiler-load-session-cache-enabled?)]
-      (begin
-        (compiler_load.compiler-load-session-cache-disable-for-test!)
-        ok))))
+    ok))
 
 (test
   lsp-patch-text-smoke
@@ -1961,30 +1914,27 @@
         [depth : i64 0]
         [current-start : i64 -1]
         [result : i64 -1]
-        (begin
-          (while (and (< i n) (= result -1))
-            (let
-              [c : char (string.string-ref text i)]
+        (while (and (< i n) (= result -1))
+          (let
+            [c : char (string.string-ref text i)]
+            (if (= c (string.string-ref "(" 0))
               (begin
-                (if (= c (string.string-ref "(" 0))
-                  (begin
-                    (if (= depth 0)
-                      (set! current-start i)
-                      unit)
-                    (set! depth (+ depth 1)))
-                  (if (= c (string.string-ref ")" 0))
-                    (if (> depth 0)
-                      (begin
-                        (set! depth (- depth 1))
-                        (if (= depth 0)
-                          (if (and (>= offset current-start) (<= offset i))
-                            (set! result current-start)
-                            unit)
-                          unit))
+                (if (= depth 0)
+                  (set! current-start i)
+                  unit)
+                (set! depth (+ depth 1)))
+              (if (= c (string.string-ref ")" 0))
+                (when
+                  (> depth 0)
+                  (set! depth (- depth 1))
+                  (if (= depth 0)
+                    (if (and (>= offset current-start) (<= offset i))
+                      (set! result current-start)
                       unit)
                     unit))
-                (set! i (+ i 1)))))
-          result)))))
+                unit))
+            (set! i (+ i 1))))
+        result))))
 
 (define (lsp-replace-form-at-position
   [text : String]
@@ -2005,48 +1955,37 @@
 (define (lsp-extract-define-name [text : String]) : String
   (let
     [n : i64 (string.string-length text)]
-    (begin
-      (when (= n 0) (return ""))
+    (when (= n 0) (return ""))
+    (let
+      [open : i64 (source_text.source-text-skip-space text 0 n)]
+      (when
+        (or
+          (>= open n)
+          (not (= (string.string-ref text open) (string.string-ref "(" 0))))
+        (return ""))
       (let
-        [open : i64 (source_text.source-text-skip-space text 0 n)]
-        (begin
-          (when
-            (or
-              (>= open n)
-              (not (= (string.string-ref text open) (string.string-ref "(" 0))))
-            (return ""))
+        [kw-start : i64 (source_text.source-text-skip-space text (+ open 1) n)]
+        [kw-end : i64 0]
+        [kw : String ""]
+        (set! kw-end (lsp.lsp-scan-ident text kw-start n))
+        (when (= kw-end kw-start) (return ""))
+        (set! kw (string.substring text kw-start (- kw-end kw-start)))
+        (when
+          (not (or (string.eq kw "define") (string.eq kw "defmacro")))
+          (return ""))
+        (let
+          [name-start : i64 (source_text.source-text-skip-space text kw-end n)]
+          (when (>= name-start n) (return ""))
+          (if (= (string.string-ref text name-start) (string.string-ref "(" 0))
+            (set!
+              name-start
+              (source_text.source-text-skip-space text (+ name-start 1) n))
+            unit)
           (let
-            [kw-start : i64
-              (source_text.source-text-skip-space text (+ open 1) n)]
-            [kw-end : i64 0]
-            [kw : String ""]
-            (begin
-              (set! kw-end (lsp.lsp-scan-ident text kw-start n))
-              (when (= kw-end kw-start) (return ""))
-              (set! kw (string.substring text kw-start (- kw-end kw-start)))
-              (when
-                (not (or (string.eq kw "define") (string.eq kw "defmacro")))
-                (return ""))
-              (let
-                [name-start : i64
-                  (source_text.source-text-skip-space text kw-end n)]
-                (begin
-                  (when (>= name-start n) (return ""))
-                  (if (=
-                    (string.string-ref text name-start)
-                    (string.string-ref "(" 0))
-                    (set!
-                      name-start
-                      (source_text.source-text-skip-space
-                        text
-                        (+ name-start 1)
-                        n))
-                    unit)
-                  (let
-                    [name-end : i64 (lsp.lsp-scan-ident text name-start n)]
-                    (if (= name-end name-start)
-                      ""
-                      (string.substring text name-start (- name-end name-start)))))))))))))
+            [name-end : i64 (lsp.lsp-scan-ident text name-start n)]
+            (if (= name-end name-start)
+              ""
+              (string.substring text name-start (- name-end name-start)))))))))
 
 ;; Helper: Search outward from a position to find a define/defmacro form and extract its name.
 (define (lsp-find-define-name-outward [text : String] [search-offset : i64]) : String
@@ -2175,74 +2114,73 @@
       [z-decls : lsp_decl_vec.Vec (lsp_decl_vec.new)]
       [a-decls : lsp_decl_vec.Vec (lsp_decl_vec.new)]
       [sources : lvf.LspWorkspaceSources (lsp.lsp-workspace-sources-new)]
-      (begin
-        ;; Deliberately insert in the reverse of the required result order.
-        (lsp_decl_vec.push-ref!
-          (&mut z-decls)
-          (lsp-workspace-symbol-test-decl "mytarget" 4))
-        (lsp_decl_vec.push-ref!
-          (&mut z-decls)
-          (lsp-workspace-symbol-test-decl "targetPrefix" 3))
-        (lsp_decl_vec.push-ref!
-          (&mut z-decls)
-          (lsp-workspace-symbol-test-decl "target" 2))
-        (lsp_decl_vec.push-ref!
-          (&mut z-decls)
-          (lsp-workspace-symbol-test-decl "Target" 1))
-        (lsp_decl_vec.push-ref!
-          (&mut a-decls)
-          (lsp-workspace-symbol-test-decl "target" 5))
-        (lsp.lsp-workspace-sources-push!
-          (&mut sources)
-          (lsp-workspace-symbol-test-source "file:///z.tl" "z.module" z-decls))
-        (lsp.lsp-workspace-sources-push!
-          (&mut sources)
-          (lsp-workspace-symbol-test-source "file:///a.tl" "a.module" a-decls))
-        (let
-          [workspace : lvf.LspWorkspaceIndex
-            (lvf.LspWorkspaceIndex (lsp.lsp-workspace-roots-new) sources)]
-          [ranked : lsp.LspWorkspaceSymbolResults
-            (lsp.lsp-workspace-symbol-query (& workspace) "target")]
-          [all : lsp.LspWorkspaceSymbolResults
-            (lsp.lsp-workspace-symbol-query (& workspace) "")]
-          [rendered : String
-            (json.stringify
-              (lsp.lsp-workspace-symbol-result-json (& workspace) "target"))]
-          [exact-rendered : String
-            (json.stringify
-              (lsp.lsp-project-search-result-json (& workspace) "target"))]
-          [prefix-needle : String "targetPrefix"]
-          [substring-needle : String "mytarget"]
-          [location-needle : String "\"location\":{\"uri\":\"file:///a.tl\""]
-          [container-needle : String "\"containerName\":\"a.module\""]
-          (and
-            (= (lsp.lsp-workspace-symbol-results-len (& ranked)) 4)
-            (string.eq
-              (lsp-workspace-symbol-test-candidate-name (& ranked) 0)
-              "target")
-            (string.eq
-              (lsp-workspace-symbol-test-candidate-module (& ranked) 0)
-              "a.module")
-            (string.eq
-              (lsp-workspace-symbol-test-candidate-name (& ranked) 1)
-              "target")
-            (string.eq
-              (lsp-workspace-symbol-test-candidate-module (& ranked) 1)
-              "z.module")
-            (string.eq
-              (lsp-workspace-symbol-test-candidate-name (& ranked) 2)
-              "targetPrefix")
-            (string.eq
-              (lsp-workspace-symbol-test-candidate-name (& ranked) 3)
-              "mytarget")
-            (= (lsp.lsp-workspace-symbol-results-len (& all)) 5)
-            (string.eq
-              (lsp-workspace-symbol-test-candidate-name (& all) 0)
-              "Target")
-            (string.contains (& rendered) (& location-needle))
-            (string.contains (& rendered) (& container-needle))
-            (not (string.contains (& exact-rendered) (& prefix-needle)))
-            (not (string.contains (& exact-rendered) (& substring-needle)))))))
+      ;; Deliberately insert in the reverse of the required result order.
+      (lsp_decl_vec.push-ref!
+        (&mut z-decls)
+        (lsp-workspace-symbol-test-decl "mytarget" 4))
+      (lsp_decl_vec.push-ref!
+        (&mut z-decls)
+        (lsp-workspace-symbol-test-decl "targetPrefix" 3))
+      (lsp_decl_vec.push-ref!
+        (&mut z-decls)
+        (lsp-workspace-symbol-test-decl "target" 2))
+      (lsp_decl_vec.push-ref!
+        (&mut z-decls)
+        (lsp-workspace-symbol-test-decl "Target" 1))
+      (lsp_decl_vec.push-ref!
+        (&mut a-decls)
+        (lsp-workspace-symbol-test-decl "target" 5))
+      (lsp.lsp-workspace-sources-push!
+        (&mut sources)
+        (lsp-workspace-symbol-test-source "file:///z.tl" "z.module" z-decls))
+      (lsp.lsp-workspace-sources-push!
+        (&mut sources)
+        (lsp-workspace-symbol-test-source "file:///a.tl" "a.module" a-decls))
+      (let
+        [workspace : lvf.LspWorkspaceIndex
+          (lvf.LspWorkspaceIndex (lsp.lsp-workspace-roots-new) sources)]
+        [ranked : lsp.LspWorkspaceSymbolResults
+          (lsp.lsp-workspace-symbol-query (& workspace) "target")]
+        [all : lsp.LspWorkspaceSymbolResults
+          (lsp.lsp-workspace-symbol-query (& workspace) "")]
+        [rendered : String
+          (json.stringify
+            (lsp.lsp-workspace-symbol-result-json (& workspace) "target"))]
+        [exact-rendered : String
+          (json.stringify
+            (lsp.lsp-project-search-result-json (& workspace) "target"))]
+        [prefix-needle : String "targetPrefix"]
+        [substring-needle : String "mytarget"]
+        [location-needle : String "\"location\":{\"uri\":\"file:///a.tl\""]
+        [container-needle : String "\"containerName\":\"a.module\""]
+        (and
+          (= (lsp.lsp-workspace-symbol-results-len (& ranked)) 4)
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-name (& ranked) 0)
+            "target")
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-module (& ranked) 0)
+            "a.module")
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-name (& ranked) 1)
+            "target")
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-module (& ranked) 1)
+            "z.module")
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-name (& ranked) 2)
+            "targetPrefix")
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-name (& ranked) 3)
+            "mytarget")
+          (= (lsp.lsp-workspace-symbol-results-len (& all)) 5)
+          (string.eq
+            (lsp-workspace-symbol-test-candidate-name (& all) 0)
+            "Target")
+          (string.contains (& rendered) (& location-needle))
+          (string.contains (& rendered) (& container-needle))
+          (not (string.contains (& exact-rendered) (& prefix-needle)))
+          (not (string.contains (& exact-rendered) (& substring-needle))))))
     (io.panic "lsp-workspace-symbol-ranking failed")))
 
 (test
@@ -2251,36 +2189,31 @@
     (let
       [decls : lsp_decl_vec.Vec (lsp_decl_vec.with-capacity 301)]
       [index : i64 0]
-      (begin
-        (while (< index 300)
-          (begin
-            (lsp_decl_vec.push-ref!
-              (&mut decls)
-              (lsp-workspace-symbol-test-decl "same" (+ index 1)))
-            (set! index (+ index 1))))
-        ;; Exact duplicate source identities collapse to one result.
+      (while (< index 300)
         (lsp_decl_vec.push-ref!
           (&mut decls)
-          (lsp-workspace-symbol-test-decl "same" 1))
+          (lsp-workspace-symbol-test-decl "same" (+ index 1)))
+        (set! index (+ index 1)))
+      ;; Exact duplicate source identities collapse to one result.
+      (lsp_decl_vec.push-ref!
+        (&mut decls)
+        (lsp-workspace-symbol-test-decl "same" 1))
+      (let
+        [sources : lvf.LspWorkspaceSources (lsp.lsp-workspace-sources-new)]
+        (lsp.lsp-workspace-sources-push!
+          (&mut sources)
+          (lsp-workspace-symbol-test-source "file:///many.tl" "many" decls))
         (let
-          [sources : lvf.LspWorkspaceSources (lsp.lsp-workspace-sources-new)]
-          (begin
-            (lsp.lsp-workspace-sources-push!
-              (&mut sources)
-              (lsp-workspace-symbol-test-source "file:///many.tl" "many" decls))
-            (let
-              [workspace : lvf.LspWorkspaceIndex
-                (lvf.LspWorkspaceIndex (lsp.lsp-workspace-roots-new) sources)]
-              [results : lsp.LspWorkspaceSymbolResults
-                (lsp.lsp-workspace-symbol-query (& workspace) "same")]
-              (and
-                (=
-                  (lsp.lsp-workspace-symbol-results-len (& results))
-                  lsp.lsp-workspace-symbol-result-limit)
-                (= (lsp-workspace-symbol-test-candidate-line (& results) 0) 1)
-                (=
-                  (lsp-workspace-symbol-test-candidate-line (& results) 255)
-                  256)))))))
+          [workspace : lvf.LspWorkspaceIndex
+            (lvf.LspWorkspaceIndex (lsp.lsp-workspace-roots-new) sources)]
+          [results : lsp.LspWorkspaceSymbolResults
+            (lsp.lsp-workspace-symbol-query (& workspace) "same")]
+          (and
+            (=
+              (lsp.lsp-workspace-symbol-results-len (& results))
+              lsp.lsp-workspace-symbol-result-limit)
+            (= (lsp-workspace-symbol-test-candidate-line (& results) 0) 1)
+            (= (lsp-workspace-symbol-test-candidate-line (& results) 255) 256)))))
     (io.panic "lsp-workspace-symbol-cap-dedup failed")))
 
 (test

@@ -83,14 +83,12 @@
                             home
                             (driver.compiler-driver-render-source-diagnostic
                               (owned_view.compiler-owned-box-shared-view diag)))]))])]))]
-        (begin
-          (in-arena
-            job
-            (begin
-              (driver.compiler-driver-package-runtime-scope-release!
-                (owned_view.compiler-owned-shared-view scope))
-              (driver.compiler-driver-package-runtime-scope-release! scope)))
-          result)))))
+        (in-arena
+          job
+          (driver.compiler-driver-package-runtime-scope-release!
+            (owned_view.compiler-owned-shared-view scope))
+          (driver.compiler-driver-package-runtime-scope-release! scope))
+        result))))
 
 (define (runtime-owner-smoke-for-route
   [source : String]
@@ -168,43 +166,37 @@
       (runtime-owner-smoke "(define (main) : i64 missing_owner_name)")]
     [before : i64 (profile.alloc-live)]
     [index : i64 0]
-    (begin
+    (unless
+      (string.contains warm "unbound name missing_owner_name")
+      (io.panic "expected checked error before lifetime measurement"))
+    (while (< index 8)
       (unless
-        (string.contains warm "unbound name missing_owner_name")
-        (io.panic "expected checked error before lifetime measurement"))
-      (while (< index 8)
-        (begin
-          (unless
-            (string.contains
-              (runtime-owner-smoke "(define (main) : i64 missing_owner_name)")
-              "unbound name missing_owner_name")
-            (io.panic "repeated checked error changed diagnostic"))
-          (set! index (+ index 1))))
-      ;; Includes copied diagnostics and restored parent selectors. Leaking one
-      ;; source/checked pool per error retains far more than this bound.
-      (unless
-        (< (- (profile.alloc-live) before) 1048576)
-        (io.panic "checked errors retained retired AST pool generations")))))
+        (string.contains
+          (runtime-owner-smoke "(define (main) : i64 missing_owner_name)")
+          "unbound name missing_owner_name")
+        (io.panic "repeated checked error changed diagnostic"))
+      (set! index (+ index 1)))
+    ;; Includes copied diagnostics and restored parent selectors. Leaking one
+    ;; source/checked pool per error retains far more than this bound.
+    (unless
+      (< (- (profile.alloc-live) before) 1048576)
+      (io.panic "checked errors retained retired AST pool generations"))))
 
 (test
   package-runtime-target-and-optimization-retirement
   (let
     [level : i64 0]
     (while (< level 3)
-      (begin
-        (unless
-          (and
-            (string.contains
-              (runtime-owner-smoke-for "(define (main) : i64 42)" (Linux) level)
-              "main:")
-            (string.contains
-              (runtime-owner-smoke-for
-                "(define (main) : i64 42)"
-                (Windows)
-                level)
-              "main:"))
-          (io.panic "target or optimization route lost owned runtime output"))
-        (set! level (+ level 1))))))
+      (unless
+        (and
+          (string.contains
+            (runtime-owner-smoke-for "(define (main) : i64 42)" (Linux) level)
+            "main:")
+          (string.contains
+            (runtime-owner-smoke-for "(define (main) : i64 42)" (Windows) level)
+            "main:"))
+        (io.panic "target or optimization route lost owned runtime output"))
+      (set! level (+ level 1)))))
 
 (test
   package-runtime-macro-error-survives-next-job
@@ -242,42 +234,37 @@
               [(Err diag)
                 (driver.compiler-driver-render-source-diagnostic
                   (owned_view.compiler-owned-box-shared-view diag))]))]
-        (begin
-          (driver.compiler-driver-package-runtime-scope-release! scope)
-          message)))))
+        (driver.compiler-driver-package-runtime-scope-release! scope)
+        message))))
 
 (test
   package-runtime-import-error-captures-live-loader-state
-  (begin
-    (load.compiler-load-test-mkdir "target/exp")
-    (load.compiler-load-test-mkdir "target/exp/package-runtime-lifetime")
-    (load_tests.compiler-load-write-file-text
-      "target/exp/package-runtime-lifetime/helper.tl"
-      "(module helper) (define value : i64 42)")
-    (load_tests.compiler-load-write-file-text
-      "target/exp/package-runtime-lifetime/good.tl"
-      "(import helper as helper) (define (main) : i64 helper.value)")
-    (load_tests.compiler-load-write-file-text
-      "target/exp/package-runtime-lifetime/bad.tl"
-      "(import helper as helper) (import absent_runtime as absent) (define (main) : i64 helper.value)")
-    (let
-      [table : i64 (ci.intern-active-table-id)]
-      [first : String
-        (runtime-owner-load-message
-          "target/exp/package-runtime-lifetime/good.tl")]
-      [bad : String
-        (runtime-owner-load-message
-          "target/exp/package-runtime-lifetime/bad.tl")]
-      [last : String
-        (runtime-owner-load-message
-          "target/exp/package-runtime-lifetime/good.tl")]
-      (unless
-        (and
-          (string.eq first "loaded")
-          (string.eq last "loaded")
-          (string.contains bad "absent_runtime")
-          (= table (ci.intern-active-table-id)))
-        (io.panic "failed package import did not restore live loader ownership")))))
+  (load.compiler-load-test-mkdir "target/exp")
+  (load.compiler-load-test-mkdir "target/exp/package-runtime-lifetime")
+  (load_tests.compiler-load-write-file-text
+    "target/exp/package-runtime-lifetime/helper.tl"
+    "(module helper) (define value : i64 42)")
+  (load_tests.compiler-load-write-file-text
+    "target/exp/package-runtime-lifetime/good.tl"
+    "(import helper as helper) (define (main) : i64 helper.value)")
+  (load_tests.compiler-load-write-file-text
+    "target/exp/package-runtime-lifetime/bad.tl"
+    "(import helper as helper) (import absent_runtime as absent) (define (main) : i64 helper.value)")
+  (let
+    [table : i64 (ci.intern-active-table-id)]
+    [first : String
+      (runtime-owner-load-message "target/exp/package-runtime-lifetime/good.tl")]
+    [bad : String
+      (runtime-owner-load-message "target/exp/package-runtime-lifetime/bad.tl")]
+    [last : String
+      (runtime-owner-load-message "target/exp/package-runtime-lifetime/good.tl")]
+    (unless
+      (and
+        (string.eq first "loaded")
+        (string.eq last "loaded")
+        (string.contains bad "absent_runtime")
+        (= table (ci.intern-active-table-id)))
+      (io.panic "failed package import did not restore live loader ownership"))))
 
 (test
   package-runtime-direct-object-releases-side-backend
@@ -287,23 +274,21 @@
       (runtime-owner-smoke-for-route (string.copy source) Linux 0 true)]
     [before : i64 (profile.alloc-live)]
     [index : i64 0]
-    (begin
+    (unless
+      (string.contains warm "main:")
+      (io.panic "direct object side assembly must survive runtime cleanup"))
+    (while (< index 8)
       (unless
-        (string.contains warm "main:")
-        (io.panic "direct object side assembly must survive runtime cleanup"))
-      (while (< index 8)
-        (begin
-          (unless
-            (string.contains
-              (runtime-owner-smoke-for-route (string.copy source) Linux 0 true)
-              "main:")
-            (io.panic "repeated direct object emission lost side assembly"))
-          (set! index (+ index 1))))
-      ;; Includes retained object images, assembly and restored parent state.
-      ;; Unretired side-backend arenas push this fixture above the bound.
-      (unless
-        (< (- (profile.alloc-live) before) 1048576)
-        (io.panic "direct object jobs retained private side-backend arenas")))))
+        (string.contains
+          (runtime-owner-smoke-for-route (string.copy source) Linux 0 true)
+          "main:")
+        (io.panic "repeated direct object emission lost side assembly"))
+      (set! index (+ index 1)))
+    ;; Includes retained object images, assembly and restored parent state.
+    ;; Unretired side-backend arenas push this fixture above the bound.
+    (unless
+      (< (- (profile.alloc-live) before) 1048576)
+      (io.panic "direct object jobs retained private side-backend arenas"))))
 
 (test
   package-runtime-spmd-callable-ir-survives-frontend-retirement
@@ -328,14 +313,13 @@
             false
             false)]
         [next : String (runtime-owner-smoke "(define (main) : i64 42)")]
-        (begin
-          (unless
-            (and
-              (string.contains linux "spmd_pkg_")
-              (string.contains windows "spmd_pkg_")
-              (string.contains next "main:"))
-            (io.panic "package SPMD function lost its retained IR storage"))
-          (set! level (+ level 1)))))))
+        (unless
+          (and
+            (string.contains linux "spmd_pkg_")
+            (string.contains windows "spmd_pkg_")
+            (string.contains next "main:"))
+          (io.panic "package SPMD function lost its retained IR storage"))
+        (set! level (+ level 1))))))
 
 ;; One package job whose child interner grows its structural table across
 ;; several record and map generations before the scope is released.
@@ -348,16 +332,14 @@
           (driver.compiler-driver-package-runtime-scope-new home)]
         [first : i64 (ci.intern-composite-pair-id 11 12)]
         [index : i64 0]
-        (begin
-          (while (< index count)
-            (let
-              [_raw : i64 (ci.intern-composite-pair-id 13 (+ 14 index))]
-              (set! index (+ index 1))))
+        (while (< index count)
           (let
-            [same? : bool (= (ci.intern-composite-pair-id 11 12) first)]
-            (begin
-              (driver.compiler-driver-package-runtime-scope-release! scope)
-              same?)))))))
+            [_raw : i64 (ci.intern-composite-pair-id 13 (+ 14 index))]
+            (set! index (+ index 1))))
+        (let
+          [same? : bool (= (ci.intern-composite-pair-id 11 12) first)]
+          (driver.compiler-driver-package-runtime-scope-release! scope)
+          same?)))))
 
 (test
   package-runtime-release-retires-structural-generations
@@ -372,23 +354,21 @@
     [made : i64 (ci.intern-structural-generations-made-count)]
     [same? : bool warm]
     [index : i64 0]
-    (begin
-      (while (< index 4)
-        (begin
-          (set! same? (and same? (runtime-owner-structural-growth-job 20000)))
-          (set! index (+ index 1))))
-      ;; An unreleased job keeps a 32768-record column generation and a map of
-      ;; at least 32768 slots, each larger than this bound.
-      (unless
-        (and
-          same?
-          (= table-id (ci.intern-active-table-id))
-          (= (ci.intern-structural-generations-live) live)
-          ;; Seven record and at least six map growths per job.
-          (>= (ci.intern-structural-generations-made-count) (+ made 52))
-          (= (ci.intern-composite-pair-id left right) parent-pair)
-          (< (- (profile.alloc-live) before) 1048576))
-        (io.panic "package runtime release retained structural generations")))))
+    (while (< index 4)
+      (set! same? (and same? (runtime-owner-structural-growth-job 20000)))
+      (set! index (+ index 1)))
+    ;; An unreleased job keeps a 32768-record column generation and a map of
+    ;; at least 32768 slots, each larger than this bound.
+    (unless
+      (and
+        same?
+        (= table-id (ci.intern-active-table-id))
+        (= (ci.intern-structural-generations-live) live)
+        ;; Seven record and at least six map growths per job.
+        (>= (ci.intern-structural-generations-made-count) (+ made 52))
+        (= (ci.intern-composite-pair-id left right) parent-pair)
+        (< (- (profile.alloc-live) before) 1048576))
+      (io.panic "package runtime release retained structural generations"))))
 
 (test
   package-runtime-structural-release-keeps-growing-parent
@@ -397,25 +377,23 @@
     [first : i64 (ci.intern-composite-pair-id left 1)]
     [ok? : bool true]
     [round : i64 0]
-    (begin
-      ;; The parent grows across its own generations between child jobs that
-      ;; grow and release theirs over the same record indices.
-      (while (< round 3)
-        (let
-          [index : i64 0]
-          (begin
-            (while (< index 5000)
-              (let
-                [_raw : i64
-                  (ci.intern-composite-pair-id left (+ (* round 5000) index 2))]
-                (set! index (+ index 1))))
-            (set! ok? (and ok? (runtime-owner-structural-growth-job 5000)))
-            (set! round (+ round 1)))))
-      (unless
-        (and
-          ok?
-          (= (ci.intern-composite-pair-id left 1) first)
-          (=
-            (ci.intern-composite-pair-id left 7002)
-            (ci.intern-composite-pair-id left 7002)))
-        (io.panic "child structural release disturbed the parent table")))))
+    ;; The parent grows across its own generations between child jobs that
+    ;; grow and release theirs over the same record indices.
+    (while (< round 3)
+      (let
+        [index : i64 0]
+        (while (< index 5000)
+          (let
+            [_raw : i64
+              (ci.intern-composite-pair-id left (+ (* round 5000) index 2))]
+            (set! index (+ index 1))))
+        (set! ok? (and ok? (runtime-owner-structural-growth-job 5000)))
+        (set! round (+ round 1))))
+    (unless
+      (and
+        ok?
+        (= (ci.intern-composite-pair-id left 1) first)
+        (=
+          (ci.intern-composite-pair-id left 7002)
+          (ci.intern-composite-pair-id left 7002)))
+      (io.panic "child structural release disturbed the parent table"))))

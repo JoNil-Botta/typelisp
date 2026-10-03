@@ -32,19 +32,15 @@
   (let
     [subst : tc_core.TcLifetimeSubst Nil]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [from : i64
-            (if reverse?
-              (- (- count index) 1)
-              index)]
-          (begin
-            (set!
-              subst
-              (tc-lifetime-subst-must-bind subst from (+ from 100000)))
-            (set! index (+ index 1)))))
-      subst)))
+    (while (< index count)
+      (let
+        [from : i64
+          (if reverse?
+            (- (- count index) 1)
+            index)]
+        (set! subst (tc-lifetime-subst-must-bind subst from (+ from 100000)))
+        (set! index (+ index 1))))
+    subst))
 
 (define (tc-lifetime-subst-len [subst : tc_core.TcLifetimeSubst]) : i64
   (match subst
@@ -59,19 +55,17 @@
     [reverse : tc_core.TcLifetimeSubst (tc-lifetime-subst-build count true)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< index count))
-        (begin
-          (if (and
-            (tc-lifetime-subst-lookup-eq? forward index (+ index 100000))
-            (tc-lifetime-subst-lookup-eq? reverse index (+ index 100000)))
-            unit
-            (set! ok false))
-          (set! index (+ index 1))))
-      (and
-        ok
-        (= (tc-lifetime-subst-len forward) count)
-        (= (tc-lifetime-subst-len reverse) count)))))
+    (while (and ok (< index count))
+      (if (and
+        (tc-lifetime-subst-lookup-eq? forward index (+ index 100000))
+        (tc-lifetime-subst-lookup-eq? reverse index (+ index 100000)))
+        unit
+        (set! ok false))
+      (set! index (+ index 1)))
+    (and
+      ok
+      (= (tc-lifetime-subst-len forward) count)
+      (= (tc-lifetime-subst-len reverse) count))))
 
 (define (tc-lifetime-subst-list-ok?) : bool
   (let
@@ -81,18 +75,17 @@
         3
         103)]
     [input : ast.AstLifetimeList (ast.ast-lifetime-list-new)]
-    (begin
-      (ast.ast-lifetime-list-push (&mut input) 1)
-      (ast.ast-lifetime-list-push (&mut input) 2)
-      (ast.ast-lifetime-list-push (&mut input) 3)
-      (let
-        [output : ast.AstLifetimeList
-          (tc_core.tc-lifetime-subst-list subst input)]
-        (and
-          (= (ast.ast-lifetime-list-len (& output)) 3)
-          (= (ast.ast-lifetime-list-get (& output) 0 -1) 101)
-          (= (ast.ast-lifetime-list-get (& output) 1 -1) 2)
-          (= (ast.ast-lifetime-list-get (& output) 2 -1) 103))))))
+    (ast.ast-lifetime-list-push (&mut input) 1)
+    (ast.ast-lifetime-list-push (&mut input) 2)
+    (ast.ast-lifetime-list-push (&mut input) 3)
+    (let
+      [output : ast.AstLifetimeList
+        (tc_core.tc-lifetime-subst-list subst input)]
+      (and
+        (= (ast.ast-lifetime-list-len (& output)) 3)
+        (= (ast.ast-lifetime-list-get (& output) 0 -1) 101)
+        (= (ast.ast-lifetime-list-get (& output) 1 -1) 2)
+        (= (ast.ast-lifetime-list-get (& output) 2 -1) 103)))))
 
 (define (tc-lifetime-subst-storage-ok?) : bool
   (let

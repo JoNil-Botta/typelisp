@@ -12,10 +12,9 @@
 (define (graph-test-digest [seed : i64]) : sha256.Sha256Digest
   (let
     [octets : (Array u8 32) (make-array u8 32)]
-    (begin
-      (set! (array-ref octets 0) (cast seed : u8))
-      (set! (array-ref octets 31) (cast (+ seed 7) : u8))
-      (sha256.Sha256Digest octets))))
+    (set! (array-ref octets 0) (cast seed : u8))
+    (set! (array-ref octets 31) (cast (+ seed 7) : u8))
+    (sha256.Sha256Digest octets)))
 
 (define (graph-test-child [domain : String] [length : i64]) : identity.CompilerIncrementalChildIdentity
   (identity.CompilerIncrementalChildIdentity
@@ -49,14 +48,13 @@
 (define (graph-test-key [seed : i64]) : graph.CompilerIncrementalStoredResultKey
   (let
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 3)]
-    (begin
-      (set! (array-ref bytes 0) (cast seed : u8))
-      (set! (array-ref bytes 1) 42)
-      (set! (array-ref bytes 2) (cast (* seed 3) : u8))
-      (graph.CompilerIncrementalStoredResultKey
-        "typelisp.compiler.incremental.stored-result"
-        1
-        bytes))))
+    (set! (array-ref bytes 0) (cast seed : u8))
+    (set! (array-ref bytes 1) 42)
+    (set! (array-ref bytes 2) (cast (* seed 3) : u8))
+    (graph.CompilerIncrementalStoredResultKey
+      "typelisp.compiler.incremental.stored-result"
+      1
+      bytes)))
 
 (define (graph-test-source [path : String]) : trace.CompilerIncrementalTraceEdge
   (trace.CompilerIncrementalTraceEdge
@@ -104,16 +102,14 @@
 (define (graph-test-add-node!
   [builder : (&mut builder graph.CompilerIncrementalGraphBuilder)]
   [node : graph.CompilerIncrementalGraphNode]) : unit
-  (begin
-    (graph.compiler-graph-add-node! builder node)
-    unit))
+  (graph.compiler-graph-add-node! builder node)
+  unit)
 
 (define (graph-test-add-root!
   [builder : (&mut builder graph.CompilerIncrementalGraphBuilder)]
   [root : graph.CompilerIncrementalGraphRoot]) : unit
-  (begin
-    (graph.compiler-graph-add-root! builder root)
-    unit))
+  (graph.compiler-graph-add-root! builder root)
+  unit)
 
 ;; A trace observing one source file and the given child results.
 (define (graph-test-trace
@@ -130,26 +126,25 @@
   (let
     [builder : trace.CompilerIncrementalTraceBuilder
       (graph-test-trace-begin query)]
-    (begin
-      (graph-test-note! (&mut builder) (graph-test-source source))
-      (when macro? (graph-test-note! (&mut builder) (graph-test-macro-edge)))
-      (when
-        (>= children 1)
-        (graph-test-note!
-          (&mut builder)
-          (graph-test-child-edge
-            0
-            (graph-test-query first-kind first-length)
-            (graph-test-output first-output))))
-      (when
-        (>= children 2)
-        (graph-test-note!
-          (&mut builder)
-          (graph-test-child-edge
-            1
-            (graph-test-query second-kind second-length)
-            (graph-test-output second-output))))
-      (graph-test-trace-finish builder))))
+    (graph-test-note! (&mut builder) (graph-test-source source))
+    (when macro? (graph-test-note! (&mut builder) (graph-test-macro-edge)))
+    (when
+      (>= children 1)
+      (graph-test-note!
+        (&mut builder)
+        (graph-test-child-edge
+          0
+          (graph-test-query first-kind first-length)
+          (graph-test-output first-output))))
+    (when
+      (>= children 2)
+      (graph-test-note!
+        (&mut builder)
+        (graph-test-child-edge
+          1
+          (graph-test-query second-kind second-length)
+          (graph-test-output second-output))))
+    (graph-test-trace-finish builder)))
 
 (define (graph-test-node
   [kind : i64]
@@ -271,37 +266,36 @@
 (define (graph-test-representative [reverse? : bool] [repeat? : bool]) : graph.ResultCompilerIncrementalGraph
   (let
     [builder : graph.CompilerIncrementalGraphBuilder (graph-test-begin)]
-    (begin
-      (if reverse?
-        (begin
-          (graph-test-add-node! (&mut builder) (graph-test-decl 13))
-          (graph-test-add-root!
-            (&mut builder)
-            (graph-test-root "typelisp.root.check" "lib" 2 3))
-          (graph-test-add-node! (&mut builder) (graph-test-module 11))
-          (graph-test-add-node! (&mut builder) (graph-test-macro))
-          (graph-test-add-root!
-            (&mut builder)
-            (graph-test-root "typelisp.root.build" "app" 3 4))
-          (graph-test-add-node! (&mut builder) (graph-test-load)))
-        (begin
-          (graph-test-add-root!
-            (&mut builder)
-            (graph-test-root "typelisp.root.build" "app" 3 4))
-          (graph-test-add-root!
-            (&mut builder)
-            (graph-test-root "typelisp.root.check" "lib" 2 3))
-          (graph-test-add-node! (&mut builder) (graph-test-load))
-          (graph-test-add-node! (&mut builder) (graph-test-macro))
-          (graph-test-add-node! (&mut builder) (graph-test-module 11))
-          (graph-test-add-node! (&mut builder) (graph-test-decl 13))))
-      (when
-        repeat?
-        (graph-test-add-node! (&mut builder) (graph-test-module 11))
+    (if reverse?
+      (begin
+        (graph-test-add-node! (&mut builder) (graph-test-decl 13))
         (graph-test-add-root!
           (&mut builder)
-          (graph-test-root "typelisp.root.build" "app" 3 4)))
-      (graph.compiler-graph-finalize builder))))
+          (graph-test-root "typelisp.root.check" "lib" 2 3))
+        (graph-test-add-node! (&mut builder) (graph-test-module 11))
+        (graph-test-add-node! (&mut builder) (graph-test-macro))
+        (graph-test-add-root!
+          (&mut builder)
+          (graph-test-root "typelisp.root.build" "app" 3 4))
+        (graph-test-add-node! (&mut builder) (graph-test-load)))
+      (begin
+        (graph-test-add-root!
+          (&mut builder)
+          (graph-test-root "typelisp.root.build" "app" 3 4))
+        (graph-test-add-root!
+          (&mut builder)
+          (graph-test-root "typelisp.root.check" "lib" 2 3))
+        (graph-test-add-node! (&mut builder) (graph-test-load))
+        (graph-test-add-node! (&mut builder) (graph-test-macro))
+        (graph-test-add-node! (&mut builder) (graph-test-module 11))
+        (graph-test-add-node! (&mut builder) (graph-test-decl 13))))
+    (when
+      repeat?
+      (graph-test-add-node! (&mut builder) (graph-test-module 11))
+      (graph-test-add-root!
+        (&mut builder)
+        (graph-test-root "typelisp.root.build" "app" 3 4)))
+    (graph.compiler-graph-finalize builder)))
 
 (define (graph-test-array-eq?
   [left : (& left (__tl_dyn-array i64))]
@@ -309,14 +303,12 @@
   (let
     [equal? : bool (= (array-length left) (array-length right))]
     [index : i64 0]
-    (begin
-      (while (and equal? (< index (array-length left)))
-        (begin
-          (unless
-            (= (array-ref left index) (array-ref right index))
-            (set! equal? false))
-          (set! index (+ index 1))))
-      equal?)))
+    (while (and equal? (< index (array-length left)))
+      (unless
+        (= (array-ref left index) (array-ref right index))
+        (set! equal? false))
+      (set! index (+ index 1)))
+    equal?))
 
 (define (graph-test-indices
   [a : i64]
@@ -326,12 +318,11 @@
   [count : i64]) : (__tl_dyn-array i64)
   (let
     [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    (begin
-      (when (> count 0) (set! (array-ref out 0) a))
-      (when (> count 1) (set! (array-ref out 1) b))
-      (when (> count 2) (set! (array-ref out 2) c))
-      (when (> count 3) (set! (array-ref out 3) d))
-      out)))
+    (when (> count 0) (set! (array-ref out 0) a))
+    (when (> count 1) (set! (array-ref out 1) b))
+    (when (> count 2) (set! (array-ref out 2) c))
+    (when (> count 3) (set! (array-ref out 3) d))
+    out))
 
 (define (graph-test-index
   [value : (& value graph.CompilerIncrementalGraph)]
@@ -443,15 +434,14 @@
   [decl : graph.CompilerIncrementalGraphNode]) : graph.ResultCompilerIncrementalGraph
   (let
     [builder : graph.CompilerIncrementalGraphBuilder (graph-test-begin)]
-    (begin
-      (graph-test-add-root!
-        (&mut builder)
-        (graph-test-root "typelisp.root.build" "app" 3 4))
-      (graph-test-add-node! (&mut builder) (graph-test-load))
-      (graph-test-add-node! (&mut builder) (graph-test-macro))
-      (graph-test-add-node! (&mut builder) module)
-      (graph-test-add-node! (&mut builder) decl)
-      (graph.compiler-graph-finalize builder))))
+    (graph-test-add-root!
+      (&mut builder)
+      (graph-test-root "typelisp.root.build" "app" 3 4))
+    (graph-test-add-node! (&mut builder) (graph-test-load))
+    (graph-test-add-node! (&mut builder) (graph-test-macro))
+    (graph-test-add-node! (&mut builder) module)
+    (graph-test-add-node! (&mut builder) decl)
+    (graph.compiler-graph-finalize builder)))
 
 ;; A parent's edge compares semantic outputs, never stored-result keys.
 (define (graph-test-output-key-separation?) : bool
@@ -576,26 +566,25 @@
           0
           41
           41))]
-    (begin
-      (graph-test-add-root!
-        (&mut builder)
-        (graph-test-root "typelisp.root.build" "c" 2 43))
-      (graph-test-add-node! (&mut builder) top)
-      (graph-test-add-node! (&mut builder) right)
-      (graph-test-add-node! (&mut builder) left)
-      (let
-        [value : graph.CompilerIncrementalGraph
-          (graph-test-unwrap (graph.compiler-graph-finalize builder))]
-        [a : i64 (graph-test-index (& value) 0 41)]
-        [b : i64 (graph-test-index (& value) 0 42)]
-        [c : i64 (graph-test-index (& value) 2 43)]
-        [order : (__tl_dyn-array i64)
-          (graph.compiler-graph-topological-order (& value))]
-        [expected : (__tl_dyn-array i64)
-          (if (< a b)
-            (graph-test-indices a b c 0 3)
-            (graph-test-indices b a c 0 3))]
-        (graph-test-array-eq? (& order) (& expected))))))
+    (graph-test-add-root!
+      (&mut builder)
+      (graph-test-root "typelisp.root.build" "c" 2 43))
+    (graph-test-add-node! (&mut builder) top)
+    (graph-test-add-node! (&mut builder) right)
+    (graph-test-add-node! (&mut builder) left)
+    (let
+      [value : graph.CompilerIncrementalGraph
+        (graph-test-unwrap (graph.compiler-graph-finalize builder))]
+      [a : i64 (graph-test-index (& value) 0 41)]
+      [b : i64 (graph-test-index (& value) 0 42)]
+      [c : i64 (graph-test-index (& value) 2 43)]
+      [order : (__tl_dyn-array i64)
+        (graph.compiler-graph-topological-order (& value))]
+      [expected : (__tl_dyn-array i64)
+        (if (< a b)
+          (graph-test-indices a b c 0 3)
+          (graph-test-indices b a c 0 3))]
+      (graph-test-array-eq? (& order) (& expected)))))
 
 ;; Lookup admits only exact transcripts: an identity carrying another node's
 ;; fingerprint over a different transcript finds nothing, and a forged
@@ -652,13 +641,12 @@
   [second : graph.CompilerIncrementalGraphNode]) : i64
   (let
     [builder : graph.CompilerIncrementalGraphBuilder (graph-test-begin)]
-    (begin
-      (graph-test-add-root!
-        (&mut builder)
-        (graph-test-root "typelisp.root.build" "app" 0 1))
-      (graph-test-add-node! (&mut builder) first)
-      (graph-test-add-node! (&mut builder) second)
-      (graph-test-error-code (graph.compiler-graph-finalize builder)))))
+    (graph-test-add-root!
+      (&mut builder)
+      (graph-test-root "typelisp.root.build" "app" 0 1))
+    (graph-test-add-node! (&mut builder) first)
+    (graph-test-add-node! (&mut builder) second)
+    (graph-test-error-code (graph.compiler-graph-finalize builder))))
 
 (define (graph-test-load-with-key
   [key : graph.CompilerIncrementalStoredResultKey]) : graph.CompilerIncrementalGraphNode
@@ -777,13 +765,12 @@
   [second : graph.CompilerIncrementalGraphNode]) : graph.ResultCompilerIncrementalGraph
   (let
     [builder : graph.CompilerIncrementalGraphBuilder (graph-test-begin)]
-    (begin
-      (graph-test-add-root!
-        (&mut builder)
-        (graph-test-root "typelisp.root.build" "app" root-kind root-length))
-      (graph-test-add-node! (&mut builder) first)
-      (when second? (graph-test-add-node! (&mut builder) second))
-      (graph.compiler-graph-finalize builder))))
+    (graph-test-add-root!
+      (&mut builder)
+      (graph-test-root "typelisp.root.build" "app" root-kind root-length))
+    (graph-test-add-node! (&mut builder) first)
+    (when second? (graph-test-add-node! (&mut builder) second))
+    (graph.compiler-graph-finalize builder)))
 
 (define (graph-test-structure-rejections?) : bool
   (let
@@ -844,10 +831,9 @@
       (let
         [builder : trace.CompilerIncrementalTraceBuilder
           (graph-test-trace-begin (graph-test-query 2 30))]
-        (begin
-          (graph-test-note! (&mut builder) (graph-test-source "src/a.tl"))
-          (graph-test-note! (&mut builder) (graph-test-source "src/b.tl"))
-          (graph-test-trace-finish builder)))]
+        (graph-test-note! (&mut builder) (graph-test-source "src/a.tl"))
+        (graph-test-note! (&mut builder) (graph-test-source "src/b.tl"))
+        (graph-test-trace-finish builder))]
     [scc : graph.CompilerIncrementalGraphNode
       (graph-test-node 2 30 30 30 unit-trace)]
     [absent-child : graph.CompilerIncrementalGraphError
@@ -878,32 +864,27 @@
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [domain : String]
   [schema : i64]) : unit
-  (begin
-    (binary.compiler-incremental-binary-push-string! out (& domain))
-    (byte_le.push-u32! out schema)))
+  (binary.compiler-incremental-binary-push-string! out (& domain))
+  (byte_le.push-u32! out schema))
 
 (define (graph-test-push-root!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [purpose : String]
   [name : String]
   [query : identity.CompilerIncrementalIdentity]) : unit
-  (begin
-    (binary.compiler-incremental-binary-push-string! out (& purpose))
-    (binary.compiler-incremental-binary-push-string! out (& name))
-    (byte_le.push-u32! out (array-length query.transcript))
-    (binary.compiler-incremental-binary-push-array! out (& query.transcript))))
+  (binary.compiler-incremental-binary-push-string! out (& purpose))
+  (binary.compiler-incremental-binary-push-string! out (& name))
+  (byte_le.push-u32! out (array-length query.transcript))
+  (binary.compiler-incremental-binary-push-array! out (& query.transcript)))
 
 (define (graph-test-push-node!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [node : graph.CompilerIncrementalGraphNode]) : unit
-  (begin
-    (byte_le.push-u32! out (array-length node.query.transcript))
-    (binary.compiler-incremental-binary-push-array!
-      out
-      (& node.query.transcript))
-    (byte_buf_core.byte-buf-builder-append-string
-      out
-      (graph.compiler-graph-encode-node-body (& node)))))
+  (byte_le.push-u32! out (array-length node.query.transcript))
+  (binary.compiler-incremental-binary-push-array! out (& node.query.transcript))
+  (byte_buf_core.byte-buf-builder-append-string
+    out
+    (graph.compiler-graph-encode-node-body (& node))))
 
 (define (graph-test-decode-code [bytes : (__tl_dyn-array u8)]) : i64
   (let
@@ -921,22 +902,21 @@
   (let
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity 4096)]
-    (begin
-      (graph-test-push-header! (&mut out) domain schema)
-      (byte_le.push-u32! (&mut out) 1)
-      (graph-test-push-root!
-        (&mut out)
-        "typelisp.root.build"
-        "app"
-        (graph-test-query 0 1))
-      (byte_le.push-u32!
-        (&mut out)
-        (if second?
-          2
-          1))
-      (graph-test-push-node! (&mut out) first)
-      (when second? (graph-test-push-node! (&mut out) second))
-      (byte_buf_core.byte-buf-builder-finish-array (& out)))))
+    (graph-test-push-header! (&mut out) domain schema)
+    (byte_le.push-u32! (&mut out) 1)
+    (graph-test-push-root!
+      (&mut out)
+      "typelisp.root.build"
+      "app"
+      (graph-test-query 0 1))
+    (byte_le.push-u32!
+      (&mut out)
+      (if second?
+        2
+        1))
+    (graph-test-push-node! (&mut out) first)
+    (when second? (graph-test-push-node! (&mut out) second))
+    (byte_buf_core.byte-buf-builder-finish-array (& out))))
 
 ;; A trace of `query` whose one child-result edge names `query` itself.
 (define (graph-test-self-trace [query : identity.CompilerIncrementalIdentity]) : trace.CompilerIncrementalTrace
@@ -958,24 +938,23 @@
     [key-bytes : String (trace.compiler-trace-encode-key (& key))]
     [observation-bytes : String
       (trace.compiler-trace-encode-observation (& observation))]
-    (begin
-      (binary.compiler-incremental-binary-push-string!
-        (&mut out)
-        (& trace.compiler-incremental-trace-domain))
-      (byte_le.push-u32! (&mut out) 1)
-      (byte_le.push-u32! (&mut out) (array-length query.transcript))
-      (binary.compiler-incremental-binary-push-array!
-        (&mut out)
-        (& query.transcript))
-      (byte_le.push-u32! (&mut out) 1)
-      (binary.compiler-incremental-binary-push-string! (&mut out) (& key-bytes))
-      (binary.compiler-incremental-binary-push-string!
-        (&mut out)
-        (& observation-bytes))
-      (let
-        [bytes : (__tl_dyn-array u8)
-          (byte_buf_core.byte-buf-builder-finish-array (& out))]
-        (trace.CompilerIncrementalTrace 1 query 1 bytes (graph-test-digest 0))))))
+    (binary.compiler-incremental-binary-push-string!
+      (&mut out)
+      (& trace.compiler-incremental-trace-domain))
+    (byte_le.push-u32! (&mut out) 1)
+    (byte_le.push-u32! (&mut out) (array-length query.transcript))
+    (binary.compiler-incremental-binary-push-array!
+      (&mut out)
+      (& query.transcript))
+    (byte_le.push-u32! (&mut out) 1)
+    (binary.compiler-incremental-binary-push-string! (&mut out) (& key-bytes))
+    (binary.compiler-incremental-binary-push-string!
+      (&mut out)
+      (& observation-bytes))
+    (let
+      [bytes : (__tl_dyn-array u8)
+        (byte_buf_core.byte-buf-builder-finish-array (& out))]
+      (trace.CompilerIncrementalTrace 1 query 1 bytes (graph-test-digest 0)))))
 
 (define (graph-test-hostile?) : bool
   (let
@@ -1006,140 +985,134 @@
       (+ 4 (string.string-length graph.compiler-incremental-graph-domain))]
     [load : graph.CompilerIncrementalGraphNode (graph-test-load)]
     [load-query-bytes : i64 (array-length load.query.transcript)]
-    (begin
-      ;; Every proper prefix fails, terminates, and leaves decoding reusable.
-      (while (< prefix length)
-        (let
-          [cut : (__tl_dyn-array u8)
-            (graph.compiler-graph-range-bytes (& bytes) 0 prefix)]
-          (begin
-            (when (= (graph-test-decode-code cut) 0) (set! prefixes-ok? false))
-            (set! prefix (+ prefix 1)))))
+    ;; Every proper prefix fails, terminates, and leaves decoding reusable.
+    (while (< prefix length)
       (let
-        [index : i64 0]
-        (while (< index length)
-          (begin
-            (set! (array-ref trailing index) (array-ref bytes index))
-            (set! index (+ index 1)))))
-      ;; Counts no input could hold are refused before any allocation.
-      (set! (array-ref huge-roots (+ header 4)) 255)
-      (set! (array-ref huge-roots (+ header 5)) 255)
-      (set! (array-ref huge-roots (+ header 6)) 255)
-      (set! (array-ref huge-roots (+ header 7)) 255)
-      (let
-        ;; header, schema and root count, then the root's purpose, name and query.
-        [node-count : i64
+        [cut : (__tl_dyn-array u8)
+          (graph.compiler-graph-range-bytes (& bytes) 0 prefix)]
+        (when (= (graph-test-decode-code cut) 0) (set! prefixes-ok? false))
+        (set! prefix (+ prefix 1))))
+    (let
+      [index : i64 0]
+      (while (< index length)
+        (set! (array-ref trailing index) (array-ref bytes index))
+        (set! index (+ index 1))))
+    ;; Counts no input could hold are refused before any allocation.
+    (set! (array-ref huge-roots (+ header 4)) 255)
+    (set! (array-ref huge-roots (+ header 5)) 255)
+    (set! (array-ref huge-roots (+ header 6)) 255)
+    (set! (array-ref huge-roots (+ header 7)) 255)
+    (let
+      ;; header, schema and root count, then the root's purpose, name and query.
+      [node-count : i64
+        (+
+          (+ header 8)
           (+
-            (+ header 8)
-            (+
-              (+ 4 (string.string-length "typelisp.root.build"))
-              (+ (+ 4 3) (+ 4 load-query-bytes))))]
-        (begin
-          (set! (array-ref huge-nodes node-count) 255)
-          (set! (array-ref huge-nodes (+ node-count 1)) 255)
-          (set! (array-ref huge-nodes (+ node-count 2)) 255)
-          (set! (array-ref bad-tag (+ node-count (+ 8 load-query-bytes))) 0)))
-      (and
-        prefixes-ok?
-        (=
-          (graph-test-decode-code
-            (graph.compiler-graph-range-bytes (& bytes) 0 length))
-          0)
-        (=
-          (graph-test-decode-code trailing)
-          graph.compiler-graph-error-trailing)
-        (=
-          (graph-test-decode-code
-            (graph-test-crafted
-              "typelisp.compiler.incremental.trace"
-              1
-              (graph-test-load)
-              false
-              (graph-test-load)))
-          graph.compiler-graph-error-schema)
-        (=
-          (graph-test-decode-code
-            (graph-test-crafted
-              "typelisp.compiler.incremental.graph"
-              2
-              (graph-test-load)
-              false
-              (graph-test-load)))
-          graph.compiler-graph-error-schema)
-        (let
-          [code : i64 (graph-test-decode-code huge-roots)]
-          (or
-            (= code graph.compiler-graph-error-limit)
-            (= code graph.compiler-graph-error-framing)))
-        (let
-          [code : i64 (graph-test-decode-code huge-nodes)]
-          (or
-            (= code graph.compiler-graph-error-limit)
-            (= code graph.compiler-graph-error-framing)))
-        (= (graph-test-decode-code bad-tag) graph.compiler-graph-error-framing)
-        ;; The same node twice, and two nodes out of canonical order.
-        (=
-          (graph-test-decode-code
-            (graph-test-crafted
-              "typelisp.compiler.incremental.graph"
-              1
-              (graph-test-load)
-              true
-              (graph-test-load)))
-          graph.compiler-graph-error-order)
-        (let
-          [macro : graph.CompilerIncrementalGraphNode (graph-test-macro)]
-          [load-first? : bool
-            (<
-              (graph.compiler-graph-range-compare
-                (& load.query.transcript)
-                0
-                (array-length load.query.transcript)
-                (& macro.query.transcript)
-                0
-                (array-length macro.query.transcript))
-              0)]
-          [code : i64
-            (if load-first?
-              (graph-test-decode-code
-                (graph-test-crafted
-                  "typelisp.compiler.incremental.graph"
-                  1
-                  (graph-test-macro)
-                  true
-                  (graph-test-load)))
-              (graph-test-decode-code
-                (graph-test-crafted
-                  "typelisp.compiler.incremental.graph"
-                  1
-                  (graph-test-load)
-                  true
-                  (graph-test-macro))))]
-          (= code graph.compiler-graph-error-order))
-        ;; A node whose trace is another query's, and one naming itself.
-        (=
-          (graph-test-decode-code
-            (graph-test-crafted
-              "typelisp.compiler.incremental.graph"
-              1
-              (graph-test-node 0 1 11 1 (graph-test-macro-trace))
-              false
-              (graph-test-load)))
-          graph.compiler-graph-error-trace-parent)
-        (=
-          (graph-test-decode-code
-            (graph-test-crafted
-              "typelisp.compiler.incremental.graph"
-              1
-              (graph-test-node
-                0
+            (+ 4 (string.string-length "typelisp.root.build"))
+            (+ (+ 4 3) (+ 4 load-query-bytes))))]
+      (set! (array-ref huge-nodes node-count) 255)
+      (set! (array-ref huge-nodes (+ node-count 1)) 255)
+      (set! (array-ref huge-nodes (+ node-count 2)) 255)
+      (set! (array-ref bad-tag (+ node-count (+ 8 load-query-bytes))) 0))
+    (and
+      prefixes-ok?
+      (=
+        (graph-test-decode-code
+          (graph.compiler-graph-range-bytes (& bytes) 0 length))
+        0)
+      (= (graph-test-decode-code trailing) graph.compiler-graph-error-trailing)
+      (=
+        (graph-test-decode-code
+          (graph-test-crafted
+            "typelisp.compiler.incremental.trace"
+            1
+            (graph-test-load)
+            false
+            (graph-test-load)))
+        graph.compiler-graph-error-schema)
+      (=
+        (graph-test-decode-code
+          (graph-test-crafted
+            "typelisp.compiler.incremental.graph"
+            2
+            (graph-test-load)
+            false
+            (graph-test-load)))
+        graph.compiler-graph-error-schema)
+      (let
+        [code : i64 (graph-test-decode-code huge-roots)]
+        (or
+          (= code graph.compiler-graph-error-limit)
+          (= code graph.compiler-graph-error-framing)))
+      (let
+        [code : i64 (graph-test-decode-code huge-nodes)]
+        (or
+          (= code graph.compiler-graph-error-limit)
+          (= code graph.compiler-graph-error-framing)))
+      (= (graph-test-decode-code bad-tag) graph.compiler-graph-error-framing)
+      ;; The same node twice, and two nodes out of canonical order.
+      (=
+        (graph-test-decode-code
+          (graph-test-crafted
+            "typelisp.compiler.incremental.graph"
+            1
+            (graph-test-load)
+            true
+            (graph-test-load)))
+        graph.compiler-graph-error-order)
+      (let
+        [macro : graph.CompilerIncrementalGraphNode (graph-test-macro)]
+        [load-first? : bool
+          (<
+            (graph.compiler-graph-range-compare
+              (& load.query.transcript)
+              0
+              (array-length load.query.transcript)
+              (& macro.query.transcript)
+              0
+              (array-length macro.query.transcript))
+            0)]
+        [code : i64
+          (if load-first?
+            (graph-test-decode-code
+              (graph-test-crafted
+                "typelisp.compiler.incremental.graph"
                 1
-                11
+                (graph-test-macro)
+                true
+                (graph-test-load)))
+            (graph-test-decode-code
+              (graph-test-crafted
+                "typelisp.compiler.incremental.graph"
                 1
-                (graph-test-self-trace (graph-test-query 0 1)))
-              false
-              (graph-test-load)))
-          graph.compiler-graph-error-trace)))))
+                (graph-test-load)
+                true
+                (graph-test-macro))))]
+        (= code graph.compiler-graph-error-order))
+      ;; A node whose trace is another query's, and one naming itself.
+      (=
+        (graph-test-decode-code
+          (graph-test-crafted
+            "typelisp.compiler.incremental.graph"
+            1
+            (graph-test-node 0 1 11 1 (graph-test-macro-trace))
+            false
+            (graph-test-load)))
+        graph.compiler-graph-error-trace-parent)
+      (=
+        (graph-test-decode-code
+          (graph-test-crafted
+            "typelisp.compiler.incremental.graph"
+            1
+            (graph-test-node
+              0
+              1
+              11
+              1
+              (graph-test-self-trace (graph-test-query 0 1)))
+            false
+            (graph-test-load)))
+        graph.compiler-graph-error-trace))))
 
 (test
   compiler-incremental-graph-round-trip

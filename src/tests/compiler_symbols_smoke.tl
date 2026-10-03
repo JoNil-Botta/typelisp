@@ -3,6 +3,5 @@
 (import compiler_builtin_ids as cbi)
 
 (define (main) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (sym_tests.compiler-symbols-self-test)))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (sym_tests.compiler-symbols-self-test))

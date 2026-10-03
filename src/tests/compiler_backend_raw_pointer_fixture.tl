@@ -33,11 +33,8 @@
           (io.arg 2))]
       (match (compiler-backend-raw-pointer-fixture-for-name target-name)
         [(Ok asm)
-          (begin
-            (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
-            0)]
+          (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
+          0]
         [(Err diag)
-          (begin
-            (io.print-error
-              (diagnostic.compiler-diagnostic-render (deref diag)))
-            1)]))))
+          (io.print-error (diagnostic.compiler-diagnostic-render (deref diag)))
+          1]))))

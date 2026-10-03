@@ -16,10 +16,8 @@
         (coff.compiler-object-coff-boundary-image 0xffff 0x10000)]
       (match (coff.compiler-object-coff-render image)
         [(Ok bytes)
-          (begin
-            (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& bytes)))
-            0)]
+          (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& bytes)))
+          0]
         [(Err message)
-          (begin
-            (io.print-error message)
-            1)]))))
+          (io.print-error message)
+          1]))))

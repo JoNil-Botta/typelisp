@@ -249,27 +249,24 @@
   (let
     [stream : tokens.FormatTokenStream (format-lex (format-cst-fixture))]
     [tree : cst.FormatCst (parse-format-source (format-cst-fixture))]
-    (begin
-      (unless (> (tokens.format-token-count stream) 40) (return 1))
-      (unless
-        (> (fmt-cst-count (owned_view.compiler-owned-shared-view tree)) 40)
-        (return 2))
-      (unless
-        (=
-          (fmt-cst-comment-count (owned_view.compiler-owned-shared-view tree))
-          1)
-        (return 3))
-      (unless (> (fmt-cst-bracket-count tree) 4) (return 4))
-      (unless
-        (= (format-token-tag-count stream (tokens.fmt-tag-char)) 1)
-        (return 5))
-      (unless (format-cst-boxed-nested-ok?) (return 6))
-      (unless (format-cst-prefixed-int-ok?) (return 7))
-      (unless (format-cst-apostrophe-char-ok?) (return 8))
-      (unless (format-cst-error-location-ok?) (return 9))
-      (unless (format-cst-legacy-char-rejected-ok?) (return 10))
-      (unless (format-cst-dense-storage-ok?) (return 11))
-      42)))
+    (unless (> (tokens.format-token-count stream) 40) (return 1))
+    (unless
+      (> (fmt-cst-count (owned_view.compiler-owned-shared-view tree)) 40)
+      (return 2))
+    (unless
+      (= (fmt-cst-comment-count (owned_view.compiler-owned-shared-view tree)) 1)
+      (return 3))
+    (unless (> (fmt-cst-bracket-count tree) 4) (return 4))
+    (unless
+      (= (format-token-tag-count stream (tokens.fmt-tag-char)) 1)
+      (return 5))
+    (unless (format-cst-boxed-nested-ok?) (return 6))
+    (unless (format-cst-prefixed-int-ok?) (return 7))
+    (unless (format-cst-apostrophe-char-ok?) (return 8))
+    (unless (format-cst-error-location-ok?) (return 9))
+    (unless (format-cst-legacy-char-rejected-ok?) (return 10))
+    (unless (format-cst-dense-storage-ok?) (return 11))
+    42))
 
 (define (format-rules-render-width [node : cst.FormatCst] [width : i64]) : String
   (rules.format-rules-render-cst-width node width))
@@ -367,25 +364,24 @@
       (__tl_make-array cst.FormatCst 3)]
     [offset-slots : (__tl_dyn-array cst.FormatCst)
       (__tl_make-array cst.FormatCst 5)]
-    (begin
-      (set! (array-ref dense-slots 0) head)
-      (set! (array-ref dense-slots 1) colon)
-      (set! (array-ref dense-slots 2) typ)
-      (set! (array-ref offset-slots 1) head)
-      (set! (array-ref offset-slots 2) colon)
-      (set! (array-ref offset-slots 3) typ)
-      (let
-        [dense-render : String
-          (format-rules-render-width
-            (List (box (cst.FormatCstList dense-slots 0 3)))
-            80)]
-        [offset-render : String
-          (format-rules-render-width
-            (List (box (cst.FormatCstList offset-slots 1 3)))
-            80)]
-        (and
-          (string.eq dense-render "(x : i64)")
-          (string.eq offset-render dense-render))))))
+    (set! (array-ref dense-slots 0) head)
+    (set! (array-ref dense-slots 1) colon)
+    (set! (array-ref dense-slots 2) typ)
+    (set! (array-ref offset-slots 1) head)
+    (set! (array-ref offset-slots 2) colon)
+    (set! (array-ref offset-slots 3) typ)
+    (let
+      [dense-render : String
+        (format-rules-render-width
+          (List (box (cst.FormatCstList dense-slots 0 3)))
+          80)]
+      [offset-render : String
+        (format-rules-render-width
+          (List (box (cst.FormatCstList offset-slots 1 3)))
+          80)]
+      (and
+        (string.eq dense-render "(x : i64)")
+        (string.eq offset-render dense-render)))))
 
 (define (format-rules-self-test) : i64
   (let
@@ -446,34 +442,31 @@
       (format-rules-render-source-width
         "(define (main) : i64 (begin (array-ref items 0).value (tuple-ref items 0).value (deref item).inner.value))"
         80)]
-    (begin
-      (unless (string.eq decls (format-rules-decls-expected)) (return 1))
-      (unless (string.eq flow (format-rules-flow-expected)) (return 2))
-      (unless (string.eq flow-fixpoint flow) (return 11))
-      (unless
-        (string.eq empty-let (format-rules-empty-let-expected))
-        (return 12))
-      (unless (string.eq empty-let-fixpoint empty-let) (return 13))
-      (unless (string.eq comments (format-rules-comments-expected)) (return 3))
-      (unless (string.eq quote (format-rules-quote-expected)) (return 4))
-      (unless (string.eq unsafe (format-rules-unsafe-expected)) (return 5))
-      (unless
-        (string.eq metadata (format-rules-define-metadata-expected))
-        (return 6))
-      (unless
-        (string.eq metadata-long (format-rules-define-metadata-long-expected))
-        (return 7))
-      (unless
-        (string.eq spmd-callable (format-rules-spmd-callable-expected))
-        (return 8))
-      (unless
-        (string.eq variadic (format-rules-variadic-macro-expected))
-        (return 9))
-      (unless
-        (string.eq projection-suffix (format-rules-projection-suffix-expected))
-        (return 14))
-      (unless (format-rules-offset-slice-preserved?) (return 10))
-      42)))
+    (unless (string.eq decls (format-rules-decls-expected)) (return 1))
+    (unless (string.eq flow (format-rules-flow-expected)) (return 2))
+    (unless (string.eq flow-fixpoint flow) (return 11))
+    (unless (string.eq empty-let (format-rules-empty-let-expected)) (return 12))
+    (unless (string.eq empty-let-fixpoint empty-let) (return 13))
+    (unless (string.eq comments (format-rules-comments-expected)) (return 3))
+    (unless (string.eq quote (format-rules-quote-expected)) (return 4))
+    (unless (string.eq unsafe (format-rules-unsafe-expected)) (return 5))
+    (unless
+      (string.eq metadata (format-rules-define-metadata-expected))
+      (return 6))
+    (unless
+      (string.eq metadata-long (format-rules-define-metadata-long-expected))
+      (return 7))
+    (unless
+      (string.eq spmd-callable (format-rules-spmd-callable-expected))
+      (return 8))
+    (unless
+      (string.eq variadic (format-rules-variadic-macro-expected))
+      (return 9))
+    (unless
+      (string.eq projection-suffix (format-rules-projection-suffix-expected))
+      (return 14))
+    (unless (format-rules-offset-slice-preserved?) (return 10))
+    42))
 
 (define (format-source-span-eq?
   [span : tokens.FormatSourceSpan]
@@ -493,16 +486,12 @@
   (let
     [i : i64 0]
     [hits : i64 0]
-    (begin
-      (while (< i stream.count)
-        (begin
-          (if (=
-            (tokens.format-token-tag (tokens.format-token-at stream i))
-            wanted)
-            (set! hits (+ hits 1))
-            (set! hits hits))
-          (set! i (+ i 1))))
-      hits)))
+    (while (< i stream.count)
+      (if (= (tokens.format-token-tag (tokens.format-token-at stream i)) wanted)
+        (set! hits (+ hits 1))
+        (set! hits hits))
+      (set! i (+ i 1)))
+    hits))
 
 (define (format-lex [src : String]) : tokens.FormatTokenStream
   (match (tokens.format-lex-result src)

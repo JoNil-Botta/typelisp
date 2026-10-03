@@ -21,9 +21,8 @@
 (import (vector.vector doc_expand.DocGeneratedTargetExample core) as doc_generated_target_example_vec)
 
 (define (main) : i64
-  (begin
-    (doc-expand-ignore-fence-smoke)
-    (doc-expand-smoke)))
+  (doc-expand-ignore-fence-smoke)
+  (doc-expand-smoke))
 
 (test
   doc-macro-type-kind-constraint-source
@@ -96,72 +95,63 @@
       (doc_generated_target_example_vec.new)]
     [modules : doc_module_vec.Vec (doc_module_vec.new)]
     [index : i64 0]
-    (begin
-      (while (< index 6)
-        (begin
-          (doc_item_vec.push-ref!
-            (&mut items)
-            (doc_extract.DocItem.Item
-              (Define)
-              (string.int->string index)
-              ""
-              ""
-              0))
-          (doc_import_form_vec.push-ref!
-            (&mut forms)
-            (string.int->string index))
-          (doc_macro_import_example_vec.push-ref!
-            (&mut macro-examples)
-            (doc_expand.DocMacroImportExample (string.int->string index) ""))
-          (doc_generated_target_example_vec.push-ref!
-            (&mut targets)
-            (doc_expand.DocGeneratedTargetExample (string.int->string index) ""))
-          (doc_module_vec.push-ref!
-            (&mut modules)
-            (doc_render.DocModule.Module
-              (string.int->string index)
-              (doc_extract.doc-extraction-empty)))
-          (set! index (+ index 1))))
-      (unless
-        (and
-          (= (doc_extract.doc-item-list-count items) 6)
-          (= (doc_import_form_vec.len (& forms)) 6)
-          (= (doc_macro_import_example_vec.len (& macro-examples)) 6)
-          (= (doc_generated_target_example_vec.len (& targets)) 6)
-          (= (doc_render.doc-module-list-count (clone modules)) 6)
-          (string.eq
-            (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 0))
-            "0")
-          (string.eq
-            (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 5))
-            "5")
-          (string.eq (doc_import_form_vec.get (& forms) 0 "") "0")
-          (string.eq (doc_import_form_vec.get (& forms) 5 "") "5")
-          (string.eq
-            (__tl-project-field
-              (doc_macro_import_example_vec.get
-                (& macro-examples)
-                5
-                (doc_expand.doc-macro-import-example-fallback))
-              alias)
-            "5")
-          (string.eq
-            (__tl-project-field
-              (doc_generated_target_example_vec.get
-                (& targets)
-                5
-                (doc_expand.doc-generated-target-example-fallback))
-              target)
-            "5")
-          (string.eq
-            (doc_render.doc-module-path
-              (doc_render.doc-module-list-ref (clone modules) 0))
-            "0")
-          (string.eq
-            (doc_render.doc-module-path
-              (doc_render.doc-module-list-ref (clone modules) 5))
-            "5"))
-        (io.panic "doc-expand: generated vector growth/order mismatch")))))
+    (while (< index 6)
+      (doc_item_vec.push-ref!
+        (&mut items)
+        (doc_extract.DocItem.Item (Define) (string.int->string index) "" "" 0))
+      (doc_import_form_vec.push-ref! (&mut forms) (string.int->string index))
+      (doc_macro_import_example_vec.push-ref!
+        (&mut macro-examples)
+        (doc_expand.DocMacroImportExample (string.int->string index) ""))
+      (doc_generated_target_example_vec.push-ref!
+        (&mut targets)
+        (doc_expand.DocGeneratedTargetExample (string.int->string index) ""))
+      (doc_module_vec.push-ref!
+        (&mut modules)
+        (doc_render.DocModule.Module
+          (string.int->string index)
+          (doc_extract.doc-extraction-empty)))
+      (set! index (+ index 1)))
+    (unless
+      (and
+        (= (doc_extract.doc-item-list-count items) 6)
+        (= (doc_import_form_vec.len (& forms)) 6)
+        (= (doc_macro_import_example_vec.len (& macro-examples)) 6)
+        (= (doc_generated_target_example_vec.len (& targets)) 6)
+        (= (doc_render.doc-module-list-count (clone modules)) 6)
+        (string.eq
+          (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 0))
+          "0")
+        (string.eq
+          (doc_extract.doc-item-name (doc_extract.doc-item-list-ref items 5))
+          "5")
+        (string.eq (doc_import_form_vec.get (& forms) 0 "") "0")
+        (string.eq (doc_import_form_vec.get (& forms) 5 "") "5")
+        (string.eq
+          (__tl-project-field
+            (doc_macro_import_example_vec.get
+              (& macro-examples)
+              5
+              (doc_expand.doc-macro-import-example-fallback))
+            alias)
+          "5")
+        (string.eq
+          (__tl-project-field
+            (doc_generated_target_example_vec.get
+              (& targets)
+              5
+              (doc_expand.doc-generated-target-example-fallback))
+            target)
+          "5")
+        (string.eq
+          (doc_render.doc-module-path
+            (doc_render.doc-module-list-ref (clone modules) 0))
+          "0")
+        (string.eq
+          (doc_render.doc-module-path
+            (doc_render.doc-module-list-ref (clone modules) 5))
+          "5"))
+      (io.panic "doc-expand: generated vector growth/order mismatch"))))
 
 (test
   doc-expand-context-owner-isolation
@@ -195,37 +185,36 @@
     [decoy-exprs-before : i64 (ast.ast-node-pool-context-expr-len pools-b)]
     [decoy-types-before : i64 (ast.ast-node-pool-context-type-len pools-b)]
     [ok : bool false]
-    (begin
-      (ci.intern-compat-state-install! intern-b)
-      (ast.ast-node-pool-context-install! pools-b)
-      (set!
-        ok
-        (and
-          (= name-a name-b)
-          (= type-a type-b)
-          (= expr-a expr-b)
-          (string.eq
-            (doc_expand.doc-ast-expr-source ctx-a expr-a)
-            "(type owner-a-name)")
-          (= (ci.intern-compat-state-pool-len (& intern-b)) decoy-intern-before)
-          (= (ast.ast-node-pool-context-expr-len pools-b) decoy-exprs-before)
-          (= (ast.ast-node-pool-context-type-len pools-b) decoy-types-before)
-          (=
-            (ci.intern-active-table-id)
-            (ci.intern-compat-state-table-id (& intern-b)))
-          (=
-            (ast.ast-node-pool-active-expr-segment-bases)
-            (ast.ast-node-pool-context-expr-segment-bases (& pools-b)))
-          (=
-            (ast.ast-node-pool-reader-type-segment-bases)
-            (ast.ast-node-pool-context-type-segment-bases (& pools-b)))))
-      (ci.intern-compat-state-install! home-intern)
-      (ast.ast-node-pool-context-install! home-pools)
-      (ast.ast-node-pool-context-destroy-storage! pools-a)
-      (ast.ast-node-pool-context-destroy-storage! pools-b)
-      (unless
-        ok
-        (io.panic "doc-expand: explicit owner context followed active decoy")))))
+    (ci.intern-compat-state-install! intern-b)
+    (ast.ast-node-pool-context-install! pools-b)
+    (set!
+      ok
+      (and
+        (= name-a name-b)
+        (= type-a type-b)
+        (= expr-a expr-b)
+        (string.eq
+          (doc_expand.doc-ast-expr-source ctx-a expr-a)
+          "(type owner-a-name)")
+        (= (ci.intern-compat-state-pool-len (& intern-b)) decoy-intern-before)
+        (= (ast.ast-node-pool-context-expr-len pools-b) decoy-exprs-before)
+        (= (ast.ast-node-pool-context-type-len pools-b) decoy-types-before)
+        (=
+          (ci.intern-active-table-id)
+          (ci.intern-compat-state-table-id (& intern-b)))
+        (=
+          (ast.ast-node-pool-active-expr-segment-bases)
+          (ast.ast-node-pool-context-expr-segment-bases (& pools-b)))
+        (=
+          (ast.ast-node-pool-reader-type-segment-bases)
+          (ast.ast-node-pool-context-type-segment-bases (& pools-b)))))
+    (ci.intern-compat-state-install! home-intern)
+    (ast.ast-node-pool-context-install! home-pools)
+    (ast.ast-node-pool-context-destroy-storage! pools-a)
+    (ast.ast-node-pool-context-destroy-storage! pools-b)
+    (unless
+      ok
+      (io.panic "doc-expand: explicit owner context followed active decoy"))))
 
 (define (doc-expand-smoke) : i64
   (let

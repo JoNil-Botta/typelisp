@@ -27,40 +27,34 @@
             "compiler-backend-runtime-fixture: unknown target")))]))
 
 (define (main) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (if (< (io.arg-count) 2)
-      (begin
-        (io.print-error
-          "compiler-backend-runtime-fixture: expected output path")
-        1)
-      (let
-        [target-name : String
-          (if (< (io.arg-count) 3)
-            "linux-x86_64"
-            (io.arg 2))]
-        ;; Keep the driver source emit direct in main; this is the compile-heavy
-        ;; fixture path and avoids an extra helper wrapper in the native smoke.
-        (if (string.eq target-name "windows-driver-primitives")
-          (match (compiler_backend.compiler-backend-emit-source-for-target
-            (compiler_backend.compiler-backend-windows-driver-runtime-source)
-            (Windows))
-            [(Ok asm)
-              (begin
-                (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
-                0)]
-            [(Err diag)
-              (begin
-                (io.print-error
-                  (diagnostic.compiler-diagnostic-render (deref diag)))
-                1)])
-          (match (compiler-backend-runtime-fixture-emit target-name)
-            [(Ok asm)
-              (begin
-                (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
-                0)]
-            [(Err diag)
-              (begin
-                (io.print-error
-                  (diagnostic.compiler-diagnostic-render (deref diag)))
-                1)]))))))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (if (< (io.arg-count) 2)
+    (begin
+      (io.print-error "compiler-backend-runtime-fixture: expected output path")
+      1)
+    (let
+      [target-name : String
+        (if (< (io.arg-count) 3)
+          "linux-x86_64"
+          (io.arg 2))]
+      ;; Keep the driver source emit direct in main; this is the compile-heavy
+      ;; fixture path and avoids an extra helper wrapper in the native smoke.
+      (if (string.eq target-name "windows-driver-primitives")
+        (match (compiler_backend.compiler-backend-emit-source-for-target
+          (compiler_backend.compiler-backend-windows-driver-runtime-source)
+          (Windows))
+          [(Ok asm)
+            (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
+            0]
+          [(Err diag)
+            (io.print-error
+              (diagnostic.compiler-diagnostic-render (deref diag)))
+            1])
+        (match (compiler-backend-runtime-fixture-emit target-name)
+          [(Ok asm)
+            (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& asm)))
+            0]
+          [(Err diag)
+            (io.print-error
+              (diagnostic.compiler-diagnostic-render (deref diag)))
+            1])))))

@@ -22,14 +22,12 @@
       (let
         [idx : i64 0]
         [ok : bool true]
-        (begin
-          (while (and ok (< idx left-len))
-            (begin
-              (if (= (string.string-ref left idx) (string.string-ref right idx))
-                unit
-                (set! ok false))
-              (set! idx (+ idx 1))))
-          ok))
+        (while (and ok (< idx left-len))
+          (if (= (string.string-ref left idx) (string.string-ref right idx))
+            unit
+            (set! ok false))
+          (set! idx (+ idx 1)))
+        ok)
       false)))
 
 (define (compiler-diagnostic-render-ok?) : bool
@@ -433,42 +431,41 @@
         (cdiag.compiler-diagnostic-simple "dense.tl" 1 1 "single"))]
     [diagnostics : cdiag.CompilerDiagnosticList
       (cdiag.compiler-diagnostic-list-empty)]
-    (begin
-      (cdiag.compiler-diagnostic-list-push!
-        (&mut diagnostics)
-        (cdiag.compiler-diagnostic-simple "dense.tl" 1 1 "one"))
-      (cdiag.compiler-diagnostic-list-push!
-        (&mut diagnostics)
-        (cdiag.compiler-diagnostic-simple "dense.tl" 3 1 "three"))
-      (cdiag.compiler-diagnostic-list-insert!
-        (&mut diagnostics)
-        1
-        (cdiag.compiler-diagnostic-simple "dense.tl" 2 1 "two"))
-      (and
-        (= (cdiag.compiler-diagnostic-note-list-count base-notes) 0)
-        (= (cdiag.compiler-diagnostic-note-list-count one-notes) 1)
-        (= (cdiag.compiler-diagnostic-note-list-count two-notes) 2)
-        (string.eq (cdiag.compiler-diagnostic-note-list-get one-notes 0) "one")
-        (string.eq (cdiag.compiler-diagnostic-note-list-get two-notes 0) "two")
-        (string.eq (cdiag.compiler-diagnostic-note-list-get two-notes 1) "one")
-        (= (cdiag.compiler-diagnostic-label-list-count base-labels) 0)
-        (= (cdiag.compiler-diagnostic-label-list-count one-labels) 1)
-        (= (cdiag.compiler-diagnostic-label-list-count two-labels) 2)
-        (= (cdiag.compiler-diagnostic-list-count empty-diagnostics) 0)
-        (= (cdiag.compiler-diagnostic-list-count single-diagnostics) 1)
-        (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
-        (=
-          (cdiag.compiler-diagnostic-line
-            (cdiag.compiler-diagnostic-list-ref (& diagnostics) 0))
-          1)
-        (=
-          (cdiag.compiler-diagnostic-line
-            (cdiag.compiler-diagnostic-list-ref (& diagnostics) 1))
-          2)
-        (=
-          (cdiag.compiler-diagnostic-line
-            (cdiag.compiler-diagnostic-list-ref (& diagnostics) 2))
-          3)))))
+    (cdiag.compiler-diagnostic-list-push!
+      (&mut diagnostics)
+      (cdiag.compiler-diagnostic-simple "dense.tl" 1 1 "one"))
+    (cdiag.compiler-diagnostic-list-push!
+      (&mut diagnostics)
+      (cdiag.compiler-diagnostic-simple "dense.tl" 3 1 "three"))
+    (cdiag.compiler-diagnostic-list-insert!
+      (&mut diagnostics)
+      1
+      (cdiag.compiler-diagnostic-simple "dense.tl" 2 1 "two"))
+    (and
+      (= (cdiag.compiler-diagnostic-note-list-count base-notes) 0)
+      (= (cdiag.compiler-diagnostic-note-list-count one-notes) 1)
+      (= (cdiag.compiler-diagnostic-note-list-count two-notes) 2)
+      (string.eq (cdiag.compiler-diagnostic-note-list-get one-notes 0) "one")
+      (string.eq (cdiag.compiler-diagnostic-note-list-get two-notes 0) "two")
+      (string.eq (cdiag.compiler-diagnostic-note-list-get two-notes 1) "one")
+      (= (cdiag.compiler-diagnostic-label-list-count base-labels) 0)
+      (= (cdiag.compiler-diagnostic-label-list-count one-labels) 1)
+      (= (cdiag.compiler-diagnostic-label-list-count two-labels) 2)
+      (= (cdiag.compiler-diagnostic-list-count empty-diagnostics) 0)
+      (= (cdiag.compiler-diagnostic-list-count single-diagnostics) 1)
+      (= (cdiag.compiler-diagnostic-list-count diagnostics) 3)
+      (=
+        (cdiag.compiler-diagnostic-line
+          (cdiag.compiler-diagnostic-list-ref (& diagnostics) 0))
+        1)
+      (=
+        (cdiag.compiler-diagnostic-line
+          (cdiag.compiler-diagnostic-list-ref (& diagnostics) 1))
+        2)
+      (=
+        (cdiag.compiler-diagnostic-line
+          (cdiag.compiler-diagnostic-list-ref (& diagnostics) 2))
+        3))))
 
 ;; A typecheck error states its kind where it is raised and the code follows
 ;; the kind, never the wording (#7139). Kinds map one-to-one onto the
@@ -595,43 +592,40 @@
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
     [index : i64 0]
     [ok : bool (= count 22)]
-    (begin
-      (while (and ok (< index count))
-        (let
-          [code : String (cdiag.compiler-diagnostic-code-registry-code index)]
-          [other : i64 (+ index 1)]
-          (begin
-            (if (and
-              (> (string.string-length code) 0)
-              (>
-                (string.string-length
-                  (cdiag.compiler-diagnostic-code-registry-title index))
-                0)
-              (>
-                (string.string-length
-                  (compiler-diagnostic-code-registry-category index))
-                0)
-              (>
-                (string.string-length
-                  (compiler-diagnostic-code-registry-owner index))
-                0))
-              unit
-              (set! ok false))
-            (while (and ok (< other count))
-              (begin
-                (if (string.eq
-                  code
-                  (cdiag.compiler-diagnostic-code-registry-code other))
-                  (set! ok false)
-                  unit)
-                (set! other (+ other 1))))))
-        (set! index (+ index 1)))
-      (and
-        ok
-        (string.eq (cdiag.compiler-diagnostic-code-registry-code count) "")
-        (string.eq (cdiag.compiler-diagnostic-code-registry-title count) "")
-        (string.eq (compiler-diagnostic-code-registry-category count) "")
-        (string.eq (compiler-diagnostic-code-registry-owner count) "")))))
+    (while (and ok (< index count))
+      (let
+        [code : String (cdiag.compiler-diagnostic-code-registry-code index)]
+        [other : i64 (+ index 1)]
+        (if (and
+          (> (string.string-length code) 0)
+          (>
+            (string.string-length
+              (cdiag.compiler-diagnostic-code-registry-title index))
+            0)
+          (>
+            (string.string-length
+              (compiler-diagnostic-code-registry-category index))
+            0)
+          (>
+            (string.string-length
+              (compiler-diagnostic-code-registry-owner index))
+            0))
+          unit
+          (set! ok false))
+        (while (and ok (< other count))
+          (if (string.eq
+            code
+            (cdiag.compiler-diagnostic-code-registry-code other))
+            (set! ok false)
+            unit)
+          (set! other (+ other 1))))
+      (set! index (+ index 1)))
+    (and
+      ok
+      (string.eq (cdiag.compiler-diagnostic-code-registry-code count) "")
+      (string.eq (cdiag.compiler-diagnostic-code-registry-title count) "")
+      (string.eq (compiler-diagnostic-code-registry-category count) "")
+      (string.eq (compiler-diagnostic-code-registry-owner count) ""))))
 
 (define (compiler-advisory-phase-copy [phase : cdiag.CompilerAdvisoryPhase]) : cdiag.CompilerAdvisoryPhase
   (match phase
@@ -653,31 +647,27 @@
     [next : (__tl_dyn-array cdiag.CompilerAdvisory)
       (__tl_make-array cdiag.CompilerAdvisory new-capacity)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            (array-ref next index)
-            (cdiag.compiler-advisory-copy-ref
-              (& (array-ref advisories.slots index))))
-          (set! index (+ index 1))))
-      (set! advisories.slots next))))
+    (while (< index count)
+      (set!
+        (array-ref next index)
+        (cdiag.compiler-advisory-copy-ref
+          (& (array-ref advisories.slots index))))
+      (set! index (+ index 1)))
+    (set! advisories.slots next)))
 
 (define (compiler-advisory-list-push!
   [advisories : (&mut advisories cdiag.CompilerAdvisoryList)]
   [phase : cdiag.CompilerAdvisoryPhase]
   [diagnostic : cdiag.CompilerDiagnostic]) : unit
-  (begin
-    (if (< advisories.len (array-length advisories.slots))
-      unit
-      (compiler-advisory-list-grow! advisories))
-    (let
-      [index : i64 advisories.len]
-      (begin
-        (set!
-          (array-ref advisories.slots index)
-          (cdiag.CompilerAdvisory phase diagnostic))
-        (set! advisories.len (+ index 1))))))
+  (if (< advisories.len (array-length advisories.slots))
+    unit
+    (compiler-advisory-list-grow! advisories))
+  (let
+    [index : i64 advisories.len]
+    (set!
+      (array-ref advisories.slots index)
+      (cdiag.CompilerAdvisory phase diagnostic))
+    (set! advisories.len (+ index 1))))
 
 ;; Return false for an error-level diagnostic instead of silently reclassifying
 ;; it. The caller retains the original value and must take its ordinary fatal
@@ -704,20 +694,19 @@
               (arena.Arena payload-arena)
               (cdiag.compiler-advisory-list-with-capacity 4))
             (deref data).advisories)]
-        (begin
-          (in-arena
-            (arena.Arena payload-arena)
-            (compiler-advisory-list-push!
-              (&mut advisories)
-              (compiler-advisory-phase-copy phase)
-              (cdiag.compiler-diagnostic-copy-ref diagnostic)))
-          (cdiag.compiler-advisory-sink-data-set!
-            sink
-            (cdiag.CompilerAdvisorySinkData
-              payload-arena
-              advisories
-              (deref data).generation))
-          true)))))
+        (in-arena
+          (arena.Arena payload-arena)
+          (compiler-advisory-list-push!
+            (&mut advisories)
+            (compiler-advisory-phase-copy phase)
+            (cdiag.compiler-diagnostic-copy-ref diagnostic)))
+        (cdiag.compiler-advisory-sink-data-set!
+          sink
+          (cdiag.CompilerAdvisorySinkData
+            payload-arena
+            advisories
+            (deref data).generation))
+        true))))
 
 (define (compiler-diagnostic-advisory-warning
   [path : String]
@@ -748,18 +737,14 @@
             (compiler-diagnostic-advisory-warning "other.tl" 1 "other job")]
           [fatal : cdiag.CompilerDiagnostic
             (cdiag.compiler-diagnostic-simple "first.tl" 6 1 "fatal")]
-          (begin
-            (compiler-advisory-sink-push! sink-a Semantic (& semantic))
-            (compiler-advisory-sink-push! sink-a Lowering (& lowering))
-            (compiler-advisory-sink-push! sink-a Optimization (& optimization))
-            (compiler-advisory-sink-push!
-              sink-a
-              RegisterAllocation
-              (& regalloc))
-            (compiler-advisory-sink-push! sink-a Backend (& backend))
-            (compiler-advisory-sink-push! sink-b Semantic (& other))
-            (compiler-advisory-sink-push! sink-a Backend (& fatal))
-            unit)))]
+          (compiler-advisory-sink-push! sink-a Semantic (& semantic))
+          (compiler-advisory-sink-push! sink-a Lowering (& lowering))
+          (compiler-advisory-sink-push! sink-a Optimization (& optimization))
+          (compiler-advisory-sink-push! sink-a RegisterAllocation (& regalloc))
+          (compiler-advisory-sink-push! sink-a Backend (& backend))
+          (compiler-advisory-sink-push! sink-b Semantic (& other))
+          (compiler-advisory-sink-push! sink-a Backend (& fatal))
+          unit))]
     [a : cdiag.CompilerAdvisoryList
       (cdiag.compiler-advisory-sink-snapshot sink-a)]
     [b : cdiag.CompilerAdvisoryList
@@ -788,19 +773,18 @@
         (string.eq
           (cdiag.compiler-diagnostic-message b0-diagnostic)
           "other job"))]
-    (begin
-      (cdiag.compiler-advisory-sink-reset! sink-a)
-      (let
-        [after-reset : cdiag.CompilerAdvisoryList
-          (cdiag.compiler-advisory-sink-snapshot sink-a)]
-        (and
-          before-reset
-          (= (cdiag.compiler-advisory-list-count (& after-reset)) 0)
-          (= (compiler-advisory-sink-generation sink-a) 1)
-          (let
-            [still-b : cdiag.CompilerAdvisoryList
-              (cdiag.compiler-advisory-sink-snapshot sink-b)]
-            (= (cdiag.compiler-advisory-list-count (& still-b)) 1)))))))
+    (cdiag.compiler-advisory-sink-reset! sink-a)
+    (let
+      [after-reset : cdiag.CompilerAdvisoryList
+        (cdiag.compiler-advisory-sink-snapshot sink-a)]
+      (and
+        before-reset
+        (= (cdiag.compiler-advisory-list-count (& after-reset)) 0)
+        (= (compiler-advisory-sink-generation sink-a) 1)
+        (let
+          [still-b : cdiag.CompilerAdvisoryList
+            (cdiag.compiler-advisory-sink-snapshot sink-b)]
+          (= (cdiag.compiler-advisory-list-count (& still-b)) 1))))))
 
 (define (compiler-diagnostic-self-test) : i64
   (begin

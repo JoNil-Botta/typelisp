@@ -15,25 +15,22 @@
   (let
     [slots : (__tl_dyn-array planner.LintFixSnapshot)
       (__tl_make-array planner.LintFixSnapshot 1)]
-    (begin
-      (set! (array-ref slots 0) value)
-      (planner.LintFixSnapshotSeq slots 1))))
+    (set! (array-ref slots 0) value)
+    (planner.LintFixSnapshotSeq slots 1)))
 
 (define (one-identity [value : planner.LintFixSourceIdentity]) : planner.LintFixSourceIdentitySeq
   (let
     [slots : (__tl_dyn-array planner.LintFixSourceIdentity)
       (__tl_make-array planner.LintFixSourceIdentity 1)]
-    (begin
-      (set! (array-ref slots 0) value)
-      (planner.LintFixSourceIdentitySeq slots 1))))
+    (set! (array-ref slots 0) value)
+    (planner.LintFixSourceIdentitySeq slots 1)))
 
 (define (one-candidate [value : planner.LintFixCandidate]) : planner.LintFixCandidateSeq
   (let
     [slots : (__tl_dyn-array planner.LintFixCandidate)
       (__tl_make-array planner.LintFixCandidate 1)]
-    (begin
-      (set! (array-ref slots 0) value)
-      (planner.LintFixCandidateSeq slots 1))))
+    (set! (array-ref slots 0) value)
+    (planner.LintFixCandidateSeq slots 1)))
 
 (define (two-candidates
   [first : planner.LintFixCandidate]
@@ -41,10 +38,9 @@
   (let
     [slots : (__tl_dyn-array planner.LintFixCandidate)
       (__tl_make-array planner.LintFixCandidate 2)]
-    (begin
-      (set! (array-ref slots 0) first)
-      (set! (array-ref slots 1) second)
-      (planner.LintFixCandidateSeq slots 2))))
+    (set! (array-ref slots 0) first)
+    (set! (array-ref slots 1) second)
+    (planner.LintFixCandidateSeq slots 2)))
 
 (define (candidate
   [id : String]
@@ -282,48 +278,47 @@
       (__tl_make-array planner.LintFixSourceIdentity 2)]
     [edits : (__tl_dyn-array diag.CompilerDiagnosticTextEdit)
       (__tl_make-array diag.CompilerDiagnosticTextEdit 2)]
-    (begin
-      (set! (array-ref snapshots 0) (clone a))
-      (set! (array-ref snapshots 1) (clone b))
-      ;; Deliberately reverse identities: outcome metadata belongs to a.tl.
-      (set! (array-ref identities 0) (planner.source-identity b))
-      (set! (array-ref identities 1) (planner.source-identity (clone a)))
-      (set!
-        (array-ref edits 0)
-        (diag.compiler-diagnostic-text-edit-new
-          (diag.CompilerDiagnosticSpan "" 1 1 1 2)
-          "A"))
-      (set!
-        (array-ref edits 1)
-        (diag.compiler-diagnostic-text-edit-new
-          (diag.CompilerDiagnosticSpan "b.tl" 1 2 1 3)
-          "E"))
-      (let
-        [fix : diag.CompilerDiagnosticFix
-          (diag.compiler-diagnostic-fix-new
-            "Two files"
-            CompilerDiagnosticMachineApplicable
-            (diag.CompilerDiagnosticTextEditSeq edits 2))]
-        [candidate : planner.LintFixCandidate
-          (planner.LintFixCandidate
-            "two-files"
-            (diag.compiler-diagnostic-with-fix
-              (diag.compiler-diagnostic-simple "a.tl" 1 1 "lint")
-              fix)
-            (planner.LintFixSourceIdentitySeq identities 2))]
-        [plan : planner.LintFixPlan
-          (planner.plan
-            (planner.LintFixSnapshotSeq snapshots 2)
-            (one-candidate candidate)
-            (planner.machine-only))]
-        [applied : planner.LintFixSnapshotSeq (planner.apply (clone plan))]
-        (and
-          plan.publishable
-          (= plan.edits.len 2)
-          (= (array-ref plan.outcomes.slots 0).version 7)
-          (= (array-ref plan.outcomes.slots 0).source-hash a.source-hash)
-          (string.eq (array-ref applied.slots 0).source "Abc")
-          (string.eq (array-ref applied.slots 1).source "dEf"))))))
+    (set! (array-ref snapshots 0) (clone a))
+    (set! (array-ref snapshots 1) (clone b))
+    ;; Deliberately reverse identities: outcome metadata belongs to a.tl.
+    (set! (array-ref identities 0) (planner.source-identity b))
+    (set! (array-ref identities 1) (planner.source-identity (clone a)))
+    (set!
+      (array-ref edits 0)
+      (diag.compiler-diagnostic-text-edit-new
+        (diag.CompilerDiagnosticSpan "" 1 1 1 2)
+        "A"))
+    (set!
+      (array-ref edits 1)
+      (diag.compiler-diagnostic-text-edit-new
+        (diag.CompilerDiagnosticSpan "b.tl" 1 2 1 3)
+        "E"))
+    (let
+      [fix : diag.CompilerDiagnosticFix
+        (diag.compiler-diagnostic-fix-new
+          "Two files"
+          CompilerDiagnosticMachineApplicable
+          (diag.CompilerDiagnosticTextEditSeq edits 2))]
+      [candidate : planner.LintFixCandidate
+        (planner.LintFixCandidate
+          "two-files"
+          (diag.compiler-diagnostic-with-fix
+            (diag.compiler-diagnostic-simple "a.tl" 1 1 "lint")
+            fix)
+          (planner.LintFixSourceIdentitySeq identities 2))]
+      [plan : planner.LintFixPlan
+        (planner.plan
+          (planner.LintFixSnapshotSeq snapshots 2)
+          (one-candidate candidate)
+          (planner.machine-only))]
+      [applied : planner.LintFixSnapshotSeq (planner.apply (clone plan))]
+      (and
+        plan.publishable
+        (= plan.edits.len 2)
+        (= (array-ref plan.outcomes.slots 0).version 7)
+        (= (array-ref plan.outcomes.slots 0).source-hash a.source-hash)
+        (string.eq (array-ref applied.slots 0).source "Abc")
+        (string.eq (array-ref applied.slots 1).source "dEf")))))
 
 (define (many-edits-ok?) : bool
   (let
@@ -332,38 +327,36 @@
     [edits : (__tl_dyn-array diag.CompilerDiagnosticTextEdit)
       (__tl_make-array diag.CompilerDiagnosticTextEdit 17)]
     [at : i64 0]
-    (begin
-      (while (< at 17)
-        (begin
-          (set!
-            (array-ref edits at)
-            (diag.compiler-diagnostic-text-edit-new
-              (diag.CompilerDiagnosticSpan "" 1 (+ at 1) 1 (+ at 2))
-              "b"))
-          (set! at (+ at 1))))
-      (let
-        [fix : diag.CompilerDiagnosticFix
-          (diag.compiler-diagnostic-fix-new
-            "Seventeen edits"
-            CompilerDiagnosticMachineApplicable
-            (diag.CompilerDiagnosticTextEditSeq edits 17))]
-        [candidate : planner.LintFixCandidate
-          (planner.LintFixCandidate
-            "many"
-            (diag.compiler-diagnostic-with-fix
-              (diag.compiler-diagnostic-simple "many.tl" 1 1 "lint")
-              fix)
-            (one-identity (planner.source-identity (clone source))))]
-        [plan : planner.LintFixPlan
-          (planner.plan
-            (one-snapshot source)
-            (one-candidate candidate)
-            (planner.machine-only))]
-        [applied : planner.LintFixSnapshotSeq (planner.apply (clone plan))]
-        (and
-          plan.publishable
-          (= plan.edits.len 17)
-          (string.eq (array-ref applied.slots 0).source "bbbbbbbbbbbbbbbbb"))))))
+    (while (< at 17)
+      (set!
+        (array-ref edits at)
+        (diag.compiler-diagnostic-text-edit-new
+          (diag.CompilerDiagnosticSpan "" 1 (+ at 1) 1 (+ at 2))
+          "b"))
+      (set! at (+ at 1)))
+    (let
+      [fix : diag.CompilerDiagnosticFix
+        (diag.compiler-diagnostic-fix-new
+          "Seventeen edits"
+          CompilerDiagnosticMachineApplicable
+          (diag.CompilerDiagnosticTextEditSeq edits 17))]
+      [candidate : planner.LintFixCandidate
+        (planner.LintFixCandidate
+          "many"
+          (diag.compiler-diagnostic-with-fix
+            (diag.compiler-diagnostic-simple "many.tl" 1 1 "lint")
+            fix)
+          (one-identity (planner.source-identity (clone source))))]
+      [plan : planner.LintFixPlan
+        (planner.plan
+          (one-snapshot source)
+          (one-candidate candidate)
+          (planner.machine-only))]
+      [applied : planner.LintFixSnapshotSeq (planner.apply (clone plan))]
+      (and
+        plan.publishable
+        (= plan.edits.len 17)
+        (string.eq (array-ref applied.slots 0).source "bbbbbbbbbbbbbbbbb")))))
 
 (define (touching-and-inserts-ok?) : bool
   (let
@@ -452,26 +445,25 @@
         3
         "Y"
         CompilerDiagnosticMachineApplicable)]
-    (begin
-      (set!
-        missing.sources
-        (planner.LintFixSourceIdentitySeq
-          (__tl_make-array planner.LintFixSourceIdentity 0)
-          0))
-      (let
-        [plan : planner.LintFixPlan
-          (planner.plan
-            (one-snapshot source)
-            (two-candidates missing valid)
-            (planner.machine-only))]
-        [applied : planner.LintFixSnapshotSeq (planner.apply (clone plan))]
-        (and
-          (not plan.publishable)
-          (= plan.edits.len 1)
-          (string.eq (array-ref applied.slots 0).source "abc")
-          (match (array-ref plan.outcomes.slots 0).reason
-            [(MissingIdentity) true]
-            [_ false]))))))
+    (set!
+      missing.sources
+      (planner.LintFixSourceIdentitySeq
+        (__tl_make-array planner.LintFixSourceIdentity 0)
+        0))
+    (let
+      [plan : planner.LintFixPlan
+        (planner.plan
+          (one-snapshot source)
+          (two-candidates missing valid)
+          (planner.machine-only))]
+      [applied : planner.LintFixSnapshotSeq (planner.apply (clone plan))]
+      (and
+        (not plan.publishable)
+        (= plan.edits.len 1)
+        (string.eq (array-ref applied.slots 0).source "abc")
+        (match (array-ref plan.outcomes.slots 0).reason
+          [(MissingIdentity) true]
+          [_ false])))))
 
 (test
   lint-fix-plan-single-edit
@@ -526,41 +518,36 @@
     [slots : (__tl_dyn-array planner.LintFixCandidate)
       (__tl_make-array planner.LintFixCandidate count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [finding : lint_core.LintFinding
-            (lint_core.lint-findings-ref (& findings) index)]
-          (begin
-            (match finding.fix
-              [(lint_core.LintFixAvailable fix)
-                (set!
-                  (array-ref slots index)
-                  (planner.LintFixCandidate
-                    (str_cat.str-cat
-                      "redundant-begin-"
-                      (string.int->string index))
-                    (diag.compiler-diagnostic-with-fix
-                      (diag.compiler-diagnostic-from-ast-span
-                        "fix.tl"
-                        finding.span
-                        finding.message)
-                      fix)
-                    (one-identity (planner.source-identity (clone snap)))))]
-              [(lint_core.LintFixUnavailable _ _)
-                (io.panic "redundant-begin finding without a fix")])
-            (set! index (+ index 1)))))
-      (planner.plan
-        (one-snapshot snap)
-        (planner.LintFixCandidateSeq slots count)
-        (planner.machine-only)))))
+    (while (< index count)
+      (let
+        [finding : lint_core.LintFinding
+          (lint_core.lint-findings-ref (& findings) index)]
+        (match finding.fix
+          [(lint_core.LintFixAvailable fix)
+            (set!
+              (array-ref slots index)
+              (planner.LintFixCandidate
+                (str_cat.str-cat "redundant-begin-" (string.int->string index))
+                (diag.compiler-diagnostic-with-fix
+                  (diag.compiler-diagnostic-from-ast-span
+                    "fix.tl"
+                    finding.span
+                    finding.message)
+                  fix)
+                (one-identity (planner.source-identity (clone snap)))))]
+          [(lint_core.LintFixUnavailable _ _)
+            (io.panic "redundant-begin finding without a fix")])
+        (set! index (+ index 1))))
+    (planner.plan
+      (one-snapshot snap)
+      (planner.LintFixCandidateSeq slots count)
+      (planner.machine-only))))
 
 (define (redundant-begin-applied [source : String]) : String
   (let
     [batch : planner.LintFixPlan (redundant-begin-plan source)]
-    (begin
-      (assert batch.publishable "redundant-begin fixes should plan cleanly")
-      (clone (array-ref (planner.apply batch).slots 0).source))))
+    (assert batch.publishable "redundant-begin fixes should plan cleanly")
+    (clone (array-ref (planner.apply batch).slots 0).source)))
 
 (define (formatted [source : String]) : String
   (match (format_rules.format-rules-render-source-width-result source 80)

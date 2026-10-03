@@ -32,39 +32,38 @@
     [qualified-variants : ast.AstVariantDefList (ast.ast-variant-def-list-new)]
     [enum-handle : i64
       (csym.compiler-symbol-make-handle (csym.compiler-symbol-kind-defenum) 0)]
-    (begin
-      (ast.ast-variant-def-list-push
-        (&mut qualified-variants)
-        (ast.AstVariantDef.Def
-          qualified-variant-id
-          (ast.ast-type-list-new)
-          (ast.ast-variant-payload-cleanup-list-new)))
-      (and
-        (not (= variant-id generated-variant-id))
-        (match (compiler_typecheck_core.tc-variant-handle-in-list-at
-          session
-          enum-handle
-          variant-id
-          (& qualified-variants)
-          0)
-          [(option_i64.Some _) true]
-          [(option_i64.None) false])
-        (match (compiler_typecheck_core.tc-variant-handle-in-list-at
-          session
-          enum-handle
-          dotted-pattern-id
-          (& qualified-variants)
-          0)
-          [(option_i64.Some _) true]
-          [(option_i64.None) false])
-        (match (compiler_typecheck_core.tc-variant-handle-in-list-at
-          session
-          enum-handle
-          (ci.intern "Missing")
-          (& qualified-variants)
-          0)
-          [(option_i64.Some _) false]
-          [(option_i64.None) true])))))
+    (ast.ast-variant-def-list-push
+      (&mut qualified-variants)
+      (ast.AstVariantDef.Def
+        qualified-variant-id
+        (ast.ast-type-list-new)
+        (ast.ast-variant-payload-cleanup-list-new)))
+    (and
+      (not (= variant-id generated-variant-id))
+      (match (compiler_typecheck_core.tc-variant-handle-in-list-at
+        session
+        enum-handle
+        variant-id
+        (& qualified-variants)
+        0)
+        [(option_i64.Some _) true]
+        [(option_i64.None) false])
+      (match (compiler_typecheck_core.tc-variant-handle-in-list-at
+        session
+        enum-handle
+        dotted-pattern-id
+        (& qualified-variants)
+        0)
+        [(option_i64.Some _) true]
+        [(option_i64.None) false])
+      (match (compiler_typecheck_core.tc-variant-handle-in-list-at
+        session
+        enum-handle
+        (ci.intern "Missing")
+        (& qualified-variants)
+        0)
+        [(option_i64.Some _) false]
+        [(option_i64.None) true]))))
 
 (define (tc-reverse-mixed-parsed-module-id
   [program : (& program ast.AstProgram)]) : i64

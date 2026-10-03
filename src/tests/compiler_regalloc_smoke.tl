@@ -12,14 +12,13 @@
   (let
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (+ rest.len 1))]
-    (begin
-      (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
-      (ir.compiler-ir-instr-builder-append-seq-range!
-        (&mut builder)
-        rest
-        0
-        rest.len)
-      (ir.compiler-ir-instr-builder-to-seq builder))))
+    (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
+    (ir.compiler-ir-instr-builder-append-seq-range!
+      (&mut builder)
+      rest
+      0
+      rest.len)
+    (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
@@ -149,17 +148,16 @@
       (not (live.compiler-live-set-contains? groups 7)))))
 
 (define (main) : i64
-  (begin
-    (reg_tests.compiler-regalloc-self-test-require!
-      "named failure message renderer"
-      (string.eq
-        (reg_tests.compiler-regalloc-self-test-failure-message "register reuse")
-        "regalloc self-test failed: register reuse"))
-    (reg_tests.compiler-regalloc-self-test)
-    (reg_tests.compiler-regalloc-self-test-require!
-      "compiler-reg-smoke-spmd-call-shape-ok?"
-      (compiler-reg-smoke-spmd-call-shape-ok?))
-    (reg_tests.compiler-regalloc-self-test-require!
-      "compiler-reg-smoke-descriptor-pair-group-ok?"
-      (compiler-reg-smoke-descriptor-pair-group-ok?))
-    42))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "named failure message renderer"
+    (string.eq
+      (reg_tests.compiler-regalloc-self-test-failure-message "register reuse")
+      "regalloc self-test failed: register reuse"))
+  (reg_tests.compiler-regalloc-self-test)
+  (reg_tests.compiler-regalloc-self-test-require!
+    "compiler-reg-smoke-spmd-call-shape-ok?"
+    (compiler-reg-smoke-spmd-call-shape-ok?))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "compiler-reg-smoke-descriptor-pair-group-ok?"
+    (compiler-reg-smoke-descriptor-pair-group-ok?))
+  42)

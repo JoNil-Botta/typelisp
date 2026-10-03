@@ -44,20 +44,18 @@
   (let
     [errors : doc_error_vec.Vec (doc_test.doc-test-error-list-empty)]
     [index : i64 1]
-    (begin
-      (while (<= index 5)
-        (begin
-          (doc_error_vec.push-ref!
-            (&mut errors)
-            (doc_test.DocTestError.Error index (string.int->string index)))
-          (set! index (+ index 1))))
-      (and
-        (= (doc_test.doc-test-error-list-count errors) 5)
-        (= (doc_error_vec.capacity (& errors)) 8)
-        (=
-          (doc_test.doc-test-error-line
-            (doc_test.doc-test-error-list-ref errors 4))
-          5)))))
+    (while (<= index 5)
+      (doc_error_vec.push-ref!
+        (&mut errors)
+        (doc_test.DocTestError.Error index (string.int->string index)))
+      (set! index (+ index 1)))
+    (and
+      (= (doc_test.doc-test-error-list-count errors) 5)
+      (= (doc_error_vec.capacity (& errors)) 8)
+      (=
+        (doc_test.doc-test-error-line
+          (doc_test.doc-test-error-list-ref errors 4))
+        5))))
 
 ;; Grow the generated line collection past its initial capacity while preserving
 ;; physical source-line order. Extraction uses this same helper.
@@ -65,24 +63,22 @@
   (let
     [lines : doc_line_vec.Vec (doc_line_vec.new)]
     [index : i64 1]
-    (begin
-      (while (<= index 5)
-        (begin
-          (doc_line_vec.push-ref!
-            (&mut lines)
-            (doc_test.DocTestLine.Line index (string.int->string index)))
-          (set! index (+ index 1))))
-      (and
-        (= (doc_line_vec.len (& lines)) 5)
-        (= (doc_line_vec.capacity (& lines)) 8)
-        (=
-          (doc_test.doc-test-line-number
-            (doc_line_vec.get (& lines) 0 (doc_test.DocTestLine.Line 0 "")))
-          1)
-        (=
-          (doc_test.doc-test-line-number
-            (doc_line_vec.get (& lines) 4 (doc_test.DocTestLine.Line 0 "")))
-          5)))))
+    (while (<= index 5)
+      (doc_line_vec.push-ref!
+        (&mut lines)
+        (doc_test.DocTestLine.Line index (string.int->string index)))
+      (set! index (+ index 1)))
+    (and
+      (= (doc_line_vec.len (& lines)) 5)
+      (= (doc_line_vec.capacity (& lines)) 8)
+      (=
+        (doc_test.doc-test-line-number
+          (doc_line_vec.get (& lines) 0 (doc_test.DocTestLine.Line 0 "")))
+        1)
+      (=
+        (doc_test.doc-test-line-number
+          (doc_line_vec.get (& lines) 4 (doc_test.DocTestLine.Line 0 "")))
+        5))))
 
 ;; Both doc-test collections contain move-only strings. Exercise canonical core
 ;; growth across the initial capacity without requiring clone/pop support, and
@@ -91,56 +87,52 @@
   (let
     [examples : doc_example_vec.Vec (doc_test.doc-test-example-list-empty)]
     [index : i64 1]
-    (begin
-      (while (<= index 5)
-        (begin
-          (doc_example_vec.push-ref!
-            (&mut examples)
-            (doc_test.DocTestExample.Example
-              index
-              (+ index 10)
-              (Pass)
-              (string.int->string index)))
-          (set! index (+ index 1))))
-      (and
-        (= (doc_test.doc-test-example-list-count examples) 5)
-        (= (doc_example_vec.capacity (& examples)) 8)
-        (=
-          (doc_test.doc-test-example-index
-            (doc_test.doc-test-example-list-ref examples 0))
-          1)
-        (string.eq
-          (doc_test.doc-test-example-code
-            (doc_test.doc-test-example-list-ref examples 4))
-          "5")))))
+    (while (<= index 5)
+      (doc_example_vec.push-ref!
+        (&mut examples)
+        (doc_test.DocTestExample.Example
+          index
+          (+ index 10)
+          (Pass)
+          (string.int->string index)))
+      (set! index (+ index 1)))
+    (and
+      (= (doc_test.doc-test-example-list-count examples) 5)
+      (= (doc_example_vec.capacity (& examples)) 8)
+      (=
+        (doc_test.doc-test-example-index
+          (doc_test.doc-test-example-list-ref examples 0))
+        1)
+      (string.eq
+        (doc_test.doc-test-example-code
+          (doc_test.doc-test-example-list-ref examples 4))
+        "5"))))
 
 (define (doc-test-run-failure-vector-growth-smoke-ok?) : bool
   (let
     [failures : doc_run_failure_vec.Vec
       (doc_test.doc-test-run-failure-list-empty)]
     [index : i64 1]
-    (begin
-      (while (<= index 5)
-        (begin
-          (doc_run_failure_vec.push-ref!
-            (&mut failures)
-            (doc_test.DocTestRunFailure.Failure
-              (string.int->string index)
-              (+ index 10)
-              index
-              (string.int->string index)))
-          (set! index (+ index 1))))
-      (and
-        (= (doc_test.doc-test-run-failure-list-count failures) 5)
-        (= (doc_run_failure_vec.capacity (& failures)) 8)
-        (string.eq
-          (doc-test-run-failure-path
-            (doc_test.doc-test-run-failure-list-ref failures 0))
-          "1")
-        (=
-          (doc-test-run-failure-index
-            (doc_test.doc-test-run-failure-list-ref failures 4))
-          5)))))
+    (while (<= index 5)
+      (doc_run_failure_vec.push-ref!
+        (&mut failures)
+        (doc_test.DocTestRunFailure.Failure
+          (string.int->string index)
+          (+ index 10)
+          index
+          (string.int->string index)))
+      (set! index (+ index 1)))
+    (and
+      (= (doc_test.doc-test-run-failure-list-count failures) 5)
+      (= (doc_run_failure_vec.capacity (& failures)) 8)
+      (string.eq
+        (doc-test-run-failure-path
+          (doc_test.doc-test-run-failure-list-ref failures 0))
+        "1")
+      (=
+        (doc-test-run-failure-index
+          (doc_test.doc-test-run-failure-list-ref failures 4))
+        5))))
 
 (define (doc-test-public-diagnostic-render-smoke-ok?) : bool
   (let
@@ -244,27 +236,26 @@
   [source-line : i64]
   [expect-error : bool]
   [code-fragment : String]) : bool
-  (begin
-    (unless
-      (=
-        (doc_test.doc-test-example-index
-          (owned_view.compiler-owned-shared-view example))
-        index)
-      (return false))
-    (unless
-      (=
-        (doc_test.doc-test-example-source-line
-          (owned_view.compiler-owned-shared-view example))
-        source-line)
-      (return false))
-    (unless
-      (=
-        (doc_test.doc-test-expectation-error?
-          (doc_test.doc-test-example-expectation
-            (owned_view.compiler-owned-shared-view example)))
-        expect-error)
-      (return false))
-    (string.contains (doc_test.doc-test-example-code example) code-fragment)))
+  (unless
+    (=
+      (doc_test.doc-test-example-index
+        (owned_view.compiler-owned-shared-view example))
+      index)
+    (return false))
+  (unless
+    (=
+      (doc_test.doc-test-example-source-line
+        (owned_view.compiler-owned-shared-view example))
+      source-line)
+    (return false))
+  (unless
+    (=
+      (doc_test.doc-test-expectation-error?
+        (doc_test.doc-test-example-expectation
+          (owned_view.compiler-owned-shared-view example)))
+      expect-error)
+    (return false))
+  (string.contains (doc_test.doc-test-example-code example) code-fragment))
 
 (define (doc-test-runnable-example-ok?
   [example : doc_test.DocTestExample]
@@ -274,30 +265,26 @@
   [expected-stdout : String]
   [expected-stderr : String]
   [code-fragment : String]) : bool
-  (begin
-    (unless
-      (=
-        (doc_test.doc-test-example-index
-          (owned_view.compiler-owned-shared-view example))
-        index)
-      (return false))
-    (unless
-      (=
-        (doc_test.doc-test-example-source-line
-          (owned_view.compiler-owned-shared-view example))
-        source-line)
-      (return false))
-    (match (doc_test.doc-test-example-expectation
-      (owned_view.compiler-owned-shared-view example))
-      [(Run actual-exit actual-stdout actual-stderr)
-        (begin
-          (unless (= actual-exit expected-exit) (return false))
-          (unless (string.eq actual-stdout expected-stdout) (return false))
-          (unless (string.eq actual-stderr expected-stderr) (return false))
-          (string.contains
-            (doc_test.doc-test-example-code example)
-            code-fragment))]
-      [_ false])))
+  (unless
+    (=
+      (doc_test.doc-test-example-index
+        (owned_view.compiler-owned-shared-view example))
+      index)
+    (return false))
+  (unless
+    (=
+      (doc_test.doc-test-example-source-line
+        (owned_view.compiler-owned-shared-view example))
+      source-line)
+    (return false))
+  (match (doc_test.doc-test-example-expectation
+    (owned_view.compiler-owned-shared-view example))
+    [(Run actual-exit actual-stdout actual-stderr)
+      (unless (= actual-exit expected-exit) (return false))
+      (unless (string.eq actual-stdout expected-stdout) (return false))
+      (unless (string.eq actual-stderr expected-stderr) (return false))
+      (string.contains (doc_test.doc-test-example-code example) code-fragment)]
+    [_ false]))
 
 (define (doc-test-error-list-has-from?
   [errors : (& errors doc_error_vec.Vec)]
@@ -352,38 +339,37 @@
         (doc_test.doc-test-error-list-ref errors 1)]
       [third : doc_test.DocTestError
         (doc_test.doc-test-error-list-ref errors 2)]
-      (begin
-        (unless
-          (=
-            (doc_test.doc-test-error-line
-              (owned_view.compiler-owned-shared-view first))
-            1)
-          (return false))
-        (unless
-          (string.contains
-            (doc_test.doc-test-error-message first)
-            "unsupported TypeLisp doctest option")
-          (return false))
-        (unless
-          (=
-            (doc_test.doc-test-error-line
-              (owned_view.compiler-owned-shared-view second))
-            5)
-          (return false))
-        (unless
-          (string.contains
-            (doc_test.doc-test-error-message second)
-            "empty TypeLisp doctest fence")
-          (return false))
-        (unless
-          (=
-            (doc_test.doc-test-error-line
-              (owned_view.compiler-owned-shared-view third))
-            8)
-          (return false))
+      (unless
+        (=
+          (doc_test.doc-test-error-line
+            (owned_view.compiler-owned-shared-view first))
+          1)
+        (return false))
+      (unless
         (string.contains
-          (doc_test.doc-test-error-message third)
-          "unterminated TypeLisp doctest fence")))
+          (doc_test.doc-test-error-message first)
+          "unsupported TypeLisp doctest option")
+        (return false))
+      (unless
+        (=
+          (doc_test.doc-test-error-line
+            (owned_view.compiler-owned-shared-view second))
+          5)
+        (return false))
+      (unless
+        (string.contains
+          (doc_test.doc-test-error-message second)
+          "empty TypeLisp doctest fence")
+        (return false))
+      (unless
+        (=
+          (doc_test.doc-test-error-line
+            (owned_view.compiler-owned-shared-view third))
+          8)
+        (return false))
+      (string.contains
+        (doc_test.doc-test-error-message third)
+        "unterminated TypeLisp doctest fence"))
     false))
 
 (define (doc-test-ordinary-comments-ok?) : bool
@@ -408,19 +394,16 @@
 ;: ```
 (define legacy : i64 1)")
     [(Extraction examples errors)
-      (begin
-        (unless
-          (= (doc_test.doc-test-error-list-count errors) 0)
-          (return false))
-        (unless
-          (= (doc_test.doc-test-example-list-count examples) 1)
-          (return false))
-        (let
-          [example : doc_test.DocTestExample
-            (doc_test.doc-test-example-list-ref examples 0)]
-          (string.contains
-            (doc_test.doc-test-example-code example)
-            "(define legacy")))]))
+      (unless (= (doc_test.doc-test-error-list-count errors) 0) (return false))
+      (unless
+        (= (doc_test.doc-test-example-list-count examples) 1)
+        (return false))
+      (let
+        [example : doc_test.DocTestExample
+          (doc_test.doc-test-example-list-ref examples 0)]
+        (string.contains
+          (doc_test.doc-test-example-code example)
+          "(define legacy"))]))
 
 (define (doc-test-malformed-smoke-ok?) : bool
   (match (doc_test.doc-test-extract-source (doc-test-malformed-source))
@@ -434,37 +417,26 @@
 (define (doc-test-runnable-smoke-ok?) : bool
   (match (doc_test.doc-test-extract-source (doc-test-runnable-source))
     [(Extraction examples errors)
-      (begin
+      (unless (= (doc_test.doc-test-error-list-count errors) 0) (return false))
+      (unless
+        (= (doc_test.doc-test-example-list-count examples) 2)
+        (return false))
+      (let
+        [first : doc_test.DocTestExample
+          (doc_test.doc-test-example-list-ref examples 0)]
+        [second : doc_test.DocTestExample
+          (doc_test.doc-test-example-list-ref examples 1)]
         (unless
-          (= (doc_test.doc-test-error-list-count errors) 0)
+          (doc-test-runnable-example-ok?
+            first
+            1
+            2
+            0
+            "hello\n"
+            "error\tline\r"
+            "(define (main)")
           (return false))
-        (unless
-          (= (doc_test.doc-test-example-list-count examples) 2)
-          (return false))
-        (let
-          [first : doc_test.DocTestExample
-            (doc_test.doc-test-example-list-ref examples 0)]
-          [second : doc_test.DocTestExample
-            (doc_test.doc-test-example-list-ref examples 1)]
-          (begin
-            (unless
-              (doc-test-runnable-example-ok?
-                first
-                1
-                2
-                0
-                "hello\n"
-                "error\tline\r"
-                "(define (main)")
-              (return false))
-            (doc-test-runnable-example-ok?
-              second
-              2
-              14
-              42
-              ""
-              ""
-              "(define (main)"))))]))
+        (doc-test-runnable-example-ok? second 2 14 42 "" "" "(define (main)"))]))
 
 (define (doc-test-runnable-malformed-smoke-ok?) : bool
   (match (doc_test.doc-test-extract-source
@@ -486,56 +458,52 @@
 ;# ```
 ")
     [(Extraction examples errors)
-      (begin
-        (unless
-          (= (doc_test.doc-test-example-list-count examples) 0)
-          (return false))
-        (unless
-          (= (doc_test.doc-test-error-list-count errors) 5)
-          (return false))
-        (unless
-          (doc-test-error-list-has? errors 1 "cannot be combined")
-          (return false))
-        (unless
-          (doc-test-error-list-has? errors 4 "cannot be combined")
-          (return false))
-        (unless
-          (doc-test-error-list-has? errors 8 "must be an integer")
-          (return false))
-        (unless
-          (doc-test-error-list-has? errors 12 "output metadata")
-          (return false))
-        (doc-test-error-list-has? errors 14 "requires doctest-exit"))]))
+      (unless
+        (= (doc_test.doc-test-example-list-count examples) 0)
+        (return false))
+      (unless (= (doc_test.doc-test-error-list-count errors) 5) (return false))
+      (unless
+        (doc-test-error-list-has? errors 1 "cannot be combined")
+        (return false))
+      (unless
+        (doc-test-error-list-has? errors 4 "cannot be combined")
+        (return false))
+      (unless
+        (doc-test-error-list-has? errors 8 "must be an integer")
+        (return false))
+      (unless
+        (doc-test-error-list-has? errors 12 "output metadata")
+        (return false))
+      (doc-test-error-list-has? errors 14 "requires doctest-exit")]))
 
 (define (doc-test-smoke) : i64
   (match (doc_test.doc-test-extract-source (doc-test-smoke-source))
     [(Extraction examples errors)
-      (begin
-        (unless
-          (= (doc_test.doc-test-error-list-count errors) 0)
-          (return (io.panic "doc-test: unexpected extraction error")))
-        (unless
-          (= (doc_test.doc-test-example-list-count examples) 2)
-          (return (io.panic "doc-test: example count mismatch")))
-        (unless
-          (doc-test-smoke-examples-ok? examples)
-          (return (io.panic "doc-test: example metadata mismatch")))
-        (unless
-          (doc-test-ordinary-comments-ok?)
-          (return (io.panic "doc-test: ordinary comment smoke mismatch")))
-        (unless
-          (doc-test-legacy-item-smoke-ok?)
-          (return (io.panic "doc-test: legacy item smoke mismatch")))
-        (unless
-          (doc-test-malformed-smoke-ok?)
-          (return (io.panic "doc-test: malformed smoke mismatch")))
-        (unless
-          (doc-test-runnable-smoke-ok?)
-          (return (io.panic "doc-test: runnable smoke mismatch")))
-        (unless
-          (doc-test-runnable-malformed-smoke-ok?)
-          (return (io.panic "doc-test: runnable malformed smoke mismatch")))
-        42)]))
+      (unless
+        (= (doc_test.doc-test-error-list-count errors) 0)
+        (return (io.panic "doc-test: unexpected extraction error")))
+      (unless
+        (= (doc_test.doc-test-example-list-count examples) 2)
+        (return (io.panic "doc-test: example count mismatch")))
+      (unless
+        (doc-test-smoke-examples-ok? examples)
+        (return (io.panic "doc-test: example metadata mismatch")))
+      (unless
+        (doc-test-ordinary-comments-ok?)
+        (return (io.panic "doc-test: ordinary comment smoke mismatch")))
+      (unless
+        (doc-test-legacy-item-smoke-ok?)
+        (return (io.panic "doc-test: legacy item smoke mismatch")))
+      (unless
+        (doc-test-malformed-smoke-ok?)
+        (return (io.panic "doc-test: malformed smoke mismatch")))
+      (unless
+        (doc-test-runnable-smoke-ok?)
+        (return (io.panic "doc-test: runnable smoke mismatch")))
+      (unless
+        (doc-test-runnable-malformed-smoke-ok?)
+        (return (io.panic "doc-test: runnable malformed smoke mismatch")))
+      42]))
 
 ;; --- runner self-test -----------------------------------------------------------
 ;; A normal example whose body fails to typecheck (i64 return, bool body).
@@ -561,9 +529,8 @@
 (define (doc-test-run-smoke-stdlib-roots) : doc_svec.Vec
   (let
     [roots : doc_svec.Vec (doc_svec.new)]
-    (begin
-      (doc_svec.push-ref! (&mut roots) "stdlib")
-      roots)))
+    (doc_svec.push-ref! (&mut roots) "stdlib")
+    roots))
 
 (define (doc-test-run-runnable-wrong-exit-source) : String
   ";# ```typelisp run
@@ -623,28 +590,27 @@
       (let
         [failure : doc_test.DocTestRunFailure
           (doc_test.doc-test-run-failure-list-ref failures 0)]
-        (begin
-          (unless
-            (=
-              (doc-test-run-failure-index
-                (owned_view.compiler-owned-shared-view failure))
-              1)
-            (return false))
-          (unless
-            (=
-              (doc-test-run-failure-line
-                (owned_view.compiler-owned-shared-view failure))
-              1)
-            (return false))
-          (unless
-            (string.eq
-              (doc-test-run-failure-path
-                (owned_view.compiler-owned-shared-view failure))
-              "docs/bad.tl")
-            (return false))
-          (string.contains
-            (doc-test-run-failure-message failure)
-            "return type mismatch")))
+        (unless
+          (=
+            (doc-test-run-failure-index
+              (owned_view.compiler-owned-shared-view failure))
+            1)
+          (return false))
+        (unless
+          (=
+            (doc-test-run-failure-line
+              (owned_view.compiler-owned-shared-view failure))
+            1)
+          (return false))
+        (unless
+          (string.eq
+            (doc-test-run-failure-path
+              (owned_view.compiler-owned-shared-view failure))
+            "docs/bad.tl")
+          (return false))
+        (string.contains
+          (doc-test-run-failure-message failure)
+          "return type mismatch"))
       false)))
 
 ;; An `expect-error` example that checks successfully is a failure.
@@ -763,47 +729,46 @@
       false)))
 
 (define (doc-test-run-smoke-runnable-failures-ok?) : bool
-  (begin
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-wrong-exit-source)
-        "expected exit: 0")
-      (return false))
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-wrong-exit-source)
-        "actual exit: 7")
-      (return false))
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-stdout-mismatch-source)
-        "expected stdout:")
-      (return false))
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-stdout-mismatch-source)
-        "actual\n")
-      (return false))
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-stderr-mismatch-source)
-        "expected stderr:")
-      (return false))
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        (doc-test-run-runnable-stderr-mismatch-source)
-        "actual-error\n")
-      (return false))
-    (unless
-      (doc-test-run-single-failure-message-contains?
-        ";# ```typelisp run
+  (unless
+    (doc-test-run-single-failure-message-contains?
+      (doc-test-run-runnable-wrong-exit-source)
+      "expected exit: 0")
+    (return false))
+  (unless
+    (doc-test-run-single-failure-message-contains?
+      (doc-test-run-runnable-wrong-exit-source)
+      "actual exit: 7")
+    (return false))
+  (unless
+    (doc-test-run-single-failure-message-contains?
+      (doc-test-run-runnable-stdout-mismatch-source)
+      "expected stdout:")
+    (return false))
+  (unless
+    (doc-test-run-single-failure-message-contains?
+      (doc-test-run-runnable-stdout-mismatch-source)
+      "actual\n")
+    (return false))
+  (unless
+    (doc-test-run-single-failure-message-contains?
+      (doc-test-run-runnable-stderr-mismatch-source)
+      "expected stderr:")
+    (return false))
+  (unless
+    (doc-test-run-single-failure-message-contains?
+      (doc-test-run-runnable-stderr-mismatch-source)
+      "actual-error\n")
+    (return false))
+  (unless
+    (doc-test-run-single-failure-message-contains?
+      ";# ```typelisp run
 ;# ;; doctest-exit: 0
 ;# (define (main) : i64 true)
 ;# ```
 "
-        "runnable compile failed")
-      (return false))
-    true))
+      "runnable compile failed")
+    (return false))
+  true)
 
 (define (doc-test-typecheck-smoke-runnable-only-ok?) : bool
   (let
@@ -885,33 +850,32 @@ typecheck: return type mismatch"))]
       (doc-test-run-source "docs/ok.tl" (doc-test-smoke-source))]
     [fail-report : doc_test.DocTestRunReport
       (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))]
-    (begin
-      (unless
-        (=
-          (doc_test.doc-test-run-report-status
-            (owned_view.compiler-owned-shared-view pass-report))
-          0)
-        (return false))
-      (unless
-        (string.eq
-          (doc_test.doc-test-run-report-render pass-report)
-          "Doc tests passed: 2 example(s)")
-        (return false))
-      (unless
-        (=
-          (doc_test.doc-test-run-report-status
-            (owned_view.compiler-owned-shared-view fail-report))
-          1)
-        (return false))
-      (unless
-        (string.contains
-          (doc_test.doc-test-run-report-render
-            (owned_view.compiler-owned-shared-view fail-report))
-          "doc tests failed: 1 failure(s) across 1 example(s)")
-        (return false))
+    (unless
+      (=
+        (doc_test.doc-test-run-report-status
+          (owned_view.compiler-owned-shared-view pass-report))
+        0)
+      (return false))
+    (unless
+      (string.eq
+        (doc_test.doc-test-run-report-render pass-report)
+        "Doc tests passed: 2 example(s)")
+      (return false))
+    (unless
+      (=
+        (doc_test.doc-test-run-report-status
+          (owned_view.compiler-owned-shared-view fail-report))
+        1)
+      (return false))
+    (unless
       (string.contains
-        (doc_test.doc-test-run-report-render fail-report)
-        "return type mismatch"))))
+        (doc_test.doc-test-run-report-render
+          (owned_view.compiler-owned-shared-view fail-report))
+        "doc tests failed: 1 failure(s) across 1 example(s)")
+      (return false))
+    (string.contains
+      (doc_test.doc-test-run-report-render fail-report)
+      "return type mismatch")))
 
 (define (doc-test-session-cache-smoke-ok?) : bool
   (let
@@ -921,22 +885,20 @@ typecheck: return type mismatch"))]
     [roots : doc_svec.Vec
       (let
         [items : doc_svec.Vec (doc_svec.new)]
-        (begin
-          (doc_svec.push-ref! (&mut items) "target/doc_test_session_cache")
-          items))]
-    (begin
-      (compiler_load.compiler-load-test-mkdir "target")
-      (compiler_load.compiler-load-test-mkdir root)
-      (let
-        [contents : String "(define shared-value : i64 7)"]
-        (io.write-file dep-file (byte_buf.str-as-bytes (& contents))))
-      (compiler_load.compiler-load-session-cache-enable!)
-      (compiler_load.compiler-load-program-cache-clear!)
-      (let
-        [report : doc_test.DocTestRunReport
-          (doc_test.doc-test-typecheck-source-with-roots
-            doc-file
-            ";# ```typelisp
+        (doc_svec.push-ref! (&mut items) "target/doc_test_session_cache")
+        items)]
+    (compiler_load.compiler-load-test-mkdir "target")
+    (compiler_load.compiler-load-test-mkdir root)
+    (let
+      [contents : String "(define shared-value : i64 7)"]
+      (io.write-file dep-file (byte_buf.str-as-bytes (& contents))))
+    (compiler_load.compiler-load-session-cache-enable!)
+    (compiler_load.compiler-load-program-cache-clear!)
+    (let
+      [report : doc_test.DocTestRunReport
+        (doc_test.doc-test-typecheck-source-with-roots
+          doc-file
+          ";# ```typelisp
 ;# (import stdlib.dep)
 ;# (define (main) : i64 dep.shared-value)
 ;# ```
@@ -945,11 +907,10 @@ typecheck: return type mismatch"))]
 ;# (define (main) : i64 dep.shared-value)
 ;# ```
 "
-            roots)]
-        [hits : i64 (load_tests.compiler-load-program-cache-hit-count-value)]
-        (begin
-          (compiler_load.compiler-load-session-cache-disable-for-test!)
-          (and (doc_test.doc-test-run-report-ok? report) (> hits 0)))))))
+          roots)]
+      [hits : i64 (load_tests.compiler-load-program-cache-hit-count-value)]
+      (compiler_load.compiler-load-session-cache-disable-for-test!)
+      (and (doc_test.doc-test-run-report-ok? report) (> hits 0)))))
 
 (define (doc-test-package-walk-example-source [value : i64]) : String
   (str_cat.str-cat
@@ -973,27 +934,25 @@ typecheck: return type mismatch"))]
   (let
     [i : i64 0]
     [out : ast.AstDeclPathList paths]
-    (begin
-      (while (< i count)
+    (while (< i count)
+      (let
+        [path : String
+          (doc-test-package-walk-numbered-path
+            (owned_view.compiler-owned-shared-view root)
+            "empty_"
+            i)]
         (let
-          [path : String
-            (doc-test-package-walk-numbered-path
-              (owned_view.compiler-owned-shared-view root)
-              "empty_"
-              i)]
-          (begin
-            (let
-              [contents : String ";; no doctest fence
+          [contents : String ";; no doctest fence
 "]
-              (io.write-file path (byte_buf.str-as-bytes (& contents))))
-            (set!
-              out
-              (ast.ast-decl-path-list-prepend-builder-with-owner-id
-                path
-                cbi.compiler-builtin-id-fix-empty
-                out))
-            (set! i (+ i 1)))))
-      out)))
+          (io.write-file path (byte_buf.str-as-bytes (& contents))))
+        (set!
+          out
+          (ast.ast-decl-path-list-prepend-builder-with-owner-id
+            path
+            cbi.compiler-builtin-id-fix-empty
+            out))
+        (set! i (+ i 1))))
+    out))
 
 (define (doc-test-package-walk-long-list-smoke-ok?) : bool
   (let
@@ -1013,142 +972,136 @@ typecheck: return type mismatch"))]
         (owned_view.compiler-owned-shared-view root)
         "example_"
         3)]
-    (begin
-      (compiler_load.compiler-load-test-mkdir "target")
-      (compiler_load.compiler-load-test-mkdir
-        (owned_view.compiler-owned-shared-view root))
-      (let
-        [contents-a : String (doc-test-package-walk-example-source 1)]
-        [contents-b : String (doc-test-package-walk-example-source 2)]
-        [contents-c : String (doc-test-package-walk-example-source 3)]
-        (begin
-          (io.write-file example-a (byte_buf.str-as-bytes (& contents-a)))
-          (io.write-file example-b (byte_buf.str-as-bytes (& contents-b)))
-          (io.write-file example-c (byte_buf.str-as-bytes (& contents-c)))))
-      (let
-        [paths : ast.AstDeclPathList
-          (doc-test-package-walk-write-empty-paths
-            (owned_view.compiler-owned-shared-view root)
-            128
+    (compiler_load.compiler-load-test-mkdir "target")
+    (compiler_load.compiler-load-test-mkdir
+      (owned_view.compiler-owned-shared-view root))
+    (let
+      [contents-a : String (doc-test-package-walk-example-source 1)]
+      [contents-b : String (doc-test-package-walk-example-source 2)]
+      [contents-c : String (doc-test-package-walk-example-source 3)]
+      (io.write-file example-a (byte_buf.str-as-bytes (& contents-a)))
+      (io.write-file example-b (byte_buf.str-as-bytes (& contents-b)))
+      (io.write-file example-c (byte_buf.str-as-bytes (& contents-c))))
+    (let
+      [paths : ast.AstDeclPathList
+        (doc-test-package-walk-write-empty-paths
+          (owned_view.compiler-owned-shared-view root)
+          128
+          (ast.ast-decl-root-path-cons
+            (owned_view.compiler-owned-shared-view example-a)
             (ast.ast-decl-root-path-cons
-              (owned_view.compiler-owned-shared-view example-a)
+              example-a
               (ast.ast-decl-root-path-cons
-                example-a
+                example-b
                 (ast.ast-decl-root-path-cons
-                  example-b
-                  (ast.ast-decl-root-path-cons
-                    example-c
-                    (ast.ast-decl-path-list-new))))))]
-        [report : doc_test.DocTestRunReport
-          (doc_test.doc-test-typecheck-package-paths-with-roots
-            paths
-            (doc-test-run-smoke-stdlib-roots)
-            root
-            (compiler_load.compiler-pkg-deps-empty))]
-        (and
-          (doc_test.doc-test-run-report-ok?
-            (owned_view.compiler-owned-shared-view report))
-          (= (doc_test.doc-test-run-report-count report) 3))))))
+                  example-c
+                  (ast.ast-decl-path-list-new))))))]
+      [report : doc_test.DocTestRunReport
+        (doc_test.doc-test-typecheck-package-paths-with-roots
+          paths
+          (doc-test-run-smoke-stdlib-roots)
+          root
+          (compiler_load.compiler-pkg-deps-empty))]
+      (and
+        (doc_test.doc-test-run-report-ok?
+          (owned_view.compiler-owned-shared-view report))
+        (= (doc_test.doc-test-run-report-count report) 3)))))
 
 (define (doc-test-run-smoke) : i64
-  (begin
-    (unless
-      (doc-test-error-vector-growth-smoke-ok?)
-      (return (io.panic "doc-test-run: generated error vector growth mismatch")))
-    (unless
-      (doc-test-line-vector-growth-smoke-ok?)
-      (return (io.panic "doc-test-run: generated line vector growth mismatch")))
-    (unless
-      (doc-test-example-vector-growth-smoke-ok?)
-      (return
-        (io.panic "doc-test-run: generated example vector growth mismatch")))
-    (unless
-      (doc-test-run-failure-vector-growth-smoke-ok?)
-      (return
-        (io.panic "doc-test-run: generated failure vector growth mismatch")))
-    (unless
-      (doc-test-run-smoke-pass-ok?)
-      (return (io.panic "doc-test-run: pass-case mismatch")))
-    (unless
-      (doc-test-run-smoke-unexpected-error-ok?)
-      (return (io.panic "doc-test-run: unexpected-error mismatch")))
-    (unless
-      (doc-test-run-smoke-unexpected-pass-ok?)
-      (return (io.panic "doc-test-run: unexpected-pass mismatch")))
-    (unless
-      (doc-test-run-smoke-malformed-ok?)
-      (return (io.panic "doc-test-run: malformed mismatch")))
-    (unless
-      (doc-test-run-smoke-empty-ok?)
-      (return (io.panic "doc-test-run: empty-source mismatch")))
-    (unless
-      (doc-test-run-smoke-runnable-ok?)
-      (return (io.panic "doc-test-run: runnable execution mismatch")))
-    (unless
-      (doc-test-typecheck-smoke-runnable-only-ok?)
-      (return (io.panic "doc-test-typecheck: runnable typecheck mismatch")))
-    (unless
-      (doc-test-typecheck-smoke-unexpected-pass-ok?)
-      (return (io.panic "doc-test-typecheck: unexpected-pass mismatch")))
-    (unless
-      (doc-test-typecheck-smoke-malformed-ok?)
-      (return (io.panic "doc-test-typecheck: malformed mismatch")))
-    (unless
-      (doc-test-public-diagnostic-render-smoke-ok?)
-      (return (io.panic "doc-test-run: public diagnostic render mismatch")))
-    (unless
-      (doc-test-run-smoke-render-ok?)
-      (return (io.panic "doc-test-run: render mismatch")))
-    (unless
-      (doc-test-run-smoke-report-render-ok?)
-      (return (io.panic "doc-test-run: report render mismatch")))
-    (unless
-      (doc-test-session-cache-smoke-ok?)
-      (return (io.panic "doc-test-run: session cache smoke mismatch")))
-    (unless
-      (doc-test-package-walk-long-list-smoke-ok?)
-      (return (io.panic "doc-test-run: package walk long-list mismatch")))
-    42))
+  (unless
+    (doc-test-error-vector-growth-smoke-ok?)
+    (return (io.panic "doc-test-run: generated error vector growth mismatch")))
+  (unless
+    (doc-test-line-vector-growth-smoke-ok?)
+    (return (io.panic "doc-test-run: generated line vector growth mismatch")))
+  (unless
+    (doc-test-example-vector-growth-smoke-ok?)
+    (return (io.panic "doc-test-run: generated example vector growth mismatch")))
+  (unless
+    (doc-test-run-failure-vector-growth-smoke-ok?)
+    (return (io.panic "doc-test-run: generated failure vector growth mismatch")))
+  (unless
+    (doc-test-run-smoke-pass-ok?)
+    (return (io.panic "doc-test-run: pass-case mismatch")))
+  (unless
+    (doc-test-run-smoke-unexpected-error-ok?)
+    (return (io.panic "doc-test-run: unexpected-error mismatch")))
+  (unless
+    (doc-test-run-smoke-unexpected-pass-ok?)
+    (return (io.panic "doc-test-run: unexpected-pass mismatch")))
+  (unless
+    (doc-test-run-smoke-malformed-ok?)
+    (return (io.panic "doc-test-run: malformed mismatch")))
+  (unless
+    (doc-test-run-smoke-empty-ok?)
+    (return (io.panic "doc-test-run: empty-source mismatch")))
+  (unless
+    (doc-test-run-smoke-runnable-ok?)
+    (return (io.panic "doc-test-run: runnable execution mismatch")))
+  (unless
+    (doc-test-typecheck-smoke-runnable-only-ok?)
+    (return (io.panic "doc-test-typecheck: runnable typecheck mismatch")))
+  (unless
+    (doc-test-typecheck-smoke-unexpected-pass-ok?)
+    (return (io.panic "doc-test-typecheck: unexpected-pass mismatch")))
+  (unless
+    (doc-test-typecheck-smoke-malformed-ok?)
+    (return (io.panic "doc-test-typecheck: malformed mismatch")))
+  (unless
+    (doc-test-public-diagnostic-render-smoke-ok?)
+    (return (io.panic "doc-test-run: public diagnostic render mismatch")))
+  (unless
+    (doc-test-run-smoke-render-ok?)
+    (return (io.panic "doc-test-run: render mismatch")))
+  (unless
+    (doc-test-run-smoke-report-render-ok?)
+    (return (io.panic "doc-test-run: report render mismatch")))
+  (unless
+    (doc-test-session-cache-smoke-ok?)
+    (return (io.panic "doc-test-run: session cache smoke mismatch")))
+  (unless
+    (doc-test-package-walk-long-list-smoke-ok?)
+    (return (io.panic "doc-test-run: package walk long-list mismatch")))
+  42)
 
 ;; Combined smoke: extraction then runner. Returns 42 iff both
 ;; self-test batteries pass.
 (define (doc-test-smoke-all) : i64
-  (begin
-    (unless
-      (= (doc-test-smoke) 42)
-      (return (io.panic "doc-test: extraction smoke regressed")))
-    (unless
-      (build_run_tests.source-tool-link-inputs-dedupe-smoke-ok?)
-      (return (io.panic "source-tool: link input dedupe smoke regressed")))
-    (unless
-      (build_run_tests.source-tool-link-dependency-section-smoke-ok?)
-      (return (io.panic "source-tool: link dependency section smoke regressed")))
-    (unless
-      (build_run_tests.source-tool-windows-stack-reserve-smoke-ok?)
-      (return (io.panic "source-tool: windows stack reserve smoke regressed")))
-    (unless
-      (build_run_tests.source-tool-windows-system-libs-smoke-ok?)
-      (return (io.panic "source-tool: windows system libs smoke regressed")))
-    (unless
-      (build_run_tests.source-tool-windows-debug-linker-smoke-ok?)
-      (return (io.panic "source-tool: windows debug linker smoke regressed")))
-    (unless
-      (build_run_tests.source-tool-windows-reproducible-linker-smoke-ok?)
-      (return
-        (io.panic "source-tool: windows reproducible linker smoke regressed")))
-    (unless
-      (build_run_tests.source-tool-linux-direct-object-linkability-smoke-ok?)
-      (return (io.panic "source-tool: linux direct object smoke regressed")))
-    (unless
-      (build_run_tests.source-tool-windows-direct-object-linkability-smoke-ok?)
-      (return (io.panic "source-tool: windows direct object smoke regressed")))
-    (unless
-      (build_run_tests.source-tool-windows-direct-object-runtime-fallback-smoke-ok?)
-      (return
-        (io.panic "source-tool: windows direct object fallback smoke regressed")))
-    (unless
-      (build_run_tests.source-tool-windows-direct-object-relocation-gate-smoke-ok?)
-      (return
-        (io.panic
-          "source-tool: windows direct object relocation gate smoke regressed")))
-    (doc-test-run-smoke)))
+  (unless
+    (= (doc-test-smoke) 42)
+    (return (io.panic "doc-test: extraction smoke regressed")))
+  (unless
+    (build_run_tests.source-tool-link-inputs-dedupe-smoke-ok?)
+    (return (io.panic "source-tool: link input dedupe smoke regressed")))
+  (unless
+    (build_run_tests.source-tool-link-dependency-section-smoke-ok?)
+    (return (io.panic "source-tool: link dependency section smoke regressed")))
+  (unless
+    (build_run_tests.source-tool-windows-stack-reserve-smoke-ok?)
+    (return (io.panic "source-tool: windows stack reserve smoke regressed")))
+  (unless
+    (build_run_tests.source-tool-windows-system-libs-smoke-ok?)
+    (return (io.panic "source-tool: windows system libs smoke regressed")))
+  (unless
+    (build_run_tests.source-tool-windows-debug-linker-smoke-ok?)
+    (return (io.panic "source-tool: windows debug linker smoke regressed")))
+  (unless
+    (build_run_tests.source-tool-windows-reproducible-linker-smoke-ok?)
+    (return
+      (io.panic "source-tool: windows reproducible linker smoke regressed")))
+  (unless
+    (build_run_tests.source-tool-linux-direct-object-linkability-smoke-ok?)
+    (return (io.panic "source-tool: linux direct object smoke regressed")))
+  (unless
+    (build_run_tests.source-tool-windows-direct-object-linkability-smoke-ok?)
+    (return (io.panic "source-tool: windows direct object smoke regressed")))
+  (unless
+    (build_run_tests.source-tool-windows-direct-object-runtime-fallback-smoke-ok?)
+    (return
+      (io.panic "source-tool: windows direct object fallback smoke regressed")))
+  (unless
+    (build_run_tests.source-tool-windows-direct-object-relocation-gate-smoke-ok?)
+    (return
+      (io.panic
+        "source-tool: windows direct object relocation gate smoke regressed")))
+  (doc-test-run-smoke))

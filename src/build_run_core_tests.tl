@@ -19,14 +19,12 @@
     [n : i64 (process.args-count left)]
     [i : i64 0]
     [same : bool (= n (process.args-count right))]
-    (begin
-      (while (and same (< i n))
-        (begin
-          (if (string.eq (process.args-ref left i) (process.args-ref right i))
-            unit
-            (set! same false))
-          (set! i (+ i 1))))
-      same)))
+    (while (and same (< i n))
+      (if (string.eq (process.args-ref left i) (process.args-ref right i))
+        unit
+        (set! same false))
+      (set! i (+ i 1)))
+    same))
 
 (define (source-tool-link-inputs-eq?
   [left : build_run.SourceToolLinkInputs]
@@ -144,19 +142,18 @@
   (let
     [previous : bool (ir.compiler-debug-info-enabled?)]
     [ok : bool false]
-    (begin
-      (ir.compiler-debug-info-set-enabled! true)
-      (set!
-        ok
-        (let
-          [linker-args
-            (build_run.source-tool-windows-linker-args
-              "input.obj"
-              "output.exe"
-              (build_run.source-tool-link-inputs-empty))]
-          (build_run.source-tool-string-list-contains? linker-args "/DEBUG")))
-      (ir.compiler-debug-info-set-enabled! previous)
-      ok)))
+    (ir.compiler-debug-info-set-enabled! true)
+    (set!
+      ok
+      (let
+        [linker-args
+          (build_run.source-tool-windows-linker-args
+            "input.obj"
+            "output.exe"
+            (build_run.source-tool-link-inputs-empty))]
+        (build_run.source-tool-string-list-contains? linker-args "/DEBUG")))
+    (ir.compiler-debug-info-set-enabled! previous)
+    ok))
 
 (define (source-tool-linux-direct-object-linkability-smoke-ok?) : bool
   (match (backend.compiler-backend-emit-source-object-image-for-target
@@ -262,16 +259,14 @@
   (let
     [out : process.ProcessStringList (process.args-empty)]
     [index : i64 0]
-    (begin
-      (while (< index (cli_svec.len (& items)))
-        (begin
-          (set!
-            out
-            (process.args-append
-              out
-              (process.args-single (cli_svec.get (& items) index ""))))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index (cli_svec.len (& items)))
+      (set!
+        out
+        (process.args-append
+          out
+          (process.args-single (cli_svec.get (& items) index ""))))
+      (set! index (+ index 1)))
+    out))
 
 (define (source-tool-test-strings2 [a : String] [b : String]) : process.ProcessStringList
   (process.args-cons a (process.args-single b)))
@@ -314,27 +309,24 @@
           "m"))]
     [expected-linux : cli_svec.Vec (cli_svec.new)]
     [expected-windows : cli_svec.Vec (cli_svec.new)]
-    (begin
-      (cli_svec.push-ref! (&mut expected-linux) "-Lnative dir")
-      (cli_svec.push-ref! (&mut expected-linux) "-Wl,--start-group")
-      (cli_svec.push-ref! (&mut expected-linux) "-lm")
-      (cli_svec.push-ref! (&mut expected-linux) "-Wl,--as-needed")
-      (cli_svec.push-ref! (&mut expected-linux) "wa.a")
-      (cli_svec.push-ref! (&mut expected-linux) "wb.a")
-      (cli_svec.push-ref! (&mut expected-linux) "-Wl,--end-group")
-      (cli_svec.push-ref! (&mut expected-windows) "/LIBPATH:native dir")
-      (cli_svec.push-ref! (&mut expected-windows) "m.lib")
-      (cli_svec.push-ref! (&mut expected-windows) "-Wl,--as-needed")
-      (cli_svec.push-ref! (&mut expected-windows) "wa.a")
-      (cli_svec.push-ref! (&mut expected-windows) "wb.a")
-      (and
-        (source-tool-string-list-eq?
-          linux
-          (source-tool-test-list expected-linux))
-        (source-tool-string-list-eq?
-          windows
-          (source-tool-test-list expected-windows))
-        (source-tool-string-list-eq? no-archives (process.args-single "-lm"))))))
+    (cli_svec.push-ref! (&mut expected-linux) "-Lnative dir")
+    (cli_svec.push-ref! (&mut expected-linux) "-Wl,--start-group")
+    (cli_svec.push-ref! (&mut expected-linux) "-lm")
+    (cli_svec.push-ref! (&mut expected-linux) "-Wl,--as-needed")
+    (cli_svec.push-ref! (&mut expected-linux) "wa.a")
+    (cli_svec.push-ref! (&mut expected-linux) "wb.a")
+    (cli_svec.push-ref! (&mut expected-linux) "-Wl,--end-group")
+    (cli_svec.push-ref! (&mut expected-windows) "/LIBPATH:native dir")
+    (cli_svec.push-ref! (&mut expected-windows) "m.lib")
+    (cli_svec.push-ref! (&mut expected-windows) "-Wl,--as-needed")
+    (cli_svec.push-ref! (&mut expected-windows) "wa.a")
+    (cli_svec.push-ref! (&mut expected-windows) "wb.a")
+    (and
+      (source-tool-string-list-eq? linux (source-tool-test-list expected-linux))
+      (source-tool-string-list-eq?
+        windows
+        (source-tool-test-list expected-windows))
+      (source-tool-string-list-eq? no-archives (process.args-single "-lm")))))
 
 ;; Libraries, search paths and archives merge once; raw arguments merge once
 ;; only when asked, since another package's copy may be half of a positional

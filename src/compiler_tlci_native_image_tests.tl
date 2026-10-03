@@ -242,25 +242,24 @@
 
 (test
   compiler-tlci-native-layout
-  (begin
-    (test.assert-true
-      (compiler-tlci-native-test-layout-ok?)
-      "internal call, GOT import, base fixup, and BSS alignment")
-    (test.assert-true
-      (compiler-tlci-native-test-emitters-ok?)
-      "fixup and import section emitters, with unknown-import rejection")
-    (test.assert-true
-      (compiler-tlci-native-test-results-independent?)
-      "layout results own their import metadata")
-    (test.assert-true
-      (compiler-tlci-native-test-error?
-        true
-        false
-        "tlci native image: direct extern call host-call")
-      "direct extern calls are rejected")
-    (test.assert-true
-      (compiler-tlci-native-test-error?
-        false
-        true
-        "tlci native image: SymbolRva32 is not supported")
-      "SymbolRva32 is rejected")))
+  (test.assert-true
+    (compiler-tlci-native-test-layout-ok?)
+    "internal call, GOT import, base fixup, and BSS alignment")
+  (test.assert-true
+    (compiler-tlci-native-test-emitters-ok?)
+    "fixup and import section emitters, with unknown-import rejection")
+  (test.assert-true
+    (compiler-tlci-native-test-results-independent?)
+    "layout results own their import metadata")
+  (test.assert-true
+    (compiler-tlci-native-test-error?
+      true
+      false
+      "tlci native image: direct extern call host-call")
+    "direct extern calls are rejected")
+  (test.assert-true
+    (compiler-tlci-native-test-error?
+      false
+      true
+      "tlci native image: SymbolRva32 is not supported")
+    "SymbolRva32 is rejected"))

@@ -69,19 +69,17 @@
 (define (tlci-test-bytes3 [a : i64] [b : i64] [c : i64]) : (__tl_dyn-array u8)
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    (begin
-      (tlci.tlci-push-u8! (&mut out) a)
-      (tlci.tlci-push-u8! (&mut out) b)
-      (tlci.tlci-push-u8! (&mut out) c)
-      (byte_buf_core.byte-buf-builder-finish-array (& out)))))
+    (tlci.tlci-push-u8! (&mut out) a)
+    (tlci.tlci-push-u8! (&mut out) b)
+    (tlci.tlci-push-u8! (&mut out) c)
+    (byte_buf_core.byte-buf-builder-finish-array (& out))))
 
 (define (tlci-test-zero-records [record-size : i64] [count : i64]) : (__tl_dyn-array
     u8)
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    (begin
-      (tlci.tlci-push-zeroes! (&mut out) (* record-size count))
-      (byte_buf_core.byte-buf-builder-finish-array (& out)))))
+    (tlci.tlci-push-zeroes! (&mut out) (* record-size count))
+    (byte_buf_core.byte-buf-builder-finish-array (& out))))
 
 (define (tlci-test-metadata-only-image) : tlci.TlciImage
   (tlci.TlciImage
@@ -118,19 +116,18 @@
         tlci.tlci-section-import-header-size
         tlci.tlci-section-import-record-size)]
     [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ name-offset name-len))]
-    (begin
-      (tlci.tlci-set-u64! (&mut out) 0 1)
-      (tlci.tlci-set-u64! (&mut out) tlci.tlci-section-import-header-size 8)
-      (tlci.tlci-set-u64!
-        (&mut out)
-        (+ tlci.tlci-section-import-header-size 8)
-        name-offset)
-      (tlci.tlci-set-u64!
-        (&mut out)
-        (+ tlci.tlci-section-import-header-size 16)
-        name-len)
-      (tlci.tlci-put-string! (&mut out) name-offset name)
-      out)))
+    (tlci.tlci-set-u64! (&mut out) 0 1)
+    (tlci.tlci-set-u64! (&mut out) tlci.tlci-section-import-header-size 8)
+    (tlci.tlci-set-u64!
+      (&mut out)
+      (+ tlci.tlci-section-import-header-size 8)
+      name-offset)
+    (tlci.tlci-set-u64!
+      (&mut out)
+      (+ tlci.tlci-section-import-header-size 16)
+      name-len)
+    (tlci.tlci-put-string! (&mut out) name-offset name)
+    out))
 
 (define (tlci-test-imports-image) : tlci.TlciImage
   (tlci.TlciImage
@@ -512,50 +509,47 @@
     [callables : tlci.TlciSpmdCallables (tlci.tlci-spmd-callables-empty)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      ;; Cross several vector growth boundaries for both metadata sequences.
-      (while (< index 33)
-        (begin
-          (tlci.tlci-spmd-specializations-push!
-            (&mut specializations)
-            (tlci.tlci-make-spmd-specialization
-              "spmd-call-v1"
-              "scalar"
-              (+ index 1)
-              "u"
-              "u"
-              -1
-              (str_cat.str-cat "specialization-" (string.int->string index))))
-          (tlci.tlci-spmd-callables-push!
-            (&mut callables)
-            (tlci.tlci-make-spmd-callable
-              (str_cat.str-cat "helper-" (string.int->string index))
-              "(-> i64 i64)"
-              (tlci.tlci-spmd-specializations-empty)))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index 33)
-        (let
-          [specialization : tlci.TlciSpmdSpecialization
-            (tlci.tlci-spmd-specializations-ref specializations index)]
-          [callable : tlci.TlciSpmdCallable
-            (tlci.tlci-spmd-callables-ref callables index)]
-          (begin
-            (unless
-              (and
-                (= specialization.lanes (+ index 1))
-                (string.eq
-                  specialization.symbol
-                  (str_cat.str-cat "specialization-" (string.int->string index)))
-                (string.eq
-                  callable.name
-                  (str_cat.str-cat "helper-" (string.int->string index))))
-              (set! ok false))
-            (set! index (+ index 1)))))
-      (and
-        ok
-        (= (tlci.tlci-spmd-specializations-len specializations) 33)
-        (= (tlci.tlci-spmd-callables-len callables) 33)))))
+    ;; Cross several vector growth boundaries for both metadata sequences.
+    (while (< index 33)
+      (tlci.tlci-spmd-specializations-push!
+        (&mut specializations)
+        (tlci.tlci-make-spmd-specialization
+          "spmd-call-v1"
+          "scalar"
+          (+ index 1)
+          "u"
+          "u"
+          -1
+          (str_cat.str-cat "specialization-" (string.int->string index))))
+      (tlci.tlci-spmd-callables-push!
+        (&mut callables)
+        (tlci.tlci-make-spmd-callable
+          (str_cat.str-cat "helper-" (string.int->string index))
+          "(-> i64 i64)"
+          (tlci.tlci-spmd-specializations-empty)))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index 33)
+      (let
+        [specialization : tlci.TlciSpmdSpecialization
+          (tlci.tlci-spmd-specializations-ref specializations index)]
+        [callable : tlci.TlciSpmdCallable
+          (tlci.tlci-spmd-callables-ref callables index)]
+        (unless
+          (and
+            (= specialization.lanes (+ index 1))
+            (string.eq
+              specialization.symbol
+              (str_cat.str-cat "specialization-" (string.int->string index)))
+            (string.eq
+              callable.name
+              (str_cat.str-cat "helper-" (string.int->string index))))
+          (set! ok false))
+        (set! index (+ index 1))))
+    (and
+      ok
+      (= (tlci.tlci-spmd-specializations-len specializations) 33)
+      (= (tlci.tlci-spmd-callables-len callables) 33))))
 
 (define (tlci-test-v1-emission-unchanged?) : bool
   (string.eq
@@ -636,9 +630,8 @@
   [value : i64]) : (__tl_dyn-array u8)
   (let
     [out : (__tl_dyn-array u8) (tlci.tlci-copy-bytes bytes)]
-    (begin
-      (set! (array-ref out offset) (tlci.tlci-byte value))
-      out)))
+    (set! (array-ref out offset) (tlci.tlci-byte value))
+    out))
 
 (define (tlci-test-rejections-ok?) : bool
   (match (tlci.tlci-emit-image (tlci-test-metadata-only-image))
@@ -691,15 +684,14 @@
       code-bearing))
     [(Err message) (Rejected message)]
     [(Ok bytes)
-      (begin
-        (tlci.tlci-set-u64! (&mut bytes) 16 platform)
-        (tlci.tlci-set-u64!
-          (&mut bytes)
-          tlci.tlci-hash-field-offset
-          (tlci.tlci-content-hash bytes))
-        (match (tlci.tlci-parse-image bytes)
-          [(Err message) (Rejected message)]
-          [(Ok image) (tlci.tlci-image-admit-host image host-platform)]))]))
+      (tlci.tlci-set-u64! (&mut bytes) 16 platform)
+      (tlci.tlci-set-u64!
+        (&mut bytes)
+        tlci.tlci-hash-field-offset
+        (tlci.tlci-content-hash bytes))
+      (match (tlci.tlci-parse-image bytes)
+        [(Err message) (Rejected message)]
+        [(Ok image) (tlci.tlci-image-admit-host image host-platform)])]))
 
 (define (tlci-test-host-platform-admission-ok?) : bool
   (let
@@ -911,69 +903,63 @@
     [ast : (__tl_dyn-array u8) (tlci.tlci-string->bytes "ast")]
     [sections : (__tl_dyn-array tlci.TlciAuxSection)
       (__tl_make-array tlci.TlciAuxSection 2)]
-    (begin
-      (set!
-        (array-ref sections 0)
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-package-identity
-          1
-          (clone identity)))
-      (set!
-        (array-ref sections 1)
-        (tlci.TlciAuxSection tlci.tlci-aux-kind-frontend-ast 3 (clone ast)))
-      (match (tlci.tlci-aux-pack-rodata (clone base) sections)
-        [(Err _) false]
-        [(Ok packed)
-          (and
-            (match (tlci.tlci-aux-directory packed)
-              [(Ok directory) (= directory.base-len (array-length base))]
-              [_ false])
-            (match (tlci.tlci-aux-find
-              packed
-              tlci.tlci-aux-kind-package-identity)
-              [(Ok version payload)
-                (and (= version 1) (tlci.tlci-bytes-eq? payload identity))]
-              [_ false])
-            (match (tlci.tlci-aux-find packed tlci.tlci-aux-kind-frontend-ast)
-              [(Ok version payload)
-                (and (= version 3) (tlci.tlci-bytes-eq? payload ast))]
-              [_ false])
-            (match (tlci.tlci-aux-find packed tlci.tlci-aux-kind-frontend-facts)
-              [(Missing) true]
-              [_ false])
-            (match (tlci.tlci-aux-pack-rodata base sections)
-              [(Ok again) (tlci.tlci-bytes-eq? packed again)]
-              [(Err _) false]))]))))
+    (set!
+      (array-ref sections 0)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-package-identity
+        1
+        (clone identity)))
+    (set!
+      (array-ref sections 1)
+      (tlci.TlciAuxSection tlci.tlci-aux-kind-frontend-ast 3 (clone ast)))
+    (match (tlci.tlci-aux-pack-rodata (clone base) sections)
+      [(Err _) false]
+      [(Ok packed)
+        (and
+          (match (tlci.tlci-aux-directory packed)
+            [(Ok directory) (= directory.base-len (array-length base))]
+            [_ false])
+          (match (tlci.tlci-aux-find packed tlci.tlci-aux-kind-package-identity)
+            [(Ok version payload)
+              (and (= version 1) (tlci.tlci-bytes-eq? payload identity))]
+            [_ false])
+          (match (tlci.tlci-aux-find packed tlci.tlci-aux-kind-frontend-ast)
+            [(Ok version payload)
+              (and (= version 3) (tlci.tlci-bytes-eq? payload ast))]
+            [_ false])
+          (match (tlci.tlci-aux-find packed tlci.tlci-aux-kind-frontend-facts)
+            [(Missing) true]
+            [_ false])
+          (match (tlci.tlci-aux-pack-rodata base sections)
+            [(Ok again) (tlci.tlci-bytes-eq? packed again)]
+            [(Err _) false]))])))
 
 (define (tlci-test-aux-corruption-rejected?) : bool
   (let
     [sections : (__tl_dyn-array tlci.TlciAuxSection)
       (__tl_make-array tlci.TlciAuxSection 1)]
-    (begin
-      (set!
-        (array-ref sections 0)
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-package-identity
-          1
-          (tlci.tlci-string->bytes "identity")))
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(Err _) false]
-        [(Ok packed)
-          (match (tlci.tlci-aux-directory packed)
-            [(Ok directory)
-              (let
-                [corrupt : (__tl_dyn-array u8) (tlci.tlci-copy-bytes packed)]
-                [record : i64 directory.directory-offset]
-                [payload-offset : i64
-                  (tlci.tlci-read-u64 corrupt (+ record 16))]
-                (begin
-                  (set! (array-ref corrupt payload-offset) 0)
-                  (match (tlci.tlci-aux-find
-                    corrupt
-                    tlci.tlci-aux-kind-package-identity)
-                    [(Err _) true]
-                    [_ false])))]
-            [_ false])]))))
+    (set!
+      (array-ref sections 0)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-package-identity
+        1
+        (tlci.tlci-string->bytes "identity")))
+    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+      [(Err _) false]
+      [(Ok packed)
+        (match (tlci.tlci-aux-directory packed)
+          [(Ok directory)
+            (let
+              [corrupt : (__tl_dyn-array u8) (tlci.tlci-copy-bytes packed)]
+              [record : i64 directory.directory-offset]
+              [payload-offset : i64 (tlci.tlci-read-u64 corrupt (+ record 16))]
+              (set! (array-ref corrupt payload-offset) 0)
+              (match (tlci.tlci-aux-find
+                corrupt
+                tlci.tlci-aux-kind-package-identity)
+                [(Err _) true]
+                [_ false]))]
+          [_ false])])))
 
 (define (tlci-test-aux-directory-shapes-ok?) : bool
   (let
@@ -983,83 +969,74 @@
       (__tl_make-array tlci.TlciAuxSection 2)]
     [first : (__tl_dyn-array u8) (tlci.tlci-string->bytes "first")]
     [unknown : (__tl_dyn-array u8) (tlci.tlci-string->bytes "unknown")]
-    (begin
-      (set!
-        (array-ref sections 0)
-        (tlci.TlciAuxSection tlci.tlci-aux-kind-package-identity 1 first))
-      (set!
-        (array-ref sections 1)
-        (tlci.TlciAuxSection
-          99
-          7
-          (owned_view.compiler-owned-shared-view unknown)))
-      (set!
-        (array-ref duplicates 0)
-        (owned_view.compiler-owned-array-element-shared-view sections 0))
-      (set!
-        (array-ref duplicates 1)
-        (owned_view.compiler-owned-array-element-shared-view sections 0))
-      (and
-        (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) duplicates)
-          [(Err _) true]
-          [_ false])
-        (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-          [(Err _) false]
-          [(Ok packed)
-            (match (tlci.tlci-aux-directory packed)
-              [(Ok directory)
-                (let
-                  [duplicate-kind : (__tl_dyn-array u8)
-                    (tlci.tlci-copy-bytes packed)]
-                  [overlap : (__tl_dyn-array u8) (tlci.tlci-copy-bytes packed)]
-                  [oversized : (__tl_dyn-array u8)
-                    (tlci.tlci-copy-bytes packed)]
-                  [truncated : (__tl_dyn-array u8)
-                    (tlci.tlci-slice-bytes packed 0 (- (array-length packed) 1))]
-                  [first-record : i64 directory.directory-offset]
-                  [second-record : i64
-                    (+ first-record tlci.tlci-aux-record-size)]
-                  [first-offset : i64
-                    (tlci.tlci-read-u64 packed (+ first-record 16))]
-                  (begin
-                    (tlci.tlci-set-u64!
-                      (&mut duplicate-kind)
-                      second-record
-                      tlci.tlci-aux-kind-package-identity)
-                    (tlci.tlci-set-u64!
-                      (&mut overlap)
-                      (+ second-record 16)
-                      first-offset)
-                    (tlci.tlci-set-u64!
-                      (&mut oversized)
-                      (+ first-record 24)
-                      (+ directory.directory-offset 1))
-                    (and
-                      (match (tlci.tlci-aux-find packed 99)
-                        [(Ok schema payload)
-                          (and
-                            (= schema 7)
-                            (tlci.tlci-bytes-eq? payload unknown))]
-                        [_ false])
-                      (match (tlci.tlci-aux-find
-                        duplicate-kind
-                        tlci.tlci-aux-kind-package-identity)
-                        [(Err _) true]
-                        [_ false])
-                      (match (tlci.tlci-aux-find
-                        overlap
-                        tlci.tlci-aux-kind-package-identity)
-                        [(Err _) true]
-                        [_ false])
-                      (match (tlci.tlci-aux-find
-                        oversized
-                        tlci.tlci-aux-kind-package-identity)
-                        [(Err _) true]
-                        [_ false])
-                      (match (tlci.tlci-aux-directory truncated)
-                        [(Missing) true]
-                        [_ false]))))]
-              [_ false])])))))
+    (set!
+      (array-ref sections 0)
+      (tlci.TlciAuxSection tlci.tlci-aux-kind-package-identity 1 first))
+    (set!
+      (array-ref sections 1)
+      (tlci.TlciAuxSection 99 7 (owned_view.compiler-owned-shared-view unknown)))
+    (set!
+      (array-ref duplicates 0)
+      (owned_view.compiler-owned-array-element-shared-view sections 0))
+    (set!
+      (array-ref duplicates 1)
+      (owned_view.compiler-owned-array-element-shared-view sections 0))
+    (and
+      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) duplicates)
+        [(Err _) true]
+        [_ false])
+      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+        [(Err _) false]
+        [(Ok packed)
+          (match (tlci.tlci-aux-directory packed)
+            [(Ok directory)
+              (let
+                [duplicate-kind : (__tl_dyn-array u8)
+                  (tlci.tlci-copy-bytes packed)]
+                [overlap : (__tl_dyn-array u8) (tlci.tlci-copy-bytes packed)]
+                [oversized : (__tl_dyn-array u8) (tlci.tlci-copy-bytes packed)]
+                [truncated : (__tl_dyn-array u8)
+                  (tlci.tlci-slice-bytes packed 0 (- (array-length packed) 1))]
+                [first-record : i64 directory.directory-offset]
+                [second-record : i64 (+ first-record tlci.tlci-aux-record-size)]
+                [first-offset : i64
+                  (tlci.tlci-read-u64 packed (+ first-record 16))]
+                (tlci.tlci-set-u64!
+                  (&mut duplicate-kind)
+                  second-record
+                  tlci.tlci-aux-kind-package-identity)
+                (tlci.tlci-set-u64!
+                  (&mut overlap)
+                  (+ second-record 16)
+                  first-offset)
+                (tlci.tlci-set-u64!
+                  (&mut oversized)
+                  (+ first-record 24)
+                  (+ directory.directory-offset 1))
+                (and
+                  (match (tlci.tlci-aux-find packed 99)
+                    [(Ok schema payload)
+                      (and (= schema 7) (tlci.tlci-bytes-eq? payload unknown))]
+                    [_ false])
+                  (match (tlci.tlci-aux-find
+                    duplicate-kind
+                    tlci.tlci-aux-kind-package-identity)
+                    [(Err _) true]
+                    [_ false])
+                  (match (tlci.tlci-aux-find
+                    overlap
+                    tlci.tlci-aux-kind-package-identity)
+                    [(Err _) true]
+                    [_ false])
+                  (match (tlci.tlci-aux-find
+                    oversized
+                    tlci.tlci-aux-kind-package-identity)
+                    [(Err _) true]
+                    [_ false])
+                  (match (tlci.tlci-aux-directory truncated)
+                    [(Missing) true]
+                    [_ false])))]
+            [_ false])]))))
 
 (define (tlci-test-producer-identity-admission-ok?) : bool
   (let
@@ -1105,107 +1082,106 @@
     [negative : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     [limit : (__tl_dyn-array u8) (__tl_make-array u8 8)]
     [empty : (__tl_dyn-array u8) (tlci.tlci-empty-bytes)]
-    (begin
-      (set!
-        (array-ref sections 0)
-        (tlci.tlci-package-source-binding-section 12345))
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(Err _) false]
-        [(Ok packed)
-          (and
-            (match (tlci.tlci-package-source-binding-read packed)
-              [(Bound digest) (= digest 12345)]
-              [_ false])
-            (match (tlci.tlci-package-source-binding-admit packed 12345)
-              [(Match digest) (= digest 12345)]
-              [_ false])
-            (match (tlci.tlci-package-source-binding-admit packed 54321)
-              [(Mismatch expected actual)
-                (and (= expected 54321) (= actual 12345))]
-              [_ false])
-            (match (tlci.tlci-package-source-binding-read empty)
-              [(MissingOrLegacy) true]
-              [_ false])
-            (match (tlci.tlci-package-source-binding-admit empty 12345)
-              [(MissingOrLegacy) true]
-              [_ false]))])
-      (set!
-        (array-ref sections 0)
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-package-source-binding
-          2
-          unsupported))
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(Err _) false]
-        [(Ok packed)
-          (and
-            (match (tlci.tlci-package-source-binding-read packed)
-              [(UnsupportedSchema schema) (= schema 2)]
-              [_ false])
-            (match (tlci.tlci-package-source-binding-admit packed 12345)
-              [(UnsupportedSchema schema) (= schema 2)]
-              [_ false]))])
-      (set!
-        (array-ref sections 0)
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-package-source-binding
-          tlci.tlci-package-source-binding-schema-version
-          short))
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(Err _) false]
-        [(Ok packed)
+    (set!
+      (array-ref sections 0)
+      (tlci.tlci-package-source-binding-section 12345))
+    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+      [(Err _) false]
+      [(Ok packed)
+        (and
           (match (tlci.tlci-package-source-binding-read packed)
-            [(Malformed _) true]
-            [_ false])])
-      (tlci.tlci-set-u64! (&mut zero) 0 0)
-      (set!
-        (array-ref sections 0)
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-package-source-binding
-          tlci.tlci-package-source-binding-schema-version
-          zero))
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(Err _) false]
-        [(Ok packed)
-          (and
-            (match (tlci.tlci-package-source-binding-read packed)
-              [(Bound digest) (= digest 0)]
-              [_ false])
-            (match (tlci.tlci-package-source-binding-admit packed 0)
-              [(Match digest) (= digest 0)]
-              [_ false])
-            (match (tlci.tlci-package-source-binding-admit packed -1)
-              [(Malformed _) true]
-              [_ false])
-            (match (tlci.tlci-package-source-binding-admit packed 2147483647)
-              [(Malformed _) true]
-              [_ false]))])
-      (tlci.tlci-set-u64! (&mut negative) 0 -1)
-      (set!
-        (array-ref sections 0)
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-package-source-binding
-          tlci.tlci-package-source-binding-schema-version
-          negative))
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(Err _) false]
-        [(Ok packed)
+            [(Bound digest) (= digest 12345)]
+            [_ false])
+          (match (tlci.tlci-package-source-binding-admit packed 12345)
+            [(Match digest) (= digest 12345)]
+            [_ false])
+          (match (tlci.tlci-package-source-binding-admit packed 54321)
+            [(Mismatch expected actual)
+              (and (= expected 54321) (= actual 12345))]
+            [_ false])
+          (match (tlci.tlci-package-source-binding-read empty)
+            [(MissingOrLegacy) true]
+            [_ false])
+          (match (tlci.tlci-package-source-binding-admit empty 12345)
+            [(MissingOrLegacy) true]
+            [_ false]))])
+    (set!
+      (array-ref sections 0)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-package-source-binding
+        2
+        unsupported))
+    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+      [(Err _) false]
+      [(Ok packed)
+        (and
           (match (tlci.tlci-package-source-binding-read packed)
-            [(Malformed _) true]
-            [_ false])])
-      (tlci.tlci-set-u64! (&mut limit) 0 2147483647)
-      (set!
-        (array-ref sections 0)
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-package-source-binding
-          tlci.tlci-package-source-binding-schema-version
-          limit))
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(Err _) false]
-        [(Ok packed)
+            [(UnsupportedSchema schema) (= schema 2)]
+            [_ false])
+          (match (tlci.tlci-package-source-binding-admit packed 12345)
+            [(UnsupportedSchema schema) (= schema 2)]
+            [_ false]))])
+    (set!
+      (array-ref sections 0)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-package-source-binding
+        tlci.tlci-package-source-binding-schema-version
+        short))
+    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+      [(Err _) false]
+      [(Ok packed)
+        (match (tlci.tlci-package-source-binding-read packed)
+          [(Malformed _) true]
+          [_ false])])
+    (tlci.tlci-set-u64! (&mut zero) 0 0)
+    (set!
+      (array-ref sections 0)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-package-source-binding
+        tlci.tlci-package-source-binding-schema-version
+        zero))
+    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+      [(Err _) false]
+      [(Ok packed)
+        (and
           (match (tlci.tlci-package-source-binding-read packed)
+            [(Bound digest) (= digest 0)]
+            [_ false])
+          (match (tlci.tlci-package-source-binding-admit packed 0)
+            [(Match digest) (= digest 0)]
+            [_ false])
+          (match (tlci.tlci-package-source-binding-admit packed -1)
             [(Malformed _) true]
-            [_ false])]))))
+            [_ false])
+          (match (tlci.tlci-package-source-binding-admit packed 2147483647)
+            [(Malformed _) true]
+            [_ false]))])
+    (tlci.tlci-set-u64! (&mut negative) 0 -1)
+    (set!
+      (array-ref sections 0)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-package-source-binding
+        tlci.tlci-package-source-binding-schema-version
+        negative))
+    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+      [(Err _) false]
+      [(Ok packed)
+        (match (tlci.tlci-package-source-binding-read packed)
+          [(Malformed _) true]
+          [_ false])])
+    (tlci.tlci-set-u64! (&mut limit) 0 2147483647)
+    (set!
+      (array-ref sections 0)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-package-source-binding
+        tlci.tlci-package-source-binding-schema-version
+        limit))
+    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
+      [(Err _) false]
+      [(Ok packed)
+        (match (tlci.tlci-package-source-binding-read packed)
+          [(Malformed _) true]
+          [_ false])])))
 
 ;; The block form of the digest against the byte-at-a-time definition, at
 ;; every length around the digest field and the four-byte blocks, and on
@@ -1215,17 +1191,15 @@
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [state : i64 seed]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! state (+ (* state 6364136223846793005) 1442695040888963407))
-          (set!
-            (array-ref bytes i)
-            (if (< seed 0)
-              (cast 255 : u8)
-              (cast (bit-and (shr state 33) 255) : u8)))
-          (set! i (+ i 1))))
-      bytes)))
+    (while (< i n)
+      (set! state (+ (* state 6364136223846793005) 1442695040888963407))
+      (set!
+        (array-ref bytes i)
+        (if (< seed 0)
+          (cast 255 : u8)
+          (cast (bit-and (shr state 33) 255) : u8)))
+      (set! i (+ i 1)))
+    bytes))
 
 (define (tlci-test-range-hash-bytewise
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -1234,43 +1208,37 @@
   (let
     [hash : i64 1]
     [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (set!
-            hash
-            (%
-              (+ (* hash 131) (tlci.tlci-byte-at bytes (+ offset i)))
-              2147483647))
-          (set! i (+ i 1))))
-      hash)))
+    (while (< i len)
+      (set!
+        hash
+        (% (+ (* hash 131) (tlci.tlci-byte-at bytes (+ offset i))) 2147483647))
+      (set! i (+ i 1)))
+    hash))
 
 (define (tlci-test-hash-blocks-ok?) : bool
   (let
     [n : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< n 140))
-        (let
-          [random : (__tl_dyn-array u8) (tlci-test-hash-bytes n (+ n 3))]
-          [ones : (__tl_dyn-array u8) (tlci-test-hash-bytes n (- 0 1))]
-          (begin
-            (set!
-              ok
-              (and
-                (=
-                  (tlci.tlci-content-hash (& random))
-                  (tlci.tlci-content-hash-bytewise (& random)))
-                (=
-                  (tlci.tlci-content-hash (& ones))
-                  (tlci.tlci-content-hash-bytewise (& ones)))
-                (or
-                  (< n 5)
-                  (=
-                    (tlci.tlci-range-hash (& random) 2 (- n 5))
-                    (tlci-test-range-hash-bytewise (& random) 2 (- n 5))))))
-            (set! n (+ n 1)))))
-      ok)))
+    (while (and ok (< n 140))
+      (let
+        [random : (__tl_dyn-array u8) (tlci-test-hash-bytes n (+ n 3))]
+        [ones : (__tl_dyn-array u8) (tlci-test-hash-bytes n (- 0 1))]
+        (set!
+          ok
+          (and
+            (=
+              (tlci.tlci-content-hash (& random))
+              (tlci.tlci-content-hash-bytewise (& random)))
+            (=
+              (tlci.tlci-content-hash (& ones))
+              (tlci.tlci-content-hash-bytewise (& ones)))
+            (or
+              (< n 5)
+              (=
+                (tlci.tlci-range-hash (& random) 2 (- n 5))
+                (tlci-test-range-hash-bytewise (& random) 2 (- n 5))))))
+        (set! n (+ n 1))))
+    ok))
 
 (define (tlci-core-self-test-status) : i64
   (cond

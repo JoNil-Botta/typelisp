@@ -21,32 +21,28 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          ;; handle param used every iteration (array-ref keeps xs live)
-          (set! acc (+ acc (array-ref xs i)))
-          ;; real user call: clobbers every caller-saved register
-          (set! acc (+ acc (bump i)))
-          ;; scalar param used every iteration AFTER the call
-          (set! acc (+ acc n))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      ;; handle param used every iteration (array-ref keeps xs live)
+      (set! acc (+ acc (array-ref xs i)))
+      ;; real user call: clobbers every caller-saved register
+      (set! acc (+ acc (bump i)))
+      ;; scalar param used every iteration AFTER the call
+      (set! acc (+ acc n))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 3)]
     [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (* i 3))
-          (set! i (+ i 1))))
-      (let
-        [r : i64 (param-loop xs n)]
-        ;; n=4 (no args): array sum = 3*(0+1+2+3) = 18; bump(i) sums 1+2+3+4 =
-        ;; 10; n added per iteration = 16. total = 44.
-        (if (= r 44)
-          42
-          1)))))
+    (while (< i n)
+      (set! (array-ref xs i) (* i 3))
+      (set! i (+ i 1)))
+    (let
+      [r : i64 (param-loop xs n)]
+      ;; n=4 (no args): array sum = 3*(0+1+2+3) = 18; bump(i) sums 1+2+3+4 =
+      ;; 10; n added per iteration = 16. total = 44.
+      (if (= r 44)
+        42
+        1))))

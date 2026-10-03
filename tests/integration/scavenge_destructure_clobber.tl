@@ -40,43 +40,40 @@
     [i : i64 0]
     [out : i64 -1]
     [done : bool false]
-    (begin
-      (while (if done
-        false
-        (< i n))
-        (match (array-ref slots i)
-          [(SlotEmpty)
+    (while (if done
+      false
+      (< i n))
+      (match (array-ref slots i)
+        [(SlotEmpty)
+          (set! out -1)
+          (set! done true)]
+        [(SlotUsed slot-key slot-id slot-hash)
+          (if (if (= slot-hash hash)
+            (string.eq slot-key name)
+            false)
             (begin
-              (set! out -1)
-              (set! done true))]
-          [(SlotUsed slot-key slot-id slot-hash)
-            (if (if (= slot-hash hash)
-              (string.eq slot-key name)
-              false)
-              (begin
-                (set! out slot-id)
-                (set! done true))
-              (set! i (+ i 1)))]))
-      out)))
+              (set! out slot-id)
+              (set! done true))
+            (set! i (+ i 1)))]))
+    out))
 
 (define (main) : i64
   (let
     [s : i64 (io.arg-count)]
     [n : i64 6]
     [slots : (__tl_dyn-array Slot) (__tl_make-array Slot n)]
-    (begin
-      ;; Distinct heap key strings; ids offset by the seed so they are not folded.
-      (set! (array-ref slots 0) (SlotUsed "alpha" (+ s 10) 100))
-      (set! (array-ref slots 1) (SlotUsed "beta" (+ s 20) 200))
-      (set! (array-ref slots 2) (SlotUsed "gamma" (+ s 30) 300))
-      (set! (array-ref slots 3) (SlotUsed "delta" (+ s 40) 400))
-      (set! (array-ref slots 4) (SlotUsed "epsilon" (+ s 50) 500))
-      (set! (array-ref slots 5) (SlotEmpty))
-      ;; gamma -> id (s+30) at hash 300; delta -> id (s+40) at hash 400.
-      (let
-        [g : i64 (slot-lookup (& slots) n "gamma" 300)]
-        [d : i64 (slot-lookup (& slots) n "delta" 400)]
-        [miss : i64 (slot-lookup (& slots) n "zzz" 999)]
-        (if (and (= g (+ s 30)) (= d (+ s 40)) (= miss -1))
-          42
-          1)))))
+    ;; Distinct heap key strings; ids offset by the seed so they are not folded.
+    (set! (array-ref slots 0) (SlotUsed "alpha" (+ s 10) 100))
+    (set! (array-ref slots 1) (SlotUsed "beta" (+ s 20) 200))
+    (set! (array-ref slots 2) (SlotUsed "gamma" (+ s 30) 300))
+    (set! (array-ref slots 3) (SlotUsed "delta" (+ s 40) 400))
+    (set! (array-ref slots 4) (SlotUsed "epsilon" (+ s 50) 500))
+    (set! (array-ref slots 5) (SlotEmpty))
+    ;; gamma -> id (s+30) at hash 300; delta -> id (s+40) at hash 400.
+    (let
+      [g : i64 (slot-lookup (& slots) n "gamma" 300)]
+      [d : i64 (slot-lookup (& slots) n "delta" 400)]
+      [miss : i64 (slot-lookup (& slots) n "zzz" 999)]
+      (if (and (= g (+ s 30)) (= d (+ s 40)) (= miss -1))
+        42
+        1))))

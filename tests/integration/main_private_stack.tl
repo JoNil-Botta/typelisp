@@ -7,11 +7,10 @@
   (let
     [page : (Array i64 1024) (make-array i64 1024)]
     [index : i64 (bit-and depth 1023)]
-    (begin
-      (set! (array-ref page index) depth)
-      (if (= depth 0)
-        (array-ref page index)
-        (+ (main-private-stack-depth (- depth 1)) (array-ref page index))))))
+    (set! (array-ref page index) depth)
+    (if (= depth 0)
+      (array-ref page index)
+      (+ (main-private-stack-depth (- depth 1)) (array-ref page index)))))
 
 (define (main) : i64
   (if (= (main-private-stack-depth 14000) 98007000)

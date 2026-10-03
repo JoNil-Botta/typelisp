@@ -84,9 +84,8 @@
         shared)]
     [slot : (& short-owner i64) short-shared]
     [before-assignment : i64 (deref slot)]
-    (begin
-      (set! slot shared)
-      (+ before-assignment (deref slot)))))
+    (set! slot shared)
+    (+ before-assignment (deref slot))))
 
 (define (main) : i64
   42)

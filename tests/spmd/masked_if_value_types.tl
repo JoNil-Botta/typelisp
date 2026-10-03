@@ -8,11 +8,10 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref keys i) (cast (+ (* i 5) 1) : u32))
-        (set! (array-ref left i) (cast (+ i 10) : u32))
-        (set! (array-ref right i) (cast (+ i 100) : u32))
-        (set! i (+ i 1))))))
+      (set! (array-ref keys i) (cast (+ (* i 5) 1) : u32))
+      (set! (array-ref left i) (cast (+ i 10) : u32))
+      (set! (array-ref right i) (cast (+ i 100) : u32))
+      (set! i (+ i 1)))))
 
 (define (fill-u32-foreach
   [keys : (& keys (__tl_dyn-array u32))]
@@ -39,13 +38,12 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set!
-          (array-ref out i)
-          (if (< (array-ref keys i) pivot)
-            (array-ref left i)
-            (array-ref right i)))
-        (set! i (+ i 1))))))
+      (set!
+        (array-ref out i)
+        (if (< (array-ref keys i) pivot)
+          (array-ref left i)
+          (array-ref right i)))
+      (set! i (+ i 1)))))
 
 (define (eq-u32
   [a : (& a (__tl_dyn-array u32))]
@@ -54,14 +52,12 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (!= (array-ref a i) (array-ref b i))
-            (set! ok false)
-            unit)
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (!= (array-ref a i) (array-ref b i))
+        (set! ok false)
+        unit)
+      (set! i (+ i 1)))
+    ok))
 
 (define (case-u32 [n : i64]) : bool
   (let
@@ -71,11 +67,10 @@
     [got : (__tl_dyn-array u32) (__tl_make-array u32 n)]
     [want : (__tl_dyn-array u32) (__tl_make-array u32 n)]
     [pivot : u32 (cast 40 : u32)]
-    (begin
-      (init-u32 (&mut keys) (&mut left) (&mut right) n)
-      (fill-u32-foreach (& keys) (& left) (& right) (&mut got) n pivot)
-      (fill-u32-scalar (& keys) (& left) (& right) (&mut want) n pivot)
-      (eq-u32 (& got) (& want) n))))
+    (init-u32 (&mut keys) (&mut left) (&mut right) n)
+    (fill-u32-foreach (& keys) (& left) (& right) (&mut got) n pivot)
+    (fill-u32-scalar (& keys) (& left) (& right) (&mut want) n pivot)
+    (eq-u32 (& got) (& want) n)))
 
 (define (init-u64
   [keys : (&mut keys (__tl_dyn-array u64))]
@@ -85,11 +80,10 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref keys i) (cast (+ (* i 7) 2) : u64))
-        (set! (array-ref left i) (cast (+ i 20) : u64))
-        (set! (array-ref right i) (cast (+ i 200) : u64))
-        (set! i (+ i 1))))))
+      (set! (array-ref keys i) (cast (+ (* i 7) 2) : u64))
+      (set! (array-ref left i) (cast (+ i 20) : u64))
+      (set! (array-ref right i) (cast (+ i 200) : u64))
+      (set! i (+ i 1)))))
 
 (define (fill-u64-foreach
   [keys : (& keys (__tl_dyn-array u64))]
@@ -116,13 +110,12 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set!
-          (array-ref out i)
-          (if (< (array-ref keys i) pivot)
-            (array-ref left i)
-            (array-ref right i)))
-        (set! i (+ i 1))))))
+      (set!
+        (array-ref out i)
+        (if (< (array-ref keys i) pivot)
+          (array-ref left i)
+          (array-ref right i)))
+      (set! i (+ i 1)))))
 
 (define (eq-u64
   [a : (& a (__tl_dyn-array u64))]
@@ -131,14 +124,12 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (!= (array-ref a i) (array-ref b i))
-            (set! ok false)
-            unit)
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (!= (array-ref a i) (array-ref b i))
+        (set! ok false)
+        unit)
+      (set! i (+ i 1)))
+    ok))
 
 (define (case-u64 [n : i64]) : bool
   (let
@@ -148,11 +139,10 @@
     [got : (__tl_dyn-array u64) (__tl_make-array u64 n)]
     [want : (__tl_dyn-array u64) (__tl_make-array u64 n)]
     [pivot : u64 (cast 50 : u64)]
-    (begin
-      (init-u64 (&mut keys) (&mut left) (&mut right) n)
-      (fill-u64-foreach (& keys) (& left) (& right) (&mut got) n pivot)
-      (fill-u64-scalar (& keys) (& left) (& right) (&mut want) n pivot)
-      (eq-u64 (& got) (& want) n))))
+    (init-u64 (&mut keys) (&mut left) (&mut right) n)
+    (fill-u64-foreach (& keys) (& left) (& right) (&mut got) n pivot)
+    (fill-u64-scalar (& keys) (& left) (& right) (&mut want) n pivot)
+    (eq-u64 (& got) (& want) n)))
 
 (define (init-f32
   [keys : (&mut keys (__tl_dyn-array f32))]
@@ -162,11 +152,10 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref keys i) (cast (+ i 1) : f32))
-        (set! (array-ref left i) (cast (+ i 30) : f32))
-        (set! (array-ref right i) (cast (+ i 300) : f32))
-        (set! i (+ i 1))))))
+      (set! (array-ref keys i) (cast (+ i 1) : f32))
+      (set! (array-ref left i) (cast (+ i 30) : f32))
+      (set! (array-ref right i) (cast (+ i 300) : f32))
+      (set! i (+ i 1)))))
 
 (define (fill-f32-foreach
   [keys : (& keys (__tl_dyn-array f32))]
@@ -193,13 +182,12 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set!
-          (array-ref out i)
-          (if (< (array-ref keys i) pivot)
-            (array-ref left i)
-            (array-ref right i)))
-        (set! i (+ i 1))))))
+      (set!
+        (array-ref out i)
+        (if (< (array-ref keys i) pivot)
+          (array-ref left i)
+          (array-ref right i)))
+      (set! i (+ i 1)))))
 
 (define (eq-f32
   [a : (& a (__tl_dyn-array f32))]
@@ -208,14 +196,12 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (!= (array-ref a i) (array-ref b i))
-            (set! ok false)
-            unit)
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (!= (array-ref a i) (array-ref b i))
+        (set! ok false)
+        unit)
+      (set! i (+ i 1)))
+    ok))
 
 (define (case-f32 [n : i64]) : bool
   (let
@@ -225,11 +211,10 @@
     [got : (__tl_dyn-array f32) (__tl_make-array f32 n)]
     [want : (__tl_dyn-array f32) (__tl_make-array f32 n)]
     [pivot : f32 9.5]
-    (begin
-      (init-f32 (&mut keys) (&mut left) (&mut right) n)
-      (fill-f32-foreach (& keys) (& left) (& right) (&mut got) n pivot)
-      (fill-f32-scalar (& keys) (& left) (& right) (&mut want) n pivot)
-      (eq-f32 (& got) (& want) n))))
+    (init-f32 (&mut keys) (&mut left) (&mut right) n)
+    (fill-f32-foreach (& keys) (& left) (& right) (&mut got) n pivot)
+    (fill-f32-scalar (& keys) (& left) (& right) (&mut want) n pivot)
+    (eq-f32 (& got) (& want) n)))
 
 (define (init-f64
   [keys : (&mut keys (__tl_dyn-array f64))]
@@ -239,11 +224,10 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref keys i) (cast (+ i 1) : f64))
-        (set! (array-ref left i) (cast (+ i 40) : f64))
-        (set! (array-ref right i) (cast (+ i 400) : f64))
-        (set! i (+ i 1))))))
+      (set! (array-ref keys i) (cast (+ i 1) : f64))
+      (set! (array-ref left i) (cast (+ i 40) : f64))
+      (set! (array-ref right i) (cast (+ i 400) : f64))
+      (set! i (+ i 1)))))
 
 (define (fill-f64-foreach
   [keys : (& keys (__tl_dyn-array f64))]
@@ -270,13 +254,12 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set!
-          (array-ref out i)
-          (if (< (array-ref keys i) pivot)
-            (array-ref left i)
-            (array-ref right i)))
-        (set! i (+ i 1))))))
+      (set!
+        (array-ref out i)
+        (if (< (array-ref keys i) pivot)
+          (array-ref left i)
+          (array-ref right i)))
+      (set! i (+ i 1)))))
 
 (define (eq-f64
   [a : (& a (__tl_dyn-array f64))]
@@ -285,14 +268,12 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (!= (array-ref a i) (array-ref b i))
-            (set! ok false)
-            unit)
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (!= (array-ref a i) (array-ref b i))
+        (set! ok false)
+        unit)
+      (set! i (+ i 1)))
+    ok))
 
 (define (case-f64 [n : i64]) : bool
   (let
@@ -302,11 +283,10 @@
     [got : (__tl_dyn-array f64) (__tl_make-array f64 n)]
     [want : (__tl_dyn-array f64) (__tl_make-array f64 n)]
     [pivot : f64 7.5]
-    (begin
-      (init-f64 (&mut keys) (&mut left) (&mut right) n)
-      (fill-f64-foreach (& keys) (& left) (& right) (&mut got) n pivot)
-      (fill-f64-scalar (& keys) (& left) (& right) (&mut want) n pivot)
-      (eq-f64 (& got) (& want) n))))
+    (init-f64 (&mut keys) (&mut left) (&mut right) n)
+    (fill-f64-foreach (& keys) (& left) (& right) (&mut got) n pivot)
+    (fill-f64-scalar (& keys) (& left) (& right) (&mut want) n pivot)
+    (eq-f64 (& got) (& want) n)))
 
 (define (init-bool
   [keys : (&mut keys (__tl_dyn-array bool))]
@@ -316,11 +296,10 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref keys i) (< (% i 3) 2))
-        (set! (array-ref left i) (= (% i 2) 0))
-        (set! (array-ref right i) (= (% i 5) 0))
-        (set! i (+ i 1))))))
+      (set! (array-ref keys i) (< (% i 3) 2))
+      (set! (array-ref left i) (= (% i 2) 0))
+      (set! (array-ref right i) (= (% i 5) 0))
+      (set! i (+ i 1)))))
 
 (define (fill-bool-foreach
   [keys : (& keys (__tl_dyn-array bool))]
@@ -345,13 +324,12 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set!
-          (array-ref out i)
-          (if (array-ref keys i)
-            (array-ref left i)
-            (array-ref right i)))
-        (set! i (+ i 1))))))
+      (set!
+        (array-ref out i)
+        (if (array-ref keys i)
+          (array-ref left i)
+          (array-ref right i)))
+      (set! i (+ i 1)))))
 
 (define (eq-bool
   [a : (& a (__tl_dyn-array bool))]
@@ -360,18 +338,16 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (array-ref a i)
-            (if (array-ref b i)
-              unit
-              (set! ok false))
-            (if (array-ref b i)
-              (set! ok false)
-              unit))
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (array-ref a i)
+        (if (array-ref b i)
+          unit
+          (set! ok false))
+        (if (array-ref b i)
+          (set! ok false)
+          unit))
+      (set! i (+ i 1)))
+    ok))
 
 (define (case-bool [n : i64]) : bool
   (let
@@ -380,17 +356,15 @@
     [right : (__tl_dyn-array bool) (__tl_make-array bool n)]
     [got : (__tl_dyn-array bool) (__tl_make-array bool n)]
     [want : (__tl_dyn-array bool) (__tl_make-array bool n)]
-    (begin
-      (init-bool (&mut keys) (&mut left) (&mut right) n)
-      (fill-bool-foreach (& keys) (& left) (& right) (&mut got) n)
-      (fill-bool-scalar (& keys) (& left) (& right) (&mut want) n)
-      (eq-bool (& got) (& want) n))))
+    (init-bool (&mut keys) (&mut left) (&mut right) n)
+    (fill-bool-foreach (& keys) (& left) (& right) (&mut got) n)
+    (fill-bool-scalar (& keys) (& left) (& right) (&mut want) n)
+    (eq-bool (& got) (& want) n)))
 
 (define (main) : i64
-  (begin
-    (unless (case-u32 19) (return 2))
-    (unless (case-u64 13) (return 3))
-    (unless (case-f32 19) (return 4))
-    (unless (case-f64 13) (return 5))
-    (unless (case-bool 67) (return 6))
-    42))
+  (unless (case-u32 19) (return 2))
+  (unless (case-u64 13) (return 3))
+  (unless (case-f32 19) (return 4))
+  (unless (case-f64 13) (return 5))
+  (unless (case-bool 67) (return 6))
+  42)

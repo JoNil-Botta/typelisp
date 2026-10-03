@@ -5,11 +5,10 @@
   (let
     ;; lint-allow: single-element-array-cell
     [items : (__tl_dyn-array u64) (__tl_make-array u64 1)]
-    (begin
-      (set! (array-ref items 0) (cast 0x6666666666666667 : u64))
-      (if (>= (array-ref items 0) (threshold))
-        1
-        42))))
+    (set! (array-ref items 0) (cast 0x6666666666666667 : u64))
+    (if (>= (array-ref items 0) (threshold))
+      1
+      42)))
 
 (define (fixed-array-clear-high-bit) : i64
   (let
@@ -23,11 +22,10 @@
   (let
     ;; lint-allow: single-element-array-cell
     [items : (__tl_dyn-array u64) (__tl_make-array u64 1)]
-    (begin
-      (set! (array-ref items 0) (threshold))
-      (if (>= (array-ref items 0) (threshold))
-        42
-        3))))
+    (set! (array-ref items 0) (threshold))
+    (if (>= (array-ref items 0) (threshold))
+      42
+      3)))
 
 (define (fixed-array-set-high-bit) : i64
   (let

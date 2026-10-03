@@ -16,12 +16,10 @@
     [a : (__tl_dyn-array i8) (__tl_make-array i8 9)]
     [b : (__tl_dyn-array i8) (__tl_make-array i8 9)]
     [i : i64 0]
-    (begin
-      (while (< i 9)
-        (begin
-          (set! (array-ref a i) (cast (+ i 1) : i8))
-          (set! (array-ref b i) (cast (+ i 2) : i8))
-          (set! i (+ i 1))))
-      (if (= (product-sum a b 9) (cast 74 : i8))
-        42
-        1))))
+    (while (< i 9)
+      (set! (array-ref a i) (cast (+ i 1) : i8))
+      (set! (array-ref b i) (cast (+ i 2) : i8))
+      (set! i (+ i 1)))
+    (if (= (product-sum a b 9) (cast 74 : i8))
+      42
+      1)))

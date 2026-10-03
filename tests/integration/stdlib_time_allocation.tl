@@ -7,22 +7,19 @@
   (let
     [denominator : i64 1]
     [ok : bool true]
-    (begin
-      (while (and ok (<= denominator 256))
-        (let
-          [numerator : i64 0]
-          (begin
-            (while (and ok (< numerator denominator))
-              (begin
-                (if (not
-                  (=
-                    (time.timespec-ms 1 1 1 numerator denominator)
-                    (/ (* numerator 1000) denominator)))
-                  (set! ok false)
-                  unit)
-                (set! numerator (+ numerator 1))))
-            (set! denominator (+ denominator 1)))))
-      ok)))
+    (while (and ok (<= denominator 256))
+      (let
+        [numerator : i64 0]
+        (while (and ok (< numerator denominator))
+          (if (not
+            (=
+              (time.timespec-ms 1 1 1 numerator denominator)
+              (/ (* numerator 1000) denominator)))
+            (set! ok false)
+            unit)
+          (set! numerator (+ numerator 1)))
+        (set! denominator (+ denominator 1))))
+    ok))
 
 (define (time-conversions-ok?) : bool
   (and
@@ -64,21 +61,18 @@
     [index : i64 0]
     [previous : i64 -1]
     [ok : bool true]
-    (begin
-      (while (< index count)
-        (begin
-          (match (time.monotonic-ms)
-            [(OkTimeMs current)
-              (begin
-                (if (and (>= previous 0) (< current previous))
-                  (set! ok false)
-                  unit)
-                (set! previous current))]
-            [(ErrTimeMs _) (set! ok false)])
-          (set! index (+ index 1))))
-      (if ok
-        count
-        0))))
+    (while (< index count)
+      (match (time.monotonic-ms)
+        [(OkTimeMs current)
+          (if (and (>= previous 0) (< current previous))
+            (set! ok false)
+            unit)
+          (set! previous current)]
+        [(ErrTimeMs _) (set! ok false)])
+      (set! index (+ index 1)))
+    (if ok
+      count
+      0)))
 
 (define (time-read-worker) : i64
   (time-read-series 2000))
@@ -87,19 +81,17 @@
   (let
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (while (< index count)
-        (begin
-          (match (time.unix-ms)
-            [(OkTimeMs current)
-              (if (< current 0)
-                (set! ok false)
-                unit)]
-            [(ErrTimeMs _) (set! ok false)])
-          (set! index (+ index 1))))
-      (if ok
-        count
-        0))))
+    (while (< index count)
+      (match (time.unix-ms)
+        [(OkTimeMs current)
+          (if (< current 0)
+            (set! ok false)
+            unit)]
+        [(ErrTimeMs _) (set! ok false)])
+      (set! index (+ index 1)))
+    (if ok
+      count
+      0)))
 
 (define (time-join-value [worker : thread_i64.Handle]) : i64
   (match (thread_i64.join worker)

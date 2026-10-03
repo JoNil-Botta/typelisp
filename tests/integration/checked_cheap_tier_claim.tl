@@ -34,13 +34,11 @@
   (let
     [h : i64 2166136261]
     [i : i64 start]
-    (begin
-      (while (< i (+ start len))
-        (begin
-          (set! h (bit-xor h (array-ref data i)))
-          (set! h (* h 16777619))
-          (set! i (+ i 1))))
-      h)))
+    (while (< i (+ start len))
+      (set! h (bit-xor h (array-ref data i)))
+      (set! h (* h 16777619))
+      (set! i (+ i 1)))
+    h))
 
 ;; The hot caller: the hash at its entry, then a loop of its own holding two of
 ;; the tiny leaf's four sites.
@@ -49,14 +47,12 @@
     [h : i64 (hash-words data start len)]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (set! acc (+ acc (bit-and (mix h i) 1023)))
-          (set! acc (+ acc (bit-and (mix i h) 511)))
-          (set! h (+ h 7))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i len)
+      (set! acc (+ acc (bit-and (mix h i) 1023)))
+      (set! acc (+ acc (bit-and (mix i h) 511)))
+      (set! h (+ h 7))
+      (set! i (+ i 1)))
+    acc))
 
 ;; A cold second reference to the hash and to the caller, so no single-reference
 ;; band can claim either before the measured tier is asked; the leaf's third
@@ -69,20 +65,17 @@
     [data : (__tl_dyn-array i64) (__tl_make-array i64 32)]
     [i : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 32)
-        (begin
-          (set! (array-ref data i) (* (+ i 1) 2654435761))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i 64)
-        (begin
-          ;; A loop-variant start keeps this call in the loop: with literal
-          ;; arguments the optimizer would cache it and multiply, and `probe`
-          ;; would no longer be reached from inside a loop.
-          (set! total (+ total (probe (& data) (bit-and i 1) 16)))
-          (set! i (+ i 1))))
-      (unless (= total 422912) (return 1))
-      (unless (= (checksum (& data) 8) 2443) (return 2))
-      (unless (= (mix total 3) 1268748) (return 3))
-      42)))
+    (while (< i 32)
+      (set! (array-ref data i) (* (+ i 1) 2654435761))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i 64)
+      ;; A loop-variant start keeps this call in the loop: with literal
+      ;; arguments the optimizer would cache it and multiply, and `probe`
+      ;; would no longer be reached from inside a loop.
+      (set! total (+ total (probe (& data) (bit-and i 1) 16)))
+      (set! i (+ i 1)))
+    (unless (= total 422912) (return 1))
+    (unless (= (checksum (& data) 8) 2443) (return 2))
+    (unless (= (mix total 3) 1268748) (return 3))
+    42))

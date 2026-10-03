@@ -17,10 +17,9 @@
     [field : (MutPtr i64)
       (unsafe
         (ptr-addr-of item.y))]
-    (begin
-      (unsafe
-        (ptr-write! field 31))
-      (+ item.x (+ item.y item.z)))))
+    (unsafe
+      (ptr-write! field 31))
+    (+ item.x (+ item.y item.z))))
 
 (define (fixed-array-write-score [i : i64]) : i64
   (let
@@ -28,10 +27,9 @@
     [elem : (MutPtr i64)
       (unsafe
         (ptr-addr-of (array-ref items i)))]
-    (begin
-      (unsafe
-        (ptr-write! elem 44))
-      (+ (array-ref items 0) (+ (array-ref items 1) (array-ref items 2))))))
+    (unsafe
+      (ptr-write! elem 44))
+    (+ (array-ref items 0) (+ (array-ref items 1) (array-ref items 2)))))
 
 (define (nested-place-write-score [i : i64]) : i64
   (let
@@ -42,11 +40,10 @@
     [elem : (MutPtr i64)
       (unsafe
         (ptr-addr-of (array-ref bag.slots i)))]
-    (begin
-      (unsafe
-        (ptr-write! field 9)
-        (ptr-write! elem 70))
-      (+ bag.pair.y (array-ref bag.slots i)))))
+    (unsafe
+      (ptr-write! field 9)
+      (ptr-write! elem 70))
+    (+ bag.pair.y (array-ref bag.slots i))))
 
 (define (dynamic-array-slot-read-score) : i64
   (let

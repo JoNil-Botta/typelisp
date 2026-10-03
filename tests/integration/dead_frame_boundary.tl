@@ -64,21 +64,19 @@
     [e : i64 5]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (* a i)))
-          (set! acc (+ acc (* b i)))
-          (set! acc (+ acc (* c i)))
-          (set! acc (+ acc (* d i)))
-          (set! acc (+ acc (* e i)))
-          (set! a (+ a 1))
-          (set! b (+ b 2))
-          (set! c (+ c 3))
-          (set! d (+ d 4))
-          (set! e (+ e 5))
-          (set! i (+ i 1))))
-      (+ acc (+ (array-ref xs k) (+ a (+ b (+ c (+ d e)))))))))
+    (while (< i n)
+      (set! acc (+ acc (* a i)))
+      (set! acc (+ acc (* b i)))
+      (set! acc (+ acc (* c i)))
+      (set! acc (+ acc (* d i)))
+      (set! acc (+ acc (* e i)))
+      (set! a (+ a 1))
+      (set! b (+ b 2))
+      (set! c (+ c 3))
+      (set! d (+ d 4))
+      (set! e (+ e 5))
+      (set! i (+ i 1)))
+    (+ acc (+ (array-ref xs k) (+ a (+ b (+ c (+ d e))))))))
 
 ;; (c) A RETURNING call keeps the frame and the pad.
 (define (dfb-returning [v : i64] [rounds : i64]) : i64
@@ -88,21 +86,19 @@
     [c : i64 3]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i 8)
-        (begin
-          (set! acc (+ acc (dfb-probe i)))
-          (set! acc (+ acc (* v i)))
-          (set! acc (+ acc (* a i)))
-          (set! acc (+ acc (* b i)))
-          (set! acc (+ acc (* c i)))
-          (set! a (+ a 1))
-          (set! b (+ b 2))
-          (set! c (+ c 3))
-          (set! i (+ i 1))))
-      (if (> rounds 1)
-        (+ acc (dfb-returning v (- rounds 1)))
-        (+ acc (+ a (+ b c)))))))
+    (while (< i 8)
+      (set! acc (+ acc (dfb-probe i)))
+      (set! acc (+ acc (* v i)))
+      (set! acc (+ acc (* a i)))
+      (set! acc (+ acc (* b i)))
+      (set! acc (+ acc (* c i)))
+      (set! a (+ a 1))
+      (set! b (+ b 2))
+      (set! c (+ c 3))
+      (set! i (+ i 1)))
+    (if (> rounds 1)
+      (+ acc (dfb-returning v (- rounds 1)))
+      (+ acc (+ a (+ b c))))))
 
 (define (main) : i64
   (let

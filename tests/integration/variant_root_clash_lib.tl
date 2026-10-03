@@ -28,9 +28,8 @@
     owner
     (let
       [doubled : i64 (* n 2)]
-      (begin
-        (eval (Lit doubled))
-        Other))))
+      (eval (Lit doubled))
+      Other)))
 
 (define (mode-score [mode : Mode]) : i64
   (match mode

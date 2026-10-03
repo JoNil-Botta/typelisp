@@ -30,9 +30,8 @@
     [state-owner (memory.make)]
     [state (BrandedArenaState state-owner 42)]
     [answer : i64 (state-answer state)]
-    (begin
-      (memory.rewind-safe! phase)
-      (memory.destroy-safe! helper-owner)
-      (if (and observable (shadowed-make-copy-ok))
-        answer
-        1))))
+    (memory.rewind-safe! phase)
+    (memory.destroy-safe! helper-owner)
+    (if (and observable (shadowed-make-copy-ok))
+      answer
+      1)))

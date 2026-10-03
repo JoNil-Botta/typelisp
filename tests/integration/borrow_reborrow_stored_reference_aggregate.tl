@@ -32,6 +32,5 @@
     (match (next (&mut iter))
       [(Done) 1]
       [(Item item)
-        (begin
-          (set! item.value 42)
-          item.value)])))
+        (set! item.value 42)
+        item.value])))

@@ -21,30 +21,26 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          ;; handle passed as a DIRECT CALL ARG every iteration
-          (set! acc (+ acc (probe xs i)))
-          ;; and used directly too (keeps xs hot in the loop)
-          (set! acc (+ acc (array-ref xs i)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      ;; handle passed as a DIRECT CALL ARG every iteration
+      (set! acc (+ acc (probe xs i)))
+      ;; and used directly too (keeps xs hot in the loop)
+      (set! acc (+ acc (array-ref xs i)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 3)]
     [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (* i 3))
-          (set! i (+ i 1))))
-      (let
-        [r : i64 (sum-args (& xs) n)]
-        ;; n=4 (no args): xs[0]=0 so probe(xs,i)=i; xs[i]=3i; acc adds 4i per
-        ;; iteration -> 4*(0+1+2+3) = 24.
-        (if (= r 24)
-          42
-          1)))))
+    (while (< i n)
+      (set! (array-ref xs i) (* i 3))
+      (set! i (+ i 1)))
+    (let
+      [r : i64 (sum-args (& xs) n)]
+      ;; n=4 (no args): xs[0]=0 so probe(xs,i)=i; xs[i]=3i; acc adds 4i per
+      ;; iteration -> 4*(0+1+2+3) = 24.
+      (if (= r 24)
+        42
+        1))))

@@ -30,12 +30,10 @@
   (let
     [acc : i64 seed]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc i))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc i))
+      (set! i (+ i 1)))
+    acc))
 
 ;; A real call inside the loop body -> the loop region is NOT clobber-free, so a
 ;; homed carry must use a CALLEE-SAVED register (preserved across the call).
@@ -50,13 +48,11 @@
     [a : i64 seed]
     [b : i64 seed]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! a (+ a (bump i)))
-          (set! b (+ b 2))
-          (set! i (+ i 1))))
-      (+ a b))))
+    (while (< i n)
+      (set! a (+ a (bump i)))
+      (set! b (+ b 2))
+      (set! i (+ i 1)))
+    (+ a b)))
 
 (define (main) : i64
   (let

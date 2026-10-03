@@ -80,21 +80,19 @@
     [home : arena.Arena (arena.current)]
     [before : arena.ArenaMark (arena.mark)]
     [after : arena.ArenaMark (arena.mark)]
-    (begin
+    (unsafe
+      (arena.set! scratch))
+    (set! before (arena.mark))
+    (unsafe
+      (arena.set! home))
+    (let
+      [items : (__tl_dyn-array String) (escape-items scratch seed)]
       (unsafe
         (arena.set! scratch))
-      (set! before (arena.mark))
+      (set! after (arena.mark))
       (unsafe
         (arena.set! home))
-      (let
-        [items : (__tl_dyn-array String) (escape-items scratch seed)]
-        (begin
-          (unsafe
-            (arena.set! scratch))
-          (set! after (arena.mark))
-          (unsafe
-            (arena.set! home))
-          (and (arena.mark-eq? before after) (items-ok? items seed)))))))
+      (and (arena.mark-eq? before after) (items-ok? items seed)))))
 
 (define (main) : i64
   (let

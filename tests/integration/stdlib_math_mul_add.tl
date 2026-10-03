@@ -326,26 +326,24 @@
     [acc : u64 0]
     [nans : i64 0]
     [index : i64 0]
-    (begin
-      (while (< index 20000)
-        (let
-          [s1 : u64 (lcg-next state)]
-          [s2 : u64 (lcg-next s1)]
-          [s3 : u64 (lcg-next s2)]
-          [result : f64
-            (math.f64-mul-add
-              (math.f64-from-bits (sweep-operand-f64 s1))
-              (math.f64-from-bits (sweep-operand-f64 s2))
-              (math.f64-from-bits (sweep-operand-f64 s3)))]
+    (while (< index 20000)
+      (let
+        [s1 : u64 (lcg-next state)]
+        [s2 : u64 (lcg-next s1)]
+        [s3 : u64 (lcg-next s2)]
+        [result : f64
+          (math.f64-mul-add
+            (math.f64-from-bits (sweep-operand-f64 s1))
+            (math.f64-from-bits (sweep-operand-f64 s2))
+            (math.f64-from-bits (sweep-operand-f64 s3)))]
+        (if (math.f64-nan? result)
           (begin
-            (if (math.f64-nan? result)
-              (begin
-                (set! nans (+ nans 1))
-                (set! acc (fold acc 0)))
-              (set! acc (fold acc (math.f64-to-bits result))))
-            (set! state s3)
-            (set! index (+ index 1)))))
-      (and (= acc 0x60b0ef758dcee710) (= nans 15)))))
+            (set! nans (+ nans 1))
+            (set! acc (fold acc 0)))
+          (set! acc (fold acc (math.f64-to-bits result))))
+        (set! state s3)
+        (set! index (+ index 1))))
+    (and (= acc 0x60b0ef758dcee710) (= nans 15))))
 
 (define (sweep-f32-ok?) : bool
   (let
@@ -353,26 +351,24 @@
     [acc : u64 0]
     [nans : i64 0]
     [index : i64 0]
-    (begin
-      (while (< index 20000)
-        (let
-          [s1 : u64 (lcg-next state)]
-          [s2 : u64 (lcg-next s1)]
-          [s3 : u64 (lcg-next s2)]
-          [result : f32
-            (math.f32-mul-add
-              (math.f32-from-bits (sweep-operand-f32 s1))
-              (math.f32-from-bits (sweep-operand-f32 s2))
-              (math.f32-from-bits (sweep-operand-f32 s3)))]
+    (while (< index 20000)
+      (let
+        [s1 : u64 (lcg-next state)]
+        [s2 : u64 (lcg-next s1)]
+        [s3 : u64 (lcg-next s2)]
+        [result : f32
+          (math.f32-mul-add
+            (math.f32-from-bits (sweep-operand-f32 s1))
+            (math.f32-from-bits (sweep-operand-f32 s2))
+            (math.f32-from-bits (sweep-operand-f32 s3)))]
+        (if (math.f32-nan? result)
           (begin
-            (if (math.f32-nan? result)
-              (begin
-                (set! nans (+ nans 1))
-                (set! acc (fold acc 0)))
-              (set! acc (fold acc (cast (math.f32-to-bits result) : u64))))
-            (set! state s3)
-            (set! index (+ index 1)))))
-      (and (= acc 0xdb9d28b9ca82f0d9) (= nans 119)))))
+            (set! nans (+ nans 1))
+            (set! acc (fold acc 0)))
+          (set! acc (fold acc (cast (math.f32-to-bits result) : u64))))
+        (set! state s3)
+        (set! index (+ index 1))))
+    (and (= acc 0xdb9d28b9ca82f0d9) (= nans 119))))
 
 ;; Ordinary arithmetic is never contracted into the fused operation: this
 ;; product loses its low bits before the subtraction, at every optimization

@@ -24,15 +24,13 @@
       [state : MaybeVal (mk 1 1)]
       [i : i64 0]
       [acc : i64 0]
-      (begin
-        (while (< i n)
-          (begin
-            (match state
-              [(MSome value) (set! acc (+ acc value))]
-              [(MNone) (set! acc (+ acc 1))])
-            (set! state (mk (+ i 1) i))
-            (set! i (+ i 1))))
-        acc))))
+      (while (< i n)
+        (match state
+          [(MSome value) (set! acc (+ acc value))]
+          [(MNone) (set! acc (+ acc 1))])
+        (set! state (mk (+ i 1) i))
+        (set! i (+ i 1)))
+      acc)))
 
 (define (main) : i64
   (let

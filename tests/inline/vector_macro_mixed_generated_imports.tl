@@ -10,11 +10,10 @@
   (let
     [v : Vec (new)]
     [words : svec.Vec (svec.new)]
-    (begin
-      (push! v 10)
-      (push! v 32)
-      (svec.push-ref! (&mut words) "x")
-      (test.assert-i64-eq
-        (+ (len (& v)) (svec.len (& words)))
-        3
-        "mixed generated vector imports length"))))
+    (push! v 10)
+    (push! v 32)
+    (svec.push-ref! (&mut words) "x")
+    (test.assert-i64-eq
+      (+ (len (& v)) (svec.len (& words)))
+      3
+      "mixed generated vector imports length")))

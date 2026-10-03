@@ -32,58 +32,56 @@
   (let
     [compact : compact_i64.Vec (compact_i64.with-capacity 1)]
     [full : full_i64.Vec (full_i64.new)]
-    (begin
-      (compact_i64.push-ref! (&mut compact) 10)
-      (compact_i64.push-ref! (&mut compact) 32)
-      (compact_i64.set-ref! (&mut compact) 0 11)
-      (test.assert-i64-eq (compact_i64.len (& compact)) 2 "core len")
-      (test.assert-i64-eq
-        (compact_i64.capacity (& compact))
-        2
-        "core growth doubles capacity")
-      (test.assert-i64-eq
-        (compact_i64.get (& compact) 0 0)
-        11
-        "core set updates element")
-      (test.assert-i64-eq
-        (compact_i64.get (& compact) 1 0)
-        32
-        "core growth preserves order")
-      (test.assert-i64-eq
-        (compact_i64.get (& compact) -1 7)
-        7
-        "core get checks negative bounds")
-      (full_i64.push-ref! (&mut full) 42)
-      (match (full_i64.pop-ref! (&mut full))
-        [(Empty) (test.assert-true false "full vector pop remains available")]
-        [(Ok value)
-          (test.assert-i64-eq value 42 "full vector mode coexists with core")]))))
+    (compact_i64.push-ref! (&mut compact) 10)
+    (compact_i64.push-ref! (&mut compact) 32)
+    (compact_i64.set-ref! (&mut compact) 0 11)
+    (test.assert-i64-eq (compact_i64.len (& compact)) 2 "core len")
+    (test.assert-i64-eq
+      (compact_i64.capacity (& compact))
+      2
+      "core growth doubles capacity")
+    (test.assert-i64-eq
+      (compact_i64.get (& compact) 0 0)
+      11
+      "core set updates element")
+    (test.assert-i64-eq
+      (compact_i64.get (& compact) 1 0)
+      32
+      "core growth preserves order")
+    (test.assert-i64-eq
+      (compact_i64.get (& compact) -1 7)
+      7
+      "core get checks negative bounds")
+    (full_i64.push-ref! (&mut full) 42)
+    (match (full_i64.pop-ref! (&mut full))
+      [(Empty) (test.assert-true false "full vector pop remains available")]
+      [(Ok value)
+        (test.assert-i64-eq value 42 "full vector mode coexists with core")])))
 
 (test
   vector-core-struct-and-enum-elements
   (let
     [points : compact_point.Vec (compact_point.with-capacity 1)]
     [choices : compact_choice.Vec (compact_choice.new)]
-    (begin
-      (compact_point.push-ref! (&mut points) (VectorCorePoint 1 2))
-      (compact_point.push-ref! (&mut points) (VectorCorePoint 3 4))
-      (compact_point.set-ref! (&mut points) 0 (VectorCorePoint 9 8))
-      (compact_choice.push-ref! (&mut choices) (First 7))
-      (compact_choice.push-ref! (&mut choices) (Second 35))
-      (test.assert-i64-eq
-        (vector-core-point-score
-          (compact_point.get (& points) 0 (VectorCorePoint 0 0)))
-        98
-        "core stores and mutates struct elements")
-      (test.assert-i64-eq
-        (vector-core-point-score
-          (compact_point.get (& points) 1 (VectorCorePoint 0 0)))
-        34
-        "core preserves struct order while growing")
-      (test.assert-i64-eq
-        (vector-core-choice-value (compact_choice.get (& choices) 1 (First 0)))
-        35
-        "core stores enum elements"))))
+    (compact_point.push-ref! (&mut points) (VectorCorePoint 1 2))
+    (compact_point.push-ref! (&mut points) (VectorCorePoint 3 4))
+    (compact_point.set-ref! (&mut points) 0 (VectorCorePoint 9 8))
+    (compact_choice.push-ref! (&mut choices) (First 7))
+    (compact_choice.push-ref! (&mut choices) (Second 35))
+    (test.assert-i64-eq
+      (vector-core-point-score
+        (compact_point.get (& points) 0 (VectorCorePoint 0 0)))
+      98
+      "core stores and mutates struct elements")
+    (test.assert-i64-eq
+      (vector-core-point-score
+        (compact_point.get (& points) 1 (VectorCorePoint 0 0)))
+      34
+      "core preserves struct order while growing")
+    (test.assert-i64-eq
+      (vector-core-choice-value (compact_choice.get (& choices) 1 (First 0)))
+      35
+      "core stores enum elements")))
 
 (test
   vector-core-noncloneable-raw-pointer-aggregate
@@ -91,35 +89,34 @@
     [first : i64 10]
     [second : i64 32]
     [holders : compact_raw.Vec (compact_raw.with-capacity 1)]
-    (begin
-      (compact_raw.push-ref!
-        (&mut holders)
-        (VectorCoreRawHolder
-          (unsafe
-            (ptr-addr-of first))))
-      (compact_raw.push-ref!
-        (&mut holders)
-        (VectorCoreRawHolder
-          (unsafe
-            (ptr-addr-of second))))
-      (compact_raw.set-ref!
-        (&mut holders)
-        0
-        (VectorCoreRawHolder
-          (unsafe
-            (ptr-addr-of second))))
-      (let
-        [selected : VectorCoreRawHolder
-          (compact_raw.get
-            (& holders)
-            0
-            (VectorCoreRawHolder (ptr-null : (MutPtr i64))))]
-        (test.assert-i64-eq
-          (unsafe
-            (ptr-read selected.ptr))
-          32
-          "core does not require clone support for raw-pointer aggregates"))
+    (compact_raw.push-ref!
+      (&mut holders)
+      (VectorCoreRawHolder
+        (unsafe
+          (ptr-addr-of first))))
+    (compact_raw.push-ref!
+      (&mut holders)
+      (VectorCoreRawHolder
+        (unsafe
+          (ptr-addr-of second))))
+    (compact_raw.set-ref!
+      (&mut holders)
+      0
+      (VectorCoreRawHolder
+        (unsafe
+          (ptr-addr-of second))))
+    (let
+      [selected : VectorCoreRawHolder
+        (compact_raw.get
+          (& holders)
+          0
+          (VectorCoreRawHolder (ptr-null : (MutPtr i64))))]
       (test.assert-i64-eq
-        (compact_raw.len (& holders))
-        2
-        "core raw-pointer aggregate growth succeeds"))))
+        (unsafe
+          (ptr-read selected.ptr))
+        32
+        "core does not require clone support for raw-pointer aggregates"))
+    (test.assert-i64-eq
+      (compact_raw.len (& holders))
+      2
+      "core raw-pointer aggregate growth succeeds")))

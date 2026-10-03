@@ -31,38 +31,36 @@
     [c : i64 3]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i 100)
-        (begin
-          (set! acc (+ acc (probe6 i)))
-          ; the call every value spans
-          (set! acc (+ acc (+ a i)))
-          ; a,b,c stay hot (4-5 refs each)
-          (set! acc (+ acc (* 2 a)))
-          (set! a (+ a 1))
-          (set! acc (+ acc (+ b i)))
-          (set! acc (+ acc (* 2 b)))
-          (set! b (+ b 1))
-          (set! acc (+ acc (+ c i)))
-          (set! acc (+ acc (* 2 c)))
-          (set! c (+ c 1))
-          (set! acc (+ acc (* v i)))
-          ; v: 3 uses, all multiplies
-          (set! acc (+ acc (* v a)))
-          (set! acc (+ acc (* v b)))
-          (set! i (+ i 1))))
-      (let
-        ;; #6288: acc is the forced `%rbp` value home. Keep the immediate-add
-        ;; result distinct so the backend must encode `%rbp + 31` into another
-        ;; destination before the final rsp frame rebase. The later recursive
-        ;; probe is not inlined and keeps the original acc live, preventing the
-        ;; result from legally reusing `%rbp` in place.
-        [acc-plus-31 : i64 (+ acc 31)]
-        [kept-acc : i64 (+ acc (probe6 0))]
-        [r : i64 (+ acc-plus-31 (+ kept-acc (+ a (+ b (+ c v)))))]
-        (if (> rounds 1)
-          (+ r (churn6 v (- rounds 1)))
-          r)))))
+    (while (< i 100)
+      (set! acc (+ acc (probe6 i)))
+      ; the call every value spans
+      (set! acc (+ acc (+ a i)))
+      ; a,b,c stay hot (4-5 refs each)
+      (set! acc (+ acc (* 2 a)))
+      (set! a (+ a 1))
+      (set! acc (+ acc (+ b i)))
+      (set! acc (+ acc (* 2 b)))
+      (set! b (+ b 1))
+      (set! acc (+ acc (+ c i)))
+      (set! acc (+ acc (* 2 c)))
+      (set! c (+ c 1))
+      (set! acc (+ acc (* v i)))
+      ; v: 3 uses, all multiplies
+      (set! acc (+ acc (* v a)))
+      (set! acc (+ acc (* v b)))
+      (set! i (+ i 1)))
+    (let
+      ;; #6288: acc is the forced `%rbp` value home. Keep the immediate-add
+      ;; result distinct so the backend must encode `%rbp + 31` into another
+      ;; destination before the final rsp frame rebase. The later recursive
+      ;; probe is not inlined and keeps the original acc live, preventing the
+      ;; result from legally reusing `%rbp` in place.
+      [acc-plus-31 : i64 (+ acc 31)]
+      [kept-acc : i64 (+ acc (probe6 0))]
+      [r : i64 (+ acc-plus-31 (+ kept-acc (+ a (+ b (+ c v)))))]
+      (if (> rounds 1)
+        (+ r (churn6 v (- rounds 1)))
+        r))))
 
 (define (main) : i64
   (let

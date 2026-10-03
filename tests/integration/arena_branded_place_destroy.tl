@@ -17,11 +17,10 @@
     [other-text (in-arena other-owner (string.append "still" "-alive"))]
     [expected-other : String "still-alive"]
     [owned-len : i64 (string.string-length state.text)]
-    (begin
-      (arena.destroy-safe! state.arena)
-      (test.assert-string-eq
-        (& other-text)
-        (& expected-other)
-        "destroying one brand preserves another")
-      (arena.destroy-safe! other-owner)
-      (+ owned-len 32))))
+    (arena.destroy-safe! state.arena)
+    (test.assert-string-eq
+      (& other-text)
+      (& expected-other)
+      "destroying one brand preserves another")
+    (arena.destroy-safe! other-owner)
+    (+ owned-len 32)))

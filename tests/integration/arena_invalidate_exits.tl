@@ -24,14 +24,12 @@
   [count : i64]) : unit
   (let
     [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set! i (+ i 1))
-          (if (= i 2)
-            (break)
-            (continue))))
-      (arena.destroy-safe! owner))))
+    (while (< i count)
+      (set! i (+ i 1))
+      (if (= i 2)
+        (break)
+        (continue)))
+    (arena.destroy-safe! owner)))
 
 (define (main) : i64
   (let
@@ -42,8 +40,7 @@
     [e (arena.make)]
     [x : i64 (release-return a true)]
     [y : i64 (release-return b false)]
-    (begin
-      (release-or-panic c false)
-      (release-after-loop d 0)
-      (release-after-loop e 3)
-      (+ x y))))
+    (release-or-panic c false)
+    (release-after-loop d 0)
+    (release-after-loop e 3)
+    (+ x y)))

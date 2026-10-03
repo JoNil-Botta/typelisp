@@ -15,24 +15,21 @@
 (define (ssa-nominal-diamond [cond : bool]) : SsaNominalState
   (let
     [state : SsaNominalState Zero]
-    (begin
-      (if cond
-        (set! state Answer)
-        (set! state One))
-      state)))
+    (if cond
+      (set! state Answer)
+      (set! state One))
+    state))
 
 (define (ssa-nominal-loop [count : i64]) : SsaNominalState
   (let
     [state : SsaNominalState Zero]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (if (= index 4)
-            (set! state Answer)
-            (set! state One))
-          (set! index (+ index 1))))
-      state)))
+    (while (< index count)
+      (if (= index 4)
+        (set! state Answer)
+        (set! state One))
+      (set! index (+ index 1)))
+    state))
 
 (define (main) : i64
   (if (and

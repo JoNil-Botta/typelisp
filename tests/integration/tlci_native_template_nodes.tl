@@ -41,10 +41,9 @@
   (let
     [buf : text_buf.TextBuf (text_buf.empty)]
     [text-buf-append-chunk : String sample.label]
-    (begin
-      (text_buf.append! buf text-buf-append-chunk)
-      (text_buf.append! buf "!")
-      (text_buf.render buf))))
+    (text_buf.append! buf text-buf-append-chunk)
+    (text_buf.append! buf "!")
+    (text_buf.render buf)))
 
 ;; Encoding drives object-field/object-finish/sequence-element/sequence-finish
 ;; (the `box` template kind); decoding drives expect-object/field-value/

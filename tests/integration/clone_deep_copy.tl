@@ -48,27 +48,23 @@
   (__tl_make-array (string.append "a" "a") (string.append "b" "bb")))
 
 (define (copy-from-scratch [home : arena.Arena] [scratch : arena.Arena]) : i64
-  (begin
-    (unsafe
-      (arena.set! scratch))
+  (unsafe
+    (arena.set! scratch))
+  (let
+    [items : (__tl_dyn-array String) (__tl_make-array String 2)]
+    (set! (array-ref items 0) (string.append "d" "0"))
+    (set! (array-ref items 1) (string.append "d" "1"))
     (let
-      [items : (__tl_dyn-array String) (__tl_make-array String 2)]
-      (begin
-        (set! (array-ref items 0) (string.append "d" "0"))
-        (set! (array-ref items 1) (string.append "d" "1"))
-        (let
-          [bundle : Bundle (make-bundle items)]
-          [sequence : (__tl_dyn-array String) (make-sequence)]
-          (begin
-            (unsafe
-              (arena.set! home))
-            (let
-              [bundle-copy : Bundle (clone bundle)]
-              [sequence-copy : (__tl_dyn-array String) (clone sequence)]
-              (begin
-                (unsafe
-                  (arena.destroy scratch))
-                (+ (bundle-score bundle-copy) (sequence-score sequence-copy))))))))))
+      [bundle : Bundle (make-bundle items)]
+      [sequence : (__tl_dyn-array String) (make-sequence)]
+      (unsafe
+        (arena.set! home))
+      (let
+        [bundle-copy : Bundle (clone bundle)]
+        [sequence-copy : (__tl_dyn-array String) (clone sequence)]
+        (unsafe
+          (arena.destroy scratch))
+        (+ (bundle-score bundle-copy) (sequence-score sequence-copy))))))
 
 (define (main) : i64
   (let

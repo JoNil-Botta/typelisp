@@ -9,11 +9,10 @@
 (define (main) : i64
   (let
     [a : (__tl_dyn-array P) (__tl_make-array P 0)]
-    (begin
-      (__tl_array-push! a (P 30 5))
-      (__tl_array-push! a (P 100 7))
+    (__tl_array-push! a (P 30 5))
+    (__tl_array-push! a (P 100 7))
+    (+
+      (__tl-project-field (array-ref a 0) x)
       (+
-        (__tl-project-field (array-ref a 0) x)
-        (+
-          (__tl-project-field (array-ref a 0) y)
-          (__tl-project-field (array-ref a 1) y))))))
+        (__tl-project-field (array-ref a 0) y)
+        (__tl-project-field (array-ref a 1) y)))))

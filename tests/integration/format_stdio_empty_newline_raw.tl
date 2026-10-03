@@ -8,22 +8,20 @@
 (import stdlib.string)
 
 (define (child-stdout) : i64
-  (begin
-    (io.println)
-    (io.print "o")
-    (io.println)
-    (io.println "{}" (cast 1 : i64))
-    (io.println)
-    0))
+  (io.println)
+  (io.print "o")
+  (io.println)
+  (io.println "{}" (cast 1 : i64))
+  (io.println)
+  0)
 
 (define (child-stderr) : i64
-  (begin
-    (io.eprintln)
-    (io.eprint "e")
-    (io.eprintln)
-    (io.eprintln "{}" (cast 2 : i64))
-    (io.eprintln)
-    0))
+  (io.eprintln)
+  (io.eprint "e")
+  (io.eprintln)
+  (io.eprintln "{}" (cast 2 : i64))
+  (io.eprintln)
+  0)
 
 (define (has-carriage-return? [text : (& text str)]) : bool
   (>= (string.index-of-byte text 0 (cast 13 : u8)) 0))

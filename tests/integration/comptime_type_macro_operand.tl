@@ -21,16 +21,15 @@
     [score : i64 0]
     [picked : i64
       (cond [(pick (type bool) false) 0] [else (pick (type i64) 2)])]
-    (begin
-      (when
-        (= (first (type i64) (slice-view items 0 3)) 1)
-        (set! score (+ score 10)))
-      (unless (= (pick (type i64) 1) 2) (set! score (+ score 10)))
-      (when
-        (and
-          (pick (type bool) true)
-          (or false (second (type i64) (type bool) 7 true)))
-        (set! score (+ score 10)))
-      (set! score (+ score (ident (ident (pick (type i64) 8)))))
-      ;; 10 + 10 + 10 + 8 + 2 + 2
-      (+ score (+ picked (ident (second (type bool) (type i64) false 2)))))))
+    (when
+      (= (first (type i64) (slice-view items 0 3)) 1)
+      (set! score (+ score 10)))
+    (unless (= (pick (type i64) 1) 2) (set! score (+ score 10)))
+    (when
+      (and
+        (pick (type bool) true)
+        (or false (second (type i64) (type bool) 7 true)))
+      (set! score (+ score 10)))
+    (set! score (+ score (ident (ident (pick (type i64) 8)))))
+    ;; 10 + 10 + 10 + 8 + 2 + 2
+    (+ score (+ picked (ident (second (type bool) (type i64) false 2))))))

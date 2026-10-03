@@ -14,21 +14,18 @@
     [vl : i64 (string.string-length value)]
     [buf : (__tl_dyn-array u8) (__tl_make-array u8 (+ (+ nl vl) 2))]
     [i : i64 0]
-    (begin
-      (while (< i nl)
-        (begin
-          (set! (array-ref buf i) (cast (string.string-ref name i) : u8))
-          (set! i (+ i 1))))
-      (set! (array-ref buf nl) (cast 61 : u8))
-      (set! i 0)
-      (while (< i vl)
-        (begin
-          (set!
-            (array-ref buf (+ (+ nl 1) i))
-            (cast (string.string-ref value i) : u8))
-          (set! i (+ i 1))))
-      (set! (array-ref buf (+ (+ nl 1) vl)) (cast 0 : u8))
-      buf)))
+    (while (< i nl)
+      (set! (array-ref buf i) (cast (string.string-ref name i) : u8))
+      (set! i (+ i 1)))
+    (set! (array-ref buf nl) (cast 61 : u8))
+    (set! i 0)
+    (while (< i vl)
+      (set!
+        (array-ref buf (+ (+ nl 1) i))
+        (cast (string.string-ref value i) : u8))
+      (set! i (+ i 1)))
+    (set! (array-ref buf (+ (+ nl 1) vl)) (cast 0 : u8))
+    buf))
 
 (define (main) : i64
   (let

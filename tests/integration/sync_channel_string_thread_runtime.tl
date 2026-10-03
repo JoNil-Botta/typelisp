@@ -51,14 +51,12 @@
   (let
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (while (< i count)
-        (let
-          [message : String (sync-string-integration-message i)]
-          (begin
-            (set! sum (+ sum (string-length message)))
-            (set! i (+ i 1)))))
-      sum)))
+    (while (< i count)
+      (let
+        [message : String (sync-string-integration-message i)]
+        (set! sum (+ sum (string-length message)))
+        (set! i (+ i 1))))
+    sum))
 
 (define (sync-string-integration-consumer [ctx : i64]) : i64
   (let
@@ -69,22 +67,21 @@
     [i : i64 0]
     [sum : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< i count))
-        (let
-          [value : String
-            (sync-string-integration-recv-value-or
-              (sync.channel-string-recv channel)
-              "missing")]
-          [expected : String (sync-string-integration-message i)]
-          (if (string.eq value expected)
-            (begin
-              (set! sum (+ sum (string-length value)))
-              (set! i (+ i 1)))
-            (set! ok false))))
-      (if ok
-        sum
-        -1))))
+    (while (and ok (< i count))
+      (let
+        [value : String
+          (sync-string-integration-recv-value-or
+            (sync.channel-string-recv channel)
+            "missing")]
+        [expected : String (sync-string-integration-message i)]
+        (if (string.eq value expected)
+          (begin
+            (set! sum (+ sum (string-length value)))
+            (set! i (+ i 1)))
+          (set! ok false))))
+    (if ok
+      sum
+      -1)))
 
 (define (sync-string-integration-join-code [result : ThreadJoinResult]) : i64
   (match result
@@ -95,10 +92,9 @@
   [ctx : (&mut ctx (__tl_dyn-array i64))]
   [channel : sync.ChannelString]
   [count : i64]) : unit
-  (begin
-    (unsafe
-      (sync.channel-string-store-raw! channel ctx 0))
-    (set! (array-ref ctx sync.channel-string-raw-field-count) count)))
+  (unsafe
+    (sync.channel-string-store-raw! channel ctx 0))
+  (set! (array-ref ctx sync.channel-string-raw-field-count) count))
 
 (define (sync-string-integration-run [channel : sync.ChannelString]) : i64
   (let
@@ -110,44 +106,42 @@
     [sent : i64 0]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (sync-string-integration-pack-context!
-        (&mut ctx)
-        channel
-        sync-string-integration-count)
-      (match (unsafe
-        (thread.spawn
-          sync-string-integration-consumer
-          (sync-string-integration-array-i64-addr ctx)))
-        [(ThreadSpawnErr _) 2]
-        [(ThreadSpawnOk worker)
-          (begin
-            (while (and ok (< i sync-string-integration-count))
-              (let
-                [message-len : i64
-                  (string-length (sync-string-integration-message i))]
-                [message-sent : bool
-                  (sync-string-integration-send-ok?
-                    (sync.channel-string-send
-                      channel
-                      (in-arena owner (sync-string-integration-message i))))]
-                (if message-sent
-                  (begin
-                    (set! sent (+ sent message-len))
-                    (set! i (+ i 1)))
-                  (set! ok false))))
-            (let
-              [worker-code : i64
-                (sync-string-integration-join-code
-                  (unsafe
-                    (thread.join worker)))]
-              [closed : bool (sync.channel-string-close channel)]
-              (cond
-                [(not ok) 3]
-                [(not closed) 4]
-                [(not (= sent expected)) 5]
-                [(not (= worker-code expected)) 6]
-                [else 42])))]))))
+    (sync-string-integration-pack-context!
+      (&mut ctx)
+      channel
+      sync-string-integration-count)
+    (match (unsafe
+      (thread.spawn
+        sync-string-integration-consumer
+        (sync-string-integration-array-i64-addr ctx)))
+      [(ThreadSpawnErr _) 2]
+      [(ThreadSpawnOk worker)
+        (while (and ok (< i sync-string-integration-count))
+          (let
+            [message-len : i64
+              (string-length (sync-string-integration-message i))]
+            [message-sent : bool
+              (sync-string-integration-send-ok?
+                (sync.channel-string-send
+                  channel
+                  (in-arena owner (sync-string-integration-message i))))]
+            (if message-sent
+              (begin
+                (set! sent (+ sent message-len))
+                (set! i (+ i 1)))
+              (set! ok false))))
+        (let
+          [worker-code : i64
+            (sync-string-integration-join-code
+              (unsafe
+                (thread.join worker)))]
+          [closed : bool (sync.channel-string-close channel)]
+          (cond
+            [(not ok) 3]
+            [(not closed) 4]
+            [(not (= sent expected)) 5]
+            [(not (= worker-code expected)) 6]
+            [else 42]))])))
 
 (define (main) : i64
   (match (sync.channel-string-create 4)

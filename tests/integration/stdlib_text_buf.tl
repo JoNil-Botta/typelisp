@@ -64,33 +64,31 @@
   (let
     [base : text_buf.TextBuf (text_buf.empty)]
     [i : i64 0]
-    (begin
-      (while (< i 32)
-        (begin
-          (set! base (text_buf.append base "o"))
-          (set! i (+ i 1))))
-      (let
-        [outer-arena (arena.make)]
-        [child-ok : bool
-          (with-escape
-            outer-arena
-            (let
-              [child : text_buf.TextBuf (text_buf.append (clone base) "-inner")]
-              (string.eq
-                (text_buf.render child)
-                "oooooooooooooooooooooooooooooooo-inner")))]
-        [sibling-ok : bool
-          (with-escape
-            outer-arena
-            (let
-              [sibling : text_buf.TextBuf
-                (text_buf.append (clone base) "-sibling")]
-              (string.eq
-                (text_buf.render sibling)
-                "oooooooooooooooooooooooooooooooo-sibling")))]
-        [base-ok : bool
-          (string.eq (text_buf.render base) "oooooooooooooooooooooooooooooooo")]
-        (and child-ok sibling-ok base-ok)))))
+    (while (< i 32)
+      (set! base (text_buf.append base "o"))
+      (set! i (+ i 1)))
+    (let
+      [outer-arena (arena.make)]
+      [child-ok : bool
+        (with-escape
+          outer-arena
+          (let
+            [child : text_buf.TextBuf (text_buf.append (clone base) "-inner")]
+            (string.eq
+              (text_buf.render child)
+              "oooooooooooooooooooooooooooooooo-inner")))]
+      [sibling-ok : bool
+        (with-escape
+          outer-arena
+          (let
+            [sibling : text_buf.TextBuf
+              (text_buf.append (clone base) "-sibling")]
+            (string.eq
+              (text_buf.render sibling)
+              "oooooooooooooooooooooooooooooooo-sibling")))]
+      [base-ok : bool
+        (string.eq (text_buf.render base) "oooooooooooooooooooooooooooooooo")]
+      (and child-ok sibling-ok base-ok))))
 
 (define (text-buf-borrowed-many-integration-ok?) : bool
   (let
@@ -98,17 +96,15 @@
     [buf : (text_buf_borrowed.TextBufBorrowed source)
       (text_buf_borrowed.empty-like (& source))]
     [index : i64 0]
-    (begin
-      (while (< index 40)
-        (begin
-          (set! buf (text_buf_borrowed.append buf (& source)))
-          (set! index (+ index 1))))
-      (and
-        (= (text_buf_borrowed.chunk-count buf) 40)
-        (= (text_buf_borrowed.length buf) 40)
-        (string.eq
-          (text_buf_borrowed.render buf)
-          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")))))
+    (while (< index 40)
+      (set! buf (text_buf_borrowed.append buf (& source)))
+      (set! index (+ index 1)))
+    (and
+      (= (text_buf_borrowed.chunk-count buf) 40)
+      (= (text_buf_borrowed.length buf) 40)
+      (string.eq
+        (text_buf_borrowed.render buf)
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"))))
 
 (define (text-buf-borrowed-empty-branch-integration-ok?) : bool
   (let
@@ -171,40 +167,38 @@
     [base : (text_buf_borrowed.TextBufBorrowed source)
       (text_buf_borrowed.empty-like (& source))]
     [index : i64 0]
-    (begin
-      (while (< index 33)
-        (begin
-          (set! base (text_buf_borrowed.append base (& source)))
-          (set! index (+ index 1))))
-      (let
-        [outer-arena (arena.make)]
-        (with-escape
-          outer-arena
-          (let
-            [child : (text_buf_borrowed.TextBufBorrowed source)
-              (text_buf_borrowed.append-copy
-                (text_buf_family.text-buf-family-shared-view base)
-                (& child-source))]
-            [sibling : (text_buf_borrowed.TextBufBorrowed source)
-              (text_buf_borrowed.append-copy
-                (text_buf_family.text-buf-family-shared-view base)
-                (& sibling-source))]
-            (and
-              (= (text_buf_borrowed.chunk-count base) 33)
-              (= (text_buf_borrowed.length base) 33)
-              (string.eq
-                (text_buf_borrowed.render base)
-                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-              (= (text_buf_borrowed.chunk-count child) 34)
-              (= (text_buf_borrowed.length child) 38)
-              (string.eq
-                (text_buf_borrowed.render child)
-                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxchild")
-              (= (text_buf_borrowed.chunk-count sibling) 34)
-              (= (text_buf_borrowed.length sibling) 40)
-              (string.eq
-                (text_buf_borrowed.render sibling)
-                "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxsibling"))))))))
+    (while (< index 33)
+      (set! base (text_buf_borrowed.append base (& source)))
+      (set! index (+ index 1)))
+    (let
+      [outer-arena (arena.make)]
+      (with-escape
+        outer-arena
+        (let
+          [child : (text_buf_borrowed.TextBufBorrowed source)
+            (text_buf_borrowed.append-copy
+              (text_buf_family.text-buf-family-shared-view base)
+              (& child-source))]
+          [sibling : (text_buf_borrowed.TextBufBorrowed source)
+            (text_buf_borrowed.append-copy
+              (text_buf_family.text-buf-family-shared-view base)
+              (& sibling-source))]
+          (and
+            (= (text_buf_borrowed.chunk-count base) 33)
+            (= (text_buf_borrowed.length base) 33)
+            (string.eq
+              (text_buf_borrowed.render base)
+              "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
+            (= (text_buf_borrowed.chunk-count child) 34)
+            (= (text_buf_borrowed.length child) 38)
+            (string.eq
+              (text_buf_borrowed.render child)
+              "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxchild")
+            (= (text_buf_borrowed.chunk-count sibling) 34)
+            (= (text_buf_borrowed.length sibling) 40)
+            (string.eq
+              (text_buf_borrowed.render sibling)
+              "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxsibling")))))))
 
 (define (text-buf-borrowed-owned-growth-integration-ok?) : bool
   (let
@@ -215,30 +209,28 @@
         (& source))]
     [many : (text_buf_borrowed.TextBufBorrowed source) base]
     [index : i64 0]
-    (begin
-      (while (< index 5)
-        (begin
-          (set! many (text_buf_borrowed.append-owned many "x"))
-          (set! index (+ index 1))))
-      (let
-        [left : (text_buf_borrowed.TextBufBorrowed source)
-          (text_buf_borrowed.append-owned
-            (text_buf_family.text-buf-family-shared-view many)
-            "-left")]
-        [right : (text_buf_borrowed.TextBufBorrowed source)
-          (text_buf_borrowed.append-owned
-            (text_buf_family.text-buf-family-shared-view many)
-            "-right")]
-        (and
-          (= (text_buf_borrowed.chunk-count many) 6)
-          (string.eq
-            (text_buf_borrowed.render
-              (text_buf_family.text-buf-family-shared-view many))
-            "seedxxxxx")
-          (string.eq (text_buf_borrowed.render left) "seedxxxxx-left")
-          (string.eq (text_buf_borrowed.render right) "seedxxxxx-right")
-          (= (text_buf_borrowed.chunk-count many) 6)
-          (string.eq (text_buf_borrowed.render many) "seedxxxxx"))))))
+    (while (< index 5)
+      (set! many (text_buf_borrowed.append-owned many "x"))
+      (set! index (+ index 1)))
+    (let
+      [left : (text_buf_borrowed.TextBufBorrowed source)
+        (text_buf_borrowed.append-owned
+          (text_buf_family.text-buf-family-shared-view many)
+          "-left")]
+      [right : (text_buf_borrowed.TextBufBorrowed source)
+        (text_buf_borrowed.append-owned
+          (text_buf_family.text-buf-family-shared-view many)
+          "-right")]
+      (and
+        (= (text_buf_borrowed.chunk-count many) 6)
+        (string.eq
+          (text_buf_borrowed.render
+            (text_buf_family.text-buf-family-shared-view many))
+          "seedxxxxx")
+        (string.eq (text_buf_borrowed.render left) "seedxxxxx-left")
+        (string.eq (text_buf_borrowed.render right) "seedxxxxx-right")
+        (= (text_buf_borrowed.chunk-count many) 6)
+        (string.eq (text_buf_borrowed.render many) "seedxxxxx")))))
 
 (define (text-buf-borrowed-replay-integration-ok?) : bool
   (let
@@ -348,12 +340,10 @@
   (let
     [text : String "x"]
     [index : i64 0]
-    (begin
-      (while (< index rounds)
-        (begin
-          (set! text (string.append (& text) (& text)))
-          (set! index (+ index 1))))
-      text)))
+    (while (< index rounds)
+      (set! text (string.append (& text) (& text)))
+      (set! index (+ index 1)))
+    text))
 
 (define (text-buf-batched-write-file-integration-ok?) : bool
   (let
@@ -394,23 +384,20 @@
     [number : String (string.int->string index)]
     [head : String (string.append (& number) ":")]
     [filler : String "-"]
-    (begin
-      (while (< (string-length (& filler)) size)
-        (set! filler (string.append (& filler) (& filler))))
-      (let
-        [chunk : String (string.append (& head) (& filler))]
-        (string.substring (& chunk) 0 size)))))
+    (while (< (string-length (& filler)) size)
+      (set! filler (string.append (& filler) (& filler))))
+    (let
+      [chunk : String (string.append (& head) (& filler))]
+      (string.substring (& chunk) 0 size))))
 
 (define (text-buf-small-chunks [count : i64] [size : i64]) : text_buf.TextBuf
   (let
     [buf : text_buf.TextBuf (text_buf.empty)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (text_buf.append! buf (text-buf-numbered-chunk index size))
-          (set! index (+ index 1))))
-      buf)))
+    (while (< index count)
+      (text_buf.append! buf (text-buf-numbered-chunk index size))
+      (set! index (+ index 1)))
+    buf))
 
 (define (text-buf-write-shapes-integration-ok?) : i64
   (let
@@ -485,24 +472,23 @@
       (< allocated (* 3 (text_buf.batched-write-threshold))))))
 
 (define (main) : i64
-  (begin
-    (unless (text-buf-integration-ok?) (return 2))
-    (unless (text-buf-borrowed-integration-ok?) (return 3))
-    (unless (text-buf-write-file-integration-ok?) (return 4))
-    (unless (text-buf-owned-persistence-integration-ok?) (return 5))
-    (unless (text-buf-owned-nested-arena-integration-ok?) (return 6))
-    (unless (text-buf-borrowed-many-integration-ok?) (return 7))
-    (unless (text-buf-borrowed-empty-branch-integration-ok?) (return 8))
-    (unless (text-buf-borrowed-dense-branch-integration-ok?) (return 9))
-    (unless (text-buf-borrowed-boundary-arena-integration-ok?) (return 10))
-    (unless (text-buf-borrowed-owned-growth-integration-ok?) (return 11))
-    (unless (text-buf-borrowed-replay-integration-ok?) (return 12))
-    (unless (text-buf-borrowed-merge-persistence-integration-ok?) (return 13))
-    (unless (text-buf-owned-clone-out-integration-ok?) (return 14))
-    (unless (text-buf-batched-write-file-integration-ok?) (return 15))
-    (unless (text-buf-oversized-chunk-write-file-integration-ok?) (return 16))
-    (let
-      [shapes : i64 (text-buf-write-shapes-integration-ok?)]
-      (unless (= shapes 0) (return shapes)))
-    (unless (text-buf-write-file-bounded-allocation-ok?) (return 24))
-    42))
+  (unless (text-buf-integration-ok?) (return 2))
+  (unless (text-buf-borrowed-integration-ok?) (return 3))
+  (unless (text-buf-write-file-integration-ok?) (return 4))
+  (unless (text-buf-owned-persistence-integration-ok?) (return 5))
+  (unless (text-buf-owned-nested-arena-integration-ok?) (return 6))
+  (unless (text-buf-borrowed-many-integration-ok?) (return 7))
+  (unless (text-buf-borrowed-empty-branch-integration-ok?) (return 8))
+  (unless (text-buf-borrowed-dense-branch-integration-ok?) (return 9))
+  (unless (text-buf-borrowed-boundary-arena-integration-ok?) (return 10))
+  (unless (text-buf-borrowed-owned-growth-integration-ok?) (return 11))
+  (unless (text-buf-borrowed-replay-integration-ok?) (return 12))
+  (unless (text-buf-borrowed-merge-persistence-integration-ok?) (return 13))
+  (unless (text-buf-owned-clone-out-integration-ok?) (return 14))
+  (unless (text-buf-batched-write-file-integration-ok?) (return 15))
+  (unless (text-buf-oversized-chunk-write-file-integration-ok?) (return 16))
+  (let
+    [shapes : i64 (text-buf-write-shapes-integration-ok?)]
+    (unless (= shapes 0) (return shapes)))
+  (unless (text-buf-write-file-bounded-allocation-ok?) (return 24))
+  42)

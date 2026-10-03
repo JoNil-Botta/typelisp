@@ -31,15 +31,13 @@
   [image : tlci_core.TlciImage]) : i64
   (match (tlci_core.tlci-emit-image image)
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]
+      (io.print-error message)
+      1]
     [(Ok bytes)
       (let
         [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
-        (begin
-          (io.write-file path (byte_buf.as-bytes (& contents)))
-          0))]))
+        (io.write-file path (byte_buf.as-bytes (& contents)))
+        0)]))
 
 (define (tlci-platform-corpus-write-unknown [path : String]) : i64
   (match (tlci_core.tlci-emit-image
@@ -48,16 +46,14 @@
       "corpus.platform-unknown"
       false))
     [(Err message)
-      (begin
-        (io.print-error message)
-        1)]
+      (io.print-error message)
+      1]
     [(Ok bytes)
       (let
         [_unknown-platform : unit (tlci_core.tlci-set-u64! (&mut bytes) 16 99)]
         [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
-        (begin
-          (io.write-file path (byte_buf.as-bytes (& contents)))
-          0))]))
+        (io.write-file path (byte_buf.as-bytes (& contents)))
+        0)]))
 
 (define (main) : i64
   (if (= (io.arg-count) 1)

@@ -41,6 +41,5 @@
     (+ (+ before after) sum)))
 
 (define (main) : i64
-  (begin
-    (unless (= (probe 5) 136) (io.panic "mixed group stack homes overlap"))
-    42))
+  (unless (= (probe 5) 136) (io.panic "mixed group stack homes overlap"))
+  42)

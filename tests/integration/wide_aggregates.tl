@@ -21,21 +21,19 @@
             (comptime.expr-var "i64")
             (comptime.expr-list-empty))]
         [index : i64 count]
-        (begin
-          (while (> index 0)
-            (begin
-              (set! index (- index 1))
-              (set!
-                items
-                (comptime.expr-list-cons
-                  (comptime.expr-call
-                    (comptime.expr-var
-                      (comptime.string-append "f" (comptime.int->string index)))
-                    member-type)
-                  items))))
-          `(defstruct ,name
-            ,@items
-            (tail i64))))]
+        (while (> index 0)
+          (set! index (- index 1))
+          (set!
+            items
+            (comptime.expr-list-cons
+              (comptime.expr-call
+                (comptime.expr-var
+                  (comptime.string-append "f" (comptime.int->string index)))
+                member-type)
+              items)))
+        `(defstruct ,name
+          ,@items
+          (tail i64)))]
     [_
       `(define (wide-aggregates-count-error) : i64
         (wide-aggregates-count-must-be-an-integer-literal))]))
@@ -53,14 +51,10 @@
             (comptime.expr-int 0)
             (comptime.expr-list-empty))]
         [index : i64 count]
-        (begin
-          (while (> index 0)
-            (begin
-              (set!
-                items
-                (comptime.expr-list-cons (comptime.expr-int index) items))
-              (set! index (- index 1))))
-          `(,name ,@items)))]
+        (while (> index 0)
+          (set! items (comptime.expr-list-cons (comptime.expr-int index) items))
+          (set! index (- index 1)))
+        `(,name ,@items))]
     [_ `(wide-aggregates-count-must-be-an-integer-literal)]))
 
 ;; `(wide-enum Name N)` declares `(defenum Name (V0 i64) ... (VN-1 i64))`.
@@ -76,20 +70,18 @@
             (comptime.expr-var "i64")
             (comptime.expr-list-empty))]
         [index : i64 count]
-        (begin
-          (while (> index 0)
-            (begin
-              (set! index (- index 1))
-              (set!
-                items
-                (comptime.expr-list-cons
-                  (comptime.expr-call
-                    (comptime.expr-var
-                      (comptime.string-append "V" (comptime.int->string index)))
-                    member-type)
-                  items))))
-          `(defenum ,name
-            ,@items)))]
+        (while (> index 0)
+          (set! index (- index 1))
+          (set!
+            items
+            (comptime.expr-list-cons
+              (comptime.expr-call
+                (comptime.expr-var
+                  (comptime.string-append "V" (comptime.int->string index)))
+                member-type)
+              items)))
+        `(defenum ,name
+          ,@items))]
     [_
       `(define (wide-aggregates-count-error) : i64
         (wide-aggregates-count-must-be-an-integer-literal))]))

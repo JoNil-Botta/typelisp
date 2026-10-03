@@ -83,89 +83,80 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      ;; Default Display is decimal-only and its shortest output must round-trip
-      ;; through the decimal parser. Integer-looking Display strings are not
-      ;; required to lex as float literals without an f32/f64 context.
-      (while (and (< i 192) ok)
-        (let
-          [sign : u64
-            (if (= (% i 2) 0)
-              (cast 0 : u64)
-              (shl (cast 1 : u64) 63))]
-          [exp-field : u64 (cast (+ 1 (% (* i 37) 2046)) : u64)]
-          [mantissa : u64
-            (bit-or
-              (shl (cast (% (* i 7919) 2048) : u64) 32)
-              (cast (* i 2654435761) : u64))]
-          [bits : u64 (bit-or sign (bit-or (shl exp-field 52) mantissa))]
-          [text : String
-            (format.format-float-core (io.float-f64-from-bits bits))]
-          (begin
-            (if (and
-              (not
-                (or
-                  (string.contains (& text) "e")
-                  (string.contains (& text) "E")))
-              (match (io.float-parse-f64 text)
-                [(IoFloatSomeF64 value) (= (io.float-f64-bits value) bits)]
-                [(IoFloatNoF64) false]))
-              unit
-              (set! ok false))
-            (set! i (+ i 1)))))
-      ok)))
+    ;; Default Display is decimal-only and its shortest output must round-trip
+    ;; through the decimal parser. Integer-looking Display strings are not
+    ;; required to lex as float literals without an f32/f64 context.
+    (while (and (< i 192) ok)
+      (let
+        [sign : u64
+          (if (= (% i 2) 0)
+            (cast 0 : u64)
+            (shl (cast 1 : u64) 63))]
+        [exp-field : u64 (cast (+ 1 (% (* i 37) 2046)) : u64)]
+        [mantissa : u64
+          (bit-or
+            (shl (cast (% (* i 7919) 2048) : u64) 32)
+            (cast (* i 2654435761) : u64))]
+        [bits : u64 (bit-or sign (bit-or (shl exp-field 52) mantissa))]
+        [text : String (format.format-float-core (io.float-f64-from-bits bits))]
+        (if (and
+          (not
+            (or (string.contains (& text) "e") (string.contains (& text) "E")))
+          (match (io.float-parse-f64 text)
+            [(IoFloatSomeF64 value) (= (io.float-f64-bits value) bits)]
+            [(IoFloatNoF64) false]))
+          unit
+          (set! ok false))
+        (set! i (+ i 1))))
+    ok))
 
 (define (fe-compiler-float-roundtrip-ok?) : bool
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      ;; Exercise finite f64 printer/parser pairs across signs, exponent
-      ;; fields, and mantissas.  NaN/Inf exponent fields are intentionally
-      ;; excluded from the generated set.
-      (while (and (< i 160) ok)
-        (let
-          [sign : u64
-            (if (= (% i 2) 0)
-              (cast 0 : u64)
-              (shl (cast 1 : u64) 63))]
-          [exp-field : u64 (cast (+ 1 (% (* i 29) 2046)) : u64)]
-          [mantissa : u64
-            (bit-or
-              (shl (cast (% (* i 193) 4096) : u64) 32)
-              (cast (* i 2246822519) : u64))]
-          [bits : u64 (bit-or sign (bit-or (shl exp-field 52) mantissa))]
-          [text : String
-            (cf.compiler-float-format-f64
-              (cf.compiler-float-f64-from-bits bits))]
-          (begin
-            (if (cf.compiler-float-parse-bits-eq? text bits)
-              unit
-              (set! ok false))
-            (set! i (+ i 1)))))
-      ;; Contextual f32 parsing rounds the widened f64 spelling back to the
-      ;; original binary32 payload.  Keep the same finite-only bound here.
-      (set! i 0)
-      (while (and (< i 160) ok)
-        (let
-          [sign : u32
-            (if (= (% i 2) 0)
-              (cast 0 : u32)
-              (shl (cast 1 : u32) 31))]
-          [exp-field : u32 (cast (+ 1 (% (* i 17) 254)) : u32)]
-          [mantissa : u32
-            (bit-or
-              (shl (cast (% (* i 71) 1024) : u32) 13)
-              (bit-and (cast (* i 2654435761) : u32) 0x7fffff))]
-          [bits : u32 (bit-or sign (bit-or (shl exp-field 23) mantissa))]
-          [value : f64 (cf.compiler-float-f32-bits-to-f64 (cast bits : u64))]
-          [text : String (cf.compiler-float-format-f64 value)]
-          (begin
-            (if (cf.compiler-float-parse-f32-bits-eq? text (cast bits : u64))
-              unit
-              (set! ok false))
-            (set! i (+ i 1)))))
-      ok)))
+    ;; Exercise finite f64 printer/parser pairs across signs, exponent
+    ;; fields, and mantissas.  NaN/Inf exponent fields are intentionally
+    ;; excluded from the generated set.
+    (while (and (< i 160) ok)
+      (let
+        [sign : u64
+          (if (= (% i 2) 0)
+            (cast 0 : u64)
+            (shl (cast 1 : u64) 63))]
+        [exp-field : u64 (cast (+ 1 (% (* i 29) 2046)) : u64)]
+        [mantissa : u64
+          (bit-or
+            (shl (cast (% (* i 193) 4096) : u64) 32)
+            (cast (* i 2246822519) : u64))]
+        [bits : u64 (bit-or sign (bit-or (shl exp-field 52) mantissa))]
+        [text : String
+          (cf.compiler-float-format-f64 (cf.compiler-float-f64-from-bits bits))]
+        (if (cf.compiler-float-parse-bits-eq? text bits)
+          unit
+          (set! ok false))
+        (set! i (+ i 1))))
+    ;; Contextual f32 parsing rounds the widened f64 spelling back to the
+    ;; original binary32 payload.  Keep the same finite-only bound here.
+    (set! i 0)
+    (while (and (< i 160) ok)
+      (let
+        [sign : u32
+          (if (= (% i 2) 0)
+            (cast 0 : u32)
+            (shl (cast 1 : u32) 31))]
+        [exp-field : u32 (cast (+ 1 (% (* i 17) 254)) : u32)]
+        [mantissa : u32
+          (bit-or
+            (shl (cast (% (* i 71) 1024) : u32) 13)
+            (bit-and (cast (* i 2654435761) : u32) 0x7fffff))]
+        [bits : u32 (bit-or sign (bit-or (shl exp-field 23) mantissa))]
+        [value : f64 (cf.compiler-float-f32-bits-to-f64 (cast bits : u64))]
+        [text : String (cf.compiler-float-format-f64 value)]
+        (if (cf.compiler-float-parse-f32-bits-eq? text (cast bits : u64))
+          unit
+          (set! ok false))
+        (set! i (+ i 1))))
+    ok))
 
 (define (fe-format-cst-malformed-number-at?
   [src : String]
@@ -232,25 +223,24 @@
 
 (test
   float-exponent-lexer-token-spellings
-  (begin
-    (fe-assert
-      (and
-        (fe-lex-float-token-ok? "1.5e-9" "1.5e-9")
-        (fe-lex-float-token-ok? "1e10" "1e10")
-        (fe-lex-float-token-ok? "2.5E+3" "2.5E+3")
-        (fe-lex-float-token-ok? "-1e-5" "-1e-5")
-        (fe-lex-float-token-ok? "-1.5e+9" "-1.5e+9")
-        (fe-lex-float-token-ok? "3.14" "3.14")
-        (fe-lex-spanned-float-token-ok? "1.5e-9" "1.5e-9")
-        (fe-lex-spanned-float-token-ok? "1e10" "1e10")
-        (fe-lex-spanned-float-token-ok? "2.5E+3" "2.5E+3")
-        (fe-lex-spanned-float-token-ok? "-1e-5" "-1e-5")
-        (fe-lex-spanned-float-token-ok? "-1.5e+9" "-1.5e+9")
-        (fe-lex-spanned-float-token-ok? "3.14" "3.14"))
-      "lexer exponent token spellings changed")
-    (fe-assert
-      (fe-lex-prefix-and-symbol-ok?)
-      "prefixed integer or symbol-e lexer behavior changed")))
+  (fe-assert
+    (and
+      (fe-lex-float-token-ok? "1.5e-9" "1.5e-9")
+      (fe-lex-float-token-ok? "1e10" "1e10")
+      (fe-lex-float-token-ok? "2.5E+3" "2.5E+3")
+      (fe-lex-float-token-ok? "-1e-5" "-1e-5")
+      (fe-lex-float-token-ok? "-1.5e+9" "-1.5e+9")
+      (fe-lex-float-token-ok? "3.14" "3.14")
+      (fe-lex-spanned-float-token-ok? "1.5e-9" "1.5e-9")
+      (fe-lex-spanned-float-token-ok? "1e10" "1e10")
+      (fe-lex-spanned-float-token-ok? "2.5E+3" "2.5E+3")
+      (fe-lex-spanned-float-token-ok? "-1e-5" "-1e-5")
+      (fe-lex-spanned-float-token-ok? "-1.5e+9" "-1.5e+9")
+      (fe-lex-spanned-float-token-ok? "3.14" "3.14"))
+    "lexer exponent token spellings changed")
+  (fe-assert
+    (fe-lex-prefix-and-symbol-ok?)
+    "prefixed integer or symbol-e lexer behavior changed"))
 
 (test
   float-exponent-lexer-malformed-literals
@@ -275,32 +265,23 @@
   (let
     [stream : ft.FormatTokenStream
       (format_tests.format-lex "(1.5e-9 1e10 2.5E+3 -1e-5 0x1e5)")]
-    (begin
-      (fe-assert
-        (and
-          (= (format_tests.format-token-tag-count stream (ft.fmt-tag-int)) 5)
-          (string.eq
-            (ft.format-token-text (ft.format-token-at stream 1))
-            "1.5e-9")
-          (string.eq
-            (ft.format-token-text (ft.format-token-at stream 2))
-            "1e10")
-          (string.eq
-            (ft.format-token-text (ft.format-token-at stream 3))
-            "2.5E+3")
-          (string.eq
-            (ft.format-token-text (ft.format-token-at stream 4))
-            "-1e-5")
-          (string.eq
-            (ft.format-token-text (ft.format-token-at stream 5))
-            "0x1e5")
-          (=
-            (ft.format-token-tag (ft.format-token-at stream 7))
-            (ft.fmt-tag-end)))
-        "formatter exponent atoms changed")
-      (fe-assert
-        (fe-format-cst-malformed-exponents-ok?)
-        "formatter malformed exponent diagnostics changed"))))
+    (fe-assert
+      (and
+        (= (format_tests.format-token-tag-count stream (ft.fmt-tag-int)) 5)
+        (string.eq
+          (ft.format-token-text (ft.format-token-at stream 1))
+          "1.5e-9")
+        (string.eq (ft.format-token-text (ft.format-token-at stream 2)) "1e10")
+        (string.eq
+          (ft.format-token-text (ft.format-token-at stream 3))
+          "2.5E+3")
+        (string.eq (ft.format-token-text (ft.format-token-at stream 4)) "-1e-5")
+        (string.eq (ft.format-token-text (ft.format-token-at stream 5)) "0x1e5")
+        (= (ft.format-token-tag (ft.format-token-at stream 7)) (ft.fmt-tag-end)))
+      "formatter exponent atoms changed")
+    (fe-assert
+      (fe-format-cst-malformed-exponents-ok?)
+      "formatter malformed exponent diagnostics changed")))
 
 (test
   float-exponent-format-rules-fixpoint
@@ -313,34 +294,30 @@
       (format_tests.format-rules-render-source-width
         (lx.global-shared-view formatted)
         80)]
-    (begin
-      (fe-assert
-        (string.eq formatted expected)
-        "formatter exponent rendering changed")
-      (fe-assert
-        (string.eq fixpoint formatted)
-        "formatter exponent fixpoint changed"))))
+    (fe-assert
+      (string.eq formatted expected)
+      "formatter exponent rendering changed")
+    (fe-assert
+      (string.eq fixpoint formatted)
+      "formatter exponent fixpoint changed")))
 
 (test
   float-exponent-format-cli-diagnostics
-  (begin
-    (fe-assert
-      (fe-format-cli-malformed-error? "1e" 1 1)
-      "missing 1e diagnostic")
-    (fe-assert
-      (fe-format-cli-malformed-error? "1e+" 1 1)
-      "missing 1e+ diagnostic")
-    (fe-assert
-      (fe-format-cli-malformed-error? "1.5e" 1 1)
-      "missing 1.5e diagnostic")
-    (fe-assert
-      (fe-format-cli-malformed-error? "\n  1.5e-" 2 3)
-      "missing multiline exponent diagnostic")
-    (match (fr.format-rules-render-source-width-result "\n  1.5e-" 80)
-      [(Ok _) (io.panic "malformed exponent unexpectedly formatted")]
-      [(Err err)
-        (fe-assert
-          (string.eq
-            (fcli.fmt-source-error-message "bad.tl" err)
-            "bad.tl:2:3: format lexer: malformed number literal")
-          "CLI malformed exponent path diagnostic changed")])))
+  (fe-assert (fe-format-cli-malformed-error? "1e" 1 1) "missing 1e diagnostic")
+  (fe-assert
+    (fe-format-cli-malformed-error? "1e+" 1 1)
+    "missing 1e+ diagnostic")
+  (fe-assert
+    (fe-format-cli-malformed-error? "1.5e" 1 1)
+    "missing 1.5e diagnostic")
+  (fe-assert
+    (fe-format-cli-malformed-error? "\n  1.5e-" 2 3)
+    "missing multiline exponent diagnostic")
+  (match (fr.format-rules-render-source-width-result "\n  1.5e-" 80)
+    [(Ok _) (io.panic "malformed exponent unexpectedly formatted")]
+    [(Err err)
+      (fe-assert
+        (string.eq
+          (fcli.fmt-source-error-message "bad.tl" err)
+          "bad.tl:2:3: format lexer: malformed number literal")
+        "CLI malformed exponent path diagnostic changed")]))

@@ -38,14 +38,12 @@
     (let
       [i : i64 0]
       [acc : i64 0]
-      (begin
-        (while (< i n)
-          (begin
-            (match (mk i i)
-              [(MSome v) (set! acc (+ acc v))]
-              [(MNone) (set! acc (+ acc 1))])
-            (set! i (+ i 1))))
-        acc))))
+      (while (< i n)
+        (match (mk i i)
+          [(MSome v) (set! acc (+ acc v))]
+          [(MNone) (set! acc (+ acc 1))])
+        (set! i (+ i 1)))
+      acc)))
 
 (define (main) : i64
   (let

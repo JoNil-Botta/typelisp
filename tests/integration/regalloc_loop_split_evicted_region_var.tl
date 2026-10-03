@@ -47,32 +47,28 @@
         (ptr-cast (ptr-offset ,dst ,off) : (MutPtr i64)))]
     [cp-w : i64 0]
     [cp-b : i64 (* cp-words 8)]
-    (begin
-      (while (< cp-w cp-words)
-        (begin
-          (unsafe
-            (ptr-write!
-              (ptr-offset cp-dst64 cp-w)
-              (ptr-read (ptr-offset cp-src64 cp-w))))
-          (set! cp-w (+ cp-w 1))))
-      (while (< cp-b ,n)
-        (begin
-          (unsafe
-            (ptr-write!
-              (ptr-offset ,dst (+ ,off cp-b))
-              (ptr-read (ptr-offset cp-src cp-b))))
-          (set! cp-b (+ cp-b 1))))
-      unit)))
+    (while (< cp-w cp-words)
+      (unsafe
+        (ptr-write!
+          (ptr-offset cp-dst64 cp-w)
+          (ptr-read (ptr-offset cp-src64 cp-w))))
+      (set! cp-w (+ cp-w 1)))
+    (while (< cp-b ,n)
+      (unsafe
+        (ptr-write!
+          (ptr-offset ,dst (+ ,off cp-b))
+          (ptr-read (ptr-offset cp-src cp-b))))
+      (set! cp-b (+ cp-b 1)))
+    unit))
 
 (define buf-reserve-calls : i64
   0)
 
 (define (buf-reserve! [buf : (&mut buf Buf)] [total : i64]) : unit
-  (begin
-    (set! buf-reserve-calls (+ buf-reserve-calls 1))
-    (if (> total buf.cap)
-      (io.panic "buf overflow")
-      unit)))
+  (set! buf-reserve-calls (+ buf-reserve-calls 1))
+  (if (> total buf.cap)
+    (io.panic "buf overflow")
+    unit))
 
 (define (buf-append5
   [buf : (&mut buf Buf)]
@@ -89,21 +85,19 @@
     [ne : i64 (string.string-length e)]
     [total : i64 (+ na (+ nb (+ nc (+ nd ne))))]
     [off : i64 buf.len]
-    (begin
-      (buf-reserve! buf (+ off total))
-      (let
-        [dst : (MutPtr u8) buf.data]
-        [ob : i64 (+ off na)]
-        [oc : i64 (+ ob nb)]
-        [od : i64 (+ oc nc)]
-        [oe : i64 (+ od nd)]
-        (begin
-          (copy-part! dst off a na)
-          (copy-part! dst ob b nb)
-          (copy-part! dst oc c nc)
-          (copy-part! dst od d nd)
-          (copy-part! dst oe e ne)))
-      (set! buf.len (+ off total)))))
+    (buf-reserve! buf (+ off total))
+    (let
+      [dst : (MutPtr u8) buf.data]
+      [ob : i64 (+ off na)]
+      [oc : i64 (+ ob nb)]
+      [od : i64 (+ oc nc)]
+      [oe : i64 (+ od nd)]
+      (copy-part! dst off a na)
+      (copy-part! dst ob b nb)
+      (copy-part! dst oc c nc)
+      (copy-part! dst od d nd)
+      (copy-part! dst oe e ne))
+    (set! buf.len (+ off total))))
 
 (define (byte-at [p : (MutPtr u8)] [i : i64]) : i64
   (cast
@@ -122,14 +116,12 @@
     [n : i64 (string.string-length s)]
     [i : i64 0]
     [bad : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (if (= (byte-at p (+ off i)) (str-byte-at s i))
-            unit
-            (set! bad (+ bad 1)))
-          (set! i (+ i 1))))
-      bad)))
+    (while (< i n)
+      (if (= (byte-at p (+ off i)) (str-byte-at s i))
+        unit
+        (set! bad (+ bad 1)))
+      (set! i (+ i 1)))
+    bad))
 
 (define (main) : i64
   (let
@@ -170,90 +162,84 @@
     [i : i64 0]
     [bad : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 512)
-        (begin
-          (unsafe
-            (ptr-write! (ptr-offset p i) (cast 170 : u8)))
-          (set! i (+ i 1))))
-      ;; Two appends: the first runs with off == 0, the second with off > 0.
-      (buf-append5 (&mut buf) (& a) (& b) (& c) (& d) (& e))
-      (buf-append5 (&mut buf) (& a) (& b) (& c) (& d) (& e))
-      (set!
-        total
-        (*
-          2
+    (while (< i 512)
+      (unsafe
+        (ptr-write! (ptr-offset p i) (cast 170 : u8)))
+      (set! i (+ i 1)))
+    ;; Two appends: the first runs with off == 0, the second with off > 0.
+    (buf-append5 (&mut buf) (& a) (& b) (& c) (& d) (& e))
+    (buf-append5 (&mut buf) (& a) (& b) (& c) (& d) (& e))
+    (set!
+      total
+      (*
+        2
+        (+
+          (string.string-length a)
           (+
-            (string.string-length a)
+            (string.string-length b)
             (+
-              (string.string-length b)
+              (string.string-length c)
+              (+ (string.string-length d) (string.string-length e)))))))
+    (if (= buf.len total)
+      unit
+      (set! bad (+ bad 1000)))
+    (set! i 0)
+    (while (< i 2)
+      (let
+        [base : i64
+          (*
+            i
+            (+
+              (string.string-length a)
               (+
-                (string.string-length c)
-                (+ (string.string-length d) (string.string-length e)))))))
-      (if (= buf.len total)
-        unit
-        (set! bad (+ bad 1000)))
-      (set! i 0)
-      (while (< i 2)
-        (let
-          [base : i64
-            (*
-              i
-              (+
-                (string.string-length a)
+                (string.string-length b)
                 (+
-                  (string.string-length b)
-                  (+
-                    (string.string-length c)
-                    (+ (string.string-length d) (string.string-length e))))))]
-          (begin
-            (set! bad (+ bad (check-part p base a)))
-            (set!
-              bad
-              (+ bad (check-part p (+ base (string.string-length a)) b)))
-            (set!
-              bad
+                  (string.string-length c)
+                  (+ (string.string-length d) (string.string-length e))))))]
+        (set! bad (+ bad (check-part p base a)))
+        (set! bad (+ bad (check-part p (+ base (string.string-length a)) b)))
+        (set!
+          bad
+          (+
+            bad
+            (check-part
+              p
+              (+ base (+ (string.string-length a) (string.string-length b)))
+              c)))
+        (set!
+          bad
+          (+
+            bad
+            (check-part
+              p
               (+
-                bad
-                (check-part
-                  p
-                  (+ base (+ (string.string-length a) (string.string-length b)))
-                  c)))
-            (set!
-              bad
+                base
+                (+
+                  (string.string-length a)
+                  (+ (string.string-length b) (string.string-length c))))
+              d)))
+        (set!
+          bad
+          (+
+            bad
+            (check-part
+              p
               (+
-                bad
-                (check-part
-                  p
+                base
+                (+
+                  (string.string-length a)
                   (+
-                    base
-                    (+
-                      (string.string-length a)
-                      (+ (string.string-length b) (string.string-length c))))
-                  d)))
-            (set!
-              bad
-              (+
-                bad
-                (check-part
-                  p
-                  (+
-                    base
-                    (+
-                      (string.string-length a)
-                      (+
-                        (string.string-length b)
-                        (+ (string.string-length c) (string.string-length d)))))
-                  e)))
-            (set! i (+ i 1)))))
-      ;; Nothing past the appended text may have been written.
-      (set! i total)
-      (while (< i 512)
-        (begin
-          (if (= (byte-at p i) 170)
-            unit
-            (set! bad (+ bad 1)))
-          (set! i (+ i 1))))
-      (if (and (= bad 0) (= buf-reserve-calls 2))
-        42
-        1))))
+                    (string.string-length b)
+                    (+ (string.string-length c) (string.string-length d)))))
+              e)))
+        (set! i (+ i 1))))
+    ;; Nothing past the appended text may have been written.
+    (set! i total)
+    (while (< i 512)
+      (if (= (byte-at p i) 170)
+        unit
+        (set! bad (+ bad 1)))
+      (set! i (+ i 1)))
+    (if (and (= bad 0) (= buf-reserve-calls 2))
+      42
+      1)))

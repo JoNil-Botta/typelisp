@@ -9,19 +9,17 @@
     [n : i64 19]
     [xs : i64v.Vec (i64z.make n)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (i64v.set-ref! (&mut xs) i (+ (* i 3) 1))
-          (set! i (+ i 1))))
-      (if (=
-        (let
-          [xs-slots (i64v.slots (& xs))]
-          (spmd-reduce
-            sum
-            ([j : i64 0 n])
-            0
-            (spmd-shuffle (array-ref xs-slots j) (program-index))))
-        532)
-        42
-        1))))
+    (while (< i n)
+      (i64v.set-ref! (&mut xs) i (+ (* i 3) 1))
+      (set! i (+ i 1)))
+    (if (=
+      (let
+        [xs-slots (i64v.slots (& xs))]
+        (spmd-reduce
+          sum
+          ([j : i64 0 n])
+          0
+          (spmd-shuffle (array-ref xs-slots j) (program-index))))
+      532)
+      42
+      1)))

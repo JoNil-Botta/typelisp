@@ -22,20 +22,15 @@
         (ptr-cast (ptr-offset dst start) : (MutPtr i64)))]
     [w : i64 0]
     [b : i64 (* words 8)]
-    (begin
-      (while (< w words)
-        (begin
-          (unsafe
-            (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
-          (set! w (+ w 1))))
-      (while (< b clen)
-        (begin
-          (unsafe
-            (ptr-write!
-              (ptr-offset dst (+ start b))
-              (ptr-read (ptr-offset src b))))
-          (set! b (+ b 1))))
-      unit)))
+    (while (< w words)
+      (unsafe
+        (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
+      (set! w (+ w 1)))
+    (while (< b clen)
+      (unsafe
+        (ptr-write! (ptr-offset dst (+ start b)) (ptr-read (ptr-offset src b))))
+      (set! b (+ b 1)))
+    unit))
 
 (define (fixture-backend-cat5
   [a : (& a str)]
@@ -57,14 +52,13 @@
         [dst : (MutPtr u8)
           (unsafe
             (__tl_array-data out))]
-        (begin
-          (fixture-copy-chunk-into a dst 0)
-          (fixture-copy-chunk-into b dst la)
-          (fixture-copy-chunk-into c dst (+ la lb))
-          (fixture-copy-chunk-into d dst (+ la (+ lb lc)))
-          (fixture-copy-chunk-into e dst (+ la (+ lb (+ lc ld))))
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))))
+        (fixture-copy-chunk-into a dst 0)
+        (fixture-copy-chunk-into b dst la)
+        (fixture-copy-chunk-into c dst (+ la lb))
+        (fixture-copy-chunk-into d dst (+ la (+ lb lc)))
+        (fixture-copy-chunk-into e dst (+ la (+ lb (+ lc ld))))
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
 
 (define (main) : i64
   (let

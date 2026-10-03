@@ -54,11 +54,10 @@
   [right : (-> i64 i64)]) : (-> i64 i64)
   (let
     [selected : (-> i64 i64) left]
-    (begin
-      (if cond
-        (set! selected right)
-        (set! selected left))
-      selected)))
+    (if cond
+      (set! selected right)
+      (set! selected left))
+    selected))
 
 ;; Swapping both loop-carried function handles makes phi destruction preserve a
 ;; parallel-copy cycle. Calling both handles after the loop also checks that the
@@ -71,16 +70,14 @@
     [left : (-> i64 i64) first]
     [right : (-> i64 i64) second]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [old-left : (-> i64 i64) left]
-          [old-right : (-> i64 i64) right]
-          (begin
-            (set! left old-right)
-            (set! right old-left)
-            (set! index (+ index 1)))))
-      (+ (* 10 (left 3)) (right 3)))))
+    (while (< index count)
+      (let
+        [old-left : (-> i64 i64) left]
+        [old-right : (-> i64 i64) right]
+        (set! left old-right)
+        (set! right old-left)
+        (set! index (+ index 1))))
+    (+ (* 10 (left 3)) (right 3))))
 
 (define (ssa-handle-string-score [cond : bool]) : i64
   (let

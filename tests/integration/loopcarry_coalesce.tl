@@ -36,19 +36,17 @@
   (let
     [store : i64 0]
     [scan : i64 0]
-    (begin
-      (while (< scan n)
+    (while (< scan n)
+      (if (< (array-ref xs scan) pivot)
         (begin
-          (if (< (array-ref xs scan) pivot)
-            (begin
-              ;; real call in the loop body -> `store` (live across it) must be
-              ;; callee-saved or spill; plus a bounds-checked array element store.
-              (sink (bit-and scan 3))
-              (set! (array-ref xs store) (array-ref xs scan))
-              (set! store (+ store 1)))
-            unit)
-          (set! scan (+ scan 1))))
-      store)))
+          ;; real call in the loop body -> `store` (live across it) must be
+          ;; callee-saved or spill; plus a bounds-checked array element store.
+          (sink (bit-and scan 3))
+          (set! (array-ref xs store) (array-ref xs scan))
+          (set! store (+ store 1)))
+        unit)
+      (set! scan (+ scan 1)))
+    store))
 
 (define (main) : i64
   (let
@@ -56,16 +54,14 @@
     [n : i64 1000]
     [xs : (__tl_dyn-array i64) (__tl_make-array i64 1000)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (+ i s))
-          (set! i (+ i 1))))
-      ;; xs[scan] < pivot  <=>  scan + s < threshold + s  <=>  scan < threshold,
-      ;; so count = threshold (clamped to n). Both calls leave xs unchanged.
-      (let
-        [r1 : i64 (count-below (&mut xs) n (+ 500 s))]
-        [r2 : i64 (count-below (&mut xs) n (+ 300 s))]
-        (if (and (= r1 500) (= r2 300))
-          42
-          1)))))
+    (while (< i n)
+      (set! (array-ref xs i) (+ i s))
+      (set! i (+ i 1)))
+    ;; xs[scan] < pivot  <=>  scan + s < threshold + s  <=>  scan < threshold,
+    ;; so count = threshold (clamped to n). Both calls leave xs unchanged.
+    (let
+      [r1 : i64 (count-below (&mut xs) n (+ 500 s))]
+      [r2 : i64 (count-below (&mut xs) n (+ 300 s))]
+      (if (and (= r1 500) (= r2 300))
+        42
+        1))))

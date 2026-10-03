@@ -5,7 +5,6 @@
 (import stdlib.io)
 
 (define (main) : i64
-  (begin
-    (io.print-format "{}" "hello\n")
-    (io.print-format "{}" "world\n")
-    0))
+  (io.print-format "{}" "hello\n")
+  (io.print-format "{}" "world\n")
+  0)

@@ -7,10 +7,9 @@
 (define (set-both
   [left : (&mut bags (__tl_dyn-array i64))]
   [right : (&mut bags (__tl_dyn-array i64))]) : i64
-  (begin
-    (set! (array-ref left 0) 18)
-    (set! (array-ref right 0) 24)
-    (+ (array-ref left 0) (array-ref right 0))))
+  (set! (array-ref left 0) 18)
+  (set! (array-ref right 0) 24)
+  (+ (array-ref left 0) (array-ref right 0)))
 
 (define (main) : i64
   (let

@@ -19,28 +19,25 @@
     [out : (__tl_dyn-array f32) (__tl_make-array f32 n)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            (array-ref src i)
-            (if (= (% i 2) 1)
-              (cast i : u32)
-              (cast 0 : u32)))
-          (set! (array-ref out i) (cast 100 : f32))
-          (set! i (+ i 1))))
-      (fill (& src) (&mut out) n)
-      (set! i 0)
-      (while (< i n)
-        (begin
-          (unless
-            (=
-              (array-ref out i)
-              (if (= (% i 2) 1)
-                (cast i : f32)
-                (cast 100 : f32)))
-            (set! ok false))
-          (set! i (+ i 1))))
-      (if ok
-        42
-        1))))
+    (while (< i n)
+      (set!
+        (array-ref src i)
+        (if (= (% i 2) 1)
+          (cast i : u32)
+          (cast 0 : u32)))
+      (set! (array-ref out i) (cast 100 : f32))
+      (set! i (+ i 1)))
+    (fill (& src) (&mut out) n)
+    (set! i 0)
+    (while (< i n)
+      (unless
+        (=
+          (array-ref out i)
+          (if (= (% i 2) 1)
+            (cast i : f32)
+            (cast 100 : f32)))
+        (set! ok false))
+      (set! i (+ i 1)))
+    (if ok
+      42
+      1)))

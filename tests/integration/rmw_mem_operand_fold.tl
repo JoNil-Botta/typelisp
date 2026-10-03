@@ -49,25 +49,22 @@
 (define (rmw-bump [n : i64] [k : i64]) : unit
   (let
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! rmw-add (+ rmw-add 1))
-          (set! rmw-sub (- rmw-sub k))
-          (set! rmw-or (bit-or rmw-or i))
-          (set! rmw-and (bit-and rmw-and (+ i 1024)))
-          (set! rmw-xor (bit-xor rmw-xor i))
-          (set! i (+ i 1))))
-      unit)))
+    (while (< i n)
+      (set! rmw-add (+ rmw-add 1))
+      (set! rmw-sub (- rmw-sub k))
+      (set! rmw-or (bit-or rmw-or i))
+      (set! rmw-and (bit-and rmw-and (+ i 1024)))
+      (set! rmw-xor (bit-xor rmw-xor i))
+      (set! i (+ i 1)))
+    unit))
 
 ;; The updated value is the result. The emitter answers that with a RELOAD of
 ;; the cell rather than by keeping the register, so the register still dies at
 ;; the store and this folds too -- the fold and the reload together are still
 ;; one instruction fewer than the unfolded triple.
 (define (rmw-bump-and-read [k : i64]) : i64
-  (begin
-    (set! rmw-hits (+ rmw-hits k))
-    rmw-hits))
+  (set! rmw-hits (+ rmw-hits k))
+  rmw-hits)
 
 ;; The updated value is consumed TWICE. The emitter still answers with a single
 ;; reload rather than by keeping the register alive across the store, so this
@@ -79,9 +76,8 @@
 ;; src/compiler_backend_tests.tl, which can spell the shapes this emitter never
 ;; produces for a global cell.
 (define (rmw-bump-and-double [k : i64]) : i64
-  (begin
-    (set! rmw-pair (+ rmw-pair k))
-    (+ rmw-pair rmw-pair)))
+  (set! rmw-pair (+ rmw-pair k))
+  (+ rmw-pair rmw-pair))
 
 (define (rmw-step [k : i64]) : i64
   (+ k 1))
@@ -91,13 +87,11 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! rmw-side (+ rmw-side 3))
-          (set! acc (+ acc (rmw-step i)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! rmw-side (+ rmw-side 3))
+      (set! acc (+ acc (rmw-step i)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
@@ -105,15 +99,13 @@
     [k : i64 (string.>int (io.arg 2))]
     [i : i64 0]
     [seen : i64 0]
-    (begin
-      (rmw-bump n k)
-      (while (< i n)
-        (begin
-          (set! seen (+ seen (rmw-bump-and-read k)))
-          (set! i (+ i 1))))
-      (io.print-format "{} {}\n" rmw-add rmw-sub)
-      (io.print-format "{} {} {}\n" rmw-or rmw-and rmw-xor)
-      (io.print-format "{} {}\n" rmw-hits seen)
-      (io.print-format "{} {}\n" (rmw-bump-across-call n) rmw-side)
-      (io.print-format "{} {}\n" (rmw-bump-and-double k) rmw-pair)
-      42)))
+    (rmw-bump n k)
+    (while (< i n)
+      (set! seen (+ seen (rmw-bump-and-read k)))
+      (set! i (+ i 1)))
+    (io.print-format "{} {}\n" rmw-add rmw-sub)
+    (io.print-format "{} {} {}\n" rmw-or rmw-and rmw-xor)
+    (io.print-format "{} {}\n" rmw-hits seen)
+    (io.print-format "{} {}\n" (rmw-bump-across-call n) rmw-side)
+    (io.print-format "{} {}\n" (rmw-bump-and-double k) rmw-pair)
+    42))

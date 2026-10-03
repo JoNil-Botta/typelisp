@@ -12,12 +12,10 @@
   (let
     [i : i64 0]
     [total : i64 bias]
-    (begin
-      (while (< i (array-length values))
-        (begin
-          (set! total (+ (* total 3) (array-ref values i)))
-          (set! i (+ i 1))))
-      total)))
+    (while (< i (array-length values))
+      (set! total (+ (* total 3) (array-ref values i)))
+      (set! i (+ i 1)))
+    total))
 
 ;; A prefix update before the call.
 (define (lag-prefix [values : (& values (__tl_dyn-array i64))] [n : i64]) : i64
@@ -26,14 +24,12 @@
     [a : i64 100]
     [d : i64 0]
     [r : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! d (- d 1))
-          (set! r (- a (probe values 0)))
-          (set! a i)
-          (set! i (+ i 1))))
-      (+ (* r 1000) d))))
+    (while (< i n)
+      (set! d (- d 1))
+      (set! r (- a (probe values 0)))
+      (set! a i)
+      (set! i (+ i 1)))
+    (+ (* r 1000) d)))
 
 ;; The lagged copy alone.
 (define (lag-plain [values : (& values (__tl_dyn-array i64))] [n : i64]) : i64
@@ -41,13 +37,11 @@
     [i : i64 0]
     [a : i64 100]
     [r : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! r (- a (probe values 0)))
-          (set! a i)
-          (set! i (+ i 1))))
-      r)))
+    (while (< i n)
+      (set! r (- a (probe values 0)))
+      (set! a i)
+      (set! i (+ i 1)))
+    r))
 
 ;; The lagged value feeds a sum rather than the call's neighbour.
 (define (lag-sum [values : (& values (__tl_dyn-array i64))] [n : i64]) : i64
@@ -56,21 +50,18 @@
     [a : i64 100]
     [s : i64 0]
     [r : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! s (+ s a))
-          (set! r (probe values 0))
-          (set! a i)
-          (set! i (+ i 1))))
-      (+ s r))))
+    (while (< i n)
+      (set! s (+ s a))
+      (set! r (probe values 0))
+      (set! a i)
+      (set! i (+ i 1)))
+    (+ s r)))
 
 (define (main) : i64
   (let
     [values : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [n : i64 (string.>int (io.arg 1))]
-    (begin
-      (io.println "{}" (lag-prefix (& values) n))
-      (io.println "{}" (lag-plain (& values) n))
-      (io.println "{}" (lag-sum (& values) n))
-      42)))
+    (io.println "{}" (lag-prefix (& values) n))
+    (io.println "{}" (lag-plain (& values) n))
+    (io.println "{}" (lag-sum (& values) n))
+    42))

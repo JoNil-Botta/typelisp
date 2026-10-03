@@ -6,14 +6,13 @@
     [d : i64 13]
     [e : i64 17]
     [f : i64 19]
-    (begin
-      (set! a (+ a seed))
-      (set! b (+ b a))
-      (set! c (+ c b))
-      (set! d (+ d c))
-      (set! e (+ e d))
-      (set! f (+ f e))
-      (+ (+ (+ a b) (+ c d)) (+ e f)))))
+    (set! a (+ a seed))
+    (set! b (+ b a))
+    (set! c (+ c b))
+    (set! d (+ d c))
+    (set! e (+ e d))
+    (set! f (+ f e))
+    (+ (+ (+ a b) (+ c d)) (+ e f))))
 
 (define (narrow-homes) : i64
   (let

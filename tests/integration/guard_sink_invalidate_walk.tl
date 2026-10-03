@@ -40,45 +40,39 @@
   (let
     [node : i64 gs-head]
     [found : bool false]
-    (begin
-      (while (and (>= node 0) (not found))
-        (begin
-          (set! gs-steps (+ gs-steps 1))
-          (if (gs-mentions? node var)
-            (set! found true)
-            (set! node (vec-ref (& gs-next) node)))))
-      (when found (set! gs-hits (+ gs-hits 1))))))
+    (while (and (>= node 0) (not found))
+      (set! gs-steps (+ gs-steps 1))
+      (if (gs-mentions? node var)
+        (set! found true)
+        (set! node (vec-ref (& gs-next) node))))
+    (when found (set! gs-hits (+ gs-hits 1)))))
 
 (define (gs-build! [count : i64]) : unit
   (let
     [i : i64 0]
-    (begin
-      (set! gs-next (zero-vec count))
-      (set! gs-key (zero-vec count))
-      (while (< i count)
-        (begin
-          (vec-set! (&mut gs-next) i (- i 1))
-          (vec-set! (&mut gs-key) i (* i 10))
-          (set! i (+ i 1))))
-      (set! gs-head (- count 1)))))
+    (set! gs-next (zero-vec count))
+    (set! gs-key (zero-vec count))
+    (while (< i count)
+      (vec-set! (&mut gs-next) i (- i 1))
+      (vec-set! (&mut gs-key) i (* i 10))
+      (set! i (+ i 1)))
+    (set! gs-head (- count 1))))
 
 (define (main) : i64
   (let
     [empty-calls : i64 0]
-    (begin
-      ;; Empty list: every call takes the guard's bypass.
-      (while (< empty-calls 4)
-        (begin
-          (gs-invalidate (* empty-calls 10))
-          (set! empty-calls (+ empty-calls 1))))
-      (io.print-format "{}\n" gs-hits)
-      (io.print-format "{}\n" gs-steps)
-      (gs-build! 6)
-      ;; A hit near the head, a hit near the tail, and a miss that walks the
-      ;; whole list.
-      (gs-invalidate 50)
-      (gs-invalidate 0)
-      (gs-invalidate 7)
-      (io.print-format "{}\n" gs-hits)
-      (io.print-format "{}\n" gs-steps)
-      42)))
+    ;; Empty list: every call takes the guard's bypass.
+    (while (< empty-calls 4)
+      (gs-invalidate (* empty-calls 10))
+      (set! empty-calls (+ empty-calls 1)))
+    (io.print-format "{}\n" gs-hits)
+    (io.print-format "{}\n" gs-steps)
+    (gs-build! 6)
+    ;; A hit near the head, a hit near the tail, and a miss that walks the
+    ;; whole list.
+    (gs-invalidate 50)
+    (gs-invalidate 0)
+    (gs-invalidate 7)
+    (io.print-format "{}\n" gs-hits)
+    (io.print-format "{}\n" gs-steps)
+    42))

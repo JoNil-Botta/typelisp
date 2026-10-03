@@ -21,10 +21,9 @@
     [p : (MutPtr i64)
       (unsafe
         (ptr-addr-of value))]
-    (begin
-      (set! value 5)
-      (write-seven p depth)
-      value)))
+    (set! value 5)
+    (write-seven p depth)
+    value))
 
 ;; The loop variant: each iteration's `set!` is overwritten by the call.
 (define (loop-set-after-addr [depth : i64]) : i64
@@ -35,14 +34,12 @@
         (ptr-addr-of value))]
     [sum : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i 2)
-        (begin
-          (set! value 1)
-          (write-seven p depth)
-          (set! sum (+ sum value))
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i 2)
+      (set! value 1)
+      (write-seven p depth)
+      (set! sum (+ sum value))
+      (set! i (+ i 1)))
+    sum))
 
 ;; A copy taken before the write keeps the old value: `saved` must not be
 ;; replaced by `value` after the call.
@@ -52,13 +49,11 @@
     [p : (MutPtr i64)
       (unsafe
         (ptr-addr-of value))]
-    (begin
-      (set! value 3)
-      (let
-        [saved : i64 value]
-        (begin
-          (write-seven p depth)
-          (+ saved value))))))
+    (set! value 3)
+    (let
+      [saved : i64 value]
+      (write-seven p depth)
+      (+ saved value))))
 
 ;; An expression of the local recomputed after the write sees the new value.
 (define (expr-after-write [depth : i64]) : i64
@@ -68,9 +63,8 @@
       (unsafe
         (ptr-addr-of value))]
     [before : i64 (+ value 1)]
-    (begin
-      (write-seven p depth)
-      (+ before (+ value 1)))))
+    (write-seven p depth)
+    (+ before (+ value 1))))
 
 (define (main) : i64
   (cond

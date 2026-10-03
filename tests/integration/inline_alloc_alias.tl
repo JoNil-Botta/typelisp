@@ -128,34 +128,32 @@
     [owner : arena.Arena (arena.make)]
     [shared : arena.Arena (arena.make-atomic)]
     [ok : bool (check)]
-    (begin
-      (in-arena
-        owner
-        (begin
-          (set! ok (and (check) ok))
-          ;; The inline path compares against the usable end on Linux (offset
-          ;; 24) and the committed end on Windows (offset 64). Linux chains a
-          ;; new segment there. Windows first commits more of the same
-          ;; reservation, and chains a new segment only at its reserved end
-          ;; (offset 24).
-          (fill-below owner (cfg windows 64 24))
-          (set! ok (and (in-root-segment? owner) ok))
-          (cfg
-            windows
-            (let
-              [committed : i64 (arena-word owner 64)]
-              (begin
-                (set! ok (and (check) ok))
-                (set! ok (and (in-root-segment? owner) ok))
-                (set! ok (and (> (arena-word owner 64) committed) ok))
-                (fill-below owner 24)
-                (set! ok (and (in-root-segment? owner) ok))
-                (set! ok (and (check) ok))))
+    (in-arena
+      owner
+      (begin
+        (set! ok (and (check) ok))
+        ;; The inline path compares against the usable end on Linux (offset
+        ;; 24) and the committed end on Windows (offset 64). Linux chains a
+        ;; new segment there. Windows first commits more of the same
+        ;; reservation, and chains a new segment only at its reserved end
+        ;; (offset 24).
+        (fill-below owner (cfg windows 64 24))
+        (set! ok (and (in-root-segment? owner) ok))
+        (cfg
+          windows
+          (let
+            [committed : i64 (arena-word owner 64)]
+            (set! ok (and (check) ok))
+            (set! ok (and (in-root-segment? owner) ok))
+            (set! ok (and (> (arena-word owner 64) committed) ok))
+            (fill-below owner 24)
+            (set! ok (and (in-root-segment? owner) ok))
             (set! ok (and (check) ok)))
-          (set! ok (and (not (in-root-segment? owner)) ok))))
-      (in-arena shared (set! ok (and (check) ok)))
-      (arena.destroy-safe! owner)
-      (arena.destroy-safe! shared)
-      (if ok
-        42
-        1))))
+          (set! ok (and (check) ok)))
+        (set! ok (and (not (in-root-segment? owner)) ok))))
+    (in-arena shared (set! ok (and (check) ok)))
+    (arena.destroy-safe! owner)
+    (arena.destroy-safe! shared)
+    (if ok
+      42
+      1)))

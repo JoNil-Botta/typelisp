@@ -91,68 +91,67 @@
         (begin
           (set! evaluations (+ evaluations 1))
           evaluated-once))]
-    (begin
-      (require
-        (eq_structural_sample.eq equal-left equal-right)
-        "generated hash equality fixture must compare equal")
-      (require (= same-left same-right) "equal values must hash equally")
-      (require
-        (= evaluations 1)
-        "generated hash must evaluate its input exactly once")
-      (require
-        (= evaluated-once-hash same-left)
-        "one-evaluation wrapper must preserve the value hash")
-      (require (!= same-left field-hash) "field values must affect the hash")
-      (require (!= same-left variant-hash) "enum variants must affect the hash")
-      (require
-        (!= same-left empty-variant-hash)
-        "empty enum variants must be distinct")
-      (require (!= same-left text-hash) "enum payloads must affect the hash")
-      (require
-        (!= tuple-hash tuple-reversed-hash)
-        "tuple element order must affect the hash")
-      (require
-        (!= array-hash array-reversed-hash)
-        "array element order must affect the hash")
-      (require (>= empty-hash 0) "empty aggregates must produce a valid hash")
-      (require (= same-left 742111166) "nested hash golden value changed")
-      (require (= tuple-hash 1095212616) "tuple hash golden value changed")
-      (require (= array-hash 92115361) "array hash golden value changed")
-      (require (= empty-hash 323376260) "empty hash golden value changed")
-      (require (= (hash_unit.hash unit) 1442) "unit hash golden value changed")
-      (require
-        (!= (hash_bool.hash true) (hash_bool.hash false))
-        "bool values affect the hash")
-      (require
-        (!= (hash_char.hash 'A') (hash_char.hash 'B'))
-        "char values affect the hash")
-      (require
-        (= (hash_i64.hash -7) (hash_i64.hash -7))
-        "i64 hashes deterministically")
-      (require
-        (= (hash_i32.hash (cast -7 : i32)) (hash_i32.hash (cast -7 : i32)))
-        "i32 hashes deterministically")
-      (require
-        (= (hash_i16.hash (cast -7 : i16)) (hash_i16.hash (cast -7 : i16)))
-        "i16 hashes deterministically")
-      (require
-        (= (hash_i8.hash (cast -7 : i8)) (hash_i8.hash (cast -7 : i8)))
-        "i8 hashes deterministically")
-      (require
-        (= (hash_u64.hash (cast 7 : u64)) (hash_u64.hash (cast 7 : u64)))
-        "u64 hashes deterministically")
-      (require
-        (= (hash_u32.hash (cast 7 : u32)) (hash_u32.hash (cast 7 : u32)))
-        "u32 hashes deterministically")
-      (require
-        (= (hash_u16.hash (cast 7 : u16)) (hash_u16.hash (cast 7 : u16)))
-        "u16 hashes deterministically")
-      (require
-        (= (hash_u8.hash (cast 7 : u8)) (hash_u8.hash (cast 7 : u8)))
-        "u8 hashes deterministically")
-      (require
-        (=
-          (hash_string.hash "same")
-          (hash_string.hash (string_mod.append "sa" "me")))
-        "equal distinct owned strings must hash equally")
-      0)))
+    (require
+      (eq_structural_sample.eq equal-left equal-right)
+      "generated hash equality fixture must compare equal")
+    (require (= same-left same-right) "equal values must hash equally")
+    (require
+      (= evaluations 1)
+      "generated hash must evaluate its input exactly once")
+    (require
+      (= evaluated-once-hash same-left)
+      "one-evaluation wrapper must preserve the value hash")
+    (require (!= same-left field-hash) "field values must affect the hash")
+    (require (!= same-left variant-hash) "enum variants must affect the hash")
+    (require
+      (!= same-left empty-variant-hash)
+      "empty enum variants must be distinct")
+    (require (!= same-left text-hash) "enum payloads must affect the hash")
+    (require
+      (!= tuple-hash tuple-reversed-hash)
+      "tuple element order must affect the hash")
+    (require
+      (!= array-hash array-reversed-hash)
+      "array element order must affect the hash")
+    (require (>= empty-hash 0) "empty aggregates must produce a valid hash")
+    (require (= same-left 742111166) "nested hash golden value changed")
+    (require (= tuple-hash 1095212616) "tuple hash golden value changed")
+    (require (= array-hash 92115361) "array hash golden value changed")
+    (require (= empty-hash 323376260) "empty hash golden value changed")
+    (require (= (hash_unit.hash unit) 1442) "unit hash golden value changed")
+    (require
+      (!= (hash_bool.hash true) (hash_bool.hash false))
+      "bool values affect the hash")
+    (require
+      (!= (hash_char.hash 'A') (hash_char.hash 'B'))
+      "char values affect the hash")
+    (require
+      (= (hash_i64.hash -7) (hash_i64.hash -7))
+      "i64 hashes deterministically")
+    (require
+      (= (hash_i32.hash (cast -7 : i32)) (hash_i32.hash (cast -7 : i32)))
+      "i32 hashes deterministically")
+    (require
+      (= (hash_i16.hash (cast -7 : i16)) (hash_i16.hash (cast -7 : i16)))
+      "i16 hashes deterministically")
+    (require
+      (= (hash_i8.hash (cast -7 : i8)) (hash_i8.hash (cast -7 : i8)))
+      "i8 hashes deterministically")
+    (require
+      (= (hash_u64.hash (cast 7 : u64)) (hash_u64.hash (cast 7 : u64)))
+      "u64 hashes deterministically")
+    (require
+      (= (hash_u32.hash (cast 7 : u32)) (hash_u32.hash (cast 7 : u32)))
+      "u32 hashes deterministically")
+    (require
+      (= (hash_u16.hash (cast 7 : u16)) (hash_u16.hash (cast 7 : u16)))
+      "u16 hashes deterministically")
+    (require
+      (= (hash_u8.hash (cast 7 : u8)) (hash_u8.hash (cast 7 : u8)))
+      "u8 hashes deterministically")
+    (require
+      (=
+        (hash_string.hash "same")
+        (hash_string.hash (string_mod.append "sa" "me")))
+      "equal distinct owned strings must hash equally")
+    0))

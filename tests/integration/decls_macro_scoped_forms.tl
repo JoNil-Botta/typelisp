@@ -30,16 +30,14 @@
       (let
         [i : i64 0]
         [sum : i64 0]
-        (begin
-          (while true
-            (begin
-              (set! i (+ i 1))
-              (if (> i limit)
-                (break)
-                (if (= (% i 2) 0)
-                  (continue)
-                  (set! sum (+ sum i))))))
-          sum)))
+        (while true
+          (set! i (+ i 1))
+          (if (> i limit)
+            (break)
+            (if (= (% i 2) 0)
+              (continue)
+              (set! sum (+ sum i)))))
+        sum))
     (define (lambda-apply [x : i64]) : i64
       (let
         [twice

@@ -9,10 +9,9 @@
 (define (compiler-arena-debug-fixture-protected) : i64
   (let
     [handle : i64 (arena.tl_arena_make)]
-    (begin
-      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
-      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
-      handle)))
+    (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
+    (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
+    handle))
 
 (define (compiler-arena-debug-fixture-allowed) : i64
   (let
@@ -21,9 +20,8 @@
       (unsafe
         (arena.tl_arena_set handle))]
     [values : (__tl_dyn-array i64) (__tl_make-array i64 1024)]
-    (begin
-      (set! (array-ref values 1023) 42)
-      (array-ref values 1023))))
+    (set! (array-ref values 1023) 42)
+    (array-ref values 1023)))
 
 (define (compiler-arena-debug-fixture-reset-mark) : i64
   (let
@@ -33,10 +31,9 @@
         (arena.tl_arena_set handle))]
     [mark : i64 (arena.tl_region_mark)]
     [_values : (__tl_dyn-array i64) (__tl_make-array i64 16)]
-    (begin
-      (unsafe
-        (arena.tl_region_reset mark))
-      0)))
+    (unsafe
+      (arena.tl_region_reset mark))
+    0))
 
 (define (compiler-arena-debug-fixture-reset-all) : i64
   (let
@@ -44,10 +41,9 @@
     [_set : unit
       (unsafe
         (arena.tl_arena_set handle))]
-    (begin
-      (unsafe
-        (arena.tl_region_reset 0))
-      0)))
+    (unsafe
+      (arena.tl_region_reset 0))
+    0))
 
 (define (compiler-arena-debug-fixture-overflow-reset) : i64
   (let
@@ -58,11 +54,10 @@
       (unsafe
         (arena.tl_arena_set handle))]
     [_overflow : i64 (tl_alloc 16777216)]
-    (begin
-      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
-      (unsafe
-        (arena.tl_region_reset 0))
-      0)))
+    (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
+    (unsafe
+      (arena.tl_region_reset 0))
+    0))
 
 (define (compiler-arena-debug-fixture-implicit-reset) : i64
   (let
@@ -71,11 +66,10 @@
         (arena.tl_arena_set 0))]
     [_allocation : i64 (tl_alloc 8)]
     [handle : i64 (arena.tl_arena_current)]
-    (begin
-      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
-      (unsafe
-        (arena.tl_region_reset 0))
-      0)))
+    (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
+    (unsafe
+      (arena.tl_region_reset 0))
+    0))
 
 (define (compiler-arena-debug-fixture-unprotected-reset) : i64
   (let
@@ -83,18 +77,16 @@
       (unsafe
         (arena.tl_arena_set 0))]
     [_allocation : i64 (tl_alloc 8)]
-    (begin
-      (unsafe
-        (arena.tl_region_reset 0))
-      42)))
+    (unsafe
+      (arena.tl_region_reset 0))
+    42))
 
 (define (compiler-arena-debug-fixture-destroy) : i64
   (let
     [handle : i64 (compiler-arena-debug-fixture-protected)]
-    (begin
-      (unsafe
-        (arena.tl_arena_destroy handle))
-      0)))
+    (unsafe
+      (arena.tl_arena_destroy handle))
+    0))
 
 (define (compiler-arena-debug-fixture-pool-install) : i64
   (let
@@ -108,33 +100,30 @@
     [_restore : unit
       (unsafe
         (arena.tl_arena_set home))]
-    (begin
-      (compiler_ast_types.ast-node-pool-context-install! pools)
-      0)))
+    (compiler_ast_types.ast-node-pool-context-install! pools)
+    0))
 
 (define (compiler-arena-debug-fixture-invalid-atomic) : i64
   (let
     [handle : i64 (arena.tl_arena_make_atomic)]
-    (begin
-      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
-      0)))
+    (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
+    0))
 
 (define (compiler-arena-debug-fixture-retire [grow : bool]) : i64
   (let
     [home : i64 (arena.tl_arena_current)]
     [handle : i64 (arena.tl_arena_make_small)]
-    (begin
-      (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
-      (when
-        grow
-        (begin
-          (unsafe
-            (arena.tl_arena_set handle))
-          (tl_alloc 16777216)
-          (unsafe
-            (arena.tl_arena_set home))))
-      (compiler_ast_types.compiler-arena-retire-protected-owner! handle)
-      42)))
+    (compiler_ast_types.compiler-arena-debug-protect-never-reset! handle)
+    (when
+      grow
+      (begin
+        (unsafe
+          (arena.tl_arena_set handle))
+        (tl_alloc 16777216)
+        (unsafe
+          (arena.tl_arena_set home))))
+    (compiler_ast_types.compiler-arena-retire-protected-owner! handle)
+    42))
 
 (define (main) : i64
   (if (< (io.arg-count) 2)
@@ -147,14 +136,12 @@
         [(string.eq operation "retire-grown")
           (compiler-arena-debug-fixture-retire true)]
         [(string.eq operation "retire-unprotected")
-          (begin
-            (compiler_ast_types.compiler-arena-retire-protected-owner!
-              (arena.tl_arena_make_small))
-            0)]
+          (compiler_ast_types.compiler-arena-retire-protected-owner!
+            (arena.tl_arena_make_small))
+          0]
         [(string.eq operation "retire-invalid-address")
-          (begin
-            (compiler_ast_types.compiler-arena-retire-protected-owner! 4096)
-            0)]
+          (compiler_ast_types.compiler-arena-retire-protected-owner! 4096)
+          0]
         [(string.eq operation "allowed") (compiler-arena-debug-fixture-allowed)]
         [(string.eq operation "reset-mark")
           (compiler-arena-debug-fixture-reset-mark)]
@@ -170,13 +157,11 @@
         [(string.eq operation "pool-install")
           (compiler-arena-debug-fixture-pool-install)]
         [(string.eq operation "invalid-null")
-          (begin
-            (compiler_ast_types.compiler-arena-debug-protect-never-reset! 0)
-            0)]
+          (compiler_ast_types.compiler-arena-debug-protect-never-reset! 0)
+          0]
         [(string.eq operation "invalid-address")
-          (begin
-            (compiler_ast_types.compiler-arena-debug-protect-never-reset! 4096)
-            0)]
+          (compiler_ast_types.compiler-arena-debug-protect-never-reset! 4096)
+          0]
         [(string.eq operation "invalid-atomic")
           (compiler-arena-debug-fixture-invalid-atomic)]
         [else 3]))))

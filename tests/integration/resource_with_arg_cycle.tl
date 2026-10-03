@@ -17,22 +17,20 @@
   0)
 
 (define (resource-arg-cycle-init [digit : i64]) : i64
-  (begin
-    (set! resource-arg-cycle-trace (+ (* resource-arg-cycle-trace 10) digit))
-    digit))
+  (set! resource-arg-cycle-trace (+ (* resource-arg-cycle-trace 10) digit))
+  digit)
 
 (define (resource-arg-cycle-cleanup [digit : i64]) : unit
   (set! resource-arg-cycle-trace (+ (* resource-arg-cycle-trace 10) digit)))
 
 (define (main) : i64
-  (begin
-    (with
-      ([a (resource-arg-cycle-init 3) resource-arg-cycle-cleanup]
-        [b (resource-arg-cycle-init 5) resource-arg-cycle-cleanup]
-        [c (resource-arg-cycle-init 7) resource-arg-cycle-cleanup])
-      unit)
-    ; init:    3 -> 35 -> 357
-    ; cleanup: 7 -> 5 -> 3  => 3577 -> 35775 -> 357753
-    (if (= resource-arg-cycle-trace 357753)
-      42
-      1)))
+  (with
+    ([a (resource-arg-cycle-init 3) resource-arg-cycle-cleanup]
+      [b (resource-arg-cycle-init 5) resource-arg-cycle-cleanup]
+      [c (resource-arg-cycle-init 7) resource-arg-cycle-cleanup])
+    unit)
+  ; init:    3 -> 35 -> 357
+  ; cleanup: 7 -> 5 -> 3  => 3577 -> 35775 -> 357753
+  (if (= resource-arg-cycle-trace 357753)
+    42
+    1))

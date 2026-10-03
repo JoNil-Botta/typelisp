@@ -26,12 +26,10 @@
     [slots (u8vec.slots v)]
     [word : i64 0]
     [b : i64 7]
-    (begin
-      (while (>= b 0)
-        (begin
-          (set! word (+ (* word 2) (cast (array-ref slots (+ at b)) : i64)))
-          (set! b (- b 1))))
-      word)))
+    (while (>= b 0)
+      (set! word (+ (* word 2) (cast (array-ref slots (+ at b)) : i64)))
+      (set! b (- b 1)))
+    word))
 
 (define (gd-hash [v : (& v u8vec.Vec)] [start : i64] [len : i64]) : i64
   (let
@@ -40,18 +38,13 @@
     [i : i64 0]
     [words : i64 (- len 7)]
     [tail : i64 0]
-    (begin
-      (while (< i words)
-        (begin
-          (set! h (+ (* h 31) (gd-load-word v (+ start i))))
-          (set! i (+ i 8))))
-      (while (< i len)
-        (begin
-          (set!
-            tail
-            (+ (* tail 256) (cast (array-ref slots (+ start i)) : i64)))
-          (set! i (+ i 1))))
-      (+ (* h 31) tail))))
+    (while (< i words)
+      (set! h (+ (* h 31) (gd-load-word v (+ start i))))
+      (set! i (+ i 8)))
+    (while (< i len)
+      (set! tail (+ (* tail 256) (cast (array-ref slots (+ start i)) : i64)))
+      (set! i (+ i 1)))
+    (+ (* h 31) tail)))
 
 (define (main) : i64
   (let
@@ -60,20 +53,17 @@
     [i : i64 0]
     [acc : i64 0]
     [start : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref (u8vec.slots-mut (&mut v)) i) (cast (+ i 1) : u8))
-          (set! i (+ i 1))))
-      (while (<= start n)
-        (begin
-          (set! acc (+ (* acc 7) (gd-hash (& v) start 0)))
-          (set! acc (+ (* acc 7) (gd-hash (& v) start (- n start))))
-          (set! start (+ start 1))))
-      (set! acc (+ (* acc 7) (gd-hash (& v) 0 1)))
-      (set! acc (+ (* acc 7) (gd-hash (& v) 1 7)))
-      (set! acc (+ (* acc 7) (gd-hash (& v) 1 8)))
-      (set! acc (+ (* acc 7) (gd-hash (& v) (- n 8) 8)))
-      (set! acc (+ (* acc 7) (gd-hash (& v) 0 n)))
-      (io.print-format "{}\n" acc)
-      42)))
+    (while (< i n)
+      (set! (array-ref (u8vec.slots-mut (&mut v)) i) (cast (+ i 1) : u8))
+      (set! i (+ i 1)))
+    (while (<= start n)
+      (set! acc (+ (* acc 7) (gd-hash (& v) start 0)))
+      (set! acc (+ (* acc 7) (gd-hash (& v) start (- n start))))
+      (set! start (+ start 1)))
+    (set! acc (+ (* acc 7) (gd-hash (& v) 0 1)))
+    (set! acc (+ (* acc 7) (gd-hash (& v) 1 7)))
+    (set! acc (+ (* acc 7) (gd-hash (& v) 1 8)))
+    (set! acc (+ (* acc 7) (gd-hash (& v) (- n 8) 8)))
+    (set! acc (+ (* acc 7) (gd-hash (& v) 0 n)))
+    (io.print-format "{}\n" acc)
+    42))

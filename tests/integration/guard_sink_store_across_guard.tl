@@ -12,27 +12,23 @@
 (define (gs-probe [n : i64]) : i64
   (let
     [snapshot : i64 gs-cell]
-    (begin
-      (set! gs-cell (+ gs-cell 100))
-      (if (> n 0)
-        (let
-          [acc : i64 0]
-          [i : i64 0]
-          (begin
-            (while (< i n)
-              (begin
-                (set! acc (+ acc snapshot))
-                (set! i (+ i 1))))
-            acc))
-        -1))))
+    (set! gs-cell (+ gs-cell 100))
+    (if (> n 0)
+      (let
+        [acc : i64 0]
+        [i : i64 0]
+        (while (< i n)
+          (set! acc (+ acc snapshot))
+          (set! i (+ i 1)))
+        acc)
+      -1)))
 
 (define (main) : i64
-  (begin
-    (set! gs-cell 5)
-    ;; 5 * 5, not 105 * 5.
-    (io.print-format "{}\n" (gs-probe 5))
-    ;; The store from the first call is visible here: 105 * 2.
-    (io.print-format "{}\n" (gs-probe 2))
-    ;; The guard's bypass arm never reads the snapshot at all.
-    (io.print-format "{}\n" (gs-probe 0))
-    42))
+  (set! gs-cell 5)
+  ;; 5 * 5, not 105 * 5.
+  (io.print-format "{}\n" (gs-probe 5))
+  ;; The store from the first call is visible here: 105 * 2.
+  (io.print-format "{}\n" (gs-probe 2))
+  ;; The guard's bypass arm never reads the snapshot at all.
+  (io.print-format "{}\n" (gs-probe 0))
+  42)

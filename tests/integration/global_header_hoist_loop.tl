@@ -35,52 +35,43 @@
     [marks : (&mut marks (__tl_dyn-array i64)) (i64vec.slots-mut marks-vec)]
     [total : i64 0]
     [step : i64 0]
-    (begin
-      (while (< step 3)
-        (begin
-          (set!
-            (array-ref marks index)
-            (+ (array-ref marks index) (array-ref keys index)))
-          (set! total (+ total (array-ref data index)))
-          (set! step (+ step 1))))
-      total)))
+    (while (< step 3)
+      (set!
+        (array-ref marks index)
+        (+ (array-ref marks index) (array-ref keys index)))
+      (set! total (+ total (array-ref data index)))
+      (set! step (+ step 1)))
+    total))
 
 (define (hh-scan [n : i64]) : i64
   (let
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (array-ref (i64vec.slots (& hh-data)) i)))
-          (set! acc (+ acc (array-ref (i64vec.slots (& hh-keys)) i)))
-          (when
-            (= 0 (% (array-ref (i64vec.slots (& hh-keys)) i) 5))
-            (set!
-              acc
-              (+ acc (hh-mark (& hh-data) (& hh-keys) (&mut hh-marks) i))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (array-ref (i64vec.slots (& hh-data)) i)))
+      (set! acc (+ acc (array-ref (i64vec.slots (& hh-keys)) i)))
+      (when
+        (= 0 (% (array-ref (i64vec.slots (& hh-keys)) i) 5))
+        (set! acc (+ acc (hh-mark (& hh-data) (& hh-keys) (&mut hh-marks) i))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (string.>int (io.arg 1))]
     [i : i64 0]
     [total : i64 0]
-    (begin
-      (set! hh-data (zero-vec n))
-      (set! hh-keys (zero-vec n))
-      (set! hh-marks (zero-vec n))
-      (while (< i n)
-        (begin
-          (set! (array-ref (i64vec.slots-mut (&mut hh-data)) i) (+ i 1))
-          (set! (array-ref (i64vec.slots-mut (&mut hh-keys)) i) (* i 3))
-          (set! i (+ i 1))))
-      (set! total (+ (hh-scan n) (hh-scan (- n 1))))
-      (set! i 0)
-      (while (< i n)
-        (begin
-          (set! total (+ total (array-ref (i64vec.slots (& hh-marks)) i)))
-          (set! i (+ i 1))))
-      (io.print-format "{}\n" total)
-      42)))
+    (set! hh-data (zero-vec n))
+    (set! hh-keys (zero-vec n))
+    (set! hh-marks (zero-vec n))
+    (while (< i n)
+      (set! (array-ref (i64vec.slots-mut (&mut hh-data)) i) (+ i 1))
+      (set! (array-ref (i64vec.slots-mut (&mut hh-keys)) i) (* i 3))
+      (set! i (+ i 1)))
+    (set! total (+ (hh-scan n) (hh-scan (- n 1))))
+    (set! i 0)
+    (while (< i n)
+      (set! total (+ total (array-ref (i64vec.slots (& hh-marks)) i)))
+      (set! i (+ i 1)))
+    (io.print-format "{}\n" total)
+    42))

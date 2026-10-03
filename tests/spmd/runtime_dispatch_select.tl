@@ -26,22 +26,19 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref a i) (dispatch_seed_a i))
-        (set! (array-ref b i) (dispatch_seed_b i))
-        (set! i (+ i 1))))))
+      (set! (array-ref a i) (dispatch_seed_a i))
+      (set! (array-ref b i) (dispatch_seed_b i))
+      (set! i (+ i 1)))))
 
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_checksum [out : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (array-ref out i)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (array-ref out i)))
+      (set! i (+ i 1)))
+    acc))
 
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_scalar [n : i64]) : i64
@@ -50,15 +47,14 @@
     [b : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [acc : i64 0]
-    (begin
-      (dispatch_fill_inputs (&mut a) (&mut b) n)
-      (foreach
-        ([i : i64 0 n])
-        (set! (array-ref out i) (+ (array-ref a i) (array-ref b i))))
-      (set! acc (dispatch_checksum out n))
-      (if (= (bit-and acc 0xff) 247)
-        42
-        5))))
+    (dispatch_fill_inputs (&mut a) (&mut b) n)
+    (foreach
+      ([i : i64 0 n])
+      (set! (array-ref out i) (+ (array-ref a i) (array-ref b i))))
+    (set! acc (dispatch_checksum out n))
+    (if (= (bit-and acc 0xff) 247)
+      42
+      5)))
 
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_avx2 [n : i64]) : i64
@@ -67,15 +63,14 @@
     [b : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [acc : i64 0]
-    (begin
-      (dispatch_fill_inputs (&mut a) (&mut b) n)
-      (foreach
-        ([i : i64 0 n])
-        (set! (array-ref out i) (+ (array-ref a i) (array-ref b i))))
-      (set! acc (dispatch_checksum out n))
-      (if (= (bit-and acc 0xff) 247)
-        106
-        6))))
+    (dispatch_fill_inputs (&mut a) (&mut b) n)
+    (foreach
+      ([i : i64 0 n])
+      (set! (array-ref out i) (+ (array-ref a i) (array-ref b i))))
+    (set! acc (dispatch_checksum out n))
+    (if (= (bit-and acc 0xff) 247)
+      106
+      6)))
 
 ;; lint-allow: function-name-case -- assembly dispatch symbol fixture
 (define (dispatch_avx512 [n : i64]) : i64
@@ -84,15 +79,14 @@
     [b : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [acc : i64 0]
-    (begin
-      (dispatch_fill_inputs (&mut a) (&mut b) n)
-      (foreach
-        ([i : i64 0 n])
-        (set! (array-ref out i) (+ (array-ref a i) (array-ref b i))))
-      (set! acc (dispatch_checksum out n))
-      (if (= (bit-and acc 0xff) 247)
-        170
-        7))))
+    (dispatch_fill_inputs (&mut a) (&mut b) n)
+    (foreach
+      ([i : i64 0 n])
+      (set! (array-ref out i) (+ (array-ref a i) (array-ref b i))))
+    (set! acc (dispatch_checksum out n))
+    (if (= (bit-and acc 0xff) 247)
+      170
+      7)))
 
 (defdispatch
   ;; lint-allow: function-name-case -- assembly dispatch symbol fixture

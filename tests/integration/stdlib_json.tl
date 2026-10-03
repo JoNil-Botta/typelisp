@@ -127,18 +127,16 @@
 (define (json-test-f64-from-bits [bits : u64]) : f64
   (let
     [buf : (__tl_dyn-array u64) (__tl_make-array u64 1)]
-    (begin
-      (set! (array-ref buf 0) bits)
-      (unsafe
-        (ptr-read (ptr-cast (__tl_array-data buf) : (Ptr f64)))))))
+    (set! (array-ref buf 0) bits)
+    (unsafe
+      (ptr-read (ptr-cast (__tl_array-data buf) : (Ptr f64))))))
 
 (define (json-test-f32-from-bits [bits : u32]) : f32
   (let
     [buf : (__tl_dyn-array u32) (__tl_make-array u32 1)]
-    (begin
-      (set! (array-ref buf 0) bits)
-      (unsafe
-        (ptr-read (ptr-cast (__tl_array-data buf) : (Ptr f32)))))))
+    (set! (array-ref buf 0) bits)
+    (unsafe
+      (ptr-read (ptr-cast (__tl_array-data buf) : (Ptr f32))))))
 
 (define (json-test-nonfinite-render) : bool
   (and
@@ -155,24 +153,22 @@
       " { \"name\" : \"tl\", \"items\" : [1, -2.5e3, true, false, null], \"escaped\" : \"a\\nb\" } "]
     (match (json.parse (& text))
       [(OkJson doc)
-        (begin
-          (unless (json-test-name (clone doc)) (return 1))
-          (unless (json-test-items (clone doc)) (return 2))
-          (unless (json-test-escaped (clone doc)) (return 3))
-          (unless (json-test-stringify doc) (return 4))
-          42)]
+        (unless (json-test-name (clone doc)) (return 1))
+        (unless (json-test-items (clone doc)) (return 2))
+        (unless (json-test-escaped (clone doc)) (return 3))
+        (unless (json-test-stringify doc) (return 4))
+        42]
       [(ErrJson _) 7])))
 
 (define (main) : i64
   (let
     [document-code : i64 (json-test-document-code)]
-    (begin
-      (unless (= document-code 42) (return document-code))
-      (unless (json-test-string-escapes) (return 12))
-      (unless (json-test-invalid) (return 13))
-      (unless (json-test-float-parse) (return 14))
-      (unless (json-test-float-render) (return 15))
-      (unless (json-test-nonfinite-render) (return 16))
-      (unless (json-test-i64-parse) (return 17))
-      (unless (json-test-u64) (return 18))
-      42)))
+    (unless (= document-code 42) (return document-code))
+    (unless (json-test-string-escapes) (return 12))
+    (unless (json-test-invalid) (return 13))
+    (unless (json-test-float-parse) (return 14))
+    (unless (json-test-float-render) (return 15))
+    (unless (json-test-nonfinite-render) (return 16))
+    (unless (json-test-i64-parse) (return 17))
+    (unless (json-test-u64) (return 18))
+    42))

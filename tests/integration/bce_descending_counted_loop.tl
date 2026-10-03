@@ -26,37 +26,32 @@
   (let
     [acc : i64 seed]
     [pos : i64 (- n 1)]
-    (begin
-      (while (>= pos 0)
-        (begin
-          (if (> (array-ref items pos) 0)
-            (set! acc (+ acc (array-ref other pos)))
-            (set! acc (bit-xor acc (array-ref other (+ pos 1)))))
-          (if (< acc 0)
-            (set! acc (- 0 acc))
-            (set! acc (+ acc 1)))
-          (set! pos (- pos 1))))
-      acc)))
+    (while (>= pos 0)
+      (if (> (array-ref items pos) 0)
+        (set! acc (+ acc (array-ref other pos)))
+        (set! acc (bit-xor acc (array-ref other (+ pos 1)))))
+      (if (< acc 0)
+        (set! acc (- 0 acc))
+        (set! acc (+ acc 1)))
+      (set! pos (- pos 1)))
+    acc))
 
 (define (fill-ones [items : (&mut items (__tl_dyn-array i64))] [n : i64]) : unit
   (let
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref items i) 1)
-          (set! i (+ i 1))))
-      unit)))
+    (while (< i n)
+      (set! (array-ref items i) 1)
+      (set! i (+ i 1)))
+    unit))
 
 (define (main) : i64
   (let
     [len : i64 (+ 8 (io.arg-count))]
     [items (__tl_make-array i64 len)]
     [other (__tl_make-array i64 len)]
-    (begin
-      (fill-ones (&mut items) len)
-      (if (and
-        (= (walk (& items) (& other) (- len 1) 3) (+ 3 (- len 1)))
-        (= (walk (& items) (& other) len 3) (+ 3 len)))
-        42
-        1))))
+    (fill-ones (&mut items) len)
+    (if (and
+      (= (walk (& items) (& other) (- len 1) 3) (+ 3 (- len 1)))
+      (= (walk (& items) (& other) len 3) (+ 3 len)))
+      42
+      1)))

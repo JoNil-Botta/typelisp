@@ -17,9 +17,8 @@
     (io.panic message)))
 
 (define (win-param-preassign-logical-name [name : String]) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (ci.intern-generated-name name)))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (ci.intern-generated-name name))
 
 (define (win-param-preassign-globals
   [pa : i64]
@@ -29,20 +28,19 @@
   (let
     [builder : ir.CompilerIrGlobalBuilder
       (ir.compiler-ir-global-builder-with-capacity 4)]
-    (begin
-      (ir.compiler-ir-global-builder-push!
-        (&mut builder)
-        (ir.CompilerIrGlobal.Global pa (I64) (I64 0)))
-      (ir.compiler-ir-global-builder-push!
-        (&mut builder)
-        (ir.CompilerIrGlobal.Global pb (I64) (I64 0)))
-      (ir.compiler-ir-global-builder-push!
-        (&mut builder)
-        (ir.CompilerIrGlobal.Global pc (I64) (I64 0)))
-      (ir.compiler-ir-global-builder-push!
-        (&mut builder)
-        (ir.CompilerIrGlobal.Global pd (I64) (I64 0)))
-      (ir.compiler-ir-global-builder-to-seq builder))))
+    (ir.compiler-ir-global-builder-push!
+      (&mut builder)
+      (ir.CompilerIrGlobal.Global pa (I64) (I64 0)))
+    (ir.compiler-ir-global-builder-push!
+      (&mut builder)
+      (ir.CompilerIrGlobal.Global pb (I64) (I64 0)))
+    (ir.compiler-ir-global-builder-push!
+      (&mut builder)
+      (ir.CompilerIrGlobal.Global pc (I64) (I64 0)))
+    (ir.compiler-ir-global-builder-push!
+      (&mut builder)
+      (ir.CompilerIrGlobal.Global pd (I64) (I64 0)))
+    (ir.compiler-ir-global-builder-to-seq builder)))
 
 (define (win-param-preassign-function
   [function-name : i64]

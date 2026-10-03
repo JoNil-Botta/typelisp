@@ -23,18 +23,16 @@
     (let
       [i : i64 0]
       [acc : i64 0]
-      (begin
-        (while (< i n)
-          (begin
-            (set!
-              acc
-              (+
-                acc
-                (if (and (>= i 0) (< i layout-len))
-                  (cast (string.string-ref layout-text i) : i64)
-                  -1)))
-            (set! i (+ i 1))))
-        acc))))
+      (while (< i n)
+        (set!
+          acc
+          (+
+            acc
+            (if (and (>= i 0) (< i layout-len))
+              (cast (string.string-ref layout-text i) : i64)
+              -1)))
+        (set! i (+ i 1)))
+      acc)))
 
 ;; DUP: a loop exit block that is two instructions and an unconditional jump to
 ;; the function's join, reached by a `jmp` from the arm that skipped the loop
@@ -49,14 +47,12 @@
         (let
           [i : i64 0]
           [acc : i64 0]
-          (begin
-            (while (< i n)
-              (begin
-                (if (> (* i 3) pivot)
-                  (set! acc (+ acc 7))
-                  (set! acc (- acc 1)))
-                (set! i (+ i 1))))
-            (+ (* acc 2) 5)))
+          (while (< i n)
+            (if (> (* i 3) pivot)
+              (set! acc (+ acc 7))
+              (set! acc (- acc 1)))
+            (set! i (+ i 1)))
+          (+ (* acc 2) 5))
         (* pivot 3)))))
 
 ;; KEEP: both arms carry real work and the branch compares two registers, which

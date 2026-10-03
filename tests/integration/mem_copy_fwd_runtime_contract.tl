@@ -33,9 +33,8 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref items i) (pattern i))
-        (set! i (+ i 1))))))
+      (set! (array-ref items i) (pattern i))
+      (set! i (+ i 1)))))
 
 ;; The admitted shape: one byte load, one byte store, counter step 1.
 (define (copy-fast
@@ -46,9 +45,8 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref items (+ dst i)) (array-ref items (+ src i)))
-        (set! i (+ i 1))))))
+      (set! (array-ref items (+ dst i)) (array-ref items (+ src i)))
+      (set! i (+ i 1)))))
 
 ;; The oracle: the same copy, but the second store keeps `copy_call` off it, so
 ;; this stays a genuine byte-at-a-time forward loop at every optimization level.
@@ -61,10 +59,9 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref items (+ dst i)) (array-ref items (+ src i)))
-        (set! (array-ref witness i) (cast (bit-and i 255) : u8))
-        (set! i (+ i 1))))))
+      (set! (array-ref items (+ dst i)) (array-ref items (+ src i)))
+      (set! (array-ref witness i) (cast (bit-and i 255) : u8))
+      (set! i (+ i 1)))))
 
 (define (buffers-eq?
   [a : (& a (__tl_dyn-array u8))]
@@ -73,14 +70,12 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (= (array-ref a i) (array-ref b i))
-            unit
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (= (array-ref a i) (array-ref b i))
+        unit
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 ;; Every (dst, src, len) triple in the window. Returns the number of triples
 ;; whose rewritten copy disagreed with the oracle.
@@ -92,27 +87,24 @@
     [witness : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [bad : i64 0]
     [dst : i64 0]
-    (begin
-      (while (< dst 34)
-        (let
-          [src : i64 0]
-          (while (< src 34)
-            (let
-              [len : i64 0]
-              (begin
-                (while (< len 34)
-                  (begin
-                    (fill-pattern! (&mut fast) n)
-                    (fill-pattern! (&mut ref) n)
-                    (copy-fast (&mut fast) dst src len)
-                    (copy-ref (&mut ref) (&mut witness) dst src len)
-                    (if (buffers-eq? (& fast) (& ref) n)
-                      unit
-                      (set! bad (+ bad 1)))
-                    (set! len (+ len 1))))
-                (set! src (+ src 1)))))
-          (set! dst (+ dst 1))))
-      bad)))
+    (while (< dst 34)
+      (let
+        [src : i64 0]
+        (while (< src 34)
+          (let
+            [len : i64 0]
+            (while (< len 34)
+              (fill-pattern! (&mut fast) n)
+              (fill-pattern! (&mut ref) n)
+              (copy-fast (&mut fast) dst src len)
+              (copy-ref (&mut ref) (&mut witness) dst src len)
+              (if (buffers-eq? (& fast) (& ref) n)
+                unit
+                (set! bad (+ bad 1)))
+              (set! len (+ len 1)))
+            (set! src (+ src 1))))
+        (set! dst (+ dst 1))))
+    bad))
 
 ;; Direct helper contract: exactness at both edges, and a non-positive count.
 (define (helper-checks) : i64
@@ -120,41 +112,40 @@
     [n : i64 buf-size]
     [items : (__tl_dyn-array u8) (__tl_make-array u8 n)]
     [bad : i64 0]
-    (begin
-      ;; (1) copies exactly [1, n-1) and leaves the two edge bytes alone.
-      (fill-pattern! (&mut items) n)
-      (unsafe
-        (runtime.mem-copy-fwd
-          (ptr-offset (__tl_array-data items) 1)
-          (ptr-cast (ptr-offset (__tl_array-data items) 0) : (Ptr u8))
-          (- n 2)))
-      (if (= (array-ref items 0) (pattern 0))
-        unit
-        (set! bad (bit-or bad 1)))
-      (if (= (array-ref items (- n 1)) (pattern (- n 1)))
-        unit
-        (set! bad (bit-or bad 2)))
-      ;; That call is the propagating overlap (dst = src + 1): every byte in
-      ;; the window must be the FIRST source byte, not a shifted pattern.
-      (if (= (count-eq (& items) 1 (- n 1) (pattern 0)) (- n 2))
-        unit
-        (set! bad (bit-or bad 4)))
-      ;; (2) a zero or negative count copies nothing.
-      (fill-pattern! (&mut items) n)
-      (unsafe
-        (runtime.mem-copy-fwd
-          (ptr-offset (__tl_array-data items) 0)
-          (ptr-cast (ptr-offset (__tl_array-data items) 8) : (Ptr u8))
-          0))
-      (unsafe
-        (runtime.mem-copy-fwd
-          (ptr-offset (__tl_array-data items) 0)
-          (ptr-cast (ptr-offset (__tl_array-data items) 8) : (Ptr u8))
-          (- 0 5)))
-      (if (= (count-pattern (& items) 0 n) n)
-        unit
-        (set! bad (bit-or bad 8)))
-      bad)))
+    ;; (1) copies exactly [1, n-1) and leaves the two edge bytes alone.
+    (fill-pattern! (&mut items) n)
+    (unsafe
+      (runtime.mem-copy-fwd
+        (ptr-offset (__tl_array-data items) 1)
+        (ptr-cast (ptr-offset (__tl_array-data items) 0) : (Ptr u8))
+        (- n 2)))
+    (if (= (array-ref items 0) (pattern 0))
+      unit
+      (set! bad (bit-or bad 1)))
+    (if (= (array-ref items (- n 1)) (pattern (- n 1)))
+      unit
+      (set! bad (bit-or bad 2)))
+    ;; That call is the propagating overlap (dst = src + 1): every byte in
+    ;; the window must be the FIRST source byte, not a shifted pattern.
+    (if (= (count-eq (& items) 1 (- n 1) (pattern 0)) (- n 2))
+      unit
+      (set! bad (bit-or bad 4)))
+    ;; (2) a zero or negative count copies nothing.
+    (fill-pattern! (&mut items) n)
+    (unsafe
+      (runtime.mem-copy-fwd
+        (ptr-offset (__tl_array-data items) 0)
+        (ptr-cast (ptr-offset (__tl_array-data items) 8) : (Ptr u8))
+        0))
+    (unsafe
+      (runtime.mem-copy-fwd
+        (ptr-offset (__tl_array-data items) 0)
+        (ptr-cast (ptr-offset (__tl_array-data items) 8) : (Ptr u8))
+        (- 0 5)))
+    (if (= (count-pattern (& items) 0 n) n)
+      unit
+      (set! bad (bit-or bad 8)))
+    bad))
 
 (define (count-eq
   [items : (& items (__tl_dyn-array u8))]
@@ -164,14 +155,12 @@
   (let
     [i : i64 lo]
     [seen : i64 0]
-    (begin
-      (while (< i hi)
-        (begin
-          (if (= (array-ref items i) want)
-            (set! seen (+ seen 1))
-            unit)
-          (set! i (+ i 1))))
-      seen)))
+    (while (< i hi)
+      (if (= (array-ref items i) want)
+        (set! seen (+ seen 1))
+        unit)
+      (set! i (+ i 1)))
+    seen))
 
 (define (count-pattern
   [items : (& items (__tl_dyn-array u8))]
@@ -180,14 +169,12 @@
   (let
     [i : i64 lo]
     [seen : i64 0]
-    (begin
-      (while (< i hi)
-        (begin
-          (if (= (array-ref items i) (pattern i))
-            (set! seen (+ seen 1))
-            unit)
-          (set! i (+ i 1))))
-      seen)))
+    (while (< i hi)
+      (if (= (array-ref items i) (pattern i))
+        (set! seen (+ seen 1))
+        unit)
+      (set! i (+ i 1)))
+    seen))
 
 (define (main) : i64
   (if (and (= (twin-mismatches) 0) (= (helper-checks) 0))

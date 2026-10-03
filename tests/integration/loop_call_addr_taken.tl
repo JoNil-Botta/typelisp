@@ -7,29 +7,25 @@
   (let
     [i : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 8)
-        (begin
-          (set! total (+ total (* i k)))
-          (set! i (+ i 1))))
-      (+
-        total
-        (unsafe
-          (ptr-read p))))))
+    (while (< i 8)
+      (set! total (+ total (* i k)))
+      (set! i (+ i 1)))
+    (+
+      total
+      (unsafe
+        (ptr-read p)))))
 
 (define (read-ptr0 [p : (MutPtr i64)]) : i64
   (let
     [i : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 8)
-        (begin
-          (set! total (+ total (* i i)))
-          (set! i (+ i 1))))
-      (+
-        total
-        (unsafe
-          (ptr-read p))))))
+    (while (< i 8)
+      (set! total (+ total (* i i)))
+      (set! i (+ i 1)))
+    (+
+      total
+      (unsafe
+        (ptr-read p)))))
 
 (define (with-literal) : i64
   (let
@@ -39,13 +35,11 @@
     [p : (MutPtr i64)
       (unsafe
         (ptr-addr-of x))]
-    (begin
-      (while (< i 3)
-        (begin
-          (set! x (+ x 1))
-          (set! total (+ total (read-ptr p 7)))
-          (set! i (+ i 1))))
-      total)))
+    (while (< i 3)
+      (set! x (+ x 1))
+      (set! total (+ total (read-ptr p 7)))
+      (set! i (+ i 1)))
+    total))
 
 (define (without-literal) : i64
   (let
@@ -55,16 +49,13 @@
     [p : (MutPtr i64)
       (unsafe
         (ptr-addr-of x))]
-    (begin
-      (while (< i 8)
-        (begin
-          (set! x (+ x 1))
-          (set! total (+ total (read-ptr0 p)))
-          (set! i (+ i 1))))
-      total)))
+    (while (< i 8)
+      (set! x (+ x 1))
+      (set! total (+ total (read-ptr0 p)))
+      (set! i (+ i 1)))
+    total))
 
 (define (main) : i64
-  (begin
-    (io.println "{}" (with-literal))
-    (io.println "{}" (without-literal))
-    0))
+  (io.println "{}" (with-literal))
+  (io.println "{}" (without-literal))
+  0)

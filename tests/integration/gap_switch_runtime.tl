@@ -32,24 +32,22 @@
     [values : (__tl_dyn-array GapTag) (__tl_make-array GapTag 12)]
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (set! (array-ref values 0) (T0))
-      (set! (array-ref values 1) (T1))
-      (set! (array-ref values 2) (T2))
-      (set! (array-ref values 3) (T3))
-      (set! (array-ref values 4) (T4))
-      (set! (array-ref values 5) (T5))
-      (set! (array-ref values 6) (T6))
-      (set! (array-ref values 7) (T7))
-      (set! (array-ref values 8) (T8))
-      (set! (array-ref values 9) (T9))
-      (set! (array-ref values 10) (T10))
-      (set! (array-ref values 11) (T11))
-      (while (< i 12)
-        (begin
-          (set! sum (+ sum (gap-score (array-ref values i))))
-          (set! i (+ i 1))))
-      ;; 1+2+3+100+5+6+100+8+9+10+100+12 = 356
-      (if (= sum 356)
-        42
-        1))))
+    (set! (array-ref values 0) (T0))
+    (set! (array-ref values 1) (T1))
+    (set! (array-ref values 2) (T2))
+    (set! (array-ref values 3) (T3))
+    (set! (array-ref values 4) (T4))
+    (set! (array-ref values 5) (T5))
+    (set! (array-ref values 6) (T6))
+    (set! (array-ref values 7) (T7))
+    (set! (array-ref values 8) (T8))
+    (set! (array-ref values 9) (T9))
+    (set! (array-ref values 10) (T10))
+    (set! (array-ref values 11) (T11))
+    (while (< i 12)
+      (set! sum (+ sum (gap-score (array-ref values i))))
+      (set! i (+ i 1)))
+    ;; 1+2+3+100+5+6+100+8+9+10+100+12 = 356
+    (if (= sum 356)
+      42
+      1)))

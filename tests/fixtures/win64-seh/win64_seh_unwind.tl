@@ -116,40 +116,38 @@
               (seh-expect context 0xf0 (seh-seed 15) 7))))]
       [xmm : i64 0]
       [n : i64 6]
-      (begin
-        (while (< n 16)
-          (begin
-            (set!
-              xmm
-              (bit-or
-                xmm
-                (bit-or
-                  (seh-expect
-                    context
-                    (+ 0x1a0 (* 16 n))
-                    (seh-seed (+ 0x100 n))
-                    (+ 2 n))
-                  (seh-expect
-                    context
-                    (+ 0x1a8 (* 16 n))
-                    (seh-seed (+ 0x200 n))
-                    (+ 12 n)))))
-            (set! n (+ n 1))))
-        (bit-or
-          (bit-or gp xmm)
+      (while (< n 16)
+        (set!
+          xmm
           (bit-or
-            (seh-expect
-              context
-              0x98
-              (unsafe
-                (seh-driver-recorded 0))
-              28)
-            (seh-expect
-              context
-              0xf8
-              (unsafe
-                (seh-driver-recorded 1))
-              29)))))))
+            xmm
+            (bit-or
+              (seh-expect
+                context
+                (+ 0x1a0 (* 16 n))
+                (seh-seed (+ 0x100 n))
+                (+ 2 n))
+              (seh-expect
+                context
+                (+ 0x1a8 (* 16 n))
+                (seh-seed (+ 0x200 n))
+                (+ 12 n)))))
+        (set! n (+ n 1)))
+      (bit-or
+        (bit-or gp xmm)
+        (bit-or
+          (seh-expect
+            context
+            0x98
+            (unsafe
+              (seh-driver-recorded 0))
+            28)
+          (seh-expect
+            context
+            0xf8
+            (unsafe
+              (seh-driver-recorded 1))
+            29))))))
 
 ;; Unwinds CONTEXT one frame; SCRATCH holds the image base, the handler data
 ;; and the establisher frame the unwinder writes.
@@ -186,23 +184,16 @@
         [scratch : i64 (+ context 4096)]
         [frames : i64 0]
         [found : bool false]
-        (begin
-          (seh-rtl-capture-context context)
-          (while (and
-            (not found)
-            (< frames 4)
-            (seh-unwind-frame context scratch))
-            (begin
-              (set! frames (+ frames 1))
-              (set!
-                found
-                (= (seh-read (+ context 0xf8)) (seh-driver-recorded 1)))))
-          (set!
-            seh-mismatch
-            (if found
-              (seh-compare context)
-              (shl 1 30)))
-          (+ x frames))))))
+        (seh-rtl-capture-context context)
+        (while (and (not found) (< frames 4) (seh-unwind-frame context scratch))
+          (set! frames (+ frames 1))
+          (set! found (= (seh-read (+ context 0xf8)) (seh-driver-recorded 1))))
+        (set!
+          seh-mismatch
+          (if found
+            (seh-compare context)
+            (shl 1 30)))
+        (+ x frames)))))
 
 (cfg
   windows
@@ -230,9 +221,8 @@
 (cfg
   windows
   (define (seh-run [label : String] [result : i64]) : i64
-    (begin
-      (io.print-format "{} mismatch={} result={}\n" label seh-mismatch result)
-      seh-mismatch)))
+    (io.print-format "{} mismatch={} result={}\n" label seh-mismatch result)
+    seh-mismatch))
 
 (cfg
   windows

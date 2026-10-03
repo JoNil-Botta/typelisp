@@ -35,15 +35,13 @@
     [keys (i64vec.slots-mut keys-vec)]
     [src (i64vec.slots src-vec)]
     [i : i64 0]
-    (begin
-      (while (< i total)
-        (let
-          [v : i64 (array-ref src i)]
-          (begin
-            (set! (array-ref keys v) (+ (array-ref keys v) 1))
-            (set! (array-ref edges i) v)
-            (set! i (+ i 1)))))
-      total)))
+    (while (< i total)
+      (let
+        [v : i64 (array-ref src i)]
+        (set! (array-ref keys v) (+ (array-ref keys v) 1))
+        (set! (array-ref edges i) v)
+        (set! i (+ i 1))))
+    total))
 
 ;; The load side: `edges[i]` is an index into a length-equal sibling.
 (define (cb-walk
@@ -55,35 +53,31 @@
     [marks (i64vec.slots-mut marks-vec)]
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (set! (array-ref marks 0) 1)
-      (while (< i total)
-        (let
-          [e : i64 (array-ref edges i)]
-          (begin
-            (set! (array-ref marks e) (+ (array-ref marks e) 1))
-            (set! acc (+ acc (array-ref marks e)))
-            (set! i (+ i 1)))))
-      acc)))
+    (set! (array-ref marks 0) 1)
+    (while (< i total)
+      (let
+        [e : i64 (array-ref edges i)]
+        (set! (array-ref marks e) (+ (array-ref marks e) 1))
+        (set! acc (+ acc (array-ref marks e)))
+        (set! i (+ i 1))))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (string.>int (io.arg 1))]
     [m : i64 (* n 2)]
     [i : i64 0]
-    (begin
-      (set! cb-keys (zero-vec n))
-      (set! cb-marks (zero-vec n))
-      (set! cb-edges (zero-vec m))
-      (set! cb-src (zero-vec m))
-      (while (< i m)
-        (begin
-          (set!
-            (array-ref (i64vec.slots-mut (&mut cb-src)) i)
-            (if (< i n)
-              i
-              (- i n)))
-          (set! i (+ i 1))))
-      (cb-fill (&mut cb-edges) (&mut cb-keys) (& cb-src) m)
-      (io.print-format "{}\n" (cb-walk (& cb-edges) (&mut cb-marks) m))
-      42)))
+    (set! cb-keys (zero-vec n))
+    (set! cb-marks (zero-vec n))
+    (set! cb-edges (zero-vec m))
+    (set! cb-src (zero-vec m))
+    (while (< i m)
+      (set!
+        (array-ref (i64vec.slots-mut (&mut cb-src)) i)
+        (if (< i n)
+          i
+          (- i n)))
+      (set! i (+ i 1)))
+    (cb-fill (&mut cb-edges) (&mut cb-keys) (& cb-src) m)
+    (io.print-format "{}\n" (cb-walk (& cb-edges) (&mut cb-marks) m))
+    42))

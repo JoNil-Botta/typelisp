@@ -59,22 +59,18 @@
       [acc : i64 seed]
       [spin : i64 0]
       [guard : i64 0]
-      (begin
-        (while (< i rounds)
-          (begin
-            (set! acc (+ (* acc 3) 1))
-            (set! i (+ i 1))))
-        (set! i 0)
-        (while (< i rounds)
-          (begin
-            (set! spin (+ spin acc))
-            (set! i (+ i 1))))
-        (set! i 0)
-        (while (< i rounds)
-          (begin
-            (set! guard (+ guard 1))
-            (set! i (+ i 1))))
-        (+ acc (- spin spin))))))
+      (while (< i rounds)
+        (set! acc (+ (* acc 3) 1))
+        (set! i (+ i 1)))
+      (set! i 0)
+      (while (< i rounds)
+        (set! spin (+ spin acc))
+        (set! i (+ i 1)))
+      (set! i 0)
+      (while (< i rounds)
+        (set! guard (+ guard 1))
+        (set! i (+ i 1)))
+      (+ acc (- spin spin)))))
 
 ;; The same shape as `mix`, but it WRITES a global cell. Its call-memory summary
 ;; therefore carries neither the memory bit nor the global bit, so
@@ -86,23 +82,19 @@
     [acc : i64 seed]
     [spin : i64 0]
     [guard : i64 0]
-    (begin
-      (while (< i rounds)
-        (begin
-          (set! acc (+ (* acc 3) 1))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i rounds)
-        (begin
-          (set! spin (+ spin acc))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i rounds)
-        (begin
-          (set! guard (+ guard 1))
-          (set! i (+ i 1))))
-      (set! gcell-c (+ gcell-c 1))
-      (+ acc (- spin spin)))))
+    (while (< i rounds)
+      (set! acc (+ (* acc 3) 1))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i rounds)
+      (set! spin (+ spin acc))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i rounds)
+      (set! guard (+ guard 1))
+      (set! i (+ i 1)))
+    (set! gcell-c (+ gcell-c 1))
+    (+ acc (- spin spin))))
 
 ;; ADMITTED. Two operand reads of `gcell-a` per iteration, separated by the
 ;; call; the loop enters with a handful of live values.
@@ -112,14 +104,12 @@
     (let
       [i : i64 0]
       [acc : i64 0]
-      (begin
-        (while (< i n)
-          (begin
-            (set! acc (+ acc gcell-a))
-            (set! acc (+ acc (mix i rounds)))
-            (set! acc (+ acc gcell-a))
-            (set! i (+ i 1))))
-        acc))))
+      (while (< i n)
+        (set! acc (+ acc gcell-a))
+        (set! acc (+ acc (mix i rounds)))
+        (set! acc (+ acc gcell-a))
+        (set! i (+ i 1)))
+      acc)))
 
 ;; REFUSED on pressure. Identical call and cell shape; the extra parameters are
 ;; all live across the loop, pushing the body's live-in count past the budget,
@@ -142,28 +132,26 @@
     (let
       [i : i64 0]
       [acc : i64 0]
-      (begin
-        (while (< i n)
-          (begin
-            (set! acc (+ acc gcell-b))
-            (set! acc (+ acc (mix i rounds)))
-            (set! acc (+ acc gcell-b))
-            ;; Each parameter is XORed with the loop counter, so none of them
-            ;; is a loop-invariant sub-expression LICM could fold into one
-            ;; hoisted value: all ten stay live ACROSS the loop and the body's
-            ;; live-in count is what the budget refuses.
-            (set! acc (+ acc (bit-xor p0 i)))
-            (set! acc (+ acc (bit-xor p1 i)))
-            (set! acc (+ acc (bit-xor p2 i)))
-            (set! acc (+ acc (bit-xor p3 i)))
-            (set! acc (+ acc (bit-xor p4 i)))
-            (set! acc (+ acc (bit-xor p5 i)))
-            (set! acc (+ acc (bit-xor p6 i)))
-            (set! acc (+ acc (bit-xor p7 i)))
-            (set! acc (+ acc (bit-xor p8 i)))
-            (set! acc (+ acc (bit-xor p9 i)))
-            (set! i (+ i 1))))
-        acc))))
+      (while (< i n)
+        (set! acc (+ acc gcell-b))
+        (set! acc (+ acc (mix i rounds)))
+        (set! acc (+ acc gcell-b))
+        ;; Each parameter is XORed with the loop counter, so none of them
+        ;; is a loop-invariant sub-expression LICM could fold into one
+        ;; hoisted value: all ten stay live ACROSS the loop and the body's
+        ;; live-in count is what the budget refuses.
+        (set! acc (+ acc (bit-xor p0 i)))
+        (set! acc (+ acc (bit-xor p1 i)))
+        (set! acc (+ acc (bit-xor p2 i)))
+        (set! acc (+ acc (bit-xor p3 i)))
+        (set! acc (+ acc (bit-xor p4 i)))
+        (set! acc (+ acc (bit-xor p5 i)))
+        (set! acc (+ acc (bit-xor p6 i)))
+        (set! acc (+ acc (bit-xor p7 i)))
+        (set! acc (+ acc (bit-xor p8 i)))
+        (set! acc (+ acc (bit-xor p9 i)))
+        (set! i (+ i 1)))
+      acc)))
 
 ;; REFUSED on the proof. `mix-writing` writes the cell, so every iteration must
 ;; observe the value the previous call left behind.
@@ -173,14 +161,12 @@
     (let
       [i : i64 0]
       [acc : i64 0]
-      (begin
-        (while (< i n)
-          (begin
-            (set! acc (+ acc gcell-c))
-            (set! acc (+ acc (mix-writing i rounds)))
-            (set! acc (+ acc gcell-c))
-            (set! i (+ i 1))))
-        acc))))
+      (while (< i n)
+        (set! acc (+ acc gcell-c))
+        (set! acc (+ acc (mix-writing i rounds)))
+        (set! acc (+ acc gcell-c))
+        (set! i (+ i 1)))
+      acc)))
 
 ;; Hand-spelled twin for `writer-scan`: the cell reads are written out around
 ;; the call in the same order, so it is only equal to `writer-scan` if the cell
@@ -191,16 +177,14 @@
     [acc : i64 0]
     [before : i64 0]
     [after : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! before gcell-c)
-          (set! acc (+ acc before))
-          (set! acc (+ acc (mix-writing i rounds)))
-          (set! after gcell-c)
-          (set! acc (+ acc after))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! before gcell-c)
+      (set! acc (+ acc before))
+      (set! acc (+ acc (mix-writing i rounds)))
+      (set! after gcell-c)
+      (set! acc (+ acc after))
+      (set! i (+ i 1)))
+    acc))
 
 ;; Twin for `pressured-scan`: the same ten XOR terms, spelled out against
 ;; literal parameter values.
@@ -209,18 +193,15 @@
     [i : i64 0]
     [acc : i64 0]
     [k : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (* 2 cell)))
-          (set! acc (+ acc (mix i rounds)))
-          (set! k 1)
-          (while (< k 11)
-            (begin
-              (set! acc (+ acc (bit-xor k i)))
-              (set! k (+ k 1))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (* 2 cell)))
+      (set! acc (+ acc (mix i rounds)))
+      (set! k 1)
+      (while (< k 11)
+        (set! acc (+ acc (bit-xor k i)))
+        (set! k (+ k 1)))
+      (set! i (+ i 1)))
+    acc))
 
 ;; Closed form for the remaining non-writing scan: the cell never changes, so each
 ;; iteration adds 2*cell plus whatever `mix` returns for that index.
@@ -228,14 +209,12 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (* 2 cell)))
-          (set! acc (+ acc (mix i rounds)))
-          (set! acc (+ acc extra))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (* 2 cell)))
+      (set! acc (+ acc (mix i rounds)))
+      (set! acc (+ acc extra))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   ;; `n` and `rounds` come from the process argument count so nothing folds to a

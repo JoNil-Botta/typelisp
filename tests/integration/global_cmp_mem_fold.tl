@@ -61,15 +61,14 @@
         0))))
 
 (define (main) : i64
-  (begin
-    (set! gcmp-gen (gcmp-opaque 0 0))
-    (set! gcmp-limit (gcmp-opaque 993 0))
-    (cond
-      [(not (= (probe-lhs 7 0) 1)) 1]
-      [(not (= (probe-lhs 8 0) 0)) 2]
-      [(not (= (probe-rhs 999 0) 1)) 3]
-      [(not (= (probe-rhs 1000 0) 0)) 4]
-      [(not (= (probe-rhs 1001 0) 0)) 5]
-      [(not (= (probe-refused 7 0) 8)) 6]
-      [(not (= (probe-refused 9 0) 0)) 7]
-      [else 42])))
+  (set! gcmp-gen (gcmp-opaque 0 0))
+  (set! gcmp-limit (gcmp-opaque 993 0))
+  (cond
+    [(not (= (probe-lhs 7 0) 1)) 1]
+    [(not (= (probe-lhs 8 0) 0)) 2]
+    [(not (= (probe-rhs 999 0) 1)) 3]
+    [(not (= (probe-rhs 1000 0) 0)) 4]
+    [(not (= (probe-rhs 1001 0) 0)) 5]
+    [(not (= (probe-refused 7 0) 8)) 6]
+    [(not (= (probe-refused 9 0) 0)) 7]
+    [else 42]))

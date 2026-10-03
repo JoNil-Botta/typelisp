@@ -15,17 +15,15 @@
   0)
 
 (define (to-string [_value : (& value HookValue)]) : String
-  (begin
-    (set! fallback-hook-calls (+ fallback-hook-calls 1))
-    "fallback"))
+  (set! fallback-hook-calls (+ fallback-hook-calls 1))
+  "fallback")
 
 (define (format-write
   [_value : (& value HookValue)]
   [formatter : (&mut formatter format.Formatter)]) : unit
-  (begin
-    (format.formatter-write-string! formatter "ho")
-    ;; The formatter must skip this second hook write after the first error.
-    (format.formatter-write-string! formatter "ok")))
+  (format.formatter-write-string! formatter "ho")
+  ;; The formatter must skip this second hook write after the first error.
+  (format.formatter-write-string! formatter "ok"))
 
 (define (format-writer-cell [writer : FailingWriter]) : (Array FailingWriter 1)
   (array writer))
@@ -48,20 +46,18 @@
           writer.remaining
           count)]
       [index : i64 0]
-      (begin
-        (while (< index accepted)
-          (begin
-            (set!
-              writer.bytes
-              (byte_buf.push writer.bytes (byte_buf.bytes-ref contents index)))
-            (set! index (+ index 1))))
-        (set! writer.remaining (- writer.remaining accepted))
-        (set! writer.calls (+ writer.calls 1))
-        (unsafe
-          (ptr-write! slot writer))
-        (if (= accepted count)
-          0
-          77)))))
+      (while (< index accepted)
+        (set!
+          writer.bytes
+          (byte_buf.push writer.bytes (byte_buf.bytes-ref contents index)))
+        (set! index (+ index 1)))
+      (set! writer.remaining (- writer.remaining accepted))
+      (set! writer.calls (+ writer.calls 1))
+      (unsafe
+        (ptr-write! slot writer))
+      (if (= accepted count)
+        0
+        77))))
 
 (define (format-write-capability [context : i64] [data : String]) : i64
   (let
@@ -76,10 +72,9 @@
         [status : i64
           (unsafe
             (format-write-raw address data))]
-        (begin
-          (unsafe
-            (format_writer_core.format-writer-release context))
-          status)))))
+        (unsafe
+          (format_writer_core.format-writer-release context))
+        status))))
 
 (define (error-77? [result : format.FormatResult]) : bool
   (match result

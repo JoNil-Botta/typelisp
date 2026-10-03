@@ -15,19 +15,16 @@
     [values : (__tl_dyn-array i64) (__tl_make-array i64 260)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i 260)
-        (begin
-          (set! (array-ref values i) (+ i 1))
-          (set! i (+ i 1))))
-      (alias-map (&mut values) n)
-      (set! i 0)
-      (while (and ok (< i n))
-        (begin
-          (if (= (array-ref values i) (+ (* (+ i 1) 2) 3))
-            unit
-            (set! ok false))
-          (set! i (+ i 1))))
-      (if (and ok (= (array-ref values n) (+ n 1)))
-        42
-        1))))
+    (while (< i 260)
+      (set! (array-ref values i) (+ i 1))
+      (set! i (+ i 1)))
+    (alias-map (&mut values) n)
+    (set! i 0)
+    (while (and ok (< i n))
+      (if (= (array-ref values i) (+ (* (+ i 1) 2) 3))
+        unit
+        (set! ok false))
+      (set! i (+ i 1)))
+    (if (and ok (= (array-ref values n) (+ n 1)))
+      42
+      1)))

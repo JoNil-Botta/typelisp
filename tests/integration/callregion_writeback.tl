@@ -34,44 +34,42 @@
     [w : i64 w0]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i 60)
-        (begin
-          (set! acc (+ acc (probe i)))
-          ; call A
-          (set! acc (+ acc w))
-          ; w's region: use, use, use+def
-          (set! acc (+ acc (* w i)))
-          (set! w (+ w i))
-          (set! acc (+ acc (+ a i)))
-          ; a,b,c hot: 7 refs each
-          (set! acc (+ acc (+ a 1)))
-          (set! acc (+ acc (+ a 2)))
-          (set! acc (+ acc (+ a 3)))
-          (set! acc (+ acc (* 2 a)))
-          (set! a (+ a 1))
-          (set! acc (+ acc (+ b i)))
-          (set! acc (+ acc (+ b 1)))
-          (set! acc (+ acc (+ b 2)))
-          (set! acc (+ acc (+ b 3)))
-          (set! acc (+ acc (* 2 b)))
-          (set! b (+ b 1))
-          (set! acc (+ acc (+ c i)))
-          (set! acc (+ acc (+ c 1)))
-          (set! acc (+ acc (+ c 2)))
-          (set! acc (+ acc (+ c 3)))
-          (set! acc (+ acc (* 2 c)))
-          (set! c (+ c 1))
-          (set! acc (+ acc (probe 7)))
-          ; call B -- exit store must precede
-          (set! acc (+ acc w))
-          ; post-call read of the new value
-          (set! i (+ i 1))))
-      (let
-        [r : i64 (+ acc (+ a (+ b (+ c w))))]
-        (if (> rounds 1)
-          (+ r (wb w0 (- rounds 1)))
-          r)))))
+    (while (< i 60)
+      (set! acc (+ acc (probe i)))
+      ; call A
+      (set! acc (+ acc w))
+      ; w's region: use, use, use+def
+      (set! acc (+ acc (* w i)))
+      (set! w (+ w i))
+      (set! acc (+ acc (+ a i)))
+      ; a,b,c hot: 7 refs each
+      (set! acc (+ acc (+ a 1)))
+      (set! acc (+ acc (+ a 2)))
+      (set! acc (+ acc (+ a 3)))
+      (set! acc (+ acc (* 2 a)))
+      (set! a (+ a 1))
+      (set! acc (+ acc (+ b i)))
+      (set! acc (+ acc (+ b 1)))
+      (set! acc (+ acc (+ b 2)))
+      (set! acc (+ acc (+ b 3)))
+      (set! acc (+ acc (* 2 b)))
+      (set! b (+ b 1))
+      (set! acc (+ acc (+ c i)))
+      (set! acc (+ acc (+ c 1)))
+      (set! acc (+ acc (+ c 2)))
+      (set! acc (+ acc (+ c 3)))
+      (set! acc (+ acc (* 2 c)))
+      (set! c (+ c 1))
+      (set! acc (+ acc (probe 7)))
+      ; call B -- exit store must precede
+      (set! acc (+ acc w))
+      ; post-call read of the new value
+      (set! i (+ i 1)))
+    (let
+      [r : i64 (+ acc (+ a (+ b (+ c w))))]
+      (if (> rounds 1)
+        (+ r (wb w0 (- rounds 1)))
+        r))))
 
 (define (main) : i64
   (let

@@ -16,29 +16,23 @@
 (define (run-failure-case [name : (& name str)]) : i64
   (cond
     [(string.eq name "bool")
-      (begin
-        (test.assert-bool-eq true false "bool mismatch")
-        1)]
+      (test.assert-bool-eq true false "bool mismatch")
+      1]
     [(string.eq name "i64")
-      (begin
-        (test.assert-i64-eq 26 27 "score mismatch")
-        1)]
+      (test.assert-i64-eq 26 27 "score mismatch")
+      1]
     [(string.eq name "i32")
-      (begin
-        (test.assert-i32-eq (cast -3 : i32) (cast 4 : i32) "offset mismatch")
-        1)]
+      (test.assert-i32-eq (cast -3 : i32) (cast 4 : i32) "offset mismatch")
+      1]
     [(string.eq name "f64")
-      (begin
-        (test.assert-f64-eq 1.25 2.5 "ratio mismatch")
-        1)]
+      (test.assert-f64-eq 1.25 2.5 "ratio mismatch")
+      1]
     [(string.eq name "char")
-      (begin
-        (test.assert-char-eq 'x' 'y' "mark mismatch")
-        1)]
+      (test.assert-char-eq 'x' 'y' "mark mismatch")
+      1]
     [(string.eq name "string")
-      (begin
-        (assert-owned-string-eq "left" "right" "name mismatch")
-        1)]
+      (assert-owned-string-eq "left" "right" "name mismatch")
+      1]
     [else 2]))
 
 (define (main) : i64

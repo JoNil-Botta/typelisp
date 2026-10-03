@@ -24,12 +24,10 @@
     [xs-slots (i64v.slots xs)]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (array-ref xs-slots i)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (array-ref xs-slots i)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (reduce-sum [xs : (& xs i64v.Vec)] [n : i64]) : i64
   (let
@@ -41,14 +39,12 @@
     [xs-slots (i64v.slots xs)]
     [acc : i64 seed]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (if (> (array-ref xs-slots i) acc)
-            (set! acc (array-ref xs-slots i))
-            (set! acc acc))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (if (> (array-ref xs-slots i) acc)
+        (set! acc (array-ref xs-slots i))
+        (set! acc acc))
+      (set! i (+ i 1)))
+    acc))
 
 (define (reduce-max [xs : (& xs i64v.Vec)] [n : i64] [seed : i64]) : i64
   (let
@@ -87,12 +83,10 @@
     [values-slots (f32v.slots values)]
     [acc : f32 seed]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (array-ref values-slots i)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (array-ref values-slots i)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (reduce-sum-f32 [values : (& values f32v.Vec)] [n : i64] [seed : f32]) : f32
   (let
@@ -135,47 +129,41 @@
 (define (fill-f64 [fs : (&mut fs f64v.Vec)]) : unit
   (let
     [fs-slots (f64v.slots-mut fs)]
-    (begin
-      (set! (array-ref fs-slots 0) 1.0)
-      (set! (array-ref fs-slots 1) 2.0)
-      (set! (array-ref fs-slots 2) 3.0)
-      (set! (array-ref fs-slots 3) 4.0)
-      (set! (array-ref fs-slots 4) 5.0))))
+    (set! (array-ref fs-slots 0) 1.0)
+    (set! (array-ref fs-slots 1) 2.0)
+    (set! (array-ref fs-slots 2) 3.0)
+    (set! (array-ref fs-slots 3) 4.0)
+    (set! (array-ref fs-slots 4) 5.0)))
 
 (define (fill-f32 [values : (&mut values f32v.Vec)] [n : i64]) : unit
   (let
     [values-slots (f32v.slots-mut values)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref values-slots i) (cast (+ i 1) : f32))
-          (set! i (+ i 1))))
-      ; Include a negative lane while keeping every value and partial sum
-      ; exactly representable in binary32.
-      (set! (array-ref values-slots 1) (cast -2.0 : f32)))))
+    (while (< i n)
+      (set! (array-ref values-slots i) (cast (+ i 1) : f32))
+      (set! i (+ i 1)))
+    ; Include a negative lane while keeping every value and partial sum
+    ; exactly representable in binary32.
+    (set! (array-ref values-slots 1) (cast -2.0 : f32))))
 
 (define (fill-f32-negative-zero [values : (&mut values f32v.Vec)] [n : i64]) : unit
   (let
     [values-slots (f32v.slots-mut values)]
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref values-slots i) (cast -0.0 : f32))
-        (set! i (+ i 1))))))
+      (set! (array-ref values-slots i) (cast -0.0 : f32))
+      (set! i (+ i 1)))))
 
 (define (fill-f32-overflow [values : (&mut values f32v.Vec)] [n : i64]) : unit
   (let
     [values-slots (f32v.slots-mut values)]
     [i : i64 0]
     [max-finite : f32 (f32-from-bits (cast 0x7f7fffff : u32))]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref values-slots i) (cast 0.0 : f32))
-          (set! i (+ i 1))))
-      (set! (array-ref values-slots 0) max-finite)
-      (set! (array-ref values-slots 1) max-finite))))
+    (while (< i n)
+      (set! (array-ref values-slots i) (cast 0.0 : f32))
+      (set! i (+ i 1)))
+    (set! (array-ref values-slots 0) max-finite)
+    (set! (array-ref values-slots 1) max-finite)))
 
 (define (fill-i32 [gs : (&mut gs i32v.Vec)] [n : i64]) : unit
   (let
@@ -185,41 +173,38 @@
 (define (fill-signed-i32 [hs : (&mut hs i32v.Vec)]) : unit
   (let
     [hs-slots (i32v.slots-mut hs)]
-    (begin
-      (set! (array-ref hs-slots 0) (cast 3 : i32))
-      (set! (array-ref hs-slots 1) (cast (- 0 7) : i32))
-      (set! (array-ref hs-slots 2) (cast 12 : i32))
-      (set! (array-ref hs-slots 3) (cast (- 0 1) : i32))
-      (set! (array-ref hs-slots 4) (cast 0 : i32))
-      (set! (array-ref hs-slots 5) (cast 5 : i32))
-      (set! (array-ref hs-slots 6) (cast (- 0 9) : i32))
-      (set! (array-ref hs-slots 7) (cast 8 : i32))
-      (set! (array-ref hs-slots 8) (cast (- 0 4) : i32))
-      (set! (array-ref hs-slots 9) (cast 6 : i32))
-      (set! (array-ref hs-slots 10) (cast (- 0 20) : i32)))))
+    (set! (array-ref hs-slots 0) (cast 3 : i32))
+    (set! (array-ref hs-slots 1) (cast (- 0 7) : i32))
+    (set! (array-ref hs-slots 2) (cast 12 : i32))
+    (set! (array-ref hs-slots 3) (cast (- 0 1) : i32))
+    (set! (array-ref hs-slots 4) (cast 0 : i32))
+    (set! (array-ref hs-slots 5) (cast 5 : i32))
+    (set! (array-ref hs-slots 6) (cast (- 0 9) : i32))
+    (set! (array-ref hs-slots 7) (cast 8 : i32))
+    (set! (array-ref hs-slots 8) (cast (- 0 4) : i32))
+    (set! (array-ref hs-slots 9) (cast 6 : i32))
+    (set! (array-ref hs-slots 10) (cast (- 0 20) : i32))))
 
 (define (fill-signed-i64 [values : (&mut values i64v.Vec)]) : unit
   (let
     [values-slots (i64v.slots-mut values)]
-    (begin
-      (set! (array-ref values-slots 0) 3)
-      (set! (array-ref values-slots 1) -7)
-      (set! (array-ref values-slots 2) 12)
-      (set! (array-ref values-slots 3) -1)
-      (set! (array-ref values-slots 4) 0)
-      (set! (array-ref values-slots 5) 40)
-      (set! (array-ref values-slots 6) -20)
-      (set! (array-ref values-slots 7) 8)
-      (set! (array-ref values-slots 8) -4))))
+    (set! (array-ref values-slots 0) 3)
+    (set! (array-ref values-slots 1) -7)
+    (set! (array-ref values-slots 2) 12)
+    (set! (array-ref values-slots 3) -1)
+    (set! (array-ref values-slots 4) 0)
+    (set! (array-ref values-slots 5) 40)
+    (set! (array-ref values-slots 6) -20)
+    (set! (array-ref values-slots 7) 8)
+    (set! (array-ref values-slots 8) -4)))
 
 (define (fill-bool [values : (&mut values boolv.Vec)] [n : i64] [value : bool]) : unit
   (let
     [values-slots (boolv.slots-mut values)]
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref values-slots i) value)
-        (set! i (+ i 1))))))
+      (set! (array-ref values-slots i) value)
+      (set! i (+ i 1)))))
 
 (define (check-base-reductions) : i64
   (let
@@ -229,56 +214,46 @@
     [n32 : i64 11]
     [gs : i32v.Vec (i32z.make 11)]
     [hs : i32v.Vec (i32z.make 11)]
-    (begin
-      (fill-i64 (&mut xs) n)
-      (fill-f64 (&mut fs))
-      (fill-i32 (&mut gs) n32)
-      (fill-signed-i32 (&mut hs))
-      (let
-        [xs-slots (i64v.slots (& xs))]
-        (cond
-          [(!= (reduce-sum (& xs) n) (manual-sum (& xs) n)) 1]
-          [(!= (reduce-sum (& xs) n) 15) 2]
-          [(!= (reduce-sum (& xs) 3) 6) 3]
-          [(!= (reduce-sum (& xs) 4) 10) 16]
-          [(!= (spmd-reduce sum ([i : i64 0 0]) 99 (array-ref xs-slots i)) 99)
-            4]
-          [(!= (reduce-max (& xs) n 0) (manual-max (& xs) n 0)) 5]
-          [(!= (reduce-max (& xs) n 0) 5) 6]
-          [(!= (reduce-max (& xs) n 100) 100) 7]
-          [(!= (reduce-min (& xs) n 1000) 1) 8]
-          [(!= (reduce-min (& xs) n 0) 0) 9]
-          [(!= (reduce-sum-i32 (& gs) n) (cast 15 : i32)) 10]
-          [(!= (reduce-sum-i32 (& gs) 8) (cast 36 : i32)) 21]
-          [(!= (reduce-sum-i32 (& gs) n32) (cast 66 : i32)) 22]
-          [(< (reduce-sum-f64 (& fs) n) 14.5) 11]
-          [(> (reduce-sum-f64 (& fs) n) 15.5) 12]
-          [(not (reduce-all-pos (& xs) n)) 13]
-          [(reduce-any-zero (& xs) n) 14]
-          [(not
-              (spmd-reduce
-                all
-                ([i : i64 0 0])
-                true
-                (> (array-ref xs-slots i) 0)))
-            15]
-          [(!= (reduce-max-i32 (& gs) n (cast 0 : i32)) (cast 5 : i32)) 17]
-          [(!= (reduce-max-i32 (& gs) n (cast 100 : i32)) (cast 100 : i32)) 18]
-          [(!= (reduce-min-i32 (& gs) n (cast 1000 : i32)) (cast 1 : i32)) 19]
-          [(!= (reduce-min-i32 (& gs) n (cast 0 : i32)) (cast 0 : i32)) 20]
-          [(!= (reduce-max-i32 (& gs) n32 (cast 0 : i32)) (cast 11 : i32)) 23]
-          [(!= (reduce-min-i32 (& gs) n32 (cast 1000 : i32)) (cast 1 : i32)) 24]
-          [(!= (reduce-sum-i32 (& hs) 8) (cast 11 : i32)) 25]
-          [(!= (reduce-sum-i32 (& hs) n32) (cast (- 0 7) : i32)) 26]
-          [(!=
-              (reduce-max-i32 (& hs) n32 (cast (- 0 100) : i32))
-              (cast 12 : i32))
-            27]
-          [(!=
-              (reduce-min-i32 (& hs) n32 (cast 100 : i32))
-              (cast (- 0 20) : i32))
-            28]
-          [else 0])))))
+    (fill-i64 (&mut xs) n)
+    (fill-f64 (&mut fs))
+    (fill-i32 (&mut gs) n32)
+    (fill-signed-i32 (&mut hs))
+    (let
+      [xs-slots (i64v.slots (& xs))]
+      (cond
+        [(!= (reduce-sum (& xs) n) (manual-sum (& xs) n)) 1]
+        [(!= (reduce-sum (& xs) n) 15) 2]
+        [(!= (reduce-sum (& xs) 3) 6) 3]
+        [(!= (reduce-sum (& xs) 4) 10) 16]
+        [(!= (spmd-reduce sum ([i : i64 0 0]) 99 (array-ref xs-slots i)) 99) 4]
+        [(!= (reduce-max (& xs) n 0) (manual-max (& xs) n 0)) 5]
+        [(!= (reduce-max (& xs) n 0) 5) 6]
+        [(!= (reduce-max (& xs) n 100) 100) 7]
+        [(!= (reduce-min (& xs) n 1000) 1) 8]
+        [(!= (reduce-min (& xs) n 0) 0) 9]
+        [(!= (reduce-sum-i32 (& gs) n) (cast 15 : i32)) 10]
+        [(!= (reduce-sum-i32 (& gs) 8) (cast 36 : i32)) 21]
+        [(!= (reduce-sum-i32 (& gs) n32) (cast 66 : i32)) 22]
+        [(< (reduce-sum-f64 (& fs) n) 14.5) 11]
+        [(> (reduce-sum-f64 (& fs) n) 15.5) 12]
+        [(not (reduce-all-pos (& xs) n)) 13]
+        [(reduce-any-zero (& xs) n) 14]
+        [(not
+            (spmd-reduce all ([i : i64 0 0]) true (> (array-ref xs-slots i) 0)))
+          15]
+        [(!= (reduce-max-i32 (& gs) n (cast 0 : i32)) (cast 5 : i32)) 17]
+        [(!= (reduce-max-i32 (& gs) n (cast 100 : i32)) (cast 100 : i32)) 18]
+        [(!= (reduce-min-i32 (& gs) n (cast 1000 : i32)) (cast 1 : i32)) 19]
+        [(!= (reduce-min-i32 (& gs) n (cast 0 : i32)) (cast 0 : i32)) 20]
+        [(!= (reduce-max-i32 (& gs) n32 (cast 0 : i32)) (cast 11 : i32)) 23]
+        [(!= (reduce-min-i32 (& gs) n32 (cast 1000 : i32)) (cast 1 : i32)) 24]
+        [(!= (reduce-sum-i32 (& hs) 8) (cast 11 : i32)) 25]
+        [(!= (reduce-sum-i32 (& hs) n32) (cast (- 0 7) : i32)) 26]
+        [(!= (reduce-max-i32 (& hs) n32 (cast (- 0 100) : i32)) (cast 12 : i32))
+          27]
+        [(!= (reduce-min-i32 (& hs) n32 (cast 100 : i32)) (cast (- 0 20) : i32))
+          28]
+        [else 0]))))
 
 (define (check-f32-reductions) : i64
   (let
@@ -287,82 +262,79 @@
     [overflow : f32v.Vec (f32z.make 16)]
     [pos-zero : f32 (cast 0.0 : f32)]
     [neg-zero : f32 (cast -0.0 : f32)]
-    (begin
-      (fill-f32 (&mut values) 19)
-      (fill-f32-negative-zero (&mut zeros) 16)
-      (fill-f32-overflow (&mut overflow) 16)
-      (cond
-        [(!=
-            (f32-bits (reduce-sum-f32 (& values) 0 neg-zero))
-            (cast 0x80000000 : u32))
-          29]
-        [(!= (reduce-sum-f32 (& values) 3 pos-zero) (cast 2.0 : f32)) 30]
-        [(!= (reduce-sum-f32 (& values) 8 pos-zero) (cast 32.0 : f32)) 31]
-        [(!= (reduce-sum-f32 (& values) 16 pos-zero) (cast 132.0 : f32)) 32]
-        [(!= (reduce-sum-f32 (& values) 19 pos-zero) (cast 186.0 : f32)) 33]
-        [(!=
-            (reduce-sum-f32 (& values) 19 pos-zero)
-            (manual-sum-f32 (& values) 19 pos-zero))
-          34]
-        [(!=
-            (f32-bits (reduce-sum-f32 (& zeros) 16 neg-zero))
-            (cast 0x80000000 : u32))
-          35]
-        [(!=
-            (f32-bits (reduce-sum-f32 (& overflow) 16 pos-zero))
-            (cast 0x7f800000 : u32))
-          36]
-        [(!=
-            (f32-bits (reduce-sum-f32 (& overflow) 16 pos-zero))
-            (f32-bits (manual-sum-f32 (& overflow) 16 pos-zero)))
-          37]
-        [else 0]))))
+    (fill-f32 (&mut values) 19)
+    (fill-f32-negative-zero (&mut zeros) 16)
+    (fill-f32-overflow (&mut overflow) 16)
+    (cond
+      [(!=
+          (f32-bits (reduce-sum-f32 (& values) 0 neg-zero))
+          (cast 0x80000000 : u32))
+        29]
+      [(!= (reduce-sum-f32 (& values) 3 pos-zero) (cast 2.0 : f32)) 30]
+      [(!= (reduce-sum-f32 (& values) 8 pos-zero) (cast 32.0 : f32)) 31]
+      [(!= (reduce-sum-f32 (& values) 16 pos-zero) (cast 132.0 : f32)) 32]
+      [(!= (reduce-sum-f32 (& values) 19 pos-zero) (cast 186.0 : f32)) 33]
+      [(!=
+          (reduce-sum-f32 (& values) 19 pos-zero)
+          (manual-sum-f32 (& values) 19 pos-zero))
+        34]
+      [(!=
+          (f32-bits (reduce-sum-f32 (& zeros) 16 neg-zero))
+          (cast 0x80000000 : u32))
+        35]
+      [(!=
+          (f32-bits (reduce-sum-f32 (& overflow) 16 pos-zero))
+          (cast 0x7f800000 : u32))
+        36]
+      [(!=
+          (f32-bits (reduce-sum-f32 (& overflow) 16 pos-zero))
+          (f32-bits (manual-sum-f32 (& overflow) 16 pos-zero)))
+        37]
+      [else 0])))
 
 (define (check-long-i64-reductions) : i64
   (let
     [long-xs : i64v.Vec (i64z.make 143)]
     [signed-xs : i64v.Vec (i64z.make 9)]
-    (begin
-      (fill-i64 (&mut long-xs) 143)
-      (fill-signed-i64 (&mut signed-xs))
-      (cond
-        [(!= (reduce-sum (& long-xs) 143) 10296) 38]
-        [(!= (reduce-sum (& long-xs) 143) (manual-sum (& long-xs) 143)) 39]
-        [(!= (reduce-min (& signed-xs) 0 99) 99) 40]
-        [(!= (reduce-max (& signed-xs) 0 -99) -99) 41]
-        [(!= (reduce-min (& signed-xs) 3 99) -7) 62]
-        [(!= (reduce-max (& signed-xs) 3 -99) 12) 43]
-        [(!= (reduce-min (& signed-xs) 4 99) -7) 44]
-        [(!= (reduce-max (& signed-xs) 4 -99) 12) 45]
-        [(!= (reduce-min (& signed-xs) 9 99) -20) 46]
-        [(!= (reduce-max (& signed-xs) 9 -99) 40) 47]
-        [(!= (reduce-min (& signed-xs) 9 -100) -100) 48]
-        [(!= (reduce-max (& signed-xs) 9 100) 100) 49]
-        [else 0]))))
+    (fill-i64 (&mut long-xs) 143)
+    (fill-signed-i64 (&mut signed-xs))
+    (cond
+      [(!= (reduce-sum (& long-xs) 143) 10296) 38]
+      [(!= (reduce-sum (& long-xs) 143) (manual-sum (& long-xs) 143)) 39]
+      [(!= (reduce-min (& signed-xs) 0 99) 99) 40]
+      [(!= (reduce-max (& signed-xs) 0 -99) -99) 41]
+      [(!= (reduce-min (& signed-xs) 3 99) -7) 62]
+      [(!= (reduce-max (& signed-xs) 3 -99) 12) 43]
+      [(!= (reduce-min (& signed-xs) 4 99) -7) 44]
+      [(!= (reduce-max (& signed-xs) 4 -99) 12) 45]
+      [(!= (reduce-min (& signed-xs) 9 99) -20) 46]
+      [(!= (reduce-max (& signed-xs) 9 -99) 40) 47]
+      [(!= (reduce-min (& signed-xs) 9 -100) -100) 48]
+      [(!= (reduce-max (& signed-xs) 9 100) 100) 49]
+      [else 0])))
 
 (define (check-bool-reductions) : i64
   (let
     [all-values : boolv.Vec (boolz.make 67)]
     [any-values : boolv.Vec (boolz.make 67)]
-    (begin
-      (fill-bool (&mut all-values) 67 true)
-      (fill-bool (&mut any-values) 67 false)
-      (boolv.set-ref! (&mut all-values) 40 false)
-      (boolv.set-ref! (&mut any-values) 40 true)
-      (cond
-        [(not (reduce-all-bool (& all-values) 0)) 50]
-        [(reduce-any-bool (& any-values) 0) 51]
-        [(not (reduce-all-bool (& all-values) 3)) 52]
-        [(reduce-any-bool (& any-values) 3) 53]
-        [(not (reduce-all-bool (& all-values) 32)) 54]
-        [(reduce-any-bool (& any-values) 32) 55]
-        [(reduce-all-bool (& all-values) 41) 56]
-        [(not (reduce-any-bool (& any-values) 41)) 57]
-        [(reduce-all-bool (& all-values) 64) 58]
-        [(not (reduce-any-bool (& any-values) 64)) 59]
-        [(reduce-all-bool (& all-values) 67) 60]
-        [(not (reduce-any-bool (& any-values) 67)) 61]
-        [else 0]))))
+    (fill-bool (&mut all-values) 67 true)
+    (fill-bool (&mut any-values) 67 false)
+    (boolv.set-ref! (&mut all-values) 40 false)
+    (boolv.set-ref! (&mut any-values) 40 true)
+    (cond
+      [(not (reduce-all-bool (& all-values) 0)) 50]
+      [(reduce-any-bool (& any-values) 0) 51]
+      [(not (reduce-all-bool (& all-values) 3)) 52]
+      [(reduce-any-bool (& any-values) 3) 53]
+      [(not (reduce-all-bool (& all-values) 32)) 54]
+      [(reduce-any-bool (& any-values) 32) 55]
+      [(reduce-all-bool (& all-values) 41) 56]
+      [(not (reduce-any-bool (& any-values) 41)) 57]
+      [(reduce-all-bool (& all-values) 64) 58]
+      [(not (reduce-any-bool (& any-values) 64)) 59]
+      [(reduce-all-bool (& all-values) 67) 60]
+      [(not (reduce-any-bool (& any-values) 67)) 61]
+      [else 0])))
 
 (define (main) : i64
   (let

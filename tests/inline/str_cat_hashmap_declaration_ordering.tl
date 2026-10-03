@@ -10,11 +10,10 @@
   str-cat-hashmap-declaration-ordering
   (let
     [m : map_i64_i64.Map (map_i64_i64.with-capacity 8)]
-    (begin
-      (map_i64_i64.insert! m 1 7)
-      (test.assert-i64-eq
-        (+
-          (map_i64_i64.capacity (& m))
-          (string.string-length (str_cat.str-cat "a" "b")))
-        10
-        "generated hashmap declarations precede str-cat expansion"))))
+    (map_i64_i64.insert! m 1 7)
+    (test.assert-i64-eq
+      (+
+        (map_i64_i64.capacity (& m))
+        (string.string-length (str_cat.str-cat "a" "b")))
+      10
+      "generated hashmap declarations precede str-cat expansion")))

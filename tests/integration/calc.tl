@@ -86,14 +86,13 @@
   (let
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (if (is-digit (string.string-ref src j))
-            (set! j (+ j 1))
-            (set! keep false))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (if (is-digit (string.string-ref src j))
+          (set! j (+ j 1))
+          (set! keep false))
+        (set! keep false)))
+    j))
 
 ;; Classify a single non-digit, non-space char into its operator/paren Token,
 ;; building a real `Token` value. An unexpected char aborts via the `panic`
@@ -120,33 +119,30 @@
     [i : i64 0]
     [n : i64 (string.string-length src)]
     [count : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [c : char (string.string-ref src i)]
-          (if (is-space c)
-            (set! i (+ i 1))
-            (if (is-digit c)
-              ;; Accumulate a run of digits into one `Token.Int` token.
-              (let
-                [end : i64 (scan-int-end (& src) i n)]
-                [acc : i64 0]
-                (begin
-                  (while (< i end)
-                    (begin
-                      (set!
-                        acc
-                        (+ (* acc 10) (digit-value (string.string-ref src i))))
-                      (set! i (+ i 1))))
-                  (tokvec.push-ref! toks (token.Token.Int acc))
-                  (set! count (+ count 1))))
-              (begin
-                (tokvec.push-ref! toks (single-token c))
-                (set! count (+ count 1))
-                (set! i (+ i 1)))))))
-      ;; A real lexer terminates the stream; record the sentinel too.
-      (tokvec.push-ref! toks token.Token.End)
-      count)))
+    (while (< i n)
+      (let
+        [c : char (string.string-ref src i)]
+        (if (is-space c)
+          (set! i (+ i 1))
+          (if (is-digit c)
+            ;; Accumulate a run of digits into one `Token.Int` token.
+            (let
+              [end : i64 (scan-int-end (& src) i n)]
+              [acc : i64 0]
+              (while (< i end)
+                (set!
+                  acc
+                  (+ (* acc 10) (digit-value (string.string-ref src i))))
+                (set! i (+ i 1)))
+              (tokvec.push-ref! toks (token.Token.Int acc))
+              (set! count (+ count 1)))
+            (begin
+              (tokvec.push-ref! toks (single-token c))
+              (set! count (+ count 1))
+              (set! i (+ i 1)))))))
+    ;; A real lexer terminates the stream; record the sentinel too.
+    (tokvec.push-ref! toks token.Token.End)
+    count))
 
 ;; ============================ Parser ======================================
 ;; Recursive descent over the precedence grammar
@@ -203,18 +199,16 @@
       ;; A literal: build `(Expr.Num v)` and consume the `Token.Int` token.
       (let
         [v : i64 (current-val toks cur)]
-        (begin
-          (advance cur)
-          (Num v)))
+        (advance cur)
+        (Num v))
       (if (= t (token.tag-lparen))
         ;; '(' expr ')': consume '(', parse the inner expr, consume ')'.
         (begin
           (expect toks cur (token.tag-lparen))
           (let
             [inner : Expr (parse-expr toks cur)]
-            (begin
-              (expect toks cur (token.tag-rparen))
-              inner)))
+            (expect toks cur (token.tag-rparen))
+            inner))
         (io.panic "parser: expected an integer or '('")))))
 
 ;; term := factor (('*' | '/') factor)*  (left-associative '*' / '/').
@@ -225,18 +219,17 @@
   [cur : (&mut cur (Array i64 1))]) : Expr
   (let
     [acc : Expr (parse-factor toks cur)]
-    (begin
-      (while (or
-        (= (current-tag toks cur) (token.tag-star))
-        (= (current-tag toks cur) (token.tag-slash)))
-        (if (= (current-tag toks cur) (token.tag-star))
-          (begin
-            (advance cur)
-            (set! acc (Mul (box acc) (box (parse-factor toks cur)))))
-          (begin
-            (advance cur)
-            (set! acc (Div (box acc) (box (parse-factor toks cur)))))))
-      acc)))
+    (while (or
+      (= (current-tag toks cur) (token.tag-star))
+      (= (current-tag toks cur) (token.tag-slash)))
+      (if (= (current-tag toks cur) (token.tag-star))
+        (begin
+          (advance cur)
+          (set! acc (Mul (box acc) (box (parse-factor toks cur)))))
+        (begin
+          (advance cur)
+          (set! acc (Div (box acc) (box (parse-factor toks cur)))))))
+    acc))
 
 ;; expr := term (('+' | '-') term)*  (left-associative '+' / '-').
 ;; Parse a term, then fold left-associative `Expr.Add`/`Expr.Sub` nodes over the
@@ -247,18 +240,17 @@
   [cur : (&mut cur (Array i64 1))]) : Expr
   (let
     [acc : Expr (parse-term toks cur)]
-    (begin
-      (while (or
-        (= (current-tag toks cur) (token.tag-plus))
-        (= (current-tag toks cur) (token.tag-minus)))
-        (if (= (current-tag toks cur) (token.tag-plus))
-          (begin
-            (advance cur)
-            (set! acc (Add (box acc) (box (parse-term toks cur)))))
-          (begin
-            (advance cur)
-            (set! acc (Sub (box acc) (box (parse-term toks cur)))))))
-      acc)))
+    (while (or
+      (= (current-tag toks cur) (token.tag-plus))
+      (= (current-tag toks cur) (token.tag-minus)))
+      (if (= (current-tag toks cur) (token.tag-plus))
+        (begin
+          (advance cur)
+          (set! acc (Add (box acc) (box (parse-term toks cur)))))
+        (begin
+          (advance cur)
+          (set! acc (Sub (box acc) (box (parse-term toks cur)))))))
+    acc))
 
 ;; Parse a whole token vector starting at index 0: thread a fresh cursor cell
 ;; through `parse-expr` and return the resulting `Expr` tree. This is the
@@ -297,8 +289,7 @@
 (define (main) : i64
   (let
     [toks : tokvec.Vec (tokvec.with-capacity 16)]
-    (begin
-      (lex "2 + 3 * 4" (&mut toks))
-      (let
-        [expr : Expr (parse (& toks))]
-        (eval (& expr))))))
+    (lex "2 + 3 * 4" (&mut toks))
+    (let
+      [expr : Expr (parse (& toks))]
+      (eval (& expr)))))

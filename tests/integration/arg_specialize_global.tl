@@ -23,12 +23,10 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set! acc (+ acc (array-ref (i64vec.slots v) i)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i count)
+      (set! acc (+ acc (array-ref (i64vec.slots v) i)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (spec-push! [v : (&mut v i64vec.Vec)] [value : i64]) : unit
   (i64vec.push-ref! v value))
@@ -37,12 +35,10 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set! acc (+ acc (* factor (array-ref (i64vec.slots v) i))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i count)
+      (set! acc (+ acc (* factor (array-ref (i64vec.slots v) i))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
@@ -51,25 +47,23 @@
     [local : i64vec.Vec (zero-vec n)]
     [first : i64 0]
     [second : i64 0]
-    (begin
-      (set! spec-data (zero-vec n))
-      (set! spec-log (i64vec.Vec (__tl_make-array i64 0) 0))
-      (while (< i n)
-        (begin
-          (set! (array-ref (i64vec.slots-mut (&mut spec-data)) i) (+ i 1))
-          (set! (array-ref (i64vec.slots-mut (&mut local)) i) 2)
-          (set! i (+ i 1))))
-      (set! first (spec-sum (& spec-data) n))
-      (set! second (spec-sum (& spec-data) (- n 1)))
-      (spec-push! (&mut spec-log) first)
-      (spec-push! (&mut spec-log) second)
-      (io.print-format "{}\n" first)
-      (io.print-format "{}\n" (i64vec.len (& spec-log)))
-      (io.print-format
-        "{}\n"
-        (+
-          (array-ref (i64vec.slots (& spec-log)) 0)
-          (array-ref (i64vec.slots (& spec-log)) 1)))
-      (io.print-format "{}\n" (spec-scale (& spec-data) n 3))
-      (io.print-format "{}\n" (spec-scale (& local) n 5))
-      42)))
+    (set! spec-data (zero-vec n))
+    (set! spec-log (i64vec.Vec (__tl_make-array i64 0) 0))
+    (while (< i n)
+      (set! (array-ref (i64vec.slots-mut (&mut spec-data)) i) (+ i 1))
+      (set! (array-ref (i64vec.slots-mut (&mut local)) i) 2)
+      (set! i (+ i 1)))
+    (set! first (spec-sum (& spec-data) n))
+    (set! second (spec-sum (& spec-data) (- n 1)))
+    (spec-push! (&mut spec-log) first)
+    (spec-push! (&mut spec-log) second)
+    (io.print-format "{}\n" first)
+    (io.print-format "{}\n" (i64vec.len (& spec-log)))
+    (io.print-format
+      "{}\n"
+      (+
+        (array-ref (i64vec.slots (& spec-log)) 0)
+        (array-ref (i64vec.slots (& spec-log)) 1)))
+    (io.print-format "{}\n" (spec-scale (& spec-data) n 3))
+    (io.print-format "{}\n" (spec-scale (& local) n 5))
+    42))

@@ -17,30 +17,24 @@
     [sum : i64 0]
     [index : i64 0]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< index views)
-        (let
-          [view : (& text bytes) (byte_buf.str-as-bytes text)]
-          (begin
-            (set!
-              sum
-              (+ sum (cast (byte_buf.bytes-ref view (% index 5)) : i64)))
-            (set! index (+ index 1)))))
-      (and (= (profile.alloc-total) before) (= sum 106400)))))
+    (while (< index views)
+      (let
+        [view : (& text bytes) (byte_buf.str-as-bytes text)]
+        (set! sum (+ sum (cast (byte_buf.bytes-ref view (% index 5)) : i64)))
+        (set! index (+ index 1))))
+    (and (= (profile.alloc-total) before) (= sum 106400))))
 
 (define (buf-window [buf : (& buf byte_buf.ByteBuf)]) : bool
   (let
     [sum : i64 0]
     [index : i64 0]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< index views)
-        (let
-          [view : (& buf bytes) (byte_buf.as-bytes buf)]
-          (begin
-            (set! sum (+ sum (byte_buf.bytes-length view)))
-            (set! index (+ index 1)))))
-      (and (= (profile.alloc-total) before) (= sum 5000)))))
+    (while (< index views)
+      (let
+        [view : (& buf bytes) (byte_buf.as-bytes buf)]
+        (set! sum (+ sum (byte_buf.bytes-length view)))
+        (set! index (+ index 1))))
+    (and (= (profile.alloc-total) before) (= sum 5000))))
 
 ;; A view of a view of a view, down to the empty view at the end.
 (define (subview-window [view : (& source bytes)]) : bool
@@ -48,22 +42,20 @@
     [sum : i64 0]
     [index : i64 0]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< index views)
-        (let
-          [inner : (& source bytes) (byte_buf.bytes-slice-view view 1 3)]
-          [last : (& source bytes) (byte_buf.bytes-slice-view inner 2 1)]
-          [empty : (& source bytes) (byte_buf.bytes-slice-view last 1 0)]
-          (begin
-            (set!
-              sum
-              (+
-                sum
-                (+
-                  (cast (byte_buf.bytes-ref last 0) : i64)
-                  (byte_buf.bytes-length empty))))
-            (set! index (+ index 1)))))
-      (and (= (profile.alloc-total) before) (= sum 108000)))))
+    (while (< index views)
+      (let
+        [inner : (& source bytes) (byte_buf.bytes-slice-view view 1 3)]
+        [last : (& source bytes) (byte_buf.bytes-slice-view inner 2 1)]
+        [empty : (& source bytes) (byte_buf.bytes-slice-view last 1 0)]
+        (set!
+          sum
+          (+
+            sum
+            (+
+              (cast (byte_buf.bytes-ref last 0) : i64)
+              (byte_buf.bytes-length empty))))
+        (set! index (+ index 1))))
+    (and (= (profile.alloc-total) before) (= sum 108000))))
 
 ;; Mutable views of a buffer, and a mutable view of that view, write through
 ;; to the buffer.
@@ -71,15 +63,13 @@
   (let
     [index : i64 0]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< index views)
-        (let
-          [whole : (&mut buf bytes) (byte_buf.as-mut-bytes buf)]
-          [tail : (&mut buf bytes) (byte_buf.bytes-mut-slice-view whole 3 2)]
-          (begin
-            (byte_buf.bytes-set! tail 1 (cast (% index 256) : u8))
-            (set! index (+ index 1)))))
-      (= (profile.alloc-total) before))))
+    (while (< index views)
+      (let
+        [whole : (&mut buf bytes) (byte_buf.as-mut-bytes buf)]
+        [tail : (&mut buf bytes) (byte_buf.bytes-mut-slice-view whole 3 2)]
+        (byte_buf.bytes-set! tail 1 (cast (% index 256) : u8))
+        (set! index (+ index 1))))
+    (= (profile.alloc-total) before)))
 
 ;; The private builtin the stdlib views are made of, over every source kind.
 (define (builtin-window
@@ -91,33 +81,30 @@
     [sum : i64 0]
     [index : i64 0]
     [before : i64 (profile.alloc-total)]
-    (begin
-      (while (< index views)
-        (let
-          [from-text : (& text bytes) (__tl_bytes-view text 0 5)]
-          [from-view : (& text bytes) (__tl_bytes-view from-text 4 1)]
-          [from-fixed : (& fixed bytes) (__tl_bytes-view fixed 3 1)]
-          [whole : (& fixed bytes) (__tl_bytes-view fixed 0 4)]
-          (begin
-            (set!
-              sum
+    (while (< index views)
+      (let
+        [from-text : (& text bytes) (__tl_bytes-view text 0 5)]
+        [from-view : (& text bytes) (__tl_bytes-view from-text 4 1)]
+        [from-fixed : (& fixed bytes) (__tl_bytes-view fixed 3 1)]
+        [whole : (& fixed bytes) (__tl_bytes-view fixed 0 4)]
+        (set!
+          sum
+          (+
+            sum
+            (+
+              (cast (byte_buf.bytes-ref from-view 0) : i64)
               (+
-                sum
-                (+
-                  (cast (byte_buf.bytes-ref from-view 0) : i64)
-                  (+
-                    (cast (byte_buf.bytes-ref from-fixed 0) : i64)
-                    (byte_buf.bytes-length whole)))))
-            (set! index (+ index 1)))))
-      (set! index 0)
-      (while (< index views)
-        (let
-          [slots : (&mut buf bytes) (__tl_bytes-mut-view buf.slots 0 buf.len)]
-          [first : (&mut buf bytes) (__tl_bytes-mut-view slots 0 1)]
-          (begin
-            (byte_buf.bytes-set! first 0 (cast 65 : u8))
-            (set! index (+ index 1)))))
-      (and (= (profile.alloc-total) before) (= sum 119000)))))
+                (cast (byte_buf.bytes-ref from-fixed 0) : i64)
+                (byte_buf.bytes-length whole)))))
+        (set! index (+ index 1))))
+    (set! index 0)
+    (while (< index views)
+      (let
+        [slots : (&mut buf bytes) (__tl_bytes-mut-view buf.slots 0 buf.len)]
+        [first : (&mut buf bytes) (__tl_bytes-mut-view slots 0 1)]
+        (byte_buf.bytes-set! first 0 (cast 65 : u8))
+        (set! index (+ index 1))))
+    (and (= (profile.alloc-total) before) (= sum 119000))))
 
 ;; One out-of-range view, selected by `which`.
 (define (trap [text : (& text str)] [which : i64]) : i64

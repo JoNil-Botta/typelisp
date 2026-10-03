@@ -400,22 +400,20 @@
             "source.txt"
             rooted.linux-rooted-never-cancelled)
           rooted.cleanup-linux-rooted-read-file])
-      (begin
+      (rooted.linux-rooted-test-reset!)
+      (rooted.linux-rooted-test-fail-on!
+        rooted.fs-linux-rooted-syscall-kind-fstat
+        1
+        5)
+      (let
+        [snapshot : rooted.FsLinuxRootedSourceSnapshot
+          (rooted.linux-rooted-read-file-source-snapshot
+            (& reader)
+            rooted.linux-rooted-never-cancelled)]
+        [ok : bool
+          (= (result-code (rooted.linux-rooted-source-result (& snapshot))) 8)]
         (rooted.linux-rooted-test-reset!)
-        (rooted.linux-rooted-test-fail-on!
-          rooted.fs-linux-rooted-syscall-kind-fstat
-          1
-          5)
-        (let
-          [snapshot : rooted.FsLinuxRootedSourceSnapshot
-            (rooted.linux-rooted-read-file-source-snapshot
-              (& reader)
-              rooted.linux-rooted-never-cancelled)]
-          [ok : bool
-            (= (result-code (rooted.linux-rooted-source-result (& snapshot))) 8)]
-          (begin
-            (rooted.linux-rooted-test-reset!)
-            ok))))))
+        ok))))
 
 (define (fault-revalidate
   [kind : i64]
@@ -432,18 +430,16 @@
     (let
       [source : rooted.FsLinuxRootedSourceSnapshot
         (snapshot-of (& root) "source.txt")]
-      (begin
+      (rooted.linux-rooted-test-reset!)
+      (rooted.linux-rooted-test-fail-on! kind call errno-code)
+      (let
+        [ok : bool
+          (finish-is?
+            (revalidate (& root) "source.txt" (& source))
+            operation
+            close)]
         (rooted.linux-rooted-test-reset!)
-        (rooted.linux-rooted-test-fail-on! kind call errno-code)
-        (let
-          [ok : bool
-            (finish-is?
-              (revalidate (& root) "source.txt" (& source))
-              operation
-              close)]
-          (begin
-            (rooted.linux-rooted-test-reset!)
-            ok))))))
+        ok))))
 
 ;; An operation failure and a cleanup failure in one revalidation: the name
 ;; denotes another file and the one close fails. Both are reported.
@@ -457,18 +453,16 @@
     (let
       [source : rooted.FsLinuxRootedSourceSnapshot
         (snapshot-of (& root) "source.txt")]
-      (begin
+      (rooted.linux-rooted-test-reset!)
+      (rooted.linux-rooted-test-fail-on!
+        rooted.fs-linux-rooted-syscall-kind-close
+        1
+        5)
+      (let
+        [ok : bool
+          (finish-is? (revalidate (& root) "other.txt" (& source)) 20 13)]
         (rooted.linux-rooted-test-reset!)
-        (rooted.linux-rooted-test-fail-on!
-          rooted.fs-linux-rooted-syscall-kind-close
-          1
-          5)
-        (let
-          [ok : bool
-            (finish-is? (revalidate (& root) "other.txt" (& source)) 20 13)]
-          (begin
-            (rooted.linux-rooted-test-reset!)
-            ok))))))
+        ok))))
 
 ;; A stage finished with a mask that was never admitted, whose close also
 ;; fails: both outcomes are reported and no byte is written.
@@ -492,28 +486,26 @@
               (& stage)
               rooted.linux-rooted-never-cancelled)
             rooted.cleanup-linux-rooted-file])
-        (begin
+        (rooted.linux-rooted-test-reset!)
+        (rooted.linux-rooted-test-fail-on!
+          rooted.fs-linux-rooted-syscall-kind-close
+          1
+          5)
+        (let
+          [contents : String "never\n"]
+          [ok : bool
+            (finish-is?
+              (rooted.linux-rooted-file-finish-with-source-permissions!
+                (&mut file)
+                (byte_buf.str-as-bytes (& contents))
+                (string-length (& contents))
+                (& wide)
+                true
+                rooted.linux-rooted-never-cancelled)
+              22
+              13)]
           (rooted.linux-rooted-test-reset!)
-          (rooted.linux-rooted-test-fail-on!
-            rooted.fs-linux-rooted-syscall-kind-close
-            1
-            5)
-          (let
-            [contents : String "never\n"]
-            [ok : bool
-              (finish-is?
-                (rooted.linux-rooted-file-finish-with-source-permissions!
-                  (&mut file)
-                  (byte_buf.str-as-bytes (& contents))
-                  (string-length (& contents))
-                  (& wide)
-                  true
-                  rooted.linux-rooted-never-cancelled)
-                22
-                13)]
-            (begin
-              (rooted.linux-rooted-test-reset!)
-              ok)))))))
+          ok)))))
 
 (define (fault-finish
   [stage : String]
@@ -538,25 +530,23 @@
               (& stage)
               rooted.linux-rooted-never-cancelled)
             rooted.cleanup-linux-rooted-file])
-        (begin
+        (rooted.linux-rooted-test-reset!)
+        (rooted.linux-rooted-test-fail-on! kind call errno-code)
+        (let
+          [contents : String "faulted\n"]
+          [ok : bool
+            (finish-is?
+              (rooted.linux-rooted-file-finish-with-source-permissions!
+                (&mut file)
+                (byte_buf.str-as-bytes (& contents))
+                (string-length (& contents))
+                (& source)
+                true
+                rooted.linux-rooted-never-cancelled)
+              operation
+              close)]
           (rooted.linux-rooted-test-reset!)
-          (rooted.linux-rooted-test-fail-on! kind call errno-code)
-          (let
-            [contents : String "faulted\n"]
-            [ok : bool
-              (finish-is?
-                (rooted.linux-rooted-file-finish-with-source-permissions!
-                  (&mut file)
-                  (byte_buf.str-as-bytes (& contents))
-                  (string-length (& contents))
-                  (& source)
-                  true
-                  rooted.linux-rooted-never-cancelled)
-                operation
-                close)]
-            (begin
-              (rooted.linux-rooted-test-reset!)
-              ok)))))))
+          ok)))))
 
 ;; The harness creates `source.txt` (0640) and checks that the stages whose
 ;; ownership check failed received no bytes.
@@ -633,23 +623,22 @@
     (let
       [mode : String (io.arg 1)]
       [root-path : String (io.arg 2)]
-      (begin
-        (set! fault-root-path (io.arg 2))
-        (with
-          ([root
-              (rooted.linux-rooted-open-root
-                (& root-path)
-                rooted.linux-rooted-never-cancelled)
-              rooted.cleanup-linux-rooted-directory])
-          (if (not (rooted.linux-rooted-directory-open? (& root)))
-            3
-            (let
-              [status : i64
-                (cond
-                  [(string.eq (& mode) "revalidate") (run-revalidate (& root))]
-                  [(string.eq (& mode) "finish") (run-finish (& root))]
-                  [(string.eq (& mode) "faults") (run-faults)]
-                  [else 4])]
-              (if (= status 0)
-                42
-                status))))))))
+      (set! fault-root-path (io.arg 2))
+      (with
+        ([root
+            (rooted.linux-rooted-open-root
+              (& root-path)
+              rooted.linux-rooted-never-cancelled)
+            rooted.cleanup-linux-rooted-directory])
+        (if (not (rooted.linux-rooted-directory-open? (& root)))
+          3
+          (let
+            [status : i64
+              (cond
+                [(string.eq (& mode) "revalidate") (run-revalidate (& root))]
+                [(string.eq (& mode) "finish") (run-finish (& root))]
+                [(string.eq (& mode) "faults") (run-faults)]
+                [else 4])]
+            (if (= status 0)
+              42
+              status)))))))

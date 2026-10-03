@@ -21,14 +21,13 @@
 (define (case-struct-dynarray) : bool
   (let
     [a : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (begin
-      (set! (array-ref a 0) 42)
-      (let
-        [b : Bag (Bag a)]
-        [f : (-> i64)
-          (lambda () : i64
-            (array-ref b.items 0))]
-        (= (f) 42)))))
+    (set! (array-ref a 0) 42)
+    (let
+      [b : Bag (Bag a)]
+      [f : (-> i64)
+        (lambda () : i64
+          (array-ref b.items 0))]
+      (= (f) 42))))
 
 (defenum Wrapped
   (WrappedLabel Label)
@@ -61,8 +60,7 @@
   (and (case-wrapped-label) (case-wrapped-text)))
 
 (define (main) : i64
-  (begin
-    (unless (case-struct-string) (return 1))
-    (unless (case-struct-dynarray) (return 2))
-    (unless (case-enum-nested) (return 3))
-    42))
+  (unless (case-struct-string) (return 1))
+  (unless (case-struct-dynarray) (return 2))
+  (unless (case-enum-nested) (return 3))
+  42)

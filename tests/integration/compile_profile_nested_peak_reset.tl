@@ -4,9 +4,8 @@
 (define (transient-allocation) : i64
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 4096)]
-    (begin
-      (set! (array-ref items 0) 37)
-      (array-ref items 0))))
+    (set! (array-ref items 0) 37)
+    (array-ref items 0)))
 
 (cfg
   compile-profile
@@ -28,7 +27,6 @@
 (cfg
   (not compile-profile)
   (define (main) : i64
-    (begin
-      ;; Keep the profile import live under the lint configuration too.
-      (profile.alloc-live)
-      42)))
+    ;; Keep the profile import live under the lint configuration too.
+    (profile.alloc-live)
+    42))

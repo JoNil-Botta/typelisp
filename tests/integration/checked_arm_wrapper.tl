@@ -51,33 +51,32 @@
     [step : i64 0]
     [found : i64 -1]
     [free : i64 -1]
-    (begin
-      (while (< step cap)
-        (let
-          [k : i64 (array-ref keys slot)]
-          [m : i64 (array-ref marks slot)]
-          (if (= m 0)
+    (while (< step cap)
+      (let
+        [k : i64 (array-ref keys slot)]
+        [m : i64 (array-ref marks slot)]
+        (if (= m 0)
+          (begin
+            (if (< free 0)
+              (set! free slot)
+              unit)
+            (set! found (- 0 (+ slot 2)))
+            (set! step cap))
+          (if (and (= m 1) (= k key))
             (begin
-              (if (< free 0)
+              (set! found slot)
+              (set! step cap))
+            (begin
+              (if (and (= m 2) (< free 0))
                 (set! free slot)
                 unit)
-              (set! found (- 0 (+ slot 2)))
-              (set! step cap))
-            (if (and (= m 1) (= k key))
-              (begin
-                (set! found slot)
-                (set! step cap))
-              (begin
-                (if (and (= m 2) (< free 0))
-                  (set! free slot)
-                  unit)
-                (set! slot (bit-and (+ slot 1) mask))
-                (set! step (+ step 1)))))))
-      (if (>= found 0)
-        found
-        (if (>= free 0)
-          (- 0 (+ free 2))
-          aw-empty)))))
+              (set! slot (bit-and (+ slot 1) mask))
+              (set! step (+ step 1)))))))
+    (if (>= found 0)
+      found
+      (if (>= free 0)
+        (- 0 (+ free 2))
+        aw-empty))))
 
 ;; Wrapper one: the probe at its ENTRY block, and nothing else in that block.
 (define (aw-get-or
@@ -139,17 +138,14 @@
   (let
     [acc : i64 0]
     [r : i64 0]
-    (begin
-      (while (< r rows)
-        (let
-          [c : i64 0]
-          (begin
-            (while (< c cols)
-              (begin
-                (set! acc (+ acc (aw-bump keys marks vals cap (+ (* r 7) c))))
-                (set! c (+ c 1))))
-            (set! r (+ r 1)))))
-      acc)))
+    (while (< r rows)
+      (let
+        [c : i64 0]
+        (while (< c cols)
+          (set! acc (+ acc (aw-bump keys marks vals cap (+ (* r 7) c))))
+          (set! c (+ c 1)))
+        (set! r (+ r 1))))
+    acc))
 
 (define (main) : i64
   (let
@@ -161,29 +157,27 @@
     [total : i64 0]
     [guarded : i64 0]
     [cold : i64 0]
-    (begin
-      (while (< i cap)
-        (begin
-          (set! (array-ref keys i) i)
-          (set! (array-ref marks i) 1)
-          (set! (array-ref vals i) (* i 3))
-          (set! i (+ i 1))))
-      (set! total (aw-walk (& keys) (& marks) (& vals) cap 16 16))
-      ;; The guard's own arm, proving the sibling the widening reads is the one
-      ;; that runs: a negative id never reaches the accessor at all.
-      (set! guarded (aw-slot-id (& keys) (& marks) (& vals) cap -3))
-      ;; The cold second references: one apiece for the accessor, the wrapper
-      ;; the arm site copies, and the guarded wrapper itself, so no single-site
-      ;; band can claim any of the three and every one of them keeps an
-      ;; out-of-line body for the asm-shape gate to read.
-      (set!
-        cold
+    (while (< i cap)
+      (set! (array-ref keys i) i)
+      (set! (array-ref marks i) 1)
+      (set! (array-ref vals i) (* i 3))
+      (set! i (+ i 1)))
+    (set! total (aw-walk (& keys) (& marks) (& vals) cap 16 16))
+    ;; The guard's own arm, proving the sibling the widening reads is the one
+    ;; that runs: a negative id never reaches the accessor at all.
+    (set! guarded (aw-slot-id (& keys) (& marks) (& vals) cap -3))
+    ;; The cold second references: one apiece for the accessor, the wrapper
+    ;; the arm site copies, and the guarded wrapper itself, so no single-site
+    ;; band can claim any of the three and every one of them keeps an
+    ;; out-of-line body for the asm-shape gate to read.
+    (set!
+      cold
+      (+
+        (aw-contains? (& keys) (& marks) cap 5)
         (+
-          (aw-contains? (& keys) (& marks) cap 5)
-          (+
-            (aw-get-or (& keys) (& marks) (& vals) cap 9 777)
-            (aw-slot-id (& keys) (& marks) (& vals) cap 11))))
-      (unless (= total 13969) (return 1))
-      (unless (= guarded -1) (return 2))
-      (unless (= cold 61) (return 3))
-      42)))
+          (aw-get-or (& keys) (& marks) (& vals) cap 9 777)
+          (aw-slot-id (& keys) (& marks) (& vals) cap 11))))
+    (unless (= total 13969) (return 1))
+    (unless (= guarded -1) (return 2))
+    (unless (= cold 61) (return 3))
+    42))

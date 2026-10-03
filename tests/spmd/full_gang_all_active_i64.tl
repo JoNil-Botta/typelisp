@@ -20,15 +20,14 @@
     ([i : i64 0 n])
     (let
       [value : i64 (array-ref xs i)]
-      (begin
-        ;; Parent-only accesses should be ordinary vector operations in full
-        ;; gangs and predicated operations in the final partial gang.
-        (set! (array-ref copy i) value)
-        (cond
-          [(< value -1000) (set! (array-ref out i) -99)]
-          [(< value 0) (set! (array-ref out i) -1)]
-          [(= (bit-and value 1) 0) (set! (array-ref out i) 2)]
-          [else (set! (array-ref out i) 3)])))))
+      ;; Parent-only accesses should be ordinary vector operations in full
+      ;; gangs and predicated operations in the final partial gang.
+      (set! (array-ref copy i) value)
+      (cond
+        [(< value -1000) (set! (array-ref out i) -99)]
+        [(< value 0) (set! (array-ref out i) -1)]
+        [(= (bit-and value 1) 0) (set! (array-ref out i) 2)]
+        [else (set! (array-ref out i) 3)]))))
 
 (define (run-case [n : i64]) : bool
   (let
@@ -37,34 +36,31 @@
     [out : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i capacity)
-        (begin
-          (set! (array-ref xs i) (- i 5))
-          (set! (array-ref copy i) 777)
-          (set! (array-ref out i) 888)
-          (set! i (+ i 1))))
-      (fill (& xs) (&mut copy) (&mut out) n)
-      (set! i 0)
-      (while (< i capacity)
-        (let
-          [value : i64 (array-ref xs i)]
-          [expected-copy : i64
-            (if (< i n)
-              value
-              777)]
-          [expected-out : i64
-            (if (< i n)
-              (classify value)
-              888)]
-          (begin
-            (if (or
-              (!= (array-ref copy i) expected-copy)
-              (!= (array-ref out i) expected-out))
-              (set! ok false)
-              unit)
-            (set! i (+ i 1)))))
-      ok)))
+    (while (< i capacity)
+      (set! (array-ref xs i) (- i 5))
+      (set! (array-ref copy i) 777)
+      (set! (array-ref out i) 888)
+      (set! i (+ i 1)))
+    (fill (& xs) (&mut copy) (&mut out) n)
+    (set! i 0)
+    (while (< i capacity)
+      (let
+        [value : i64 (array-ref xs i)]
+        [expected-copy : i64
+          (if (< i n)
+            value
+            777)]
+        [expected-out : i64
+          (if (< i n)
+            (classify value)
+            888)]
+        (if (or
+          (!= (array-ref copy i) expected-copy)
+          (!= (array-ref out i) expected-out))
+          (set! ok false)
+          unit)
+        (set! i (+ i 1))))
+    ok))
 
 (define (main) : i64
   (if (and

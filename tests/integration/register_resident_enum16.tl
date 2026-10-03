@@ -66,12 +66,10 @@
   (let
     [acc : Opt (Some 0)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (Some (+ (unwrap acc) i)))
-          (set! i (+ i 1))))
-      (unwrap acc))))
+    (while (< i n)
+      (set! acc (Some (+ (unwrap acc) i)))
+      (set! i (+ i 1)))
+    (unwrap acc)))
 
 (define (main) : i64
   (+

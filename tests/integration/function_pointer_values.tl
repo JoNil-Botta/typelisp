@@ -29,12 +29,11 @@
   (inc x))
 
 (define (main) : i64
-  (begin
-    (apply0u mark)
-    (unless (= (invoke 41) 42) (return 4))
-    (install-callback! dec)
-    (unless (= (apply1 inc 41) 42) (return 1))
-    (unless (= (shadow-inc dec 43) 42) (return 2))
-    (unless (= seen 42) (return 3))
-    (unless (= (invoke 43) 42) (return 5))
-    42))
+  (apply0u mark)
+  (unless (= (invoke 41) 42) (return 4))
+  (install-callback! dec)
+  (unless (= (apply1 inc 41) 42) (return 1))
+  (unless (= (shadow-inc dec 43) 42) (return 2))
+  (unless (= seen 42) (return 3))
+  (unless (= (invoke 43) 42) (return 5))
+  42)

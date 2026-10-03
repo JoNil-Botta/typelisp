@@ -19,13 +19,9 @@
   (with
     ([first (forty-one) (cleanup-function)]
       [second (increment first) (cleanup-function)])
-    (begin
-      (test.assert-i64-eq first 41 "macro expands in resource initializer")
-      (test.assert-i64-eq
-        second
-        42
-        "later resource initializer sees earlier binding")
-      (test.assert-i64-eq
-        (increment second)
-        43
-        "macro expands in resource body"))))
+    (test.assert-i64-eq first 41 "macro expands in resource initializer")
+    (test.assert-i64-eq
+      second
+      42
+      "later resource initializer sees earlier binding")
+    (test.assert-i64-eq (increment second) 43 "macro expands in resource body")))

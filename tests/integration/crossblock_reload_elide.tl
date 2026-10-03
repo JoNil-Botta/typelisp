@@ -50,13 +50,11 @@
   (let
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (touch i)))
-          (set! acc (+ acc i))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (touch i)))
+      (set! acc (+ acc i))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let

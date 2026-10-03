@@ -34,9 +34,8 @@
     (define (int-vec-get [v : (& v IntVec)] [index : i64]) : i64
       (array-ref v.slots index))
     (define (int-vec-set [v : IntVec] [index : i64] [value : i64]) : IntVec
-      (begin
-        (set! (array-ref v.slots index) value)
-        v))
+      (set! (array-ref v.slots index) value)
+      v)
     (define (int-vec-grow [v : IntVec]) : IntVec
       (let
         [old-cap : i64 v.cap]
@@ -44,19 +43,16 @@
         [bigger : (__tl_dyn-array i64) (__tl_make-array i64 new-cap)]
         [n : i64 v.len]
         [i : i64 0]
-        (begin
-          (while (< i n)
-            (begin
-              (set! (array-ref bigger i) (array-ref v.slots i))
-              (set! i (+ i 1))))
-          (IntVec bigger n new-cap))))
+        (while (< i n)
+          (set! (array-ref bigger i) (array-ref v.slots i))
+          (set! i (+ i 1)))
+        (IntVec bigger n new-cap)))
     (define (int-vec-push [v : IntVec] [value : i64]) : IntVec
       (if (< v.len v.cap)
         (let
           [slots : (__tl_dyn-array i64) v.slots]
-          (begin
-            (set! (array-ref slots v.len) value)
-            (IntVec slots (+ v.len 1) v.cap)))
+          (set! (array-ref slots v.len) value)
+          (IntVec slots (+ v.len 1) v.cap))
         (int-vec-push (int-vec-grow v) value)))
     (define (int-vec-fixed-array-probe) : i64
       (let
@@ -74,70 +70,58 @@
   (let
     [v : iv.IntVec (iv.int-vec-new)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! v (iv.int-vec-push v (* i i)))
-          (set! i (+ i 1))))
-      v)))
+    (while (< i n)
+      (set! v (iv.int-vec-push v (* i i)))
+      (set! i (+ i 1)))
+    v))
 
 (test
   generated-module-vector-new-is-empty
   (let
     [v : iv.IntVec (iv.int-vec-new)]
-    (begin
-      (test.assert-i64-eq
-        (iv.int-vec-len v)
-        0
-        "fresh generated vector is empty")
-      (test.assert-i64-eq
-        (iv.int-vec-capacity v)
-        4
-        "fresh generated vector reserves 4"))))
+    (test.assert-i64-eq (iv.int-vec-len v) 0 "fresh generated vector is empty")
+    (test.assert-i64-eq
+      (iv.int-vec-capacity v)
+      4
+      "fresh generated vector reserves 4")))
 
 (test
   generated-module-vector-push-grows-past-capacity
   (let
     [v : iv.IntVec (int-vec-fill 10)]
-    (begin
-      (test.assert-i64-eq
-        (iv.int-vec-len v)
-        10
-        "push tracks length past initial capacity")
-      (test.assert-true
-        (> (iv.int-vec-capacity v) 4)
-        "capacity doubles when pushing past the initial reservation")
-      (test.assert-i64-eq (iv.int-vec-get v 0) 0 "element 0 survives growth")
-      (test.assert-i64-eq (iv.int-vec-get v 7) 49 "element 7 survives growth")
-      (test.assert-i64-eq
-        (iv.int-vec-get v 9)
-        81
-        "last element survives growth"))))
+    (test.assert-i64-eq
+      (iv.int-vec-len v)
+      10
+      "push tracks length past initial capacity")
+    (test.assert-true
+      (> (iv.int-vec-capacity v) 4)
+      "capacity doubles when pushing past the initial reservation")
+    (test.assert-i64-eq (iv.int-vec-get v 0) 0 "element 0 survives growth")
+    (test.assert-i64-eq (iv.int-vec-get v 7) 49 "element 7 survives growth")
+    (test.assert-i64-eq (iv.int-vec-get v 9) 81 "last element survives growth")))
 
 (test
   generated-module-vector-set-overwrites
   (let
     [v : iv.IntVec (iv.int-vec-set (int-vec-fill 5) 2 999)]
-    (begin
-      (test.assert-i64-eq
-        (iv.int-vec-get v 2)
-        999
-        "set overwrites the indexed slot")
-      (test.assert-i64-eq (iv.int-vec-get v 1) 1 "set leaves neighbours intact")
-      (test.assert-i64-eq (iv.int-vec-len v) 5 "set preserves length"))))
+    (test.assert-i64-eq
+      (iv.int-vec-get v 2)
+      999
+      "set overwrites the indexed slot")
+    (test.assert-i64-eq (iv.int-vec-get v 1) 1 "set leaves neighbours intact")
+    (test.assert-i64-eq (iv.int-vec-len v) 5 "set preserves length")))
 
 (test
   generated-module-vector-extra-body-forms-round-trip
-  (begin
-    (test.assert-i64-eq
-      (iv.int-vec-fixed-array-probe)
-      6
-      "generated typed fixed array binding round-trips")
-    (test.assert-i64-eq
-      (iv.int-vec-scalar-probe-score 0)
-      10
-      "generated scalar match handles literal pattern")
-    (test.assert-i64-eq
-      (iv.int-vec-scalar-probe-score 2)
-      30
-      "generated scalar match handles wildcard pattern")))
+  (test.assert-i64-eq
+    (iv.int-vec-fixed-array-probe)
+    6
+    "generated typed fixed array binding round-trips")
+  (test.assert-i64-eq
+    (iv.int-vec-scalar-probe-score 0)
+    10
+    "generated scalar match handles literal pattern")
+  (test.assert-i64-eq
+    (iv.int-vec-scalar-probe-score 2)
+    30
+    "generated scalar match handles wildcard pattern"))

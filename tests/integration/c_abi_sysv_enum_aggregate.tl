@@ -68,16 +68,15 @@
       (wide-score (WideSome (cast 2 : u64) (cast 3 : u64)) (cast 4 : u64))]
     [wide-via-ptr : i64 (wide-copy (WideNone) (cast 6 : u64))]
     [wide-made : WideChoice (wide-make (cast 10 : u64))]
-    (begin
-      (unless (= small-direct 38) (return 1))
-      (unless (= small-via-ptr 1007) (return 2))
-      (unless (= (small-value small-made) 49) (return 3))
-      (unless (= wrapped-direct 92) (return 4))
-      (unless (= (wrapped-small-value wrapped-made) 66) (return 5))
-      (unless (= float-direct 28) (return 6))
-      (unless (= float-via-ptr 2004) (return 7))
-      (unless (= (float-value float-made) 5) (return 8))
-      (unless (= wide-direct 35) (return 9))
-      (unless (= wide-via-ptr 3006) (return 10))
-      (unless (= (wide-value wide-made) 85) (return 11))
-      42)))
+    (unless (= small-direct 38) (return 1))
+    (unless (= small-via-ptr 1007) (return 2))
+    (unless (= (small-value small-made) 49) (return 3))
+    (unless (= wrapped-direct 92) (return 4))
+    (unless (= (wrapped-small-value wrapped-made) 66) (return 5))
+    (unless (= float-direct 28) (return 6))
+    (unless (= float-via-ptr 2004) (return 7))
+    (unless (= (float-value float-made) 5) (return 8))
+    (unless (= wide-direct 35) (return 9))
+    (unless (= wide-via-ptr 3006) (return 10))
+    (unless (= (wide-value wide-made) 85) (return 11))
+    42))

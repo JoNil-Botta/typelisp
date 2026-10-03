@@ -51,17 +51,16 @@
   (let
     [item : counter.Counter (counter.Counter 0)]
     [evaluations : i64 0]
-    (begin
-      (counter.assign!
-        item
-        (begin
-          (set! evaluations (+ evaluations 1))
-          42))
-      (test.assert-i64-eq
-        item.value
-        42
-        "generated macro mutates its caller place")
-      (test.assert-i64-eq
-        evaluations
-        1
-        "generated macro evaluates its value once"))))
+    (counter.assign!
+      item
+      (begin
+        (set! evaluations (+ evaluations 1))
+        42))
+    (test.assert-i64-eq
+      item.value
+      42
+      "generated macro mutates its caller place")
+    (test.assert-i64-eq
+      evaluations
+      1
+      "generated macro evaluates its value once")))

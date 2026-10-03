@@ -20,8 +20,7 @@
   (+ (weigh (& triple)) (+ triple.a (+ triple.b triple.c))))
 
 (define (main) : i64
-  (begin
-    (io.print-format "{}\n" (report))
-    (install! 4 5 6)
-    (io.print-format "{}\n" (report))
-    42))
+  (io.print-format "{}\n" (report))
+  (install! 4 5 6)
+  (io.print-format "{}\n" (report))
+  42)

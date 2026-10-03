@@ -24,15 +24,13 @@
     [held : BigRec (make-rec -1)]
     [i : i64 0]
     [bad : i64 0]
-    (begin
-      (while (< i 10)
-        (let
-          [cur : BigRec (make-rec i)]
-          (begin
-            (when (> i 0) (unless (= held.f0 (- i 1)) (set! bad 1)))
-            (set! held cur)
-            (unless (= held.f0 i) (set! bad 2))
-            (set! i (+ i 1)))))
-      (if (= bad 0)
-        42
-        bad))))
+    (while (< i 10)
+      (let
+        [cur : BigRec (make-rec i)]
+        (when (> i 0) (unless (= held.f0 (- i 1)) (set! bad 1)))
+        (set! held cur)
+        (unless (= held.f0 i) (set! bad 2))
+        (set! i (+ i 1))))
+    (if (= bad 0)
+      42
+      bad)))

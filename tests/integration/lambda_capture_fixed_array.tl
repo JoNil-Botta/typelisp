@@ -28,13 +28,11 @@
     [f : (-> i64)
       (lambda () : i64
         (array-ref a 0))]
-    (begin
-      (set! (array-ref a 0) 5)
-      (= (f) 42))))
+    (set! (array-ref a 0) 5)
+    (= (f) 42)))
 
 (define (main) : i64
-  (begin
-    (unless (case-immediate) (return 1))
-    (unless (case-returned) (return 2))
-    (unless (case-mutated-after-capture) (return 3))
-    42))
+  (unless (case-immediate) (return 1))
+  (unless (case-returned) (return 2))
+  (unless (case-mutated-after-capture) (return 3))
+  42)

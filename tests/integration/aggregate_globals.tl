@@ -41,17 +41,16 @@
       (+ p.x (clobber-pair-stack (- n 1))))))
 
 (define (main) : i64
-  (begin
-    (reset-pair!)
-    (clobber-pair-stack 24)
+  (reset-pair!)
+  (clobber-pair-stack 24)
+  (+
+    (+ (+ (string.string-length greeting) (length cells)) (+ pair.x pair.y))
     (+
-      (+ (+ (string.string-length greeting) (length cells)) (+ pair.x pair.y))
+      (match choice
+        [(Some n) n]
+        [(None) 0])
       (+
-        (match choice
+        (string.string-length nested.label)
+        (match nested.choice
           [(Some n) n]
-          [(None) 0])
-        (+
-          (string.string-length nested.label)
-          (match nested.choice
-            [(Some n) n]
-            [(None) 0]))))))
+          [(None) 0])))))

@@ -178,12 +178,10 @@
   (let
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (while (< i 128)
-        (begin
-          (set! sum (+ sum (cast (array-ref wide i) : i64)))
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i 128)
+      (set! sum (+ sum (cast (array-ref wide i) : i64)))
+      (set! i (+ i 1)))
+    sum))
 
 (define (check [ok : bool] [code : i64] [failed : i64]) : i64
   (if (or ok (!= failed 0))
@@ -193,106 +191,105 @@
 (define (main) : i64
   (let
     [failed : i64 0]
-    (begin
-      (set!
-        failed
-        (check
-          (and
-            (= (array-ref bytes8 0) 0)
-            (= (array-ref bytes8 3) 128)
-            (= (array-ref bytes8 6) 255)
-            (= (array-ref bytes8 7) 7))
-          1
-          failed))
-      (set!
-        failed
-        (check
-          (and
-            (= (array-ref signed8 0) -128)
-            (= (array-ref signed8 1) -1)
-            (= (array-ref signed8 3) 127))
-          2
-          failed))
-      (set!
-        failed
-        (check
-          (and
-            (= (array-ref words 1) 65535)
-            (= (array-ref words 2) 4660)
-            (= (array-ref swords 0) -32768)
-            (= (array-ref swords 1) -1)
-            (= (array-ref swords 2) 32767))
-          3
-          failed))
-      (set!
-        failed
-        (check
-          (and
-            (= (array-ref dwords 0) 4294967295)
-            (= (array-ref dwords 1) 305419896)
-            (= (array-ref sdwords 0) -2147483648)
-            (= (array-ref sdwords 1) -1)
-            (= (array-ref sdwords 2) 2147483647))
-          4
-          failed))
-      (set!
-        failed
-        (check
-          (and
-            (= (array-ref qwords 0) 0xffffffffffffffff)
-            (= (array-ref qwords 1) 0x0123456789abcdef)
-            (= (array-ref sqwords 0) -9223372036854775807)
-            (= (array-ref sqwords 1) 9223372036854775807))
-          5
-          failed))
-      ;; Exact float bits, signed zero included.
-      (set!
-        failed
-        (check
-          (and
-            (= (math.f32-to-bits (array-ref singles 0)) 0x3fc00000)
-            (= (math.f32-to-bits (array-ref singles 1)) 0x80000000)
-            (= (math.f32-to-bits (array-ref singles 2)) 0x7f7fffff)
-            (= (math.f64-to-bits (array-ref doubles 0)) 0x3fb999999999999a)
-            (= (math.f64-to-bits (array-ref doubles 1)) 0x8000000000000000)
-            (= (math.f64-to-bits (array-ref doubles 2)) 0x7fe1ccf385ebc8a0))
-          6
-          failed))
-      (set!
-        failed
-        (check
-          (and
-            (array-ref flags 0)
-            (not (array-ref flags 1))
-            (array-ref flags 2)
-            (= (array-ref letters 0) 'a')
-            (= (array-ref letters 1) 'z')
-            (= (array-ref letters 2) '0'))
-          7
-          failed))
-      (set!
-        failed
-        (check (and (= (array-ref one 0) 42) (= (wide-sum) 8128)) 8 failed))
-      ;; Writes land in this global's own storage only, not in its twin's.
-      (set! (array-ref mutable 0) 10)
-      (bump! (&mut mutable))
-      (set!
-        failed
-        (check
-          (and
-            (= (array-ref mutable 0) 10)
-            (= (array-ref mutable 3) 104)
-            (= (array-ref twin 0) 1)
-            (= (array-ref twin 3) 4))
-          9
-          failed))
-      (set! replaced (array 7 8))
-      (set!
-        failed
-        (check
-          (and (= (array-ref replaced 0) 7) (= (array-ref replaced 1) 8))
-          10
-          failed))
-      (if (= failed 0)
-        42
-        failed))))
+    (set!
+      failed
+      (check
+        (and
+          (= (array-ref bytes8 0) 0)
+          (= (array-ref bytes8 3) 128)
+          (= (array-ref bytes8 6) 255)
+          (= (array-ref bytes8 7) 7))
+        1
+        failed))
+    (set!
+      failed
+      (check
+        (and
+          (= (array-ref signed8 0) -128)
+          (= (array-ref signed8 1) -1)
+          (= (array-ref signed8 3) 127))
+        2
+        failed))
+    (set!
+      failed
+      (check
+        (and
+          (= (array-ref words 1) 65535)
+          (= (array-ref words 2) 4660)
+          (= (array-ref swords 0) -32768)
+          (= (array-ref swords 1) -1)
+          (= (array-ref swords 2) 32767))
+        3
+        failed))
+    (set!
+      failed
+      (check
+        (and
+          (= (array-ref dwords 0) 4294967295)
+          (= (array-ref dwords 1) 305419896)
+          (= (array-ref sdwords 0) -2147483648)
+          (= (array-ref sdwords 1) -1)
+          (= (array-ref sdwords 2) 2147483647))
+        4
+        failed))
+    (set!
+      failed
+      (check
+        (and
+          (= (array-ref qwords 0) 0xffffffffffffffff)
+          (= (array-ref qwords 1) 0x0123456789abcdef)
+          (= (array-ref sqwords 0) -9223372036854775807)
+          (= (array-ref sqwords 1) 9223372036854775807))
+        5
+        failed))
+    ;; Exact float bits, signed zero included.
+    (set!
+      failed
+      (check
+        (and
+          (= (math.f32-to-bits (array-ref singles 0)) 0x3fc00000)
+          (= (math.f32-to-bits (array-ref singles 1)) 0x80000000)
+          (= (math.f32-to-bits (array-ref singles 2)) 0x7f7fffff)
+          (= (math.f64-to-bits (array-ref doubles 0)) 0x3fb999999999999a)
+          (= (math.f64-to-bits (array-ref doubles 1)) 0x8000000000000000)
+          (= (math.f64-to-bits (array-ref doubles 2)) 0x7fe1ccf385ebc8a0))
+        6
+        failed))
+    (set!
+      failed
+      (check
+        (and
+          (array-ref flags 0)
+          (not (array-ref flags 1))
+          (array-ref flags 2)
+          (= (array-ref letters 0) 'a')
+          (= (array-ref letters 1) 'z')
+          (= (array-ref letters 2) '0'))
+        7
+        failed))
+    (set!
+      failed
+      (check (and (= (array-ref one 0) 42) (= (wide-sum) 8128)) 8 failed))
+    ;; Writes land in this global's own storage only, not in its twin's.
+    (set! (array-ref mutable 0) 10)
+    (bump! (&mut mutable))
+    (set!
+      failed
+      (check
+        (and
+          (= (array-ref mutable 0) 10)
+          (= (array-ref mutable 3) 104)
+          (= (array-ref twin 0) 1)
+          (= (array-ref twin 3) 4))
+        9
+        failed))
+    (set! replaced (array 7 8))
+    (set!
+      failed
+      (check
+        (and (= (array-ref replaced 0) 7) (= (array-ref replaced 1) 8))
+        10
+        failed))
+    (if (= failed 0)
+      42
+      failed)))

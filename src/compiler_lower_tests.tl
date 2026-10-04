@@ -2756,15 +2756,15 @@
     (+ (score (Some 7)) (slot-score items))))")
 
 (define (compiler-lower-borrowed-enum-match-ref-struct-array-source) : String
-  "(defenum Slot (Empty) (Occupied i64))
+  "(defenum Slot (Empty) (Occupied String))
 (defstruct Bag (slots (__tl_dyn-array Slot)))
-(defenum SlotLookup (:lifetimes bag) (Missing) (Found (& bag i64)))
-(define (take [v : (& bag i64)]) : i64 41)
+(defenum SlotLookup (:lifetimes bag) (Missing) (Found (& bag str)))
+(define (take [v : (& bag str)]) : i64 41)
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) SlotLookup.Missing)
-(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotLookup.Found value))
+(define (slot-found [value : (& bag str)]) : (SlotLookup bag) (SlotLookup.Found value))
 (define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
   (match (& (array-ref bag.slots 0))
-    [(Occupied v) (let [same : (& bag i64) v] (slot-found same))]
+    [(Occupied v) (let [same : (& bag str) v] (slot-found same))]
     [Empty (slot-missing bag)]))
 (define (score [bag : (& bag Bag)]) : i64
   (match (& (array-ref bag.slots 0))
@@ -2774,7 +2774,7 @@
   (let
     [slots : (__tl_dyn-array Slot) (__tl_make-array Slot 1)]
     (begin
-      (set! (array-ref slots 0) (Occupied 9))
+      (set! (array-ref slots 0) (Occupied \"nine\"))
       (let [bag : Bag (Bag slots)]
         (+ (score (& bag))
           (match (lookup (& bag))

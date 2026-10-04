@@ -59,11 +59,7 @@
         [_ false])]
     [(Lat.Const ak av aty)
       (match b
-        [(Lat.Const bk bv bty)
-          (and
-            (= (deref ak) (deref bk))
-            (= (deref av) (deref bv))
-            (= (deref aty) (deref bty)))]
+        [(Lat.Const bk bv bty) (and (= ak bk) (= av bv) (= aty bty))]
         [_ false])]))
 
 (define (lat-join [old : (& o Lat)] [new : (& n Lat)]) : Lat
@@ -72,18 +68,15 @@
       (match new
         [(Lat.Unknown) (Lat.Unknown)]
         [(Lat.Over) (Lat.Over)]
-        [(Lat.Const nk nv nty) (Lat.Const (deref nk) (deref nv) (deref nty))])]
+        [(Lat.Const nk nv nty) (Lat.Const nk nv nty)])]
     [(Lat.Over) (Lat.Over)]
     [(Lat.Const ok ov oty)
       (match new
-        [(Lat.Unknown) (Lat.Const (deref ok) (deref ov) (deref oty))]
+        [(Lat.Unknown) (Lat.Const ok ov oty)]
         [(Lat.Over) (Lat.Over)]
         [(Lat.Const nk nv nty)
-          (if (and
-            (= (deref ok) (deref nk))
-            (= (deref ov) (deref nv))
-            (= (deref oty) (deref nty)))
-            (Lat.Const (deref ok) (deref ov) (deref oty))
+          (if (and (= ok nk) (= ov nv) (= oty nty))
+            (Lat.Const ok ov oty)
             (Lat.Over))])]))
 
 (define (lat-bind [var : i64] [value : Lat]) : unit

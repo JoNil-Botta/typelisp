@@ -24,7 +24,7 @@
 
 (define (copy-test-at [s : (& s opt.OptCopyEnv)] [index : i64]) : i64
   (match (& (array-ref s.slots index))
-    [(Copy id _) (deref id)]
+    [(Copy id _) id]
     [_ -999]))
 
 (define (copy-test-digits [s : (& s opt.OptCopyEnv)]) : i64
@@ -165,8 +165,8 @@
   [text : (& text str)]) : unit
   (match (& (array-ref s.slots index))
     [(PackWord g w value)
-      (test.assert-i64-eq (deref g) group "wide group")
-      (test.assert-i64-eq (deref w) word "wide index")
+      (test.assert-i64-eq g group "wide group")
+      (test.assert-i64-eq w word "wide index")
       (match value
         [(String actual) (test.assert-string-eq actual text "wide descriptor")]
         [_ (test.assert-true false "expected string descriptor")])]

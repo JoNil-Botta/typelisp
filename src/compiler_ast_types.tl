@@ -11105,8 +11105,8 @@
 ;; The struct's declared `(:align N)` value, or 0 when it has none.
 (define (ast-struct-repr-declared-align [repr : (& repr AstStructRepr)]) : i64
   (match repr
-    [(C align _) (deref align)]
-    [(Default) 0]))
+    [(AstStructRepr.C align _) (owned_view.compiler-owned-pattern-copy align)]
+    [(AstStructRepr.Default) 0]))
 
 ;; Field `index`'s declared `(:align N)` value, or 0 when it has none.
 (define (ast-struct-repr-field-declared-align
@@ -11119,9 +11119,11 @@
 ;; Whether the struct or any of its fields declares an alignment.
 (define (ast-struct-repr-declares-align? [repr : (& repr AstStructRepr)]) : bool
   (match repr
-    [(C align fields)
-      (or (> (deref align) 0) (> (ast-field-aligns-len fields) 0))]
-    [(Default) false]))
+    [(AstStructRepr.C align fields)
+      (or
+        (> (owned_view.compiler-owned-pattern-copy align) 0)
+        (> (ast-field-aligns-len fields) 0))]
+    [(AstStructRepr.Default) false]))
 
 ;; The first `count` field alignments of `fields` in fresh storage, padded
 ;; with absent entries.

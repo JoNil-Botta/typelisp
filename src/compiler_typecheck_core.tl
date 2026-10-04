@@ -7183,20 +7183,46 @@
     "typecheck: borrow requires a local, parameter, or aggregate place"))
 
 (define (tc-borrow-place-error-message? [message : (& message str)]) : bool
-  (string.eq message (tc-borrow-place-error-message)))
+  (or
+    (string.eq message (tc-borrow-place-error-message))
+    (tc-temporary-borrow-position-message? message)))
 
 (define (tc-borrow-place-help) : String
-  "bind the value to a local before borrowing it, or borrow a field or array element from a local aggregate")
+  "bind the value to a local before borrowing it, borrow a field or array element from a local aggregate, or pass a borrowed temporary `(& value)` directly as a call argument")
 
 (define (tc-rich-borrow-place-error
   [span : ast.AstSourceSpan]
   [message : String]) : String
-  (tc-rich-error-one-secondary
-    span
-    message
-    (tc-borrow-place-help)
-    span
-    "this expression produces a temporary value, not a borrowable place"))
+  (if (tc-temporary-borrow-position-message? message)
+    (tc-rich-error-one-secondary
+      span
+      message
+      "pass the borrow directly as a function-call argument, or bind the value to a local before borrowing it"
+      span
+      "this borrow of a temporary is not a call argument")
+    (tc-rich-error-one-secondary
+      span
+      message
+      (tc-borrow-place-help)
+      span
+      "this expression produces a temporary value, not a borrowable place")))
+
+;; A borrowed temporary outside a direct call-argument position (section 3.10).
+(define (tc-temporary-borrow-position-message) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.BorrowViolation)
+    "typecheck: a borrowed temporary must be a direct function-call argument"))
+
+(define (tc-temporary-borrow-position-message? [message : (& message str)]) : bool
+  (string.eq message (tc-temporary-borrow-position-message)))
+
+(define (tc-temporary-borrow-escape-message) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.BorrowViolation)
+    "typecheck: temporary dropped while still borrowed"))
+
+(define (tc-temporary-borrow-escape-help) : String
+  "the call's result or a mutable argument can keep this borrow after the call returns and the temporary is dropped; bind the value to a local before the call")
 
 (define (tc-arena-escape-help [region : String]) : String
   (str_cat.str-cat
@@ -9551,6 +9577,16 @@
   -1)
 (define tc-signature-lifetime-marker-id-cache : i64
   -1)
+(define tc-call-temporary-lifetime-id-generation : i64
+  -1)
+(define tc-call-temporary-lifetime-id-cache : i64
+  -1)
+
+;; Set when a call argument is typed as a borrowed temporary, so the call can
+;; check its temporaries afterwards without classifying every argument
+;; (`tc-call-temporary-borrow-scope-exit`).
+(define tc-call-temporary-borrow-typed : bool
+  false)
 
 (defmacro (tc-type-env-scoped-runtime-active? [env : Expr]) : Expr
   `(tc-type-env-scoped-state-field
@@ -11143,6 +11179,20 @@
         (set! tc-signature-lifetime-marker-id-cache marker-id)
         (set! tc-signature-lifetime-marker-id-generation generation)
         marker-id))))
+
+;; The lifetime of a temporary borrowed as a direct call argument (section
+;; 3.10). It is not a source identifier, so no written lifetime can name it.
+(define (tc-call-temporary-lifetime-id) : i64
+  (let
+    [generation : i64 (ci.intern-generation)]
+    (if (= tc-call-temporary-lifetime-id-generation generation)
+      tc-call-temporary-lifetime-id-cache
+      (let
+        [lifetime-id : i64 (ci.intern "<temporary>")]
+        (begin
+          (set! tc-call-temporary-lifetime-id-cache lifetime-id)
+          (set! tc-call-temporary-lifetime-id-generation generation)
+          lifetime-id)))))
 
 (define (tc-cleanup-owner-marker-id) : i64
   cbi.compiler-builtin-id-tc-cleanup-owner)
@@ -16350,17 +16400,25 @@
   [target-lifetime-id : i64]) : bool
   (if (= value-lifetime-id target-lifetime-id)
     true
-    (if (tc-type-env-scoped-runtime-active? env)
-      (tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
-        (tc-type-env-scoped-runtime-current env)
-        value-lifetime-id
-        target-lifetime-id)
-      (begin
-        (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
-        (tc-lifetime-outlives-lifetime-persistent-id?
-          env
-          value-lifetime-id
-          target-lifetime-id)))))
+    (let
+      [temporary : i64 (tc-call-temporary-lifetime-id)]
+      (cond
+        ;; A borrowed call-argument temporary dies when its call returns, so
+        ;; every other lifetime outlives it and it outlives none of them.
+        [(= target-lifetime-id temporary) true]
+        [(= value-lifetime-id temporary) false]
+        [(tc-type-env-scoped-runtime-active? env)
+          (tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
+            (tc-type-env-scoped-runtime-current env)
+            value-lifetime-id
+            target-lifetime-id)]
+        [else
+          (begin
+            (cfg compile-profile (counters.bump! tc-profile-env-marker-scans))
+            (tc-lifetime-outlives-lifetime-persistent-id?
+              env
+              value-lifetime-id
+              target-lifetime-id))]))))
 
 (define (tc-reference-lifetimes-outlive-lifetime-id?
   [env : TcTypeEnv]
@@ -35400,11 +35458,25 @@
             (+ index 1)
             lifetimes
             subst)
-          (match (tc-call-effective-arg-type
-            ctx
-            env
-            (tc-global-shared-view arg)
-            (tc-global-shared-view want))
+          (match (let
+            [typed : ResultTcType
+              (tc-call-effective-arg-type
+                ctx
+                env
+                (tc-global-shared-view arg)
+                (tc-global-shared-view want))]
+            [typed-ok : bool
+              (match (& typed)
+                [(ResultTcType.Ok _) true]
+                [(ResultTcType.Err _) false])]
+            (if typed-ok
+              typed
+              (tc-call-arg-type-after-error
+                ctx
+                env
+                (tc-global-shared-view arg)
+                (tc-global-shared-view want)
+                typed)))
             [(Ok got)
               (match (tc-infer-lifetime-subst-from-type
                 ctx
@@ -35480,38 +35552,57 @@
   [ret : ast.AstType]
   [allow-region-args : bool]) : ResultTcType
   (let
-    [lifetimes : ast.AstLifetimeList
-      (match (tc-global-shared-view ret)
-        [(StructArgs _ params-lifetimes)
-          (ast.ast-lifetime-list-box-shared-view params-lifetimes)]
-        [(EnumArgs _ params-lifetimes)
-          (ast.ast-lifetime-list-box-shared-view params-lifetimes)]
-        [_ (ast.ast-lifetime-list-new)])]
-    (match (tc-infer-call-lifetime-subst
-      ctx
-      env
-      (tc-global-shared-view func)
-      (tc-global-shared-view args)
-      (tc-global-shared-view params)
-      lifetimes
-      Nil)
-      [(Ok subst)
-        (let
-          [target : ast.AstType
-            (tc-tag-active-region env (tc-lifetime-subst-type subst ret))]
-          [resolved-params : ast.AstTypeList
-            (tc-lifetime-subst-type-list subst params)]
-          (match (tc-check-call-args
-            ctx
-            env
-            func
-            args
-            resolved-params
-            allow-region-args
-            (Some (tc-global-shared-view target)))
-            [(Ok) (Ok target)]
-            [(Err message) (Err message)]))]
-      [(Err message) (Err message)])))
+    [outer : bool (tc-call-temporary-borrow-scope-enter!)]
+    [typed-call : ResultTcType
+      (let
+        [lifetimes : ast.AstLifetimeList
+          (match (tc-global-shared-view ret)
+            [(StructArgs _ params-lifetimes)
+              (ast.ast-lifetime-list-box-shared-view params-lifetimes)]
+            [(EnumArgs _ params-lifetimes)
+              (ast.ast-lifetime-list-box-shared-view params-lifetimes)]
+            [_ (ast.ast-lifetime-list-new)])]
+        (match (tc-infer-call-lifetime-subst
+          ctx
+          env
+          (tc-global-shared-view func)
+          (tc-global-shared-view args)
+          (tc-global-shared-view params)
+          lifetimes
+          Nil)
+          [(Ok subst)
+            (let
+              [target : ast.AstType
+                (tc-tag-active-region
+                  env
+                  (tc-lifetime-subst-type subst (tc-global-shared-view ret)))]
+              [resolved-params : ast.AstTypeList
+                (tc-lifetime-subst-type-list
+                  subst
+                  (tc-global-shared-view params))]
+              (match (tc-check-call-args
+                ctx
+                env
+                func
+                (tc-global-shared-view args)
+                resolved-params
+                allow-region-args
+                (Some (tc-global-shared-view target)))
+                [(Ok) (Ok target)]
+                [(Err message) (Err message)]))]
+          [(Err message) (Err message)]))]
+    (if tc-call-temporary-borrow-typed
+      (tc-call-temporary-borrow-scope-exit
+        ctx
+        env
+        (& args)
+        (& params)
+        ret
+        outer
+        typed-call)
+      (begin
+        (set! tc-call-temporary-borrow-typed outer)
+        typed-call))))
 
 (define (tc-call-function-lifetimes
   [params : ast.AstTypeList]
@@ -35530,38 +35621,54 @@
   [ret : ast.AstType]
   [lifetimes : ast.AstLifetimeList]
   [allow-region-args : bool]) : ResultTcType
-  (match (tc-infer-call-lifetime-subst
-    ctx
-    env
-    (tc-global-shared-view func)
-    (tc-global-shared-view args)
-    (tc-global-shared-view params)
-    lifetimes
-    Nil)
-    [(Ok subst)
-      (let
-        [resolved-ret : ast.AstType (tc-lifetime-subst-type subst ret)]
-        [resolved-params : ast.AstTypeList
-          (tc-lifetime-subst-type-list subst params)]
-        (match (tc-check-call-args
-          ctx
-          env
-          func
-          (tc-global-shared-view args)
-          (tc-global-shared-view resolved-params)
-          allow-region-args
-          (No))
-          [(Ok)
-            (match (tc-check-invalidate-call
+  (let
+    [outer : bool (tc-call-temporary-borrow-scope-enter!)]
+    [typed-call : ResultTcType
+      (match (tc-infer-call-lifetime-subst
+        ctx
+        env
+        (tc-global-shared-view func)
+        (tc-global-shared-view args)
+        (tc-global-shared-view params)
+        lifetimes
+        Nil)
+        [(Ok subst)
+          (let
+            [resolved-ret : ast.AstType
+              (tc-lifetime-subst-type subst (tc-global-shared-view ret))]
+            [resolved-params : ast.AstTypeList
+              (tc-lifetime-subst-type-list subst (tc-global-shared-view params))]
+            (match (tc-check-call-args
               ctx
               env
+              func
               (tc-global-shared-view args)
-              resolved-params
-              (tc-global-shared-view resolved-ret))
-              [(Ok) (Ok (tc-tag-active-region env resolved-ret))]
-              [(Err message) (Err message)])]
-          [(Err message) (Err message)]))]
-    [(Err message) (Err message)]))
+              (tc-global-shared-view resolved-params)
+              allow-region-args
+              (No))
+              [(Ok)
+                (match (tc-check-invalidate-call
+                  ctx
+                  env
+                  (tc-global-shared-view args)
+                  resolved-params
+                  (tc-global-shared-view resolved-ret))
+                  [(Ok) (Ok (tc-tag-active-region env resolved-ret))]
+                  [(Err message) (Err message)])]
+              [(Err message) (Err message)]))]
+        [(Err message) (Err message)])]
+    (if tc-call-temporary-borrow-typed
+      (tc-call-temporary-borrow-scope-exit
+        ctx
+        env
+        (& args)
+        (& params)
+        ret
+        outer
+        typed-call)
+      (begin
+        (set! tc-call-temporary-borrow-typed outer)
+        typed-call))))
 
 ;; A call through `:invalidate` parameters (#6670). After lifetime
 ;; substitution each invalidated brand must be one the caller may end (a local
@@ -37903,7 +38010,7 @@
           (tc-global-shared-view want))
           [(Ok effective-arg)
             (let
-              [typed-arg : ResultTcType
+              [typed-first : ResultTcType
                 (match (& constructor-target)
                   [(No)
                     (if thread-spawn-args
@@ -37923,6 +38030,19 @@
                       env
                       (tc-global-shared-view effective-arg)
                       (tc-global-shared-view want))])]
+              [typed-first-ok : bool
+                (match (& typed-first)
+                  [(ResultTcType.Ok _) true]
+                  [(ResultTcType.Err _) false])]
+              [typed-arg : ResultTcType
+                (if typed-first-ok
+                  typed-first
+                  (tc-call-arg-type-after-error
+                    ctx
+                    env
+                    (tc-global-shared-view effective-arg)
+                    (tc-global-shared-view want)
+                    typed-first))]
               (match typed-arg
                 [(Ok got)
                   (let
@@ -52494,7 +52614,414 @@
           [(Ok) (tc-borrow-place-result-type mutable lifetime place)]
           [(Err message) (Err message)])
         (tc-borrow-place-result-type mutable lifetime place))]
-    [(Err message) (Err message)]))
+    [(Err message)
+      ;; A successfully typed place cannot be a temporary. Direct call
+      ;; arguments recover temporary borrows from this error; other positions
+      ;; keep the diagnostic without rescanning successful place borrows.
+      (if (tc-borrow-operand-temporary?
+        expr-bases
+        (tc-global-shared-view place-expr))
+        (ResultTcType.Err (tc-temporary-borrow-position-message))
+        (Err message))]))
+
+;; --- borrowed call-argument temporaries (section 3.10) ----------------------
+;;
+;; A direct call argument `(& operand)` or `(&mut operand)` whose operand names
+;; no place evaluates the operand by value into hidden storage that lives until
+;; the call returns, and borrows that storage with the call-temporary lifetime.
+;; These classifiers only read shallow node views from the live pool; they
+;; neither mutate rows nor retain a view after returning.
+;; Whether a borrow operand is a temporary rather than a place: a call,
+;; constructor, literal, or other value expression. A type annotation is
+;; transparent. Projections stay places, so a field of a temporary is still a
+;; borrow of a non-place.
+(define (tc-borrow-operand-temporary?
+  [expr-bases : i64]
+  [operand : ast.AstExpr]) : bool
+  (match (tc-global-shared-view operand)
+    [(ast.AstExpr.Spanned inner-box _)
+      (tc-borrow-operand-id-temporary? expr-bases inner-box)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (tc-borrow-operand-id-temporary? expr-bases inner-box)]
+    [(ast.AstExpr.Var _) false]
+    [(ast.AstExpr.StructGet _ _) false]
+    [(ast.AstExpr.TupleRef _ _) false]
+    [(ast.AstExpr.ArrayRef _ _) false]
+    [(ast.AstExpr.BoxGet _) false]
+    [(ast.AstExpr.BoxTake _) false]
+    [(ast.AstExpr.Ann inner-box _)
+      (tc-borrow-operand-id-temporary? expr-bases inner-box)]
+    [_ true]))
+
+(define (tc-borrow-operand-id-temporary? [expr-bases : i64] [id : i64]) : bool
+  (tc-borrow-operand-temporary?
+    expr-bases
+    (ast.ast-expr-segment-bases-get expr-bases id)))
+
+;; The operand node of a call argument that borrows a temporary, or -1. This
+;; reads through span and expansion wrappers by node ID. It does not evaluate
+;; operands or retain their arena-backed handles.
+(define (tc-call-temporary-borrow-operand-id
+  [expr-bases : i64]
+  [arg : ast.AstExpr]) : i64
+  (match (tc-global-shared-view arg)
+    [(ast.AstExpr.Spanned inner-box _)
+      (tc-call-temporary-borrow-operand-id-at expr-bases inner-box)]
+    [(ast.AstExpr.MacroExpansion inner-box _ _)
+      (tc-call-temporary-borrow-operand-id-at expr-bases inner-box)]
+    [(ast.AstExpr.Borrow _ _ operand-box)
+      (if (tc-borrow-operand-id-temporary? expr-bases operand-box)
+        operand-box
+        -1)]
+    [_ -1]))
+
+(define (tc-call-temporary-borrow-operand-id-at [expr-bases : i64] [id : i64]) : i64
+  (tc-call-temporary-borrow-operand-id
+    expr-bases
+    (ast.ast-expr-segment-bases-get expr-bases id)))
+
+(define (tc-call-temporary-borrow-arg? [expr-bases : i64] [arg : ast.AstExpr]) : bool
+  (>=
+    (tc-call-temporary-borrow-operand-id expr-bases (tc-global-shared-view arg))
+    0))
+
+(define (tc-call-temporary-borrow-arg-id? [expr-bases : i64] [id : i64]) : bool
+  (>= (tc-call-temporary-borrow-operand-id-at expr-bases id) 0))
+
+;; A call argument that failed to type as an ordinary expression: a borrowed
+;; temporary types here instead (section 3.10). Ordinary typing rejects every
+;; borrow of a non-place, so no argument pays for this test unless it failed.
+(define (tc-call-arg-type-after-error
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : ast.AstExpr]
+  [want : ast.AstType]
+  [failed : ResultTcType]) : ResultTcType
+  (if (tc-call-temporary-borrow-arg?
+    (tc-context-expr-bases ctx)
+    (tc-global-shared-view arg))
+    (match (tc-call-temporary-borrow-type ctx env arg want)
+      [(ResultTcType.Ok ty)
+        (begin
+          (set! tc-call-temporary-borrow-typed true)
+          (ResultTcType.Ok ty))]
+      [(ResultTcType.Err temporary-message)
+        (ResultTcType.Err temporary-message)])
+    failed))
+
+;; A call checks the borrowed temporaries its arguments typed once they are
+;; typed: none may escape through the result or a `&mut` argument, and a later
+;; argument may not skip one's cleanup. `enter` starts the call's record and
+;; returns the enclosing call's; a call that typed a temporary passes through
+;; `exit`, which restores the record and runs the checks. Their error wins over
+;; one from typing the call, which may have tripped over the escaping lifetime
+;; first.
+(define (tc-call-temporary-borrow-scope-enter!) : bool
+  (let
+    [outer : bool tc-call-temporary-borrow-typed]
+    (begin
+      (set! tc-call-temporary-borrow-typed false)
+      outer)))
+
+(define (tc-call-temporary-borrow-scope-exit
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : (& args ast.AstExprList)]
+  [params : (& params ast.AstTypeList)]
+  [ret : ast.AstType]
+  [outer : bool]
+  [typed-call : ResultTcType]) : ResultTcType
+  (begin
+    (set! tc-call-temporary-borrow-typed outer)
+    (match (tc-check-call-temporary-borrows ctx env args params ret)
+      [(ResultTcUnit.Ok) typed-call]
+      [(ResultTcUnit.Err message) (ResultTcType.Err message)])))
+
+;; The type a reference formal expects of a temporary's value, used to type a
+;; literal operand such as `(& 7)` against `(& u8)`. A `Slice` formal expects an
+;; array literal of its element type; a borrowed `str` formal takes a `String`
+;; value and gives no hint.
+(define (tc-call-temporary-referent-hint
+  [ctx : TcContext]
+  [want : ast.AstType]
+  [operand : ast.AstExpr]) : ast.AstMaybeType
+  (let
+    [referent-id : i64
+      (match (tc-type-strip-region (tc-resolve-type ctx want))
+        [(ast.AstType.Ref _ referent) referent]
+        [(ast.AstType.MutRef _ referent) referent]
+        [_ -1])]
+    (if (< referent-id 0)
+      (ast.AstMaybeType.No)
+      (let
+        [referent-ty : ast.AstType (tc-context-type-get ctx referent-id)]
+        (match (tc-type-strip-region
+          (tc-resolve-type ctx (tc-global-shared-view referent-ty)))
+          [(ast.AstType.Str) (ast.AstMaybeType.No)]
+          [(ast.AstType.Slice elem)
+            (match (ast.ast-expr-unspan-with-segment-bases
+              (tc-context-expr-bases ctx)
+              operand)
+              [(ast.AstExpr.Array exprs)
+                (ast.AstMaybeType.Some
+                  (ast.AstType.Array elem (ast.ast-expr-list-len (& exprs))))]
+              [_ (ast.AstMaybeType.No)])]
+          [_ (ast.AstMaybeType.Some referent-ty)])))))
+
+;; The type of a call argument that borrows a temporary: a reference with the
+;; call-temporary lifetime to the operand's value (`str` for a `String`).
+(define (tc-call-temporary-borrow-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [arg : ast.AstExpr]
+  [want : ast.AstType]) : ResultTcType
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc-context-expr-bases ctx)
+    arg)
+    [(ast.AstExpr.Borrow mutable lifetime-id operand-box)
+      (match (ast.ast-borrow-lifetime-from-id lifetime-id)
+        [(ast.AstBorrowLifetime.Named _)
+          (ResultTcType.Err
+            (tc-kind-message
+              (cdiag.CompilerTypecheckKind.LifetimeMismatch)
+              "typecheck: a borrowed temporary has no lifetime to name; remove the lifetime from this borrow"))]
+        [(ast.AstBorrowLifetime.Inferred)
+          (let
+            [operand : ast.AstExpr (tc-context-expr-get ctx operand-box)]
+            [hint : ast.AstMaybeType
+              (tc-call-temporary-referent-hint
+                ctx
+                want
+                (tc-global-shared-view operand))]
+            [operand-ty : ast.AstType
+              (try
+                (match hint
+                  [(ast.AstMaybeType.Some hint-ty)
+                    (tc-expr-with-expected-or-actual ctx env operand hint-ty)]
+                  [(ast.AstMaybeType.No) (tc-expr ctx env operand)]))]
+            (cond
+              [(and
+                  (tc-type-contains-reference?
+                    (tc-global-shared-view operand-ty))
+                  (not
+                    (tc-reference-containing-place-borrow-ok?
+                      (tc-global-shared-view operand-ty))))
+                (ResultTcType.Err
+                  "typecheck: borrowing places that contain references is not implemented")]
+              [(and
+                  (tc-type-reaches-cleanup?
+                    ctx
+                    (tc-global-shared-view operand-ty))
+                  (not
+                    (tc-cleanup-owning-aggregate-type?
+                      ctx
+                      (tc-global-shared-view operand-ty))))
+                (ResultTcType.Err
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.ResourceOwnership)
+                    "typecheck: a borrowed temporary that holds a cleanup-owning value must itself declare a cleanup function; bind it to a local and discharge it explicitly"))]
+              [else
+                (let
+                  [referent-ty : ast.AstType
+                    (tc-borrow-referent-type operand-ty)]
+                  [lifetime : i64 (tc-call-temporary-lifetime-id)]
+                  (ResultTcType.Ok
+                    (if mutable
+                      (ast.ast-ty-mut-ref lifetime referent-ty)
+                      (ast.ast-ty-ref lifetime referent-ty))))]))])]
+    [_ (ResultTcType.Err (tc-borrow-place-error-message))]))
+
+;; Whether evaluating `expr` can leave an enclosing argument list early through
+;; `return`, `try`, `break`, or `continue`. A nested lambda body runs later.
+(define (tc-expr-may-exit-early? [ctx : TcContext] [expr : ast.AstExpr]) : bool
+  (match (tc-global-shared-view expr)
+    [(ast.AstExpr.Return _) true]
+    [(ast.AstExpr.Try _) true]
+    [(ast.AstExpr.Break) true]
+    [(ast.AstExpr.Continue) true]
+    [(ast.AstExpr.Lambda _) false]
+    [_
+      (let
+        [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+        [index : i64 0]
+        [found : bool false]
+        (begin
+          (while (and (not found) (< index children.len))
+            (begin
+              (if (tc-expr-may-exit-early?
+                ctx
+                (tc-context-expr-get
+                  ctx
+                  (ast.ast-expr-list-get (& children) index -1)))
+                (set! found true)
+                unit)
+              (set! index (+ index 1))))
+          found))]))
+
+;; Whether an argument after `index` can leave the call's argument list early,
+;; which would skip the cleanup a borrowed cleanup-owning temporary at `index`
+;; is owed after the call.
+(define (tc-call-later-arg-may-exit-early?
+  [ctx : TcContext]
+  [args : (& args ast.AstExprList)]
+  [index : i64]) : bool
+  (let
+    [cursor : i64 (+ index 1)]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< cursor args.len))
+        (begin
+          (if (tc-expr-may-exit-early?
+            ctx
+            (tc-context-expr-get ctx (ast.ast-expr-list-get args cursor 0)))
+            (set! found true)
+            unit)
+          (set! cursor (+ cursor 1))))
+      found)))
+
+;; The lifetime a reference formal binds, or -1 when the formal is not a
+;; reference.
+(define (tc-call-reference-formal-lifetime
+  [ctx : TcContext]
+  [formal : ast.AstType]) : i64
+  (match (tc-type-strip-region (tc-resolve-type ctx formal))
+    [(ast.AstType.Ref lifetime _) lifetime]
+    [(ast.AstType.MutRef lifetime _) lifetime]
+    [_ -1]))
+
+;; Whether a parameter other than `index` stores `lifetime` behind a mutable
+;; reference, where the callee could keep a borrow past the call.
+(define (tc-call-mutable-formal-mentions-lifetime?
+  [ctx : TcContext]
+  [params : (& params ast.AstTypeList)]
+  [index : i64]
+  [lifetime : i64]) : bool
+  (let
+    [cursor : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< cursor (ast.ast-type-list-len params)))
+        (begin
+          (if (= cursor index)
+            unit
+            (match (tc-type-strip-region
+              (tc-resolve-type
+                ctx
+                (ast.ty-node-get
+                  (ast.ast-type-list-get
+                    params
+                    cursor
+                    (ast.ast-type-id-fallback)))))
+              [(ast.AstType.MutRef _ referent)
+                (if (tc-name-id-list-contains
+                  (tc-type-collect-regions (ast.ty-node-get referent))
+                  lifetime)
+                  (set! found true)
+                  unit)]
+              [_ unit]))
+          (set! cursor (+ cursor 1))))
+      found)))
+
+;; Rejects a call that could keep a borrow of one of its temporary arguments
+;; past the call: the argument's formal lifetime appears in the result type, or
+;; behind another mutable-reference parameter.
+(define (tc-check-call-temporary-borrows
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [args : (& args ast.AstExprList)]
+  [params : (& params ast.AstTypeList)]
+  [ret : ast.AstType]) : ResultTcUnit
+  (let
+    [expr-bases : i64 (tc-context-expr-bases ctx)]
+    [ret-lifetimes : TcNameIdList TcNameIdList.Nil]
+    [ret-lifetimes-ready : bool false]
+    [index : i64 0]
+    [failed : bool false]
+    [message : String ""]
+    (begin
+      (while (and
+        (not failed)
+        (< index args.len)
+        (< index (ast.ast-type-list-len params)))
+        (let
+          [arg : ast.AstExpr
+            (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
+          (begin
+            (if (tc-call-temporary-borrow-arg?
+              expr-bases
+              (tc-global-shared-view arg))
+              (let
+                [lifetime : i64
+                  (tc-call-reference-formal-lifetime
+                    ctx
+                    (ast.ty-node-get
+                      (ast.ast-type-list-get
+                        params
+                        index
+                        (ast.ast-type-id-fallback))))]
+                (if (and
+                  (>= lifetime 0)
+                  (or
+                    (tc-name-id-list-contains
+                      (begin
+                        (if ret-lifetimes-ready
+                          unit
+                          (begin
+                            (set!
+                              ret-lifetimes
+                              (tc-type-collect-regions
+                                (tc-global-shared-view ret)))
+                            (set! ret-lifetimes-ready true)))
+                        (tc-global-shared-view ret-lifetimes))
+                      lifetime)
+                    (tc-call-mutable-formal-mentions-lifetime?
+                      ctx
+                      params
+                      index
+                      lifetime)))
+                  (begin
+                    (set! failed true)
+                    (set!
+                      message
+                      (match (tc-expr-maybe-span expr-bases arg)
+                        [(TcMaybeAstSourceSpan.Some span)
+                          (tc-rich-error-one-secondary
+                            span
+                            (tc-temporary-borrow-escape-message)
+                            (tc-temporary-borrow-escape-help)
+                            span
+                            "this temporary is dropped when the call returns")]
+                        [(TcMaybeAstSourceSpan.No)
+                          (tc-temporary-borrow-escape-message)])))
+                  (if (and
+                    (tc-call-later-arg-may-exit-early? ctx args index)
+                    (match (tc-expr
+                      ctx
+                      env
+                      (tc-context-expr-get
+                        ctx
+                        (tc-call-temporary-borrow-operand-id
+                          expr-bases
+                          (tc-global-shared-view arg))))
+                      [(ResultTcType.Ok operand-ty)
+                        (tc-cleanup-owning-aggregate-type? ctx operand-ty)]
+                      [(ResultTcType.Err _) false]))
+                    (begin
+                      (set! failed true)
+                      (set!
+                        message
+                        (tc-locate-error-at-expr
+                          expr-bases
+                          arg
+                          (tc-kind-message
+                            (cdiag.CompilerTypecheckKind.ResourceOwnership)
+                            "typecheck: a later argument can leave the call early and skip the cleanup of this borrowed cleanup-owning temporary; bind the value with `with` before the call"))))
+                    unit)))
+              unit)
+            (set! index (+ index 1)))))
+      (if failed
+        (ResultTcUnit.Err message)
+        ResultTcUnit.Ok))))
 
 (define (tc-borrow-expr
   [ctx : TcContext]
@@ -53487,6 +54014,33 @@
 (define (tc-borrowed-field-ref-type [lifetime : i64] [field-ty : ast.AstType]) : ast.AstType
   (ast.ast-ty-ref lifetime (tc-borrow-referent-type field-ty)))
 
+;; The type of a name bound by a pattern matched through a shared reference
+;; (section 5.13). A Copy payload, field, slot or element binds by value. A
+;; `(Box T)` binds a shared reference to the boxed `T`. Any other value binds a
+;; shared reference with the scrutinee lifetime, `String` as `str`.
+(define (tc-borrowed-binding-type
+  [ctx : TcContext]
+  [lifetime : i64]
+  [field-ty : ast.AstType]) : ast.AstType
+  (match (tc-type-strip-region
+    (tc-resolve-type ctx (tc-global-shared-view field-ty)))
+    [(ast.AstType.Box inner-ty)
+      (tc-borrowed-field-ref-type lifetime (tc-context-type-get ctx inner-ty))]
+    [_
+      (if (tc-type-copyable? ctx (tc-global-shared-view field-ty))
+        field-ty
+        (tc-borrowed-field-ref-type lifetime field-ty))]))
+
+;; Whether a name bound through a shared borrowed pattern holds the payload by
+;; value, per `tc-borrowed-binding-type`.
+(define (tc-borrowed-binding-by-value?
+  [ctx : TcContext]
+  [field-ty : ast.AstType]) : bool
+  (match (tc-type-strip-region
+    (tc-resolve-type ctx (tc-global-shared-view field-ty)))
+    [(ast.AstType.Box _) false]
+    [_ (tc-type-copyable? ctx field-ty)]))
+
 (define (tc-bind-borrowed-struct-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -53532,29 +54086,31 @@
   [pattern : ast.AstPattern]
   [elem-ty : ast.AstType]) : ResultTcEnv
   (match pattern
-    [(Var name _)
-      (Ok (tc-bind-id env name (tc-borrowed-field-ref-type lifetime elem-ty)))]
-    [(Binding name)
-      (Ok (tc-bind-id env name (tc-borrowed-field-ref-type lifetime elem-ty)))]
-    [(Wildcard) (Ok env)]
-    [(Tuple patterns-box)
+    [(ast.AstPattern.Var name _)
+      (ResultTcEnv.Ok
+        (tc-bind-id env name (tc-borrowed-binding-type ctx lifetime elem-ty)))]
+    [(ast.AstPattern.Binding name)
+      (ResultTcEnv.Ok
+        (tc-bind-id env name (tc-borrowed-binding-type ctx lifetime elem-ty)))]
+    [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
+    [(ast.AstPattern.Tuple patterns-box)
       (tc-bind-tuple-pattern
         ctx
         env
-        (BorrowedElement lifetime)
+        (TcPatternListMode.BorrowedElement lifetime)
         elem-ty
         (ast.ast-pattern-list-box-shared-view patterns-box))]
-    [(Array patterns-box)
+    [(ast.AstPattern.Array patterns-box)
       (tc-bind-array-pattern
         ctx
         env
-        (BorrowedElement lifetime)
+        (TcPatternListMode.BorrowedElement lifetime)
         elem-ty
         (ast.ast-pattern-list-box-shared-view patterns-box))]
-    [(Variant name args-box)
+    [(ast.AstPattern.Variant name args-box)
       (match (tc-type-strip-region
         (tc-resolve-type ctx (tc-global-shared-view elem-ty)))
-        [(Struct struct-name)
+        [(ast.AstType.Struct struct-name)
           (tc-bind-borrowed-struct-pattern
             ctx
             env
@@ -53565,7 +54121,7 @@
             (tc-env-key-name-text name)
             name
             (ast.ast-pattern-list-box-shared-view args-box))]
-        [(StructArgs struct-name _)
+        [(ast.AstType.StructArgs struct-name _)
           (tc-bind-borrowed-struct-pattern
             ctx
             env
@@ -53577,14 +54133,14 @@
             name
             (ast.ast-pattern-list-box-shared-view args-box))]
         [_
-          (Err
+          (ResultTcEnv.Err
             (tc-kind-message
-              (Pattern)
+              (cdiag.CompilerTypecheckKind.Pattern)
               "typecheck: borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern"))])]
     [_
-      (Err
+      (ResultTcEnv.Err
         (tc-kind-message
-          (Pattern)
+          (cdiag.CompilerTypecheckKind.Pattern)
           "typecheck: borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern"))]))
 
 (define (tc-bind-borrowed-variant-pattern
@@ -53656,39 +54212,41 @@
   (let
     [ty : ast.AstType (tc-resolve-type ctx field-ty)]
     (match pattern
-      [(Var name _)
-        (Ok (tc-bind-id env name (tc-borrowed-field-ref-type lifetime ty)))]
-      [(Binding name)
-        (Ok (tc-bind-id env name (tc-borrowed-field-ref-type lifetime ty)))]
-      [(Wildcard) (Ok env)]
-      [(Literal lit) (tc-bind-literal-pattern env lit ty)]
-      [(Tuple patterns-box)
+      [(ast.AstPattern.Var name _)
+        (ResultTcEnv.Ok
+          (tc-bind-id env name (tc-borrowed-binding-type ctx lifetime ty)))]
+      [(ast.AstPattern.Binding name)
+        (ResultTcEnv.Ok
+          (tc-bind-id env name (tc-borrowed-binding-type ctx lifetime ty)))]
+      [(ast.AstPattern.Wildcard) (ResultTcEnv.Ok env)]
+      [(ast.AstPattern.Literal lit) (tc-bind-literal-pattern env lit ty)]
+      [(ast.AstPattern.Tuple patterns-box)
         (tc-bind-tuple-pattern
           ctx
           env
-          (BorrowedElement lifetime)
+          (TcPatternListMode.BorrowedElement lifetime)
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
-      [(Array patterns-box)
+      [(ast.AstPattern.Array patterns-box)
         (tc-bind-array-pattern
           ctx
           env
-          (BorrowedElement lifetime)
+          (TcPatternListMode.BorrowedElement lifetime)
           ty
           (ast.ast-pattern-list-box-shared-view patterns-box))]
-      [(Slice items-box has-rest)
+      [(ast.AstPattern.Slice items-box has-rest)
         (tc-bind-borrowed-slice-pattern
           ctx
           env
           ty
           (ast.ast-pattern-list-box-shared-view items-box)
           has-rest)]
-      [(Variant name args-box)
+      [(ast.AstPattern.Variant name args-box)
         (let
           [args : ast.AstPatternList
             (ast.ast-pattern-list-box-shared-view args-box)]
           (match (tc-type-strip-region (tc-global-shared-view ty))
-            [(Enum enum-name)
+            [(ast.AstType.Enum enum-name)
               (tc-bind-borrowed-variant-pattern
                 ctx
                 env
@@ -53697,7 +54255,7 @@
                 name
                 (ast.ast-lifetime-list-new)
                 args)]
-            [(EnumArgs enum-name lifetimes)
+            [(ast.AstType.EnumArgs enum-name lifetimes)
               (tc-bind-borrowed-variant-pattern
                 ctx
                 env
@@ -53706,17 +54264,17 @@
                 name
                 (ast.ast-lifetime-list-box-shared-view lifetimes)
                 args)]
-            [(Box _)
+            [(ast.AstType.Box _)
               (if (tc-box-pattern-name? name)
-                (Err
+                (ResultTcEnv.Err
                   (tc-kind-message
-                    (BorrowViolation)
+                    (cdiag.CompilerTypecheckKind.BorrowViolation)
                     "typecheck: borrowed box patterns are not supported"))
-                (Err
+                (ResultTcEnv.Err
                   (tc-kind-message
-                    (Pattern)
+                    (cdiag.CompilerTypecheckKind.Pattern)
                     "typecheck: nested variant pattern requires enum field")))]
-            [(Struct struct-name)
+            [(ast.AstType.Struct struct-name)
               (tc-bind-borrowed-struct-pattern
                 ctx
                 env
@@ -53727,7 +54285,7 @@
                 (tc-env-key-name-text name)
                 name
                 args)]
-            [(StructArgs struct-name _)
+            [(ast.AstType.StructArgs struct-name _)
               (tc-bind-borrowed-struct-pattern
                 ctx
                 env
@@ -53740,15 +54298,15 @@
                 args)]
             [_
               (if (tc-box-pattern-name? name)
-                (Err
+                (ResultTcEnv.Err
                   (tc-kind-message
-                    (Pattern)
+                    (cdiag.CompilerTypecheckKind.Pattern)
                     "typecheck: box pattern requires Box field"))
-                (Err
+                (ResultTcEnv.Err
                   (tc-kind-message
-                    (Pattern)
+                    (cdiag.CompilerTypecheckKind.Pattern)
                     "typecheck: nested variant pattern requires enum field")))]))]
-      [_ (Err "typecheck: unsupported nested match pattern")])))
+      [_ (ResultTcEnv.Err "typecheck: unsupported nested match pattern")])))
 
 (define (tc-bind-borrowed-enum-match-pattern
   [ctx : TcContext]
@@ -70870,6 +71428,60 @@
           (ast.ast-expr-segment-bases-get expr-bases receiver-box)))]
     [_ (ast.ast-node-push expr)]))
 
+;; The `deref` operand at the root of a field and tuple-element projection
+;; chain such as `(deref b).leaf.w`, or -1 when the chain has no `deref` root.
+(define (tc-projection-deref-root-operand
+  [expr-bases : i64]
+  [receiver : ast.AstExpr]) : i64
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases receiver)
+    [(ast.AstExpr.StructGet inner-box _)
+      (tc-projection-deref-root-operand
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(ast.AstExpr.TupleRef inner-box _)
+      (tc-projection-deref-root-operand
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(ast.AstExpr.BoxTake inner-box) inner-box]
+    [_ -1]))
+
+;; The receiver a field or tuple-element projection reads. A Copy projection
+;; through `(deref place)`, directly or through further projections, copies out
+;; of the boxed or referenced storage in place, so `(deref b).v` and
+;; `(deref b).leaf.w` check `b` as a read instead of consuming the box. A
+;; non-Copy projection keeps the consuming `deref` and its diagnostics.
+(define (tc-move-projection-receiver
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-bases : i64]
+  [projection : ast.AstExpr]
+  [receiver : ast.AstExpr]) : ast.AstExpr
+  (let
+    [operand-id : i64
+      (tc-projection-deref-root-operand
+        expr-bases
+        (tc-global-shared-view receiver))]
+    (if (< operand-id 0)
+      receiver
+      (match (match (tc-global-shared-view projection)
+        [(ast.AstExpr.StructGet receiver-id field-id)
+          ;; Consumption uses the intrinsic receiver type recorded for this
+          ;; same body and node. Reuse the ordinary field-type resolver; a
+          ;; missing fact keeps the full query, including raw-deref recovery.
+          (match (tc-body-type-fact-lookup-profiled
+            "projection.copy_receiver"
+            ctx
+            receiver-id)
+            [(TcBodyTypeFact.Hit receiver-ty)
+              (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+            [(TcBodyTypeFact.Miss) (tc-expr ctx env projection)])]
+        [_ (tc-expr ctx env projection)])
+        [(ResultTcType.Ok projected-ty)
+          (if (tc-type-copyable? ctx projected-ty)
+            (ast.ast-expr-segment-bases-get expr-bases operand-id)
+            receiver)]
+        [(ResultTcType.Err _) receiver]))))
+
 (define (tc-move-check-borrow-place
   [ctx : TcContext]
   [expr-bases : i64]
@@ -72769,7 +73381,12 @@
     [(TupleRef inner-box _)
       (let
         [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+          (tc-move-projection-receiver
+            ctx
+            env
+            expr-bases
+            (tc-global-shared-view expr)
+            (ast.ast-expr-segment-bases-get expr-bases inner-box))]
         (match (tc-move-check-expr
           ctx
           expr-bases
@@ -73352,46 +73969,30 @@
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-move-check-expr ctx expr-bases env locals loop-carried moved inner))]
     [(Borrow mutable _ inner-box)
-      (match (if mutable
-        (tc-move-foreign-global-place-check
-          ctx
+      (let
+        [inner : ast.AstExpr
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+        (if (tc-borrow-operand-temporary?
           expr-bases
-          env
-          (tc-global-shared-view locals)
-          inner-box
-          "mutably borrow")
-        ResultTcUnit.Ok)
-        [(Ok)
-          (let
-            [inner : ast.AstExpr
-              (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-            (if mutable
-              (match (tc-param-storage-check-write
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view moved)
-                (tc-global-shared-view inner)
-                "mutably borrow")
-                [(Ok)
-                  (tc-move-check-borrow-place
-                    ctx
-                    expr-bases
-                    env
-                    locals
-                    loop-carried
-                    moved
-                    inner)]
-                [(Err message) (Err message)])
-              (tc-move-check-borrow-place
-                ctx
-                expr-bases
-                env
-                locals
-                loop-carried
-                moved
-                inner)))]
-        [(Err message) (Err message)])]
+          (tc-global-shared-view inner))
+          (tc-move-check-temporary-borrow-operand
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            inner-box)
+          (tc-move-check-place-borrow
+            ctx
+            expr-bases
+            env
+            locals
+            loop-carried
+            moved
+            mutable
+            inner-box
+            inner)))]
     [(Match match-box)
       (match (ast.ast-match-box-shared-view match-box)
         [(Match scrut-box arms)
@@ -73777,7 +74378,12 @@
     [(StructGet inner-box _)
       (let
         [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+          (tc-move-projection-receiver
+            ctx
+            env
+            expr-bases
+            (tc-global-shared-view expr)
+            (ast.ast-expr-segment-bases-get expr-bases inner-box))]
         (match (tc-move-check-expr
           ctx
           expr-bases
@@ -74333,6 +74939,97 @@
         loop-carried
         moved
         (ast.ast-expr-segment-bases-get expr-bases value-box))]))
+
+(define (tc-move-check-place-borrow
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [mutable : bool]
+  [inner-box : i64]
+  [inner : ast.AstExpr]) : TcMoveResult
+  (match (if mutable
+    (tc-move-foreign-global-place-check
+      ctx
+      expr-bases
+      env
+      (tc-global-shared-view locals)
+      inner-box
+      "mutably borrow")
+    ResultTcUnit.Ok)
+    [(ResultTcUnit.Ok)
+      (if mutable
+        (match (tc-param-storage-check-write
+          ctx
+          expr-bases
+          env
+          (tc-global-shared-view moved)
+          (tc-global-shared-view inner)
+          "mutably borrow")
+          [(ResultTcUnit.Ok)
+            (tc-move-check-borrow-place
+              ctx
+              expr-bases
+              env
+              locals
+              loop-carried
+              moved
+              inner)]
+          [(ResultTcUnit.Err message) (TcMoveResult.Err message)])
+        (tc-move-check-borrow-place
+          ctx
+          expr-bases
+          env
+          locals
+          loop-carried
+          moved
+          inner))]
+    [(ResultTcUnit.Err message) (TcMoveResult.Err message)]))
+
+;; A borrowed temporary (section 3.10) consumes its operand's value into hidden
+;; storage, like a by-value argument of the operand's type; the borrow itself
+;; moves nothing. Typecheck admits one only as a direct call argument.
+(define (tc-move-check-temporary-borrow-operand
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [operand-box : i64]) : TcMoveResult
+  (let
+    [operand : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases operand-box)]
+    [operand-ty : ast.AstType
+      (match (tc-body-type-fact-expr-id
+        "move.call_arg_temporary"
+        ctx
+        env
+        operand-box)
+        [(ResultTcType.Ok ty) ty]
+        [(ResultTcType.Err _) (ast.AstType.Unit)])]
+    (match (tc-move-check-expr
+      ctx
+      expr-bases
+      env
+      (tc-global-shared-view locals)
+      (tc-global-shared-view loop-carried)
+      moved
+      (tc-global-shared-view operand))
+      [(TcMoveResult.Ok operand-moved)
+        (tc-move-after-consuming-value
+          ctx
+          expr-bases
+          env
+          (tc-global-shared-view locals)
+          (tc-global-shared-view loop-carried)
+          operand-moved
+          operand
+          (tc-global-shared-view operand-ty)
+          operand-ty)]
+      [(TcMoveResult.Err message) (TcMoveResult.Err message)])))
 
 (define (tc-move-check-body-id
   [ctx : TcContext]
@@ -81241,6 +81938,44 @@
     locals
     (tc-borrow-check-pattern-bound-names ctx scrut-ty pattern)))
 
+;; A borrowed call-argument temporary (section 3.10) borrows storage that no
+;; place names, so it adds no loan. Its operand's reads, and the value it
+;; consumes into that storage, are checked like a by-value argument.
+(define (tc-borrow-check-temporary-operand
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [operand-box : i64]) : TcBorrowCheckResult
+  (let
+    [operand : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases operand-box)]
+    (match (tc-borrow-check-expr
+      ctx
+      expr-bases
+      env
+      (tc-global-shared-view locals)
+      borrowed
+      (tc-global-shared-view operand))
+      [(TcBorrowCheckResult.Ok borrowed1)
+        (match (tc-body-type-fact-expr-id
+          "borrow.call_arg_temporary"
+          ctx
+          env
+          operand-box)
+          [(ResultTcType.Ok operand-ty)
+            (tc-borrow-check-after-consuming-value
+              ctx
+              expr-bases
+              env
+              locals
+              borrowed1
+              operand
+              operand-ty)]
+          [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed1)])]
+      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
+
 (define (tc-borrow-check-effective-arg-with-type
   [ctx : TcContext]
   [expr-bases : i64]
@@ -81592,7 +82327,9 @@
           [(Borrow mutable _ place-box)
             (if (and
               mutable
-              (tc-call-mutable-ref-formal? ctx (tc-global-shared-view raw-ty)))
+              (tc-call-mutable-ref-formal? ctx (tc-global-shared-view raw-ty))
+              ;; A borrowed temporary reserves no place.
+              (not (tc-borrow-operand-id-temporary? expr-bases place-box)))
               (let
                 [place : ast.AstExpr
                   (ast.ast-expr-segment-bases-get expr-bases place-box)]
@@ -85071,7 +85808,12 @@
     [(TupleRef inner-box _)
       (let
         [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+          (tc-move-projection-receiver
+            ctx
+            env
+            expr-bases
+            (tc-global-shared-view expr)
+            (ast.ast-expr-segment-bases-get expr-bases inner-box))]
         (match (tc-borrow-check-expr
           ctx
           expr-bases
@@ -85571,70 +86313,78 @@
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
         (tc-borrow-check-expr ctx expr-bases env locals borrowed inner))]
     [(Borrow mutable _ inner-box)
-      (let
-        [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        [read-inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get
-            expr-bases
-            (tc-move-borrow-place-read-expr-id
+      (if (tc-borrow-operand-id-temporary? expr-bases inner-box)
+        (tc-borrow-check-temporary-operand
+          ctx
+          expr-bases
+          env
+          locals
+          borrowed
+          inner-box)
+        (let
+          [inner : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+          [read-inner : ast.AstExpr
+            (ast.ast-expr-segment-bases-get
               expr-bases
-              (tc-global-shared-view inner)))]
-        (if (= (tc-moved-len borrowed) 0)
-          (match (tc-borrow-check-expr
-            ctx
-            expr-bases
-            env
-            (tc-global-shared-view locals)
-            borrowed
-            read-inner)
-            [(Ok borrowed1)
-              (match (tc-borrow-place
-                ctx
+              (tc-move-borrow-place-read-expr-id
                 expr-bases
-                env
-                (tc-global-shared-view inner))
-                [(Ok _)
-                  (tc-borrow-check-add-place-with-mutability
-                    expr-bases
-                    locals
-                    borrowed1
-                    mutable
-                    (tc-global-shared-view inner)
-                    inner)]
-                [(Err message) (Err message)])]
-            [(Err message) (Err message)])
-          (match (tc-borrow-check-place-read-conflict
-            expr-bases
-            (tc-global-shared-view locals)
-            borrowed
-            (tc-global-shared-view inner)
-            expr)
-            [(Ok borrowed0)
-              (match (tc-borrow-check-expr
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view locals)
-                borrowed0
-                read-inner)
-                [(Ok borrowed1)
-                  (match (tc-borrow-place
-                    ctx
-                    expr-bases
-                    env
-                    (tc-global-shared-view inner))
-                    [(Ok _)
-                      (tc-borrow-check-add-place-with-mutability
-                        expr-bases
-                        locals
-                        borrowed1
-                        mutable
-                        (tc-global-shared-view inner)
-                        inner)]
-                    [(Err message) (Err message)])]
-                [(Err message) (Err message)])]
-            [(Err message) (Err message)])))]
+                (tc-global-shared-view inner)))]
+          (if (= (tc-moved-len borrowed) 0)
+            (match (tc-borrow-check-expr
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view locals)
+              borrowed
+              read-inner)
+              [(Ok borrowed1)
+                (match (tc-borrow-place
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view inner))
+                  [(Ok _)
+                    (tc-borrow-check-add-place-with-mutability
+                      expr-bases
+                      locals
+                      borrowed1
+                      mutable
+                      (tc-global-shared-view inner)
+                      inner)]
+                  [(Err message) (Err message)])]
+              [(Err message) (Err message)])
+            (match (tc-borrow-check-place-read-conflict
+              expr-bases
+              (tc-global-shared-view locals)
+              borrowed
+              (tc-global-shared-view inner)
+              expr)
+              [(Ok borrowed0)
+                (match (tc-borrow-check-expr
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view locals)
+                  borrowed0
+                  read-inner)
+                  [(Ok borrowed1)
+                    (match (tc-borrow-place
+                      ctx
+                      expr-bases
+                      env
+                      (tc-global-shared-view inner))
+                      [(Ok _)
+                        (tc-borrow-check-add-place-with-mutability
+                          expr-bases
+                          locals
+                          borrowed1
+                          mutable
+                          (tc-global-shared-view inner)
+                          inner)]
+                      [(Err message) (Err message)])]
+                  [(Err message) (Err message)])]
+              [(Err message) (Err message)]))))]
     [(Match match-box)
       (match (ast.ast-match-box-shared-view match-box)
         [(Match scrut-box arms)
@@ -86027,7 +86777,12 @@
     [(StructGet inner-box _)
       (let
         [inner : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases inner-box)]
+          (tc-move-projection-receiver
+            ctx
+            env
+            expr-bases
+            (tc-global-shared-view expr)
+            (ast.ast-expr-segment-bases-get expr-bases inner-box))]
         (match (tc-borrow-check-expr
           ctx
           expr-bases
@@ -91204,7 +91959,7 @@
                 [(Some target)
                   (if (tc-module-identity-id-eq?
                     session
-                    (deref target)
+                    (owned_view.compiler-owned-pattern-copy target)
                     target-id)
                     (set! found true)
                     unit)]

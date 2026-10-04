@@ -70,18 +70,23 @@
   [index : Expr]) : Expr
   `(clone (array-ref ,items ,index)))
 
+;; A value that is not a Box is already the boxed value: a `(Box T)` payload
+;; matched through a shared reference binds `(& T)` (SPEC section 5.13).
 (defmacro (compiler-opt-box-shared-view [value : Expr]) : Expr
   (let
-    ;; Spliced into the generated pointer element type.
-    ;; lint-allow: unused-variable
-    [inner-ty : comptime.Expr
-      (comptime.box-element-type (comptime.expr-type value))]
-    `(let
-      [address : i64
-        (unsafe
-          (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr i64))))]
-      (unsafe
-        (ptr-read (int->ptr (cast address : u64) : (Ptr ,inner-ty)))))))
+    [value-ty : comptime.Expr (comptime.expr-type value)]
+    (if (string-eq (type-kind value-ty) "box")
+      (let
+        ;; Spliced into the generated pointer element type.
+        ;; lint-allow: unused-variable
+        [inner-ty : comptime.Expr (comptime.box-element-type value-ty)]
+        `(let
+          [address : i64
+            (unsafe
+              (ptr-read (ptr-cast (ptr-addr-of ,value) : (Ptr i64))))]
+          (unsafe
+            (ptr-read (int->ptr (cast address : u64) : (Ptr ,inner-ty))))))
+      value)))
 
 (defmacro (compiler-opt-box-field-shared-view [value : Expr] [field : Expr]) : Expr
   `(let
@@ -1882,12 +1887,12 @@
 
 (define (opt-bitlen-var-of [value : (& value ir.CompilerIrValue)]) : i64
   (match value
-    [(Var v) (deref v)]
+    [(Var v) (owned_view.compiler-owned-pattern-copy v)]
     [_ (- 0 1)]))
 
 (define (opt-bitlen-literal? [value : (& value ir.CompilerIrValue)] [n : i64]) : bool
   (match value
-    [(I64 k) (= (deref k) n)]
+    [(I64 k) (= (owned_view.compiler-owned-pattern-copy k) n)]
     [_ false]))
 
 ;; `var > 0` at type `ty`, or for u64 also `var != 0`.
@@ -2411,7 +2416,7 @@
 ;; potentially trapping/edge-sensitive operations stay in the IR.
 (define (opt-i64-zero? [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(I64 n) (= (deref n) 0)]
+    [(I64 n) (= (owned_view.compiler-owned-pattern-copy n) 0)]
     [_ false]))
 
 (define (opt-i64-one? [value : ir.CompilerIrValue]) : bool
@@ -2421,12 +2426,13 @@
 
 (define (opt-bool-true? [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(Bool b) (deref b)]
+    [(ir.CompilerIrValue.Bool b) (owned_view.compiler-owned-pattern-copy b)]
     [_ false]))
 
 (define (opt-bool-false? [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(Bool b) (not (deref b))]
+    [(ir.CompilerIrValue.Bool b)
+      (not (owned_view.compiler-owned-pattern-copy b))]
     [_ false]))
 
 (define (opt-strength-int-binop
@@ -2645,7 +2651,7 @@
 ;; needs no width reasoning beyond what a 64-bit `subq` already did.
 (define (opt-value-zero-literal? [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(I64 n) (= (deref n) 0)]
+    [(I64 n) (= (owned_view.compiler-owned-pattern-copy n) 0)]
     [_ false]))
 
 (define (opt-binop-negate-zero-lhs?
@@ -2897,7 +2903,8 @@
   (match instr
     ;; AddrOf's raw slot is a var use too; missing it would let DCE drop the
     ;; definition that feeds it.
-    [(AddrOf _ src) (opt-used-add set (deref src))]
+    [(AddrOf _ src)
+      (opt-used-add set (owned_view.compiler-owned-pattern-copy src))]
     [_
       (let
         [out : opt_i64_i64_map.Map set]
@@ -3466,7 +3473,8 @@
   [marks : (& marks (__tl_dyn-array bool))]
   [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(Var id) (opt-addr-taken-var? marks (deref id))]
+    [(Var id)
+      (opt-addr-taken-var? marks (owned_view.compiler-owned-pattern-copy id))]
     [_ false]))
 
 (define (opt-addr-taken-value-seq?
@@ -4087,9 +4095,11 @@
   [value : (& value ir.CompilerIrValue)]) : option_i64.Option
   (match value
     [(Var var)
-      (if (= (deref var) base)
+      (if (= (owned_view.compiler-owned-pattern-copy var) base)
         (Some 0)
-        (opt-aggregate-pointer-list-lookup ptrs (deref var)))]
+        (opt-aggregate-pointer-list-lookup
+          ptrs
+          (owned_view.compiler-owned-pattern-copy var)))]
     [_ (None)]))
 
 (define (opt-aggregate-value-has-pointer?
@@ -4124,7 +4134,11 @@
   [base : i64]
   [ptrs : (& ptrs opt_aggregate_pointer_vec.Vec)]) : bool
   (match instr
-    [(AddrOf _ src) (opt-aggregate-raw-var-is-pointer? base ptrs (deref src))]
+    [(AddrOf _ src)
+      (opt-aggregate-raw-var-is-pointer?
+        base
+        ptrs
+        (owned_view.compiler-owned-pattern-copy src))]
     [(CallIndirect _ _ _ _) false]
     [(CallIndirectC _ _ _ _) false]
     [(Pack _ _ _) false]
@@ -4157,9 +4171,9 @@
   (match instr
     [(Call dst name _ _)
       (and
-        (= (deref dst) base)
+        (= (owned_view.compiler-owned-pattern-copy dst) base)
         (ir.compiler-ir-symbol-eq?
-          (deref name)
+          (owned_view.compiler-owned-pattern-copy name)
           cbi.compiler-builtin-id-tl-alloc))]
     [(Gep _ src offset _)
       (match (opt-aggregate-value-offset base ptrs src)
@@ -5097,14 +5111,17 @@
   [ptr : (& ptr (__tl_dyn-array i64))]
   [value : (& value ir.CompilerIrValue)]) : i64
   (match value
-    [(Var var) (opt-aggregate-split-ptr-cand ptr (deref var))]
+    [(Var var)
+      (opt-aggregate-split-ptr-cand
+        ptr
+        (owned_view.compiler-owned-pattern-copy var))]
     [_ -1]))
 
 (define (opt-aggregate-split-value-var-or
   [value : (& value ir.CompilerIrValue)]
   [fallback : i64]) : i64
   (match value
-    [(Var var) (deref var)]
+    [(Var var) (owned_view.compiler-owned-pattern-copy var)]
     [_ fallback]))
 
 (define (opt-aggregate-split-literal-or
@@ -7076,7 +7093,7 @@
             (and
               (opt-type-list-eq
                 type-segment-bases
-                (deref a-params)
+                (owned_view.compiler-owned-pattern-copy a-params)
                 (deref b-params))
               (opt-type-ids-eq? type-segment-bases a-ret b-ret))]
           [_ false])]
@@ -7092,7 +7109,7 @@
           [(Tuple b-items)
             (opt-type-list-eq
               type-segment-bases
-              (deref a-items)
+              (owned_view.compiler-owned-pattern-copy a-items)
               (deref b-items))]
           [_ false])]
       [(Array a-item a-len)
@@ -7160,7 +7177,9 @@
           [(EnumArgs b-name b-lifetimes)
             (and
               (= a-name b-name)
-              (opt-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
+              (opt-lifetime-list-eq
+                (owned_view.compiler-owned-pattern-copy a-lifetimes)
+                (deref b-lifetimes)))]
           [_ false])]
       [(Struct a-name)
         (match b
@@ -7171,7 +7190,9 @@
           [(StructArgs b-name b-lifetimes)
             (and
               (= a-name b-name)
-              (opt-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
+              (opt-lifetime-list-eq
+                (owned_view.compiler-owned-pattern-copy a-lifetimes)
+                (deref b-lifetimes)))]
           [_ false])]
       [(Var a-name)
         (match b
@@ -7182,7 +7203,9 @@
           [(VarArgs b-name b-lifetimes)
             (and
               (= a-name b-name)
-              (opt-lifetime-list-eq (deref a-lifetimes) (deref b-lifetimes)))]
+              (opt-lifetime-list-eq
+                (owned_view.compiler-owned-pattern-copy a-lifetimes)
+                (deref b-lifetimes)))]
           [_ false])])))
 
 ;; `opt-type-eq` of the types two type ids name.
@@ -8491,7 +8514,7 @@
 
 (define (opt-value-is-var? [value : (& value ir.CompilerIrValue)] [var : i64]) : bool
   (match value
-    [(Var id) (= (deref id) var)]
+    [(Var id) (= (owned_view.compiler-owned-pattern-copy id) var)]
     [_ false]))
 
 (define (opt-key-uses-var? [key : (& key OptExprKey)] [var : i64]) : bool
@@ -8804,9 +8827,14 @@
   [entry : (& entry OptCopyEntry)]
   [var : i64]) : bool
   (match entry
-    [(Copy id value) (or (= (deref id) var) (opt-value-is-var? value var))]
+    [(Copy id value)
+      (or
+        (= (owned_view.compiler-owned-pattern-copy id) var)
+        (opt-value-is-var? value var))]
     [(PackWord group _ value)
-      (or (= (deref group) var) (opt-value-is-var? value var))]))
+      (or
+        (= (owned_view.compiler-owned-pattern-copy group) var)
+        (opt-value-is-var? value var))]))
 
 (define (opt-copy-invalidate-var [env : OptCopyEnv] [var : i64]) : OptCopyEnv
   (let
@@ -9366,9 +9394,9 @@
   [var : i64]) : bool
   (match length
     [(Var id)
-      (if (< (deref id) 0)
-        (= (- (- 0 (deref id)) 1) var)
-        (= (deref id) var))]
+      (if (< (owned_view.compiler-owned-pattern-copy id) 0)
+        (= (- (- 0 (owned_view.compiler-owned-pattern-copy id)) 1) var)
+        (= (owned_view.compiler-owned-pattern-copy id) var))]
     [_ false]))
 
 (define (opt-object-length-lookup [fact : OptObjectLengthFact] [var : i64]) : option_i64.Option
@@ -9631,8 +9659,12 @@
   (match offset
     [(I64 value)
       (or
-        (and (= (deref value) 1) (opt-type-eq type-segment-bases ty (I64)))
-        (and (= (deref value) 8) (opt-type-eq type-segment-bases ty (U8))))]
+        (and
+          (= (owned_view.compiler-owned-pattern-copy value) 1)
+          (opt-type-eq type-segment-bases ty (I64)))
+        (and
+          (= (owned_view.compiler-owned-pattern-copy value) 8)
+          (opt-type-eq type-segment-bases ty (U8))))]
     [_ false]))
 
 (define (opt-bounds-update-facts
@@ -16106,8 +16138,8 @@
   (match fact
     [(Expr key _ _ _)
       (bit-and (opt-global-expr-key-hash type-segment-bases key) (- capacity 1))]
-    [(Copy dst _ _ _) (deref dst)]
-    [(PackWord group _ _ _ _) (deref group)]))
+    [(Copy dst _ _ _) (owned_view.compiler-owned-pattern-copy dst)]
+    [(PackWord group _ _ _ _) (owned_view.compiler-owned-pattern-copy group)]))
 
 (define (opt-global-fact-table-add!
   [type-segment-bases : i64]
@@ -16181,7 +16213,7 @@
       (match fact
         [(Expr fact-key fact-dst def-block-id def-pos)
           (if (and
-            (not (= fact-dst (deref dst)))
+            (not (= fact-dst (owned_view.compiler-owned-pattern-copy dst)))
             (opt-global-expr-key-eq type-segment-bases fact-key key)
             (opt-global-fact-available?
               def-block-id
@@ -16196,7 +16228,7 @@
       (match fact
         [(Copy dst src def-block-id def-pos)
           (if (and
-            (= dst (deref var))
+            (= dst (owned_view.compiler-owned-pattern-copy var))
             (opt-global-fact-available?
               def-block-id
               def-pos
@@ -16210,8 +16242,8 @@
       (match fact
         [(PackWord fact-group fact-index word def-block-id def-pos)
           (if (and
-            (= fact-group (deref group))
-            (= fact-index (deref index))
+            (= fact-group (owned_view.compiler-owned-pattern-copy group))
+            (= fact-index (owned_view.compiler-owned-pattern-copy index))
             (opt-global-fact-available?
               def-block-id
               def-pos
@@ -16274,7 +16306,7 @@
         (match (opt-global-fact-lookup
           0
           facts
-          (Copy (deref id) (Unit) 0 0)
+          (Copy (owned_view.compiler-owned-pattern-copy id) (Unit) 0 0)
           doms
           use-block-id
           use-pos)
@@ -16359,7 +16391,10 @@
 
 (define (opt-copy-wide-literal? [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(I64 n) (not (opt-copy-operand-imm32-fits? (deref n)))]
+    [(I64 n)
+      (not
+        (opt-copy-operand-imm32-fits?
+          (owned_view.compiler-owned-pattern-copy n)))]
     [_ false]))
 
 ;; The scalar literals copy propagation is allowed to move
@@ -16654,7 +16689,7 @@
             [(Add) true]
             [_ false])
           (match rhs
-            [(I64 n) (= (deref n) 1)]
+            [(I64 n) (= (owned_view.compiler-owned-pattern-copy n) 1)]
             [_ false]))]
       [_ false])))
 
@@ -17210,11 +17245,13 @@
 
 (define (opt-natural-loop-header [loop : (& loop OptNaturalLoop)]) : i64
   (match loop
-    [(Loop header _ _ _) (deref header)]))
+    [(OptNaturalLoop.Loop header _ _ _)
+      (owned_view.compiler-owned-pattern-copy header)]))
 
 (define (opt-natural-loop-latch [loop : (& loop OptNaturalLoop)]) : i64
   (match loop
-    [(Loop _ latch _ _) (deref latch)]))
+    [(OptNaturalLoop.Loop _ latch _ _)
+      (owned_view.compiler-owned-pattern-copy latch)]))
 
 (define (opt-natural-loop-body-info [loop : (& loop OptNaturalLoop)]) : OptLoopBody
   (match (owned_view.compiler-owned-reference-shared-view loop)
@@ -17249,7 +17286,8 @@
 
 (define (opt-natural-loop-preheader [loop : (& loop OptNaturalLoop)]) : OptLoopPreheader
   (match loop
-    [(Loop _ _ _ preheader) (deref preheader)]))
+    [(OptNaturalLoop.Loop _ _ _ preheader)
+      (owned_view.compiler-owned-pattern-copy preheader)]))
 
 (define (opt-natural-loop-list-count [loops : (& loops (Slice OptNaturalLoop))]) : i64
   (array-length loops))
@@ -18996,8 +19034,9 @@
 
 (define (opt-rotate-ssa-phi-rec-count [recs : (& recs OptRotateSsaPhiRecs)]) : i64
   (match recs
-    [(Nil) 0]
-    [(Dense _ len) (deref len)]))
+    [(OptRotateSsaPhiRecs.Nil) 0]
+    [(OptRotateSsaPhiRecs.Dense _ len)
+      (owned_view.compiler-owned-pattern-copy len)]))
 
 (cfg
   test
@@ -20969,7 +21008,10 @@
   [env : (& env OptLicmRootEnv)]
   [value : (& value ir.CompilerIrValue)]) : OptLicmRoot
   (match value
-    [(Var var) (opt-licm-root-env-lookup env (deref var))]
+    [(Var var)
+      (opt-licm-root-env-lookup
+        env
+        (owned_view.compiler-owned-pattern-copy var))]
     [_ (NoRoot)]))
 
 (define (opt-licm-root-env-copy!
@@ -21211,8 +21253,11 @@
   (match value
     [(Var var)
       (or
-        (not (opt-used-contains loop-defs (deref var)))
-        (opt-used-contains hoisted (deref var)))]
+        (not
+          (opt-used-contains
+            loop-defs
+            (owned_view.compiler-owned-pattern-copy var)))
+        (opt-used-contains hoisted (owned_view.compiler-owned-pattern-copy var)))]
     [(Global _) globals-clean?]
     [_ true]))
 
@@ -21337,9 +21382,15 @@
   (match value
     [(Var var)
       (or
-        (not (opt-used-contains loop-defs (deref var)))
-        (opt-used-contains hoisted (deref var)))]
-    [(Global name) (opt-licm-global-facts-invariant? facts (deref name))]
+        (not
+          (opt-used-contains
+            loop-defs
+            (owned_view.compiler-owned-pattern-copy var)))
+        (opt-used-contains hoisted (owned_view.compiler-owned-pattern-copy var)))]
+    [(Global name)
+      (opt-licm-global-facts-invariant?
+        facts
+        (owned_view.compiler-owned-pattern-copy name))]
     [_ true]))
 
 (define (opt-licm-global-values-invariant?
@@ -21488,7 +21539,10 @@
   [src : (& src ir.CompilerIrValue)]) : bool
   (match src
     [(Var ptr-var)
-      (opt-licm-frame-object-kind? (opt-licm-ptr-lookup ptrs (deref ptr-var)))]
+      (opt-licm-frame-object-kind?
+        (opt-licm-ptr-lookup
+          ptrs
+          (owned_view.compiler-owned-pattern-copy ptr-var)))]
     [_ false]))
 
 ;; The header-load-safety a Load candidate reads: the frame-word reading for a
@@ -22156,7 +22210,7 @@
   [offset : (& offset ir.CompilerIrValue)]
   [_ty : (& _ty ast.AstType)]) : bool
   (match offset
-    [(I64 value) (= (deref value) 0)]
+    [(I64 value) (= (owned_view.compiler-owned-pattern-copy value) 0)]
     [_ false]))
 
 ;; The pointer classes whose target is a FIXED word of an object that element
@@ -22226,8 +22280,12 @@
   (match value
     [(Global name)
       (and
-        (opt-licm-global-header-admitted? facts (deref name))
-        (opt-licm-global-storage-invariant? facts (deref name)))]
+        (opt-licm-global-header-admitted?
+          facts
+          (owned_view.compiler-owned-pattern-copy name))
+        (opt-licm-global-storage-invariant?
+          facts
+          (owned_view.compiler-owned-pattern-copy name)))]
     [_ false]))
 
 ;; The head of the chain, as an ADDRESS KIND.
@@ -22254,7 +22312,9 @@
     [(Var ptr-var)
       (opt-licm-global-header-kind?
         facts
-        (opt-licm-ptr-lookup ptrs (deref ptr-var)))]
+        (opt-licm-ptr-lookup
+          ptrs
+          (owned_view.compiler-owned-pattern-copy ptr-var)))]
     [_ false]))
 
 ;; ALIAS-1. The ADDRESS-formation twin of opt-licm-header-slot-source?: is the
@@ -22368,9 +22428,14 @@
         ;; enclosing loop's bounds-check elimination still needs.
         (and
           late?
-          (opt-licm-array-header-var? type-segment-bases types (deref ptr-var)))
+          (opt-licm-array-header-var?
+            type-segment-bases
+            types
+            (owned_view.compiler-owned-pattern-copy ptr-var)))
         (opt-licm-header-slot-ptr-kind?
-          (opt-licm-ptr-lookup ptrs (deref ptr-var))))]
+          (opt-licm-ptr-lookup
+            ptrs
+            (owned_view.compiler-owned-pattern-copy ptr-var))))]
     [_ false]))
 
 ;; `Gep <address of a frame object>, <literal>` addresses a FIXED word of that
@@ -22399,7 +22464,10 @@
   (match base
     [(Var base-var)
       (let
-        [base-kind : OptLicmPtrKind (opt-licm-ptr-lookup ptrs (deref base-var))]
+        [base-kind : OptLicmPtrKind
+          (opt-licm-ptr-lookup
+            ptrs
+            (owned_view.compiler-owned-pattern-copy base-var))]
         (match base-kind
           [(DataBuffer object) (DataElement object)]
           [(DataElement object)
@@ -22411,11 +22479,11 @@
             (if (opt-licm-array-header-var?
               type-segment-bases
               types
-              (deref base-var))
+              (owned_view.compiler-owned-pattern-copy base-var))
               (if (opt-bounds-object-length-slot? type-segment-bases offset ty)
-                (HeaderSlot (deref base-var))
+                (HeaderSlot (owned_view.compiler-owned-pattern-copy base-var))
                 (if (opt-licm-data-slot? offset ty)
-                  (DataSlot (deref base-var))
+                  (DataSlot (owned_view.compiler-owned-pattern-copy base-var))
                   (Unknown)))
               ;; Not a descriptor handle. It may still be the address of a
               ;; frame object of this function, in which case a LITERAL offset
@@ -22434,10 +22502,12 @@
           ;; data-pointer slot.
           (if (and
             opt-licm-global-data-slot-on
-            (= (deref k) 0)
-            (opt-licm-global-header? (ir.compiler-ir-symbol-id (deref name))))
-            (GlobalDataSlot (deref name))
-            (GlobalSlot (deref name)))]
+            (= (owned_view.compiler-owned-pattern-copy k) 0)
+            (opt-licm-global-header?
+              (ir.compiler-ir-symbol-id
+                (owned_view.compiler-owned-pattern-copy name))))
+            (GlobalDataSlot (owned_view.compiler-owned-pattern-copy name))
+            (GlobalSlot (owned_view.compiler-owned-pattern-copy name)))]
         [_ (Unknown)])]
     [_ (Unknown)]))
 
@@ -22597,13 +22667,17 @@
       [(Global name)
         (opt-global-mod-ref-id-bit
           obj.index
-          (ir.compiler-ir-symbol-id (deref name)))]
+          (ir.compiler-ir-symbol-id
+            (owned_view.compiler-owned-pattern-copy name)))]
       [(GlobalAddr name)
         (opt-global-mod-ref-id-bit
           obj.index
-          (ir.compiler-ir-symbol-id (deref name)))]
+          (ir.compiler-ir-symbol-id
+            (owned_view.compiler-owned-pattern-copy name)))]
       [(Var var)
-        (match (opt-licm-ptr-lookup ptrs (deref var))
+        (match (opt-licm-ptr-lookup
+          ptrs
+          (owned_view.compiler-owned-pattern-copy var))
           [(GlobalSlot global)
             (opt-global-mod-ref-id-bit
               obj.index
@@ -29552,14 +29626,17 @@
   [cond : (& cond ir.CompilerIrValue)]) : bool
   (match cond
     [(Var var)
-      (if (not (opt-used-contains loop-defs (deref var)))
+      (if (not
+        (opt-used-contains
+          loop-defs
+          (owned_view.compiler-owned-pattern-copy var)))
         true
         (match (if (and
           (opt-licm-unswitch-widened?)
           opt-licm-unswitch-body-compare-on)
           (opt-licm-unswitch-body-compare
             (ir.compiler-ir-block-list-view body-blocks)
-            (deref var))
+            (owned_view.compiler-owned-pattern-copy var))
           (OptLicmUnswitchCmp.No))
           [(No) false]
           [(Some _ lhs rhs _)
@@ -30737,7 +30814,8 @@
 
 (define (opt-induction-fact-step [fact : (& fact OptInductionFact)]) : i64
   (match fact
-    [(Fact _ _ _ step _) (deref step)]))
+    [(OptInductionFact.Fact _ _ _ step _)
+      (owned_view.compiler-owned-pattern-copy step)]))
 
 (define (opt-induction-i64-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
@@ -31216,7 +31294,7 @@
     [(Fact phi-var _ _ _ _)
       (opt-induction-affine-offset-env-blocks
         (ir.compiler-ir-block-list-view body-blocks)
-        (deref phi-var)
+        (owned_view.compiler-owned-pattern-copy phi-var)
         (opt_i64_i64_map.with-capacity
           (opt-licm-body-map-capacity
             (owned_view.compiler-owned-reference-shared-view body-blocks))))]))
@@ -31227,9 +31305,11 @@
   [phi-var : i64]) : option_i64.Option
   (match value
     [(Var var)
-      (if (= (deref var) phi-var)
+      (if (= (owned_view.compiler-owned-pattern-copy var) phi-var)
         (Some 0)
-        (match (opt_i64_i64_map.get (& offsets) (deref var))
+        (match (opt_i64_i64_map.get
+          (& offsets)
+          (owned_view.compiler-owned-pattern-copy var))
           [(LookupFound offset) (Some offset)]
           [(LookupMissing) (None)]))]
     [_ (None)]))
@@ -31268,7 +31348,11 @@
   [loop-defs : (& loop-defs opt_i64_i64_map.Map)]
   [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(Var var) (not (opt-used-contains loop-defs (deref var)))]
+    [(Var var)
+      (not
+        (opt-used-contains
+          loop-defs
+          (owned_view.compiler-owned-pattern-copy var)))]
     [_ true]))
 
 ;; The scale of a `mul phi, scale-lit` (either operand order), if it is one.
@@ -31372,7 +31456,10 @@
   [value : (& value ir.CompilerIrValue)]) : bool
   (match value
     [(Var var)
-      (match (opt-induction-add-inv-scale scaled phi-var (deref var))
+      (match (opt-induction-add-inv-scale
+        scaled
+        phi-var
+        (owned_view.compiler-owned-pattern-copy var))
         [(Some found) (= found scale)]
         [(None) false])]
     [_ false]))
@@ -31580,8 +31667,8 @@
         [feeders : opt_i64_i64_map.Map
           (opt-induction-gep-offset-vars-blocks loop-defs body-blocks)]
         (opt-induction-scaled-env-list-from
-          (deref phi-var)
-          (deref step)
+          (owned_view.compiler-owned-pattern-copy phi-var)
+          (owned_view.compiler-owned-pattern-copy step)
           feeders
           (ir.compiler-ir-block-list-view body-blocks)
           (opt_i64_i64_map.with-capacity 17)))]))
@@ -31618,22 +31705,25 @@
                   offsets
                   lhs
                   rhs
-                  (deref phi-var)
-                  (deref step)
+                  (owned_view.compiler-owned-pattern-copy phi-var)
+                  (owned_view.compiler-owned-pattern-copy step)
                   ty)
                 (No))]
             [(Add)
               (opt-induction-add-inv-derived
                 loop-defs
                 scaled
-                (deref phi-var)
-                (deref step)
+                (owned_view.compiler-owned-pattern-copy phi-var)
+                (owned_view.compiler-owned-pattern-copy step)
                 lhs
                 rhs
                 ty)]
             [_ (No)])]
         [(Gep _ base offset ty)
-          (match (opt-induction-value-offset offsets offset (deref phi-var))
+          (match (opt-induction-value-offset
+            offsets
+            offset
+            (owned_view.compiler-owned-pattern-copy phi-var))
             [(Some derived-offset)
               (if (and
                 (opt-induction-gep-stride-pays?
@@ -31770,8 +31860,9 @@
 (define (opt-induction-derived-list-count
   [deriveds : (& deriveds OptInductionDerivedList)]) : i64
   (match deriveds
-    [(Nil) 0]
-    [(Dense _ len) (deref len)]))
+    [(OptInductionDerivedList.Nil) 0]
+    [(OptInductionDerivedList.Dense _ len)
+      (owned_view.compiler-owned-pattern-copy len)]))
 
 (define (opt-induction-derived-list-slot-count
   [deriveds : (& deriveds OptInductionDerivedList)]) : i64
@@ -32050,8 +32141,8 @@
                       offsets
                       lhs
                       rhs
-                      (deref phi-var)
-                      (deref step)
+                      (owned_view.compiler-owned-pattern-copy phi-var)
+                      (owned_view.compiler-owned-pattern-copy step)
                       ty)
                       [(Some found)
                         (opt-induction-derived-eq?
@@ -32070,7 +32161,7 @@
                 (match (opt-induction-value-offset
                   offsets
                   instr-offset
-                  (deref phi-var))
+                  (owned_view.compiler-owned-pattern-copy phi-var))
                   [(Some found-offset) (= found-offset derived-offset)]
                   [(None) false]))]
             [_ false])]
@@ -32096,7 +32187,7 @@
                     (opt-type-eq type-segment-bases instr-ty ty)
                     (opt-induction-add-inv-matches?
                       scaled
-                      (deref phi-var)
+                      (owned_view.compiler-owned-pattern-copy phi-var)
                       c
                       scale
                       lhs
@@ -32270,15 +32361,15 @@
 (define (opt-induction-derived-offset
   [derived : (& derived OptInductionDerived)]) : i64
   (match derived
-    [(Mul _ offset _) (deref offset)]
-    [(Gep _ offset _) (deref offset)]
+    [(Mul _ offset _) (owned_view.compiler-owned-pattern-copy offset)]
+    [(Gep _ offset _) (owned_view.compiler-owned-pattern-copy offset)]
     [(GepScaled _ _ _) 1]
     ;; a scaled sum seeds through a product temp; the counter's own sum
     ;; seeds straight off `start`
     [(AddInv _ scale _)
-      (if (= (deref scale) 1)
+      (if (= (owned_view.compiler-owned-pattern-copy scale) 1)
         0
-        (deref scale))]))
+        (owned_view.compiler-owned-pattern-copy scale))]))
 
 (define (opt-induction-derived-slot-count [derived : OptInductionDerived]) : i64
   (if (= (opt-induction-derived-offset derived) 0)
@@ -32315,9 +32406,19 @@
       (match derived
         [(GepScaled _ scale _)
           ;; The scaled seed's element offset is start*scale, not start+offset.
-          (BinOp offset-var (Mul) start (I64 (deref scale)) ty)]
+          (BinOp
+            offset-var
+            (Mul)
+            start
+            (I64 (owned_view.compiler-owned-pattern-copy scale))
+            ty)]
         [(AddInv _ scale _)
-          (BinOp offset-var (Mul) start (I64 (deref scale)) ty)]
+          (BinOp
+            offset-var
+            (Mul)
+            start
+            (I64 (owned_view.compiler-owned-pattern-copy scale))
+            ty)]
         [_
           (BinOp
             offset-var
@@ -33275,8 +33376,9 @@
 (define (opt-flag-exit-edge-values-count
   [values : (& values OptFlagExitEdgeValues)]) : i64
   (match values
-    [(Nil) 0]
-    [(Dense _ len) (deref len)]))
+    [(OptFlagExitEdgeValues.Nil) 0]
+    [(OptFlagExitEdgeValues.Dense _ len)
+      (owned_view.compiler-owned-pattern-copy len)]))
 
 (define (opt-flag-exit-edge-values-ref
   [values : (& values OptFlagExitEdgeValues)]
@@ -33325,8 +33427,9 @@
 
 (define (opt-flag-exit-phi-fixes-count [fixes : (& fixes OptFlagExitPhiFixes)]) : i64
   (match fixes
-    [(Nil) 0]
-    [(Dense _ len) (deref len)]))
+    [(OptFlagExitPhiFixes.Nil) 0]
+    [(OptFlagExitPhiFixes.Dense _ len)
+      (owned_view.compiler-owned-pattern-copy len)]))
 
 (define (opt-flag-exit-phi-fixes-ref
   [fixes : (& fixes OptFlagExitPhiFixes)]
@@ -33374,8 +33477,9 @@
 
 (define (opt-flag-exit-mints-count [mints : (& mints OptFlagExitMints)]) : i64
   (match mints
-    [(Nil) 0]
-    [(Dense _ len) (deref len)]))
+    [(OptFlagExitMints.Nil) 0]
+    [(OptFlagExitMints.Dense _ len)
+      (owned_view.compiler-owned-pattern-copy len)]))
 
 (define (opt-flag-exit-mints-ref
   [mints : (& mints OptFlagExitMints)]
@@ -33474,9 +33578,9 @@
   (match value
     [(Var var)
       (and
-        (>= (deref var) 0)
-        (< (deref var) (array-length closure))
-        (= (array-ref closure (deref var)) 1))]
+        (>= (owned_view.compiler-owned-pattern-copy var) 0)
+        (< (owned_view.compiler-owned-pattern-copy var) (array-length closure))
+        (= (array-ref closure (owned_view.compiler-owned-pattern-copy var)) 1))]
     [_ false]))
 
 ;; --- prescan -----------------------------------------------------------------
@@ -34119,13 +34223,21 @@
   [value : (& value ir.CompilerIrValue)]) : ir.CompilerIrValue
   (match value
     [(Var var)
-      (if (or (< (deref var) 0) (>= (deref var) (array-length def-label)))
+      (if (or
+        (< (owned_view.compiler-owned-pattern-copy var) 0)
+        (>=
+          (owned_view.compiler-owned-pattern-copy var)
+          (array-length def-label)))
         (owned_view.compiler-owned-reference-shared-view value)
         (let
-          [label : i64 (array-ref def-label (deref var))]
+          [label : i64
+            (array-ref def-label (owned_view.compiler-owned-pattern-copy var))]
           (if (or (< label 0) (opt-loop-body-label-member? body index label))
             (owned_view.compiler-owned-reference-shared-view value)
-            (match (opt-flag-exit-instr-at blocks label (deref var))
+            (match (opt-flag-exit-instr-at
+              blocks
+              label
+              (owned_view.compiler-owned-pattern-copy var))
               [(No) (owned_view.compiler-owned-reference-shared-view value)]
               [(Some instr)
                 (match instr
@@ -37586,10 +37698,13 @@
   (match value
     [(Var var)
       (and
-        (>= (deref var) 0)
-        (< (deref var) (array-length def-label))
+        (>= (owned_view.compiler-owned-pattern-copy var) 0)
+        (<
+          (owned_view.compiler-owned-pattern-copy var)
+          (array-length def-label))
         (let
-          [label : i64 (array-ref def-label (deref var))]
+          [label : i64
+            (array-ref def-label (owned_view.compiler-owned-pattern-copy var))]
           (or (< label 0) (not (opt-loop-body-label-member? body index label)))))]
     ;; a memory read evaluated on the edge itself, not a value the loop carries
     [(Global _) false]
@@ -38126,23 +38241,31 @@
 
 (define (opt-lftr-pointer-phi [pointer : (& pointer OptLftrPointer)]) : i64
   (match pointer
-    [(Pointer phi _ _ _ _ _) (deref phi)]
-    [(Sum phi _ _ _ _) (deref phi)]))
+    [(OptLftrPointer.Pointer phi _ _ _ _ _)
+      (owned_view.compiler-owned-pattern-copy phi)]
+    [(OptLftrPointer.Sum phi _ _ _ _)
+      (owned_view.compiler-owned-pattern-copy phi)]))
 
 (define (opt-lftr-pointer-next [pointer : (& pointer OptLftrPointer)]) : i64
   (match pointer
-    [(Pointer _ _ next _ _ _) (deref next)]
-    [(Sum _ _ next _ _) (deref next)]))
+    [(OptLftrPointer.Pointer _ _ next _ _ _)
+      (owned_view.compiler-owned-pattern-copy next)]
+    [(OptLftrPointer.Sum _ _ next _ _)
+      (owned_view.compiler-owned-pattern-copy next)]))
 
 (define (opt-lftr-pointer-step [pointer : (& pointer OptLftrPointer)]) : i64
   (match pointer
-    [(Pointer _ _ _ _ step _) (deref step)]
-    [(Sum _ _ _ step _) (deref step)]))
+    [(OptLftrPointer.Pointer _ _ _ _ step _)
+      (owned_view.compiler-owned-pattern-copy step)]
+    [(OptLftrPointer.Sum _ _ _ step _)
+      (owned_view.compiler-owned-pattern-copy step)]))
 
 (define (opt-lftr-pointer-step-index [pointer : (& pointer OptLftrPointer)]) : i64
   (match pointer
-    [(Pointer _ _ _ _ _ at) (deref at)]
-    [(Sum _ _ _ _ at) (deref at)]))
+    [(OptLftrPointer.Pointer _ _ _ _ _ at)
+      (owned_view.compiler-owned-pattern-copy at)]
+    [(OptLftrPointer.Sum _ _ _ _ at)
+      (owned_view.compiler-owned-pattern-copy at)]))
 
 (defenum OptLftrMaybePointer
   (No)
@@ -38211,7 +38334,7 @@
   [value : (& value ir.CompilerIrValue)]
   [var : i64]) : bool
   (match value
-    [(Var id) (= (deref id) var)]
+    [(Var id) (= (owned_view.compiler-owned-pattern-copy id) var)]
     [_ false]))
 
 ;; `i + 1` in either operand order.
@@ -38227,12 +38350,12 @@
           [_ false])
         (if (opt-lftr-value-is-var? lhs phi-var)
           (match rhs
-            [(I64 step) (= (deref step) 1)]
+            [(I64 step) (= (owned_view.compiler-owned-pattern-copy step) 1)]
             [_ false])
           (and
             (opt-lftr-value-is-var? rhs phi-var)
             (match lhs
-              [(I64 step) (= (deref step) 1)]
+              [(I64 step) (= (owned_view.compiler-owned-pattern-copy step) 1)]
               [_ false]))))]
     [_ false]))
 
@@ -38650,7 +38773,7 @@
   [seed : (& seed ir.CompilerIrValue)]
   [want : i64]) : bool
   (match seed
-    [(I64 s) (= (deref s) want)]
+    [(I64 s) (= (owned_view.compiler-owned-pattern-copy s) want)]
     [_ false]))
 
 ;; The element count the end value lies past the seed: `(bound - seed) * K`,
@@ -38748,11 +38871,18 @@
       (match seed
         [(I64 seed-literal)
           (and
-            (opt-induction-small-const? (deref limit))
             (opt-induction-small-const?
-              (* (- (deref limit) (deref seed-literal)) step)))]
+              (owned_view.compiler-owned-pattern-copy limit))
+            (opt-induction-small-const?
+              (*
+                (-
+                  (owned_view.compiler-owned-pattern-copy limit)
+                  (owned_view.compiler-owned-pattern-copy seed-literal))
+                step)))]
         ;; a var seed is subtracted at run time; only the limit folds
-        [_ (opt-induction-small-const? (deref limit))])]
+        [_
+          (opt-induction-small-const?
+            (owned_view.compiler-owned-pattern-copy limit))])]
     [_ true]))
 
 ;; The census indexes its use arrays by the retiring vars directly, so a var id
@@ -38835,8 +38965,8 @@
   [site-label : i64]
   [site-index : i64]) : bool
   (match test
-    [(Test _ _ _ _ reads-next?)
-      (if (not (deref reads-next?))
+    [(OptLftrTest.Test _ _ _ _ reads-next?)
+      (if (not (owned_view.compiler-owned-pattern-copy reads-next?))
         true
         (let
           [step-index : i64 (opt-lftr-pointer-step-index pointer)]
@@ -38927,12 +39057,12 @@
             (opt-licm-body-map-capacity
               (compiler-opt-global-shared-view body-blocks)))]
         (opt-lftr-sum-checked-blocks?
-          (deref phi-var)
+          (owned_view.compiler-owned-pattern-copy phi-var)
           (&mut offsets)
           (ir.compiler-ir-block-list-view body-blocks)
           true)
         (opt-lftr-sum-checked-blocks?
-          (deref phi-var)
+          (owned_view.compiler-owned-pattern-copy phi-var)
           (&mut offsets)
           (ir.compiler-ir-block-list-view body-blocks)
           false))]))
@@ -42257,7 +42387,7 @@
   [value : (& value ir.CompilerIrValue)]
   [var : i64]) : bool
   (match value
-    [(Var id) (= (deref id) var)]
+    [(Var id) (= (owned_view.compiler-owned-pattern-copy id) var)]
     [_ false]))
 
 ;; The compare with `input` substituted for the phi, decided by the same folder
@@ -43814,8 +43944,12 @@
   [value : (& value ir.CompilerIrValue)]) : unit
   (match value
     [(Var var)
-      (if (and (>= (deref var) 0) (< (deref var) (array-length uses)))
-        (set! (array-ref uses (deref var)) (+ (array-ref uses (deref var)) 1))
+      (if (and
+        (>= (owned_view.compiler-owned-pattern-copy var) 0)
+        (< (owned_view.compiler-owned-pattern-copy var) (array-length uses)))
+        (set!
+          (array-ref uses (owned_view.compiler-owned-pattern-copy var))
+          (+ (array-ref uses (owned_view.compiler-owned-pattern-copy var)) 1))
         unit)]
     [_ unit]))
 
@@ -44468,7 +44602,9 @@
   (match chain
     [(Nil) merge-label]
     [(Cons label _ rest)
-      (opt-thread-chain-last-label (deref label) (deref (deref rest)))]))
+      (opt-thread-chain-last-label
+        (owned_view.compiler-owned-pattern-copy label)
+        (owned_view.compiler-owned-pattern-box-ref rest))]))
 
 (define (opt-thread-chain-last-instrs
   [merge-instrs : ir.CompilerIrInstrSeq]
@@ -46910,12 +47046,14 @@
   [instr : (& instr ir.CompilerIrInstr)]
   [label : i64]) : bool
   (match instr
-    [(Jump target) (= (deref target) label)]
+    [(Jump target) (= (owned_view.compiler-owned-pattern-copy target) label)]
     [(Branch _ true-label false-label)
-      (or (= (deref true-label) label) (= (deref false-label) label))]
+      (or
+        (= (owned_view.compiler-owned-pattern-copy true-label) label)
+        (= (owned_view.compiler-owned-pattern-copy false-label) label))]
     [(Switch _ _ cases default-label)
       (or
-        (= (deref default-label) label)
+        (= (owned_view.compiler-owned-pattern-copy default-label) label)
         (opt-cfg-straighten-cases-contain? cases label))]
     [_ false]))
 
@@ -47946,7 +48084,9 @@
   [value : (& value ir.CompilerIrValue)]) : ir.CompilerIrValue
   (match value
     [(Var id)
-      (match (opt-sccp-env-lookup env (deref id))
+      (match (opt-sccp-env-lookup
+        env
+        (owned_view.compiler-owned-pattern-copy id))
         [(Const folded _) folded]
         [_ (owned_view.compiler-owned-reference-shared-view value)])]
     [_ (owned_view.compiler-owned-reference-shared-view value)]))
@@ -48076,9 +48216,11 @@
           (match length
             [(I64 len)
               (and
-                (>= (deref idx) 0)
-                (>= (deref len) 0)
-                (< (deref idx) (deref len)))]
+                (>= (owned_view.compiler-owned-pattern-copy idx) 0)
+                (>= (owned_view.compiler-owned-pattern-copy len) 0)
+                (<
+                  (owned_view.compiler-owned-pattern-copy idx)
+                  (owned_view.compiler-owned-pattern-copy len)))]
             [_ false])]
         [_ false])]
     [_ false]))
@@ -48538,8 +48680,9 @@
 
 (define (opt-switch-candidate-count [items : (& items OptSwitchCandidateList)]) : i64
   (match items
-    [(Nil) 0]
-    [(Dense _ len) (deref len)]))
+    [(OptSwitchCandidateList.Nil) 0]
+    [(OptSwitchCandidateList.Dense _ len)
+      (owned_view.compiler-owned-pattern-copy len)]))
 
 (define (opt-switch-candidates-total-enum-prefix-count-from
   [items : (& items OptSwitchCandidateList)]
@@ -50721,11 +50864,18 @@
       (let
         [affine : OptGvnAffineDefs table.affine]
         [v : i64
-          (opt_i64_i64_map.get-value-or (& affine.base) (deref s) (- 0 1))]
+          (opt_i64_i64_map.get-value-or
+            (& affine.base)
+            (owned_view.compiler-owned-pattern-copy s)
+            (- 0 1))]
         (if (< v 0)
           (No)
           (let
-            [k : i64 (opt_i64_i64_map.get-value-or (& affine.k) (deref s) 0)]
+            [k : i64
+              (opt_i64_i64_map.get-value-or
+                (& affine.k)
+                (owned_view.compiler-owned-pattern-copy s)
+                0)]
             [first : i64
               (opt-gvn-lookup
                 type-segment-bases
@@ -50746,7 +50896,10 @@
                     other
                     (compiler-opt-global-shared-view ty)))
                 first)]
-            (if (or (< sib 0) (= sib dst) (= sib (deref s)))
+            (if (or
+              (< sib 0)
+              (= sib dst)
+              (= sib (owned_view.compiler-owned-pattern-copy s)))
               (No)
               (Some (BinOp dst (Add) (Var sib) (I64 k) ty))))))]
     [_ (No)]))
@@ -51395,7 +51548,9 @@
   [length : (& length ir.CompilerIrValue)]) : ir.CompilerIrValue
   (match length
     [(Var length-var)
-      (match (opt_i64_i64_map.get (& lengths) (deref length-var))
+      (match (opt_i64_i64_map.get
+        (& lengths)
+        (owned_view.compiler-owned-pattern-copy length-var))
         [(LookupFound slice-var) (Var slice-var)]
         [(LookupMissing)
           (owned_view.compiler-owned-reference-shared-view length)])]
@@ -51472,7 +51627,7 @@
 
 (define (opt-dom-cmp-value-bit [value : (& value ir.CompilerIrValue)]) : i64
   (match value
-    [(Var id) (shl 1 (bit-and (deref id) 63))]
+    [(Var id) (shl 1 (bit-and (owned_view.compiler-owned-pattern-copy id) 63))]
     [_ 0]))
 
 (define (opt-dom-cmp-fact-vars [fact : (& fact OptDomCmpFact)]) : i64
@@ -51482,8 +51637,9 @@
 
 (define (opt-dom-cmp-facts-vars [facts : (& facts OptDomCmpFacts)]) : i64
   (match facts
-    [(Nil) 0]
-    [(Cons _ vars _) (deref vars)]))
+    [(OptDomCmpFacts.Nil) 0]
+    [(OptDomCmpFacts.Cons _ vars _)
+      (owned_view.compiler-owned-pattern-copy vars)]))
 
 (define (opt-dom-cmp-facts-cons [fact : OptDomCmpFact] [rest : OptDomCmpFacts]) : OptDomCmpFacts
   (let
@@ -51622,11 +51778,19 @@
   (match lhs
     [(Var var)
       (match rhs
-        [(I64 literal) (Some (deref var) (deref literal) true)]
+        [(I64 literal)
+          (Some
+            (owned_view.compiler-owned-pattern-copy var)
+            (owned_view.compiler-owned-pattern-copy literal)
+            true)]
         [_ (No)])]
     [(I64 literal)
       (match rhs
-        [(Var var) (Some (deref var) (deref literal) false)]
+        [(Var var)
+          (Some
+            (owned_view.compiler-owned-pattern-copy var)
+            (owned_view.compiler-owned-pattern-copy literal)
+            false)]
         [_ (No)])]
     [_ (No)]))
 
@@ -51875,36 +52039,39 @@
   [c : ir.CompilerIrValue]
   [ty : (& ty ast.AstType)]) : OptDomCmpBelow
   (match facts
-    [(Nil) (No)]
-    [(Cons fact vars rest)
+    [(OptDomCmpFacts.Nil) (OptDomCmpBelow.No)]
+    [(OptDomCmpFacts.Cons fact vars rest)
       (let
         [want : i64 (opt-dom-cmp-value-bit mid)]
         (cond
-          [(and (!= want 0) (= (bit-and (deref vars) want) 0)) (No)]
+          [(and
+              (!= want 0)
+              (= (bit-and (owned_view.compiler-owned-pattern-copy vars) want) 0))
+            (OptDomCmpBelow.No)]
           [(and (!= want 0) (= (bit-and (opt-dom-cmp-fact-vars fact) want) 0))
             (opt-dom-cmp-chain-tail
               type-segment-bases
-              (deref (deref rest))
+              (owned_view.compiler-owned-pattern-box-ref rest)
               mid
               c
               ty)]
           [else
             (match (opt-dom-cmp-fact-below type-segment-bases fact mid ty)
-              [(Some upper strict?)
+              [(OptDomCmpBelow.Some upper strict?)
                 (if (opt-value-eq
                   (compiler-opt-global-shared-view upper)
                   (compiler-opt-global-shared-view c))
-                  (Some upper strict?)
+                  (OptDomCmpBelow.Some upper strict?)
                   (opt-dom-cmp-chain-tail
                     type-segment-bases
-                    (deref (deref rest))
+                    (owned_view.compiler-owned-pattern-box-ref rest)
                     mid
                     c
                     ty))]
-              [(No)
+              [(OptDomCmpBelow.No)
                 (opt-dom-cmp-chain-tail
                   type-segment-bases
-                  (deref (deref rest))
+                  (owned_view.compiler-owned-pattern-box-ref rest)
                   mid
                   c
                   ty)])]))]))
@@ -51922,7 +52089,11 @@
     [(Cons _ vars _)
       (if (and
         (!= (opt-dom-cmp-value-bit a) 0)
-        (= (bit-and (deref vars) (opt-dom-cmp-value-bit a)) 0))
+        (=
+          (bit-and
+            (owned_view.compiler-owned-pattern-copy vars)
+            (opt-dom-cmp-value-bit a))
+          0))
         ;; No fact from here on names `a`, so none is a head step.
         (No)
         (opt-dom-cmp-chain-scan-cell
@@ -51976,7 +52147,7 @@
           (opt-dom-cmp-chain-scan
             type-segment-bases
             all-facts
-            (deref (deref rest))
+            (owned_view.compiler-owned-pattern-box-ref rest)
             query
             a
             c
@@ -52148,7 +52319,9 @@
   [value : (& value ir.CompilerIrValue)]) : bool
   (match value
     [(Var var)
-      (match (opt-bool-branch-def env.defs (deref var))
+      (match (opt-bool-branch-def
+        env.defs
+        (owned_view.compiler-owned-pattern-copy var))
         [(No) false]
         [(Some instr _)
           (match instr
@@ -52180,7 +52353,7 @@
   [len : (& len ir.CompilerIrValue)]) : bool
   (or
     (match len
-      [(I64 count) (>= (deref count) 1)]
+      [(I64 count) (>= (owned_view.compiler-owned-pattern-copy count) 1)]
       [_ false])
     (match (let
       [rhs (ir.CompilerIrValue.I64 1)]
@@ -52353,7 +52526,8 @@
           [(Some decided) decided]
           [(No)
             (match len
-              [(I64 bound) (< seed (deref bound))]
+              [(I64 bound)
+                (< seed (owned_view.compiler-owned-pattern-copy bound))]
               [_ false])]))]
     [(Var var)
       (and
@@ -52426,7 +52600,9 @@
   [len : (& len ir.CompilerIrValue)]) : bool
   (match idx
     [(Var var)
-      (match (opt-bool-branch-def env.phi-defs (deref var))
+      (match (opt-bool-branch-def
+        env.phi-defs
+        (owned_view.compiler-owned-pattern-copy var))
         [(No) false]
         [(Some instr _)
           (match instr
@@ -52628,9 +52804,11 @@
   (match phis
     [(Nil) false]
     [(Cons head rest)
-      (if (= (deref head) var)
+      (if (= (owned_view.compiler-owned-pattern-copy head) var)
         true
-        (opt-nonneg-phis-member? (deref (deref rest)) var))]))
+        (opt-nonneg-phis-member?
+          (owned_view.compiler-owned-pattern-box-ref rest)
+          var))]))
 
 ;; A fact answers a question asked at `at-id` only if the block it became valid
 ;; at dominates `at-id`. Facts read at the block the walk is IN all pass this
@@ -52641,8 +52819,11 @@
   [fact : (& fact OptDomCmpFact)]
   [at-id : i64]) : bool
   (match fact
-    [(Fact _ _ _ _ _ fact-block)
-      (opt-dom-info-dominates-id? doms (deref fact-block) at-id)]))
+    [(OptDomCmpFact.Fact _ _ _ _ _ fact-block)
+      (opt-dom-info-dominates-id?
+        doms
+        (owned_view.compiler-owned-pattern-copy fact-block)
+        at-id)]))
 
 (define (opt-dom-cmp-lookup-at-mask
   [env : (& env OptBoundsDomEnv)]
@@ -53219,12 +53400,20 @@
     [(Var var)
       (let
         [offsets (& env.checks.offsets)]
-        (if (or (< (deref var) 0) (>= (+ (deref var) 1) (array-length offsets)))
+        (if (or
+          (< (owned_view.compiler-owned-pattern-copy var) 0)
+          (>=
+            (+ (owned_view.compiler-owned-pattern-copy var) 1)
+            (array-length offsets)))
           false
           (let
             [rows (& env.checks.blocks)]
-            [row : i64 (array-ref offsets (deref var))]
-            [end : i64 (array-ref offsets (+ (deref var) 1))]
+            [row : i64
+              (array-ref offsets (owned_view.compiler-owned-pattern-copy var))]
+            [end : i64
+              (array-ref
+                offsets
+                (+ (owned_view.compiler-owned-pattern-copy var) 1))]
             [found : bool false]
             (while (and (not found) (< row end))
               (let
@@ -53252,13 +53441,21 @@
     [(Var var)
       (let
         [offsets : (__tl_dyn-array i64) env.checks.offsets]
-        (if (or (< (deref var) 0) (>= (+ (deref var) 1) (array-length offsets)))
+        (if (or
+          (< (owned_view.compiler-owned-pattern-copy var) 0)
+          (>=
+            (+ (owned_view.compiler-owned-pattern-copy var) 1)
+            (array-length offsets)))
           false
           (let
             [lens : (__tl_dyn-array ir.CompilerIrValue) env.checks.lens]
             [rows : (__tl_dyn-array i64) env.checks.blocks]
-            [row : i64 (array-ref offsets (deref var))]
-            [end : i64 (array-ref offsets (+ (deref var) 1))]
+            [row : i64
+              (array-ref offsets (owned_view.compiler-owned-pattern-copy var))]
+            [end : i64
+              (array-ref
+                offsets
+                (+ (owned_view.compiler-owned-pattern-copy var) 1))]
             [found : bool false]
             (while (and (not found) (< row end))
               (let
@@ -53342,7 +53539,9 @@
   [value : (& value ir.CompilerIrValue)]) : OptBoundsDomArms
   (match value
     [(Var var)
-      (match (opt-bool-branch-def env.phi-defs (deref var))
+      (match (opt-bool-branch-def
+        env.phi-defs
+        (owned_view.compiler-owned-pattern-copy var))
         [(No) (No)]
         [(Some instr _)
           (match instr
@@ -53966,13 +54165,17 @@
   (match idx
     [(Var var)
       (or
-        (match (opt-bool-branch-def env.phi-defs (deref var))
+        (match (opt-bool-branch-def
+          env.phi-defs
+          (owned_view.compiler-owned-pattern-copy var))
           [(No) false]
           [(Some instr _)
             (match instr
               [(Phi _ _ _) true]
               [_ false])])
-        (match (opt-bool-branch-def env.defs (deref var))
+        (match (opt-bool-branch-def
+          env.defs
+          (owned_view.compiler-owned-pattern-copy var))
           [(No) false]
           [(Some instr _)
             (match instr
@@ -54176,7 +54379,9 @@
   [idx : (& idx ir.CompilerIrValue)]) : bool
   (match idx
     [(Var var)
-      (match (opt-bool-branch-def env.defs (deref var))
+      (match (opt-bool-branch-def
+        env.defs
+        (owned_view.compiler-owned-pattern-copy var))
         [(No) false]
         [(Some instr _)
           (match instr
@@ -55824,14 +56029,19 @@
   [value : (& value ir.CompilerIrValue)]) : OptDomPhiCarrier
   (match value
     [(Var var)
-      (if (not (opt-gvn-stable-var? env.sources (deref var)))
+      (if (not
+        (opt-gvn-stable-var?
+          env.sources
+          (owned_view.compiler-owned-pattern-copy var)))
         (No)
-        (match (opt-bool-branch-def env.phi-defs (deref var))
+        (match (opt-bool-branch-def
+          env.phi-defs
+          (owned_view.compiler-owned-pattern-copy var))
           [(No) (No)]
           [(Some instr label)
             (match instr
               [(Phi dst inputs _)
-                (if (= dst (deref var))
+                (if (= dst (owned_view.compiler-owned-pattern-copy var))
                   (Some inputs label)
                   (No))]
               [_ (No)])]))]
@@ -55844,17 +56054,24 @@
   [carrier-lhs : (& carrier-lhs OptDomPhiCarrier)]
   [carrier-rhs : (& carrier-rhs OptDomPhiCarrier)]) : OptDomPhiHome
   (match carrier-lhs
-    [(Some _ left-label)
+    [(OptDomPhiCarrier.Some _ left-label)
       (match carrier-rhs
-        [(Some _ right-label)
-          (if (= (deref left-label) (deref right-label))
-            (Some (deref left-label))
-            (No))]
-        [(No) (Some (deref left-label))])]
-    [(No)
+        [(OptDomPhiCarrier.Some _ right-label)
+          (if (=
+            (owned_view.compiler-owned-pattern-copy left-label)
+            (owned_view.compiler-owned-pattern-copy right-label))
+            (OptDomPhiHome.Some
+              (owned_view.compiler-owned-pattern-copy left-label))
+            (OptDomPhiHome.No))]
+        [(OptDomPhiCarrier.No)
+          (OptDomPhiHome.Some
+            (owned_view.compiler-owned-pattern-copy left-label))])]
+    [(OptDomPhiCarrier.No)
       (match carrier-rhs
-        [(Some _ right-label) (Some (deref right-label))]
-        [(No) (No)])]))
+        [(OptDomPhiCarrier.Some _ right-label)
+          (OptDomPhiHome.Some
+            (owned_view.compiler-owned-pattern-copy right-label))]
+        [(OptDomPhiCarrier.No) (OptDomPhiHome.No)])]))
 
 ;; The single input this phi carries on `label`. Two inputs on one label mean
 ;; the edge does not name one value, so the walk refuses.
@@ -56207,7 +56424,7 @@
     [(Var var)
       (opt-bounds-dom-var-fact?
         var-facts
-        (deref var)
+        (owned_view.compiler-owned-pattern-copy var)
         (opt-bounds-dom-var-fact-length))]
     [_ false]))
 
@@ -56872,8 +57089,8 @@
 (define (opt-bounds-dom-range-decided-dst
   [instr : (& instr ir.CompilerIrInstr)]) : i64
   (match instr
-    [(BinOp dst _ _ _ _) (deref dst)]
-    [(Mov dst (Bool _) _) (deref dst)]
+    [(BinOp dst _ _ _ _) (owned_view.compiler-owned-pattern-copy dst)]
+    [(Mov dst (Bool _) _) (owned_view.compiler-owned-pattern-copy dst)]
     [_ (- 0 1)]))
 
 ;; `(>= i 0)`, in all four spellings the front end and the folds leave behind:
@@ -56966,9 +57183,9 @@
   (match value
     [(Var var)
       (and
-        (>= (deref var) 0)
-        (< (deref var) (array-length known))
-        (array-ref known (deref var)))]
+        (>= (owned_view.compiler-owned-pattern-copy var) 0)
+        (< (owned_view.compiler-owned-pattern-copy var) (array-length known))
+        (array-ref known (owned_view.compiler-owned-pattern-copy var)))]
     [_ false]))
 
 (define (opt-bounds-dom-range-known-mark!
@@ -56980,7 +57197,7 @@
 
 (define (opt-bounds-dom-range-value-var [value : (& value ir.CompilerIrValue)]) : i64
   (match value
-    [(Var var) (deref var)]
+    [(Var var) (owned_view.compiler-owned-pattern-copy var)]
     [_ (- 0 1)]))
 
 (define (opt-bounds-dom-range-known-add!
@@ -57837,7 +58054,11 @@
   (match value
     [(Var var)
       (let
-        [known : i64 (opt-flag-facts-lookup facts id (deref var))]
+        [known : i64
+          (opt-flag-facts-lookup
+            facts
+            id
+            (owned_view.compiler-owned-pattern-copy var))]
         (if (< known 0)
           (owned_view.compiler-owned-reference-shared-view value)
           (Bool (= known 1))))]
@@ -58572,7 +58793,9 @@
   [fallback : ast.AstType]) : ast.AstType
   (match value
     [(Var var)
-      (match (opt-ssa-var-types-lookup types (deref var))
+      (match (opt-ssa-var-types-lookup
+        types
+        (owned_view.compiler-owned-pattern-copy var))
         [(Some ty) ty]
         [(No) fallback])]
     [_ fallback]))
@@ -58632,7 +58855,9 @@
   [truthy-edge? : bool]) : OptDivRemFacts
   (match cond
     [(Var cond-var)
-      (match (opt-divrem-find-cmp-def instrs (deref cond-var))
+      (match (opt-divrem-find-cmp-def
+        instrs
+        (owned_view.compiler-owned-pattern-copy cond-var))
         [(Cmp op lhs rhs ty cmp-index)
           (opt-divrem-add-edge-facts-from-cmp
             type-segment-bases
@@ -59341,11 +59566,17 @@
   (match lhs
     [(Var v)
       (match rhs
-        [(I64 k) (Some (deref v) (deref k))]
+        [(I64 k)
+          (Some
+            (owned_view.compiler-owned-pattern-copy v)
+            (owned_view.compiler-owned-pattern-copy k))]
         [_ (No)])]
     [(I64 k)
       (match rhs
-        [(Var v) (Some (deref v) (deref k))]
+        [(Var v)
+          (Some
+            (owned_view.compiler-owned-pattern-copy v)
+            (owned_view.compiler-owned-pattern-copy k))]
         [_ (No)])]
     [_ (No)]))
 
@@ -59867,7 +60098,7 @@
     [(Var var)
       (opt-load-slice-word-var?
         (owned_view.compiler-owned-reference-shared-view hs)
-        (deref var))]
+        (owned_view.compiler-owned-pattern-copy var))]
     [_ false]))
 
 ;; Only the consumers that establish the repeated Slice guard/load key need
@@ -59988,7 +60219,7 @@
 ;; operand can only resolve through the const env, which needs a seed first.
 (define (opt-scan-i64-literal? [value : (& value ir.CompilerIrValue)] [n : i64]) : bool
   (match value
-    [(I64 m) (= (deref m) n)]
+    [(I64 m) (= (owned_view.compiler-owned-pattern-copy m) n)]
     [_ false]))
 
 (define (opt-scan-bool-literal? [value : ir.CompilerIrValue]) : bool
@@ -60737,7 +60968,7 @@
   [seed-facts : (& seed-facts OptAliasFacts)]) : OptAliasFacts
   (match block
     [(Block label _)
-      (if (= (deref label) entry-label)
+      (if (= (owned_view.compiler-owned-pattern-copy label) entry-label)
         (owned_view.compiler-owned-reference-shared-view seed-facts)
         (opt-alias-empty))]))
 
@@ -61389,8 +61620,9 @@
 
 (define (opt-unroll-phi-list-count [phis : (& phis OptUnrollPhiList)]) : i64
   (match phis
-    [(Nil) 0]
-    [(Dense _ len) (deref len)]))
+    [(OptUnrollPhiList.Nil) 0]
+    [(OptUnrollPhiList.Dense _ len)
+      (owned_view.compiler-owned-pattern-copy len)]))
 
 (cfg
   test
@@ -61704,7 +61936,8 @@
             "unroll|"
             (ir.compiler-ir-symbol-text opt-unroll-trace-function)
             "|"
-            (ir.compiler-ir-label-text (deref label))
+            (ir.compiler-ir-label-text
+              (owned_view.compiler-owned-pattern-copy label))
             "|"
             (if unrolled?
               "unrolled"
@@ -61931,7 +62164,8 @@
   [bound : (& bound ir.CompilerIrValue)]) : bool
   (match bound
     [(I64 _) true]
-    [(Var id) (not (opt-used-contains defs (deref id)))]
+    [(Var id)
+      (not (opt-used-contains defs (owned_view.compiler-owned-pattern-copy id)))]
     [_ false]))
 
 ;; --- a REMAINDER loop the clone can never run ---------------------------------
@@ -62159,13 +62393,19 @@
         ;; overflow-checked accumulator, so no wrapping subtraction can report a
         ;; tiny remainder for an enormous range.
         [(I64 bk)
-          (match (opt-bce-version-k-add (deref sk) cap)
+          (match (opt-bce-version-k-add
+            (owned_view.compiler-owned-pattern-copy sk)
+            cap)
             [(No) false]
             [(Some threshold) (<= bk threshold)])]
         [_ false])]
     [(Var raw)
       (let
-        [id : i64 (opt-bce-mb-resolve blocks (deref raw) 16)]
+        [id : i64
+          (opt-bce-mb-resolve
+            blocks
+            (owned_view.compiler-owned-pattern-copy raw)
+            16)]
         (match (opt-bce-mb-find-def (ir.compiler-ir-block-list-view blocks) id)
           [(No) false]
           [(Some instr)
@@ -62371,7 +62611,10 @@
       [(I64) true]
       [_ false])
     (match floor
-      [(I64 literal) (> (+ (deref literal) copies) (deref literal))]
+      [(I64 literal)
+        (>
+          (+ (owned_view.compiler-owned-pattern-copy literal) copies)
+          (owned_view.compiler-owned-pattern-copy literal))]
       [_ false])))
 
 ;; --- a DESCENDING loop whose whole trip count is a literal ---------------------
@@ -62444,13 +62687,16 @@
   [fuel : i64]) : OptUnrollMaybeI64
   (match value
     [(I64 literal)
-      (if (opt-unroll-small-literal? (deref literal))
-        (Some (deref literal))
+      (if (opt-unroll-small-literal?
+        (owned_view.compiler-owned-pattern-copy literal))
+        (Some (owned_view.compiler-owned-pattern-copy literal))
         (No))]
     [(Var id)
       (if (< fuel 1)
         (No)
-        (match (opt-unroll-resolved-def blocks (deref id))
+        (match (opt-unroll-resolved-def
+          blocks
+          (owned_view.compiler-owned-pattern-copy id))
           [(No) (No)]
           [(Some instr)
             (match instr
@@ -62486,13 +62732,16 @@
   [copies : i64]) : bool
   (match floor
     [(I64 low)
-      (if (not (opt-unroll-small-literal? (deref low)))
+      (if (not
+        (opt-unroll-small-literal? (owned_view.compiler-owned-pattern-copy low)))
         false
         (match (opt-unroll-value-max blocks seed (opt-unroll-nonneg-fuel))
           [(Some high)
             ;; at most `high - low + 1` trips, against the `2 * copies` a second
             ;; group would need.
-            (< (- high (deref low)) (- (* copies 2) 1))]
+            (<
+              (- high (owned_view.compiler-owned-pattern-copy low))
+              (- (* copies 2) 1))]
           [(No) false]))]
     [_ false]))
 
@@ -63305,8 +63554,14 @@
       (match b
         [(Var bv)
           (=
-            (opt-bce-mb-resolve blocks (deref av) 16)
-            (opt-bce-mb-resolve blocks (deref bv) 16))]
+            (opt-bce-mb-resolve
+              blocks
+              (owned_view.compiler-owned-pattern-copy av)
+              16)
+            (opt-bce-mb-resolve
+              blocks
+              (owned_view.compiler-owned-pattern-copy bv)
+              16))]
         [_ false])]
     [_
       (opt-value-eq
@@ -63397,11 +63652,13 @@
   [value : (& value ir.CompilerIrValue)]
   [fuel : i64]) : bool
   (match value
-    [(I64 literal) (>= (deref literal) 0)]
+    [(I64 literal) (>= (owned_view.compiler-owned-pattern-copy literal) 0)]
     [(Var var)
       (if (<= fuel 0)
         false
-        (match (opt-unroll-resolved-def blocks (deref var))
+        (match (opt-unroll-resolved-def
+          blocks
+          (owned_view.compiler-owned-pattern-copy var))
           [(No) false]
           [(Some instr)
             (opt-unroll-nonneg-def?
@@ -63486,9 +63743,9 @@
   (match value
     [(I64 literal)
       (or
-        (= (deref literal) (- 0 2))
-        (= (deref literal) (- 0 4))
-        (= (deref literal) (- 0 8)))]
+        (= (owned_view.compiler-owned-pattern-copy literal) (- 0 2))
+        (= (owned_view.compiler-owned-pattern-copy literal) (- 0 4))
+        (= (owned_view.compiler-owned-pattern-copy literal) (- 0 8)))]
     [_ false]))
 
 (define (opt-unroll-remainder-mask?
@@ -64750,14 +65007,16 @@
   [fallback : i64]) : i64
   (match cascade
     [(No) fallback]
-    [(Some _ _ cguard-label _ _ _ _ _) (deref cguard-label)]))
+    [(Some _ _ cguard-label _ _ _ _ _)
+      (owned_view.compiler-owned-pattern-copy cguard-label)]))
 
 (define (opt-unroll-cascade-exit
   [cascade : (& cascade OptUnrollCascade)]
   [fallback : i64]) : i64
   (match cascade
     [(No) fallback]
-    [(Some _ _ _ cunrolled-label _ _ _ _) (deref cunrolled-label)]))
+    [(Some _ _ _ cunrolled-label _ _ _ _)
+      (owned_view.compiler-owned-pattern-copy cunrolled-label)]))
 
 ;; Push the blocks that replace B, in emission order: the first level's guard
 ;; and group, then -- when the ladder stepped down -- the cascade's guard and
@@ -65657,7 +65916,7 @@
 ;; -1 for a non-Var value: never a block-local definition, so always invariant.
 (define (opt-loop-call-value-var [value : (& value ir.CompilerIrValue)]) : i64
   (match value
-    [(Var id) (deref id)]
+    [(Var id) (owned_view.compiler-owned-pattern-copy id)]
     [_ (- 0 1)]))
 
 ;; Only `inext` (whose exit value the rewrite materialises as `bound`) and the
@@ -66159,7 +66418,10 @@
   (if (= width 1)
     true
     (match bound
-      [(I64 n) (>= (deref n) (opt-copy-call-word-slot-floor))]
+      [(I64 n)
+        (>=
+          (owned_view.compiler-owned-pattern-copy n)
+          (opt-copy-call-word-slot-floor))]
       [_ true])))
 
 ;; The body must be exactly one `store_ptr <gep(base, i)>, <load <gep(base, i)>>`
@@ -66350,7 +66612,7 @@
   (match counter-side
     [(Var v)
       (and
-        (= (deref v) iphi)
+        (= (owned_view.compiler-owned-pattern-copy v) iphi)
         (not (opt-used-contains defs (opt-loop-call-value-var other-side))))]
     [_ false]))
 
@@ -67608,11 +67870,16 @@
   (if (<= fuel 0)
     (No)
     (match value
-      [(I64 k) (Some (- 0 1) 0 (deref k))]
+      [(I64 k) (Some (- 0 1) 0 (owned_view.compiler-owned-pattern-copy k))]
       [(Var raw)
         (let
           [id : i64
-            (opt-unroll-resolve-copy instrs phi-count last (deref raw) 16)]
+            (opt-unroll-resolve-copy
+              instrs
+              phi-count
+              last
+              (owned_view.compiler-owned-pattern-copy raw)
+              16)]
           (if (= id iphi)
             (Some (- 0 1) 1 0)
             (let
@@ -67776,11 +68043,11 @@
   (match a
     [(Var av)
       (match b
-        [(Var bv) (= av (deref bv))]
+        [(Var bv) (= av (owned_view.compiler-owned-pattern-copy bv))]
         [_ false])]
     [(I64 ak)
       (match b
-        [(I64 bk) (= ak (deref bk))]
+        [(I64 bk) (= ak (owned_view.compiler-owned-pattern-copy bk))]
         [_ false])]
     [_ false]))
 
@@ -70379,7 +70646,11 @@
   (match value
     [(Var id)
       (let
-        [index : i64 (opt_i64_i64_map.get-value-or (& defs) (deref id) (- 0 1))]
+        [index : i64
+          (opt_i64_i64_map.get-value-or
+            (& defs)
+            (owned_view.compiler-owned-pattern-copy id)
+            (- 0 1))]
         (if (< index 0)
           false
           (match (ir.compiler-ir-instr-seq-ref instrs index)
@@ -71307,14 +71578,16 @@
             [(I64 b)
               (opt-bce-version-cond-fold-literals
                 op
-                (deref a)
-                (deref b)
+                (owned_view.compiler-owned-pattern-copy a)
+                (owned_view.compiler-owned-pattern-copy b)
                 signed?)]
             [_ (Unknown)])]
         [(Var a)
           (match rhs
             [(Var b)
-              (if (= (deref a) (deref b))
+              (if (=
+                (owned_view.compiler-owned-pattern-copy a)
+                (owned_view.compiler-owned-pattern-copy b))
                 (opt-bce-version-cond-fold-reflexive op)
                 (Unknown))]
             [_ (Unknown)])]
@@ -71407,7 +71680,7 @@
         (owned_view.compiler-owned-reference-shared-view value)
         (match (opt-bce-mb-find-def
           (ir.compiler-ir-block-list-view blocks)
-          (deref var))
+          (owned_view.compiler-owned-pattern-copy var))
           [(No) (owned_view.compiler-owned-reference-shared-view value)]
           [(Some instr)
             (match instr
@@ -71445,13 +71718,16 @@
   (match lhs
     [(I64 a)
       (match rhs
-        [(I64 b) (opt-bce-version-k-add (deref a) (deref b))]
+        [(I64 b)
+          (opt-bce-version-k-add
+            (owned_view.compiler-owned-pattern-copy a)
+            (owned_view.compiler-owned-pattern-copy b))]
         [_ (No)])]
     [_ (No)]))
 
 (define (opt-bce-version-zero-literal? [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(I64 k) (= (deref k) 0)]
+    [(I64 k) (= (owned_view.compiler-owned-pattern-copy k) 0)]
     [_ false]))
 
 (define (opt-bce-version-value-var? [value : (& value ir.CompilerIrValue)]) : bool
@@ -71606,11 +71882,16 @@
   [defs : (& defs opt_i64_i64_map.Map)]
   [value : (& value ir.CompilerIrValue)]) : ir.CompilerIrMaybeValue
   (match value
-    [(I64 k) (Some (I64 (deref k)))]
+    [(I64 k) (Some (I64 (owned_view.compiler-owned-pattern-copy k)))]
     [(Var raw)
       (let
         [id : i64
-          (opt-bce-version-resolve instrs phi-count last (deref raw) 16)]
+          (opt-bce-version-resolve
+            instrs
+            phi-count
+            last
+            (owned_view.compiler-owned-pattern-copy raw)
+            16)]
         (if (opt-used-contains defs id)
           (No)
           (Some (Var id))))]
@@ -73891,8 +74172,9 @@
 
 (define (opt-bce-mask-list-count [masks : (& masks OptBceMaskList)]) : i64
   (match masks
-    [(Empty) 0]
-    [(Dense _ count) (deref count)]))
+    [(OptBceMaskList.Empty) 0]
+    [(OptBceMaskList.Dense _ count)
+      (owned_view.compiler-owned-pattern-copy count)]))
 
 (define (opt-bce-mask-list-ref [masks : (& masks OptBceMaskList)] [index : i64]) : ir.CompilerIrValue
   (match (owned_view.compiler-owned-reference-shared-view masks)
@@ -73955,7 +74237,7 @@
 ;; can (see the head comment).
 (define (opt-bce-mask-bound-ok? [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(I64 k) (>= (deref k) 0)]
+    [(I64 k) (>= (owned_view.compiler-owned-pattern-copy k) 0)]
     [(Var _) true]
     [_ false]))
 
@@ -74804,10 +75086,10 @@
   [cell : (&mut cell (__tl_dyn-array i64))]) : OptBceVersionDownRange
   (match seed
     [(I64 k)
-      (if (= (deref k) 9223372036854775807)
+      (if (= (owned_view.compiler-owned-pattern-copy k) 9223372036854775807)
         (No)
         (Some
-          (I64 (+ (deref k) 1))
+          (I64 (+ (owned_view.compiler-owned-pattern-copy k) 1))
           (Some
             (ir.compiler-ir-instr-builder-new)
             (ir.compiler-ir-value-seq-empty)
@@ -75983,7 +76265,7 @@
 (define (opt-bce-mb-counter-offset-none?
   [offset : (& offset ir.CompilerIrValue)]) : bool
   (match offset
-    [(I64 k) (= (deref k) 0)]
+    [(I64 k) (= (owned_view.compiler-owned-pattern-copy k) 0)]
     [_ false]))
 
 (defstruct OptBceMbShape
@@ -76309,7 +76591,11 @@
   (match value
     [(Var raw)
       (let
-        [id : i64 (opt-bce-mb-resolve body-blocks (deref raw) 16)]
+        [id : i64
+          (opt-bce-mb-resolve
+            body-blocks
+            (owned_view.compiler-owned-pattern-copy raw)
+            16)]
         (if (= id iphi)
           (Some 1 0)
           (if (<= fuel 0)
@@ -77600,8 +77886,11 @@
       (match loop
         [(Loop other-header _ _ _)
           (if (and
-            (not (= (deref other-header) header))
-            (opt-label-contains body-labels (deref other-header)))
+            (not
+              (= (owned_view.compiler-owned-pattern-copy other-header) header))
+            (opt-label-contains
+              body-labels
+              (owned_view.compiler-owned-pattern-copy other-header)))
             true
             (opt-bce-mb-has-nested-loop? rest header body-labels))])]))
 
@@ -79642,12 +79931,15 @@
       (match init
         [(Var init-id)
           (=
-            (opt-bce-mb-resolve all-blocks (deref seed-id) 16)
+            (opt-bce-mb-resolve
+              all-blocks
+              (owned_view.compiler-owned-pattern-copy seed-id)
+              16)
             (opt-bce-mb-resolve all-blocks init-id 16))]
         [_ false])]
     [(I64 sk)
       (match init
-        [(I64 ik) (= (deref sk) ik)]
+        [(I64 ik) (= (owned_view.compiler-owned-pattern-copy sk) ik)]
         [_ false])]
     [_ false]))
 
@@ -79658,10 +79950,14 @@
   [defs : (& defs opt_i64_i64_map.Map)]
   [value : (& value ir.CompilerIrValue)]) : ir.CompilerIrMaybeValue
   (match value
-    [(I64 k) (Some (I64 (deref k)))]
+    [(I64 k) (Some (I64 (owned_view.compiler-owned-pattern-copy k)))]
     [(Var raw)
       (let
-        [id : i64 (opt-bce-mb-resolve body-blocks (deref raw) 16)]
+        [id : i64
+          (opt-bce-mb-resolve
+            body-blocks
+            (owned_view.compiler-owned-pattern-copy raw)
+            16)]
         (if (opt-used-contains defs id)
           (No)
           (Some (Var id))))]
@@ -79862,8 +80158,8 @@
 
 (define (opt-bce-mb-keep-count [keep : (& keep OptBceMbKeep)]) : i64
   (match keep
-    [(Nil) 0]
-    [(Dense _ len) (deref len)]))
+    [(OptBceMbKeep.Nil) 0]
+    [(OptBceMbKeep.Dense _ len) (owned_view.compiler-owned-pattern-copy len)]))
 
 (define (opt-bce-mb-keep-tail [keep : (& keep OptBceMbKeep)]) : OptBceMbKeep
   (match (owned_view.compiler-owned-reference-shared-view keep)
@@ -80223,7 +80519,11 @@
   (match value
     [(Var raw)
       (let
-        [id : i64 (opt-bce-mb-resolve body-blocks (deref raw) 16)]
+        [id : i64
+          (opt-bce-mb-resolve
+            body-blocks
+            (owned_view.compiler-owned-pattern-copy raw)
+            16)]
         (if (<= fuel 0)
           (Some id k)
           (match (opt-bce-mb-find-def
@@ -80314,14 +80614,18 @@
   [key : i64]
   [offset : i64]) : i64
   (match hoists
-    [(Nil) (- 0 1)]
-    [(Cons item-kind item-key item-offset load-var rest)
+    [(OptBceMbHoists.Nil) (- 0 1)]
+    [(OptBceMbHoists.Cons item-kind item-key item-offset load-var rest)
       (if (and
-        (= (deref item-kind) kind)
-        (= (deref item-key) key)
-        (= (deref item-offset) offset))
-        (deref load-var)
-        (opt-bce-mb-hoists-lookup (deref (deref rest)) kind key offset))]))
+        (= (owned_view.compiler-owned-pattern-copy item-kind) kind)
+        (= (owned_view.compiler-owned-pattern-copy item-key) key)
+        (= (owned_view.compiler-owned-pattern-copy item-offset) offset))
+        (owned_view.compiler-owned-pattern-copy load-var)
+        (opt-bce-mb-hoists-lookup
+          (owned_view.compiler-owned-pattern-box-ref rest)
+          kind
+          key
+          offset))]))
 
 ;; Can any instruction of these loop blocks change a DESCRIPTOR word -- a
 ;; descriptor header slot, or the global cell a handle lives in -- that a load
@@ -80371,8 +80675,9 @@
 (define (opt-bce-mb-descriptor-type-segment-bases
   [descriptor : (& descriptor OptBceMbDescriptor)]) : i64
   (match descriptor
-    [(No) (- 0 1)]
-    [(Some bases _ _ _) (deref bases)]))
+    [(OptBceMbDescriptor.No) (- 0 1)]
+    [(OptBceMbDescriptor.Some bases _ _ _)
+      (owned_view.compiler-owned-pattern-copy bases)]))
 
 ;; P-B's length-equality table, or an empty one when recognition is off.
 (define (opt-bce-mb-descriptor-len-eq
@@ -80631,7 +80936,7 @@
                                                             base-id))
                                                         (not
                                                           (opt-bounds-object-length-slot?
-                                                            (deref
+                                                            (owned_view.compiler-owned-pattern-copy
                                                               type-segment-bases)
                                                             offset
                                                             gep-ty)))
@@ -80939,7 +81244,10 @@
           (opt-bce-mb-self-phi-value
             body-blocks
             defs
-            (opt-bce-mb-resolve body-blocks (deref raw) 16))]
+            (opt-bce-mb-resolve
+              body-blocks
+              (owned_view.compiler-owned-pattern-copy raw)
+              16))]
         [_ (No)])]))
 
 (define (opt-bce-mb-mask-operand
@@ -81197,12 +81505,21 @@
   [acc : OptBceVersionGuardAcc]) : OptBceVersionGuardAcc
   (match index-value
     [(I64 k)
-      (if (>= (deref k) 0)
-        (opt-bce-version-cond cell (Lt) (I64 (deref k)) length-value acc)
+      (if (>= (owned_view.compiler-owned-pattern-copy k) 0)
+        (opt-bce-version-cond
+          cell
+          (Lt)
+          (I64 (owned_view.compiler-owned-pattern-copy k))
+          length-value
+          acc)
         (No))]
     [(Var raw)
       (let
-        [id : i64 (opt-bce-mb-resolve body-blocks (deref raw) 16)]
+        [id : i64
+          (opt-bce-mb-resolve
+            body-blocks
+            (owned_view.compiler-owned-pattern-copy raw)
+            16)]
         (cond
           [(= id iphi)
             ;; counter: [seed, bound) subset of [0, len) iff seed >= 0
@@ -81862,7 +82179,7 @@
     [(Var var)
       (match (opt-bce-mb-find-def
         (ir.compiler-ir-block-list-view all-blocks)
-        (deref var))
+        (owned_view.compiler-owned-pattern-copy var))
         [(Some instr)
           (match instr
             [(Load _ src _)
@@ -83474,8 +83791,9 @@
 (define (opt-bce-version-guard-counter-seen?
   [acc : (& acc OptBceVersionGuardAcc)]) : bool
   (match acc
-    [(No) false]
-    [(Some _ _ counter-seen) (deref counter-seen)]))
+    [(OptBceVersionGuardAcc.No) false]
+    [(OptBceVersionGuardAcc.Some _ _ counter-seen)
+      (owned_view.compiler-owned-pattern-copy counter-seen)]))
 
 ;; How many conjuncts a finished guard states: its comparisons, each of which
 ;; lowers to a compare plus a branch. That is what the counter-free economics
@@ -83612,7 +83930,13 @@
   [iphi : i64]
   [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(Var raw) (= (opt-bce-mb-resolve body-blocks (deref raw) 16) iphi)]
+    [(Var raw)
+      (=
+        (opt-bce-mb-resolve
+          body-blocks
+          (owned_view.compiler-owned-pattern-copy raw)
+          16)
+        iphi)]
     [_ false]))
 
 (define (opt-bce-fold-nonnegative-operand?
@@ -84079,7 +84403,11 @@
   (match value
     [(Var v)
       (let
-        [resolved : i64 (opt-bce-mb-resolve blocks (deref v) 16)]
+        [resolved : i64
+          (opt-bce-mb-resolve
+            blocks
+            (owned_view.compiler-owned-pattern-copy v)
+            16)]
         (match (opt-bce-mb-find-def
           (ir.compiler-ir-block-list-view blocks)
           resolved)
@@ -84797,7 +85125,7 @@
 ;; A literal strictly less than zero.
 (define (opt-bce-hoist-negative-literal? [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(I64 k) (< (deref k) 0)]
+    [(I64 k) (< (owned_view.compiler-owned-pattern-copy k) 0)]
     [_ false]))
 
 (define (opt-bce-hoist-literal-at-least?
@@ -84809,7 +85137,7 @@
 
 (define (opt-bce-hoist-var? [value : (& value ir.CompilerIrValue)] [id : i64]) : bool
   (match value
-    [(Var other) (= (deref other) id)]
+    [(Var other) (= (owned_view.compiler-owned-pattern-copy other) id)]
     [_ false]))
 
 ;; `inext` is `iphi` moved DOWN by a literal, on a signed type: `iphi - c` with
@@ -84824,7 +85152,7 @@
     [(Var next-id)
       (match (opt-bce-mb-find-def
         (ir.compiler-ir-block-list-view body-blocks)
-        (deref next-id))
+        (owned_view.compiler-owned-pattern-copy next-id))
         [(No) false]
         [(Some instr)
           (match instr
@@ -85250,7 +85578,7 @@
     [(Var id)
       (match (opt-bce-mb-find-def
         (ir.compiler-ir-block-list-view body-blocks)
-        (deref id))
+        (owned_view.compiler-owned-pattern-copy id))
         [(Some instr)
           (match instr
             [(BinOp _ op lhs rhs ty)
@@ -87912,15 +88240,25 @@
                 [(Var b)
                   (let
                     [a-in : bool
-                      (opt-gep-offset-var-in-loop? (deref a) def-block body)]
+                      (opt-gep-offset-var-in-loop?
+                        (owned_view.compiler-owned-pattern-copy a)
+                        def-block
+                        body)]
                     [b-in : bool
-                      (opt-gep-offset-var-in-loop? (deref b) def-block body)]
+                      (opt-gep-offset-var-in-loop?
+                        (owned_view.compiler-owned-pattern-copy b)
+                        def-block
+                        body)]
                     (if a-in
                       (if b-in
                         (No)
-                        (Some (deref b) (deref a)))
+                        (Some
+                          (owned_view.compiler-owned-pattern-copy b)
+                          (owned_view.compiler-owned-pattern-copy a)))
                       (if b-in
-                        (Some (deref a) (deref b))
+                        (Some
+                          (owned_view.compiler-owned-pattern-copy a)
+                          (owned_view.compiler-owned-pattern-copy b))
                         (No))))]
                 [_ (No)])]
             [_ (No)])]
@@ -90031,11 +90369,11 @@
   (match instr
     [(Branch cond _ _)
       (match cond
-        [(Var v) (deref v)]
+        [(Var v) (owned_view.compiler-owned-pattern-copy v)]
         [_ (- 0 1)])]
     [(TotalEnumBranch cond _ _)
       (match cond
-        [(Var v) (deref v)]
+        [(Var v) (owned_view.compiler-owned-pattern-copy v)]
         [_ (- 0 1)])]
     [_ (- 0 1)]))
 
@@ -90543,7 +90881,7 @@
   [moves : (& moves OptSuccessorSinkMoves)]) : i64
   (match moves
     [(Nil) 0]
-    [(Dense _ len) (deref len)]))
+    [(Dense _ len) (owned_view.compiler-owned-pattern-copy len)]))
 
 (define (opt-successor-sink-moves-ref
   [moves : (& moves OptSuccessorSinkMoves)]
@@ -90893,9 +91231,11 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [value : (& value ir.CompilerIrValue)]) : option_i64.Option
   (match value
-    [(I64 n) (Some (deref n))]
+    [(I64 n) (Some (owned_view.compiler-owned-pattern-copy n))]
     [(Var var)
-      (match (opt-find-def (ir.compiler-ir-block-list-view blocks) (deref var))
+      (match (opt-find-def
+        (ir.compiler-ir-block-list-view blocks)
+        (owned_view.compiler-owned-pattern-copy var))
         [(Some instr)
           (match instr
             [(Mov _ (I64 n) _) (Some n)]
@@ -91157,19 +91497,21 @@
   (match lhs
     [(Var iv)
       (and
-        (>= (deref iv) 0)
-        (< (deref iv) frame)
-        (> (array-ref defs (deref iv)) 0)
+        (>= (owned_view.compiler-owned-pattern-copy iv) 0)
+        (< (owned_view.compiler-owned-pattern-copy iv) frame)
+        (> (array-ref defs (owned_view.compiler-owned-pattern-copy iv)) 0)
         (match (opt-successor-sink-value-i64 blocks rhs)
           [(Some n) (= n scale)]
           [(None) false])
-        (match (opt-find-def (ir.compiler-ir-block-list-view blocks) (deref iv))
+        (match (opt-find-def
+          (ir.compiler-ir-block-list-view blocks)
+          (owned_view.compiler-owned-pattern-copy iv))
           [(Some instr)
             (match instr
               [(Phi _ inputs _)
                 (match (opt-successor-sink-iv-phi-shape
                   blocks
-                  (deref iv)
+                  (owned_view.compiler-owned-pattern-copy iv)
                   inputs)
                   [(Some _ _) true]
                   [(No) false])]
@@ -91194,7 +91536,7 @@
             lhs
             rhs
             scale)
-            (Some (deref iv))
+            (Some (owned_view.compiler-owned-pattern-copy iv))
             (match rhs
               [(Var other-iv)
                 (if (opt-successor-sink-mul-scale-source
@@ -91204,7 +91546,7 @@
                   rhs
                   lhs
                   scale)
-                  (Some (deref other-iv))
+                  (Some (owned_view.compiler-owned-pattern-copy other-iv))
                   (None))]
               [_ (None)]))]
         [_
@@ -91217,7 +91559,7 @@
                 rhs
                 lhs
                 scale)
-                (Some (deref iv))
+                (Some (owned_view.compiler-owned-pattern-copy iv))
                 (None))]
             [_ (None)])])]
     [_ (None)]))
@@ -94836,15 +95178,15 @@
   (if bool-ty?
     (match value
       [(Bool flag)
-        (if (deref flag)
+        (if (owned_view.compiler-owned-pattern-copy flag)
           1
           0)]
       [_ (- 0 1)])
     (match value
       [(I64 literal)
         (cond
-          [(= (deref literal) 1) 1]
-          [(= (deref literal) 0) 0]
+          [(= (owned_view.compiler-owned-pattern-copy literal) 1) 1]
+          [(= (owned_view.compiler-owned-pattern-copy literal) 0) 0]
           [else (- 0 1)])]
       [_ (- 0 1)])))
 
@@ -95461,11 +95803,11 @@
         [(U8)
           (match source
             [(Var source-var)
-              (if (= (deref source-var) base)
+              (if (= (owned_view.compiler-owned-pattern-copy source-var) base)
                 (match offset
                   [(I64 k)
-                    (if (>= (deref k) 0)
-                      (deref k)
+                    (if (>= (owned_view.compiler-owned-pattern-copy k) 0)
+                      (owned_view.compiler-owned-pattern-copy k)
                       -1)]
                   [_ -1])
                 -1)]
@@ -96138,11 +96480,11 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [len : (& len ir.CompilerIrValue)]) : bool
   (match len
-    [(I64 literal) (>= (deref literal) 0)]
+    [(I64 literal) (>= (owned_view.compiler-owned-pattern-copy literal) 0)]
     [(Var var)
       (match (opt-bce-mb-find-def
         (ir.compiler-ir-block-list-view blocks)
-        (deref var))
+        (owned_view.compiler-owned-pattern-copy var))
         [(No) false]
         [(Some instr)
           (match instr
@@ -97099,8 +97441,8 @@
 
 (define (opt-bg-plan-list-count [plans : (& plans OptBgPlanList)]) : i64
   (match plans
-    [(Nil) 0]
-    [(Dense _ _ len) (deref len)]))
+    [(OptBgPlanList.Nil) 0]
+    [(OptBgPlanList.Dense _ _ len) (owned_view.compiler-owned-pattern-copy len)]))
 
 (define (opt-bg-plan-list-ref [plans : (& plans OptBgPlanList)] [index : i64]) : OptBgPlan
   (match (owned_view.compiler-owned-reference-shared-view plans)
@@ -97383,12 +97725,19 @@
   [body : (& body OptLoopBody)]
   [literal-only? : bool]) : bool
   (match len
-    [(I64 n) (or (not literal-only?) (>= (deref n) 0))]
+    [(I64 n)
+      (or (not literal-only?) (>= (owned_view.compiler-owned-pattern-copy n) 0))]
     [(Var w)
       (and
         (not literal-only?)
-        (opt-bg-single-def? (deref w) def-block)
-        (not (opt-gep-offset-var-in-loop? (deref w) def-block body)))]
+        (opt-bg-single-def?
+          (owned_view.compiler-owned-pattern-copy w)
+          def-block)
+        (not
+          (opt-gep-offset-var-in-loop?
+            (owned_view.compiler-owned-pattern-copy w)
+            def-block
+            body)))]
     [_ false]))
 
 (define (opt-bg-check-at
@@ -97579,8 +97928,8 @@
 (define (opt-bg-literal-length [len : (& len ir.CompilerIrValue)]) : i64
   (match len
     [(I64 n)
-      (if (>= (deref n) 0)
-        (deref n)
+      (if (>= (owned_view.compiler-owned-pattern-copy n) 0)
+        (owned_view.compiler-owned-pattern-copy n)
         (- 0 1))]
     [_ (- 0 1)]))
 
@@ -100869,15 +101218,15 @@
   (match value
     [(I64 n)
       (cond
-        [(= (deref n) 17) 4]
-        [(= (deref n) 33) 5]
-        [(= (deref n) 65) 6]
+        [(= (owned_view.compiler-owned-pattern-copy n) 17) 4]
+        [(= (owned_view.compiler-owned-pattern-copy n) 33) 5]
+        [(= (owned_view.compiler-owned-pattern-copy n) 65) 6]
         [else 0])]
     [_ 0]))
 
 (define (opt-ml-var [value : (& value ir.CompilerIrValue)]) : i64
   (match value
-    [(Var v) (+ (deref v) 1)]
+    [(Var v) (+ (owned_view.compiler-owned-pattern-copy v) 1)]
     [_ 0]))
 
 (define (opt-ml-candidate [instr : (& instr ir.CompilerIrInstr)]) : i64
@@ -100894,7 +101243,7 @@
         (or
           (and (> (opt-ml-power rhs) 0) (> (opt-ml-var lhs) 0))
           (and (> (opt-ml-power lhs) 0) (> (opt-ml-var rhs) 0))))
-        (+ (deref dst) 1)
+        (+ (owned_view.compiler-owned-pattern-copy dst) 1)
         0)]
     [_ 0]))
 
@@ -103506,18 +103855,20 @@
   [instr : (& instr ir.CompilerIrInstr)]
   [np : i64]) : bool
   (match instr
-    [(Mov dst _ _) (>= (deref dst) np)]
-    [(Gep dst _ _ _) (>= (deref dst) np)]
-    [(Load dst _ _) (>= (deref dst) np)]
-    [(Cast dst _ _ _) (>= (deref dst) np)]
-    [(Bitcast dst _ _ _) (>= (deref dst) np)]
-    [(BinOp dst _ _ _ _) (>= (deref dst) np)]
-    [(UnOp dst _ _ _) (>= (deref dst) np)]
-    [(Pack dst _ _) (>= (deref dst) np)]
-    [(Word dst _ _ _) (>= (deref dst) np)]
-    [(Call dst _ _ _) (>= (deref dst) np)]
-    [(CallIndirect dst _ _ _) (>= (deref dst) np)]
-    [(CallIndirectC dst _ _ _) (>= (deref dst) np)]
+    [(Mov dst _ _) (>= (owned_view.compiler-owned-pattern-copy dst) np)]
+    [(Gep dst _ _ _) (>= (owned_view.compiler-owned-pattern-copy dst) np)]
+    [(Load dst _ _) (>= (owned_view.compiler-owned-pattern-copy dst) np)]
+    [(Cast dst _ _ _) (>= (owned_view.compiler-owned-pattern-copy dst) np)]
+    [(Bitcast dst _ _ _) (>= (owned_view.compiler-owned-pattern-copy dst) np)]
+    [(BinOp dst _ _ _ _) (>= (owned_view.compiler-owned-pattern-copy dst) np)]
+    [(UnOp dst _ _ _) (>= (owned_view.compiler-owned-pattern-copy dst) np)]
+    [(Pack dst _ _) (>= (owned_view.compiler-owned-pattern-copy dst) np)]
+    [(Word dst _ _ _) (>= (owned_view.compiler-owned-pattern-copy dst) np)]
+    [(Call dst _ _ _) (>= (owned_view.compiler-owned-pattern-copy dst) np)]
+    [(CallIndirect dst _ _ _)
+      (>= (owned_view.compiler-owned-pattern-copy dst) np)]
+    [(CallIndirectC dst _ _ _)
+      (>= (owned_view.compiler-owned-pattern-copy dst) np)]
     [(BoundsCheck _ _ _) true]
     [(StorePtr _ _ _) true]
     [(StoreOwned _ _ _) true]
@@ -104358,13 +104709,21 @@
   [ret : (& ret ast.AstType)]) : bool
   (match (match ret
     [(Struct name)
-      (ast.AstMaybeNominalKey.Some (ast.ast-nominal-name-id-key (deref name)))]
+      (ast.AstMaybeNominalKey.Some
+        (ast.ast-nominal-name-id-key
+          (owned_view.compiler-owned-pattern-copy name)))]
     [(StructArgs name _)
-      (ast.AstMaybeNominalKey.Some (ast.ast-nominal-name-id-key (deref name)))]
+      (ast.AstMaybeNominalKey.Some
+        (ast.ast-nominal-name-id-key
+          (owned_view.compiler-owned-pattern-copy name)))]
     [(Enum name)
-      (ast.AstMaybeNominalKey.Some (ast.ast-nominal-name-id-key (deref name)))]
+      (ast.AstMaybeNominalKey.Some
+        (ast.ast-nominal-name-id-key
+          (owned_view.compiler-owned-pattern-copy name)))]
     [(EnumArgs name _)
-      (ast.AstMaybeNominalKey.Some (ast.ast-nominal-name-id-key (deref name)))]
+      (ast.AstMaybeNominalKey.Some
+        (ast.ast-nominal-name-id-key
+          (owned_view.compiler-owned-pattern-copy name)))]
     [_ ast.AstMaybeNominalKey.None])
     [(Some key)
       (match (ir.compiler-ir-representation-index-kind-for-key
@@ -105101,20 +105460,35 @@
   [base : i64]) : ir.CompilerIrValue
   (match v
     [(Var id)
-      (if (< (deref id) np)
-        (opt-inline-clone-arg-at sa (deref id))
-        (Var (opt-inline-rebase-var (deref id) np base)))]
-    [(Global name) (Global (ir.compiler-ir-symbol-clone (deref name)))]
-    [(GlobalAddr name) (GlobalAddr (ir.compiler-ir-symbol-clone (deref name)))]
-    [(Function name) (Function (ir.compiler-ir-symbol-clone (deref name)))]
-    [(I64 n) (I64 (deref n))]
-    [(F64 bits) (F64 (deref bits))]
-    [(Bool b) (Bool (deref b))]
-    [(Char c) (Char (deref c))]
+      (if (< (owned_view.compiler-owned-pattern-copy id) np)
+        (opt-inline-clone-arg-at sa (owned_view.compiler-owned-pattern-copy id))
+        (Var
+          (opt-inline-rebase-var
+            (owned_view.compiler-owned-pattern-copy id)
+            np
+            base)))]
+    [(Global name)
+      (Global
+        (ir.compiler-ir-symbol-clone
+          (owned_view.compiler-owned-pattern-copy name)))]
+    [(GlobalAddr name)
+      (GlobalAddr
+        (ir.compiler-ir-symbol-clone
+          (owned_view.compiler-owned-pattern-copy name)))]
+    [(Function name)
+      (Function
+        (ir.compiler-ir-symbol-clone
+          (owned_view.compiler-owned-pattern-copy name)))]
+    [(I64 n) (I64 (owned_view.compiler-owned-pattern-copy n))]
+    [(F64 bits) (F64 (owned_view.compiler-owned-pattern-copy bits))]
+    [(Bool b) (Bool (owned_view.compiler-owned-pattern-copy b))]
+    [(Char c) (Char (owned_view.compiler-owned-pattern-copy c))]
     [(String s) (String (string.copy s))]
     [(Bytes s) (Bytes (string.copy s))]
     [(RuntimeGlobal init)
-      (RuntimeGlobal (ir.compiler-ir-symbol-clone (deref init)))]
+      (RuntimeGlobal
+        (ir.compiler-ir-symbol-clone
+          (owned_view.compiler-owned-pattern-copy init)))]
     [(StaticArray s) (StaticArray (string.copy s))]
     [(Unit) (Unit)]))
 
@@ -105364,7 +105738,8 @@
     [(TailCall cname cargs _)
       (Call
         dst
-        (ir.compiler-ir-symbol-clone (deref cname))
+        (ir.compiler-ir-symbol-clone
+          (owned_view.compiler-owned-pattern-copy cname))
         (opt-inline-remap-args
           cargs
           (owned_view.compiler-owned-reference-shared-view sa)
@@ -105407,7 +105782,8 @@
         [(No) (Return (No))])]
     [(TailCall cname cargs _)
       (TailCall
-        (ir.compiler-ir-symbol-clone (deref cname))
+        (ir.compiler-ir-symbol-clone
+          (owned_view.compiler-owned-pattern-copy cname))
         (opt-inline-remap-args
           cargs
           (owned_view.compiler-owned-reference-shared-view sa)
@@ -115142,7 +115518,9 @@
   [value : (& value ir.CompilerIrValue)]) : i64
   (match value
     [(Var var)
-      (match (opt_i64_i64_map.get elements (deref var))
+      (match (opt_i64_i64_map.get
+        elements
+        (owned_view.compiler-owned-pattern-copy var))
         [(LookupFound kind) kind]
         [(LookupMissing) 0])]
     [_ 0]))
@@ -116890,7 +117268,7 @@
     [(Global name)
       (match (opt_i64_i64_map.get
         (& const-divisors)
-        (ir.compiler-ir-symbol-id (deref name)))
+        (ir.compiler-ir-symbol-id (owned_view.compiler-owned-pattern-copy name)))
         [(LookupFound n)
           (if (opt-const-globals-imm32-fits? n)
             (I64 n)
@@ -116986,11 +117364,17 @@
   (let
     [symbol : i64
       (match value
-        [(Global name) (ir.compiler-ir-symbol-id (deref name))]
+        [(Global name)
+          (ir.compiler-ir-symbol-id
+            (owned_view.compiler-owned-pattern-copy name))]
         [(Var var)
-          (match (opt_i64_i64_map.get (& counts) (deref var))
+          (match (opt_i64_i64_map.get
+            (& counts)
+            (owned_view.compiler-owned-pattern-copy var))
             [(LookupFound 1)
-              (match (opt_i64_i64_map.get (& copies) (deref var))
+              (match (opt_i64_i64_map.get
+                (& copies)
+                (owned_view.compiler-owned-pattern-copy var))
                 [(LookupFound id) id]
                 [_ (- 0 1)])]
             [_ (- 0 1)])]
@@ -117460,7 +117844,9 @@
   [value : (& value ir.CompilerIrValue)]) : OptGlobalCellScan
   (match value
     [(Global name)
-      (opt-global-cell-scan-ref scan (ir.compiler-ir-symbol-id (deref name)))]
+      (opt-global-cell-scan-ref
+        scan
+        (ir.compiler-ir-symbol-id (owned_view.compiler-owned-pattern-copy name)))]
     [_ scan]))
 
 (define (opt-global-cell-scan-use
@@ -118516,7 +118902,7 @@
 ;; --- the escape check and the per-function own-write mask --------------------
 (define (opt-global-obj-value-var [value : (& value ir.CompilerIrValue)]) : i64
   (match value
-    [(Var var) (deref var)]
+    [(Var var) (owned_view.compiler-owned-pattern-copy var)]
     [_ -1]))
 
 ;; -2 licenses every use (a direct call, whose every var operand is an argument
@@ -118532,7 +118918,7 @@
     [(Mov _ src _) (opt-global-obj-value-var src)]
     [(Cast _ src _ _) (opt-global-obj-value-var src)]
     [(Bitcast _ src _ _) (opt-global-obj-value-var src)]
-    [(AddrOf _ src) (deref src)]
+    [(AddrOf _ src) (owned_view.compiler-owned-pattern-copy src)]
     [(Gep _ base _ _) (opt-global-obj-value-var base)]
     [(StorePtr ptr _ _) (opt-global-obj-value-var ptr)]
     [(StoreOwned ptr _ _) (opt-global-obj-value-var ptr)]
@@ -119197,8 +119583,14 @@
     [(I64 _) true]
     [(Var var)
       (and
-        (<= (opt-len-eq-def-count tables (deref var)) 1)
-        (match (opt-len-eq-def tables (deref var))
+        (<=
+          (opt-len-eq-def-count
+            tables
+            (owned_view.compiler-owned-pattern-copy var))
+          1)
+        (match (opt-len-eq-def
+          tables
+          (owned_view.compiler-owned-pattern-copy var))
           [(Some instr _)
             (match instr
               [(BinOp _ _ lhs rhs _)
@@ -119247,7 +119639,7 @@
 ;; descriptor. Spelled as a plain zero offset in both element and byte forms.
 (define (opt-len-eq-word0? [offset : (& offset ir.CompilerIrValue)]) : bool
   (match offset
-    [(I64 value) (= (deref value) 0)]
+    [(I64 value) (= (owned_view.compiler-owned-pattern-copy value) 0)]
     [_ false]))
 
 ;; The base object a store address names, or -1: a `gep` of a var, or the var
@@ -119402,8 +119794,12 @@
 
 (define (opt-len-eq-call [instr : (& instr ir.CompilerIrInstr)]) : OptLenEqCall
   (match instr
-    [(Call _ name _ _) (Direct (ir.compiler-ir-symbol-id (deref name)))]
-    [(TailCall name _ _) (Direct (ir.compiler-ir-symbol-id (deref name)))]
+    [(Call _ name _ _)
+      (Direct
+        (ir.compiler-ir-symbol-id (owned_view.compiler-owned-pattern-copy name)))]
+    [(TailCall name _ _)
+      (Direct
+        (ir.compiler-ir-symbol-id (owned_view.compiler-owned-pattern-copy name)))]
     [(CallIndirect _ _ _ _) (Opaque)]
     [(CallIndirectC _ _ _ _) (Opaque)]
     [(CallCAbiStoreResult _) (Opaque)]
@@ -119938,7 +120334,9 @@
   (match value
     [(Global name)
       (let
-        [id : i64 (ir.compiler-ir-symbol-id (deref name))]
+        [id : i64
+          (ir.compiler-ir-symbol-id
+            (owned_view.compiler-owned-pattern-copy name))]
         (if (opt_i64_i64_map.contains? (& ctx.cand) id)
           id
           (- 0 1)))]
@@ -119988,7 +120386,10 @@
   [value : (& value ir.CompilerIrValue)]) : unit
   (opt-len-eq-refuse! bad (opt-len-eq-candidate? ctx value))
   (match value
-    [(Var var) (opt-len-eq-refuse! bad (opt-len-eq-taint-of taint (deref var)))]
+    [(Var var)
+      (opt-len-eq-refuse!
+        bad
+        (opt-len-eq-taint-of taint (owned_view.compiler-owned-pattern-copy var)))]
     [_ unit]))
 
 ;; A box or descriptor handed to a callee: only a callee whose summary proves it
@@ -122426,7 +122827,7 @@
     [(Global name)
       (opt_i64_i64_map.contains?
         (& nonneg)
-        (ir.compiler-ir-symbol-id (deref name)))]
+        (ir.compiler-ir-symbol-id (owned_view.compiler-owned-pattern-copy name)))]
     [_ false]))
 
 ;; The three-argument form, for callers with no program facts or per-callee
@@ -123493,7 +123894,9 @@
         (owned_view.compiler-owned-reference-shared-view op))]
     [(Call _ name _ _)
       (let
-        [text : String (ir.compiler-ir-symbol-text (deref name))]
+        [text : String
+          (ir.compiler-ir-symbol-text
+            (owned_view.compiler-owned-pattern-copy name))]
         (or
           (string.eq text "stdlib/io.tl::stdlib.io/panic")
           (string.eq text "stdlib\\io.tl::stdlib.io/panic")))]
@@ -123504,8 +123907,11 @@
   [instr : (& instr ir.CompilerIrInstr)]) : OptRemapSpanKey
   (if (or (ir.compiler-debug-info-enabled?) (opt-runtime-abort-instr? instr))
     (match instr
-      [(BoundsCheck _ _ ok-label) (SomeKey (Bounds function (deref ok-label)))]
-      [(Store name _ _) (SomeKey (Store function (deref name)))]
+      [(BoundsCheck _ _ ok-label)
+        (SomeKey
+          (Bounds function (owned_view.compiler-owned-pattern-copy ok-label)))]
+      [(Store name _ _)
+        (SomeKey (Store function (owned_view.compiler-owned-pattern-copy name)))]
       [(CallIndirect _ _ _ _) (NoKey)]
       [(CallIndirectC _ _ _ _) (NoKey)]
       [_
@@ -123911,11 +124317,11 @@
 
 (define (opt-function-frame [func : (& func ir.CompilerIrFunction)]) : i64
   (match func
-    [(Function _ _ _ frame _ _) (deref frame)]))
+    [(Function _ _ _ frame _ _) (owned_view.compiler-owned-pattern-copy frame)]))
 
 (define (opt-function-name [func : (& func ir.CompilerIrFunction)]) : i64
   (match func
-    [(Function name _ _ _ _ _) (deref name)]))
+    [(Function name _ _ _ _ _) (owned_view.compiler-owned-pattern-copy name)]))
 
 (define (opt-function-params [func : (& func ir.CompilerIrFunction)]) : ir.CompilerIrParamSeq
   (match func
@@ -124117,7 +124523,8 @@
   [facts : OptAliasFacts]
   [value : (& value ir.CompilerIrValue)]) : OptAliasRoot
   (match value
-    [(Var var) (opt-alias-root-of-var facts (deref var))]
+    [(Var var)
+      (opt-alias-root-of-var facts (owned_view.compiler-owned-pattern-copy var))]
     [_ (NoRoot)]))
 
 ;; Whether a store through STORE-ROOT leaves a load table entry on ENTRY-ROOT
@@ -124528,7 +124935,7 @@
       (opt-scratch-var-derived?
         (owned_view.compiler-owned-reference-shared-view roots)
         facts
-        (deref var))]
+        (owned_view.compiler-owned-pattern-copy var))]
     [_ false]))
 
 (define (opt-scratch-maybe-value-derived?
@@ -124888,8 +125295,10 @@
 
 (define (opt-scratch-state-candidate? [state : (& state OptScratchScopeState)]) : bool
   (match state
-    [(State allocs _ _ _ blocker)
-      (and (> (deref allocs) 0) (opt-scratch-blocker-none? blocker))]))
+    [(OptScratchScopeState.State allocs _ _ _ blocker)
+      (and
+        (> (owned_view.compiler-owned-pattern-copy allocs) 0)
+        (opt-scratch-blocker-none? blocker))]))
 
 (define (opt-scratch-report-alloc-count [report : OptScratchScopeReport]) : i64
   (match report
@@ -126620,8 +127029,8 @@
   [index : i64]
   [out : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match kinds
-    [(Dense work _ len _)
-      (if (>= index (deref len))
+    [(OptLoadPtrKinds.Dense work _ len _)
+      (if (>= index (owned_view.compiler-owned-pattern-copy len))
         out
         (let
           [var : i64 (array-ref work.active index)]
@@ -126859,8 +127268,13 @@
       [(Var source-var)
         (if (and
           (opt-gvn-stable-var? sources dst)
-          (opt-gvn-stable-var? sources (deref source-var)))
-          (opt-load-canon-bind! canon dst (deref source-var))
+          (opt-gvn-stable-var?
+            sources
+            (owned_view.compiler-owned-pattern-copy source-var)))
+          (opt-load-canon-bind!
+            canon
+            dst
+            (owned_view.compiler-owned-pattern-copy source-var))
           unit)]
       [_ unit])))
 
@@ -127560,12 +127974,15 @@
 
 (define (opt-load-key-uses-var? [key : (& key OptLoadKey)] [var : i64]) : bool
   (match key
-    [(Raw value _ _) (opt-value-is-var? value var)]
-    [(Field base _ _ _) (= (deref base) var)]
-    [(ScaledField base index _ _)
-      (or (= (deref base) var) (= (deref index) var))]
+    [(OptLoadKey.Raw value _ _) (opt-value-is-var? value var)]
+    [(OptLoadKey.Field base _ _ _)
+      (= (owned_view.compiler-owned-pattern-copy base) var)]
+    [(OptLoadKey.ScaledField base index _ _)
+      (or
+        (= (owned_view.compiler-owned-pattern-copy base) var)
+        (= (owned_view.compiler-owned-pattern-copy index) var))]
     ;; A global base names no var, so no redefinition can invalidate this key.
-    [(GlobalField _ _ _ _) false]))
+    [(OptLoadKey.GlobalField _ _ _ _) false]))
 
 (define (opt-load-key-type [key : (& key OptLoadKey)]) : ast.AstType
   (match (owned_view.compiler-owned-reference-shared-view key)
@@ -127648,7 +128065,10 @@
         (Some
           (opt-load-entry-value
             (owned_view.compiler-owned-reference-shared-view entry)))
-        (opt-load-table-lookup type-segment-bases (deref (deref rest)) key))]))
+        (opt-load-table-lookup
+          type-segment-bases
+          (owned_view.compiler-owned-pattern-box-ref rest)
+          key))]))
 
 (define (opt-load-table-has-value-with-type?
   [type-segment-bases : i64]
@@ -127699,8 +128119,11 @@
 ;; the whole spine (see opt-alias-remove-var).
 (define (opt-load-table-len [table : (& table OptLoadTable)]) : i64
   (match table
-    [(Nil) 0]
-    [(Cons _ rest) (+ 1 (opt-load-table-len (deref (deref rest))))]))
+    [(OptLoadTable.Nil) 0]
+    [(OptLoadTable.Cons _ rest)
+      (+
+        1
+        (opt-load-table-len (owned_view.compiler-owned-pattern-box-ref rest)))]))
 
 ;; Bind key -> value. Since granular invalidation lets tables survive stores,
 ;; cap growth: a fresh key is skipped once the table reaches the state cap.
@@ -127876,11 +128299,13 @@
   [table : (& table OptLoadTable)]
   [var : i64]) : bool
   (match table
-    [(Nil) false]
-    [(Cons entry rest)
+    [(OptLoadTable.Nil) false]
+    [(OptLoadTable.Cons entry rest)
       (if (opt-load-entry-mentions-var? entry var)
         true
-        (opt-load-table-mentions-var? (deref (deref rest)) var))]))
+        (opt-load-table-mentions-var?
+          (owned_view.compiler-owned-pattern-box-ref rest)
+          var))]))
 
 (define (opt-load-table-invalidate-var-scan [table : OptLoadTable] [var : i64]) : OptLoadTable
   (match table
@@ -128130,7 +128555,7 @@
       [(Var p)
         (match (opt-load-kinds-lookup
           (owned_view.compiler-owned-reference-shared-view kinds)
-          (deref p))
+          (owned_view.compiler-owned-pattern-copy p))
           [(OptLoadLocElement) (OptLoadStoreElement ty)]
           [(OptLoadLocField base off _ header?)
             (OptLoadStoreField base off width header? ty)]
@@ -128171,14 +128596,20 @@
       (match b
         [(OptLoadStoreField bbase boff bwidth bheader? _)
           (and
-            (= (deref abase) (deref bbase))
-            (= (deref aoff) (deref boff))
-            (= (deref awidth) (deref bwidth))
             (=
-              (if (deref aheader?)
+              (owned_view.compiler-owned-pattern-copy abase)
+              (owned_view.compiler-owned-pattern-copy bbase))
+            (=
+              (owned_view.compiler-owned-pattern-copy aoff)
+              (owned_view.compiler-owned-pattern-copy boff))
+            (=
+              (owned_view.compiler-owned-pattern-copy awidth)
+              (owned_view.compiler-owned-pattern-copy bwidth))
+            (=
+              (if (owned_view.compiler-owned-pattern-copy aheader?)
                 1
                 0)
-              (if (deref bheader?)
+              (if (owned_view.compiler-owned-pattern-copy bheader?)
                 1
                 0)))]
         [_ false])]
@@ -128195,11 +128626,16 @@
         [_ false])]
     [(OptLoadStoreField abase aoff awidth aheader? _)
       (match candidate
-        [(OptLoadStoreElement _) (deref aheader?)]
+        [(OptLoadStoreElement _)
+          (owned_view.compiler-owned-pattern-copy aheader?)]
         [(OptLoadStoreField bbase boff bwidth _ _)
           (and
-            (= (deref abase) bbase)
-            (opt-load-ranges-disjoint? (deref aoff) (deref awidth) boff bwidth))]
+            (= (owned_view.compiler-owned-pattern-copy abase) bbase)
+            (opt-load-ranges-disjoint?
+              (owned_view.compiler-owned-pattern-copy aoff)
+              (owned_view.compiler-owned-pattern-copy awidth)
+              boff
+              bwidth))]
         [(OptLoadStoreUnknown) false])]))
 
 (define (opt-dead-store-filter-store
@@ -128450,7 +128886,8 @@
   [sources : (& sources OptValueSources)]
   [value : (& value ir.CompilerIrValue)]) : bool
   (match value
-    [(Var v) (opt-gvn-stable-var? sources (deref v))]
+    [(Var v)
+      (opt-gvn-stable-var? sources (owned_view.compiler-owned-pattern-copy v))]
     [_ true]))
 
 (define (opt-load-subword-forward-const
@@ -129886,7 +130323,11 @@
           entry.args
           (compiler-opt-global-shared-view args)))
         entry.dst
-        (opt-pure-call-table-find (deref (deref rest)) env name args))]))
+        (opt-pure-call-table-find
+          (owned_view.compiler-owned-pattern-box-ref rest)
+          env
+          name
+          args))]))
 
 ;; Any two direct calls to summarized write-free callees at all? The rebuild
 ;; below is skipped for the many functions that have none.
@@ -130113,7 +130554,9 @@
   (match instr
     [(Mov dst value _)
       (and
-        (opt-pure-call-single-def? defs (deref dst))
+        (opt-pure-call-single-def?
+          defs
+          (owned_view.compiler-owned-pattern-copy dst))
         (match value
           [(I64 _) true]
           [(F64 _) true]
@@ -132573,9 +133016,15 @@
   (match instr
     [(Mov dst src _)
       (and
-        (opt-gvn-stable-var? sources (deref dst))
+        (opt-gvn-stable-var?
+          sources
+          (owned_view.compiler-owned-pattern-copy dst))
         (match src
-          [(Global name) (= (ir.compiler-ir-symbol-id (deref name)) global)]
+          [(Global name)
+            (=
+              (ir.compiler-ir-symbol-id
+                (owned_view.compiler-owned-pattern-copy name))
+              global)]
           [_ false]))]
     [_ false]))
 
@@ -137050,12 +137499,21 @@
   [value : (& value ir.CompilerIrValue)]) : bool
   (match value
     [(Var var)
-      (if (or (< (deref var) 0) (>= (deref var) (array-length def-blocks)))
+      (if (or
+        (< (owned_view.compiler-owned-pattern-copy var) 0)
+        (>=
+          (owned_view.compiler-owned-pattern-copy var)
+          (array-length def-blocks)))
         true
         (let
           ;; def-blocks stores id+1, so 0 is "no def recorded in this function"
           ;; -- a parameter or an entry-live var, neither of which is in a loop.
-          [def-id : i64 (- (array-ref def-blocks (deref var)) 1)]
+          [def-id : i64
+            (-
+              (array-ref
+                def-blocks
+                (owned_view.compiler-owned-pattern-copy var))
+              1)]
           (if (< def-id 0)
             false
             (if (or

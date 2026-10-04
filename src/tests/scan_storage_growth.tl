@@ -4,6 +4,7 @@
 (import read as reader)
 (import token)
 (import compiler_intern as ci)
+(import compiler_owned_view as owned_view)
 (cfg test (import compiler_allocation_profile as allocation_profile))
 (import stdlib.arena)
 (import stdlib.string)
@@ -200,20 +201,26 @@
       (= (token.spanned-token-line record) (+ (/ index 7) 1))
       (= (token.spanned-token-col record) column)
       (match (token.spanned-token-token-ref record)
-        [(LParen) (= position 0)]
-        [(Sym name)
+        [(token.Token.LParen) (= position 0)]
+        [(token.Token.Sym name)
           (and
             (= position 1)
             (string.eq (ci.intern-str (ci.intern-id-value name)) "atom"))]
-        [(Int value text)
-          (and (= position 2) (= (deref value) 123) (string.eq text "0x7b"))]
-        [(Char value) (and (= position 3) (= (deref value) 'q'))]
-        [(Str text)
+        [(token.Token.Int value text)
+          (and
+            (= position 2)
+            (= (owned_view.compiler-owned-pattern-copy value) 123)
+            (string.eq text "0x7b"))]
+        [(token.Token.Char value)
+          (and
+            (= position 3)
+            (= (owned_view.compiler-owned-pattern-copy value) 'q'))]
+        [(token.Token.Str text)
           (and
             (= position 4)
             (string.eq (ci.intern-str (ci.intern-id-value text)) "bytes"))]
-        [(Float text) (and (= position 5) (string.eq text "1.5"))]
-        [(RParen) (= position 6)]
+        [(token.Token.Float text) (and (= position 5) (string.eq text "1.5"))]
+        [(token.Token.RParen) (= position 6)]
         [_ false]))))
 
 (cfg

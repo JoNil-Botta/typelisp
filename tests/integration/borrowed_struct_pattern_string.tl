@@ -26,15 +26,15 @@
         (+
           (string.string-length first)
           (string.string-length second)
-          (deref first-code)
-          (deref second-code))
+          first-code
+          second-code)
         1)]))
 
 (define (nested-score [items : (& items (Tuple Nested i64))]) : i64
   (match items
     [(tuple (Nested _ (Label text code)) _)
       (if (string.eq text "nested")
-        (+ (string.string-length text) (deref code))
+        (+ (string.string-length text) code)
         1)]))
 
 (define (owner-score [items : (Tuple Label i64)]) : i64

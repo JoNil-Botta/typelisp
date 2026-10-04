@@ -3822,6 +3822,13 @@
 (defenum TcSpmdRole
   (Value)
   (ForeachIndex)
+  ;; A read-only coordinate of a rank-2 foreach domain: its ordinal in
+  ;; binding order (0 outer, 1 inner), then for the inner coordinate the ids
+  ;; of the header's begin and end expressions when each is a stable atom
+  ;; (an integer literal, or a variable the body never assigns), else -1.
+  ;; The final field is the domain body id, used to reject mutable offsets.
+  ;; The row-major write proof compares the body's span against those atoms.
+  (ForeachCoordinate i64 i64 i64 i64)
   (CompactIndex)
   (CompactSlot)
   ;; foreach-active (#8306): the read-only lane binding, and the two sentinel
@@ -24276,7 +24283,26 @@
                   expr-bases
                   body
                   tc-spmd-scope-foreach)]
-              [(Err message) (Err message)]))])]
+              [(Err message) (Err message)]))]
+        [(Foreach2 _ _ a-box b-box _ _ c-box d-box body-box)
+          (match (tc-source-expr-pair-spmd-broadcast-scope-ok
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases a-box)
+            (ast.ast-expr-segment-bases-get expr-bases b-box)
+            tc-spmd-scope-outside)
+            [(Ok)
+              (match (tc-source-expr-pair-spmd-broadcast-scope-ok
+                expr-bases
+                (ast.ast-expr-segment-bases-get expr-bases c-box)
+                (ast.ast-expr-segment-bases-get expr-bases d-box)
+                tc-spmd-scope-outside)
+                [(Ok)
+                  (tc-source-expr-spmd-broadcast-scope-ok
+                    expr-bases
+                    (ast.ast-expr-segment-bases-get expr-bases body-box)
+                    tc-spmd-scope-foreach)]
+                [(Err message) (Err message)])]
+            [(Err message) (Err message)])])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(Reduce _ _ _ start-box end-box init-box value-box)
@@ -24886,7 +24912,27 @@
             (match (tc-source-type-policy-ok ctx index-ty)
               [(Ok)
                 (tc-source-expr-triple-policy-ok ctx expr-bases start end body)]
-              [(Err message) (Err message)]))])]
+              [(Err message) (Err message)]))]
+        [(Foreach2 _ outer-ty a-box b-box _ inner-ty c-box d-box body-box)
+          (match (tc-source-type-policy-ok ctx outer-ty)
+            [(Ok)
+              (match (tc-source-type-policy-ok ctx inner-ty)
+                [(Ok)
+                  (match (tc-source-expr-triple-policy-ok
+                    ctx
+                    expr-bases
+                    (ast.ast-expr-segment-bases-get expr-bases a-box)
+                    (ast.ast-expr-segment-bases-get expr-bases b-box)
+                    (ast.ast-expr-segment-bases-get expr-bases c-box))
+                    [(Ok)
+                      (tc-source-expr-pair-policy-ok
+                        ctx
+                        expr-bases
+                        (ast.ast-expr-segment-bases-get expr-bases d-box)
+                        (ast.ast-expr-segment-bases-get expr-bases body-box))]
+                    [(Err message) (Err message)])]
+                [(Err message) (Err message)])]
+            [(Err message) (Err message)])])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(Reduce _ _ index-ty start-box end-box init-box value-box)
@@ -41443,7 +41489,36 @@
                 expr-bases
                 body
                 name
-                (tc-string-list-add bound (tc-env-key-name-text index)))))])]
+                (tc-string-list-add bound (tc-env-key-name-text index)))))]
+        [(Foreach2 outer _ a-box b-box inner _ c-box d-box body-box)
+          (and
+            (tc-ref-closure-local-uses-ok?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases a-box)
+              (tc-global-shared-view name)
+              (tc-global-shared-view bound))
+            (tc-ref-closure-local-uses-ok?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases b-box)
+              (tc-global-shared-view name)
+              (tc-global-shared-view bound))
+            (tc-ref-closure-local-uses-ok?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases c-box)
+              (tc-global-shared-view name)
+              (tc-global-shared-view bound))
+            (tc-ref-closure-local-uses-ok?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases d-box)
+              (tc-global-shared-view name)
+              (tc-global-shared-view bound))
+            (tc-ref-closure-local-uses-ok?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases body-box)
+              name
+              (tc-string-list-add
+                (tc-string-list-add bound (tc-env-key-name-text outer))
+                (tc-env-key-name-text inner))))])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(Reduce _ index _ start-box end-box init-box value-box)
@@ -42476,6 +42551,9 @@
         (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(Var name)
       (match (tc-spmd-env-lookup-id spmd-env name)
+        ;; A helper never proves a rank-2 row-major write: its body sees the
+        ;; coordinate as a plain varying value.
+        [(Found _ _ _ (ForeachCoordinate _ _ _ _)) Value]
         [(Found _ _ _ role) role]
         [(Missing) Value])]
     [_ Value]))
@@ -43312,7 +43390,7 @@
         (tc-spmd-foreach-index-unsupported spmd-env))]
     [_ (tc-spmd-foreach-index-unsupported spmd-env)]))
 
-(define (tc-spmd-foreach-index
+(define (tc-spmd-foreach-index-rank1
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
@@ -43325,12 +43403,12 @@
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-spmd-foreach-index ctx expr-bases env spmd-env inner))]
+        (tc-spmd-foreach-index-rank1 ctx expr-bases env spmd-env inner))]
     [(Cast inner-box _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-spmd-foreach-index ctx expr-bases env spmd-env inner))]
+        (tc-spmd-foreach-index-rank1 ctx expr-bases env spmd-env inner))]
     [(Binary op left-box right-box)
       (let
         [left : ast.AstExpr
@@ -43377,6 +43455,463 @@
         spmd-env
         (ast.ast-expr-unspan-with-segment-bases expr-bases expr))]))
 
+;; The latest binding of NAME-ID at or below INDEX, or -1.
+(define (tc-spmd-env-latest-index-from
+  [bindings : u64]
+  [index : i64]
+  [name-id : i64]) : i64
+  (if (< index 0)
+    -1
+    (let
+      [binding : TcSpmdBinding (tc-spmd-binding-at bindings index)]
+      (if (= binding.name name-id)
+        index
+        (tc-spmd-env-latest-index-from bindings (- index 1) name-id)))))
+
+;; The index of the inner coordinate of the rank-2 domain whose body is being
+;; checked, or -1. Entering a nested domain marks the coordinates outer, and a
+;; helper body never binds them, so neither sees one.
+(define (tc-spmd-env-rank2-inner-from [bindings : u64] [index : i64]) : i64
+  (if (< index 0)
+    -1
+    (let
+      [binding : TcSpmdBinding (tc-spmd-binding-at bindings index)]
+      (match binding.role
+        [(ForeachCoordinate ordinal _ _ _)
+          (if (and
+            (= ordinal 1)
+            (match binding.scope
+              [(Local) true]
+              [(Outer) false]))
+            index
+            (tc-spmd-env-rank2-inner-from bindings (- index 1)))]
+        [_ (tc-spmd-env-rank2-inner-from bindings (- index 1))]))))
+
+(define (tc-spmd-env-rank2-inner [env : TcSpmdEnv]) : i64
+  (tc-spmd-env-rank2-inner-from env.bindings (- (tc-spmd-env-len env) 1)))
+
+(define (tc-spmd-row-major-atom [expr-bases : i64] [expr : ast.AstExpr]) : ast.AstExpr
+  (let
+    [unspanned : ast.AstExpr
+      (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
+    (match (tc-global-shared-view unspanned)
+      [(Ann inner-box _)
+        (tc-spmd-row-major-atom
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+      [_ unspanned])))
+
+;; HEADER-ID when that foreach header bound is an integer literal or a
+;; variable BODY never assigns, else -1.
+(define (tc-spmd-foreach2-stable-atom
+  [expr-bases : i64]
+  [header-id : i64]
+  [body : ast.AstExpr]) : i64
+  (match (tc-spmd-row-major-atom
+    expr-bases
+    (ast.ast-expr-segment-bases-get expr-bases header-id))
+    [(Literal (Int _ _)) header-id]
+    [(Var name)
+      (if (tc-expr-uses-free-names?
+        expr-bases
+        body
+        (tc-string-list-add Nil (tc-env-key-name-text name))
+        Nil
+        true)
+        -1
+        header-id)]
+    [_ -1]))
+
+;; True when body expression EXPR denotes the stable header atom HEADER-ID.
+;; A variable must resolve below the domain's outer coordinate at OUTER-AT,
+;; i.e. to the enclosing binding the header read rather than a body local.
+(define (tc-spmd-row-major-atom-eq?
+  [expr-bases : i64]
+  [spmd-env : TcSpmdEnv]
+  [outer-at : i64]
+  [expr : ast.AstExpr]
+  [header-id : i64]) : bool
+  (if (< header-id 0)
+    false
+    (match (tc-spmd-row-major-atom
+      expr-bases
+      (ast.ast-expr-segment-bases-get expr-bases header-id))
+      [(Literal (Int value _))
+        (match (tc-spmd-row-major-atom expr-bases expr)
+          [(Literal (Int other _)) (= value other)]
+          [_ false])]
+      [(Var name)
+        (match (tc-spmd-row-major-atom expr-bases expr)
+          [(Var other)
+            (and
+              (= name other)
+              (let
+                [found : i64
+                  (tc-spmd-env-latest-index-from
+                    spmd-env.bindings
+                    (- (tc-spmd-env-len spmd-env) 1)
+                    name)]
+                (and (>= found 0) (< found outer-at))))]
+          [_ false])]
+      [_ false])))
+
+(define (tc-spmd-row-major-zero? [expr-bases : i64] [header-id : i64]) : bool
+  (and
+    (>= header-id 0)
+    (match (tc-spmd-row-major-atom
+      expr-bases
+      (ast.ast-expr-segment-bases-get expr-bases header-id))
+      [(Literal (Int value _)) (= value 0)]
+      [_ false])))
+
+;; True when EXPR is the inner span: (- end begin) over the header's stable
+;; inner bounds, or bare end when begin is the literal 0.
+(define (tc-spmd-row-major-span?
+  [expr-bases : i64]
+  [spmd-env : TcSpmdEnv]
+  [inner-at : i64]
+  [expr : ast.AstExpr]) : bool
+  (match (tc-spmd-binding-at spmd-env.bindings inner-at)
+    [(TcSpmdBinding _ _ _ _ role)
+      (match role
+        [(ForeachCoordinate _ begin-id end-id _)
+          (match (tc-spmd-row-major-atom
+            expr-bases
+            (tc-global-shared-view expr))
+            [(Binary (Sub) left-box right-box)
+              (and
+                (tc-spmd-row-major-atom-eq?
+                  expr-bases
+                  spmd-env
+                  (- inner-at 1)
+                  (ast.ast-expr-segment-bases-get expr-bases left-box)
+                  end-id)
+                (tc-spmd-row-major-atom-eq?
+                  expr-bases
+                  spmd-env
+                  (- inner-at 1)
+                  (ast.ast-expr-segment-bases-get expr-bases right-box)
+                  begin-id))]
+            [_
+              (and
+                (tc-spmd-row-major-zero? expr-bases begin-id)
+                (tc-spmd-row-major-atom-eq?
+                  expr-bases
+                  spmd-env
+                  (- inner-at 1)
+                  expr
+                  end-id))])]
+        [_ false])]))
+
+(defstruct TcSpmdRowMajorTerms
+  (rows i64)
+  (columns i64)
+  (ok bool))
+
+(define (tc-spmd-row-major-fail) : TcSpmdRowMajorTerms
+  (TcSpmdRowMajorTerms 0 0 false))
+
+(define (tc-spmd-row-major-uniform-term
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [inner-at : i64]
+  [expr : ast.AstExpr]
+  [acc : TcSpmdRowMajorTerms]) : TcSpmdRowMajorTerms
+  (match (tc-spmd-expr ctx expr-bases env spmd-env (tc-global-shared-view expr))
+    [(Ok (TcSpmdExprInfo _ class _))
+      (if (tc-spmd-varying? class)
+        (tc-spmd-row-major-fail)
+        (let
+          [node : ast.AstExpr
+            (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
+          (match (tc-global-shared-view node)
+            [(Literal _) acc]
+            [(Var name)
+              (let
+                [found : i64
+                  (tc-spmd-env-latest-index-from
+                    spmd-env.bindings
+                    (- (tc-spmd-env-len spmd-env) 1)
+                    name)]
+                (if (and (>= found 0) (< found (- inner-at 1)))
+                  (match (tc-spmd-binding-at spmd-env.bindings inner-at)
+                    [(TcSpmdBinding _ _ _ _ role)
+                      (match role
+                        [(ForeachCoordinate _ _ _ body-id)
+                          (if (tc-expr-uses-free-names?
+                            expr-bases
+                            (ast.ast-expr-segment-bases-get expr-bases body-id)
+                            (tc-string-list-add Nil (tc-env-key-name-text name))
+                            Nil
+                            true)
+                            (tc-spmd-row-major-fail)
+                            acc)]
+                        [_ (tc-spmd-row-major-fail)])])
+                  (tc-spmd-row-major-fail)))]
+            [_
+              ;; Lane-uniform is insufficient: every offset must stay constant
+              ;; across the domain. Closed scalar operations preserve that
+              ;; invariant; memory reads and calls require a captured outer value.
+              (if (match (tc-global-shared-view node)
+                [(Unary _ _) true]
+                [(Binary _ _ _) true]
+                [(Cast _ _) true]
+                [(Ann _ _) true]
+                [(MacroExpansion _ _ _) true]
+                [_ false])
+                (let
+                  [children : ast.AstExprList (ast.ast-expr-child-ids node)]
+                  [index : i64 0]
+                  [result : TcSpmdRowMajorTerms acc]
+                  (while (and
+                    result.ok
+                    (< index (ast.ast-expr-list-len (& children))))
+                    (set!
+                      result
+                      (tc-spmd-row-major-uniform-term
+                        ctx
+                        expr-bases
+                        env
+                        spmd-env
+                        inner-at
+                        (ast.ast-expr-segment-bases-get
+                          expr-bases
+                          (ast.ast-expr-list-get (& children) index -1))
+                        result))
+                    (set! index (+ index 1)))
+                  result)
+                (tc-spmd-row-major-fail))])))]
+    [(Err _) (tc-spmd-row-major-fail)]))
+
+;; Count the coordinate terms of the additive tree EXPR, whose terms have
+;; sign POSITIVE?. At the top level a term is the inner coordinate, a row
+;; product, or a uniform value; inside a row factor (FACTOR?) it is the outer
+;; coordinate or a uniform value. A coordinate must appear with positive sign
+;; and nowhere else, so any other term fails the proof.
+(define (tc-spmd-row-major-terms
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [inner-at : i64]
+  [expr : ast.AstExpr]
+  [positive? : bool]
+  [factor? : bool]
+  [acc : TcSpmdRowMajorTerms]) : TcSpmdRowMajorTerms
+  (if (not acc.ok)
+    acc
+    (match (ast.ast-expr-unspan-with-segment-bases
+      expr-bases
+      (tc-global-shared-view expr))
+      [(Ann inner-box _)
+        (tc-spmd-row-major-terms
+          ctx
+          expr-bases
+          env
+          spmd-env
+          inner-at
+          (ast.ast-expr-segment-bases-get expr-bases inner-box)
+          positive?
+          factor?
+          acc)]
+      [(Binary op left-box right-box)
+        (let
+          [left : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases left-box)]
+          [right : ast.AstExpr
+            (ast.ast-expr-segment-bases-get expr-bases right-box)]
+          (match op
+            [(Add)
+              (tc-spmd-row-major-terms
+                ctx
+                expr-bases
+                env
+                spmd-env
+                inner-at
+                right
+                positive?
+                factor?
+                (tc-spmd-row-major-terms
+                  ctx
+                  expr-bases
+                  env
+                  spmd-env
+                  inner-at
+                  left
+                  positive?
+                  factor?
+                  acc))]
+            [(Sub)
+              (tc-spmd-row-major-terms
+                ctx
+                expr-bases
+                env
+                spmd-env
+                inner-at
+                right
+                (not positive?)
+                factor?
+                (tc-spmd-row-major-terms
+                  ctx
+                  expr-bases
+                  env
+                  spmd-env
+                  inner-at
+                  left
+                  positive?
+                  factor?
+                  acc))]
+            [(Mul)
+              (let
+                [uniform : TcSpmdRowMajorTerms
+                  (tc-spmd-row-major-uniform-term
+                    ctx
+                    expr-bases
+                    env
+                    spmd-env
+                    inner-at
+                    (tc-global-shared-view expr)
+                    acc)]
+                (cond
+                  [uniform.ok uniform]
+                  [(and
+                      positive?
+                      (not factor?)
+                      (or
+                        (and
+                          (tc-spmd-row-major-span?
+                            expr-bases
+                            spmd-env
+                            inner-at
+                            (tc-global-shared-view left))
+                          (tc-spmd-row-major-row-factor?
+                            ctx
+                            expr-bases
+                            env
+                            spmd-env
+                            inner-at
+                            (tc-global-shared-view right)))
+                        (and
+                          (tc-spmd-row-major-span?
+                            expr-bases
+                            spmd-env
+                            inner-at
+                            (tc-global-shared-view right))
+                          (tc-spmd-row-major-row-factor?
+                            ctx
+                            expr-bases
+                            env
+                            spmd-env
+                            inner-at
+                            (tc-global-shared-view left)))))
+                    (TcSpmdRowMajorTerms (+ acc.rows 1) acc.columns true)]
+                  [else (tc-spmd-row-major-fail)]))]
+            [_
+              (tc-spmd-row-major-uniform-term
+                ctx
+                expr-bases
+                env
+                spmd-env
+                inner-at
+                expr
+                acc)]))]
+      [(Var name)
+        (match (tc-spmd-env-lookup-id spmd-env name)
+          [(Found _ (Varying) (Local) (ForeachCoordinate ordinal _ _ _))
+            (cond
+              [(not positive?) (tc-spmd-row-major-fail)]
+              [(and factor? (= ordinal 0))
+                (TcSpmdRowMajorTerms (+ acc.rows 1) acc.columns true)]
+              [(and (not factor?) (= ordinal 1))
+                (TcSpmdRowMajorTerms acc.rows (+ acc.columns 1) true)]
+              [else (tc-spmd-row-major-fail)])]
+          [_
+            (tc-spmd-row-major-uniform-term
+              ctx
+              expr-bases
+              env
+              spmd-env
+              inner-at
+              expr
+              acc)])]
+      [_
+        (tc-spmd-row-major-uniform-term
+          ctx
+          expr-bases
+          env
+          spmd-env
+          inner-at
+          expr
+          acc)])))
+
+;; True when EXPR is the outer coordinate plus uniform offsets.
+(define (tc-spmd-row-major-row-factor?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [inner-at : i64]
+  [expr : ast.AstExpr]) : bool
+  (let
+    [terms : TcSpmdRowMajorTerms
+      (tc-spmd-row-major-terms
+        ctx
+        expr-bases
+        env
+        spmd-env
+        inner-at
+        expr
+        true
+        true
+        (TcSpmdRowMajorTerms 0 0 true))]
+    (and terms.ok (= terms.rows 1) (= terms.columns 0))))
+
+;; A rank-2 index is injective over the whole domain when it is
+;; U + (y - A) * S + (x - B) for constant uniform U, A and B and S the exact inner
+;; span: the checked domain product keeps (y - y0) * S + (x - x0) in
+;; [0, rows * S), and adding a constant modulo 2^64 preserves injectivity.
+;; Additive terms may appear in any order and grouping.
+(define (tc-spmd-row-major-index?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [inner-at : i64]
+  [expr : ast.AstExpr]) : bool
+  (let
+    [terms : TcSpmdRowMajorTerms
+      (tc-spmd-row-major-terms
+        ctx
+        expr-bases
+        env
+        spmd-env
+        inner-at
+        expr
+        true
+        false
+        (TcSpmdRowMajorTerms 0 0 true))]
+    (and terms.ok (= terms.rows 1) (= terms.columns 1))))
+
+(define (tc-spmd-foreach-index
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : ast.AstExpr]) : ResultTcUnit
+  (let
+    [inner-at : i64 (tc-spmd-env-rank2-inner spmd-env)]
+    (cond
+      [(< inner-at 0)
+        (tc-spmd-foreach-index-rank1 ctx expr-bases env spmd-env expr)]
+      [(tc-spmd-row-major-index? ctx expr-bases env spmd-env inner-at expr) Ok]
+      [else
+        (Err
+          (tc-kind-message
+            (Spmd)
+            "typecheck: rank-2 foreach array element destination indexes must be row-major with stable uniform offsets: base + (y - y0) * (x1 - x0) + (x - x0) over the coordinates and the header's inner bounds"))])))
+
 (define (tc-spmd-masked-if-uniform-offset
   [ctx : TcContext]
   [expr-bases : i64]
@@ -43417,7 +43952,7 @@
       (tc-spmd-masked-if-unsupported
         "gather/scatter-like array indexes; use the foreach index plus a uniform offset")]))
 
-(define (tc-spmd-masked-if-index
+(define (tc-spmd-masked-if-index-rank1
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
@@ -43430,12 +43965,12 @@
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-spmd-masked-if-index ctx expr-bases env spmd-env inner))]
+        (tc-spmd-masked-if-index-rank1 ctx expr-bases env spmd-env inner))]
     [(Cast inner-box _)
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (tc-spmd-masked-if-index ctx expr-bases env spmd-env inner))]
+        (tc-spmd-masked-if-index-rank1 ctx expr-bases env spmd-env inner))]
     [(Binary op left-box right-box)
       (let
         [left : ast.AstExpr
@@ -43486,6 +44021,22 @@
         expr-bases
         spmd-env
         (ast.ast-expr-unspan-with-segment-bases expr-bases expr))]))
+
+(define (tc-spmd-masked-if-index
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [expr : ast.AstExpr]) : ResultTcUnit
+  (let
+    [inner-at : i64 (tc-spmd-env-rank2-inner spmd-env)]
+    (cond
+      [(< inner-at 0)
+        (tc-spmd-masked-if-index-rank1 ctx expr-bases env spmd-env expr)]
+      [(tc-spmd-row-major-index? ctx expr-bases env spmd-env inner-at expr) Ok]
+      [else
+        (tc-spmd-masked-if-unsupported
+          "rank-2 array indexes other than the row-major form with stable uniform offsets: base + (y - y0) * (x1 - x0) + (x - x0)")])))
 
 (define (tc-spmd-masked-if-lane-type-ok [ty : ast.AstType]) : ResultTcUnit
   (if (tc-spmd-lane-type-supported? (tc-global-shared-view ty))
@@ -44292,6 +44843,59 @@
         Varying
         Local
         ForeachIndex)]
+    [result : ResultTcUnit Ok]
+    (tc-spmd-inline-helper-stack-reset-for-job! (tc-context-job-state ctx))
+    (set!
+      result
+      (match (tc-spmd-expr ctx expr-bases body-env body-spmd-env body)
+        [(Ok _) Ok]
+        [(Err message) (Err message)]))
+    (tc-spmd-inline-helper-stack-reset-for-job! (tc-context-job-state ctx))
+    result))
+
+;; Check a rank-2 domain's BODY with both coordinates bound read-only and
+;; varying: in scalar order every (outer, inner) pair is its own logical
+;; instance. The inner coordinate's role carries the stable header bounds
+;; INNER-BEGIN-ID and INNER-END-ID, plus the domain body id, for the proof.
+(define (tc-spmd-check-foreach2-body-with-env
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [outer : i64]
+  [inner : i64]
+  [inner-begin-id : i64]
+  [inner-end-id : i64]
+  [body-id : i64]) : ResultTcUnit
+  (let
+    [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-id)]
+    [body-env : TcTypeEnv (tc-bind-id (tc-bind-id env outer (I64)) inner (I64))]
+    [inner-role : TcSpmdRole
+      (ForeachCoordinate
+        1
+        (tc-spmd-foreach2-stable-atom
+          expr-bases
+          inner-begin-id
+          (tc-global-shared-view body))
+        (tc-spmd-foreach2-stable-atom
+          expr-bases
+          inner-end-id
+          (tc-global-shared-view body))
+        body-id)]
+    [body-spmd-env : TcSpmdEnv
+      (tc-spmd-env-bind-role-id
+        (tc-spmd-env-bind-role-id
+          (tc-spmd-env-mark-outer spmd-env)
+          outer
+          (I64)
+          Varying
+          Local
+          (ForeachCoordinate 0 -1 -1 body-id))
+        inner
+        (I64)
+        Varying
+        Local
+        inner-role)]
     [result : ResultTcUnit Ok]
     (tc-spmd-inline-helper-stack-reset-for-job! (tc-context-job-state ctx))
     (set!
@@ -45318,6 +45922,40 @@
                     "typecheck: foreach cannot set binding declared outside foreach"))]
               [else (tc-spmd-finish expr-ty Uniform value-env)])])))))
 
+;; Classify BOUNDS from INDEX on in order, threading the SPMD env; each must
+;; be uniform. The result carries the env after the last bound.
+(define (tc-spmd-uniform-bounds
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [spmd-env : TcSpmdEnv]
+  [bounds : ast.AstExprList]
+  [index : i64]) : ResultTcSpmdExprInfo
+  (if (>= index bounds.len)
+    (Ok (TcSpmdExprInfo (ast.AstType.Unit) Uniform spmd-env))
+    (match (tc-spmd-expr
+      ctx
+      expr-bases
+      (tc-global-shared-view env)
+      spmd-env
+      (ast.ast-expr-segment-bases-get
+        expr-bases
+        (ast.ast-expr-list-get (& bounds) index 0)))
+      [(Ok (TcSpmdExprInfo _ class next-env))
+        (match (tc-spmd-require-uniform
+          class
+          (tc-kind-message (Spmd) "typecheck: foreach bounds must be uniform"))
+          [(Ok)
+            (tc-spmd-uniform-bounds
+              ctx
+              expr-bases
+              env
+              next-env
+              bounds
+              (+ index 1))]
+          [(Err message) (Err message)])]
+      [(Err message) (Err message)])))
+
 (define (tc-spmd-expr-typed
   [ctx : TcContext]
   [expr-bases : i64]
@@ -45752,6 +46390,11 @@
             (tc-kind-message
               (Spmd)
               "typecheck: foreach-active lane binding is read-only"))]
+        [(Found _ _ _ (ForeachCoordinate _ _ _ _))
+          (Err
+            (tc-kind-message
+              (Spmd)
+              "typecheck: rank-2 foreach coordinate bindings are read-only"))]
         [(Found _ class _ _)
           (if (tc-spmd-env-hidden-id? spmd-env name)
             (Err
@@ -45841,7 +46484,35 @@
                                     (tc-spmd-finish expr-ty Uniform end-env)]
                                   [(Err message) (Err message)])]
                               [(Err message) (Err message)])]))]
-                    [(Err message) (Err message)])]))]))]
+                    [(Err message) (Err message)])]))]
+          [(Foreach2 outer _ a-box b-box inner _ c-box d-box body-box)
+            (match (tc-spmd-uniform-bounds
+              ctx
+              expr-bases
+              env
+              spmd-env
+              (ast.ast-expr-cons
+                a-box
+                (ast.ast-expr-cons
+                  b-box
+                  (ast.ast-expr-cons
+                    c-box
+                    (ast.ast-expr-cons d-box (ast.ast-expr-list-new)))))
+              0)
+              [(Ok (TcSpmdExprInfo _ _ bounds-env))
+                (match (tc-spmd-check-foreach2-body-with-env
+                  ctx
+                  expr-bases
+                  env
+                  (tc-global-shared-view bounds-env)
+                  outer
+                  inner
+                  c-box
+                  d-box
+                  body-box)
+                  [(Ok) (tc-spmd-finish expr-ty Uniform bounds-env)]
+                  [(Err message) (Err message)])]
+              [(Err message) (Err message)])]))]
     [(SpmdReduce _)
       (if (tc-spmd-env-in-active-body? spmd-env)
         (Err (tc-spmd-active-unsupported-message "spmd-reduce"))
@@ -46638,7 +47309,41 @@
                 body
                 names
                 (tc-string-list-add bound (tc-env-key-name-text index))
-                sets-only?)))])]
+                sets-only?)))]
+        [(Foreach2 outer _ a-box b-box inner _ c-box d-box body-box)
+          (or
+            (tc-expr-uses-free-names?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases a-box)
+              (tc-global-shared-view names)
+              (tc-global-shared-view bound)
+              sets-only?)
+            (tc-expr-uses-free-names?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases b-box)
+              (tc-global-shared-view names)
+              (tc-global-shared-view bound)
+              sets-only?)
+            (tc-expr-uses-free-names?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases c-box)
+              (tc-global-shared-view names)
+              (tc-global-shared-view bound)
+              sets-only?)
+            (tc-expr-uses-free-names?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases d-box)
+              (tc-global-shared-view names)
+              (tc-global-shared-view bound)
+              sets-only?)
+            (tc-expr-uses-free-names?
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases body-box)
+              names
+              (tc-string-list-add
+                (tc-string-list-add bound (tc-env-key-name-text outer))
+                (tc-env-key-name-text inner))
+              sets-only?))])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(Reduce _ index _ start-box end-box init-box value-box)
@@ -47395,7 +48100,48 @@
                 target-2
                 (tc-name-id-list-add
                   bound
-                  (tc-env-key-source-id-or-neg session index)))))])]
+                  (tc-env-key-source-id-or-neg session index)))))]
+        [(Foreach2 outer _ a-box b-box inner _ c-box d-box body-box)
+          (or
+            (tc-expr-uses-free-source-id?
+              session
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases a-box)
+              target-1
+              target-2
+              bound)
+            (tc-expr-uses-free-source-id?
+              session
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases b-box)
+              target-1
+              target-2
+              bound)
+            (tc-expr-uses-free-source-id?
+              session
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases c-box)
+              target-1
+              target-2
+              bound)
+            (tc-expr-uses-free-source-id?
+              session
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases d-box)
+              target-1
+              target-2
+              bound)
+            (tc-expr-uses-free-source-id?
+              session
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases body-box)
+              target-1
+              target-2
+              (tc-name-id-list-add
+                (tc-name-id-list-add
+                  bound
+                  (tc-env-key-source-id-or-neg session outer))
+                (tc-env-key-source-id-or-neg session inner))))])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(Reduce _ index _ start-box end-box init-box value-box)
@@ -47749,7 +48495,15 @@
               expr-bases
               body
               owners
-              (tc-string-list-add bound (tc-env-key-name-text index))))])]
+              (tc-string-list-add bound (tc-env-key-name-text index))))]
+        [(Foreach2 outer _ _ _ inner _ _ _ body-box)
+          (tc-expr-result-uses-cleanup-owner?
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases body-box)
+            owners
+            (tc-string-list-add
+              (tc-string-list-add bound (tc-env-key-name-text outer))
+              (tc-env-key-name-text inner)))])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(Reduce _ index _ _ _ _ value-box)
@@ -59066,6 +59820,47 @@
         [(Err message) (Err message)])]
     [(Err message) (Err message)]))
 
+(define (tc-foreach2-coordinate-type? [ty : ast.AstType]) : bool
+  (match ty
+    [(I64) true]
+    [_ false]))
+
+;; Type a rank-2 foreach bound in the enclosing scope: no coordinate is
+;; visible to any bound.
+(define (tc-foreach2-bound-ok
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [bound-id : i64]) : ResultTcUnit
+  (match (tc-expr-with-expected-or-actual-id ctx env bound-id (I64))
+    [(Ok ty)
+      (tc-expect
+        ty
+        (I64)
+        (tc-kind-message
+          (Spmd)
+          "typecheck: rank-2 foreach bounds must have type i64"))]
+    [(Err message) (Err message)]))
+
+(define (tc-foreach2-bounds-ok
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [outer-start : i64]
+  [outer-end : i64]
+  [inner-start : i64]
+  [inner-end : i64]) : ResultTcUnit
+  (match (tc-foreach2-bound-ok ctx (tc-global-shared-view env) outer-start)
+    [(Ok)
+      (match (tc-foreach2-bound-ok ctx (tc-global-shared-view env) outer-end)
+        [(Ok)
+          (match (tc-foreach2-bound-ok
+            ctx
+            (tc-global-shared-view env)
+            inner-start)
+            [(Ok) (tc-foreach2-bound-ok ctx env inner-end)]
+            [(Err message) (Err message)])]
+        [(Err message) (Err message)])]
+    [(Err message) (Err message)]))
+
 (define (tc-expr-inner [ctx : TcContext] [env : TcTypeEnv] [expr : ast.AstExpr]) : ResultTcType
   (match expr
     [(Spanned inner-box span)
@@ -59584,7 +60379,59 @@
               (Err
                 (tc-kind-message
                   (Spmd)
-                  "typecheck: foreach index type must be integer"))))])]
+                  "typecheck: foreach index type must be integer"))))]
+        [(Foreach2
+            outer
+            outer-ty
+            outer-start-box
+            outer-end-box
+            inner
+            inner-ty
+            inner-start-box
+            inner-end-box
+            body-box)
+          (if (and
+            (tc-foreach2-coordinate-type? (tc-resolve-type ctx outer-ty))
+            (tc-foreach2-coordinate-type? (tc-resolve-type ctx inner-ty)))
+            (match (tc-foreach2-bounds-ok
+              ctx
+              env
+              outer-start-box
+              outer-end-box
+              inner-start-box
+              inner-end-box)
+              [(Ok)
+                (match (tc-expr-id
+                  ctx
+                  (tc-bind-id (tc-bind-id env outer (I64)) inner (I64))
+                  body-box)
+                  [(Ok body-ty)
+                    (match (tc-expect
+                      body-ty
+                      (Unit)
+                      (tc-kind-message
+                        (Spmd)
+                        "typecheck: foreach body must be unit"))
+                      [(Ok)
+                        (match (tc-spmd-check-foreach2-body-with-env
+                          ctx
+                          (tc-context-expr-bases ctx)
+                          env
+                          (tc-spmd-env-from-type-env env)
+                          outer
+                          inner
+                          inner-start-box
+                          inner-end-box
+                          body-box)
+                          [(Ok) (Ok (Unit))]
+                          [(Err message) (Err message)])]
+                      [(Err message) (Err message)])]
+                  [(Err message) (Err message)])]
+              [(Err message) (Err message)])
+            (Err
+              (tc-kind-message
+                (Spmd)
+                "typecheck: rank-2 foreach coordinate types must be i64")))])]
     [(SpmdReduce reduce-box)
       (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
         [(Reduce op index index-ty start-box end-box init-box value-box)
@@ -61154,6 +62001,43 @@
                 seen
                 template?
                 body)]
+            [(Err message) (Err message)])]
+        [(Foreach2 outer _ a b inner _ c d body)
+          (match (tc-comptime-purity-node2-mode
+            ctx
+            expr-bases
+            env
+            (tc-global-shared-view bound)
+            (tc-global-shared-view chain)
+            (tc-global-shared-view seen)
+            template?
+            a
+            b)
+            [(Ok)
+              (match (tc-comptime-purity-node2-mode
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view bound)
+                (tc-global-shared-view chain)
+                (tc-global-shared-view seen)
+                template?
+                c
+                d)
+                [(Ok)
+                  (tc-comptime-purity-node-mode
+                    ctx
+                    expr-bases
+                    env
+                    (tc-comptime-purity-template-bound
+                      template?
+                      (tc-comptime-purity-template-bound template? bound outer)
+                      inner)
+                    chain
+                    seen
+                    template?
+                    body)]
+                [(Err message) (Err message)])]
             [(Err message) (Err message)])])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
@@ -71207,6 +72091,28 @@
       name)
     "assign to"))
 
+;; Move-check FIRST then SECOND in one scope, threading the moved set.
+(define (tc-move-check-expr-pair
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [first : ast.AstExpr]
+  [second : ast.AstExpr]) : TcMoveResult
+  (match (tc-move-check-expr
+    ctx
+    expr-bases
+    (tc-global-shared-view env)
+    (tc-global-shared-view locals)
+    (tc-global-shared-view loop-carried)
+    moved
+    first)
+    [(Ok moved1)
+      (tc-move-check-expr ctx expr-bases env locals loop-carried moved1 second)]
+    [(Err message) (Err message)]))
+
 (define (tc-move-check-expr
   [ctx : TcContext]
   [expr-bases : i64]
@@ -72612,7 +73518,76 @@
                             (Ok moved2))]
                         [(Err message) (Err message)]))]
                   [(Err message) (Err message)])]
-              [(Err message) (Err message)]))])]
+              [(Err message) (Err message)]))]
+        [(Foreach2
+            outer
+            outer-ty
+            a-box
+            b-box
+            inner
+            inner-ty
+            c-box
+            d-box
+            body-box)
+          (match (tc-move-check-expr-pair
+            ctx
+            expr-bases
+            env
+            (tc-global-shared-view locals)
+            (tc-global-shared-view loop-carried)
+            moved
+            (ast.ast-expr-segment-bases-get expr-bases a-box)
+            (ast.ast-expr-segment-bases-get expr-bases b-box))
+            [(Ok moved1)
+              (match (tc-move-check-expr-pair
+                ctx
+                expr-bases
+                env
+                (tc-global-shared-view locals)
+                (tc-global-shared-view loop-carried)
+                moved1
+                (ast.ast-expr-segment-bases-get expr-bases c-box)
+                (ast.ast-expr-segment-bases-get expr-bases d-box))
+                [(Ok moved2)
+                  (let
+                    [body-loop-carried : TcMovedSet
+                      (tc-moved-remove-root-state
+                        (tc-moved-remove-root-state
+                          (tc-moved-union locals (tc-moved-clone loop-carried))
+                          outer)
+                        inner)]
+                    (match (tc-move-check-loop-expr
+                      ctx
+                      expr-bases
+                      (tc-bind-id
+                        (tc-bind-id env outer (tc-resolve-type ctx outer-ty))
+                        inner
+                        (tc-resolve-type ctx inner-ty))
+                      (tc-moved-add
+                        (tc-moved-add
+                          (tc-move-enter-loop-body (tc-moved-clone locals))
+                          outer)
+                        inner)
+                      body-loop-carried
+                      (tc-moved-remove-root-state
+                        (tc-moved-remove-root-state loop-carried outer)
+                        inner)
+                      (tc-moved-clone moved2)
+                      (ast.ast-expr-segment-bases-get expr-bases body-box)
+                      true
+                      false)
+                      [(Ok _ _ breaks? break-moved-box)
+                        (if breaks?
+                          (tc-move-join-loop-exit
+                            expr-bases
+                            locals
+                            moved2
+                            (tc-moved-set-box-shared-view break-moved-box)
+                            (ast.ast-expr-segment-bases-get expr-bases body-box))
+                          (Ok moved2))]
+                      [(Err message) (Err message)]))]
+                [(Err message) (Err message)])]
+            [(Err message) (Err message)])])]
     [(SpmdReduce reduce-box)
       (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
         [(Reduce _ _ _ a-box b-box c-box d-box)
@@ -81691,6 +82666,26 @@
       (tc-moved-remove-root-state state remove-root-id)
       state)))
 
+;; Drop ROOT-ID's borrow state from every edge of RESULT, as an exit edge
+;; does for a loop's own binder; a rank-2 foreach binds two such roots.
+(define (tc-borrow-loop-result-remove-root
+  [result : TcBorrowLoopResult]
+  [root-id : i64]) : TcBorrowLoopResult
+  (match result
+    [(Err message) (Err message)]
+    [(Ok normal? normal-box repeats? repeat-box breaks? break-box)
+      (let
+        [normal : TcMovedSet (tc-moved-set-box-shared-view normal-box)]
+        [repeat : TcMovedSet (tc-moved-set-box-shared-view repeat-box)]
+        [break : TcMovedSet (tc-moved-set-box-shared-view break-box)]
+        (Ok
+          normal?
+          (box (tc-moved-remove-root-state (tc-moved-clone normal) root-id))
+          repeats?
+          (box (tc-moved-remove-root-state (tc-moved-clone repeat) root-id))
+          breaks?
+          (box (tc-moved-remove-root-state (tc-moved-clone break) root-id))))]))
+
 (define (tc-borrow-loop-result-exit-state
   [ctx : TcContext]
   [loop-env : TcTypeEnv]
@@ -84721,7 +85716,60 @@
                           body-entry
                           body)))]
                   [(Err message) (Err message)])]
-              [(Err message) (Err message)]))])]
+              [(Err message) (Err message)]))]
+        [(Foreach2
+            outer
+            outer-ty
+            a-box
+            b-box
+            inner
+            inner-ty
+            c-box
+            d-box
+            body-box)
+          (let
+            [body-env : TcTypeEnv
+              (tc-bind-id
+                (tc-bind-id env outer (tc-resolve-type ctx outer-ty))
+                inner
+                (tc-resolve-type ctx inner-ty))]
+            [body-locals : TcMovedSet
+              (tc-moved-add (tc-moved-add (tc-moved-clone locals) outer) inner)]
+            [bounds-borrowed : TcMovedSet
+              (try
+                (tc-borrow-check-exprs
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  borrowed
+                  (ast.ast-expr-cons
+                    a-box
+                    (ast.ast-expr-cons
+                      b-box
+                      (ast.ast-expr-cons
+                        c-box
+                        (ast.ast-expr-cons d-box (ast.ast-expr-list-new)))))))]
+            [body-entry : TcMovedSet
+              (tc-moved-remove-root-state
+                (tc-moved-remove-root-state bounds-borrowed outer)
+                inner)]
+            (tc-borrow-loop-result-exit-state
+              ctx
+              env
+              (tc-global-shared-view body-entry)
+              inner
+              (tc-borrow-loop-result-remove-root
+                (tc-borrow-check-loop-path-expr
+                  ctx
+                  expr-bases
+                  body-env
+                  env
+                  body-locals
+                  (tc-global-shared-view body-entry)
+                  body-entry
+                  (ast.ast-expr-segment-bases-get expr-bases body-box))
+                outer)))])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(Reduce _ _ _ a-box b-box c-box d-box)
@@ -85733,6 +86781,28 @@
               ctx
               expr-bases
               (ast.ast-expr-segment-bases-get expr-bases end-box))
+            (tc-borrow-gate-expr-relevant?
+              ctx
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases body-box)))]
+        [(Foreach2 _ _ a-box b-box _ _ c-box d-box body-box)
+          (or
+            (tc-borrow-gate-expr-relevant?
+              ctx
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases a-box))
+            (tc-borrow-gate-expr-relevant?
+              ctx
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases b-box))
+            (tc-borrow-gate-expr-relevant?
+              ctx
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases c-box))
+            (tc-borrow-gate-expr-relevant?
+              ctx
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases d-box))
             (tc-borrow-gate-expr-relevant?
               ctx
               expr-bases
@@ -94165,6 +95235,49 @@
                 (macro-spanned-symbol-id (ci.intern "foreach") span)
                 (reader.spanned-sexpr-list1 srange span)
                 sbody
+                span)))]
+        [(Foreach2
+            outer
+            outer-ty
+            outer-start-id
+            outer-end-id
+            inner
+            inner-ty
+            inner-start-id
+            inner-end-id
+            body-id)
+          (let
+            [souter-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [souter : reader.SpannedSexpr
+              (try
+                (macro-range-binder-bracket
+                  owner
+                  outer
+                  "foreach-index"
+                  outer-ty
+                  outer-start-id
+                  outer-end-id
+                  span
+                  souter-origin))]
+            [sinner-origin : ast.AstExpr (tc-global-shared-view origin)]
+            [sinner : reader.SpannedSexpr
+              (try
+                (macro-range-binder-bracket
+                  owner
+                  inner
+                  "foreach-index"
+                  inner-ty
+                  inner-start-id
+                  inner-end-id
+                  span
+                  sinner-origin))]
+            [sbody : reader.SpannedSexpr
+              (try (macro-child-to-spanned-sexpr owner body-id span origin))]
+            (Ok
+              (reader.spanned-sexpr-list3
+                (macro-spanned-symbol-id (ci.intern "foreach") span)
+                (reader.spanned-sexpr-list2 souter sinner span)
+                sbody
                 span)))])]
     [(ForeachActive lane body-id)
       (let
@@ -97061,6 +98174,32 @@
             produced
             expr-bases
             body-box
+            shared-path?)]
+        [(Foreach2 _ _ a-box b-box _ _ c-box d-box body-box)
+          (macro-hygiene-produced-note-id!
+            produced
+            expr-bases
+            a-box
+            shared-path?)
+          (macro-hygiene-produced-note-id!
+            produced
+            expr-bases
+            b-box
+            shared-path?)
+          (macro-hygiene-produced-note-id!
+            produced
+            expr-bases
+            c-box
+            shared-path?)
+          (macro-hygiene-produced-note-id!
+            produced
+            expr-bases
+            d-box
+            shared-path?)
+          (macro-hygiene-produced-note-id!
+            produced
+            expr-bases
+            body-box
             shared-path?)])]
     [(SpmdReduce payload)
       (match (__tl-box-place payload)
@@ -98443,7 +99582,32 @@
                   (macro-hygiene-type index-ty env macro-name)
                   (macro-hygiene-expr expr-bases start env macro-name depth)
                   (macro-hygiene-expr expr-bases end env macro-name depth)
-                  (macro-hygiene-expr expr-bases body body-env macro-name depth))]))])]
+                  (macro-hygiene-expr expr-bases body body-env macro-name depth))]))]
+        [(Foreach2 outer outer-ty a b inner inner-ty c d body)
+          (match (macro-hygiene-bind-name-id env macro-name depth outer)
+            [(Name nouter-id outer-env)
+              (match (macro-hygiene-bind-name-id
+                outer-env
+                macro-name
+                depth
+                inner)
+                [(Name ninner-id body-env)
+                  (ast.ast-expr-foreach2-id-with-pools
+                    env.pools
+                    nouter-id
+                    (macro-hygiene-type outer-ty env macro-name)
+                    (macro-hygiene-expr expr-bases a env macro-name depth)
+                    (macro-hygiene-expr expr-bases b env macro-name depth)
+                    ninner-id
+                    (macro-hygiene-type inner-ty env macro-name)
+                    (macro-hygiene-expr expr-bases c env macro-name depth)
+                    (macro-hygiene-expr expr-bases d env macro-name depth)
+                    (macro-hygiene-expr
+                      expr-bases
+                      body
+                      body-env
+                      macro-name
+                      depth))])])])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(Reduce op index index-ty start-box end-box init-box value-box)
@@ -103851,16 +105015,15 @@
             params.len
             false)]
         [(Shell catalog)
-          (begin
-            (cfg
-              compile-profile
-              (if (macro-tlci-resolved-catalog-dependency? catalog)
-                unit
-                (compiler-tc-macro-profile-metric-add!
-                  (tc-context-macro-state ctx)
-                  tc-profile-stdlib-shell-cache-hits
-                  1)))
-            No)]
+          (cfg
+            compile-profile
+            (if (macro-tlci-resolved-catalog-dependency? catalog)
+              unit
+              (compiler-tc-macro-profile-metric-add!
+                (tc-context-macro-state ctx)
+                tc-profile-stdlib-shell-cache-hits
+                1)))
+          No]
         [(MetadataOnly) No]
         [(Missing) No]
         [(Unavailable) No]))))
@@ -103994,172 +105157,158 @@
           declaration-id)
           [(None) No]
           [(Resolved catalog)
-            (begin
-              (cfg compile-profile (compiler-tc-walk-direct-marshal-start!))
-              (match (let
-                [capture-result : ResultMacroCapturedOperands
-                  (macro-capture-params-direct
-                    ctx
-                    decls
-                    (tc-global-shared-view fallback-module)
+            (cfg compile-profile (compiler-tc-walk-direct-marshal-start!))
+            (match (let
+              [capture-result : ResultMacroCapturedOperands
+                (macro-capture-params-direct
+                  ctx
+                  decls
+                  (tc-global-shared-view fallback-module)
+                  fallback-module-id
+                  type-env
+                  (tc-global-shared-view macro-name)
+                  (tc-global-shared-view params)
+                  (tc-global-shared-view expanded-args)
+                  (tc-ctfe-env ctx)
+                  (macro-expand-expr-type-macro?
+                    (tc-context-macro-state ctx)
                     fallback-module-id
-                    type-env
-                    (tc-global-shared-view macro-name)
-                    (tc-global-shared-view params)
-                    (tc-global-shared-view expanded-args)
-                    (tc-ctfe-env ctx)
-                    (macro-expand-expr-type-macro?
+                    macro-name-id)
+                  (tc-global-shared-view call-expr))]
+              (cfg compile-profile (compiler-tc-walk-direct-marshal-finish!))
+              capture-result)
+              [(Err diag) (Err diag)]
+              [(Ok operands count base-env syntax-pools)
+                (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
+                  (tc-context-ctfe-macro-state ctx))
+                (macro-result-provenance-reset-with-captured-body!
+                  (tc-context-ctfe-macro-state ctx)
+                  (macro-binding-prefix-transformer?
+                    ctx
+                    fallback-module
+                    fallback-module-id
+                    macro-name-id
+                    (tc-global-shared-view params)))
+                (macro-hygiene-produced-eval-start-with-pools!
+                  (tc-context-macro-state ctx)
+                  syntax-pools)
+                (cfg compile-profile (compiler-tc-macro-profile-start))
+                (match (let
+                  [native-result : MacroNativeStdlibTlciResult
+                    (macro-try-stdlib-tlci-native-resolved
+                      syntax-pools
                       (tc-context-macro-state ctx)
-                      fallback-module-id
-                      macro-name-id)
-                    (tc-global-shared-view call-expr))]
-                (begin
-                  (cfg
-                    compile-profile
-                    (compiler-tc-walk-direct-marshal-finish!))
-                  capture-result))
-                [(Err diag) (Err diag)]
-                [(Ok operands count base-env syntax-pools)
-                  (begin
-                    (ctfe_support.ctfe-result-hygiene-free-reset-for-state!
-                      (tc-context-ctfe-macro-state ctx))
-                    (macro-result-provenance-reset-with-captured-body!
-                      (tc-context-ctfe-macro-state ctx)
-                      (macro-binding-prefix-transformer?
-                        ctx
-                        fallback-module
-                        fallback-module-id
-                        macro-name-id
-                        (tc-global-shared-view params)))
-                    (macro-hygiene-produced-eval-start-with-pools!
-                      (tc-context-macro-state ctx)
-                      syntax-pools)
-                    (cfg compile-profile (compiler-tc-macro-profile-start))
-                    (match (let
-                      [native-result : MacroNativeStdlibTlciResult
-                        (macro-try-stdlib-tlci-native-resolved
-                          syntax-pools
-                          (tc-context-macro-state ctx)
-                          identity
-                          (tc-global-shared-view catalog)
-                          (tc-global-shared-view params)
-                          ret
-                          base-env
-                          call-expr
-                          (tc-global-shared-view operands)
-                          count
-                          true)]
-                      native-result)
-                      [(Value value)
-                        (begin
-                          (tc-context-install-pools! ctx)
-                          (cfg
-                            compile-profile
-                            (begin
-                              (if (macro-tlci-resolved-catalog-dependency?
-                                catalog)
-                                unit
-                                (compiler-tc-macro-profile-metric-add!
-                                  (tc-context-macro-state ctx)
-                                  tc-profile-stdlib-direct-expr-results
-                                  1))
-                              (compiler-tc-macro-profile-finish
-                                (tc-context-macro-state ctx)
-                                (ci.intern-composite-pair-id
-                                  fallback-module-id
-                                  macro-name-id)
-                                macro-name
-                                expanded-args)))
-                          (Value
-                            (ctfe_support.ctfe-capture-syntax-value-with-pools
-                              value
-                              syntax-pools)))]
-                      [(Err diag)
-                        (begin
-                          (cfg
-                            compile-profile
-                            (compiler-tc-macro-profile-finish
-                              (tc-context-macro-state ctx)
-                              (ci.intern-composite-pair-id
-                                fallback-module-id
-                                macro-name-id)
-                              macro-name
-                              expanded-args))
-                          (Err (box diag)))]
-                      [(Shell)
-                        (begin
-                          (cfg
-                            compile-profile
-                            (macro-note-embedded-tlci-resolved-fallback!
-                              (tc-context-macro-state ctx)
-                              catalog)
-                            unit)
-                          (macro-dependency-tlci-note-if!
+                      identity
+                      (tc-global-shared-view catalog)
+                      (tc-global-shared-view params)
+                      ret
+                      base-env
+                      call-expr
+                      (tc-global-shared-view operands)
+                      count
+                      true)]
+                  native-result)
+                  [(Value value)
+                    (tc-context-install-pools! ctx)
+                    (cfg
+                      compile-profile
+                      (begin
+                        (if (macro-tlci-resolved-catalog-dependency? catalog)
+                          unit
+                          (compiler-tc-macro-profile-metric-add!
                             (tc-context-macro-state ctx)
-                            catalog
-                            tc-dependency-tlci-direct-shell-env-folds)
-                          (cfg
-                            compile-profile
-                            (compiler-tc-macro-profile-metric-add!
-                              (tc-context-macro-state ctx)
-                              tc-profile-stdlib-direct-shell-env-folds
-                              1))
-                          (PreparedEnv
-                            (macro-fold-captured-operands-env
-                              params
-                              operands
-                              count
-                              (ctfe_support.ctfe-env-rebase-syntax-pools
-                                base-env
-                                syntax-pools))))]
-                      [(No)
-                        (begin
-                          (cfg
-                            compile-profile
-                            (macro-note-embedded-tlci-resolved-fallback!
-                              (tc-context-macro-state ctx)
-                              catalog)
-                            unit)
-                          BoundFallback)]))]))]
+                            tc-profile-stdlib-direct-expr-results
+                            1))
+                        (compiler-tc-macro-profile-finish
+                          (tc-context-macro-state ctx)
+                          (ci.intern-composite-pair-id
+                            fallback-module-id
+                            macro-name-id)
+                          macro-name
+                          expanded-args)))
+                    (Value
+                      (ctfe_support.ctfe-capture-syntax-value-with-pools
+                        value
+                        syntax-pools))]
+                  [(Err diag)
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-profile-finish
+                        (tc-context-macro-state ctx)
+                        (ci.intern-composite-pair-id
+                          fallback-module-id
+                          macro-name-id)
+                        macro-name
+                        expanded-args))
+                    (Err (box diag))]
+                  [(Shell)
+                    (cfg
+                      compile-profile
+                      (macro-note-embedded-tlci-resolved-fallback!
+                        (tc-context-macro-state ctx)
+                        catalog)
+                      unit)
+                    (macro-dependency-tlci-note-if!
+                      (tc-context-macro-state ctx)
+                      catalog
+                      tc-dependency-tlci-direct-shell-env-folds)
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-profile-metric-add!
+                        (tc-context-macro-state ctx)
+                        tc-profile-stdlib-direct-shell-env-folds
+                        1))
+                    (PreparedEnv
+                      (macro-fold-captured-operands-env
+                        params
+                        operands
+                        count
+                        (ctfe_support.ctfe-env-rebase-syntax-pools
+                          base-env
+                          syntax-pools)))]
+                  [(No)
+                    (cfg
+                      compile-profile
+                      (macro-note-embedded-tlci-resolved-fallback!
+                        (tc-context-macro-state ctx)
+                        catalog)
+                      unit)
+                    BoundFallback])])]
           [(Shell catalog)
-            (begin
-              (cfg
-                compile-profile
-                (macro-note-embedded-tlci-shell-fallback!
-                  (tc-context-macro-state ctx)
-                  catalog)
-                unit)
-              BoundFallback)]
+            (cfg
+              compile-profile
+              (macro-note-embedded-tlci-shell-fallback!
+                (tc-context-macro-state ctx)
+                catalog)
+              unit)
+            BoundFallback]
           [(MetadataOnly)
-            (begin
-              (cfg
-                compile-profile
-                (macro-note-embedded-tlci-slot-fallback!
-                  (tc-context-macro-state ctx)
-                  dependency-slot
-                  tc-profile-stdlib-catalog-misses)
-                unit)
-              BoundFallback)]
+            (cfg
+              compile-profile
+              (macro-note-embedded-tlci-slot-fallback!
+                (tc-context-macro-state ctx)
+                dependency-slot
+                tc-profile-stdlib-catalog-misses)
+              unit)
+            BoundFallback]
           [(Missing)
-            (begin
-              (cfg
-                compile-profile
-                (macro-note-embedded-tlci-slot-fallback!
-                  (tc-context-macro-state ctx)
-                  dependency-slot
-                  tc-profile-stdlib-catalog-misses)
-                unit)
-              BoundFallback)]
+            (cfg
+              compile-profile
+              (macro-note-embedded-tlci-slot-fallback!
+                (tc-context-macro-state ctx)
+                dependency-slot
+                tc-profile-stdlib-catalog-misses)
+              unit)
+            BoundFallback]
           [(Unavailable)
-            (begin
-              (cfg
-                compile-profile
-                (macro-note-embedded-tlci-slot-fallback!
-                  (tc-context-macro-state ctx)
-                  dependency-slot
-                  tc-profile-stdlib-load-failures)
-                unit)
-              BoundFallback)])))))
+            (cfg
+              compile-profile
+              (macro-note-embedded-tlci-slot-fallback!
+                (tc-context-macro-state ctx)
+                dependency-slot
+                tc-profile-stdlib-load-failures)
+              unit)
+            BoundFallback])))))
 
 (cfg
   (not embedded-stdlib-tlci)
@@ -106288,6 +107437,57 @@
                           nstart
                           nend
                           nbody))]
+                    [(Err diag) (Err diag)])]
+                [(Err diag) (Err diag)])]
+            [(Err diag) (Err diag)])]
+        [(Foreach2
+            outer
+            outer-ty
+            a-box
+            b-box
+            inner
+            inner-ty
+            c-box
+            d-box
+            body-box)
+          (match (macro-expand-node ctx env decls depth a-box)
+            [(Ok na)
+              (match (macro-expand-node ctx env decls depth b-box)
+                [(Ok nb)
+                  (match (macro-expand-node ctx env decls depth c-box)
+                    [(Ok nc)
+                      (match (macro-expand-node ctx env decls depth d-box)
+                        [(Ok nd)
+                          (match (macro-expand-node
+                            ctx
+                            (tc-bind-id
+                              (tc-bind-id
+                                env
+                                outer
+                                (tc-resolve-type
+                                  ctx
+                                  (tc-global-shared-view outer-ty)))
+                              inner
+                              (tc-resolve-type
+                                ctx
+                                (tc-global-shared-view inner-ty)))
+                            decls
+                            depth
+                            body-box)
+                            [(Ok nbody)
+                              (Ok
+                                (ast.ast-expr-foreach2-id
+                                  outer
+                                  outer-ty
+                                  na
+                                  nb
+                                  inner
+                                  inner-ty
+                                  nc
+                                  nd
+                                  nbody))]
+                            [(Err diag) (Err diag)])]
+                        [(Err diag) (Err diag)])]
                     [(Err diag) (Err diag)])]
                 [(Err diag) (Err diag)])]
             [(Err diag) (Err diag)])])]
@@ -109363,7 +110563,29 @@
             (or
               (macro-expr-might-fire? state expr-bases start)
               (macro-expr-might-fire? state expr-bases end)
-              (macro-expr-might-fire? state expr-bases body)))])]
+              (macro-expr-might-fire? state expr-bases body)))]
+        [(Foreach2 _ _ a-box b-box _ _ c-box d-box body-box)
+          (or
+            (macro-expr-might-fire?
+              state
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases a-box))
+            (macro-expr-might-fire?
+              state
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases b-box))
+            (macro-expr-might-fire?
+              state
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases c-box))
+            (macro-expr-might-fire?
+              state
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases d-box))
+            (macro-expr-might-fire?
+              state
+              expr-bases
+              (ast.ast-expr-segment-bases-get expr-bases body-box)))])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(Reduce _ _ _ start-box end-box init-box value-box)
@@ -109897,7 +111119,17 @@
             (ctfe-node-has-type-literal? expr-bases state s)
             (ctfe-reflection-prescan-or
               (ctfe-node-has-type-literal? expr-bases state e)
-              (ctfe-node-has-type-literal? expr-bases state b)))])]
+              (ctfe-node-has-type-literal? expr-bases state b)))]
+        [(Foreach2 _ _ a b _ _ c d body)
+          (ctfe-reflection-prescan-or
+            (ctfe-node-has-type-literal? expr-bases state a)
+            (ctfe-reflection-prescan-or
+              (ctfe-node-has-type-literal? expr-bases state b)
+              (ctfe-reflection-prescan-or
+                (ctfe-node-has-type-literal? expr-bases state c)
+                (ctfe-reflection-prescan-or
+                  (ctfe-node-has-type-literal? expr-bases state d)
+                  (ctfe-node-has-type-literal? expr-bases state body)))))])]
     [(StructGet i _) (ctfe-node-has-type-literal? expr-bases state i)]
     [(StructSet i _ v)
       (ctfe-reflection-prescan-or

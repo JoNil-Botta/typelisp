@@ -68,6 +68,8 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 16: AstExpr tag 89 adds the rank-2 Foreach2 domain.
+  ;;
   ;; 15: AstPattern tag 7 adds the `(slice ...)` pattern: a rest flag, then
   ;; the item list.
   ;;
@@ -117,7 +119,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  15)
+  16)
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)

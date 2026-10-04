@@ -893,6 +893,42 @@
     "lambda operands reset early-exit scope"))
 
 (test
+  semantic-facts-rank2-foreach-coordinates
+  (test.assert-true
+    (semantic-facts-test-source
+      "(define (value) : unit (foreach ([lane-probe : i64 0 2] [x : i64 0 4]) (let [v : i64 (+ lane-probe x)] unit)))")
+    "rank-2 foreach check, outer coordinate")
+  (test.assert-true
+    (> semantic-facts-test-forbidden 0)
+    "rank-2 foreach cannot return or propagate")
+  (test.assert-true
+    (> semantic-facts-test-forbidden-lane-operands 0)
+    "outer coordinate operands were observed")
+  (test.assert-i64-eq
+    semantic-facts-test-allowed-lane-operands
+    0
+    "outer coordinate operands forbid early exit")
+  (test.assert-i64-eq
+    semantic-facts-test-missing-binding-spans
+    0
+    "both rank-2 coordinates retain their source token")
+  (test.assert-true
+    (semantic-facts-test-source
+      "(define (value) : unit (foreach ([y : i64 0 2] [lane-probe : i64 0 4]) (let [v : i64 (+ y lane-probe)] unit)))")
+    "rank-2 foreach check, inner coordinate")
+  (test.assert-true
+    (> semantic-facts-test-forbidden-lane-operands 0)
+    "inner coordinate operands were observed")
+  (test.assert-i64-eq
+    semantic-facts-test-allowed-lane-operands
+    0
+    "inner coordinate operands forbid early exit")
+  (test.assert-i64-eq
+    semantic-facts-test-missing-binding-spans
+    0
+    "the inner coordinate retains its source token"))
+
+(test
   semantic-facts-spmd-error-restores-the-next-function-scope
   (test.assert-true
     (not

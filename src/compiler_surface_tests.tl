@@ -863,6 +863,56 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-ast-push-int [pools : ast.AstNodePoolContext] [value : i64]) : i64
+    (ast.ast-node-pool-context-expr-push
+      pools
+      (Literal (ast.ast-lit-int value)))))
+
+;; A rank-2 domain keeps both coordinate names and all four bounds in binding
+;; order through the codec.
+(cfg
+  compiler-surface-selftest
+  (define (surface-ast-hydrated-foreach2-ok? [pools : ast.AstNodePoolContext]) : bool
+    (let
+      [id : i64 0]
+      [ok : bool false]
+      (while (and (not ok) (< id (ast.ast-node-pool-context-expr-len pools)))
+        (match (ast.ast-node-pool-context-expr-get pools id)
+          [(Foreach payload)
+            (match (deref payload)
+              [(Foreach2
+                  outer
+                  (I64)
+                  outer-start
+                  outer-end
+                  inner
+                  (I64)
+                  inner-start
+                  inner-end
+                  body)
+                (set!
+                  ok
+                  (and
+                    (surface_identity.surface-identity-string-eq?
+                      (ci.intern-str outer)
+                      "domain-row")
+                    (surface_identity.surface-identity-string-eq?
+                      (ci.intern-str inner)
+                      "domain-column")
+                    (surface-ast-int-node-value? (& pools) outer-start 41)
+                    (surface-ast-int-node-value? (& pools) outer-end 42)
+                    (surface-ast-int-node-value? (& pools) inner-start 43)
+                    (surface-ast-int-node-value? (& pools) inner-end 44)
+                    (match (ast.ast-node-pool-context-expr-get pools body)
+                      [(Literal (Unit)) true]
+                      [_ false])))]
+              [_ unit])]
+          [_ unit])
+        (set! id (+ id 1)))
+      ok)))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-ast-invalidate-param-ok?
     [pools : ast.AstNodePoolContext]
     [params : (& params ast.AstParamList)]
@@ -926,6 +976,8 @@
       [compact-index-id : i64 (ci.intern "compact-index")]
       [compact-slot-id : i64 (ci.intern "compact-slot")]
       [active-lane-id : i64 (ci.intern "active-lane")]
+      [domain-row-id : i64 (ci.intern "domain-row")]
+      [domain-column-id : i64 (ci.intern "domain-column")]
       [kind-i64-id : i64 (ci.intern "i64")]
       [kind-struct-id : i64 (ci.intern "struct")]
       [kind-type-var-id : i64 (ci.intern "type-var")]
@@ -1006,14 +1058,26 @@
           source-pools
           active-lane-id
           (ast.ast-expr-lane-value-with-pools source-pools left))]
-      [body-items : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      [domain : i64
+        (ast.ast-expr-foreach2-id-with-pools
+          source-pools
+          domain-row-id
+          (I64)
+          (surface-ast-push-int source-pools 41)
+          (surface-ast-push-int source-pools 42)
+          domain-column-id
+          (I64)
+          (surface-ast-push-int source-pools 43)
+          (surface-ast-push-int source-pools 44)
+          (ast.ast-node-pool-context-expr-push source-pools (Literal Unit)))]
+      [body-items : (__tl_dyn-array i64) (__tl_make-array i64 5)]
       [combined-body : i64
         (ast.ast-node-pool-context-expr-push
           source-pools
           (Begin
             (ast.AstExprList
               (owned_view.compiler-owned-shared-view body-items)
-              4)))]
+              5)))]
       [macro-type-kinds : ast.AstMacroTypeKindList
         (ast.ast-macro-type-kind-list-with-length 3)]
       [macro-param-slots : (__tl_dyn-array ast.AstMacroParam)
@@ -1030,6 +1094,7 @@
       (set! (array-ref body-items 1) tuple-set)
       (set! (array-ref body-items 2) compact)
       (set! (array-ref body-items 3) active)
+      (set! (array-ref body-items 4) domain)
       (ast.ast-macro-type-kind-list-set! (&mut macro-type-kinds) 0 kind-i64-id)
       (ast.ast-macro-type-kind-list-set!
         (&mut macro-type-kinds)
@@ -1206,7 +1271,7 @@
                               (=
                                 (ast.ast-node-pool-context-expr-len
                                   hydration.pools)
-                                13)
+                                19)
                               (ast.ast-node-pool-context-expr-span-oracle-ok?
                                 hydration.pools)
                               (= (ast.ast-decl-list-len (& hydration.decls)) 4)
@@ -1465,6 +1530,9 @@
                                 (owned_view.compiler-owned-shared-view
                                   hydration.pools))
                               (surface-ast-hydrated-foreach-active-ok?
+                                (owned_view.compiler-owned-shared-view
+                                  hydration.pools))
+                              (surface-ast-hydrated-foreach2-ok?
                                 hydration.pools))]))]))])])))))
 
 (cfg

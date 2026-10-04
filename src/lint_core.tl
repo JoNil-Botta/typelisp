@@ -3997,7 +3997,26 @@
                 (owned_view.compiler-owned-shared-view scope))
               (let
                 [scope-arg (lint-unsafe-scope-add-id scope index)]
-                (lint-unsafe-scan-node body scope-arg)))])]
+                (lint-unsafe-scan-node body scope-arg)))]
+          [(Foreach2 outer _ a b inner _ c d body)
+            (let
+              [bounds : LintUnsafeScan
+                (lint-unsafe-scan-combine
+                  (lint-unsafe-scan-two-nodes
+                    a
+                    b
+                    (owned_view.compiler-owned-shared-view scope))
+                  (lint-unsafe-scan-two-nodes
+                    c
+                    d
+                    (owned_view.compiler-owned-shared-view scope)))]
+              [body-scope : LintUnsafeScope
+                (lint-unsafe-scope-add-id
+                  (lint-unsafe-scope-add-id scope outer)
+                  inner)]
+              (lint-unsafe-scan-combine
+                bounds
+                (lint-unsafe-scan-node body body-scope)))])]
       [(SpmdReduce reduce-box)
         (match (__tl-box-place reduce-box)
           [(Reduce _ index _ start end init value)
@@ -4873,6 +4892,45 @@
                 after-range.findings)]
             [with-body : LintCopyOnUpdateState
               (lint-copy-on-update-expr body with-local span)]
+            (lint-copy-on-update-state-with
+              (owned_view.compiler-owned-shared-view with-body)
+              outer-locals
+              with-body.findings))]
+        [(Foreach2 outer outer-ty a b inner inner-ty c d body)
+          (let
+            [after-range : LintCopyOnUpdateState
+              (lint-copy-on-update-expr
+                d
+                (lint-copy-on-update-expr
+                  c
+                  (lint-copy-on-update-expr
+                    b
+                    (lint-copy-on-update-expr
+                      a
+                      (owned_view.compiler-owned-shared-view state)
+                      span)
+                    span)
+                  span)
+                span)]
+            [outer-locals : LintCopyOnUpdateLocalList
+              (owned_view.compiler-owned-shared-view after-range.locals)]
+            [with-locals : LintCopyOnUpdateState
+              (lint-copy-on-update-state-with
+                (owned_view.compiler-owned-shared-view after-range)
+                (lint-copy-on-update-local-add
+                  (lint-copy-on-update-local-add
+                    (owned_view.compiler-owned-shared-view outer-locals)
+                    (ci.intern-str outer)
+                    (lint-copy-on-update-struct-name-from-type
+                      state.shapes
+                      outer-ty))
+                  (ci.intern-str inner)
+                  (lint-copy-on-update-struct-name-from-type
+                    state.shapes
+                    inner-ty))
+                after-range.findings)]
+            [with-body : LintCopyOnUpdateState
+              (lint-copy-on-update-expr body with-locals span)]
             (lint-copy-on-update-state-with
               (owned_view.compiler-owned-shared-view with-body)
               outer-locals
@@ -8740,6 +8798,49 @@
                   end
                   (lint-unused-variable-expr start scanned.state span)
                   span))
+              span))]
+        [(Foreach2 outer outer-ty a b inner inner-ty c d body)
+          (let
+            [outer-scan : LintNameCaseLocalScan
+              (if state.name-case
+                (lint-unused-variable-scan-form-local-name
+                  (owned_view.compiler-owned-shared-view state)
+                  (ci.intern-str outer)
+                  span
+                  "(foreach")
+                (LintNameCaseLocalScan
+                  (owned_view.compiler-owned-shared-view state)
+                  0))]
+            [inner-scan : LintNameCaseLocalScan
+              (if state.name-case
+                (let
+                  [limit : i64 (lint-source-span-end-index state.source span)]
+                  (lint-unused-variable-scan-local-name
+                    outer-scan.state
+                    (ci.intern-str inner)
+                    outer-scan.next-index
+                    (if (< limit 0)
+                      (string.string-length state.source)
+                      limit)))
+                (LintNameCaseLocalScan outer-scan.state 0))]
+            (lint-unused-variable-scan-body-scope
+              inner
+              outer
+              body
+              (lint-unused-variable-type
+                inner-ty
+                (lint-unused-variable-type
+                  outer-ty
+                  (lint-unused-variable-expr
+                    d
+                    (lint-unused-variable-expr
+                      c
+                      (lint-unused-variable-expr
+                        b
+                        (lint-unused-variable-expr a inner-scan.state span)
+                        span)
+                      span)
+                    span)))
               span))])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)

@@ -71463,7 +71463,19 @@
         (tc-global-shared-view receiver))]
     (if (< operand-id 0)
       receiver
-      (match (tc-expr ctx env projection)
+      (match (match (tc-global-shared-view projection)
+        [(ast.AstExpr.StructGet receiver-id field-id)
+          ;; Consumption uses the intrinsic receiver type recorded for this
+          ;; same body and node. Reuse the ordinary field-type resolver; a
+          ;; missing fact keeps the full query, including raw-deref recovery.
+          (match (tc-body-type-fact-lookup-profiled
+            "projection.copy_receiver"
+            ctx
+            receiver-id)
+            [(TcBodyTypeFact.Hit receiver-ty)
+              (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+            [(TcBodyTypeFact.Miss) (tc-expr ctx env projection)])]
+        [_ (tc-expr ctx env projection)])
         [(ResultTcType.Ok projected-ty)
           (if (tc-type-copyable? ctx projected-ty)
             (ast.ast-expr-segment-bases-get expr-bases operand-id)

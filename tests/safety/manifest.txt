@@ -392,6 +392,7 @@ runtime_memory_abort_site_safe_reject|check-fail|tests/safety/runtime_memory_abo
 runtime_memory_abort_forward_safe_reject|check-fail|tests/safety/runtime_memory_abort_forward_safe_reject.tl|-|runtime/oob-abort-at requires unsafe context
 runtime_memory_callable_launder_reject|check-fail|tests/safety/runtime_memory_callable_launder_reject.tl|-|runtime/mem-copy-fwd is an unsafe callable and cannot be used as a plain function value
 runtime_memory_unsafe_call_ok|check-ok|tests/safety/runtime_memory_unsafe_call_ok.tl|-|-
+thread_local_word_unsafe_call_reject|check-fail|tests/safety/thread_local_word_unsafe_call_reject.tl|-|storage requires unsafe context
 sync_atomic_raw_alias_safe_reject|check-fail|tests/safety/sync_atomic_raw_alias_safe_reject.tl|-|sync/atomic-i64-load-ptr requires unsafe context
 format_byte_buf_raw_safe_reject|check-fail|tests/safety/format_byte_buf_raw_safe_reject.tl|-|byte_buf/format-write-raw requires unsafe context
 format_text_buf_raw_safe_reject|check-fail|tests/safety/format_text_buf_raw_safe_reject.tl|-|text_buf/format-write-raw requires unsafe context

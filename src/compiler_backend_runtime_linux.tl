@@ -13,6 +13,9 @@
     .globl tl_current_arena
 tl_current_arena:
     .zero 8
+    .globl tl_thread_local_word
+tl_thread_local_word:
+    .zero 8
 "
     (if backtrace
       "    .globl tl_backtrace_stack_low
@@ -575,6 +578,9 @@ tl_alloc_aligned:
 (define (compiler-backend-runtime-linux-arena-functions-base
   [profile : bool]
   [arena-debug : bool]) : String
+  ;; The native entry and each clone worker install a fresh zeroed TLS mapping.
+  ;; Its negative TPOFF words and FS:0 self pointer fit in the 4096-byte mapping;
+  ;; the storage word is independent of arena switching and reclamation.
   (str_cat.str-cat
     "    .globl tl_thread_init
     .type tl_thread_init,@function
@@ -589,9 +595,9 @@ tl_thread_init:
     syscall
     testq %rax, %rax
     js .L_tl_thread_init_abort
-    movq $tl_current_arena@tpoff, %rdi
-    subq %rdi, %rax
     movq %rax, %rsi
+    subq $tl_current_arena@tpoff, %rsi
+    movq %rsi, 0(%rsi)
     movq $0x1002, %rdi
     movq $158, %rax
     syscall
@@ -603,6 +609,14 @@ tl_thread_init:
     movq $134, %rdi
     syscall
     .size tl_thread_init, . - tl_thread_init
+
+    .globl tl_thread_local_word_addr
+    .type tl_thread_local_word_addr,@function
+tl_thread_local_word_addr:
+    movq %fs:0, %rax
+    addq $tl_thread_local_word@tpoff, %rax
+    ret
+    .size tl_thread_local_word_addr, . - tl_thread_local_word_addr
 
     .globl tl_arena_current
     .type tl_arena_current,@function

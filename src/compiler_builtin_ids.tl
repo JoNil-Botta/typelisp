@@ -52,6 +52,8 @@
   -1)
 (define compiler-builtin-id-tl-thread-init : i64
   -1)
+(define compiler-builtin-id-tl-thread-local-word-addr : i64
+  -1)
 (define compiler-builtin-id-tl-atomic-i64-load-ptr : i64
   -1)
 (define compiler-builtin-id-tl-atomic-i64-store-ptr : i64
@@ -880,6 +882,10 @@
             "tl_arena_debug_assert_pool_install")
           (id compiler-builtin-id-tl-thread-entry-ptr 9 "tl_thread_entry_ptr")
           (id compiler-builtin-id-tl-thread-init 10 "tl_thread_init")
+          (id
+            compiler-builtin-id-tl-thread-local-word-addr
+            323
+            "tl_thread_local_word_addr")
           (id
             compiler-builtin-id-tl-atomic-i64-load-ptr
             11
@@ -2602,6 +2608,7 @@
 (define (compiler-builtin-backend-runtime-core-id? [name-id : i64]) : bool
   (compiler-builtin-refresh!)
   (or
+    (= name-id compiler-builtin-id-tl-thread-local-word-addr)
     (compiler-builtin-id-any4?
       name-id
       compiler-builtin-id-tl-alloc
@@ -2696,6 +2703,7 @@
 (define (compiler-builtin-backend-runtime-always-provided-id? [name-id : i64]) : bool
   (compiler-builtin-refresh!)
   (or
+    (= name-id compiler-builtin-id-tl-thread-local-word-addr)
     (compiler-builtin-id-any4?
       name-id
       compiler-builtin-id-tl-arena-poison-enable
@@ -3102,6 +3110,29 @@
 (define (compiler-builtin-c-fn-check-id? [name-id : i64]) : bool
   (compiler-builtin-refresh!)
   (= name-id compiler-builtin-id-c-fn-check))
+
+(cfg
+  test
+  (test
+    compiler-builtin-thread-local-word-reset
+    (begin
+      (ci.intern-reset!)
+      (compiler-builtin-reset!)
+      (compiler-builtin-initialize-for-parse!)
+      (compiler-builtin-refresh!)
+      (let
+        [snapshot : CompilerBuiltinIdsState (state-capture)]
+        [word-id : i64 compiler-builtin-id-tl-thread-local-word-addr]
+        (set! compiler-builtin-id-tl-thread-local-word-addr -1)
+        (state-install! snapshot)
+        (if (and
+          (= compiler-builtin-id-tl-thread-local-word-addr word-id)
+          (= (state-ref snapshot 323) word-id)
+          (compiler-builtin-backend-runtime-core-id? word-id)
+          (compiler-builtin-backend-runtime-always-provided-id? word-id)
+          (string.eq (ci.intern-str word-id) "tl_thread_local_word_addr"))
+          unit
+          (io.panic "compiler TLS storage builtin identity lifecycle failed"))))))
 
 (cfg
   test

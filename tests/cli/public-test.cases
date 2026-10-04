@@ -68,6 +68,24 @@ stdout match Wrote[ ]
 in file {{dir}}/inline_test_pass.s
 not-contains __tl_inline_test
 
+case borrowed-struct-pattern-string-opt0
+run test "{{root}}/tests/integration/borrowed_struct_pattern_string.tl" --target {{host-target}} --opt-level 0 --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains ok borrowed-struct-pattern-string
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+
+case borrowed-struct-pattern-string-opt1
+run test "{{root}}/tests/integration/borrowed_struct_pattern_string.tl" --target {{host-target}} --opt-level 1 --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains ok borrowed-struct-pattern-string
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+
+case borrowed-struct-pattern-string-opt2
+run test "{{root}}/tests/integration/borrowed_struct_pattern_string.tl" --target {{host-target}} --opt-level 2 --stdlib-root "{{root}}/stdlib"
+stdout empty
+stderr contains ok borrowed-struct-pattern-string
+stderr contains TypeLisp tests: 1 passed; 0 failed; 0 ignored; 0 slow-skipped; 1 total
+
 # #8169: an inline-test harness prunes runtime declarations to those its tests
 # reach. A constant named only by an imported module's top-level declaration
 # macro call is such a reference and must survive, or the expansion reads an

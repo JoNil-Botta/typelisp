@@ -645,9 +645,7 @@
         (if (or (< target-index 0) (>= target-index (array-length entries)))
           (Err "git delta: invalid REF entry target")
           (if (string.eq
-            (git-delta-entry-at entries target-index)
-            .
-            object-id
+            (git-delta-entry-at entries target-index).object-id
             object-id)
             (Ok target-index)
             (Err "git delta: inconsistent REF entry lookup")))]
@@ -655,9 +653,7 @@
         (if (or (< target-index 0) (>= target-index (array-length thin-bases)))
           (Err "git delta: invalid thin base target")
           (if (string.eq
-            (git-delta-thin-at thin-bases target-index)
-            .
-            object-id
+            (git-delta-thin-at thin-bases target-index).object-id
             object-id)
             (Ok (- 0 (+ target-index 1)))
             (Err "git delta: inconsistent thin base lookup")))]

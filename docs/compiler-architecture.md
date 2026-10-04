@@ -76,6 +76,28 @@ borrowed-Slice boundaries even on default native declarations. The broader
 explicit-C ABI checker remains separate because private runtime declarations
 also use native contracts outside the ordinary C signature subset.
 
+Borrowed pattern bindings share one type/lowering contract:
+`tc-borrowed-binding-type` copies `Copy` parts, projects boxed storage as a
+shared reference, and otherwise retains a reference to the part. Lowering uses
+`lower-borrowed-binding-expr` for enum, struct, tuple and array name patterns;
+memory-class copies need independent storage, while String references load the
+stored handle before forming a `str` view. Scalar enum copies may retain their
+payload address only when `lower-deferred-copy-scan` proves every read precedes
+any possible memory write. Calls, stores and cleanup boundaries invalidate that
+proof; loops, captures, address-taking and unmodeled uses require an eager copy.
+Deferred IDs name fresh locals and keep their by-value type. Reading one emits
+a load, and borrowing one first copies the loaded value into its own storage.
+
+A direct call argument may explicitly borrow a temporary. Its operand is a
+by-value position evaluated in argument order, and its reserved lifetime ends
+with the call. Typechecking rejects any result or mutable referent that could
+retain that lifetime. The nested-call record is restored on both success and
+error. Lowering keeps storage through the call and records owned cleanup in
+the existing `LowerArgWriteback` sequence, reloading mutable register-class
+storage before cleanup. Such a call cannot become a tail call. A later argument
+that can leave early is rejected when it would bypass an earlier temporary's
+cleanup; cleanup-containing aggregates without their own disposer are rejected.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM

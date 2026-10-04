@@ -8827,9 +8827,14 @@
   [entry : (& entry OptCopyEntry)]
   [var : i64]) : bool
   (match entry
-    [(Copy id value) (or (= (deref id) var) (opt-value-is-var? value var))]
+    [(Copy id value)
+      (or
+        (= (owned_view.compiler-owned-pattern-copy id) var)
+        (opt-value-is-var? value var))]
     [(PackWord group _ value)
-      (or (= (deref group) var) (opt-value-is-var? value var))]))
+      (or
+        (= (owned_view.compiler-owned-pattern-copy group) var)
+        (opt-value-is-var? value var))]))
 
 (define (opt-copy-invalidate-var [env : OptCopyEnv] [var : i64]) : OptCopyEnv
   (let
@@ -104704,13 +104709,21 @@
   [ret : (& ret ast.AstType)]) : bool
   (match (match ret
     [(Struct name)
-      (ast.AstMaybeNominalKey.Some (ast.ast-nominal-name-id-key (deref name)))]
+      (ast.AstMaybeNominalKey.Some
+        (ast.ast-nominal-name-id-key
+          (owned_view.compiler-owned-pattern-copy name)))]
     [(StructArgs name _)
-      (ast.AstMaybeNominalKey.Some (ast.ast-nominal-name-id-key (deref name)))]
+      (ast.AstMaybeNominalKey.Some
+        (ast.ast-nominal-name-id-key
+          (owned_view.compiler-owned-pattern-copy name)))]
     [(Enum name)
-      (ast.AstMaybeNominalKey.Some (ast.ast-nominal-name-id-key (deref name)))]
+      (ast.AstMaybeNominalKey.Some
+        (ast.ast-nominal-name-id-key
+          (owned_view.compiler-owned-pattern-copy name)))]
     [(EnumArgs name _)
-      (ast.AstMaybeNominalKey.Some (ast.ast-nominal-name-id-key (deref name)))]
+      (ast.AstMaybeNominalKey.Some
+        (ast.ast-nominal-name-id-key
+          (owned_view.compiler-owned-pattern-copy name)))]
     [_ ast.AstMaybeNominalKey.None])
     [(Some key)
       (match (ir.compiler-ir-representation-index-kind-for-key

@@ -666,8 +666,47 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-ast-while-body-roundtrip-ok?) : bool
+    (let
+      [intern-state : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [context : codec.SurfaceAstWriteContext
+        (codec.surface-ast-write-context-new session 0 0)]
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+      [body : ast.AstExprList
+        (ast.ast-expr-cons 4 (ast.ast-expr-cons 5 (ast.ast-expr-list-new)))]
+      (expr_codec.surface-ast-write-expr!
+        (&mut out)
+        (&mut context)
+        (ast.AstExpr.While 3 body))
+      (let
+        [bytes : (__tl_dyn-array u8)
+          (byte_buf_core.byte-buf-builder-finish-array (& out))]
+        [byte-count : i64 (array-length bytes)]
+        [reader : codec.SurfaceAstReader
+          (codec.surface-ast-reader-new bytes session (__tl_make-array i64 0))]
+        [decoded : ast.AstExpr
+          (expr_codec.surface-ast-read-expr! (&mut reader))]
+        (and
+          (codec.surface-ast-reader-valid? (& reader))
+          (= (codec.surface-ast-reader-offset (& reader)) byte-count)
+          (match decoded
+            [(While condition forms)
+              (and
+                (= condition 3)
+                (= forms.len 2)
+                (= (ast.ast-expr-list-get (& forms) 0 -1) 4)
+                (= (ast.ast-expr-list-get (& forms) 1 -1) 5))]
+            [_ false]))))))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-ast-decl-meta-tests-ok?) : bool
     (and
+      (surface-ast-while-body-roundtrip-ok?)
       (surface-ast-decl-meta-roundtrip-ok?
         (ast.ast-decl-meta-runtime-shared-view)
         false

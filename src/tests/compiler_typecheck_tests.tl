@@ -4993,8 +4993,44 @@
 (define (compiler-typecheck-stmt-if-cond-source) : String
   "(define (main) : i64 (if 1 2 3))")
 
+(define (compiler-typecheck-while-body-error-at? [body : String] [line : i64]) : bool
+  (compiler-typecheck-error-location-ok?
+    (str_cat.str-cat
+      "(define (s) : i64 1)\n(define (main) : unit\n  (while false\n"
+      body
+      "))")
+    "typecheck: while body must be unit: expected unit, found i64"
+    line
+    5))
+
+(define (compiler-typecheck-while-unit-body-tests-ok?) : bool
+  (and
+    (compiler-typecheck-while-body-error-at? "    (s)\n    unit" 4)
+    (compiler-typecheck-while-body-error-at? "    unit\n    (s)\n    unit" 5)
+    (compiler-typecheck-while-body-error-at? "    unit\n    unit\n    (s)" 6)
+    (compiler-typecheck-while-body-error-at? "    (s)" 4)
+    (compiler-typecheck-while-body-error-at? "    (break)\n    (s)\n    unit" 5)
+    (compiler-typecheck-while-body-error-at? "    (begin unit (s))" 4)
+    (compiler-typecheck-ok?
+      "(define (main) : unit
+  (while false (begin 1 unit) (begin (begin 2 unit) unit)))")
+    (compiler-typecheck-ok?
+      "(define (main) : unit
+  (while true (break) (continue) (return unit)))")
+    (compiler-typecheck-error-ok?
+      "(defmacro (empty-body [items : Expr ...]) : Expr
+  `(while false ,@items))
+(define (main) : unit (empty-body))"
+      "typecheck: while requires at least one body expression")
+    (compiler-typecheck-error-ok?
+      "(define (s) : i64 1)
+(defmacro (loop [value : Expr]) : Expr `(while false ,value unit))
+(define (main) : unit (loop (s)))"
+      "typecheck: while body must be unit: expected unit, found i64")))
+
 (define (compiler-typecheck-statement-tests-ok?) : bool
   (and
+    (compiler-typecheck-while-unit-body-tests-ok?)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stmt-if-cond-source)
       "typecheck: if condition must be bool: expected bool, found i32")

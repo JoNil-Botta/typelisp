@@ -24442,13 +24442,16 @@
               (+ vars n))]
           [i : i64 0]
           (while (< i n)
-            (compiler_regalloc.compiler-reg-assignment-table-insert
-              out
-              (+ vars i)
-              (if (= (array-ref regs i) compiler_abi.compiler-reg-id-invalid)
-                (Spill
-                  (compiler_regalloc.compiler-reg-stack-slot-offset (+ vars i)))
-                (Register (array-ref regs i))))
+            (begin
+              (compiler_regalloc.compiler-reg-assignment-table-insert
+                out
+                (+ vars i)
+                (if (= (array-ref regs i) compiler_abi.compiler-reg-id-invalid)
+                  (Spill
+                    (compiler_regalloc.compiler-reg-stack-slot-offset
+                      (+ vars i)))
+                  (Register (array-ref regs i))))
+              unit)
             (set! i (+ i 1)))
           out))]))
 
@@ -74947,12 +74950,14 @@
   (let
     [e : i64 0]
     (while (< e edge-count)
-      (compiler-backend-iag-bits-merge!
-        census.callee-reach
-        (* (array-ref census.edge-src e) census.words)
-        census.reach
-        (* (array-ref census.edge-dst e) census.words)
-        census.words)
+      (begin
+        (compiler-backend-iag-bits-merge!
+          census.callee-reach
+          (* (array-ref census.edge-src e) census.words)
+          census.reach
+          (* (array-ref census.edge-dst e) census.words)
+          census.words)
+        unit)
       (set! e (+ e 1)))))
 
 ;; The safety rule, applied to the recorded rows: a candidate that some

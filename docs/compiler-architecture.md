@@ -902,6 +902,15 @@ these semantic flags even when the aggregates have identical ABI. The existing
 AST wrapper, surface roundtrip, and specialization selftests guard these rules;
 serialized metadata changes also require a surface-AST schema version change.
 
+`AstExpr.While` keeps its direct body forms in an `AstExprList` (surface AST
+schema 17). Typechecking requires each form to be unit-valued and locates a
+mismatch at that form. An explicit `Begin` remains one body form and may discard
+its non-final values. Shared child traversal, quasiquote, hygiene and declaration
+serialization preserve the ordered list; lowering and ownership analyses reuse
+the existing sequence handling. The public comptime `expr-while` builder keeps
+its one expression as a singleton list. Native quasiquote uses the same host
+callback with its body-list flag so it agrees with interpreted expansion.
+
 `Module` and `Decls` macro output share `macro-wrap-generated-decls` in
 `compiler_typecheck_core.tl`. Ordinary generated imports carry namespace effects
 without a visible declaration name; retain their generated metadata so the

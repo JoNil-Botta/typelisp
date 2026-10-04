@@ -1797,7 +1797,11 @@
           -1
           (let
             [body-opened : i64
-              (embedded-native-template-ops params body-node ops ops-count)]
+              (embedded-native-template-args-ops
+                params
+                (& body-node)
+                ops
+                ops-count)]
             (if (< body-opened 0)
               -1
               (begin
@@ -1805,7 +1809,7 @@
                   ops
                   ops-count
                   (tlci_core.tlci-host-callback-name expr-while)
-                  "0"
+                  "1"
                   "0"
                   "0")
                 (+ cond-opened body-opened 1))))))]
@@ -6120,7 +6124,7 @@
         [condition : EmbeddedNativeDataValue
           (embedded-native-data-value params cond-node)]
         [body-code : String
-          (embedded-native-computed-statement-code params body-node)]
+          (embedded-native-computed-statement-list-code params (& body-node) 0)]
         (if (string.eq condition.text "")
           (embedded-native-fallback-code "statement-while:condition")
           (if (string.eq body-code "")

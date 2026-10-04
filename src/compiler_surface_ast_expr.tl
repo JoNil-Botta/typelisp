@@ -393,7 +393,7 @@
       [(While condition body)
         (codec.surface-ast-write-i64! out 19)
         (codec.surface-ast-write-i64! out condition)
-        (codec.surface-ast-write-i64! out body)]
+        (surface-ast-write-expr-list! out body)]
       [(Begin items)
         (codec.surface-ast-write-i64! out 20)
         (surface-ast-write-expr-list! out items)]
@@ -825,7 +825,7 @@
       [(= tag 19)
         (While
           (codec.surface-ast-read-i64! reader)
-          (codec.surface-ast-read-i64! reader))]
+          (surface-ast-read-expr-list! reader))]
       [(= tag 20) (Begin (surface-ast-read-expr-list! reader))]
       [(= tag 21) (Unsafe (surface-ast-read-expr-list! reader))]
       [(= tag 22)

@@ -52607,44 +52607,42 @@
   [lifetime : ast.AstBorrowLifetime]
   [place-expr : ast.AstExpr]
   [allow-mut-by-value-borrow : bool]) : ResultTcType
-  (if (tc-borrow-operand-temporary? expr-bases (& place-expr))
-    ;; Call arguments type their temporary borrows through
-    ;; `tc-call-temporary-borrow-type`; every other position reaches here.
-    (ResultTcType.Err (tc-temporary-borrow-position-message))
-    (match (tc-borrow-place
-      ctx
-      expr-bases
-      env
-      (tc-global-shared-view place-expr))
-      [(Ok place)
-        (if (and mutable (not allow-mut-by-value-borrow))
-          (match (tc-mut-borrow-non-call-place-ok ctx env place-expr)
-            [(Ok) (tc-borrow-place-result-type mutable lifetime place)]
-            [(Err message) (Err message)])
-          (tc-borrow-place-result-type mutable lifetime place))]
-      [(Err message) (Err message)])))
+  (match (tc-borrow-place ctx expr-bases env (tc-global-shared-view place-expr))
+    [(Ok place)
+      (if (and mutable (not allow-mut-by-value-borrow))
+        (match (tc-mut-borrow-non-call-place-ok ctx env place-expr)
+          [(Ok) (tc-borrow-place-result-type mutable lifetime place)]
+          [(Err message) (Err message)])
+        (tc-borrow-place-result-type mutable lifetime place))]
+    [(Err message)
+      ;; A successfully typed place cannot be a temporary. Direct call
+      ;; arguments recover temporary borrows from this error; other positions
+      ;; keep the diagnostic without rescanning successful place borrows.
+      (if (tc-borrow-operand-temporary?
+        expr-bases
+        (tc-global-shared-view place-expr))
+        (ResultTcType.Err (tc-temporary-borrow-position-message))
+        (Err message))]))
 
 ;; --- borrowed call-argument temporaries (section 3.10) ----------------------
 ;;
 ;; A direct call argument `(& operand)` or `(&mut operand)` whose operand names
 ;; no place evaluates the operand by value into hidden storage that lives until
 ;; the call returns, and borrows that storage with the call-temporary lifetime.
+;; These classifiers only read shallow node views from the live pool; they
+;; neither mutate rows nor retain a view after returning.
 ;; Whether a borrow operand is a temporary rather than a place: a call,
 ;; constructor, literal, or other value expression. A type annotation is
 ;; transparent. Projections stay places, so a field of a temporary is still a
 ;; borrow of a non-place.
 (define (tc-borrow-operand-temporary?
   [expr-bases : i64]
-  [operand : (& operand ast.AstExpr)]) : bool
-  (match operand
+  [operand : ast.AstExpr]) : bool
+  (match (tc-global-shared-view operand)
     [(ast.AstExpr.Spanned inner-box _)
-      (tc-borrow-operand-id-temporary?
-        expr-bases
-        (owned_view.compiler-owned-pattern-copy inner-box))]
+      (tc-borrow-operand-id-temporary? expr-bases inner-box)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-borrow-operand-id-temporary?
-        expr-bases
-        (owned_view.compiler-owned-pattern-copy inner-box))]
+      (tc-borrow-operand-id-temporary? expr-bases inner-box)]
     [(ast.AstExpr.Var _) false]
     [(ast.AstExpr.StructGet _ _) false]
     [(ast.AstExpr.TupleRef _ _) false]
@@ -52652,48 +52650,40 @@
     [(ast.AstExpr.BoxGet _) false]
     [(ast.AstExpr.BoxTake _) false]
     [(ast.AstExpr.Ann inner-box _)
-      (tc-borrow-operand-id-temporary?
-        expr-bases
-        (owned_view.compiler-owned-pattern-copy inner-box))]
+      (tc-borrow-operand-id-temporary? expr-bases inner-box)]
     [_ true]))
 
 (define (tc-borrow-operand-id-temporary? [expr-bases : i64] [id : i64]) : bool
-  (let
-    [operand : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases id)]
-    (tc-borrow-operand-temporary? expr-bases (& operand))))
+  (tc-borrow-operand-temporary?
+    expr-bases
+    (ast.ast-expr-segment-bases-get expr-bases id)))
 
 ;; The operand node of a call argument that borrows a temporary, or -1. This
-;; runs for call arguments in every pass, so it reads through the span and
-;; expansion wrappers by node id and copies no node into its frame.
+;; reads through span and expansion wrappers by node ID. It does not evaluate
+;; operands or retain their arena-backed handles.
 (define (tc-call-temporary-borrow-operand-id
   [expr-bases : i64]
-  [arg : (& arg ast.AstExpr)]) : i64
-  (match arg
+  [arg : ast.AstExpr]) : i64
+  (match (tc-global-shared-view arg)
     [(ast.AstExpr.Spanned inner-box _)
-      (tc-call-temporary-borrow-operand-id-at
-        expr-bases
-        (owned_view.compiler-owned-pattern-copy inner-box))]
+      (tc-call-temporary-borrow-operand-id-at expr-bases inner-box)]
     [(ast.AstExpr.MacroExpansion inner-box _ _)
-      (tc-call-temporary-borrow-operand-id-at
-        expr-bases
-        (owned_view.compiler-owned-pattern-copy inner-box))]
+      (tc-call-temporary-borrow-operand-id-at expr-bases inner-box)]
     [(ast.AstExpr.Borrow _ _ operand-box)
-      (if (tc-borrow-operand-id-temporary?
-        expr-bases
-        (owned_view.compiler-owned-pattern-copy operand-box))
-        (owned_view.compiler-owned-pattern-copy operand-box)
+      (if (tc-borrow-operand-id-temporary? expr-bases operand-box)
+        operand-box
         -1)]
     [_ -1]))
 
 (define (tc-call-temporary-borrow-operand-id-at [expr-bases : i64] [id : i64]) : i64
-  (let
-    [arg : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases id)]
-    (tc-call-temporary-borrow-operand-id expr-bases (& arg))))
+  (tc-call-temporary-borrow-operand-id
+    expr-bases
+    (ast.ast-expr-segment-bases-get expr-bases id)))
 
-(define (tc-call-temporary-borrow-arg?
-  [expr-bases : i64]
-  [arg : (& arg ast.AstExpr)]) : bool
-  (>= (tc-call-temporary-borrow-operand-id expr-bases arg) 0))
+(define (tc-call-temporary-borrow-arg? [expr-bases : i64] [arg : ast.AstExpr]) : bool
+  (>=
+    (tc-call-temporary-borrow-operand-id expr-bases (tc-global-shared-view arg))
+    0))
 
 (define (tc-call-temporary-borrow-arg-id? [expr-bases : i64] [id : i64]) : bool
   (>= (tc-call-temporary-borrow-operand-id-at expr-bases id) 0))
@@ -52707,7 +52697,9 @@
   [arg : ast.AstExpr]
   [want : ast.AstType]
   [failed : ResultTcType]) : ResultTcType
-  (if (tc-call-temporary-borrow-arg? (tc-context-expr-bases ctx) (& arg))
+  (if (tc-call-temporary-borrow-arg?
+    (tc-context-expr-bases ctx)
+    (tc-global-shared-view arg))
     (match (tc-call-temporary-borrow-type ctx env arg want)
       [(ResultTcType.Ok ty)
         (begin
@@ -52955,7 +52947,9 @@
           [arg : ast.AstExpr
             (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
           (begin
-            (if (tc-call-temporary-borrow-arg? expr-bases (& arg))
+            (if (tc-call-temporary-borrow-arg?
+              expr-bases
+              (tc-global-shared-view arg))
               (let
                 [lifetime : i64
                   (tc-call-reference-formal-lifetime
@@ -53006,7 +53000,9 @@
                       env
                       (tc-context-expr-get
                         ctx
-                        (tc-call-temporary-borrow-operand-id expr-bases (& arg))))
+                        (tc-call-temporary-borrow-operand-id
+                          expr-bases
+                          (tc-global-shared-view arg))))
                       [(ResultTcType.Ok operand-ty)
                         (tc-cleanup-owning-aggregate-type? ctx operand-ty)]
                       [(ResultTcType.Err _) false]))
@@ -73964,7 +73960,9 @@
       (let
         [inner : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases inner-box)]
-        (if (tc-borrow-operand-temporary? expr-bases (& inner))
+        (if (tc-borrow-operand-temporary?
+          expr-bases
+          (tc-global-shared-view inner))
           (tc-move-check-temporary-borrow-operand
             ctx
             expr-bases

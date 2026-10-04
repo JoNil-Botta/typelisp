@@ -25925,7 +25925,7 @@
         ctx
         (tc_core.tc-call-temporary-borrow-operand-id
           (tc_core.tc-context-expr-bases ctx)
-          (& arg)))]
+          (lower-global-shared-view arg)))]
     [hint : ast.AstMaybeType
       (tc_core.tc-call-temporary-referent-hint
         ctx
@@ -26057,7 +26057,7 @@
       [_ false])
     (tc_core.tc-call-temporary-borrow-arg?
       (tc_core.tc-context-expr-bases ctx)
-      (& arg)))
+      (lower-global-shared-view arg)))
     (lower-call-arg-temporary-borrow ctx state env type-env arg arg-ty)
     (match (tc_core.tc-call-effective-arg-expr
       ctx

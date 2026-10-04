@@ -625,6 +625,14 @@ Compiler-development builds expose three opt-in `typelisp compile` diagnostics:
   written. Failures name the function and, for operand failures, the block and
   instruction index.
 
+`tests/golden/ir_structural_names.tl` imports the compiler AST pool graph,
+including nested macro-local type variables. The IR observability gate dumps it
+at opt0/1/2 and after SSA. The IR smoke also checks source, macro-local and fresh
+syntax IDs in `Var`, `VarArgs` and nested pointer/slice types, plus wrong-owner,
+negative and out-of-range identities. Rendering decodes names through their
+structural session; an unresolvable identity prints `<id:N>` instead of indexing
+the source intern pool.
+
 The checked-in pass golden is
 [`../tests/golden/optimizer_fold.after-fold.ir`](../tests/golden/optimizer_fold.after-fold.ir).
 Run the focused cross-platform gate with a current compiler:

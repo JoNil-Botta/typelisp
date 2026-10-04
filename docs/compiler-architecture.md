@@ -84,6 +84,15 @@ and emission takes the mask from the scavenger as a third XMM scratch that
 excludes the source, accumulator and sibling. AVX-512 native min/max and the
 other reduction shapes use two scratch registers.
 
+IR type rendering takes the compile's structural-session handle and type-pool
+segment bases. `Var` and `VarArgs` names, like lifetime names, may carry either
+source intern IDs or hygienic syntax IDs. `compiler-ir-syntax-name-render`
+checks the ID domain and decodes through that session before any intern-pool
+read; unresolved, stale and wrong-owner syntax IDs render as `<id:N>`.
+Recursive type rendering retains both owners through nested pointer, slice,
+function and nominal arguments. The compatibility type-name entry deliberately
+uses the installed structural owner through the zero-handle adapter.
+
 A function's frame is laid out before its body is emitted. Below the slot and
 maximum callee-save area it holds, from the top down: the SIMD staging region,
 the cycle-temp slots, the emergency slots, and, at the bottom, the outgoing

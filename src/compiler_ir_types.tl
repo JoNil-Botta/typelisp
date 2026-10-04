@@ -6319,7 +6319,7 @@
   (if (>= index (ast.ast-lifetime-list-len lifetimes))
     ""
     (str_cat.str-cat
-      (compiler-ir-lifetime-render
+      (compiler-ir-syntax-name-render
         structural-session
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback)))
       (if (>= (+ index 1) (ast.ast-lifetime-list-len lifetimes))
@@ -6347,20 +6347,22 @@
     (compiler-ir-lifetime-list-render structural-session lifetimes)
     ")"))
 
-(define (compiler-ir-lifetime-render
+;; Type variables and lifetimes carry source or session-owned syntax IDs. Only
+;; decoded renderable IDs may index the intern pool, including in nested types.
+(define (compiler-ir-syntax-name-render
   [structural-session : cis.InternStructuralSessionHandle]
-  [region : i64]) : String
-  (if (ci.intern-renderable-id? region)
-    (ci.intern-str region)
+  [name : i64]) : String
+  (if (ci.intern-renderable-id? name)
+    (ci.intern-str name)
     (let
       [source-id : i64
         (cis.intern-structural-session-syntax-source-name-id-or
           structural-session
-          region
+          name
           -1)]
       (if (>= source-id 0)
         (ci.intern-str source-id)
-        (str_cat.str-cat "<id:" (string.int->string region) ">")))))
+        (str_cat.str-cat "<id:" (string.int->string name) ">")))))
 
 (define (compiler-ir-type-render
   [structural-session : cis.InternStructuralSessionHandle]
@@ -6454,7 +6456,7 @@
     [(Region region inner)
       (str_cat.str-cat
         "(Region "
-        (compiler-ir-lifetime-render structural-session region)
+        (compiler-ir-syntax-name-render structural-session region)
         " "
         (compiler-ir-type-render
           structural-session
@@ -6464,7 +6466,7 @@
     [(Invalidate lifetime inner)
       (str_cat.str-cat
         "(Invalidate "
-        (compiler-ir-lifetime-render structural-session lifetime)
+        (compiler-ir-syntax-name-render structural-session lifetime)
         " "
         (compiler-ir-type-render
           structural-session
@@ -6474,7 +6476,7 @@
     [(Ref region inner)
       (str_cat.str-cat
         "(& "
-        (compiler-ir-lifetime-render structural-session region)
+        (compiler-ir-syntax-name-render structural-session region)
         " "
         (compiler-ir-type-render
           structural-session
@@ -6484,7 +6486,7 @@
     [(MutRef region inner)
       (str_cat.str-cat
         "(&mut "
-        (compiler-ir-lifetime-render structural-session region)
+        (compiler-ir-syntax-name-render structural-session region)
         " "
         (compiler-ir-type-render
           structural-session
@@ -6503,11 +6505,11 @@
         structural-session
         (ast.ast-nominal-name-id-display name)
         (deref lifetimes))]
-    [(Var name) (ci.intern-str name)]
+    [(Var name) (compiler-ir-syntax-name-render structural-session name)]
     [(VarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         structural-session
-        (ci.intern-str name)
+        (compiler-ir-syntax-name-render structural-session name)
         (deref lifetimes))]
     [(Ptr elem)
       (str_cat.str-cat
@@ -9339,7 +9341,7 @@
     [(Region region inner)
       (str_cat.str-cat
         "(in "
-        (compiler-ir-lifetime-render
+        (compiler-ir-syntax-name-render
           (cis.InternStructuralSessionHandle 0)
           region)
         " "
@@ -9350,7 +9352,7 @@
     [(Invalidate lifetime inner)
       (str_cat.str-cat
         "(:invalidate "
-        (compiler-ir-lifetime-render
+        (compiler-ir-syntax-name-render
           (cis.InternStructuralSessionHandle 0)
           lifetime)
         " "
@@ -9361,7 +9363,7 @@
     [(Ref region inner)
       (str_cat.str-cat
         "(& "
-        (compiler-ir-lifetime-render
+        (compiler-ir-syntax-name-render
           (cis.InternStructuralSessionHandle 0)
           region)
         " "
@@ -9372,7 +9374,7 @@
     [(MutRef region inner)
       (str_cat.str-cat
         "(&mut "
-        (compiler-ir-lifetime-render
+        (compiler-ir-syntax-name-render
           (cis.InternStructuralSessionHandle 0)
           region)
         " "
@@ -9392,11 +9394,19 @@
         (cis.InternStructuralSessionHandle 0)
         (ast.ast-nominal-name-id-display name)
         (deref lifetimes))]
-    [(Var name) (str_cat.str-cat "'" (ci.intern-str name) "'")]
+    [(Var name)
+      (str_cat.str-cat
+        "'"
+        (compiler-ir-syntax-name-render
+          (cis.InternStructuralSessionHandle 0)
+          name)
+        "'")]
     [(VarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (cis.InternStructuralSessionHandle 0)
-        (ci.intern-str name)
+        (compiler-ir-syntax-name-render
+          (cis.InternStructuralSessionHandle 0)
+          name)
         (deref lifetimes))]
     [(Ptr elem)
       (str_cat.str-cat

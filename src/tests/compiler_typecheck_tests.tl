@@ -5022,6 +5022,12 @@
   `(while false ,@items))
 (define (main) : unit (empty-body))"
       "typecheck: while requires at least one body expression")
+    (compiler-typecheck-error-code-ok?
+      "(defmacro (empty-body [items : Expr ...]) : Expr
+  `(while false ,@items))
+(define (main) : unit (empty-body))"
+      (cdiag.compiler-diagnostic-code-typecheck-arity-mismatch)
+      "typecheck")
     (compiler-typecheck-error-ok?
       "(define (s) : i64 1)
 (defmacro (loop [value : Expr]) : Expr `(while false ,value unit))

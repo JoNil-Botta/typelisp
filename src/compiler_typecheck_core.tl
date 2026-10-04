@@ -42467,7 +42467,11 @@
   [exprs : (& exprs ast.AstExprList)]) : ResultTcType
   (when
     (= exprs.len 0)
-    (return (Err "typecheck: while requires at least one body expression")))
+    (return
+      (Err
+        (tc-kind-message
+          (ArityMismatch)
+          "typecheck: while requires at least one body expression"))))
   (let
     [index : i64 0]
     (while (< index exprs.len)

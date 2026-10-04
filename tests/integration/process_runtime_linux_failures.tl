@@ -1061,7 +1061,8 @@
             (atomic-load (ptr-addr-of reservation-release)))
           0)
           (unsafe
-            (syscall 24))
+            (syscall 24)
+            unit)
           unit)
         42)]))
 
@@ -1091,7 +1092,8 @@
         4)
       (< (profile.now-ticks) deadline))
       (unsafe
-        (syscall 24))
+        (syscall 24)
+        unit)
       unit)
     (test.assert-i64-eq
       (unsafe

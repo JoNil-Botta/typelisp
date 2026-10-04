@@ -1,5 +1,8 @@
 (import stdlib.comptime)
 
+(define (body-value [value : i64]) : i64
+  value)
+
 (defmacro (loop-body [condition : Expr] [body : Expr]) : Expr
   (comptime.expr-while condition body))
 
@@ -13,7 +16,7 @@
       [i : i64 0]
       (while (< i 3)
         (begin
-          i
+          (body-value i)
           unit)
         (set! i (+ i 1)))
       i)))
@@ -26,7 +29,7 @@
     [total : i64 0]
     (while running
       (begin
-        (+ total 1)
+        (body-value (+ total 1))
         unit)
       (set! total (+ total 10))
       (set! running false))
@@ -34,7 +37,7 @@
     (loop-body
       running
       (begin
-        (+ total 1)
+        (body-value (+ total 1))
         (set! total (+ total 20))
         (set! running false)))
     (set! running true)
@@ -42,7 +45,7 @@
       running
       (begin
         (begin
-          99
+          (body-value 99)
           unit)
         unit)
       (set! total (+ total 6))

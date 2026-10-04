@@ -62688,10 +62688,17 @@
                         fields
                         types
                         (+ index 1))
-                      (match (lower-gep-byte
+                      (match (lower-bind-element-access
+                        ctx
                         state
+                        (Borrowed borrow-lifetime)
                         (lower-global-shared-view base)
-                        offset)
+                        offset
+                        (lower-global-shared-view pattern)
+                        (lower-global-shared-view field-ty)
+                        (tc_core.tc-borrowed-field-ref-type
+                          borrow-lifetime
+                          (lower-global-shared-view field-ty)))
                         [(Expr address-state address _)
                           (match (lower-bind-element-pattern
                             ctx

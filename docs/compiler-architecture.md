@@ -198,6 +198,11 @@ desugars the domain to private bound locals, emptiness tests, checked span and
 product traps, and nested `while` loops in every backend mode (#7190); native
 row-local gangs are #7191.
 
+Borrowed aggregate patterns share `lower-bind-element-access`: a String name
+binding loads the stored handle to expose a `str` view, while nested aggregate
+patterns retain the address of inline storage. Struct fields follow the same
+access rule as tuple slots and array elements, preserving the borrow lifetime.
+
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
 records routing, residual inline bodies and the state/evaluation/provenance

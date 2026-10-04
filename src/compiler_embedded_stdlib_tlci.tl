@@ -4931,15 +4931,17 @@
         (if (< cond-node 0)
           tlci.tlci-host-callback-status-bad-request
           (if (= arg-a 1)
-            (match (compiler-comptime-host-value-expr-list
-              (compiler-comptime-host-stack-value 1))
-              [(Some body)
-                (compiler-comptime-host-replace-expr!
-                  2
-                  (ast.ast-node-pool-context-expr-push
-                    (compiler-comptime-host-session-pools)
-                    (ast.AstExpr.While cond-node body)))]
-              [(None) tlci.tlci-host-callback-status-bad-request])
+            (let
+              [body-value : ctfe_support.CompilerCtfeValue
+                (compiler-comptime-host-stack-value 1)]
+              (match (compiler-comptime-host-value-expr-list body-value)
+                [(Some body)
+                  (compiler-comptime-host-replace-expr!
+                    2
+                    (ast.ast-node-pool-context-expr-push
+                      (compiler-comptime-host-session-pools)
+                      (ast.AstExpr.While cond-node body)))]
+                [(None) tlci.tlci-host-callback-status-bad-request]))
             (let
               [body-node : i64 (compiler-comptime-host-stack-node 1)]
               (if (< body-node 0)

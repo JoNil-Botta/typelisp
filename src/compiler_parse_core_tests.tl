@@ -3892,3 +3892,50 @@
           (io.panic "parse: error-path self-tests failed"))
         (io.panic "parse: compiler AST smoke score mismatch"))]
     [(Err message) (io.panic message)]))
+
+(test
+  compiler-parse-numeric-text-outlives-intern-arena
+  (let
+    [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [_install : unit (ci.intern-compat-state-install! (& state))]
+    [parsed : parser.ResultAstProgram
+      (parser.parse-ast-source
+        "(define (literal) : f64 (match 0x2a [0x2a 1.25] [_ 0.0]))")]
+    [_reset : unit (ci.intern-reset!)]
+    [_retire : unit (ci.intern-persistent-arena-reset!)]
+    [_reader-reset : unit (reader.sp-node-pool-reset!)]
+    [_restore : unit (ci.intern-compat-state-install! (& installed))]
+    [valid : bool
+      (match parsed
+        [(Ok (Program decls-box))
+          (match (ast.ast-decl-list-step (deref decls-box))
+            [(Cons (DefFn _ _ _ _ body _) _)
+              (match (ast.ast-expr-unspan (ast.ast-node-get body))
+                [(Match payload)
+                  (match (deref payload)
+                    [(Match scrutinee arms)
+                      (and
+                        (match (ast.ast-expr-unspan
+                          (ast.ast-node-get scrutinee))
+                          [(Literal (Int 42 text)) (string.eq text "0x2a")]
+                          [_ false])
+                        (match (ast.ast-match-arm-list-get
+                          (& arms)
+                          0
+                          (ast.ast-match-arm-fallback))
+                          [(Arm (Literal (Int 42 text)) result)
+                            (and
+                              (string.eq text "0x2a")
+                              (match (ast.ast-expr-unspan
+                                (ast.ast-node-get result))
+                                [(Literal (Float spelling))
+                                  (string.eq spelling "1.25")]
+                                [_ false]))]
+                          [_ false]))])]
+                [_ false])]
+            [_ false])]
+        [(Err _) false])]
+    (unless
+      valid
+      (io.panic "parse: numeric expression or pattern text died with interner"))))

@@ -14,6 +14,13 @@
   `(while ,condition
     ,body))
 
+(defmacro (count-loop) : Expr
+  (let
+    [i : i64 0]
+    (while (< i 3)
+      (set! i (+ i 1)))
+    (comptime.expr-int i)))
+
 (defmacro (emit-loop) : Decls
   '(define (generated-loop) : i64
     (let
@@ -28,6 +35,7 @@
 (emit-loop)
 
 (define (main) : i64
+  (when (!= (count-loop) 3) (return 1))
   (let
     [running : bool true]
     [total : i64 0]

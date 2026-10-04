@@ -1796,26 +1796,12 @@
         (if (< cond-opened 0)
           -1
           (let
-            ;; The single-expression callback retains an explicit Begin.
-            ;; A splice can produce any number of direct forms and needs a list.
-            [single-body : i64
-              (if (= body-node.len 1)
-                (compiler_ast_types.ast-expr-list-get (& body-node) 0 -1)
-                -1)]
-            [single-form : bool
-              (and
-                (>= single-body 0)
-                (match (embedded-stdlib-tlci-unwrap-expr single-body)
-                  [(UnquoteSplicing _) false]
-                  [_ true]))]
             [body-opened : i64
-              (if single-form
-                (embedded-native-template-ops params single-body ops ops-count)
-                (embedded-native-template-args-ops
-                  params
-                  (& body-node)
-                  ops
-                  ops-count))]
+              (embedded-native-template-args-ops
+                params
+                (& body-node)
+                ops
+                ops-count)]
             (if (< body-opened 0)
               -1
               (begin
@@ -1823,9 +1809,7 @@
                   ops
                   ops-count
                   (tlci_core.tlci-host-callback-name expr-while)
-                  (if single-form
-                    "0"
-                    "1")
+                  "1"
                   "0"
                   "0")
                 (+ cond-opened body-opened 1))))))]
@@ -6236,6 +6220,8 @@
           (embedded-native-expr-kind-name
             (embedded-stdlib-tlci-unwrap-expr node))))]))
 
+;; Each statement returns a host status. The final status is already the
+;; sequence result, including any callback failure.
 (define (embedded-native-computed-statement-list-code
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [exprs : (& exprs compiler_ast_types.AstExprList)]
@@ -6256,15 +6242,17 @@
             (embedded-native-expr-kind-name
               (embedded-stdlib-tlci-unwrap-expr
                 (compiler_ast_types.ast-expr-list-get exprs index 0)))))
-        (let
-          [rest : String
-            (embedded-native-computed-statement-list-code
-              params
-              exprs
-              (+ index 1))]
-          (if (string.eq rest "")
-            ""
-            (embedded-native-status-sequence-code head rest)))))))
+        (if (= (+ index 1) (compiler_ast_types.ast-expr-list-len exprs))
+          head
+          (let
+            [rest : String
+              (embedded-native-computed-statement-list-code
+                params
+                exprs
+                (+ index 1))]
+            (if (string.eq rest "")
+              ""
+              (embedded-native-status-sequence-code head rest))))))))
 
 (define (embedded-native-let-statement-code
   [params : (& params compiler_ast_types.AstMacroParamList)]

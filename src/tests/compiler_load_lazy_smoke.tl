@@ -603,7 +603,9 @@
         (and
           (= (parser.compiler-parse-semantic-origin-run-len (& run)) 4)
           (string.eq
-            (parser.compiler-parse-semantic-origin-kind-marker type-origin.kind)
+            (reader.sp-text
+              (parser.compiler-parse-semantic-origin-kind-marker
+                type-origin.kind))
             "__tl_semantic_origin_type_definition")
           (string.eq (ci.intern-str type-origin.written-name) "Same")
           (= (ast.ast-source-span-start-line type-span) 3)
@@ -611,8 +613,9 @@
           (= (ast.ast-source-span-end-line type-span) 3)
           (= (ast.ast-source-span-end-col type-span) 16)
           (string.eq
-            (parser.compiler-parse-semantic-origin-kind-marker
-              field-origin.kind)
+            (reader.sp-text
+              (parser.compiler-parse-semantic-origin-kind-marker
+                field-origin.kind))
             "__tl_semantic_origin_struct_field_definition")
           (string.eq (ci.intern-str field-origin.written-name) "same-field")
           (= (ast.ast-source-span-start-line field-span) 3)

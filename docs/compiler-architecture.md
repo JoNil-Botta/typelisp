@@ -396,10 +396,10 @@ token scratch, while reusable sessions retain their current capacity.
 
 Reader rows are Copy. `Sym`, `Str`, `Int` and `Float` rows carry intern ids,
 so a row's text lives as long as the active intern table, not as a String the
-row owns. Origin-record markers are reset-aware builtin ids. The views render
-Int and Float text as a shared view of the interned spelling. A consumer that
-keeps a spelling past an intern reset copies it out, as the parser's literal
-AST nodes do (`reader.sp-text-copy`).
+row owns. Origin records are written and scanned by marker id (reset-aware
+builtin ids). The views render Int and Float text as a shared view of the
+interned spelling. A consumer that keeps a spelling past an intern reset copies
+it out, as the parser's literal AST nodes do (`reader.sp-text-copy`).
 
 The IR source-span table (`CompilerSourceSpans`) keeps two dense lists of flat
 inline records: function entries (symbol, path id, span; 32 bytes) and

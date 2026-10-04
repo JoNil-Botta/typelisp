@@ -61,15 +61,6 @@ tl_array_fill8:
 end-file
 
 # Named TLS offsets and the FS:0 self pointer must survive every runtime layout.
-case thread-local-word-debug
-source tests/integration/thread_local_word.tl
-opt 0 1 2
-args --stdlib-root src --cfg compiler-arena-debug
-do link-run
-exit 42
-stdout empty
-stderr empty
-
 case thread-local-word-profile
 source tests/integration/thread_local_word.tl
 opt 0 1 2
@@ -78,6 +69,8 @@ do link-run
 exit 42
 stdout empty
 stderr empty
+in asm
+contains tl_profile_alloc_total_bytes:
 
 case thread-local-word-backtrace
 source tests/integration/thread_local_word.tl
@@ -87,15 +80,8 @@ do link-run
 exit 42
 stdout empty
 stderr empty
-
-case thread-local-word-combined
-source tests/integration/thread_local_word.tl
-opt 0 1 2
-args --stdlib-root src --cfg compiler-arena-debug --cfg compile-profile --backtrace
-do link-run
-exit 42
-stdout empty
-stderr empty
+in asm
+contains tl_backtrace_stack_low:
 
 # A --backtrace program under each TYPELISP_BACKTRACE mode, optimized,
 # stripped, with a corrupted map, on a worker thread, and through the CRT

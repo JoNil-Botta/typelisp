@@ -2,6 +2,12 @@
 (import (thread.handle i64) as task)
 (import stdlib.arena)
 (import stdlib.string)
+(cfg compile-profile (import stdlib.profile))
+
+(cfg
+  compiler-arena-debug
+  (unsafe
+    (extern (debug-layout [owner : i64]) : unit (:symbol "tl_arena_debug_assert_pool_install"))))
 
 ;; The raw address stays in its owning thread. Only scalar results cross join.
 (unsafe
@@ -76,12 +82,12 @@
 (define (two-live) : bool
   (match (task.spawn
     (lambda () : i64
-      (live-worker 11)))
+      (live-worker 4294967307)))
     [(task.I64SpawnErr _) false]
     [(task.I64SpawnOk first)
       (match (task.spawn
         (lambda () : i64
-          (live-worker 23)))
+          (live-worker -4294967273)))
         [(task.I64SpawnErr _)
           (release!)
           (join-value first)
@@ -93,7 +99,7 @@
             2)
             unit)
           (let
-            [parent-ok : bool (= (read-word) 37)]
+            [parent-ok : bool (= (read-word) 9223372036854775807)]
             (release!)
             (let
               [first-value : i64 (join-value first)]
@@ -102,26 +108,32 @@
                 parent-ok
                 (= first-value 42)
                 (= second-value 42)
-                (= (read-word) 37))))])]))
+                (= (read-word) 9223372036854775807))))])]))
 
 (define (fresh-worker) : i64
   (let
     [fresh : bool (= (read-word) 0)]
-    (write-word 53)
-    (if (and fresh (arena-stable? 53))
+    (write-word -9223372036854775808)
+    (if (and fresh (arena-stable? -9223372036854775808))
       42
       1)))
 
 (define (main) : i64
+  ;; Reachability selects the actual runtime variants; cfg names alone do not.
+  (cfg
+    compiler-arena-debug
+    (unsafe
+      (debug-layout 0)))
+  (cfg compile-profile (profile.alloc-total))
   (if (not (= (read-word) 0))
     1
     (begin
-      (write-word 37)
+      (write-word 9223372036854775807)
       (if (not (two-live))
         2
         (let
           [round : i64 0]
-          [ok : bool (arena-stable? 37)]
+          [ok : bool (arena-stable? 9223372036854775807)]
           (while (and ok (< round 32))
             (match (task.spawn
               (lambda () : i64
@@ -129,6 +141,6 @@
               [(task.I64SpawnErr _) (set! ok false)]
               [(task.I64SpawnOk handle) (set! ok (= (join-value handle) 42))])
             (set! round (+ round 1)))
-          (if (and ok (= (read-word) 37))
+          (if (and ok (= (read-word) 9223372036854775807))
             42
             3))))))

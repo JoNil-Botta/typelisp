@@ -28,8 +28,10 @@ seed policy are in
 at opt levels 0, 1 and 2: initial zero, simultaneous thread isolation, fresh
 storage after repeated spawn/join, and address/value stability across arena
 switching, reset and destruction. The `thread-local-word-*` rows of
-`tests/codegen/integration-fixtures.cases` repeat it with arena debugging,
-allocation profiling, backtraces and their combined TLS layout. Its unsafe
+`tests/codegen/integration-fixtures.cases` repeat it with allocation profiling
+and backtraces. `verify-compiler-arena-debug.sh` uses its test-enabled emitter
+for the debug and combined layouts, asserting that debug/profile/backtrace
+storage and renderer symbols really exist before running each binary. Its unsafe
 declaration is paired with `thread_local_word_unsafe_call_reject.tl` in the
 safety corpus. This accessor is a freestanding Linux ABI primitive.
 

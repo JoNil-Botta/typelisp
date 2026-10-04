@@ -6026,18 +6026,141 @@
     [(List (slice (Sym name _) & _))
       (let
         [args (reader.spanned-sexpr-drop s 1)]
-        [parsed-args (try (parse-ast-pattern-list dispatch pools args))]
         [name-id : i64 (ci.intern-syntax-id-value name)]
-        [tag : i64 (compiler-parse-dispatch-tag-id dispatch name-id)]
-        (cond
-          [(= tag (compiler-parse-tag-expr-tuple))
-            (Ok (ast.ast-pat-tuple parsed-args))]
-          [(= tag (compiler-parse-tag-expr-array))
-            (Ok (ast.ast-pat-array parsed-args))]
-          [(= name-id (cbi.compiler-builtin-ctfe "slice"))
-            (parse-ast-slice-pattern dispatch parsed-args)]
-          [else (Ok (ast.ast-pat-variant-id name-id parsed-args))]))]
+        (if (compiler-parse-pattern-head?
+          dispatch
+          name
+          (cbi.compiler-builtin-ctfe "fields")
+          "fields")
+          (parse-ast-fields-pattern dispatch pools args)
+          (let
+            [parsed-args (try (parse-ast-pattern-list dispatch pools args))]
+            [tag : i64 (compiler-parse-dispatch-tag-id dispatch name-id)]
+            (cond
+              [(= tag (compiler-parse-tag-expr-tuple))
+                (Ok (ast.ast-pat-tuple parsed-args))]
+              [(= tag (compiler-parse-tag-expr-array))
+                (Ok (ast.ast-pat-array parsed-args))]
+              [(= name-id (cbi.compiler-builtin-ctfe "slice"))
+                (parse-ast-slice-pattern dispatch parsed-args)]
+              [(compiler-parse-pattern-head?
+                  dispatch
+                  name
+                  (cbi.compiler-builtin-ctfe "or")
+                  "or")
+                (if (< (ast.ast-pattern-list-len (& parsed-args)) 2)
+                  (Err "parse: or-pattern needs at least two alternatives")
+                  (Ok (ast.ast-pat-or parsed-args)))]
+              [else (Ok (ast.ast-pat-variant-id name-id parsed-args))]))))]
     [_ (Err "parse: expected pattern")]))
+
+;; Whether a pattern list's head symbol is the reserved pattern head `head`
+;; (`or` or `fields`, both builtin ctfe ids). An ordinary interned name
+;; compares by id; a macro template's structural syntax identity compares by
+;; its source spelling. Expressions never ask, so `(or ...)` stays a call there.
+(define (compiler-parse-pattern-head?
+  [dispatch : sym_i64_env.SymI64Env]
+  [name : ci.InternSyntaxId]
+  [head-id : i64]
+  [head : String]) : bool
+  (let
+    [name-id : i64 (ci.intern-syntax-id-value name)]
+    (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
+      (= name-id head-id)
+      (string.eq (compiler-parse-dispatch-syntax-id-text dispatch name) head))))
+
+;; `(fields f [p g] ...)`: a bare field name `f` binds that field to `f`; a
+;; bracketed `[p g]` matches field `g` against the pattern `p`. Fields not named
+;; are ignored. The typechecker resolves the names against the struct.
+(define (parse-ast-fields-pattern
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [entries : reader.SpannedSexpr]) : ResultAstPattern
+  (let
+    [out : ast.AstPatternList (ast.ast-pattern-list-new)]
+    (match (parse-ast-fields-pattern-into dispatch pools entries (&mut out))
+      [(ResultAstPatternListBuild.Ok)
+        (if (ast.ast-pattern-list-empty? (& out))
+          (ResultAstPattern.Err
+            "parse: (fields ...) pattern needs at least one field")
+          (ResultAstPattern.Ok (ast.ast-pat-fields out)))]
+      [(ResultAstPatternListBuild.Err message) (ResultAstPattern.Err message)])))
+
+(define (parse-ast-fields-pattern-into
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [s : reader.SpannedSexpr]
+  [out : (&mut out ast.AstPatternList)]) : ResultAstPatternListBuild
+  (match (reader.spanned-sexpr-view s)
+    [(reader.SpannedSexprView.Nil _) (ResultAstPatternListBuild.Ok)]
+    [(reader.SpannedSexprView.Cons head tail _)
+      (match (parse-ast-fields-pattern-entry dispatch pools head)
+        [(ResultAstPattern.Ok parsed-head)
+          (ast.ast-pattern-list-push out parsed-head)
+          (parse-ast-fields-pattern-into dispatch pools tail out)]
+        [(ResultAstPattern.Err message) (ResultAstPatternListBuild.Err message)])]
+    [_ (ResultAstPatternListBuild.Err "parse: malformed (fields ...) pattern")]))
+
+(define (parse-ast-fields-pattern-field-name
+  [dispatch : sym_i64_env.SymI64Env]
+  [node : reader.SpannedSexpr]) : i64
+  (match (reader.spanned-sexpr-view node)
+    [(reader.SpannedSexprView.Sym name _)
+      (let
+        [name-id : i64 (ci.intern-syntax-id-value name)]
+        (if (=
+          (compiler-parse-dispatch-tag-id dispatch name-id)
+          (compiler-parse-tag-pattern-wildcard))
+          -1
+          name-id))]
+    [_ -1]))
+
+(define (parse-ast-fields-pattern-entry
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [entry : reader.SpannedSexpr]) : ResultAstPattern
+  (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view entry))
+    [(reader.SpannedSexprView.Sym _ _)
+      (let
+        [name-id : i64 (parse-ast-fields-pattern-field-name dispatch entry)]
+        (if (< name-id 0)
+          (ResultAstPattern.Err "parse: (fields ...) entry must name a field")
+          (ResultAstPattern.Ok
+            (ast.ast-pat-field name-id (ast.ast-pat-binding-id name-id)))))]
+    [(reader.SpannedSexprView.BracketList items _)
+      (match (reader.spanned-sexpr-view items)
+        [(reader.SpannedSexprView.Cons pattern rest _)
+          (match (reader.spanned-sexpr-view rest)
+            [(reader.SpannedSexprView.Cons field end _)
+              (let
+                [name-id : i64
+                  (parse-ast-fields-pattern-field-name dispatch field)]
+                (match (reader.spanned-sexpr-view end)
+                  [(reader.SpannedSexprView.Nil _)
+                    (if (< name-id 0)
+                      (ResultAstPattern.Err
+                        "parse: (fields ...) entry [pattern field] must end with a field name")
+                      (match (parse-ast-pattern
+                        dispatch
+                        pools
+                        (compiler-parse-place-shared-view pattern))
+                        [(ResultAstPattern.Ok parsed)
+                          (ResultAstPattern.Ok
+                            (ast.ast-pat-field name-id parsed))]
+                        [(ResultAstPattern.Err message)
+                          (ResultAstPattern.Err message)]))]
+                  [_
+                    (ResultAstPattern.Err
+                      "parse: (fields ...) entry [pattern field] takes exactly two items")]))]
+            [_
+              (ResultAstPattern.Err
+                "parse: (fields ...) entry [pattern field] takes exactly two items")])]
+        [_
+          (ResultAstPattern.Err
+            "parse: (fields ...) entry [pattern field] takes exactly two items")])]
+    [_
+      (ResultAstPattern.Err
+        "parse: (fields ...) entry must be a field name or [pattern field]")]))
 
 (define (compiler-parse-semantic-pattern-list-origins!
   [dispatch : sym_i64_env.SymI64Env]
@@ -6047,6 +6170,22 @@
     [(Cons head tail _)
       (compiler-parse-semantic-pattern-origins! dispatch head)
       (compiler-parse-semantic-pattern-list-origins! dispatch tail)]
+    [_ unit]))
+
+(define (compiler-parse-semantic-fields-pattern-origins!
+  [dispatch : sym_i64_env.SymI64Env]
+  [entries : reader.SpannedSexpr]) : unit
+  (match (reader.spanned-sexpr-view entries)
+    [(reader.SpannedSexprView.Cons entry tail _)
+      (match (reader.spanned-sexpr-view
+        (compiler-parse-place-shared-view entry))
+        [(reader.SpannedSexprView.BracketList items _)
+          (match (reader.spanned-sexpr-view items)
+            [(reader.SpannedSexprView.Cons pattern _ _)
+              (compiler-parse-semantic-pattern-origins! dispatch pattern)]
+            [_ unit])]
+        [_ (compiler-parse-semantic-pattern-origins! dispatch entry)])
+      (compiler-parse-semantic-fields-pattern-origins! dispatch tail)]
     [_ unit]))
 
 (define (compiler-parse-semantic-pattern-origins!
@@ -6063,20 +6202,36 @@
               (compiler-parse-dispatch-tag-id
                 dispatch
                 (ci.intern-syntax-id-value name))]
-            (if (or
-              (= tag (compiler-parse-tag-expr-tuple))
-              (= tag (compiler-parse-tag-expr-array))
-              (=
-                (ci.intern-syntax-id-value name)
-                (cbi.compiler-builtin-ctfe "slice")))
-              unit
-              (compiler-parse-semantic-origin-push-components!
-                name
-                span
-                (ModulePath)
-                (EnumVariantPattern))))]
-        [_ unit])
-      (compiler-parse-semantic-pattern-list-origins! dispatch args)]
+            (cond
+              ;; A `(fields ...)` entry's field name is not a pattern name;
+              ;; only the bare-name shorthand and the `[pattern field]`
+              ;; pattern bind.
+              [(compiler-parse-pattern-head?
+                  dispatch
+                  name
+                  (cbi.compiler-builtin-ctfe "fields")
+                  "fields")
+                (compiler-parse-semantic-fields-pattern-origins! dispatch args)]
+              [else
+                (if (or
+                  (= tag (compiler-parse-tag-expr-tuple))
+                  (= tag (compiler-parse-tag-expr-array))
+                  (=
+                    (ci.intern-syntax-id-value name)
+                    (cbi.compiler-builtin-ctfe "slice"))
+                  (compiler-parse-pattern-head?
+                    dispatch
+                    name
+                    (cbi.compiler-builtin-ctfe "or")
+                    "or"))
+                  unit
+                  (compiler-parse-semantic-origin-push-components!
+                    name
+                    span
+                    (ModulePath)
+                    (EnumVariantPattern)))
+                (compiler-parse-semantic-pattern-list-origins! dispatch args)]))]
+        [_ (compiler-parse-semantic-pattern-list-origins! dispatch args)])]
     [(Sym name span)
       (let
         [tag : i64

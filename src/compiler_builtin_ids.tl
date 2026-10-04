@@ -1742,7 +1742,9 @@
           (ctfe 321 "__tl_semantic_origin_import_alias")
           (ctfe 322 "__tl_semantic_origin_value_qualifier")
           (ctfe 323 "__tl_semantic_origin_value_name")
-          (ctfe 324 "__tl_semantic_origin_binding_definition")))
+          (ctfe 324 "__tl_semantic_origin_binding_definition")
+          ;; The by-name struct pattern head (compiler_parse_core.tl).
+          (ctfe 325 "fields")))
         [(comptime.Expr.Call _ items) items]
         [_
           (comptime.comptime-error

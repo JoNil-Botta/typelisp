@@ -506,6 +506,7 @@
   [start : i64]
   [count : i64]
   [arms : bool]
+  [or-arms : bool]
   [emit : bool]
   [width : i64]
   [indent : i64]
@@ -570,6 +571,7 @@
               (if arms
                 (format-rules-layout-arm-cst
                   (owned_view.compiler-owned-shared-view node)
+                  or-arms
                   emit
                   width
                   indent
@@ -605,6 +607,7 @@
     items.slots
     items.start
     items.len
+    false
     false
     emit
     width
@@ -662,6 +665,7 @@
 
 (define (format-rules-layout-arm-cst
   [node : cst.FormatCst]
+  [or-arms : bool]
   [emit : bool]
   [width : i64]
   [indent : i64]
@@ -669,33 +673,43 @@
   [flat : bool]
   [limit : i64]
   [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
-  (if (format-rules-arm-sequence? (owned_view.compiler-owned-shared-view node))
-    (match node
-      [(BracketList items)
-        (match (cst.fmt-cst-list-step (deref items))
-          [(Item head body)
-            (format-rules-layout-text
-              "]"
-              emit
-              width
-              indent
-              (format-rules-layout-arm-hard-tail
-                false
-                body
+  (cond
+    [(and
+        or-arms
+        (format-rules-arm-or-pattern?
+          (owned_view.compiler-owned-shared-view node)))
+      (format-rules-layout-or-arm node emit width indent col flat limit buf)]
+    [(format-rules-arm-sequence? (owned_view.compiler-owned-shared-view node))
+      (match node
+        [(BracketList items)
+          (match (cst.fmt-cst-list-step (deref items))
+            [(Item head body)
+              (format-rules-layout-text
+                "]"
                 emit
                 width
-                (+ indent 2)
-                (format-rules-layout-cst
-                  head
+                indent
+                (format-rules-layout-arm-hard-tail
+                  false
+                  false
+                  body
                   emit
                   width
-                  indent
-                  (format-rules-layout-text
-                    "["
+                  (+ indent 2)
+                  (format-rules-layout-cst
+                    head
                     emit
                     width
                     indent
-                    col
+                    (format-rules-layout-text
+                      "["
+                      emit
+                      width
+                      indent
+                      col
+                      flat
+                      limit
+                      buf)
                     flat
                     limit
                     buf)
@@ -704,16 +718,14 @@
                   buf)
                 flat
                 limit
-                buf)
-              flat
-              limit
-              buf)]
-          [(Empty) col])]
-      [_ col])
-    (format-rules-layout-cst node emit width indent col flat limit buf)))
+                buf)]
+            [(Empty) col])]
+        [_ col])]
+    [else (format-rules-layout-cst node emit width indent col flat limit buf)]))
 
 (define (format-rules-layout-arm-hard-tail
   [arms : bool]
+  [or-arms : bool]
   [items : cst.FormatCstList]
   [emit : bool]
   [width : i64]
@@ -727,6 +739,7 @@
     items.start
     items.len
     arms
+    or-arms
     emit
     width
     indent
@@ -736,7 +749,8 @@
     buf))
 
 ;; `(head first arm...)` for match, or `(head arm...)` for a cond that has a
-;; multi-form arm, with every arm on its own line.
+;; multi-form arm, with every arm on its own line. A match arm whose pattern
+;; is `(or ...)` fills its alternatives (`format-rules-layout-or-arm`).
 (define (format-rules-layout-arms-form
   [head : String]
   [rest : cst.FormatCstList]
@@ -769,6 +783,7 @@
           (if skip-first
             (format-rules-layout-arm-hard-tail
               true
+              true
               arms
               emit
               width
@@ -787,6 +802,7 @@
               buf)
             (format-rules-layout-arm-hard-tail
               true
+              false
               rest
               emit
               width
@@ -2194,6 +2210,289 @@
         flat
         limit
         buf)]))
+
+(define (format-rules-node-or-list? [node : cst.FormatCst]) : bool
+  (match node
+    [(List items)
+      (match (cst.fmt-cst-list-step (deref items))
+        [(Item head _) (string.eq (format-rules-node-symbol-name head) "or")]
+        [_ false])]
+    [_ false]))
+
+;; Whether `node` is a `[pattern body...]` arm whose pattern is `(or ...)`.
+(define (format-rules-arm-or-pattern? [node : cst.FormatCst]) : bool
+  (match node
+    [(BracketList items)
+      (match (cst.fmt-cst-list-step (deref items))
+        [(Item pattern _) (format-rules-node-or-list? pattern)]
+        [_ false])]
+    [_ false]))
+
+;; A match arm with an `(or ...)` pattern is delimited like any arm, but the
+;; pattern fills its alternatives. The emitting pass first measures whether
+;; the whole arm fits flat on its line.
+(define (format-rules-layout-or-arm
+  [node : cst.FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  (match (owned_view.compiler-owned-shared-view node)
+    [(BracketList items)
+      (if emit
+        (let
+          [remaining : i64 (- width col)]
+          [flat-width : i64
+            (format-rules-layout-or-arm-inner
+              (owned_view.compiler-owned-box-shared-view items)
+              false
+              width
+              indent
+              0
+              false
+              remaining
+              buf)]
+          (format-rules-layout-or-arm-inner
+            (owned_view.compiler-owned-box-shared-view items)
+            true
+            width
+            indent
+            col
+            (<= flat-width remaining)
+            limit
+            buf))
+        (format-rules-layout-or-arm-inner
+          (owned_view.compiler-owned-box-shared-view items)
+          false
+          width
+          indent
+          col
+          flat
+          limit
+          buf))]
+    [_ (format-rules-layout-cst node emit width indent col flat limit buf)]))
+
+(define (format-rules-layout-or-arm-inner
+  [items : cst.FormatCstList]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  (let
+    [pattern : cst.FormatCst
+      (owned_view.compiler-owned-array-element-shared-view
+        items.slots
+        items.start)]
+    [after-pattern : i64
+      (format-rules-layout-or-fill
+        (owned_view.compiler-owned-shared-view pattern)
+        emit
+        width
+        (+ indent 2)
+        (format-rules-layout-text "[" emit width indent col flat limit buf)
+        flat
+        limit
+        buf)]
+    (format-rules-layout-text
+      "]"
+      emit
+      width
+      indent
+      (cond
+        [(<= items.len 1) after-pattern]
+        [(> (format-rules-arm-form-count (& items)) 2)
+          (format-rules-layout-hard-tail-dense
+            items.slots
+            (+ items.start 1)
+            (- items.len 1)
+            false
+            false
+            emit
+            width
+            (+ indent 2)
+            after-pattern
+            flat
+            limit
+            buf)]
+        [else
+          (format-rules-layout-list-tail-dense
+            (format-rules-node-comment? pattern)
+            items.slots
+            (+ items.start 1)
+            (- items.len 1)
+            emit
+            width
+            (+ indent 2)
+            after-pattern
+            flat
+            limit
+            buf)])
+      flat
+      limit
+      buf)))
+
+;; An `(or ...)` pattern that does not fit on its line packs as many
+;; alternatives per line as fit, each continuation line aligned under the first
+;; alternative. A comment between alternatives stays on its own line.
+(define (format-rules-layout-or-fill
+  [node : cst.FormatCst]
+  [emit : bool]
+  [width : i64]
+  [indent : i64]
+  [col : i64]
+  [flat : bool]
+  [limit : i64]
+  [buf : (&mut buf fmt_buf.FmtRenderBuf)]) : i64
+  (if (not emit)
+    (format-rules-layout-cst node false width indent col flat limit buf)
+    (let
+      [remaining : i64 (- width col)]
+      [flat-width : i64
+        (format-rules-layout-cst
+          (owned_view.compiler-owned-shared-view node)
+          false
+          width
+          indent
+          0
+          false
+          remaining
+          buf)]
+      (if (<= flat-width remaining)
+        (format-rules-layout-cst node true width indent col true limit buf)
+        (match (owned_view.compiler-owned-shared-view node)
+          [(cst.FormatCst.List boxed)
+            (let
+              [items : cst.FormatCstList (deref boxed)]
+              [align : i64 (+ col 4)]
+              [index : i64 (+ items.start 1)]
+              [end : i64 (+ items.start items.len)]
+              [out : i64
+                (format-rules-layout-text
+                  "(or"
+                  true
+                  width
+                  indent
+                  col
+                  flat
+                  limit
+                  buf)]
+              [first : bool true]
+              [break-next : bool false]
+              (while (< index end)
+                (let
+                  [alternative : cst.FormatCst
+                    (owned_view.compiler-owned-array-element-shared-view
+                      items.slots
+                      index)]
+                  (if (format-rules-node-comment?
+                    (owned_view.compiler-owned-shared-view alternative))
+                    (begin
+                      (set!
+                        out
+                        (format-rules-layout-cst
+                          (owned_view.compiler-owned-shared-view alternative)
+                          true
+                          width
+                          align
+                          (if first
+                            (format-rules-layout-text
+                              " "
+                              true
+                              width
+                              align
+                              out
+                              flat
+                              limit
+                              buf)
+                            (format-rules-layout-hard-line
+                              true
+                              width
+                              align
+                              out
+                              flat
+                              limit
+                              buf))
+                          flat
+                          limit
+                          buf))
+                      (set! break-next true))
+                    (let
+                      [alternative-width : i64
+                        (format-rules-layout-cst
+                          (owned_view.compiler-owned-shared-view alternative)
+                          false
+                          width
+                          align
+                          0
+                          false
+                          (- width align)
+                          buf)]
+                      ;; The last alternative also needs room for `)`.
+                      [needed : i64
+                        (+
+                          out
+                          1
+                          alternative-width
+                          (if (= index (- end 1))
+                            1
+                            0))]
+                      (set!
+                        out
+                        (format-rules-layout-cst
+                          (owned_view.compiler-owned-shared-view alternative)
+                          true
+                          width
+                          align
+                          (if (or break-next (and (not first) (> needed width)))
+                            (format-rules-layout-hard-line
+                              true
+                              width
+                              align
+                              out
+                              flat
+                              limit
+                              buf)
+                            (format-rules-layout-text
+                              " "
+                              true
+                              width
+                              align
+                              out
+                              flat
+                              limit
+                              buf))
+                          flat
+                          limit
+                          buf))
+                      (set! break-next false)))
+                  (set! first false)
+                  (set! index (+ index 1))))
+              (format-rules-layout-text
+                ")"
+                true
+                width
+                indent
+                (if break-next
+                  (format-rules-layout-hard-line
+                    true
+                    width
+                    align
+                    out
+                    flat
+                    limit
+                    buf)
+                  out)
+                flat
+                limit
+                buf))]
+          [_
+            (format-rules-layout-cst node true width indent col flat limit buf)])))))
 
 (define (format-rules-layout-special-list
   [head : cst.FormatCst]

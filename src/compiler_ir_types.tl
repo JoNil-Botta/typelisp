@@ -1579,97 +1579,73 @@
 ;: The var `instr` defines, or -1. Var ids are nonnegative.
 (define (compiler-ir-instr-dst [instr : (& instr CompilerIrInstr)]) : i64
   (match instr
-    [(CompilerIrInstr.Mov dst _ _) (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Alloc dst _) (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.AddrOf dst _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Gep dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Load dst _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Mov dst _ _) dst]
+    [(CompilerIrInstr.Alloc dst _) dst]
+    [(CompilerIrInstr.AddrOf dst _) dst]
+    [(CompilerIrInstr.Gep dst _ _ _) dst]
+    [(CompilerIrInstr.Load dst _ _) dst]
     [(CompilerIrInstr.StoreOwned _ _ _) -1]
     [(CompilerIrInstr.StorePtr _ _ _) -1]
     [(CompilerIrInstr.CopyBytes _ _ _) -1]
     [(CompilerIrInstr.BoundsCheck _ _ _) -1]
-    [(CompilerIrInstr.Cast dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Bitcast dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.BinOp dst _ _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.UnOp dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.LaneId dst _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Splat dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Cast dst _ _ _) dst]
+    [(CompilerIrInstr.Bitcast dst _ _ _) dst]
+    [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
+    [(CompilerIrInstr.UnOp dst _ _ _) dst]
+    [(CompilerIrInstr.LaneId dst _ _) dst]
+    [(CompilerIrInstr.Splat dst _ _ _) dst]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
+        payload-box.dst)]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
-    [(CompilerIrInstr.VectorReduce dst _ _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+        payload-box.dst)]
+    [(CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
     [(CompilerIrInstr.VectorCompare payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
-    [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.MaskNot dst _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.MaskReduce dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+        payload-box.dst)]
+    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
+    [(CompilerIrInstr.MaskNot dst _ _) dst]
+    [(CompilerIrInstr.MaskReduce dst _ _ _) dst]
     [(CompilerIrInstr.Select payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
-    [(CompilerIrInstr.VectorLoad dst _ _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+        payload-box.dst)]
+    [(CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
     [(CompilerIrInstr.VectorStore _) -1]
     [(CompilerIrInstr.PredicatedStore _) -1]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
+        payload-box.dst)]
     [(CompilerIrInstr.GatherLoad payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
+        payload-box.dst)]
     [(CompilerIrInstr.VectorShuffle payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
-    [(CompilerIrInstr.TailMask dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.EntryArgc dst)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.EntryArgv dst)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.EntryEnvp dst)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.CpuId dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Xgetbv dst _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Syscall dst _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Call dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.CallIndirect dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.CallIndirectC dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+        payload-box.dst)]
+    [(CompilerIrInstr.TailMask dst _ _ _) dst]
+    [(CompilerIrInstr.EntryArgc dst) dst]
+    [(CompilerIrInstr.EntryArgv dst) dst]
+    [(CompilerIrInstr.EntryEnvp dst) dst]
+    [(CompilerIrInstr.CpuId dst _ _ _) dst]
+    [(CompilerIrInstr.Xgetbv dst _) dst]
+    [(CompilerIrInstr.Syscall dst _) dst]
+    [(CompilerIrInstr.Call dst _ _ _) dst]
+    [(CompilerIrInstr.CallIndirect dst _ _ _) dst]
+    [(CompilerIrInstr.CallIndirectC dst _ _ _) dst]
     [(CompilerIrInstr.CallCAbiStoreResult _) -1]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult _) -1]
     [(CompilerIrInstr.SpmdCall payload-box)
@@ -1685,11 +1661,9 @@
     [(CompilerIrInstr.Branch _ _ _) -1]
     [(CompilerIrInstr.TotalEnumBranch _ _ _) -1]
     [(CompilerIrInstr.Return _) -1]
-    [(CompilerIrInstr.Phi dst _ _) (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Pack dst _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Word dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Phi dst _ _) dst]
+    [(CompilerIrInstr.Pack dst _ _) dst]
+    [(CompilerIrInstr.Word dst _ _ _) dst]
     [(CompilerIrInstr.TailCallIndirect _ _ _) -1]
     [(CompilerIrInstr.Switch _ _ _ _) -1]
     [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) -1]))
@@ -6098,9 +6072,9 @@
   (match (compiler-ir-global-shared-view instr)
     [(SpmdCall payload-box)
       (let
-        [callee (compiler-ir-box-field-shared-view payload-box callee)]
-        [backend (compiler-ir-box-field-shared-view payload-box backend)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [callee (deref payload-box).callee]
+        [backend (deref payload-box).backend]
+        [lanes (deref payload-box).lanes]
         [active-mask
           (compiler-ir-box-field-shared-view payload-box active-mask)]
         [args (compiler-ir-box-field-shared-view payload-box args)]
@@ -7108,11 +7082,11 @@
         (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(VectorBinOp payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [op (compiler-ir-box-field-shared-view payload-box op)]
         [lhs (compiler-ir-box-field-shared-view payload-box lhs)]
         [rhs (compiler-ir-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7128,11 +7102,11 @@
           (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(VectorPrefix payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [op (compiler-ir-box-field-shared-view payload-box op)]
+        [dst (deref payload-box).dst]
+        [op (deref payload-box).op]
         [src (compiler-ir-box-field-shared-view payload-box src)]
         [carry (compiler-ir-box-field-shared-view payload-box carry)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7159,11 +7133,11 @@
         (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(VectorCompare payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [op (compiler-ir-box-field-shared-view payload-box op)]
         [lhs (compiler-ir-box-field-shared-view payload-box lhs)]
         [rhs (compiler-ir-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7206,11 +7180,11 @@
         (string.int->string lanes))]
     [(Select payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [mask (compiler-ir-box-field-shared-view payload-box mask)]
         [on-true (compiler-ir-box-field-shared-view payload-box on-true)]
         [on-false (compiler-ir-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7240,7 +7214,7 @@
         [base (compiler-ir-box-field-shared-view payload-box base)]
         [index (compiler-ir-box-field-shared-view payload-box index)]
         [value (compiler-ir-box-field-shared-view payload-box value)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           "  vector_store "
@@ -7259,7 +7233,7 @@
         [index (compiler-ir-box-field-shared-view payload-box index)]
         [value (compiler-ir-box-field-shared-view payload-box value)]
         [mask (compiler-ir-box-field-shared-view payload-box mask)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           "  predicated_store "
@@ -7276,11 +7250,11 @@
           (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(PredicatedLoad payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [base (compiler-ir-box-field-shared-view payload-box base)]
         [index (compiler-ir-box-field-shared-view payload-box index)]
         [mask (compiler-ir-box-field-shared-view payload-box mask)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7296,13 +7270,12 @@
           (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(GatherLoad payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [base (compiler-ir-box-field-shared-view payload-box base)]
         [index-base (compiler-ir-box-field-shared-view payload-box index-base)]
         [index (compiler-ir-box-field-shared-view payload-box index)]
-        [lane-offset
-          (compiler-ir-box-field-shared-view payload-box lane-offset)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lane-offset (deref payload-box).lane-offset]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7322,7 +7295,7 @@
           (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(VectorShuffle payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [source (compiler-ir-box-field-shared-view payload-box source)]
         [selector-low
           (compiler-ir-box-field-shared-view payload-box selector-low)]
@@ -7330,7 +7303,7 @@
           (compiler-ir-box-field-shared-view payload-box selector-high)]
         [active-lanes
           (compiler-ir-box-field-shared-view payload-box active-lanes)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7411,7 +7384,7 @@
     [(CallCAbiStoreResult payload-box)
       (let
         [base (compiler-ir-box-field-shared-view payload-box base)]
-        [name (compiler-ir-box-field-shared-view payload-box name)]
+        [name (deref payload-box).name]
         [args (compiler-ir-box-field-shared-view payload-box args)]
         [slots (compiler-ir-box-field-shared-view payload-box slots)]
         (str_cat.str-cat
@@ -7462,9 +7435,9 @@
         ty)]
     [(SpmdCall payload-box)
       (let
-        [callee (compiler-ir-box-field-shared-view payload-box callee)]
-        [backend (compiler-ir-box-field-shared-view payload-box backend)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [callee (deref payload-box).callee]
+        [backend (deref payload-box).backend]
+        [lanes (deref payload-box).lanes]
         [active-mask
           (compiler-ir-box-field-shared-view payload-box active-mask)]
         [args (compiler-ir-box-field-shared-view payload-box args)]

@@ -8925,7 +8925,7 @@
     (while (> index 0)
       (set! index (- index 1))
       (when
-        (= (lower-global-array-element-shared-view subs.names index) name)
+        (= (array-ref subs.names index) name)
         (set! found index)
         (set! index 0)))
     (if (< found 0)
@@ -20971,7 +20971,7 @@
                       (lower-global-shared-view resolved)
                       (deref items-box)
                       has-rest
-                      (lower-global-shared-view mode)
+                      mode
                       fail-label
                       true)
                       [(Ok slice-state slice-env slice-type-env)
@@ -49796,8 +49796,8 @@
                   ctx
                   mode
                   numeric-context
-                  (lower-global-shared-view env)
-                  (lower-global-shared-view type-env)
+                  env
+                  type-env
                   index
                   (lower-global-shared-view dst-elem)
                   (lower-context-expr-get ctx init-box)
@@ -72340,7 +72340,7 @@
   [request : CompilerLowerRequest]) : ResultCompilerLower
   (let
     [state : CompilerLowerState (compiler-lower-state-new)]
-    (compiler-lower-state-use-request! state (lower-global-shared-view request))
+    (compiler-lower-state-use-request! state request)
     (match request.pointer-proof
       [(Disabled) unit]
       [(Requested input)

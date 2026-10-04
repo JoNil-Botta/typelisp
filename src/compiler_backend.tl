@@ -16097,7 +16097,7 @@
     [(VectorBinOp payload-box)
       (let
         [op (compiler-backend-box-field-shared-view payload-box op)]
-        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
         [mode : CompilerBackendMode
           (compiler-backend-vector-mode elem-ty lanes)]
@@ -16115,7 +16115,7 @@
           [else 0]))]
     [(PredicatedLoad payload-box)
       (let
-        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
         (if (and
           avx2-function
@@ -16124,7 +16124,7 @@
           0))]
     [(PredicatedStore payload-box)
       (let
-        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
         (if (and
           avx2-function
@@ -16133,7 +16133,7 @@
           0))]
     [(GatherLoad payload-box)
       (let
-        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
         [dword : bool
           (compiler-backend-gather-dword-element?
@@ -16157,7 +16157,7 @@
           0))]
     [(VectorShuffle payload-box)
       (let
-        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
         [avx512 : bool (compiler-backend-avx512-shape-ok? elem-ty lanes)]
         (if (or avx512 (compiler-backend-avx2-shape-ok? elem-ty lanes))
@@ -23647,7 +23647,7 @@
       (if (compiler-backend-const-hoist-block-call-free?
         (compiler-backend-global-array-element-shared-view
           orig
-          (compiler-backend-global-array-element-shared-view preds i)))
+          (array-ref preds i)))
         unit
         (set! ok false))
       (set! i (+ i 1)))
@@ -39539,7 +39539,7 @@
           (compiler-backend-windows-closure-stack-arg-space args)]
         [(CallCAbiStoreResult payload-box)
           (let
-            [name (compiler-backend-box-field-shared-view payload-box name)]
+            [name (deref payload-box).name]
             [args (compiler-backend-box-field-shared-view payload-box args)]
             (+
               (compiler-backend-windows-stack-arg-space
@@ -39594,7 +39594,7 @@
         ;; base-save offset, so no per-call %rsp dip is needed.
         [(CallCAbiStoreResult payload-box)
           (let
-            [name (compiler-backend-box-field-shared-view payload-box name)]
+            [name (deref payload-box).name]
             [args (compiler-backend-box-field-shared-view payload-box args)]
             (+
               (compiler-backend-call-stack-arg-space
@@ -49132,11 +49132,11 @@
           ctx.backend-state)]
       [(VectorBinOp payload-box)
         (let
-          [dst (compiler-backend-box-field-shared-view payload-box dst)]
+          [dst (deref payload-box).dst]
           [op (compiler-backend-box-field-shared-view payload-box op)]
           [lhs (compiler-backend-box-field-shared-view payload-box lhs)]
           [rhs (compiler-backend-box-field-shared-view payload-box rhs)]
-          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+          [lanes (deref payload-box).lanes]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-vector-binop
             (compiler-backend-vector-mode elem-ty lanes)
@@ -49152,11 +49152,11 @@
             ctx.backend-state))]
       [(VectorPrefix payload-box)
         (let
-          [dst (compiler-backend-box-field-shared-view payload-box dst)]
-          [op (compiler-backend-box-field-shared-view payload-box op)]
+          [dst (deref payload-box).dst]
+          [op (deref payload-box).op]
           [src (compiler-backend-box-field-shared-view payload-box src)]
           [carry (compiler-backend-box-field-shared-view payload-box carry)]
-          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+          [lanes (deref payload-box).lanes]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-vector-prefix
             ctx.assignments
@@ -49181,11 +49181,11 @@
           ctx.backend-state)]
       [(VectorCompare payload-box)
         (let
-          [dst (compiler-backend-box-field-shared-view payload-box dst)]
+          [dst (deref payload-box).dst]
           [op (compiler-backend-box-field-shared-view payload-box op)]
           [lhs (compiler-backend-box-field-shared-view payload-box lhs)]
           [rhs (compiler-backend-box-field-shared-view payload-box rhs)]
-          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+          [lanes (deref payload-box).lanes]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-vector-compare
             ctx.type-segment-bases
@@ -49230,12 +49230,12 @@
           ctx.backend-state)]
       [(Select payload-box)
         (let
-          [dst (compiler-backend-box-field-shared-view payload-box dst)]
+          [dst (deref payload-box).dst]
           [mask (compiler-backend-box-field-shared-view payload-box mask)]
           [on-true (compiler-backend-box-field-shared-view payload-box on-true)]
           [on-false
             (compiler-backend-box-field-shared-view payload-box on-false)]
-          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+          [lanes (deref payload-box).lanes]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-select
             ctx.type-segment-bases
@@ -49265,7 +49265,7 @@
           [base (compiler-backend-box-field-shared-view payload-box base)]
           [index (compiler-backend-box-field-shared-view payload-box index)]
           [value (compiler-backend-box-field-shared-view payload-box value)]
-          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+          [lanes (deref payload-box).lanes]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-vector-store
             (compiler-backend-vector-mode elem-ty lanes)
@@ -49284,7 +49284,7 @@
           [index (compiler-backend-box-field-shared-view payload-box index)]
           [value (compiler-backend-box-field-shared-view payload-box value)]
           [mask (compiler-backend-box-field-shared-view payload-box mask)]
-          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+          [lanes (deref payload-box).lanes]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-predicated-store
             ctx.type-segment-bases
@@ -49301,11 +49301,11 @@
             ctx.backend-state))]
       [(PredicatedLoad payload-box)
         (let
-          [dst (compiler-backend-box-field-shared-view payload-box dst)]
+          [dst (deref payload-box).dst]
           [base (compiler-backend-box-field-shared-view payload-box base)]
           [index (compiler-backend-box-field-shared-view payload-box index)]
           [mask (compiler-backend-box-field-shared-view payload-box mask)]
-          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+          [lanes (deref payload-box).lanes]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-predicated-load
             ctx.type-segment-bases
@@ -49322,14 +49322,13 @@
             ctx.backend-state))]
       [(GatherLoad payload-box)
         (let
-          [dst (compiler-backend-box-field-shared-view payload-box dst)]
+          [dst (deref payload-box).dst]
           [base (compiler-backend-box-field-shared-view payload-box base)]
           [index-base
             (compiler-backend-box-field-shared-view payload-box index-base)]
           [index (compiler-backend-box-field-shared-view payload-box index)]
-          [lane-offset
-            (compiler-backend-box-field-shared-view payload-box lane-offset)]
-          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+          [lane-offset (deref payload-box).lane-offset]
+          [lanes (deref payload-box).lanes]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-gather-load
             ctx.type-segment-bases
@@ -49345,7 +49344,7 @@
             ctx.backend-state))]
       [(VectorShuffle payload-box)
         (let
-          [dst (compiler-backend-box-field-shared-view payload-box dst)]
+          [dst (deref payload-box).dst]
           [source (compiler-backend-box-field-shared-view payload-box source)]
           [selector-low
             (compiler-backend-box-field-shared-view payload-box selector-low)]
@@ -49353,7 +49352,7 @@
             (compiler-backend-box-field-shared-view payload-box selector-high)]
           [active-lanes
             (compiler-backend-box-field-shared-view payload-box active-lanes)]
-          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+          [lanes (deref payload-box).lanes]
           [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
           (compiler-backend-emit-vector-shuffle
             ctx.type-segment-bases
@@ -49427,9 +49426,9 @@
           ctx.backend-state)]
       [(SpmdCall payload-box)
         (let
-          [name (compiler-backend-box-field-shared-view payload-box callee)]
-          [backend (compiler-backend-box-field-shared-view payload-box backend)]
-          [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+          [name (deref payload-box).callee]
+          [backend (deref payload-box).backend]
+          [lanes (deref payload-box).lanes]
           [active-mask
             (compiler-backend-box-field-shared-view payload-box active-mask)]
           [args (compiler-backend-box-field-shared-view payload-box args)]
@@ -49521,7 +49520,7 @@
       [(CallCAbiStoreResult payload-box)
         (let
           [base (compiler-backend-box-field-shared-view payload-box base)]
-          [name (compiler-backend-box-field-shared-view payload-box name)]
+          [name (deref payload-box).name]
           [args (compiler-backend-box-field-shared-view payload-box args)]
           [slots (compiler-backend-box-field-shared-view payload-box slots)]
           (compiler-backend-emit-c-abi-store-result-call
@@ -50265,7 +50264,7 @@
     [(Select payload-box)
       (let
         [mask (compiler-backend-box-field-shared-view payload-box mask)]
-        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         (if (not (= lanes 0))
           (- 0 1)
           (match mask
@@ -73773,7 +73772,7 @@
       (let
         [base (compiler-backend-box-field-shared-view payload-box base)]
         [args (compiler-backend-box-field-shared-view payload-box args)]
-        [name (compiler-backend-box-field-shared-view payload-box name)]
+        [name (deref payload-box).name]
         (compiler-backend-iag-note-callee!
           (compiler-backend-global-shared-view collections.iag)
           name)
@@ -73796,7 +73795,7 @@
         [active-mask
           (compiler-backend-box-field-shared-view payload-box active-mask)]
         [args (compiler-backend-box-field-shared-view payload-box args)]
-        [callee (compiler-backend-box-field-shared-view payload-box callee)]
+        [callee (deref payload-box).callee]
         (compiler-backend-iag-note-callee!
           (compiler-backend-global-shared-view collections.iag)
           callee)
@@ -73946,9 +73945,8 @@
         [index-base
           (compiler-backend-box-field-shared-view payload-box index-base)]
         [index (compiler-backend-box-field-shared-view payload-box index)]
-        [lane-offset
-          (compiler-backend-box-field-shared-view payload-box lane-offset)]
-        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [lane-offset (deref payload-box).lane-offset]
+        [lanes (deref payload-box).lanes]
         [elem-ty (compiler-backend-box-field-shared-view payload-box ty)]
         [values : CompilerBackendProgramCollections
           (compiler-backend-collect-value-collections
@@ -75727,7 +75725,7 @@
       (compiler-backend-runtime-index-add-call index call-name)]
     [(CallCAbiStoreResult payload-box)
       (let
-        [call-name (compiler-backend-box-field-shared-view payload-box name)]
+        [call-name (deref payload-box).name]
         (compiler-backend-runtime-index-add-call index call-name))]
     [(TailCall call-name _ _)
       (compiler-backend-runtime-index-add-call index call-name)]
@@ -79351,7 +79349,7 @@
     [(CallCAbiStoreResult payload-box)
       (let
         [base (compiler-backend-box-field-shared-view payload-box base)]
-        [name (compiler-backend-box-field-shared-view payload-box name)]
+        [name (deref payload-box).name]
         [args (compiler-backend-box-field-shared-view payload-box args)]
         [call-target : String
           (compiler-backend-call-symbol-index name plan program-index)]
@@ -79717,11 +79715,11 @@
         program-index)]
     [(Select payload-box)
       (let
-        [dst (compiler-backend-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [mask (compiler-backend-box-field-shared-view payload-box mask)]
         [on-true (compiler-backend-box-field-shared-view payload-box on-true)]
         [on-false (compiler-backend-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-backend-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-backend-box-field-shared-view payload-box ty)]
         (if (= lanes 0)
           (compiler-backend-object-scalar-select

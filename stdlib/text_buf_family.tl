@@ -35,30 +35,6 @@
   `(unsafe
     (ptr-read (ptr-addr-of ,place))))
 
-;: Read a Copy payload bound by a pattern matched through a shared reference.
-;: Such a payload binds by value; a bootstrap seed that predates that rule binds
-;: a reference, so the generated code reads the binding through this macro until
-;: the seed carries the rule.
-(defmacro (text-buf-family-pattern-copy [binding : Expr]) : Expr
-  (if (string-eq (type-kind (comptime.expr-type binding)) "ref")
-    `(deref ,binding)
-    binding))
-
-;: Borrow the boxed value of a `(Box T)` payload bound by a pattern matched
-;: through a shared reference. Such a payload binds `(& T)`; a bootstrap seed
-;: that predates that rule binds `(& (Box T))`, so the generated code borrows
-;: through this macro until the seed carries the rule.
-(defmacro (text-buf-family-pattern-box-ref [binding : Expr]) : Expr
-  (let
-    [binding-type : comptime.Expr (comptime.expr-type binding)]
-    (if (if (string-eq (type-kind binding-type) "ref")
-      (string-eq
-        (type-kind (comptime.reference-element-type binding-type))
-        "box")
-      false)
-      `(& (deref (deref ,binding)))
-      binding)))
-
 ;; The remaining `box-get` spellings in this file occur only inside checked-in
 ;; quasiquoted AST templates. The published seed must be able to parse those
 ;; templates during the one-epoch bootstrap; rebuilt public source uses `deref`.
@@ -506,9 +482,7 @@
               (io.file-write-status raw (byte_buf.str-as-bytes (& chunk))))]
           [(TextBufChunkDense store visible-count)
             (let
-              [count : i64
-                (stdlib.text_buf_family.text-buf-family-pattern-copy
-                  visible-count)]
+              [count : i64 visible-count]
               [limit : i64 (stdlib.text_buf.batched-write-threshold)]
               [batch : byte_buf.ByteBuf (byte_buf.with-capacity capacity)]
               [index : i64 0]
@@ -517,10 +491,7 @@
                 (while (and (= status io.io-status-ok) (< index count))
                   (let
                     [chunk : String
-                      (stdlib.text_buf.text-buf-store-entry-at
-                        (stdlib.text_buf_family.text-buf-family-pattern-box-ref
-                          store)
-                        index)]
+                      (stdlib.text_buf.text-buf-store-entry-at store index)]
                     [chunk-len : i64 (string-length chunk)]
                     [pending : i64 (byte_buf.len (& batch))]
                     (begin
@@ -635,12 +606,10 @@
       (append (empty-like text) text))
     (define (empty? [buf : (& buf (TextBufBorrowed text))]) : bool
       (match buf
-        [(TextBufBorrowed _ len)
-          (= (text_buf_family.text-buf-family-pattern-copy len) 0)]))
+        [(TextBufBorrowed _ len) (= len 0)]))
     (define (length [buf : (& buf (TextBufBorrowed text))]) : i64
       (match buf
-        [(TextBufBorrowed _ len)
-          (text_buf_family.text-buf-family-pattern-copy len)]))
+        [(TextBufBorrowed _ len) len]))
     (define (slice-valid? [source : (& text str)] [start : i64] [len : i64]) : bool
       (let
         [n : i64 (string-length source)]
@@ -1066,9 +1035,7 @@
         [(TextBufBorrowedChunkNil _) count]
         [(TextBufBorrowedChunkInline _ _ _) (+ count 1)]
         [(TextBufBorrowedChunkDense _ _ prefix-count _ _)
-          (+
-            count
-            (+ (text_buf_family.text-buf-family-pattern-copy prefix-count) 1))]))
+          (+ count (+ prefix-count 1))]))
     (define (chunk-count [buf : (& buf (TextBufBorrowed text))]) : i64
       (match buf
         [(TextBufBorrowed chunks _)

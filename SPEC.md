@@ -5183,8 +5183,13 @@ flattened, and the two coordinate names must differ.
   `a`, and `b`, where `span` is `(- x-end x-begin)` over the header's own inner
   bounds, or the bare `x-end` when `x-begin` is the literal `0`. Additive
   terms may appear in any order and grouping, each coordinate exactly once and
-  with positive sign. The span's bounds must be integer literals or
-  variables bound outside the `foreach` that the body never assigns. Because
+  with positive sign. Uniform offsets must be constant across the whole
+  domain: literals, outer variables the body never assigns, or closed scalar
+  operations on those values. A memory read or call must be evaluated into an
+  outer scalar before the `foreach`; body-local values cannot prove a stable
+  offset. This also rejects mutation through `foreach-active`. The span's
+  bounds must be integer literals or variables bound outside the `foreach`
+  that the body never assigns. Because
   the checked domain product keeps `(y - y-begin) * span + (x - x-begin)` in
   `[0, product)`, such writes are disjoint over the whole domain. Any other
   coordinate-dependent destination, including `out[x]` and `out[y]`, is

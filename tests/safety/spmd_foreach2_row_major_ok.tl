@@ -1,5 +1,5 @@
 ;: Canonical rank-2 row-major writes are disjoint over the whole domain: any
-;: uniform base and coordinate offsets, the span as (- end begin) or as a bare
+;: stable uniform base and coordinate offsets, the span as (- end begin) or as a bare
 ;: end over a literal zero begin, and additive terms in any order or grouping.
 (define (fill-offset
   [out : (&mut out (__tl_dyn-array i64))]
@@ -11,7 +11,9 @@
   (foreach
     ([y : i64 y0 y1] [x : i64 x0 x1])
     (set!
-      (array-ref out (+ base (+ (* (- y y0) (- x1 x0)) (- x x0))))
+      (array-ref
+        out
+        (+ (+ (* base 1) (cast 0 : i64)) (+ (* (- y y0) (- x1 x0)) (- x x0))))
       (+ (* y 100) x))))
 
 (define (fill-swapped
@@ -37,16 +39,28 @@
       (set! (array-ref out (+ (* y w) x)) -1)
       unit)))
 
+(define (fill-captured [out : (&mut out (__tl_dyn-array i64))]) : unit
+  (let
+    [memory : (Array i64 1) (make-array i64 1)]
+    [base : i64 (array-ref memory 0)]
+    (foreach
+      ([y : i64 0 2] [x : i64 0 2])
+      (begin
+        (set! (array-ref out (+ base (+ (* y 2) x))) (+ (* y 100) x))
+        (foreach-active [lane : i64] (set! (array-ref memory 0) 7))))))
+
 (define (main) : i64
   (let
     [a : (__tl_dyn-array i64) (__tl_make-array i64 12)]
     [b : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     [c : (__tl_dyn-array i64) (__tl_make-array i64 16)]
+    [d : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     (begin
       (fill-offset (&mut a) 2 1 4 -1 2)
       (fill-swapped (&mut b) 2 3)
       (fill-literal (&mut c))
       (fill-masked (&mut b) 2 3)
+      (fill-captured (&mut d))
       (cond
         [(not
             (and
@@ -73,4 +87,11 @@
               (= (array-ref c 12) 100)
               (= (array-ref c 15) 103)))
           3]
+        [(not
+            (and
+              (= (array-ref d 0) 0)
+              (= (array-ref d 1) 1)
+              (= (array-ref d 2) 100)
+              (= (array-ref d 3) 101)))
+          4]
         [else 42]))))

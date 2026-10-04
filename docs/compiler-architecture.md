@@ -183,8 +183,13 @@ A rank-2 `foreach` is `AstForeach.Foreach2` (surface schema 16, expression
 tag 89): the outer coordinate's name, type and bounds, then the inner one's,
 then the body, so binding order and ordinal survive every AST walker. The
 SPMD checker binds both coordinates varying and read-only with role
-`ForeachCoordinate ordinal begin end`; the inner role carries the header's
-inner bounds when each is a literal or a variable the body never assigns.
+`ForeachCoordinate ordinal begin end body-id`; the inner role carries the
+header's inner bounds when each is a literal or a variable the body never
+assigns. The body id lets the proof reject uniform offsets that change
+between instances, including assignments from `foreach-active`. Offset
+expressions use the shared child schema and accept only closed scalar
+operations over literals and unassigned outer bindings; memory reads and
+calls need a scalar captured before the domain.
 While a rank-2 coordinate is local, destination and masked-branch indexes go
 through the row-major proof (`tc-spmd-row-major-index?`) instead of the
 rank-1 rule; a nested domain marks the coordinates outer and a helper argument

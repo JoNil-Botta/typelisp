@@ -542,6 +542,11 @@ spmd_foreach2_assigned_span_write_reject|check-fail|tests/safety/spmd_foreach2_a
 spmd_foreach2_masked_write_reject|check-fail|tests/safety/spmd_foreach2_masked_write_reject.tl|-|SPMD masked if does not support rank-2 array indexes other than the row-major form
 spmd_foreach2_helper_write_reject|check-fail|tests/safety/spmd_foreach2_helper_write_reject.tl|-|foreach does not support non-contiguous array element destination indexes
 spmd_foreach2_nested_write_reject|check-fail|tests/safety/spmd_foreach2_nested_write_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_foreach2_assigned_base_write_reject|check-fail|tests/safety/spmd_foreach2_assigned_base_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major with stable uniform offsets
+spmd_foreach2_assigned_row_offset_write_reject|check-fail|tests/safety/spmd_foreach2_assigned_row_offset_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major with stable uniform offsets
+spmd_foreach2_assigned_column_offset_write_reject|check-fail|tests/safety/spmd_foreach2_assigned_column_offset_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major with stable uniform offsets
+spmd_foreach2_memory_offset_write_reject|check-fail|tests/safety/spmd_foreach2_memory_offset_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major with stable uniform offsets
+spmd_foreach2_assigned_base_masked_reject|check-fail|tests/safety/spmd_foreach2_assigned_base_masked_reject.tl|-|SPMD masked if does not support rank-2 array indexes other than the row-major form with stable uniform offsets
 spmd_foreach2_row_major_ok|run-exit|tests/safety/spmd_foreach2_row_major_ok.tl|42|-
 
 # SPMD v1 private-call ABI policy: public vector/mask/varying source types

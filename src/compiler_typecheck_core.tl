@@ -3826,8 +3826,9 @@
   ;; binding order (0 outer, 1 inner), then for the inner coordinate the ids
   ;; of the header's begin and end expressions when each is a stable atom
   ;; (an integer literal, or a variable the body never assigns), else -1.
+  ;; The final field is the domain body id, used to reject mutable offsets.
   ;; The row-major write proof compares the body's span against those atoms.
-  (ForeachCoordinate i64 i64 i64)
+  (ForeachCoordinate i64 i64 i64 i64)
   (CompactIndex)
   (CompactSlot)
   ;; foreach-active (#8306): the read-only lane binding, and the two sentinel
@@ -42552,7 +42553,7 @@
       (match (tc-spmd-env-lookup-id spmd-env name)
         ;; A helper never proves a rank-2 row-major write: its body sees the
         ;; coordinate as a plain varying value.
-        [(Found _ _ _ (ForeachCoordinate _ _ _)) Value]
+        [(Found _ _ _ (ForeachCoordinate _ _ _ _)) Value]
         [(Found _ _ _ role) role]
         [(Missing) Value])]
     [_ Value]))
@@ -43476,7 +43477,7 @@
     (let
       [binding : TcSpmdBinding (tc-spmd-binding-at bindings index)]
       (match binding.role
-        [(ForeachCoordinate ordinal _ _)
+        [(ForeachCoordinate ordinal _ _ _)
           (if (and
             (= ordinal 1)
             (match binding.scope
@@ -43573,7 +43574,7 @@
   (match (tc-spmd-binding-at spmd-env.bindings inner-at)
     [(TcSpmdBinding _ _ _ _ role)
       (match role
-        [(ForeachCoordinate _ begin-id end-id)
+        [(ForeachCoordinate _ begin-id end-id _)
           (match (tc-spmd-row-major-atom
             expr-bases
             (tc-global-shared-view expr))
@@ -43615,13 +43616,73 @@
   [expr-bases : i64]
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
+  [inner-at : i64]
   [expr : ast.AstExpr]
   [acc : TcSpmdRowMajorTerms]) : TcSpmdRowMajorTerms
-  (match (tc-spmd-expr ctx expr-bases env spmd-env expr)
+  (match (tc-spmd-expr ctx expr-bases env spmd-env (tc-global-shared-view expr))
     [(Ok (TcSpmdExprInfo _ class _))
       (if (tc-spmd-varying? class)
         (tc-spmd-row-major-fail)
-        acc)]
+        (let
+          [node : ast.AstExpr
+            (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
+          (match (tc-global-shared-view node)
+            [(Literal _) acc]
+            [(Var name)
+              (let
+                [found : i64
+                  (tc-spmd-env-latest-index-from
+                    spmd-env.bindings
+                    (- (tc-spmd-env-len spmd-env) 1)
+                    name)]
+                (if (and (>= found 0) (< found (- inner-at 1)))
+                  (match (tc-spmd-binding-at spmd-env.bindings inner-at)
+                    [(TcSpmdBinding _ _ _ _ role)
+                      (match role
+                        [(ForeachCoordinate _ _ _ body-id)
+                          (if (tc-expr-uses-free-names?
+                            expr-bases
+                            (ast.ast-expr-segment-bases-get expr-bases body-id)
+                            (tc-string-list-add Nil (tc-env-key-name-text name))
+                            Nil
+                            true)
+                            (tc-spmd-row-major-fail)
+                            acc)]
+                        [_ (tc-spmd-row-major-fail)])])
+                  (tc-spmd-row-major-fail)))]
+            [_
+              ;; Lane-uniform is insufficient: every offset must stay constant
+              ;; across the domain. Closed scalar operations preserve that
+              ;; invariant; memory reads and calls require a captured outer value.
+              (if (match (tc-global-shared-view node)
+                [(Unary _ _) true]
+                [(Binary _ _ _) true]
+                [(Cast _ _) true]
+                [(Ann _ _) true]
+                [(MacroExpansion _ _ _) true]
+                [_ false])
+                (let
+                  [children : ast.AstExprList (ast.ast-expr-child-ids node)]
+                  [index : i64 0]
+                  [result : TcSpmdRowMajorTerms acc]
+                  (while (and
+                    result.ok
+                    (< index (ast.ast-expr-list-len (& children))))
+                    (set!
+                      result
+                      (tc-spmd-row-major-uniform-term
+                        ctx
+                        expr-bases
+                        env
+                        spmd-env
+                        inner-at
+                        (ast.ast-expr-segment-bases-get
+                          expr-bases
+                          (ast.ast-expr-list-get (& children) index -1))
+                        result))
+                    (set! index (+ index 1)))
+                  result)
+                (tc-spmd-row-major-fail))])))]
     [(Err _) (tc-spmd-row-major-fail)]))
 
 ;; Count the coordinate terms of the additive tree EXPR, whose terms have
@@ -43710,6 +43771,7 @@
                     expr-bases
                     env
                     spmd-env
+                    inner-at
                     (tc-global-shared-view expr)
                     acc)]
                 (cond
@@ -43752,11 +43814,12 @@
                 expr-bases
                 env
                 spmd-env
+                inner-at
                 expr
                 acc)]))]
       [(Var name)
         (match (tc-spmd-env-lookup-id spmd-env name)
-          [(Found _ (Varying) (Local) (ForeachCoordinate ordinal _ _))
+          [(Found _ (Varying) (Local) (ForeachCoordinate ordinal _ _ _))
             (cond
               [(not positive?) (tc-spmd-row-major-fail)]
               [(and factor? (= ordinal 0))
@@ -43770,9 +43833,18 @@
               expr-bases
               env
               spmd-env
+              inner-at
               expr
               acc)])]
-      [_ (tc-spmd-row-major-uniform-term ctx expr-bases env spmd-env expr acc)])))
+      [_
+        (tc-spmd-row-major-uniform-term
+          ctx
+          expr-bases
+          env
+          spmd-env
+          inner-at
+          expr
+          acc)])))
 
 ;; True when EXPR is the outer coordinate plus uniform offsets.
 (define (tc-spmd-row-major-row-factor?
@@ -43797,7 +43869,7 @@
     (and terms.ok (= terms.rows 1) (= terms.columns 0))))
 
 ;; A rank-2 index is injective over the whole domain when it is
-;; U + (y - A) * S + (x - B) for uniform U, A and B and S the exact inner
+;; U + (y - A) * S + (x - B) for constant uniform U, A and B and S the exact inner
 ;; span: the checked domain product keeps (y - y0) * S + (x - x0) in
 ;; [0, rows * S), and adding a constant modulo 2^64 preserves injectivity.
 ;; Additive terms may appear in any order and grouping.
@@ -43838,7 +43910,7 @@
         (Err
           (tc-kind-message
             (Spmd)
-            "typecheck: rank-2 foreach array element destination indexes must be row-major: base + (y - y0) * (x1 - x0) + (x - x0) over the coordinates and the header's inner bounds"))])))
+            "typecheck: rank-2 foreach array element destination indexes must be row-major with stable uniform offsets: base + (y - y0) * (x1 - x0) + (x - x0) over the coordinates and the header's inner bounds"))])))
 
 (define (tc-spmd-masked-if-uniform-offset
   [ctx : TcContext]
@@ -44784,7 +44856,7 @@
 ;; Check a rank-2 domain's BODY with both coordinates bound read-only and
 ;; varying: in scalar order every (outer, inner) pair is its own logical
 ;; instance. The inner coordinate's role carries the stable header bounds
-;; INNER-BEGIN-ID and INNER-END-ID for the row-major write proof.
+;; INNER-BEGIN-ID and INNER-END-ID, plus the domain body id, for the proof.
 (define (tc-spmd-check-foreach2-body-with-env
   [ctx : TcContext]
   [expr-bases : i64]
@@ -44794,8 +44866,9 @@
   [inner : i64]
   [inner-begin-id : i64]
   [inner-end-id : i64]
-  [body : ast.AstExpr]) : ResultTcUnit
+  [body-id : i64]) : ResultTcUnit
   (let
+    [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-id)]
     [body-env : TcTypeEnv (tc-bind-id (tc-bind-id env outer (I64)) inner (I64))]
     [inner-role : TcSpmdRole
       (ForeachCoordinate
@@ -44807,7 +44880,8 @@
         (tc-spmd-foreach2-stable-atom
           expr-bases
           inner-end-id
-          (tc-global-shared-view body)))]
+          (tc-global-shared-view body))
+        body-id)]
     [body-spmd-env : TcSpmdEnv
       (tc-spmd-env-bind-role-id
         (tc-spmd-env-bind-role-id
@@ -44816,7 +44890,7 @@
           (I64)
           Varying
           Local
-          (ForeachCoordinate 0 -1 -1))
+          (ForeachCoordinate 0 -1 -1 body-id))
         inner
         (I64)
         Varying
@@ -46316,7 +46390,7 @@
             (tc-kind-message
               (Spmd)
               "typecheck: foreach-active lane binding is read-only"))]
-        [(Found _ _ _ (ForeachCoordinate _ _ _))
+        [(Found _ _ _ (ForeachCoordinate _ _ _ _))
           (Err
             (tc-kind-message
               (Spmd)
@@ -46435,7 +46509,7 @@
                   inner
                   c-box
                   d-box
-                  (ast.ast-expr-segment-bases-get expr-bases body-box))
+                  body-box)
                   [(Ok) (tc-spmd-finish expr-ty Uniform bounds-env)]
                   [(Err message) (Err message)])]
               [(Err message) (Err message)])]))]
@@ -60348,7 +60422,7 @@
                           inner
                           inner-start-box
                           inner-end-box
-                          (tc-context-expr-get ctx body-box))
+                          body-box)
                           [(Ok) (Ok (Unit))]
                           [(Err message) (Err message)])]
                       [(Err message) (Err message)])]

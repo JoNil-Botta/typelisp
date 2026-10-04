@@ -595,9 +595,8 @@ tl_thread_init:
     syscall
     testq %rax, %rax
     js .L_tl_thread_init_abort
-    movq $tl_current_arena@tpoff, %rdi
-    subq %rdi, %rax
     movq %rax, %rsi
+    subq $tl_current_arena@tpoff, %rsi
     movq %rsi, 0(%rsi)
     movq $0x1002, %rdi
     movq $158, %rax

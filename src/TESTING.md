@@ -629,7 +629,8 @@ Compiler-development builds expose three opt-in `typelisp compile` diagnostics:
 including nested macro-local type variables. The IR observability gate dumps it
 at opt0/1/2 and after SSA. The IR smoke also checks source, macro-local and fresh
 syntax IDs in `Var`, `VarArgs` and nested pointer/slice types, plus wrong-owner,
-negative and out-of-range identities. Rendering decodes names through their
+negative and out-of-range identities, including malformed decoded source IDs.
+Rendering decodes names through their
 structural session; an unresolvable identity prints `<id:N>` instead of indexing
 the source intern pool.
 

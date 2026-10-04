@@ -87,8 +87,8 @@ other reduction shapes use two scratch registers.
 IR type rendering takes the compile's structural-session handle and type-pool
 segment bases. `Var` and `VarArgs` names, like lifetime names, may carry either
 source intern IDs or hygienic syntax IDs. `compiler-ir-syntax-name-render`
-checks the ID domain and decodes through that session before any intern-pool
-read; unresolved, stale and wrong-owner syntax IDs render as `<id:N>`.
+checks both the raw and decoded ID domains through that session before any
+intern-pool read; opaque, unresolved, stale and wrong-owner IDs render as `<id:N>`.
 Recursive type rendering retains both owners through nested pointer, slice,
 function and nominal arguments. The compatibility type-name entry deliberately
 uses the installed structural owner through the zero-handle adapter.

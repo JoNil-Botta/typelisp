@@ -1261,6 +1261,20 @@
           definition
           7
           source))]
+    [invalid-global : i64
+      (cis.intern-macro-global-identity-raw
+        (cis.intern-structural-session-macro-global-identity
+          session
+          Context
+          module-id
+          (ci.intern-capacity)))]
+    [invalid-local : i64
+      (cis.intern-macro-local-identity-raw
+        (cis.intern-structural-session-macro-local-identity
+          session
+          definition
+          9
+          (ci.intern-capacity)))]
     [borrowed : ast.AstType (ast.ast-ty-ref-with-pools pools lifetime I64)]
     [arithmetic-borrowed : ast.AstType
       (ast.ast-ty-ref-with-pools
@@ -1276,6 +1290,16 @@
       (ast.ast-ty-ref-with-pools pools (ci.intern-capacity) I64)]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases (& pools))]
     (and
+      (compiler-ir-smoke-type-variable-render-ok?
+        pools
+        session
+        invalid-global
+        (str_cat.str-cat "<id:" (string.int->string invalid-global) ">"))
+      (compiler-ir-smoke-type-variable-render-ok?
+        pools
+        session
+        invalid-local
+        (str_cat.str-cat "<id:" (string.int->string invalid-local) ">"))
       (compiler-ir-smoke-type-variable-render-ok?
         pools
         session

@@ -6360,7 +6360,7 @@
           structural-session
           name
           -1)]
-      (if (>= source-id 0)
+      (if (ci.intern-renderable-id? source-id)
         (ci.intern-str source-id)
         (str_cat.str-cat "<id:" (string.int->string name) ">")))))
 

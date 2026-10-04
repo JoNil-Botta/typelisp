@@ -42478,13 +42478,19 @@
       (let
         [expr-id : i64 (ast.ast-expr-list-get exprs index 0)]
         [ty : ast.AstType (try (tc-expr-id ctx env expr-id))]
-        (try
-          (tc-expect-at-expr
-            ctx
-            (tc-context-expr-get ctx expr-id)
-            ty
-            (Unit)
-            "typecheck: while body must be unit")))
+        (match (tc-global-shared-view ty)
+          [(Unit) unit]
+          [(Never) unit]
+          [_
+            (match (tc-expect ty (Unit) "typecheck: while body must be unit")
+              [(Ok) unit]
+              [(Err message)
+                (return
+                  (Err
+                    (tc-locate-error-at-expr
+                      (tc-context-expr-bases ctx)
+                      (tc-context-expr-get ctx expr-id)
+                      message)))])]))
       (set! index (+ index 1)))
     (Ok (Unit))))
 

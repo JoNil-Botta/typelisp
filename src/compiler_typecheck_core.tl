@@ -44036,7 +44036,7 @@
       [(tc-spmd-row-major-index? ctx expr-bases env spmd-env inner-at expr) Ok]
       [else
         (tc-spmd-masked-if-unsupported
-          "rank-2 array indexes other than the row-major form base + (y - y0) * (x1 - x0) + (x - x0)")])))
+          "rank-2 array indexes other than the row-major form with stable uniform offsets: base + (y - y0) * (x1 - x0) + (x - x0)")])))
 
 (define (tc-spmd-masked-if-lane-type-ok [ty : ast.AstType]) : ResultTcUnit
   (if (tc-spmd-lane-type-supported? (tc-global-shared-view ty))

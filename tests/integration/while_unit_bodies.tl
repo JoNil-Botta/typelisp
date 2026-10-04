@@ -10,6 +10,10 @@
   `(while ,condition
     ,@body))
 
+(defmacro (loop-form [condition : Expr] [body : Expr]) : Expr
+  `(while ,condition
+    ,body))
+
 (defmacro (emit-loop) : Decls
   '(define (generated-loop) : i64
     (let
@@ -39,6 +43,14 @@
       (begin
         (body-value (+ total 1))
         (set! total (+ total 20))
+        (set! running false)))
+    (set! running true)
+    (loop-form running (set! running false))
+    (set! running true)
+    (loop-form
+      running
+      (begin
+        (body-value total)
         (set! running false)))
     (set! running true)
     (loop-forms

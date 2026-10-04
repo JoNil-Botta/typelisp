@@ -1796,12 +1796,26 @@
         (if (< cond-opened 0)
           -1
           (let
+            ;; The single-expression callback retains an explicit Begin.
+            ;; A splice can produce any number of direct forms and needs a list.
+            [single-body : i64
+              (if (= body-node.len 1)
+                (compiler_ast_types.ast-expr-list-get (& body-node) 0 -1)
+                -1)]
+            [single-form : bool
+              (and
+                (>= single-body 0)
+                (match (embedded-stdlib-tlci-unwrap-expr single-body)
+                  [(UnquoteSplicing _) false]
+                  [_ true]))]
             [body-opened : i64
-              (embedded-native-template-args-ops
-                params
-                (& body-node)
-                ops
-                ops-count)]
+              (if single-form
+                (embedded-native-template-ops params single-body ops ops-count)
+                (embedded-native-template-args-ops
+                  params
+                  (& body-node)
+                  ops
+                  ops-count))]
             (if (< body-opened 0)
               -1
               (begin
@@ -1809,7 +1823,9 @@
                   ops
                   ops-count
                   (tlci_core.tlci-host-callback-name expr-while)
-                  "1"
+                  (if single-form
+                    "0"
+                    "1")
                   "0"
                   "0")
                 (+ cond-opened body-opened 1))))))]

@@ -11945,7 +11945,37 @@
                 (lower-global-shared-view names)
                 (lower-reach-expr pools all-functions names state source)
                 init)
-              body))])]
+              body))]
+        [(Foreach2 _ _ a-box b-box _ _ c-box d-box body-box)
+          (let
+            [reached : LowerReachState
+              (lower-reach-expr
+                pools
+                all-functions
+                (lower-global-shared-view names)
+                (lower-reach-expr
+                  pools
+                  all-functions
+                  (lower-global-shared-view names)
+                  (lower-reach-expr
+                    pools
+                    all-functions
+                    (lower-global-shared-view names)
+                    (lower-reach-expr
+                      pools
+                      all-functions
+                      (lower-global-shared-view names)
+                      state
+                      (ast.ast-node-pool-context-expr-get pools a-box))
+                    (ast.ast-node-pool-context-expr-get pools b-box))
+                  (ast.ast-node-pool-context-expr-get pools c-box))
+                (ast.ast-node-pool-context-expr-get pools d-box))]
+            (lower-reach-expr
+              pools
+              all-functions
+              names
+              reached
+              (ast.ast-node-pool-context-expr-get pools body-box)))])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(Reduce _ _ _ source-box init-box map-expr-box reduce-expr-box)
@@ -28973,7 +29003,20 @@
               index-ty
               start
               end
-              body))])]
+              body))]
+        [(Foreach2 outer _ a-box b-box inner _ c-box d-box body-box)
+          (lower-foreach2
+            ctx
+            state
+            env
+            type-env
+            outer
+            a-box
+            b-box
+            inner
+            c-box
+            d-box
+            body-box)])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)
         [(Reduce op index index-ty start-box end-box init-box value-box)
@@ -43891,6 +43934,180 @@
                 (ast.ast-node-pool-context-expr-push pools (Var cursor-id))
                 (ast.ast-expr-list-new))))))]
     (lower-expr ctx state env type-env (lower-context-expr-get ctx root-id))))
+
+;; A rank-2 foreach has one lowering in every backend mode, the scalar
+;; reference: nested loops with the inner coordinate fastest. The four bounds
+;; are evaluated once, in binding order, into private locals. Both dimensions
+;; are tested for emptiness before any span arithmetic, so an empty domain
+;; never traps; otherwise each span and the domain product are checked against
+;; i64 overflow before the first body effect.
+(define (lower-foreach2
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [outer-id : i64]
+  [outer-start : i64]
+  [outer-end : i64]
+  [inner-id : i64]
+  [inner-start : i64]
+  [inner-end : i64]
+  [body : i64]) : ResultLowerExpr
+  (let
+    [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+    [y0 : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-private-identity state (SpmdDomainBound 0)))]
+    [y1 : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-private-identity state (SpmdDomainBound 1)))]
+    [x0 : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-private-identity state (SpmdDomainBound 2)))]
+    [x1 : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-private-identity state (SpmdDomainBound 3)))]
+    [zero-id : i64
+      (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 0)))]
+    [unit-id : i64 (ast.ast-node-pool-context-expr-push pools (Literal Unit))]
+    ;; The typed zero-length array read is the same checked-access abort that
+    ;; `spmd-compact` uses for its overflow trap.
+    [trap-id : i64
+      (ast.ast-expr-array-ref-with-pools
+        pools
+        (ast.ast-expr-fixed-make-array-with-pools pools (Unit) zero-id)
+        zero-id)]
+    [y-span : i64 (lower-foreach2-binary pools (Sub) y1 y0)]
+    [x-span : i64 (lower-foreach2-binary pools (Sub) x1 x0)]
+    [checks : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Begin
+          (ast.ast-expr-cons
+            (lower-foreach2-trap-if
+              pools
+              (ast.ast-expr-binary-with-pools pools (Lt) y-span zero-id)
+              trap-id
+              unit-id)
+            (ast.ast-expr-cons
+              (lower-foreach2-trap-if
+                pools
+                (ast.ast-expr-binary-with-pools pools (Lt) x-span zero-id)
+                trap-id
+                unit-id)
+              (ast.ast-expr-cons
+                (lower-foreach2-trap-if
+                  pools
+                  (ast.ast-expr-binary-with-pools
+                    pools
+                    (Gt)
+                    y-span
+                    (ast.ast-expr-binary-with-pools
+                      pools
+                      (Div)
+                      (ast.ast-node-pool-context-expr-push
+                        pools
+                        (Literal (ast.ast-lit-int 9223372036854775807)))
+                      x-span))
+                  trap-id
+                  unit-id)
+                (ast.ast-expr-list-new))))))]
+    [inner-loop : i64 (lower-foreach2-loop pools inner-id x0 x1 body)]
+    [outer-loop : i64 (lower-foreach2-loop pools outer-id y0 y1 inner-loop)]
+    [nonempty : i64
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Begin
+          (ast.ast-expr-cons
+            checks
+            (ast.ast-expr-cons outer-loop (ast.ast-expr-list-new)))))]
+    [root-id : i64
+      (ast.ast-expr-let-with-pools
+        pools
+        (ast.ast-let-binding-cons
+          (ast.ast-let-binding-id y0 (Some (I64)) outer-start)
+          (ast.ast-let-binding-cons
+            (ast.ast-let-binding-id y1 (Some (I64)) outer-end)
+            (ast.ast-let-binding-cons
+              (ast.ast-let-binding-id x0 (Some (I64)) inner-start)
+              (ast.ast-let-binding-cons
+                (ast.ast-let-binding-id x1 (Some (I64)) inner-end)
+                (ast.ast-let-binding-list-new)))))
+        (ast.ast-expr-if-with-pools
+          pools
+          (ast.ast-expr-binary-with-pools
+            pools
+            (Lt)
+            (lower-foreach2-var pools y0)
+            (lower-foreach2-var pools y1))
+          (ast.ast-expr-if-with-pools
+            pools
+            (ast.ast-expr-binary-with-pools
+              pools
+              (Lt)
+              (lower-foreach2-var pools x0)
+              (lower-foreach2-var pools x1))
+            nonempty
+            unit-id)
+          unit-id))]
+    (lower-expr ctx state env type-env (lower-context-expr-get ctx root-id))))
+
+(define (lower-foreach2-var [pools : ast.AstNodePoolContext] [id : i64]) : i64
+  (ast.ast-node-pool-context-expr-push pools (Var id)))
+
+(define (lower-foreach2-binary
+  [pools : ast.AstNodePoolContext]
+  [op : ast.AstBinOp]
+  [left-id : i64]
+  [right-id : i64]) : i64
+  (ast.ast-expr-binary-with-pools
+    pools
+    op
+    (lower-foreach2-var pools left-id)
+    (lower-foreach2-var pools right-id)))
+
+(define (lower-foreach2-trap-if
+  [pools : ast.AstNodePoolContext]
+  [cond : i64]
+  [trap-id : i64]
+  [unit-id : i64]) : i64
+  (ast.ast-expr-if-with-pools pools cond trap-id unit-id))
+
+;; (let [coord : i64 begin] (while (< coord end) (begin body (set! coord (+ coord 1)))))
+(define (lower-foreach2-loop
+  [pools : ast.AstNodePoolContext]
+  [coord : i64]
+  [begin-id : i64]
+  [end-id : i64]
+  [body : i64]) : i64
+  (ast.ast-expr-let-with-pools
+    pools
+    (ast.ast-let-binding-cons
+      (ast.ast-let-binding-id
+        coord
+        (Some (I64))
+        (lower-foreach2-var pools begin-id))
+      (ast.ast-let-binding-list-new))
+    (ast.ast-expr-while-with-pools
+      pools
+      (lower-foreach2-binary pools (Lt) coord end-id)
+      (ast.ast-node-pool-context-expr-push
+        pools
+        (Begin
+          (ast.ast-expr-cons
+            body
+            (ast.ast-expr-cons
+              (ast.ast-expr-set-id-with-pools
+                pools
+                coord
+                (ast.ast-expr-binary-with-pools
+                  pools
+                  (Add)
+                  (lower-foreach2-var pools coord)
+                  (ast.ast-node-pool-context-expr-push
+                    pools
+                    (Literal (ast.ast-lit-int 1)))))
+              (ast.ast-expr-list-new))))))))
 
 (define (lower-spmd-broadcast
   [ctx : tc_core.TcContext]
@@ -61071,7 +61288,10 @@
       [(Foreach foreach-box)
         (match (__tl-box-place foreach-box)
           [(Foreach name _ _ _ _)
-            (lower-spmd-array-view-note! flags name other)])]
+            (lower-spmd-array-view-note! flags name other)]
+          [(Foreach2 outer _ _ _ inner _ _ _ _)
+            (lower-spmd-array-view-note! flags outer other)
+            (lower-spmd-array-view-note! flags inner other)])]
       [(SpmdReduce reduce-box)
         (match (__tl-box-place reduce-box)
           [(Reduce _ name _ _ _ _ _)

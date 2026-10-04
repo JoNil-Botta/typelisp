@@ -434,6 +434,26 @@
             (codec.surface-ast-write-type! out context index-ty)
             (codec.surface-ast-write-i64! out start)
             (codec.surface-ast-write-i64! out end)
+            (codec.surface-ast-write-i64! out body)]
+          [(Foreach2
+            outer
+            outer-ty
+            outer-start
+            outer-end
+            inner
+            inner-ty
+            inner-start
+            inner-end
+            body)
+            (codec.surface-ast-write-i64! out 89)
+            (codec.surface-ast-write-name! out context outer)
+            (codec.surface-ast-write-type! out context outer-ty)
+            (codec.surface-ast-write-i64! out outer-start)
+            (codec.surface-ast-write-i64! out outer-end)
+            (codec.surface-ast-write-name! out context inner)
+            (codec.surface-ast-write-type! out context inner-ty)
+            (codec.surface-ast-write-i64! out inner-start)
+            (codec.surface-ast-write-i64! out inner-end)
             (codec.surface-ast-write-i64! out body)])]
       [(SpmdReduce payload)
         (match (deref payload)
@@ -763,6 +783,19 @@
           (codec.surface-ast-read-name! reader)
           (codec.surface-ast-read-i64! reader))]
       [(= tag 88) (LaneValue (codec.surface-ast-read-i64! reader))]
+      [(= tag 89)
+        (Foreach
+          (box
+            (ast.AstForeach.Foreach2
+              (codec.surface-ast-read-name! reader)
+              (codec.surface-ast-read-type! reader)
+              (codec.surface-ast-read-i64! reader)
+              (codec.surface-ast-read-i64! reader)
+              (codec.surface-ast-read-name! reader)
+              (codec.surface-ast-read-type! reader)
+              (codec.surface-ast-read-i64! reader)
+              (codec.surface-ast-read-i64! reader)
+              (codec.surface-ast-read-i64! reader))))]
       [(= tag 13)
         (MakeArray
           (codec.surface-ast-read-i64! reader)

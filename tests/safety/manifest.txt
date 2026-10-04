@@ -519,6 +519,31 @@ foreach_active_gang_scalar_defined|run-exit|tests/safety/foreach_active_gang_sca
 foreach_active_masked_defined|run-exit|tests/safety/foreach_active_masked_defined.tl|42|-
 foreach_active_bounds_trap|run-trap|tests/safety/foreach_active_bounds_trap.tl|134|array index out of bounds: index=4 length=4
 
+# Rank-2 foreach domains (#7190): one or two distinct i64 bindings with bounds
+# outside both coordinates, read-only coordinates, and the row-major proof for
+# full-domain disjoint writes (helpers and nested domains see no coordinate).
+spmd_foreach2_rank0_reject|check-fail|tests/safety/spmd_foreach2_rank0_reject.tl|-|parse: foreach requires one or two domain bindings
+spmd_foreach2_rank3_reject|check-fail|tests/safety/spmd_foreach2_rank3_reject.tl|-|parse: foreach supports at most two domain bindings (rank 2)
+spmd_foreach2_duplicate_name_reject|check-fail|tests/safety/spmd_foreach2_duplicate_name_reject.tl|-|parse: foreach domain bindings must use distinct names
+spmd_foreach2_coordinate_type_reject|check-fail|tests/safety/spmd_foreach2_coordinate_type_reject.tl|-|rank-2 foreach coordinate types must be i64
+spmd_foreach2_bound_type_reject|check-fail|tests/safety/spmd_foreach2_bound_type_reject.tl|-|rank-2 foreach bounds must have type i64
+spmd_foreach2_bound_scope_reject|check-fail|tests/safety/spmd_foreach2_bound_scope_reject.tl|-|unbound name y
+spmd_foreach2_body_type_reject|check-fail|tests/safety/spmd_foreach2_body_type_reject.tl|-|foreach body must be unit
+spmd_foreach2_return_reject|check-fail|tests/safety/spmd_foreach2_return_reject.tl|-|return inside foreach is not supported
+spmd_foreach2_nonuniform_bound_reject|check-fail|tests/safety/spmd_foreach2_nonuniform_bound_reject.tl|-|foreach bounds must be uniform
+spmd_foreach2_coordinate_mutation_reject|check-fail|tests/safety/spmd_foreach2_coordinate_mutation_reject.tl|-|rank-2 foreach coordinate bindings are read-only
+spmd_foreach2_inner_write_reject|check-fail|tests/safety/spmd_foreach2_inner_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_outer_write_reject|check-fail|tests/safety/spmd_foreach2_outer_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_diagonal_write_reject|check-fail|tests/safety/spmd_foreach2_diagonal_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_stride_write_reject|check-fail|tests/safety/spmd_foreach2_stride_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_negated_column_write_reject|check-fail|tests/safety/spmd_foreach2_negated_column_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_shadowed_span_write_reject|check-fail|tests/safety/spmd_foreach2_shadowed_span_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_assigned_span_write_reject|check-fail|tests/safety/spmd_foreach2_assigned_span_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_masked_write_reject|check-fail|tests/safety/spmd_foreach2_masked_write_reject.tl|-|SPMD masked if does not support rank-2 array indexes other than the row-major form
+spmd_foreach2_helper_write_reject|check-fail|tests/safety/spmd_foreach2_helper_write_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_foreach2_nested_write_reject|check-fail|tests/safety/spmd_foreach2_nested_write_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_foreach2_row_major_ok|run-exit|tests/safety/spmd_foreach2_row_major_ok.tl|42|-
+
 # SPMD v1 private-call ABI policy: public vector/mask/varying source types
 # stay rejected, and function-value calls remain outside the direct helper ABI.
 spmd_public_vector_type_reject|check-fail|tests/safety/spmd_public_vector_type_reject.tl|-|public SPMD vector source types are deferred

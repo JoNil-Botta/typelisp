@@ -68473,8 +68473,7 @@
   [loop-carried : TcMovedSet]
   [moved : TcMovedSet]
   [expr : ast.AstExpr]
-  [target-ty : ast.AstType]
-  [_value-ty : ast.AstType]) : TcMoveResult
+  [target-ty : ast.AstType]) : TcMoveResult
   (let
     [closure-move-only : bool
       (tc-move-value-concrete-closure-move-only?
@@ -69743,16 +69742,6 @@
         [raw-ty : ast.AstType
           (ast.ty-node-get
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-        [value-ty : ast.AstType
-          (match (tc-body-type-fact-expr-id
-            (if auto-borrow?
-              "move.call_arg_value_auto"
-              "move.call_arg_value")
-            ctx
-            env
-            head)
-            [(Ok actual) actual]
-            [(Err _) (owned_view.compiler-owned-shared-view raw-ty)])]
         (match (if auto-borrow?
           (tc-call-effective-arg-expr
             ctx
@@ -69778,8 +69767,7 @@
                   (tc-global-shared-view loop-carried)
                   moved1
                   effective-head
-                  raw-ty
-                  value-ty)
+                  raw-ty)
                   [(Ok moved2)
                     (tc-move-check-exprs-with-types-at
                       ctx
@@ -74512,7 +74500,6 @@
                             loop-carried
                             moved1
                             inner
-                            (tc-global-shared-view receiver-ty)
                             receiver-ty)]
                         [(Ref _ _)
                           (Err
@@ -74641,7 +74628,6 @@
                   (tc-moved-empty)
                   moved1
                   (tc-global-shared-view inner)
-                  (tc-global-shared-view return-ty)
                   return-ty)]
               [(Err _) (TcMoveResult.Ok moved1)])
               [(Ok moved2)
@@ -75027,7 +75013,6 @@
           (tc-global-shared-view loop-carried)
           operand-moved
           operand
-          (tc-global-shared-view operand-ty)
           operand-ty)]
       [(TcMoveResult.Err message) (TcMoveResult.Err message)])))
 
@@ -78091,17 +78076,28 @@
             [(Err message) (Err message)])
           (Ok borrowed))]
       [(No)
-        (match (tc-body-type-fact-expr-id "borrow.bind_init" ctx env init-id)
-          [(Ok init-ty)
-            (tc-borrow-check-after-bind-typed
+        ;; Only a place can conflict with a loan when its value moves, so the
+        ;; value's type matters only for a place.
+        (match (tc-borrow-check-place-path
+          expr-bases
+          (tc-global-shared-view init))
+          [(Some _)
+            (match (tc-body-type-fact-expr-id
+              "borrow.bind_init"
               ctx
-              expr-bases
               env
-              locals
-              borrowed
-              init
-              init-ty)]
-          [(Err _) (Ok borrowed)])])))
+              init-id)
+              [(Ok init-ty)
+                (tc-borrow-check-after-bind-typed
+                  ctx
+                  expr-bases
+                  env
+                  locals
+                  borrowed
+                  init
+                  init-ty)]
+              [(Err _) (Ok borrowed)])]
+          [(No) (Ok borrowed)])])))
 
 (define (tc-borrow-check-call-constructor?
   [ctx : TcContext]

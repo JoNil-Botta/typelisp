@@ -122,7 +122,9 @@
       (in-arena (arena.Arena owner) (string.copy "shared reader storage"))]
     [index : i64 0]
     (while (< index 2049)
-      (reader.sp-node-push (Int index "" (token.SourceSpan 1 1 1 1)))
+      (begin
+        (reader.sp-node-push (Int index "" (token.SourceSpan 1 1 1 1)))
+        unit)
       (set! index (+ index 1)))
     (unless
       (and

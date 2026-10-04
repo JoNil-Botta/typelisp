@@ -5918,6 +5918,14 @@
       [chain : (Ptr i64)
         (unsafe
           (ptr-offset previous 0))]
+      ;; Chain links this position may still follow (zlib's max_chain). The
+      ;; walk stops when the 64th link is followed, without examining the
+      ;; candidate it reaches, so at most 64 candidates (the head and 63
+      ;; more) are examined per position. Uncapped, indentation runs put
+      ;; most positions of the 4096-byte window on the same "   " chain;
+      ;; the cap costs about 2% of payload size. Format and decoder are
+      ;; unaffected: any (offset, length) the walk picks is a valid token.
+      [links : i64 64]
       ;; best-len < cap exits once no candidate can improve the match; the
       ;; replaced best-len < 18 condition kept walking candidates that could
       ;; not win. It also bounds both reads below: index+best-len is under
@@ -5936,6 +5944,7 @@
           ;; wider loop needs for best-len and best-offset.
           (while (and
             (>= candidate floor)
+            (> links 0)
             (not
               (=
                 (ctfe-embedded-stdlib-lzss-byte data (+ candidate best-len))
@@ -5943,8 +5952,9 @@
             (set!
               candidate
               (unsafe
-                (ptr-read (ptr-offset chain candidate)))))
-          (if (< candidate floor)
+                (ptr-read (ptr-offset chain candidate))))
+            (set! links (- links 1)))
+          (if (or (< candidate floor) (= links 0))
             (return (CtfeEmbeddedStdlibLzssMatch best-offset best-len))
             (let
               [length : i64
@@ -5956,7 +5966,8 @@
               (set!
                 candidate
                 (unsafe
-                  (ptr-read (ptr-offset chain candidate))))))))
+                  (ptr-read (ptr-offset chain candidate))))
+              (set! links (- links 1))))))
       (CtfeEmbeddedStdlibLzssMatch best-offset best-len))))
 
 (define (ctfe-embedded-stdlib-lzss-compress [source : String]) : String

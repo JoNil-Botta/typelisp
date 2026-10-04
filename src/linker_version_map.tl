@@ -7,6 +7,7 @@
 (import (vector.vector script.Token) as token_vec)
 
 (defstruct VersionMapLimits
+  ;; max-bytes also caps the source label copied into a diagnostic.
   (lex script.LinkerScriptLimits)
   (max-nodes i64)
   (max-symbols i64)
@@ -317,6 +318,8 @@
       (Err (VersionMapError 1 1 "invalid version-map limits"))]
     [(> (array-length data) limits.lex.max-bytes)
       (Err (VersionMapError 1 1 "version-map byte limit exceeded"))]
+    [(> (string.string-length source) limits.lex.max-bytes)
+      (Err (VersionMapError 1 1 "version-map source-label limit exceeded"))]
     [(> (array-length data) (/ limits.max-work 3))
       (Err (VersionMapError 1 1 "version-map work limit exceeded"))]
     [else

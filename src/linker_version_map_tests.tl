@@ -208,3 +208,19 @@
     [limits : map.VersionMapLimits (map.default-limits)]
     (reject "/* never closed" "unterminated comment" 1 1 (& limits))
     (reject "V{global:\"never closed" "unterminated quote" 1 10 (& limits))))
+
+(test
+  version-map-source-label-boundary
+  (let
+    [limits : map.VersionMapLimits (map.default-limits)]
+    [data : (__tl_dyn-array u8) (bytes-of "V{};")]
+    (set! limits.lex.max-bytes 4)
+    (match (map.parse "five!" (& data) (& limits))
+      [(Ok _) (io.panic "accepted source label over limit")]
+      [(Err error)
+        (assert
+          (string.eq error.message "version-map source-label limit exceeded")
+          "bounded diagnostic")])
+    (match (map.parse "four" (& data) (& limits))
+      [(Ok _) unit]
+      [(Err error) (io.panic error.message)])))

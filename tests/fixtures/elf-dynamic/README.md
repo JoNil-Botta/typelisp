@@ -13,6 +13,10 @@ The `use` DSO needs V2 from liba.so and B1 from libb.so. GNU ld interleaves each
 Verneed with its Vernaux; lld places both headers before both auxiliaries.
 The `client` DSO additionally defines BASE and CLIENT_1, exercising a shared
 namespace of definition and need indices.
+The `many` DSO needs both V1 and V2 from liba.so and B1 from libb.so, covering
+multi-entry Vernaux chains in both layouts. The producer's `a.map` deliberately
+binds `api` in two nodes to exercise `.symver`; this is a section oracle, outside
+the bounded map parser's duplicate-binding policy.
 
 The `lld23-use` bytes contain a non-weak V2 and a WEAK B1 requirement. Its only
 B1 reference is a weak undefined `beta`. GNU ld 2.47 and lld 22.1.8 emit a zero

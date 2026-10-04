@@ -547,3 +547,73 @@
     [request : codec.DecodeRequest (fixture false true)]
     (set! request.limits.max-work -1)
     (expect-error (& request) "limits")))
+
+(include-bin
+  gnu-many-str
+  "../tests/fixtures/elf-dynamic/ld-many.dynstr.expected")
+
+(include-bin
+  gnu-many-sym
+  "../tests/fixtures/elf-dynamic/ld-many.gnu.version.expected")
+
+(include-bin
+  gnu-many-need
+  "../tests/fixtures/elf-dynamic/ld-many.gnu.version_r.expected")
+
+(include-bin
+  lld-many-str
+  "../tests/fixtures/elf-dynamic/ld.lld-many.dynstr.expected")
+
+(include-bin
+  lld-many-sym
+  "../tests/fixtures/elf-dynamic/ld.lld-many.gnu.version.expected")
+
+(include-bin
+  lld-many-need
+  "../tests/fixtures/elf-dynamic/ld.lld-many.gnu.version_r.expected")
+
+(test
+  elf-version-multiple-needs-per-provider
+  (let
+    [producer : i64 0]
+    (while (< producer 2)
+      (let
+        [request : codec.DecodeRequest
+          (codec.DecodeRequest
+            (codec.VersionBytes
+              (if (= producer 0)
+                (copy-bytes (& gnu-many-sym) (array-length gnu-many-sym))
+                (copy-bytes (& lld-many-sym) (array-length lld-many-sym)))
+              (__tl_make-array u8 0)
+              (if (= producer 0)
+                (copy-bytes (& gnu-many-need) (array-length gnu-many-need))
+                (copy-bytes (& lld-many-need) (array-length lld-many-need))))
+            (if (= producer 0)
+              (copy-bytes (& gnu-many-str) (array-length gnu-many-str))
+              (copy-bytes (& lld-many-str) (array-length lld-many-str)))
+            5
+            0
+            2
+            true
+            (codec.default-limits))]
+        (round-trip (& request))
+        (match (codec.decode (& request))
+          [(Err _) (io.panic "multiple need fixture")]
+          [(Ok versions)
+            (assert
+              (=
+                (array-ref
+                  versions.needs.records.slots
+                  (if (= producer 0)
+                    1
+                    0)).aux.len
+                2)
+              "two versions from liba.so")])
+        (le.set-u32!
+          (&mut request.bytes.needs)
+          (if (= producer 0)
+            60
+            44)
+          0)
+        (expect-error (& request) "vn_cnt"))
+      (set! producer (+ producer 1)))))

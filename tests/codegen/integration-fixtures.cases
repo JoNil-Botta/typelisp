@@ -7,43 +7,6 @@ do none
 target -
 opt -
 
-# Named TLS offsets and the FS:0 self pointer must survive every runtime layout.
-case thread-local-word-debug
-source tests/integration/thread_local_word.tl
-opt 0 1 2
-args --stdlib-root src --cfg compiler-arena-debug
-do link-run
-exit 42
-stdout empty
-stderr empty
-
-case thread-local-word-profile
-source tests/integration/thread_local_word.tl
-opt 0 1 2
-args --stdlib-root src --cfg compile-profile
-do link-run
-exit 42
-stdout empty
-stderr empty
-
-case thread-local-word-backtrace
-source tests/integration/thread_local_word.tl
-opt 0 1 2
-args --stdlib-root src --backtrace
-do link-run
-exit 42
-stdout empty
-stderr empty
-
-case thread-local-word-combined
-source tests/integration/thread_local_word.tl
-opt 0 1 2
-args --stdlib-root src --cfg compiler-arena-debug --cfg compile-profile --backtrace
-do link-run
-exit 42
-stdout empty
-stderr empty
-
 # The direct backend fixtures bypass the driver-owned runtime prelude, so they
 # link freestanding stand-ins for the runtime calls they can emit; the happy
 # paths must not execute them.
@@ -96,6 +59,43 @@ tl_array_fill8:
 .L_tl_array_fill8_done:
     ret
 end-file
+
+# Named TLS offsets and the FS:0 self pointer must survive every runtime layout.
+case thread-local-word-debug
+source tests/integration/thread_local_word.tl
+opt 0 1 2
+args --stdlib-root src --cfg compiler-arena-debug
+do link-run
+exit 42
+stdout empty
+stderr empty
+
+case thread-local-word-profile
+source tests/integration/thread_local_word.tl
+opt 0 1 2
+args --stdlib-root src --cfg compile-profile
+do link-run
+exit 42
+stdout empty
+stderr empty
+
+case thread-local-word-backtrace
+source tests/integration/thread_local_word.tl
+opt 0 1 2
+args --stdlib-root src --backtrace
+do link-run
+exit 42
+stdout empty
+stderr empty
+
+case thread-local-word-combined
+source tests/integration/thread_local_word.tl
+opt 0 1 2
+args --stdlib-root src --cfg compiler-arena-debug --cfg compile-profile --backtrace
+do link-run
+exit 42
+stdout empty
+stderr empty
 
 # A --backtrace program under each TYPELISP_BACKTRACE mode, optimized,
 # stripped, with a corrupted map, on a worker thread, and through the CRT

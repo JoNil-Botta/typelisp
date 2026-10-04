@@ -25987,7 +25987,12 @@
                             (match (lower-emit-cast
                               stored-state
                               (lower-global-shared-view reference)
-                              (lower-global-shared-view arg-ty)
+                              ;; Until packed, this is the array's one-word
+                              ;; reference, not the two-word Slice formal.
+                              (ast.ast-ty-ref-with-pools
+                                (tc_core.tc-context-pools ctx)
+                                (tc_core.tc-call-temporary-lifetime-id)
+                                (lower-global-shared-view resolved-ty))
                               (ast.AstType.U64))
                               [(LowerExpr.Expr cast-state ptr _)
                                 (lower-emit-pack

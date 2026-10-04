@@ -53,6 +53,16 @@
 (define (first [xs : (& (Slice i64))]) : i64
   (array-ref xs 0))
 
+(define (slice-size [xs : (& (Slice i64))]) : i64
+  (array-length xs))
+
+(define (replace-first! [xs : (&mut (Slice i64))]) : i64
+  (set! (array-ref xs 0) 11)
+  (array-ref xs 0))
+
+(define (produce-array) : (Array i64 3)
+  (array 8 9 10))
+
 (define (ordered [a : i64] [b : (& i64)] [c : i64]) : i64
   (+ (* 100 a) (* 10 (deref b)) c))
 
@@ -86,6 +96,11 @@
       (not (empty? (& (Shape.Circle 1))))
       (same-sum? (& p) (& (Point 2 0)))
       (= (first (& (array 5 6 7))) 5)
+      (= (first (& (array 4))) 4)
+      (= (first (& (array 3 2))) 3)
+      (= (first (& (produce-array))) 8)
+      (= (slice-size (& (array))) 0)
+      (= (replace-first! (&mut (array 1 2 3))) 11)
       (= (ordered (next!) (& (next!)) (next!)) 123)
       (= (via sum) 5)
       (= (sum (& (Point (twice (& 1)) 3))) 5)

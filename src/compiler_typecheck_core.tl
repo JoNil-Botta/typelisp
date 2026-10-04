@@ -94494,7 +94494,7 @@
           (macro-form2-id
             (cbi.compiler-builtin-ctfe "Array")
             selem
-            (Int count (string.int->string count) span)
+            (Int count (reader.sp-text-id (string.int->string count)) span)
             span)))]
     [(Box inner)
       (macro-type-unary-sexpr-id
@@ -94754,8 +94754,8 @@
   [lit : ast.AstLiteral]
   [span : token.SourceSpan]) : reader.SpannedSexpr
   (match lit
-    [(Int n text) (Int n text span)]
-    [(Float text) (Float text span)]
+    [(Int n text) (Int n (reader.sp-text-id text) span)]
+    [(Float text) (Float (reader.sp-text-id text) span)]
     [(Bool value)
       (macro-spanned-symbol-id
         (if value
@@ -95563,7 +95563,10 @@
                       (macro-form2-id
                         (cbi.compiler-builtin-ctfe "tuple-ref")
                         sreceiver
-                        (Int index (string.int->string index) span)
+                        (Int
+                          index
+                          (reader.sp-text-id (string.int->string index))
+                          span)
                         span))
                     (macro-form2-id
                       (ci.intern "__tl_struct-get")
@@ -95689,7 +95692,7 @@
             (macro-form2-id
               (cbi.compiler-builtin-ctfe "tuple-ref")
               stuple
-              (Int index (string.int->string index) span)
+              (Int index (reader.sp-text-id (string.int->string index)) span)
               span))]
         [(Err diag) (Err diag)])]
     [(Init maybe-ty-id)

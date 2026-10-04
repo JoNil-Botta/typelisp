@@ -394,6 +394,13 @@ and `src/tests/scan_storage_growth.tl` covers retained growth in place, the
 handoff's owner retirement, failed reads and shared-session reuse. Whole-load scan release empties the
 token scratch, while reusable sessions retain their current capacity.
 
+Reader rows are Copy. `Sym`, `Str`, `Int` and `Float` rows carry intern ids,
+so a row's text lives as long as the active intern table, not as a String the
+row owns. Origin-record markers are reset-aware builtin ids. The views render
+Int and Float text as a shared view of the interned spelling. A consumer that
+keeps a spelling past an intern reset copies it out, as the parser's literal
+AST nodes do (`reader.sp-text-copy`).
+
 The IR source-span table (`CompilerSourceSpans`) keeps two dense lists of flat
 inline records: function entries (symbol, path id, span; 32 bytes) and
 instruction entries (value, store or bounds key, path id, span; 48 bytes). The

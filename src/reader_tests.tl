@@ -27,19 +27,24 @@
     [old-cap : i64 (reader.sp-node-pool-capacity)]
     [i : i64 0]
     (while (<= i old-cap)
-      (reader.sp-node-push (Int i "__tl_pool_growth_marker" span))
+      (reader.sp-node-push
+        (Int i (reader.sp-text-id "__tl_pool_growth_marker") span))
       (set! i (+ i 1)))
     (let
       [grew : bool (> (reader.sp-node-pool-capacity) old-cap)]
       [first-ok : bool
         (match (reader.sp-node-get 0)
           [(Int value text _)
-            (and (= value 0) (string.eq text "__tl_pool_growth_marker"))]
+            (and
+              (= value 0)
+              (string.eq (reader.sp-text text) "__tl_pool_growth_marker"))]
           [_ false])]
       [boundary-ok : bool
         (match (reader.sp-node-get old-cap)
           [(Int value text _)
-            (and (= value old-cap) (string.eq text "__tl_pool_growth_marker"))]
+            (and
+              (= value old-cap)
+              (string.eq (reader.sp-text text) "__tl_pool_growth_marker"))]
           [_ false])]
       (reader.sp-node-pool-reset!)
       (and grew first-ok boundary-ok))))
@@ -1058,7 +1063,11 @@
     [builder : reader.SpannedSexprBuilder (reader.spanned-sexpr-builder-new)]
     [i : i64 0]
     (while (< i count)
-      (set! builder (reader.spanned-sexpr-builder-push builder (Int i "" span)))
+      (set!
+        builder
+        (reader.spanned-sexpr-builder-push
+          builder
+          (Int i (reader.sp-text-id "") span)))
       (set! i (+ i 1)))
     (match (reader.spanned-sexpr-list-from-builder builder span)
       [(List start length _)
@@ -1087,7 +1096,7 @@
       (while (< (reader.sp-node-pool-len) (- rows 3))
         (reader.sp-node-pool-fill!
           (reader.sp-node-pool-reserve! 1)
-          (Int 7 "__tl_pool_placement" span)))]
+          (Int 7 (reader.sp-text-id "__tl_pool_placement") span)))]
     [first-address : i64 (sp-node-pool-test-row-address 0)]
     [straddler : i64 (sp-node-pool-test-list 10 span)]
     [long : i64 (sp-node-pool-test-list (+ (* 2 rows) 5) span)]
@@ -1098,11 +1107,12 @@
         (= long (* 2 rows))
         (= after (+ (* 4 rows) 5))
         (match (reader.sp-node-get (- rows 1))
-          [(Int value text _) (and (= value 0) (string.eq text ""))]
+          [(Int value text _)
+            (and (= value 0) (string.eq (reader.sp-text text) ""))]
           [_ false]))]
     [_grow-directory : unit
       (while (<= (reader.sp-node-pool-capacity) (* 64 rows))
-        (reader.sp-node-push (Int 7 "" span))
+        (reader.sp-node-push (Int 7 (reader.sp-text-id "") span))
         unit)]
     [reads : bool
       (and

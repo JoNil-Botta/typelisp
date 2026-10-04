@@ -17,7 +17,7 @@
     [(Int value text span)
       (and
         (= value index)
-        (string.eq text "retained")
+        (string.eq (reader.sp-text text) "retained")
         (= span.start-line (+ index 1)))]
     [_ false]))
 
@@ -29,19 +29,25 @@
     [caller : i64 (arena.tl_arena_current)]
     (while (< index 32768)
       (reader.sp-node-push
-        (Int index "retained" (token.SourceSpan (+ index 1) 2 3 4)))
+        (Int
+          index
+          (reader.sp-text-id "retained")
+          (token.SourceSpan (+ index 1) 2 3 4)))
       (set! index (+ index 1)))
     (reader.sp-node-pool-compact-retained!)
     (let
       [builder : reader.SpannedSexprBuilder (reader.spanned-sexpr-builder-new)]
       [span : token.SourceSpan (token.SourceSpan 9 8 7 6)]
       [old-owner : i64 (reader.sp-node-pool-base-arena-handle-value)]
+      ;; Intern the spellings before the measured window below.
+      [float-text : ci.InternId (reader.sp-text-id "1.5")]
+      [retained-text : ci.InternId (reader.sp-text-id "retained")]
       [_old-bytes : i64
         (allocation_profile.compiler-allocation-profile-arena-bump-bytes
           old-owner)]
       [_before : i64 (cfg compile-profile (profile.alloc-live) 0)]
       [valid : bool true]
-      (reader.spanned-sexpr-builder-push builder (Float "1.5" span))
+      (reader.spanned-sexpr-builder-push builder (Float float-text span))
       (reader.spanned-sexpr-builder-push builder (List 4 2 span))
       (if pool-current?
         (unsafe
@@ -49,7 +55,7 @@
           (arena.tl_arena_set old-owner))
         unit)
       (reader.sp-node-push
-        (Int 32768 "retained" (token.SourceSpan 32769 2 3 4)))
+        (Int 32768 retained-text (token.SourceSpan 32769 2 3 4)))
       (let
         [new-owner : i64 (reader.sp-node-pool-base-arena-handle-value)]
         [new-bytes : i64
@@ -89,7 +95,9 @@
               (= length 2)
               (match (reader.sp-node-get start)
                 [(Float text saved)
-                  (and (string.eq text "1.5") (= saved.start-line 9))]
+                  (and
+                    (string.eq (reader.sp-text text) "1.5")
+                    (= saved.start-line 9))]
                 [_ false])
               (match (reader.sp-node-get (+ start 1))
                 [(List child count _)
@@ -111,7 +119,8 @@
   retained-reader-reset-restores-shared-growth
   (reader.sp-node-pool-reset!)
   (reader.sp-node-pool-compact-retained!)
-  (reader.sp-node-push (Int 0 "" (token.SourceSpan 1 1 1 1)))
+  (reader.sp-node-push
+    (Int 0 (reader.sp-text-id "") (token.SourceSpan 1 1 1 1)))
   (reader.sp-node-pool-compact-retained!)
   (reader.sp-node-pool-reset!)
   (let
@@ -120,7 +129,8 @@
       (in-arena (arena.Arena owner) (string.copy "shared reader storage"))]
     [index : i64 0]
     (while (< index 2049)
-      (reader.sp-node-push (Int index "" (token.SourceSpan 1 1 1 1)))
+      (reader.sp-node-push
+        (Int index (reader.sp-text-id "") (token.SourceSpan 1 1 1 1)))
       (set! index (+ index 1)))
     (unless
       (and
@@ -135,7 +145,8 @@
   retained-reader-error-and-empty-reuse
   (reader.sp-node-pool-reset!)
   (reader.sp-node-pool-compact-retained!)
-  (reader.sp-node-push (Int 0 "retained" (token.SourceSpan 1 1 1 1)))
+  (reader.sp-node-push
+    (Int 0 (reader.sp-text-id "retained") (token.SourceSpan 1 1 1 1)))
   (reader.sp-node-pool-compact-retained!)
   (match (lex.spanned-result "(7 (8) \"text\"")
     [(Ok tokens)

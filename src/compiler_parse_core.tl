@@ -208,6 +208,36 @@
     (ast.ast-source-span-end-line span)
     (ast.ast-source-span-end-col span)))
 
+;; Origin rows carry their marker spelling as a reset-aware builtin intern id.
+(defmacro (compiler-parse-marker [spelling : Expr]) : Expr
+  `(ci.intern-id-from-renderable (cbi.compiler-builtin-ctfe ,spelling)))
+
+(define (compiler-parse-semantic-origin-kind-marker-id
+  [kind : CompilerParseSemanticOriginKind]) : ci.InternId
+  (match kind
+    [(TypeName) (compiler-parse-marker "__tl_semantic_origin_type_name")]
+    [(TypeDefinition)
+      (compiler-parse-marker "__tl_semantic_origin_type_definition")]
+    [(StructFieldDefinition)
+      (compiler-parse-marker "__tl_semantic_origin_struct_field_definition")]
+    [(EnumVariantDefinition)
+      (compiler-parse-marker "__tl_semantic_origin_enum_variant_definition")]
+    [(StructFieldUse)
+      (compiler-parse-marker "__tl_semantic_origin_struct_field_use")]
+    [(EnumVariantPattern)
+      (compiler-parse-marker "__tl_semantic_origin_enum_variant_pattern")]
+    [(DispatchFunction)
+      (compiler-parse-marker "__tl_semantic_origin_dispatch_function")]
+    [(ModuleDefinition)
+      (compiler-parse-marker "__tl_semantic_origin_module_definition")]
+    [(ModulePath) (compiler-parse-marker "__tl_semantic_origin_module_path")]
+    [(ImportAlias) (compiler-parse-marker "__tl_semantic_origin_import_alias")]
+    [(ValueQualifier)
+      (compiler-parse-marker "__tl_semantic_origin_value_qualifier")]
+    [(ValueName) (compiler-parse-marker "__tl_semantic_origin_value_name")]
+    [(BindingDefinition)
+      (compiler-parse-marker "__tl_semantic_origin_binding_definition")]))
+
 (define (compiler-parse-semantic-origin-kind-marker
   [kind : CompilerParseSemanticOriginKind]) : String
   (match kind
@@ -870,8 +900,13 @@
       (let
         [marker-span : token.SourceSpan
           (compiler-parse-token-span-from-ast-span span)]
-        (reader.sp-node-push (Int key "__tl_decl_origin" marker-span))
-        (reader.sp-node-push (Int slot "__tl_decl_origin_start" marker-span))
+        (reader.sp-node-push
+          (Int key (compiler-parse-marker "__tl_decl_origin") marker-span))
+        (reader.sp-node-push
+          (Int
+            slot
+            (compiler-parse-marker "__tl_decl_origin_start")
+            marker-span))
         (reader.sp-node-push (reader.spanned-sexpr-empty marker-span))
         unit)]
     [(None) unit]))
@@ -899,8 +934,8 @@
         (Int
           (compiler-parse-decl-list-storage-key decls)
           (if repeat
-            "__tl_decl_origin_alias_repeat"
-            "__tl_decl_origin_alias")
+            (compiler-parse-marker "__tl_decl_origin_alias_repeat")
+            (compiler-parse-marker "__tl_decl_origin_alias"))
           (token.SourceSpan
             (+ decls.offset decl-slot)
             count
@@ -939,11 +974,14 @@
                       (< record-slot source-end))
                       (begin
                         (reader.sp-node-push
-                          (Int dest-key "__tl_decl_origin" marker-span))
+                          (Int
+                            dest-key
+                            (compiler-parse-marker "__tl_decl_origin")
+                            marker-span))
                         (reader.sp-node-push
                           (Int
                             (+ dest-start (- record-slot source-start))
-                            "__tl_decl_origin_start"
+                            (compiler-parse-marker "__tl_decl_origin_start")
                             marker-span))
                         (reader.sp-node-push (reader.sp-node-get (+ cursor 2)))
                         unit)
@@ -966,11 +1004,15 @@
                         (let
                           [record-index : i64 0]
                           (reader.sp-node-push
-                            (Int dest-key "__tl_semantic_origin" run-span))
+                            (Int
+                              dest-key
+                              (compiler-parse-marker "__tl_semantic_origin")
+                              run-span))
                           (reader.sp-node-push
                             (Int
                               (+ dest-start (- record-slot source-start))
-                              "__tl_semantic_origin_start"
+                              (compiler-parse-marker
+                                "__tl_semantic_origin_start")
                               run-span))
                           (while (< record-index count)
                             (reader.sp-node-push
@@ -6146,8 +6188,8 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]) : ResultAstPattern
   (match (reader.sexpr-view (compiler-parse-place-shared-view s))
-    [(Int n text) (Ok (Literal (Int n text)))]
-    [(Float text) (Ok (Literal (Float text)))]
+    [(Int n text) (Ok (Literal (Int n (reader.sp-text-copy text))))]
+    [(Float text) (Ok (Literal (Float (reader.sp-text-copy text))))]
     [(Str string-id) (Ok (Literal (String (ci.intern-id-value string-id))))]
     [(Char c) (Ok (Literal (Char c)))]
     [(Sym name)
@@ -9033,13 +9075,17 @@
           (Ok
             (ast-expr-wrap-span
               pools
-              (ast.ast-node-pool-context-expr-push pools (Literal (Int n text)))
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (Literal (Int n (reader.sp-text-copy text))))
               (compiler-parse-place-shared-view s)))]
         [(Float text _)
           (Ok
             (ast-expr-wrap-span
               pools
-              (ast.ast-node-pool-context-expr-push pools (Literal (Float text)))
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (Literal (Float (reader.sp-text-copy text))))
               (compiler-parse-place-shared-view s)))]
         [(Str string-id _)
           (Ok
@@ -10597,7 +10643,8 @@
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [member-marker : i64
-              (reader.sp-node-push (Int 0 "__tl_member_origin" name-span))]
+              (reader.sp-node-push
+                (Int 0 (compiler-parse-marker "__tl_member_origin") name-span))]
             (compiler-parse-semantic-origin-push-components!
               name
               name-span
@@ -10624,7 +10671,7 @@
                             (__tl_array-data parsed-variants.slots)
                             : (Ptr u8)))
                         : i64))
-                    "__tl_member_origin"
+                    (compiler-parse-marker "__tl_member_origin")
                     name-span))
                 (if (ast.ast-variant-def-list-empty? (& parsed-variants))
                   (Err "parse: defenum needs at least one variant")
@@ -10659,7 +10706,8 @@
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [member-marker : i64
-              (reader.sp-node-push (Int 0 "__tl_member_origin" name-span))]
+              (reader.sp-node-push
+                (Int 0 (compiler-parse-marker "__tl_member_origin") name-span))]
             (compiler-parse-semantic-origin-push-components!
               name
               name-span
@@ -10690,7 +10738,7 @@
                             (__tl_array-data parsed-fields.slots)
                             : (Ptr u8)))
                         : i64))
-                    "__tl_member_origin"
+                    (compiler-parse-marker "__tl_member_origin")
                     name-span))
                 (if (ast.ast-field-def-list-empty? (& parsed-fields))
                   (Err "parse: defstruct needs at least one field")
@@ -11739,13 +11787,13 @@
         run-start
         (Int
           (compiler-parse-decl-list-storage-key decls)
-          "__tl_semantic_origin"
+          (compiler-parse-marker "__tl_semantic_origin")
           marker-span))
       (reader.sp-node-pool-fill!
         (+ run-start 1)
         (Int
           (+ decls.offset slot)
-          "__tl_semantic_origin_start"
+          (compiler-parse-marker "__tl_semantic_origin_start")
           (token.SourceSpan count 0 0 0)))
       (while (< index count)
         (let
@@ -11755,7 +11803,7 @@
             (+ (+ run-start 2) index)
             (Int
               origin.written-name
-              (compiler-parse-semantic-origin-kind-marker
+              (compiler-parse-semantic-origin-kind-marker-id
                 (compiler-parse-semantic-origin-kind-from-tag origin.kind-tag))
               (token.SourceSpan
                 origin.start-line

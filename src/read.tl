@@ -30,6 +30,14 @@
 ;; quoted string reads as a distinct atom rather than being conflated with a
 ;; `Sym` of the same characters. `Char` carries a character-literal datum
 ;; (`'x'`), likewise keeping chars distinct from symbols, ints, and strings.
+;; `Int` and `Float` keep their source spelling as an intern id (most integer
+;; spellings are empty, see `token.int-text`), so every row is Copy.
+;;
+;; Lifetime: like `Sym` and `Str`, Int and Float text now lives as long as the
+;; active intern table, not as a String owned by the row. The views render it
+;; with `sp-text`, a shared view of the interned spelling. A consumer that keeps
+;; a spelling past an intern reset copies it out with `sp-text-copy`, as the
+;; parser's literal nodes do.
 ;;
 ;; `SexprView` is the span-free view: it drops spans and walks a bracket list
 ;; like a parenthesized one.
@@ -50,12 +58,12 @@
   (Err String))
 
 (defenum SpannedSexpr
-  (Int i64 String token.SourceSpan)
+  (Int i64 ci.InternId token.SourceSpan)
   (Sym ci.InternSyntaxId token.SourceSpan)
   (List i64 i64 token.SourceSpan)
   (Str ci.InternId token.SourceSpan)
   (Char char token.SourceSpan)
-  (Float String token.SourceSpan)
+  (Float ci.InternId token.SourceSpan)
   (BracketList i64 i64 token.SourceSpan))
 
 (defenum SpannedSexprView
@@ -186,7 +194,7 @@
 
 ;; The row a list's skipped tail rows hold.
 (define (sp-node-filler) : SpannedSexpr
-  (Int 0 "" (token.SourceSpan 0 0 0 0)))
+  (Int 0 (sp-text-id "") (token.SourceSpan 0 0 0 0)))
 
 (define (sp-node-pool-segment [slot : i64]) : (__tl_dyn-array SpannedSexpr)
   (unsafe
@@ -745,9 +753,45 @@
     [(List start length _) (BracketList start length span)]
     [_ (io.panic "reader: bracket form requires a proper list")]))
 
+;; The empty spelling's id, cached per intern table like the compiler's builtin
+;; ids: a reset or a table switch looks it up again.
+(define sp-text-empty-id : i64
+  -1)
+(define sp-text-empty-generation : i64
+  -1)
+(define sp-text-empty-table : i64
+  -1)
+
+;; The intern id of an Int or Float row's source spelling.
+(define (sp-text-id [text : (& text str)]) : ci.InternId
+  (let
+    [length : i64 (ci.intern-private-string-length text)]
+    (if (> length 0)
+      (ci.intern-source-slice-id text 0 length)
+      (begin
+        (unless
+          (and
+            (= sp-text-empty-generation (ci.intern-generation))
+            (= sp-text-empty-table (ci.intern-active-table-id)))
+          (set! sp-text-empty-id (ci.intern-source-slice text 0 0))
+          (set! sp-text-empty-generation (ci.intern-generation))
+          (set! sp-text-empty-table (ci.intern-active-table-id)))
+        (ci.intern-id-from-renderable sp-text-empty-id)))))
+
+;; The spelling as a shared view of the intern table's String.
+(define (sp-text [id : ci.InternId]) : String
+  (ci.intern-id-str id))
+
+;; A spelling that must outlive the intern table. The empty spelling stays the
+;; static literal, as `token.int-text` returns it.
+(define (sp-text-copy [text : String]) : String
+  (if (= (string.string-length text) 0)
+    ""
+    (string.copy text)))
+
 (define (spanned-sexpr-view [s : SpannedSexpr]) : SpannedSexprView
   (match s
-    [(Int n text span) (Int n text span)]
+    [(Int n text span) (Int n (sp-text text) span)]
     [(Sym name span) (Sym name span)]
     [(List start length span)
       (if (<= length 0)
@@ -755,7 +799,7 @@
         (Cons (sp-node-get start) (List (+ start 1) (- length 1) span) span))]
     [(Str text span) (Str text span)]
     [(Char c span) (Char c span)]
-    [(Float text span) (Float text span)]
+    [(Float text span) (Float (sp-text text) span)]
     [(BracketList start length span)
       (BracketList (List start length span) span)]))
 
@@ -766,12 +810,12 @@
 
 (define (sexpr-view [s : SpannedSexpr]) : SexprView
   (match s
-    [(Int n text _) (Int n text)]
+    [(Int n text _) (Int n (sp-text text))]
     [(Sym name _) (Sym name)]
     [(List start length span) (sexpr-list-view start length span)]
     [(Str text _) (Str text)]
     [(Char c _) (Char c)]
-    [(Float text _) (Float text)]
+    [(Float text _) (Float (sp-text text))]
     [(BracketList start length span) (sexpr-list-view start length span)]))
 
 (define (spanned-sexpr-span [s : SpannedSexpr]) : token.SourceSpan
@@ -913,12 +957,12 @@
           [value : i64 (token.int tok)]
           [text : String (token.int-text tok)]
           (advance cur)
-          (Ok (Int value text span)))]
+          (Ok (Int value (sp-text-id text) span)))]
       [(= t (token.tag-float))
         (let
           [text : String (token.float tok)]
           (advance cur)
-          (Ok (Float text span)))]
+          (Ok (Float (sp-text-id text) span)))]
       [(= t (token.tag-sym))
         (let
           [name-id : ci.InternId (token.sym-id tok)]

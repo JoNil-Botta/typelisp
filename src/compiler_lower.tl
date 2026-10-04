@@ -15617,20 +15617,16 @@
       1)
     state))
 
-;; Used by local reads and reborrows. Expand the empty-map guard at those
-;; sites so functions without deferred bindings need no accessor call/frame.
-;; Bind both inputs once, in their call order, before testing the map.
-(defmacro (lower-state-deferred-copy? [state : Expr] [var-id : Expr]) : Expr
-  `(let
-    [data : (Box LowerStateData) (lower-state-box ,state)]
-    [local-id : i64 ,var-id]
+(define (lower-state-deferred-copy? [state : LowerState] [var-id : i64]) : bool
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
     (and
       (not
         (lower_i64_i64_map.is-empty?
           (& (__tl-project-field (__tl-box-place data) deferred-copies))))
       (lower_i64_i64_map.contains?
         (& (__tl-project-field (__tl-box-place data) deferred-copies))
-        local-id))))
+        var-id))))
 
 (define (lower-state-deferred-copy-mark [state : LowerState] [var-id : i64]) : LowerState
   (let

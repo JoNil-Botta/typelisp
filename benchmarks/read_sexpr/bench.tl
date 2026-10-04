@@ -371,7 +371,9 @@
     [len : i64 (- sexpr-builder-count builder-start)]
     [i : i64 0]
     (while (< i len)
-      (sexpr-node-push (sexpr-builder-get (+ builder-start i)))
+      (begin
+        (sexpr-node-push (sexpr-builder-get (+ builder-start i)))
+        unit)
       (set! i (+ i 1)))
     (set! sexpr-builder-count builder-start)
     (List start len)))

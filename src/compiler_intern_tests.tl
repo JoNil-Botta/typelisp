@@ -434,7 +434,10 @@
       [pair-again : i64 (ci.intern-composite-pair-id 1000005 2000005)]
       [triple-again : i64 (ci.intern-composite-triple-id 3000006 6 4000006)]
       (ci.intern-reset!)
-      (intern-structural-reset-fill! 40000)
+      ;; Enough records that eight bytes each outweigh the map (at most 8/3
+      ;; slots per record after growth) plus the whole cache.
+      (intern-structural-reset-fill!
+        (+ (/ (* (ci.intern-structural-cache-capacity) 3) 16) 40000))
       (let
         [full? : bool (not (intern-structural-table-by-record-reset?))]
         (ci.intern-reset!)

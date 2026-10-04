@@ -34,7 +34,8 @@
     [i : i64 0]
     (while (< i limit)
       (unsafe
-        (atomic-fetch-add! counter 1))
+        (atomic-fetch-add! counter 1)
+        unit)
       (set! i (+ i 1)))
     0))
 

@@ -28,8 +28,10 @@
     [index : i64 0]
     [caller : i64 (arena.tl_arena_current)]
     (while (< index 32768)
-      (reader.sp-node-push
-        (Int index "retained" (token.SourceSpan (+ index 1) 2 3 4)))
+      (begin
+        (reader.sp-node-push
+          (Int index "retained" (token.SourceSpan (+ index 1) 2 3 4)))
+        unit)
       (set! index (+ index 1)))
     (reader.sp-node-pool-compact-retained!)
     (let

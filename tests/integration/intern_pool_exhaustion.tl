@@ -9,7 +9,9 @@
   (let
     [i : i64 0]
     (while (< i (compiler_intern.intern-capacity))
-      (compiler_intern.intern-generated-name "opaque")
+      (begin
+        (compiler_intern.intern-generated-name "opaque")
+        unit)
       (set! i (+ i 1)))))
 
 (define (fill-state-generated
@@ -17,7 +19,9 @@
   (let
     [i : i64 0]
     (while (< i (compiler_intern.intern-capacity))
-      (compiler_intern.intern-compat-state-generated-name state "opaque")
+      (begin
+        (compiler_intern.intern-compat-state-generated-name state "opaque")
+        unit)
       (set! i (+ i 1)))))
 
 (define (active-source-exhaustion) : i64

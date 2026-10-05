@@ -111238,13 +111238,12 @@
           (macro-expr-might-fire? state expr-bases str)
           (macro-expr-might-fire? state expr-bases index)))]
     [(While cond-box body-box)
-      (let
-        [cond : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : ast.AstExpr (Begin body-box)]
-        (or
-          (macro-expr-might-fire? state expr-bases cond)
-          (macro-expr-might-fire? state expr-bases body)))]
+      (or
+        (macro-expr-might-fire?
+          state
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases cond-box))
+        (macro-expr-list-might-fire? state expr-bases body-box))]
     [(ForOwnedState payload)
       (let
         [source : ast.AstExpr

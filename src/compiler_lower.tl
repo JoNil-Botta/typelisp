@@ -11861,13 +11861,12 @@
     [(While cond-box body-box)
       (let
         [cond : ast.AstExpr (ast.ast-node-pool-context-expr-get pools cond-box)]
-        [body : ast.AstExpr (Begin body-box)]
-        (lower-reach-expr
+        (lower-reach-expr-list
           pools
           all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state cond)
-          body))]
+          body-box))]
     [(ForOwnedState payload)
       (lower-reach-expr
         pools
@@ -47721,12 +47720,12 @@
           type-env
           index
           (lower-context-expr-get ctx cond-box))
-        (lower-masked-vector-body-has-bool-array-lane?
+        (lower-masked-vector-expr-list-has-bool-array-lane?
           ctx
           env
           type-env
           index
-          (Begin body-box)))]
+          body-box))]
     [(Begin exprs)
       (lower-masked-vector-expr-list-has-bool-array-lane?
         ctx
@@ -48317,7 +48316,12 @@
           type-env
           index
           (lower-context-expr-get ctx cond-box))
-        (lower-masked-vector-array-vars ctx env type-env index (Begin body-box)))]
+        (lower-masked-vector-expr-list-array-vars
+          ctx
+          env
+          type-env
+          index
+          body-box))]
     [(Match match-box)
       (match (__tl-box-place match-box)
         [(Match scrutinee-box arms)

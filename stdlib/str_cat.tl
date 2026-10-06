@@ -43,9 +43,8 @@
 (cfg
   test
   (define (str-cat-counted-operand [text : String]) : String
-    (begin
-      (set! str-cat-evaluation-count (+ str-cat-evaluation-count 1))
-      text)))
+    (set! str-cat-evaluation-count (+ str-cat-evaluation-count 1))
+    text))
 
 (cfg
   test
@@ -81,109 +80,108 @@
       [b : String "bar"]
       [empty : String ""]
       [score : i64 0]
-      (begin
-        (set! score (+ score (str-cat-api-eq (str_cat_runtime.str-cat) "")))
-        (set!
+      (set! score (+ score (str-cat-api-eq (str_cat_runtime.str-cat) "")))
+      (set!
+        score
+        (+
           score
-          (+
-            score
-            (str-cat-api-eq (str_cat_runtime.str-cat (string.copy (& a))) "foo")))
-        (set!
+          (str-cat-api-eq (str_cat_runtime.str-cat (string.copy (& a))) "foo")))
+      (set!
+        score
+        (+
           score
-          (+
-            score
-            (str-cat-api-eq
-              (str_cat_runtime.str-cat (string.copy (& a)) (string.copy (& b)))
-              "foobar")))
+          (str-cat-api-eq
+            (str_cat_runtime.str-cat (string.copy (& a)) (string.copy (& b)))
+            "foobar")))
+      (set!
+        score
+        (+
+          score
+          (str-cat-api-eq
+            (str_cat_runtime.str-cat
+              (string.copy (& b))
+              "!"
+              (string.copy (& b)))
+            "bar!bar")))
+      (set!
+        score
+        (+
+          score
+          (str-cat-api-eq
+            (str_cat_runtime.str-cat
+              (string.copy (& empty))
+              (string.copy (& a))
+              empty)
+            "foo")))
+      (set!
+        score
+        (+
+          score
+          (str-cat-api-eq
+            (str_cat_runtime.str-cat "1" "2" "3" "4" "5" "6" "7")
+            "1234567")))
+      ;; A str-cat-produced value remains a valid operand to another flat
+      ;; str-cat call.
+      (let
+        [middle : String (str_cat_runtime.str-cat "-" b "-")]
         (set!
           score
           (+
             score
             (str-cat-api-eq
               (str_cat_runtime.str-cat
-                (string.copy (& b))
-                "!"
-                (string.copy (& b)))
-              "bar!bar")))
-        (set!
-          score
-          (+
-            score
-            (str-cat-api-eq
-              (str_cat_runtime.str-cat
-                (string.copy (& empty))
                 (string.copy (& a))
-                empty)
-              "foo")))
+                middle
+                (string.copy (& a)))
+              "foo-bar-foo"))))
+      (let
+        [__tl_str_cat_parts : String "baz"]
         (set!
           score
           (+
             score
             (str-cat-api-eq
-              (str_cat_runtime.str-cat "1" "2" "3" "4" "5" "6" "7")
-              "1234567")))
-        ;; A str-cat-produced value remains a valid operand to another flat
-        ;; str-cat call.
-        (let
-          [middle : String (str_cat_runtime.str-cat "-" b "-")]
-          (set!
-            score
-            (+
-              score
-              (str-cat-api-eq
-                (str_cat_runtime.str-cat
-                  (string.copy (& a))
-                  middle
-                  (string.copy (& a)))
-                "foo-bar-foo"))))
-        (let
-          [__tl_str_cat_parts : String "baz"]
-          (set!
-            score
-            (+
-              score
-              (str-cat-api-eq
-                (str_cat_runtime.str-cat
-                  (string.copy (& __tl_str_cat_parts))
-                  "!"
-                  (string.copy (& __tl_str_cat_parts))
-                  "!"
-                  "q"
-                  "!"
-                  "r")
-                "baz!baz!q!r"))))
-        (set! str-cat-evaluation-count 0)
-        (let
-          [once : String
-            (str_cat_runtime.str-cat-scoped
-              (str-cat-counted-operand "a")
-              (str-cat-counted-operand "b")
-              (str-cat-counted-operand "c")
-              (str-cat-counted-operand "d")
-              (str-cat-counted-operand "e"))]
-          (if (and (string.eq once "abcde") (= str-cat-evaluation-count 5))
-            (set! score (+ score 1))
-            unit))
-        (if (string.eq
+              (str_cat_runtime.str-cat
+                (string.copy (& __tl_str_cat_parts))
+                "!"
+                (string.copy (& __tl_str_cat_parts))
+                "!"
+                "q"
+                "!"
+                "r")
+              "baz!baz!q!r"))))
+      (set! str-cat-evaluation-count 0)
+      (let
+        [once : String
           (str_cat_runtime.str-cat-scoped
-            (if true
-              "left"
-              "wrong")
-            (if false
-              "wrong"
-              "right"))
-          "leftright")
+            (str-cat-counted-operand "a")
+            (str-cat-counted-operand "b")
+            (str-cat-counted-operand "c")
+            (str-cat-counted-operand "d")
+            (str-cat-counted-operand "e"))]
+        (if (and (string.eq once "abcde") (= str-cat-evaluation-count 5))
           (set! score (+ score 1))
-          unit)
-        (if (str-cat-scoped-region-ok?)
+          unit))
+      (if (string.eq
+        (str_cat_runtime.str-cat-scoped
+          (if true
+            "left"
+            "wrong")
+          (if false
+            "wrong"
+            "right"))
+        "leftright")
+        (set! score (+ score 1))
+        unit)
+      (if (str-cat-scoped-region-ok?)
+        (set! score (+ score 1))
+        unit)
+      (let
+        [borrowed : String "borrowed"]
+        (if (string.eq (str-cat-borrowed-input (& borrowed)) "borrowed!")
           (set! score (+ score 1))
-          unit)
-        (let
-          [borrowed : String "borrowed"]
-          (if (string.eq (str-cat-borrowed-input (& borrowed)) "borrowed!")
-            (set! score (+ score 1))
-            unit))
-        score))))
+          unit))
+      score)))
 
 (cfg
   test

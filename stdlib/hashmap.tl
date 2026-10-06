@@ -224,33 +224,31 @@
             (unsafe
               (ptr-cast (__tl_array-data fresh) : (MutPtr GeneratedHashmapSlot)))]
           (while (< scan old-capacity)
-            (begin
-              (let
-                [old-slot : GeneratedHashmapSlot
-                  (unsafe
-                    (ptr-read (ptr-offset old-data scan)))]
-                (match (__tl-project-field-name old-slot "state")
-                  [GeneratedHashmapSlotState.Occupied
-                    (let
-                      ;; No stored hash on a scalar slot: recompute the same
-                      ;; multiplicative bucket hash `hash-key` uses, so every
-                      ;; key lands in the bucket the stored word used to name.
-                      ;; One multiply per live slot at growth, against a word
-                      ;; per slot of probe traffic on every lookup.
-                      [key : ,K (__tl-project-field-name old-slot "key")]
-                      [index : i64 (bit-and (* key 6364136223846793005) mask)]
-                      (begin
-                        (while (match (__tl-project-field-name
-                          (unsafe
-                            (ptr-read (ptr-offset fresh-data index)))
-                          "state")
-                          [GeneratedHashmapSlotState.Empty false]
-                          [_ true])
-                          (set! index (bit-and (+ index 1) mask)))
-                        (unsafe
-                          (ptr-write! (ptr-offset fresh-data index) old-slot))))]
-                  [_ unit]))
-              (set! scan (+ scan 1)))))
+            (let
+              [old-slot : GeneratedHashmapSlot
+                (unsafe
+                  (ptr-read (ptr-offset old-data scan)))]
+              (match (__tl-project-field-name old-slot "state")
+                [GeneratedHashmapSlotState.Occupied
+                  (let
+                    ;; No stored hash on a scalar slot: recompute the same
+                    ;; multiplicative bucket hash `hash-key` uses, so every
+                    ;; key lands in the bucket the stored word used to name.
+                    ;; One multiply per live slot at growth, against a word
+                    ;; per slot of probe traffic on every lookup.
+                    [key : ,K (__tl-project-field-name old-slot "key")]
+                    [index : i64 (bit-and (* key 6364136223846793005) mask)]
+                    (while (match (__tl-project-field-name
+                      (unsafe
+                        (ptr-read (ptr-offset fresh-data index)))
+                      "state")
+                      [GeneratedHashmapSlotState.Empty false]
+                      [_ true])
+                      (set! index (bit-and (+ index 1) mask)))
+                    (unsafe
+                      (ptr-write! (ptr-offset fresh-data index) old-slot)))]
+                [_ unit]))
+            (set! scan (+ scan 1))))
         `(let
           [old-slots : (& map (__tl_dyn-array GeneratedHashmapSlot))
             (& map.slots)]
@@ -261,44 +259,35 @@
                 (__tl_array-data map.slots)
                 : (Ptr GeneratedHashmapSlot)))]
           (while (< scan old-count)
-            (begin
-              (let
-                [old-slot : GeneratedHashmapSlot
-                  (unsafe
-                    (ptr-read (ptr-offset old-data scan)))]
-                (match (clone (__tl-project-field-name old-slot "state"))
-                  [GeneratedHashmapSlotState.Occupied
+            (let
+              [old-slot : GeneratedHashmapSlot
+                (unsafe
+                  (ptr-read (ptr-offset old-data scan)))]
+              (match (clone (__tl-project-field-name old-slot "state"))
+                [GeneratedHashmapSlotState.Occupied
+                  (let
+                    [key : ,K (clone (__tl-project-field-name old-slot "key"))]
+                    [value : ,V
+                      (clone (__tl-project-field-name old-slot "value"))]
+                    [hash : i64 (__tl-project-field-name old-slot "hash")]
+                    [index : i64 (bit-and hash mask)]
+                    (while (match (clone
+                      (__tl-project-field-name (array-ref fresh index) "state"))
+                      [GeneratedHashmapSlotState.Empty false]
+                      [_ true])
+                      (set! index (bit-and (+ index 1) mask)))
                     (let
-                      [key : ,K
-                        (clone (__tl-project-field-name old-slot "key"))]
-                      [value : ,V
-                        (clone (__tl-project-field-name old-slot "value"))]
-                      [hash : i64 (__tl-project-field-name old-slot "hash")]
-                      [index : i64 (bit-and hash mask)]
-                      (begin
-                        (while (match (clone
-                          (__tl-project-field-name
-                            (array-ref fresh index)
-                            "state"))
-                          [GeneratedHashmapSlotState.Empty false]
-                          [_ true])
-                          (set! index (bit-and (+ index 1) mask)))
-                        (let
-                          [slot : (&mut fresh GeneratedHashmapSlot)
-                            (&mut (array-ref fresh index))]
-                          (begin
-                            (__tl-project-set-field-name slot "key" ,key-copy)
-                            (__tl-project-set-field-name
-                              slot
-                              "value"
-                              ,value-copy)
-                            (__tl-project-set-field-name slot "hash" hash)
-                            (__tl-project-set-field-name
-                              slot
-                              "state"
-                              (GeneratedHashmapSlotState.Occupied))))))]
-                  [_ unit]))
-              (set! scan (+ scan 1))))))]
+                      [slot : (&mut fresh GeneratedHashmapSlot)
+                        (&mut (array-ref fresh index))]
+                      (__tl-project-set-field-name slot "key" ,key-copy)
+                      (__tl-project-set-field-name slot "value" ,value-copy)
+                      (__tl-project-set-field-name slot "hash" hash)
+                      (__tl-project-set-field-name
+                        slot
+                        "state"
+                        (GeneratedHashmapSlotState.Occupied))))]
+                [_ unit]))
+            (set! scan (+ scan 1)))))]
     [get-value-or-body : comptime.Expr
       (if scalar-family
         `(let
@@ -318,31 +307,29 @@
               [mask : i64 (- cap 1)]
               [cursor : i64 (bit-and (* key 6364136223846793005) mask)]
               [start : i64 cursor]
-              (begin
-                (while true
-                  (begin
-                    ;; Occupied leads the arm order: it is the tag every
-                    ;; collision step reads, so the common step classifies a
-                    ;; slot in one compare instead of falling through two.
-                    (let
-                      [slot : GeneratedHashmapSlot
-                        (unsafe
-                          (ptr-read (ptr-offset data cursor)))]
-                      (match (__tl-project-field-name slot "state")
-                        [GeneratedHashmapSlotState.Occupied
-                          (if (= (__tl-project-field-name slot "key") key)
-                            (return (__tl-project-field-name slot "value"))
-                            (set! cursor (bit-and (+ cursor 1) mask)))]
-                        [GeneratedHashmapSlotState.Empty (return fallback)]
-                        [GeneratedHashmapSlotState.Tombstone
-                          (set! cursor (bit-and (+ cursor 1) mask))]))
-                    ;; Wrap detection is the walked bound: a masked cursor over
-                    ;; a positive power-of-two capacity returns to `start` only
-                    ;; after visiting all `cap` slots.
-                    (if (= cursor start)
-                      (return fallback)
-                      unit)))
-                fallback))))
+              (while true
+                ;; Occupied leads the arm order: it is the tag every
+                ;; collision step reads, so the common step classifies a
+                ;; slot in one compare instead of falling through two.
+                (let
+                  [slot : GeneratedHashmapSlot
+                    (unsafe
+                      (ptr-read (ptr-offset data cursor)))]
+                  (match (__tl-project-field-name slot "state")
+                    [GeneratedHashmapSlotState.Occupied
+                      (if (= (__tl-project-field-name slot "key") key)
+                        (return (__tl-project-field-name slot "value"))
+                        (set! cursor (bit-and (+ cursor 1) mask)))]
+                    [GeneratedHashmapSlotState.Empty (return fallback)]
+                    [GeneratedHashmapSlotState.Tombstone
+                      (set! cursor (bit-and (+ cursor 1) mask))]))
+                ;; Wrap detection is the walked bound: a masked cursor over
+                ;; a positive power-of-two capacity returns to `start` only
+                ;; after visiting all `cap` slots.
+                (if (= cursor start)
+                  (return fallback)
+                  unit))
+              fallback)))
         `(lookup-value-or (get map key) fallback))]
     [update-slot-body : comptime.Expr
       `(set-occupied-value! (&mut map.slots) index value)]
@@ -356,115 +343,109 @@
       (if scalar-family
         `(let
           [growth-limit-before : i64 map.growth-limit]
-          (begin
-            ;; Preserve the pre-probe len + deleted condition through the
-            ;; cached limit: below the threshold at least one Empty slot
-            ;; remains in the table.
-            ;; Perform this exactly once before deriving data or probing, so a
-            ;; grow cannot invalidate the raw pointer used by the loop.
-            (if (>= map.len growth-limit-before)
-              (grow! map)
-              unit)
-            (let
-              [data : (MutPtr GeneratedHashmapSlot)
-                (unsafe
-                  (ptr-cast
-                    (__tl_array-data map.slots)
-                    : (MutPtr GeneratedHashmapSlot)))]
-              ;; with-capacity and grow! preserve a positive power-of-two
-              ;; capacity, making the masked initial cursor in bounds.
-              [cap : i64 (__tl_array-length map.slots)]
-              [hash : i64 (* key 6364136223846793005)]
-              [mask : i64 (- cap 1)]
-              [cursor : i64 (bit-and hash mask)]
-              [start : i64 cursor]
-              [first : i64 -1]
-              (begin
-                ;; The preserved growth predicate guarantees an Empty slot,
-                ;; so this loop terminates without a redundant walked bound.
-                (while true
-                  (begin
-                    (let
-                      [observed-slot : GeneratedHashmapSlot
+          ;; Preserve the pre-probe len + deleted condition through the
+          ;; cached limit: below the threshold at least one Empty slot
+          ;; remains in the table.
+          ;; Perform this exactly once before deriving data or probing, so a
+          ;; grow cannot invalidate the raw pointer used by the loop.
+          (if (>= map.len growth-limit-before)
+            (grow! map)
+            unit)
+          (let
+            [data : (MutPtr GeneratedHashmapSlot)
+              (unsafe
+                (ptr-cast
+                  (__tl_array-data map.slots)
+                  : (MutPtr GeneratedHashmapSlot)))]
+            ;; with-capacity and grow! preserve a positive power-of-two
+            ;; capacity, making the masked initial cursor in bounds.
+            [cap : i64 (__tl_array-length map.slots)]
+            [hash : i64 (* key 6364136223846793005)]
+            [mask : i64 (- cap 1)]
+            [cursor : i64 (bit-and hash mask)]
+            [start : i64 cursor]
+            [first : i64 -1]
+            ;; The preserved growth predicate guarantees an Empty slot,
+            ;; so this loop terminates without a redundant walked bound.
+            (while true
+              (let
+                [observed-slot : GeneratedHashmapSlot
+                  (unsafe
+                    (ptr-read (ptr-offset data cursor)))]
+                (match (__tl-project-field-name observed-slot "state")
+                  [GeneratedHashmapSlotState.Empty
+                    (if (< first 0)
+                      (begin
+                        ;; The cursor is already a masked in-bounds index
+                        ;; and `data` is the array the loop just read
+                        ;; through, so publishing through the same raw
+                        ;; pointer skips re-deriving the array and the
+                        ;; bounds check `array-ref` would repeat.
                         (unsafe
-                          (ptr-read (ptr-offset data cursor)))]
-                      (match (__tl-project-field-name observed-slot "state")
-                        [GeneratedHashmapSlotState.Empty
-                          (if (< first 0)
-                            (begin
-                              ;; The cursor is already a masked in-bounds index
-                              ;; and `data` is the array the loop just read
-                              ;; through, so publishing through the same raw
-                              ;; pointer skips re-deriving the array and the
-                              ;; bounds check `array-ref` would repeat.
-                              (unsafe
-                                (ptr-write!
-                                  (ptr-offset data cursor)
-                                  (GeneratedHashmapSlot
-                                    (GeneratedHashmapSlotState.Occupied)
-                                    key
-                                    value)))
-                              (set! map.len (+ map.len 1))
-                              (return unit))
-                            (begin
-                              (unsafe
-                                (ptr-write!
-                                  (ptr-offset data first)
-                                  (GeneratedHashmapSlot
-                                    (GeneratedHashmapSlotState.Occupied)
-                                    key
-                                    value)))
-                              (set! map.len (+ map.len 1))
-                              (set! map.growth-limit (+ map.growth-limit 1))
-                              (return unit)))]
-                        [GeneratedHashmapSlotState.Tombstone
-                          (begin
-                            (if (< first 0)
-                              (set! first cursor)
-                              unit)
-                            ;; Wrap by masking rather than comparing. The capacity
-                            ;; is a positive power of two -- the same invariant the
-                            ;; masked initial cursor above already relies on -- so
-                            ;; for `next` in [1, cap] the mask maps `cap` to 0 and
-                            ;; leaves every smaller value alone. One `and` replaces
-                            ;; a compare and an unpredictable branch.
-                            (set! cursor (bit-and (+ cursor 1) mask)))]
-                        [GeneratedHashmapSlotState.Occupied
-                          (if (=
-                            (__tl-project-field-name observed-slot "key")
-                            key)
-                            (begin
-                              ;; The slot was just classified Occupied with a
-                              ;; matching key, so the state re-check inside
-                              ;; set-occupied-value! is known-true here.
-                              (unsafe
-                                (ptr-write!
-                                  (ptr-offset data cursor)
-                                  (GeneratedHashmapSlot
-                                    (GeneratedHashmapSlotState.Occupied)
-                                    key
-                                    value)))
-                              (return unit))
-                            (set! cursor (bit-and (+ cursor 1) mask)))]))
-                    ;; Map values may be shallow-copied while sharing their
-                    ;; slot descriptor. Preserve the prior Full-table behavior
-                    ;; for a stale copied len without a per-probe counter.
-                    (if (= cursor start)
-                      (if (< first 0)
-                        (return unit)
-                        (begin
-                          (unsafe
-                            (ptr-write!
-                              (ptr-offset data first)
-                              (GeneratedHashmapSlot
-                                (GeneratedHashmapSlotState.Occupied)
-                                key
-                                value)))
-                          (set! map.len (+ map.len 1))
-                          (set! map.growth-limit (+ map.growth-limit 1))
-                          (return unit)))
-                      unit)))
-                unit))))
+                          (ptr-write!
+                            (ptr-offset data cursor)
+                            (GeneratedHashmapSlot
+                              (GeneratedHashmapSlotState.Occupied)
+                              key
+                              value)))
+                        (set! map.len (+ map.len 1))
+                        (return unit))
+                      (begin
+                        (unsafe
+                          (ptr-write!
+                            (ptr-offset data first)
+                            (GeneratedHashmapSlot
+                              (GeneratedHashmapSlotState.Occupied)
+                              key
+                              value)))
+                        (set! map.len (+ map.len 1))
+                        (set! map.growth-limit (+ map.growth-limit 1))
+                        (return unit)))]
+                  [GeneratedHashmapSlotState.Tombstone
+                    (if (< first 0)
+                      (set! first cursor)
+                      unit)
+                    ;; Wrap by masking rather than comparing. The capacity
+                    ;; is a positive power of two -- the same invariant the
+                    ;; masked initial cursor above already relies on -- so
+                    ;; for `next` in [1, cap] the mask maps `cap` to 0 and
+                    ;; leaves every smaller value alone. One `and` replaces
+                    ;; a compare and an unpredictable branch.
+                    (set! cursor (bit-and (+ cursor 1) mask))]
+                  [GeneratedHashmapSlotState.Occupied
+                    (if (= (__tl-project-field-name observed-slot "key") key)
+                      (begin
+                        ;; The slot was just classified Occupied with a
+                        ;; matching key, so the state re-check inside
+                        ;; set-occupied-value! is known-true here.
+                        (unsafe
+                          (ptr-write!
+                            (ptr-offset data cursor)
+                            (GeneratedHashmapSlot
+                              (GeneratedHashmapSlotState.Occupied)
+                              key
+                              value)))
+                        (return unit))
+                      (set! cursor (bit-and (+ cursor 1) mask)))]))
+              ;; Map values may be shallow-copied while sharing their
+              ;; slot descriptor. Preserve the prior Full-table behavior
+              ;; for a stale copied len without a per-probe counter.
+              (if (= cursor start)
+                (if (< first 0)
+                  (return unit)
+                  (begin
+                    (unsafe
+                      (ptr-write!
+                        (ptr-offset data first)
+                        (GeneratedHashmapSlot
+                          (GeneratedHashmapSlotState.Occupied)
+                          key
+                          value)))
+                    (set! map.len (+ map.len 1))
+                    (set! map.growth-limit (+ map.growth-limit 1))
+                    (return unit)))
+                unit))
+            unit))
         `(begin
           (if (needs-grow? map)
             (grow! map)
@@ -485,21 +466,19 @@
                       "state")
                       [GeneratedHashmapSlotState.Tombstone true]
                       [_ false])]
-                  (begin
-                    (publish-occupied!
-                      (&mut map.slots)
-                      index
-                      ,insert-key-copy
-                      value
-                      hash)
-                    (set! map.len (+ map.len 1))
-                    (if was-tombstone
-                      (set! map.growth-limit (+ map.growth-limit 1))
-                      unit)))]
+                  (publish-occupied!
+                    (&mut map.slots)
+                    index
+                    ,insert-key-copy
+                    value
+                    hash)
+                  (set! map.len (+ map.len 1))
+                  (if was-tombstone
+                    (set! map.growth-limit (+ map.growth-limit 1))
+                    unit))]
               [GeneratedHashmapProbe.Full
-                (begin
-                  (grow! map)
-                  (insert-ref! map key value))]))))]
+                (grow! map)
+                (insert-ref! map key value)]))))]
     ;; Probe body. The scalar arm has no stored hash to pre-compare against, so
     ;; it confirms the key directly, and Occupied leads the arm order because it
     ;; is the tag every collision step reads. Probe order, wrap rule,
@@ -519,34 +498,32 @@
               [walked : i64 0]
               [first : i64 -1]
               [mask : i64 (- capacity 1)]
-              (begin
-                (while (< walked capacity)
-                  (let
-                    [slot : (& slots GeneratedHashmapSlot)
-                      (& (array-ref slots cursor))]
-                    (match (clone (__tl-project-field-name slot "state"))
-                      [GeneratedHashmapSlotState.Occupied
-                        (if ,probe-key-eq-body
-                          (return (GeneratedHashmapProbe.Found cursor))
-                          (begin
-                            (set! cursor (bit-and (+ cursor 1) mask))
-                            (set! walked (+ walked 1))))]
-                      [GeneratedHashmapSlotState.Empty
-                        (return
-                          (GeneratedHashmapProbe.Absent
-                            (if (>= first 0)
-                              first
-                              cursor)))]
-                      [GeneratedHashmapSlotState.Tombstone
+              (while (< walked capacity)
+                (let
+                  [slot : (& slots GeneratedHashmapSlot)
+                    (& (array-ref slots cursor))]
+                  (match (clone (__tl-project-field-name slot "state"))
+                    [GeneratedHashmapSlotState.Occupied
+                      (if ,probe-key-eq-body
+                        (return (GeneratedHashmapProbe.Found cursor))
                         (begin
-                          (if (< first 0)
-                            (set! first cursor)
-                            unit)
                           (set! cursor (bit-and (+ cursor 1) mask))
-                          (set! walked (+ walked 1)))])))
-                (if (>= first 0)
-                  (GeneratedHashmapProbe.Absent first)
-                  (GeneratedHashmapProbe.Full))))))
+                          (set! walked (+ walked 1))))]
+                    [GeneratedHashmapSlotState.Empty
+                      (return
+                        (GeneratedHashmapProbe.Absent
+                          (if (>= first 0)
+                            first
+                            cursor)))]
+                    [GeneratedHashmapSlotState.Tombstone
+                      (if (< first 0)
+                        (set! first cursor)
+                        unit)
+                      (set! cursor (bit-and (+ cursor 1) mask))
+                      (set! walked (+ walked 1))])))
+              (if (>= first 0)
+                (GeneratedHashmapProbe.Absent first)
+                (GeneratedHashmapProbe.Full)))))
         `(define (probe
           [slots : (& slots (__tl_dyn-array GeneratedHashmapSlot))]
           [capacity : i64]
@@ -559,36 +536,34 @@
               [walked : i64 0]
               [first : i64 -1]
               [mask : i64 (- capacity 1)]
-              (begin
-                (while (< walked capacity)
-                  (let
-                    [slot : (& slots GeneratedHashmapSlot)
-                      (& (array-ref slots cursor))]
-                    (match (clone (__tl-project-field-name slot "state"))
-                      [GeneratedHashmapSlotState.Empty
-                        (return
-                          (GeneratedHashmapProbe.Absent
-                            (if (>= first 0)
-                              first
-                              cursor)))]
-                      [GeneratedHashmapSlotState.Tombstone
+              (while (< walked capacity)
+                (let
+                  [slot : (& slots GeneratedHashmapSlot)
+                    (& (array-ref slots cursor))]
+                  (match (clone (__tl-project-field-name slot "state"))
+                    [GeneratedHashmapSlotState.Empty
+                      (return
+                        (GeneratedHashmapProbe.Absent
+                          (if (>= first 0)
+                            first
+                            cursor)))]
+                    [GeneratedHashmapSlotState.Tombstone
+                      (if (< first 0)
+                        (set! first cursor)
+                        unit)
+                      (set! cursor (bit-and (+ cursor 1) mask))
+                      (set! walked (+ walked 1))]
+                    [GeneratedHashmapSlotState.Occupied
+                      (if (if (= (__tl-project-field-name slot "hash") hash)
+                        ,probe-key-eq-body
+                        false)
+                        (return (GeneratedHashmapProbe.Found cursor))
                         (begin
-                          (if (< first 0)
-                            (set! first cursor)
-                            unit)
                           (set! cursor (bit-and (+ cursor 1) mask))
-                          (set! walked (+ walked 1)))]
-                      [GeneratedHashmapSlotState.Occupied
-                        (if (if (= (__tl-project-field-name slot "hash") hash)
-                          ,probe-key-eq-body
-                          false)
-                          (return (GeneratedHashmapProbe.Found cursor))
-                          (begin
-                            (set! cursor (bit-and (+ cursor 1) mask))
-                            (set! walked (+ walked 1))))])))
-                (if (>= first 0)
-                  (GeneratedHashmapProbe.Absent first)
-                  (GeneratedHashmapProbe.Full)))))))]
+                          (set! walked (+ walked 1))))])))
+              (if (>= first 0)
+                (GeneratedHashmapProbe.Absent first)
+                (GeneratedHashmapProbe.Full))))))]
     ;; One index-returning lookup backs get/contains/remove for every family.
     ;; The scalar arm scans through the raw data pointer with the probe order,
     ;; wrap rule and bound `probe` uses; the general arm keeps `probe` so the
@@ -614,25 +589,23 @@
                 [mask : i64 (- cap 1)]
                 [cursor : i64 (bit-and (* key 6364136223846793005) mask)]
                 [start : i64 cursor]
-                (begin
-                  (while true
-                    (begin
-                      (let
-                        [slot : GeneratedHashmapSlot
-                          (unsafe
-                            (ptr-read (ptr-offset data cursor)))]
-                        (match (__tl-project-field-name slot "state")
-                          [GeneratedHashmapSlotState.Occupied
-                            (if (= (__tl-project-field-name slot "key") key)
-                              (return cursor)
-                              (set! cursor (bit-and (+ cursor 1) mask)))]
-                          [GeneratedHashmapSlotState.Empty (return -1)]
-                          [GeneratedHashmapSlotState.Tombstone
-                            (set! cursor (bit-and (+ cursor 1) mask))]))
-                      (if (= cursor start)
-                        (return -1)
-                        unit)))
-                  -1)))))
+                (while true
+                  (let
+                    [slot : GeneratedHashmapSlot
+                      (unsafe
+                        (ptr-read (ptr-offset data cursor)))]
+                    (match (__tl-project-field-name slot "state")
+                      [GeneratedHashmapSlotState.Occupied
+                        (if (= (__tl-project-field-name slot "key") key)
+                          (return cursor)
+                          (set! cursor (bit-and (+ cursor 1) mask)))]
+                      [GeneratedHashmapSlotState.Empty (return -1)]
+                      [GeneratedHashmapSlotState.Tombstone
+                        (set! cursor (bit-and (+ cursor 1) mask))]))
+                  (if (= cursor start)
+                    (return -1)
+                    unit))
+                -1))))
         `(define (find-index [map : (& map Map)] [key : ,query-key-type]) : i64
           (match (probe
             (& map.slots)
@@ -663,26 +636,24 @@
             [mask : i64 (- cap 1)]
             [cursor : i64 (bit-and (* key 6364136223846793005) mask)]
             [start : i64 cursor]
-            (begin
-              (while true
-                (begin
-                  (let
-                    [slot : GeneratedHashmapSlot
-                      (unsafe
-                        (ptr-read (ptr-offset data cursor)))]
-                    (match (__tl-project-field-name slot "state")
-                      [GeneratedHashmapSlotState.Occupied
-                        (if (= (__tl-project-field-name slot "key") key)
-                          (return
-                            (LookupFound (__tl-project-field-name slot "value")))
-                          (set! cursor (bit-and (+ cursor 1) mask)))]
-                      [GeneratedHashmapSlotState.Empty (return (LookupMissing))]
-                      [GeneratedHashmapSlotState.Tombstone
-                        (set! cursor (bit-and (+ cursor 1) mask))]))
-                  (if (= cursor start)
-                    (return (LookupMissing))
-                    unit)))
-              (LookupMissing)))))]
+            (while true
+              (let
+                [slot : GeneratedHashmapSlot
+                  (unsafe
+                    (ptr-read (ptr-offset data cursor)))]
+                (match (__tl-project-field-name slot "state")
+                  [GeneratedHashmapSlotState.Occupied
+                    (if (= (__tl-project-field-name slot "key") key)
+                      (return
+                        (LookupFound (__tl-project-field-name slot "value")))
+                      (set! cursor (bit-and (+ cursor 1) mask)))]
+                  [GeneratedHashmapSlotState.Empty (return (LookupMissing))]
+                  [GeneratedHashmapSlotState.Tombstone
+                    (set! cursor (bit-and (+ cursor 1) mask))]))
+              (if (= cursor start)
+                (return (LookupMissing))
+                unit))
+            (LookupMissing))))]
     [get-borrowed-body : comptime.Expr
       (if scalar-family
         scalar-lookup-body
@@ -762,15 +733,14 @@
             (if (< from 0)
               0
               from)]
-          (begin
-            (while (< index cap)
-              (match (__tl-project-field-name
-                (unsafe
-                  (ptr-read (ptr-offset data index)))
-                "state")
-                [GeneratedHashmapSlotState.Occupied (return index)]
-                [_ (set! index (+ index 1))]))
-            index))
+          (while (< index cap)
+            (match (__tl-project-field-name
+              (unsafe
+                (ptr-read (ptr-offset data index)))
+              "state")
+              [GeneratedHashmapSlotState.Occupied (return index)]
+              [_ (set! index (+ index 1))]))
+          index)
         `(let
           [index : i64
             (if (< from 0)
@@ -778,13 +748,12 @@
               from)]
           [cap : i64 (capacity map)]
           [found : bool false]
-          (begin
-            (while (and (not found) (< index cap))
-              (match (clone
-                (__tl-project-field-name (array-ref map.slots index) "state"))
-                [GeneratedHashmapSlotState.Occupied (set! found true)]
-                [_ (set! index (+ index 1))]))
-            index)))]
+          (while (and (not found) (< index cap))
+            (match (clone
+              (__tl-project-field-name (array-ref map.slots index) "state"))
+              [GeneratedHashmapSlotState.Occupied (set! found true)]
+              [_ (set! index (+ index 1))]))
+          index))]
     [entry-at-body : comptime.Expr
       (if scalar-family
         `(if (and (>= index 0) (< index (capacity map)))
@@ -850,13 +819,12 @@
           (let
             [slot : (&mut slots GeneratedHashmapSlot)
               (&mut (array-ref slots index))]
-            (begin
-              (__tl-project-set-field-name slot "key" key)
-              (__tl-project-set-field-name slot "value" value)
-              (__tl-project-set-field-name
-                slot
-                "state"
-                (GeneratedHashmapSlotState.Occupied)))))
+            (__tl-project-set-field-name slot "key" key)
+            (__tl-project-set-field-name slot "value" value)
+            (__tl-project-set-field-name
+              slot
+              "state"
+              (GeneratedHashmapSlotState.Occupied))))
         `(define (publish-occupied!
           [slots : (&mut slots (__tl_dyn-array GeneratedHashmapSlot))]
           [index : i64]
@@ -866,14 +834,13 @@
           (let
             [slot : (&mut slots GeneratedHashmapSlot)
               (&mut (array-ref slots index))]
-            (begin
-              (__tl-project-set-field-name slot "key" key)
-              (__tl-project-set-field-name slot "value" value)
-              (__tl-project-set-field-name slot "hash" hash)
-              (__tl-project-set-field-name
-                slot
-                "state"
-                (GeneratedHashmapSlotState.Occupied))))))]
+            (__tl-project-set-field-name slot "key" key)
+            (__tl-project-set-field-name slot "value" value)
+            (__tl-project-set-field-name slot "hash" hash)
+            (__tl-project-set-field-name
+              slot
+              "state"
+              (GeneratedHashmapSlotState.Occupied)))))]
     (if (string.eq value-kind "unsupported")
       (comptime.comptime-error
         (comptime.string-append
@@ -934,12 +901,11 @@
           (let
             [slot : (&mut slots GeneratedHashmapSlot)
               (&mut (array-ref slots index))]
-            (begin
-              (match (__tl-project-field-name slot "state")
-                [GeneratedHashmapSlotState.Occupied
-                  (__tl-project-set-field-name slot "value" value)]
-                [_ unit])
-              unit)))
+            (match (__tl-project-field-name slot "state")
+              [GeneratedHashmapSlotState.Occupied
+                (__tl-project-set-field-name slot "value" value)]
+              [_ unit])
+            unit))
         (define (mark-occupied-tombstone!
           [slots : (&mut slots (__tl_dyn-array GeneratedHashmapSlot))]
           [index : i64]) : unit
@@ -955,10 +921,9 @@
             capacity
             (let
               [rounded : i64 1]
-              (begin
-                (while (< rounded capacity)
-                  (set! rounded (* rounded 2)))
-                rounded))))
+              (while (< rounded capacity)
+                (set! rounded (* rounded 2)))
+              rounded)))
         (define (growth-limit-for [capacity : i64]) : i64
           ,growth-limit-body)
         ,probe-decl
@@ -985,16 +950,14 @@
           (let
             [cap : i64 (capacity-mut map)]
             [index : i64 0]
-            (begin
-              (while (< index cap)
-                (begin
-                  (__tl-project-set-field-name
-                    (array-ref map.slots index)
-                    "state"
-                    (GeneratedHashmapSlotState.Empty))
-                  (set! index (+ index 1))))
-              (set! map.len 0)
-              (set! map.growth-limit (growth-limit-for cap)))))
+            (while (< index cap)
+              (__tl-project-set-field-name
+                (array-ref map.slots index)
+                "state"
+                (GeneratedHashmapSlotState.Empty))
+              (set! index (+ index 1)))
+            (set! map.len 0)
+            (set! map.growth-limit (growth-limit-for cap))))
         (define (deleted [map : (& map Map)]) : i64
           (- (growth-limit-for (capacity map)) map.growth-limit))
         (define (is-empty? [map : (& map Map)]) : bool
@@ -1052,12 +1015,11 @@
             ;; guard is what makes the proof available rather than decoration.
             [cap : i64 (__tl_array-length fresh)]
             [mask : i64 (- cap 1)]
-            (begin
-              (if (>= cap 1)
-                ,grow-rehash-body
-                unit)
-              (set! map.slots fresh)
-              (set! map.growth-limit (growth-limit-for cap)))))
+            (if (>= cap 1)
+              ,grow-rehash-body
+              unit)
+            (set! map.slots fresh)
+            (set! map.growth-limit (growth-limit-for cap))))
         (define (needs-grow? [map : (&mut map Map)]) : bool
           (>= map.len map.growth-limit))
         (define (insert-ref! [map : (&mut map Map)] [key : ,K] [value : ,V]) : unit
@@ -1101,9 +1063,8 @@
           (match (get-borrowed (& map) ,owned-query-key)
             [(LookupFound value) (EntryOrInsertFound value)]
             [(LookupMissing)
-              (begin
-                (insert-ref! map key (clone default-value))
-                (EntryOrInsertInserted default-value))]))
+              (insert-ref! map key (clone default-value))
+              (EntryOrInsertInserted default-value)]))
         (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
           (match result
             [(EntryOrInsertInserted _) true]
@@ -1278,48 +1239,46 @@
     (let
       [sm : hashmap_string_i64.Map (hashmap_string_i64.with-capacity 1)]
       [im : hashmap_i64_i64.Map (hashmap_i64_i64.with-capacity 1)]
-      (begin
-        (hashmap_string_i64.insert! sm "alpha" 10)
-        (hashmap_string_i64.insert! sm "beta" 20)
-        (hashmap_i64_i64.insert! im 1 100)
-        (hashmap_i64_i64.insert! im 2 200)
-        (test.assert-i64-eq
-          (hashmap_string_i64.lookup-value-or
-            (hashmap_string_i64.get (& sm) "alpha")
-            -1)
-          10
-          "generated string-key lookup")
-        (test.assert-i64-eq
-          (hashmap_i64_i64.get-value-or (& im) 2 -1)
-          200
-          "generated i64-key lookup")
+      (hashmap_string_i64.insert! sm "alpha" 10)
+      (hashmap_string_i64.insert! sm "beta" 20)
+      (hashmap_i64_i64.insert! im 1 100)
+      (hashmap_i64_i64.insert! im 2 200)
+      (test.assert-i64-eq
+        (hashmap_string_i64.lookup-value-or
+          (hashmap_string_i64.get (& sm) "alpha")
+          -1)
+        10
+        "generated string-key lookup")
+      (test.assert-i64-eq
+        (hashmap_i64_i64.get-value-or (& im) 2 -1)
+        200
+        "generated i64-key lookup")
+      (test.assert-true
+        (hashmap_string_i64.remove-ok? (hashmap_string_i64.remove! sm "beta"))
+        "generated string-key remove")
+      (test.assert-true
+        (hashmap_i64_i64.insert-if-absent! im 3 300)
+        "generated i64 insert-if-absent")
+      (let
+        [old-capacity : i64 (hashmap_i64_i64.capacity (& im))]
+        (hashmap_i64_i64.remove! im 1)
+        (hashmap_i64_i64.clear-ref! (&mut im))
         (test.assert-true
-          (hashmap_string_i64.remove-ok? (hashmap_string_i64.remove! sm "beta"))
-          "generated string-key remove")
-        (test.assert-true
-          (hashmap_i64_i64.insert-if-absent! im 3 300)
-          "generated i64 insert-if-absent")
-        (let
-          [old-capacity : i64 (hashmap_i64_i64.capacity (& im))]
-          (begin
-            (hashmap_i64_i64.remove! im 1)
-            (hashmap_i64_i64.clear-ref! (&mut im))
-            (test.assert-true
-              (hashmap_i64_i64.is-empty? (& im))
-              "generated i64 clear empties map")
-            (test.assert-i64-eq
-              (hashmap_i64_i64.capacity (& im))
-              old-capacity
-              "generated i64 clear retains capacity")
-            (test.assert-i64-eq
-              (hashmap_i64_i64.deleted (& im))
-              0
-              "generated i64 clear removes tombstones")
-            (hashmap_i64_i64.insert! im 4 400)
-            (test.assert-i64-eq
-              (hashmap_i64_i64.get-value-or (& im) 4 -1)
-              400
-              "generated i64 insert after clear")))))))
+          (hashmap_i64_i64.is-empty? (& im))
+          "generated i64 clear empties map")
+        (test.assert-i64-eq
+          (hashmap_i64_i64.capacity (& im))
+          old-capacity
+          "generated i64 clear retains capacity")
+        (test.assert-i64-eq
+          (hashmap_i64_i64.deleted (& im))
+          0
+          "generated i64 clear removes tombstones")
+        (hashmap_i64_i64.insert! im 4 400)
+        (test.assert-i64-eq
+          (hashmap_i64_i64.get-value-or (& im) 4 -1)
+          400
+          "generated i64 insert after clear")))))
 
 (cfg
   test
@@ -1329,28 +1288,26 @@
       [key : String "alpha"]
       [sm : hashmap_string_string.Map (hashmap_string_string.new)]
       [im : hashmap_i64_string.Map (hashmap_i64_string.new)]
-      (begin
-        (hashmap_string_string.insert! sm "alpha" "red")
-        (hashmap_string_string.insert! sm "alpha" "blue")
-        (hashmap_i64_string.insert! im 7 "seven")
-        (let
-          [entry : (hashmap_string_string.MutEntry sm)
-            (hashmap_string_string.get-mut-entry-borrowed (&mut sm) (& key))]
-          (begin
-            (test.assert-true
-              (hashmap_string_string.mut-entry-present? entry)
-              "generated mut entry present")
-            (hashmap_string_string.mut-entry-set! entry "green")))
-        (hashmap-test-assert-string
-          (hashmap_string_string.lookup-value-or
-            (hashmap_string_string.get (& sm) "alpha")
-            "missing")
-          "green"
-          "generated string value update")
+      (hashmap_string_string.insert! sm "alpha" "red")
+      (hashmap_string_string.insert! sm "alpha" "blue")
+      (hashmap_i64_string.insert! im 7 "seven")
+      (let
+        [entry : (hashmap_string_string.MutEntry sm)
+          (hashmap_string_string.get-mut-entry-borrowed (&mut sm) (& key))]
         (test.assert-true
-          (hashmap_i64_string.borrowed-value-found?
-            (hashmap_i64_string.get-value-borrowed (& im) 7))
-          "generated borrowed string value")))))
+          (hashmap_string_string.mut-entry-present? entry)
+          "generated mut entry present")
+        (hashmap_string_string.mut-entry-set! entry "green"))
+      (hashmap-test-assert-string
+        (hashmap_string_string.lookup-value-or
+          (hashmap_string_string.get (& sm) "alpha")
+          "missing")
+        "green"
+        "generated string value update")
+      (test.assert-true
+        (hashmap_i64_string.borrowed-value-found?
+          (hashmap_i64_string.get-value-borrowed (& im) 7))
+        "generated borrowed string value"))))
 
 (cfg
   test
@@ -1363,41 +1320,40 @@
       [nested : hashmap_nested_i64.Map (hashmap_nested_i64.new)]
       [payloads : hashmap_string_payload.Map (hashmap_string_payload.new)]
       [states : hashmap_i64_state.Map (hashmap_i64_state.new)]
-      (begin
-        (hashmap_nested_i64.insert! nested alpha 11)
-        (hashmap_nested_i64.insert! nested beta 22)
-        (hashmap_string_payload.insert! payloads "p" (HashPayload 3 4))
-        (hashmap_i64_state.insert! states 1 (HashPaused 7))
-        (hashmap_string_payload.insert! payloads "p" (HashPayload 5 6))
-        (hashmap_i64_state.insert! states 1 (HashReady 9))
-        (let
-          [entry : (hashmap_string_payload.MutEntry payloads)
-            (hashmap_string_payload.get-mut-entry (&mut payloads) "p")]
-          (hashmap_string_payload.mut-entry-set! entry (HashPayload 7 8)))
-        (let
-          [entry : (hashmap_i64_state.MutEntry states)
-            (hashmap_i64_state.get-mut-entry (&mut states) 1)]
-          (hashmap_i64_state.mut-entry-set! entry (HashPaused 4)))
-        (test.assert-i64-eq
-          (hashmap_nested_i64.lookup-value-or
-            (hashmap_nested_i64.get (& nested) equal-alpha)
-            -1)
-          11
-          "generated aggregate key equality")
-        (test.assert-i64-eq
-          (hash-payload-score
-            (hashmap_string_payload.lookup-value-or
-              (hashmap_string_payload.get (& payloads) "p")
-              (HashPayload 0 0)))
-          15
-          "generated aggregate struct update and mut entry")
-        (test.assert-i64-eq
-          (hash-state-score
-            (hashmap_i64_state.lookup-value-or
-              (hashmap_i64_state.get (& states) 1)
-              (HashFailed)))
-          -4
-          "generated aggregate enum update and mut entry")))))
+      (hashmap_nested_i64.insert! nested alpha 11)
+      (hashmap_nested_i64.insert! nested beta 22)
+      (hashmap_string_payload.insert! payloads "p" (HashPayload 3 4))
+      (hashmap_i64_state.insert! states 1 (HashPaused 7))
+      (hashmap_string_payload.insert! payloads "p" (HashPayload 5 6))
+      (hashmap_i64_state.insert! states 1 (HashReady 9))
+      (let
+        [entry : (hashmap_string_payload.MutEntry payloads)
+          (hashmap_string_payload.get-mut-entry (&mut payloads) "p")]
+        (hashmap_string_payload.mut-entry-set! entry (HashPayload 7 8)))
+      (let
+        [entry : (hashmap_i64_state.MutEntry states)
+          (hashmap_i64_state.get-mut-entry (&mut states) 1)]
+        (hashmap_i64_state.mut-entry-set! entry (HashPaused 4)))
+      (test.assert-i64-eq
+        (hashmap_nested_i64.lookup-value-or
+          (hashmap_nested_i64.get (& nested) equal-alpha)
+          -1)
+        11
+        "generated aggregate key equality")
+      (test.assert-i64-eq
+        (hash-payload-score
+          (hashmap_string_payload.lookup-value-or
+            (hashmap_string_payload.get (& payloads) "p")
+            (HashPayload 0 0)))
+        15
+        "generated aggregate struct update and mut entry")
+      (test.assert-i64-eq
+        (hash-state-score
+          (hashmap_i64_state.lookup-value-or
+            (hashmap_i64_state.get (& states) 1)
+            (HashFailed)))
+        -4
+        "generated aggregate enum update and mut entry"))))
 
 (cfg
   test
@@ -1409,111 +1365,110 @@
       [inactive-scalar : hashmap_i64_i64.Map (hashmap_i64_i64.with-capacity 1)]
       [inactive-general : hashmap_string_i64.Map
         (hashmap_string_i64.with-capacity 1)]
-      (begin
-        (let
-          [entry : (hashmap_i64_i64.MutEntry inactive-scalar)
-            (hashmap_i64_i64.MutEntry (&mut inactive-scalar.slots) 0 true 99 0)]
-          (hashmap_i64_i64.mut-entry-set! entry 77))
-        (test.assert-i64-eq
-          (hashmap_i64_i64.len (& inactive-scalar))
-          0
-          "present bit cannot make an empty slot writable")
-        (hashmap_string_i64.insert! inactive-general "stale" 1)
-        (test.assert-true
-          (hashmap_string_i64.remove-ok?
-            (hashmap_string_i64.remove! inactive-general "stale"))
-          "stale-entry fixture creates a tombstone")
-        (let
-          [entry : (hashmap_string_i64.MutEntry inactive-general)
-            (hashmap_string_i64.MutEntry
-              (&mut inactive-general.slots)
-              0
-              true
-              "stale"
-              0)]
-          (hashmap_string_i64.mut-entry-set! entry 77))
-        (test.assert-i64-eq
-          (hashmap_string_i64.lookup-value-or
-            (hashmap_string_i64.get (& inactive-general) "stale")
-            -1)
-          -1
-          "present bit cannot make a tombstone payload writable")
-        (hashmap_i64_i64.insert! scalar 1 10)
-        (hashmap_string_i64.insert! general "one" 10)
-        (hashmap_i64_i64.insert! scalar 1 11)
-        (hashmap_string_i64.insert! general "one" 11)
-        (let
-          [entry : (hashmap_i64_i64.MutEntry scalar)
-            (hashmap_i64_i64.get-mut-entry (&mut scalar) 1)]
-          (hashmap_i64_i64.mut-entry-set! entry 13))
-        (let
-          [entry : (hashmap_string_i64.MutEntry general)
-            (hashmap_string_i64.get-mut-entry (&mut general) "one")]
-          (hashmap_string_i64.mut-entry-set! entry 13))
-        (test.assert-i64-eq
-          (hashmap_i64_i64.get-value-or (& scalar) 1 -1)
-          13
-          "scalar insert and mut entry update in place")
-        (test.assert-i64-eq
-          (hashmap_string_i64.lookup-value-or
-            (hashmap_string_i64.get (& general) "one")
-            -1)
-          13
-          "general insert and mut entry update in place")
-        (test.assert-true
-          (hashmap_i64_i64.remove-ok? (hashmap_i64_i64.remove! scalar 1))
-          "scalar remove creates tombstone")
-        (test.assert-true
-          (hashmap_string_i64.remove-ok?
-            (hashmap_string_i64.remove! general "one"))
-          "general remove creates tombstone")
-        (test.assert-i64-eq
-          (hashmap_i64_i64.deleted (& scalar))
-          1
-          "scalar tombstone count after remove")
-        (test.assert-i64-eq
-          (hashmap_string_i64.deleted (& general))
-          1
-          "general tombstone count after remove")
-        (hashmap_i64_i64.insert! scalar 1 12)
-        (hashmap_string_i64.insert! general "one" 12)
-        (test.assert-i64-eq
-          (hashmap_i64_i64.deleted (& scalar))
-          0
-          "scalar insert reuses one tombstone")
-        (test.assert-i64-eq
-          (hashmap_string_i64.deleted (& general))
-          0
-          "general insert reuses one tombstone")
-        (hashmap_i64_i64.insert! scalar 2 20)
-        (hashmap_i64_i64.insert! scalar 3 30)
-        (hashmap_i64_i64.insert! scalar 4 40)
-        (hashmap_string_i64.insert! general "two" 20)
-        (hashmap_string_i64.insert! general "three" 30)
-        (hashmap_string_i64.insert! general "four" 40)
-        (test.assert-i64-eq
-          (hashmap_i64_i64.capacity (& scalar))
-          8
-          "scalar growth runs exactly once before probing")
-        (test.assert-i64-eq
-          (hashmap_string_i64.capacity (& general))
-          8
-          "general growth runs exactly once before probing")
-        (test.assert-i64-eq
-          (hashmap_i64_i64.len (& scalar))
-          4
-          "scalar insert parity after growth")
-        (test.assert-i64-eq
-          (hashmap_string_i64.len (& general))
-          4
-          "general insert parity after growth")
-        (test.assert-i64-eq
-          (hashmap_i64_i64.get-value-or (& scalar) 1 -1)
-          12
-          "scalar tombstone value survives growth")
-        (test.assert-i64-eq
-          (hashmap_string_i64.lookup-value-or
-            (hashmap_string_i64.get (& general) "one")
-            -1)
-          12
-          "general tombstone value survives growth")))))
+      (let
+        [entry : (hashmap_i64_i64.MutEntry inactive-scalar)
+          (hashmap_i64_i64.MutEntry (&mut inactive-scalar.slots) 0 true 99 0)]
+        (hashmap_i64_i64.mut-entry-set! entry 77))
+      (test.assert-i64-eq
+        (hashmap_i64_i64.len (& inactive-scalar))
+        0
+        "present bit cannot make an empty slot writable")
+      (hashmap_string_i64.insert! inactive-general "stale" 1)
+      (test.assert-true
+        (hashmap_string_i64.remove-ok?
+          (hashmap_string_i64.remove! inactive-general "stale"))
+        "stale-entry fixture creates a tombstone")
+      (let
+        [entry : (hashmap_string_i64.MutEntry inactive-general)
+          (hashmap_string_i64.MutEntry
+            (&mut inactive-general.slots)
+            0
+            true
+            "stale"
+            0)]
+        (hashmap_string_i64.mut-entry-set! entry 77))
+      (test.assert-i64-eq
+        (hashmap_string_i64.lookup-value-or
+          (hashmap_string_i64.get (& inactive-general) "stale")
+          -1)
+        -1
+        "present bit cannot make a tombstone payload writable")
+      (hashmap_i64_i64.insert! scalar 1 10)
+      (hashmap_string_i64.insert! general "one" 10)
+      (hashmap_i64_i64.insert! scalar 1 11)
+      (hashmap_string_i64.insert! general "one" 11)
+      (let
+        [entry : (hashmap_i64_i64.MutEntry scalar)
+          (hashmap_i64_i64.get-mut-entry (&mut scalar) 1)]
+        (hashmap_i64_i64.mut-entry-set! entry 13))
+      (let
+        [entry : (hashmap_string_i64.MutEntry general)
+          (hashmap_string_i64.get-mut-entry (&mut general) "one")]
+        (hashmap_string_i64.mut-entry-set! entry 13))
+      (test.assert-i64-eq
+        (hashmap_i64_i64.get-value-or (& scalar) 1 -1)
+        13
+        "scalar insert and mut entry update in place")
+      (test.assert-i64-eq
+        (hashmap_string_i64.lookup-value-or
+          (hashmap_string_i64.get (& general) "one")
+          -1)
+        13
+        "general insert and mut entry update in place")
+      (test.assert-true
+        (hashmap_i64_i64.remove-ok? (hashmap_i64_i64.remove! scalar 1))
+        "scalar remove creates tombstone")
+      (test.assert-true
+        (hashmap_string_i64.remove-ok?
+          (hashmap_string_i64.remove! general "one"))
+        "general remove creates tombstone")
+      (test.assert-i64-eq
+        (hashmap_i64_i64.deleted (& scalar))
+        1
+        "scalar tombstone count after remove")
+      (test.assert-i64-eq
+        (hashmap_string_i64.deleted (& general))
+        1
+        "general tombstone count after remove")
+      (hashmap_i64_i64.insert! scalar 1 12)
+      (hashmap_string_i64.insert! general "one" 12)
+      (test.assert-i64-eq
+        (hashmap_i64_i64.deleted (& scalar))
+        0
+        "scalar insert reuses one tombstone")
+      (test.assert-i64-eq
+        (hashmap_string_i64.deleted (& general))
+        0
+        "general insert reuses one tombstone")
+      (hashmap_i64_i64.insert! scalar 2 20)
+      (hashmap_i64_i64.insert! scalar 3 30)
+      (hashmap_i64_i64.insert! scalar 4 40)
+      (hashmap_string_i64.insert! general "two" 20)
+      (hashmap_string_i64.insert! general "three" 30)
+      (hashmap_string_i64.insert! general "four" 40)
+      (test.assert-i64-eq
+        (hashmap_i64_i64.capacity (& scalar))
+        8
+        "scalar growth runs exactly once before probing")
+      (test.assert-i64-eq
+        (hashmap_string_i64.capacity (& general))
+        8
+        "general growth runs exactly once before probing")
+      (test.assert-i64-eq
+        (hashmap_i64_i64.len (& scalar))
+        4
+        "scalar insert parity after growth")
+      (test.assert-i64-eq
+        (hashmap_string_i64.len (& general))
+        4
+        "general insert parity after growth")
+      (test.assert-i64-eq
+        (hashmap_i64_i64.get-value-or (& scalar) 1 -1)
+        12
+        "scalar tombstone value survives growth")
+      (test.assert-i64-eq
+        (hashmap_string_i64.lookup-value-or
+          (hashmap_string_i64.get (& general) "one")
+          -1)
+        12
+        "general tombstone value survives growth"))))

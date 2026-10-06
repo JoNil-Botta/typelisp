@@ -81,23 +81,21 @@
   (define (linux-control-create [arena : i64]) : i64
     (let
       [home : i64 (env-arena-current)]
-      (begin
+      (unsafe
+        (env-arena-set arena))
+      (let
+        [slots : (__tl_dyn-array i64) (__tl_make-array i64 3)]
+        [_lock : unit (set! (array-ref slots 0) 0)]
+        [_environ : unit (set! (array-ref slots 1) 0)]
+        [_gate : unit (set! (array-ref slots 2) 0)]
+        [addr : i64
+          (unsafe
+            (cast
+              (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8)))
+              : i64))]
         (unsafe
-          (env-arena-set arena))
-        (let
-          [slots : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-          [_lock : unit (set! (array-ref slots 0) 0)]
-          [_environ : unit (set! (array-ref slots 1) 0)]
-          [_gate : unit (set! (array-ref slots 2) 0)]
-          [addr : i64
-            (unsafe
-              (cast
-                (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8)))
-                : i64))]
-          (begin
-            (unsafe
-              (env-arena-set home))
-            addr))))))
+          (env-arena-set home))
+        addr))))
 
 ;: Address of the Linux control block. Threads share the block, never this
 ;: binding's storage: it is written once during single-threaded initialization
@@ -121,18 +119,16 @@
 ;: Spurious returns are fine: every caller rechecks its condition.
 (unsafe
   (define (linux-futex-wait [addr : i64] [expected : i64]) : unit
-    (begin
-      (unsafe
-        (syscall 202 addr 0 expected 0 0 0))
-      unit)))
+    (unsafe
+      (syscall 202 addr 0 expected 0 0 0))
+    unit))
 
 ;: Wake every thread parked on the word at `addr`.
 (unsafe
   (define (linux-futex-wake-all [addr : i64]) : unit
-    (begin
-      (unsafe
-        (syscall 202 addr 1 2147483647 0 0 0))
-      unit)))
+    (unsafe
+      (syscall 202 addr 1 2147483647 0 0 0))
+    unit))
 
 ;: Acquire the Linux mutation lock, parking on the lock word under contention.
 ;: The critical section never blocks, so waiters are released promptly. Lock
@@ -150,25 +146,24 @@
         (unsafe
           (atomic-cas! word 0 1))]
       (while (not (= seen 0))
-        (begin
-          ;; Mark the lock contended before parking so the holder knows to wake.
-          (if (or
-            (= seen 2)
-            (not
-              (=
-                (unsafe
-                  (atomic-cas! word 1 2))
-                0)))
-            (unsafe
-              (linux-futex-wait
-                (unsafe
-                  (cast (ptr->int word) : i64))
-                2))
-            unit)
-          (set!
-            seen
-            (unsafe
-              (atomic-cas! word 0 2))))))))
+        ;; Mark the lock contended before parking so the holder knows to wake.
+        (if (or
+          (= seen 2)
+          (not
+            (=
+              (unsafe
+                (atomic-cas! word 1 2))
+              0)))
+          (unsafe
+            (linux-futex-wait
+              (unsafe
+                (cast (ptr->int word) : i64))
+              2))
+          unit)
+        (set!
+          seen
+          (unsafe
+            (atomic-cas! word 0 2)))))))
 
 ;: Release the Linux mutation lock and wake parked waiters when there are any.
 ;: Unsafe: the calling thread must hold the lock from `linux-lock!`; releasing a
@@ -221,31 +216,29 @@
         [open : (MutPtr i64)
           (unsafe
             (ptr-offset reached 1))]
-        (begin
+        (unsafe
+          (atomic-store! reached 1))
+        (unsafe
+          (linux-futex-wake-all gate-addr))
+        (while (=
           (unsafe
-            (atomic-store! reached 1))
+            (atomic-load open))
+          0)
           (unsafe
-            (linux-futex-wake-all gate-addr))
-          (while (=
-            (unsafe
-              (atomic-load open))
-            0)
-            (unsafe
-              (linux-futex-wait (+ gate-addr 8) 0))))))))
+            (linux-futex-wait (+ gate-addr 8) 0)))))))
 
 ;: Length of the NUL-terminated C string at `ptr` (a freestanding `strlen`).
 (unsafe
   (define (c-string-length [ptr : (Ptr u8)]) : i64
     (let
       [n : i64 0]
-      (begin
-        (while (not
-          (=
-            (unsafe
-              (ptr-read (ptr-offset ptr n)))
-            (cast 0 : u8)))
-          (set! n (+ n 1)))
-        n))))
+      (while (not
+        (=
+          (unsafe
+            (ptr-read (ptr-offset ptr n)))
+          (cast 0 : u8)))
+        (set! n (+ n 1)))
+      n)))
 
 ;: Copy a NUL-terminated C string into an owned TypeLisp String.
 (unsafe
@@ -256,16 +249,14 @@
           (c-string-length ptr))]
       [buf : (__tl_dyn-array u8) (__tl_make-array u8 n)]
       [i : i64 0]
-      (begin
-        (while (< i n)
-          (begin
-            (set!
-              (array-ref buf i)
-              (unsafe
-                (ptr-read (ptr-offset ptr i))))
-            (set! i (+ i 1))))
-        (unsafe
-          (string-from-bytes (ptr-cast (__tl_array-data buf) : (Ptr u8)) n))))))
+      (while (< i n)
+        (set!
+          (array-ref buf i)
+          (unsafe
+            (ptr-read (ptr-offset ptr i))))
+        (set! i (+ i 1)))
+      (unsafe
+        (string-from-bytes (ptr-cast (__tl_array-data buf) : (Ptr u8)) n)))))
 
 ;: Lowercase an ASCII byte (A-Z -> a-z); other bytes pass through. Used for the
 ;: case-insensitive environment-name match on Windows.
@@ -284,28 +275,27 @@
       [n : i64 (string-length name)]
       [i : i64 0]
       [ok : bool true]
-      (begin
-        (while (and ok (< i n))
-          (let
-            [ec : u8
-              (unsafe
-                (ptr-read (ptr-offset entry i)))]
-            [nc : u8 (cast (string-ref name i) : u8)]
-            (if (if fold
-              (= (ascii-fold ec) (ascii-fold nc))
-              (= ec nc))
-              (set! i (+ i 1))
-              (set! ok false))))
-        (if (not ok)
-          (ptr-null : (Ptr u8))
-          (let
-            [sep : u8
-              (unsafe
-                (ptr-read (ptr-offset entry n)))]
-            (if (= sep (cast '=' : u8))
-              (unsafe
-                (ptr-offset entry (+ n 1)))
-              (ptr-null : (Ptr u8)))))))))
+      (while (and ok (< i n))
+        (let
+          [ec : u8
+            (unsafe
+              (ptr-read (ptr-offset entry i)))]
+          [nc : u8 (cast (string-ref name i) : u8)]
+          (if (if fold
+            (= (ascii-fold ec) (ascii-fold nc))
+            (= ec nc))
+            (set! i (+ i 1))
+            (set! ok false))))
+      (if (not ok)
+        (ptr-null : (Ptr u8))
+        (let
+          [sep : u8
+            (unsafe
+              (ptr-read (ptr-offset entry n)))]
+          (if (= sep (cast '=' : u8))
+            (unsafe
+              (ptr-offset entry (+ n 1)))
+            (ptr-null : (Ptr u8))))))))
 
 ;: Return one admitted Linux environment table. Before the first mutation this
 ;: is the SysV stack-captured `envp`; afterwards it is the most recently published
@@ -339,24 +329,23 @@
       [idx : i64 0]
       [result : (Ptr u8) (ptr-null : (Ptr u8))]
       [stop : bool false]
-      (begin
-        (while (not stop)
-          (let
-            [entry : (Ptr u8)
-              (unsafe
-                (ptr-read (ptr-offset envp idx)))]
-            (if (ptr-null? entry)
-              (set! stop true)
-              (let
-                [value : (Ptr u8)
-                  (unsafe
-                    (match-entry name entry false))]
-                (if (ptr-null? value)
-                  (set! idx (+ idx 1))
-                  (begin
-                    (set! result value)
-                    (set! stop true)))))))
-        result))))
+      (while (not stop)
+        (let
+          [entry : (Ptr u8)
+            (unsafe
+              (ptr-read (ptr-offset envp idx)))]
+          (if (ptr-null? entry)
+            (set! stop true)
+            (let
+              [value : (Ptr u8)
+                (unsafe
+                  (match-entry name entry false))]
+              (if (ptr-null? value)
+                (set! idx (+ idx 1))
+                (begin
+                  (set! result value)
+                  (set! stop true)))))))
+      result)))
 
 ;: Windows `getenv`: walk the GetEnvironmentStringsA block (case-insensitive,
 ;: matching the platform's environment semantics). Returns a pointer to the value
@@ -371,31 +360,30 @@
             (env-win-get-environment-strings))]
         [result : (Ptr u8) (ptr-null : (Ptr u8))]
         [stop : bool false]
-        (begin
-          (while (not stop)
-            (if (=
-              (unsafe
-                (ptr-read p))
-              (cast 0 : u8))
-              (set! stop true)
-              (let
-                [value : (Ptr u8)
+        (while (not stop)
+          (if (=
+            (unsafe
+              (ptr-read p))
+            (cast 0 : u8))
+            (set! stop true)
+            (let
+              [value : (Ptr u8)
+                (unsafe
+                  (match-entry name p true))]
+              (if (ptr-null? value)
+                (set!
+                  p
                   (unsafe
-                    (match-entry name p true))]
-                (if (ptr-null? value)
-                  (set!
-                    p
-                    (unsafe
-                      (ptr-offset
-                        p
-                        (+
-                          (unsafe
-                            (c-string-length p))
-                          1))))
-                  (begin
-                    (set! result value)
-                    (set! stop true))))))
-          result)))))
+                    (ptr-offset
+                      p
+                      (+
+                        (unsafe
+                          (c-string-length p))
+                        1))))
+                (begin
+                  (set! result value)
+                  (set! stop true))))))
+        result))))
 
 ;: Return the value pointer for `name`, or null when missing. `env.tl` is
 ;: imported by the compiler loader while stdlib roots are being discovered, so
@@ -434,14 +422,12 @@
     [n : i64 (string-length text)]
     [i : i64 0]
     [found : bool false]
-    (begin
-      (while (and (< i n) (not found))
-        (begin
-          (if (= (string-ref text i) needle)
-            (set! found true)
-            unit)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< i n) (not found))
+      (if (= (string-ref text i) needle)
+        (set! found true)
+        unit)
+      (set! i (+ i 1)))
+    found))
 
 ;: Return true when an environment name can be represented by both target
 ;: APIs. Empty names, `=`, and interior NUL bytes are rejected.
@@ -461,13 +447,11 @@
     [n : i64 (string-length text)]
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 (+ n 1))]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref bytes i) (cast (string-ref text i) : u8))
-          (set! i (+ i 1))))
-      (set! (array-ref bytes n) (cast 0 : u8))
-      bytes)))
+    (while (< i n)
+      (set! (array-ref bytes i) (cast (string-ref text i) : u8))
+      (set! i (+ i 1)))
+    (set! (array-ref bytes n) (cast 0 : u8))
+    bytes))
 
 ;: Return a read-only byte pointer to an array's backing storage.
 (unsafe
@@ -492,22 +476,21 @@
       [index : i64 0]
       [count : i64 0]
       [done : bool false]
-      (begin
-        (while (not done)
-          (let
-            [entry : (Ptr u8)
-              (unsafe
-                (ptr-read (ptr-offset environ index)))]
-            (if (ptr-null? entry)
-              (set! done true)
-              (begin
-                (if (ptr-null?
-                  (unsafe
-                    (match-entry name entry false)))
-                  (set! count (+ count 1))
-                  unit)
-                (set! index (+ index 1))))))
-        count))))
+      (while (not done)
+        (let
+          [entry : (Ptr u8)
+            (unsafe
+              (ptr-read (ptr-offset environ index)))]
+          (if (ptr-null? entry)
+            (set! done true)
+            (begin
+              (if (ptr-null?
+                (unsafe
+                  (match-entry name entry false)))
+                (set! count (+ count 1))
+                unit)
+              (set! index (+ index 1))))))
+      count)))
 
 ;: Allocate one Linux `NAME=VALUE\0` entry in the active arena and return its
 ;: address. Unsafe: the persistent arena must be active, so the entry lives as
@@ -521,22 +504,19 @@
       [bytes : (__tl_dyn-array u8)
         (__tl_make-array u8 (+ (+ name-len value-len) 2))]
       [i : i64 0]
-      (begin
-        (while (< i name-len)
-          (begin
-            (set! (array-ref bytes i) (cast (string-ref name i) : u8))
-            (set! i (+ i 1))))
-        (set! (array-ref bytes name-len) (cast '=' : u8))
-        (set! i 0)
-        (while (< i value-len)
-          (begin
-            (set!
-              (array-ref bytes (+ (+ name-len 1) i))
-              (cast (string-ref value i) : u8))
-            (set! i (+ i 1))))
-        (set! (array-ref bytes (+ (+ name-len 1) value-len)) (cast 0 : u8))
-        (unsafe
-          (cast (ptr->int (array-u8-ptr bytes)) : i64))))))
+      (while (< i name-len)
+        (set! (array-ref bytes i) (cast (string-ref name i) : u8))
+        (set! i (+ i 1)))
+      (set! (array-ref bytes name-len) (cast '=' : u8))
+      (set! i 0)
+      (while (< i value-len)
+        (set!
+          (array-ref bytes (+ (+ name-len 1) i))
+          (cast (string-ref value i) : u8))
+        (set! i (+ i 1)))
+      (set! (array-ref bytes (+ (+ name-len 1) value-len)) (cast 0 : u8))
+      (unsafe
+        (cast (ptr->int (array-u8-ptr bytes)) : i64)))))
 
 ;: Build and publish a Linux replacement environment containing all nonmatching
 ;: current entries and, when `present` is true, one new value for `name`.
@@ -569,45 +549,42 @@
       [read-index : i64 0]
       [write-index : i64 0]
       [done : bool false]
-      (begin
-        (while (not done)
-          (let
-            [entry : (Ptr u8)
-              (unsafe
-                (ptr-read (ptr-offset environ read-index)))]
-            (if (ptr-null? entry)
-              (set! done true)
-              (begin
-                (if (ptr-null?
+      (while (not done)
+        (let
+          [entry : (Ptr u8)
+            (unsafe
+              (ptr-read (ptr-offset environ read-index)))]
+          (if (ptr-null? entry)
+            (set! done true)
+            (begin
+              (when
+                (ptr-null?
                   (unsafe
                     (match-entry name entry false)))
-                  (begin
-                    (set!
-                      (array-ref slots write-index)
-                      (unsafe
-                        (ptr->int entry)))
-                    (set! write-index (+ write-index 1)))
-                  unit)
-                (set! read-index (+ read-index 1))))))
-        (if present
-          (begin
-            (set!
-              (array-ref slots write-index)
-              (cast
-                (unsafe
-                  (linux-entry-addr name value))
-                : u64))
-            (set! write-index (+ write-index 1)))
-          unit)
-        (set! (array-ref slots write-index) (cast 0 : u64))
-        (linux-publication-gate-pass!)
-        ;; The table and its new entry are fully written; this sequentially
-        ;; consistent store is the only point where other threads can see them.
-        (unsafe
-          (atomic-store!
-            (linux-control-slot env-linux-control-environ-slot)
+                (set!
+                  (array-ref slots write-index)
+                  (unsafe
+                    (ptr->int entry)))
+                (set! write-index (+ write-index 1)))
+              (set! read-index (+ read-index 1))))))
+      (when
+        present
+        (set!
+          (array-ref slots write-index)
+          (cast
             (unsafe
-              (array-u64-addr slots))))))))
+              (linux-entry-addr name value))
+            : u64))
+        (set! write-index (+ write-index 1)))
+      (set! (array-ref slots write-index) (cast 0 : u64))
+      (linux-publication-gate-pass!)
+      ;; The table and its new entry are fully written; this sequentially
+      ;; consistent store is the only point where other threads can see them.
+      (unsafe
+        (atomic-store!
+          (linux-control-slot env-linux-control-environ-slot)
+          (unsafe
+            (array-u64-addr slots)))))))
 
 ;: Set or remove one Linux environment entry while retaining replacement
 ;: storage for the process lifetime. Returns false for an invalid name, or an
@@ -625,18 +602,17 @@
   (if (and (valid-name? name) (or (not present) (valid-value? value)))
     (let
       [home : i64 (env-arena-current)]
-      (begin
-        (unsafe
-          (linux-lock!))
-        (unsafe
-          (env-arena-set env-linux-persistent-arena))
-        (unsafe
-          (linux-rebuild! name value present))
-        (unsafe
-          (env-arena-set home))
-        (unsafe
-          (linux-unlock!))
-        true))
+      (unsafe
+        (linux-lock!))
+      (unsafe
+        (env-arena-set env-linux-persistent-arena))
+      (unsafe
+        (linux-rebuild! name value present))
+      (unsafe
+        (env-arena-set home))
+      (unsafe
+        (linux-unlock!))
+      true)
     false))
 
 ;: Set one Windows environment entry. Returns false for an invalid name or value
@@ -763,13 +739,11 @@
     [n : i64 rest.len]
     [slots : (__tl_dyn-array String) (__tl_make-array String (+ n 1))]
     [i : i64 0]
-    (begin
-      (set! (array-ref slots 0) value)
-      (while (< i n)
-        (begin
-          (set! (array-ref slots (+ i 1)) (array-ref rest.slots i))
-          (set! i (+ i 1))))
-      (EnvStringList slots (+ n 1)))))
+    (set! (array-ref slots 0) value)
+    (while (< i n)
+      (set! (array-ref slots (+ i 1)) (array-ref rest.slots i))
+      (set! i (+ i 1)))
+    (EnvStringList slots (+ n 1))))
 
 ;: Build an environment string list from `items`, preserving vector order.
 (define (string-list-from-vec [items : svec.Vec]) : EnvStringList
@@ -777,12 +751,10 @@
     [n : i64 (svec.len (& items))]
     [slots : (__tl_dyn-array String) (__tl_make-array String n)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref slots i) (svec.get (& items) i ""))
-          (set! i (+ i 1))))
-      (EnvStringList slots n))))
+    (while (< i n)
+      (set! (array-ref slots i) (svec.get (& items) i ""))
+      (set! i (+ i 1)))
+    (EnvStringList slots n)))
 
 ;: Copy `items` into `out`, preserving list order.
 (define (string-list-to-vec-into
@@ -792,17 +764,15 @@
     [n : i64 items.len]
     [i : i64 0]
     (while (< i n)
-      (begin
-        (svec.push-ref! out (string.copy (array-ref items.slots i)))
-        (set! i (+ i 1))))))
+      (svec.push-ref! out (string.copy (array-ref items.slots i)))
+      (set! i (+ i 1)))))
 
 ;: Copy `items` into a fresh generated string vector, preserving list order.
 (define (string-list-to-vec [items : (& items EnvStringList)]) : svec.Vec
   (let
     [out : svec.Vec (svec.new)]
-    (begin
-      (string-list-to-vec-into items (&mut out))
-      out)))
+    (string-list-to-vec-into items (&mut out))
+    out))
 
 ;: Return the current platform PATH-list separator as a one-byte String.
 (define (path-list-separator) : String
@@ -829,20 +799,17 @@
         [items : svec.Vec (svec.new)]
         [start : i64 0]
         [i : i64 0]
-        (begin
-          (while (< i n)
-            (if (string.char-eq (string-ref value i) sep)
-              (begin
-                (svec.push-ref!
-                  (&mut items)
-                  (string.substring value start (- i start)))
-                (set! start (+ i 1))
-                (set! i (+ i 1)))
-              (set! i (+ i 1))))
-          (svec.push-ref!
-            (&mut items)
-            (string.substring value start (- n start)))
-          items)))))
+        (while (< i n)
+          (if (string.char-eq (string-ref value i) sep)
+            (begin
+              (svec.push-ref!
+                (&mut items)
+                (string.substring value start (- i start)))
+              (set! start (+ i 1))
+              (set! i (+ i 1)))
+            (set! i (+ i 1))))
+        (svec.push-ref! (&mut items) (string.substring value start (- n start)))
+        items))))
 
 ;: Split a PATH-style string using the supplied one-byte separator string.
 (define (path-split-with-separator
@@ -914,9 +881,8 @@
 
 ;: Inline test helper that forces a test failure without importing `io.tl`.
 (define (test-fail) : unit
-  (begin
-    (/ 1 0)
-    unit))
+  (/ 1 0)
+  unit)
 
 ;: Inline test assertion for boolean predicates.
 (define (test-assert-true [condition : bool] [_message : String]) : unit

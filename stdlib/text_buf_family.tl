@@ -144,16 +144,12 @@
         [current-head : i64 (tls-current-arena)]
         [current-owner-root : i64
           (stdlib.text_buf_family.text-buf-family-arena-owner-root current-head)]
-        (begin
-          ,(comptime.expr-struct-set
-            `(box-get store)
-            "owner-root"
-            `current-owner-root)
-          ,(comptime.expr-struct-set
-            `(box-get store)
-            "owner-head"
-            `current-head)
-          store)))
+        ,(comptime.expr-struct-set
+          `(box-get store)
+          "owner-root"
+          `current-owner-root)
+        ,(comptime.expr-struct-set `(box-get store) "owner-head" `current-head)
+        store))
     (define (text-buf-store-capacity [store : (& store TextBufStringStore)]) : i64
       (array-length store.slots))
     (define (text-buf-store-entry-at
@@ -197,23 +193,22 @@
               (+ visible-count 1)
               current-owner-root
               current-head))]
-        (begin
-          (unsafe
-            (stdlib.text_buf_family.text-buf-family-copy-bytes!
-              (ptr-cast
-                (__tl_array-data
-                  ,(comptime.expr-struct-get `(box-get new-store) "slots"))
-                : (MutPtr u8))
-              (ptr-cast
-                (__tl_array-data
-                  ,(comptime.expr-struct-get `(box-get store) "slots"))
-                : (Ptr u8))
-              (* visible-count (stdlib.text_buf.text-buf-store-string-stride))))
-          (stdlib.text_buf_family.text-buf-owned-store-write!
-            new-store
-            visible-count
-            entry)
-          new-store)))
+        (unsafe
+          (stdlib.text_buf_family.text-buf-family-copy-bytes!
+            (ptr-cast
+              (__tl_array-data
+                ,(comptime.expr-struct-get `(box-get new-store) "slots"))
+              : (MutPtr u8))
+            (ptr-cast
+              (__tl_array-data
+                ,(comptime.expr-struct-get `(box-get store) "slots"))
+              : (Ptr u8))
+            (* visible-count (stdlib.text_buf.text-buf-store-string-stride))))
+        (stdlib.text_buf_family.text-buf-owned-store-write!
+          new-store
+          visible-count
+          entry)
+        new-store))
     ;: Recover same-owner-root prefix reuse on the cold path, then delegate
     ;: capacity growth and prefix copying to text-buf-store-copy-and-commit.
     (define (text-buf-store-commit-slow
@@ -320,21 +315,19 @@
         [items : (__tl_dyn-array String) (__tl_make-array String front-count)]
         [result : TextBufChunkList back]
         [index : i64 0]
-        (begin
-          (stdlib.text_buf.chunks-fill-array-rev
-            front
-            (&mut items)
-            (- front-count 1))
-          (while (< index front-count)
-            (begin
-              (set!
-                result
-                (stdlib.text_buf.chunk-cons
-                  (unsafe
-                    (ptr-read (ptr-offset (__tl_array-data items) index)))
-                  result))
-              (set! index (+ index 1))))
-          result)))
+        (stdlib.text_buf.chunks-fill-array-rev
+          front
+          (&mut items)
+          (- front-count 1))
+        (while (< index front-count)
+          (set!
+            result
+            (stdlib.text_buf.chunk-cons
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data items) index)))
+              result))
+          (set! index (+ index 1)))
+        result))
     (define (append-buffer [left : TextBuf] [right : TextBuf]) : TextBuf
       (let
         [left-len : i64 left.len]
@@ -371,10 +364,9 @@
                   (stdlib.text_buf.text-buf-store-entry-at
                     (& (box-get store))
                     cursor)]
-                (begin
-                  (set! (array-ref items out-index) chunk)
-                  (set! out-index (- out-index 1))
-                  (set! cursor (- cursor 1))))))]))
+                (set! (array-ref items out-index) chunk)
+                (set! out-index (- out-index 1))
+                (set! cursor (- cursor 1)))))]))
     (define (copy-chunk-into
       [chunk : (& chunk str)]
       [dst : (MutPtr u8)]
@@ -393,22 +385,17 @@
             (ptr-cast (ptr-offset dst start) : (MutPtr i64)))]
         [w : i64 0]
         [b : i64 (* words 8)]
-        (begin
-          (while (< w words)
-            (begin
-              (unsafe
-                (ptr-write!
-                  (ptr-offset dst64 w)
-                  (ptr-read (ptr-offset src64 w))))
-              (set! w (+ w 1))))
-          (while (< b clen)
-            (begin
-              (unsafe
-                (ptr-write!
-                  (ptr-offset dst (+ start b))
-                  (ptr-read (ptr-offset src b))))
-              (set! b (+ b 1))))
-          unit)))
+        (while (< w words)
+          (unsafe
+            (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
+          (set! w (+ w 1)))
+        (while (< b clen)
+          (unsafe
+            (ptr-write!
+              (ptr-offset dst (+ start b))
+              (ptr-read (ptr-offset src b))))
+          (set! b (+ b 1)))
+        unit))
     (define (render-small-chunk-limit) : i64
       16)
     (define (fill-rev-into
@@ -429,50 +416,44 @@
                     (unsafe
                       (string-data (& chunk)))]
                   [index : i64 0]
-                  (begin
-                    (while (< index clen)
-                      (begin
-                        (unsafe
-                          (ptr-write!
-                            (ptr-offset dst (+ start index))
-                            (ptr-read (ptr-offset src index))))
-                        (set! index (+ index 1))))
-                    unit))
+                  (while (< index clen)
+                    (unsafe
+                      (ptr-write!
+                        (ptr-offset dst (+ start index))
+                        (ptr-read (ptr-offset src index))))
+                    (set! index (+ index 1)))
+                  unit)
                 (stdlib.text_buf.copy-chunk-into (& chunk) dst start)))]
           [(TextBufChunkDense store visible-count)
             (let
               [cursor : i64 (- visible-count 1)]
               [out-pos : i64 pos]
               [byte-index : i64 0]
-              (begin
-                (while (>= cursor 0)
-                  (let
-                    [chunk : String
-                      (stdlib.text_buf.text-buf-store-entry-at
-                        (& (box-get store))
-                        cursor)]
-                    [clen : i64 (string-length (& chunk))]
-                    [start : i64 (- out-pos clen)]
-                    (begin
-                      (if (<= clen small-limit)
-                        (let
-                          [src : (Ptr u8)
-                            (unsafe
-                              (string-data (& chunk)))]
-                          (begin
-                            (set! byte-index 0)
-                            (while (< byte-index clen)
-                              (begin
-                                (unsafe
-                                  (ptr-write!
-                                    (ptr-offset dst (+ start byte-index))
-                                    (ptr-read (ptr-offset src byte-index))))
-                                (set! byte-index (+ byte-index 1))))
-                            unit))
-                        (stdlib.text_buf.copy-chunk-into (& chunk) dst start))
-                      (set! out-pos start)
-                      (set! cursor (- cursor 1)))))
-                unit))])))
+              (while (>= cursor 0)
+                (let
+                  [chunk : String
+                    (stdlib.text_buf.text-buf-store-entry-at
+                      (& (box-get store))
+                      cursor)]
+                  [clen : i64 (string-length (& chunk))]
+                  [start : i64 (- out-pos clen)]
+                  (if (<= clen small-limit)
+                    (let
+                      [src : (Ptr u8)
+                        (unsafe
+                          (string-data (& chunk)))]
+                      (set! byte-index 0)
+                      (while (< byte-index clen)
+                        (unsafe
+                          (ptr-write!
+                            (ptr-offset dst (+ start byte-index))
+                            (ptr-read (ptr-offset src byte-index))))
+                        (set! byte-index (+ byte-index 1)))
+                      unit)
+                    (stdlib.text_buf.copy-chunk-into (& chunk) dst start))
+                  (set! out-pos start)
+                  (set! cursor (- cursor 1))))
+              unit)])))
     (define (render-chunks [chunks : TextBufChunkList] [total : i64]) : String
       (if (= total 0)
         ""
@@ -481,10 +462,9 @@
           [dst : (MutPtr u8)
             (unsafe
               (__tl_array-data out))]
-          (begin
-            (stdlib.text_buf.fill-rev-into chunks dst total)
-            (unsafe
-              (string-from-bytes (ptr-cast dst : (Ptr u8)) total))))))
+          (stdlib.text_buf.fill-rev-into chunks dst total)
+          (unsafe
+            (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
     (define (render [buf : TextBuf]) : String
       (stdlib.text_buf.render-chunks buf.chunks buf.len))
     (define (batched-write-threshold) : i64
@@ -513,44 +493,42 @@
               [batch : byte_buf.ByteBuf (byte_buf.with-capacity capacity)]
               [index : i64 0]
               [status : i64 io.io-status-ok]
-              (begin
-                (while (and (= status io.io-status-ok) (< index count))
-                  (let
-                    [chunk : String
-                      (stdlib.text_buf.text-buf-store-entry-at
-                        (stdlib.text_buf_family.text-buf-family-pattern-box-ref
-                          store)
-                        index)]
-                    [chunk-len : i64 (string-length chunk)]
-                    [pending : i64 (byte_buf.len (& batch))]
+              (while (and (= status io.io-status-ok) (< index count))
+                (let
+                  [chunk : String
+                    (stdlib.text_buf.text-buf-store-entry-at
+                      (stdlib.text_buf_family.text-buf-family-pattern-box-ref
+                        store)
+                      index)]
+                  [chunk-len : i64 (string-length chunk)]
+                  [pending : i64 (byte_buf.len (& batch))]
+                  (if (and (> pending 0) (> (+ pending chunk-len) limit))
                     (begin
-                      (if (and (> pending 0) (> (+ pending chunk-len) limit))
-                        (begin
-                          (set!
-                            status
-                            (unsafe
-                              (io.file-write-status
-                                raw
-                                (byte_buf.as-bytes (& batch)))))
-                          (set! batch (byte_buf.clear! batch)))
-                        unit)
-                      (cond
-                        [(not (= status io.io-status-ok)) unit]
-                        [(>= chunk-len limit)
-                          (set!
-                            status
-                            (unsafe
-                              (io.file-write-status
-                                raw
-                                (byte_buf.str-as-bytes (& chunk)))))]
-                        [else (set! batch (byte_buf.append-string batch chunk))])
-                      (set! index (+ index 1)))))
-                (if (and
-                  (= status io.io-status-ok)
-                  (> (byte_buf.len (& batch)) 0))
-                  (unsafe
-                    (io.file-write-status raw (byte_buf.as-bytes (& batch))))
-                  status)))])))
+                      (set!
+                        status
+                        (unsafe
+                          (io.file-write-status
+                            raw
+                            (byte_buf.as-bytes (& batch)))))
+                      (set! batch (byte_buf.clear! batch)))
+                    unit)
+                  (cond
+                    [(not (= status io.io-status-ok)) unit]
+                    [(>= chunk-len limit)
+                      (set!
+                        status
+                        (unsafe
+                          (io.file-write-status
+                            raw
+                            (byte_buf.str-as-bytes (& chunk)))))]
+                    [else (set! batch (byte_buf.append-string batch chunk))])
+                  (set! index (+ index 1))))
+              (if (and
+                (= status io.io-status-ok)
+                (> (byte_buf.len (& batch)) 0))
+                (unsafe
+                  (io.file-write-status raw (byte_buf.as-bytes (& batch))))
+                status))])))
     (define (write-file [path : (& path str)] [buf : (& buf TextBuf)]) : i64
       (let
         [open-result : io.ResultIoFile
@@ -576,9 +554,8 @@
               1))
           1)))
     (define (clear-ref! [buf : (&mut buf TextBuf)]) : unit
-      (begin
-        (set! buf.chunks (TextBufChunkNil))
-        (set! buf.len 0)))
+      (set! buf.chunks (TextBufChunkNil))
+      (set! buf.len 0))
     (define (clear [_buf : TextBuf]) : TextBuf
       (stdlib.text_buf.empty))
     (define (reset [buf : TextBuf]) : TextBuf
@@ -906,25 +883,23 @@
         [items : (__tl_dyn-array String) (__tl_make-array String count)]
         [result : (TextBufBorrowedChunkList text) left]
         [index : i64 0]
-        (begin
-          (text_buf.chunks-fill-array-rev
-            (text_buf_family.text-buf-family-shared-view prefix)
-            (&mut items)
-            (- count 1))
-          (while (< index count)
-            (begin
-              (set!
-                result
-                (stdlib.text_buf_borrowed.text-buf-borrowed-append-tail
-                  result
-                  (unsafe
-                    (ptr-read (ptr-offset (__tl_array-data items) index)))
-                  false))
-              (set! index (+ index 1))))
-          (stdlib.text_buf_borrowed.text-buf-borrowed-append-tail
+        (text_buf.chunks-fill-array-rev
+          (text_buf_family.text-buf-family-shared-view prefix)
+          (&mut items)
+          (- count 1))
+        (while (< index count)
+          (set!
             result
-            tail-text
-            tail-borrowed?))))
+            (stdlib.text_buf_borrowed.text-buf-borrowed-append-tail
+              result
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data items) index)))
+              false))
+          (set! index (+ index 1)))
+        (stdlib.text_buf_borrowed.text-buf-borrowed-append-tail
+          result
+          tail-text
+          tail-borrowed?)))
     (define (append-buffer
       [left : (TextBufBorrowed text)]
       [right : (TextBufBorrowed text)]) : (TextBufBorrowed text)
@@ -987,22 +962,17 @@
             (ptr-cast (ptr-offset dst dst-start) : (MutPtr i64)))]
         [w : i64 0]
         [b : i64 (* words 8)]
-        (begin
-          (while (< w words)
-            (begin
-              (unsafe
-                (ptr-write!
-                  (ptr-offset dst64 w)
-                  (ptr-read (ptr-offset src64 w))))
-              (set! w (+ w 1))))
-          (while (< b clen)
-            (begin
-              (unsafe
-                (ptr-write!
-                  (ptr-offset dst (+ dst-start b))
-                  (ptr-read (ptr-offset base b))))
-              (set! b (+ b 1))))
-          unit)))
+        (while (< w words)
+          (unsafe
+            (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
+          (set! w (+ w 1)))
+        (while (< b clen)
+          (unsafe
+            (ptr-write!
+              (ptr-offset dst (+ dst-start b))
+              (ptr-read (ptr-offset base b))))
+          (set! b (+ b 1)))
+        unit))
     (define (text-buf-borrowed-copy-string [text : String]) : String
       (string.substring (& text) 0 (string-length text)))
     (define (text-buf-borrowed-copy-prefix [prefix : text_buf.TextBufChunkList]) : text_buf.TextBufChunkList
@@ -1015,25 +985,22 @@
         [owned : text_buf.TextBufChunkList
           (stdlib.text_buf_borrowed.text-buf-borrowed-empty-owned-chunks)]
         [index : i64 0]
-        (begin
-          (text_buf.chunks-fill-array-rev
-            (text_buf_family.text-buf-family-shared-view prefix)
-            (&mut items)
-            (- count 1))
-          (while (< index count)
-            (let
-              [entry : String
-                (unsafe
-                  (ptr-read (ptr-offset (__tl_array-data items) index)))]
-              (begin
-                (set!
-                  owned
-                  (text_buf.chunk-cons
-                    (stdlib.text_buf_borrowed.text-buf-borrowed-copy-string
-                      entry)
-                    owned))
-                (set! index (+ index 1)))))
-          owned)))
+        (text_buf.chunks-fill-array-rev
+          (text_buf_family.text-buf-family-shared-view prefix)
+          (&mut items)
+          (- count 1))
+        (while (< index count)
+          (let
+            [entry : String
+              (unsafe
+                (ptr-read (ptr-offset (__tl_array-data items) index)))]
+            (set!
+              owned
+              (text_buf.chunk-cons
+                (stdlib.text_buf_borrowed.text-buf-borrowed-copy-string entry)
+                owned))
+            (set! index (+ index 1))))
+        owned))
     (define (text-buf-borrowed-render-chunks
       [chunks : (TextBufBorrowedChunkList text)]) : text_buf.TextBufChunkList
       (match chunks

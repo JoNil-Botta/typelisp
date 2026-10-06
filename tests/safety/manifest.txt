@@ -359,6 +359,12 @@ borrow_call_outer_pending_reject|check-fail|tests/safety/borrow_call_outer_pendi
 borrow_let_final_use_before_owner_write_ok|check-ok|tests/safety/borrow_let_final_use_before_owner_write_ok.tl|-|-
 borrow_let_three_binding_order_ok|check-ok|tests/safety/borrow_let_three_binding_order_ok.tl|-|-
 borrow_let_later_binding_reject|check-fail|tests/safety/borrow_let_later_binding_reject.tl|-|cannot assign to borrowed place `n`
+# The move and borrow checks read an annotated let binding's type from body
+# typing: loans, arena regions and moves still follow the binding.
+let_annotated_types_ok|check-ok|tests/safety/let_annotated_types_ok.tl|-|-
+let_annotated_ref_loan_reject|check-fail|tests/safety/let_annotated_ref_loan_reject.tl|-|cannot assign to borrowed place `x.a`
+let_annotated_region_escape_reject|check-fail|tests/safety/let_annotated_region_escape_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+let_annotated_move_only_reject|check-fail|tests/safety/let_annotated_move_only_reject.tl|-|use of moved value `s`
 borrow_let_closure_call_initializer_ok|check-ok|tests/safety/borrow_let_closure_call_initializer_ok.tl|-|-
 borrow_lambda_capture_final_use_ok|check-ok|tests/safety/borrow_lambda_capture_final_use_ok.tl|-|-
 borrow_if_result_before_last_use_reject|check-fail|tests/safety/borrow_if_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`

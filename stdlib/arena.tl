@@ -181,15 +181,13 @@
 (define (phase [arena : Arena]) : ArenaPhase
   (let
     [home : Arena (current)]
-    (begin
+    (unsafe
+      (tl_arena_set (raw-handle arena)))
+    (let
+      [mark : ArenaMark (mark)]
       (unsafe
-        (tl_arena_set (raw-handle arena)))
-      (let
-        [mark : ArenaMark (mark)]
-        (begin
-          (unsafe
-            (tl_arena_set (raw-handle home)))
-          (ArenaPhase arena mark))))))
+        (tl_arena_set (raw-handle home)))
+      (ArenaPhase arena mark))))
 
 ;: Return the raw runtime handle for low-level interop.
 (define (raw-handle [arena : Arena]) : i64
@@ -244,10 +242,9 @@
   (let
     [home : Arena (current)]
     (unsafe
-      (begin
-        (tl_arena_set (raw-handle phase.arena))
-        (tl_region_reset (mark-raw-handle phase.mark))
-        (tl_arena_set (raw-handle home))))))
+      (tl_arena_set (raw-handle phase.arena))
+      (tl_region_reset (mark-raw-handle phase.mark))
+      (tl_arena_set (raw-handle home)))))
 
 ;: Safely destroy a direct-local owner or branded local aggregate owner place.
 ;:
@@ -267,18 +264,15 @@
   (let
     [home : Arena (current)]
     [scratch : Arena (make)]
-    (begin
+    (unsafe
+      (stdlib.arena.set! scratch))
+    (let
+      [scratch-current : Arena (current)]
+      [scratch-mark : ArenaMark (mark)]
+      (test.assert-true
+        (eq? scratch-current scratch)
+        "arena-first-class-api: (eq? scratch-current scratch)")
       (unsafe
-        (stdlib.arena.set! scratch))
-      (let
-        [scratch-current : Arena (current)]
-        [scratch-mark : ArenaMark (mark)]
-        (begin
-          (test.assert-true
-            (eq? scratch-current scratch)
-            "arena-first-class-api: (eq? scratch-current scratch)")
-          (unsafe
-            (begin
-              (rewind scratch-mark)
-              (stdlib.arena.set! home)
-              (destroy scratch))))))))
+        (rewind scratch-mark)
+        (stdlib.arena.set! home)
+        (destroy scratch)))))

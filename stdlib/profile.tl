@@ -54,20 +54,18 @@
 (cfg
   compile-profile
   (define (compile-wide-peak-start!) : unit
-    (begin
-      (set! compile-wide-peak-start-live (alloc-live-hook))
-      (set! compile-wide-peak-best 0)
-      (set! compile-wide-peak-active true)
-      ;; Discard any process-lifetime peak from before this compile.
-      (alloc-reset-peak-hook))))
+    (set! compile-wide-peak-start-live (alloc-live-hook))
+    (set! compile-wide-peak-best 0)
+    (set! compile-wide-peak-active true)
+    ;; Discard any process-lifetime peak from before this compile.
+    (alloc-reset-peak-hook)))
 
 (cfg
   compile-profile
   (define (compile-wide-peak-finish!) : i64
-    (begin
-      (compile-wide-peak-note!)
-      (set! compile-wide-peak-active false)
-      compile-wide-peak-best)))
+    (compile-wide-peak-note!)
+    (set! compile-wide-peak-active false)
+    compile-wide-peak-best))
 
 ;; Absolute compile-wide allocator high-water mark observed so far. Lifetime
 ;; ledgers snapshot this value at nested boundaries because the runtime exposes
@@ -76,9 +74,8 @@
 (cfg
   compile-profile
   (define (compile-wide-peak-current) : i64
-    (begin
-      (compile-wide-peak-note!)
-      (+ compile-wide-peak-start-live compile-wide-peak-best))))
+    (compile-wide-peak-note!)
+    (+ compile-wide-peak-start-live compile-wide-peak-best)))
 
 ;: Linux `clock_gettime(CLOCK_MONOTONIC)` via raw syscall 228.
 (cfg
@@ -200,9 +197,8 @@
 
 ;: Inline test failure helper.
 (define (test-fail) : unit
-  (begin
-    (/ 1 0)
-    unit))
+  (/ 1 0)
+  unit)
 
 ;: Inline test boolean assertion.
 (define (test-assert [ok : bool]) : unit
@@ -214,27 +210,24 @@
 (define (test-allocation) : (__tl_dyn-array i64)
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-    (begin
-      (set! (array-ref items 0) 12)
-      items)))
+    (set! (array-ref items 0) 12)
+    items))
 
 (test
   profile-api
-  (begin
-    (test-assert (>= (now-ms) 0))
-    (test-assert (> (ticks-per-second) 0))
-    (test-assert (> (now-ticks) 0))
-    (alloc-reset-peak)
-    (let
-      [before-total : i64 (alloc-total)]
-      [before-live : i64 (alloc-live)]
-      [items : (__tl_dyn-array i64) (test-allocation)]
-      [after-total : i64 (alloc-total)]
-      [after-live : i64 (alloc-live)]
-      [peak : i64 (alloc-peak)]
-      (begin
-        (test-assert (= (array-length items) 4))
-        (test-assert (= (array-ref items 0) 12))
-        (test-assert (>= after-total before-total))
-        (test-assert (>= after-live before-live))
-        (test-assert (>= peak after-live))))))
+  (test-assert (>= (now-ms) 0))
+  (test-assert (> (ticks-per-second) 0))
+  (test-assert (> (now-ticks) 0))
+  (alloc-reset-peak)
+  (let
+    [before-total : i64 (alloc-total)]
+    [before-live : i64 (alloc-live)]
+    [items : (__tl_dyn-array i64) (test-allocation)]
+    [after-total : i64 (alloc-total)]
+    [after-live : i64 (alloc-live)]
+    [peak : i64 (alloc-peak)]
+    (test-assert (= (array-length items) 4))
+    (test-assert (= (array-ref items 0) 12))
+    (test-assert (>= after-total before-total))
+    (test-assert (>= after-live before-live))
+    (test-assert (>= peak after-live))))

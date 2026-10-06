@@ -54,19 +54,18 @@
     [idx : i64 0]
     [done : bool false]
     [less : bool false]
-    (begin
-      (while (and (not done) (< idx limit))
-        (let
-          [lc : i64 (stdlib.sort.char-code-at left idx)]
-          [rc : i64 (stdlib.sort.char-code-at right idx)]
-          (if (= lc rc)
-            (set! idx (+ idx 1))
-            (begin
-              (set! less (< lc rc))
-              (set! done true)))))
-      (if done
-        less
-        (< left-len right-len)))))
+    (while (and (not done) (< idx limit))
+      (let
+        [lc : i64 (stdlib.sort.char-code-at left idx)]
+        [rc : i64 (stdlib.sort.char-code-at right idx)]
+        (if (= lc rc)
+          (set! idx (+ idx 1))
+          (begin
+            (set! less (< lc rc))
+            (set! done true)))))
+    (if done
+      less
+      (< left-len right-len))))
 
 ;: Owned-string wrapper for `string-less-borrowed?`.
 (define (string-less? [left : String] [right : String]) : bool
@@ -141,92 +140,79 @@
         [n : i64 (len-mut v)]
         [slots (slots-mut v)]
         [chunk-start : i64 0]
-        (begin
-          (while (< chunk-start n)
-            (let
-              [chunk-end : i64
-                (if (> 16 (- n chunk-start))
-                  n
-                  (+ chunk-start 16))]
-              [i : i64 (+ chunk-start 1)]
-              (begin
-                (while (< i chunk-end)
+        (while (< chunk-start n)
+          (let
+            [chunk-end : i64
+              (if (> 16 (- n chunk-start))
+                n
+                (+ chunk-start 16))]
+            [i : i64 (+ chunk-start 1)]
+            (while (< i chunk-end)
+              (let
+                [value : ,T ,insertion-value]
+                [j : i64 i]
+                (while (if (> j chunk-start)
+                  ,insertion-less
+                  false)
+                  (set! (array-ref slots j) ,insertion-shift-value)
+                  (set! j (- j 1)))
+                (set! (array-ref slots j) value)
+                (set! i (+ i 1))))
+            (set! chunk-start chunk-end)))
+        (if (> n 16)
+          (let
+            [scratch : (__tl_dyn-array ,T) (__tl_make-array ,T n)]
+            [width : i64 16]
+            (while (< width n)
+              (let
+                [left : i64 0]
+                (while (< left n)
                   (let
-                    [value : ,T ,insertion-value]
-                    [j : i64 i]
-                    (begin
-                      (while (if (> j chunk-start)
-                        ,insertion-less
-                        false)
-                        (begin
-                          (set! (array-ref slots j) ,insertion-shift-value)
-                          (set! j (- j 1))))
-                      (set! (array-ref slots j) value)
-                      (set! i (+ i 1)))))
-                (set! chunk-start chunk-end))))
-          (if (> n 16)
-            (let
-              [scratch : (__tl_dyn-array ,T) (__tl_make-array ,T n)]
-              [width : i64 16]
-              (while (< width n)
-                (let
-                  [left : i64 0]
-                  (begin
-                    (while (< left n)
-                      (let
-                        [mid : i64
-                          (if (> width (- n left))
-                            n
-                            (+ left width))]
-                        [right : i64
-                          (if (> width (- n mid))
-                            n
-                            (+ mid width))]
-                        (begin
-                          (if (if (< mid right)
-                            ,boundary-less
-                            false)
-                            (let
-                              [left-index : i64 left]
-                              [right-index : i64 mid]
-                              [out : i64 left]
-                              (begin
-                                (while (< out right)
-                                  (let
-                                    [take-left : bool
-                                      (if (< left-index mid)
-                                        (if (< right-index right)
-                                          (not ,right-before-left)
-                                          true)
-                                        false)]
-                                    (begin
-                                      (if take-left
-                                        (begin
-                                          (set!
-                                            (array-ref scratch out)
-                                            ,left-merge-value)
-                                          (set! left-index (+ left-index 1)))
-                                        (begin
-                                          (set!
-                                            (array-ref scratch out)
-                                            ,right-merge-value)
-                                          (set! right-index (+ right-index 1))))
-                                      (set! out (+ out 1)))))
-                                (set! out left)
-                                (while (< out right)
-                                  (begin
-                                    (set!
-                                      (array-ref slots out)
-                                      ,copy-back-value)
-                                    (set! out (+ out 1))))))
-                            unit)
-                          (set! left right))))
-                    (set!
-                      width
-                      (if (>= width (- n width))
+                    [mid : i64
+                      (if (> width (- n left))
                         n
-                        (* width 2)))))))
-            unit)))]
+                        (+ left width))]
+                    [right : i64
+                      (if (> width (- n mid))
+                        n
+                        (+ mid width))]
+                    (if (if (< mid right)
+                      ,boundary-less
+                      false)
+                      (let
+                        [left-index : i64 left]
+                        [right-index : i64 mid]
+                        [out : i64 left]
+                        (while (< out right)
+                          (let
+                            [take-left : bool
+                              (if (< left-index mid)
+                                (if (< right-index right)
+                                  (not ,right-before-left)
+                                  true)
+                                false)]
+                            (if take-left
+                              (begin
+                                (set! (array-ref scratch out) ,left-merge-value)
+                                (set! left-index (+ left-index 1)))
+                              (begin
+                                (set!
+                                  (array-ref scratch out)
+                                  ,right-merge-value)
+                                (set! right-index (+ right-index 1))))
+                            (set! out (+ out 1))))
+                        (set! out left)
+                        (while (< out right)
+                          (set! (array-ref slots out) ,copy-back-value)
+                          (set! out (+ out 1))))
+                      unit)
+                    (set! left right)))
+                (set!
+                  width
+                  (if (>= width (- n width))
+                    n
+                    (* width 2))))))
+          unit))]
     [sort-decl : comptime.Expr
       (if scalar?
         `(define (sort! [v : (&mut v Vec)]) : unit
@@ -268,9 +254,8 @@
 (cfg
   test
   (define (sort-test-counting-string-less? [left : String] [right : String]) : bool
-    (begin
-      (set! sort-test-comparison-count (+ sort-test-comparison-count 1))
-      (stdlib.sort.string-less? left right))))
+    (set! sort-test-comparison-count (+ sort-test-comparison-count 1))
+    (stdlib.sort.string-less? left right)))
 
 (cfg
   test
@@ -282,20 +267,18 @@
   (define (sort-test-make-i64-vec1 [a : i64]) : i64v.Vec
     (let
       [v : i64v.Vec (i64v.new)]
-      (begin
-        (i64v.push-ref! (&mut v) a)
-        v))))
+      (i64v.push-ref! (&mut v) a)
+      v)))
 
 (cfg
   test
   (define (sort-test-make-i64-vec3 [a : i64] [b : i64] [c : i64]) : i64v.Vec
     (let
       [v : i64v.Vec (i64v.new)]
-      (begin
-        (i64v.push-ref! (&mut v) a)
-        (i64v.push-ref! (&mut v) b)
-        (i64v.push-ref! (&mut v) c)
-        v))))
+      (i64v.push-ref! (&mut v) a)
+      (i64v.push-ref! (&mut v) b)
+      (i64v.push-ref! (&mut v) c)
+      v)))
 
 (cfg
   test
@@ -307,20 +290,18 @@
     [e : i64]) : i64v.Vec
     (let
       [v : i64v.Vec (i64v.new)]
-      (begin
-        (i64v.push-ref! (&mut v) a)
-        (i64v.push-ref! (&mut v) b)
-        (i64v.push-ref! (&mut v) c)
-        (i64v.push-ref! (&mut v) d)
-        (i64v.push-ref! (&mut v) e)
-        v))))
+      (i64v.push-ref! (&mut v) a)
+      (i64v.push-ref! (&mut v) b)
+      (i64v.push-ref! (&mut v) c)
+      (i64v.push-ref! (&mut v) d)
+      (i64v.push-ref! (&mut v) e)
+      v)))
 
 (cfg
   test
   (define (sort-test-assert-i64-vec1 [v : i64v.Vec] [a : i64]) : unit
-    (begin
-      (test.assert-i64-eq (i64v.len (& v)) 1 "i64 vec1 len")
-      (test.assert-i64-eq (i64v.get (& v) 0 9999) a "i64 vec1 0"))))
+    (test.assert-i64-eq (i64v.len (& v)) 1 "i64 vec1 len")
+    (test.assert-i64-eq (i64v.get (& v) 0 9999) a "i64 vec1 0")))
 
 (cfg
   test
@@ -329,11 +310,10 @@
     [a : i64]
     [b : i64]
     [c : i64]) : unit
-    (begin
-      (test.assert-i64-eq (i64v.len (& v)) 3 "i64 vec3 len")
-      (test.assert-i64-eq (i64v.get (& v) 0 9999) a "i64 vec3 0")
-      (test.assert-i64-eq (i64v.get (& v) 1 9999) b "i64 vec3 1")
-      (test.assert-i64-eq (i64v.get (& v) 2 9999) c "i64 vec3 2"))))
+    (test.assert-i64-eq (i64v.len (& v)) 3 "i64 vec3 len")
+    (test.assert-i64-eq (i64v.get (& v) 0 9999) a "i64 vec3 0")
+    (test.assert-i64-eq (i64v.get (& v) 1 9999) b "i64 vec3 1")
+    (test.assert-i64-eq (i64v.get (& v) 2 9999) c "i64 vec3 2")))
 
 (cfg
   test
@@ -344,22 +324,20 @@
     [c : i64]
     [d : i64]
     [e : i64]) : unit
-    (begin
-      (test.assert-i64-eq (i64v.len (& v)) 5 "i64 vec5 len")
-      (test.assert-i64-eq (i64v.get (& v) 0 9999) a "i64 vec5 0")
-      (test.assert-i64-eq (i64v.get (& v) 1 9999) b "i64 vec5 1")
-      (test.assert-i64-eq (i64v.get (& v) 2 9999) c "i64 vec5 2")
-      (test.assert-i64-eq (i64v.get (& v) 3 9999) d "i64 vec5 3")
-      (test.assert-i64-eq (i64v.get (& v) 4 9999) e "i64 vec5 4"))))
+    (test.assert-i64-eq (i64v.len (& v)) 5 "i64 vec5 len")
+    (test.assert-i64-eq (i64v.get (& v) 0 9999) a "i64 vec5 0")
+    (test.assert-i64-eq (i64v.get (& v) 1 9999) b "i64 vec5 1")
+    (test.assert-i64-eq (i64v.get (& v) 2 9999) c "i64 vec5 2")
+    (test.assert-i64-eq (i64v.get (& v) 3 9999) d "i64 vec5 3")
+    (test.assert-i64-eq (i64v.get (& v) 4 9999) e "i64 vec5 4")))
 
 (cfg
   test
   (define (sort-test-make-string-vec1 [a : String]) : strv.Vec
     (let
       [v : strv.Vec (strv.new)]
-      (begin
-        (strv.push-ref! (&mut v) a)
-        v))))
+      (strv.push-ref! (&mut v) a)
+      v)))
 
 (cfg
   test
@@ -370,22 +348,17 @@
     [d : String]) : strv.Vec
     (let
       [v : strv.Vec (strv.new)]
-      (begin
-        (strv.push-ref! (&mut v) a)
-        (strv.push-ref! (&mut v) b)
-        (strv.push-ref! (&mut v) c)
-        (strv.push-ref! (&mut v) d)
-        v))))
+      (strv.push-ref! (&mut v) a)
+      (strv.push-ref! (&mut v) b)
+      (strv.push-ref! (&mut v) c)
+      (strv.push-ref! (&mut v) d)
+      v)))
 
 (cfg
   test
   (define (sort-test-assert-string-vec1 [v : strv.Vec] [a : String]) : unit
-    (begin
-      (test.assert-i64-eq (strv.len (& v)) 1 "string vec1 len")
-      (test.assert-owned-string-eq
-        (strv.get (& v) 0 "missing")
-        a
-        "string vec1 0"))))
+    (test.assert-i64-eq (strv.len (& v)) 1 "string vec1 len")
+    (test.assert-owned-string-eq (strv.get (& v) 0 "missing") a "string vec1 0")))
 
 (cfg
   test
@@ -395,62 +368,42 @@
     [b : String]
     [c : String]
     [d : String]) : unit
-    (begin
-      (test.assert-i64-eq (strv.len (& v)) 4 "string vec4 len")
-      (test.assert-owned-string-eq
-        (strv.get (& v) 0 "missing")
-        a
-        "string vec4 0")
-      (test.assert-owned-string-eq
-        (strv.get (& v) 1 "missing")
-        b
-        "string vec4 1")
-      (test.assert-owned-string-eq
-        (strv.get (& v) 2 "missing")
-        c
-        "string vec4 2")
-      (test.assert-owned-string-eq
-        (strv.get (& v) 3 "missing")
-        d
-        "string vec4 3"))))
+    (test.assert-i64-eq (strv.len (& v)) 4 "string vec4 len")
+    (test.assert-owned-string-eq (strv.get (& v) 0 "missing") a "string vec4 0")
+    (test.assert-owned-string-eq (strv.get (& v) 1 "missing") b "string vec4 1")
+    (test.assert-owned-string-eq (strv.get (& v) 2 "missing") c "string vec4 2")
+    (test.assert-owned-string-eq (strv.get (& v) 3 "missing") d "string vec4 3")))
 
 (cfg
   test
   (define (sort-test-assert-i64-sort-cases) : unit
-    (begin
-      (let
-        [empty : i64v.Vec (i64v.new)]
-        (begin
-          (i64sort.sort! (&mut empty))
-          (test.assert-i64-eq (i64v.len (& empty)) 0 "empty i64 sort len")
-          (test.assert-true
-            (>= (i64v.capacity (& empty)) 1)
-            "empty i64 sort growable")))
-      (let
-        [single : i64v.Vec (sort-test-make-i64-vec1 7)]
-        (begin
-          (i64sort.sort! (&mut single))
-          (sort-test-assert-i64-vec1 single 7)))
-      (let
-        [sorted : i64v.Vec (sort-test-make-i64-vec3 1 2 3)]
-        (begin
-          (i64sort.sort! (&mut sorted))
-          (sort-test-assert-i64-vec3 sorted 1 2 3)))
-      (let
-        [reverse : i64v.Vec (sort-test-make-i64-vec5 5 4 3 2 1)]
-        (begin
-          (i64sort.sort! (&mut reverse))
-          (sort-test-assert-i64-vec5 reverse 1 2 3 4 5)))
-      (let
-        [dupes : i64v.Vec (sort-test-make-i64-vec5 3 1 3 2 1)]
-        (begin
-          (i64sort_again.sort! (&mut dupes))
-          (sort-test-assert-i64-vec5 dupes 1 1 2 3 3)))
-      (let
-        [negative : i64v.Vec (sort-test-make-i64-vec5 0 -10 5 -10 2)]
-        (begin
-          (i64sort.sort! (&mut negative))
-          (sort-test-assert-i64-vec5 negative -10 -10 0 2 5))))))
+    (let
+      [empty : i64v.Vec (i64v.new)]
+      (i64sort.sort! (&mut empty))
+      (test.assert-i64-eq (i64v.len (& empty)) 0 "empty i64 sort len")
+      (test.assert-true
+        (>= (i64v.capacity (& empty)) 1)
+        "empty i64 sort growable"))
+    (let
+      [single : i64v.Vec (sort-test-make-i64-vec1 7)]
+      (i64sort.sort! (&mut single))
+      (sort-test-assert-i64-vec1 single 7))
+    (let
+      [sorted : i64v.Vec (sort-test-make-i64-vec3 1 2 3)]
+      (i64sort.sort! (&mut sorted))
+      (sort-test-assert-i64-vec3 sorted 1 2 3))
+    (let
+      [reverse : i64v.Vec (sort-test-make-i64-vec5 5 4 3 2 1)]
+      (i64sort.sort! (&mut reverse))
+      (sort-test-assert-i64-vec5 reverse 1 2 3 4 5))
+    (let
+      [dupes : i64v.Vec (sort-test-make-i64-vec5 3 1 3 2 1)]
+      (i64sort_again.sort! (&mut dupes))
+      (sort-test-assert-i64-vec5 dupes 1 1 2 3 3))
+    (let
+      [negative : i64v.Vec (sort-test-make-i64-vec5 0 -10 5 -10 2)]
+      (i64sort.sort! (&mut negative))
+      (sort-test-assert-i64-vec5 negative -10 -10 0 2 5))))
 
 (cfg
   test
@@ -458,160 +411,139 @@
     (let
       [items : i64v.Vec (i64v.new)]
       [i : i64 0]
-      (begin
-        (while (< i 2049)
-          (begin
-            (i64v.push-ref! (&mut items) (- 2048 i))
-            (set! i (+ i 1))))
-        (i64sort.sort! (&mut items))
-        (test.assert-i64-eq (i64v.len (& items)) 2049 "large i64 sort len")
-        (set! i 0)
-        (while (< i 2049)
-          (begin
-            (test.assert-i64-eq
-              (i64v.get (& items) i -1)
-              i
-              "large i64 sort item")
-            (set! i (+ i 1))))))))
+      (while (< i 2049)
+        (i64v.push-ref! (&mut items) (- 2048 i))
+        (set! i (+ i 1)))
+      (i64sort.sort! (&mut items))
+      (test.assert-i64-eq (i64v.len (& items)) 2049 "large i64 sort len")
+      (set! i 0)
+      (while (< i 2049)
+        (test.assert-i64-eq (i64v.get (& items) i -1) i "large i64 sort item")
+        (set! i (+ i 1))))))
 
 (cfg
   test
   (define (sort-test-assert-string-less-cases) : unit
-    (begin
-      (test.assert-true (string-less? "" "a") "empty string sorts first")
-      (test.assert-true (string-less? "a" "aa") "prefix sorts first")
-      (test.assert-true (string-less? "alpha" "beta") "alpha before beta")
-      (test.assert-false (string-less? "beta" "alpha") "beta after alpha")
-      (test.assert-false (string-less? "same" "same") "equal is not less"))))
+    (test.assert-true (string-less? "" "a") "empty string sorts first")
+    (test.assert-true (string-less? "a" "aa") "prefix sorts first")
+    (test.assert-true (string-less? "alpha" "beta") "alpha before beta")
+    (test.assert-false (string-less? "beta" "alpha") "beta after alpha")
+    (test.assert-false (string-less? "same" "same") "equal is not less")))
 
 (cfg
   test
   (define (sort-test-assert-string-sort-cases) : unit
-    (begin
-      (let
-        [empty : strv.Vec (strv.new)]
-        (begin
-          (strsort.sort! (&mut empty) string-less?)
-          (test.assert-i64-eq (strv.len (& empty)) 0 "empty string sort len")))
-      (let
-        [single : strv.Vec (sort-test-make-string-vec1 "solo")]
-        (begin
-          (strsort.sort! (&mut single) string-less?)
-          (sort-test-assert-string-vec1 single "solo")))
-      (let
-        [sorted : strv.Vec
-          (sort-test-make-string-vec4 "alpha" "bravo" "charlie" "delta")]
-        (begin
-          (strsort.sort! (&mut sorted) string-less?)
-          (sort-test-assert-string-vec4
-            sorted
-            "alpha"
-            "bravo"
-            "charlie"
-            "delta")))
-      (let
-        [mixed : strv.Vec
-          (sort-test-make-string-vec4 "delta" "alpha" "charlie" "bravo")]
-        (begin
-          (strsort.sort! (&mut mixed) string-less?)
-          (sort-test-assert-string-vec4 mixed "alpha" "bravo" "charlie" "delta")))
-      (let
-        [prefixes : strv.Vec (sort-test-make-string-vec4 "b" "aa" "a" "")]
-        (begin
-          (strsort.sort! (&mut prefixes) string-less?)
-          (sort-test-assert-string-vec4 prefixes "" "a" "aa" "b")))
-      (let
-        [dupes : strv.Vec
-          (sort-test-make-string-vec4 "beta" "alpha" "beta" "alpha")]
-        (begin
-          (strsort.sort! (&mut dupes) string-less?)
-          (sort-test-assert-string-vec4 dupes "alpha" "alpha" "beta" "beta"))))))
+    (let
+      [empty : strv.Vec (strv.new)]
+      (strsort.sort! (&mut empty) string-less?)
+      (test.assert-i64-eq (strv.len (& empty)) 0 "empty string sort len"))
+    (let
+      [single : strv.Vec (sort-test-make-string-vec1 "solo")]
+      (strsort.sort! (&mut single) string-less?)
+      (sort-test-assert-string-vec1 single "solo"))
+    (let
+      [sorted : strv.Vec
+        (sort-test-make-string-vec4 "alpha" "bravo" "charlie" "delta")]
+      (strsort.sort! (&mut sorted) string-less?)
+      (sort-test-assert-string-vec4 sorted "alpha" "bravo" "charlie" "delta"))
+    (let
+      [mixed : strv.Vec
+        (sort-test-make-string-vec4 "delta" "alpha" "charlie" "bravo")]
+      (strsort.sort! (&mut mixed) string-less?)
+      (sort-test-assert-string-vec4 mixed "alpha" "bravo" "charlie" "delta"))
+    (let
+      [prefixes : strv.Vec (sort-test-make-string-vec4 "b" "aa" "a" "")]
+      (strsort.sort! (&mut prefixes) string-less?)
+      (sort-test-assert-string-vec4 prefixes "" "a" "aa" "b"))
+    (let
+      [dupes : strv.Vec
+        (sort-test-make-string-vec4 "beta" "alpha" "beta" "alpha")]
+      (strsort.sort! (&mut dupes) string-less?)
+      (sort-test-assert-string-vec4 dupes "alpha" "alpha" "beta" "beta"))))
 
 (cfg
   test
   (define (sort-test-assert-string-sort-stable) : unit
     (let
       [items : strv.Vec (strv.new)]
-      (begin
-        (strv.push-ref! (&mut items) "b0")
-        (strv.push-ref! (&mut items) "a1")
-        (strv.push-ref! (&mut items) "b2")
-        (strv.push-ref! (&mut items) "a3")
-        (strsort.sort! (&mut items) sort-test-first-char-less?)
-        (sort-test-assert-string-vec4 items "a1" "a3" "b0" "b2")))))
+      (strv.push-ref! (&mut items) "b0")
+      (strv.push-ref! (&mut items) "a1")
+      (strv.push-ref! (&mut items) "b2")
+      (strv.push-ref! (&mut items) "a3")
+      (strsort.sort! (&mut items) sort-test-first-char-less?)
+      (sort-test-assert-string-vec4 items "a1" "a3" "b0" "b2"))))
 
 (cfg
   test
   (define (sort-test-assert-merge-sort-stable) : unit
     (let
       [items : strv.Vec (strv.new)]
-      (begin
-        (strv.push-ref! (&mut items) "b0")
-        (strv.push-ref! (&mut items) "a1")
-        (strv.push-ref! (&mut items) "b2")
-        (strv.push-ref! (&mut items) "a3")
-        (strv.push-ref! (&mut items) "b4")
-        (strv.push-ref! (&mut items) "a5")
-        (strv.push-ref! (&mut items) "b6")
-        (strv.push-ref! (&mut items) "a7")
-        (strv.push-ref! (&mut items) "b8")
-        (strv.push-ref! (&mut items) "a9")
-        (strv.push-ref! (&mut items) "b10")
-        (strv.push-ref! (&mut items) "a11")
-        (strv.push-ref! (&mut items) "b12")
-        (strv.push-ref! (&mut items) "a13")
-        (strv.push-ref! (&mut items) "b14")
-        (strv.push-ref! (&mut items) "a15")
-        (strv.push-ref! (&mut items) "b16")
-        (strv.push-ref! (&mut items) "a17")
-        (strv.push-ref! (&mut items) "b18")
-        (strv.push-ref! (&mut items) "a19")
-        (strv.push-ref! (&mut items) "b20")
-        (strv.push-ref! (&mut items) "a21")
-        (strv.push-ref! (&mut items) "b22")
-        (strv.push-ref! (&mut items) "a23")
-        (strv.push-ref! (&mut items) "b24")
-        (strv.push-ref! (&mut items) "a25")
-        (strv.push-ref! (&mut items) "b26")
-        (strv.push-ref! (&mut items) "a27")
-        (strv.push-ref! (&mut items) "b28")
-        (strv.push-ref! (&mut items) "a29")
-        (strv.push-ref! (&mut items) "b30")
-        (strv.push-ref! (&mut items) "a31")
-        (strsort.sort! (&mut items) sort-test-first-char-less?)
-        (test.assert-i64-eq (strv.len (& items)) 32 "merge stability len")
-        (test.assert-owned-string-eq
-          (strv.get (& items) 0 "missing")
-          "a1"
-          "merge stability a first")
-        (test.assert-owned-string-eq
-          (strv.get (& items) 7 "missing")
-          "a15"
-          "merge stability a left run")
-        (test.assert-owned-string-eq
-          (strv.get (& items) 8 "missing")
-          "a17"
-          "merge stability a right run")
-        (test.assert-owned-string-eq
-          (strv.get (& items) 15 "missing")
-          "a31"
-          "merge stability a last")
-        (test.assert-owned-string-eq
-          (strv.get (& items) 16 "missing")
-          "b0"
-          "merge stability b first")
-        (test.assert-owned-string-eq
-          (strv.get (& items) 23 "missing")
-          "b14"
-          "merge stability b left run")
-        (test.assert-owned-string-eq
-          (strv.get (& items) 24 "missing")
-          "b16"
-          "merge stability b right run")
-        (test.assert-owned-string-eq
-          (strv.get (& items) 31 "missing")
-          "b30"
-          "merge stability b last")))))
+      (strv.push-ref! (&mut items) "b0")
+      (strv.push-ref! (&mut items) "a1")
+      (strv.push-ref! (&mut items) "b2")
+      (strv.push-ref! (&mut items) "a3")
+      (strv.push-ref! (&mut items) "b4")
+      (strv.push-ref! (&mut items) "a5")
+      (strv.push-ref! (&mut items) "b6")
+      (strv.push-ref! (&mut items) "a7")
+      (strv.push-ref! (&mut items) "b8")
+      (strv.push-ref! (&mut items) "a9")
+      (strv.push-ref! (&mut items) "b10")
+      (strv.push-ref! (&mut items) "a11")
+      (strv.push-ref! (&mut items) "b12")
+      (strv.push-ref! (&mut items) "a13")
+      (strv.push-ref! (&mut items) "b14")
+      (strv.push-ref! (&mut items) "a15")
+      (strv.push-ref! (&mut items) "b16")
+      (strv.push-ref! (&mut items) "a17")
+      (strv.push-ref! (&mut items) "b18")
+      (strv.push-ref! (&mut items) "a19")
+      (strv.push-ref! (&mut items) "b20")
+      (strv.push-ref! (&mut items) "a21")
+      (strv.push-ref! (&mut items) "b22")
+      (strv.push-ref! (&mut items) "a23")
+      (strv.push-ref! (&mut items) "b24")
+      (strv.push-ref! (&mut items) "a25")
+      (strv.push-ref! (&mut items) "b26")
+      (strv.push-ref! (&mut items) "a27")
+      (strv.push-ref! (&mut items) "b28")
+      (strv.push-ref! (&mut items) "a29")
+      (strv.push-ref! (&mut items) "b30")
+      (strv.push-ref! (&mut items) "a31")
+      (strsort.sort! (&mut items) sort-test-first-char-less?)
+      (test.assert-i64-eq (strv.len (& items)) 32 "merge stability len")
+      (test.assert-owned-string-eq
+        (strv.get (& items) 0 "missing")
+        "a1"
+        "merge stability a first")
+      (test.assert-owned-string-eq
+        (strv.get (& items) 7 "missing")
+        "a15"
+        "merge stability a left run")
+      (test.assert-owned-string-eq
+        (strv.get (& items) 8 "missing")
+        "a17"
+        "merge stability a right run")
+      (test.assert-owned-string-eq
+        (strv.get (& items) 15 "missing")
+        "a31"
+        "merge stability a last")
+      (test.assert-owned-string-eq
+        (strv.get (& items) 16 "missing")
+        "b0"
+        "merge stability b first")
+      (test.assert-owned-string-eq
+        (strv.get (& items) 23 "missing")
+        "b14"
+        "merge stability b left run")
+      (test.assert-owned-string-eq
+        (strv.get (& items) 24 "missing")
+        "b16"
+        "merge stability b right run")
+      (test.assert-owned-string-eq
+        (strv.get (& items) 31 "missing")
+        "b30"
+        "merge stability b last"))))
 
 (cfg
   test
@@ -619,28 +551,26 @@
     (let
       [items : strv.Vec (strv.new)]
       [i : i64 0]
-      (begin
-        (while (< i 512)
-          (begin
-            (strv.push-ref!
-              (&mut items)
-              (if (< i 256)
-                "b"
-                "a"))
-            (set! i (+ i 1))))
-        (set! sort-test-comparison-count 0)
-        (strsort.sort! (&mut items) sort-test-counting-string-less?)
-        (test.assert-true
-          (< sort-test-comparison-count 8192)
-          "large sort comparison count stays subquadratic")
-        (test.assert-owned-string-eq
-          (strv.get (& items) 0 "missing")
-          "a"
-          "large comparator sort first")
-        (test.assert-owned-string-eq
-          (strv.get (& items) 511 "missing")
-          "b"
-          "large comparator sort last")))))
+      (while (< i 512)
+        (strv.push-ref!
+          (&mut items)
+          (if (< i 256)
+            "b"
+            "a"))
+        (set! i (+ i 1)))
+      (set! sort-test-comparison-count 0)
+      (strsort.sort! (&mut items) sort-test-counting-string-less?)
+      (test.assert-true
+        (< sort-test-comparison-count 8192)
+        "large sort comparison count stays subquadratic")
+      (test.assert-owned-string-eq
+        (strv.get (& items) 0 "missing")
+        "a"
+        "large comparator sort first")
+      (test.assert-owned-string-eq
+        (strv.get (& items) 511 "missing")
+        "b"
+        "large comparator sort last"))))
 
 (cfg
   test
@@ -648,26 +578,23 @@
     (let
       [items : itemv.Vec (itemv.new)]
       [i : i64 0]
-      (begin
-        (while (< i 32)
-          (begin
-            (itemv.push-ref! (&mut items) (SortTestItem (% i 4) i))
-            (set! i (+ i 1))))
-        (itemsort.sort! (&mut items) sort-test-item-less?)
-        (test.assert-i64-eq (itemv.len (& items)) 32 "aggregate sort len")
-        (set! i 0)
-        (while (< i 32)
-          (let
-            [item : SortTestItem (itemv.get (& items) i (SortTestItem -1 -1))]
-            [expected-key : i64 (/ i 8)]
-            [expected-order : i64 (+ expected-key (* (% i 8) 4))]
-            (begin
-              (test.assert-i64-eq item.key expected-key "aggregate sort key")
-              (test.assert-i64-eq
-                item.order
-                expected-order
-                "aggregate sort stable order")
-              (set! i (+ i 1)))))))))
+      (while (< i 32)
+        (itemv.push-ref! (&mut items) (SortTestItem (% i 4) i))
+        (set! i (+ i 1)))
+      (itemsort.sort! (&mut items) sort-test-item-less?)
+      (test.assert-i64-eq (itemv.len (& items)) 32 "aggregate sort len")
+      (set! i 0)
+      (while (< i 32)
+        (let
+          [item : SortTestItem (itemv.get (& items) i (SortTestItem -1 -1))]
+          [expected-key : i64 (/ i 8)]
+          [expected-order : i64 (+ expected-key (* (% i 8) 4))]
+          (test.assert-i64-eq item.key expected-key "aggregate sort key")
+          (test.assert-i64-eq
+            item.order
+            expected-order
+            "aggregate sort stable order")
+          (set! i (+ i 1)))))))
 
 (cfg
   test

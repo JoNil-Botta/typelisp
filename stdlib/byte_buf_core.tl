@@ -63,19 +63,16 @@
   [src : (& src (__tl_dyn-array u8))]
   [src-start : i64]
   [count : i64]) : unit
-  (begin
-    (byte-buf-builder-check-range (array-length dst) dst-start count)
-    (byte-buf-builder-check-range (array-length src) src-start count)
-    (let
-      [index : i64 0]
-      (begin
-        (while (< index count)
-          (begin
-            (set!
-              (array-ref dst (+ dst-start index))
-              (array-ref src (+ src-start index)))
-            (set! index (+ index 1))))
-        unit))))
+  (byte-buf-builder-check-range (array-length dst) dst-start count)
+  (byte-buf-builder-check-range (array-length src) src-start count)
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (set!
+        (array-ref dst (+ dst-start index))
+        (array-ref src (+ src-start index)))
+      (set! index (+ index 1)))
+    unit))
 
 ;: Ensure the backing array can hold at least `min-capacity` bytes.
 (define (byte-buf-builder-grow-to
@@ -95,14 +92,13 @@
           min-capacity
           doubled)]
       [bigger : (__tl_dyn-array u8) (__tl_make-array u8 new-capacity)]
-      (begin
-        (byte-buf-builder-copy-array-range-into
-          (&mut bigger)
-          0
-          (& buf.slots)
-          0
-          old-len)
-        (set! buf.slots bigger)))))
+      (byte-buf-builder-copy-array-range-into
+        (&mut bigger)
+        0
+        (& buf.slots)
+        0
+        old-len)
+      (set! buf.slots bigger))))
 
 ;: Grow `buf` to at least twice its current capacity.
 (define (byte-buf-builder-grow [buf : (&mut buf ByteBufBuilder)]) : unit
@@ -122,13 +118,11 @@
 
 ;: Append one byte to `buf`, growing if needed.
 (define (byte-buf-builder-push [buf : (&mut buf ByteBufBuilder)] [value : u8]) : unit
-  (begin
-    (byte-buf-builder-reserve buf 1)
-    (let
-      [index : i64 buf.len]
-      (begin
-        (set! (array-ref buf.slots index) value)
-        (set! buf.len (+ index 1))))))
+  (byte-buf-builder-reserve buf 1)
+  (let
+    [index : i64 buf.len]
+    (set! (array-ref buf.slots index) value)
+    (set! buf.len (+ index 1))))
 
 ;: Append `count` bytes from `src` starting at `start`.
 (define (byte-buf-builder-append-array-range
@@ -136,19 +130,17 @@
   [src : (& src (__tl_dyn-array u8))]
   [start : i64]
   [count : i64]) : unit
-  (begin
-    (byte-buf-builder-check-range (array-length src) start count)
-    (byte-buf-builder-reserve buf count)
-    (let
-      [old-len : i64 buf.len]
-      (begin
-        (byte-buf-builder-copy-array-range-into
-          (&mut buf.slots)
-          old-len
-          src
-          start
-          count)
-        (set! buf.len (+ old-len count))))))
+  (byte-buf-builder-check-range (array-length src) start count)
+  (byte-buf-builder-reserve buf count)
+  (let
+    [old-len : i64 buf.len]
+    (byte-buf-builder-copy-array-range-into
+      (&mut buf.slots)
+      old-len
+      src
+      start
+      count)
+    (set! buf.len (+ old-len count))))
 
 ;: Append every byte from `src`.
 (define (byte-buf-builder-append-array
@@ -162,24 +154,21 @@
   [src : String]
   [start : i64]
   [count : i64]) : unit
-  (begin
-    (byte-buf-builder-check-range (string.string-length src) start count)
-    (byte-buf-builder-reserve buf count)
-    (let
-      [old-len : i64 buf.len]
-      [src-ptr : (Ptr u8)
+  (byte-buf-builder-check-range (string.string-length src) start count)
+  (byte-buf-builder-reserve buf count)
+  (let
+    [old-len : i64 buf.len]
+    [src-ptr : (Ptr u8)
+      (unsafe
+        (string-data (& src)))]
+    [index : i64 0]
+    (while (< index count)
+      (set!
+        (array-ref buf.slots (+ old-len index))
         (unsafe
-          (string-data (& src)))]
-      [index : i64 0]
-      (begin
-        (while (< index count)
-          (begin
-            (set!
-              (array-ref buf.slots (+ old-len index))
-              (unsafe
-                (ptr-read (ptr-offset src-ptr (+ start index)))))
-            (set! index (+ index 1))))
-        (set! buf.len (+ old-len count))))))
+          (ptr-read (ptr-offset src-ptr (+ start index)))))
+      (set! index (+ index 1)))
+    (set! buf.len (+ old-len count))))
 
 ;: Append every byte from `src`.
 (define (byte-buf-builder-append-string
@@ -194,18 +183,16 @@
   [buf : (& buf ByteBufBuilder)]
   [start : i64]
   [count : i64]) : (__tl_dyn-array u8)
-  (begin
-    (byte-buf-builder-check-range (byte-buf-builder-len buf) start count)
-    (let
-      [out : (__tl_dyn-array u8) (__tl_make-array u8 count)]
-      (begin
-        (byte-buf-builder-copy-array-range-into
-          (&mut out)
-          0
-          (& buf.slots)
-          start
-          count)
-        out))))
+  (byte-buf-builder-check-range (byte-buf-builder-len buf) start count)
+  (let
+    [out : (__tl_dyn-array u8) (__tl_make-array u8 count)]
+    (byte-buf-builder-copy-array-range-into
+      (&mut out)
+      0
+      (& buf.slots)
+      start
+      count)
+    out))
 
 ;: Copy all live bytes into private compatibility storage.
 (define (byte-buf-builder-to-array [buf : (& buf ByteBufBuilder)]) : (__tl_dyn-array

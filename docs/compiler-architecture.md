@@ -106,6 +106,15 @@ and emission takes the mask from the scavenger as a third XMM scratch that
 excludes the source, accumulator and sibling. AVX-512 native min/max and the
 other reduction shapes use two scratch registers.
 
+IR type rendering takes the compile's structural-session handle and type-pool
+segment bases. `Var` and `VarArgs` names, like lifetime names, may carry either
+source intern IDs or hygienic syntax IDs. `compiler-ir-syntax-name-render`
+checks both the raw and decoded ID domains through that session before any
+intern-pool read; opaque, unresolved, stale and wrong-owner IDs render as `<id:N>`.
+Recursive type rendering retains both owners through nested pointer, slice,
+function and nominal arguments. The compatibility type-name entry deliberately
+uses the installed structural owner through the zero-handle adapter.
+
 A function's frame is laid out before its body is emitted. Below the slot and
 maximum callee-save area it holds, from the top down: the SIMD staging region,
 the cycle-temp slots, the emergency slots, and, at the bottom, the outgoing
@@ -902,6 +911,15 @@ these semantic flags even when the aggregates have identical ABI. The existing
 AST wrapper, surface roundtrip, and specialization selftests guard these rules;
 serialized metadata changes also require a surface-AST schema version change.
 
+`AstExpr.While` keeps its direct body forms in an `AstExprList` (surface AST
+schema 17). Typechecking requires each form to be unit-valued and locates a
+mismatch at that form. An explicit `Begin` remains one body form and may discard
+its non-final values. Shared child traversal, quasiquote, hygiene and declaration
+serialization preserve the ordered list; lowering and ownership analyses reuse
+the existing sequence handling. The public comptime `expr-while` builder keeps
+its one expression as a singleton list. Native quasiquote uses the same host
+callback with its body-list flag so it agrees with interpreted expansion.
+
 `Module` and `Decls` macro output share `macro-wrap-generated-decls` in
 `compiler_typecheck_core.tl`. Ordinary generated imports carry namespace effects
 without a visible declaration name; retain their generated metadata so the
@@ -994,6 +1012,14 @@ successor. `Jcc` accepts only x86 condition codes 0–15. Its six-byte encoding
 places the rel32 field at byte 2; ELF, COFF and native TLCI relocation use that
 same site. The object branch tests check all conditions, forward/backward
 targets, invalid codes and unresolved symbols across these serializers.
+
+Both installed and explicit type pools preserve canonical IDs while their
+private hash indexes grow. At half occupancy they rehash the immutable prefix
+in the pool's base arena, including when the pending push finds an existing ID.
+The replacement descriptor and backing storage survive caller scratch resets;
+index growth never changes node IDs or publishes into a different pool owner.
+At the maximum index capacity both append paths retain the raw-append fallback.
+
 
 Expression node IDs belong to an AST pool. Literal analysis in
 `compiler_typecheck_core.tl` snapshots the context's expression owner for its

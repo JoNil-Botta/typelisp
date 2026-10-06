@@ -56,10 +56,9 @@
               (string.substring fragment (+ eq 1) (- fragment-len (+ eq 1)))]
             (if (= (string.string-length pin-value) 0)
               (Err "package-cache: remote dependency pin must not be empty")
-              (match (package-cache-parse-pin-kind kind-text)
-                [(Err message) (Err message)]
-                [(Ok kind)
-                  (Ok (cache.PackageCacheRemoteSpec url kind pin-value))]))))))))
+              (let
+                [kind (try (package-cache-parse-pin-kind kind-text))]
+                (Ok (cache.PackageCacheRemoteSpec url kind pin-value))))))))))
 
 (define (package-cache-key-from-spec [spec : cache.PackageCacheRemoteSpec]) : cache.ResultPackageCacheKey
   (let
@@ -79,9 +78,9 @@
             ""))])))
 
 (define (package-cache-key-from-normalized-remote [dep : String]) : cache.ResultPackageCacheKey
-  (match (package-cache-parse-normalized-remote dep)
-    [(Err message) (Err message)]
-    [(Ok spec) (package-cache-key-from-spec spec)]))
+  (let
+    [spec (try (package-cache-parse-normalized-remote dep))]
+    (package-cache-key-from-spec spec)))
 
 (define (package-cache-entry-reusable? [state : cache.PackageCacheEntryState]) : bool
   (match state

@@ -451,6 +451,11 @@ while_break_lambda_boundary_reject|check-fail|tests/safety/while_break_lambda_bo
 while_when_break_lambda_boundary_reject|check-fail|tests/safety/while_when_break_lambda_boundary_reject.tl|-|typecheck: macro operand typecheck failed: typecheck: break requires enclosing scalar while
 while_break_value_reject|check-fail|tests/safety/while_break_value_reject.tl|-|parse: break expects no arguments
 while_continue_value_reject|check-fail|tests/safety/while_continue_value_reject.tl|-|parse: continue expects no arguments
+while_nonunit_first_reject|check-fail|tests/safety/while_nonunit_first_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
+while_nonunit_macro_reject|check-fail|tests/safety/while_nonunit_macro_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
+while_nonunit_decls_reject|check-fail|tests/safety/while_nonunit_decls_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
+while_empty_splice_reject|check-fail|tests/safety/while_empty_splice_reject.tl|-|typecheck: while requires at least one body expression
+while_ignored_result_reject|check-fail|tests/safety/while_ignored_result_reject.tl|-|typecheck: while body must be unit: expected unit, found Outcome
 integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
 if_literal_branch_join_range_reject|check-fail|tests/safety/if_literal_branch_join_range_reject.tl|-|if branches must match
 if_value_branch_join_reject|check-fail|tests/safety/if_value_branch_join_reject.tl|-|if branches must match

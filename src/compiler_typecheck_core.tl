@@ -24361,8 +24361,7 @@
       (let
         [cond : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases body-box)]
+        [body : ast.AstExpr (Begin body-box)]
         (tc-source-expr-pair-spmd-broadcast-scope-ok expr-bases cond body allow))]
     [(Begin exprs)
       (tc-source-expr-list-spmd-broadcast-scope-ok expr-bases exprs allow)]
@@ -24980,8 +24979,7 @@
       (let
         [cond : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases body-box)]
+        [body : ast.AstExpr (Begin body-box)]
         (tc-source-expr-pair-policy-ok ctx expr-bases cond body))]
     [(Begin exprs) (tc-source-expr-list-policy-ok ctx expr-bases exprs)]
     [(Unsafe exprs) (tc-source-expr-list-policy-ok ctx expr-bases exprs)]
@@ -35300,6 +35298,18 @@
     [(Nil) true]
     [_ false]))
 
+;; Whether a call argument is a String temporary (a literal or a call) for a
+;; `(& str)` formal: it cannot be borrowed as a place, so it skips the place
+;; borrow and the diagnostic that borrow would build.
+(define (tc-call-string-temporary-arg?
+  [ctx : TcContext]
+  [arg : ast.AstExpr]
+  [want : ast.AstType]
+  [got : ast.AstType]) : bool
+  (and
+    (tc-borrow-operand-temporary? (tc-context-expr-bases ctx) arg)
+    (tc-call-string-temporary-ref-compatible? ctx want got)))
+
 (define (tc-call-effective-arg-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -35345,19 +35355,29 @@
         [_
           (match (tc-call-arg-expr-type ctx env (tc-global-shared-view arg))
             [(Ok got)
-              (if (tc-call-actual-immutable-reference?
-                ctx
-                (tc-global-shared-view got))
-                (Ok got)
-                (match (tc-call-auto-borrow-type ctx env arg)
-                  [(Ok borrowed) (Ok borrowed)]
-                  [(Err message)
-                    (if (tc-call-string-temporary-ref-compatible?
-                      ctx
-                      (tc-global-shared-view want)
-                      got)
-                      (Ok want)
-                      (Err message))]))]
+              (cond
+                [(tc-call-actual-immutable-reference?
+                    ctx
+                    (tc-global-shared-view got))
+                  (Ok got)]
+                ;; a String temporary (a literal or a call) cannot be borrowed as
+                ;; a place, so skip the place borrow and its diagnostic
+                [(tc-call-string-temporary-arg?
+                    ctx
+                    (tc-global-shared-view arg)
+                    (tc-global-shared-view want)
+                    (tc-global-shared-view got))
+                  (Ok want)]
+                [else
+                  (match (tc-call-auto-borrow-type ctx env arg)
+                    [(Ok borrowed) (Ok borrowed)]
+                    [(Err message)
+                      (if (tc-call-string-temporary-ref-compatible?
+                        ctx
+                        (tc-global-shared-view want)
+                        got)
+                        (Ok want)
+                        (Err message))])])]
             [(Err message) (Err message)])])
       (tc-expr-with-expected-or-actual-call-arg ctx env arg want))))
 
@@ -35420,22 +35440,30 @@
           [_
             (match (tc-call-arg-expr-type ctx env (tc-global-shared-view arg))
               [(Ok got)
-                (if (tc-call-actual-immutable-reference?
-                  ctx
-                  (tc-global-shared-view got))
-                  (Ok arg)
-                  (match (tc-call-auto-borrow-type
-                    ctx
-                    env
-                    (tc-global-shared-view arg))
-                    [(Ok _) (Ok (tc-call-auto-borrow-expr arg))]
-                    [(Err message)
-                      (if (tc-call-string-temporary-ref-compatible?
-                        ctx
-                        want
-                        got)
-                        (Ok arg)
-                        (Err message))]))]
+                (cond
+                  [(tc-call-actual-immutable-reference?
+                      ctx
+                      (tc-global-shared-view got))
+                    (Ok arg)]
+                  [(tc-call-string-temporary-arg?
+                      ctx
+                      (tc-global-shared-view arg)
+                      (tc-global-shared-view want)
+                      (tc-global-shared-view got))
+                    (Ok arg)]
+                  [else
+                    (match (tc-call-auto-borrow-type
+                      ctx
+                      env
+                      (tc-global-shared-view arg))
+                      [(Ok _) (Ok (tc-call-auto-borrow-expr arg))]
+                      [(Err message)
+                        (if (tc-call-string-temporary-ref-compatible?
+                          ctx
+                          want
+                          got)
+                          (Ok arg)
+                          (Err message))])])]
               [(Err message) (Err message)])]))
       (Ok arg))))
 
@@ -42558,6 +42586,39 @@
         [(Ok _) (tc-begin-list-at ctx env exprs (+ index 1))]
         [(Err message) (Err message)]))))
 
+(define (tc-while-body
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [exprs : (& exprs ast.AstExprList)]) : ResultTcType
+  (when
+    (= exprs.len 0)
+    (return
+      (Err
+        (tc-kind-message
+          (ArityMismatch)
+          "typecheck: while requires at least one body expression"))))
+  (let
+    [index : i64 0]
+    (while (< index exprs.len)
+      (let
+        [expr-id : i64 (ast.ast-expr-list-get exprs index 0)]
+        [ty : ast.AstType (try (tc-expr-id ctx env expr-id))]
+        (match (tc-global-shared-view ty)
+          [(Unit) unit]
+          [(Never) unit]
+          [_
+            (match (tc-expect ty (Unit) "typecheck: while body must be unit")
+              [(Ok) unit]
+              [(Err message)
+                (return
+                  (Err
+                    (tc-locate-error-at-expr
+                      (tc-context-expr-bases ctx)
+                      (tc-context-expr-get ctx expr-id)
+                      message)))])]))
+      (set! index (+ index 1)))
+    (Ok (Unit))))
+
 ;; A body checked against the context's expected type when it has one, and
 ;; synthesized otherwise.
 (define (tc-begin-list-maybe-expected
@@ -44540,8 +44601,7 @@
       (let
         [cond : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases body-box)]
+        [body : ast.AstExpr (Begin body-box)]
         (match (tc-spmd-masked-if-expr
           ctx
           expr-bases
@@ -46531,8 +46591,7 @@
       (let
         [cond : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases body-box)]
+        [body : ast.AstExpr (Begin body-box)]
         (match (tc-spmd-expr
           ctx
           expr-bases
@@ -52891,6 +52950,12 @@
                   [(ast.AstMaybeType.Some hint-ty)
                     (tc-expr-with-expected-or-actual ctx env operand hint-ty)]
                   [(ast.AstMaybeType.No) (tc-expr ctx env operand)]))]
+            ;; the move and borrow checks read the operand's type back
+            [_recorded : unit
+              (tc-body-type-fact-record!
+                (tc-context-body-state ctx)
+                operand-box
+                (tc-global-shared-view operand-ty))]
             (cond
               [(and
                   (tc-type-contains-reference?
@@ -60940,16 +61005,7 @@
             cond-ty
             (Bool)
             "typecheck: while condition must be bool")
-            [(Ok)
-              (match (tc-expr-id ctx (tc-enter-loop-target env) body-box)
-                [(Ok body-ty)
-                  (match (tc-expect
-                    body-ty
-                    (Unit)
-                    "typecheck: while body must be unit")
-                    [(Ok) (Ok (Unit))]
-                    [(Err message) (Err message)])]
-                [(Err message) (Err message)])]
+            [(Ok) (tc-while-body ctx (tc-enter-loop-target env) body-box)]
             [(Err message) (Err message)])]
         [(Err message) (Err message)])]
     [(Foreach fe-box)
@@ -73895,8 +73951,7 @@
       (let
         [cond : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases body-box)]
+        [body : ast.AstExpr (Begin body-box)]
         (match (tc-move-check-expr
           ctx
           expr-bases
@@ -86247,8 +86302,7 @@
       (let
         [cond : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases body-box)]
+        [body : ast.AstExpr (Begin body-box)]
         (match (tc-borrow-check-expr
           ctx
           expr-bases
@@ -87763,10 +87817,7 @@
           ctx
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases cond-box))
-        (tc-borrow-gate-expr-relevant?
-          ctx
-          expr-bases
-          (ast.ast-expr-segment-bases-get expr-bases body-box)))]
+        (tc-borrow-gate-exprs-relevant? ctx expr-bases body-box))]
     [(Begin exprs) (tc-borrow-gate-exprs-relevant? ctx expr-bases exprs)]
     [(Unsafe exprs) (tc-borrow-gate-exprs-relevant? ctx expr-bases exprs)]
     [(Set _ value-box)
@@ -95596,22 +95647,7 @@
                 [(Err diag) (Err diag)])]
             [(Err diag) (Err diag)])])]
     [(While cond-id body-id)
-      (match (macro-child-to-spanned-sexpr
-        owner
-        cond-id
-        span
-        (tc-global-shared-view origin))
-        [(Ok scond)
-          (match (macro-child-to-spanned-sexpr owner body-id span origin)
-            [(Ok sbody)
-              (Ok
-                (macro-form2-id
-                  (cbi.compiler-builtin-ctfe "while")
-                  scond
-                  sbody
-                  span))]
-            [(Err diag) (Err diag)])]
-        [(Err diag) (Err diag)])]
+      (macro-operand-body-form owner "while" cond-id body-id span origin)]
     [(Match match-box)
       (match (__tl-box-place match-box)
         [(Match scrutinee-id arms)
@@ -99065,7 +99101,7 @@
         expr-bases
         cond-box
         shared-path?)
-      (macro-hygiene-produced-note-id!
+      (macro-hygiene-produced-note-expr-list!
         produced
         expr-bases
         body-box
@@ -100446,11 +100482,11 @@
     [(While cond-box body-box)
       (let
         [cond : i64 cond-box]
-        [body : i64 body-box]
-        (ast.ast-expr-while-with-pools
+        (ast.ast-node-pool-context-expr-push
           env.pools
-          (macro-hygiene-expr expr-bases cond env macro-name depth)
-          (macro-hygiene-expr expr-bases body env macro-name depth)))]
+          (While
+            (macro-hygiene-expr expr-bases cond env macro-name depth)
+            (macro-hygiene-expr-list expr-bases body-box env macro-name depth))))]
     [(ForOwnedState payload)
       (let
         [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
@@ -108327,13 +108363,13 @@
         [(Ok ncond)
           ;; As in `tc-expr`: the body is a loop target, so a macro operand
           ;; such as `(when done (break))` checks its `break` / `continue`.
-          (match (macro-expand-node
+          (match (macro-expand-exprs
             ctx
             (tc-enter-loop-target env)
             decls
             depth
             body-box)
-            [(Ok nbody) (Ok (ast.ast-expr-while ncond nbody))]
+            [(Ok nbody) (Ok (ast.ast-node-push (While ncond nbody)))]
             [(Err diag) (Err diag)])]
         [(Err diag) (Err diag)])]
     [(ForOwnedState payload)
@@ -111501,14 +111537,12 @@
           (macro-expr-might-fire? state expr-bases str)
           (macro-expr-might-fire? state expr-bases index)))]
     [(While cond-box body-box)
-      (let
-        [cond : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases cond-box)]
-        [body : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases body-box)]
-        (or
-          (macro-expr-might-fire? state expr-bases cond)
-          (macro-expr-might-fire? state expr-bases body)))]
+      (or
+        (macro-expr-might-fire?
+          state
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases cond-box))
+        (macro-expr-list-might-fire? state expr-bases body-box))]
     [(ForOwnedState payload)
       (let
         [source : ast.AstExpr
@@ -112117,7 +112151,7 @@
     [(While c b)
       (ctfe-reflection-prescan-or
         (ctfe-node-has-type-literal? expr-bases state c)
-        (ctfe-node-has-type-literal? expr-bases state b))]
+        (ctfe-exprs-have-type-literal? expr-bases state b))]
     [(Begin exprs) (ctfe-exprs-have-type-literal? expr-bases state exprs)]
     [(Unsafe exprs) (ctfe-exprs-have-type-literal? expr-bases state exprs)]
     [(Set _ rhs) (ctfe-node-has-type-literal? expr-bases state rhs)]

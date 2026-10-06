@@ -2715,6 +2715,6 @@
     (fmt_buf.fmt-render-buf-string buf)))
 
 (define (format-rules-render-source-width-result [src : String] [width : i64]) : ResultFormatString
-  (match (cst.parse-format-source-result src)
-    [(Ok tree) (Ok (format-rules-render-cst-width tree width))]
-    [(Err err) (Err err)]))
+  (let
+    [tree (try (cst.parse-format-source-result src))]
+    (Ok (format-rules-render-cst-width tree width))))

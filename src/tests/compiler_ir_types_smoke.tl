@@ -1209,6 +1209,34 @@
               [_ false]))]
         [_ false]))))
 
+(define (compiler-ir-smoke-type-variable-render-ok?
+  [pools : ast.AstNodePoolContext]
+  [session : cis.InternStructuralSessionHandle]
+  [name : i64]
+  [expected : String]) : bool
+  (let
+    [plain : ast.AstType (Var name)]
+    [life : i64 (ci.intern "type-variable-life")]
+    [args : ast.AstType
+      (ast.ast-ty-var-args
+        name
+        (ast.ast-lifetime-cons life (ast.ast-lifetime-list-new)))]
+    [nested : ast.AstType
+      (ast.ast-ty-slice-with-pools
+        pools
+        (ast.ast-ty-ptr-with-pools pools (ast.ast-global-shared-view plain)))]
+    [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    (and
+      (string.eq
+        (compiler_ir_types.compiler-ir-type-render session bases plain)
+        expected)
+      (string.eq
+        (compiler_ir_types.compiler-ir-type-render session bases args)
+        (str_cat.str-cat "(" (string.copy (& expected)) " type-variable-life)"))
+      (string.eq
+        (compiler_ir_types.compiler-ir-type-render session bases nested)
+        (str_cat.str-cat "(Slice (Ptr " (string.copy (& expected)) "))")))))
+
 (define (compiler-ir-smoke-structural-lifetime-render-ok?) : bool
   (let
     [pools : ast.AstNodePoolContext
@@ -1233,6 +1261,20 @@
           definition
           7
           source))]
+    [invalid-global : i64
+      (cis.intern-macro-global-identity-raw
+        (cis.intern-structural-session-macro-global-identity
+          session
+          Context
+          module-id
+          (ci.intern-capacity)))]
+    [invalid-local : i64
+      (cis.intern-macro-local-identity-raw
+        (cis.intern-structural-session-macro-local-identity
+          session
+          definition
+          9
+          (ci.intern-capacity)))]
     [borrowed : ast.AstType (ast.ast-ty-ref-with-pools pools lifetime I64)]
     [arithmetic-borrowed : ast.AstType
       (ast.ast-ty-ref-with-pools
@@ -1248,6 +1290,57 @@
       (ast.ast-ty-ref-with-pools pools (ci.intern-capacity) I64)]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases (& pools))]
     (and
+      (compiler-ir-smoke-type-variable-render-ok?
+        pools
+        session
+        invalid-global
+        (str_cat.str-cat "<id:" (string.int->string invalid-global) ">"))
+      (compiler-ir-smoke-type-variable-render-ok?
+        pools
+        session
+        invalid-local
+        (str_cat.str-cat "<id:" (string.int->string invalid-local) ">"))
+      (compiler-ir-smoke-type-variable-render-ok?
+        pools
+        session
+        source
+        "macro-local-life")
+      (compiler-ir-smoke-type-variable-render-ok?
+        pools
+        session
+        lifetime
+        "macro-local-life")
+      (compiler-ir-smoke-type-variable-render-ok?
+        pools
+        session
+        (cis.intern-fresh-local-identity-raw
+          (cis.intern-structural-session-fresh-local-identity session 8 source))
+        "macro-local-life")
+      (compiler-ir-smoke-type-variable-render-ok?
+        pools
+        other-session
+        lifetime
+        (str_cat.str-cat "<id:" (string.int->string lifetime) ">"))
+      (compiler-ir-smoke-type-variable-render-ok?
+        pools
+        session
+        (ci.intern-capacity)
+        (str_cat.str-cat "<id:" (string.int->string (ci.intern-capacity)) ">"))
+      (compiler-ir-smoke-type-variable-render-ok? pools session -1 "<id:-1>")
+      (string.eq
+        (compiler_ir_types.compiler-ir-type-name bases (Var source))
+        "'macro-local-life'")
+      (string.eq
+        (compiler_ir_types.compiler-ir-type-name bases (Var lifetime))
+        (str_cat.str-cat "'<id:" (string.int->string lifetime) ">'"))
+      (string.eq
+        (compiler_ir_types.compiler-ir-type-name bases (Var -1))
+        "'<id:-1>'")
+      (string.eq
+        (compiler_ir_types.compiler-ir-type-name
+          bases
+          (ast.ast-ty-var-args lifetime (ast.ast-lifetime-list-new)))
+        (str_cat.str-cat "(<id:" (string.int->string lifetime) "> )"))
       (string.eq
         (compiler_ir_types.compiler-ir-type-render
           session

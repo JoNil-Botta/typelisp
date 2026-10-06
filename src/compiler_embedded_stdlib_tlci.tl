@@ -400,26 +400,23 @@
       [bytes : (__tl_dyn-array u8) (compiler-embedded-stdlib-tlci-copy)]
       [host : tlci.TlciHostCallbackTable
         (compiler-embedded-stdlib-tlci-host-table)]
-      (match (loader.tlci-loader-load-from-bytes-with-host
-        (arena.tl_arena_current)
-        bytes
-        host)
-        [(Err message) (Err message)]
-        [(Ok loaded)
-          (let
-            [count : i64 loaded.macro-entry-count]
-            [has-native-sentinel : bool
-              (match (loader.tlci-loader-find-macro-entry
-                (& loaded)
-                "stdlib.core_macros/__tl-box-place")
-                [(Ok _) true]
-                [(Err _) false])]
-            (match (loader.tlci-loader-release loaded)
-              [(Err message) (Err message)]
-              [(Ok)
-                (if (and (> count 0) has-native-sentinel)
-                  (Ok count)
-                  (Err "embedded stdlib tlci is missing its macro catalog"))]))]))))
+      [loaded
+        (try
+          (loader.tlci-loader-load-from-bytes-with-host
+            (arena.tl_arena_current)
+            bytes
+            host))]
+      [count : i64 loaded.macro-entry-count]
+      [has-native-sentinel : bool
+        (match (loader.tlci-loader-find-macro-entry
+          (& loaded)
+          "stdlib.core_macros/__tl-box-place")
+          [(Ok _) true]
+          [(Err _) false])]
+      [_ (try (loader.tlci-loader-release loaded))]
+      (if (and (> count 0) has-native-sentinel)
+        (Ok count)
+        (Err "embedded stdlib tlci is missing its macro catalog")))))
 
 ;; --- compiler-owned native-comptime host session (refs #5212) -----------------
 ;;
@@ -4884,28 +4881,46 @@
                   2)]
               [(None) tlci.tlci-host-callback-status-bad-request])))))))
 
-;; expr-while: pop the body then the condition expression and push the
-;; while node the parser produces.
+;; Quasiquote (`arg-a = 1`) retains a list of direct body forms. The public
+;; Expr builder (`arg-a = 0`) retains its one body expression, including an
+;; explicit Begin, so interpreted and native construction agree.
 (define (compiler-comptime-host-callback-expr-while
   [session : i64]
-  [_arg-a : i64]
+  [arg-a : i64]
   [_arg-b : i64]
   [_arg-c : i64]) : i64
   (compiler-comptime-host-status-callback
     session
-    (if (< compiler-comptime-host-stack-len 2)
+    (if (or
+      (< compiler-comptime-host-stack-len 2)
+      (and (not (= arg-a 0)) (not (= arg-a 1))))
       tlci.tlci-host-callback-status-bad-request
       (let
-        [body-node : i64 (compiler-comptime-host-stack-node 1)]
         [cond-node : i64 (compiler-comptime-host-stack-node 2)]
-        (if (or (< body-node 0) (< cond-node 0))
+        (if (< cond-node 0)
           tlci.tlci-host-callback-status-bad-request
-          (compiler-comptime-host-replace-expr!
-            2
-            (ast.ast-expr-while-with-pools
-              (compiler-comptime-host-session-pools)
-              cond-node
-              body-node)))))))
+          (if (= arg-a 1)
+            (let
+              [body-value : ctfe_support.CompilerCtfeValue
+                (compiler-comptime-host-stack-value 1)]
+              (match (compiler-comptime-host-value-expr-list body-value)
+                [(Some body)
+                  (compiler-comptime-host-replace-expr!
+                    2
+                    (ast.ast-node-pool-context-expr-push
+                      (compiler-comptime-host-session-pools)
+                      (ast.AstExpr.While cond-node body)))]
+                [(None) tlci.tlci-host-callback-status-bad-request]))
+            (let
+              [body-node : i64 (compiler-comptime-host-stack-node 1)]
+              (if (< body-node 0)
+                tlci.tlci-host-callback-status-bad-request
+                (compiler-comptime-host-replace-expr!
+                  2
+                  (ast.ast-expr-while-with-pools
+                    (compiler-comptime-host-session-pools)
+                    cond-node
+                    body-node))))))))))
 
 ;; let-binding-typed: pop the type value/syntax then the init expression and
 ;; push a binding for the name in `a`/`b` (template-source marked) with

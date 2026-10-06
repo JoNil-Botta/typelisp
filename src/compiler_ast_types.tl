@@ -968,7 +968,9 @@
   (ArrayTake i64 i64 i64)
   (ArrayPush i64 i64)
   (StringRef i64 i64)
-  (While i64 i64)
+  ;; Direct body forms remain distinct from an explicit `Begin`: every form
+  ;; must be unit-valued, whereas `Begin` discards its non-final values.
+  (While i64 AstExprList)
   (Begin AstExprList)
   ;; `(unsafe expr+)`: a `begin`-like block that additionally marks an
   ;; unsafe context (same runtime/type behavior as `begin`; the
@@ -3076,7 +3078,33 @@
     [dedup-cap : i64 (array-length dedup-slots)]
     [dedup-count : i64 pool.dedup-count]
     (if (>= (* dedup-count 2) dedup-cap)
-      (ast-type-node-pool-state-push-raw pool node)
+      (if (>= dedup-cap ty-node-dedup-max-capacity)
+        (ast-type-node-pool-state-push-raw pool node)
+        (in-arena
+          (arena.Arena pool.base-arena)
+          (let
+            [slots-bits : u64
+              (ast-type-dedup-grow-slots
+                pool.segment-bases
+                (& dedup-slots)
+                pool.base-arena)]
+            [grown-slots : (__tl_dyn-array i64)
+              (unsafe
+                (ptr-read
+                  (ptr-cast
+                    (ptr-addr-of slots-bits)
+                    : (Ptr (__tl_dyn-array i64)))))]
+            [grown : AstTypeNodePoolState
+              (AstTypeNodePoolState
+                pool.segment-bases
+                pool.count
+                pool.base-arena
+                pool.exhausted
+                grown-slots
+                pool.dedup-count
+                pool.storage-arena
+                pool.segment-count)]
+            (ast-type-node-pool-state-push (ast-global-shared-view grown) node))))
       (let
         [mask : i64 (- dedup-cap 1)]
         [idx : i64
@@ -3306,41 +3334,56 @@
 ;; equality probe when it was inserted, so the entries are pairwise distinct and
 ;; the first free slot on the new probe path is the right one. Growth is decided
 ;; purely by count against capacity, so it fires at the same push on every run.
+;; Rehash immutable prefix ids into a replacement index owned by the pool.
+;; Return descriptor bits so an aggregate return cannot move its descriptor
+;; into a transient caller arena. Both append APIs share this insertion order.
+(define (ast-type-dedup-grow-slots
+  [type-bases : i64]
+  [old-slots : (& old-slots (__tl_dyn-array i64))]
+  [base-arena : i64]) : u64
+  (in-arena
+    (arena.Arena base-arena)
+    (let
+      [old-capacity : i64 (array-length old-slots)]
+      [new-capacity : i64 (* old-capacity 2)]
+      [new-slots : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
+      [mask : i64 (- new-capacity 1)]
+      [i : i64 0]
+      (while (< i old-capacity)
+        (let
+          [slot : i64 (array-ref old-slots i)]
+          (if (= slot 0)
+            unit
+            (let
+              [idx : i64
+                (ty-node-dedup-slot-index
+                  (ty-node-hash-value
+                    (ast-type-segment-bases-get type-bases (- slot 1)))
+                  mask)]
+              (while (not (= (array-ref new-slots idx) 0))
+                (set! idx (bit-and (+ idx 1) mask)))
+              (set! (array-ref new-slots idx) slot)))
+          (set! i (+ i 1))))
+      (ast-pool-cell-descriptor new-slots))))
+
 (define (ty-node-dedup-grow!) : unit
   (let
-    [old-capacity : i64 (array-length ty-node-dedup-slots)]
-    [new-capacity : i64 (* old-capacity 2)]
-    [base-arena : i64 node-pool-base-arena]
-    [new-slots : (__tl_dyn-array i64)
-      (in-arena (arena.Arena base-arena) (__tl_make-array i64 new-capacity))]
-    [mask : i64 (- new-capacity 1)]
-    [i : i64 0]
-    (while (< i old-capacity)
-      (let
-        [slot : i64 (array-ref ty-node-dedup-slots i)]
-        (if (= slot 0)
-          unit
-          (let
-            [idx : i64
-              (ty-node-dedup-slot-index
-                (ty-node-hash-value (ty-node-get (- slot 1)))
-                mask)]
-            (while (not (= (array-ref new-slots idx) 0))
-              (set! idx (bit-and (+ idx 1) mask)))
-            (set! (array-ref new-slots idx) slot)))
-        (set! i (+ i 1))))
-    (set! ty-node-dedup-slots new-slots)
-    ;; The probe keeps only this raw backing address. The replacement table
-    ;; lives in the pool's stable base arena and never grows in place; publish
-    ;; its new address before any following probe can run.
+    [new-capacity : i64 (* (array-length ty-node-dedup-slots) 2)]
+    [slots-bits : u64
+      (ast-type-dedup-grow-slots
+        ty-node-pool-segment-bases
+        (& ty-node-dedup-slots)
+        node-pool-base-arena)]
+    (unsafe
+      (ptr-write!
+        (ptr-cast (ptr-addr-of ty-node-dedup-slots) : (MutPtr u64))
+        slots-bits))
     (set!
       ty-node-dedup-slots-data-address
       (unsafe
         (ptr->int (__tl_array-data ty-node-dedup-slots))))
     (set! ty-node-dedup-capacity new-capacity)
-    ;; The pool state carries the slots array by reference, so the context
-    ;; cell has to learn about the replacement here: the push that follows may
-    ;; resolve to an existing id and never reach `ty-node-push-raw`'s capture.
+    ;; A grow can be followed by a hit, which never captures a raw append.
     (ast-node-pool-active-context-capture-type!)))
 
 ;; Probe the dedup table for `node`, appending it only on a miss. Split out of
@@ -6234,7 +6277,7 @@
   (ast-node-push (Replace place replacement)))
 
 (define (ast-expr-while [cond : i64] [body : i64]) : i64
-  (ast-node-push (While cond body)))
+  (ast-node-push (While cond (ast-expr-cons body (ast-expr-list-new)))))
 
 (define (ast-for-owned-state-payload
   [source-name : i64]
@@ -6564,7 +6607,8 @@
       [(AstExpr.ArrayTake a b d) (ast-fold-3 ,c ,s ,e a b d ,@x)]
       [(AstExpr.ArrayPush a b) (ast-fold-2 ,c ,s ,e a b ,@x)]
       [(AstExpr.StringRef a b) (ast-fold-2 ,c ,s ,e a b ,@x)]
-      [(AstExpr.While a b) (ast-fold-2 ,c ,s ,e a b ,@x)]
+      [(AstExpr.While a items)
+        (ast-expr-list-fold items ,c (ast-fold-1 ,c ,s ,e a ,@x) ,e ,@x)]
       [(AstExpr.Begin items) (ast-expr-list-fold items ,c ,s ,e ,@x)]
       [(AstExpr.Unsafe items) (ast-expr-list-fold items ,c ,s ,e ,@x)]
       [(AstExpr.Set _ a) (ast-fold-1 ,c ,s ,e a ,@x)]
@@ -6926,7 +6970,8 @@
         (AstExpr.ArrayTake (,e ,@x a) (,e ,@x b) (,e ,@x d))]
       [(AstExpr.ArrayPush a b) (AstExpr.ArrayPush (,e ,@x a) (,e ,@x b))]
       [(AstExpr.StringRef a b) (AstExpr.StringRef (,e ,@x a) (,e ,@x b))]
-      [(AstExpr.While a b) (AstExpr.While (,e ,@x a) (,e ,@x b))]
+      [(AstExpr.While a items)
+        (AstExpr.While (,e ,@x a) (ast-expr-list-map items ,e ,@x))]
       [(AstExpr.Begin items) (AstExpr.Begin (ast-expr-list-map items ,e ,@x))]
       [(AstExpr.Unsafe items) (AstExpr.Unsafe (ast-expr-list-map items ,e ,@x))]
       [(AstExpr.Set name a) (AstExpr.Set name (,e ,@x a))]
@@ -7474,9 +7519,10 @@
         (match ,r
           [(AstExpr.StringRef b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
           [_ false])]
-      [(AstExpr.While a0 a1)
+      [(AstExpr.While a0 as)
         (match ,r
-          [(AstExpr.While b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [(AstExpr.While b0 bs)
+            (and (,e ,@x a0 b0) (ast-expr-list-eq? as bs ,e ,@x))]
           [_ false])]
       [(AstExpr.Begin as)
         (match ,r
@@ -8594,7 +8640,9 @@
   [pools : AstNodePoolContext]
   [cond : i64]
   [body : i64]) : i64
-  (ast-node-pool-context-expr-push-borrowed (& pools) (While cond body)))
+  (ast-node-pool-context-expr-push-borrowed
+    (& pools)
+    (While cond (ast-expr-cons body (ast-expr-list-new)))))
 
 (define (ast-expr-for-owned-state-with-pools
   [pools : AstNodePoolContext]

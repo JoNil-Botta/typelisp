@@ -950,13 +950,12 @@
         (let
           [name : ci.InternSyntaxId (prefix-symbol t)]
           (advance cur)
-          (match (form-spanned-result toks cur)
-            [(Ok form)
-              (form-spanned-suffix-result
-                toks
-                cur
-                (prefix-spanned-form name span form))]
-            [(Err err) (Err err)]))]
+          (let
+            [form (try (form-spanned-result toks cur))]
+            (form-spanned-suffix-result
+              toks
+              cur
+              (prefix-spanned-form name span form))))]
       [(= t (token.tag-rparen))
         (Err (token.SourceError "reader: unexpected ')'" span))]
       [(= t (token.tag-rbracket))
@@ -1051,9 +1050,9 @@
         (if (projection-suffix-symbol? text)
           (begin
             (advance cur)
-            (match (spanned-projection-suffix-at base text span 1)
-              [(Ok projected) (form-spanned-suffix-result toks cur projected)]
-              [(Err err) (Err err)]))
+            (let
+              [projected (try (spanned-projection-suffix-at base text span 1))]
+              (form-spanned-suffix-result toks cur projected)))
           (Ok base)))
       (Ok base))))
 
@@ -1061,9 +1060,9 @@
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
   [cur : (&mut cur (__tl_dyn-array i64))]
   [result : ResultSpannedSexpr]) : ResultSpannedSexpr
-  (match result
-    [(Ok form) (form-spanned-suffix-result toks cur form)]
-    [(Err err) (Err err)]))
+  (let
+    [form (try result)]
+    (form-spanned-suffix-result toks cur form)))
 
 (define (list-spanned-items-result
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
@@ -1089,15 +1088,14 @@
         (Err
           (token.SourceError (mismatched-close-message close-tag t span) span))]
       [else
-        (match (form-spanned-result toks cur)
-          [(Ok head)
-            (list-spanned-items-result
-              toks
-              cur
-              open-span
-              close-tag
-              (spanned-sexpr-builder-push builder head))]
-          [(Err err) (Err err)])])))
+        (let
+          [head (try (form-spanned-result toks cur))]
+          (list-spanned-items-result
+            toks
+            cur
+            open-span
+            close-tag
+            (spanned-sexpr-builder-push builder head)))])))
 
 (define (list-spanned-result
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]

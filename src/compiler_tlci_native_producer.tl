@@ -1797,7 +1797,11 @@
           -1
           (let
             [body-opened : i64
-              (embedded-native-template-ops params body-node ops ops-count)]
+              (embedded-native-template-args-ops
+                params
+                (& body-node)
+                ops
+                ops-count)]
             (if (< body-opened 0)
               -1
               (begin
@@ -1805,7 +1809,7 @@
                   ops
                   ops-count
                   (tlci_core.tlci-host-callback-name expr-while)
-                  "0"
+                  "1"
                   "0"
                   "0")
                 (+ cond-opened body-opened 1))))))]
@@ -6120,7 +6124,7 @@
         [condition : EmbeddedNativeDataValue
           (embedded-native-data-value params cond-node)]
         [body-code : String
-          (embedded-native-computed-statement-code params body-node)]
+          (embedded-native-computed-statement-list-code params (& body-node) 0)]
         (if (string.eq condition.text "")
           (embedded-native-fallback-code "statement-while:condition")
           (if (string.eq body-code "")
@@ -6216,6 +6220,8 @@
           (embedded-native-expr-kind-name
             (embedded-stdlib-tlci-unwrap-expr node))))]))
 
+;; Each statement returns a host status. The final status is already the
+;; sequence result, including any callback failure.
 (define (embedded-native-computed-statement-list-code
   [params : (& params compiler_ast_types.AstMacroParamList)]
   [exprs : (& exprs compiler_ast_types.AstExprList)]
@@ -6236,15 +6242,17 @@
             (embedded-native-expr-kind-name
               (embedded-stdlib-tlci-unwrap-expr
                 (compiler_ast_types.ast-expr-list-get exprs index 0)))))
-        (let
-          [rest : String
-            (embedded-native-computed-statement-list-code
-              params
-              exprs
-              (+ index 1))]
-          (if (string.eq rest "")
-            ""
-            (embedded-native-status-sequence-code head rest)))))))
+        (if (= (+ index 1) (compiler_ast_types.ast-expr-list-len exprs))
+          head
+          (let
+            [rest : String
+              (embedded-native-computed-statement-list-code
+                params
+                exprs
+                (+ index 1))]
+            (if (string.eq rest "")
+              ""
+              (embedded-native-status-sequence-code head rest))))))))
 
 (define (embedded-native-let-statement-code
   [params : (& params compiler_ast_types.AstMacroParamList)]
@@ -8494,33 +8502,33 @@
                 "object emission failed: "
                 (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]
           [(Ok image)
-            (match (compiler_tlci_native_image.compiler-tlci-native-layout-image
-              (owned_view.compiler-owned-shared-view image))
-              [(Err message) (Err message)]
-              [(Ok layout)
+            (let
+              [layout
+                (try
+                  (compiler_tlci_native_image.compiler-tlci-native-layout-image
+                    (owned_view.compiler-owned-shared-view image)))]
+              [entry-offsets : (__tl_dyn-array i64)
+                (embedded-native-entry-offsets image (array-length names))]
+              (if (not (= (array-length entry-offsets) (array-length names)))
+                (Err "entry count does not match catalog")
                 (let
-                  [entry-offsets : (__tl_dyn-array i64)
-                    (embedded-native-entry-offsets image (array-length names))]
-                  (if (not
-                    (= (array-length entry-offsets) (array-length names)))
-                    (Err "entry count does not match catalog")
-                    (match (compiler_tlci_native_image.compiler-tlci-native-emit-imports
-                      (& layout))
-                      [(Err message) (Err message)]
-                      [(Ok imports)
-                        (match (compiler_tlci_native_image.compiler-tlci-native-package
-                          metadata-text
-                          build-hash
-                          (if windows-target
-                            tlci_core.tlci-host-platform-x86-64-windows
-                            tlci_core.tlci-host-platform-x86-64-linux)
-                          rodata
-                          layout.bytes
-                          imports
-                          layout.fixup-offsets
-                          layout.fixup-count
-                          (owned_view.compiler-owned-shared-view names)
-                          entry-offsets
-                          (array-length names))
-                          [(Err message) (Err message)]
-                          [(Ok bytes) (Ok bytes)])])))])])])))
+                  [imports
+                    (try
+                      (compiler_tlci_native_image.compiler-tlci-native-emit-imports
+                        (& layout)))]
+                  (Ok
+                    (try
+                      (compiler_tlci_native_image.compiler-tlci-native-package
+                        metadata-text
+                        build-hash
+                        (if windows-target
+                          tlci_core.tlci-host-platform-x86-64-windows
+                          tlci_core.tlci-host-platform-x86-64-linux)
+                        rodata
+                        layout.bytes
+                        imports
+                        layout.fixup-offsets
+                        layout.fixup-count
+                        (owned_view.compiler-owned-shared-view names)
+                        entry-offsets
+                        (array-length names)))))))])])))

@@ -2688,12 +2688,35 @@
 
 (define (compiler-parse-implicit-body-tail-ok?) : bool
   (and
+    (compiler-parse-while-body-list-ok?)
     (compiler-parse-ok? "(define (main) : i64 (let [x : i64 1] x (+ x 1)))")
     (compiler-parse-ok? "(define (main) : i64 (let [] 1 2))")
     (compiler-parse-ok?
       "(define (main) : i64 (begin (while false unit unit) 0))")
     (compiler-parse-ok? "(define (main) : i64 unit 42)")
     (compiler-parse-ok? "(define (main) : i64 ((lambda () : i64 unit 42)))")))
+
+(define (compiler-parse-while-body-list-ok?) : bool
+  (and
+    (match (parser.parse-ast-source
+      "(define (main) : unit (while false unit (begin 1 unit) unit))")
+      [(Ok (Program decls-box))
+        (match (ast.ast-decl-list-step (deref decls-box))
+          [(Cons (DefFn _ _ _ _ body _) _)
+            (match (ast.ast-expr-unspan (ast.ast-node-get body))
+              [(While _ forms)
+                (and
+                  (= forms.len 3)
+                  (match (ast.ast-expr-unspan
+                    (ast.ast-node-get (ast.ast-expr-list-get (& forms) 1 0)))
+                    [(Begin explicit-forms) (= explicit-forms.len 2)]
+                    [_ false]))]
+              [_ false])]
+          [_ false])]
+      [(Err _) false])
+    (compiler-parse-error-ok?
+      "(define (main) : unit (while false (cfg missing-feature unit)))"
+      "parse: malformed while")))
 
 (define (compiler-parse-spmd-tests-ok?) : bool
   (and

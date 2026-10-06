@@ -296,9 +296,7 @@
         tlci.tlci-aux-kind-frontend-facts
         surface_facts.surface-typecheck-facts-schema-version
         fact-bytes))
-    (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-      [(Err message) (Err message)]
-      [(Ok rodata) (Ok rodata)])))
+    (Ok (try (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)))))
 
 (define (prelude-surface-encode-payloads
   [structural-session : cis.InternStructuralSessionHandle]
@@ -311,28 +309,28 @@
   [pools : ast.AstNodePoolContext]
   [source-count : i64]
   [identity-count : i64]) : ResultPreludeSurface
-  (match (surface_identity.surface-identity-encode identity-payload)
-    [(Err message) (Err message)]
-    [(Ok identity-bytes)
-      (match (surface_ast.surface-ast-encode
-        structural-session
-        decls
-        paths
-        modules
-        seen
-        pools
-        source-count
-        identity-count)
-        [(Err message) (Err message)]
-        [(Ok ast-bytes)
-          (match (surface_facts.surface-typecheck-facts-encode
-            facts
-            structural-session
-            source-count
-            identity-count)
-            [(Err message) (Err message)]
-            [(Ok fact-bytes)
-              (prelude-surface-pack identity-bytes ast-bytes fact-bytes)])])]))
+  (let
+    [identity-bytes
+      (try (surface_identity.surface-identity-encode identity-payload))]
+    [ast-bytes
+      (try
+        (surface_ast.surface-ast-encode
+          structural-session
+          decls
+          paths
+          modules
+          seen
+          pools
+          source-count
+          identity-count))]
+    [fact-bytes
+      (try
+        (surface_facts.surface-typecheck-facts-encode
+          facts
+          structural-session
+          source-count
+          identity-count))]
+    (prelude-surface-pack identity-bytes ast-bytes fact-bytes)))
 
 (define (prelude-surface-build
   [root : String]

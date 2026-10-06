@@ -666,8 +666,47 @@
 
 (cfg
   compiler-surface-selftest
+  (define (surface-ast-while-body-roundtrip-ok?) : bool
+    (let
+      [intern-state : ci.InternCompatState
+        (ci.intern-compat-state-capture-active)]
+      [session : cis.InternStructuralSessionHandle
+        (cis.intern-structural-session-handle-from-source-names
+          (ci.intern-source-name-session-handle-from-state intern-state))]
+      [context : codec.SurfaceAstWriteContext
+        (codec.surface-ast-write-context-new session 0 0)]
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+      [body : ast.AstExprList
+        (ast.ast-expr-cons 4 (ast.ast-expr-cons 5 (ast.ast-expr-list-new)))]
+      (expr_codec.surface-ast-write-expr!
+        (&mut out)
+        (&mut context)
+        (ast.AstExpr.While 3 body))
+      (let
+        [bytes : (__tl_dyn-array u8)
+          (byte_buf_core.byte-buf-builder-finish-array (& out))]
+        [byte-count : i64 (array-length bytes)]
+        [reader : codec.SurfaceAstReader
+          (codec.surface-ast-reader-new bytes session (__tl_make-array i64 0))]
+        [decoded : ast.AstExpr
+          (expr_codec.surface-ast-read-expr! (&mut reader))]
+        (and
+          (codec.surface-ast-reader-valid? (& reader))
+          (= (codec.surface-ast-reader-offset (& reader)) byte-count)
+          (match decoded
+            [(While condition forms)
+              (and
+                (= condition 3)
+                (= forms.len 2)
+                (= (ast.ast-expr-list-get (& forms) 0 -1) 4)
+                (= (ast.ast-expr-list-get (& forms) 1 -1) 5))]
+            [_ false]))))))
+
+(cfg
+  compiler-surface-selftest
   (define (surface-ast-decl-meta-tests-ok?) : bool
     (and
+      (surface-ast-while-body-roundtrip-ok?)
       (surface-ast-decl-meta-roundtrip-ok?
         (ast.ast-decl-meta-runtime-shared-view)
         false
@@ -722,33 +761,34 @@
     [source-pools : ast.AstNodePoolContext]
     [source-count : i64]
     [identity-count : i64]) : surface_ast.ResultSurfaceAstBytes
-    (match (surface_ast.surface-ast-encode
-      structural-session
-      (owned_view.compiler-owned-shared-view decls)
-      (owned_view.compiler-owned-shared-view paths)
-      modules
-      seen
-      source-pools
-      source-count
-      identity-count)
-      [(Err message) (Err message)]
-      [(Ok first)
-        (match (surface_ast.surface-ast-encode
-          structural-session
-          decls
-          paths
-          modules
-          seen
-          source-pools
-          source-count
-          identity-count)
-          [(Err message) (Err message)]
-          [(Ok second)
-            (if (surface-ast-byte-array-eq?
-              (owned_view.compiler-owned-shared-view first)
-              second)
-              (Ok first)
-              (Err "surface ast: repeated encoding mismatch"))])])))
+    (let
+      [first
+        (try
+          (surface_ast.surface-ast-encode
+            structural-session
+            (owned_view.compiler-owned-shared-view decls)
+            (owned_view.compiler-owned-shared-view paths)
+            modules
+            seen
+            source-pools
+            source-count
+            identity-count))]
+      [second
+        (try
+          (surface_ast.surface-ast-encode
+            structural-session
+            decls
+            paths
+            modules
+            seen
+            source-pools
+            source-count
+            identity-count))]
+      (if (surface-ast-byte-array-eq?
+        (owned_view.compiler-owned-shared-view first)
+        second)
+        (Ok first)
+        (Err "surface ast: repeated encoding mismatch")))))
 
 (cfg
   compiler-surface-selftest
@@ -1809,10 +1849,11 @@
           (__tl_make-array decl-id)
           (__tl_make-array root-id)
           (__tl_make-array 0))]
-      (match (surface_identity.surface-identity-encode identity-payload)
-        [(Err message) (Err message)]
-        [(Ok identity-bytes)
-          (match (surface_ast.surface-ast-encode
+      [identity-bytes
+        (try (surface_identity.surface-identity-encode identity-payload))]
+      [ast-bytes
+        (try
+          (surface_ast.surface-ast-encode
             structural-session
             decls
             paths
@@ -1820,30 +1861,28 @@
             (sym_i64_env.sym-i64-empty)
             source-pools
             2
-            2)
-            [(Err message) (Err message)]
-            [(Ok ast-bytes)
-              (match (surface_facts.surface-typecheck-facts-encode
-                first
-                structural-session
-                2
-                2)
-                [(Err message) (Err message)]
-                [(Ok fact-one-bytes)
-                  (match (surface_facts.surface-typecheck-facts-encode
-                    second
-                    structural-session
-                    2
-                    2)
-                    [(Err message) (Err message)]
-                    [(Ok fact-two-bytes)
-                      (Ok
-                        (CompilerSurfaceHydrateTestPayloads
-                          identity-bytes
-                          ast-bytes
-                          fact-one-bytes
-                          fact-two-bytes
-                          key))])])])]))))
+            2))]
+      [fact-one-bytes
+        (try
+          (surface_facts.surface-typecheck-facts-encode
+            first
+            structural-session
+            2
+            2))]
+      [fact-two-bytes
+        (try
+          (surface_facts.surface-typecheck-facts-encode
+            second
+            structural-session
+            2
+            2))]
+      (Ok
+        (CompilerSurfaceHydrateTestPayloads
+          identity-bytes
+          ast-bytes
+          fact-one-bytes
+          fact-two-bytes
+          key)))))
 
 (cfg
   compiler-surface-selftest

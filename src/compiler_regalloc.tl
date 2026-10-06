@@ -6984,11 +6984,13 @@
   (let
     [index : i64 0]
     (while (< index (compiler-reg-interval-seq-count candidates))
-      (compiler-reg-assignment-table-unassign
-        assignments
-        (__tl-project-field
-          (compiler-reg-interval-seq-ref candidates index)
-          var))
+      (begin
+        (compiler-reg-assignment-table-unassign
+          assignments
+          (__tl-project-field
+            (compiler-reg-interval-seq-ref candidates index)
+            var))
+        unit)
       (set! index (+ index 1)))))
 
 (define (compiler-reg-active-before?

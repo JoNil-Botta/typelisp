@@ -698,15 +698,17 @@
       (let
         [rule-index : i64 0]
         (while (< rule-index rule-count)
-          (lint-policy-group-contains-rule?
-            rules
-            groups
-            index-map
-            valid
-            (&mut membership)
-            (&mut states)
-            group-index
-            rule-index)
+          (begin
+            (lint-policy-group-contains-rule?
+              rules
+              groups
+              index-map
+              valid
+              (&mut membership)
+              (&mut states)
+              group-index
+              rule-index)
+            unit)
           (set! rule-index (+ rule-index 1)))
         (set! group-index (+ group-index 1))))
     membership))

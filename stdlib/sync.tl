@@ -155,14 +155,13 @@
               [channel : Channel]
               [dst : (&mut dst (__tl_dyn-array i64))]
               [offset : i64]) : unit
-              (begin
-                (set! (array-ref dst offset) channel.slots-addr)
-                (set! (array-ref dst (+ offset 1)) channel.state-addr)
-                (set! (array-ref dst (+ offset 2)) channel.capacity)
-                (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
-                (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
-                (set! (array-ref dst (+ offset 5)) channel.items-handle)
-                (set! (array-ref dst (+ offset 6)) channel.spaces-handle))))
+              (set! (array-ref dst offset) channel.slots-addr)
+              (set! (array-ref dst (+ offset 1)) channel.state-addr)
+              (set! (array-ref dst (+ offset 2)) channel.capacity)
+              (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
+              (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
+              (set! (array-ref dst (+ offset 5)) channel.items-handle)
+              (set! (array-ref dst (+ offset 6)) channel.spaces-handle)))
           (unsafe
             (define (load-raw
               [src : (& src (__tl_dyn-array i64))]
@@ -231,9 +230,8 @@
               (sync.i64-mutex-register initial))
               [(registry.ConcurrencyShareErr) fallback]
               [(registry.ConcurrencyShared authority)
-                (begin
-                  (release fallback)
-                  (Mutex authority))]))
+                (release fallback)
+                (Mutex authority)]))
           (define (create-initial-ok? [initial : i64]) : bool
             (match (create initial)
               [(CreateErr _) false]
@@ -271,11 +269,10 @@
                   registry.concurrency-family-mutex-i64))
                 [(registry.ConcurrencyTokenErr) false]
                 [(registry.ConcurrencyToken token)
-                  (begin
-                    (set!
-                      (array-ref dst offset)
-                      (registry.concurrency-token-address (& token)))
-                    true)])))
+                  (set!
+                    (array-ref dst offset)
+                    (registry.concurrency-token-address (& token)))
+                  true])))
           (unsafe
             (define (load-raw
               [src : (& src (__tl_dyn-array i64))]
@@ -788,13 +785,12 @@
                         [_closed : bool (i64-mutex-close (& authority))]
                         (ConcurrencyShareErr))]
                     [(ConcurrencyToken grant)
-                      (begin
-                        (unsafe
-                          (write-i64!
-                            cell
-                            i64-mutex-cell-grant-slot
-                            (registry.concurrency-token-address (& grant))))
-                        (ConcurrencyShared authority))])]))))))))
+                      (unsafe
+                        (write-i64!
+                          cell
+                          i64-mutex-cell-grant-slot
+                          (registry.concurrency-token-address (& grant))))
+                      (ConcurrencyShared authority)])]))))))))
 
 ;: Lock the mutex `authority` names and return its grant for the guard. The
 ;: lease taken first lasts through the wait and the guard's lifetime, so close
@@ -827,14 +823,10 @@
             [grant : i64
               (unsafe
                 (read-i64 lease.field0 i64-mutex-cell-grant-slot))]
-            (begin
-              (unsafe
-                (atomic-i64-store!
-                  lease.field0
-                  i64-mutex-cell-holder-slot
-                  grant))
-              (unsafe
-                (i64-mutex-token-at grant)))))))))
+            (unsafe
+              (atomic-i64-store! lease.field0 i64-mutex-cell-holder-slot grant))
+            (unsafe
+              (i64-mutex-token-at grant))))))))
 
 ;: While the caller holds the registry lock, the cell of the mutex whose
 ;: current holder is the grant identity (`token`, `address`), or 0. Close
@@ -876,38 +868,36 @@
     [token : i64
       (unsafe
         (read-i64 address 0))]
-    (begin
-      (unsafe
-        (registry.concurrency-lock!))
-      (let
-        [cell : i64
+    (unsafe
+      (registry.concurrency-lock!))
+    (let
+      [cell : i64
+        (unsafe
+          (i64-mutex-holder-cell-locked token address))]
+      (if (= cell 0)
+        (begin
           (unsafe
-            (i64-mutex-holder-cell-locked token address))]
-        (if (= cell 0)
-          (begin
-            (unsafe
-              (registry.concurrency-unlock!))
-            (abort 134))
-          (let
-            [value : i64
-              (cond
-                [(= mode 1) operand]
-                [(= mode 2)
-                  (+
-                    (unsafe
-                      (read-i64 cell i64-mutex-cell-value-slot))
-                    operand)]
-                [else
+            (registry.concurrency-unlock!))
+          (abort 134))
+        (let
+          [value : i64
+            (cond
+              [(= mode 1) operand]
+              [(= mode 2)
+                (+
                   (unsafe
-                    (read-i64 cell i64-mutex-cell-value-slot))])]
-            (begin
-              (if (= mode 0)
-                unit
+                    (read-i64 cell i64-mutex-cell-value-slot))
+                  operand)]
+              [else
                 (unsafe
-                  (write-i64! cell i64-mutex-cell-value-slot value)))
-              (unsafe
-                (registry.concurrency-unlock!))
-              value)))))))
+                  (read-i64 cell i64-mutex-cell-value-slot))])]
+          (if (= mode 0)
+            unit
+            (unsafe
+              (write-i64! cell i64-mutex-cell-value-slot value)))
+          (unsafe
+            (registry.concurrency-unlock!))
+          value)))))
 
 ;: Guard cleanup: when `grant` is the current holder, clear the holder under
 ;: the registry lock, then post the semaphore and release the lease `lock`
@@ -918,71 +908,69 @@
   (let
     [identity : registry.ConcurrencyBoxIdentity
       (registry.concurrency-owned-box-identity grant)]
-    (begin
+    (unsafe
+      (registry.concurrency-lock!))
+    (let
+      [slot : i64
+        (unsafe
+          (registry.concurrency-locked-resource
+            identity.token
+            identity.address
+            registry.concurrency-family-mutex-i64
+            i64-mutex-registry-field-count))]
+      [cell : i64
+        (if (< slot 0)
+          0
+          (let
+            [candidate : i64
+              (unsafe
+                (registry.concurrency-locked-field slot 0))]
+            (if (=
+              (unsafe
+                (atomic-i64-load candidate i64-mutex-cell-holder-slot))
+              identity.address)
+              candidate
+              0)))]
+      [handle : i64
+        (if (= cell 0)
+          0
+          (unsafe
+            (registry.concurrency-locked-field slot 1)))]
+      [generation : i64
+        (if (= cell 0)
+          0
+          (unsafe
+            (registry.concurrency-locked-generation slot)))]
+      (if (= cell 0)
+        unit
+        (unsafe
+          (atomic-i64-store! cell i64-mutex-cell-holder-slot 0)))
       (unsafe
-        (registry.concurrency-lock!))
-      (let
-        [slot : i64
-          (unsafe
-            (registry.concurrency-locked-resource
-              identity.token
-              identity.address
-              registry.concurrency-family-mutex-i64
-              i64-mutex-registry-field-count))]
-        [cell : i64
-          (if (< slot 0)
-            0
-            (let
-              [candidate : i64
-                (unsafe
-                  (registry.concurrency-locked-field slot 0))]
-              (if (=
-                (unsafe
-                  (atomic-i64-load candidate i64-mutex-cell-holder-slot))
-                identity.address)
-                candidate
-                0)))]
-        [handle : i64
-          (if (= cell 0)
-            0
+        (registry.concurrency-unlock!))
+      (if (= cell 0)
+        unit
+        (let
+          [_posted : bool
             (unsafe
-              (registry.concurrency-locked-field slot 1)))]
-        [generation : i64
-          (if (= cell 0)
-            0
+              (semaphore-post handle))]
+          [_released : bool
             (unsafe
-              (registry.concurrency-locked-generation slot)))]
-        (begin
-          (if (= cell 0)
-            unit
-            (unsafe
-              (atomic-i64-store! cell i64-mutex-cell-holder-slot 0)))
-          (unsafe
-            (registry.concurrency-unlock!))
-          (if (= cell 0)
-            unit
-            (let
-              [_posted : bool
-                (unsafe
-                  (semaphore-post handle))]
-              [_released : bool
-                (unsafe
-                  (registry.concurrency-release
-                    (registry.ConcurrencyLease
-                      true
-                      slot
-                      generation
-                      registry.concurrency-family-mutex-i64
-                      i64-mutex-registry-field-count
-                      0
-                      0
-                      0
-                      0
-                      0
-                      0
-                      0
-                      "")))]
-              unit)))))))
+              (registry.concurrency-release
+                (registry.ConcurrencyLease
+                  true
+                  slot
+                  generation
+                  registry.concurrency-family-mutex-i64
+                  i64-mutex-registry-field-count
+                  0
+                  0
+                  0
+                  0
+                  0
+                  0
+                  0
+                  "")))]
+          unit)))))
 
 ;: Close the mutex `authority` names: detach it from the registry, which
 ;: revokes every handle, then close its semaphore and free its cell. Fails
@@ -1154,22 +1142,21 @@
           [tail : i64
             (unsafe
               (read-i64 channel.state-addr 1))]
-          (begin
+          (unsafe
+            (write-i64! channel.slots-addr tail value))
+          (unsafe
+            (write-i64!
+              channel.state-addr
+              1
+              (i64-channel-next-index channel.capacity tail)))
+          (if (not
             (unsafe
-              (write-i64! channel.slots-addr tail value))
-            (unsafe
-              (write-i64!
-                channel.state-addr
-                1
-                (i64-channel-next-index channel.capacity tail)))
-            (if (not
-              (unsafe
-                (semaphore-post channel.mutex-handle)))
-              (i64-channel-send-err-result "sync: channel unlock failed")
-              (if (unsafe
-                (semaphore-post channel.items-handle))
-                (i64-channel-send-ok-result)
-                (i64-channel-send-err-result "sync: channel send signal failed")))))))))
+              (semaphore-post channel.mutex-handle)))
+            (i64-channel-send-err-result "sync: channel unlock failed")
+            (if (unsafe
+              (semaphore-post channel.items-handle))
+              (i64-channel-send-ok-result)
+              (i64-channel-send-err-result "sync: channel send signal failed"))))))))
 
 ;: Receive one value, blocking until one queued message is available.
 (unsafe
@@ -1192,58 +1179,56 @@
           [value : i64
             (unsafe
               (read-i64 channel.slots-addr head))]
-          (begin
+          (unsafe
+            (write-i64!
+              channel.state-addr
+              0
+              (i64-channel-next-index channel.capacity head)))
+          (if (not
             (unsafe
-              (write-i64!
-                channel.state-addr
-                0
-                (i64-channel-next-index channel.capacity head)))
-            (if (not
-              (unsafe
-                (semaphore-post channel.mutex-handle)))
-              (i64-channel-recv-err-result "sync: channel unlock failed")
-              (if (unsafe
-                (semaphore-post channel.spaces-handle))
-                (i64-channel-recv-ok-result value)
-                (i64-channel-recv-err-result "sync: channel recv signal failed")))))))))
+              (semaphore-post channel.mutex-handle)))
+            (i64-channel-recv-err-result "sync: channel unlock failed")
+            (if (unsafe
+              (semaphore-post channel.spaces-handle))
+              (i64-channel-recv-ok-result value)
+              (i64-channel-recv-err-result "sync: channel recv signal failed"))))))))
 
 ;: Close channel resources after all senders/receivers are done.
 (unsafe
   (define (i64-channel-close [channel : SyncI64Channel]) : bool
     (let
       [ok : bool true]
-      (begin
-        (set!
+      (set!
+        ok
+        (if (unsafe
+          (semaphore-close channel.mutex-handle))
           ok
-          (if (unsafe
-            (semaphore-close channel.mutex-handle))
-            ok
-            false))
-        (set!
+          false))
+      (set!
+        ok
+        (if (unsafe
+          (semaphore-close channel.items-handle))
           ok
-          (if (unsafe
-            (semaphore-close channel.items-handle))
-            ok
-            false))
-        (set!
+          false))
+      (set!
+        ok
+        (if (unsafe
+          (semaphore-close channel.spaces-handle))
           ok
-          (if (unsafe
-            (semaphore-close channel.spaces-handle))
-            ok
-            false))
-        (set!
+          false))
+      (set!
+        ok
+        (if (unsafe
+          (runtime-free channel.slots-addr channel.slots-bytes))
           ok
-          (if (unsafe
-            (runtime-free channel.slots-addr channel.slots-bytes))
-            ok
-            false))
-        (set!
+          false))
+      (set!
+        ok
+        (if (unsafe
+          (runtime-free channel.state-addr 16))
           ok
-          (if (unsafe
-            (runtime-free channel.state-addr 16))
-            ok
-            false))
-        ok))))
+          false))
+      ok)))
 
 ;: Store a channel handle into a raw `i64` array at `offset`.
 (unsafe
@@ -1251,14 +1236,13 @@
     [channel : SyncI64Channel]
     [dst : (&mut dst (__tl_dyn-array i64))]
     [offset : i64]) : unit
-    (begin
-      (set! (array-ref dst offset) channel.slots-addr)
-      (set! (array-ref dst (+ offset 1)) channel.state-addr)
-      (set! (array-ref dst (+ offset 2)) channel.capacity)
-      (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
-      (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
-      (set! (array-ref dst (+ offset 5)) channel.items-handle)
-      (set! (array-ref dst (+ offset 6)) channel.spaces-handle))))
+    (set! (array-ref dst offset) channel.slots-addr)
+    (set! (array-ref dst (+ offset 1)) channel.state-addr)
+    (set! (array-ref dst (+ offset 2)) channel.capacity)
+    (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
+    (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
+    (set! (array-ref dst (+ offset 5)) channel.items-handle)
+    (set! (array-ref dst (+ offset 6)) channel.spaces-handle)))
 
 ;: Rebuild a channel handle from a raw `i64` array at `offset`.
 (unsafe
@@ -1418,25 +1402,24 @@
           (unsafe
             (read-i64 channel.state-addr 1))]
         [slot : i64 (* tail 2)]
-        (begin
+        (unsafe
+          (write-i64! channel.slots-addr slot value.left))
+        (unsafe
+          (write-i64! channel.slots-addr (+ slot 1) value.right))
+        (unsafe
+          (write-i64!
+            channel.state-addr
+            1
+            (channel-i64-pair-next-index channel tail)))
+        (if (not
           (unsafe
-            (write-i64! channel.slots-addr slot value.left))
-          (unsafe
-            (write-i64! channel.slots-addr (+ slot 1) value.right))
-          (unsafe
-            (write-i64!
-              channel.state-addr
-              1
-              (channel-i64-pair-next-index channel tail)))
-          (if (not
-            (unsafe
-              (semaphore-post channel.mutex-handle)))
-            (channel-i64-pair-send-err-result "sync: channel unlock failed")
-            (if (unsafe
-              (semaphore-post channel.items-handle))
-              (channel-i64-pair-send-ok-result)
-              (channel-i64-pair-send-err-result
-                "sync: channel send signal failed"))))))))
+            (semaphore-post channel.mutex-handle)))
+          (channel-i64-pair-send-err-result "sync: channel unlock failed")
+          (if (unsafe
+            (semaphore-post channel.items-handle))
+            (channel-i64-pair-send-ok-result)
+            (channel-i64-pair-send-err-result
+              "sync: channel send signal failed")))))))
 
 ;: Receive one pair value, blocking until one queued message is available.
 (define (channel-i64-pair-recv [channel : ChannelI64PairChannel]) : ChannelI64PairRecvResult
@@ -1462,58 +1445,56 @@
         [right : i64
           (unsafe
             (read-i64 channel.slots-addr (+ slot 1)))]
-        (begin
+        (unsafe
+          (write-i64!
+            channel.state-addr
+            0
+            (channel-i64-pair-next-index channel head)))
+        (if (not
           (unsafe
-            (write-i64!
-              channel.state-addr
-              0
-              (channel-i64-pair-next-index channel head)))
-          (if (not
-            (unsafe
-              (semaphore-post channel.mutex-handle)))
-            (channel-i64-pair-recv-err-result "sync: channel unlock failed")
-            (if (unsafe
-              (semaphore-post channel.spaces-handle))
-              (channel-i64-pair-recv-ok-result (ChannelI64Pair left right))
-              (channel-i64-pair-recv-err-result
-                "sync: channel recv signal failed"))))))))
+            (semaphore-post channel.mutex-handle)))
+          (channel-i64-pair-recv-err-result "sync: channel unlock failed")
+          (if (unsafe
+            (semaphore-post channel.spaces-handle))
+            (channel-i64-pair-recv-ok-result (ChannelI64Pair left right))
+            (channel-i64-pair-recv-err-result
+              "sync: channel recv signal failed")))))))
 
 ;: Close pair channel resources after all senders/receivers are done.
 (define (channel-i64-pair-close [channel : ChannelI64PairChannel]) : bool
   (let
     [ok : bool true]
-    (begin
-      (set!
+    (set!
+      ok
+      (if (unsafe
+        (semaphore-close channel.mutex-handle))
         ok
-        (if (unsafe
-          (semaphore-close channel.mutex-handle))
-          ok
-          false))
-      (set!
+        false))
+    (set!
+      ok
+      (if (unsafe
+        (semaphore-close channel.items-handle))
         ok
-        (if (unsafe
-          (semaphore-close channel.items-handle))
-          ok
-          false))
-      (set!
+        false))
+    (set!
+      ok
+      (if (unsafe
+        (semaphore-close channel.spaces-handle))
         ok
-        (if (unsafe
-          (semaphore-close channel.spaces-handle))
-          ok
-          false))
-      (set!
+        false))
+    (set!
+      ok
+      (if (unsafe
+        (runtime-free channel.slots-addr channel.slots-bytes))
         ok
-        (if (unsafe
-          (runtime-free channel.slots-addr channel.slots-bytes))
-          ok
-          false))
-      (set!
+        false))
+    (set!
+      ok
+      (if (unsafe
+        (runtime-free channel.state-addr 16))
         ok
-        (if (unsafe
-          (runtime-free channel.state-addr 16))
-          ok
-          false))
-      ok)))
+        false))
+    ok))
 
 ;: Store a pair channel handle into a raw `i64` array at `offset`.
 (unsafe
@@ -1521,14 +1502,13 @@
     [channel : ChannelI64PairChannel]
     [dst : (&mut dst (__tl_dyn-array i64))]
     [offset : i64]) : unit
-    (begin
-      (set! (array-ref dst offset) channel.slots-addr)
-      (set! (array-ref dst (+ offset 1)) channel.state-addr)
-      (set! (array-ref dst (+ offset 2)) channel.capacity)
-      (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
-      (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
-      (set! (array-ref dst (+ offset 5)) channel.items-handle)
-      (set! (array-ref dst (+ offset 6)) channel.spaces-handle))))
+    (set! (array-ref dst offset) channel.slots-addr)
+    (set! (array-ref dst (+ offset 1)) channel.state-addr)
+    (set! (array-ref dst (+ offset 2)) channel.capacity)
+    (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
+    (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
+    (set! (array-ref dst (+ offset 5)) channel.items-handle)
+    (set! (array-ref dst (+ offset 6)) channel.spaces-handle)))
 
 ;: Rebuild a pair channel handle from a raw `i64` array at `offset`.
 (unsafe
@@ -1681,23 +1661,21 @@
         [tail : i64
           (unsafe
             (read-i64 channel.state-addr 1))]
-        (begin
+        (unsafe
+          (write-string! channel.slots-addr tail value))
+        (unsafe
+          (write-i64!
+            channel.state-addr
+            1
+            (channel-string-next-index channel tail)))
+        (if (not
           (unsafe
-            (write-string! channel.slots-addr tail value))
-          (unsafe
-            (write-i64!
-              channel.state-addr
-              1
-              (channel-string-next-index channel tail)))
-          (if (not
-            (unsafe
-              (semaphore-post channel.mutex-handle)))
-            (channel-string-send-err-result "sync: channel unlock failed")
-            (if (unsafe
-              (semaphore-post channel.items-handle))
-              (channel-string-send-ok-result)
-              (channel-string-send-err-result
-                "sync: channel send signal failed"))))))))
+            (semaphore-post channel.mutex-handle)))
+          (channel-string-send-err-result "sync: channel unlock failed")
+          (if (unsafe
+            (semaphore-post channel.items-handle))
+            (channel-string-send-ok-result)
+            (channel-string-send-err-result "sync: channel send signal failed")))))))
 
 ;: Receive one string value, blocking until one queued message is available.
 (define (channel-string-recv [channel : ChannelString]) : ChannelStringRecvResult
@@ -1719,58 +1697,55 @@
         [value : String
           (unsafe
             (read-string channel.slots-addr head))]
-        (begin
+        (unsafe
+          (write-i64!
+            channel.state-addr
+            0
+            (channel-string-next-index channel head)))
+        (if (not
           (unsafe
-            (write-i64!
-              channel.state-addr
-              0
-              (channel-string-next-index channel head)))
-          (if (not
-            (unsafe
-              (semaphore-post channel.mutex-handle)))
-            (channel-string-recv-err-result "sync: channel unlock failed")
-            (if (unsafe
-              (semaphore-post channel.spaces-handle))
-              (ChannelStringRecvOk value)
-              (channel-string-recv-err-result
-                "sync: channel recv signal failed"))))))))
+            (semaphore-post channel.mutex-handle)))
+          (channel-string-recv-err-result "sync: channel unlock failed")
+          (if (unsafe
+            (semaphore-post channel.spaces-handle))
+            (ChannelStringRecvOk value)
+            (channel-string-recv-err-result "sync: channel recv signal failed")))))))
 
 ;: Close string channel resources after all senders/receivers are done.
 (define (channel-string-close [channel : ChannelString]) : bool
   (let
     [ok : bool true]
-    (begin
-      (set!
+    (set!
+      ok
+      (if (unsafe
+        (semaphore-close channel.mutex-handle))
         ok
-        (if (unsafe
-          (semaphore-close channel.mutex-handle))
-          ok
-          false))
-      (set!
+        false))
+    (set!
+      ok
+      (if (unsafe
+        (semaphore-close channel.items-handle))
         ok
-        (if (unsafe
-          (semaphore-close channel.items-handle))
-          ok
-          false))
-      (set!
+        false))
+    (set!
+      ok
+      (if (unsafe
+        (semaphore-close channel.spaces-handle))
         ok
-        (if (unsafe
-          (semaphore-close channel.spaces-handle))
-          ok
-          false))
-      (set!
+        false))
+    (set!
+      ok
+      (if (unsafe
+        (runtime-free channel.slots-addr channel.slots-bytes))
         ok
-        (if (unsafe
-          (runtime-free channel.slots-addr channel.slots-bytes))
-          ok
-          false))
-      (set!
+        false))
+    (set!
+      ok
+      (if (unsafe
+        (runtime-free channel.state-addr 16))
         ok
-        (if (unsafe
-          (runtime-free channel.state-addr 16))
-          ok
-          false))
-      ok)))
+        false))
+    ok))
 
 ;: Store a string channel handle into a raw `i64` array at `offset`.
 (unsafe
@@ -1778,14 +1753,13 @@
     [channel : ChannelString]
     [dst : (&mut dst (__tl_dyn-array i64))]
     [offset : i64]) : unit
-    (begin
-      (set! (array-ref dst offset) channel.slots-addr)
-      (set! (array-ref dst (+ offset 1)) channel.state-addr)
-      (set! (array-ref dst (+ offset 2)) channel.capacity)
-      (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
-      (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
-      (set! (array-ref dst (+ offset 5)) channel.items-handle)
-      (set! (array-ref dst (+ offset 6)) channel.spaces-handle))))
+    (set! (array-ref dst offset) channel.slots-addr)
+    (set! (array-ref dst (+ offset 1)) channel.state-addr)
+    (set! (array-ref dst (+ offset 2)) channel.capacity)
+    (set! (array-ref dst (+ offset 3)) channel.slots-bytes)
+    (set! (array-ref dst (+ offset 4)) channel.mutex-handle)
+    (set! (array-ref dst (+ offset 5)) channel.items-handle)
+    (set! (array-ref dst (+ offset 6)) channel.spaces-handle)))
 
 ;: Rebuild a string channel handle from a raw `i64` array at `offset`.
 (unsafe
@@ -1901,20 +1875,19 @@
           [tail : i64
             (unsafe
               (read-i64 channel.state-addr 1))]
-          (begin
+          (unsafe
+            (write-i64! channel.slots-addr tail value))
+          (unsafe
+            (write-i64!
+              channel.state-addr
+              1
+              (i64-channel-next-index channel.capacity tail)))
+          (if (not
             (unsafe
-              (write-i64! channel.slots-addr tail value))
+              (semaphore-post channel.mutex-handle)))
+            false
             (unsafe
-              (write-i64!
-                channel.state-addr
-                1
-                (i64-channel-next-index channel.capacity tail)))
-            (if (not
-              (unsafe
-                (semaphore-post channel.mutex-handle)))
-              false
-              (unsafe
-                (semaphore-post channel.items-handle)))))))))
+              (semaphore-post channel.items-handle))))))))
 
 ;: Receive one i64 value, or return `fallback` on error.
 (unsafe
@@ -1937,20 +1910,19 @@
           [value : i64
             (unsafe
               (read-i64 channel.slots-addr head))]
-          (begin
+          (unsafe
+            (write-i64!
+              channel.state-addr
+              0
+              (i64-channel-next-index channel.capacity head)))
+          (if (not
             (unsafe
-              (write-i64!
-                channel.state-addr
-                0
-                (i64-channel-next-index channel.capacity head)))
-            (if (not
-              (unsafe
-                (semaphore-post channel.mutex-handle)))
-              fallback
-              (if (unsafe
-                (semaphore-post channel.spaces-handle))
-                value
-                fallback))))))))
+              (semaphore-post channel.mutex-handle)))
+            fallback
+            (if (unsafe
+              (semaphore-post channel.spaces-handle))
+              value
+              fallback)))))))
 
 ;: Return true when creating a pair channel with `capacity` succeeds.
 (define (channel-i64-pair-create-capacity-ok? [capacity : i64]) : bool
@@ -2053,22 +2025,21 @@
           (unsafe
             (read-i64 channel.state-addr 1))]
         [slot : i64 (* tail 2)]
-        (begin
+        (unsafe
+          (write-i64! channel.slots-addr slot value.left))
+        (unsafe
+          (write-i64! channel.slots-addr (+ slot 1) value.right))
+        (unsafe
+          (write-i64!
+            channel.state-addr
+            1
+            (channel-i64-pair-next-index channel tail)))
+        (if (not
           (unsafe
-            (write-i64! channel.slots-addr slot value.left))
+            (semaphore-post channel.mutex-handle)))
+          false
           (unsafe
-            (write-i64! channel.slots-addr (+ slot 1) value.right))
-          (unsafe
-            (write-i64!
-              channel.state-addr
-              1
-              (channel-i64-pair-next-index channel tail)))
-          (if (not
-            (unsafe
-              (semaphore-post channel.mutex-handle)))
-            false
-            (unsafe
-              (semaphore-post channel.items-handle))))))))
+            (semaphore-post channel.items-handle)))))))
 
 ;: Receive one pair value, or return `fallback` on error.
 (define (channel-i64-pair-recv-or
@@ -2096,20 +2067,19 @@
         [right : i64
           (unsafe
             (read-i64 channel.slots-addr (+ slot 1)))]
-        (begin
+        (unsafe
+          (write-i64!
+            channel.state-addr
+            0
+            (channel-i64-pair-next-index channel head)))
+        (if (not
           (unsafe
-            (write-i64!
-              channel.state-addr
-              0
-              (channel-i64-pair-next-index channel head)))
-          (if (not
-            (unsafe
-              (semaphore-post channel.mutex-handle)))
-            fallback
-            (if (unsafe
-              (semaphore-post channel.spaces-handle))
-              (ChannelI64Pair left right)
-              fallback)))))))
+            (semaphore-post channel.mutex-handle)))
+          fallback
+          (if (unsafe
+            (semaphore-post channel.spaces-handle))
+            (ChannelI64Pair left right)
+            fallback))))))
 
 ;: Return true when creating a string channel with `capacity` succeeds.
 (define (channel-string-create-capacity-ok? [capacity : i64]) : bool
@@ -2211,20 +2181,19 @@
         [tail : i64
           (unsafe
             (read-i64 channel.state-addr 1))]
-        (begin
+        (unsafe
+          (write-string! channel.slots-addr tail value))
+        (unsafe
+          (write-i64!
+            channel.state-addr
+            1
+            (channel-string-next-index channel tail)))
+        (if (not
           (unsafe
-            (write-string! channel.slots-addr tail value))
+            (semaphore-post channel.mutex-handle)))
+          false
           (unsafe
-            (write-i64!
-              channel.state-addr
-              1
-              (channel-string-next-index channel tail)))
-          (if (not
-            (unsafe
-              (semaphore-post channel.mutex-handle)))
-            false
-            (unsafe
-              (semaphore-post channel.items-handle))))))))
+            (semaphore-post channel.items-handle)))))))
 
 ;: Receive one string value, or return `fallback` on error.
 (define (channel-string-recv-or [channel : ChannelString] [fallback : String]) : String
@@ -2246,26 +2215,24 @@
         [value : String
           (unsafe
             (read-string channel.slots-addr head))]
-        (begin
+        (unsafe
+          (write-i64!
+            channel.state-addr
+            0
+            (channel-string-next-index channel head)))
+        (if (not
           (unsafe
-            (write-i64!
-              channel.state-addr
-              0
-              (channel-string-next-index channel head)))
-          (if (not
-            (unsafe
-              (semaphore-post channel.mutex-handle)))
-            fallback
-            (if (unsafe
-              (semaphore-post channel.spaces-handle))
-              value
-              fallback)))))))
+            (semaphore-post channel.mutex-handle)))
+          fallback
+          (if (unsafe
+            (semaphore-post channel.spaces-handle))
+            value
+            fallback))))))
 
 ;: Inline test failure helper.
 (define (test-fail) : unit
-  (begin
-    (/ 1 0)
-    unit))
+  (/ 1 0)
+  unit)
 
 ;: Inline test boolean assertion.
 (define (test-assert [ok : bool]) : unit
@@ -2275,18 +2242,17 @@
 
 (test
   sync-api
-  (begin
-    (test-assert (= i64-channel-raw-field-count 7))
-    (test-assert (= channel-i64-pair-raw-field-count 7))
-    (test-assert (= channel-string-raw-field-count 7))
-    (test-assert (= i64-mutex-raw-field-count 1))
-    (test-assert (= i64-mutex-registry-field-count 2))
-    (test-assert (not (i64-channel-create-capacity-ok? 0)))
-    (test-assert
-      (not (i64-channel-create-capacity-ok? (+ channel-max-capacity 1))))
-    (test-assert (not (channel-i64-pair-create-capacity-ok? 0)))
-    (test-assert
-      (not (channel-i64-pair-create-capacity-ok? (+ channel-max-capacity 1))))
-    (test-assert (not (channel-string-create-capacity-ok? 0)))
-    (test-assert
-      (not (channel-string-create-capacity-ok? (+ channel-max-capacity 1))))))
+  (test-assert (= i64-channel-raw-field-count 7))
+  (test-assert (= channel-i64-pair-raw-field-count 7))
+  (test-assert (= channel-string-raw-field-count 7))
+  (test-assert (= i64-mutex-raw-field-count 1))
+  (test-assert (= i64-mutex-registry-field-count 2))
+  (test-assert (not (i64-channel-create-capacity-ok? 0)))
+  (test-assert
+    (not (i64-channel-create-capacity-ok? (+ channel-max-capacity 1))))
+  (test-assert (not (channel-i64-pair-create-capacity-ok? 0)))
+  (test-assert
+    (not (channel-i64-pair-create-capacity-ok? (+ channel-max-capacity 1))))
+  (test-assert (not (channel-string-create-capacity-ok? 0)))
+  (test-assert
+    (not (channel-string-create-capacity-ok? (+ channel-max-capacity 1)))))

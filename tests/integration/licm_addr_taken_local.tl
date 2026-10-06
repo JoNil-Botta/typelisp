@@ -21,10 +21,12 @@
     [i : i64 0]
     (while (< i 3)
       (set! sum (+ sum (+ value 1)))
-      (write-seven
-        (unsafe
-          (ptr-addr-of value))
-        depth)
+      (begin
+        (write-seven
+          (unsafe
+            (ptr-addr-of value))
+          depth)
+        unit)
       (set! i (+ i 1)))
     sum))
 

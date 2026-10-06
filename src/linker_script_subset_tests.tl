@@ -247,6 +247,7 @@
 
 (test
   linker-script-accepted-syntax
+  (expect (read-text "INPUT(a:b)") "1:1 INPUT[1:7 a:b]" "colon in path")
   ;; The Debian/Ubuntu multiarch libc.so.
   (expect
     (read-text

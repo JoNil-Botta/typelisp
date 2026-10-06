@@ -6,7 +6,6 @@
 ;; Hashing, zlib, files, processes, and network I/O are outside this boundary.
 (import stdlib.byte_buf_core as byte_buf)
 (import stdlib.string)
-(import compiler_owned_view as owned_view)
 
 (defstruct GitDeltaLimits
   (max-object-bytes i64)
@@ -629,14 +628,10 @@
           (match (& candidate.target)
             [(Entry entry-index)
               (set! target-kind 0)
-              (set!
-                target-index
-                (owned_view.compiler-owned-pattern-copy entry-index))]
+              (set! target-index entry-index)]
             [(Thin thin-index)
               (set! target-kind 1)
-              (set!
-                target-index
-                (owned_view.compiler-owned-pattern-copy thin-index))]))
+              (set! target-index thin-index)]))
         (set! index (+ index 1))))
     (cond
       [(= matches 0) (Err "git delta: missing REF base")]
@@ -730,7 +725,7 @@
                         entries
                         tables.offsets
                         entry.offset
-                        (owned_view.compiler-owned-pattern-copy base-offset)
+                        base-offset
                         limits
                         (&mut budget))
                         [(Err message) (return (Err message))]

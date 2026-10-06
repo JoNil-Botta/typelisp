@@ -902,6 +902,15 @@ these semantic flags even when the aggregates have identical ABI. The existing
 AST wrapper, surface roundtrip, and specialization selftests guard these rules;
 serialized metadata changes also require a surface-AST schema version change.
 
+`AstExpr.While` keeps its direct body forms in an `AstExprList` (surface AST
+schema 17). Typechecking requires each form to be unit-valued and locates a
+mismatch at that form. An explicit `Begin` remains one body form and may discard
+its non-final values. Shared child traversal, quasiquote, hygiene and declaration
+serialization preserve the ordered list; lowering and ownership analyses reuse
+the existing sequence handling. The public comptime `expr-while` builder keeps
+its one expression as a singleton list. Native quasiquote uses the same host
+callback with its body-list flag so it agrees with interpreted expansion.
+
 `Module` and `Decls` macro output share `macro-wrap-generated-decls` in
 `compiler_typecheck_core.tl`. Ordinary generated imports carry namespace effects
 without a visible declaration name; retain their generated metadata so the
@@ -1170,6 +1179,25 @@ bounded by caller limits. Reading is pure; resolving the names against profile
 roots and recording them in the link manifest belongs to #8304. The fixtures
 under `tests/fixtures/linker-scripts/` are real installed scripts with their
 provenance.
+
+`src/linker_version_map.tl` reuses that scanner for the bounded VERSION-map
+grammar: named nodes, inheritance from an earlier node, an anonymous sole node,
+ordered exact global/local names, and `local: *`. Colon is a separator only in
+this grammar, so implicit-script paths retain their spelling. Duplicate bound
+names, other globs, expressions and extern-language blocks fail with source,
+line and column. Byte/token limits bound scanning; node/symbol and work limits
+also bound retained output and name comparisons. #8263's C-export script and
+#8293's provider resolver consume this pure parser.
+
+`src/linker_elf_version_codec.tl` encodes and decodes the little-endian Versym,
+Verdef/Verdaux and Verneed/Vernaux sections for #8293 and #7042's DSO row.
+Callers supply dynstr and metadata counts explicitly. The codec validates
+ranges, disjoint record ownership, relative chains, counts, ELF name hashes,
+the combined version-index namespace, and the required DSO BASE definition.
+Its models retain physical offsets and padding outside records, preserving
+both GNU ld's interleaved and lld's grouped Verneed layout. Counts, sizes, name
+lengths and work have caller bounds; no component performs I/O or owns linker
+state. The public ELF name hash is reusable by #8296's dynamic-section codec.
 
 The fresh-artifact pipeline prepares the runtime once for checked-surface
 capture, then passes that same result to artifact finishing. Finishers accept

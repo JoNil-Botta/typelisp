@@ -145,8 +145,8 @@ echo "Linting TypeLisp sources for $count file(s) in batches of $LINT_BATCH_SIZE
 # state between batches on memory-constrained CI hosts. Materialize the same
 # ordered chunks so opt-in timing can attribute individual outliers. Split at
 # src/ boundaries as well as the size bound: compiler sources receive the union
-# of normal and deprecated-concat rules in one parse/traversal, while the other
-# source units retain their existing opt-in rule scope.
+# of normal, deprecated-concat and redundant-begin rules in one parse/traversal,
+# while the other source units retain their existing opt-in rule scope.
 LINT_CHUNK_DIR="$WORKDIR/chunks"
 rm -rf "$LINT_CHUNK_DIR"
 mkdir -p "$LINT_CHUNK_DIR"
@@ -181,7 +181,7 @@ for lint_chunk in "$LINT_CHUNK_DIR"/lint.*.txt; do
         case "$lint_source" in src/*) src_rules=1 ;; esac
     done < "$lint_chunk"
     if [ "$src_rules" -eq 1 ]; then
-        set -- --deprecated-string-concat --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" "$@"
+        set -- --deprecated-string-concat --redundant-begin --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" "$@"
         src_concat_chunk_index=$((src_concat_chunk_index + 1))
     fi
     if [ "$NAME_CASE_CURRENT" -eq 1 ]; then

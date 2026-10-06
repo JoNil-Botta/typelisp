@@ -4348,9 +4348,11 @@
     [decoy-index : i64 0]
     [ok : bool false]
     (while (<= (ci.intern-compat-state-pool-len (& decoy)) name-a)
-      (ci.intern-compat-state-intern
-        (&mut decoy)
-        (str_cat.str-cat "plain" (string.int->string decoy-index)))
+      (begin
+        (ci.intern-compat-state-intern
+          (&mut decoy)
+          (str_cat.str-cat "plain" (string.int->string decoy-index)))
+        unit)
       (set! decoy-index (+ decoy-index 1)))
     (let
       [decoy-len : i64 (ci.intern-compat-state-pool-len (& decoy))]

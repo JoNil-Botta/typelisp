@@ -973,8 +973,11 @@
                               "__tl_semantic_origin_start"
                               run-span))
                           (while (< record-index count)
-                            (reader.sp-node-push
-                              (reader.sp-node-get (+ (+ cursor 2) record-index)))
+                            (begin
+                              (reader.sp-node-push
+                                (reader.sp-node-get
+                                  (+ (+ cursor 2) record-index)))
+                              unit)
                             (set! record-index (+ record-index 1))))
                         unit))]
                   [_ unit])]
@@ -6581,14 +6584,13 @@
     [(Cons cond body-tail _)
       (let
         [parsed-cond (try (parse-ast-expr-with-pools dispatch pools cond))]
-        [parsed-body
-          (try
-            (parse-ast-body-tail
-              dispatch
+        [parsed-body (try (parse-ast-expr-list dispatch pools body-tail))]
+        (if (= parsed-body.len 0)
+          (Err "parse: malformed while")
+          (Ok
+            (ast.ast-node-pool-context-expr-push
               pools
-              body-tail
-              "parse: malformed while"))]
-        (Ok (ast.ast-expr-while-with-pools pools parsed-cond parsed-body)))]
+              (While parsed-cond parsed-body)))))]
     [_ (Err "parse: malformed while")]))
 
 (define (parse-ast-set

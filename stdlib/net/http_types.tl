@@ -283,35 +283,29 @@
   (let
     [old-len : i64 headers.len]
     [capacity : i64 (array-length headers.slots)]
-    (begin
-      (if (>= old-len capacity)
-        (let
-          [next-capacity : i64
-            (if (< capacity 4)
-              4
-              (if (> capacity 4611686018427387903)
-                (+ old-len 1)
-                (* capacity 2)))]
-          [slots : (__tl_dyn-array HttpHeaderField)
-            (__tl_make-array HttpHeaderField next-capacity)]
-          [index : i64 0]
-          (begin
-            (while (< index old-len)
-              (begin
-                (set!
-                  (array-ref slots index)
-                  (clone (array-ref headers.slots index)))
-                (set! index (+ index 1))))
-            (set! headers.slots slots)))
-        unit)
-      (set! (array-ref headers.slots old-len) field)
-      (set! headers.len (+ old-len 1)))))
+    (if (>= old-len capacity)
+      (let
+        [next-capacity : i64
+          (if (< capacity 4)
+            4
+            (if (> capacity 4611686018427387903)
+              (+ old-len 1)
+              (* capacity 2)))]
+        [slots : (__tl_dyn-array HttpHeaderField)
+          (__tl_make-array HttpHeaderField next-capacity)]
+        [index : i64 0]
+        (while (< index old-len)
+          (set! (array-ref slots index) (clone (array-ref headers.slots index)))
+          (set! index (+ index 1)))
+        (set! headers.slots slots))
+      unit)
+    (set! (array-ref headers.slots old-len) field)
+    (set! headers.len (+ old-len 1))))
 
 ;: Append one field while preserving wire order.
 (define (headers-append [headers : HttpHeaders] [field : HttpHeaderField]) : HttpHeaders
-  (begin
-    (headers-push! (&mut headers) field)
-    headers))
+  (headers-push! (&mut headers) field)
+  headers)
 
 ;: Number of fields in an ordered header collection.
 (define (headers-len [headers : (& headers HttpHeaders)]) : i64
@@ -337,16 +331,14 @@
     [n : i64 (byte_buf.bytes-length left)]
     [index : i64 0]
     [same : bool (= n (byte_buf.bytes-length right))]
-    (begin
-      (while (and same (< index n))
-        (begin
-          (if (!=
-            (ascii-lower (byte_buf.bytes-ref left index))
-            (ascii-lower (byte_buf.bytes-ref right index)))
-            (set! same false)
-            unit)
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index n))
+      (if (!=
+        (ascii-lower (byte_buf.bytes-ref left index))
+        (ascii-lower (byte_buf.bytes-ref right index)))
+        (set! same false)
+        unit)
+      (set! index (+ index 1)))
+    same))
 
 ;: True when a checked name equals the supplied ASCII spelling, ignoring case.
 (define (header-name-eq
@@ -363,17 +355,15 @@
   (let
     [index : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< index headers.len) (< found 0))
-        (let
-          [field : (& headers HttpHeaderField)
-            (& (array-ref headers.slots index))]
-          (begin
-            (if (header-name-eq (& field.name) name)
-              (set! found index)
-              unit)
-            (set! index (+ index 1)))))
-      found)))
+    (while (and (< index headers.len) (< found 0))
+      (let
+        [field : (& headers HttpHeaderField)
+          (& (array-ref headers.slots index))]
+        (if (header-name-eq (& field.name) name)
+          (set! found index)
+          unit)
+        (set! index (+ index 1))))
+    found))
 
 ;: Count matching fields using ASCII case-insensitive name comparison.
 (define (headers-count
@@ -382,17 +372,15 @@
   (let
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index headers.len)
-        (let
-          [field : (& headers HttpHeaderField)
-            (& (array-ref headers.slots index))]
-          (begin
-            (if (header-name-eq (& field.name) name)
-              (set! count (+ count 1))
-              unit)
-            (set! index (+ index 1)))))
-      count)))
+    (while (< index headers.len)
+      (let
+        [field : (& headers HttpHeaderField)
+          (& (array-ref headers.slots index))]
+        (if (header-name-eq (& field.name) name)
+          (set! count (+ count 1))
+          unit)
+        (set! index (+ index 1))))
+    count))
 
 ;: Return an empty normalized name set.
 (define (header-name-set-empty) : HttpHeaderNameSet
@@ -405,17 +393,15 @@
   (let
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (< index set.len) (not found))
-        (let
-          [stored : (& set byte_buf.ByteBuf) (& (array-ref set.slots index))]
-          [stored-view : (& set bytes) (byte_buf.as-bytes stored)]
-          (begin
-            (if (bytes-eq-ascii-case stored-view name)
-              (set! found true)
-              unit)
-            (set! index (+ index 1)))))
-      found)))
+    (while (and (< index set.len) (not found))
+      (let
+        [stored : (& set byte_buf.ByteBuf) (& (array-ref set.slots index))]
+        [stored-view : (& set bytes) (byte_buf.as-bytes stored)]
+        (if (bytes-eq-ascii-case stored-view name)
+          (set! found true)
+          unit)
+        (set! index (+ index 1))))
+    found))
 
 ;: Add `name` in normalized lowercase form, preserving first declaration order.
 (define (header-name-set-add [set : HttpHeaderNameSet] [name : (& name bytes)]) : HttpHeaderNameSet
@@ -428,22 +414,19 @@
       [index : i64 0]
       [normalized : byte_buf.ByteBuf
         (byte_buf.with-capacity (byte_buf.bytes-length name))]
-      (begin
-        (while (< index old-len)
-          (begin
-            (set! (array-ref slots index) (array-ref set.slots index))
-            (set! index (+ index 1))))
-        (set! index 0)
-        (while (< index (byte_buf.bytes-length name))
-          (begin
-            (set!
-              normalized
-              (byte_buf.push
-                normalized
-                (ascii-lower (byte_buf.bytes-ref name index))))
-            (set! index (+ index 1))))
-        (set! (array-ref slots old-len) normalized)
-        (HttpHeaderNameSet slots (+ old-len 1))))))
+      (while (< index old-len)
+        (set! (array-ref slots index) (array-ref set.slots index))
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index (byte_buf.bytes-length name))
+        (set!
+          normalized
+          (byte_buf.push
+            normalized
+            (ascii-lower (byte_buf.bytes-ref name index))))
+        (set! index (+ index 1)))
+      (set! (array-ref slots old-len) normalized)
+      (HttpHeaderNameSet slots (+ old-len 1)))))
 
 ;: Number of names in a normalized trailer declaration set.
 (define (header-name-set-len [set : (& set HttpHeaderNameSet)]) : i64
@@ -485,37 +468,33 @@
   (let
     [valid : bool (and (>= set.len 0) (<= set.len (array-length set.slots)))]
     [index : i64 0]
-    (begin
-      (while (and valid (< index set.len))
-        (let
-          [stored : (& set byte_buf.ByteBuf) (& (array-ref set.slots index))]
-          [stored-len : i64 stored.len]
-          (if (or (<= stored-len 0) (> stored-len (array-length stored.slots)))
-            (set! valid false)
-            (let
-              [name : (& set bytes) (byte_buf.as-bytes stored)]
-              [byte-index : i64 0]
-              [prior : i64 0]
-              (begin
-                (while (and valid (< byte-index stored-len))
-                  (let
-                    [byte : u8 (byte_buf.bytes-ref name byte-index)]
-                    (begin
-                      (if (and (token-byte? byte) (= byte (ascii-lower byte)))
-                        unit
-                        (set! valid false))
-                      (set! byte-index (+ byte-index 1)))))
-                (while (and valid (< prior index))
-                  (let
-                    [other : (& set bytes)
-                      (byte_buf.as-bytes (& (array-ref set.slots prior)))]
-                    (begin
-                      (if (bytes-eq-ascii-case other name)
-                        (set! valid false)
-                        unit)
-                      (set! prior (+ prior 1))))))))
-          (set! index (+ index 1))))
-      valid)))
+    (while (and valid (< index set.len))
+      (let
+        [stored : (& set byte_buf.ByteBuf) (& (array-ref set.slots index))]
+        [stored-len : i64 stored.len]
+        (if (or (<= stored-len 0) (> stored-len (array-length stored.slots)))
+          (set! valid false)
+          (let
+            [name : (& set bytes) (byte_buf.as-bytes stored)]
+            [byte-index : i64 0]
+            [prior : i64 0]
+            (while (and valid (< byte-index stored-len))
+              (let
+                [byte : u8 (byte_buf.bytes-ref name byte-index)]
+                (if (and (token-byte? byte) (= byte (ascii-lower byte)))
+                  unit
+                  (set! valid false))
+                (set! byte-index (+ byte-index 1))))
+            (while (and valid (< prior index))
+              (let
+                [other : (& set bytes)
+                  (byte_buf.as-bytes (& (array-ref set.slots prior)))]
+                (if (bytes-eq-ascii-case other name)
+                  (set! valid false)
+                  unit)
+                (set! prior (+ prior 1))))))
+        (set! index (+ index 1))))
+    valid))
 
 ;: True for optional-whitespace bytes permitted inside a field value.
 (define (field-ows-byte? [byte : u8]) : bool
@@ -593,88 +572,85 @@
     [index : i64 0]
     [bad-name : i64 -1]
     [bad-value : i64 -1]
-    (begin
-      (while (and (< index name-len) (< bad-name 0))
-        (begin
-          (if (not (token-byte? (byte_buf.bytes-ref name index)))
-            (set! bad-name index)
-            unit)
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (and (< index value-len) (< bad-value 0))
-        (let
-          [code : i64 (cast (byte_buf.bytes-ref value index) : i64)]
-          (begin
-            (if (or
-              (= code 0)
-              (= code 10)
-              (= code 13)
-              (and (< code 32) (!= code 9))
-              (= code 127))
-              (set! bad-value index)
-              unit)
-            (set! index (+ index 1)))))
-      (cond
-        [(not (head-limits-valid? limits))
-          (HttpTypedFieldErr
-            (field-shape-error (HttpInvalidLimits) name-offset peer-input))]
-        [(= name-len 0)
-          (HttpTypedFieldErr
-            (field-shape-error (HttpInvalidFieldName) name-offset peer-input))]
-        [(> name-len limits.max-name-bytes)
-          (HttpTypedFieldErr
-            (field-shape-error
-              (HttpNameTooLong)
-              (field-offset-add name-offset limits.max-name-bytes)
-              peer-input))]
-        [(>= bad-name 0)
-          (HttpTypedFieldErr
-            (field-shape-error
-              (if (= (cast (byte_buf.bytes-ref name bad-name) : i64) 0)
-                (HttpNulByte)
-                (HttpInvalidFieldName))
-              (field-offset-add name-offset bad-name)
-              peer-input))]
-        [(> value-len limits.max-value-bytes)
-          (HttpTypedFieldErr
-            (field-shape-error
-              (HttpValueTooLong)
-              (field-offset-add value-offset limits.max-value-bytes)
-              peer-input))]
-        [(>= bad-value 0)
-          (HttpTypedFieldErr
-            (field-shape-error
-              (if (= (cast (byte_buf.bytes-ref value bad-value) : i64) 0)
-                (HttpNulByte)
-                (HttpInvalidControlByte))
-              (field-offset-add value-offset bad-value)
-              peer-input))]
-        [(and
-            (> value-len 0)
-            (or
-              (field-ows-byte? (byte_buf.bytes-ref value 0))
-              (field-ows-byte? (byte_buf.bytes-ref value (- value-len 1)))))
-          (HttpTypedFieldErr
-            (field-shape-error
-              (HttpNonCanonicalFieldValueWhitespace)
-              value-offset
-              peer-input))]
-        [(or (< line-length 0) (> line-length limits.max-line-bytes))
-          (HttpTypedFieldErr
-            (field-shape-error
-              (HttpLineTooLong)
-              (field-offset-add name-offset limits.max-line-bytes)
-              peer-input))]
-        [(and enforce-sensitivity (header-name-bytes-known-sensitive? name))
-          (match sensitivity
-            [(HttpHeaderSensitive) (HttpTypedFieldOk)]
-            [(HttpHeaderPublic)
-              (HttpTypedFieldErr
-                (field-shape-error
-                  (HttpSensitiveHeaderMustBeMarked)
-                  name-offset
-                  peer-input))])]
-        [else (HttpTypedFieldOk)]))))
+    (while (and (< index name-len) (< bad-name 0))
+      (if (not (token-byte? (byte_buf.bytes-ref name index)))
+        (set! bad-name index)
+        unit)
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (and (< index value-len) (< bad-value 0))
+      (let
+        [code : i64 (cast (byte_buf.bytes-ref value index) : i64)]
+        (if (or
+          (= code 0)
+          (= code 10)
+          (= code 13)
+          (and (< code 32) (!= code 9))
+          (= code 127))
+          (set! bad-value index)
+          unit)
+        (set! index (+ index 1))))
+    (cond
+      [(not (head-limits-valid? limits))
+        (HttpTypedFieldErr
+          (field-shape-error (HttpInvalidLimits) name-offset peer-input))]
+      [(= name-len 0)
+        (HttpTypedFieldErr
+          (field-shape-error (HttpInvalidFieldName) name-offset peer-input))]
+      [(> name-len limits.max-name-bytes)
+        (HttpTypedFieldErr
+          (field-shape-error
+            (HttpNameTooLong)
+            (field-offset-add name-offset limits.max-name-bytes)
+            peer-input))]
+      [(>= bad-name 0)
+        (HttpTypedFieldErr
+          (field-shape-error
+            (if (= (cast (byte_buf.bytes-ref name bad-name) : i64) 0)
+              (HttpNulByte)
+              (HttpInvalidFieldName))
+            (field-offset-add name-offset bad-name)
+            peer-input))]
+      [(> value-len limits.max-value-bytes)
+        (HttpTypedFieldErr
+          (field-shape-error
+            (HttpValueTooLong)
+            (field-offset-add value-offset limits.max-value-bytes)
+            peer-input))]
+      [(>= bad-value 0)
+        (HttpTypedFieldErr
+          (field-shape-error
+            (if (= (cast (byte_buf.bytes-ref value bad-value) : i64) 0)
+              (HttpNulByte)
+              (HttpInvalidControlByte))
+            (field-offset-add value-offset bad-value)
+            peer-input))]
+      [(and
+          (> value-len 0)
+          (or
+            (field-ows-byte? (byte_buf.bytes-ref value 0))
+            (field-ows-byte? (byte_buf.bytes-ref value (- value-len 1)))))
+        (HttpTypedFieldErr
+          (field-shape-error
+            (HttpNonCanonicalFieldValueWhitespace)
+            value-offset
+            peer-input))]
+      [(or (< line-length 0) (> line-length limits.max-line-bytes))
+        (HttpTypedFieldErr
+          (field-shape-error
+            (HttpLineTooLong)
+            (field-offset-add name-offset limits.max-line-bytes)
+            peer-input))]
+      [(and enforce-sensitivity (header-name-bytes-known-sensitive? name))
+        (match sensitivity
+          [(HttpHeaderSensitive) (HttpTypedFieldOk)]
+          [(HttpHeaderPublic)
+            (HttpTypedFieldErr
+              (field-shape-error
+                (HttpSensitiveHeaderMustBeMarked)
+                name-offset
+                peer-input))])]
+      [else (HttpTypedFieldOk)])))
 
 ;: Validate an already-typed field without allocating or copying its bytes.
 (define (validate-typed-field
@@ -727,87 +703,84 @@
           (or (= first 32) (= first 9)))
         (HttpFieldLinePartsErr (peer-error (HttpObsoleteLineFold) base-offset))]
       [else
-        (begin
-          (while (and (< index line-len) (< colon 0) (< bad-offset 0))
+        (while (and (< index line-len) (< colon 0) (< bad-offset 0))
+          (let
+            [byte : u8 (byte_buf.bytes-ref line index)]
+            [code : i64 (cast byte : i64)]
+            (cond
+              [(= code 58) (set! colon index)]
+              [(= code 0) (set! bad-offset index)]
+              [(not (token-byte? byte)) (set! bad-offset index)]
+              [else (set! index (+ index 1))])))
+        (cond
+          [(>= bad-offset 0)
+            (HttpFieldLinePartsErr
+              (peer-error
+                (if (= (cast (byte_buf.bytes-ref line bad-offset) : i64) 0)
+                  (HttpNulByte)
+                  (HttpInvalidFieldName))
+                (field-offset-add base-offset bad-offset)))]
+          [(< colon 0)
+            (HttpFieldLinePartsErr
+              (peer-error
+                (HttpMissingFieldColon)
+                (field-offset-add base-offset line-len)))]
+          [(= colon 0)
+            (HttpFieldLinePartsErr
+              (peer-error (HttpInvalidFieldName) base-offset))]
+          [(> colon limits.max-name-bytes)
+            (HttpFieldLinePartsErr
+              (peer-error
+                (HttpNameTooLong)
+                (field-offset-add base-offset limits.max-name-bytes)))]
+          [else
             (let
-              [byte : u8 (byte_buf.bytes-ref line index)]
-              [code : i64 (cast byte : i64)]
-              (cond
-                [(= code 58) (set! colon index)]
-                [(= code 0) (set! bad-offset index)]
-                [(not (token-byte? byte)) (set! bad-offset index)]
-                [else (set! index (+ index 1))])))
-          (cond
-            [(>= bad-offset 0)
-              (HttpFieldLinePartsErr
-                (peer-error
-                  (if (= (cast (byte_buf.bytes-ref line bad-offset) : i64) 0)
-                    (HttpNulByte)
-                    (HttpInvalidFieldName))
-                  (field-offset-add base-offset bad-offset)))]
-            [(< colon 0)
-              (HttpFieldLinePartsErr
-                (peer-error
-                  (HttpMissingFieldColon)
-                  (field-offset-add base-offset line-len)))]
-            [(= colon 0)
-              (HttpFieldLinePartsErr
-                (peer-error (HttpInvalidFieldName) base-offset))]
-            [(> colon limits.max-name-bytes)
-              (HttpFieldLinePartsErr
-                (peer-error
-                  (HttpNameTooLong)
-                  (field-offset-add base-offset limits.max-name-bytes)))]
-            [else
+              [raw-value-start : i64 (+ colon 1)]
+              [value-start : i64 raw-value-start]
+              [value-end : i64 line-len]
+              (while (and
+                (< value-start value-end)
+                (let
+                  [code : i64
+                    (cast (byte_buf.bytes-ref line value-start) : i64)]
+                  (or (= code 32) (= code 9))))
+                (set! value-start (+ value-start 1)))
+              (while (and
+                (> value-end value-start)
+                (let
+                  [code : i64
+                    (cast (byte_buf.bytes-ref line (- value-end 1)) : i64)]
+                  (or (= code 32) (= code 9))))
+                (set! value-end (- value-end 1)))
               (let
-                [raw-value-start : i64 (+ colon 1)]
-                [value-start : i64 raw-value-start]
-                [value-end : i64 line-len]
-                (begin
-                  (while (and
-                    (< value-start value-end)
-                    (let
-                      [code : i64
-                        (cast (byte_buf.bytes-ref line value-start) : i64)]
-                      (or (= code 32) (= code 9))))
-                    (set! value-start (+ value-start 1)))
-                  (while (and
-                    (> value-end value-start)
-                    (let
-                      [code : i64
-                        (cast (byte_buf.bytes-ref line (- value-end 1)) : i64)]
-                      (or (= code 32) (= code 9))))
-                    (set! value-end (- value-end 1)))
-                  (let
-                    [value-len : i64 (- value-end value-start)]
-                    [name-view : (& line bytes)
-                      (byte_buf.bytes-slice-view line 0 colon)]
-                    [value-view : (& line bytes)
-                      (byte_buf.bytes-slice-view line value-start value-len)]
-                    (if (> (- line-len raw-value-start) limits.max-value-bytes)
-                      (HttpFieldLinePartsErr
-                        (peer-error
-                          (HttpValueTooLong)
-                          (field-offset-add
-                            base-offset
-                            (field-offset-add
-                              raw-value-start
-                              limits.max-value-bytes))))
-                      (match (validate-field-parts
-                        name-view
-                        value-view
+                [value-len : i64 (- value-end value-start)]
+                [name-view : (& line bytes)
+                  (byte_buf.bytes-slice-view line 0 colon)]
+                [value-view : (& line bytes)
+                  (byte_buf.bytes-slice-view line value-start value-len)]
+                (if (> (- line-len raw-value-start) limits.max-value-bytes)
+                  (HttpFieldLinePartsErr
+                    (peer-error
+                      (HttpValueTooLong)
+                      (field-offset-add
                         base-offset
-                        (field-offset-add base-offset value-start)
-                        line-len
-                        limits
-                        (HttpHeaderPublic)
-                        false
-                        true)
-                        [(HttpTypedFieldErr error)
-                          (HttpFieldLinePartsErr error)]
-                        [(HttpTypedFieldOk)
-                          (HttpFieldLinePartsOk
-                            (HttpFieldLineParts colon value-start value-len))])))))]))])))
+                        (field-offset-add
+                          raw-value-start
+                          limits.max-value-bytes))))
+                  (match (validate-field-parts
+                    name-view
+                    value-view
+                    base-offset
+                    (field-offset-add base-offset value-start)
+                    line-len
+                    limits
+                    (HttpHeaderPublic)
+                    false
+                    true)
+                    [(HttpTypedFieldErr error) (HttpFieldLinePartsErr error)]
+                    [(HttpTypedFieldOk)
+                      (HttpFieldLinePartsOk
+                        (HttpFieldLineParts colon value-start value-len))]))))])])))
 
 ;: Copy checked field-line ranges into one owned field. Callers obtain `parts`
 ;: from `validate-field-line-parts` for this exact `line`.

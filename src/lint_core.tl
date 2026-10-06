@@ -2041,14 +2041,16 @@
 ;; match or cond arm body) can be spliced into that sequence. The rule reads
 ;; the token stream, so it sees exactly the source forms: a body sequence the
 ;; parser builds is never mistaken for a written `begin`. A begin under a quote
-;; or directly behind a reader prefix, one with a bracket form, and one
-;; projected with `.field` stay as written.
+;; or directly behind a reader prefix, one with a bracket form or a `(cfg ...)`
+;; form, and one projected with `.field` stay as written. A cfg form makes the
+;; body depend on the configuration: spliced into a `let`, the body can shrink
+;; to a lone `let` once cfg drops the rest, which `nested-let` rejects.
 ;;
-;; `when` and `unless` check every body form as `unit`, while `begin` discards
-;; its non-final values, and this rule has no types. Under them it only reports
-;; a begin whose forms the splice exposes to that check (every form but the
-;; last, through nested begins that may be spliced too) are syntactically
-;; unit: `set!`, `while`, `when`, `unless`, `for`, `unit`, and
+;; `when`, `unless` and `while` check every body form as `unit`, while `begin`
+;; discards its non-final values, and this rule has no types. Under them it
+;; only reports a begin whose forms the splice exposes to that check (every
+;; form but the last, through nested begins that may be spliced too) are
+;; syntactically unit: `set!`, `while`, `when`, `unless`, `for`, `unit`, and
 ;; `begin`/`let`/`unsafe`/`if` ending in those.
 ;: Child position from which a form headed by `head` evaluates a body
 ;: sequence, or -1. `nested` is false for a top-level form, where `unsafe` and
@@ -2090,7 +2092,10 @@
     [else -1]))
 
 (define (lint-redundant-begin-unit-guard? [head : (& head str)]) : bool
-  (or (string.eq head "when") (string.eq head "unless")))
+  (or
+    (string.eq head "when")
+    (string.eq head "unless")
+    (string.eq head "while")))
 
 (define (lint-token-tag-at
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
@@ -2227,7 +2232,7 @@
             (lint-redundant-begin-unit-form? toks close-of else-at)))]
       [else false])))
 
-;: Under `when`/`unless`, splicing the begin at `open` (and any begin nested
+;: Under `when`/`unless`/`while`, splicing the begin at `open` (and any begin nested
 ;: directly in it) exposes its forms to the unit check: every form except the
 ;: very last must be syntactically unit, and none may carry a reader prefix.
 (define (lint-redundant-begin-unit-safe?
@@ -2255,7 +2260,7 @@
     ok))
 
 ;: Whether the begin opened at `open` has at least two forms and no bracket
-;: form among them.
+;: or `(cfg ...)` form among them.
 (define (lint-redundant-begin-spliceable?
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
   [close-of : (& close-of (__tl_dyn-array i64))]
@@ -2267,7 +2272,9 @@
     [ok : bool true]
     (while (and ok (< at close))
       (when
-        (= (lint-token-tag-at toks at) (token.tag-lbracket))
+        (or
+          (= (lint-token-tag-at toks at) (token.tag-lbracket))
+          (string.eq (lint-token-paren-head toks at) "cfg"))
         (set! ok false))
       (set! count (+ count 1))
       (set! at (lint-token-form-end toks close-of at)))

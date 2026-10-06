@@ -8925,7 +8925,7 @@
     (while (> index 0)
       (set! index (- index 1))
       (when
-        (= (lower-global-array-element-shared-view subs.names index) name)
+        (= (array-ref subs.names index) name)
         (set! found index)
         (set! index 0)))
     (if (< found 0)
@@ -11861,13 +11861,12 @@
     [(While cond-box body-box)
       (let
         [cond : ast.AstExpr (ast.ast-node-pool-context-expr-get pools cond-box)]
-        [body : ast.AstExpr (ast.ast-node-pool-context-expr-get pools body-box)]
-        (lower-reach-expr
+        (lower-reach-expr-list
           pools
           all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state cond)
-          body))]
+          body-box))]
     [(ForOwnedState payload)
       (lower-reach-expr
         pools
@@ -15631,12 +15630,11 @@
 (define (lower-state-deferred-copy-mark [state : LowerState] [var-id : i64]) : LowerState
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
-    (begin
-      (lower_i64_i64_map.insert-ref!
-        (&mut (__tl-project-field (__tl-box-place data) deferred-copies))
-        var-id
-        1)
-      state)))
+    (lower_i64_i64_map.insert-ref!
+      (&mut (__tl-project-field (__tl-box-place data) deferred-copies))
+      var-id
+      1)
+    state))
 
 (define (lower-state-deferred-arm-body [state : LowerState]) : i64
   (let
@@ -20674,19 +20672,17 @@
         [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
         [index : i64 0]
         [found : bool false]
-        (begin
-          (while (and (not found) (< index children.len))
-            (begin
-              (when
-                (lower-deferred-copy-mentions?
-                  ctx
-                  (lower-context-expr-get
-                    ctx
-                    (ast.ast-expr-list-get (& children) index -1))
-                  name)
-                (set! found true))
-              (set! index (+ index 1))))
-          found))]))
+        (while (and (not found) (< index children.len))
+          (when
+            (lower-deferred-copy-mentions?
+              ctx
+              (lower-context-expr-get
+                ctx
+                (ast.ast-expr-list-get (& children) index -1))
+              name)
+            (set! found true))
+          (set! index (+ index 1)))
+        found)]))
 
 ;; A tuple or fixed-array payload for its element patterns: the loaded value
 ;; when owned, the payload's address when borrowed.
@@ -20974,7 +20970,7 @@
                       (lower-global-shared-view resolved)
                       (deref items-box)
                       has-rest
-                      (lower-global-shared-view mode)
+                      mode
                       fail-label
                       true)
                       [(Ok slice-state slice-env slice-type-env)
@@ -21725,31 +21721,29 @@
       ;; apply here.
       (let
         [outer-arm-body : i64 (lower-state-deferred-arm-body state)]
-        (begin
-          (lower-state-set-deferred-arm-body! state body-id)
-          (let
-            [bound : ResultLowerEnv
-              (lower-bind-variant-payloads
-                ctx
-                state
-                env
-                type-env
-                (Borrowed lifetime)
-                base
-                patterns
-                types
-                mode
-                enum-id
-                enum-name
-                variant-name
-                variant-name-id
-                index
-                cursor
-                fail-label
-                false)]
-            (begin
-              (lower-state-set-deferred-arm-body! state outer-arm-body)
-              bound))))]))
+        (lower-state-set-deferred-arm-body! state body-id)
+        (let
+          [bound : ResultLowerEnv
+            (lower-bind-variant-payloads
+              ctx
+              state
+              env
+              type-env
+              (Borrowed lifetime)
+              base
+              patterns
+              types
+              mode
+              enum-id
+              enum-name
+              variant-name
+              variant-name-id
+              index
+              cursor
+              fail-label
+              false)]
+          (lower-state-set-deferred-arm-body! state outer-arm-body)
+          bound))]))
 
 ;; A payload subpattern is refutable when it can fail to match at run time.
 ;; Literals, nested enum variants and slice patterns with a length test are
@@ -23373,6 +23367,7 @@
       [function-spans : ir.CompilerSourceSpans
         (lower-record-function-span
           (compiler-lower-state-from-name-cache names)
+          (& (tc_core.tc-context-pools ctx))
           spans
           (ir.compiler-ir-symbol-typed-id logical-name)
           (lower-global-shared-view body))]
@@ -25883,16 +25878,14 @@
     [expr-bases : i64 (tc_core.tc-context-expr-bases ctx)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index args.len))
-        (begin
-          (if (tc_core.tc-call-temporary-borrow-arg-id?
-            expr-bases
-            (ast.ast-expr-list-get args index 0))
-            (set! found true)
-            unit)
-          (set! index (+ index 1))))
-      found)))
+    (while (and (not found) (< index args.len))
+      (if (tc_core.tc-call-temporary-borrow-arg-id?
+        expr-bases
+        (ast.ast-expr-list-get args index 0))
+        (set! found true)
+        unit)
+      (set! index (+ index 1)))
+    found))
 
 ;; The symbol of a cleanup-owning type's declared cleanup function.
 (define (lower-cleanup-symbol-for-type
@@ -29699,7 +29692,7 @@
     [(While cond-box body-box)
       (let
         [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-        [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+        [body : ast.AstExpr (Begin body-box)]
         (lower-while ctx state env type-env cond body))]
     [(ForOwnedState payload)
       (lower-for-owned-state
@@ -43805,7 +43798,7 @@
     [(While cond-box body-box)
       (or
         (lower-spmd-reduce-node-writes-id? ctx name cond-box)
-        (lower-spmd-reduce-node-writes-id? ctx name body-box))]
+        (lower-spmd-reduce-expr-list-writes-id? ctx name body-box))]
     [(Begin exprs) (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
     [(Unsafe exprs) (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
     [(Set set-name value-box)
@@ -46420,7 +46413,7 @@
       [(While cond-box body-box)
         (let
           [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-          [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+          [body : ast.AstExpr (Begin body-box)]
           (lower-masked-vector-lanes-merge
             (lower-masked-vector-expr-lanes-with-locals
               ctx
@@ -46748,7 +46741,7 @@
                   form
                   index
                   lane-locals
-                  (lower-context-expr-get ctx body-box))))]
+                  (Begin body-box))))]
           [_ false])]
       [(Match match-box)
         (match form
@@ -47721,12 +47714,12 @@
           type-env
           index
           (lower-context-expr-get ctx cond-box))
-        (lower-masked-vector-body-has-bool-array-lane?
+        (lower-masked-vector-expr-list-has-bool-array-lane?
           ctx
           env
           type-env
           index
-          (lower-context-expr-get ctx body-box)))]
+          body-box))]
     [(Begin exprs)
       (lower-masked-vector-expr-list-has-bool-array-lane?
         ctx
@@ -48317,12 +48310,12 @@
           type-env
           index
           (lower-context-expr-get ctx cond-box))
-        (lower-masked-vector-array-vars
+        (lower-masked-vector-expr-list-array-vars
           ctx
           env
           type-env
           index
-          (lower-context-expr-get ctx body-box)))]
+          body-box))]
     [(Match match-box)
       (match (__tl-box-place match-box)
         [(Match scrutinee-box arms)
@@ -49066,7 +49059,7 @@
         type-env
         (MaskedControl)
         (lower-context-expr-get ctx condition-box)
-        (lower-context-expr-get ctx body-box))]
+        (Begin body-box))]
     [(Begin exprs)
       (lower-spmd-numeric-failure-in-expr-list
         ctx
@@ -49802,8 +49795,8 @@
                   ctx
                   mode
                   numeric-context
-                  (lower-global-shared-view env)
-                  (lower-global-shared-view type-env)
+                  env
+                  type-env
                   index
                   (lower-global-shared-view dst-elem)
                   (lower-context-expr-get ctx init-box)
@@ -59249,6 +59242,7 @@
     [function-spans : ir.CompilerSourceSpans
       (lower-record-function-span
         (compiler-lower-state-from-name-cache names)
+        (& (tc_core.tc-context-pools ctx))
         spans
         (ir.compiler-ir-symbol-typed-id hidden-name)
         (lower-global-shared-view body))]
@@ -59408,6 +59402,7 @@
     [function-spans : ir.CompilerSourceSpans
       (lower-record-function-span
         (compiler-lower-state-from-name-cache names)
+        (& (tc_core.tc-context-pools ctx))
         spans
         (ir.compiler-ir-symbol-typed-id hidden-name)
         (lower-global-shared-view body))]
@@ -60681,7 +60676,7 @@
             active-mask
             lanes
             (lower-context-expr-get ctx cond-box)
-            (lower-context-expr-get ctx body-box)))]
+            (Begin body-box)))]
       [(Begin exprs)
         (lower-avx512-masked-begin
           ctx
@@ -66878,6 +66873,7 @@
       [function-spans : ir.CompilerSourceSpans
         (lower-record-function-span
           (compiler-lower-state-from-name-cache names)
+          (& (tc_core.tc-context-pools ctx))
           spans
           (ir.compiler-ir-symbol-typed-id logical-name)
           (lower-global-shared-view body))]
@@ -67200,17 +67196,37 @@
           [(Err _) (tc_core.tc-top-decl-type-with-env ctx env actual)])]
       [_ (tc_core.tc-top-decl-type-with-env ctx env actual)])))
 
+;; The span a function's provenance row records: the body's own span. A body
+;; of several forms reaches lowering as the parser's implicit `Begin`
+;; (`parse-ast-body-tail`), which has no `Spanned` wrapper, so it takes its
+;; first form's span -- where an explicit `(begin ...)` around the same forms
+;; would have started. Without it such a function had no location in a
+;; `--backtrace` map, and a `stdlib/runtime.tl` frame escaped the renderer's
+;; runtime-path filter (#8651).
+(define (lower-function-body-span
+  [pools : (& pools ast.AstNodePoolContext)]
+  [body : ast.AstExpr]) : ir.CompilerMaybeSourceSpan
+  (match body
+    [(Spanned _ span) (Some span)]
+    [(Begin exprs)
+      (if (> exprs.len 0)
+        (lower-ast-expr-direct-span
+          (ast.ast-node-pool-context-expr-get
+            pools
+            (ast.ast-expr-list-get (& exprs) 0 0)))
+        (No))]
+    [_ (No)]))
+
 ;; Record `name -> body span` into the provenance table. A function whose
-;;
 ;; body carries no source span leaves the table unchanged, so the backend simply
-;;
 ;; falls back to its default location for that function.
 (define (lower-record-function-span
   [lower-state : CompilerLowerState]
+  [pools : (& pools ast.AstNodePoolContext)]
   [spans : ir.CompilerSourceSpans]
   [name : ir.CompilerIrSymbolId]
   [body : ast.AstExpr]) : ir.CompilerSourceSpans
-  (match (lower-ast-expr-direct-span body)
+  (match (lower-function-body-span pools body)
     [(Some span)
       (if (ir.compiler-debug-info-enabled?)
         (ir.compiler-source-spans-insert-located
@@ -72323,7 +72339,7 @@
   [request : CompilerLowerRequest]) : ResultCompilerLower
   (let
     [state : CompilerLowerState (compiler-lower-state-new)]
-    (compiler-lower-state-use-request! state (lower-global-shared-view request))
+    (compiler-lower-state-use-request! state request)
     (match request.pointer-proof
       [(Disabled) unit]
       [(Requested input)

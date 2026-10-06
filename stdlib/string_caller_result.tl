@@ -63,22 +63,20 @@
     [olen : i64 (string-length old)]
     [i : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (<= i (- hlen olen)))
-        (let
-          [j : i64 0]
-          [ok : bool true]
-          (begin
-            (while (and ok (< j olen))
-              (if (string.char-eq (string-ref s (+ i j)) (string-ref old j))
-                (set! j (+ j 1))
-                (set! ok false)))
-            (if ok
-              (set! found true)
-              (set! i (+ i 1))))))
-      (if found
-        i
-        -1))))
+    (while (and (not found) (<= i (- hlen olen)))
+      (let
+        [j : i64 0]
+        [ok : bool true]
+        (while (and ok (< j olen))
+          (if (string.char-eq (string-ref s (+ i j)) (string-ref old j))
+            (set! j (+ j 1))
+            (set! ok false)))
+        (if ok
+          (set! found true)
+          (set! i (+ i 1)))))
+    (if found
+      i
+      -1)))
 
 ;: Build owned replacement text for a known match at `index`.
 (define (string-replace-owned-at
@@ -115,9 +113,8 @@
 
 ;: Inline test helper that forces a caller-result string test failure.
 (define (test-fail) : unit
-  (begin
-    (/ 1 0)
-    unit))
+  (/ 1 0)
+  unit)
 
 ;: Inline test assertion for owned string equality.
 (define (test-string-eq [actual : String] [expected : String]) : unit
@@ -145,19 +142,18 @@
       (string-replace-result (& text) (& missing) (& replacement))]
     [helper-owned : (StringReplaceResult text needle replacement)
       (string-replace-result (& text) (& needle) (& replacement))]
-    (begin
-      (test.assert-true
-        (string-replace-result-borrowed? borrowed)
-        "string-caller-result-api: (string-replace-result-borrowed? borrowed)")
-      (test.assert-true
-        (string-replace-result-owned? owned-result)
-        "string-caller-result-api: (string-replace-result-owned? owned-result)")
-      (test-string-eq (string-replace-result-string borrowed) "alpha")
-      (test-string-eq (string-replace-result-string owned-result) "owned")
-      (test.assert-true
-        (string-replace-result-borrowed? helper-borrowed)
-        "string-caller-result-api: (string-replace-result-borrowed? helper-borrowed)")
-      (test.assert-true
-        (string-replace-result-owned? helper-owned)
-        "string-caller-result-api: (string-replace-result-owned? helper-owned)")
-      (test-string-eq (string-replace-result-string helper-owned) "alrena"))))
+    (test.assert-true
+      (string-replace-result-borrowed? borrowed)
+      "string-caller-result-api: (string-replace-result-borrowed? borrowed)")
+    (test.assert-true
+      (string-replace-result-owned? owned-result)
+      "string-caller-result-api: (string-replace-result-owned? owned-result)")
+    (test-string-eq (string-replace-result-string borrowed) "alpha")
+    (test-string-eq (string-replace-result-string owned-result) "owned")
+    (test.assert-true
+      (string-replace-result-borrowed? helper-borrowed)
+      "string-caller-result-api: (string-replace-result-borrowed? helper-borrowed)")
+    (test.assert-true
+      (string-replace-result-owned? helper-owned)
+      "string-caller-result-api: (string-replace-result-owned? helper-owned)")
+    (test-string-eq (string-replace-result-string helper-owned) "alrena")))

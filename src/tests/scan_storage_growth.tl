@@ -4,7 +4,6 @@
 (import read as reader)
 (import token)
 (import compiler_intern as ci)
-(import compiler_owned_view as owned_view)
 (cfg test (import compiler_allocation_profile as allocation_profile))
 (import stdlib.arena)
 (import stdlib.string)
@@ -28,8 +27,10 @@
     [index : i64 0]
     [caller : i64 (arena.tl_arena_current)]
     (while (< index 32768)
-      (reader.sp-node-push
-        (Int index "retained" (token.SourceSpan (+ index 1) 2 3 4)))
+      (begin
+        (reader.sp-node-push
+          (Int index "retained" (token.SourceSpan (+ index 1) 2 3 4)))
+        unit)
       (set! index (+ index 1)))
     (reader.sp-node-pool-compact-retained!)
     (let
@@ -120,7 +121,9 @@
       (in-arena (arena.Arena owner) (string.copy "shared reader storage"))]
     [index : i64 0]
     (while (< index 2049)
-      (reader.sp-node-push (Int index "" (token.SourceSpan 1 1 1 1)))
+      (begin
+        (reader.sp-node-push (Int index "" (token.SourceSpan 1 1 1 1)))
+        unit)
       (set! index (+ index 1)))
     (unless
       (and
@@ -207,14 +210,8 @@
             (= position 1)
             (string.eq (ci.intern-str (ci.intern-id-value name)) "atom"))]
         [(token.Token.Int value text)
-          (and
-            (= position 2)
-            (= (owned_view.compiler-owned-pattern-copy value) 123)
-            (string.eq text "0x7b"))]
-        [(token.Token.Char value)
-          (and
-            (= position 3)
-            (= (owned_view.compiler-owned-pattern-copy value) 'q'))]
+          (and (= position 2) (= value 123) (string.eq text "0x7b"))]
+        [(token.Token.Char value) (and (= position 3) (= value 'q'))]
         [(token.Token.Str text)
           (and
             (= position 4)

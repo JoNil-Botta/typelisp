@@ -80,13 +80,12 @@
   [code : i64]
   [offset : i64]
   [message : String]) : unit
-  (if reader.ok?
-    (begin
-      (set! reader.ok? false)
-      (set! reader.error-code code)
-      (set! reader.error-offset offset)
-      (set! reader.error-message message))
-    unit))
+  (when
+    reader.ok?
+    (set! reader.ok? false)
+    (set! reader.error-code code)
+    (set! reader.error-offset offset)
+    (set! reader.error-message message)))
 
 ;: True when `[start, start + count)` lies inside a sequence of `length` bytes.
 (define (range-present? [length : i64] [start : i64] [count : i64]) : bool
@@ -108,25 +107,22 @@
   (cond
     [(not reader.ok?) false]
     [(not (range-present? reader.end reader.offset count))
-      (begin
-        (fail!
-          reader
-          error-truncated
-          reader.offset
-          "byte reader: input is truncated")
-        false)]
+      (fail!
+        reader
+        error-truncated
+        reader.offset
+        "byte reader: input is truncated")
+      false]
     [(> count (- reader.max-work reader.work))
-      (begin
-        (fail!
-          reader
-          error-work-limit
-          reader.offset
-          "byte reader: work limit exceeded")
-        false)]
+      (fail!
+        reader
+        error-work-limit
+        reader.offset
+        "byte reader: work limit exceeded")
+      false]
     [else
-      (begin
-        (set! reader.work (+ reader.work count))
-        true)]))
+      (set! reader.work (+ reader.work count))
+      true]))
 
 ;: Move the cursor past `count` bytes that a successful `consume!` covered.
 (define (skip! [reader : (&mut reader ByteReader)] [count : i64]) : unit
@@ -137,9 +133,8 @@
   (if (consume! reader 1)
     (let
       [offset : i64 reader.offset]
-      (begin
-        (skip! reader 1)
-        (cast (array-ref reader.bytes offset) : i64)))
+      (skip! reader 1)
+      (cast (array-ref reader.bytes offset) : i64))
     0))
 
 ;: Consume and return the next zero-extended 16-bit value, or `0` after a
@@ -148,9 +143,8 @@
   (if (consume! reader 2)
     (let
       [offset : i64 reader.offset]
-      (begin
-        (skip! reader 2)
-        (byte_le.read-u16 (& reader.bytes) offset)))
+      (skip! reader 2)
+      (byte_le.read-u16 (& reader.bytes) offset))
     0))
 
 ;: Consume and return the next zero-extended 32-bit value, or `0` after a
@@ -159,9 +153,8 @@
   (if (consume! reader 4)
     (let
       [offset : i64 reader.offset]
-      (begin
-        (skip! reader 4)
-        (byte_le.read-u32 (& reader.bytes) offset)))
+      (skip! reader 4)
+      (byte_le.read-u32 (& reader.bytes) offset))
     0))
 
 ;: Consume and return the next 64-bit pattern as an `i64`, or `0` after a
@@ -170,9 +163,8 @@
   (if (consume! reader 8)
     (let
       [offset : i64 reader.offset]
-      (begin
-        (skip! reader 8)
-        (byte_le.read-u64 (& reader.bytes) offset)))
+      (skip! reader 8)
+      (byte_le.read-u64 (& reader.bytes) offset))
     0))
 
 (cfg
@@ -181,73 +173,63 @@
     (let
       [bytes : (__tl_dyn-array u8) (__tl_make-array u8 15)]
       [index : i64 0]
-      (begin
-        (while (< index 15)
-          (begin
-            (set! (array-ref bytes index) (cast (+ index 1) : u8))
-            (set! index (+ index 1))))
-        bytes))))
+      (while (< index 15)
+        (set! (array-ref bytes index) (cast (+ index 1) : u8))
+        (set! index (+ index 1)))
+      bytes)))
 
 (test
   byte-reader-reads-in-order
   (let
     [reader : ByteReader (new (byte-reader-test-bytes) unlimited-work)]
-    (begin
-      (test.assert-i64-eq (read-u8! (&mut reader)) 1 "u8")
-      (test.assert-i64-eq (read-u16! (&mut reader)) 770 "u16")
-      (test.assert-i64-eq (read-u32! (&mut reader)) 117835012 "u32")
-      (test.assert-i64-eq (read-u64! (&mut reader)) 1084818905618843912 "u64")
-      (test.assert-true (at-end? (& reader)) "consumed exactly")
-      (test.assert-i64-eq reader.work 15 "work counts consumed bytes"))))
+    (test.assert-i64-eq (read-u8! (&mut reader)) 1 "u8")
+    (test.assert-i64-eq (read-u16! (&mut reader)) 770 "u16")
+    (test.assert-i64-eq (read-u32! (&mut reader)) 117835012 "u32")
+    (test.assert-i64-eq (read-u64! (&mut reader)) 1084818905618843912 "u64")
+    (test.assert-true (at-end? (& reader)) "consumed exactly")
+    (test.assert-i64-eq reader.work 15 "work counts consumed bytes")))
 
 (test
   byte-reader-truncation-is-sticky
   (let
     [reader : ByteReader (new (byte-reader-test-bytes) unlimited-work)]
-    (begin
-      (test.assert-i64-eq (read-u64! (&mut reader)) 578437695752307201 "u64")
-      (test.assert-true (available? (& reader) 7) "seven bytes remain")
-      (test.assert-false (available? (& reader) 8) "eight do not")
-      (test.assert-i64-eq (read-u64! (&mut reader)) 0 "truncated read")
-      (test.assert-false reader.ok? "failed")
-      (test.assert-i64-eq reader.error-code error-truncated "truncated code")
-      (test.assert-i64-eq reader.error-offset 8 "failure offset")
-      (test.assert-i64-eq reader.offset 8 "cursor stays put")
-      (test.assert-i64-eq (read-u8! (&mut reader)) 0 "reads stay failed")
-      (fail! (&mut reader) 7 0 "later failure")
-      (test.assert-i64-eq
-        reader.error-code
-        error-truncated
-        "first failure kept")
-      (test.assert-false (available? (& reader) 0) "nothing after failure")
-      (test.assert-false (at-end? (& reader)) "not a clean end"))))
+    (test.assert-i64-eq (read-u64! (&mut reader)) 578437695752307201 "u64")
+    (test.assert-true (available? (& reader) 7) "seven bytes remain")
+    (test.assert-false (available? (& reader) 8) "eight do not")
+    (test.assert-i64-eq (read-u64! (&mut reader)) 0 "truncated read")
+    (test.assert-false reader.ok? "failed")
+    (test.assert-i64-eq reader.error-code error-truncated "truncated code")
+    (test.assert-i64-eq reader.error-offset 8 "failure offset")
+    (test.assert-i64-eq reader.offset 8 "cursor stays put")
+    (test.assert-i64-eq (read-u8! (&mut reader)) 0 "reads stay failed")
+    (fail! (&mut reader) 7 0 "later failure")
+    (test.assert-i64-eq reader.error-code error-truncated "first failure kept")
+    (test.assert-false (available? (& reader) 0) "nothing after failure")
+    (test.assert-false (at-end? (& reader)) "not a clean end")))
 
 (test
   byte-reader-work-limit
   (let
     [reader : ByteReader (new (byte-reader-test-bytes) 6)]
-    (begin
-      (test.assert-true (consume! (&mut reader) 4) "within the limit")
-      (test.assert-i64-eq reader.offset 0 "consume does not move")
-      (test.assert-false (consume! (&mut reader) 3) "over the limit")
-      (test.assert-i64-eq reader.error-code error-work-limit "work code")
-      (test.assert-i64-eq reader.work 4 "failed consume is not charged"))))
+    (test.assert-true (consume! (&mut reader) 4) "within the limit")
+    (test.assert-i64-eq reader.offset 0 "consume does not move")
+    (test.assert-false (consume! (&mut reader) 3) "over the limit")
+    (test.assert-i64-eq reader.error-code error-work-limit "work code")
+    (test.assert-i64-eq reader.work 4 "failed consume is not charged")))
 
 (test
   byte-reader-caller-failure
   (let
     [reader : ByteReader (new (__tl_make-array u8 0) unlimited-work)]
-    (begin
-      (test.assert-true (at-end? (& reader)) "empty input is at its end")
-      (test.assert-false (consume! (&mut reader) -1) "negative count")
-      (test.assert-i64-eq
-        reader.error-code
-        error-truncated
-        "negative is truncated")
-      (let
-        [fresh : ByteReader (new (byte-reader-test-bytes) unlimited-work)]
-        (begin
-          (fail! (&mut fresh) 12 3 "schema")
-          (test.assert-i64-eq fresh.error-code 12 "caller code")
-          (test.assert-i64-eq fresh.error-offset 3 "caller offset")
-          (test.assert-owned-string-eq fresh.error-message "schema" "message"))))))
+    (test.assert-true (at-end? (& reader)) "empty input is at its end")
+    (test.assert-false (consume! (&mut reader) -1) "negative count")
+    (test.assert-i64-eq
+      reader.error-code
+      error-truncated
+      "negative is truncated")
+    (let
+      [fresh : ByteReader (new (byte-reader-test-bytes) unlimited-work)]
+      (fail! (&mut fresh) 12 3 "schema")
+      (test.assert-i64-eq fresh.error-code 12 "caller code")
+      (test.assert-i64-eq fresh.error-offset 3 "caller offset")
+      (test.assert-owned-string-eq fresh.error-message "schema" "message"))))

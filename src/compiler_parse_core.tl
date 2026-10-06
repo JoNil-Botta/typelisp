@@ -1020,8 +1020,11 @@
                                 "__tl_semantic_origin_start")
                               run-span))
                           (while (< record-index count)
-                            (reader.sp-node-push
-                              (reader.sp-node-get (+ (+ cursor 2) record-index)))
+                            (begin
+                              (reader.sp-node-push
+                                (reader.sp-node-get
+                                  (+ (+ cursor 2) record-index)))
+                              unit)
                             (set! record-index (+ record-index 1))))
                         unit))]
                   [_ unit])]
@@ -6629,14 +6632,13 @@
     [(Cons cond body-tail _)
       (let
         [parsed-cond (try (parse-ast-expr-with-pools dispatch pools cond))]
-        [parsed-body
-          (try
-            (parse-ast-body-tail
-              dispatch
+        [parsed-body (try (parse-ast-expr-list dispatch pools body-tail))]
+        (if (= parsed-body.len 0)
+          (Err "parse: malformed while")
+          (Ok
+            (ast.ast-node-pool-context-expr-push
               pools
-              body-tail
-              "parse: malformed while"))]
-        (Ok (ast.ast-expr-while-with-pools pools parsed-cond parsed-body)))]
+              (While parsed-cond parsed-body)))))]
     [_ (Err "parse: malformed while")]))
 
 (define (parse-ast-set
@@ -8661,17 +8663,17 @@
             [(Nil _)
               (match (parse-ast-foreach-dim dispatch pools binding)
                 [(Ok name index-ty start end)
-                  (match (parse-ast-foreach-body dispatch pools body-tail)
-                    [(Ok body)
-                      (Ok
-                        (ast.ast-expr-foreach-id-with-pools
-                          pools
-                          name
-                          index-ty
-                          start
-                          end
-                          body))]
-                    [(Err message) (Err message)])]
+                  (let
+                    [body
+                      (try (parse-ast-foreach-body dispatch pools body-tail))]
+                    (Ok
+                      (ast.ast-expr-foreach-id-with-pools
+                        pools
+                        name
+                        index-ty
+                        start
+                        end
+                        body)))]
                 [(Err message) (Err message)])]
             [(Cons inner-binding rank-end _)
               (match (reader.spanned-sexpr-view rank-end)
@@ -8686,24 +8688,25 @@
                           (if (= outer inner)
                             (Err
                               "parse: foreach domain bindings must use distinct names")
-                            (match (parse-ast-foreach-body
-                              dispatch
-                              pools
-                              body-tail)
-                              [(Ok body)
-                                (Ok
-                                  (ast.ast-expr-foreach2-id-with-pools
+                            (let
+                              [body
+                                (try
+                                  (parse-ast-foreach-body
+                                    dispatch
                                     pools
-                                    outer
-                                    outer-ty
-                                    outer-start
-                                    outer-end
-                                    inner
-                                    inner-ty
-                                    inner-start
-                                    inner-end
-                                    body))]
-                              [(Err message) (Err message)]))]
+                                    body-tail))]
+                              (Ok
+                                (ast.ast-expr-foreach2-id-with-pools
+                                  pools
+                                  outer
+                                  outer-ty
+                                  outer-start
+                                  outer-end
+                                  inner
+                                  inner-ty
+                                  inner-start
+                                  inner-end
+                                  body))))]
                         [(Err message) (Err message)])]
                     [(Err message) (Err message)])]
                 [_

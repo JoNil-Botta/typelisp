@@ -1018,9 +1018,9 @@
 (define (spanned-result-with-intern-owner
   [src : String]
   [owner : (LexerInternOwner intern-state)]) : ResultSpannedTokens
-  (match (into-spanned-tokens-result-with-intern-owner (& src) owner)
-    [(Ok _) (Ok (global-shared-view lex-spanned-token-buffer))]
-    [(Err err) (Err err)]))
+  (let
+    [_ (try (into-spanned-tokens-result-with-intern-owner (& src) owner))]
+    (Ok (global-shared-view lex-spanned-token-buffer))))
 
 ;; Serial/tool compatibility adapter. Compile jobs use the explicit twin below.
 (define (spanned-result [src : String]) : ResultSpannedTokens

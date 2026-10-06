@@ -230,6 +230,16 @@ borrow_temporary_named_lifetime_reject|check-fail|tests/safety/borrow_temporary_
 borrow_temporary_moved_operand_reject|check-fail|tests/safety/borrow_temporary_moved_operand_reject.tl|-|use of moved value `name`
 borrow_temporary_cleanup_early_exit_reject|check-fail|tests/safety/borrow_temporary_cleanup_early_exit_reject.tl|-|skip the cleanup of this borrowed cleanup-owning temporary
 borrow_temporary_cleanup_aggregate_reject|check-fail|tests/safety/borrow_temporary_cleanup_aggregate_reject.tl|-|a borrowed temporary that holds a cleanup-owning value must itself declare a cleanup function
+# A body whose only borrows are arguments of calls that keep no borrow past the
+# call skips the borrow check unless two arguments of one call use the same
+# variable, so conflicts inside one call are still found.
+call_scoped_borrow_args_ok|check-ok|tests/safety/call_scoped_borrow_args_ok.tl|-|-
+call_scoped_mut_shared_same_call_reject|check-fail|tests/safety/call_scoped_mut_shared_same_call_reject.tl|-|cannot mutably borrow borrowed place `x`
+call_scoped_shared_move_same_call_reject|check-fail|tests/safety/call_scoped_shared_move_same_call_reject.tl|-|cannot move borrowed place `x`
+call_scoped_mut_assign_same_call_reject|check-fail|tests/safety/call_scoped_mut_assign_same_call_reject.tl|-|cannot assign to borrowed place `x.a`
+call_scoped_mut_set_same_call_reject|check-fail|tests/safety/call_scoped_mut_set_same_call_reject.tl|-|cannot assign to borrowed place `x`
+call_scoped_mut_field_move_same_call_reject|check-fail|tests/safety/call_scoped_mut_field_move_same_call_reject.tl|-|cannot move borrowed place `x.b`
+call_scoped_nested_mut_reject|check-fail|tests/safety/call_scoped_nested_mut_reject.tl|-|cannot mutably borrow borrowed place `x`
 comptime_mut_borrow_rvalue_temporary_ok|check-ok|tests/safety/comptime_mut_borrow_rvalue_temporary_ok.tl|-|-
 comptime_mut_call_rvalue_temporary_ok|check-ok|tests/safety/comptime_mut_call_rvalue_temporary_ok.tl|-|-
 queue_bang_rvalue_temporary_ok|check-ok|tests/safety/queue_bang_rvalue_temporary_ok.tl|-|-
@@ -435,6 +445,11 @@ while_break_lambda_boundary_reject|check-fail|tests/safety/while_break_lambda_bo
 while_when_break_lambda_boundary_reject|check-fail|tests/safety/while_when_break_lambda_boundary_reject.tl|-|typecheck: macro operand typecheck failed: typecheck: break requires enclosing scalar while
 while_break_value_reject|check-fail|tests/safety/while_break_value_reject.tl|-|parse: break expects no arguments
 while_continue_value_reject|check-fail|tests/safety/while_continue_value_reject.tl|-|parse: continue expects no arguments
+while_nonunit_first_reject|check-fail|tests/safety/while_nonunit_first_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
+while_nonunit_macro_reject|check-fail|tests/safety/while_nonunit_macro_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
+while_nonunit_decls_reject|check-fail|tests/safety/while_nonunit_decls_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
+while_empty_splice_reject|check-fail|tests/safety/while_empty_splice_reject.tl|-|typecheck: while requires at least one body expression
+while_ignored_result_reject|check-fail|tests/safety/while_ignored_result_reject.tl|-|typecheck: while body must be unit: expected unit, found Outcome
 integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
 if_literal_branch_join_range_reject|check-fail|tests/safety/if_literal_branch_join_range_reject.tl|-|if branches must match
 if_value_branch_join_reject|check-fail|tests/safety/if_value_branch_join_reject.tl|-|if branches must match

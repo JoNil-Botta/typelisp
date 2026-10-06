@@ -1576,7 +1576,9 @@
           [index : i64 0]
           [_views : unit
             (while (< index 50)
-              (byte_buf.as-mut-bytes (&mut buffer))
+              (begin
+                (byte_buf.as-mut-bytes (&mut buffer))
+                unit)
               (set! index (+ index 1)))]
           [views : i64 (- (profile.alloc-total) views-before)]
           [before : i64 (profile.alloc-total)]

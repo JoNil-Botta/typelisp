@@ -168,12 +168,10 @@
       (let
         [out : (Array u8 16) (make-array u8 16)]
         [index : i64 0]
-        (begin
-          (while (< index 16)
-            (begin
-              (set! (array-ref out index) (byte_buf.bytes-ref input index))
-              (set! index (+ index 1))))
-          (Ipv6Ok (Ipv6Addr out)))))))
+        (while (< index 16)
+          (set! (array-ref out index) (byte_buf.bytes-ref input index))
+          (set! index (+ index 1)))
+        (Ipv6Ok (Ipv6Addr out))))))
 
 ;: Copy a borrowed four- or sixteen-byte network-order address.
 (define (ip-from-bytes [input : (& input bytes)]) : IpAddrResult
@@ -221,28 +219,24 @@
   (let
     [index : i64 0]
     [same : bool true]
-    (begin
-      (while (and same (< index 4))
-        (begin
-          (if (!= (array-ref left.octets index) (array-ref right.octets index))
-            (set! same false)
-            unit)
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index 4))
+      (if (!= (array-ref left.octets index) (array-ref right.octets index))
+        (set! same false)
+        unit)
+      (set! index (+ index 1)))
+    same))
 
 ;: Return true when two IPv6 addresses contain identical octets.
 (define (ipv6-eq? [left : (& left Ipv6Addr)] [right : (& right Ipv6Addr)]) : bool
   (let
     [index : i64 0]
     [same : bool true]
-    (begin
-      (while (and same (< index 16))
-        (begin
-          (if (!= (array-ref left.octets index) (array-ref right.octets index))
-            (set! same false)
-            unit)
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index 16))
+      (if (!= (array-ref left.octets index) (array-ref right.octets index))
+        (set! same false)
+        unit)
+      (set! index (+ index 1)))
+    same))
 
 ;: Return true when two addresses have the same family and bytes.
 (define (ip-eq? [left : (& left IpAddr)] [right : (& right IpAddr)]) : bool
@@ -260,31 +254,27 @@
 (define (ipv4-compare [left : (& left Ipv4Addr)] [right : (& right Ipv4Addr)]) : i64
   (let
     [index : i64 0]
-    (begin
-      (while (< index 4)
-        (let
-          [a : u8 (array-ref left.octets index)]
-          [b : u8 (array-ref right.octets index)]
-          (begin
-            (when (< a b) (return -1))
-            (when (> a b) (return 1))
-            (set! index (+ index 1)))))
-      0)))
+    (while (< index 4)
+      (let
+        [a : u8 (array-ref left.octets index)]
+        [b : u8 (array-ref right.octets index)]
+        (when (< a b) (return -1))
+        (when (> a b) (return 1))
+        (set! index (+ index 1))))
+    0))
 
 ;: Compare two IPv6 addresses lexicographically by network-order octets.
 (define (ipv6-compare [left : (& left Ipv6Addr)] [right : (& right Ipv6Addr)]) : i64
   (let
     [index : i64 0]
-    (begin
-      (while (< index 16)
-        (let
-          [a : u8 (array-ref left.octets index)]
-          [b : u8 (array-ref right.octets index)]
-          (begin
-            (when (< a b) (return -1))
-            (when (> a b) (return 1))
-            (set! index (+ index 1)))))
-      0)))
+    (while (< index 16)
+      (let
+        [a : u8 (array-ref left.octets index)]
+        [b : u8 (array-ref right.octets index)]
+        (when (< a b) (return -1))
+        (when (> a b) (return 1))
+        (set! index (+ index 1))))
+    0))
 
 ;: Compare addresses by family (`V4` first), then network-order octets.
 (define (ip-compare [left : (& left IpAddr)] [right : (& right IpAddr)]) : i64
@@ -303,28 +293,24 @@
   (let
     [value : i64 4]
     [index : i64 0]
-    (begin
-      (while (< index 4)
-        (begin
-          (set!
-            value
-            (hash.combine value (cast (array-ref address.octets index) : i64)))
-          (set! index (+ index 1))))
-      value)))
+    (while (< index 4)
+      (set!
+        value
+        (hash.combine value (cast (array-ref address.octets index) : i64)))
+      (set! index (+ index 1)))
+    value))
 
 ;: Return a deterministic non-cryptographic IPv6 hash.
 (define (ipv6-hash [address : (& address Ipv6Addr)]) : i64
   (let
     [value : i64 6]
     [index : i64 0]
-    (begin
-      (while (< index 16)
-        (begin
-          (set!
-            value
-            (hash.combine value (cast (array-ref address.octets index) : i64)))
-          (set! index (+ index 1))))
-      value)))
+    (while (< index 16)
+      (set!
+        value
+        (hash.combine value (cast (array-ref address.octets index) : i64)))
+      (set! index (+ index 1)))
+    value))
 
 ;: Return a deterministic family-sensitive non-cryptographic IP hash.
 (define (ip-hash [address : (& address IpAddr)]) : i64
@@ -352,47 +338,41 @@
     [octets : (Array u8 4) (make-array u8 4)]
     [component : i64 0]
     [cursor : i64 start]
-    (begin
-      (while (< component 4)
-        (begin
-          (when
-            (>= cursor end)
-            (return (Ipv4Err (IpAddrError (IpTooFewComponents) end))))
+    (while (< component 4)
+      (when
+        (>= cursor end)
+        (return (Ipv4Err (IpAddrError (IpTooFewComponents) end))))
+      (let
+        [component-start : i64 cursor]
+        [first : i64 (decimal-digit (string-ref text cursor))]
+        [value : i64 0]
+        (when
+          (< first 0)
+          (return (Ipv4Err (IpAddrError (IpInvalidCharacter) cursor))))
+        (while (and (< cursor end) (!= (string-ref text cursor) '.'))
           (let
-            [component-start : i64 cursor]
-            [first : i64 (decimal-digit (string-ref text cursor))]
-            [value : i64 0]
-            (begin
-              (when
-                (< first 0)
-                (return (Ipv4Err (IpAddrError (IpInvalidCharacter) cursor))))
-              (while (and (< cursor end) (!= (string-ref text cursor) '.'))
-                (let
-                  [digit : i64 (decimal-digit (string-ref text cursor))]
-                  (begin
-                    (when
-                      (< digit 0)
-                      (return
-                        (Ipv4Err (IpAddrError (IpInvalidCharacter) cursor))))
-                    (when
-                      (and (= cursor (+ component-start 1)) (= first 0))
-                      (return (Ipv4Err (IpAddrError (IpLeadingZero) cursor))))
-                    (set! value (+ (* value 10) digit))
-                    (when
-                      (> value 255)
-                      (return
-                        (Ipv4Err (IpAddrError (IpComponentOverflow) cursor))))
-                    (set! cursor (+ cursor 1)))))
-              (set! (array-ref octets component) (cast value : u8))
-              (if (< component 3)
-                (if (and (< cursor end) (= (string-ref text cursor) '.'))
-                  (set! cursor (+ cursor 1))
-                  (return (Ipv4Err (IpAddrError (IpTooFewComponents) cursor))))
-                (when
-                  (< cursor end)
-                  (return (Ipv4Err (IpAddrError (IpTooManyComponents) cursor)))))
-              (set! component (+ component 1))))))
-      (Ipv4Ok (Ipv4Addr octets)))))
+            [digit : i64 (decimal-digit (string-ref text cursor))]
+            (when
+              (< digit 0)
+              (return (Ipv4Err (IpAddrError (IpInvalidCharacter) cursor))))
+            (when
+              (and (= cursor (+ component-start 1)) (= first 0))
+              (return (Ipv4Err (IpAddrError (IpLeadingZero) cursor))))
+            (set! value (+ (* value 10) digit))
+            (when
+              (> value 255)
+              (return (Ipv4Err (IpAddrError (IpComponentOverflow) cursor))))
+            (set! cursor (+ cursor 1))))
+        (set! (array-ref octets component) (cast value : u8))
+        (if (< component 3)
+          (if (and (< cursor end) (= (string-ref text cursor) '.'))
+            (set! cursor (+ cursor 1))
+            (return (Ipv4Err (IpAddrError (IpTooFewComponents) cursor))))
+          (when
+            (< cursor end)
+            (return (Ipv4Err (IpAddrError (IpTooManyComponents) cursor)))))
+        (set! component (+ component 1))))
+    (Ipv4Ok (Ipv4Addr octets))))
 
 ;: Parse strict RFC 3986 dotted-decimal IPv4 text without allocating.
 (define (parse-ipv4 [text : (& text str)]) : Ipv4AddrResult
@@ -409,14 +389,12 @@
   (let
     [cursor : i64 start]
     [found : bool false]
-    (begin
-      (while (and (not found) (< cursor end))
-        (begin
-          (if (= (string-ref text cursor) '.')
-            (set! found true)
-            unit)
-          (set! cursor (+ cursor 1))))
-      found)))
+    (while (and (not found) (< cursor end))
+      (if (= (string-ref text cursor) '.')
+        (set! found true)
+        unit)
+      (set! cursor (+ cursor 1)))
+    found))
 
 ;: Parse one IPv6 colon-delimited side without allocating.
 (define (parse-ipv6-part
@@ -428,91 +406,79 @@
     [segments : (Array u16 8) (make-array u16 8)]
     [count : i64 0]
     [token-start : i64 start]
-    (begin
-      (when (= start end) (return (Ipv6PartOk (Ipv6Part segments 0))))
-      (while (< token-start end)
-        (let
-          [token-end : i64 token-start]
+    (when (= start end) (return (Ipv6PartOk (Ipv6Part segments 0))))
+    (while (< token-start end)
+      (let
+        [token-end : i64 token-start]
+        (while (and (< token-end end) (!= (string-ref text token-end) ':'))
+          (set! token-end (+ token-end 1)))
+        (when
+          (= token-start token-end)
+          (return (Ipv6PartErr (IpAddrError (IpInvalidSeparator) token-start))))
+        (if (range-has-dot? text token-start token-end)
           (begin
-            (while (and (< token-end end) (!= (string-ref text token-end) ':'))
-              (set! token-end (+ token-end 1)))
             (when
-              (= token-start token-end)
+              (not allow-embedded-ipv4)
               (return
-                (Ipv6PartErr (IpAddrError (IpInvalidSeparator) token-start))))
-            (if (range-has-dot? text token-start token-end)
-              (begin
-                (when
-                  (not allow-embedded-ipv4)
-                  (return
-                    (Ipv6PartErr
-                      (IpAddrError (IpEmbeddedIpv4NotFinal) token-start))))
-                (when
-                  (!= token-end end)
-                  (return
-                    (Ipv6PartErr
-                      (IpAddrError (IpEmbeddedIpv4NotFinal) token-end))))
-                (when
-                  (> count 6)
-                  (return
-                    (Ipv6PartErr
-                      (IpAddrError (IpTooManyComponents) token-start))))
-                (match (parse-ipv4-range text token-start token-end)
-                  [(Ipv4Err error) (return (Ipv6PartErr error))]
-                  [(Ipv4Ok address)
-                    (begin
-                      (set!
-                        (array-ref segments count)
-                        (cast
-                          (+
-                            (shl (cast (ipv4-octet (& address) 0) : i64) 8)
-                            (cast (ipv4-octet (& address) 1) : i64))
-                          : u16))
-                      (set!
-                        (array-ref segments (+ count 1))
-                        (cast
-                          (+
-                            (shl (cast (ipv4-octet (& address) 2) : i64) 8)
-                            (cast (ipv4-octet (& address) 3) : i64))
-                          : u16))
-                      (set! count (+ count 2)))])
-                (set! token-start token-end))
+                (Ipv6PartErr (IpAddrError (IpEmbeddedIpv4NotFinal) token-start))))
+            (when
+              (!= token-end end)
+              (return
+                (Ipv6PartErr (IpAddrError (IpEmbeddedIpv4NotFinal) token-end))))
+            (when
+              (> count 6)
+              (return
+                (Ipv6PartErr (IpAddrError (IpTooManyComponents) token-start))))
+            (match (parse-ipv4-range text token-start token-end)
+              [(Ipv4Err error) (return (Ipv6PartErr error))]
+              [(Ipv4Ok address)
+                (set!
+                  (array-ref segments count)
+                  (cast
+                    (+
+                      (shl (cast (ipv4-octet (& address) 0) : i64) 8)
+                      (cast (ipv4-octet (& address) 1) : i64))
+                    : u16))
+                (set!
+                  (array-ref segments (+ count 1))
+                  (cast
+                    (+
+                      (shl (cast (ipv4-octet (& address) 2) : i64) 8)
+                      (cast (ipv4-octet (& address) 3) : i64))
+                    : u16))
+                (set! count (+ count 2))])
+            (set! token-start token-end))
+          (let
+            [cursor : i64 token-start]
+            [value : i64 0]
+            (when
+              (>= count 8)
+              (return
+                (Ipv6PartErr (IpAddrError (IpTooManyComponents) token-start))))
+            (while (< cursor token-end)
               (let
-                [cursor : i64 token-start]
-                [value : i64 0]
-                (begin
-                  (when
-                    (>= count 8)
-                    (return
-                      (Ipv6PartErr
-                        (IpAddrError (IpTooManyComponents) token-start))))
-                  (while (< cursor token-end)
-                    (let
-                      [digit : i64 (hex-digit (string-ref text cursor))]
-                      (begin
-                        (when
-                          (< digit 0)
-                          (return
-                            (Ipv6PartErr
-                              (IpAddrError (IpInvalidCharacter) cursor))))
-                        (when
-                          (>= (- cursor token-start) 4)
-                          (return
-                            (Ipv6PartErr
-                              (IpAddrError (IpComponentOverflow) cursor))))
-                        (set! value (+ (shl value 4) digit))
-                        (set! cursor (+ cursor 1)))))
-                  (set! (array-ref segments count) (cast value : u16))
-                  (set! count (+ count 1)))))
-            (if (= token-end end)
-              (set! token-start end)
-              (begin
-                (set! token-start (+ token-end 1))
+                [digit : i64 (hex-digit (string-ref text cursor))]
                 (when
-                  (= token-start end)
+                  (< digit 0)
                   (return
-                    (Ipv6PartErr (IpAddrError (IpInvalidSeparator) token-end)))))))))
-      (Ipv6PartOk (Ipv6Part segments count)))))
+                    (Ipv6PartErr (IpAddrError (IpInvalidCharacter) cursor))))
+                (when
+                  (>= (- cursor token-start) 4)
+                  (return
+                    (Ipv6PartErr (IpAddrError (IpComponentOverflow) cursor))))
+                (set! value (+ (shl value 4) digit))
+                (set! cursor (+ cursor 1))))
+            (set! (array-ref segments count) (cast value : u16))
+            (set! count (+ count 1))))
+        (if (= token-end end)
+          (set! token-start end)
+          (begin
+            (set! token-start (+ token-end 1))
+            (when
+              (= token-start end)
+              (return
+                (Ipv6PartErr (IpAddrError (IpInvalidSeparator) token-end))))))))
+    (Ipv6PartOk (Ipv6Part segments count))))
 
 ;: Parse RFC 4291 IPv6 text without allocating.
 (define (parse-ipv6 [text : (& text str)]) : Ipv6AddrResult
@@ -520,66 +486,60 @@
     [n : i64 (string-length text)]
     [cursor : i64 0]
     [compression : i64 -1]
-    (begin
-      (when (= n 0) (return (Ipv6Err (IpAddrError (IpEmpty) 0))))
-      (when
-        (> n (ipv6-max-text-bytes))
-        (return (Ipv6Err (IpAddrError (IpInputTooLong) (ipv6-max-text-bytes)))))
-      (while (< (+ cursor 1) n)
-        (begin
-          (if (and
-            (= (string-ref text cursor) ':')
-            (= (string-ref text (+ cursor 1)) ':'))
-            (if (>= compression 0)
-              (return (Ipv6Err (IpAddrError (IpMultipleCompression) cursor)))
-              (begin
-                (set! compression cursor)
-                (set! cursor (+ cursor 1))))
-            unit)
-          (set! cursor (+ cursor 1))))
-      (if (< compression 0)
-        (match (parse-ipv6-part text 0 n true)
-          [(Ipv6PartErr error) (Ipv6Err error)]
-          [(Ipv6PartOk part)
-            (if (!= part.count 8)
-              (Ipv6Err (IpAddrError (IpTooFewComponents) n))
-              (Ipv6Ok (ipv6-from-segments part.segments)))])
-        (match (parse-ipv6-part text 0 compression false)
-          [(Ipv6PartErr error) (Ipv6Err error)]
-          [(Ipv6PartOk left)
-            (match (parse-ipv6-part text (+ compression 2) n true)
-              [(Ipv6PartErr error) (Ipv6Err error)]
-              [(Ipv6PartOk right)
-                (let
-                  [total : i64 (+ left.count right.count)]
-                  [zeros : i64 (- 8 total)]
-                  [segments : (Array u16 8) (make-array u16 8)]
-                  [index : i64 0]
-                  (begin
-                    (when
-                      (< zeros 0)
-                      (return
-                        (Ipv6Err
-                          (IpAddrError (IpTooManyComponents) compression))))
-                    (when
-                      (= zeros 0)
-                      (return
-                        (Ipv6Err
-                          (IpAddrError (IpCompressionWithoutZero) compression))))
-                    (while (< index left.count)
-                      (begin
-                        (set!
-                          (array-ref segments index)
-                          (array-ref left.segments index))
-                        (set! index (+ index 1))))
-                    (set! index 0)
-                    (while (< index right.count)
-                      (begin
-                        (set!
-                          (array-ref segments (+ (+ left.count zeros) index))
-                          (array-ref right.segments index))
-                        (set! index (+ index 1))))
-                    (Ipv6Ok (ipv6-from-segments segments))))])])))))
+    (when (= n 0) (return (Ipv6Err (IpAddrError (IpEmpty) 0))))
+    (when
+      (> n (ipv6-max-text-bytes))
+      (return (Ipv6Err (IpAddrError (IpInputTooLong) (ipv6-max-text-bytes)))))
+    (while (< (+ cursor 1) n)
+      (if (and
+        (= (string-ref text cursor) ':')
+        (= (string-ref text (+ cursor 1)) ':'))
+        (if (>= compression 0)
+          (return (Ipv6Err (IpAddrError (IpMultipleCompression) cursor)))
+          (begin
+            (set! compression cursor)
+            (set! cursor (+ cursor 1))))
+        unit)
+      (set! cursor (+ cursor 1)))
+    (if (< compression 0)
+      (match (parse-ipv6-part text 0 n true)
+        [(Ipv6PartErr error) (Ipv6Err error)]
+        [(Ipv6PartOk part)
+          (if (!= part.count 8)
+            (Ipv6Err (IpAddrError (IpTooFewComponents) n))
+            (Ipv6Ok (ipv6-from-segments part.segments)))])
+      (match (parse-ipv6-part text 0 compression false)
+        [(Ipv6PartErr error) (Ipv6Err error)]
+        [(Ipv6PartOk left)
+          (match (parse-ipv6-part text (+ compression 2) n true)
+            [(Ipv6PartErr error) (Ipv6Err error)]
+            [(Ipv6PartOk right)
+              (let
+                [total : i64 (+ left.count right.count)]
+                [zeros : i64 (- 8 total)]
+                [segments : (Array u16 8) (make-array u16 8)]
+                [index : i64 0]
+                (when
+                  (< zeros 0)
+                  (return
+                    (Ipv6Err (IpAddrError (IpTooManyComponents) compression))))
+                (when
+                  (= zeros 0)
+                  (return
+                    (Ipv6Err
+                      (IpAddrError (IpCompressionWithoutZero) compression))))
+                (while (< index left.count)
+                  (set!
+                    (array-ref segments index)
+                    (array-ref left.segments index))
+                  (set! index (+ index 1)))
+                (set! index 0)
+                (while (< index right.count)
+                  (set!
+                    (array-ref segments (+ (+ left.count zeros) index))
+                    (array-ref right.segments index))
+                  (set! index (+ index 1)))
+                (Ipv6Ok (ipv6-from-segments segments)))])]))))
 
 ;: Parse IPv4 when no colon occurs, otherwise parse IPv6.
 (define (parse-ip [text : (& text str)]) : IpAddrResult
@@ -587,20 +547,18 @@
     [n : i64 (string-length text)]
     [cursor : i64 0]
     [has-colon : bool false]
-    (begin
-      (while (and (not has-colon) (< cursor n))
-        (begin
-          (if (= (string-ref text cursor) ':')
-            (set! has-colon true)
-            unit)
-          (set! cursor (+ cursor 1))))
-      (if has-colon
-        (match (parse-ipv6 text)
-          [(Ipv6Ok address) (IpOk (V6 address))]
-          [(Ipv6Err error) (IpErr error)])
-        (match (parse-ipv4 text)
-          [(Ipv4Ok address) (IpOk (V4 address))]
-          [(Ipv4Err error) (IpErr error)])))))
+    (while (and (not has-colon) (< cursor n))
+      (if (= (string-ref text cursor) ':')
+        (set! has-colon true)
+        unit)
+      (set! cursor (+ cursor 1)))
+    (if has-colon
+      (match (parse-ipv6 text)
+        [(Ipv6Ok address) (IpOk (V6 address))]
+        [(Ipv6Err error) (IpErr error)])
+      (match (parse-ipv4 text)
+        [(Ipv4Ok address) (IpOk (V4 address))]
+        [(Ipv4Err error) (IpErr error)]))))
 
 ;: Format an IPv4 address to strict minimal dotted decimal.
 (define (ipv4-to-string [address : (& address Ipv4Addr)]) : String
@@ -611,67 +569,63 @@
         (ptr-cast (__tl_array-data storage) : (MutPtr u8)))]
     [cursor : i64 0]
     [index : i64 0]
-    (begin
-      (while (< index 4)
-        (let
-          [number : i64 (cast (array-ref address.octets index) : i64)]
-          (begin
-            (if (> index 0)
-              (begin
-                (unsafe
-                  (ptr-write! (ptr-offset output cursor) (cast '.' : u8)))
-                (set! cursor (+ cursor 1)))
-              unit)
-            (if (>= number 100)
-              (begin
-                (unsafe
-                  (ptr-write!
-                    (ptr-offset output cursor)
-                    (cast (+ 48 (/ number 100)) : u8)))
-                (set! cursor (+ cursor 1))
-                (set! number (% number 100))
-                (unsafe
-                  (ptr-write!
-                    (ptr-offset output cursor)
-                    (cast (+ 48 (/ number 10)) : u8)))
-                (set! cursor (+ cursor 1))
-                (unsafe
-                  (ptr-write!
-                    (ptr-offset output cursor)
-                    (cast (+ 48 (% number 10)) : u8)))
-                (set! cursor (+ cursor 1)))
-              (if (>= number 10)
-                (begin
-                  (unsafe
-                    (ptr-write!
-                      (ptr-offset output cursor)
-                      (cast (+ 48 (/ number 10)) : u8)))
-                  (set! cursor (+ cursor 1))
-                  (unsafe
-                    (ptr-write!
-                      (ptr-offset output cursor)
-                      (cast (+ 48 (% number 10)) : u8)))
-                  (set! cursor (+ cursor 1)))
-                (begin
-                  (unsafe
-                    (ptr-write!
-                      (ptr-offset output cursor)
-                      (cast (+ 48 number) : u8)))
-                  (set! cursor (+ cursor 1)))))
-            (set! index (+ index 1)))))
+    (while (< index 4)
       (let
-        [finished : (MutPtr u8) (string.string-runtime-alloc cursor)]
-        [copy-index : i64 0]
-        (begin
-          (while (< copy-index cursor)
+        [number : i64 (cast (array-ref address.octets index) : i64)]
+        (if (> index 0)
+          (begin
+            (unsafe
+              (ptr-write! (ptr-offset output cursor) (cast '.' : u8)))
+            (set! cursor (+ cursor 1)))
+          unit)
+        (if (>= number 100)
+          (begin
+            (unsafe
+              (ptr-write!
+                (ptr-offset output cursor)
+                (cast (+ 48 (/ number 100)) : u8)))
+            (set! cursor (+ cursor 1))
+            (set! number (% number 100))
+            (unsafe
+              (ptr-write!
+                (ptr-offset output cursor)
+                (cast (+ 48 (/ number 10)) : u8)))
+            (set! cursor (+ cursor 1))
+            (unsafe
+              (ptr-write!
+                (ptr-offset output cursor)
+                (cast (+ 48 (% number 10)) : u8)))
+            (set! cursor (+ cursor 1)))
+          (if (>= number 10)
             (begin
               (unsafe
                 (ptr-write!
-                  (ptr-offset finished copy-index)
-                  (ptr-read (ptr-offset output copy-index))))
-              (set! copy-index (+ copy-index 1))))
-          (unsafe
-            (string-from-bytes (ptr-cast finished : (Ptr u8)) cursor)))))))
+                  (ptr-offset output cursor)
+                  (cast (+ 48 (/ number 10)) : u8)))
+              (set! cursor (+ cursor 1))
+              (unsafe
+                (ptr-write!
+                  (ptr-offset output cursor)
+                  (cast (+ 48 (% number 10)) : u8)))
+              (set! cursor (+ cursor 1)))
+            (begin
+              (unsafe
+                (ptr-write!
+                  (ptr-offset output cursor)
+                  (cast (+ 48 number) : u8)))
+              (set! cursor (+ cursor 1)))))
+        (set! index (+ index 1))))
+    (let
+      [finished : (MutPtr u8) (string.string-runtime-alloc cursor)]
+      [copy-index : i64 0]
+      (while (< copy-index cursor)
+        (unsafe
+          (ptr-write!
+            (ptr-offset finished copy-index)
+            (ptr-read (ptr-offset output copy-index))))
+        (set! copy-index (+ copy-index 1)))
+      (unsafe
+        (string-from-bytes (ptr-cast finished : (Ptr u8)) cursor)))))
 
 ;: Format an IPv6 address to the canonical pure-hexadecimal RFC 5952 spelling.
 (define (ipv6-to-string [address : (& address Ipv6Addr)]) : String
@@ -679,86 +633,78 @@
     [best-start : i64 -1]
     [best-length : i64 0]
     [index : i64 0]
-    (begin
-      (while (< index 8)
-        (if (= (ipv6-segment address index) (cast 0 : u16))
+    (while (< index 8)
+      (if (= (ipv6-segment address index) (cast 0 : u16))
+        (let
+          [run-start : i64 index]
+          (while (and
+            (< index 8)
+            (= (ipv6-segment address index) (cast 0 : u16)))
+            (set! index (+ index 1)))
           (let
-            [run-start : i64 index]
-            (begin
-              (while (and
-                (< index 8)
-                (= (ipv6-segment address index) (cast 0 : u16)))
-                (set! index (+ index 1)))
-              (let
-                [run-length : i64 (- index run-start)]
-                (if (and (> run-length best-length) (>= run-length 2))
-                  (begin
-                    (set! best-start run-start)
-                    (set! best-length run-length))
-                  unit))))
-          (set! index (+ index 1))))
-      (let
-        [storage : (Array u8 39) (make-array u8 39)]
-        [output : (MutPtr u8)
-          (unsafe
-            (ptr-cast (__tl_array-data storage) : (MutPtr u8)))]
-        [cursor : i64 0]
-        [segment-index : i64 0]
-        (begin
-          (while (< segment-index 8)
-            (if (= segment-index best-start)
+            [run-length : i64 (- index run-start)]
+            (when
+              (and (> run-length best-length) (>= run-length 2))
+              (set! best-start run-start)
+              (set! best-length run-length))))
+        (set! index (+ index 1))))
+    (let
+      [storage : (Array u8 39) (make-array u8 39)]
+      [output : (MutPtr u8)
+        (unsafe
+          (ptr-cast (__tl_array-data storage) : (MutPtr u8)))]
+      [cursor : i64 0]
+      [segment-index : i64 0]
+      (while (< segment-index 8)
+        (if (= segment-index best-start)
+          (begin
+            (unsafe
+              (ptr-write! (ptr-offset output cursor) (cast ':' : u8)))
+            (set! cursor (+ cursor 1))
+            (unsafe
+              (ptr-write! (ptr-offset output cursor) (cast ':' : u8)))
+            (set! cursor (+ cursor 1))
+            (set! segment-index (+ segment-index best-length)))
+          (begin
+            (if (and
+              (> segment-index 0)
+              (not (= segment-index (+ best-start best-length))))
               (begin
                 (unsafe
                   (ptr-write! (ptr-offset output cursor) (cast ':' : u8)))
-                (set! cursor (+ cursor 1))
-                (unsafe
-                  (ptr-write! (ptr-offset output cursor) (cast ':' : u8)))
-                (set! cursor (+ cursor 1))
-                (set! segment-index (+ segment-index best-length)))
-              (begin
-                (if (and
-                  (> segment-index 0)
-                  (not (= segment-index (+ best-start best-length))))
-                  (begin
-                    (unsafe
-                      (ptr-write! (ptr-offset output cursor) (cast ':' : u8)))
-                    (set! cursor (+ cursor 1)))
-                  unit)
+                (set! cursor (+ cursor 1)))
+              unit)
+            (let
+              [value : i64 (cast (ipv6-segment address segment-index) : i64)]
+              [shift : i64 12]
+              [started : bool false]
+              (while (>= shift 0)
                 (let
-                  [value : i64
-                    (cast (ipv6-segment address segment-index) : i64)]
-                  [shift : i64 12]
-                  [started : bool false]
-                  (while (>= shift 0)
-                    (let
-                      [digit : i64 (bit-and (shr value shift) 15)]
-                      (begin
-                        (if (or started (!= digit 0) (= shift 0))
-                          (begin
-                            (set! started true)
-                            (unsafe
-                              (ptr-write!
-                                (ptr-offset output cursor)
-                                (if (< digit 10)
-                                  (cast (+ 48 digit) : u8)
-                                  (cast (+ 87 digit) : u8))))
-                            (set! cursor (+ cursor 1)))
-                          unit)
-                        (set! shift (- shift 4))))))
-                (set! segment-index (+ segment-index 1)))))
-          (let
-            [finished : (MutPtr u8) (string.string-runtime-alloc cursor)]
-            [copy-index : i64 0]
-            (begin
-              (while (< copy-index cursor)
-                (begin
-                  (unsafe
-                    (ptr-write!
-                      (ptr-offset finished copy-index)
-                      (ptr-read (ptr-offset output copy-index))))
-                  (set! copy-index (+ copy-index 1))))
-              (unsafe
-                (string-from-bytes (ptr-cast finished : (Ptr u8)) cursor)))))))))
+                  [digit : i64 (bit-and (shr value shift) 15)]
+                  (if (or started (!= digit 0) (= shift 0))
+                    (begin
+                      (set! started true)
+                      (unsafe
+                        (ptr-write!
+                          (ptr-offset output cursor)
+                          (if (< digit 10)
+                            (cast (+ 48 digit) : u8)
+                            (cast (+ 87 digit) : u8))))
+                      (set! cursor (+ cursor 1)))
+                    unit)
+                  (set! shift (- shift 4)))))
+            (set! segment-index (+ segment-index 1)))))
+      (let
+        [finished : (MutPtr u8) (string.string-runtime-alloc cursor)]
+        [copy-index : i64 0]
+        (while (< copy-index cursor)
+          (unsafe
+            (ptr-write!
+              (ptr-offset finished copy-index)
+              (ptr-read (ptr-offset output copy-index))))
+          (set! copy-index (+ copy-index 1)))
+        (unsafe
+          (string-from-bytes (ptr-cast finished : (Ptr u8)) cursor))))))
 
 ;: Format either address family to its canonical text spelling.
 (define (ip-to-string [address : (& address IpAddr)]) : String
@@ -771,43 +717,39 @@
   (let
     [v4-source : String "192.0.2.128"]
     [v6-source : String "2001:0DB8:0:0:0:0:0:1"]
-    (begin
-      (match (parse-ipv4 (& v4-source))
-        [(Ipv4Err _)
-          (begin
-            (/ 1 0)
-            unit)]
-        [(Ipv4Ok address)
-          (let
-            [actual : String (ipv4-to-string (& address))]
-            (if (string.eq (& actual) (& v4-source))
-              unit
-              (begin
-                (/ 1 0)
-                unit)))])
-      (match (parse-ipv6 (& v6-source))
-        [(Ipv6Err _)
-          (begin
-            (/ 1 0)
-            unit)]
-        [(Ipv6Ok address)
-          (let
-            [actual : String (ipv6-to-string (& address))]
-            (if (string.eq (& actual) "2001:db8::1")
-              unit
-              (begin
-                (/ 1 0)
-                unit)))])
-      (let
-        [bad : String "192.168.001.1"]
-        (match (parse-ipv4 (& bad))
-          [(Ipv4Ok _)
+    (match (parse-ipv4 (& v4-source))
+      [(Ipv4Err _)
+        (/ 1 0)
+        unit]
+      [(Ipv4Ok address)
+        (let
+          [actual : String (ipv4-to-string (& address))]
+          (if (string.eq (& actual) (& v4-source))
+            unit
             (begin
               (/ 1 0)
-              unit)]
-          [(Ipv4Err error)
-            (if (= error.offset 9)
-              unit
-              (begin
-                (/ 1 0)
-                unit))])))))
+              unit)))])
+    (match (parse-ipv6 (& v6-source))
+      [(Ipv6Err _)
+        (/ 1 0)
+        unit]
+      [(Ipv6Ok address)
+        (let
+          [actual : String (ipv6-to-string (& address))]
+          (if (string.eq (& actual) "2001:db8::1")
+            unit
+            (begin
+              (/ 1 0)
+              unit)))])
+    (let
+      [bad : String "192.168.001.1"]
+      (match (parse-ipv4 (& bad))
+        [(Ipv4Ok _)
+          (/ 1 0)
+          unit]
+        [(Ipv4Err error)
+          (if (= error.offset 9)
+            unit
+            (begin
+              (/ 1 0)
+              unit))]))))

@@ -390,19 +390,20 @@
   [index : i64]) : ResultPackageSourceConfinedPath
   (if (>= index (svec.len (& entries)))
     (Ok checkout-root)
-    (match (package-source-fetched-checkout-audit-entry
-      (owned_view.compiler-owned-shared-view package-name)
-      (owned_view.compiler-owned-shared-view checkout-root)
-      relative
-      (svec.get (& entries) index ""))
-      [(Err message) (Err message)]
-      [(Ok _)
-        (package-source-fetched-checkout-audit-entries-from
-          package-name
-          checkout-root
-          relative
-          entries
-          (+ index 1))])))
+    (let
+      [_
+        (try
+          (package-source-fetched-checkout-audit-entry
+            (owned_view.compiler-owned-shared-view package-name)
+            (owned_view.compiler-owned-shared-view checkout-root)
+            relative
+            (svec.get (& entries) index "")))]
+      (package-source-fetched-checkout-audit-entries-from
+        package-name
+        checkout-root
+        relative
+        entries
+        (+ index 1)))))
 
 (define (package-source-fetched-checkout-audit-dir
   [package-name : String]
@@ -662,21 +663,22 @@
   [acc : svec.Vec]) : ResultPackageSourceList
   (if (>= index (svec.len (& entries)))
     (Ok acc)
-    (match (package-source-scan-one
-      (owned_view.compiler-owned-shared-view command)
-      root
-      relative
-      (svec.get (& entries) index "")
-      acc)
-      [(Err message) (Err message)]
-      [(Ok next)
-        (package-source-scan-entries-from
-          command
-          root
-          relative
-          entries
-          (+ index 1)
-          next)])))
+    (let
+      [next
+        (try
+          (package-source-scan-one
+            (owned_view.compiler-owned-shared-view command)
+            root
+            relative
+            (svec.get (& entries) index "")
+            acc))]
+      (package-source-scan-entries-from
+        command
+        root
+        relative
+        entries
+        (+ index 1)
+        next))))
 
 (define (package-source-scan-entries
   [command : String]
@@ -794,30 +796,31 @@
   [command : String]
   [manifest-path : String]
   [has-manifest : bool]) : ResultPackageSourceSet
-  (match (package-source-resolve-manifest
-    (owned_view.compiler-owned-shared-view command)
-    manifest-path
-    has-manifest)
-    [(Err message) (Err message)]
-    [(Ok base)
-      (match (package-source-scan-root
-        (owned_view.compiler-owned-shared-view command)
-        (owned_view.compiler-owned-shared-view base))
-        [(Err message) (Err message)]
-        [(Ok sources)
-          (if (= (svec.len (& sources)) 0)
-            (Err
-              (str_cat.str-cat
-                command
-                ": no TypeLisp source files found in package '"
-                base.manifest-path
-                "'"))
-            (Ok
-              (PackageSourceSet
-                base.manifest-path
-                base.manifest-dir
-                base.manifest
-                sources)))])]))
+  (let
+    [base
+      (try
+        (package-source-resolve-manifest
+          (owned_view.compiler-owned-shared-view command)
+          manifest-path
+          has-manifest))]
+    [sources
+      (try
+        (package-source-scan-root
+          (owned_view.compiler-owned-shared-view command)
+          (owned_view.compiler-owned-shared-view base)))]
+    (if (= (svec.len (& sources)) 0)
+      (Err
+        (str_cat.str-cat
+          command
+          ": no TypeLisp source files found in package '"
+          base.manifest-path
+          "'"))
+      (Ok
+        (PackageSourceSet
+          base.manifest-path
+          base.manifest-dir
+          base.manifest
+          sources)))))
 
 (define (package-source-discover-tests-for
   [command : String]

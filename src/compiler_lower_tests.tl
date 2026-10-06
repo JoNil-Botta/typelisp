@@ -12208,9 +12208,11 @@
             (unless (= ordinal 3) (set! ok false))]
           [_ (set! ok false)])
         (while (< index 700)
-          (compiler-lower-private-identity-raw
-            session-a
-            (CleanupHidden (+ 100000 index)))
+          (begin
+            (compiler-lower-private-identity-raw
+              session-a
+              (CleanupHidden (+ 100000 index)))
+            unit)
           (set! index (+ index 1)))
         (unless
           (=

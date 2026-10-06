@@ -1078,7 +1078,7 @@
                 (let
                   [mid : i64 (/ (+ scope-low scope-high) 2)]
                   [event : CompilerSemanticScopeEvent
-                    (owned_view.compiler-owned-array-element-shared-view
+                    (array-ref
                       index.scope-events
                       (+ info.scope-event-offset mid))]
                   (if (<= event.byte-offset byte-offset)
@@ -1088,7 +1088,7 @@
                 (let
                   [mid : i64 (/ (+ module-low module-high) 2)]
                   [event : CompilerSemanticModuleEvent
-                    (owned_view.compiler-owned-array-element-shared-view
+                    (array-ref
                       index.module-events
                       (+ info.module-event-offset mid))]
                   (if (<= event.byte-offset byte-offset)
@@ -1098,12 +1098,12 @@
                 (CompilerSemanticVisibleBindingQuery
                   path-index
                   (if (> module-low 0)
-                    (owned_view.compiler-owned-array-element-shared-view
+                    (array-ref
                       index.module-events
                       (+ info.module-event-offset (- module-low 1))).module-index
                     info.default-module-index)
                   (if (> scope-low 0)
-                    (owned_view.compiler-owned-array-element-shared-view
+                    (array-ref
                       index.scope-events
                       (+ info.scope-event-offset (- scope-low 1))).head
                     -1))))))))))
@@ -1268,9 +1268,7 @@
           cursor.top-cursor
           cursor.stage)]
       [module-info : CompilerSemanticModuleInfo
-        (owned_view.compiler-owned-array-element-shared-view
-          index.modules
-          cursor.query.module-index)]
+        (array-ref index.modules cursor.query.module-index)]
       [top-end : i64 (+ module-info.candidate-offset module-info.candidate-len)]
       (cond
         [(or
@@ -1318,9 +1316,7 @@
       (while (and (= next.stage 1) (< next.top-cursor top-end))
         (let
           [candidate : CompilerSemanticTopCandidateRef
-            (owned_view.compiler-owned-array-element-shared-view
-              index.top-candidates
-              next.top-cursor)]
+            (array-ref index.top-candidates next.top-cursor)]
           (set! next.top-cursor (+ next.top-cursor 1))
           (cond
             [(and
@@ -5761,8 +5757,7 @@
     [index : i64 0]
     (while (< index raw-len)
       (let
-        [event : CompilerSemanticScopeEvent
-          (owned_view.compiler-owned-array-element-shared-view raw index)]
+        [event : CompilerSemanticScopeEvent (array-ref raw index)]
         (set!
           (array-ref counts event.path-index)
           (+
@@ -5792,8 +5787,7 @@
     (set! index 0)
     (while (< index raw-len)
       (let
-        [event : CompilerSemanticScopeEvent
-          (owned_view.compiler-owned-array-element-shared-view raw index)]
+        [event : CompilerSemanticScopeEvent (array-ref raw index)]
         [info : CompilerSemanticSourcePathInfo
           (owned_view.compiler-owned-array-element-shared-view
             paths
@@ -5831,8 +5825,7 @@
     [index : i64 0]
     (while (< index raw-len)
       (let
-        [event : CompilerSemanticModuleEvent
-          (owned_view.compiler-owned-array-element-shared-view raw index)]
+        [event : CompilerSemanticModuleEvent (array-ref raw index)]
         (set!
           (array-ref counts event.path-index)
           (+
@@ -5862,8 +5855,7 @@
     (set! index 0)
     (while (< index raw-len)
       (let
-        [event : CompilerSemanticModuleEvent
-          (owned_view.compiler-owned-array-element-shared-view raw index)]
+        [event : CompilerSemanticModuleEvent (array-ref raw index)]
         [info : CompilerSemanticSourcePathInfo
           (owned_view.compiler-owned-array-element-shared-view
             paths

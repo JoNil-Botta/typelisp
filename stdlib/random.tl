@@ -187,13 +187,11 @@
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 (+ len 1))]
     [source : (__tl_dyn-array i64) rest.slots]
     [index : i64 0]
-    (begin
-      (set! (array-ref slots 0) weight)
-      (while (< index len)
-        (begin
-          (set! (array-ref slots (+ index 1)) (array-ref source index))
-          (set! index (+ index 1))))
-      (RandomWeightList slots (+ len 1)))))
+    (set! (array-ref slots 0) weight)
+    (while (< index len)
+      (set! (array-ref slots (+ index 1)) (array-ref source index))
+      (set! index (+ index 1)))
+    (RandomWeightList slots (+ len 1))))
 
 ;: Return true when a weight list has no entries.
 (define (weight-list-empty? [weights : RandomWeightList]) : bool
@@ -249,17 +247,16 @@
   [weights : (& weights (Slice i64))]
   [count : i64]
   [empty-message : String]) : RandomWeightedIndexResult
-  (match (weight-slice-total-prefix weights count empty-message)
-    [(ErrRandomWeightTotal message) (ErrRandomWeightedIndex message)]
-    [(OkRandomWeightTotal total)
-      (if (<= total 0)
-        (ErrRandomWeightedIndex "random: weight total must be positive")
-        (match (bounded state total)
-          [(OkRandomBounded next-state target)
-            (OkRandomWeightedIndex
-              next-state
-              (weight-slice-scan-from weights count target 0))]
-          [(ErrRandomBounded message) (ErrRandomWeightedIndex message)]))]))
+  (let
+    [total (try (weight-slice-total-prefix weights count empty-message))]
+    (if (<= total 0)
+      (ErrRandomWeightedIndex "random: weight total must be positive")
+      (match (bounded state total)
+        [(OkRandomBounded next-state target)
+          (OkRandomWeightedIndex
+            next-state
+            (weight-slice-scan-from weights count target 0))]
+        [(ErrRandomBounded message) (ErrRandomWeightedIndex message)]))))
 
 ;: Choose an index from `weights`, skipping zero weights.
 ;:
@@ -372,9 +369,9 @@
 ;: Return a system-provided random seed, or a diagnostic when entropy is
 ;: unavailable. The seed is normalized to the valid MINSTD range.
 (define (system-seed) : ResultSystemSeed
-  (match (cfg windows (windows-system-seed) (linux-system-seed))
-    [(OkSystemSeed seed-value) (OkSystemSeed (normalize-seed-value seed-value))]
-    [(ErrSystemSeed err) (ErrSystemSeed err)]))
+  (let
+    [seed-value (try (cfg windows (windows-system-seed) (linux-system-seed)))]
+    (OkSystemSeed (normalize-seed-value seed-value))))
 
 ;: Build a `RandomState` directly from host entropy, or panic when entropy is
 ;: unavailable. This is a convenience wrapper over `system-seed`.
@@ -406,9 +403,8 @@
 (define (test-assert-system-seed-ok [result : ResultSystemSeed]) : unit
   (match result
     [(OkSystemSeed seed)
-      (begin
-        (test-assert-true (> seed 0) "system seed positive")
-        (test-assert-true (< seed (modulus)) "system seed normalized"))]
+      (test-assert-true (> seed 0) "system seed positive")
+      (test-assert-true (< seed (modulus)) "system seed normalized")]
     [(ErrSystemSeed _)
       (io.panic "system seed should succeed on supported hosts")]))
 
@@ -431,9 +427,8 @@
   [message : String]) : unit
   (match result
     [(OkRandomBounded state value)
-      (begin
-        (test-assert-i64-eq (state-seed state) want-state (string.copy message))
-        (test-assert-i64-eq value want-value message))]
+      (test-assert-i64-eq (state-seed state) want-state (string.copy message))
+      (test-assert-i64-eq value want-value message)]
     [(ErrRandomBounded err) (io.panic err)]))
 
 ;: Assert that a bounded draw failed with the expected message.
@@ -453,9 +448,8 @@
   [message : String]) : unit
   (match result
     [(OkRandomWeightedIndex state index)
-      (begin
-        (test-assert-i64-eq (state-seed state) want-state (string.copy message))
-        (test-assert-i64-eq index want-index message))]
+      (test-assert-i64-eq (state-seed state) want-state (string.copy message))
+      (test-assert-i64-eq index want-index message)]
     [(ErrRandomWeightedIndex err) (io.panic err)]))
 
 ;: Assert that a weighted-index draw failed with the expected message.
@@ -473,14 +467,13 @@
     [draw1 : RandomDraw (next (seed 1))]
     [draw2 : RandomDraw (next (draw-state draw1))]
     [draw3 : RandomDraw (next (draw-state draw2))]
-    (begin
-      (test-assert-i64-eq (draw-value draw1) 16807 "first MINSTD draw")
-      (test-assert-i64-eq
-        (state-seed (draw-state draw1))
-        16807
-        "first MINSTD state")
-      (test-assert-i64-eq (draw-value draw2) 282475249 "second MINSTD draw")
-      (test-assert-i64-eq (draw-value draw3) 1622650073 "third MINSTD draw"))))
+    (test-assert-i64-eq (draw-value draw1) 16807 "first MINSTD draw")
+    (test-assert-i64-eq
+      (state-seed (draw-state draw1))
+      16807
+      "first MINSTD state")
+    (test-assert-i64-eq (draw-value draw2) 282475249 "second MINSTD draw")
+    (test-assert-i64-eq (draw-value draw3) 1622650073 "third MINSTD draw")))
 
 ;: Assert that bounded draws stay in `[0, upper)`.
 (define (test-assert-bounded-range
@@ -493,11 +486,10 @@
     (while (< i count)
       (match (bounded current upper)
         [(OkRandomBounded next value)
-          (begin
-            (test-assert-true (>= value 0) "bounded draw non-negative")
-            (test-assert-true (< value upper) "bounded draw below upper")
-            (set! current next)
-            (set! i (+ i 1)))]
+          (test-assert-true (>= value 0) "bounded draw non-negative")
+          (test-assert-true (< value upper) "bounded draw below upper")
+          (set! current next)
+          (set! i (+ i 1))]
         [(ErrRandomBounded err) (io.panic err)]))))
 
 ;: Weighted-list fixture with zeros around positive buckets.
@@ -512,30 +504,27 @@
 (define (test-weighted-vector-fixture) : i64v.Vec
   (let
     [weights : i64v.Vec (i64v.new)]
-    (begin
-      (i64v.push-ref! (&mut weights) 0)
-      (i64v.push-ref! (&mut weights) 10)
-      (i64v.push-ref! (&mut weights) 0)
-      (i64v.push-ref! (&mut weights) 5)
-      weights)))
+    (i64v.push-ref! (&mut weights) 0)
+    (i64v.push-ref! (&mut weights) 10)
+    (i64v.push-ref! (&mut weights) 0)
+    (i64v.push-ref! (&mut weights) 5)
+    weights))
 
 ;: Weighted-vector fixture whose total is zero.
 (define (test-weighted-zero-vector) : i64v.Vec
   (let
     [weights : i64v.Vec (i64v.new)]
-    (begin
-      (i64v.push-ref! (&mut weights) 0)
-      (i64v.push-ref! (&mut weights) 0)
-      weights)))
+    (i64v.push-ref! (&mut weights) 0)
+    (i64v.push-ref! (&mut weights) 0)
+    weights))
 
 ;: Weighted-vector fixture with a negative weight.
 (define (test-weighted-negative-vector) : i64v.Vec
   (let
     [weights : i64v.Vec (i64v.new)]
-    (begin
-      (i64v.push-ref! (&mut weights) 1)
-      (i64v.push-ref! (&mut weights) -1)
-      weights)))
+    (i64v.push-ref! (&mut weights) 1)
+    (i64v.push-ref! (&mut weights) -1)
+    weights))
 
 ;: Exercise the public borrowed-vector API with an owned test fixture.
 (define (test-weighted-index-vec [state : RandomState] [weights : i64v.Vec]) : RandomWeightedIndexResult
@@ -547,93 +536,91 @@
 
 (test
   random-api
-  (begin
-    (test-assert-i64-eq (state-seed (seed 0)) 1 "zero seed normalizes")
-    (test-assert-i64-eq (state-seed (seed 1)) 1 "one seed stays one")
-    (test-assert-i64-eq
-      (state-seed (seed -1))
-      2147483646
-      "negative seed normalizes")
-    (test-assert-i64-eq
-      (state-seed (seed 2147483647))
-      1
-      "modulus seed normalizes")
-    (test-assert-sequence-from-one)
-    (test-assert-bounded-ok (bounded (seed 1) 10) 16807 7 "bounded draw stable")
-    (test-assert-bounded-error
-      (bounded (seed 1) 0)
-      "random: upper bound must be positive")
-    (test-assert-bounded-range (seed 99) 3 12)
-    (test-assert-weighted-error
-      (weighted-index (seed 1) (weight-list-empty))
-      "random: weight list must not be empty")
-    (test-assert-weighted-error
-      (weighted-index
-        (seed 1)
-        (weight-list-cons 0 (weight-list-cons 0 (weight-list-empty))))
-      "random: weight total must be positive")
-    (test-assert-weighted-error
-      (weighted-index
-        (seed 1)
-        (weight-list-cons 1 (weight-list-cons -1 (weight-list-empty))))
-      "random: weight must not be negative")
-    (test-assert-weighted-error
-      (test-weighted-index-slice (seed 1) (i64v.new))
-      "random: weight slice must not be empty")
-    (test-assert-weighted-error
-      (test-weighted-index-slice (seed 1) (test-weighted-zero-vector))
-      "random: weight total must be positive")
-    (test-assert-weighted-error
-      (test-weighted-index-slice (seed 1) (test-weighted-negative-vector))
-      "random: weight must not be negative")
-    (test-assert-weighted-error
-      (test-weighted-index-vec (seed 1) (i64v.new))
-      "random: weight vector must not be empty")
-    (test-assert-weighted-error
-      (test-weighted-index-vec (seed 1) (test-weighted-zero-vector))
-      "random: weight total must be positive")
-    (test-assert-weighted-error
-      (test-weighted-index-vec (seed 1) (test-weighted-negative-vector))
-      "random: weight must not be negative")
-    (test-assert-weighted-ok
-      (weighted-index (seed 1) (test-weighted-fixture))
-      16807
-      1
-      "weighted index skips leading zero and picks first positive bucket")
-    (test-assert-weighted-ok
-      (test-weighted-index-slice (seed 1) (test-weighted-vector-fixture))
-      16807
-      1
-      "Slice weighted index matches list first positive bucket")
-    (test-assert-weighted-ok
-      (test-weighted-index-vec (seed 1) (test-weighted-vector-fixture))
-      16807
-      1
-      "vector weighted index matches list first positive bucket")
-    (test-assert-weighted-ok
-      (weighted-index (seed 2) (test-weighted-fixture))
-      33614
-      3
-      "weighted index reaches later positive bucket")
-    (test-assert-weighted-ok
-      (test-weighted-index-slice (seed 2) (test-weighted-vector-fixture))
-      33614
-      3
-      "Slice weighted index reaches later positive bucket")
-    (test-assert-weighted-ok
-      (test-weighted-index-vec (seed 2) (test-weighted-vector-fixture))
-      33614
-      3
-      "vector weighted index reaches later positive bucket")
-    (test-assert-system-seed-ok (system-seed))
-    (test-assert-system-seed-ok (system-seed))
-    (test-assert-system-seed-error
-      (ErrSystemSeed (RandomSystemSeedUnavailable "entropy unavailable")))
-    (let
-      [state1 : RandomState (from-system)]
-      (begin
-        (test-assert-true (> (state-seed state1) 0) "from-system seed positive")
-        (test-assert-true
-          (< (state-seed state1) (modulus))
-          "from-system seed normalized")))
-    unit))
+  (test-assert-i64-eq (state-seed (seed 0)) 1 "zero seed normalizes")
+  (test-assert-i64-eq (state-seed (seed 1)) 1 "one seed stays one")
+  (test-assert-i64-eq
+    (state-seed (seed -1))
+    2147483646
+    "negative seed normalizes")
+  (test-assert-i64-eq
+    (state-seed (seed 2147483647))
+    1
+    "modulus seed normalizes")
+  (test-assert-sequence-from-one)
+  (test-assert-bounded-ok (bounded (seed 1) 10) 16807 7 "bounded draw stable")
+  (test-assert-bounded-error
+    (bounded (seed 1) 0)
+    "random: upper bound must be positive")
+  (test-assert-bounded-range (seed 99) 3 12)
+  (test-assert-weighted-error
+    (weighted-index (seed 1) (weight-list-empty))
+    "random: weight list must not be empty")
+  (test-assert-weighted-error
+    (weighted-index
+      (seed 1)
+      (weight-list-cons 0 (weight-list-cons 0 (weight-list-empty))))
+    "random: weight total must be positive")
+  (test-assert-weighted-error
+    (weighted-index
+      (seed 1)
+      (weight-list-cons 1 (weight-list-cons -1 (weight-list-empty))))
+    "random: weight must not be negative")
+  (test-assert-weighted-error
+    (test-weighted-index-slice (seed 1) (i64v.new))
+    "random: weight slice must not be empty")
+  (test-assert-weighted-error
+    (test-weighted-index-slice (seed 1) (test-weighted-zero-vector))
+    "random: weight total must be positive")
+  (test-assert-weighted-error
+    (test-weighted-index-slice (seed 1) (test-weighted-negative-vector))
+    "random: weight must not be negative")
+  (test-assert-weighted-error
+    (test-weighted-index-vec (seed 1) (i64v.new))
+    "random: weight vector must not be empty")
+  (test-assert-weighted-error
+    (test-weighted-index-vec (seed 1) (test-weighted-zero-vector))
+    "random: weight total must be positive")
+  (test-assert-weighted-error
+    (test-weighted-index-vec (seed 1) (test-weighted-negative-vector))
+    "random: weight must not be negative")
+  (test-assert-weighted-ok
+    (weighted-index (seed 1) (test-weighted-fixture))
+    16807
+    1
+    "weighted index skips leading zero and picks first positive bucket")
+  (test-assert-weighted-ok
+    (test-weighted-index-slice (seed 1) (test-weighted-vector-fixture))
+    16807
+    1
+    "Slice weighted index matches list first positive bucket")
+  (test-assert-weighted-ok
+    (test-weighted-index-vec (seed 1) (test-weighted-vector-fixture))
+    16807
+    1
+    "vector weighted index matches list first positive bucket")
+  (test-assert-weighted-ok
+    (weighted-index (seed 2) (test-weighted-fixture))
+    33614
+    3
+    "weighted index reaches later positive bucket")
+  (test-assert-weighted-ok
+    (test-weighted-index-slice (seed 2) (test-weighted-vector-fixture))
+    33614
+    3
+    "Slice weighted index reaches later positive bucket")
+  (test-assert-weighted-ok
+    (test-weighted-index-vec (seed 2) (test-weighted-vector-fixture))
+    33614
+    3
+    "vector weighted index reaches later positive bucket")
+  (test-assert-system-seed-ok (system-seed))
+  (test-assert-system-seed-ok (system-seed))
+  (test-assert-system-seed-error
+    (ErrSystemSeed (RandomSystemSeedUnavailable "entropy unavailable")))
+  (let
+    [state1 : RandomState (from-system)]
+    (test-assert-true (> (state-seed state1) 0) "from-system seed positive")
+    (test-assert-true
+      (< (state-seed state1) (modulus))
+      "from-system seed normalized"))
+  unit)

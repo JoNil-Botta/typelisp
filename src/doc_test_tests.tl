@@ -21,6 +21,8 @@
 (import (vector.vector doc_test.DocTestError core) as doc_error_vec)
 (import (vector.vector doc_test.DocTestRunFailure core) as doc_run_failure_vec)
 (import doc_test)
+(import compiler_check_core as check_core)
+(import compiler_cfg_core as cfg_core)
 
 (define (doc-test-run-failure-path [failure : doc_test.DocTestRunFailure]) : String
   (match failure
@@ -784,6 +786,45 @@
       (doc_test.doc-test-run-report-ok? report)
       false)))
 
+(define (doc-test-cfg-across-reset-source) : String
+  ;; Escaped newlines keep these examples out of the repository doctest gate,
+  ;; which reads `;:` lines from this file and runs without the cfg.
+  (str_cat.str-cat
+    ";: First example.\n;: ```typelisp\n;: (define (one) : i64 1)\n;: ```\n"
+    "(define (first-doc) : i64 1)\n\n"
+    ";: Valid only while the `doc-probe-flag` cfg is enabled.\n"
+    ";: ```typelisp\n;: (cfg doc-probe-flag (define (probe) : i64 42))\n"
+    ";: (define (use) : i64 (probe))\n;: ```\n(define (second-doc) : i64 2)\n"))
+
+;; Every check-only example resets the interner to the session floor, which
+;; retires the interned cfg names the caller built its cfgs from. A cfg must
+;; still reach the second example (#8663), and must matter there.
+(define (doc-test-typecheck-smoke-cfg-across-reset-ok?) : bool
+  (let
+    [with-flag : doc_test.DocTestRunReport
+      (doc_test.doc-test-typecheck-source-with-roots-and-cfg
+        "docs/cfg.tl"
+        (doc-test-cfg-across-reset-source)
+        (doc-test-run-smoke-stdlib-roots)
+        (cfg_core.compiler-cfg-enable
+          (check_core.compiler-check-language-cfgs)
+          "doc-probe-flag"))]
+    [without-flag : doc_test.DocTestRunReport
+      (doc_test.doc-test-typecheck-source-with-roots-and-cfg
+        "docs/cfg.tl"
+        (doc-test-cfg-across-reset-source)
+        (doc-test-run-smoke-stdlib-roots)
+        (check_core.compiler-check-language-cfgs))]
+    [unflagged-failures : doc_run_failure_vec.Vec
+      (doc_test.doc-test-run-report-failures without-flag)]
+    (and
+      (=
+        (doc_test.doc-test-run-report-count
+          (owned_view.compiler-owned-shared-view with-flag))
+        2)
+      (doc_test.doc-test-run-report-ok? with-flag)
+      (= (doc_test.doc-test-run-failure-list-count unflagged-failures) 1))))
+
 (define (doc-test-typecheck-smoke-unexpected-pass-ok?) : bool
   (let
     [report : doc_test.DocTestRunReport
@@ -1047,6 +1088,9 @@ typecheck: return type mismatch"))]
   (unless
     (doc-test-typecheck-smoke-malformed-ok?)
     (return (io.panic "doc-test-typecheck: malformed mismatch")))
+  (unless
+    (doc-test-typecheck-smoke-cfg-across-reset-ok?)
+    (return (io.panic "doc-test-typecheck: cfg across reset mismatch")))
   (unless
     (doc-test-public-diagnostic-render-smoke-ok?)
     (return (io.panic "doc-test-run: public diagnostic render mismatch")))

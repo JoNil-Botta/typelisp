@@ -25,8 +25,10 @@
     [old-cap : i64 (reader.sp-node-pool-capacity)]
     [i : i64 0]
     (while (<= i old-cap)
-      (reader.sp-node-push
-        (Int i (reader.sp-text-id "__tl_pool_growth_marker") span))
+      (begin
+        (reader.sp-node-push
+          (Int i (reader.sp-text-id "__tl_pool_growth_marker") span))
+        unit)
       (set! i (+ i 1)))
     (let
       [grew : bool (> (reader.sp-node-pool-capacity) old-cap)]
@@ -1110,7 +1112,9 @@
           [_ false]))]
     [_grow-directory : unit
       (while (<= (reader.sp-node-pool-capacity) (* 64 rows))
-        (reader.sp-node-push (Int 7 (reader.sp-text-id "") span))
+        (begin
+          (reader.sp-node-push (Int 7 (reader.sp-text-id "") span))
+          unit)
         unit)]
     [reads : bool
       (and

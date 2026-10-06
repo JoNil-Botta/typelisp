@@ -127,6 +127,22 @@ grep -F "function @main()" "$WORKDIR/optimizer_fold.final.ir" >/dev/null
 grep -F "optimizer-pass|main|licm|blocks=" "$TRACE" >/dev/null
 grep -F "after licm @main" "$WORKDIR/optimizer_fold.after-licm.ir" >/dev/null
 
+# Compiler AST pool initializers retain nested, macro-local type variables.
+# Dumping them must resolve syntax IDs through their owner, never as pool indexes.
+STRUCTURAL_SOURCE="$ROOT/tests/golden/ir_structural_names.tl"
+for opt in 0 1 2; do
+    "$COMPILER" compile "$STRUCTURAL_SOURCE" --dump-ir --opt-level "$opt" \
+        -o "$WORKDIR/structural-$opt.ir" \
+        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+        >"$WORKDIR/structural-$opt.stdout" 2>"$WORKDIR/structural-$opt.stderr"
+    grep -F 'function @main()' "$WORKDIR/structural-$opt.ir" >/dev/null
+done
+"$COMPILER" compile "$STRUCTURAL_SOURCE" --dump-ir after-ssa --opt-level 2 \
+    -o "$WORKDIR/structural-after-ssa.ir" \
+    --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+    >"$WORKDIR/structural-after-ssa.stdout" 2>"$WORKDIR/structural-after-ssa.stderr"
+grep -F 'after ssa @' "$WORKDIR/structural-after-ssa.ir" >/dev/null
+
 # DCE-2: `dce_late` closes the level-2 pass list, so an omission there is
 # invisible unless the trace is asked for the slot by name -- the pipeline
 # still reports every pass above it. A level-2 compile must observe the slot

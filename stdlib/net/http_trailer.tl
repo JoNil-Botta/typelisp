@@ -153,18 +153,16 @@
       (let
         [index : i64 0]
         [valid : bool true]
-        (begin
-          (while (and valid (< index declared.len))
-            (let
-              [name : (& declared bytes)
-                (http_types.header-name-set-ref declared index)]
-              [name-len : i64 (byte_buf.bytes-length name)]
-              (begin
-                (if (> name-len limits.max-name-bytes)
-                  (set! valid false)
-                  unit)
-                (set! index (+ index 1)))))
-          valid)))))
+        (while (and valid (< index declared.len))
+          (let
+            [name : (& declared bytes)
+              (http_types.header-name-set-ref declared index)]
+            [name-len : i64 (byte_buf.bytes-length name)]
+            (if (> name-len limits.max-name-bytes)
+              (set! valid false)
+              unit)
+            (set! index (+ index 1))))
+        valid))))
 
 ;: Construct a local configuration/API error.
 (define (response-trailer-local-error
@@ -310,12 +308,9 @@
                               line
                               parts
                               sensitivity)]
-                          (begin
-                            (http_types.headers-push!
-                              (&mut parser.fields)
-                              field)
-                            (set! parser.retained-bytes next-retained)
-                            (HttpResponseTrailerLineContinue)))]))))]))))))
+                          (http_types.headers-push! (&mut parser.fields) field)
+                          (set! parser.retained-bytes next-retained)
+                          (HttpResponseTrailerLineContinue))]))))]))))))
 
 ;: Feed one borrowed byte slice, stopping at the exact final CRLF. Invalid
 ;: bytes are counted as consumed by the failing call but never enter scratch.
@@ -337,136 +332,122 @@
             (HttpResponseTrailerTruncatedTerminator)
             parser.fields.len
             parser.total-bytes)]
-        (begin
-          (while (and (< consumed input-len) (not done))
-            (let
-              [byte : u8 (byte_buf.bytes-ref input consumed)]
-              [code : i64 (cast byte : i64)]
-              (if parser.saw-cr
-                (if (= code 10)
-                  (if (>= parser.total-bytes parser.limits.max-total-bytes)
-                    (begin
-                      (set!
-                        failure
-                        (response-trailer-peer-error
-                          (HttpResponseTrailerSectionTooLarge)
-                          parser.fields.len
-                          parser.total-bytes))
-                      (set! consumed (+ consumed 1))
-                      (set! result-kind 2)
-                      (set! done true))
-                    (begin
-                      (set! parser.total-bytes (+ parser.total-bytes 1))
-                      (set! parser.saw-cr false)
-                      (set! consumed (+ consumed 1))
-                      (match (process-completed-response-trailer-line
-                        (&mut parser))
-                        [(HttpResponseTrailerLineErr error)
-                          (begin
-                            (set! failure error)
-                            (set! result-kind 2)
-                            (set! done true))]
-                        [(HttpResponseTrailerLineComplete)
-                          (begin
-                            (set! result-kind 1)
-                            (set! done true))]
-                        [(HttpResponseTrailerLineContinue)
-                          (begin
-                            (set! parser.line.len 0)
-                            (set! parser.line-start parser.total-bytes))])))
+        (while (and (< consumed input-len) (not done))
+          (let
+            [byte : u8 (byte_buf.bytes-ref input consumed)]
+            [code : i64 (cast byte : i64)]
+            (if parser.saw-cr
+              (if (= code 10)
+                (if (>= parser.total-bytes parser.limits.max-total-bytes)
                   (begin
                     (set!
                       failure
                       (response-trailer-peer-error
-                        (HttpResponseTrailerFieldError
-                          (http_types.HttpBareCarriageReturn))
+                        (HttpResponseTrailerSectionTooLarge)
                         parser.fields.len
-                        (- parser.total-bytes 1)))
+                        parser.total-bytes))
                     (set! consumed (+ consumed 1))
                     (set! result-kind 2)
-                    (set! done true)))
-                (cond
-                  [(= code 10)
-                    (begin
-                      (set!
-                        failure
-                        (response-trailer-peer-error
-                          (HttpResponseTrailerFieldError
-                            (http_types.HttpBareLineFeed))
-                          parser.fields.len
-                          parser.total-bytes))
-                      (set! consumed (+ consumed 1))
-                      (set! result-kind 2)
-                      (set! done true))]
-                  [(= code 0)
-                    (begin
-                      (set!
-                        failure
-                        (response-trailer-peer-error
-                          (HttpResponseTrailerFieldError
-                            (http_types.HttpNulByte))
-                          parser.fields.len
-                          parser.total-bytes))
-                      (set! consumed (+ consumed 1))
-                      (set! result-kind 2)
-                      (set! done true))]
-                  [(or (and (< code 32) (!= code 13) (!= code 9)) (= code 127))
-                    (begin
-                      (set!
-                        failure
-                        (response-trailer-peer-error
-                          (HttpResponseTrailerFieldError
-                            (http_types.HttpInvalidControlByte))
-                          parser.fields.len
-                          parser.total-bytes))
-                      (set! consumed (+ consumed 1))
-                      (set! result-kind 2)
-                      (set! done true))]
-                  [(>= parser.total-bytes parser.limits.max-total-bytes)
-                    (begin
-                      (set!
-                        failure
-                        (response-trailer-peer-error
-                          (HttpResponseTrailerSectionTooLarge)
-                          parser.fields.len
-                          parser.total-bytes))
-                      (set! consumed (+ consumed 1))
-                      (set! result-kind 2)
-                      (set! done true))]
-                  [(= code 13)
-                    (begin
-                      (set! parser.saw-cr true)
-                      (set! parser.total-bytes (+ parser.total-bytes 1))
-                      (set! consumed (+ consumed 1)))]
-                  [(>=
-                      (byte_buf.len (& parser.line))
-                      parser.limits.max-line-bytes)
-                    (begin
-                      (set!
-                        failure
-                        (response-trailer-peer-error
-                          (HttpResponseTrailerFieldError
-                            (http_types.HttpLineTooLong))
-                          parser.fields.len
-                          parser.total-bytes))
-                      (set! consumed (+ consumed 1))
-                      (set! result-kind 2)
-                      (set! done true))]
-                  [else
-                    (begin
-                      (set! parser.line (byte_buf.push parser.line byte))
-                      (set! parser.total-bytes (+ parser.total-bytes 1))
-                      (set! consumed (+ consumed 1)))]))))
-          (cond
-            [(= result-kind 1)
-              (begin
-                (set! parser.state (HttpResponseTrailerComplete))
-                (HttpResponseTrailerFeedComplete parser consumed))]
-            [(= result-kind 2)
-              (begin
-                (set! parser.state (HttpResponseTrailerFailed (clone failure)))
-                (HttpResponseTrailerFeedErr parser failure consumed))]
-            [else (HttpResponseTrailerFeedNeedInput parser consumed)])))]))
+                    (set! done true))
+                  (begin
+                    (set! parser.total-bytes (+ parser.total-bytes 1))
+                    (set! parser.saw-cr false)
+                    (set! consumed (+ consumed 1))
+                    (match (process-completed-response-trailer-line
+                      (&mut parser))
+                      [(HttpResponseTrailerLineErr error)
+                        (set! failure error)
+                        (set! result-kind 2)
+                        (set! done true)]
+                      [(HttpResponseTrailerLineComplete)
+                        (set! result-kind 1)
+                        (set! done true)]
+                      [(HttpResponseTrailerLineContinue)
+                        (set! parser.line.len 0)
+                        (set! parser.line-start parser.total-bytes)])))
+                (begin
+                  (set!
+                    failure
+                    (response-trailer-peer-error
+                      (HttpResponseTrailerFieldError
+                        (http_types.HttpBareCarriageReturn))
+                      parser.fields.len
+                      (- parser.total-bytes 1)))
+                  (set! consumed (+ consumed 1))
+                  (set! result-kind 2)
+                  (set! done true)))
+              (cond
+                [(= code 10)
+                  (set!
+                    failure
+                    (response-trailer-peer-error
+                      (HttpResponseTrailerFieldError
+                        (http_types.HttpBareLineFeed))
+                      parser.fields.len
+                      parser.total-bytes))
+                  (set! consumed (+ consumed 1))
+                  (set! result-kind 2)
+                  (set! done true)]
+                [(= code 0)
+                  (set!
+                    failure
+                    (response-trailer-peer-error
+                      (HttpResponseTrailerFieldError (http_types.HttpNulByte))
+                      parser.fields.len
+                      parser.total-bytes))
+                  (set! consumed (+ consumed 1))
+                  (set! result-kind 2)
+                  (set! done true)]
+                [(or (and (< code 32) (!= code 13) (!= code 9)) (= code 127))
+                  (set!
+                    failure
+                    (response-trailer-peer-error
+                      (HttpResponseTrailerFieldError
+                        (http_types.HttpInvalidControlByte))
+                      parser.fields.len
+                      parser.total-bytes))
+                  (set! consumed (+ consumed 1))
+                  (set! result-kind 2)
+                  (set! done true)]
+                [(>= parser.total-bytes parser.limits.max-total-bytes)
+                  (set!
+                    failure
+                    (response-trailer-peer-error
+                      (HttpResponseTrailerSectionTooLarge)
+                      parser.fields.len
+                      parser.total-bytes))
+                  (set! consumed (+ consumed 1))
+                  (set! result-kind 2)
+                  (set! done true)]
+                [(= code 13)
+                  (set! parser.saw-cr true)
+                  (set! parser.total-bytes (+ parser.total-bytes 1))
+                  (set! consumed (+ consumed 1))]
+                [(>=
+                  (byte_buf.len (& parser.line))
+                  parser.limits.max-line-bytes)
+                  (set!
+                    failure
+                    (response-trailer-peer-error
+                      (HttpResponseTrailerFieldError
+                        (http_types.HttpLineTooLong))
+                      parser.fields.len
+                      parser.total-bytes))
+                  (set! consumed (+ consumed 1))
+                  (set! result-kind 2)
+                  (set! done true)]
+                [else
+                  (set! parser.line (byte_buf.push parser.line byte))
+                  (set! parser.total-bytes (+ parser.total-bytes 1))
+                  (set! consumed (+ consumed 1))]))))
+        (cond
+          [(= result-kind 1)
+            (set! parser.state (HttpResponseTrailerComplete))
+            (HttpResponseTrailerFeedComplete parser consumed)]
+          [(= result-kind 2)
+            (set! parser.state (HttpResponseTrailerFailed (clone failure)))
+            (HttpResponseTrailerFeedErr parser failure consumed)]
+          [else (HttpResponseTrailerFeedNeedInput parser consumed)]))]))
 
 ;: Finish at explicit EOF, preserving an existing terminal state or reporting
 ;: the first missing byte and whether a field or final terminator was pending.
@@ -490,9 +471,8 @@
                 (HttpResponseTrailerTruncatedTerminator))
               parser.fields.len
               parser.total-bytes))]
-        (begin
-          (set! parser.state (HttpResponseTrailerFailed (clone failure)))
-          (HttpResponseTrailerFinishErr parser failure)))]))
+        (set! parser.state (HttpResponseTrailerFailed (clone failure)))
+        (HttpResponseTrailerFinishErr parser failure))]))
 
 ;: Consume a completed parser and return the separate ordered trailers. Open
 ;: or failed parsers return a stable local/terminal error and no fields.

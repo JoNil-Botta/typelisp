@@ -87,22 +87,17 @@
     [__eq_right ,right]
     [__eq_i : i64 0]
     [__eq_same : bool true]
-    (begin
-      (while (and (< __eq_i ,length-expr) __eq_same)
-        (let
-          [__eq_left_item
-            (stdlib.eq.eq-shared-view (__tl_array-ref __eq_left __eq_i))]
-          [__eq_right_item
-            (stdlib.eq.eq-shared-view (__tl_array-ref __eq_right __eq_i))]
-          (begin
-            (if (stdlib.eq.inline-eq
-              ,element-type
-              __eq_left_item
-              __eq_right_item)
-              unit
-              (set! __eq_same false))
-            (set! __eq_i (+ __eq_i 1)))))
-      __eq_same)))
+    (while (and (< __eq_i ,length-expr) __eq_same)
+      (let
+        [__eq_left_item
+          (stdlib.eq.eq-shared-view (__tl_array-ref __eq_left __eq_i))]
+        [__eq_right_item
+          (stdlib.eq.eq-shared-view (__tl_array-ref __eq_right __eq_i))]
+        (if (stdlib.eq.inline-eq ,element-type __eq_left_item __eq_right_item)
+          unit
+          (set! __eq_same false))
+        (set! __eq_i (+ __eq_i 1))))
+    __eq_same))
 
 ;: Emit finite structural equality for a nested value expression.
 (defmacro (inline-eq [T : type] [left : comptime.Expr] [right : comptime.Expr]) : comptime.Expr

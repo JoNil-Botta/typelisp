@@ -152,8 +152,6 @@ stdlib.text_buf/append-int!	2	fixed	expr	tests/integration/tlci_identity_public_
 stdlib.text_buf/clear!	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.text_buf/reset!	1	fixed	expr	tests/integration/tlci_identity_public_gaps.tl	ok	default	assembly
 stdlib.text_buf_family/text-buf-family-shared-view	1	fixed	expr	tests/integration/stdlib_text_buf.tl	ok	default	assembly
-stdlib.text_buf_family/text-buf-family-pattern-copy	1	fixed	expr	tests/integration/stdlib_text_buf.tl	ok	default	assembly
-stdlib.text_buf_family/text-buf-family-pattern-box-ref	1	fixed	expr	tests/integration/stdlib_text_buf.tl	ok	default	assembly
 stdlib.text_buf_family/text-buf-owned-store-write!	3	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.text_buf_family/text-buf-owned-store-commit!	3	fixed	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.text_buf_family/owned	0	fixed	decls	tests/integration/stdlib_serialize_json.tl	ok	default	assembly

@@ -101,16 +101,14 @@
                 [n : i64 (key-length key)]
                 [i : i64 0]
                 [hash : i64 0]
-                (begin
-                  (while (< i n)
-                    (begin
-                      (set!
-                        hash
-                        (%
-                          (+ (+ (* hash 131) (cast (key-ref key i) : i64)) 1)
-                          2147483647))
-                      (set! i (+ i 1))))
-                  hash)))
+                (while (< i n)
+                  (set!
+                    hash
+                    (%
+                      (+ (+ (* hash 131) (cast (key-ref key i) : i64)) 1)
+                      2147483647))
+                  (set! i (+ i 1)))
+                hash))
             `(define (hash-key [key : i64]) : i64
               (hash-normalize key)))]
         [string-imports : comptime.ExprList
@@ -143,14 +141,13 @@
                     (let
                       [i : i64 0]
                       [same : bool true]
-                      (begin
-                        (while (if same
-                          (< i left-len)
-                          false)
-                          (if (= (key-ref (& left) i) (key-ref right i))
-                            (set! i (+ i 1))
-                            (set! same false)))
-                        same)))))
+                      (while (if same
+                        (< i left-len)
+                        false)
+                        (if (= (key-ref (& left) i) (key-ref right i))
+                          (set! i (+ i 1))
+                          (set! same false)))
+                      same))))
               (comptime.expr-list-empty))
             (comptime.expr-list-empty))]
         [owned-contains : comptime.ExprList
@@ -208,10 +205,9 @@
           (define (round-capacity [capacity : i64]) : i64
             (let
               [rounded : i64 1]
-              (begin
-                (while (< rounded capacity)
-                  (set! rounded (* rounded 2)))
-                rounded)))
+              (while (< rounded capacity)
+                (set! rounded (* rounded 2)))
+              rounded))
           (define (bucket-index [hash : i64] [capacity : i64]) : i64
             (bit-and (hash-normalize hash) (- capacity 1)))
           (define (next-index [index : i64] [capacity : i64]) : i64
@@ -301,69 +297,60 @@
               [fresh : (__tl_dyn-array Slot)
                 (__tl_make-array Slot new-capacity)]
               [scan : i64 0]
-              (begin
-                (while (< scan old-capacity)
-                  (begin
-                    (match (array-ref set.slots scan)
-                      [(Slot.Occupied key hash)
-                        (let
-                          [index : i64 (bucket-index hash new-capacity)]
-                          [seen : i64 0]
-                          [placed : bool false]
-                          (while (if placed
-                            false
-                            (< seen new-capacity))
-                            (match (array-ref fresh index)
-                              [Slot.Empty
-                                (begin
-                                  (set!
-                                    (array-ref fresh index)
-                                    (Slot.Occupied ,owned-key hash))
-                                  (set! placed true))]
-                              [_
-                                (begin
-                                  (set! index (next-index index new-capacity))
-                                  (set! seen (+ seen 1)))])))]
-                      [_ unit])
-                    (set! scan (+ scan 1))))
-                (set! set.slots fresh)
-                (set! set.deleted 0))))
+              (while (< scan old-capacity)
+                (match (array-ref set.slots scan)
+                  [(Slot.Occupied key hash)
+                    (let
+                      [index : i64 (bucket-index hash new-capacity)]
+                      [seen : i64 0]
+                      [placed : bool false]
+                      (while (if placed
+                        false
+                        (< seen new-capacity))
+                        (match (array-ref fresh index)
+                          [Slot.Empty
+                            (set!
+                              (array-ref fresh index)
+                              (Slot.Occupied ,owned-key hash))
+                            (set! placed true)]
+                          [_
+                            (set! index (next-index index new-capacity))
+                            (set! seen (+ seen 1))])))]
+                  [_ unit])
+                (set! scan (+ scan 1)))
+              (set! set.slots fresh)
+              (set! set.deleted 0)))
           (define (,contains-name [set : (& set Set)] [key : ,key-param-type]) : bool
             (match (,probe-name (& set.slots) (capacity set) key (hash-key key))
               [(Probe.Found _) true]
               [_ false]))
           ,@owned-contains
           (define (insert-ref! [set : (&mut set Set)] [key : ,key-type]) : unit
-            (begin
-              (if (needs-grow? set)
-                (grow set)
-                unit)
-              (let
-                [hash : i64 (hash-key ,key-arg)]
-                (match (,probe-name
-                  (& set.slots)
-                  (capacity-mut set)
-                  ,key-arg
-                  hash)
-                  [(Probe.Found _) unit]
-                  [(Probe.Absent index)
-                    (let
-                      [was-tombstone : bool
-                        (match (array-ref set.slots index)
-                          [Slot.Tombstone true]
-                          [_ false])]
-                      (begin
-                        (set!
-                          (array-ref set.slots index)
-                          (Slot.Occupied key hash))
-                        (set! set.len (+ set.len 1))
-                        (if was-tombstone
-                          (set! set.deleted (- set.deleted 1))
-                          unit)))]
-                  [Probe.Full
-                    (begin
-                      (grow set)
-                      (insert-ref! set key))]))))
+            (if (needs-grow? set)
+              (grow set)
+              unit)
+            (let
+              [hash : i64 (hash-key ,key-arg)]
+              (match (,probe-name
+                (& set.slots)
+                (capacity-mut set)
+                ,key-arg
+                hash)
+                [(Probe.Found _) unit]
+                [(Probe.Absent index)
+                  (let
+                    [was-tombstone : bool
+                      (match (array-ref set.slots index)
+                        [Slot.Tombstone true]
+                        [_ false])]
+                    (set! (array-ref set.slots index) (Slot.Occupied key hash))
+                    (set! set.len (+ set.len 1))
+                    (if was-tombstone
+                      (set! set.deleted (- set.deleted 1))
+                      unit))]
+                [Probe.Full
+                  (grow set)
+                  (insert-ref! set key)])))
           (define (,remove-name [set : (&mut set Set)] [key : ,key-param-type]) : unit
             (match (,probe-name
               (& set.slots)
@@ -371,10 +358,9 @@
               key
               (hash-key key))
               [(Probe.Found index)
-                (begin
-                  (set! (array-ref set.slots index) (Slot.Tombstone))
-                  (set! set.len (- set.len 1))
-                  (set! set.deleted (+ set.deleted 1)))]
+                (set! (array-ref set.slots index) (Slot.Tombstone))
+                (set! set.len (- set.len 1))
+                (set! set.deleted (+ set.deleted 1))]
               [_ unit]))
           ,@owned-remove
           (define (next-occupied [set : (& set Set)] [from : i64]) : i64
@@ -385,14 +371,13 @@
                   from)]
               [cap : i64 (capacity set)]
               [found : bool false]
-              (begin
-                (while (if found
-                  false
-                  (< index cap))
-                  (match (array-ref set.slots index)
-                    [(Slot.Occupied _ _) (set! found true)]
-                    [_ (set! index (+ index 1))]))
-                index)))
+              (while (if found
+                false
+                (< index cap))
+                (match (array-ref set.slots index)
+                  [(Slot.Occupied _ _) (set! found true)]
+                  [_ (set! index (+ index 1))]))
+              index))
           (define (entry-at [set : (& set Set)] [index : i64]) : Entry
             (if (if (>= index 0)
               (< index (capacity set))
@@ -440,82 +425,78 @@
       (let
         [borrowed-key : String "alpha"]
         [s : strset.Set (strset.with-capacity 4)]
-        (begin
-          (strset.insert! s "alpha")
-          (strset.insert! s "alpha")
+        (strset.insert! s "alpha")
+        (strset.insert! s "alpha")
+        (test.assert-i64-eq
+          (strset.len (& s))
+          1
+          "duplicate String insert is idempotent")
+        (test.assert-true
+          (strset.contains-borrowed? (& s) (& borrowed-key))
+          "borrowed String contains finds owned key")
+        (strset.insert! s "a")
+        (strset.insert! s "e")
+        (test.assert-true
+          (strset.contains? (& s) "e")
+          "String collision chain lookup")
+        (strset.remove! s "a")
+        (test.assert-false
+          (strset.contains? (& s) "a")
+          "String remove tombstones key")
+        (test.assert-true
+          (strset.contains? (& s) "e")
+          "String tombstone preserves later collision")
+        (strset.insert! s "i")
+        (test.assert-true
+          (strset.contains? (& s) "i")
+          "String insert reuses tombstone slot")
+        (strset.remove-borrowed! s (& borrowed-key))
+        (test.assert-false
+          (strset.contains-borrowed? (& s) (& borrowed-key))
+          "borrowed String remove removes key")
+        (let
+          [len-before-missing : i64 (strset.len (& s))]
+          (strset.remove! s "missing")
           (test.assert-i64-eq
             (strset.len (& s))
-            1
-            "duplicate String insert is idempotent")
+            len-before-missing
+            "missing String remove is no-op"))
+        (strset.insert! s "one")
+        (strset.insert! s "two")
+        (strset.insert! s "three")
+        (test.assert-true
+          (> (strset.capacity (& s)) 4)
+          "String set grows and rehashes")
+        (test.assert-true
+          (strset.contains? (& s) "e")
+          "String set keeps old key after resize")
+        (let
+          [iter-index : i64 (strset.next-occupied (& s) 0)]
+          [iter-count : i64 0]
+          [iter-monotonic : bool true]
+          (while (< iter-index (strset.capacity (& s)))
+            (let
+              [next : i64 (strset.next-occupied (& s) (+ iter-index 1))]
+              (set! iter-count (+ iter-count 1))
+              (if (> next iter-index)
+                unit
+                (set! iter-monotonic false))
+              (set! iter-index next)))
+          (test.assert-i64-eq
+            iter-count
+            (strset.len (& s))
+            "String set iteration visits every key")
           (test.assert-true
-            (strset.contains-borrowed? (& s) (& borrowed-key))
-            "borrowed String contains finds owned key")
-          (strset.insert! s "a")
-          (strset.insert! s "e")
-          (test.assert-true
-            (strset.contains? (& s) "e")
-            "String collision chain lookup")
-          (strset.remove! s "a")
-          (test.assert-false
-            (strset.contains? (& s) "a")
-            "String remove tombstones key")
-          (test.assert-true
-            (strset.contains? (& s) "e")
-            "String tombstone preserves later collision")
-          (strset.insert! s "i")
-          (test.assert-true
-            (strset.contains? (& s) "i")
-            "String insert reuses tombstone slot")
-          (strset.remove-borrowed! s (& borrowed-key))
-          (test.assert-false
-            (strset.contains-borrowed? (& s) (& borrowed-key))
-            "borrowed String remove removes key")
-          (let
-            [len-before-missing : i64 (strset.len (& s))]
-            (begin
-              (strset.remove! s "missing")
-              (test.assert-i64-eq
-                (strset.len (& s))
-                len-before-missing
-                "missing String remove is no-op")))
-          (strset.insert! s "one")
-          (strset.insert! s "two")
-          (strset.insert! s "three")
-          (test.assert-true
-            (> (strset.capacity (& s)) 4)
-            "String set grows and rehashes")
-          (test.assert-true
-            (strset.contains? (& s) "e")
-            "String set keeps old key after resize")
-          (let
-            [iter-index : i64 (strset.next-occupied (& s) 0)]
-            [iter-count : i64 0]
-            [iter-monotonic : bool true]
-            (begin
-              (while (< iter-index (strset.capacity (& s)))
-                (let
-                  [next : i64 (strset.next-occupied (& s) (+ iter-index 1))]
-                  (begin
-                    (set! iter-count (+ iter-count 1))
-                    (if (> next iter-index)
-                      unit
-                      (set! iter-monotonic false))
-                    (set! iter-index next))))
-              (test.assert-i64-eq
-                iter-count
-                (strset.len (& s))
-                "String set iteration visits every key")
-              (test.assert-true
-                iter-monotonic
-                "String set iteration is ascending bucket order")))
-          (test.assert-true
-            (>
-              (set-test-string-entry-len-or
-                (strset.entry-at (& s) (strset.next-occupied (& s) 0))
-                -1)
-              0)
-            "String set entry-at returns a live key")
-          unit)))))
+            iter-monotonic
+            "String set iteration is ascending bucket order"))
+        (test.assert-true
+          (>
+            (set-test-string-entry-len-or
+              (strset.entry-at (& s) (strset.next-occupied (& s) 0))
+              -1)
+            0)
+          "String set entry-at returns a live key")
+        unit))))
 
 (cfg
   test
@@ -527,70 +508,63 @@
       ;; `(set i64)` requests sharing one generated nominal Set.
       (let
         [s : i64set.Set (i64set.with-capacity 4)]
-        (begin
-          (i64set.insert! s 1)
-          (i64set.insert! s 5)
-          (i64set.insert! s 1)
-          (test.assert-i64-eq
-            (i64set.len (& s))
-            2
-            "duplicate i64 insert is idempotent")
-          (test.assert-true (i64set.contains? (& s) 5) "i64 collision lookup")
-          (i64set.remove! s 1)
-          (test.assert-false
-            (i64set.contains? (& s) 1)
-            "i64 remove tombstones key")
-          (test.assert-true
-            (i64set.contains? (& s) 5)
-            "i64 tombstone preserves later collision")
-          (i64set.insert! s 9)
-          (test.assert-true
-            (i64set.contains? (& s) 9)
-            "i64 tombstone slot reused")
-          (let
-            [len-before-missing : i64 (i64set.len (& s))]
-            [sum-before-growth : i64 0]
-            [sum-index : i64 (i64set.next-occupied (& s) 0)]
-            (begin
-              (while (< sum-index (i64set.capacity (& s)))
-                (begin
-                  (set!
-                    sum-before-growth
-                    (+
-                      sum-before-growth
-                      (i64set.entry-key-or (i64set.entry-at (& s) sum-index) 0)))
-                  (set! sum-index (i64set.next-occupied (& s) (+ sum-index 1)))))
-              (i64set.remove! s 999)
-              (test.assert-i64-eq
-                (i64set.len (& s))
-                len-before-missing
-                "missing i64 remove is no-op")
-              (test.assert-i64-eq
+        (i64set.insert! s 1)
+        (i64set.insert! s 5)
+        (i64set.insert! s 1)
+        (test.assert-i64-eq
+          (i64set.len (& s))
+          2
+          "duplicate i64 insert is idempotent")
+        (test.assert-true (i64set.contains? (& s) 5) "i64 collision lookup")
+        (i64set.remove! s 1)
+        (test.assert-false
+          (i64set.contains? (& s) 1)
+          "i64 remove tombstones key")
+        (test.assert-true
+          (i64set.contains? (& s) 5)
+          "i64 tombstone preserves later collision")
+        (i64set.insert! s 9)
+        (test.assert-true
+          (i64set.contains? (& s) 9)
+          "i64 tombstone slot reused")
+        (let
+          [len-before-missing : i64 (i64set.len (& s))]
+          [sum-before-growth : i64 0]
+          [sum-index : i64 (i64set.next-occupied (& s) 0)]
+          (while (< sum-index (i64set.capacity (& s)))
+            (set!
+              sum-before-growth
+              (+
                 sum-before-growth
-                14
-                "i64 set iteration exposes live keys")))
-          (i64set.insert! s 10)
-          (i64set.insert! s 11)
-          (i64set.insert! s 12)
-          (test.assert-true
-            (> (i64set.capacity (& s)) 4)
-            "i64 set grows and rehashes")
-          (let
-            [iter-index : i64 (i64set.next-occupied (& s) 0)]
-            [iter-count : i64 0]
-            (begin
-              (while (< iter-index (i64set.capacity (& s)))
-                (begin
-                  (set! iter-count (+ iter-count 1))
-                  (set!
-                    iter-index
-                    (i64set.next-occupied (& s) (+ iter-index 1)))))
-              (test.assert-i64-eq
-                iter-count
-                (i64set.len (& s))
-                "i64 set iteration visits every key")))
+                (i64set.entry-key-or (i64set.entry-at (& s) sum-index) 0)))
+            (set! sum-index (i64set.next-occupied (& s) (+ sum-index 1))))
+          (i64set.remove! s 999)
           (test.assert-i64-eq
-            (i64set_again.len (& s))
             (i64set.len (& s))
-            "duplicate set macro requests share the generated type")
-          unit)))))
+            len-before-missing
+            "missing i64 remove is no-op")
+          (test.assert-i64-eq
+            sum-before-growth
+            14
+            "i64 set iteration exposes live keys"))
+        (i64set.insert! s 10)
+        (i64set.insert! s 11)
+        (i64set.insert! s 12)
+        (test.assert-true
+          (> (i64set.capacity (& s)) 4)
+          "i64 set grows and rehashes")
+        (let
+          [iter-index : i64 (i64set.next-occupied (& s) 0)]
+          [iter-count : i64 0]
+          (while (< iter-index (i64set.capacity (& s)))
+            (set! iter-count (+ iter-count 1))
+            (set! iter-index (i64set.next-occupied (& s) (+ iter-index 1))))
+          (test.assert-i64-eq
+            iter-count
+            (i64set.len (& s))
+            "i64 set iteration visits every key"))
+        (test.assert-i64-eq
+          (i64set_again.len (& s))
+          (i64set.len (& s))
+          "duplicate set macro requests share the generated type")
+        unit))))

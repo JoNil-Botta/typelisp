@@ -1335,7 +1335,7 @@
   [path : String]
   [example : DocTestExample]
   [stdlib-roots : doc_svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : DocTestMaybeFailure
+  [cfg-snapshot : cfg_core.CompilerCfgSnapshot]) : DocTestMaybeFailure
   (let
     ;; Each check-only example is its own program. The check resets its pools
     ;; but not the interner, so reset that to the session floor first, as lint
@@ -1345,6 +1345,11 @@
     ;; The session's program cache survives, so examples still share loaded
     ;; dependencies. Runnable examples get the full driver reset instead.
     [_reset : unit (compiler_check_core.compiler-check-reset-interns!)]
+    ;; Cfg keys are interned names, and the reset retires every name above the
+    ;; floor, so the cfgs travel as a snapshot of name strings and are interned
+    ;; again here, after the reset (#8663).
+    [cfgs : sym_i64_env.SymI64Env
+      (cfg_core.compiler-cfg-snapshot-to-env cfg-snapshot)]
     [index : i64
       (doc-test-example-index (owned_view.compiler-owned-shared-view example))]
     [source-line : i64
@@ -1393,7 +1398,8 @@
     path
     example
     stdlib-roots
-    (compiler_check_core.compiler-check-language-cfgs)))
+    (cfg_core.compiler-cfg-snapshot-from-env
+      (compiler_check_core.compiler-check-language-cfgs))))
 
 (define (doc-test-typecheck-package-example-with-roots-and-cfg
   [path : String]
@@ -1497,7 +1503,7 @@
   [index : i64]
   [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : doc_run_failure_vec.Vec
+  [cfg-snapshot : cfg_core.CompilerCfgSnapshot]) : doc_run_failure_vec.Vec
   (if (>= index (doc-test-example-list-count examples))
     failures
     (let
@@ -1506,7 +1512,7 @@
         (owned_view.compiler-owned-shared-view path)
         example
         (owned_view.compiler-owned-shared-view stdlib-roots)
-        cfgs)
+        (owned_view.compiler-owned-shared-view cfg-snapshot))
         [(No)
           (doc-test-typecheck-examples-with-roots-from
             path
@@ -1514,7 +1520,7 @@
             (+ index 1)
             failures
             stdlib-roots
-            cfgs)]
+            cfg-snapshot)]
         [(Some failure)
           (doc-test-typecheck-examples-with-roots-from
             path
@@ -1522,7 +1528,7 @@
             (+ index 1)
             (doc-test-run-failure-list-append failures failure)
             stdlib-roots
-            cfgs)]))))
+            cfg-snapshot)]))))
 
 (define (doc-test-typecheck-examples-with-roots-and-cfg
   [path : String]
@@ -1536,7 +1542,9 @@
     0
     failures
     stdlib-roots
-    cfgs))
+    ;; Taken before the first example's interner reset; see
+    ;; doc-test-typecheck-example-with-roots-and-cfg.
+    (cfg_core.compiler-cfg-snapshot-from-env cfgs)))
 
 (define (doc-test-typecheck-package-examples-with-roots-from
   [path : String]

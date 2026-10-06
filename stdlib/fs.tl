@@ -752,10 +752,9 @@
             (if (= locked (cast 0 : i32))
               (let
                 [status : i64 (fs-windows-last-error-status)]
-                (begin
-                  (unsafe
-                    (fs-win-close-handle handle))
-                  (- 0 status)))
+                (unsafe
+                  (fs-win-close-handle handle))
+                (- 0 status))
               handle))))
       (let
         [path-bytes : (__tl_dyn-array u8) (io.c-string path)]
@@ -771,10 +770,9 @@
             (if (< status 0)
               (let
                 [error-status : i64 (io.last-error-code)]
-                (begin
-                  (unsafe
-                    (io.linux-syscall-close fd))
-                  (- 0 error-status)))
+                (unsafe
+                  (io.linux-syscall-close fd))
+                (- 0 error-status))
               fd)))))))
 
 ;: Release an advisory file lock and close its host handle.
@@ -903,18 +901,17 @@
       (let
         [i : i64 0]
         [done : bool false]
-        (begin
-          (while (not done)
-            (let
-              [byte : u8
-                (unsafe
-                  (ptr-read (ptr-offset name i)))]
-              (if (= (cast byte : i64) 0)
-                (set! done true)
-                (begin
-                  (__tl_array-push! out.slots byte)
-                  (set! i (+ i 1))))))
-          (__tl_array-push! out.slots (cast '\n' : u8)))))))
+        (while (not done)
+          (let
+            [byte : u8
+              (unsafe
+                (ptr-read (ptr-offset name i)))]
+            (if (= (cast byte : i64) 0)
+              (set! done true)
+              (begin
+                (__tl_array-push! out.slots byte)
+                (set! i (+ i 1))))))
+        (__tl_array-push! out.slots (cast '\n' : u8))))))
 
 ;: Append a raw entry name only when its terminator occurs within `capacity`.
 ;: The caller must prove that `name` addresses that many initialized bytes.
@@ -928,57 +925,53 @@
       (let
         [len : i64 0]
         [terminated : bool false]
-        (begin
-          (while (and (< len capacity) (not terminated))
-            (if (=
-              (unsafe
-                (c-string-byte name len))
-              0)
-              (set! terminated true)
-              (set! len (+ len 1))))
-          (if (not terminated)
-            false
-            (let
-              [dot-entry : bool
-                (or
-                  (and
-                    (= len 1)
-                    (=
+        (while (and (< len capacity) (not terminated))
+          (if (=
+            (unsafe
+              (c-string-byte name len))
+            0)
+            (set! terminated true)
+            (set! len (+ len 1))))
+        (if (not terminated)
+          false
+          (let
+            [dot-entry : bool
+              (or
+                (and
+                  (= len 1)
+                  (=
+                    (unsafe
+                      (c-string-byte name 0))
+                    46))
+                (and
+                  (= len 2)
+                  (=
+                    (unsafe
+                      (c-string-byte name 0))
+                    46)
+                  (=
+                    (unsafe
+                      (c-string-byte name 1))
+                    46)))]
+            (if dot-entry
+              true
+              (let
+                [index : i64 0]
+                (while (< index len)
+                  (__tl_array-push!
+                    out.slots
+                    (cast
                       (unsafe
-                        (c-string-byte name 0))
-                      46))
-                  (and
-                    (= len 2)
-                    (=
-                      (unsafe
-                        (c-string-byte name 0))
-                      46)
-                    (=
-                      (unsafe
-                        (c-string-byte name 1))
-                      46)))]
-              (if dot-entry
-                true
-                (let
-                  [index : i64 0]
-                  (begin
-                    (while (< index len)
-                      (begin
-                        (__tl_array-push!
-                          out.slots
-                          (cast
-                            (unsafe
-                              (c-string-byte name index))
-                            : u8))
-                        (set! index (+ index 1))))
-                    (__tl_array-push! out.slots (cast '\n' : u8))
-                    true))))))))))
+                        (c-string-byte name index))
+                      : u8))
+                  (set! index (+ index 1)))
+                (__tl_array-push! out.slots (cast '\n' : u8))
+                true))))))))
 
 ;: Convert the accumulated newline-delimited bytes into a String.
 (define (read-dir-bytes-string [out : (&mut out byte_buf_core.ByteBufBuilder)]) : String
-  (begin
-    (set! out.len (array-length out.slots))
-    (byte_buf_core.byte-buf-builder-finish-string (& out))))
+  (set! out.len (array-length out.slots))
+  (byte_buf_core.byte-buf-builder-finish-string (& out)))
 
 ;: Read the Linux `d_reclen` field from a `linux_dirent64` record.
 (cfg
@@ -1084,35 +1077,33 @@
             (byte_buf_core.ByteBufBuilder (__tl_make-array u8 0) 0)]
           [ok : bool true]
           [done : bool false]
-          (begin
-            (while (not done)
-              (let
-                [read-count : i64
-                  (unsafe
-                    (linux-syscall-getdents64
-                      fd
-                      (io.array-ptr buf)
-                      fs-read-dir-buffer-size))]
-                (if (< read-count 0)
-                  (begin
+          (while (not done)
+            (let
+              [read-count : i64
+                (unsafe
+                  (linux-syscall-getdents64
+                    fd
+                    (io.array-ptr buf)
+                    fs-read-dir-buffer-size))]
+              (if (< read-count 0)
+                (begin
+                  (set! ok false)
+                  (set! done true))
+                (if (= read-count 0)
+                  (set! done true)
+                  (when
+                    (not
+                      (linux-read-dir-append-page!
+                        (clone buf)
+                        read-count
+                        (&mut out)))
                     (set! ok false)
-                    (set! done true))
-                  (if (= read-count 0)
-                    (set! done true)
-                    (when
-                      (not
-                        (linux-read-dir-append-page!
-                          (clone buf)
-                          read-count
-                          (&mut out)))
-                      (begin
-                        (set! ok false)
-                        (set! done true)))))))
-            (unsafe
-              (io.linux-syscall-close fd))
-            (if ok
-              (read-dir-bytes-string (&mut out))
-              "")))))))
+                    (set! done true))))))
+          (unsafe
+            (io.linux-syscall-close fd))
+          (if ok
+            (read-dir-bytes-string (&mut out))
+            ""))))))
 
 ;: Map Windows `GetLastError` values to errno-style stdlib statuses.
 (cfg
@@ -1204,28 +1195,27 @@
         (let
           [done : bool false]
           [ok : bool true]
-          (begin
-            (while (not done)
-              (if (unsafe
-                (read-dir-append-bounded-entry!
-                  (&mut out)
-                  (unsafe
-                    (fs-windows-find-data-name (io.array-ptr data)))
-                  fs-windows-find-data-name-capacity))
-                (if (=
-                  (unsafe
-                    (fs-win-find-next-file handle (io.array-ptr data)))
-                  (cast 0 : i32))
-                  (set! done true)
-                  unit)
-                (begin
-                  (set! ok false)
-                  (set! done true))))
-            (unsafe
-              (fs-win-find-close handle))
-            (if ok
-              (read-dir-bytes-string (&mut out))
-              "")))))))
+          (while (not done)
+            (if (unsafe
+              (read-dir-append-bounded-entry!
+                (&mut out)
+                (unsafe
+                  (fs-windows-find-data-name (io.array-ptr data)))
+                fs-windows-find-data-name-capacity))
+              (if (=
+                (unsafe
+                  (fs-win-find-next-file handle (io.array-ptr data)))
+                (cast 0 : i32))
+                (set! done true)
+                unit)
+              (begin
+                (set! ok false)
+                (set! done true))))
+          (unsafe
+            (fs-win-find-close handle))
+          (if ok
+            (read-dir-bytes-string (&mut out))
+            ""))))))
 
 ;: Return the host status code for reading a directory listing.
 (define (read-dir-status [path : String]) : i64
@@ -1826,37 +1816,35 @@
           0))]
     [segment-start : i64 i]
     [segments : svec.Vec (svec.new)]
-    (begin
-      (while (< i n)
+    (while (< i n)
+      (if (stdlib.fs.path-separator? (string-ref path i))
         (begin
-          (if (stdlib.fs.path-separator? (string-ref path i))
-            (begin
-              (stdlib.fs.path-normalize-segment
-                (string.substring path segment-start (- i segment-start))
-                (&mut segments)
-                rooted)
-              (set! segment-start (+ i 1)))
-            (set! segment-start segment-start))
-          (set! i (+ i 1))))
-      (stdlib.fs.path-normalize-segment
-        (string.substring path segment-start (- n segment-start))
-        (&mut segments)
-        rooted)
-      (let
-        [body : String (stdlib.fs.path-segment-vec-render segments)]
-        (cond
-          [(if drive-root
-              (= (string-length body) 0)
-              false)
-            (str_cat.str-cat (string.substring path 0 2) "/")]
-          [drive-root (str_cat.str-cat (string.substring path 0 2) "/" body)]
-          [(if rooted
-              (= (string-length body) 0)
-              false)
-            "/"]
-          [rooted (str_cat.str-cat "/" body)]
-          [(= (string-length body) 0) "."]
-          [else body])))))
+          (stdlib.fs.path-normalize-segment
+            (string.substring path segment-start (- i segment-start))
+            (&mut segments)
+            rooted)
+          (set! segment-start (+ i 1)))
+        (set! segment-start segment-start))
+      (set! i (+ i 1)))
+    (stdlib.fs.path-normalize-segment
+      (string.substring path segment-start (- n segment-start))
+      (&mut segments)
+      rooted)
+    (let
+      [body : String (stdlib.fs.path-segment-vec-render segments)]
+      (cond
+        [(if drive-root
+            (= (string-length body) 0)
+            false)
+          (str_cat.str-cat (string.substring path 0 2) "/")]
+        [drive-root (str_cat.str-cat (string.substring path 0 2) "/" body)]
+        [(if rooted
+            (= (string-length body) 0)
+            false)
+          "/"]
+        [rooted (str_cat.str-cat "/" body)]
+        [(= (string-length body) 0) "."]
+        [else body]))))
 
 ;: Return true when a normalized relative path still escapes via leading `..`.
 (define (path-normalized-escapes? [normalized : (& normalized str)]) : bool
@@ -1957,14 +1945,12 @@
     [n : i64 (string-length path)]
     [i : i64 0]
     [last : i64 -1]
-    (begin
-      (while (< i n)
-        (begin
-          (if (stdlib.fs.path-separator? (string-ref path i))
-            (set! last i)
-            (set! last last))
-          (set! i (+ i 1))))
-      last)))
+    (while (< i n)
+      (if (stdlib.fs.path-separator? (string-ref path i))
+        (set! last i)
+        (set! last last))
+      (set! i (+ i 1)))
+    last))
 
 ;: Directory portion of `path`, without a trailing separator.
 ;:
@@ -2002,16 +1988,14 @@
     [bn : i64 (string-length base)]
     [i : i64 0]
     [dot : i64 -1]
-    (begin
-      (while (< i bn)
-        (begin
-          (if (string.char-eq (string-ref base i) '.')
-            (set! dot i)
-            (set! dot dot))
-          (set! i (+ i 1))))
-      (if (<= dot 0)
-        ""
-        (string.substring base (+ dot 1) (- bn (+ dot 1)))))))
+    (while (< i bn)
+      (if (string.char-eq (string-ref base i) '.')
+        (set! dot i)
+        (set! dot dot))
+      (set! i (+ i 1)))
+    (if (<= dot 0)
+      ""
+      (string.substring base (+ dot 1) (- bn (+ dot 1))))))
 
 ;: Convert a runtime file-kind status into a structured result.
 (define (file-kind-status-result [path : (& path str)] [status : i64]) : ResultFsFileKind
@@ -2222,17 +2206,15 @@
     [path-text : String (string.copy path)]
     (if (io.empty-path? path)
       (ErrFsMetadata (io.invalid-path-error path))
-      (match (stdlib.fs.try-file-kind path)
-        [(ErrFsFileKind error) (ErrFsMetadata error)]
-        [(OkFsFileKind kind)
-          (if (stdlib.fs.file-kind-regular? kind)
-            (let
-              [status : i64
-                (stdlib.fs.file-size-status (string.copy path-text))]
-              (if (= status io.io-status-ok)
-                (OkFsMetadata (FsMetadata kind (stdlib.fs.file-size path-text)))
-                (ErrFsMetadata (io.error-from-status path status))))
-            (OkFsMetadata (FsMetadata kind 0)))]))))
+      (let
+        [kind (try (stdlib.fs.try-file-kind path))]
+        (if (stdlib.fs.file-kind-regular? kind)
+          (let
+            [status : i64 (stdlib.fs.file-size-status (string.copy path-text))]
+            (if (= status io.io-status-ok)
+              (OkFsMetadata (FsMetadata kind (stdlib.fs.file-size path-text)))
+              (ErrFsMetadata (io.error-from-status path status))))
+          (OkFsMetadata (FsMetadata kind 0)))))))
 
 ;: Split the runtime's newline-delimited directory payload into entry names.
 (define (read-dir-split-vec [entries : String]) : FsStringVector
@@ -2241,24 +2223,21 @@
     [items : svec.Vec (svec.new)]
     [start : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (if (string.char-eq (string-ref entries i) '\n')
-          (begin
-            (if (> i start)
-              (svec.push-ref!
-                (&mut items)
-                (string.substring entries start (- i start)))
-              unit)
-            (set! start (+ i 1))
-            (set! i (+ i 1)))
-          (set! i (+ i 1))))
-      (if (< start n)
-        (svec.push-ref!
-          (&mut items)
-          (string.substring entries start (- n start)))
-        unit)
-      (FsStringVector items))))
+    (while (< i n)
+      (if (string.char-eq (string-ref entries i) '\n')
+        (begin
+          (if (> i start)
+            (svec.push-ref!
+              (&mut items)
+              (string.substring entries start (- i start)))
+            unit)
+          (set! start (+ i 1))
+          (set! i (+ i 1)))
+        (set! i (+ i 1))))
+    (if (< start n)
+      (svec.push-ref! (&mut items) (string.substring entries start (- n start)))
+      unit)
+    (FsStringVector items)))
 
 ;: Read one directory and return entry names as a generated String vector.
 ;:
@@ -2812,11 +2791,10 @@
         (fs-test-expect-file-metadata
           (fs-api-test-try-file-metadata path)
           message)]
-      (begin
-        (match (metadata-kind metadata)
-          [(FsFileRegular) unit]
-          [_ (io.panic message)])
-        (fs-test-assert-i64-eq (metadata-size metadata) expected-size message)))))
+      (match (metadata-kind metadata)
+        [(FsFileRegular) unit]
+        [_ (io.panic message)])
+      (fs-test-assert-i64-eq (metadata-size metadata) expected-size message))))
 
 (cfg
   test
@@ -2854,51 +2832,48 @@
     [path : (& path str)]
     [expected-size : i64]
     [message : String]) : unit
-    (begin
-      (fs-test-assert-i64-eq
-        (fs-api-test-fs-file-kind-status path)
-        fs-file-kind-regular-code
-        message)
-      (fs-test-assert-i64-eq
-        (fs-api-test-fs-file-size-status path)
-        io.io-status-ok
-        message)
-      (fs-test-assert-i64-eq
-        (fs-api-test-fs-file-size path)
-        expected-size
-        message))))
+    (fs-test-assert-i64-eq
+      (fs-api-test-fs-file-kind-status path)
+      fs-file-kind-regular-code
+      message)
+    (fs-test-assert-i64-eq
+      (fs-api-test-fs-file-size-status path)
+      io.io-status-ok
+      message)
+    (fs-test-assert-i64-eq
+      (fs-api-test-fs-file-size path)
+      expected-size
+      message)))
 
 (cfg
   test
   (define (fs-test-assert-runtime-metadata-directory
     [path : (& path str)]
     [message : String]) : unit
-    (begin
-      (fs-test-assert-i64-eq
-        (fs-api-test-fs-file-kind-status path)
-        fs-file-kind-directory-code
-        message)
-      (fs-test-assert-i64-eq
-        (fs-api-test-fs-file-size-status path)
-        io.io-status-ok
-        message)
-      (fs-test-assert-i64-eq (fs-api-test-fs-file-size path) 0 message))))
+    (fs-test-assert-i64-eq
+      (fs-api-test-fs-file-kind-status path)
+      fs-file-kind-directory-code
+      message)
+    (fs-test-assert-i64-eq
+      (fs-api-test-fs-file-size-status path)
+      io.io-status-ok
+      message)
+    (fs-test-assert-i64-eq (fs-api-test-fs-file-size path) 0 message)))
 
 (cfg
   test
   (define (fs-test-assert-runtime-metadata-not-found
     [path : (& path str)]
     [message : String]) : unit
-    (begin
-      (fs-test-assert-i64-eq
-        (fs-api-test-fs-file-kind-status path)
-        io.io-status-not-found
-        message)
-      (fs-test-assert-i64-eq
-        (fs-api-test-fs-file-size-status path)
-        io.io-status-not-found
-        message)
-      (fs-test-assert-i64-eq (fs-api-test-fs-file-size path) 0 message))))
+    (fs-test-assert-i64-eq
+      (fs-api-test-fs-file-kind-status path)
+      io.io-status-not-found
+      message)
+    (fs-test-assert-i64-eq
+      (fs-api-test-fs-file-size-status path)
+      io.io-status-not-found
+      message)
+    (fs-test-assert-i64-eq (fs-api-test-fs-file-size path) 0 message)))
 
 (cfg
   test
@@ -2908,20 +2883,19 @@
     [second : String]
     [third : String]
     [message : String]) : unit
-    (begin
-      (fs-test-assert-i64-eq (stdlib.fs.string-vector-len (& items)) 3 message)
-      (fs-test-assert-owned-string-eq
-        (stdlib.fs.string-vector-get (& items) 0 "missing")
-        first
-        message)
-      (fs-test-assert-owned-string-eq
-        (stdlib.fs.string-vector-get (& items) 1 "missing")
-        second
-        message)
-      (fs-test-assert-owned-string-eq
-        (stdlib.fs.string-vector-get (& items) 2 "missing")
-        third
-        message))))
+    (fs-test-assert-i64-eq (stdlib.fs.string-vector-len (& items)) 3 message)
+    (fs-test-assert-owned-string-eq
+      (stdlib.fs.string-vector-get (& items) 0 "missing")
+      first
+      message)
+    (fs-test-assert-owned-string-eq
+      (stdlib.fs.string-vector-get (& items) 1 "missing")
+      second
+      message)
+    (fs-test-assert-owned-string-eq
+      (stdlib.fs.string-vector-get (& items) 2 "missing")
+      third
+      message)))
 
 (cfg
   test
@@ -2949,12 +2923,11 @@
         (fs-test-expect-ok-string
           (fs-api-test-try-create-temp-dir "typelisp fs test")
           "create temp dir b: ")]
-      (begin
-        (fs-test-assert-true
-          (not (string.eq dir-a dir-b))
-          "temp directories are unique")
-        (fs-test-assert-exists dir-a true "temp dir a exists")
-        (fs-test-assert-exists dir-b true "temp dir b exists")))))
+      (fs-test-assert-true
+        (not (string.eq dir-a dir-b))
+        "temp directories are unique")
+      (fs-test-assert-exists dir-a true "temp dir a exists")
+      (fs-test-assert-exists dir-b true "temp dir b exists"))))
 
 (cfg
   test
@@ -2970,19 +2943,18 @@
     [cleanup : bool]) : unit
     (let
       [dir : String (fs-api-test-fs-path-join parent "mkdir-if-missing")]
-      (begin
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-mkdir-if-missing dir)
+        "mkdir-if-missing new dir: ")
+      (fs-test-assert-exists dir true "mkdir-if-missing dir exists")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-mkdir-if-missing dir)
+        "mkdir-if-missing existing dir: ")
+      (if cleanup
         (fs-test-assert-ok-unit
-          (fs-api-test-try-mkdir-if-missing dir)
-          "mkdir-if-missing new dir: ")
-        (fs-test-assert-exists dir true "mkdir-if-missing dir exists")
-        (fs-test-assert-ok-unit
-          (fs-api-test-try-mkdir-if-missing dir)
-          "mkdir-if-missing existing dir: ")
-        (if cleanup
-          (fs-test-assert-ok-unit
-            (fs-api-test-try-remove-dir dir)
-            "mkdir-if-missing cleanup dir: ")
-          unit)))))
+          (fs-api-test-try-remove-dir dir)
+          "mkdir-if-missing cleanup dir: ")
+        unit))))
 
 (cfg
   test
@@ -3004,85 +2976,77 @@
         (fs-api-test-fs-path-join root "missing source.txt")]
       [missing-destination : String
         (fs-api-test-fs-path-join root "missing destination.txt")]
-      (begin
-        (fs-test-assert-ok-unit
-          (fs-api-test-try-write-file file-source "alpha")
-          "write rename source: ")
-        (fs-test-assert-ok-unit
-          (fs-api-test-try-rename file-source file-destination)
-          "rename file with spaces: ")
-        (fs-test-assert-exists file-source false "renamed source is gone")
-        (fs-test-assert-exists
-          file-destination
-          true
-          "renamed destination exists")
-        (fs-test-assert-file-contents
-          file-destination
-          "alpha"
-          "renamed destination preserves contents")
-        (fs-test-assert-not-found-unit
-          (fs-api-test-try-rename missing-source missing-destination)
-          "missing rename source is not found")
-        (fs-test-assert-invalid-unit
-          (fs-api-test-try-rename "" file-destination)
-          "empty rename source is invalid")
-        (fs-test-assert-invalid-unit
-          (fs-api-test-try-rename file-destination "")
-          "empty rename destination is invalid")
-        (fs-test-assert-ok-unit
-          (fs-api-test-try-write-file replace-source "replacement")
-          "write replacement source: ")
-        (fs-test-assert-ok-unit
-          (fs-api-test-try-write-file replace-destination "old")
-          "write replacement destination: ")
-        (fs-test-assert-ok-unit
-          (fs-api-test-try-rename replace-source replace-destination)
-          "rename replaces existing file: ")
-        (fs-test-assert-exists
-          replace-source
-          false
-          "replacement source is gone")
-        (fs-test-assert-file-contents
-          replace-destination
-          "replacement"
-          "rename replacement policy overwrites destination")
-        (fs-test-assert-ok-unit
-          (fs-api-test-try-mkdir dir-source)
-          "create rename dir source: ")
-        (fs-test-assert-ok-unit
-          (fs-api-test-try-rename dir-source dir-destination)
-          "rename directory with spaces: ")
-        (fs-test-assert-exists
-          dir-source
-          false
-          "renamed directory source is gone")
-        (fs-test-assert-exists
-          dir-destination
-          true
-          "renamed directory destination exists")
-        (fs-test-assert-ok-unit
-          (fs-api-test-try-remove-file file-destination)
-          "cleanup renamed file: ")
-        (fs-test-assert-ok-unit
-          (fs-api-test-try-remove-file replace-destination)
-          "cleanup replacement file: ")
-        (fs-test-assert-ok-unit
-          (fs-api-test-try-remove-dir dir-destination)
-          "cleanup renamed directory: ")))))
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-write-file file-source "alpha")
+        "write rename source: ")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-rename file-source file-destination)
+        "rename file with spaces: ")
+      (fs-test-assert-exists file-source false "renamed source is gone")
+      (fs-test-assert-exists file-destination true "renamed destination exists")
+      (fs-test-assert-file-contents
+        file-destination
+        "alpha"
+        "renamed destination preserves contents")
+      (fs-test-assert-not-found-unit
+        (fs-api-test-try-rename missing-source missing-destination)
+        "missing rename source is not found")
+      (fs-test-assert-invalid-unit
+        (fs-api-test-try-rename "" file-destination)
+        "empty rename source is invalid")
+      (fs-test-assert-invalid-unit
+        (fs-api-test-try-rename file-destination "")
+        "empty rename destination is invalid")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-write-file replace-source "replacement")
+        "write replacement source: ")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-write-file replace-destination "old")
+        "write replacement destination: ")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-rename replace-source replace-destination)
+        "rename replaces existing file: ")
+      (fs-test-assert-exists replace-source false "replacement source is gone")
+      (fs-test-assert-file-contents
+        replace-destination
+        "replacement"
+        "rename replacement policy overwrites destination")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-mkdir dir-source)
+        "create rename dir source: ")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-rename dir-source dir-destination)
+        "rename directory with spaces: ")
+      (fs-test-assert-exists
+        dir-source
+        false
+        "renamed directory source is gone")
+      (fs-test-assert-exists
+        dir-destination
+        true
+        "renamed directory destination exists")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-remove-file file-destination)
+        "cleanup renamed file: ")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-remove-file replace-destination)
+        "cleanup replacement file: ")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-remove-dir dir-destination)
+        "cleanup renamed directory: "))))
 
 (cfg
   test
   (define (fs-test-assert-windows-rename-api) : unit
-    (begin
-      (fs-test-assert-not-found-unit
-        (fs-api-test-try-rename "windows source" "windows destination")
-        "windows missing rename source reports not found")
-      (fs-test-assert-invalid-unit
-        (fs-api-test-try-rename "" "windows destination")
-        "windows empty rename source is invalid")
-      (fs-test-assert-invalid-unit
-        (fs-api-test-try-rename "windows source" "")
-        "windows empty rename destination is invalid"))))
+    (fs-test-assert-not-found-unit
+      (fs-api-test-try-rename "windows source" "windows destination")
+      "windows missing rename source reports not found")
+    (fs-test-assert-invalid-unit
+      (fs-api-test-try-rename "" "windows destination")
+      "windows empty rename source is invalid")
+    (fs-test-assert-invalid-unit
+      (fs-api-test-try-rename "windows source" "")
+      "windows empty rename destination is invalid")))
 
 (cfg
   test
@@ -3092,76 +3056,72 @@
       [file-b : String (fs-api-test-fs-path-join root "beta data.txt")]
       [child-dir : String (fs-api-test-fs-path-join root "child-dir")]
       [missing : String (fs-api-test-fs-path-join root "missing")]
-      (begin
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-write-file file-a "alpha")
+        "read-dir file a: ")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-write-file file-b "beta")
+        "read-dir file b: ")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-mkdir child-dir)
+        "read-dir child dir: ")
+      (let
+        [entries : FsStringVector
+          (fs-test-expect-ok-string-vector
+            (fs-api-test-try-read-dir root)
+            "read dir: ")]
+        [entries-vec : FsStringVector
+          (fs-test-expect-ok-string-vector
+            (fs-api-test-try-read-dir-vec root)
+            "read dir vec: ")]
+        (fs-test-assert-true
+          (stdlib.fs.string-vector-contains? (& entries) "alpha.txt")
+          "read-dir includes first file name")
+        (fs-test-assert-true
+          (stdlib.fs.string-vector-contains? (& entries) "beta data.txt")
+          "read-dir includes second file name")
+        (fs-test-assert-true
+          (stdlib.fs.string-vector-contains? (& entries) "child-dir")
+          "read-dir includes subdirectory name")
+        (test.assert-false
+          (stdlib.fs.string-vector-contains? (& entries) ".")
+          "read-dir filters dot")
+        (test.assert-false
+          (stdlib.fs.string-vector-contains? (& entries) "..")
+          "read-dir filters dotdot")
+        (fs-test-assert-true
+          (stdlib.fs.string-vector-contains? (& entries-vec) "alpha.txt")
+          "read-dir vec includes first file name")
+        (fs-test-assert-true
+          (stdlib.fs.string-vector-contains? (& entries-vec) "beta data.txt")
+          "read-dir vec includes second file name")
+        (fs-test-assert-true
+          (stdlib.fs.string-vector-contains? (& entries-vec) "child-dir")
+          "read-dir vec includes subdirectory name")
+        (test.assert-false
+          (stdlib.fs.string-vector-contains? (& entries-vec) ".")
+          "read-dir vec filters dot")
+        (test.assert-false
+          (stdlib.fs.string-vector-contains? (& entries-vec) "..")
+          "read-dir vec filters dotdot")
+        (fs-test-assert-not-found-string-vector
+          (fs-api-test-try-read-dir missing)
+          "read-dir missing path reports not found")
+        (fs-test-assert-error-string-vector
+          (fs-api-test-try-read-dir file-a)
+          "read-dir file path reports an IoError")
+        (fs-test-assert-invalid-string-vector
+          (fs-api-test-try-read-dir "")
+          "read-dir empty path invalid")
         (fs-test-assert-ok-unit
-          (fs-api-test-try-write-file file-a "alpha")
-          "read-dir file a: ")
+          (fs-api-test-try-remove-file file-a)
+          "cleanup read-dir file a: ")
         (fs-test-assert-ok-unit
-          (fs-api-test-try-write-file file-b "beta")
-          "read-dir file b: ")
+          (fs-api-test-try-remove-file file-b)
+          "cleanup read-dir file b: ")
         (fs-test-assert-ok-unit
-          (fs-api-test-try-mkdir child-dir)
-          "read-dir child dir: ")
-        (let
-          [entries : FsStringVector
-            (fs-test-expect-ok-string-vector
-              (fs-api-test-try-read-dir root)
-              "read dir: ")]
-          [entries-vec : FsStringVector
-            (fs-test-expect-ok-string-vector
-              (fs-api-test-try-read-dir-vec root)
-              "read dir vec: ")]
-          (begin
-            (fs-test-assert-true
-              (stdlib.fs.string-vector-contains? (& entries) "alpha.txt")
-              "read-dir includes first file name")
-            (fs-test-assert-true
-              (stdlib.fs.string-vector-contains? (& entries) "beta data.txt")
-              "read-dir includes second file name")
-            (fs-test-assert-true
-              (stdlib.fs.string-vector-contains? (& entries) "child-dir")
-              "read-dir includes subdirectory name")
-            (test.assert-false
-              (stdlib.fs.string-vector-contains? (& entries) ".")
-              "read-dir filters dot")
-            (test.assert-false
-              (stdlib.fs.string-vector-contains? (& entries) "..")
-              "read-dir filters dotdot")
-            (fs-test-assert-true
-              (stdlib.fs.string-vector-contains? (& entries-vec) "alpha.txt")
-              "read-dir vec includes first file name")
-            (fs-test-assert-true
-              (stdlib.fs.string-vector-contains?
-                (& entries-vec)
-                "beta data.txt")
-              "read-dir vec includes second file name")
-            (fs-test-assert-true
-              (stdlib.fs.string-vector-contains? (& entries-vec) "child-dir")
-              "read-dir vec includes subdirectory name")
-            (test.assert-false
-              (stdlib.fs.string-vector-contains? (& entries-vec) ".")
-              "read-dir vec filters dot")
-            (test.assert-false
-              (stdlib.fs.string-vector-contains? (& entries-vec) "..")
-              "read-dir vec filters dotdot")
-            (fs-test-assert-not-found-string-vector
-              (fs-api-test-try-read-dir missing)
-              "read-dir missing path reports not found")
-            (fs-test-assert-error-string-vector
-              (fs-api-test-try-read-dir file-a)
-              "read-dir file path reports an IoError")
-            (fs-test-assert-invalid-string-vector
-              (fs-api-test-try-read-dir "")
-              "read-dir empty path invalid")
-            (fs-test-assert-ok-unit
-              (fs-api-test-try-remove-file file-a)
-              "cleanup read-dir file a: ")
-            (fs-test-assert-ok-unit
-              (fs-api-test-try-remove-file file-b)
-              "cleanup read-dir file b: ")
-            (fs-test-assert-ok-unit
-              (fs-api-test-try-remove-dir child-dir)
-              "cleanup read-dir child: ")))))))
+          (fs-api-test-try-remove-dir child-dir)
+          "cleanup read-dir child: ")))))
 
 (cfg
   test
@@ -3174,31 +3134,29 @@
 (cfg
   test
   (define (fs-test-assert-current-dir-api) : unit
-    (begin
-      (fs-test-assert-i64-eq
-        (stdlib.fs.current-dir-status)
-        io.io-status-ok
-        "current dir status ok")
-      (let
-        [direct-cwd : String (stdlib.fs.current-dir)]
+    (fs-test-assert-i64-eq
+      (stdlib.fs.current-dir-status)
+      io.io-status-ok
+      "current dir status ok")
+    (let
+      [direct-cwd : String (stdlib.fs.current-dir)]
+      (fs-test-assert-true
+        (> (string-length direct-cwd) 0)
+        "direct current dir is non-empty"))
+    (match (stdlib.fs.try-current-dir)
+      [(OkIoString cwd)
         (fs-test-assert-true
-          (> (string-length direct-cwd) 0)
-          "direct current dir is non-empty"))
-      (match (stdlib.fs.try-current-dir)
-        [(OkIoString cwd)
-          (begin
-            (fs-test-assert-true
-              (> (string-length cwd) 0)
-              "current dir is non-empty")
-            (fs-test-assert-true
-              (if (stdlib.fs.windows?)
-                (if (fs-api-test-fs-path-starts-separator? cwd)
-                  true
-                  (fs-test-drive-absolute? cwd))
-                (fs-api-test-fs-path-starts-separator? cwd))
-              "current dir has rooted shape"))]
-        [(ErrIoString _)
-          (fs-test-assert-true false "current dir unexpectedly failed")]))))
+          (> (string-length cwd) 0)
+          "current dir is non-empty")
+        (fs-test-assert-true
+          (if (stdlib.fs.windows?)
+            (if (fs-api-test-fs-path-starts-separator? cwd)
+              true
+              (fs-test-drive-absolute? cwd))
+            (fs-api-test-fs-path-starts-separator? cwd))
+          "current dir has rooted shape")]
+      [(ErrIoString _)
+        (fs-test-assert-true false "current dir unexpectedly failed")])))
 
 (cfg
   test
@@ -3242,23 +3200,22 @@
   (define (fs-test-assert-metadata-byte-decode) : unit
     (let
       [bytes : (__tl_dyn-array u8) (__tl_make-array u8 8)]
-      (begin
-        (set! (array-ref bytes 0) (cast 1 : u8))
-        (set! (array-ref bytes 1) (cast 2 : u8))
-        (set! (array-ref bytes 2) (cast 3 : u8))
-        (set! (array-ref bytes 3) (cast 4 : u8))
-        (set! (array-ref bytes 4) (cast 5 : u8))
-        (set! (array-ref bytes 5) (cast 6 : u8))
-        (set! (array-ref bytes 6) (cast 7 : u8))
-        (set! (array-ref bytes 7) (cast 8 : u8))
-        (fs-test-assert-i64-eq
-          (cast (metadata-read-u32-from (& bytes) 0) : i64)
-          0x04030201
-          "owned metadata u32 byte decode")
-        (fs-test-assert-i64-eq
-          (metadata-read-i64-from (& bytes) 0)
-          0x0807060504030201
-          "owned metadata i64 byte decode")))))
+      (set! (array-ref bytes 0) (cast 1 : u8))
+      (set! (array-ref bytes 1) (cast 2 : u8))
+      (set! (array-ref bytes 2) (cast 3 : u8))
+      (set! (array-ref bytes 3) (cast 4 : u8))
+      (set! (array-ref bytes 4) (cast 5 : u8))
+      (set! (array-ref bytes 5) (cast 6 : u8))
+      (set! (array-ref bytes 6) (cast 7 : u8))
+      (set! (array-ref bytes 7) (cast 8 : u8))
+      (fs-test-assert-i64-eq
+        (cast (metadata-read-u32-from (& bytes) 0) : i64)
+        0x04030201
+        "owned metadata u32 byte decode")
+      (fs-test-assert-i64-eq
+        (metadata-read-i64-from (& bytes) 0)
+        0x0807060504030201
+        "owned metadata i64 byte decode"))))
 
 (cfg
   (all test (not windows))
@@ -3266,31 +3223,30 @@
       u8)
     (let
       [bytes : (__tl_dyn-array u8) (__tl_make-array u8 24)]
-      (begin
-        (set! (array-ref bytes 16) (cast reclen : u8))
-        (set! (array-ref bytes 17) (cast 0 : u8))
-        (set! (array-ref bytes 19) (cast 'a' : u8))
-        (set!
-          (array-ref bytes 20)
-          (if terminated
-            (cast 0 : u8)
-            (cast 'b' : u8)))
-        (set!
-          (array-ref bytes 21)
-          (if terminated
-            (cast 0 : u8)
-            (cast 'c' : u8)))
-        (set!
-          (array-ref bytes 22)
-          (if terminated
-            (cast 0 : u8)
-            (cast 'd' : u8)))
-        (set!
-          (array-ref bytes 23)
-          (if terminated
-            (cast 0 : u8)
-            (cast 'e' : u8)))
-        bytes))))
+      (set! (array-ref bytes 16) (cast reclen : u8))
+      (set! (array-ref bytes 17) (cast 0 : u8))
+      (set! (array-ref bytes 19) (cast 'a' : u8))
+      (set!
+        (array-ref bytes 20)
+        (if terminated
+          (cast 0 : u8)
+          (cast 'b' : u8)))
+      (set!
+        (array-ref bytes 21)
+        (if terminated
+          (cast 0 : u8)
+          (cast 'c' : u8)))
+      (set!
+        (array-ref bytes 22)
+        (if terminated
+          (cast 0 : u8)
+          (cast 'd' : u8)))
+      (set!
+        (array-ref bytes 23)
+        (if terminated
+          (cast 0 : u8)
+          (cast 'e' : u8)))
+      bytes)))
 
 (cfg
   (all test (not windows))
@@ -3311,189 +3267,185 @@
       [oversized : (__tl_dyn-array u8) (fs-test-linux-dirent-page 24 true)]
       [oversized-out : byte_buf_core.ByteBufBuilder
         (byte_buf_core.ByteBufBuilder (__tl_make-array u8 0) 0)]
-      (begin
-        (fs-test-assert-true valid-result "valid Linux dirent page")
-        (fs-test-assert-owned-string-eq
-          valid-text
-          "a\n"
-          "valid Linux dirent name")
-        (test.assert-false
-          (linux-read-dir-append-page! short 24 (&mut short-out))
-          "short Linux dirent record rejected")
-        (test.assert-false
-          (linux-read-dir-append-page! unterminated 24 (&mut unterminated-out))
-          "unterminated Linux dirent name rejected")
-        (test.assert-false
-          (linux-read-dir-append-page! oversized 25 (&mut oversized-out))
-          "oversized Linux dirent byte count rejected")))))
+      (fs-test-assert-true valid-result "valid Linux dirent page")
+      (fs-test-assert-owned-string-eq
+        valid-text
+        "a\n"
+        "valid Linux dirent name")
+      (test.assert-false
+        (linux-read-dir-append-page! short 24 (&mut short-out))
+        "short Linux dirent record rejected")
+      (test.assert-false
+        (linux-read-dir-append-page! unterminated 24 (&mut unterminated-out))
+        "unterminated Linux dirent name rejected")
+      (test.assert-false
+        (linux-read-dir-append-page! oversized 25 (&mut oversized-out))
+        "oversized Linux dirent byte count rejected"))))
 
 (cfg
   test
   (define (fs-test-assert-windows-nt-create-abi) : unit
-    (begin
-      (fs-test-assert-i64-eq
-        (comptime (size-of (type FsWindowsUnicodeString)))
-        16
-        "UNICODE_STRING x64 size")
-      (fs-test-assert-i64-eq
-        (comptime (offset-of (type FsWindowsUnicodeString) length))
-        0
-        "UNICODE_STRING.Length offset")
-      (fs-test-assert-i64-eq
-        (comptime (offset-of (type FsWindowsUnicodeString) maximum-length))
-        2
-        "UNICODE_STRING.MaximumLength offset")
-      (fs-test-assert-i64-eq
-        (comptime (offset-of (type FsWindowsUnicodeString) buffer))
-        8
-        "UNICODE_STRING.Buffer offset")
-      (fs-test-assert-i64-eq
-        (comptime (size-of (type FsWindowsObjectAttributes)))
-        48
-        "OBJECT_ATTRIBUTES x64 size")
-      (fs-test-assert-i64-eq
-        (comptime (offset-of (type FsWindowsObjectAttributes) length))
-        0
-        "OBJECT_ATTRIBUTES.Length offset")
-      (fs-test-assert-i64-eq
-        (comptime (offset-of (type FsWindowsObjectAttributes) root-directory))
-        8
-        "OBJECT_ATTRIBUTES.RootDirectory offset")
-      (fs-test-assert-i64-eq
-        (comptime (offset-of (type FsWindowsObjectAttributes) object-name))
-        16
-        "OBJECT_ATTRIBUTES.ObjectName offset")
-      (fs-test-assert-i64-eq
-        (comptime (offset-of (type FsWindowsObjectAttributes) attributes))
-        24
-        "OBJECT_ATTRIBUTES.Attributes offset")
-      (fs-test-assert-i64-eq
-        (comptime
-          (offset-of (type FsWindowsObjectAttributes) security-descriptor))
-        32
-        "OBJECT_ATTRIBUTES.SecurityDescriptor offset")
-      (fs-test-assert-i64-eq
-        (comptime
-          (offset-of
-            (type FsWindowsObjectAttributes)
-            security-quality-of-service))
-        40
-        "OBJECT_ATTRIBUTES.SecurityQualityOfService offset")
-      (fs-test-assert-i64-eq
-        (comptime (size-of (type FsWindowsIoStatusBlock)))
-        16
-        "IO_STATUS_BLOCK x64 size")
-      (fs-test-assert-i64-eq
-        (comptime (offset-of (type FsWindowsIoStatusBlock) status-or-pointer))
-        0
-        "IO_STATUS_BLOCK status union offset")
-      (fs-test-assert-i64-eq
-        (comptime (offset-of (type FsWindowsIoStatusBlock) information))
-        8
-        "IO_STATUS_BLOCK.Information offset")
-      (fs-test-assert-i64-eq (comptime (size-of (type i32))) 4 "NTSTATUS width")
-      (fs-test-assert-i64-eq
-        (comptime (size-of (type i64)))
-        8
-        "Windows handle width")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-obj-case-insensitive : i64)
-        64
-        "OBJ_CASE_INSENSITIVE value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-obj-dont-reparse : i64)
-        4096
-        "OBJ_DONT_REPARSE value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-open-reparse-point : i64)
-        2097152
-        "FILE_OPEN_REPARSE_POINT value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-create : i64)
-        2
-        "FILE_CREATE value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-open : i64)
-        1
-        "FILE_OPEN value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-directory-file : i64)
-        1
-        "FILE_DIRECTORY_FILE value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-write-data : i64)
-        2
-        "FILE_WRITE_DATA value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-read-data : i64)
-        1
-        "FILE_READ_DATA value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-list-directory : i64)
-        1
-        "FILE_LIST_DIRECTORY value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-non-directory-file : i64)
-        64
-        "FILE_NON_DIRECTORY_FILE value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-synchronous-io-nonalert : i64)
-        32
-        "FILE_SYNCHRONOUS_IO_NONALERT value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-attribute-normal : i64)
-        128
-        "FILE_ATTRIBUTE_NORMAL value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-share-read : i64)
-        1
-        "FILE_SHARE_READ value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-share-write : i64)
-        2
-        "FILE_SHARE_WRITE value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-file-share-delete : i64)
-        4
-        "FILE_SHARE_DELETE value")
-      (fs-test-assert-i64-eq
-        (cast fs-windows-synchronize : i64)
-        1048576
-        "SYNCHRONIZE value")
-      (fs-test-assert-true
-        (windows-nt-create-ok?
-          (fs-windows-nt-create-result-from-status (cast 0 : i32) 91))
-        "NT_SUCCESS maps to ok")
-      (fs-test-assert-i64-eq
-        (windows-nt-create-handle-or
-          (fs-windows-nt-create-result-from-status (cast 0 : i32) 91)
-          -1)
-        91
-        "NT_SUCCESS preserves handle")
-      (fs-test-assert-true
-        (windows-nt-create-already-exists?
-          (fs-windows-nt-create-result-from-status (cast -1073741771 : i32) -1))
-        "STATUS_OBJECT_NAME_COLLISION maps once")
-      (fs-test-assert-true
-        (windows-nt-create-reparse-point?
-          (fs-windows-nt-create-result-from-status (cast -1073740533 : i32) -1))
-        "STATUS_REPARSE_POINT_ENCOUNTERED maps once")
-      (fs-test-assert-true
-        (windows-nt-create-not-found?
-          (fs-windows-nt-create-result-from-status (cast -1073741772 : i32) -1))
-        "STATUS_OBJECT_NAME_NOT_FOUND maps once")
-      (fs-test-assert-true
-        (windows-nt-create-not-found?
-          (fs-windows-nt-create-result-from-status (cast -1073741766 : i32) -1))
-        "STATUS_OBJECT_PATH_NOT_FOUND maps once")
-      (fs-test-assert-true
-        (windows-nt-create-access-denied?
-          (fs-windows-nt-create-result-from-status (cast -1073741790 : i32) -1))
-        "STATUS_ACCESS_DENIED maps once")
-      (fs-test-assert-true
-        (windows-nt-create-failed?
-          (fs-windows-nt-create-result-from-status (cast -1 : i32) -1))
-        "unknown NTSTATUS maps to stable failure"))))
+    (fs-test-assert-i64-eq
+      (comptime (size-of (type FsWindowsUnicodeString)))
+      16
+      "UNICODE_STRING x64 size")
+    (fs-test-assert-i64-eq
+      (comptime (offset-of (type FsWindowsUnicodeString) length))
+      0
+      "UNICODE_STRING.Length offset")
+    (fs-test-assert-i64-eq
+      (comptime (offset-of (type FsWindowsUnicodeString) maximum-length))
+      2
+      "UNICODE_STRING.MaximumLength offset")
+    (fs-test-assert-i64-eq
+      (comptime (offset-of (type FsWindowsUnicodeString) buffer))
+      8
+      "UNICODE_STRING.Buffer offset")
+    (fs-test-assert-i64-eq
+      (comptime (size-of (type FsWindowsObjectAttributes)))
+      48
+      "OBJECT_ATTRIBUTES x64 size")
+    (fs-test-assert-i64-eq
+      (comptime (offset-of (type FsWindowsObjectAttributes) length))
+      0
+      "OBJECT_ATTRIBUTES.Length offset")
+    (fs-test-assert-i64-eq
+      (comptime (offset-of (type FsWindowsObjectAttributes) root-directory))
+      8
+      "OBJECT_ATTRIBUTES.RootDirectory offset")
+    (fs-test-assert-i64-eq
+      (comptime (offset-of (type FsWindowsObjectAttributes) object-name))
+      16
+      "OBJECT_ATTRIBUTES.ObjectName offset")
+    (fs-test-assert-i64-eq
+      (comptime (offset-of (type FsWindowsObjectAttributes) attributes))
+      24
+      "OBJECT_ATTRIBUTES.Attributes offset")
+    (fs-test-assert-i64-eq
+      (comptime
+        (offset-of (type FsWindowsObjectAttributes) security-descriptor))
+      32
+      "OBJECT_ATTRIBUTES.SecurityDescriptor offset")
+    (fs-test-assert-i64-eq
+      (comptime
+        (offset-of (type FsWindowsObjectAttributes) security-quality-of-service))
+      40
+      "OBJECT_ATTRIBUTES.SecurityQualityOfService offset")
+    (fs-test-assert-i64-eq
+      (comptime (size-of (type FsWindowsIoStatusBlock)))
+      16
+      "IO_STATUS_BLOCK x64 size")
+    (fs-test-assert-i64-eq
+      (comptime (offset-of (type FsWindowsIoStatusBlock) status-or-pointer))
+      0
+      "IO_STATUS_BLOCK status union offset")
+    (fs-test-assert-i64-eq
+      (comptime (offset-of (type FsWindowsIoStatusBlock) information))
+      8
+      "IO_STATUS_BLOCK.Information offset")
+    (fs-test-assert-i64-eq (comptime (size-of (type i32))) 4 "NTSTATUS width")
+    (fs-test-assert-i64-eq
+      (comptime (size-of (type i64)))
+      8
+      "Windows handle width")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-obj-case-insensitive : i64)
+      64
+      "OBJ_CASE_INSENSITIVE value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-obj-dont-reparse : i64)
+      4096
+      "OBJ_DONT_REPARSE value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-open-reparse-point : i64)
+      2097152
+      "FILE_OPEN_REPARSE_POINT value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-create : i64)
+      2
+      "FILE_CREATE value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-open : i64)
+      1
+      "FILE_OPEN value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-directory-file : i64)
+      1
+      "FILE_DIRECTORY_FILE value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-write-data : i64)
+      2
+      "FILE_WRITE_DATA value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-read-data : i64)
+      1
+      "FILE_READ_DATA value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-list-directory : i64)
+      1
+      "FILE_LIST_DIRECTORY value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-non-directory-file : i64)
+      64
+      "FILE_NON_DIRECTORY_FILE value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-synchronous-io-nonalert : i64)
+      32
+      "FILE_SYNCHRONOUS_IO_NONALERT value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-attribute-normal : i64)
+      128
+      "FILE_ATTRIBUTE_NORMAL value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-share-read : i64)
+      1
+      "FILE_SHARE_READ value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-share-write : i64)
+      2
+      "FILE_SHARE_WRITE value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-file-share-delete : i64)
+      4
+      "FILE_SHARE_DELETE value")
+    (fs-test-assert-i64-eq
+      (cast fs-windows-synchronize : i64)
+      1048576
+      "SYNCHRONIZE value")
+    (fs-test-assert-true
+      (windows-nt-create-ok?
+        (fs-windows-nt-create-result-from-status (cast 0 : i32) 91))
+      "NT_SUCCESS maps to ok")
+    (fs-test-assert-i64-eq
+      (windows-nt-create-handle-or
+        (fs-windows-nt-create-result-from-status (cast 0 : i32) 91)
+        -1)
+      91
+      "NT_SUCCESS preserves handle")
+    (fs-test-assert-true
+      (windows-nt-create-already-exists?
+        (fs-windows-nt-create-result-from-status (cast -1073741771 : i32) -1))
+      "STATUS_OBJECT_NAME_COLLISION maps once")
+    (fs-test-assert-true
+      (windows-nt-create-reparse-point?
+        (fs-windows-nt-create-result-from-status (cast -1073740533 : i32) -1))
+      "STATUS_REPARSE_POINT_ENCOUNTERED maps once")
+    (fs-test-assert-true
+      (windows-nt-create-not-found?
+        (fs-windows-nt-create-result-from-status (cast -1073741772 : i32) -1))
+      "STATUS_OBJECT_NAME_NOT_FOUND maps once")
+    (fs-test-assert-true
+      (windows-nt-create-not-found?
+        (fs-windows-nt-create-result-from-status (cast -1073741766 : i32) -1))
+      "STATUS_OBJECT_PATH_NOT_FOUND maps once")
+    (fs-test-assert-true
+      (windows-nt-create-access-denied?
+        (fs-windows-nt-create-result-from-status (cast -1073741790 : i32) -1))
+      "STATUS_ACCESS_DENIED maps once")
+    (fs-test-assert-true
+      (windows-nt-create-failed?
+        (fs-windows-nt-create-result-from-status (cast -1 : i32) -1))
+      "unknown NTSTATUS maps to stable failure")))
 
 (cfg
   test
@@ -3710,50 +3662,49 @@
                   "create temp dir read dir: ")]
               [file-a : String
                 (fs-api-test-fs-path-join dir "artifact with space.s")]
-              (begin
-                (fs-test-assert-mkdir-if-missing dir true)
-                (fs-test-assert-file-kind-directory
-                  dir
-                  "windows temp dir is directory")
-                (fs-test-assert-file-metadata-directory
-                  dir
-                  "windows temp dir metadata is directory")
-                (fs-test-assert-runtime-metadata-directory
-                  dir
-                  "windows runtime metadata dir")
-                (fs-test-assert-ok-unit
-                  (fs-api-test-try-write-file file-a "assembly")
-                  "windows write temp artifact: ")
-                (fs-test-assert-file-kind-regular
-                  file-a
-                  "windows temp artifact is regular")
-                (fs-test-assert-file-metadata-regular-size
-                  file-a
-                  8
-                  "windows temp artifact metadata size")
-                (fs-test-assert-runtime-metadata-regular
-                  file-a
-                  8
-                  "windows runtime metadata file")
-                (fs-test-assert-file-kind-not-found
-                  (fs-api-test-fs-path-join dir "missing artifact.s")
-                  "windows missing file kind is not found")
-                (fs-test-assert-file-metadata-not-found
-                  (fs-api-test-fs-path-join dir "missing artifact.s")
-                  "windows missing file metadata is not found")
-                (fs-test-assert-runtime-metadata-not-found
-                  (fs-api-test-fs-path-join dir "missing artifact.s")
-                  "windows runtime metadata missing")
-                (fs-test-assert-ok-unit
-                  (fs-api-test-try-remove-file file-a)
-                  "windows remove temp artifact: ")
-                (fs-test-assert-read-dir-api dir-d)
-                (fs-test-assert-ok-unit
-                  (fs-api-test-try-remove-dir dir-d)
-                  "windows cleanup read-dir temp dir: ")
-                (fs-test-assert-ok-unit
-                  (fs-api-test-try-remove-dir dir)
-                  "windows cleanup mkdir temp dir: ")))
+              (fs-test-assert-mkdir-if-missing dir true)
+              (fs-test-assert-file-kind-directory
+                dir
+                "windows temp dir is directory")
+              (fs-test-assert-file-metadata-directory
+                dir
+                "windows temp dir metadata is directory")
+              (fs-test-assert-runtime-metadata-directory
+                dir
+                "windows runtime metadata dir")
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-write-file file-a "assembly")
+                "windows write temp artifact: ")
+              (fs-test-assert-file-kind-regular
+                file-a
+                "windows temp artifact is regular")
+              (fs-test-assert-file-metadata-regular-size
+                file-a
+                8
+                "windows temp artifact metadata size")
+              (fs-test-assert-runtime-metadata-regular
+                file-a
+                8
+                "windows runtime metadata file")
+              (fs-test-assert-file-kind-not-found
+                (fs-api-test-fs-path-join dir "missing artifact.s")
+                "windows missing file kind is not found")
+              (fs-test-assert-file-metadata-not-found
+                (fs-api-test-fs-path-join dir "missing artifact.s")
+                "windows missing file metadata is not found")
+              (fs-test-assert-runtime-metadata-not-found
+                (fs-api-test-fs-path-join dir "missing artifact.s")
+                "windows runtime metadata missing")
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-remove-file file-a)
+                "windows remove temp artifact: ")
+              (fs-test-assert-read-dir-api dir-d)
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-remove-dir dir-d)
+                "windows cleanup read-dir temp dir: ")
+              (fs-test-assert-ok-unit
+                (fs-api-test-try-remove-dir dir)
+                "windows cleanup mkdir temp dir: "))
             (fs-test-assert-windows-rename-api)
             (fs-test-assert-file-kind-invalid
               ""
@@ -3782,82 +3733,77 @@
             [file-a : String
               (fs-api-test-fs-path-join dir-a "artifact with space.s")]
             [file-b : String (fs-api-test-fs-path-join dir-b "cleanup.obj")]
-            (begin
-              (fs-test-assert-true
-                (not (string.eq dir-a dir-b))
-                "temp directories are unique")
-              (fs-test-assert-exists dir-a true "temp dir a exists")
-              (fs-test-assert-exists dir-b true "temp dir b exists")
-              (fs-test-assert-file-kind-directory
-                dir-a
-                "temp dir a is directory")
-              (fs-test-assert-file-metadata-directory
-                dir-a
-                "temp dir a metadata is directory")
-              (fs-test-assert-runtime-metadata-directory
-                dir-a
-                "runtime metadata dir")
-              (fs-test-assert-ok-unit
-                (fs-api-test-try-write-file file-a "assembly")
-                "write temp artifact a: ")
-              (fs-test-assert-ok-unit
-                (fs-api-test-try-write-file file-b "object")
-                "write temp artifact b: ")
-              (fs-test-assert-mkdir-if-missing dir-a true)
-              (fs-test-assert-exists file-a true "temp artifact a exists")
-              (fs-test-assert-file-kind-regular
-                file-a
-                "temp artifact a is regular")
-              (fs-test-assert-file-metadata-regular-size
-                file-a
-                8
-                "temp artifact a metadata size")
-              (fs-test-assert-runtime-metadata-regular
-                file-a
-                8
-                "runtime metadata file")
-              (fs-test-assert-file-kind-not-found
-                (fs-api-test-fs-path-join dir-a "missing artifact.s")
-                "missing file kind is not found")
-              (fs-test-assert-file-metadata-not-found
-                (fs-api-test-fs-path-join dir-a "missing artifact.s")
-                "missing file metadata is not found")
-              (fs-test-assert-runtime-metadata-not-found
-                (fs-api-test-fs-path-join dir-a "missing artifact.s")
-                "runtime metadata missing")
-              (fs-test-assert-ok-unit
-                (fs-api-test-try-remove-file file-a)
-                "remove temp artifact a: ")
-              (fs-test-assert-exists file-a false "temp artifact a removed")
-              (fs-test-assert-ok-unit
-                (fs-api-test-try-remove-dir dir-a)
-                "remove temp dir a: ")
-              (fs-test-assert-exists dir-a false "temp dir a removed")
-              (fs-test-assert-ok-unit
-                (fs-api-test-try-remove-file-if-exists file-b)
-                "cleanup temp artifact b: ")
-              (fs-test-assert-ok-unit
-                (fs-api-test-try-remove-file-if-exists file-b)
-                "cleanup missing temp artifact b: ")
-              (fs-test-assert-ok-unit
-                (fs-api-test-try-remove-dir-if-exists dir-b)
-                "cleanup temp dir b: ")
-              (fs-test-assert-ok-unit
-                (fs-api-test-try-remove-dir-if-exists dir-b)
-                "cleanup missing temp dir b: ")
-              (fs-test-assert-invalid-temp-dir)
-              (fs-test-assert-file-kind-invalid
-                ""
-                "empty file-kind path invalid")
-              (fs-test-assert-file-metadata-invalid
-                ""
-                "empty metadata path invalid")
-              (fs-test-assert-linux-rename-api dir-c)
-              (fs-test-assert-ok-unit
-                (fs-api-test-try-remove-dir dir-c)
-                "cleanup rename temp dir: ")
-              (fs-test-assert-read-dir-api dir-d)
-              (fs-test-assert-ok-unit
-                (fs-api-test-try-remove-dir dir-d)
-                "cleanup read-dir temp dir: ")
-              42)))))))
+            (fs-test-assert-true
+              (not (string.eq dir-a dir-b))
+              "temp directories are unique")
+            (fs-test-assert-exists dir-a true "temp dir a exists")
+            (fs-test-assert-exists dir-b true "temp dir b exists")
+            (fs-test-assert-file-kind-directory dir-a "temp dir a is directory")
+            (fs-test-assert-file-metadata-directory
+              dir-a
+              "temp dir a metadata is directory")
+            (fs-test-assert-runtime-metadata-directory
+              dir-a
+              "runtime metadata dir")
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-write-file file-a "assembly")
+              "write temp artifact a: ")
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-write-file file-b "object")
+              "write temp artifact b: ")
+            (fs-test-assert-mkdir-if-missing dir-a true)
+            (fs-test-assert-exists file-a true "temp artifact a exists")
+            (fs-test-assert-file-kind-regular
+              file-a
+              "temp artifact a is regular")
+            (fs-test-assert-file-metadata-regular-size
+              file-a
+              8
+              "temp artifact a metadata size")
+            (fs-test-assert-runtime-metadata-regular
+              file-a
+              8
+              "runtime metadata file")
+            (fs-test-assert-file-kind-not-found
+              (fs-api-test-fs-path-join dir-a "missing artifact.s")
+              "missing file kind is not found")
+            (fs-test-assert-file-metadata-not-found
+              (fs-api-test-fs-path-join dir-a "missing artifact.s")
+              "missing file metadata is not found")
+            (fs-test-assert-runtime-metadata-not-found
+              (fs-api-test-fs-path-join dir-a "missing artifact.s")
+              "runtime metadata missing")
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-remove-file file-a)
+              "remove temp artifact a: ")
+            (fs-test-assert-exists file-a false "temp artifact a removed")
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-remove-dir dir-a)
+              "remove temp dir a: ")
+            (fs-test-assert-exists dir-a false "temp dir a removed")
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-remove-file-if-exists file-b)
+              "cleanup temp artifact b: ")
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-remove-file-if-exists file-b)
+              "cleanup missing temp artifact b: ")
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-remove-dir-if-exists dir-b)
+              "cleanup temp dir b: ")
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-remove-dir-if-exists dir-b)
+              "cleanup missing temp dir b: ")
+            (fs-test-assert-invalid-temp-dir)
+            (fs-test-assert-file-kind-invalid "" "empty file-kind path invalid")
+            (fs-test-assert-file-metadata-invalid
+              ""
+              "empty metadata path invalid")
+            (fs-test-assert-linux-rename-api dir-c)
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-remove-dir dir-c)
+              "cleanup rename temp dir: ")
+            (fs-test-assert-read-dir-api dir-d)
+            (fs-test-assert-ok-unit
+              (fs-api-test-try-remove-dir dir-d)
+              "cleanup read-dir temp dir: ")
+            42))))))

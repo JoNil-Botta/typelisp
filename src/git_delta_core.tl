@@ -272,19 +272,17 @@
     (unless
       (git-delta-budget-charge-work! budget limits delta-length)
       (return (Err "git delta: total work limit exceeded")))
-    (match (git-delta-read-size-varint delta index)
-      [(Err message) (return (Err message))]
-      [(Ok decoded)
-        (set! declared-base decoded.value)
-        (set! index decoded.next)])
+    (let
+      [decoded (try (git-delta-read-size-varint delta index))]
+      (set! declared-base decoded.value)
+      (set! index decoded.next))
     (when
       (!= declared-base base-length)
       (return (Err "git delta: base length mismatch")))
-    (match (git-delta-read-size-varint delta index)
-      [(Err message) (return (Err message))]
-      [(Ok decoded)
-        (set! result-length decoded.value)
-        (set! index decoded.next)])
+    (let
+      [decoded (try (git-delta-read-size-varint delta index))]
+      (set! result-length decoded.value)
+      (set! index decoded.next))
     (when
       (> result-length limits.max-object-bytes)
       (return (Err "git delta: result exceeds object limit")))
@@ -721,16 +719,44 @@
                       (when
                         (> stack-count limits.max-depth)
                         (return (Err "git delta: chain depth limit exceeded")))
-                      (match (git-delta-resolve-offset-lookup!
-                        entries
-                        tables.offsets
-                        entry.offset
-                        base-offset
-                        limits
-                        (&mut budget))
-                        [(Err message) (return (Err message))]
-                        [(Ok dependency)
-                          (set! (array-ref dependencies slot) dependency)
+                      (let
+                        [dependency
+                          (try
+                            (git-delta-resolve-offset-lookup!
+                              entries
+                              tables.offsets
+                              entry.offset
+                              base-offset
+                              limits
+                              (&mut budget)))]
+                        (set! (array-ref dependencies slot) dependency)
+                        (cond
+                          [(= (array-ref states dependency) 1)
+                            (return (Err "git delta: dependency cycle"))]
+                          [(= (array-ref states dependency) 0)
+                            (when
+                              (>= stack-count count)
+                              (return
+                                (Err "git delta: dependency stack overflow")))
+                            (set! (array-ref stack stack-count) dependency)
+                            (set! stack-count (+ stack-count 1))]
+                          [else unit]))]
+                    [(Ref object-id _ _)
+                      (when
+                        (> stack-count limits.max-depth)
+                        (return (Err "git delta: chain depth limit exceeded")))
+                      (let
+                        [dependency
+                          (try
+                            (git-delta-resolve-id-lookup!
+                              entries
+                              tables.ids
+                              tables.thin-bases
+                              object-id
+                              limits
+                              (&mut budget)))]
+                        (set! (array-ref dependencies slot) dependency)
+                        (if (>= dependency 0)
                           (cond
                             [(= (array-ref states dependency) 1)
                               (return (Err "git delta: dependency cycle"))]
@@ -741,34 +767,8 @@
                                   (Err "git delta: dependency stack overflow")))
                               (set! (array-ref stack stack-count) dependency)
                               (set! stack-count (+ stack-count 1))]
-                            [else unit])])]
-                    [(Ref object-id _ _)
-                      (when
-                        (> stack-count limits.max-depth)
-                        (return (Err "git delta: chain depth limit exceeded")))
-                      (match (git-delta-resolve-id-lookup!
-                        entries
-                        tables.ids
-                        tables.thin-bases
-                        object-id
-                        limits
-                        (&mut budget))
-                        [(Err message) (return (Err message))]
-                        [(Ok dependency)
-                          (set! (array-ref dependencies slot) dependency)
-                          (if (>= dependency 0)
-                            (cond
-                              [(= (array-ref states dependency) 1)
-                                (return (Err "git delta: dependency cycle"))]
-                              [(= (array-ref states dependency) 0)
-                                (when
-                                  (>= stack-count count)
-                                  (return
-                                    (Err "git delta: dependency stack overflow")))
-                                (set! (array-ref stack stack-count) dependency)
-                                (set! stack-count (+ stack-count 1))]
-                              [else unit])
-                            unit)])])]
+                            [else unit])
+                          unit))])]
                 [(= state 1)
                   (let
                     [dependency : i64 (array-ref dependencies slot)]
@@ -828,24 +828,28 @@
                         (unless
                           (git-delta-expected-kind-matches? expected base-kind)
                           (return (Err "git delta: object type mismatch")))
-                        (match (git-delta-apply-with-budget
-                          (& base-bytes)
-                          delta
-                          limits
-                          (&mut budget))
-                          [(Err message) (return (Err message))]
-                          [(Ok object) (set! (array-ref objects slot) object)])]
+                        (let
+                          [object
+                            (try
+                              (git-delta-apply-with-budget
+                                (& base-bytes)
+                                delta
+                                limits
+                                (&mut budget)))]
+                          (set! (array-ref objects slot) object))]
                       [(Ref _ expected delta)
                         (unless
                           (git-delta-expected-kind-matches? expected base-kind)
                           (return (Err "git delta: object type mismatch")))
-                        (match (git-delta-apply-with-budget
-                          (& base-bytes)
-                          delta
-                          limits
-                          (&mut budget))
-                          [(Err message) (return (Err message))]
-                          [(Ok object) (set! (array-ref objects slot) object)])])
+                        (let
+                          [object
+                            (try
+                              (git-delta-apply-with-budget
+                                (& base-bytes)
+                                delta
+                                limits
+                                (&mut budget)))]
+                          (set! (array-ref objects slot) object))])
                     (set! (array-ref kinds slot) base-kind)
                     (set! (array-ref depths slot) (+ base-depth 1))
                     (set! (array-ref states slot) 2)

@@ -547,9 +547,9 @@
   (io.try-file-exists? path))
 
 (define (source-tool-try-read-file [path : (& path str)]) : io.ResultIoString
-  (match (io.try-read-file path)
-    [(OkIoBytes contents) (OkIoString (byte_buf.to-string contents))]
-    [(ErrIoBytes error) (ErrIoString error)]))
+  (let
+    [contents (try (io.try-read-file path))]
+    (OkIoString (byte_buf.to-string contents))))
 
 (define (source-tool-try-remove-file-if-exists [path : (& path str)]) : io.ResultIoUnit
   (fs.try-remove-file-if-exists path))
@@ -870,9 +870,7 @@
   [image : cobj.CompilerObjectImage]) : ResultSourceToolString
   (if (source-tool-windows-direct-object-linkable?
     (owned_view.compiler-owned-shared-view image))
-    (match (compiler_object_coff.compiler-object-coff-render image)
-      [(Ok obj) (Ok obj)]
-      [(Err message) (Err message)])
+    (Ok (try (compiler_object_coff.compiler-object-coff-render image)))
     (Err (source-tool-windows-direct-object-unavailable-message))))
 
 (define (source-tool-noexecstack-note) : String
@@ -1477,13 +1475,14 @@
           (owned_view.compiler-owned-shared-view link-inputs))
         link-inputs)]
     [(Windows)
-      (match (source-tool-windows-linker-command
-        obj-path
-        bin-path
-        (owned_view.compiler-owned-shared-view link-inputs))
-        [(Ok command)
-          (source-tool-run-command-for "linker" target command link-inputs)]
-        [(Err message) (Err message)])]))
+      (let
+        [command
+          (try
+            (source-tool-windows-linker-command
+              obj-path
+              bin-path
+              (owned_view.compiler-owned-shared-view link-inputs)))]
+        (source-tool-run-command-for "linker" target command link-inputs))]))
 
 (define (source-tool-archive
   [target : backend.CompilerBackendTarget]
@@ -1496,9 +1495,10 @@
         target
         (source-tool-archiver-command obj-path archive-path))]
     [(Windows)
-      (match (source-tool-windows-archiver-command obj-path archive-path)
-        [(Ok command) (source-tool-run-command "archiver" target command)]
-        [(Err message) (Err message)])]))
+      (let
+        [command
+          (try (source-tool-windows-archiver-command obj-path archive-path))]
+        (source-tool-run-command "archiver" target command))]))
 
 (define (source-tool-assemble-and-link
   [target : backend.CompilerBackendTarget]
@@ -1506,24 +1506,28 @@
   [obj-path : String]
   [bin-path : String]
   [link-inputs : SourceToolLinkInputs]) : SourceToolCommandStatus
-  (match (source-tool-assemble
-    target
-    asm-path
-    (owned_view.compiler-owned-shared-view obj-path))
-    [(Ok) (source-tool-link target obj-path bin-path link-inputs)]
-    [(Err message) (Err message)]))
+  (let
+    [_
+      (try
+        (source-tool-assemble
+          target
+          asm-path
+          (owned_view.compiler-owned-shared-view obj-path)))]
+    (source-tool-link target obj-path bin-path link-inputs)))
 
 (define (source-tool-assemble-and-archive
   [target : backend.CompilerBackendTarget]
   [asm-path : String]
   [obj-path : String]
   [archive-path : String]) : SourceToolCommandStatus
-  (match (source-tool-assemble
-    target
-    asm-path
-    (owned_view.compiler-owned-shared-view obj-path))
-    [(Ok) (source-tool-archive target obj-path archive-path)]
-    [(Err message) (Err message)]))
+  (let
+    [_
+      (try
+        (source-tool-assemble
+          target
+          asm-path
+          (owned_view.compiler-owned-shared-view obj-path)))]
+    (source-tool-archive target obj-path archive-path)))
 
 (define (source-tool-write-direct-object-and-link
   [obj-path : String]
@@ -1759,27 +1763,25 @@
     [(Ok) Ok]
     [(Err message) (Err message)]
     [(Unavailable _)
-      (match (source-tool-emit-program-assembly
-        request.source
-        request.program
-        request.target
-        request.opt-level
-        request.mode
-        request.link-inputs)
-        [(Err message) (Err message)]
-        [(Ok asm)
-          (match (source-tool-write-file
-            request.files.asm
-            asm
-            request.write-context)
-            [(Err message) (Err message)]
-            [(Ok)
-              (source-tool-assemble-and-link
-                request.target
-                request.files.asm
-                request.files.obj
-                request.files.bin
-                request.link-inputs)])])]))
+      (let
+        [asm
+          (try
+            (source-tool-emit-program-assembly
+              request.source
+              request.program
+              request.target
+              request.opt-level
+              request.mode
+              request.link-inputs))]
+        [_
+          (try
+            (source-tool-write-file request.files.asm asm request.write-context))]
+        (source-tool-assemble-and-link
+          request.target
+          request.files.asm
+          request.files.obj
+          request.files.bin
+          request.link-inputs))]))
 
 ;; Link `request` and run the executable with `args` and the env overrides
 ;; `env`, streaming its output when `inherit` and capturing it otherwise. The

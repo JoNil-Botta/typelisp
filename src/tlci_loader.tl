@@ -622,29 +622,33 @@
   [rodata-len : i64]) : ResultTlciLoaderUnit
   (if (= rodata-len 0)
     (Ok)
-    (match (pages.tlci-pages-protect-data-readonly
-      (pages.TlciPageRegion
-        (+ image-base rodata-offset)
-        (pages.tlci-pages-round-size rodata-len)
-        false
-        true
-        false))
-      [(Ok _) (Ok)]
-      [(Err message) (Err message)])))
+    (let
+      [_
+        (try
+          (pages.tlci-pages-protect-data-readonly
+            (pages.TlciPageRegion
+              (+ image-base rodata-offset)
+              (pages.tlci-pages-round-size rodata-len)
+              false
+              true
+              false)))]
+      (Ok))))
 
 (define (tlci-loader-protect-code
   [image-base : i64]
   [code-offset : i64]
   [code-len : i64]) : ResultTlciLoaderUnit
-  (match (pages.tlci-pages-protect-code-executable
-    (pages.TlciPageRegion
-      (+ image-base code-offset)
-      (pages.tlci-pages-round-size code-len)
-      true
-      true
-      false))
-    [(Ok _) (Ok)]
-    [(Err message) (Err message)]))
+  (let
+    [_
+      (try
+        (pages.tlci-pages-protect-code-executable
+          (pages.TlciPageRegion
+            (+ image-base code-offset)
+            (pages.tlci-pages-round-size code-len)
+            true
+            true
+            false)))]
+    (Ok)))
 
 (define (tlci-loader-loaded-image-region [loaded : TlciLoadedImage]) : pages.TlciPageRegion
   (pages.TlciPageRegion
@@ -666,9 +670,9 @@
       [page-result : pages.ResultTlciPageUnit
         (pages.tlci-pages-release (tlci-loader-loaded-image-region loaded))]
       (tlci-loader-destroy-index-arena index-arena)
-      (match page-result
-        [(Ok) (Ok)]
-        [(Err message) (Err message)]))))
+      (let
+        [_ (try page-result)]
+        (Ok)))))
 
 ;; Every failed load relinquishes its only mapping owner. The index arena is
 ;; destroyed by tlci-loader-release even when the host leaves pages mapped;
@@ -830,71 +834,66 @@
   [owner-arena : i64]
   [bytes : (__tl_dyn-array u8)]
   [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
-  (match (tlci.tlci-parse-image (owned_view.compiler-owned-shared-view bytes))
-    [(Err message) (Err message)]
-    [(Ok parsed)
-      (let
-        [native-table : i64 (tlci-loader-native-table-offset parsed)]
-        (match (tlci-loader-load-parsed owner-arena bytes parsed (& host-table))
-          [(Err message) (Err message)]
-          [(Ok loaded)
-            (if (>= native-table 0)
-              (tlci-loader-install-native-table
-                owner-arena
-                bytes
-                loaded
-                host-table
-                native-table)
-              (tlci-loader-finish-registration owner-arena loaded host-table))]))]))
+  (let
+    [parsed
+      (try
+        (tlci.tlci-parse-image (owned_view.compiler-owned-shared-view bytes)))]
+    [native-table : i64 (tlci-loader-native-table-offset parsed)]
+    [loaded
+      (try (tlci-loader-load-parsed owner-arena bytes parsed (& host-table)))]
+    (if (>= native-table 0)
+      (tlci-loader-install-native-table
+        owner-arena
+        bytes
+        loaded
+        host-table
+        native-table)
+      (tlci-loader-finish-registration owner-arena loaded host-table))))
 
 (define (tlci-loader-finish-registration
   [owner-arena : i64]
   [loaded : TlciLoadedImage]
   [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
-  (match (ResultTlciLoadedImage.Ok loaded)
-    [(Err message) (Err message)]
-    [(Ok loaded)
+  (let
+    [loaded (try (ResultTlciLoadedImage.Ok loaded))]
+    [host-storage : (__tl_dyn-array i64)
+      (tlci-loader-host-table-storage owner-arena host-table)]
+    [registration-storage : (__tl_dyn-array i64)
+      (tlci-loader-registration-storage owner-arena)]
+    [host-table-addr : i64 (tlci-loader-i64-array-addr host-storage)]
+    [registration-addr : i64 (tlci-loader-i64-array-addr registration-storage)]
+    [status : i64
+      (unsafe
+        (tlci-loader-call-image-entry-raw
+          loaded.entry-addr
+          host-table-addr
+          registration-addr))]
+    (if (not (= status tlci.tlci-image-entry-success))
+      (tlci-loader-rollback-loaded
+        loaded
+        (tlci-loader-registration-status-error status))
       (let
-        [host-storage : (__tl_dyn-array i64)
-          (tlci-loader-host-table-storage owner-arena host-table)]
-        [registration-storage : (__tl_dyn-array i64)
-          (tlci-loader-registration-storage owner-arena)]
-        [host-table-addr : i64 (tlci-loader-i64-array-addr host-storage)]
-        [registration-addr : i64
-          (tlci-loader-i64-array-addr registration-storage)]
-        [status : i64
-          (unsafe
-            (tlci-loader-call-image-entry-raw
-              loaded.entry-addr
-              host-table-addr
-              registration-addr))]
-        (if (not (= status tlci.tlci-image-entry-success))
-          (tlci-loader-rollback-loaded
-            loaded
-            (tlci-loader-registration-status-error status))
-          (let
-            [registration : tlci.TlciImageRegistration
-              (tlci-loader-read-registration registration-addr)]
-            (match (tlci.tlci-validate-image-registration registration)
-              [(Err message)
-                (tlci-loader-rollback-loaded
+        [registration : tlci.TlciImageRegistration
+          (tlci-loader-read-registration registration-addr)]
+        (match (tlci.tlci-validate-image-registration registration)
+          [(Err message)
+            (tlci-loader-rollback-loaded
+              loaded
+              (tlci-loader-registration-error message))]
+          [(Ok)
+            (let
+              [registered : TlciLoadedImage
+                (tlci-loader-loaded-image-with-registration
                   loaded
-                  (tlci-loader-registration-error message))]
-              [(Ok)
-                (let
-                  [registered : TlciLoadedImage
-                    (tlci-loader-loaded-image-with-registration
-                      loaded
-                      host-storage
-                      registration-storage
-                      host-table-addr
-                      registration-addr
-                      registration)]
-                  (match (tlci-loader-index-macro-entries
-                    (tlci-loader-global-shared-view registered))
-                    [(Err message)
-                      (tlci-loader-rollback-loaded registered message)]
-                    [(Ok indexed) (Ok indexed)]))]))))]))
+                  host-storage
+                  registration-storage
+                  host-table-addr
+                  registration-addr
+                  registration)]
+              (match (tlci-loader-index-macro-entries
+                (tlci-loader-global-shared-view registered))
+                [(Err message) (tlci-loader-rollback-loaded registered message)]
+                [(Ok indexed) (Ok indexed)]))])))))
 
 (define (tlci-loader-load-mapped-region
   [owner-arena : i64]
@@ -960,32 +959,26 @@
       (let
         [rodata-offset : i64 (tlci.tlci-read-u64 bytes 72)]
         [code-offset : i64 (tlci.tlci-read-u64 bytes 88)]
-        (match (if (tlci-loader-native-image? image)
-          (ResultTlciLoaderI64.Ok 0)
-          (tlci-loader-find-entry-code-offset image))
-          [(Err message) (Err message)]
-          [(Ok entry-code-offset)
-            (match (tlci-loader-validate-fixups image rodata-offset code-offset)
-              [(Err message) (Err message)]
-              [(Ok)
-                (match (tlci-loader-validate-imports
-                  image
-                  rodata-offset
-                  code-offset)
-                  [(Err message) (Err message)]
-                  [(Ok)
-                    (match (pages.tlci-pages-allocate-data (array-length bytes))
-                      [(Err message) (Err message)]
-                      [(Ok image-region)
-                        (tlci-loader-load-mapped-region
-                          owner-arena
-                          bytes
-                          image
-                          image-region
-                          entry-code-offset
-                          rodata-offset
-                          code-offset
-                          host-table)])])])]))]))
+        [entry-code-offset
+          (try
+            (if (tlci-loader-native-image? image)
+              (ResultTlciLoaderI64.Ok 0)
+              (tlci-loader-find-entry-code-offset image)))]
+        [_ (try (tlci-loader-validate-fixups image rodata-offset code-offset))]
+        (let
+          [_
+            (try (tlci-loader-validate-imports image rodata-offset code-offset))]
+          [image-region
+            (try (pages.tlci-pages-allocate-data (array-length bytes)))]
+          (tlci-loader-load-mapped-region
+            owner-arena
+            bytes
+            image
+            image-region
+            entry-code-offset
+            rodata-offset
+            code-offset
+            host-table)))]))
 
 (define (tlci-loader-empty-host-table) : tlci.TlciHostCallbackTable
   (tlci.TlciHostCallbackTable
@@ -1002,16 +995,16 @@
     0))
 
 (define (tlci-loader-load-from-bytes [bytes : (__tl_dyn-array u8)]) : ResultTlciLoadedImage
-  (match (tlci.tlci-parse-image (owned_view.compiler-owned-shared-view bytes))
-    [(Err message) (Err message)]
-    [(Ok image)
-      (let
-        [host-table : tlci.TlciHostCallbackTable (tlci-loader-empty-host-table)]
-        (tlci-loader-load-parsed
-          (arena.tl_arena_current)
-          bytes
-          image
-          (& host-table)))]))
+  (let
+    [image
+      (try
+        (tlci.tlci-parse-image (owned_view.compiler-owned-shared-view bytes)))]
+    [host-table : tlci.TlciHostCallbackTable (tlci-loader-empty-host-table)]
+    (tlci-loader-load-parsed
+      (arena.tl_arena_current)
+      bytes
+      image
+      (& host-table))))
 
 ;: `owner-arena` owns the storage the returned image RETAINS, and must outlive
 ;: every dispatch on it -- see the ownership rule above
@@ -1022,14 +1015,12 @@
   [owner-arena : i64]
   [bytes : (__tl_dyn-array u8)]
   [host-table : tlci.TlciHostCallbackTable]) : ResultTlciLoadedImage
-  (match (tlci.tlci-validate-host-callback-table
-    (tlci-loader-global-shared-view host-table))
-    [(Err message) (Err message)]
-    [(Ok)
-      (tlci-loader-load-from-bytes-with-registration
-        owner-arena
-        bytes
-        host-table)]))
+  (let
+    [_
+      (try
+        (tlci.tlci-validate-host-callback-table
+          (tlci-loader-global-shared-view host-table)))]
+    (tlci-loader-load-from-bytes-with-registration owner-arena bytes host-table)))
 
 (define (tlci-loader-address-range-contained?
   [addr : i64]
@@ -1418,11 +1409,10 @@
             [(Ok indexed) (Ok indexed)]))])))
 
 (define (tlci-loader-validate-macro-entries [loaded : TlciLoadedImage]) : ResultTlciLoaderUnit
-  (match (tlci-loader-index-macro-entries loaded)
-    [(Err message) (Err message)]
-    [(Ok indexed)
-      (tlci-loader-destroy-index-arena indexed.macro-index-arena)
-      (Ok)]))
+  (let
+    [indexed (try (tlci-loader-index-macro-entries loaded))]
+    (tlci-loader-destroy-index-arena indexed.macro-index-arena)
+    (Ok)))
 
 (define (tlci-loader-resolve-macro-entry
   [loaded : (& loaded TlciLoadedImage)]
@@ -1511,17 +1501,15 @@
 (define (tlci-loader-mark-macro-entry-shell!
   [loaded : (& loaded TlciLoadedImage)]
   [resolved : TlciResolvedMacroEntry]) : ResultTlciLoaderUnit
-  (match (tlci-loader-resolved-macro-entry loaded resolved)
-    [(Err message) (Err message)]
-    [(Ok _)
-      (let
-        [states : (__tl_dyn-array i64) loaded.macro-index-entry-states]
-        [index : i64 resolved.entry-index]
-        (if (not (= (array-length states) loaded.macro-entry-count))
-          (Err "tlci loader: macro entry state index is unavailable")
-          (begin
-            (set! (array-ref states index) 1)
-            (Ok))))]))
+  (let
+    [_ (try (tlci-loader-resolved-macro-entry loaded resolved))]
+    [states : (__tl_dyn-array i64) loaded.macro-index-entry-states]
+    [index : i64 resolved.entry-index]
+    (if (not (= (array-length states) loaded.macro-entry-count))
+      (Err "tlci loader: macro entry state index is unavailable")
+      (begin
+        (set! (array-ref states index) 1)
+        (Ok)))))
 
 (define (tlci-loader-find-macro-entry
   [loaded : (& loaded TlciLoadedImage)]
@@ -1575,15 +1563,14 @@
   [session-context : i64]
   [operands : (__tl_dyn-array i64)]
   [initial-result : i64]) : ResultTlciMacroDispatch
-  (match (tlci-loader-resolved-macro-entry loaded resolved)
-    [(Err message) (Err message)]
-    [(Ok entry)
-      (tlci-loader-dispatch-macro-entry
-        loaded
-        entry
-        session-context
-        operands
-        initial-result)]))
+  (let
+    [entry (try (tlci-loader-resolved-macro-entry loaded resolved))]
+    (tlci-loader-dispatch-macro-entry
+      loaded
+      entry
+      session-context
+      operands
+      initial-result)))
 
 (define (tlci-loader-dispatch-macro
   [loaded : (& loaded TlciLoadedImage)]

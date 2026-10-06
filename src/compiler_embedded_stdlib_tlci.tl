@@ -400,26 +400,23 @@
       [bytes : (__tl_dyn-array u8) (compiler-embedded-stdlib-tlci-copy)]
       [host : tlci.TlciHostCallbackTable
         (compiler-embedded-stdlib-tlci-host-table)]
-      (match (loader.tlci-loader-load-from-bytes-with-host
-        (arena.tl_arena_current)
-        bytes
-        host)
-        [(Err message) (Err message)]
-        [(Ok loaded)
-          (let
-            [count : i64 loaded.macro-entry-count]
-            [has-native-sentinel : bool
-              (match (loader.tlci-loader-find-macro-entry
-                (& loaded)
-                "stdlib.core_macros/__tl-box-place")
-                [(Ok _) true]
-                [(Err _) false])]
-            (match (loader.tlci-loader-release loaded)
-              [(Err message) (Err message)]
-              [(Ok)
-                (if (and (> count 0) has-native-sentinel)
-                  (Ok count)
-                  (Err "embedded stdlib tlci is missing its macro catalog"))]))]))))
+      [loaded
+        (try
+          (loader.tlci-loader-load-from-bytes-with-host
+            (arena.tl_arena_current)
+            bytes
+            host))]
+      [count : i64 loaded.macro-entry-count]
+      [has-native-sentinel : bool
+        (match (loader.tlci-loader-find-macro-entry
+          (& loaded)
+          "stdlib.core_macros/__tl-box-place")
+          [(Ok _) true]
+          [(Err _) false])]
+      [_ (try (loader.tlci-loader-release loaded))]
+      (if (and (> count 0) has-native-sentinel)
+        (Ok count)
+        (Err "embedded stdlib tlci is missing its macro catalog")))))
 
 ;; --- compiler-owned native-comptime host session (refs #5212) -----------------
 ;;

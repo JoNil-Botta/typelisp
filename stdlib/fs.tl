@@ -2206,17 +2206,15 @@
     [path-text : String (string.copy path)]
     (if (io.empty-path? path)
       (ErrFsMetadata (io.invalid-path-error path))
-      (match (stdlib.fs.try-file-kind path)
-        [(ErrFsFileKind error) (ErrFsMetadata error)]
-        [(OkFsFileKind kind)
-          (if (stdlib.fs.file-kind-regular? kind)
-            (let
-              [status : i64
-                (stdlib.fs.file-size-status (string.copy path-text))]
-              (if (= status io.io-status-ok)
-                (OkFsMetadata (FsMetadata kind (stdlib.fs.file-size path-text)))
-                (ErrFsMetadata (io.error-from-status path status))))
-            (OkFsMetadata (FsMetadata kind 0)))]))))
+      (let
+        [kind (try (stdlib.fs.try-file-kind path))]
+        (if (stdlib.fs.file-kind-regular? kind)
+          (let
+            [status : i64 (stdlib.fs.file-size-status (string.copy path-text))]
+            (if (= status io.io-status-ok)
+              (OkFsMetadata (FsMetadata kind (stdlib.fs.file-size path-text)))
+              (ErrFsMetadata (io.error-from-status path status))))
+          (OkFsMetadata (FsMetadata kind 0)))))))
 
 ;: Split the runtime's newline-delimited directory payload into entry names.
 (define (read-dir-split-vec [entries : String]) : FsStringVector

@@ -224,6 +224,163 @@
       (__tl-project-field (ast.ast-type-node-pool-state-create 1) dedup-slots))
     131072))
 
+;; At the half-load boundary a duplicate triggers growth but keeps its id.
+;; The replacement descriptor and data must outlive the caller's scratch arena.
+(define (compiler-ast-context-dedup-half-load-smoke?) : bool
+  (let
+    [active-before : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [decoy : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [retained-bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
+    [first : i64 (ast.ast-node-pool-context-type-push pools (I64))]
+    [collision-a : i64 (ast.ast-node-pool-context-type-push pools (Var 0))]
+    [collision-b : i64 (ast.ast-node-pool-context-type-push pools (Var 131072))]
+    [decoy-first : i64 (ast.ast-node-pool-context-type-push decoy (Bool))]
+    [index : i64 0]
+    (while (< index 65533)
+      (begin
+        (ast.ast-node-pool-context-type-push pools (Array first index))
+        unit)
+      (set! index (+ index 1)))
+    (ast.ast-node-pool-context-install! decoy)
+    (let
+      [home : arena.Arena (arena.current)]
+      [scratch : arena.Arena (arena.make)]
+      [duplicate-node : ast.AstType (I64)]
+      [duplicate : i64
+        (in-arena
+          scratch
+          (ast.ast-node-pool-context-type-push pools duplicate-node))]
+      [_destroy : unit
+        (unsafe
+          (arena.destroy scratch))]
+      [state : ast.AstTypeNodePoolState
+        (ast.ast-type-pool-cell-read pools.type-pool)]
+      [count-at-hit : i64 state.count]
+      [dedup-at-hit : i64 state.dedup-count]
+      [capacity-at-hit : i64 (array-length state.dedup-slots)]
+      [new-id : i64 (ast.ast-node-pool-context-type-push pools (Char))]
+      [ok : bool
+        (and
+          (= first 0)
+          (= collision-a 1)
+          (= collision-b 2)
+          (= duplicate first)
+          (= count-at-hit 65536)
+          (= dedup-at-hit 65536)
+          (= capacity-at-hit 262144)
+          (= new-id 65536)
+          (=
+            (ast.ast-node-pool-context-type-segment-bases pools)
+            retained-bases)
+          (match (ast.ast-type-segment-bases-get retained-bases 65535)
+            [(Array elem count) (and (= elem first) (= count 65532))]
+            [_ false])
+          (= (ast.ast-node-pool-context-type-push pools (Var 0)) collision-a)
+          (=
+            (ast.ast-node-pool-context-type-push pools (Var 131072))
+            collision-b)
+          (=
+            (ast.ast-node-pool-context-type-push pools (Array first 65532))
+            65535)
+          (compiler-ast-context-type-i64? pools first)
+          (compiler-ast-context-type-char? pools new-id)
+          (= (ast.ast-node-pool-context-type-len pools) 65537)
+          (= decoy-first 0)
+          (= (ast.ast-node-pool-context-type-len decoy) 1)
+          (= (ast.ty-node-push (Bool)) decoy-first)
+          (ast.ast-node-pool-context-type-installed? decoy))]
+      (unsafe
+        (arena.set! home))
+      (ast.ast-node-pool-context-install! pools)
+      (set!
+        ok
+        (and
+          ok
+          (= (ast.ty-node-push (I64)) first)
+          (= (ast.ty-node-push (Char)) new-id)
+          (= (ast.ast-node-pool-context-type-len pools) 65537)))
+      (ast.ty-node-pool-truncate! 1)
+      (set!
+        ok
+        (and
+          ok
+          (= (ast.ast-node-pool-context-type-push pools (String)) 1)
+          (= (ast.ast-node-pool-context-type-push pools (String)) 1)
+          (= (ast.ast-node-pool-context-type-len pools) 2)
+          (= (ast.ty-node-push (String)) 1)))
+      (ast.ast-node-pool-context-install! active-before)
+      ok)))
+
+(test
+  compiler-ast-context-dedup-half-load
+  (tl_test.assert-true
+    (compiler-ast-context-dedup-half-load-smoke?)
+    "explicit dedup growth preserves ids, collisions, reset and arena ownership"))
+
+;; Use a small real index with the existing bound temporarily set to its
+;; capacity. This exercises the maximum-capacity fallback without an 8M-node
+;; fixture; restore the bound and installed owner before reporting assertions.
+(define (compiler-ast-context-dedup-max-capacity-smoke?) : bool
+  (let
+    [active-before : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [old-max : i64 ast.ty-node-dedup-max-capacity]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [state : ast.AstTypeNodePoolState
+      (ast.ast-type-pool-cell-read pools.type-pool)]
+    [small : ast.AstTypeNodePoolState
+      (ast.AstTypeNodePoolState
+        state.segment-bases
+        state.count
+        state.base-arena
+        state.exhausted
+        (in-arena (arena.Arena state.base-arena) (__tl_make-array i64 8))
+        state.dedup-count
+        state.storage-arena
+        state.segment-count)]
+    (ast.ast-type-pool-cell-write! pools.type-pool small)
+    (ast.ast-node-pool-context-type-push pools (I64))
+    (ast.ast-node-pool-context-type-push pools (Var 0))
+    (ast.ast-node-pool-context-type-push pools (Var 8))
+    (ast.ast-node-pool-context-type-push pools (Bool))
+    (unsafe
+      (ptr-write!
+        (ptr-cast (ptr-addr-of ast.ty-node-dedup-max-capacity) : (MutPtr i64))
+        8))
+    (let
+      [explicit : i64 (ast.ast-node-pool-context-type-push pools (I64))]
+      [after-explicit : i64 (ast.ast-node-pool-context-type-len pools)]
+      [_install : unit (ast.ast-node-pool-context-install! pools)]
+      [installed : i64 (ast.ty-node-push (I64))]
+      [after-installed : i64 (ast.ast-node-pool-context-type-len pools)]
+      [final-state : ast.AstTypeNodePoolState
+        (ast.ast-type-pool-cell-read pools.type-pool)]
+      [capacity : i64 (array-length final-state.dedup-slots)]
+      [dedup-count : i64 final-state.dedup-count]
+      (unsafe
+        (ptr-write!
+          (ptr-cast (ptr-addr-of ast.ty-node-dedup-max-capacity) : (MutPtr i64))
+          old-max))
+      (ast.ast-node-pool-context-install! active-before)
+      (and
+        (= explicit 4)
+        (= after-explicit 5)
+        (= installed 5)
+        (= after-installed 6)
+        (= capacity 8)
+        (= dedup-count 4)))))
+
+(test
+  compiler-ast-context-dedup-max-capacity
+  (tl_test.assert-true
+    (compiler-ast-context-dedup-max-capacity-smoke?)
+    "both append APIs retain raw fallback at the dedup capacity bound"))
+
 (define (compiler-ast-state-owned-node-pools-smoke?) : bool
   (and
     (compiler-ast-state-owned-expr-pool-smoke?)
@@ -2258,6 +2415,8 @@
   (unless (compiler-ast-int-literal-source-bits-smoke?) (return 18))
   (unless (compiler-ast-state-owned-node-pools-smoke?) (return 3))
   (unless (compiler-ast-active-context-sync-smoke?) (return 4))
+  (unless (compiler-ast-context-dedup-half-load-smoke?) (return 28))
+  (unless (compiler-ast-context-dedup-max-capacity-smoke?) (return 29))
   (unless (compiler-ast-context-owner-identity-smoke?) (return 17))
   (unless (compiler-ast-program-compaction-smoke?) (return 5))
   (unless (compiler-ast-program-copy-append-smoke?) (return 13))

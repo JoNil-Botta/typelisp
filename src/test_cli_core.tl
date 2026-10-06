@@ -394,12 +394,11 @@
             (Err "test: cannot combine --batch with --manifest-path")]
           [has-source (Err "test: cannot combine input paths with --batch")]
           [else
-            (match (tltest-batch-paths list-path)
-              [(Ok paths)
-                (if (cli_svec.is-empty? (& paths))
-                  (Err "test: --batch list is empty")
-                  (Ok (Batch paths target mode roots opt-level test-mode)))]
-              [(Err message) (Err message)])])]
+            (let
+              [paths (try (tltest-batch-paths list-path))]
+              (if (cli_svec.is-empty? (& paths))
+                (Err "test: --batch list is empty")
+                (Ok (Batch paths target mode roots opt-level test-mode))))])]
       [(No)
         (if tltest-prefix-cache-stats
           (Err "test: --prefix-cache-stats requires --batch")

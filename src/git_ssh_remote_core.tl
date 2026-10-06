@@ -389,10 +389,8 @@
                     hostport
                     (+ colon 1)
                     (- (string.string-length hostport) (+ colon 1)))]
-                (match (git-ssh-port-parse (& port-text))
-                  [(Err error) (Err error)]
-                  [(Ok port)
-                    (Ok (GitSshEndpoint has-user user host (Name) port))]))]))])))
+                [port (try (git-ssh-port-parse (& port-text)))]
+                (Ok (GitSshEndpoint has-user user host (Name) port)))]))])))
 
 (define (git-ssh-ipv6-endpoint
   [has-user : bool]
@@ -424,10 +422,8 @@
                   hostport
                   (+ tail-start 1)
                   (- hostport-length (+ tail-start 1)))]
-              (match (git-ssh-port-parse (& port-text))
-                [(Err error) (Err error)]
-                [(Ok port)
-                  (Ok (GitSshEndpoint has-user user host (Ipv6Literal) port))]))])))))
+              [port (try (git-ssh-port-parse (& port-text)))]
+              (Ok (GitSshEndpoint has-user user host (Ipv6Literal) port)))])))))
 
 (define (git-ssh-parse-authority
   [authority : (& authority str)]
@@ -539,13 +535,11 @@
         [authority : String (string.substring remote 6 (- path-start 6))]
         [raw-path : String
           (string.substring remote path-start (- length path-start))]
-        (match (git-ssh-parse-authority (& authority) true)
+        [endpoint (try (git-ssh-parse-authority (& authority) true))]
+        (match (git-ssh-uri-path-decode (& raw-path))
           [(Err error) (Err error)]
-          [(Ok endpoint)
-            (match (git-ssh-uri-path-decode (& raw-path))
-              [(Err error) (Err error)]
-              [(Ok path path-kind)
-                (Ok (GitSshRemote (Uri) endpoint path path-kind))])])))))
+          [(Ok path path-kind)
+            (Ok (GitSshRemote (Uri) endpoint path path-kind))])))))
 
 (define (git-ssh-scp-delimiter [remote : (& remote str)]) : i64
   (let
@@ -630,13 +624,12 @@
             (git-ssh-ascii-alpha? (git-ssh-byte (& authority) 0)))
           (git-ssh-scp-unbracketed-ipv6-ambiguous? remote delimiter))
           (Err (AmbiguousSyntax))
-          (match (git-ssh-parse-authority (& authority) false)
-            [(Err error) (Err error)]
-            [(Ok endpoint)
-              (match (git-ssh-scp-path (& raw-path))
-                [(Err error) (Err error)]
-                [(Ok path path-kind)
-                  (Ok (GitSshRemote (Scp) endpoint path path-kind))])]))))))
+          (let
+            [endpoint (try (git-ssh-parse-authority (& authority) false))]
+            (match (git-ssh-scp-path (& raw-path))
+              [(Err error) (Err error)]
+              [(Ok path path-kind)
+                (Ok (GitSshRemote (Scp) endpoint path path-kind))])))))))
 
 ;: Parse one supported SSH Git remote without retaining the input authority.
 ;:
@@ -767,12 +760,10 @@
 
 ;: Parse a remote and return the sole structured endpoint/service handoff.
 (define (git-ssh-upload-pack-request [remote-text : (& remote-text str)]) : ResultGitSshUploadPackRequest
-  (match (git-ssh-remote-parse remote-text)
-    [(Err error) (Err error)]
-    [(Ok remote)
-      (match (git-ssh-upload-pack-command (& remote))
-        [(Err error) (Err error)]
-        [(Ok command) (Ok (GitSshUploadPackRequest remote command))])]))
+  (let
+    [remote (try (git-ssh-remote-parse remote-text))]
+    [command (try (git-ssh-upload-pack-command (& remote)))]
+    (Ok (GitSshUploadPackRequest remote command))))
 
 (define (git-ssh-syntax-name [syntax : (& syntax GitSshRemoteSyntax)]) : String
   (match syntax

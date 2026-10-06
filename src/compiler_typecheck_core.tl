@@ -87224,6 +87224,212 @@
     [(Hit fn-ty) (tc-type-contains-any-region fn-ty)]
     [(Miss) true]))
 
+;; A callee that keeps no borrow past the call: each parameter is free of
+;; lifetimes or a reference to a referent free of them, and so is the result.
+;; Such a call's borrows end when it returns, so in a body with no other
+;; borrow-relevant form the borrow check can only object to two of its
+;; arguments using the same variable.
+(define (tc-borrow-gate-call-scoped-callee? [ctx : TcContext] [func-id : i64]) : bool
+  (match (tc-body-type-fact-lookup (tc-context-body-state ctx) func-id)
+    [(Hit fn-ty)
+      (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+        [(Func params ret)
+          (and
+            (not
+              (tc-type-contains-any-region
+                (tc-resolve-type ctx (ast.ty-node-get ret))))
+            (tc-borrow-gate-call-scoped-params-at?
+              ctx
+              (ast.ast-type-list-box-shared-view params)
+              0))]
+        [_ false])]
+    [(Miss) false]))
+
+(define (tc-borrow-gate-call-scoped-params-at?
+  [ctx : TcContext]
+  [params : ast.AstTypeList]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-type-list-len (& params)))
+    true
+    (let
+      [param : ast.AstType
+        (tc-resolve-type
+          ctx
+          (ast.ty-node-get
+            (ast.ast-type-list-get (& params) index (ast.ast-type-id-fallback))))]
+      [referent : i64
+        (match (& param)
+          [(Ref _ inner) inner]
+          [(MutRef _ inner) inner]
+          [_ -1])]
+      (and
+        (not
+          (tc-type-contains-any-region
+            (if (>= referent 0)
+              (tc-resolve-type ctx (ast.ty-node-get referent))
+              param)))
+        (tc-borrow-gate-call-scoped-params-at? ctx params (+ index 1))))))
+
+;; The variable a call argument names as a place, borrowed explicitly or
+;; possibly auto-borrowed: `x`, `x.f`, `(& x.f)` or `(&mut x)`. -1 for any
+;; other argument, and -2 for a borrow the gate does not look through.
+(define (tc-borrow-gate-arg-root [expr-bases : i64] [arg : ast.AstExpr]) : i64
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view arg))
+    [(Borrow _ lifetime-id operand-box)
+      (match (ast.ast-borrow-lifetime-from-id lifetime-id)
+        [(ast.AstBorrowLifetime.Inferred)
+          (let
+            [root : i64
+              (tc-borrow-gate-place-root
+                expr-bases
+                (ast.ast-expr-segment-bases-get expr-bases operand-box))]
+            (if (>= root 0)
+              root
+              (if (tc-borrow-operand-id-temporary? expr-bases operand-box)
+                -1
+                -2)))]
+        [_ -2])]
+    [_ (tc-borrow-gate-place-root expr-bases arg)]))
+
+;; The root variable of a variable or field path, or -1.
+(define (tc-borrow-gate-place-root [expr-bases : i64] [expr : ast.AstExpr]) : i64
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+    [(Var name) name]
+    [(StructGet receiver-box _)
+      (tc-borrow-gate-place-root
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases receiver-box))]
+    [_ -1]))
+
+;; Whether a call-scoped call's arguments leave the borrow check nothing to
+;; find: each is a borrow of a place or a temporary, or a form the gate finds
+;; irrelevant, and no argument's place variable occurs in another argument.
+(define (tc-borrow-gate-call-scoped-args-inert?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [args : ast.AstExprList]) : bool
+  (let
+    [count : i64 (ast.ast-expr-list-len (& args))]
+    [i : i64 0]
+    [inert : bool true]
+    (while (and inert (< i count))
+      (let
+        [arg : ast.AstExpr
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-expr-list-get (& args) i 0))]
+        [root : i64
+          (tc-borrow-gate-arg-root expr-bases (tc-global-shared-view arg))]
+        (cond
+          [(= root -2) (set! inert false)]
+          [(>= root 0)
+            (when
+              (or
+                (tc-borrow-gate-dotted-name? ctx root)
+                (tc-borrow-gate-name-in-other-args?
+                  ctx
+                  expr-bases
+                  (& args)
+                  i
+                  root))
+              (set! inert false))]
+          [(tc-borrow-gate-expr-relevant?
+              ctx
+              expr-bases
+              (match (ast.ast-expr-unspan-with-segment-bases
+                expr-bases
+                (tc-global-shared-view arg))
+                [(Borrow _ _ operand-box)
+                  (ast.ast-expr-segment-bases-get expr-bases operand-box)]
+                [_ arg]))
+            (set! inert false)]
+          [else unit])
+        (set! i (+ i 1))))
+    inert))
+
+(define (tc-borrow-gate-dotted-name? [ctx : TcContext] [name : i64]) : bool
+  (>= (tc-dotted-name-first-dot-id (tc-context-structural-session ctx) name) 0))
+
+(define (tc-borrow-gate-name-in-other-args?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [args : (& args ast.AstExprList)]
+  [skip : i64]
+  [name : i64]) : bool
+  (let
+    [count : i64 (ast.ast-expr-list-len args)]
+    [j : i64 0]
+    [found : bool false]
+    (while (and (not found) (< j count))
+      (when
+        (and
+          (!= j skip)
+          (tc-borrow-gate-expr-mentions?
+            ctx
+            expr-bases
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-expr-list-get args j 0))
+            name))
+        (set! found true))
+      (set! j (+ j 1)))
+    found))
+
+;; Whether an expression mentions a variable, or any dotted name that might
+;; reach it. A called function's name is not a mention.
+(define (tc-borrow-gate-expr-mentions?
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [expr : ast.AstExpr]
+  [name : i64]) : bool
+  (match (tc-global-shared-view expr)
+    [(Var other) (or (= other name) (tc-borrow-gate-dotted-name? ctx other))]
+    [(Set target value-box)
+      (or
+        (= target name)
+        (tc-borrow-gate-dotted-name? ctx target)
+        (tc-borrow-gate-expr-mentions?
+          ctx
+          expr-bases
+          (ast.ast-expr-segment-bases-get expr-bases value-box)
+          name))]
+    [(Call _ args)
+      (let
+        [count : i64 (ast.ast-expr-list-len (& args))]
+        [j : i64 0]
+        [found : bool false]
+        (while (and (not found) (< j count))
+          (when
+            (tc-borrow-gate-expr-mentions?
+              ctx
+              expr-bases
+              (ast.ast-expr-segment-bases-get
+                expr-bases
+                (ast.ast-expr-list-get (& args) j 0))
+              name)
+            (set! found true))
+          (set! j (+ j 1)))
+        found)]
+    [_
+      (let
+        [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
+        [j : i64 0]
+        [found : bool false]
+        (while (and (not found) (< j children.len))
+          (when
+            (tc-borrow-gate-expr-mentions?
+              ctx
+              expr-bases
+              (ast.ast-expr-segment-bases-get
+                expr-bases
+                (ast.ast-expr-list-get (& children) j -1))
+              name)
+            (set! found true))
+          (set! j (+ j 1)))
+        found)]))
+
 (define (tc-borrow-gate-expr-ty-has-region? [ctx : TcContext] [expr-id : i64]) : bool
   (match (tc-body-type-fact-lookup (tc-context-body-state ctx) expr-id)
     [(Hit ty) (tc-type-contains-any-region ty)]
@@ -87341,7 +87547,6 @@
         (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(Call func-box args)
       (or
-        (tc-borrow-gate-call-has-region? ctx func-box)
         (tc-slice-view-call-spelling?
           expr-bases
           (tc-context-structural-session ctx)
@@ -87350,7 +87555,12 @@
           ctx
           expr-bases
           (ast.ast-expr-segment-bases-get expr-bases func-box))
-        (tc-borrow-gate-exprs-relevant? ctx expr-bases args))]
+        (if (tc-borrow-gate-call-has-region? ctx func-box)
+          (not
+            (and
+              (tc-borrow-gate-call-scoped-callee? ctx func-box)
+              (tc-borrow-gate-call-scoped-args-inert? ctx expr-bases args)))
+          (tc-borrow-gate-exprs-relevant? ctx expr-bases args)))]
     [(BracketClause items)
       (tc-borrow-gate-exprs-relevant? ctx expr-bases items)]
     [(TypeLiteral _) false]

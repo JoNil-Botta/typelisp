@@ -2425,7 +2425,12 @@
   (early-exit-suppress-depth i64)
   (early-exit-source-expr-limit i64)
   (early-exit-facts (__tl_dyn-array i64))
-  (early-exit-known (__tl_dyn-array i64)))
+  (early-exit-known (__tl_dyn-array i64))
+  ;; The contextual type body typing gave each annotated let binding's value,
+  ;; keyed by the value's node id; see tc-body-let-init-type-record!.
+  (let-init-ids (__tl_dyn-array i64))
+  (let-init-types (__tl_dyn-array ast.AstType))
+  (let-init-count i64))
 
 ;; TcContext values are copied while resolving modules and rebuilding macro
 ;; views. Keep the mutable body analysis behind a shared one-slot cell so every
@@ -3111,7 +3116,10 @@
         0
         -1
         (__tl_make-array i64 1)
-        (__tl_make-array i64 1)))
+        (__tl_make-array i64 1)
+        (tc-global-shared-view tc-body-let-init-no-ids)
+        (tc-global-shared-view tc-body-let-init-no-types)
+        0))
     (TcBodyState
       (cast
         (unsafe
@@ -3269,6 +3277,13 @@
         (set! (deref data).type-fact-expr-ids (__tl_make-array i64 1))
         (set! (deref data).type-fact-types (__tl_make-array ast.AstType 1))
         (set! (deref data).type-fact-closure-codes (__tl_make-array i64 1))
+        (set!
+          (deref data).let-init-ids
+          (tc-global-shared-view tc-body-let-init-no-ids))
+        (set!
+          (deref data).let-init-types
+          (tc-global-shared-view tc-body-let-init-no-types))
+        (set! (deref data).let-init-count 0)
         (set! (deref data).type-fact-storage-arena 0)
         (set! (deref data).type-fact-enclosing-arena 0)
         (set! (deref data).type-fact-count 0)
@@ -3370,7 +3385,8 @@
             (set! (array-ref (deref data).type-fact-index expr-id) 0)
             unit)
           (set! i (+ i 1))))
-      (set! (deref data).type-fact-count 0))))
+      (set! (deref data).type-fact-count 0)
+      (set! (deref data).let-init-count 0))))
 
 (define (tc-body-type-fact-ensure-storage! [state : TcBodyState]) : unit
   (unsafe
@@ -3451,6 +3467,75 @@
                 (+ slot 1))
               (set! (deref ready).type-fact-count (+ slot 1)))))
         unit))))
+
+(define (tc-body-let-init-capacity) : i64
+  256)
+
+(define tc-body-let-init-no-ids : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define tc-body-let-init-no-types : (__tl_dyn-array ast.AstType)
+  (__tl_make-array ast.AstType 0))
+
+;; Record the contextual type body typing gave an annotated let binding's
+;; value. The move check, the borrow check and the result-fact walk each need
+;; the binding's type, and re-typing the value against its annotation three
+;; times was the costliest part of both checks. A body with more annotated
+;; bindings than the table holds keeps re-typing the rest.
+(define (tc-body-let-init-type-record!
+  [state : TcBodyState]
+  [init-id : i64]
+  [ty : ast.AstType]) : unit
+  (let
+    [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    (unsafe
+      (when
+        (and
+          (deref data).type-facts-recording
+          (>= init-id 0)
+          (< (deref data).let-init-count (tc-body-let-init-capacity))
+          (< (tc-body-let-init-slot state init-id) 0))
+        (let
+          [slot : i64 (deref data).let-init-count]
+          [ready : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
+          ;; The table lives in the facts' storage arena, made on first use.
+          (when
+            (= (array-length (deref ready).let-init-ids) 0)
+            (in-arena
+              (arena.Arena (deref ready).type-fact-storage-arena)
+              (set!
+                (deref ready).let-init-ids
+                (__tl_make-array i64 (tc-body-let-init-capacity)))
+              (set!
+                (deref ready).let-init-types
+                (__tl_make-array ast.AstType (tc-body-let-init-capacity)))))
+          (set! (array-ref (deref ready).let-init-ids slot) init-id)
+          (set! (array-ref (deref ready).let-init-types slot) ty)
+          (set! (deref ready).let-init-count (+ slot 1)))))))
+
+(define (tc-body-let-init-slot [state : TcBodyState] [init-id : i64]) : i64
+  (let
+    [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    [i : i64 0]
+    [slot : i64 -1]
+    (unsafe
+      (while (and (< slot 0) (< i (deref data).let-init-count))
+        (when (= (array-ref (deref data).let-init-ids i) init-id) (set! slot i))
+        (set! i (+ i 1))))
+    slot))
+
+;; The recorded contextual type of an annotated let binding's value, while the
+;; body's facts are being consumed.
+(define (tc-body-let-init-type-lookup [state : TcBodyState] [init-id : i64]) : TcBodyTypeFact
+  (let
+    [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    (unsafe
+      (if (deref data).type-facts-consuming
+        (let
+          [slot : i64 (tc-body-let-init-slot state init-id)]
+          (if (>= slot 0)
+            (Hit (ast.ast-array-shared-view (deref data).let-init-types slot))
+            (Miss)))
+        (Miss)))))
 
 (define (tc-body-type-fact-lookup [state : TcBodyState] [expr-id : i64]) : TcBodyTypeFact
   (let
@@ -32562,11 +32647,16 @@
     [(Some t)
       (let
         [resolved : ast.AstType (tc-resolve-type ctx t)]
-        (match (tc-expr-with-expected-or-actual-id
-          ctx
-          env
-          init-id
-          (tc-global-shared-view resolved))
+        (match (match (tc-body-let-init-type-lookup
+          (tc-context-body-state ctx)
+          init-id)
+          [(Hit typed) (ResultTcType.Ok typed)]
+          [(Miss)
+            (tc-expr-with-expected-or-actual-id
+              ctx
+              env
+              init-id
+              (tc-global-shared-view resolved))])
           [(Ok init-ty)
             (if (tc-type-contains-any-region (tc-global-shared-view init-ty))
               init-ty
@@ -42004,6 +42094,20 @@
   (define (tc-let-binding-init-type-call-count-for-test) : i64
     tc-let-binding-init-type-call-count))
 
+(define (tc-let-init-contextual-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [init-id : i64]
+  [want : ast.AstType]) : ResultTcType
+  (let
+    [typed : ResultTcType
+      (tc-expr-with-expected-or-actual-id ctx env init-id want)]
+    (match (tc-global-shared-view typed)
+      [(Ok ty)
+        (tc-body-let-init-type-record! (tc-context-body-state ctx) init-id ty)]
+      [(Err _) unit])
+    typed))
+
 (define (tc-let-binding-init-type-at
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -42096,13 +42200,13 @@
                               maybe-ret
                               lambda-body))])]
                     [_
-                      (tc-expr-with-expected-or-actual-id
+                      (tc-let-init-contextual-type
                         ctx
                         env
                         init-id
                         resolved-want)])]
                 [(Err message) (Err message)])
-              (tc-expr-with-expected-or-actual-id ctx env init-id resolved-want)))]
+              (tc-let-init-contextual-type ctx env init-id resolved-want)))]
         [(No)
           (if capability-capturing-lambda
             (match (cond

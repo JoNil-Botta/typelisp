@@ -1004,6 +1004,14 @@ places the rel32 field at byte 2; ELF, COFF and native TLCI relocation use that
 same site. The object branch tests check all conditions, forward/backward
 targets, invalid codes and unresolved symbols across these serializers.
 
+Both installed and explicit type pools preserve canonical IDs while their
+private hash indexes grow. At half occupancy they rehash the immutable prefix
+in the pool's base arena, including when the pending push finds an existing ID.
+The replacement descriptor and backing storage survive caller scratch resets;
+index growth never changes node IDs or publishes into a different pool owner.
+At the maximum index capacity both append paths retain the raw-append fallback.
+
+
 Expression node IDs belong to an AST pool. Literal analysis in
 `compiler_typecheck_core.tl` snapshots the context's expression owner for its
 read-only walk and shares the AST unspanner with other structural consumers. The

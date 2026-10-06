@@ -40,12 +40,11 @@
     [n : i64 (byte_buf.bytes-length view)]
     [i : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< i n))
-        (if (= (byte_buf.bytes-ref view i) (cast '\0' : u8))
-          (set! found true)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (not found) (< i n))
+      (if (= (byte_buf.bytes-ref view i) (cast '\0' : u8))
+        (set! found true)
+        (set! i (+ i 1))))
+    found))
 
 ;: Copy exactly `n` bytes from `view` into `dst`.
 ;:
@@ -58,10 +57,9 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (unsafe
-          (ptr-write! (ptr-offset dst i) (byte_buf.bytes-ref view i)))
-        (set! i (+ i 1))))))
+      (unsafe
+        (ptr-write! (ptr-offset dst i) (byte_buf.bytes-ref view i)))
+      (set! i (+ i 1)))))
 
 ;: Copy `view` to caller-owned mutable storage and append the trailing NUL byte.
 ;:
@@ -83,11 +81,10 @@
         (FfiCStringBufferTooSmall needed)
         (let
           [n : i64 (byte_buf.bytes-length view)]
-          (begin
-            (c-bytes-copy-bytes! view dst n)
-            (unsafe
-              (ptr-write! (ptr-offset dst n) (cast '\0' : u8)))
-            (FfiCStringCopyOk needed)))))))
+          (c-bytes-copy-bytes! view dst n)
+          (unsafe
+            (ptr-write! (ptr-offset dst n) (cast '\0' : u8)))
+          (FfiCStringCopyOk needed))))))
 
 ;: Allocate a NUL-terminated C string copy of `view` in the active arena.
 ;:
@@ -105,12 +102,11 @@
       [dst : (MutPtr u8)
         (unsafe
           (__tl_array-data buf))]
-      (begin
-        (c-bytes-copy-bytes! view dst n)
-        (unsafe
-          (ptr-write! (ptr-offset dst n) (cast '\0' : u8)))
-        (unsafe
-          (ptr-cast dst : (Ptr u8)))))))
+      (c-bytes-copy-bytes! view dst n)
+      (unsafe
+        (ptr-write! (ptr-offset dst n) (cast '\0' : u8)))
+      (unsafe
+        (ptr-cast dst : (Ptr u8))))))
 
 ;: Short alias for `c-bytes-alloc`.
 (define (cbytes [view : (& source bytes)]) : (Ptr u8)
@@ -170,9 +166,8 @@
 
 ;: Inline test helper that forces a test failure.
 (define (test-fail) : unit
-  (begin
-    (/ 1 0)
-    unit))
+  (/ 1 0)
+  unit)
 
 ;: Inline test assertion for byte values.
 (define (test-assert-u8-eq [actual : u8] [expected : i64]) : unit
@@ -211,145 +206,132 @@
     [dst : (MutPtr u8)
       (unsafe
         (__tl_array-data data))]
-    (begin
-      (test-write-u8! dst 0 97)
-      (test-write-u8! dst 1 0)
-      (test-write-u8! dst 2 98)
-      (unsafe
-        (string-from-bytes (ptr-cast dst : (Ptr u8)) 3)))))
+    (test-write-u8! dst 0 97)
+    (test-write-u8! dst 1 0)
+    (test-write-u8! dst 2 98)
+    (unsafe
+      (string-from-bytes (ptr-cast dst : (Ptr u8)) 3))))
 
 (test
   ffi-c-string-api
-  (begin
+  (test.assert-true
+    (= (c-string-required-bytes "") 1)
+    "ffi-c-string-api: (= (c-string-required-bytes \"\") 1)")
+  (test.assert-true
+    (= (c-string-required-bytes "abc") 4)
+    "ffi-c-string-api: (= (c-string-required-bytes \"abc\") 4)")
+  (let
+    [view-text : String "bytes"]
+    [view : (& view-text bytes) (byte_buf.str-as-bytes (& view-text))]
     (test.assert-true
-      (= (c-string-required-bytes "") 1)
-      "ffi-c-string-api: (= (c-string-required-bytes \"\") 1)")
+      (= (c-bytes-required-bytes view) 6)
+      "ffi-c-string-api: (= (c-bytes-required-bytes view) 6)")
     (test.assert-true
-      (= (c-string-required-bytes "abc") 4)
-      "ffi-c-string-api: (= (c-string-required-bytes \"abc\") 4)")
-    (let
-      [view-text : String "bytes"]
-      [view : (& view-text bytes) (byte_buf.str-as-bytes (& view-text))]
-      (begin
-        (test.assert-true
-          (= (c-bytes-required-bytes view) 6)
-          "ffi-c-string-api: (= (c-bytes-required-bytes view) 6)")
-        (test.assert-true
-          (not (c-bytes-interior-nul? view))
-          "ffi-c-string-api: (not (c-bytes-interior-nul? view))")))
+      (not (c-bytes-interior-nul? view))
+      "ffi-c-string-api: (not (c-bytes-interior-nul? view))"))
+  (test.assert-true
+    (not (c-string-interior-nul? "abc"))
+    "ffi-c-string-api: (not (c-string-interior-nul? \"abc\"))")
+  (let
+    [empty-storage : (__tl_dyn-array u8) (__tl_make-array u8 1)]
+    [empty-buf : (MutPtr u8)
+      (unsafe
+        (__tl_array-data empty-storage))]
+    (test-assert-copy-ok (c-string-copy! "" empty-buf 1) 1)
+    (test-assert-u8-eq (test-read-u8 empty-buf 0) 0))
+  (let
+    [exact-storage : (__tl_dyn-array u8) (__tl_make-array u8 4)]
+    [exact : (MutPtr u8)
+      (unsafe
+        (__tl_array-data exact-storage))]
+    (test-assert-copy-ok (c-string-copy! "abc" exact 4) 4)
+    (test-assert-u8-eq (test-read-u8 exact 0) 97)
+    (test-assert-u8-eq (test-read-u8 exact 1) 98)
+    (test-assert-u8-eq (test-read-u8 exact 2) 99)
+    (test-assert-u8-eq (test-read-u8 exact 3) 0))
+  (let
+    [bytes-text : String "buf"]
+    [bytes-view : (& bytes-text bytes) (byte_buf.str-as-bytes (& bytes-text))]
+    [bytes-storage : (__tl_dyn-array u8) (__tl_make-array u8 4)]
+    [bytes-dst : (MutPtr u8)
+      (unsafe
+        (__tl_array-data bytes-storage))]
+    (test-assert-copy-ok (c-bytes-copy! bytes-view bytes-dst 4) 4)
+    (test-assert-u8-eq (test-read-u8 bytes-dst 0) 98)
+    (test-assert-u8-eq (test-read-u8 bytes-dst 1) 117)
+    (test-assert-u8-eq (test-read-u8 bytes-dst 2) 102)
+    (test-assert-u8-eq (test-read-u8 bytes-dst 3) 0))
+  (let
+    [small-storage : (__tl_dyn-array u8) (__tl_make-array u8 3)]
+    [small : (MutPtr u8)
+      (unsafe
+        (__tl_array-data small-storage))]
+    (test-write-u8! small 0 77)
+    (test-assert-too-small (c-string-copy! "abc" small 3) 4)
+    (test-assert-u8-eq (test-read-u8 small 0) 77))
+  (let
+    [with-nul : String (test-string-with-nul)]
+    [nul-storage : (__tl_dyn-array u8) (__tl_make-array u8 4)]
+    [nul-buf : (MutPtr u8)
+      (unsafe
+        (__tl_array-data nul-storage))]
+    (test-write-u8! nul-buf 0 88)
     (test.assert-true
-      (not (c-string-interior-nul? "abc"))
-      "ffi-c-string-api: (not (c-string-interior-nul? \"abc\"))")
-    (let
-      [empty-storage : (__tl_dyn-array u8) (__tl_make-array u8 1)]
-      [empty-buf : (MutPtr u8)
-        (unsafe
-          (__tl_array-data empty-storage))]
-      (begin
-        (test-assert-copy-ok (c-string-copy! "" empty-buf 1) 1)
-        (test-assert-u8-eq (test-read-u8 empty-buf 0) 0)))
-    (let
-      [exact-storage : (__tl_dyn-array u8) (__tl_make-array u8 4)]
-      [exact : (MutPtr u8)
-        (unsafe
-          (__tl_array-data exact-storage))]
-      (begin
-        (test-assert-copy-ok (c-string-copy! "abc" exact 4) 4)
-        (test-assert-u8-eq (test-read-u8 exact 0) 97)
-        (test-assert-u8-eq (test-read-u8 exact 1) 98)
-        (test-assert-u8-eq (test-read-u8 exact 2) 99)
-        (test-assert-u8-eq (test-read-u8 exact 3) 0)))
-    (let
-      [bytes-text : String "buf"]
-      [bytes-view : (& bytes-text bytes) (byte_buf.str-as-bytes (& bytes-text))]
-      [bytes-storage : (__tl_dyn-array u8) (__tl_make-array u8 4)]
-      [bytes-dst : (MutPtr u8)
-        (unsafe
-          (__tl_array-data bytes-storage))]
-      (begin
-        (test-assert-copy-ok (c-bytes-copy! bytes-view bytes-dst 4) 4)
-        (test-assert-u8-eq (test-read-u8 bytes-dst 0) 98)
-        (test-assert-u8-eq (test-read-u8 bytes-dst 1) 117)
-        (test-assert-u8-eq (test-read-u8 bytes-dst 2) 102)
-        (test-assert-u8-eq (test-read-u8 bytes-dst 3) 0)))
-    (let
-      [small-storage : (__tl_dyn-array u8) (__tl_make-array u8 3)]
-      [small : (MutPtr u8)
-        (unsafe
-          (__tl_array-data small-storage))]
-      (begin
-        (test-write-u8! small 0 77)
-        (test-assert-too-small (c-string-copy! "abc" small 3) 4)
-        (test-assert-u8-eq (test-read-u8 small 0) 77)))
-    (let
-      [with-nul : String (test-string-with-nul)]
-      [nul-storage : (__tl_dyn-array u8) (__tl_make-array u8 4)]
-      [nul-buf : (MutPtr u8)
-        (unsafe
-          (__tl_array-data nul-storage))]
-      (begin
-        (test-write-u8! nul-buf 0 88)
-        (test.assert-true
-          (c-string-interior-nul? with-nul)
-          "ffi-c-string-api: (c-string-interior-nul? with-nul)")
-        (test-assert-interior-nul (c-string-copy! with-nul nul-buf 4))
-        (test-assert-u8-eq (test-read-u8 nul-buf 0) 88)))
-    (let
-      [binary : byte_buf.ByteBuf
-        (byte_buf.push
-          (byte_buf.push (byte_buf.new) (cast 97 : u8))
-          (cast 0 : u8))]
-      [binary-view : (& binary bytes) (byte_buf.as-bytes (& binary))]
-      [binary-storage : (__tl_dyn-array u8) (__tl_make-array u8 3)]
-      [binary-buf : (MutPtr u8)
-        (unsafe
-          (__tl_array-data binary-storage))]
-      (begin
-        (test-write-u8! binary-buf 0 66)
-        (test.assert-true
-          (c-bytes-interior-nul? binary-view)
-          "ffi-c-string-api: (c-bytes-interior-nul? binary-view)")
-        (test-assert-interior-nul (c-bytes-copy! binary-view binary-buf 3))
-        (test-assert-u8-eq (test-read-u8 binary-buf 0) 66)))
-    (let
-      [empty-ptr : (Ptr u8) (c-string-alloc "")]
-      (begin
-        (test.assert-true
-          (not (ptr-null? empty-ptr))
-          "ffi-c-string-api: (not (ptr-null? empty-ptr))")
-        (test-assert-u8-eq (test-read-const-u8 empty-ptr 0) 0)))
-    (let
-      [ptr : (Ptr u8) (c-string-alloc "abc")]
-      (begin
-        (test.assert-true
-          (not (ptr-null? ptr))
-          "ffi-c-string-api: (not (ptr-null? ptr))")
-        (test-assert-u8-eq (test-read-const-u8 ptr 0) 97)
-        (test-assert-u8-eq (test-read-const-u8 ptr 1) 98)
-        (test-assert-u8-eq (test-read-const-u8 ptr 2) 99)
-        (test-assert-u8-eq (test-read-const-u8 ptr 3) 0)))
-    (let
-      [bytes-text : String "pq"]
-      [bytes-view : (& bytes-text bytes) (byte_buf.str-as-bytes (& bytes-text))]
-      [bytes-ptr : (Ptr u8) (cbytes bytes-view)]
-      (begin
-        (test.assert-true
-          (not (ptr-null? bytes-ptr))
-          "ffi-c-string-api: (not (ptr-null? bytes-ptr))")
-        (test-assert-u8-eq (test-read-const-u8 bytes-ptr 0) 112)
-        (test-assert-u8-eq (test-read-const-u8 bytes-ptr 1) 113)
-        (test-assert-u8-eq (test-read-const-u8 bytes-ptr 2) 0)))
-    (let
-      [alias-ptr : (Ptr u8) (cstr "xy")]
-      (begin
-        (test.assert-true
-          (not (ptr-null? alias-ptr))
-          "ffi-c-string-api: (not (ptr-null? alias-ptr))")
-        (test-assert-u8-eq (test-read-const-u8 alias-ptr 0) 120)
-        (test-assert-u8-eq (test-read-const-u8 alias-ptr 1) 121)
-        (test-assert-u8-eq (test-read-const-u8 alias-ptr 2) 0)))
-    (let
-      [with-nul : String (test-string-with-nul)]
-      (test.assert-true
-        (ptr-null? (c-string-alloc with-nul))
-        "ffi-c-string-api: (ptr-null? (c-string-alloc with-nul))"))))
+      (c-string-interior-nul? with-nul)
+      "ffi-c-string-api: (c-string-interior-nul? with-nul)")
+    (test-assert-interior-nul (c-string-copy! with-nul nul-buf 4))
+    (test-assert-u8-eq (test-read-u8 nul-buf 0) 88))
+  (let
+    [binary : byte_buf.ByteBuf
+      (byte_buf.push
+        (byte_buf.push (byte_buf.new) (cast 97 : u8))
+        (cast 0 : u8))]
+    [binary-view : (& binary bytes) (byte_buf.as-bytes (& binary))]
+    [binary-storage : (__tl_dyn-array u8) (__tl_make-array u8 3)]
+    [binary-buf : (MutPtr u8)
+      (unsafe
+        (__tl_array-data binary-storage))]
+    (test-write-u8! binary-buf 0 66)
+    (test.assert-true
+      (c-bytes-interior-nul? binary-view)
+      "ffi-c-string-api: (c-bytes-interior-nul? binary-view)")
+    (test-assert-interior-nul (c-bytes-copy! binary-view binary-buf 3))
+    (test-assert-u8-eq (test-read-u8 binary-buf 0) 66))
+  (let
+    [empty-ptr : (Ptr u8) (c-string-alloc "")]
+    (test.assert-true
+      (not (ptr-null? empty-ptr))
+      "ffi-c-string-api: (not (ptr-null? empty-ptr))")
+    (test-assert-u8-eq (test-read-const-u8 empty-ptr 0) 0))
+  (let
+    [ptr : (Ptr u8) (c-string-alloc "abc")]
+    (test.assert-true
+      (not (ptr-null? ptr))
+      "ffi-c-string-api: (not (ptr-null? ptr))")
+    (test-assert-u8-eq (test-read-const-u8 ptr 0) 97)
+    (test-assert-u8-eq (test-read-const-u8 ptr 1) 98)
+    (test-assert-u8-eq (test-read-const-u8 ptr 2) 99)
+    (test-assert-u8-eq (test-read-const-u8 ptr 3) 0))
+  (let
+    [bytes-text : String "pq"]
+    [bytes-view : (& bytes-text bytes) (byte_buf.str-as-bytes (& bytes-text))]
+    [bytes-ptr : (Ptr u8) (cbytes bytes-view)]
+    (test.assert-true
+      (not (ptr-null? bytes-ptr))
+      "ffi-c-string-api: (not (ptr-null? bytes-ptr))")
+    (test-assert-u8-eq (test-read-const-u8 bytes-ptr 0) 112)
+    (test-assert-u8-eq (test-read-const-u8 bytes-ptr 1) 113)
+    (test-assert-u8-eq (test-read-const-u8 bytes-ptr 2) 0))
+  (let
+    [alias-ptr : (Ptr u8) (cstr "xy")]
+    (test.assert-true
+      (not (ptr-null? alias-ptr))
+      "ffi-c-string-api: (not (ptr-null? alias-ptr))")
+    (test-assert-u8-eq (test-read-const-u8 alias-ptr 0) 120)
+    (test-assert-u8-eq (test-read-const-u8 alias-ptr 1) 121)
+    (test-assert-u8-eq (test-read-const-u8 alias-ptr 2) 0))
+  (let
+    [with-nul : String (test-string-with-nul)]
+    (test.assert-true
+      (ptr-null? (c-string-alloc with-nul))
+      "ffi-c-string-api: (ptr-null? (c-string-alloc with-nul))")))

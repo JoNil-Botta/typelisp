@@ -571,12 +571,10 @@
     [n : i64 (thread-i64-vec.len (& src))]
     [out : thread-i64-vec.Vec (thread-i64-vec.with-capacity n)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (thread-i64-vec.push-ref! (&mut out) (thread-i64-vec.get (& src) i 0))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i n)
+      (thread-i64-vec.push-ref! (&mut out) (thread-i64-vec.get (& src) i 0))
+      (set! i (+ i 1)))
+    out))
 
 ;: Linux raw clone flags for same-process worker threads.
 (define (linux-clone-flags) : i64
@@ -621,10 +619,9 @@
 
 ;: Linux current-thread exit syscall wrapper.
 (define (linux-exit-current [code : i64]) : never
-  (begin
-    (unsafe
-      (syscall 60 code))
-    (linux-exit-current code)))
+  (unsafe
+    (syscall 60 code))
+  (linux-exit-current code))
 
 ;: Linux child path entered immediately after raw `clone` returns zero.
 (unsafe
@@ -650,10 +647,9 @@
         (linux-futex-wake started-addr))
       (let
         [result : i64 (entry arg)]
-        (begin
-          (unsafe
-            (write-i64! result-addr result))
-          (linux-exit-current result))))))
+        (unsafe
+          (write-i64! result-addr result))
+        (linux-exit-current result)))))
 
 ;: Wait until the i32 at `addr` no longer equals `expected`.
 (unsafe
@@ -662,10 +658,9 @@
       (unsafe
         (read-i32 addr))
       expected)
-      (begin
-        (unsafe
-          (linux-futex-wait addr (cast expected : i64)))
-        unit))))
+      (unsafe
+        (linux-futex-wait addr (cast expected : i64)))
+      unit)))
 
 ;: Linux implementation of `spawn`.
 (unsafe
@@ -691,28 +686,27 @@
               (array-u8-addr stack))
             default-stack-size)
           -16)]
-      (begin
-        (set! (array-ref clear-cell 0) (cast 1 : i32))
-        (let
-          [tid : i64
+      (set! (array-ref clear-cell 0) (cast 1 : i32))
+      (let
+        [tid : i64
+          (unsafe
+            (syscall 56 (linux-clone-flags) stack-top 0 clear-addr 0))]
+        (if (< tid 0)
+          (ThreadSpawnErr "thread: spawn failed")
+          (if (= tid 0)
             (unsafe
-              (syscall 56 (linux-clone-flags) stack-top 0 clear-addr 0))]
-          (if (< tid 0)
-            (ThreadSpawnErr "thread: spawn failed")
-            (if (= tid 0)
-              (unsafe
-                (linux-child-main
-                  entry
-                  arg
-                  result-addr
-                  started-addr
-                  (unsafe
-                    (array-u8-addr stack))
-                  stack-top))
-              (begin
+              (linux-child-main
+                entry
+                arg
+                result-addr
+                started-addr
                 (unsafe
-                  (linux-wait-i32-change started-addr (cast 0 : i32)))
-                (ThreadSpawnOk (Thread tid clear-addr result-addr ""))))))))))
+                  (array-u8-addr stack))
+                stack-top))
+            (begin
+              (unsafe
+                (linux-wait-i32-change started-addr (cast 0 : i32)))
+              (ThreadSpawnOk (Thread tid clear-addr result-addr "")))))))))
 
 ;: Windows spin-wait until the backend trampoline copies its start context.
 (cfg
@@ -723,9 +717,8 @@
         (unsafe
           (read-i32 started-addr))
         (cast 0 : i32))
-        (begin
-          (thread-windows-switch-to-thread)
-          unit)))))
+        (thread-windows-switch-to-thread)
+        unit))))
 
 ;: Windows implementation of `spawn`.
 (cfg
@@ -745,30 +738,29 @@
         [result-addr : i64
           (unsafe
             (array-i64-addr result-cell))]
-        (begin
-          (set!
-            (array-ref context 0)
+        (set!
+          (array-ref context 0)
+          (unsafe
+            (cast entry : u64)))
+        (set! (array-ref context 1) (cast arg : u64))
+        (set! (array-ref context 2) (cast result-addr : u64))
+        (set! (array-ref context 3) (cast started-addr : u64))
+        (let
+          [handle : i64
             (unsafe
-              (cast entry : u64)))
-          (set! (array-ref context 1) (cast arg : u64))
-          (set! (array-ref context 2) (cast result-addr : u64))
-          (set! (array-ref context 3) (cast started-addr : u64))
-          (let
-            [handle : i64
+              (thread-windows-create-thread
+                0
+                0
+                thread-windows-entry
+                context-addr
+                (cast 0 : i32)
+                0))]
+          (if (= handle 0)
+            (ThreadSpawnErr "thread: spawn failed")
+            (begin
               (unsafe
-                (thread-windows-create-thread
-                  0
-                  0
-                  thread-windows-entry
-                  context-addr
-                  (cast 0 : i32)
-                  0))]
-            (if (= handle 0)
-              (ThreadSpawnErr "thread: spawn failed")
-              (begin
-                (unsafe
-                  (thread-windows-wait-started started-addr))
-                (ThreadSpawnOk (Thread handle 0 result-addr ""))))))))))
+                (thread-windows-wait-started started-addr))
+              (ThreadSpawnOk (Thread handle 0 result-addr "")))))))))
 
 ;: Spawn `entry`, passing `arg`; the result can be joined exactly once.
 (unsafe
@@ -809,9 +801,8 @@
     (unsafe
       (spawn
         (lambda ([_ignored : i64]) : i64
-          (begin
-            (task)
-            0))
+          (task)
+          0)
         0))))
 
 ;: Spawn a compiler-checked direct nullary closure returning `String`.
@@ -833,10 +824,9 @@
           (let
             [value : String (in-arena owner (task))]
             [copied : String (in-arena owner (string.copy (& value)))]
-            (begin
-              (unsafe
-                (write-string! result-addr copied))
-              0)))
+            (unsafe
+              (write-string! result-addr copied))
+            0))
         0))
       [(ThreadSpawnOk raw) (ThreadStringSpawnOk (ThreadString raw result-addr))]
       [(ThreadSpawnErr message) (ThreadStringSpawnErr message)])))
@@ -861,10 +851,9 @@
           (let
             [value : thread-i64-vec.Vec (in-arena owner (task))]
             [copied : thread-i64-vec.Vec (in-arena owner (i64-vec-copy value))]
-            (begin
-              (unsafe
-                (write-i64-vec! result-addr copied))
-              0)))
+            (unsafe
+              (write-i64-vec! result-addr copied))
+            0))
         0))
       [(ThreadSpawnOk raw) (ThreadI64VecSpawnOk (ThreadI64Vec raw result-addr))]
       [(ThreadSpawnErr message) (ThreadI64VecSpawnErr message)])))
@@ -886,10 +875,9 @@
         (lambda ([_ignored : i64]) : i64
           (let
             [value : (Box i64) (in-arena owner (task))]
-            (begin
-              (unsafe
-                (write-i64! result-addr (__tl-box-place value)))
-              0)))
+            (unsafe
+              (write-i64! result-addr (__tl-box-place value)))
+            0))
         0))
       [(ThreadSpawnOk raw)
         (ThreadBoxI64SpawnOk (ThreadBoxI64 raw result-addr owner))]
@@ -922,59 +910,56 @@
               (let
                 [done : bool false]
                 [result : ThreadWaitResult (ThreadWaitTimedOut)]
-                (begin
-                  (while (not done)
-                    (if (=
-                      (unsafe
-                        (read-i32 clear-addr))
-                      (cast 0 : i32))
-                      (begin
-                        (set! result (ThreadWaitReady))
-                        (set! done true))
-                      (let
-                        [now-ms : i64
-                          (unsafe
-                            (linux-monotonic-ms (&mut clock)))]
-                        (if (< now-ms start-ms)
-                          (begin
-                            (set!
-                              result
-                              (ThreadWaitErr
-                                "thread: wait monotonic clock unavailable"))
-                            (set! done true))
-                          (let
-                            [elapsed-ms : i64 (- now-ms start-ms)]
-                            (if (>= elapsed-ms timeout-ms)
-                              (begin
-                                (if (=
-                                  (unsafe
-                                    (read-i32 clear-addr))
-                                  (cast 0 : i32))
-                                  (set! result (ThreadWaitReady))
-                                  (set! result (ThreadWaitTimedOut)))
-                                (set! done true))
+                (while (not done)
+                  (if (=
+                    (unsafe
+                      (read-i32 clear-addr))
+                    (cast 0 : i32))
+                    (begin
+                      (set! result (ThreadWaitReady))
+                      (set! done true))
+                    (let
+                      [now-ms : i64
+                        (unsafe
+                          (linux-monotonic-ms (&mut clock)))]
+                      (if (< now-ms start-ms)
+                        (begin
+                          (set!
+                            result
+                            (ThreadWaitErr
+                              "thread: wait monotonic clock unavailable"))
+                          (set! done true))
+                        (let
+                          [elapsed-ms : i64 (- now-ms start-ms)]
+                          (if (>= elapsed-ms timeout-ms)
+                            (begin
+                              (if (=
+                                (unsafe
+                                  (read-i32 clear-addr))
+                                (cast 0 : i32))
+                                (set! result (ThreadWaitReady))
+                                (set! result (ThreadWaitTimedOut)))
+                              (set! done true))
+                            (let
+                              [remaining-ms : i64 (- timeout-ms elapsed-ms)]
+                              (time.timespec-from-ms!
+                                (&mut timeout)
+                                remaining-ms)
                               (let
-                                [remaining-ms : i64 (- timeout-ms elapsed-ms)]
-                                (begin
-                                  (time.timespec-from-ms!
-                                    (&mut timeout)
-                                    remaining-ms)
-                                  (let
-                                    [status : i64
+                                [status : i64
+                                  (unsafe
+                                    (linux-futex-wait-for
+                                      clear-addr
+                                      1
                                       (unsafe
-                                        (linux-futex-wait-for
-                                          clear-addr
-                                          1
-                                          (unsafe
-                                            (array-i64-addr (& timeout)))))]
-                                    (if (linux-wait-retry? status)
-                                      unit
-                                      (begin
-                                        (set!
-                                          result
-                                          (ThreadWaitErr "thread: wait failed"))
-                                        (set! done true))))))))))))
-                  result)))))))))
+                                        (array-i64-addr (& timeout)))))]
+                                (unless
+                                  (linux-wait-retry? status)
+                                  (set!
+                                    result
+                                    (ThreadWaitErr "thread: wait failed"))
+                                  (set! done true))))))))))
+                result))))))))
 
 ;: Windows non-consuming bounded wait, split to avoid the `INFINITE` sentinel.
 (cfg
@@ -987,34 +972,29 @@
         [remaining-ms : i64 timeout-ms]
         [done : bool false]
         [result : ThreadWaitResult (ThreadWaitTimedOut)]
-        (begin
-          (while (not done)
-            (let
-              [chunk-ms : i64
-                (if (> remaining-ms windows-wait-max-finite-ms)
-                  windows-wait-max-finite-ms
-                  remaining-ms)]
-              [waited : u32
-                (unsafe
-                  (thread-windows-wait-single
-                    thread.handle
-                    (cast chunk-ms : u32)))]
-              (cond
-                [(= waited windows-wait-object-0)
+        (while (not done)
+          (let
+            [chunk-ms : i64
+              (if (> remaining-ms windows-wait-max-finite-ms)
+                windows-wait-max-finite-ms
+                remaining-ms)]
+            [waited : u32
+              (unsafe
+                (thread-windows-wait-single thread.handle (cast chunk-ms : u32)))]
+            (cond
+              [(= waited windows-wait-object-0)
+                (set! result (ThreadWaitReady))
+                (set! done true)]
+              [(= waited windows-wait-timeout)
+                (if (<= remaining-ms chunk-ms)
                   (begin
-                    (set! result (ThreadWaitReady))
-                    (set! done true))]
-                [(= waited windows-wait-timeout)
-                  (if (<= remaining-ms chunk-ms)
-                    (begin
-                      (set! result (ThreadWaitTimedOut))
-                      (set! done true))
-                    (set! remaining-ms (- remaining-ms chunk-ms)))]
-                [else
-                  (begin
-                    (set! result (ThreadWaitErr "thread: wait failed"))
-                    (set! done true))])))
-          result)))))
+                    (set! result (ThreadWaitTimedOut))
+                    (set! done true))
+                  (set! remaining-ms (- remaining-ms chunk-ms)))]
+              [else
+                (set! result (ThreadWaitErr "thread: wait failed"))
+                (set! done true)])))
+        result))))
 
 ;: Observe thread completion for at most `timeout-ms` without consuming the handle.
 ;:
@@ -1036,19 +1016,17 @@
   (define (linux-join [thread : Thread]) : ThreadJoinResult
     (let
       [clear-addr : i64 thread.clear-tid-addr]
-      (begin
-        (while (not
-          (=
-            (unsafe
-              (read-i32 clear-addr))
-            (cast 0 : i32)))
-          (begin
-            (unsafe
-              (linux-futex-wait clear-addr (cast 1 : i64)))
-            unit))
-        (ThreadJoinOk
+      (while (not
+        (=
           (unsafe
-            (read-i64 thread.result-addr)))))))
+            (read-i32 clear-addr))
+          (cast 0 : i32)))
+        (unsafe
+          (linux-futex-wait clear-addr (cast 1 : i64)))
+        unit)
+      (ThreadJoinOk
+        (unsafe
+          (read-i64 thread.result-addr))))))
 
 ;: Windows implementation of `join`.
 (cfg
@@ -1116,28 +1094,22 @@
   (let
     [i : i64 0]
     [count : i64 0]
-    (begin
-      (while (< i 8)
-        (begin
-          (if (= (bit-and (shr byte i) 1) 1)
-            (set! count (+ count 1))
-            unit)
-          (set! i (+ i 1))))
-      count)))
+    (while (< i 8)
+      (if (= (bit-and (shr byte i) 1) 1)
+        (set! count (+ count 1))
+        unit)
+      (set! i (+ i 1)))
+    count))
 
 ;: Count set CPU bits in a Linux affinity mask buffer.
 (define (count-affinity-bytes [mask : (__tl_dyn-array u8)]) : i64
   (let
     [i : i64 0]
     [count : i64 0]
-    (begin
-      (while (< i (array-length mask))
-        (begin
-          (set!
-            count
-            (+ count (count-byte-bits (cast (array-ref mask i) : i64))))
-          (set! i (+ i 1))))
-      count)))
+    (while (< i (array-length mask))
+      (set! count (+ count (count-byte-bits (cast (array-ref mask i) : i64))))
+      (set! i (+ i 1)))
+    count))
 
 ;: Linux implementation of `default-worker-count`.
 (define (linux-default-worker-count) : i64
@@ -1234,25 +1206,24 @@
         [buf : (__tl_dyn-array u64) (__tl_make-array u64 1)]
         [done : bool false]
         [ok : bool false]
-        (begin
-          (while (not done)
-            (let
-              [n : i64
-                (unsafe
-                  (syscall
-                    0
-                    sem.handle
-                    (unsafe
-                      (array-u64-addr (& buf)))
-                    8))]
-              (if (= n 8)
-                (begin
-                  (set! ok true)
-                  (set! done true))
-                (if (= n -4)
-                  unit
-                  (set! done true)))))
-          ok)))))
+        (while (not done)
+          (let
+            [n : i64
+              (unsafe
+                (syscall
+                  0
+                  sem.handle
+                  (unsafe
+                    (array-u64-addr (& buf)))
+                  8))]
+            (if (= n 8)
+              (begin
+                (set! ok true)
+                (set! done true))
+              (if (= n -4)
+                unit
+                (set! done true)))))
+        ok))))
 
 ;: Post one semaphore token.
 (unsafe
@@ -1266,17 +1237,16 @@
           (cast 0 : i32)))
       (let
         [buf : (__tl_dyn-array u64) (__tl_make-array u64 1)]
-        (begin
-          (set! (array-ref buf 0) (cast 1 : u64))
-          (=
-            (unsafe
-              (syscall
-                1
-                sem.handle
-                (unsafe
-                  (array-u64-addr (& buf)))
-                8))
-            8))))))
+        (set! (array-ref buf 0) (cast 1 : u64))
+        (=
+          (unsafe
+            (syscall
+              1
+              sem.handle
+              (unsafe
+                (array-u64-addr (& buf)))
+              8))
+          8)))))
 
 ;: Close a semaphore handle.
 (unsafe
@@ -1295,9 +1265,8 @@
 
 ;: Inline test failure helper.
 (define (test-fail) : unit
-  (begin
-    (/ 1 0)
-    unit))
+  (/ 1 0)
+  unit)
 
 ;: Inline test boolean assertion.
 (define (test-assert [ok : bool]) : unit
@@ -1321,16 +1290,15 @@
   thread-api
   (let
     [mask : (__tl_dyn-array u8) (__tl_make-array u8 4)]
-    (begin
-      (set! (array-ref mask 0) (cast 0 : u8))
-      (set! (array-ref mask 1) (cast 1 : u8))
-      (set! (array-ref mask 2) (cast 3 : u8))
-      (set! (array-ref mask 3) (cast 255 : u8))
-      (test-assert (>= (default-worker-count) 1))
-      (test-assert-i64-eq (count-byte-bits 0) 0)
-      (test-assert-i64-eq (count-byte-bits 1) 1)
-      (test-assert-i64-eq (count-byte-bits 3) 2)
-      (test-assert-i64-eq (count-byte-bits 255) 8)
-      (test-assert-i64-eq (count-affinity-bytes mask) 11)
-      (test-assert-semaphore-err -1)
-      (test-assert-semaphore-err 2147483648))))
+    (set! (array-ref mask 0) (cast 0 : u8))
+    (set! (array-ref mask 1) (cast 1 : u8))
+    (set! (array-ref mask 2) (cast 3 : u8))
+    (set! (array-ref mask 3) (cast 255 : u8))
+    (test-assert (>= (default-worker-count) 1))
+    (test-assert-i64-eq (count-byte-bits 0) 0)
+    (test-assert-i64-eq (count-byte-bits 1) 1)
+    (test-assert-i64-eq (count-byte-bits 3) 2)
+    (test-assert-i64-eq (count-byte-bits 255) 8)
+    (test-assert-i64-eq (count-affinity-bytes mask) 11)
+    (test-assert-semaphore-err -1)
+    (test-assert-semaphore-err 2147483648)))

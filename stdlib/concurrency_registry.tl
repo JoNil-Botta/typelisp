@@ -230,19 +230,17 @@
     (let
       [offset : i64 0]
       [found : i64 -1]
-      (begin
-        (while (and (< offset capacity) (< found 0))
-          (let
-            [slot : i64 (% (+ start offset) capacity)]
-            (begin
-              (if (=
-                (unsafe
-                  (concurrency-ref states slot))
-                0)
-                (set! found slot)
-                unit)
-              (set! offset (+ offset 1)))))
-        found))))
+      (while (and (< offset capacity) (< found 0))
+        (let
+          [slot : i64 (% (+ start offset) capacity)]
+          (if (=
+            (unsafe
+              (concurrency-ref states slot))
+            0)
+            (set! found slot)
+            unit)
+          (set! offset (+ offset 1))))
+      found)))
 
 ;: Return the backing address of an owned Box without losing its owner.
 (defstruct ConcurrencyBoxIdentity
@@ -311,15 +309,13 @@
         (let
           [slot : i64 0]
           [found : i64 -1]
-          (begin
-            (while (and (< slot concurrency-authority-capacity) (< found 0))
-              (begin
-                (if (unsafe
-                  (concurrency-authority-at-address? slot address))
-                  (set! found slot)
-                  unit)
-                (set! slot (+ slot 1))))
-            found))))))
+          (while (and (< slot concurrency-authority-capacity) (< found 0))
+            (if (unsafe
+              (concurrency-authority-at-address? slot address))
+              (set! found slot)
+              unit)
+            (set! slot (+ slot 1)))
+          found)))))
 
 ;: Dropping an issued Box removes its address from the registry before the
 ;: caller's arena may recycle that storage. A native adapter still owns the
@@ -329,84 +325,75 @@
   (let
     [identity : ConcurrencyBoxIdentity
       (concurrency-owned-box-identity token-box)]
-    (begin
-      (unsafe
-        (concurrency-lock!))
-      (let
-        [slot : i64
-          (unsafe
-            (concurrency-cleanup-authority-slot identity.token identity.address))]
-        (if (>= slot 0)
-          (let
-            [resource-slot : i64
+    (unsafe
+      (concurrency-lock!))
+    (let
+      [slot : i64
+        (unsafe
+          (concurrency-cleanup-authority-slot identity.token identity.address))]
+      (if (>= slot 0)
+        (let
+          [resource-slot : i64
+            (unsafe
+              (concurrency-ref concurrency-authority-resource-slot slot))]
+          [resource-generation : i64
+            (unsafe
+              (concurrency-ref concurrency-authority-resource-generation slot))]
+          (if (and
+            (>= resource-slot 0)
+            (< resource-slot concurrency-resource-capacity)
+            (=
               (unsafe
-                (concurrency-ref concurrency-authority-resource-slot slot))]
-            [resource-generation : i64
+                (concurrency-ref concurrency-resource-state resource-slot))
+              1)
+            (=
               (unsafe
-                (concurrency-ref concurrency-authority-resource-generation slot))]
-            (begin
-              (if (and
-                (>= resource-slot 0)
-                (< resource-slot concurrency-resource-capacity)
-                (=
+                (concurrency-ref concurrency-resource-generation resource-slot))
+              resource-generation))
+            (let
+              [current : i64
+                (unsafe
+                  (concurrency-ref
+                    concurrency-resource-authority-head
+                    resource-slot))]
+              [previous : i64 -1]
+              (while (and (>= current 0) (!= current slot))
+                (set! previous current)
+                (set!
+                  current
                   (unsafe
-                    (concurrency-ref concurrency-resource-state resource-slot))
-                  1)
-                (=
-                  (unsafe
-                    (concurrency-ref
-                      concurrency-resource-generation
-                      resource-slot))
-                  resource-generation))
+                    (concurrency-ref concurrency-authority-next current))))
+              (if (= current slot)
                 (let
-                  [current : i64
+                  [next : i64
                     (unsafe
-                      (concurrency-ref
+                      (concurrency-ref concurrency-authority-next slot))]
+                  (if (< previous 0)
+                    (unsafe
+                      (concurrency-set!
                         concurrency-resource-authority-head
-                        resource-slot))]
-                  [previous : i64 -1]
-                  (begin
-                    (while (and (>= current 0) (!= current slot))
-                      (begin
-                        (set! previous current)
-                        (set!
-                          current
-                          (unsafe
-                            (concurrency-ref concurrency-authority-next current)))))
-                    (if (= current slot)
-                      (let
-                        [next : i64
-                          (unsafe
-                            (concurrency-ref concurrency-authority-next slot))]
-                        (if (< previous 0)
-                          (unsafe
-                            (concurrency-set!
-                              concurrency-resource-authority-head
-                              resource-slot
-                              next))
-                          (unsafe
-                            (concurrency-set!
-                              concurrency-authority-next
-                              previous
-                              next))))
-                      unit)))
-                unit)
-              (unsafe
-                (concurrency-set! concurrency-authority-state slot 0))
-              (unsafe
-                (concurrency-set! concurrency-authority-box-address slot 0))
-              (unsafe
-                (concurrency-set! concurrency-authority-resource-slot slot -1))
-              (unsafe
-                (concurrency-set!
-                  concurrency-authority-resource-generation
-                  slot
-                  0))
-              (unsafe
-                (concurrency-set! concurrency-authority-next slot -1))))
-          unit))
-      (unsafe
-        (concurrency-unlock!)))))
+                        resource-slot
+                        next))
+                    (unsafe
+                      (concurrency-set!
+                        concurrency-authority-next
+                        previous
+                        next))))
+                unit))
+            unit)
+          (unsafe
+            (concurrency-set! concurrency-authority-state slot 0))
+          (unsafe
+            (concurrency-set! concurrency-authority-box-address slot 0))
+          (unsafe
+            (concurrency-set! concurrency-authority-resource-slot slot -1))
+          (unsafe
+            (concurrency-set! concurrency-authority-resource-generation slot 0))
+          (unsafe
+            (concurrency-set! concurrency-authority-next slot -1)))
+        unit))
+    (unsafe
+      (concurrency-unlock!))))
 
 ;: Validate one issued authority and family while holding the registry lock.
 ;: Returns the resource slot or -1. No resource field is read on failure.
@@ -497,49 +484,48 @@
                 (+ (* generation concurrency-authority-capacity) slot)]
               [identity : ConcurrencyBoxIdentity
                 (concurrency-owned-box-identity (box token))]
-              (begin
-                (unsafe
-                  (concurrency-set!
-                    concurrency-authority-generation
-                    slot
-                    generation))
-                (unsafe
-                  (concurrency-set!
-                    concurrency-authority-box-address
-                    slot
-                    identity.address))
-                (unsafe
-                  (concurrency-set!
-                    concurrency-authority-resource-slot
-                    slot
-                    resource-slot))
-                (unsafe
-                  (concurrency-set!
-                    concurrency-authority-resource-generation
-                    slot
-                    (unsafe
-                      (concurrency-ref
-                        concurrency-resource-generation
-                        resource-slot))))
-                (unsafe
-                  (concurrency-set!
-                    concurrency-authority-next
-                    slot
-                    (unsafe
-                      (concurrency-ref
-                        concurrency-resource-authority-head
-                        resource-slot))))
-                (unsafe
-                  (concurrency-set!
-                    concurrency-resource-authority-head
-                    resource-slot
-                    slot))
-                (unsafe
-                  (concurrency-set! concurrency-authority-state slot 1))
-                (set!
-                  concurrency-next-authority
-                  (% (+ slot 1) concurrency-authority-capacity))
-                (ConcurrencyToken identity.box)))))))))
+              (unsafe
+                (concurrency-set!
+                  concurrency-authority-generation
+                  slot
+                  generation))
+              (unsafe
+                (concurrency-set!
+                  concurrency-authority-box-address
+                  slot
+                  identity.address))
+              (unsafe
+                (concurrency-set!
+                  concurrency-authority-resource-slot
+                  slot
+                  resource-slot))
+              (unsafe
+                (concurrency-set!
+                  concurrency-authority-resource-generation
+                  slot
+                  (unsafe
+                    (concurrency-ref
+                      concurrency-resource-generation
+                      resource-slot))))
+              (unsafe
+                (concurrency-set!
+                  concurrency-authority-next
+                  slot
+                  (unsafe
+                    (concurrency-ref
+                      concurrency-resource-authority-head
+                      resource-slot))))
+              (unsafe
+                (concurrency-set!
+                  concurrency-resource-authority-head
+                  resource-slot
+                  slot))
+              (unsafe
+                (concurrency-set! concurrency-authority-state slot 1))
+              (set!
+                concurrency-next-authority
+                (% (+ slot 1) concurrency-authority-capacity))
+              (ConcurrencyToken identity.box))))))))
 
 ;: `concurrency-issue-token` wrapped as a move-only authority.
 (unsafe
@@ -663,20 +649,18 @@
                   (match (unsafe
                     (concurrency-issue slot))
                     [(ConcurrencyShareErr)
-                      (begin
-                        (unsafe
-                          (concurrency-set! concurrency-resource-state slot 0))
-                        (unsafe
-                          (concurrency-unlock!))
-                        (ConcurrencyShareErr))]
+                      (unsafe
+                        (concurrency-set! concurrency-resource-state slot 0))
+                      (unsafe
+                        (concurrency-unlock!))
+                      (ConcurrencyShareErr)]
                     [(ConcurrencyShared authority)
-                      (begin
-                        (set!
-                          concurrency-next-resource
-                          (% (+ slot 1) concurrency-resource-capacity))
-                        (unsafe
-                          (concurrency-unlock!))
-                        (ConcurrencyShared authority))]))))))))))
+                      (set!
+                        concurrency-next-resource
+                        (% (+ slot 1) concurrency-resource-capacity))
+                      (unsafe
+                        (concurrency-unlock!))
+                      (ConcurrencyShared authority)]))))))))))
 
 ;: Issue a second authority token for one live shareable resource. Thread
 ;: task owners are deliberately excluded: their typed handles must remain
@@ -690,22 +674,20 @@
       (let
         [token : i64 (concurrency-authority-token authority)]
         [box-address : i64 (concurrency-authority-address authority)]
-        (begin
+        (unsafe
+          (concurrency-lock!))
+        (let
+          [slot : i64
+            (unsafe
+              (concurrency-validated-resource token box-address family))]
+          [issued : ConcurrencyTokenResult
+            (if (< slot 0)
+              (ConcurrencyTokenErr)
+              (unsafe
+                (concurrency-issue-token slot)))]
           (unsafe
-            (concurrency-lock!))
-          (let
-            [slot : i64
-              (unsafe
-                (concurrency-validated-resource token box-address family))]
-            [issued : ConcurrencyTokenResult
-              (if (< slot 0)
-                (ConcurrencyTokenErr)
-                (unsafe
-                  (concurrency-issue-token slot)))]
-            (begin
-              (unsafe
-                (concurrency-unlock!))
-              issued)))))))
+            (concurrency-unlock!))
+          issued)))))
 
 ;: Issue a second authority for one live shareable resource.
 (define (concurrency-share
@@ -771,17 +753,15 @@
     (let
       [token : i64 (concurrency-authority-token authority)]
       [box-address : i64 (concurrency-authority-address authority)]
-      (begin
+      (unsafe
+        (concurrency-lock!))
+      (let
+        [lease : ConcurrencyLease
+          (unsafe
+            (concurrency-locked-acquire token box-address family field-count))]
         (unsafe
-          (concurrency-lock!))
-        (let
-          [lease : ConcurrencyLease
-            (unsafe
-              (concurrency-locked-acquire token box-address family field-count))]
-          (begin
-            (unsafe
-              (concurrency-unlock!))
-            lease))))))
+          (concurrency-unlock!))
+        lease))))
 
 ;: The live resource row an issued token identity names, or -1: the token and
 ;: its Box address, as `concurrency-token-address` reads them from a token the
@@ -826,47 +806,43 @@
 ;: Release exactly one acquired lease. Invalid snapshots cannot alter counters.
 (unsafe
   (define (concurrency-release [lease : ConcurrencyLease]) : bool
-    (begin
-      (unsafe
-        (concurrency-lock!))
-      (let
-        [valid : bool
-          (and
-            lease.ok
-            (>= lease.resource-slot 0)
-            (< lease.resource-slot concurrency-resource-capacity)
-            (=
-              (unsafe
-                (concurrency-ref concurrency-resource-state lease.resource-slot))
-              1)
-            (=
-              (unsafe
-                (concurrency-ref
-                  concurrency-resource-generation
-                  lease.resource-slot))
-              lease.resource-generation)
-            (>
+    (unsafe
+      (concurrency-lock!))
+    (let
+      [valid : bool
+        (and
+          lease.ok
+          (>= lease.resource-slot 0)
+          (< lease.resource-slot concurrency-resource-capacity)
+          (=
+            (unsafe
+              (concurrency-ref concurrency-resource-state lease.resource-slot))
+            1)
+          (=
+            (unsafe
+              (concurrency-ref
+                concurrency-resource-generation
+                lease.resource-slot))
+            lease.resource-generation)
+          (>
+            (unsafe
+              (concurrency-ref concurrency-resource-leases lease.resource-slot))
+            0))]
+      (if valid
+        (unsafe
+          (concurrency-set!
+            concurrency-resource-leases
+            lease.resource-slot
+            (-
               (unsafe
                 (concurrency-ref
                   concurrency-resource-leases
                   lease.resource-slot))
-              0))]
-        (begin
-          (if valid
-            (unsafe
-              (concurrency-set!
-                concurrency-resource-leases
-                lease.resource-slot
-                (-
-                  (unsafe
-                    (concurrency-ref
-                      concurrency-resource-leases
-                      lease.resource-slot))
-                  1)))
-            unit)
-          (unsafe
-            (concurrency-unlock!))
-          valid)))))
+              1)))
+        unit)
+      (unsafe
+        (concurrency-unlock!))
+      valid)))
 
 ;: Detach one quiescent resource exactly once. Any retained aliases fail closed
 ;: before their resource slot can be reused, even if the native handle recycles.
@@ -879,125 +855,115 @@
       [token : i64 (concurrency-authority-token authority)]
       [box-address : i64 (concurrency-authority-address authority)]
       [empty : ConcurrencyClaim (ConcurrencyClaim false 0 0 0 0 0 0 0 0 0 "")]
-      (begin
-        (unsafe
-          (concurrency-lock!))
-        (let
-          [slot : i64
-            (unsafe
-              (concurrency-validated-resource token box-address family))]
-          [claim : ConcurrencyClaim
-            (if (or
-              (< slot 0)
-              (!=
-                (unsafe
-                  (concurrency-ref concurrency-resource-field-count slot))
-                field-count)
-              (!=
-                (unsafe
-                  (concurrency-ref concurrency-resource-leases slot))
-                0))
-              empty
+      (unsafe
+        (concurrency-lock!))
+      (let
+        [slot : i64
+          (unsafe
+            (concurrency-validated-resource token box-address family))]
+        [claim : ConcurrencyClaim
+          (if (or
+            (< slot 0)
+            (!=
+              (unsafe
+                (concurrency-ref concurrency-resource-field-count slot))
+              field-count)
+            (!=
+              (unsafe
+                (concurrency-ref concurrency-resource-leases slot))
+              0))
+            empty
+            (let
+              [detached : ConcurrencyClaim
+                (ConcurrencyClaim
+                  true
+                  family
+                  field-count
+                  (unsafe
+                    (concurrency-ref concurrency-resource-fields (* slot 7)))
+                  (unsafe
+                    (concurrency-ref
+                      concurrency-resource-fields
+                      (+ (* slot 7) 1)))
+                  (unsafe
+                    (concurrency-ref
+                      concurrency-resource-fields
+                      (+ (* slot 7) 2)))
+                  (unsafe
+                    (concurrency-ref
+                      concurrency-resource-fields
+                      (+ (* slot 7) 3)))
+                  (unsafe
+                    (concurrency-ref
+                      concurrency-resource-fields
+                      (+ (* slot 7) 4)))
+                  (unsafe
+                    (concurrency-ref
+                      concurrency-resource-fields
+                      (+ (* slot 7) 5)))
+                  (unsafe
+                    (concurrency-ref
+                      concurrency-resource-fields
+                      (+ (* slot 7) 6)))
+                  "")]
               (let
-                [detached : ConcurrencyClaim
-                  (ConcurrencyClaim
-                    true
-                    family
-                    field-count
-                    (unsafe
-                      (concurrency-ref concurrency-resource-fields (* slot 7)))
-                    (unsafe
-                      (concurrency-ref
-                        concurrency-resource-fields
-                        (+ (* slot 7) 1)))
-                    (unsafe
-                      (concurrency-ref
-                        concurrency-resource-fields
-                        (+ (* slot 7) 2)))
-                    (unsafe
-                      (concurrency-ref
-                        concurrency-resource-fields
-                        (+ (* slot 7) 3)))
-                    (unsafe
-                      (concurrency-ref
-                        concurrency-resource-fields
-                        (+ (* slot 7) 4)))
-                    (unsafe
-                      (concurrency-ref
-                        concurrency-resource-fields
-                        (+ (* slot 7) 5)))
-                    (unsafe
-                      (concurrency-ref
-                        concurrency-resource-fields
-                        (+ (* slot 7) 6)))
-                    "")]
-                (begin
+                [authority-slot : i64
+                  (unsafe
+                    (concurrency-ref concurrency-resource-authority-head slot))]
+                (while (>= authority-slot 0)
                   (let
-                    [authority-slot : i64
+                    [next-slot : i64
                       (unsafe
                         (concurrency-ref
-                          concurrency-resource-authority-head
-                          slot))]
-                    (while (>= authority-slot 0)
-                      (let
-                        [next-slot : i64
-                          (unsafe
-                            (concurrency-ref
-                              concurrency-authority-next
-                              authority-slot))]
-                        (begin
-                          (unsafe
-                            (concurrency-set!
-                              concurrency-authority-state
-                              authority-slot
-                              0))
-                          (unsafe
-                            (concurrency-set!
-                              concurrency-authority-box-address
-                              authority-slot
-                              0))
-                          (unsafe
-                            (concurrency-set!
-                              concurrency-authority-resource-slot
-                              authority-slot
-                              -1))
-                          (unsafe
-                            (concurrency-set!
-                              concurrency-authority-resource-generation
-                              authority-slot
-                              0))
-                          (unsafe
-                            (concurrency-set!
-                              concurrency-authority-next
-                              authority-slot
-                              -1))
-                          (set! authority-slot next-slot)))))
+                          concurrency-authority-next
+                          authority-slot))]
+                    (unsafe
+                      (concurrency-set!
+                        concurrency-authority-state
+                        authority-slot
+                        0))
+                    (unsafe
+                      (concurrency-set!
+                        concurrency-authority-box-address
+                        authority-slot
+                        0))
+                    (unsafe
+                      (concurrency-set!
+                        concurrency-authority-resource-slot
+                        authority-slot
+                        -1))
+                    (unsafe
+                      (concurrency-set!
+                        concurrency-authority-resource-generation
+                        authority-slot
+                        0))
+                    (unsafe
+                      (concurrency-set!
+                        concurrency-authority-next
+                        authority-slot
+                        -1))
+                    (set! authority-slot next-slot))))
+              (unsafe
+                (concurrency-set! concurrency-resource-authority-head slot -1))
+              (unsafe
+                (concurrency-set! concurrency-resource-state slot 0))
+              (unsafe
+                (concurrency-set! concurrency-resource-family slot 0))
+              (unsafe
+                (concurrency-set! concurrency-resource-field-count slot 0))
+              (let
+                [i : i64 0]
+                (while (< i 7)
                   (unsafe
                     (concurrency-set!
-                      concurrency-resource-authority-head
-                      slot
-                      -1))
-                  (unsafe
-                    (concurrency-set! concurrency-resource-state slot 0))
-                  (unsafe
-                    (concurrency-set! concurrency-resource-family slot 0))
-                  (unsafe
-                    (concurrency-set! concurrency-resource-field-count slot 0))
-                  (let
-                    [i : i64 0]
-                    (while (< i 7)
-                      (begin
-                        (unsafe
-                          (concurrency-set!
-                            concurrency-resource-fields
-                            (+ (* slot 7) i)
-                            0))
-                        (set! i (+ i 1)))))
-                  detached)))]
-          (begin
-            (unsafe
-              (concurrency-unlock!))
-            claim))))))
+                      concurrency-resource-fields
+                      (+ (* slot 7) i)
+                      0))
+                  (set! i (+ i 1))))
+              detached))]
+        (unsafe
+          (concurrency-unlock!))
+        claim))))
 
 ;: Observe table occupancy without exposing raw native resource fields.
 (define (concurrency-stats) : ConcurrencyStats
@@ -1008,53 +974,47 @@
     [retired-authorities : i64 0]
     [active-leases : i64 0]
     [slot : i64 0]
-    (begin
-      (unsafe
-        (concurrency-lock!))
-      (while (< slot concurrency-resource-capacity)
-        (begin
-          (let
-            [state : i64
+    (unsafe
+      (concurrency-lock!))
+    (while (< slot concurrency-resource-capacity)
+      (let
+        [state : i64
+          (unsafe
+            (concurrency-ref concurrency-resource-state slot))]
+        (when
+          (= state 1)
+          (set! live-resources (+ live-resources 1))
+          (set!
+            active-leases
+            (+
+              active-leases
               (unsafe
-                (concurrency-ref concurrency-resource-state slot))]
-            (begin
-              (if (= state 1)
-                (begin
-                  (set! live-resources (+ live-resources 1))
-                  (set!
-                    active-leases
-                    (+
-                      active-leases
-                      (unsafe
-                        (concurrency-ref concurrency-resource-leases slot)))))
-                unit)
-              (if (= state 2)
-                (set! retired-resources (+ retired-resources 1))
-                unit)))
-          (set! slot (+ slot 1))))
-      (set! slot 0)
-      (while (< slot concurrency-authority-capacity)
-        (begin
-          (let
-            [state : i64
-              (unsafe
-                (concurrency-ref concurrency-authority-state slot))]
-            (begin
-              (if (= state 1)
-                (set! live-authorities (+ live-authorities 1))
-                unit)
-              (if (= state 2)
-                (set! retired-authorities (+ retired-authorities 1))
-                unit)))
-          (set! slot (+ slot 1))))
-      (unsafe
-        (concurrency-unlock!))
-      (ConcurrencyStats
-        live-resources
-        live-authorities
-        retired-resources
-        retired-authorities
-        active-leases))))
+                (concurrency-ref concurrency-resource-leases slot)))))
+        (if (= state 2)
+          (set! retired-resources (+ retired-resources 1))
+          unit))
+      (set! slot (+ slot 1)))
+    (set! slot 0)
+    (while (< slot concurrency-authority-capacity)
+      (let
+        [state : i64
+          (unsafe
+            (concurrency-ref concurrency-authority-state slot))]
+        (if (= state 1)
+          (set! live-authorities (+ live-authorities 1))
+          unit)
+        (if (= state 2)
+          (set! retired-authorities (+ retired-authorities 1))
+          unit))
+      (set! slot (+ slot 1)))
+    (unsafe
+      (concurrency-unlock!))
+    (ConcurrencyStats
+      live-resources
+      live-authorities
+      retired-resources
+      retired-authorities
+      active-leases)))
 
 ;: Inline registry tests use inert fields, never OS handles or addresses.
 (cfg
@@ -1120,51 +1080,42 @@
       (let
         [before : ConcurrencyStats (concurrency-stats)]
         [variant : i64 0]
-        (begin
-          (while (< variant 5)
-            (begin
-              (match (concurrency-share
-                (& owner)
-                concurrency-family-channel-i64)
-                [(ConcurrencyShareErr) (concurrency-test-assert false 61)]
-                [(ConcurrencyShared alias)
-                  (with
-                    ([held alias cleanup-concurrency-authority])
-                    (set!
-                      (deref held.token)
-                      (cond
-                        [(= variant 0) 0]
-                        [(= variant 1) 1]
-                        [(= variant 2) -1]
-                        [(= variant 3) (concurrency-authority-token (& owner))]
-                        [else
-                          (+
-                            (concurrency-authority-token (& held))
-                            concurrency-authority-capacity)])))])
-              (let
-                [after : ConcurrencyStats (concurrency-stats)]
-                (begin
-                  (concurrency-test-assert
-                    (= after.live-authorities before.live-authorities)
-                    62)
-                  (concurrency-test-assert
-                    (= after.live-resources before.live-resources)
-                    63)))
-              (concurrency-test-assert
-                (concurrency-test-acquire-ok (& owner))
-                64)
-              ;; A forged Box carrying the owner's token must not revoke it.
+        (while (< variant 5)
+          (match (concurrency-share (& owner) concurrency-family-channel-i64)
+            [(ConcurrencyShareErr) (concurrency-test-assert false 61)]
+            [(ConcurrencyShared alias)
               (with
-                ([forged
-                    (ConcurrencyAuthority
-                      (box (concurrency-authority-token (& owner))))
-                    cleanup-concurrency-authority])
-                unit)
-              (concurrency-test-assert
-                (concurrency-test-acquire-ok (& owner))
-                65)
-              (set! variant (+ variant 1))))
-          (concurrency-test-assert (concurrency-test-close-ok (& owner)) 66)))]))
+                ([held alias cleanup-concurrency-authority])
+                (set!
+                  (deref held.token)
+                  (cond
+                    [(= variant 0) 0]
+                    [(= variant 1) 1]
+                    [(= variant 2) -1]
+                    [(= variant 3) (concurrency-authority-token (& owner))]
+                    [else
+                      (+
+                        (concurrency-authority-token (& held))
+                        concurrency-authority-capacity)])))])
+          (let
+            [after : ConcurrencyStats (concurrency-stats)]
+            (concurrency-test-assert
+              (= after.live-authorities before.live-authorities)
+              62)
+            (concurrency-test-assert
+              (= after.live-resources before.live-resources)
+              63))
+          (concurrency-test-assert (concurrency-test-acquire-ok (& owner)) 64)
+          ;; A forged Box carrying the owner's token must not revoke it.
+          (with
+            ([forged
+                (ConcurrencyAuthority
+                  (box (concurrency-authority-token (& owner))))
+                cleanup-concurrency-authority])
+            unit)
+          (concurrency-test-assert (concurrency-test-acquire-ok (& owner)) 65)
+          (set! variant (+ variant 1)))
+        (concurrency-test-assert (concurrency-test-close-ok (& owner)) 66))]))
 
 (test
   concurrency-registry-identity-and-lease
@@ -1182,56 +1133,49 @@
         [lease : ConcurrencyLease
           (unsafe
             (concurrency-acquire (& authority) concurrency-family-channel-i64 2))]
-        (begin
-          (concurrency-test-assert (not wrong-family.ok) 2)
+        (concurrency-test-assert (not wrong-family.ok) 2)
+        (concurrency-test-assert
+          (not
+            (concurrency-test-forged-acquire-ok
+              (concurrency-authority-token (& authority))))
+          3)
+        (concurrency-test-assert
+          (not (concurrency-test-forged-acquire-ok 0))
+          13)
+        (concurrency-test-assert
+          (not (concurrency-test-forged-acquire-ok 1))
+          14)
+        (concurrency-test-assert (not wrong-count.ok) 15)
+        (concurrency-test-assert lease.ok 4)
+        (concurrency-test-assert (= lease.field0 17) 5)
+        (concurrency-test-assert (= lease.field1 29) 6)
+        (let
+          [before : ConcurrencyStats (concurrency-stats)]
           (concurrency-test-assert
-            (not
-              (concurrency-test-forged-acquire-ok
-                (concurrency-authority-token (& authority))))
-            3)
-          (concurrency-test-assert
-            (not (concurrency-test-forged-acquire-ok 0))
-            13)
-          (concurrency-test-assert
-            (not (concurrency-test-forged-acquire-ok 1))
-            14)
-          (concurrency-test-assert (not wrong-count.ok) 15)
-          (concurrency-test-assert lease.ok 4)
-          (concurrency-test-assert (= lease.field0 17) 5)
-          (concurrency-test-assert (= lease.field1 29) 6)
+            (concurrency-test-share-and-drop (& authority))
+            16)
           (let
-            [before : ConcurrencyStats (concurrency-stats)]
-            (begin
-              (concurrency-test-assert
-                (concurrency-test-share-and-drop (& authority))
-                16)
-              (let
-                [after : ConcurrencyStats (concurrency-stats)]
-                (concurrency-test-assert
-                  (= after.live-authorities before.live-authorities)
-                  17))))
-          (match (concurrency-share
-            (& authority)
-            concurrency-family-channel-i64)
-            [(ConcurrencyShareErr) (concurrency-test-assert false 7)]
-            [(ConcurrencyShared alias)
-              (begin
-                (concurrency-test-assert
-                  (not (concurrency-test-close-ok (& alias)))
-                  8)
-                (concurrency-test-assert
-                  (unsafe
-                    (concurrency-release lease))
-                  9)
-                (concurrency-test-assert
-                  (concurrency-test-close-ok (& alias))
-                  10)
-                (concurrency-test-assert
-                  (not (concurrency-test-close-ok (& authority)))
-                  11)
-                (concurrency-test-assert
-                  (not (concurrency-test-acquire-ok (& authority)))
-                  12))])))]))
+            [after : ConcurrencyStats (concurrency-stats)]
+            (concurrency-test-assert
+              (= after.live-authorities before.live-authorities)
+              17)))
+        (match (concurrency-share (& authority) concurrency-family-channel-i64)
+          [(ConcurrencyShareErr) (concurrency-test-assert false 7)]
+          [(ConcurrencyShared alias)
+            (concurrency-test-assert
+              (not (concurrency-test-close-ok (& alias)))
+              8)
+            (concurrency-test-assert
+              (unsafe
+                (concurrency-release lease))
+              9)
+            (concurrency-test-assert (concurrency-test-close-ok (& alias)) 10)
+            (concurrency-test-assert
+              (not (concurrency-test-close-ok (& authority)))
+              11)
+            (concurrency-test-assert
+              (not (concurrency-test-acquire-ok (& authority)))
+              12)]))]))
 
 (test
   concurrency-registry-drop-original-authority
@@ -1249,27 +1193,25 @@
                   (& original)
                   concurrency-family-channel-i64
                   2))]
-            (begin
-              (concurrency-test-assert lease.ok 45)
-              (with ([retired original cleanup-concurrency-authority]) unit)
-              (let
-                [stats : ConcurrencyStats (concurrency-stats)]
-                (begin
-                  (concurrency-test-assert (= stats.live-authorities 1) 43)
-                  (concurrency-test-assert (= stats.active-leases 1) 46)))
-              (concurrency-test-assert
-                (not (concurrency-test-close-ok (& successor)))
-                47)
-              (concurrency-test-assert
-                (unsafe
-                  (concurrency-release lease))
-                48)
-              (concurrency-test-assert
-                (concurrency-test-acquire-ok (& successor))
-                42)
-              (concurrency-test-assert
-                (concurrency-test-close-ok (& successor))
-                44)))])]))
+            (concurrency-test-assert lease.ok 45)
+            (with ([retired original cleanup-concurrency-authority]) unit)
+            (let
+              [stats : ConcurrencyStats (concurrency-stats)]
+              (concurrency-test-assert (= stats.live-authorities 1) 43)
+              (concurrency-test-assert (= stats.active-leases 1) 46))
+            (concurrency-test-assert
+              (not (concurrency-test-close-ok (& successor)))
+              47)
+            (concurrency-test-assert
+              (unsafe
+                (concurrency-release lease))
+              48)
+            (concurrency-test-assert
+              (concurrency-test-acquire-ok (& successor))
+              42)
+            (concurrency-test-assert
+              (concurrency-test-close-ok (& successor))
+              44))])]))
 
 (test
   concurrency-registry-thread-owner-cannot-share
@@ -1277,25 +1219,23 @@
     (concurrency-register concurrency-family-thread 1 73 0 0 0 0 0 0))
     [(ConcurrencyShareErr) (concurrency-test-assert false 50)]
     [(ConcurrencyShared owner)
-      (begin
-        (match (concurrency-share (& owner) concurrency-family-thread)
-          [(ConcurrencyShared _) (concurrency-test-assert false 51)]
-          [(ConcurrencyShareErr) unit])
-        (let
-          [lease : ConcurrencyLease
-            (unsafe
-              (concurrency-acquire (& owner) concurrency-family-thread 1))]
-          (begin
-            (concurrency-test-assert lease.ok 52)
-            (concurrency-test-assert (= lease.field0 73) 53)
-            (concurrency-test-assert
-              (unsafe
-                (concurrency-release lease))
-              54)
-            (concurrency-test-assert
-              (unsafe
-                (concurrency-close (& owner) concurrency-family-thread 1)).ok
-              55))))]))
+      (match (concurrency-share (& owner) concurrency-family-thread)
+        [(ConcurrencyShared _) (concurrency-test-assert false 51)]
+        [(ConcurrencyShareErr) unit])
+      (let
+        [lease : ConcurrencyLease
+          (unsafe
+            (concurrency-acquire (& owner) concurrency-family-thread 1))]
+        (concurrency-test-assert lease.ok 52)
+        (concurrency-test-assert (= lease.field0 73) 53)
+        (concurrency-test-assert
+          (unsafe
+            (concurrency-release lease))
+          54)
+        (concurrency-test-assert
+          (unsafe
+            (concurrency-close (& owner) concurrency-family-thread 1)).ok
+          55))]))
 
 (test
   concurrency-registry-slot-reuse
@@ -1303,92 +1243,85 @@
     (concurrency-register concurrency-family-channel-i64 2 31 37 0 0 0 0 0))
     [(ConcurrencyShareErr) (concurrency-test-assert false 20)]
     [(ConcurrencyShared stale)
-      (begin
-        (concurrency-test-assert (concurrency-test-close-ok (& stale)) 21)
-        (let
-          [i : i64 0]
-          (while (< i (+ concurrency-authority-capacity 1))
-            (begin
-              (match (unsafe
-                (concurrency-register
-                  concurrency-family-channel-i64
-                  2
-                  i
-                  0
-                  0
-                  0
-                  0
-                  0
-                  0))
-                [(ConcurrencyShareErr) (concurrency-test-assert false 22)]
-                [(ConcurrencyShared current)
-                  (begin
-                    (concurrency-test-assert
-                      (concurrency-test-close-ok (& current))
-                      23)
-                    (concurrency-test-assert
-                      (not (concurrency-test-acquire-ok (& stale)))
-                      24))])
-              (set! i (+ i 1)))))
-        (let
-          [stats : ConcurrencyStats (concurrency-stats)]
-          (begin
-            (concurrency-test-assert (= stats.live-resources 0) 25)
-            (concurrency-test-assert (= stats.live-authorities 0) 26)
-            (concurrency-test-assert (= stats.active-leases 0) 27))))]))
+      (concurrency-test-assert (concurrency-test-close-ok (& stale)) 21)
+      (let
+        [i : i64 0]
+        (while (< i (+ concurrency-authority-capacity 1))
+          (match (unsafe
+            (concurrency-register
+              concurrency-family-channel-i64
+              2
+              i
+              0
+              0
+              0
+              0
+              0
+              0))
+            [(ConcurrencyShareErr) (concurrency-test-assert false 22)]
+            [(ConcurrencyShared current)
+              (concurrency-test-assert
+                (concurrency-test-close-ok (& current))
+                23)
+              (concurrency-test-assert
+                (not (concurrency-test-acquire-ok (& stale)))
+                24)])
+          (set! i (+ i 1))))
+      (let
+        [stats : ConcurrencyStats (concurrency-stats)]
+        (concurrency-test-assert (= stats.live-resources 0) 25)
+        (concurrency-test-assert (= stats.live-authorities 0) 26)
+        (concurrency-test-assert (= stats.active-leases 0) 27))]))
 
 (test
   concurrency-registry-generation-exhaustion
   (let
     [before : ConcurrencyStats (concurrency-stats)]
-    (begin
+    (unsafe
+      (concurrency-lock!))
+    (let
+      [resource-slot : i64
+        (unsafe
+          (concurrency-find-free
+            concurrency-resource-state
+            concurrency-resource-capacity
+            concurrency-next-resource))]
+      [authority-slot : i64
+        (unsafe
+          (concurrency-find-free
+            concurrency-authority-state
+            concurrency-authority-capacity
+            concurrency-next-authority))]
+      (concurrency-test-assert (>= resource-slot 0) 30)
+      (concurrency-test-assert (>= authority-slot 0) 31)
       (unsafe
-        (concurrency-lock!))
-      (let
-        [resource-slot : i64
-          (unsafe
-            (concurrency-find-free
-              concurrency-resource-state
-              concurrency-resource-capacity
-              concurrency-next-resource))]
-        [authority-slot : i64
-          (unsafe
-            (concurrency-find-free
-              concurrency-authority-state
-              concurrency-authority-capacity
-              concurrency-next-authority))]
-        (begin
-          (concurrency-test-assert (>= resource-slot 0) 30)
-          (concurrency-test-assert (>= authority-slot 0) 31)
-          (unsafe
-            (concurrency-set!
-              concurrency-resource-generation
-              resource-slot
-              concurrency-max-resource-generation))
-          (unsafe
-            (concurrency-set!
-              concurrency-authority-generation
-              authority-slot
-              concurrency-max-authority-generation))
-          (unsafe
-            (concurrency-unlock!))))
-      (match (unsafe
-        (concurrency-register concurrency-family-channel-i64 2 41 43 0 0 0 0 0))
-        [(ConcurrencyShareErr) (concurrency-test-assert false 32)]
-        [(ConcurrencyShared authority)
-          (concurrency-test-assert (concurrency-test-close-ok (& authority)) 33)])
-      (let
-        [after : ConcurrencyStats (concurrency-stats)]
-        (begin
-          (concurrency-test-assert
-            (= after.retired-resources (+ before.retired-resources 1))
-            34)
-          (concurrency-test-assert
-            (= after.retired-authorities (+ before.retired-authorities 1))
-            35)
-          (concurrency-test-assert
-            (= after.live-resources before.live-resources)
-            36)
-          (concurrency-test-assert
-            (= after.live-authorities before.live-authorities)
-            37))))))
+        (concurrency-set!
+          concurrency-resource-generation
+          resource-slot
+          concurrency-max-resource-generation))
+      (unsafe
+        (concurrency-set!
+          concurrency-authority-generation
+          authority-slot
+          concurrency-max-authority-generation))
+      (unsafe
+        (concurrency-unlock!)))
+    (match (unsafe
+      (concurrency-register concurrency-family-channel-i64 2 41 43 0 0 0 0 0))
+      [(ConcurrencyShareErr) (concurrency-test-assert false 32)]
+      [(ConcurrencyShared authority)
+        (concurrency-test-assert (concurrency-test-close-ok (& authority)) 33)])
+    (let
+      [after : ConcurrencyStats (concurrency-stats)]
+      (concurrency-test-assert
+        (= after.retired-resources (+ before.retired-resources 1))
+        34)
+      (concurrency-test-assert
+        (= after.retired-authorities (+ before.retired-authorities 1))
+        35)
+      (concurrency-test-assert
+        (= after.live-resources before.live-resources)
+        36)
+      (concurrency-test-assert
+        (= after.live-authorities before.live-authorities)
+        37))))

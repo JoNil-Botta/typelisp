@@ -136,83 +136,79 @@
     (let
       [offset : i64 0]
       [found : i64 -1]
-      (begin
-        (while (and (< offset format-writer-registry-capacity) (< found 0))
-          (let
-            [slot : i64 (% (+ start offset) format-writer-registry-capacity)]
-            (begin
-              (if (=
-                (unsafe
-                  (format-writer-registry-i64-ref
-                    format-writer-registry-states
-                    slot))
-                0)
-                (set! found slot)
-                unit)
-              (set! offset (+ offset 1)))))
-        found))))
+      (while (and (< offset format-writer-registry-capacity) (< found 0))
+        (let
+          [slot : i64 (% (+ start offset) format-writer-registry-capacity)]
+          (if (=
+            (unsafe
+              (format-writer-registry-i64-ref
+                format-writer-registry-states
+                slot))
+            0)
+            (set! found slot)
+            unit)
+          (set! offset (+ offset 1))))
+      found)))
 
 ;: Register one caller-proven live writer-cell address and return an opaque
 ;: generation token. The address must stay live until `unregister` returns.
 (unsafe
   (define (format-writer-register [address : i64] [writer-key : String]) : i64
-    (begin
-      (unsafe
-        (format-writer-registry-lock!))
-      (let
-        [slot : i64
+    (unsafe
+      (format-writer-registry-lock!))
+    (let
+      [slot : i64
+        (unsafe
+          (format-writer-registry-find-free-from format-writer-registry-next))]
+      (if (< slot 0)
+        (begin
           (unsafe
-            (format-writer-registry-find-free-from format-writer-registry-next))]
-        (if (< slot 0)
-          (begin
+            (format-writer-registry-unlock!))
+          (format-writer-registry-abort
+            "format: writer capability registry exhausted"))
+        (let
+          [previous : i64
             (unsafe
-              (format-writer-registry-unlock!))
-            (format-writer-registry-abort
-              "format: writer capability registry exhausted"))
-          (let
-            [previous : i64
+              (format-writer-registry-i64-ref
+                format-writer-registry-generations
+                slot))]
+          [generation : i64 (+ previous 1)]
+          [token : i64 (+ (* generation format-writer-registry-capacity) slot)]
+          (if (> generation format-writer-registry-max-generation)
+            (begin
               (unsafe
-                (format-writer-registry-i64-ref
+                (format-writer-registry-i64-set!
+                  format-writer-registry-states
+                  slot
+                  3))
+              (unsafe
+                (format-writer-registry-unlock!))
+              (unsafe
+                (format-writer-register address writer-key)))
+            (begin
+              (unsafe
+                (format-writer-registry-i64-set!
                   format-writer-registry-generations
-                  slot))]
-            [generation : i64 (+ previous 1)]
-            [token : i64
-              (+ (* generation format-writer-registry-capacity) slot)]
-            (if (> generation format-writer-registry-max-generation)
-              (begin
-                (unsafe
-                  (format-writer-registry-i64-set!
-                    format-writer-registry-states
-                    slot
-                    3))
-                (unsafe
-                  (format-writer-registry-unlock!))
-                (unsafe
-                  (format-writer-register address writer-key)))
-              (begin
-                (unsafe
-                  (format-writer-registry-i64-set!
-                    format-writer-registry-generations
-                    slot
-                    generation))
-                (unsafe
-                  (format-writer-registry-i64-set!
-                    format-writer-registry-addresses
-                    slot
-                    address))
-                (unsafe
-                  (format-writer-registry-key-set! slot writer-key))
-                (unsafe
-                  (format-writer-registry-i64-set!
-                    format-writer-registry-states
-                    slot
-                    1))
-                (set!
-                  format-writer-registry-next
-                  (% (+ slot 1) format-writer-registry-capacity))
-                (unsafe
-                  (format-writer-registry-unlock!))
-                token))))))))
+                  slot
+                  generation))
+              (unsafe
+                (format-writer-registry-i64-set!
+                  format-writer-registry-addresses
+                  slot
+                  address))
+              (unsafe
+                (format-writer-registry-key-set! slot writer-key))
+              (unsafe
+                (format-writer-registry-i64-set!
+                  format-writer-registry-states
+                  slot
+                  1))
+              (set!
+                format-writer-registry-next
+                (% (+ slot 1) format-writer-registry-capacity))
+              (unsafe
+                (format-writer-registry-unlock!))
+              token)))))))
 
 ;: Acquire the live, type-matched writer address for one synchronous callback.
 ;: The returned address is zero when the token is forged, stale, belongs to a
@@ -224,17 +220,17 @@
     [expected-key : (& expected str)]) : i64
     (let
       [address : i64 0]
-      (begin
-        (unsafe
-          (format-writer-registry-lock!))
-        (if (> token 0)
-          (let
-            [slot : i64 (% token format-writer-registry-capacity)]
-            [generation : i64 (/ token format-writer-registry-capacity)]
-            [registered-key : String
-              (unsafe
-                (format-writer-registry-key-ref slot))]
-            (if (and
+      (unsafe
+        (format-writer-registry-lock!))
+      (if (> token 0)
+        (let
+          [slot : i64 (% token format-writer-registry-capacity)]
+          [generation : i64 (/ token format-writer-registry-capacity)]
+          [registered-key : String
+            (unsafe
+              (format-writer-registry-key-ref slot))]
+          (when
+            (and
               (> generation 0)
               (< slot format-writer-registry-capacity)
               (=
@@ -250,75 +246,70 @@
                     slot))
                 generation)
               (string.eq (& registered-key) expected-key))
-              (begin
-                (set!
-                  address
-                  (unsafe
-                    (format-writer-registry-i64-ref
-                      format-writer-registry-addresses
-                      slot)))
-                (if (= address 0)
-                  unit
-                  (unsafe
-                    (format-writer-registry-i64-set!
-                      format-writer-registry-states
-                      slot
-                      2))))
-              unit))
-          unit)
-        (unsafe
-          (format-writer-registry-unlock!))
-        address))))
-
-;: Release a callback lease acquired for `token`.
-(unsafe
-  (define (format-writer-release [token : i64]) : unit
-    (begin
-      (unsafe
-        (format-writer-registry-lock!))
-      (if (> token 0)
-        (let
-          [slot : i64 (% token format-writer-registry-capacity)]
-          [generation : i64 (/ token format-writer-registry-capacity)]
-          [registered-generation : i64
-            (unsafe
-              (format-writer-registry-i64-ref
-                format-writer-registry-generations
-                slot))]
-          [state : i64
-            (unsafe
-              (format-writer-registry-i64-ref
-                format-writer-registry-states
-                slot))]
-          (if (and
-            (> generation 0)
-            (< slot format-writer-registry-capacity)
-            (= registered-generation generation))
-            (if (= state 2)
+            (set!
+              address
+              (unsafe
+                (format-writer-registry-i64-ref
+                  format-writer-registry-addresses
+                  slot)))
+            (if (= address 0)
+              unit
               (unsafe
                 (format-writer-registry-i64-set!
                   format-writer-registry-states
                   slot
-                  1))
-              (if (= state 4)
-                (begin
-                  (unsafe
-                    (format-writer-registry-i64-set!
-                      format-writer-registry-addresses
-                      slot
-                      0))
-                  (unsafe
-                    (format-writer-registry-key-set! slot ""))
-                  (unsafe
-                    (format-writer-registry-i64-set!
-                      format-writer-registry-states
-                      slot
-                      0)))
-                unit))
-            unit))
+                  2)))))
         unit)
       (unsafe
-        (format-writer-registry-unlock!)))))
+        (format-writer-registry-unlock!))
+      address)))
+
+;: Release a callback lease acquired for `token`.
+(unsafe
+  (define (format-writer-release [token : i64]) : unit
+    (unsafe
+      (format-writer-registry-lock!))
+    (if (> token 0)
+      (let
+        [slot : i64 (% token format-writer-registry-capacity)]
+        [generation : i64 (/ token format-writer-registry-capacity)]
+        [registered-generation : i64
+          (unsafe
+            (format-writer-registry-i64-ref
+              format-writer-registry-generations
+              slot))]
+        [state : i64
+          (unsafe
+            (format-writer-registry-i64-ref format-writer-registry-states slot))]
+        (if (and
+          (> generation 0)
+          (< slot format-writer-registry-capacity)
+          (= registered-generation generation))
+          (if (= state 2)
+            (unsafe
+              (format-writer-registry-i64-set!
+                format-writer-registry-states
+                slot
+                1))
+            (if (= state 4)
+              (begin
+                (unsafe
+                  (format-writer-registry-i64-set!
+                    format-writer-registry-addresses
+                    slot
+                    0))
+                (unsafe
+                  (format-writer-registry-key-set! slot ""))
+                (unsafe
+                  (format-writer-registry-i64-set!
+                    format-writer-registry-states
+                    slot
+                    0)))
+              unit))
+          unit))
+      unit)
+    (unsafe
+      (format-writer-registry-unlock!))))
 
 ;: Invalidate one token after every in-flight callback releases its lease.
 ;: New acquisitions cannot begin after the locked state transition to free.
@@ -327,50 +318,49 @@
     (let
       [done : bool false]
       (while (not done)
-        (begin
-          (unsafe
-            (format-writer-registry-lock!))
-          (if (> token 0)
-            (let
-              [slot : i64 (% token format-writer-registry-capacity)]
-              [generation : i64 (/ token format-writer-registry-capacity)]
-              [registered-generation : i64
+        (unsafe
+          (format-writer-registry-lock!))
+        (if (> token 0)
+          (let
+            [slot : i64 (% token format-writer-registry-capacity)]
+            [generation : i64 (/ token format-writer-registry-capacity)]
+            [registered-generation : i64
+              (unsafe
+                (format-writer-registry-i64-ref
+                  format-writer-registry-generations
+                  slot))]
+            [state : i64
+              (unsafe
+                (format-writer-registry-i64-ref
+                  format-writer-registry-states
+                  slot))]
+            (if (and
+              (> generation 0)
+              (< slot format-writer-registry-capacity)
+              (= registered-generation generation))
+              (if (= state 2)
                 (unsafe
-                  (format-writer-registry-i64-ref
-                    format-writer-registry-generations
-                    slot))]
-              [state : i64
-                (unsafe
-                  (format-writer-registry-i64-ref
+                  (format-writer-registry-i64-set!
                     format-writer-registry-states
-                    slot))]
-              (if (and
-                (> generation 0)
-                (< slot format-writer-registry-capacity)
-                (= registered-generation generation))
-                (if (= state 2)
-                  (unsafe
-                    (format-writer-registry-i64-set!
-                      format-writer-registry-states
-                      slot
-                      4))
-                  (if (= state 4)
-                    unit
-                    (begin
-                      (unsafe
-                        (format-writer-registry-i64-set!
-                          format-writer-registry-addresses
-                          slot
-                          0))
-                      (unsafe
-                        (format-writer-registry-key-set! slot ""))
-                      (unsafe
-                        (format-writer-registry-i64-set!
-                          format-writer-registry-states
-                          slot
-                          0))
-                      (set! done true))))
-                (set! done true)))
-            (set! done true))
-          (unsafe
-            (format-writer-registry-unlock!)))))))
+                    slot
+                    4))
+                (if (= state 4)
+                  unit
+                  (begin
+                    (unsafe
+                      (format-writer-registry-i64-set!
+                        format-writer-registry-addresses
+                        slot
+                        0))
+                    (unsafe
+                      (format-writer-registry-key-set! slot ""))
+                    (unsafe
+                      (format-writer-registry-i64-set!
+                        format-writer-registry-states
+                        slot
+                        0))
+                    (set! done true))))
+              (set! done true)))
+          (set! done true))
+        (unsafe
+          (format-writer-registry-unlock!))))))

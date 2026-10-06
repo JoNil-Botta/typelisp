@@ -219,17 +219,15 @@
       (let
         [slots : (__tl_dyn-array String) (__tl_make-array String n)]
         [i : i64 0]
-        (begin
-          (while (< i n)
-            (begin
-              (set!
-                (array-ref slots i)
-                (process-array-shared-view args.slots (+ i 1)))
-              (set! i (+ i 1))))
-          (ProcessStringStep
-            true
-            (process-array-shared-view args.slots 0)
-            (ProcessStringList slots)))))))
+        (while (< i n)
+          (set!
+            (array-ref slots i)
+            (process-array-shared-view args.slots (+ i 1)))
+          (set! i (+ i 1)))
+        (ProcessStringStep
+          true
+          (process-array-shared-view args.slots 0)
+          (ProcessStringList slots))))))
 
 ;: Return whether a destructured argv step contains an item.
 (define (string-step-present? [step : (& step ProcessStringStep)]) : bool
@@ -267,12 +265,9 @@
     [n : i64 (env-count env)]
     [i : i64 start]
     (while (< i n)
-      (begin
-        (set! (array-ref dst-names (+ offset (- i start))) (env-name-ref env i))
-        (set!
-          (array-ref dst-values (+ offset (- i start)))
-          (env-value-ref env i))
-        (set! i (+ i 1))))))
+      (set! (array-ref dst-names (+ offset (- i start))) (env-name-ref env i))
+      (set! (array-ref dst-values (+ offset (- i start))) (env-value-ref env i))
+      (set! i (+ i 1)))))
 
 ;: Return a destructured step from an environment override list. The tail is
 ;: copied to right-sized parallel arrays so stepping does not retain a boxed
@@ -287,17 +282,15 @@
         [tail-names : (__tl_dyn-array String) (__tl_make-array String tail-n)]
         [tail-values : (__tl_dyn-array String) (__tl_make-array String tail-n)]
         [i : i64 1]
-        (begin
-          (while (< i n)
-            (begin
-              (set! (array-ref tail-names (- i 1)) (env-name-ref env i))
-              (set! (array-ref tail-values (- i 1)) (env-value-ref env i))
-              (set! i (+ i 1))))
-          (ProcessEnvStep
-            true
-            (env-name-ref env 0)
-            (env-value-ref env 0)
-            (ProcessEnvList tail-names tail-values)))))))
+        (while (< i n)
+          (set! (array-ref tail-names (- i 1)) (env-name-ref env i))
+          (set! (array-ref tail-values (- i 1)) (env-value-ref env i))
+          (set! i (+ i 1)))
+        (ProcessEnvStep
+          true
+          (env-name-ref env 0)
+          (env-value-ref env 0)
+          (ProcessEnvList tail-names tail-values))))))
 
 ;: Return whether a destructured env step contains an item.
 (define (env-step-present? [step : (& step ProcessEnvStep)]) : bool
@@ -352,11 +345,10 @@
     [n : i64 (array-length args.slots)]
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set!
-          (array-ref dst (+ offset i))
-          (process-array-shared-view args.slots i))
-        (set! i (+ i 1))))))
+      (set!
+        (array-ref dst (+ offset i))
+        (process-array-shared-view args.slots i))
+      (set! i (+ i 1)))))
 
 ;: Prepend an owned argument string to an argv list.
 (define (args-cons [value : String] [rest : ProcessStringList]) : ProcessStringList
@@ -364,18 +356,16 @@
     [n : i64 (array-length rest.slots)]
     [next : i64 (process-checked-count-add n 1)]
     [slots : (__tl_dyn-array String) (__tl_make-array String next)]
-    (begin
-      (set! (array-ref slots 0) value)
-      (args-copy-into (&mut slots) rest 1)
-      (ProcessStringList slots))))
+    (set! (array-ref slots 0) value)
+    (args-copy-into (&mut slots) rest 1)
+    (ProcessStringList slots)))
 
 ;: Return a one-element argument list backed by an owned string.
 (define (args-single [value : String]) : ProcessStringList
   (let
     [slots : (__tl_dyn-array String) (__tl_make-array String 1)]
-    (begin
-      (set! (array-ref slots 0) value)
-      (ProcessStringList slots))))
+    (set! (array-ref slots 0) value)
+    (ProcessStringList slots)))
 
 ;: Concatenate two argument lists while preserving argv order.
 (define (args-append [left : ProcessStringList] [right : ProcessStringList]) : ProcessStringList
@@ -384,10 +374,9 @@
     [rn : i64 (array-length right.slots)]
     [count : i64 (process-checked-count-add ln rn)]
     [slots : (__tl_dyn-array String) (__tl_make-array String count)]
-    (begin
-      (args-copy-into (&mut slots) left 0)
-      (args-copy-into (&mut slots) right ln)
-      (ProcessStringList slots))))
+    (args-copy-into (&mut slots) left 0)
+    (args-copy-into (&mut slots) right ln)
+    (ProcessStringList slots)))
 
 ;: Convert a generated string-vector argv buffer to the sequence representation
 ;: consumed by `ProcessCommand`, preserving vector order.
@@ -399,12 +388,10 @@
       (let
         [slots : (__tl_dyn-array String) (__tl_make-array String n)]
         [i : i64 0]
-        (begin
-          (while (< i n)
-            (begin
-              (set! (array-ref slots i) (svec.get args i ""))
-              (set! i (+ i 1))))
-          (ProcessStringList slots))))))
+        (while (< i n)
+          (set! (array-ref slots i) (svec.get args i ""))
+          (set! i (+ i 1)))
+        (ProcessStringList slots)))))
 
 ;: Return an empty environment override list.
 (define (env-empty) : ProcessEnvList
@@ -429,11 +416,10 @@
     [next : i64 (process-checked-count-add n 1)]
     [names : (__tl_dyn-array String) (__tl_make-array String next)]
     [values : (__tl_dyn-array String) (__tl_make-array String next)]
-    (begin
-      (set! (array-ref names 0) name)
-      (set! (array-ref values 0) value)
-      (env-copy-into (&mut names) (&mut values) rest 1 0)
-      (ProcessEnvList names values))))
+    (set! (array-ref names 0) name)
+    (set! (array-ref values 0) value)
+    (env-copy-into (&mut names) (&mut values) rest 1 0)
+    (ProcessEnvList names values)))
 
 ;: Return true when `text` contains `needle`.
 (define (string-contains-char? [text : (& text str)] [needle : char]) : bool
@@ -441,14 +427,12 @@
     [n : i64 (string-length text)]
     [i : i64 0]
     [found : bool false]
-    (begin
-      (while (and (< i n) (not found))
-        (begin
-          (if (= (string-ref text i) needle)
-            (set! found true)
-            unit)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< i n) (not found))
+      (if (= (string-ref text i) needle)
+        (set! found true)
+        unit)
+      (set! i (+ i 1)))
+    found))
 
 ;: Return the name buffer from a vector-backed env override set.
 (define (env-vec-names [env : (& env ProcessEnvVec)]) : (& env svec.Vec)
@@ -503,9 +487,8 @@
   (if (env-vec-storage-valid? env)
     (let
       [_next : i64 (process-checked-count-add (svec.len (& env.names)) 1)]
-      (begin
-        (svec.push-ref! (&mut env.names) name)
-        (svec.push-ref! (&mut env.values) value)))
+      (svec.push-ref! (&mut env.names) name)
+      (svec.push-ref! (&mut env.values) value))
     (io.panic "process: environment vector storage is malformed")))
 
 ;: Fill dense public env storage from a vector-backed override set.
@@ -517,10 +500,9 @@
     [n : i64 (env-vec-count env)]
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref names i) (svec.get (env-vec-names env) i ""))
-        (set! (array-ref values i) (svec.get (env-vec-values env) i ""))
-        (set! i (+ i 1))))))
+      (set! (array-ref names i) (svec.get (env-vec-names env) i ""))
+      (set! (array-ref values i) (svec.get (env-vec-values env) i ""))
+      (set! i (+ i 1)))))
 
 ;: Convert vector-backed env overrides to the dense representation consumed by
 ;: `ProcessCommand` and the process runtime.
@@ -530,9 +512,8 @@
       [n : i64 (env-vec-count env)]
       [names : (__tl_dyn-array String) (__tl_make-array String n)]
       [values : (__tl_dyn-array String) (__tl_make-array String n)]
-      (begin
-        (env-vec-to-list-fill env (&mut names) (&mut values))
-        (ProcessEnvList names values)))
+      (env-vec-to-list-fill env (&mut names) (&mut values))
+      (ProcessEnvList names values))
     (io.panic "process: environment vector storage is malformed")))
 
 ;: Return the first vector-backed env validation error, or `ProcessNoString`.
@@ -1117,9 +1098,8 @@
 
 ;: Inline test failure helper.
 (define (test-fail) : unit
-  (begin
-    (/ 1 0)
-    unit))
+  (/ 1 0)
+  unit)
 
 ;: Inline test boolean assertion.
 (define (test-assert [ok : bool]) : unit
@@ -1140,10 +1120,9 @@
   [env : ProcessEnvList]
   [expected-name : String]
   [expected-value : String]) : unit
-  (begin
-    (test-assert (> (env-count env) 0))
-    (test-assert-string-eq (env-name-ref env 0) expected-name)
-    (test-assert-string-eq (env-value-ref env 0) expected-value)))
+  (test-assert (> (env-count env) 0))
+  (test-assert-string-eq (env-name-ref env 0) expected-name)
+  (test-assert-string-eq (env-value-ref env 0) expected-value))
 
 ;: Inline test assertion for a two-entry process environment list.
 (define (test-assert-env-list2
@@ -1152,12 +1131,11 @@
   [first-value : String]
   [second-name : String]
   [second-value : String]) : unit
-  (begin
-    (test-assert-i64-eq (env-count env) 2)
-    (test-assert-string-eq (env-name-ref env 0) first-name)
-    (test-assert-string-eq (env-value-ref env 0) first-value)
-    (test-assert-string-eq (env-name-ref env 1) second-name)
-    (test-assert-string-eq (env-value-ref env 1) second-value)))
+  (test-assert-i64-eq (env-count env) 2)
+  (test-assert-string-eq (env-name-ref env 0) first-name)
+  (test-assert-string-eq (env-value-ref env 0) first-value)
+  (test-assert-string-eq (env-name-ref env 1) second-name)
+  (test-assert-string-eq (env-value-ref env 1) second-value))
 
 ;: Inline test body for dense environment storage, stepping, duplicates, and
 ;: retained-parent persistence.
@@ -1176,17 +1154,16 @@
     [empty-step : ProcessEnvStep (env-step (process-place-shared-view empty))]
     [child-step : ProcessEnvStep (env-step (process-place-shared-view child))]
     [tail-step : ProcessEnvStep (env-step (env-step-rest child-step))]
-    (begin
-      (test-assert-i64-eq (env-count empty) 0)
-      (test-assert (not (env-step-present? empty-step)))
-      (test-assert-i64-eq (env-count parent) 1)
-      (test-assert-env-head parent "PARENT" "one")
-      (test-assert-i64-eq (env-count child) 2)
-      (test-assert-env-list2 child "CHILD" "two" "PARENT" "one")
-      (test-assert (env-step-present? child-step))
-      (test-assert-string-eq (env-step-name child-step) "CHILD")
-      (test-assert-string-eq (env-step-value child-step) "two")
-      (test-assert (env-step-present? tail-step))
-      (test-assert-string-eq (env-step-name tail-step) "PARENT")
-      (test-assert-string-eq (env-step-value tail-step) "one")
-      (test-assert-env-list2 duplicate "DUP" "second" "DUP" "first"))))
+    (test-assert-i64-eq (env-count empty) 0)
+    (test-assert (not (env-step-present? empty-step)))
+    (test-assert-i64-eq (env-count parent) 1)
+    (test-assert-env-head parent "PARENT" "one")
+    (test-assert-i64-eq (env-count child) 2)
+    (test-assert-env-list2 child "CHILD" "two" "PARENT" "one")
+    (test-assert (env-step-present? child-step))
+    (test-assert-string-eq (env-step-name child-step) "CHILD")
+    (test-assert-string-eq (env-step-value child-step) "two")
+    (test-assert (env-step-present? tail-step))
+    (test-assert-string-eq (env-step-name tail-step) "PARENT")
+    (test-assert-string-eq (env-step-value tail-step) "one")
+    (test-assert-env-list2 duplicate "DUP" "second" "DUP" "first")))

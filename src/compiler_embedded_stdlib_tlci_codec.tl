@@ -546,18 +546,18 @@
                         buffer
                         available
                         consumed)]
-                    (match (compiler-embedded-stdlib-tlci-codec-decode-symbol
-                      payload
-                      bit-len
-                      (&mut reader)
-                      (& main-table))
-                      [(Err message) (return (Err message))]
-                      [(Ok value)
-                        (set! symbol value)
-                        (set! next-byte reader.next-byte)
-                        (set! buffer reader.buffer)
-                        (set! available reader.available)
-                        (set! consumed reader.consumed)])))
+                    [value
+                      (try
+                        (compiler-embedded-stdlib-tlci-codec-decode-symbol
+                          payload
+                          bit-len
+                          (&mut reader)
+                          (& main-table)))]
+                    (set! symbol value)
+                    (set! next-byte reader.next-byte)
+                    (set! buffer reader.buffer)
+                    (set! available reader.available)
+                    (set! consumed reader.consumed)))
                 (if (< symbol 256)
                   (begin
                     (set! (array-ref out out-index) (cast symbol : u8))
@@ -606,20 +606,20 @@
                                 buffer
                                 available
                                 consumed)]
-                            (match (compiler-embedded-stdlib-tlci-codec-decode-symbol
-                              payload
-                              bit-len
-                              (&mut reader)
-                              (if (= stage 1)
-                                (& distance-table)
-                                (& length-table)))
-                              [(Err message) (return (Err message))]
-                              [(Ok v)
-                                (set! value v)
-                                (set! next-byte reader.next-byte)
-                                (set! buffer reader.buffer)
-                                (set! available reader.available)
-                                (set! consumed reader.consumed)])))
+                            [v
+                              (try
+                                (compiler-embedded-stdlib-tlci-codec-decode-symbol
+                                  payload
+                                  bit-len
+                                  (&mut reader)
+                                  (if (= stage 1)
+                                    (& distance-table)
+                                    (& length-table))))]
+                            (set! value v)
+                            (set! next-byte reader.next-byte)
+                            (set! buffer reader.buffer)
+                            (set! available reader.available)
+                            (set! consumed reader.consumed)))
                         (if (= stage 1)
                           (begin
                             (set! distance-symbol value)
@@ -666,30 +666,30 @@
           (+
             distance-start
             (compiler-embedded-stdlib-tlci-codec-distance-symbols))]
-        (match (compiler-embedded-stdlib-tlci-codec-build-table
-          payload
-          main-start
-          (compiler-embedded-stdlib-tlci-codec-main-symbols))
-          [(Err message) (Err message)]
-          [(Ok main-table)
-            (match (compiler-embedded-stdlib-tlci-codec-build-table
+        [main-table
+          (try
+            (compiler-embedded-stdlib-tlci-codec-build-table
+              payload
+              main-start
+              (compiler-embedded-stdlib-tlci-codec-main-symbols)))]
+        [distance-table
+          (try
+            (compiler-embedded-stdlib-tlci-codec-build-table
               payload
               distance-start
-              (compiler-embedded-stdlib-tlci-codec-distance-symbols))
-              [(Err message) (Err message)]
-              [(Ok distance-table)
-                (match (compiler-embedded-stdlib-tlci-codec-build-table
-                  payload
-                  length-start
-                  (compiler-embedded-stdlib-tlci-codec-length-symbols))
-                  [(Err message) (Err message)]
-                  [(Ok length-table)
-                    (compiler-embedded-stdlib-tlci-codec-decode-with-tables
-                      payload
-                      raw-len
-                      bit-len
-                      bit-start
-                      main-start
-                      main-table
-                      distance-table
-                      length-table)])])]))]))
+              (compiler-embedded-stdlib-tlci-codec-distance-symbols)))]
+        [length-table
+          (try
+            (compiler-embedded-stdlib-tlci-codec-build-table
+              payload
+              length-start
+              (compiler-embedded-stdlib-tlci-codec-length-symbols)))]
+        (compiler-embedded-stdlib-tlci-codec-decode-with-tables
+          payload
+          raw-len
+          bit-len
+          bit-start
+          main-start
+          main-table
+          distance-table
+          length-table))]))

@@ -204,30 +204,27 @@
             [docs : doc_extract.DocExtraction
               (doc_extract.doc-extract-file
                 (owned_view.compiler-owned-shared-view path))]
-            (match (doc_expand.doc-expanded-generated-modules-from-source-docs-with-state-and-pools-and-intern-state
-              (owned_view.compiler-owned-shared-view load-state)
-              job-state
-              path
-              docs
-              (owned_view.compiler-owned-shared-view stdlib-roots)
-              pools
-              (owned_view.compiler-owned-shared-view intern-state))
-              [(Ok head-modules)
-                (match (doc-generated-modules-from-source-paths-into
+            [head-modules
+              (try
+                (doc_expand.doc-expanded-generated-modules-from-source-docs-with-state-and-pools-and-intern-state
+                  (owned_view.compiler-owned-shared-view load-state)
+                  job-state
+                  path
+                  docs
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  pools
+                  (owned_view.compiler-owned-shared-view intern-state)))]
+            [tail-modules
+              (try
+                (doc-generated-modules-from-source-paths-into
                   load-state
                   job-state
                   pools
                   intern-state
                   rest
                   seen
-                  stdlib-roots)
-                  [(Ok tail-modules)
-                    (Ok
-                      (doc_render.doc-module-list-append
-                        head-modules
-                        tail-modules))]
-                  [(Err message) (Err message)])]
-              [(Err message) (Err message)]))
+                  stdlib-roots))]
+            (Ok (doc_render.doc-module-list-append head-modules tail-modules)))
           (doc-generated-modules-from-source-paths-into
             load-state
             job-state
@@ -659,12 +656,11 @@
         (Err "doc: cannot combine --batch with --manifest-path")
         (if (not (doc_svec.is-empty? (& input-paths)))
           (Err "doc: cannot combine input paths with --batch")
-          (match (doc-test-batch-paths list-path)
-            [(Ok paths)
-              (if (doc_svec.is-empty? (& paths))
-                (Err "doc: --batch list is empty")
-                (Ok (File paths stdlib-roots)))]
-            [(Err message) (Err message)])))]
+          (let
+            [paths (try (doc-test-batch-paths list-path))]
+            (if (doc_svec.is-empty? (& paths))
+              (Err "doc: --batch list is empty")
+              (Ok (File paths stdlib-roots))))))]
     [(No)
       (cond
         [doc-test-prefix-cache-stats

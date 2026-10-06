@@ -8502,33 +8502,33 @@
                 "object emission failed: "
                 (compiler_diagnostic.compiler-diagnostic-render (deref diag))))]
           [(Ok image)
-            (match (compiler_tlci_native_image.compiler-tlci-native-layout-image
-              (owned_view.compiler-owned-shared-view image))
-              [(Err message) (Err message)]
-              [(Ok layout)
+            (let
+              [layout
+                (try
+                  (compiler_tlci_native_image.compiler-tlci-native-layout-image
+                    (owned_view.compiler-owned-shared-view image)))]
+              [entry-offsets : (__tl_dyn-array i64)
+                (embedded-native-entry-offsets image (array-length names))]
+              (if (not (= (array-length entry-offsets) (array-length names)))
+                (Err "entry count does not match catalog")
                 (let
-                  [entry-offsets : (__tl_dyn-array i64)
-                    (embedded-native-entry-offsets image (array-length names))]
-                  (if (not
-                    (= (array-length entry-offsets) (array-length names)))
-                    (Err "entry count does not match catalog")
-                    (match (compiler_tlci_native_image.compiler-tlci-native-emit-imports
-                      (& layout))
-                      [(Err message) (Err message)]
-                      [(Ok imports)
-                        (match (compiler_tlci_native_image.compiler-tlci-native-package
-                          metadata-text
-                          build-hash
-                          (if windows-target
-                            tlci_core.tlci-host-platform-x86-64-windows
-                            tlci_core.tlci-host-platform-x86-64-linux)
-                          rodata
-                          layout.bytes
-                          imports
-                          layout.fixup-offsets
-                          layout.fixup-count
-                          (owned_view.compiler-owned-shared-view names)
-                          entry-offsets
-                          (array-length names))
-                          [(Err message) (Err message)]
-                          [(Ok bytes) (Ok bytes)])])))])])])))
+                  [imports
+                    (try
+                      (compiler_tlci_native_image.compiler-tlci-native-emit-imports
+                        (& layout)))]
+                  (Ok
+                    (try
+                      (compiler_tlci_native_image.compiler-tlci-native-package
+                        metadata-text
+                        build-hash
+                        (if windows-target
+                          tlci_core.tlci-host-platform-x86-64-windows
+                          tlci_core.tlci-host-platform-x86-64-linux)
+                        rodata
+                        layout.bytes
+                        imports
+                        layout.fixup-offsets
+                        layout.fixup-count
+                        (owned_view.compiler-owned-shared-view names)
+                        entry-offsets
+                        (array-length names)))))))])])))

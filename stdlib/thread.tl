@@ -718,8 +718,9 @@
         (unsafe
           (read-i32 started-addr))
         (cast 0 : i32))
-        (thread-windows-switch-to-thread)
-        unit))))
+        (begin
+          (thread-windows-switch-to-thread)
+          unit)))))
 
 ;: Windows implementation of `spawn`.
 (cfg

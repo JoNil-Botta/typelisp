@@ -35586,6 +35586,106 @@
       ret
       (tc-type-list-collect-reference-lifetimes params Nil))))
 
+;; Whether a call's lifetimes are all call-scoped: each is the outer lifetime
+;; of exactly one reference parameter, and no other lifetime or region occurs
+;; in the parameters or the result. Such a lifetime only says how long the call
+;; borrows its argument, so the call infers nothing: each one becomes the
+;; call-temporary lifetime, which every lifetime outlives.
+(define (tc-call-lifetimes-call-scoped?
+  [ctx : TcContext]
+  [params : (& params ast.AstTypeList)]
+  [ret : ast.AstType]
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]) : bool
+  (and
+    (tc-name-id-list-empty? (tc-type-collect-regions-into ret Nil))
+    (=
+      (tc-call-scoped-reference-param-count ctx params 0 0)
+      (ast.ast-lifetime-list-len lifetimes))))
+
+;; The number of reference parameters from `index` on, each with a referent
+;; free of lifetimes, or -1 when some other parameter carries a lifetime.
+(define (tc-call-scoped-reference-param-count
+  [ctx : TcContext]
+  [params : (& params ast.AstTypeList)]
+  [index : i64]
+  [count : i64]) : i64
+  (if (>= index (ast.ast-type-list-len params))
+    count
+    (let
+      [param : ast.AstType
+        (ast.ty-node-get
+          (ast.ast-type-list-get params index (ast.ast-type-id-fallback)))]
+      [referent : i64
+        (match (& param)
+          [(Ref _ inner) inner]
+          [(MutRef _ inner) inner]
+          [_ -1])]
+      (cond
+        [(>= referent 0)
+          (if (tc-lifetime-subst-formal-inert? ctx (ast.ty-node-get referent))
+            (tc-call-scoped-reference-param-count
+              ctx
+              params
+              (+ index 1)
+              (+ count 1))
+            -1)]
+        [(tc-lifetime-subst-formal-inert? ctx param)
+          (tc-call-scoped-reference-param-count ctx params (+ index 1) count)]
+        [else -1]))))
+
+;; The substitution of a call whose lifetimes are all call-scoped.
+(define (tc-call-scoped-lifetime-subst
+  [lifetimes : (& lifetimes ast.AstLifetimeList)]) : TcLifetimeSubst
+  (let
+    [subst : TcLifetimeSubst Nil]
+    [index : i64 0]
+    [temporary : i64 (tc-call-temporary-lifetime-id)]
+    (while (< index (ast.ast-lifetime-list-len lifetimes))
+      (set!
+        subst
+        (tc-lifetime-subst-push
+          subst
+          (ast.ast-lifetime-list-get
+            lifetimes
+            index
+            (ast.ast-lifetime-fallback))
+          temporary))
+      (set! index (+ index 1)))
+    subst))
+
+;; Check a call's arguments against its signature under a lifetime substitution.
+(define (tc-call-lifetime-function-type-with-subst
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [args : ast.AstExprList]
+  [params : ast.AstTypeList]
+  [ret : ast.AstType]
+  [allow-region-args : bool]
+  [subst : TcLifetimeSubst]) : ResultTcType
+  (let
+    [resolved-ret : ast.AstType (tc-lifetime-subst-type subst ret)]
+    [resolved-params : ast.AstTypeList
+      (tc-lifetime-subst-type-list subst params)]
+    (match (tc-check-call-args
+      ctx
+      env
+      func
+      (tc-global-shared-view args)
+      (tc-global-shared-view resolved-params)
+      allow-region-args
+      (No))
+      [(Ok)
+        (match (tc-check-invalidate-call
+          ctx
+          env
+          args
+          resolved-params
+          (tc-global-shared-view resolved-ret))
+          [(Ok) (Ok (tc-tag-active-region env resolved-ret))]
+          [(Err message) (Err message)])]
+      [(Err message) (Err message)])))
+
 (define (tc-call-lifetime-function-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -35598,39 +35698,44 @@
   (let
     [outer : bool (tc-call-temporary-borrow-scope-enter!)]
     [typed-call : ResultTcType
-      (match (tc-infer-call-lifetime-subst
+      (match (if (tc-call-lifetimes-call-scoped?
         ctx
-        env
-        (tc-global-shared-view func)
-        (tc-global-shared-view args)
-        (tc-global-shared-view params)
-        lifetimes
-        Nil)
-        [(Ok subst)
-          (let
-            [resolved-ret : ast.AstType
-              (tc-lifetime-subst-type subst (tc-global-shared-view ret))]
-            [resolved-params : ast.AstTypeList
-              (tc-lifetime-subst-type-list subst (tc-global-shared-view params))]
-            (match (tc-check-call-args
-              ctx
-              env
-              func
-              (tc-global-shared-view args)
-              (tc-global-shared-view resolved-params)
-              allow-region-args
-              (No))
-              [(Ok)
-                (match (tc-check-invalidate-call
-                  ctx
-                  env
-                  (tc-global-shared-view args)
-                  resolved-params
-                  (tc-global-shared-view resolved-ret))
-                  [(Ok) (Ok (tc-tag-active-region env resolved-ret))]
-                  [(Err message) (Err message)])]
-              [(Err message) (Err message)]))]
-        [(Err message) (Err message)])]
+        (& params)
+        (tc-global-shared-view ret)
+        (& lifetimes))
+        (tc-call-lifetime-function-type-with-subst
+          ctx
+          env
+          (tc-global-shared-view func)
+          (tc-global-shared-view args)
+          (tc-global-shared-view params)
+          (tc-global-shared-view ret)
+          allow-region-args
+          (tc-call-scoped-lifetime-subst (& lifetimes)))
+        (ResultTcType.Err ""))
+        [(Ok scoped-ty) (Ok scoped-ty)]
+        ;; Infer the substitution, which also gives a rejected call its
+        ;; diagnostic.
+        [(Err _)
+          (match (tc-infer-call-lifetime-subst
+            ctx
+            env
+            (tc-global-shared-view func)
+            (tc-global-shared-view args)
+            (tc-global-shared-view params)
+            lifetimes
+            Nil)
+            [(Ok subst)
+              (tc-call-lifetime-function-type-with-subst
+                ctx
+                env
+                (tc-global-shared-view func)
+                (tc-global-shared-view args)
+                (tc-global-shared-view params)
+                (tc-global-shared-view ret)
+                allow-region-args
+                subst)]
+            [(Err message) (Err message)])])]
     (if tc-call-temporary-borrow-typed
       (tc-call-temporary-borrow-scope-exit
         ctx

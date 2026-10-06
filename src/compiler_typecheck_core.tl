@@ -11189,10 +11189,9 @@
       tc-call-temporary-lifetime-id-cache
       (let
         [lifetime-id : i64 (ci.intern "<temporary>")]
-        (begin
-          (set! tc-call-temporary-lifetime-id-cache lifetime-id)
-          (set! tc-call-temporary-lifetime-id-generation generation)
-          lifetime-id)))))
+        (set! tc-call-temporary-lifetime-id-cache lifetime-id)
+        (set! tc-call-temporary-lifetime-id-generation generation)
+        lifetime-id))))
 
 (define (tc-cleanup-owner-marker-id) : i64
   cbi.compiler-builtin-id-tc-cleanup-owner)
@@ -52702,9 +52701,8 @@
     (tc-global-shared-view arg))
     (match (tc-call-temporary-borrow-type ctx env arg want)
       [(ResultTcType.Ok ty)
-        (begin
-          (set! tc-call-temporary-borrow-typed true)
-          (ResultTcType.Ok ty))]
+        (set! tc-call-temporary-borrow-typed true)
+        (ResultTcType.Ok ty)]
       [(ResultTcType.Err temporary-message)
         (ResultTcType.Err temporary-message)])
     failed))
@@ -52719,9 +52717,8 @@
 (define (tc-call-temporary-borrow-scope-enter!) : bool
   (let
     [outer : bool tc-call-temporary-borrow-typed]
-    (begin
-      (set! tc-call-temporary-borrow-typed false)
-      outer)))
+    (set! tc-call-temporary-borrow-typed false)
+    outer))
 
 (define (tc-call-temporary-borrow-scope-exit
   [ctx : TcContext]
@@ -52731,11 +52728,10 @@
   [ret : ast.AstType]
   [outer : bool]
   [typed-call : ResultTcType]) : ResultTcType
-  (begin
-    (set! tc-call-temporary-borrow-typed outer)
-    (match (tc-check-call-temporary-borrows ctx env args params ret)
-      [(ResultTcUnit.Ok) typed-call]
-      [(ResultTcUnit.Err message) (ResultTcType.Err message)])))
+  (set! tc-call-temporary-borrow-typed outer)
+  (match (tc-check-call-temporary-borrows ctx env args params ret)
+    [(ResultTcUnit.Ok) typed-call]
+    [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 ;; The type a reference formal expects of a temporary's value, used to type a
 ;; literal operand such as `(& 7)` against `(& u8)`. A `Slice` formal expects an
@@ -52845,18 +52841,16 @@
         [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
         [index : i64 0]
         [found : bool false]
-        (begin
-          (while (and (not found) (< index children.len))
-            (begin
-              (if (tc-expr-may-exit-early?
-                ctx
-                (tc-context-expr-get
-                  ctx
-                  (ast.ast-expr-list-get (& children) index -1)))
-                (set! found true)
-                unit)
-              (set! index (+ index 1))))
-          found))]))
+        (while (and (not found) (< index children.len))
+          (if (tc-expr-may-exit-early?
+            ctx
+            (tc-context-expr-get
+              ctx
+              (ast.ast-expr-list-get (& children) index -1)))
+            (set! found true)
+            unit)
+          (set! index (+ index 1)))
+        found)]))
 
 ;; Whether an argument after `index` can leave the call's argument list early,
 ;; which would skip the cleanup a borrowed cleanup-owning temporary at `index`
@@ -52868,16 +52862,14 @@
   (let
     [cursor : i64 (+ index 1)]
     [found : bool false]
-    (begin
-      (while (and (not found) (< cursor args.len))
-        (begin
-          (if (tc-expr-may-exit-early?
-            ctx
-            (tc-context-expr-get ctx (ast.ast-expr-list-get args cursor 0)))
-            (set! found true)
-            unit)
-          (set! cursor (+ cursor 1))))
-      found)))
+    (while (and (not found) (< cursor args.len))
+      (if (tc-expr-may-exit-early?
+        ctx
+        (tc-context-expr-get ctx (ast.ast-expr-list-get args cursor 0)))
+        (set! found true)
+        unit)
+      (set! cursor (+ cursor 1)))
+    found))
 
 ;; The lifetime a reference formal binds, or -1 when the formal is not a
 ;; reference.
@@ -52899,28 +52891,23 @@
   (let
     [cursor : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< cursor (ast.ast-type-list-len params)))
-        (begin
-          (if (= cursor index)
-            unit
-            (match (tc-type-strip-region
-              (tc-resolve-type
-                ctx
-                (ast.ty-node-get
-                  (ast.ast-type-list-get
-                    params
-                    cursor
-                    (ast.ast-type-id-fallback)))))
-              [(ast.AstType.MutRef _ referent)
-                (if (tc-name-id-list-contains
-                  (tc-type-collect-regions (ast.ty-node-get referent))
-                  lifetime)
-                  (set! found true)
-                  unit)]
-              [_ unit]))
-          (set! cursor (+ cursor 1))))
-      found)))
+    (while (and (not found) (< cursor (ast.ast-type-list-len params)))
+      (if (= cursor index)
+        unit
+        (match (tc-type-strip-region
+          (tc-resolve-type
+            ctx
+            (ast.ty-node-get
+              (ast.ast-type-list-get params cursor (ast.ast-type-id-fallback)))))
+          [(ast.AstType.MutRef _ referent)
+            (if (tc-name-id-list-contains
+              (tc-type-collect-regions (ast.ty-node-get referent))
+              lifetime)
+              (set! found true)
+              unit)]
+          [_ unit]))
+      (set! cursor (+ cursor 1)))
+    found))
 
 ;; Rejects a call that could keep a borrow of one of its temporary arguments
 ;; past the call: the argument's formal lifetime appears in the result type, or
@@ -52938,90 +52925,85 @@
     [index : i64 0]
     [failed : bool false]
     [message : String ""]
-    (begin
-      (while (and
-        (not failed)
-        (< index args.len)
-        (< index (ast.ast-type-list-len params)))
-        (let
-          [arg : ast.AstExpr
-            (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
-          (begin
-            (if (tc-call-temporary-borrow-arg?
-              expr-bases
-              (tc-global-shared-view arg))
-              (let
-                [lifetime : i64
-                  (tc-call-reference-formal-lifetime
-                    ctx
-                    (ast.ty-node-get
-                      (ast.ast-type-list-get
-                        params
-                        index
-                        (ast.ast-type-id-fallback))))]
-                (if (and
-                  (>= lifetime 0)
-                  (or
-                    (tc-name-id-list-contains
-                      (begin
-                        (if ret-lifetimes-ready
-                          unit
-                          (begin
-                            (set!
-                              ret-lifetimes
-                              (tc-type-collect-regions
-                                (tc-global-shared-view ret)))
-                            (set! ret-lifetimes-ready true)))
-                        (tc-global-shared-view ret-lifetimes))
-                      lifetime)
-                    (tc-call-mutable-formal-mentions-lifetime?
-                      ctx
-                      params
-                      index
-                      lifetime)))
+    (while (and
+      (not failed)
+      (< index args.len)
+      (< index (ast.ast-type-list-len params)))
+      (let
+        [arg : ast.AstExpr
+          (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
+        (if (tc-call-temporary-borrow-arg?
+          expr-bases
+          (tc-global-shared-view arg))
+          (let
+            [lifetime : i64
+              (tc-call-reference-formal-lifetime
+                ctx
+                (ast.ty-node-get
+                  (ast.ast-type-list-get
+                    params
+                    index
+                    (ast.ast-type-id-fallback))))]
+            (if (and
+              (>= lifetime 0)
+              (or
+                (tc-name-id-list-contains
                   (begin
-                    (set! failed true)
-                    (set!
-                      message
-                      (match (tc-expr-maybe-span expr-bases arg)
-                        [(TcMaybeAstSourceSpan.Some span)
-                          (tc-rich-error-one-secondary
-                            span
-                            (tc-temporary-borrow-escape-message)
-                            (tc-temporary-borrow-escape-help)
-                            span
-                            "this temporary is dropped when the call returns")]
-                        [(TcMaybeAstSourceSpan.No)
-                          (tc-temporary-borrow-escape-message)])))
-                  (if (and
-                    (tc-call-later-arg-may-exit-early? ctx args index)
-                    (match (tc-expr
-                      ctx
-                      env
-                      (tc-context-expr-get
-                        ctx
-                        (tc-call-temporary-borrow-operand-id
-                          expr-bases
-                          (tc-global-shared-view arg))))
-                      [(ResultTcType.Ok operand-ty)
-                        (tc-cleanup-owning-aggregate-type? ctx operand-ty)]
-                      [(ResultTcType.Err _) false]))
-                    (begin
-                      (set! failed true)
+                    (unless
+                      ret-lifetimes-ready
                       (set!
-                        message
-                        (tc-locate-error-at-expr
-                          expr-bases
-                          arg
-                          (tc-kind-message
-                            (cdiag.CompilerTypecheckKind.ResourceOwnership)
-                            "typecheck: a later argument can leave the call early and skip the cleanup of this borrowed cleanup-owning temporary; bind the value with `with` before the call"))))
-                    unit)))
-              unit)
-            (set! index (+ index 1)))))
-      (if failed
-        (ResultTcUnit.Err message)
-        ResultTcUnit.Ok))))
+                        ret-lifetimes
+                        (tc-type-collect-regions (tc-global-shared-view ret)))
+                      (set! ret-lifetimes-ready true))
+                    (tc-global-shared-view ret-lifetimes))
+                  lifetime)
+                (tc-call-mutable-formal-mentions-lifetime?
+                  ctx
+                  params
+                  index
+                  lifetime)))
+              (begin
+                (set! failed true)
+                (set!
+                  message
+                  (match (tc-expr-maybe-span expr-bases arg)
+                    [(TcMaybeAstSourceSpan.Some span)
+                      (tc-rich-error-one-secondary
+                        span
+                        (tc-temporary-borrow-escape-message)
+                        (tc-temporary-borrow-escape-help)
+                        span
+                        "this temporary is dropped when the call returns")]
+                    [(TcMaybeAstSourceSpan.No)
+                      (tc-temporary-borrow-escape-message)])))
+              (when
+                (and
+                  (tc-call-later-arg-may-exit-early? ctx args index)
+                  (match (tc-expr
+                    ctx
+                    env
+                    (tc-context-expr-get
+                      ctx
+                      (tc-call-temporary-borrow-operand-id
+                        expr-bases
+                        (tc-global-shared-view arg))))
+                    [(ResultTcType.Ok operand-ty)
+                      (tc-cleanup-owning-aggregate-type? ctx operand-ty)]
+                    [(ResultTcType.Err _) false]))
+                (set! failed true)
+                (set!
+                  message
+                  (tc-locate-error-at-expr
+                    expr-bases
+                    arg
+                    (tc-kind-message
+                      (cdiag.CompilerTypecheckKind.ResourceOwnership)
+                      "typecheck: a later argument can leave the call early and skip the cleanup of this borrowed cleanup-owning temporary; bind the value with `with` before the call"))))))
+          unit)
+        (set! index (+ index 1))))
+    (if failed
+      (ResultTcUnit.Err message)
+      ResultTcUnit.Ok)))
 
 (define (tc-borrow-expr
   [ctx : TcContext]

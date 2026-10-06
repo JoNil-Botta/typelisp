@@ -10482,26 +10482,23 @@
   [node : CompilerDebugTypeNode]) : i64
   (let
     [id : i64 graph.node-count]
-    (begin
-      (when
-        (>= id (array-length graph.nodes))
-        (let
-          [grown : (__tl_dyn-array CompilerDebugTypeNode)
-            (__tl_make-array CompilerDebugTypeNode (+ 16 (* 2 id)))]
-          [index : i64 0]
-          (begin
-            (while (< index id)
-              (begin
-                (set!
-                  (array-ref grown index)
-                  (owned_view.compiler-owned-array-element-shared-view
-                    graph.nodes
-                    index))
-                (set! index (+ index 1))))
-            (set! graph.nodes grown))))
-      (set! (array-ref graph.nodes id) node)
-      (set! graph.node-count (+ id 1))
-      id)))
+    (when
+      (>= id (array-length graph.nodes))
+      (let
+        [grown : (__tl_dyn-array CompilerDebugTypeNode)
+          (__tl_make-array CompilerDebugTypeNode (+ 16 (* 2 id)))]
+        [index : i64 0]
+        (while (< index id)
+          (set!
+            (array-ref grown index)
+            (owned_view.compiler-owned-array-element-shared-view
+              graph.nodes
+              index))
+          (set! index (+ index 1)))
+        (set! graph.nodes grown)))
+    (set! (array-ref graph.nodes id) node)
+    (set! graph.node-count (+ id 1))
+    id))
 
 (define (compiler-debug-type-graph-set-node!
   [graph : (&mut graph CompilerDebugTypeGraph)]
@@ -10514,25 +10511,22 @@
   [member : CompilerDebugTypeMember]) : unit
   (let
     [index : i64 graph.member-count]
-    (begin
-      (when
-        (>= index (array-length graph.members))
-        (let
-          [grown : (__tl_dyn-array CompilerDebugTypeMember)
-            (__tl_make-array CompilerDebugTypeMember (+ 16 (* 2 index)))]
-          [copy : i64 0]
-          (begin
-            (while (< copy index)
-              (begin
-                (set!
-                  (array-ref grown copy)
-                  (owned_view.compiler-owned-array-element-shared-view
-                    graph.members
-                    copy))
-                (set! copy (+ copy 1))))
-            (set! graph.members grown))))
-      (set! (array-ref graph.members index) member)
-      (set! graph.member-count (+ index 1)))))
+    (when
+      (>= index (array-length graph.members))
+      (let
+        [grown : (__tl_dyn-array CompilerDebugTypeMember)
+          (__tl_make-array CompilerDebugTypeMember (+ 16 (* 2 index)))]
+        [copy : i64 0]
+        (while (< copy index)
+          (set!
+            (array-ref grown copy)
+            (owned_view.compiler-owned-array-element-shared-view
+              graph.members
+              copy))
+          (set! copy (+ copy 1)))
+        (set! graph.members grown)))
+    (set! (array-ref graph.members index) member)
+    (set! graph.member-count (+ index 1))))
 
 (define (compiler-debug-type-kind-name [kind : i64]) : String
   (cond
@@ -10562,70 +10556,65 @@
           (string.int->string graph.node-count)
           "\n"))]
     [id : i64 0]
-    (begin
-      (while (< id graph.node-count)
-        (let
-          [node : CompilerDebugTypeNode
-            (owned_view.compiler-owned-array-element-shared-view graph.nodes id)]
-          [member : i64 node.first-member]
-          (begin
+    (while (< id graph.node-count)
+      (let
+        [node : CompilerDebugTypeNode
+          (owned_view.compiler-owned-array-element-shared-view graph.nodes id)]
+        [member : i64 node.first-member]
+        (set!
+          buf
+          (text_buf.append
+            buf
+            (str_cat.str-cat
+              "t"
+              (string.int->string id)
+              " "
+              (compiler-debug-type-kind-name node.kind)
+              " "
+              node.name
+              " size="
+              (string.int->string node.size)
+              " align="
+              (string.int->string node.align)
+              (if (>= node.target 0)
+                (str_cat.str-cat " target=t" (string.int->string node.target))
+                "")
+              (if (>= node.count 0)
+                (str_cat.str-cat " count=" (string.int->string node.count))
+                "")
+              (if (> node.register-words 0)
+                (str_cat.str-cat
+                  " regs="
+                  (string.int->string node.register-words))
+                "")
+              "\n")))
+        (while (< member (+ node.first-member node.member-count))
+          (let
+            [row : CompilerDebugTypeMember
+              (owned_view.compiler-owned-array-element-shared-view
+                graph.members
+                member)]
             (set!
               buf
               (text_buf.append
                 buf
-                (str_cat.str-cat
-                  "t"
-                  (string.int->string id)
-                  " "
-                  (compiler-debug-type-kind-name node.kind)
-                  " "
-                  node.name
-                  " size="
-                  (string.int->string node.size)
-                  " align="
-                  (string.int->string node.align)
-                  (if (>= node.target 0)
-                    (str_cat.str-cat
-                      " target=t"
-                      (string.int->string node.target))
-                    "")
-                  (if (>= node.count 0)
-                    (str_cat.str-cat " count=" (string.int->string node.count))
-                    "")
-                  (if (> node.register-words 0)
-                    (str_cat.str-cat
-                      " regs="
-                      (string.int->string node.register-words))
-                    "")
-                  "\n")))
-            (while (< member (+ node.first-member node.member-count))
-              (let
-                [row : CompilerDebugTypeMember
-                  (owned_view.compiler-owned-array-element-shared-view
-                    graph.members
-                    member)]
-                (begin
-                  (set!
-                    buf
-                    (text_buf.append
-                      buf
-                      (if (< row.type 0)
-                        (str_cat.str-cat
-                          "  variant "
-                          row.name
-                          " ="
-                          (string.int->string row.variant)
-                          "\n")
-                        (str_cat.str-cat
-                          (if (< row.variant 0)
-                            "  ."
-                            "    .")
-                          row.name
-                          " t"
-                          (string.int->string row.type)
-                          " @"
-                          (string.int->string row.offset)
-                          "\n"))))
-                  (set! member (+ member 1)))))
-            (set! id (+ id 1)))))
-      (text_buf.render buf))))
+                (if (< row.type 0)
+                  (str_cat.str-cat
+                    "  variant "
+                    row.name
+                    " ="
+                    (string.int->string row.variant)
+                    "\n")
+                  (str_cat.str-cat
+                    (if (< row.variant 0)
+                      "  ."
+                      "    .")
+                    row.name
+                    " t"
+                    (string.int->string row.type)
+                    " @"
+                    (string.int->string row.offset)
+                    "\n"))))
+            (set! member (+ member 1))))
+        (set! id (+ id 1))))
+    (text_buf.render buf)))

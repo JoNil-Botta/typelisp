@@ -728,6 +728,16 @@ exit 134
 in stderr
 contains array index out of bounds
 
+# A rank-2 foreach runs the scalar reference in every mode: a domain product
+# beyond i64 aborts before the body (#7190).
+case foreach-2d-product-trap
+source tests/spmd/foreach_2d_product_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+
 # ------------------------------------------------------------ map operators
 
 case map-operator-surface

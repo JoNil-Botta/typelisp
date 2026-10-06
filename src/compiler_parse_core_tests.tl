@@ -2688,12 +2688,35 @@
 
 (define (compiler-parse-implicit-body-tail-ok?) : bool
   (and
+    (compiler-parse-while-body-list-ok?)
     (compiler-parse-ok? "(define (main) : i64 (let [x : i64 1] x (+ x 1)))")
     (compiler-parse-ok? "(define (main) : i64 (let [] 1 2))")
     (compiler-parse-ok?
       "(define (main) : i64 (begin (while false unit unit) 0))")
     (compiler-parse-ok? "(define (main) : i64 unit 42)")
     (compiler-parse-ok? "(define (main) : i64 ((lambda () : i64 unit 42)))")))
+
+(define (compiler-parse-while-body-list-ok?) : bool
+  (and
+    (match (parser.parse-ast-source
+      "(define (main) : unit (while false unit (begin 1 unit) unit))")
+      [(Ok (Program decls-box))
+        (match (ast.ast-decl-list-step (deref decls-box))
+          [(Cons (DefFn _ _ _ _ body _) _)
+            (match (ast.ast-expr-unspan (ast.ast-node-get body))
+              [(While _ forms)
+                (and
+                  (= forms.len 3)
+                  (match (ast.ast-expr-unspan
+                    (ast.ast-node-get (ast.ast-expr-list-get (& forms) 1 0)))
+                    [(Begin explicit-forms) (= explicit-forms.len 2)]
+                    [_ false]))]
+              [_ false])]
+          [_ false])]
+      [(Err _) false])
+    (compiler-parse-error-ok?
+      "(define (main) : unit (while false (cfg missing-feature unit)))"
+      "parse: malformed while")))
 
 (define (compiler-parse-spmd-tests-ok?) : bool
   (and
@@ -2740,6 +2763,31 @@
       "parse: malformed foreach binding")
     (compiler-parse-error-ok?
       "(define (main) : i64 (begin (foreach) 0))"
+      "parse: malformed foreach")
+    ;; A rank-2 domain takes exactly two distinct, well-formed bindings and one
+    ;; body; rank zero and rank three are diagnosed, not flattened (#7190).
+    (compiler-parse-ok?
+      "(define (main [h : i64] [w : i64]) : i64 (begin (foreach ([y : i64 (+ 0 1) h] [x : i64 -2 (* w 2)]) unit) 0))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach () unit) 0))"
+      "parse: foreach requires one or two domain bindings")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([z : i64 0 1] [y : i64 0 1] [x : i64 0 1]) unit) 0))"
+      "parse: foreach supports at most two domain bindings (rank 2)")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([x : i64 0 1] [x : i64 0 1]) unit) 0))"
+      "parse: foreach domain bindings must use distinct names")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([y : i64 0 1] [x : i64 0]) unit) 0))"
+      "parse: malformed foreach binding")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([y : i64 0 1] [x i64 0 1 2]) unit) 0))"
+      "parse: expected ':' in foreach")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([y : i64 0 1] [x : i64 0 1]) unit unit) 0))"
+      "parse: malformed foreach")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([y : i64 0 1] [x : i64 0 1])) 0))"
       "parse: malformed foreach")
     (compiler-parse-error-ok?
       "(define (main) : i64 (spmd-reduce sum))"

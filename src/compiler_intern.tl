@@ -682,8 +682,14 @@
       (comptime (size-of (type String)))
       (comptime (size-of (type InternSlotId))))))
 
+;; The pair cache fronts every module-qualified symbol key
+;; (`compiler-symbol-module-key-id-by-id`), about 11M lookups in a self-compile.
+;; At 128K slots its direct-mapped conflict misses depended on where interning
+;; happened to place the ids, so unrelated source edits moved the self-compile
+;; by tens of millions of instructions. 512K slots (4 MiB) cut those misses and
+;; lower the self-compile count by about 50M.
 (define (intern-structural-pair-cache-capacity) : i64
-  131072)
+  524288)
 
 (define (intern-structural-triple-cache-capacity) : i64
   65536)

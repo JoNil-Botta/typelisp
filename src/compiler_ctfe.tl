@@ -926,7 +926,7 @@
 
 (define (ctfe-untyped-expr-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(Var name) (= (deref name) (ctfe-untyped-expr-type-id))]
+    [(ast.AstType.Var name) (= name (ctfe-untyped-expr-type-id))]
     [_ false]))
 
 (define (ctfe-captured-expr-type-id) : i64
@@ -4562,8 +4562,7 @@
     [(While cond-box body-box)
       (let
         [cond : ast.AstExpr (ctfe-ast-get env cond-box)]
-        [body : ast.AstExpr (ctfe-ast-get env body-box)]
-        (ctfe-eval-while cond body expr env fuel))]
+        (ctfe-eval-while cond body-box expr env fuel))]
     [(Let let-box)
       (match (__tl-box-place let-box)
         [(Let bindings body-box)
@@ -10036,7 +10035,7 @@
 ;; existing deterministic fuel diagnostic instead of relying on host state.
 (define (ctfe-eval-while
   [cond : ast.AstExpr]
-  [body : ast.AstExpr]
+  [body : ast.AstExprList]
   [origin : ast.AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
@@ -10045,7 +10044,7 @@
       (match cond-value
         [(Bool keep-going)
           (if keep-going
-            (match (compiler-ctfe-eval (clone body) env cond-fuel)
+            (match (ctfe-eval-begin-at (& body) 0 env cond-fuel)
               [(Ok _ body-fuel)
                 (ctfe-eval-while cond body origin env body-fuel)]
               [(Err diag) (Err diag)])
@@ -12144,13 +12143,13 @@
         exprs
         ast.AstExpr.Unsafe)]
     [(While cond-box body-box)
-      (ctfe-quote-children-2
-        env
-        fuel
-        quasiquote
-        ast.ast-expr-while-with-pools
-        cond-box
-        body-box)]
+      (match (ctfe-quote-expr (ctfe-ast-get env cond-box) env fuel quasiquote)
+        [(Ok condition _ condition-fuel)
+          (match (ctfe-quote-expr-list body-box env condition-fuel quasiquote)
+            [(Ok body next-fuel)
+              (Ok (ctfe-ast-push env (While condition body)) (Expr) next-fuel)]
+            [(Err diag) (Err diag)])]
+        [(Err diag) (Err diag)])]
     [(ForOwnedState payload)
       (match (ctfe-quote-expr-list
         (ctfe-for-owned-state-exprs
@@ -12309,6 +12308,51 @@
                             quoted-body)
                           (Expr)
                           body-fuel)]
+                      [(Err diag) (Err diag)])]
+                  [(Err diag) (Err diag)])]
+              [(Err diag) (Err diag)]))]
+        [(Foreach2
+            outer
+            outer-ty
+            outer-start-box
+            outer-end-box
+            inner
+            inner-ty
+            inner-start-box
+            inner-end-box
+            body-box)
+          (let
+            [outer-start : ast.AstExpr (ctfe-ast-get env outer-start-box)]
+            [outer-end : ast.AstExpr (ctfe-ast-get env outer-end-box)]
+            [inner-start : ast.AstExpr (ctfe-ast-get env inner-start-box)]
+            [inner-end : ast.AstExpr (ctfe-ast-get env inner-end-box)]
+            [body : ast.AstExpr (ctfe-ast-get env body-box)]
+            (match (ctfe-quote-expr outer-start env fuel quasiquote)
+              [(Ok quoted-outer-start _ fuel0)
+                (match (ctfe-quote-expr outer-end env fuel0 quasiquote)
+                  [(Ok quoted-outer-end _ fuel1)
+                    (match (ctfe-quote-expr inner-start env fuel1 quasiquote)
+                      [(Ok quoted-inner-start _ fuel2)
+                        (match (ctfe-quote-expr inner-end env fuel2 quasiquote)
+                          [(Ok quoted-inner-end _ fuel3)
+                            (match (ctfe-quote-expr body env fuel3 quasiquote)
+                              [(Ok quoted-body _ body-fuel)
+                                (Ok
+                                  (ast.ast-expr-foreach2-id-with-pools
+                                    (ctfe-env-pools env)
+                                    (ctfe-quote-name-id env outer)
+                                    outer-ty
+                                    quoted-outer-start
+                                    quoted-outer-end
+                                    (ctfe-quote-name-id env inner)
+                                    inner-ty
+                                    quoted-inner-start
+                                    quoted-inner-end
+                                    quoted-body)
+                                  (Expr)
+                                  body-fuel)]
+                              [(Err diag) (Err diag)])]
+                          [(Err diag) (Err diag)])]
                       [(Err diag) (Err diag)])]
                   [(Err diag) (Err diag)])]
               [(Err diag) (Err diag)]))])]

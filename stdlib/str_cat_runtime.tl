@@ -39,23 +39,20 @@
           (let
             [index : i64 (comptime.expr-list-length elems)]
             [stores : comptime.ExprList (comptime.expr-list-empty)]
-            (begin
-              (while (> index i)
-                (begin
-                  (set! index (- index 1))
-                  (set!
-                    stores
-                    (comptime.expr-list-cons
-                      `(stdlib.str_cat_runtime.str-cat-pack-part!
-                        (&mut __tl_str_cat_pack)
-                        ,(comptime.expr-int index)
-                        ,(comptime.expr-list-nth elems index))
-                      stores))))
-              `(let
-                [__tl_str_cat_pack ,pack]
-                (begin
-                  ,@stores
-                  __tl_str_cat_pack))))]
+            (while (> index i)
+              (set! index (- index 1))
+              (set!
+                stores
+                (comptime.expr-list-cons
+                  `(stdlib.str_cat_runtime.str-cat-pack-part!
+                    (&mut __tl_str_cat_pack)
+                    ,(comptime.expr-int index)
+                    ,(comptime.expr-list-nth elems index))
+                  stores)))
+            `(let
+              [__tl_str_cat_pack ,pack]
+              ,@stores
+              __tl_str_cat_pack))]
         [_ pack])]
     [_ pack]))
 
@@ -137,16 +134,15 @@
               [(comptime.Expr.Var _) true]
               [_ false]))]
         [all-borrowable : bool true]
-        (begin
-          (if arg0-borrowable
-            unit
-            (set! all-borrowable false))
-          (if arg1-borrowable
-            unit
-            (set! all-borrowable false))
-          (if all-borrowable
-            `(stdlib.string.concat3-borrowed ,arg0 ,arg1 "")
-            `(stdlib.string.concat3 ,arg0 ,arg1 ""))))]
+        (if arg0-borrowable
+          unit
+          (set! all-borrowable false))
+        (if arg1-borrowable
+          unit
+          (set! all-borrowable false))
+        (if all-borrowable
+          `(stdlib.string.concat3-borrowed ,arg0 ,arg1 "")
+          `(stdlib.string.concat3 ,arg0 ,arg1 "")))]
     [3
       (let
         [arg0 : comptime.Expr (comptime.expr-list-nth args 0)]
@@ -171,19 +167,18 @@
               [(comptime.Expr.Var _) true]
               [_ false]))]
         [all-borrowable : bool true]
-        (begin
-          (if arg0-borrowable
-            unit
-            (set! all-borrowable false))
-          (if arg1-borrowable
-            unit
-            (set! all-borrowable false))
-          (if arg2-borrowable
-            unit
-            (set! all-borrowable false))
-          (if all-borrowable
-            `(stdlib.string.concat3-borrowed ,arg0 ,arg1 ,arg2)
-            `(stdlib.string.concat3 ,arg0 ,arg1 ,arg2))))]
+        (if arg0-borrowable
+          unit
+          (set! all-borrowable false))
+        (if arg1-borrowable
+          unit
+          (set! all-borrowable false))
+        (if arg2-borrowable
+          unit
+          (set! all-borrowable false))
+        (if all-borrowable
+          `(stdlib.string.concat3-borrowed ,arg0 ,arg1 ,arg2)
+          `(stdlib.string.concat3 ,arg0 ,arg1 ,arg2)))]
     [4
       (let
         [arg0 : comptime.Expr (comptime.expr-list-nth args 0)]
@@ -215,22 +210,21 @@
               [(comptime.Expr.Var _) true]
               [_ false]))]
         [all-borrowable : bool true]
-        (begin
-          (if arg0-borrowable
-            unit
-            (set! all-borrowable false))
-          (if arg1-borrowable
-            unit
-            (set! all-borrowable false))
-          (if arg2-borrowable
-            unit
-            (set! all-borrowable false))
-          (if arg3-borrowable
-            unit
-            (set! all-borrowable false))
-          (if all-borrowable
-            `(stdlib.string.concat4-borrowed ,arg0 ,arg1 ,arg2 ,arg3)
-            `(stdlib.string.concat4 ,arg0 ,arg1 ,arg2 ,arg3))))]
+        (if arg0-borrowable
+          unit
+          (set! all-borrowable false))
+        (if arg1-borrowable
+          unit
+          (set! all-borrowable false))
+        (if arg2-borrowable
+          unit
+          (set! all-borrowable false))
+        (if arg3-borrowable
+          unit
+          (set! all-borrowable false))
+        (if all-borrowable
+          `(stdlib.string.concat4-borrowed ,arg0 ,arg1 ,arg2 ,arg3)
+          `(stdlib.string.concat4 ,arg0 ,arg1 ,arg2 ,arg3)))]
     [5
       (let
         [arg0 : comptime.Expr (comptime.expr-list-nth args 0)]
@@ -269,25 +263,24 @@
               [(comptime.Expr.Var _) true]
               [_ false]))]
         [all-borrowable : bool true]
-        (begin
-          (if arg0-borrowable
-            unit
-            (set! all-borrowable false))
-          (if arg1-borrowable
-            unit
-            (set! all-borrowable false))
-          (if arg2-borrowable
-            unit
-            (set! all-borrowable false))
-          (if arg3-borrowable
-            unit
-            (set! all-borrowable false))
-          (if arg4-borrowable
-            unit
-            (set! all-borrowable false))
-          (if all-borrowable
-            `(stdlib.string.concat5-borrowed ,arg0 ,arg1 ,arg2 ,arg3 ,arg4)
-            `(stdlib.string.concat5 ,arg0 ,arg1 ,arg2 ,arg3 ,arg4))))]
+        (if arg0-borrowable
+          unit
+          (set! all-borrowable false))
+        (if arg1-borrowable
+          unit
+          (set! all-borrowable false))
+        (if arg2-borrowable
+          unit
+          (set! all-borrowable false))
+        (if arg3-borrowable
+          unit
+          (set! all-borrowable false))
+        (if arg4-borrowable
+          unit
+          (set! all-borrowable false))
+        (if all-borrowable
+          `(stdlib.string.concat5-borrowed ,arg0 ,arg1 ,arg2 ,arg3 ,arg4)
+          `(stdlib.string.concat5 ,arg0 ,arg1 ,arg2 ,arg3 ,arg4)))]
     [n
       `(stdlib.str_cat_runtime.str-cat-concat-packed
         (str-cat-pack

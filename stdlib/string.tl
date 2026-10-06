@@ -117,10 +117,9 @@
       (let
         [next : i64 (/ cursor 10)]
         [digit : i64 (- (* next 10) cursor)]
-        (begin
-          (int->string-write-byte! dst (+ base index) (+ 48 digit))
-          (set! cursor next)
-          (set! index (- index 1)))))))
+        (int->string-write-byte! dst (+ base index) (+ 48 digit))
+        (set! cursor next)
+        (set! index (- index 1))))))
 
 ;: Return the decimal spelling of `value` in fresh active-arena String storage.
 (define (int->string [value : i64]) : String
@@ -136,19 +135,18 @@
         (+ digits 1)
         digits)]
     [buf : (MutPtr u8) (string-runtime-alloc len)]
-    (begin
+    (if negative
+      (int->string-write-byte! buf 0 45)
+      unit)
+    (int->string-write-negative-digits!
+      buf
       (if negative
-        (int->string-write-byte! buf 0 45)
-        unit)
-      (int->string-write-negative-digits!
-        buf
-        (if negative
-          1
-          0)
-        magnitude
-        digits)
-      (unsafe
-        (string-from-bytes (ptr-cast buf : (Ptr u8)) len)))))
+        1
+        0)
+      magnitude
+      digits)
+    (unsafe
+      (string-from-bytes (ptr-cast buf : (Ptr u8)) len))))
 
 ;: Trap when the requested substring range is outside `text`.
 (define (substring-bounds-check [text : (& text str)] [start : i64] [len : i64]) : unit
@@ -196,20 +194,15 @@
         (ptr-cast (ptr-offset dst start) : (MutPtr i64)))]
     [w : i64 0]
     [b : i64 (* words 8)]
-    (begin
-      (while (< w words)
-        (begin
-          (unsafe
-            (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
-          (set! w (+ w 1))))
-      (while (< b n)
-        (begin
-          (unsafe
-            (ptr-write!
-              (ptr-offset dst (+ start b))
-              (ptr-read (ptr-offset src b))))
-          (set! b (+ b 1))))
-      unit)))
+    (while (< w words)
+      (unsafe
+        (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
+      (set! w (+ w 1)))
+    (while (< b n)
+      (unsafe
+        (ptr-write! (ptr-offset dst (+ start b)) (ptr-read (ptr-offset src b))))
+      (set! b (+ b 1)))
+    unit))
 
 ;: Copy `n` bytes from borrowed `chunk` into `dst` at byte offset `start`.
 (define (str-copy-borrowed-bytes-into
@@ -230,20 +223,15 @@
         (ptr-cast (ptr-offset dst start) : (MutPtr i64)))]
     [w : i64 0]
     [b : i64 (* words 8)]
-    (begin
-      (while (< w words)
-        (begin
-          (unsafe
-            (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
-          (set! w (+ w 1))))
-      (while (< b n)
-        (begin
-          (unsafe
-            (ptr-write!
-              (ptr-offset dst (+ start b))
-              (ptr-read (ptr-offset src b))))
-          (set! b (+ b 1))))
-      unit)))
+    (while (< w words)
+      (unsafe
+        (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
+      (set! w (+ w 1)))
+    (while (< b n)
+      (unsafe
+        (ptr-write! (ptr-offset dst (+ start b)) (ptr-read (ptr-offset src b))))
+      (set! b (+ b 1)))
+    unit))
 
 ;: Copy a checked borrowed byte range into a fresh active-arena String.
 (define (substring-copy-checked [text : (& text str)] [start : i64] [len : i64]) : String
@@ -252,15 +240,14 @@
       (unsafe
         (string-data text))]
     [dst : (MutPtr u8) (string-runtime-alloc len)]
-    (begin
-      (str-copy-bytes-into
-        (unsafe
-          (ptr-offset src start))
-        dst
-        0
-        len)
+    (str-copy-bytes-into
       (unsafe
-        (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
+        (ptr-offset src start))
+      dst
+      0
+      len)
+    (unsafe
+      (string-from-bytes (ptr-cast dst : (Ptr u8)) len))))
 
 ;: Return a fresh active-arena String by concatenating two borrowed strings.
 (define (append [left : (& left str)] [right : (& right str)]) : String
@@ -275,11 +262,10 @@
       (unsafe
         (string-data right))]
     [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-    (begin
-      (str-copy-bytes-into left-src dst 0 left-len)
-      (str-copy-bytes-into right-src dst left-len right-len)
-      (unsafe
-        (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))
+    (str-copy-bytes-into left-src dst 0 left-len)
+    (str-copy-bytes-into right-src dst left-len right-len)
+    (unsafe
+      (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))
 
 ;: Return a fresh active-arena copy of borrowed text.
 (define (copy [text : (& text str)]) : String
@@ -295,33 +281,29 @@
     [count : i64 (array-length parts)]
     [len-index : i64 0]
     [total-len : i64 0]
-    (begin
-      (while (< len-index count)
-        (let
-          [part : (& parts str) (& (array-ref parts len-index))]
-          (begin
-            (set! total-len (+ total-len (__tl_string_length part)))
-            (set! len-index (+ len-index 1)))))
+    (while (< len-index count)
       (let
-        [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        [copy-index : i64 0]
-        [off : i64 0]
-        (begin
-          (while (< copy-index count)
-            (let
-              [part : (& parts str) (& (array-ref parts copy-index))]
-              [len : i64 (__tl_string_length part)]
-              (begin
-                (str-copy-bytes-into
-                  (unsafe
-                    (string-data part))
-                  dst
-                  off
-                  len)
-                (set! off (+ off len))
-                (set! copy-index (+ copy-index 1)))))
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
+        [part : (& parts str) (& (array-ref parts len-index))]
+        (set! total-len (+ total-len (__tl_string_length part)))
+        (set! len-index (+ len-index 1))))
+    (let
+      [dst : (MutPtr u8) (string-runtime-alloc total-len)]
+      [copy-index : i64 0]
+      [off : i64 0]
+      (while (< copy-index count)
+        (let
+          [part : (& parts str) (& (array-ref parts copy-index))]
+          [len : i64 (__tl_string_length part)]
+          (str-copy-bytes-into
+            (unsafe
+              (string-data part))
+            dst
+            off
+            len)
+          (set! off (+ off len))
+          (set! copy-index (+ copy-index 1))))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))
 
 ;: Return a fresh active-arena String by concatenating three borrowed strings.
 (define (concat3-borrowed [a : (& a str)] [b : (& b str)] [c : (& c str)]) : String
@@ -334,12 +316,11 @@
       ""
       (let
         [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        (begin
-          (str-copy-borrowed-bytes-into a dst 0 a-len)
-          (str-copy-borrowed-bytes-into b dst a-len b-len)
-          (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len)
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
+        (str-copy-borrowed-bytes-into a dst 0 a-len)
+        (str-copy-borrowed-bytes-into b dst a-len b-len)
+        (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len)
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))))
 
 ;: Return a fresh active-arena String by concatenating four borrowed strings.
 (define (concat4-borrowed
@@ -357,13 +338,12 @@
       ""
       (let
         [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        (begin
-          (str-copy-borrowed-bytes-into a dst 0 a-len)
-          (str-copy-borrowed-bytes-into b dst a-len b-len)
-          (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len)
-          (str-copy-borrowed-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
+        (str-copy-borrowed-bytes-into a dst 0 a-len)
+        (str-copy-borrowed-bytes-into b dst a-len b-len)
+        (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len)
+        (str-copy-borrowed-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))))
 
 ;: Return a fresh active-arena String by concatenating five borrowed strings.
 (define (concat5-borrowed
@@ -383,18 +363,17 @@
       ""
       (let
         [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        (begin
-          (str-copy-borrowed-bytes-into a dst 0 a-len)
-          (str-copy-borrowed-bytes-into b dst a-len b-len)
-          (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len)
-          (str-copy-borrowed-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
-          (str-copy-borrowed-bytes-into
-            e
-            dst
-            (+ a-len (+ b-len (+ c-len d-len)))
-            e-len)
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
+        (str-copy-borrowed-bytes-into a dst 0 a-len)
+        (str-copy-borrowed-bytes-into b dst a-len b-len)
+        (str-copy-borrowed-bytes-into c dst (+ a-len b-len) c-len)
+        (str-copy-borrowed-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
+        (str-copy-borrowed-bytes-into
+          e
+          dst
+          (+ a-len (+ b-len (+ c-len d-len)))
+          e-len)
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))))
 
 ;: Return a fresh active-arena String by concatenating three owned strings.
 (define (concat3 [a : String] [b : String] [c : String]) : String
@@ -407,12 +386,11 @@
       ""
       (let
         [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        (begin
-          (str-copy-owned-bytes-into a dst 0 a-len)
-          (str-copy-owned-bytes-into b dst a-len b-len)
-          (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
+        (str-copy-owned-bytes-into a dst 0 a-len)
+        (str-copy-owned-bytes-into b dst a-len b-len)
+        (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))))
 
 ;: Return a fresh active-arena String by concatenating four owned strings.
 (define (concat4 [a : String] [b : String] [c : String] [d : String]) : String
@@ -426,13 +404,12 @@
       ""
       (let
         [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        (begin
-          (str-copy-owned-bytes-into a dst 0 a-len)
-          (str-copy-owned-bytes-into b dst a-len b-len)
-          (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
-          (str-copy-owned-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
+        (str-copy-owned-bytes-into a dst 0 a-len)
+        (str-copy-owned-bytes-into b dst a-len b-len)
+        (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
+        (str-copy-owned-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))))
 
 ;: Return a fresh active-arena String by concatenating five owned strings.
 (define (concat5
@@ -452,33 +429,30 @@
       ""
       (let
         [dst : (MutPtr u8) (string-runtime-alloc total-len)]
-        (begin
-          (str-copy-owned-bytes-into a dst 0 a-len)
-          (str-copy-owned-bytes-into b dst a-len b-len)
-          (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
-          (str-copy-owned-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
-          (str-copy-owned-bytes-into
-            e
-            dst
-            (+ a-len (+ b-len (+ c-len d-len)))
-            e-len)
-          (unsafe
-            (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
+        (str-copy-owned-bytes-into a dst 0 a-len)
+        (str-copy-owned-bytes-into b dst a-len b-len)
+        (str-copy-owned-bytes-into c dst (+ a-len b-len) c-len)
+        (str-copy-owned-bytes-into d dst (+ a-len (+ b-len c-len)) d-len)
+        (str-copy-owned-bytes-into
+          e
+          dst
+          (+ a-len (+ b-len (+ c-len d-len)))
+          e-len)
+        (unsafe
+          (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len))))))
 
 ;: Return a fresh active-arena owned substring copied from borrowed text.
 (define (substring [text : (& text str)] [start : i64] [len : i64]) : String
-  (begin
-    (substring-bounds-check text start len)
-    (substring-copy-checked text start len)))
+  (substring-bounds-check text start len)
+  (substring-copy-checked text start len))
 
 ;: Return a checked borrowed substring view without copying bytes.
 (define (substring-view [text : (& text str)] [start : i64] [len : i64]) : (&
     text
     str)
-  (begin
-    (substring-bounds-check text start len)
-    (unsafe
-      (tl_str_view text start len))))
+  (substring-bounds-check text start len)
+  (unsafe
+    (tl_str_view text start len)))
 
 ;: Borrowed alias for `substring-view`.
 (define (slice-view [text : (& text str)] [start : i64] [len : i64]) : (&
@@ -536,15 +510,14 @@
         [rw : (Ptr i64) (ptr-cast ,rp : (Ptr i64))]
         [words : i64 (shr ,len 3)]
         [i : i64 0]
-        (begin
-          (while (< i words)
-            (if (not
-              (= (ptr-read (ptr-offset lw i)) (ptr-read (ptr-offset rw i))))
-              (return false)
-              (set! i (+ i 1))))
-          (=
-            (ptr-read (ptr-cast (ptr-offset ,lp (- ,len 8)) : (Ptr i64)))
-            (ptr-read (ptr-cast (ptr-offset ,rp (- ,len 8)) : (Ptr i64))))))]
+        (while (< i words)
+          (if (not
+            (= (ptr-read (ptr-offset lw i)) (ptr-read (ptr-offset rw i))))
+            (return false)
+            (set! i (+ i 1))))
+        (=
+          (ptr-read (ptr-cast (ptr-offset ,lp (- ,len 8)) : (Ptr i64)))
+          (ptr-read (ptr-cast (ptr-offset ,rp (- ,len 8)) : (Ptr i64)))))]
     [(>= ,len 4)
       (and
         (=
@@ -593,12 +566,11 @@
     [n : i64 (__tl_string_length s)]
     [i : i64 0]
     [done : bool false]
-    (begin
-      (while (and (not done) (< i n))
-        (if (is-char-whitespace (__tl_string_ref s i))
-          (set! i (+ i 1))
-          (set! done true)))
-      (substring-view s i (- n i)))))
+    (while (and (not done) (< i n))
+      (if (is-char-whitespace (__tl_string_ref s i))
+        (set! i (+ i 1))
+        (set! done true)))
+    (substring-view s i (- n i))))
 
 ;: Trim leading whitespace from borrowed text.
 (define (trim-left [s : (& s str)]) : String
@@ -606,12 +578,11 @@
     [n : i64 (__tl_string_length s)]
     [i : i64 0]
     [done : bool false]
-    (begin
-      (while (and (not done) (< i n))
-        (if (is-char-whitespace (__tl_string_ref s i))
-          (set! i (+ i 1))
-          (set! done true)))
-      (substring s i (- n i)))))
+    (while (and (not done) (< i n))
+      (if (is-char-whitespace (__tl_string_ref s i))
+        (set! i (+ i 1))
+        (set! done true)))
+    (substring s i (- n i))))
 
 ;: Return a borrowed view of text with trailing whitespace removed.
 (define (trim-right-view [s : (& s str)]) : (& s str)
@@ -619,12 +590,11 @@
     [n : i64 (__tl_string_length s)]
     [i : i64 (- n 1)]
     [done : bool false]
-    (begin
-      (while (and (not done) (>= i 0))
-        (if (is-char-whitespace (__tl_string_ref s i))
-          (set! i (- i 1))
-          (set! done true)))
-      (substring-view s 0 (+ i 1)))))
+    (while (and (not done) (>= i 0))
+      (if (is-char-whitespace (__tl_string_ref s i))
+        (set! i (- i 1))
+        (set! done true)))
+    (substring-view s 0 (+ i 1))))
 
 ;: Trim trailing whitespace from borrowed text.
 (define (trim-right [s : (& s str)]) : String
@@ -632,12 +602,11 @@
     [n : i64 (__tl_string_length s)]
     [i : i64 (- n 1)]
     [done : bool false]
-    (begin
-      (while (and (not done) (>= i 0))
-        (if (is-char-whitespace (__tl_string_ref s i))
-          (set! i (- i 1))
-          (set! done true)))
-      (substring s 0 (+ i 1)))))
+    (while (and (not done) (>= i 0))
+      (if (is-char-whitespace (__tl_string_ref s i))
+        (set! i (- i 1))
+        (set! done true)))
+    (substring s 0 (+ i 1))))
 
 ;: Return a borrowed view of text with leading and trailing whitespace removed.
 (define (trim-view [s : (& s str)]) : (& s str)
@@ -647,16 +616,15 @@
     [end : i64 (- n 1)]
     [done-left : bool false]
     [done-right : bool false]
-    (begin
-      (while (and (not done-left) (< start n))
-        (if (is-char-whitespace (__tl_string_ref s start))
-          (set! start (+ start 1))
-          (set! done-left true)))
-      (while (and (not done-right) (>= end start))
-        (if (is-char-whitespace (__tl_string_ref s end))
-          (set! end (- end 1))
-          (set! done-right true)))
-      (substring-view s start (- (+ end 1) start)))))
+    (while (and (not done-left) (< start n))
+      (if (is-char-whitespace (__tl_string_ref s start))
+        (set! start (+ start 1))
+        (set! done-left true)))
+    (while (and (not done-right) (>= end start))
+      (if (is-char-whitespace (__tl_string_ref s end))
+        (set! end (- end 1))
+        (set! done-right true)))
+    (substring-view s start (- (+ end 1) start))))
 
 ;: Trim whitespace from both ends of borrowed text.
 (define (trim [s : (& s str)]) : String
@@ -666,16 +634,15 @@
     [end : i64 (- n 1)]
     [done-left : bool false]
     [done-right : bool false]
-    (begin
-      (while (and (not done-left) (< start n))
-        (if (is-char-whitespace (__tl_string_ref s start))
-          (set! start (+ start 1))
-          (set! done-left true)))
-      (while (and (not done-right) (>= end start))
-        (if (is-char-whitespace (__tl_string_ref s end))
-          (set! end (- end 1))
-          (set! done-right true)))
-      (substring s start (- (+ end 1) start)))))
+    (while (and (not done-left) (< start n))
+      (if (is-char-whitespace (__tl_string_ref s start))
+        (set! start (+ start 1))
+        (set! done-left true)))
+    (while (and (not done-right) (>= end start))
+      (if (is-char-whitespace (__tl_string_ref s end))
+        (set! end (- end 1))
+        (set! done-right true)))
+    (substring s start (- (+ end 1) start))))
 
 ;: Return true if haystack contains needle at any position.
 (define (contains [haystack : (& haystack str)] [needle : (& needle str)]) : bool
@@ -689,12 +656,11 @@
         (let
           [found : bool false]
           [i : i64 0]
-          (begin
-            (while (and (not found) (<= i (- hlen nlen)))
-              (if (is-string-prefix-at haystack needle i)
-                (set! found true)
-                (set! i (+ i 1))))
-            found))))))
+          (while (and (not found) (<= i (- hlen nlen)))
+            (if (is-string-prefix-at haystack needle i)
+              (set! found true)
+              (set! i (+ i 1))))
+          found)))))
 
 ;: Return true if borrowed haystack contains the character c.
 (define (contains-char [haystack : (& haystack str)] [c : char]) : bool
@@ -710,25 +676,23 @@
     [olen : i64 (__tl_string_length old)]
     [i : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (<= i (- hlen olen)))
-        (let
-          [j : i64 0]
-          [ok : bool true]
-          (begin
-            (while (and ok (< j olen))
-              (if (char-eq (__tl_string_ref s (+ i j)) (__tl_string_ref old j))
-                (set! j (+ j 1))
-                (set! ok false)))
-            (if ok
-              (set! found true)
-              (set! i (+ i 1))))))
-      (if found
-        (concat3
-          (substring s 0 i)
-          new
-          (substring s (+ i olen) (- (- hlen i) olen)))
-        s))))
+    (while (and (not found) (<= i (- hlen olen)))
+      (let
+        [j : i64 0]
+        [ok : bool true]
+        (while (and ok (< j olen))
+          (if (char-eq (__tl_string_ref s (+ i j)) (__tl_string_ref old j))
+            (set! j (+ j 1))
+            (set! ok false)))
+        (if ok
+          (set! found true)
+          (set! i (+ i 1)))))
+    (if found
+      (concat3
+        (substring s 0 i)
+        new
+        (substring s (+ i olen) (- (- hlen i) olen)))
+      s)))
 
 ;: Return true if haystack has needle at position start.
 (define (is-string-prefix-at
@@ -770,69 +734,61 @@
       [outer-expected : String "outer"]
       [outer-appended-expected : String "outer-append"]
       [outer-number-expected : String "12345"]
-      (begin
-        (test.assert-true
-          (stdlib.string.eq (& outer-trimmed) (& outer-expected))
-          "string-scoped-arena-allocation-policy: (eq (& outer-trimmed) (& outer-expected))")
-        (test.assert-true
-          (stdlib.string.eq (& outer-slice) (& outer-expected))
-          "string-scoped-arena-allocation-policy: (eq (& outer-slice) (& outer-expected))")
-        (test.assert-true
-          (stdlib.string.eq (& outer-appended) (& outer-appended-expected))
-          "string-scoped-arena-allocation-policy: (eq (& outer-appended) (& outer-appended-expected))")
-        (test.assert-true
-          (stdlib.string.eq (& outer-number) (& outer-number-expected))
-          "string-scoped-arena-allocation-policy: (eq (& outer-number) (& outer-number-expected))")
-        (with-arena
-          inner
-          (let
-            [inner-replaced : String (stdlib.string.replace "alpha" "ph" "ren")]
-            [inner-slice : String (stdlib.string.slice "alphabet" 2 3)]
-            [inner-appended : String (stdlib.string.append "inner" "-append")]
-            [inner-concat : String (stdlib.string.concat "inner" "-concat")]
-            [inner-number : String (stdlib.string.int->string -6789)]
-            [inner-borrowed : String
-              (stdlib.string.append (& inner-slice) (& inner-replaced))]
-            [inner-replaced-expected : String "alrena"]
-            [inner-slice-expected : String "pha"]
-            [inner-appended-expected : String "inner-append"]
-            [inner-concat-expected : String "inner-concat"]
-            [inner-number-expected : String "-6789"]
-            [inner-borrowed-expected : String "phaalrena"]
-            (begin
-              (test.assert-true
-                (stdlib.string.eq
-                  (& inner-replaced)
-                  (& inner-replaced-expected))
-                "string-scoped-arena-allocation-policy: (eq (& inner-replaced) (& inner-replaced-expected))")
-              (test.assert-true
-                (stdlib.string.eq (& inner-slice) (& inner-slice-expected))
-                "string-scoped-arena-allocation-policy: (eq (& inner-slice) (& inner-slice-expected))")
-              (test.assert-true
-                (stdlib.string.eq
-                  (& inner-appended)
-                  (& inner-appended-expected))
-                "string-scoped-arena-allocation-policy: (eq (& inner-appended) (& inner-appended-expected))")
-              (test.assert-true
-                (stdlib.string.eq (& inner-concat) (& inner-concat-expected))
-                "string-scoped-arena-allocation-policy: (eq (& inner-concat) (& inner-concat-expected))")
-              (test.assert-true
-                (stdlib.string.eq (& inner-number) (& inner-number-expected))
-                "string-scoped-arena-allocation-policy: (eq (& inner-number) (& inner-number-expected))")
-              (test.assert-true
-                (stdlib.string.eq
-                  (& inner-borrowed)
-                  (& inner-borrowed-expected))
-                "string-scoped-arena-allocation-policy: (eq (& inner-borrowed) (& inner-borrowed-expected))")
-              (test.assert-true
-                (= (__tl_string_length outer-trimmed) 5)
-                "string-scoped-arena-allocation-policy: (= (__tl_string_length outer-trimmed) 5)")
-              (test.assert-true
-                (= (__tl_string_length outer-appended) 12)
-                "string-scoped-arena-allocation-policy: (= (__tl_string_length outer-appended) 12)")
-              (test.assert-true
-                (= (__tl_string_length outer-number) 5)
-                "string-scoped-arena-allocation-policy: (= (__tl_string_length outer-number) 5)"))))))))
+      (test.assert-true
+        (stdlib.string.eq (& outer-trimmed) (& outer-expected))
+        "string-scoped-arena-allocation-policy: (eq (& outer-trimmed) (& outer-expected))")
+      (test.assert-true
+        (stdlib.string.eq (& outer-slice) (& outer-expected))
+        "string-scoped-arena-allocation-policy: (eq (& outer-slice) (& outer-expected))")
+      (test.assert-true
+        (stdlib.string.eq (& outer-appended) (& outer-appended-expected))
+        "string-scoped-arena-allocation-policy: (eq (& outer-appended) (& outer-appended-expected))")
+      (test.assert-true
+        (stdlib.string.eq (& outer-number) (& outer-number-expected))
+        "string-scoped-arena-allocation-policy: (eq (& outer-number) (& outer-number-expected))")
+      (with-arena
+        inner
+        (let
+          [inner-replaced : String (stdlib.string.replace "alpha" "ph" "ren")]
+          [inner-slice : String (stdlib.string.slice "alphabet" 2 3)]
+          [inner-appended : String (stdlib.string.append "inner" "-append")]
+          [inner-concat : String (stdlib.string.concat "inner" "-concat")]
+          [inner-number : String (stdlib.string.int->string -6789)]
+          [inner-borrowed : String
+            (stdlib.string.append (& inner-slice) (& inner-replaced))]
+          [inner-replaced-expected : String "alrena"]
+          [inner-slice-expected : String "pha"]
+          [inner-appended-expected : String "inner-append"]
+          [inner-concat-expected : String "inner-concat"]
+          [inner-number-expected : String "-6789"]
+          [inner-borrowed-expected : String "phaalrena"]
+          (test.assert-true
+            (stdlib.string.eq (& inner-replaced) (& inner-replaced-expected))
+            "string-scoped-arena-allocation-policy: (eq (& inner-replaced) (& inner-replaced-expected))")
+          (test.assert-true
+            (stdlib.string.eq (& inner-slice) (& inner-slice-expected))
+            "string-scoped-arena-allocation-policy: (eq (& inner-slice) (& inner-slice-expected))")
+          (test.assert-true
+            (stdlib.string.eq (& inner-appended) (& inner-appended-expected))
+            "string-scoped-arena-allocation-policy: (eq (& inner-appended) (& inner-appended-expected))")
+          (test.assert-true
+            (stdlib.string.eq (& inner-concat) (& inner-concat-expected))
+            "string-scoped-arena-allocation-policy: (eq (& inner-concat) (& inner-concat-expected))")
+          (test.assert-true
+            (stdlib.string.eq (& inner-number) (& inner-number-expected))
+            "string-scoped-arena-allocation-policy: (eq (& inner-number) (& inner-number-expected))")
+          (test.assert-true
+            (stdlib.string.eq (& inner-borrowed) (& inner-borrowed-expected))
+            "string-scoped-arena-allocation-policy: (eq (& inner-borrowed) (& inner-borrowed-expected))")
+          (test.assert-true
+            (= (__tl_string_length outer-trimmed) 5)
+            "string-scoped-arena-allocation-policy: (= (__tl_string_length outer-trimmed) 5)")
+          (test.assert-true
+            (= (__tl_string_length outer-appended) 12)
+            "string-scoped-arena-allocation-policy: (= (__tl_string_length outer-appended) 12)")
+          (test.assert-true
+            (= (__tl_string_length outer-number) 5)
+            "string-scoped-arena-allocation-policy: (= (__tl_string_length outer-number) 5)"))))))
 
 ;; Inline test coverage.
 (cfg test (import stdlib.test))
@@ -870,12 +826,11 @@
       [dst : (MutPtr u8)
         (unsafe
           (__tl_array-data bytes))]
-      (begin
-        (set! (array-ref bytes 0) (cast 'a' : u8))
-        (set! (array-ref bytes 1) (cast 0 : u8))
-        (set! (array-ref bytes 2) (cast 'b' : u8))
-        (unsafe
-          (string-from-bytes (ptr-cast dst : (Ptr u8)) 3))))))
+      (set! (array-ref bytes 0) (cast 'a' : u8))
+      (set! (array-ref bytes 1) (cast 0 : u8))
+      (set! (array-ref bytes 2) (cast 'b' : u8))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) 3)))))
 
 (cfg
   test
@@ -1067,19 +1022,18 @@
       [left : String "owned"]
       [right : String "-place"]
       [joined : String (append left right)]
-      (begin
-        (test.assert-owned-string-eq
-          joined
-          "owned-place"
-          "append auto-borrows owned places")
-        (test.assert-owned-string-eq
-          left
-          "owned"
-          "append leaves the left owned place usable")
-        (test.assert-owned-string-eq
-          right
-          "-place"
-          "append leaves the right owned place usable")))
+      (test.assert-owned-string-eq
+        joined
+        "owned-place"
+        "append auto-borrows owned places")
+      (test.assert-owned-string-eq
+        left
+        "owned"
+        "append leaves the left owned place usable")
+      (test.assert-owned-string-eq
+        right
+        "-place"
+        "append leaves the right owned place usable"))
     (test.assert-true
       (string-test-append-auto-borrow-param "owned" "-param")
       "append auto-borrows owned parameters")
@@ -1279,55 +1233,48 @@
       "largest prefix position")
     (let
       [text : String "0123456789abcdefghijklmnopqrstuvwxyz"]
-      (begin
-        ;; Every width class of the word compare, at an unaligned offset.
-        (test.assert-true (is-string-prefix-at (& text) "3" 3) "1-byte prefix")
-        (test.assert-true (is-string-prefix-at (& text) "34" 3) "2-byte prefix")
-        (test.assert-true
-          (is-string-prefix-at (& text) "345" 3)
-          "3-byte prefix")
-        (test.assert-true
-          (is-string-prefix-at (& text) "3456" 3)
-          "4-byte prefix")
-        (test.assert-true
-          (is-string-prefix-at (& text) "3456789" 3)
-          "7-byte prefix")
-        (test.assert-true
-          (is-string-prefix-at (& text) "3456789a" 3)
-          "8-byte prefix")
-        (test.assert-true
-          (is-string-prefix-at (& text) "3456789ab" 3)
-          "9-byte prefix")
-        (test.assert-true
-          (is-string-prefix-at (& text) "3456789abcdefghij" 3)
-          "17-byte prefix")
-        (test.assert-true
-          (is-string-prefix-at (& text) "uvwxyz" 30)
-          "prefix ending at the end")
-        (test.assert-false
-          (is-string-prefix-at (& text) "X" 3)
-          "1-byte mismatch")
-        (test.assert-false
-          (is-string-prefix-at (& text) "3X" 3)
-          "2-byte mismatch")
-        (test.assert-false
-          (is-string-prefix-at (& text) "345X" 3)
-          "4-byte last-byte mismatch")
-        (test.assert-false
-          (is-string-prefix-at (& text) "X456789abcdefghij" 3)
-          "first-byte mismatch")
-        (test.assert-false
-          (is-string-prefix-at (& text) "3456789aXcdefghij" 3)
-          "second-word mismatch")
-        (test.assert-false
-          (is-string-prefix-at (& text) "3456789abcdefghiX" 3)
-          "last-byte mismatch")
-        (test.assert-false
-          (is-string-prefix-at (& text) "3456789abcdefghij" 4)
-          "shifted prefix")
-        (test.assert-true
-          (is-string-prefix-at (& text) (& text) 0)
-          "whole text at start")
-        (test.assert-false
-          (is-string-prefix-at (& text) (& text) 1)
-          "whole text past start")))))
+      ;; Every width class of the word compare, at an unaligned offset.
+      (test.assert-true (is-string-prefix-at (& text) "3" 3) "1-byte prefix")
+      (test.assert-true (is-string-prefix-at (& text) "34" 3) "2-byte prefix")
+      (test.assert-true (is-string-prefix-at (& text) "345" 3) "3-byte prefix")
+      (test.assert-true (is-string-prefix-at (& text) "3456" 3) "4-byte prefix")
+      (test.assert-true
+        (is-string-prefix-at (& text) "3456789" 3)
+        "7-byte prefix")
+      (test.assert-true
+        (is-string-prefix-at (& text) "3456789a" 3)
+        "8-byte prefix")
+      (test.assert-true
+        (is-string-prefix-at (& text) "3456789ab" 3)
+        "9-byte prefix")
+      (test.assert-true
+        (is-string-prefix-at (& text) "3456789abcdefghij" 3)
+        "17-byte prefix")
+      (test.assert-true
+        (is-string-prefix-at (& text) "uvwxyz" 30)
+        "prefix ending at the end")
+      (test.assert-false (is-string-prefix-at (& text) "X" 3) "1-byte mismatch")
+      (test.assert-false
+        (is-string-prefix-at (& text) "3X" 3)
+        "2-byte mismatch")
+      (test.assert-false
+        (is-string-prefix-at (& text) "345X" 3)
+        "4-byte last-byte mismatch")
+      (test.assert-false
+        (is-string-prefix-at (& text) "X456789abcdefghij" 3)
+        "first-byte mismatch")
+      (test.assert-false
+        (is-string-prefix-at (& text) "3456789aXcdefghij" 3)
+        "second-word mismatch")
+      (test.assert-false
+        (is-string-prefix-at (& text) "3456789abcdefghiX" 3)
+        "last-byte mismatch")
+      (test.assert-false
+        (is-string-prefix-at (& text) "3456789abcdefghij" 4)
+        "shifted prefix")
+      (test.assert-true
+        (is-string-prefix-at (& text) (& text) 0)
+        "whole text at start")
+      (test.assert-false
+        (is-string-prefix-at (& text) (& text) 1)
+        "whole text past start"))))

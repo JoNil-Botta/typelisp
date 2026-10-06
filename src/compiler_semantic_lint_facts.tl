@@ -702,7 +702,21 @@
                 [(ast.AstForeach.Foreach index _ start _ _)
                   (if (= index name)
                     start
-                    -1)])]
+                    -1)]
+                [(ast.AstForeach.Foreach2
+                    outer
+                    _
+                    outer-start
+                    _
+                    inner
+                    _
+                    inner-start
+                    _
+                    _)
+                  (cond
+                    [(= outer name) outer-start]
+                    [(= inner name) inner-start]
+                    [else -1])])]
             [(ast.AstExpr.ForeachActive lane body)
               (if (= lane name)
                 body
@@ -1215,6 +1229,14 @@
               [(ast.AstExpr.Foreach payload)
                 (match (ast.ast-foreach-box-shared-view payload)
                   [(ast.AstForeach.Foreach _ _ _ _ body)
+                    (or
+                      (= expression body)
+                      (=
+                        (ast.ast-node-pool-context-expr-source-owner
+                          (& pools)
+                          expression)
+                        body))]
+                  [(ast.AstForeach.Foreach2 _ _ _ _ _ _ _ _ body)
                     (or
                       (= expression body)
                       (=

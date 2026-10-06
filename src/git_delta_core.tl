@@ -628,10 +628,10 @@
           (match (& candidate.target)
             [(Entry entry-index)
               (set! target-kind 0)
-              (set! target-index (deref entry-index))]
+              (set! target-index entry-index)]
             [(Thin thin-index)
               (set! target-kind 1)
-              (set! target-index (deref thin-index))]))
+              (set! target-index thin-index)]))
         (set! index (+ index 1))))
     (cond
       [(= matches 0) (Err "git delta: missing REF base")]
@@ -725,7 +725,7 @@
                         entries
                         tables.offsets
                         entry.offset
-                        (deref base-offset)
+                        base-offset
                         limits
                         (&mut budget))
                         [(Err message) (return (Err message))]

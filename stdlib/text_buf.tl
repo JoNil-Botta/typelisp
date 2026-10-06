@@ -99,10 +99,9 @@
           (unsafe
             (string-from-bytes (ptr-cast storage : (Ptr u8)) count)))]
       [next : TextBuf (append buf chunk)]
-      (begin
-        (unsafe
-          (ptr-write! slot next))
-        0))))
+      (unsafe
+        (ptr-write! slot next))
+      0)))
 
 ;: Validate and lease one TextBuf writer capability before raw cell access.
 ;: This ordinary safe function may be retained as a formatter callback.
@@ -119,10 +118,9 @@
         [status : i64
           (unsafe
             (format-write-raw address data))]
-        (begin
-          (unsafe
-            (format_writer_core.format-writer-release context))
-          status)))))
+        (unsafe
+          (format_writer_core.format-writer-release context))
+        status))))
 
 (test
   text-buf-scoped-arena-render-policy
@@ -152,15 +150,14 @@
     (let
       [actual-length : i64 buf.len]
       [expected-length : i64 (string-length expected)]
-      (begin
-        (test.assert-i64-eq
-          actual-length
-          expected-length
-          (string.copy (& message)))
-        (test.assert-owned-string-eq
-          (stdlib.text_buf.render buf)
-          expected
-          message)))))
+      (test.assert-i64-eq
+        actual-length
+        expected-length
+        (string.copy (& message)))
+      (test.assert-owned-string-eq
+        (stdlib.text_buf.render buf)
+        expected
+        message))))
 
 (cfg
   test
@@ -185,108 +182,97 @@
       "append order")
     (let
       [buf : TextBuf (stdlib.text_buf.empty)]
-      (begin
-        (stdlib.text_buf.append! buf "")
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          (clone buf)
-          ""
-          "mutable empty append leaves buffer empty")
-        (stdlib.text_buf.append! buf "alpha")
-        (stdlib.text_buf.append! buf "")
-        (stdlib.text_buf.append! buf " beta")
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          (clone buf)
-          "alpha beta"
-          "mutable append order")))
+      (stdlib.text_buf.append! buf "")
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        (clone buf)
+        ""
+        "mutable empty append leaves buffer empty")
+      (stdlib.text_buf.append! buf "alpha")
+      (stdlib.text_buf.append! buf "")
+      (stdlib.text_buf.append! buf " beta")
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        (clone buf)
+        "alpha beta"
+        "mutable append order"))
     (let
       [buf : TextBuf (stdlib.text_buf.empty)]
       [i : i64 0]
-      (begin
-        (while (< i 6)
-          (begin
-            (set! buf (stdlib.text_buf.append buf "ha"))
-            (set! i (+ i 1))))
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          buf
-          "hahahahahaha"
-          "repeated append")))
+      (while (< i 6)
+        (set! buf (stdlib.text_buf.append buf "ha"))
+        (set! i (+ i 1)))
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        buf
+        "hahahahahaha"
+        "repeated append"))
     (let
       [buf : TextBuf (stdlib.text_buf.empty)]
       [i : i64 0]
-      (begin
-        (while (< i 6)
-          (begin
-            (stdlib.text_buf.append! buf "ha")
-            (set! i (+ i 1))))
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          buf
-          "hahahahahaha"
-          "mutable repeated append")))
+      (while (< i 6)
+        (stdlib.text_buf.append! buf "ha")
+        (set! i (+ i 1)))
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        buf
+        "hahahahahaha"
+        "mutable repeated append"))
     (let
       [buf : TextBuf (stdlib.text_buf.empty)]
       [i : i64 0]
-      (begin
-        (while (< i 40)
-          (begin
-            (set! buf (stdlib.text_buf.append buf "x"))
-            (set! i (+ i 1))))
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          (clone buf)
-          "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-          "dense chunk order crosses capacity boundary")
-        (test.assert-i64-eq
-          (stdlib.text_buf.chunk-count buf.chunks 0)
-          40
-          "dense chunk count crosses capacity boundary")))
+      (while (< i 40)
+        (set! buf (stdlib.text_buf.append buf "x"))
+        (set! i (+ i 1)))
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        (clone buf)
+        "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+        "dense chunk order crosses capacity boundary")
+      (test.assert-i64-eq
+        (stdlib.text_buf.chunk-count buf.chunks 0)
+        40
+        "dense chunk count crosses capacity boundary"))
     (let
       [base : TextBuf (stdlib.text_buf.append (stdlib.text_buf.empty) "base")]
       [left : TextBuf (stdlib.text_buf.append (clone base) "-left")]
       [right : TextBuf (stdlib.text_buf.append (clone base) "-right")]
-      (begin
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          base
-          "base"
-          "functional base snapshot remains unchanged")
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          left
-          "base-left"
-          "functional left branch remains independent")
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          right
-          "base-right"
-          "functional right branch remains independent")))
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        base
+        "base"
+        "functional base snapshot remains unchanged")
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        left
+        "base-left"
+        "functional left branch remains independent")
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        right
+        "base-right"
+        "functional right branch remains independent"))
     (let
       [base : TextBuf (stdlib.text_buf.empty)]
       [i : i64 0]
-      (begin
-        (while (< i 32)
-          (begin
-            (set! base (stdlib.text_buf.append base "o"))
-            (set! i (+ i 1))))
-        (let
-          [outer-arena (arena.make)]
-          [child-ok : bool
-            (with-escape
-              outer-arena
-              (let
-                [child : TextBuf (stdlib.text_buf.append (clone base) "-inner")]
-                (string.eq
-                  (stdlib.text_buf.render child)
-                  "oooooooooooooooooooooooooooooooo-inner")))]
-          [sibling-ok : bool
-            (with-escape
-              outer-arena
-              (let
-                [sibling : TextBuf
-                  (stdlib.text_buf.append (clone base) "-sibling")]
-                (string.eq
-                  (stdlib.text_buf.render sibling)
-                  "oooooooooooooooooooooooooooooooo-sibling")))]
-          (begin
-            (test.assert-true child-ok "nested arena child growth renders")
-            (test.assert-true
-              sibling-ok
-              "nested arena retained snapshot growth renders")))))
+      (while (< i 32)
+        (set! base (stdlib.text_buf.append base "o"))
+        (set! i (+ i 1)))
+      (let
+        [outer-arena (arena.make)]
+        [child-ok : bool
+          (with-escape
+            outer-arena
+            (let
+              [child : TextBuf (stdlib.text_buf.append (clone base) "-inner")]
+              (string.eq
+                (stdlib.text_buf.render child)
+                "oooooooooooooooooooooooooooooooo-inner")))]
+        [sibling-ok : bool
+          (with-escape
+            outer-arena
+            (let
+              [sibling : TextBuf
+                (stdlib.text_buf.append (clone base) "-sibling")]
+              (string.eq
+                (stdlib.text_buf.render sibling)
+                "oooooooooooooooooooooooooooooooo-sibling")))]
+        (test.assert-true child-ok "nested arena child growth renders")
+        (test.assert-true
+          sibling-ok
+          "nested arena retained snapshot growth renders")))
     (stdlib.text_buf.text-buf-test-assert-text-buf
       (stdlib.text_buf.append
         (stdlib.text_buf.append
@@ -309,15 +295,14 @@
       "char and int append")
     (let
       [buf : TextBuf (stdlib.text_buf.empty)]
-      (begin
-        (stdlib.text_buf.append! buf "A")
-        (stdlib.text_buf.append-char! buf '\n')
-        (stdlib.text_buf.append-char! buf '\t')
-        (stdlib.text_buf.append-int! buf (cast -12 : i64))
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          buf
-          "A\n\t-12"
-          "mutable char and int append")))
+      (stdlib.text_buf.append! buf "A")
+      (stdlib.text_buf.append-char! buf '\n')
+      (stdlib.text_buf.append-char! buf '\t')
+      (stdlib.text_buf.append-int! buf (cast -12 : i64))
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        buf
+        "A\n\t-12"
+        "mutable char and int append"))
     (let
       [left : TextBuf
         (stdlib.text_buf.append
@@ -335,34 +320,32 @@
     (let
       [original : TextBuf
         (stdlib.text_buf.append (stdlib.text_buf.empty) "keep")]
-      (begin
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          (stdlib.text_buf.clear (clone original))
-          ""
-          "clear returns empty")
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          (stdlib.text_buf.reset (clone original))
-          ""
-          "reset returns empty")
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          original
-          "keep"
-          "clear leaves original value")))
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        (stdlib.text_buf.clear (clone original))
+        ""
+        "clear returns empty")
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        (stdlib.text_buf.reset (clone original))
+        ""
+        "reset returns empty")
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        original
+        "keep"
+        "clear leaves original value"))
     (let
       [buf : TextBuf (stdlib.text_buf.append (stdlib.text_buf.empty) "drop")]
-      (begin
-        (stdlib.text_buf.clear! buf)
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          (clone buf)
-          ""
-          "mutable clear empties buffer")
-        (stdlib.text_buf.append! buf "again")
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          (clone buf)
-          "again"
-          "mutable append after clear")
-        (stdlib.text_buf.reset! buf)
-        (stdlib.text_buf.text-buf-test-assert-text-buf
-          buf
-          ""
-          "mutable reset empties buffer")))))
+      (stdlib.text_buf.clear! buf)
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        (clone buf)
+        ""
+        "mutable clear empties buffer")
+      (stdlib.text_buf.append! buf "again")
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        (clone buf)
+        "again"
+        "mutable append after clear")
+      (stdlib.text_buf.reset! buf)
+      (stdlib.text_buf.text-buf-test-assert-text-buf
+        buf
+        ""
+        "mutable reset empties buffer"))))

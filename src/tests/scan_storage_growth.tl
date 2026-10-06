@@ -27,8 +27,10 @@
     [index : i64 0]
     [caller : i64 (arena.tl_arena_current)]
     (while (< index 32768)
-      (reader.sp-node-push
-        (Int index "retained" (token.SourceSpan (+ index 1) 2 3 4)))
+      (begin
+        (reader.sp-node-push
+          (Int index "retained" (token.SourceSpan (+ index 1) 2 3 4)))
+        unit)
       (set! index (+ index 1)))
     (reader.sp-node-pool-compact-retained!)
     (let
@@ -119,7 +121,9 @@
       (in-arena (arena.Arena owner) (string.copy "shared reader storage"))]
     [index : i64 0]
     (while (< index 2049)
-      (reader.sp-node-push (Int index "" (token.SourceSpan 1 1 1 1)))
+      (begin
+        (reader.sp-node-push (Int index "" (token.SourceSpan 1 1 1 1)))
+        unit)
       (set! index (+ index 1)))
     (unless
       (and
@@ -200,20 +204,20 @@
       (= (token.spanned-token-line record) (+ (/ index 7) 1))
       (= (token.spanned-token-col record) column)
       (match (token.spanned-token-token-ref record)
-        [(LParen) (= position 0)]
-        [(Sym name)
+        [(token.Token.LParen) (= position 0)]
+        [(token.Token.Sym name)
           (and
             (= position 1)
             (string.eq (ci.intern-str (ci.intern-id-value name)) "atom"))]
-        [(Int value text)
-          (and (= position 2) (= (deref value) 123) (string.eq text "0x7b"))]
-        [(Char value) (and (= position 3) (= (deref value) 'q'))]
-        [(Str text)
+        [(token.Token.Int value text)
+          (and (= position 2) (= value 123) (string.eq text "0x7b"))]
+        [(token.Token.Char value) (and (= position 3) (= value 'q'))]
+        [(token.Token.Str text)
           (and
             (= position 4)
             (string.eq (ci.intern-str (ci.intern-id-value text)) "bytes"))]
-        [(Float text) (and (= position 5) (string.eq text "1.5"))]
-        [(RParen) (= position 6)]
+        [(token.Token.Float text) (and (= position 5) (string.eq text "1.5"))]
+        [(token.Token.RParen) (= position 6)]
         [_ false]))))
 
 (cfg

@@ -150,13 +150,12 @@
     (while (< index 8)
       (let
         [shift : i64 (- 56 (* index 8))]
-        (begin
-          (set!
-            (array-ref block (+ 56 index))
-            (cast
-              (bit-and (shr bit-length (cast shift : u64)) (cast 255 : u64))
-              : u8))
-          (set! index (+ index 1)))))))
+        (set!
+          (array-ref block (+ 56 index))
+          (cast
+            (bit-and (shr bit-length (cast shift : u64)) (cast 255 : u64))
+            : u8))
+        (set! index (+ index 1))))))
 
 ;: Store one digest word in network order through an audited raw sink.
 (unsafe
@@ -169,14 +168,13 @@
       (while (< index 4)
         (let
           [shift : i64 (- 24 (* index 8))]
-          (begin
-            (unsafe
-              (ptr-write!
-                (ptr-offset output (+ offset index))
-                (cast
-                  (bit-and (shr value (cast shift : u64)) (cast 255 : u32))
-                  : u8)))
-            (set! index (+ index 1))))))))
+          (unsafe
+            (ptr-write!
+              (ptr-offset output (+ offset index))
+              (cast
+                (bit-and (shr value (cast shift : u64)) (cast 255 : u32))
+                : u8)))
+          (set! index (+ index 1)))))))
 
 ;: Volatile-wipe one completed 80-word compression schedule.
 (unsafe
@@ -184,67 +182,60 @@
     (let
       [index : i64 0]
       (while (< index 80)
-        (begin
-          (unsafe
-            (volatile-store! (ptr-offset data index) (cast 0 : u32)))
-          (set! index (+ index 1)))))))
+        (unsafe
+          (volatile-store! (ptr-offset data index) (cast 0 : u32)))
+        (set! index (+ index 1))))))
 
 ;: Compress the complete 64-byte block currently stored in `state`.
 (define (compress! [state : (&mut state GitSha1State)]) : unit
   (let
     [schedule : (Array u32 80) (make-array u32 80)]
     [index : i64 0]
-    (begin
-      (while (< index 16)
-        (begin
-          (set!
-            (array-ref schedule index)
-            (load-word-be (& state.block) (* index 4)))
-          (set! index (+ index 1))))
-      (while (< index 80)
-        (begin
-          (set!
-            (array-ref schedule index)
-            (rotate-left
-              (bit-xor
-                (array-ref schedule (- index 3))
-                (array-ref schedule (- index 8))
-                (array-ref schedule (- index 14))
-                (array-ref schedule (- index 16)))
-              1))
-          (set! index (+ index 1))))
-      (let
-        [a : u32 (array-ref state.words 0)]
-        [b : u32 (array-ref state.words 1)]
-        [c : u32 (array-ref state.words 2)]
-        [d : u32 (array-ref state.words 3)]
-        [e : u32 (array-ref state.words 4)]
-        [round : i64 0]
-        (begin
-          (while (< round 80)
-            (let
-              [next : u32
-                (+
-                  (rotate-left a 5)
-                  (round-function round b c d)
-                  e
-                  (round-constant round)
-                  (array-ref schedule round))]
-              (begin
-                (set! e d)
-                (set! d c)
-                (set! c (rotate-left b 30))
-                (set! b a)
-                (set! a next)
-                (set! round (+ round 1)))))
-          (set! (array-ref state.words 0) (+ (array-ref state.words 0) a))
-          (set! (array-ref state.words 1) (+ (array-ref state.words 1) b))
-          (set! (array-ref state.words 2) (+ (array-ref state.words 2) c))
-          (set! (array-ref state.words 3) (+ (array-ref state.words 3) d))
-          (set! (array-ref state.words 4) (+ (array-ref state.words 4) e))))
-      (unsafe
-        (wipe-schedule-pointer!
-          (ptr-cast (ptr-addr-of schedule) : (MutPtr u32)))))))
+    (while (< index 16)
+      (set!
+        (array-ref schedule index)
+        (load-word-be (& state.block) (* index 4)))
+      (set! index (+ index 1)))
+    (while (< index 80)
+      (set!
+        (array-ref schedule index)
+        (rotate-left
+          (bit-xor
+            (array-ref schedule (- index 3))
+            (array-ref schedule (- index 8))
+            (array-ref schedule (- index 14))
+            (array-ref schedule (- index 16)))
+          1))
+      (set! index (+ index 1)))
+    (let
+      [a : u32 (array-ref state.words 0)]
+      [b : u32 (array-ref state.words 1)]
+      [c : u32 (array-ref state.words 2)]
+      [d : u32 (array-ref state.words 3)]
+      [e : u32 (array-ref state.words 4)]
+      [round : i64 0]
+      (while (< round 80)
+        (let
+          [next : u32
+            (+
+              (rotate-left a 5)
+              (round-function round b c d)
+              e
+              (round-constant round)
+              (array-ref schedule round))]
+          (set! e d)
+          (set! d c)
+          (set! c (rotate-left b 30))
+          (set! b a)
+          (set! a next)
+          (set! round (+ round 1))))
+      (set! (array-ref state.words 0) (+ (array-ref state.words 0) a))
+      (set! (array-ref state.words 1) (+ (array-ref state.words 1) b))
+      (set! (array-ref state.words 2) (+ (array-ref state.words 2) c))
+      (set! (array-ref state.words 3) (+ (array-ref state.words 3) d))
+      (set! (array-ref state.words 4) (+ (array-ref state.words 4) e)))
+    (unsafe
+      (wipe-schedule-pointer! (ptr-cast (ptr-addr-of schedule) : (MutPtr u32))))))
 
 ;: True when public bookkeeping fields describe a live streaming state.
 (define (state-valid? [state : (& state GitSha1State)]) : bool
@@ -272,34 +263,29 @@
           [(GitSha1LengthOk length)
             (let
               [offset : i64 0]
-              (begin
-                (set! state.byte-length length)
-                (while (< offset input-length)
-                  (let
-                    [available : i64 (- 64 state.block-length)]
-                    [remaining : i64 (- input-length offset)]
-                    [take : i64
-                      (if (< remaining available)
-                        remaining
-                        available)]
-                    [copy-index : i64 0]
+              (set! state.byte-length length)
+              (while (< offset input-length)
+                (let
+                  [available : i64 (- 64 state.block-length)]
+                  [remaining : i64 (- input-length offset)]
+                  [take : i64
+                    (if (< remaining available)
+                      remaining
+                      available)]
+                  [copy-index : i64 0]
+                  (while (< copy-index take)
+                    (set!
+                      (array-ref state.block (+ state.block-length copy-index))
+                      (byte_buf.bytes-ref input (+ offset copy-index)))
+                    (set! copy-index (+ copy-index 1)))
+                  (set! state.block-length (+ state.block-length take))
+                  (set! offset (+ offset take))
+                  (if (= state.block-length 64)
                     (begin
-                      (while (< copy-index take)
-                        (begin
-                          (set!
-                            (array-ref
-                              state.block
-                              (+ state.block-length copy-index))
-                            (byte_buf.bytes-ref input (+ offset copy-index)))
-                          (set! copy-index (+ copy-index 1))))
-                      (set! state.block-length (+ state.block-length take))
-                      (set! offset (+ offset take))
-                      (if (= state.block-length 64)
-                        (begin
-                          (compress! state)
-                          (set! state.block-length 0))
-                        unit))))
-                (GitSha1UpdateOk)))]))]))
+                      (compress! state)
+                      (set! state.block-length 0))
+                    unit)))
+              (GitSha1UpdateOk))]))]))
 
 ;: Extend `state` from a raw scoped source without an ordinary byte container.
 ;: The source must remain valid for `input-length` bytes and not alias state.
@@ -323,36 +309,30 @@
           [(GitSha1LengthOk length)
             (let
               [offset : i64 0]
-              (begin
-                (set! state.byte-length length)
-                (while (< offset input-length)
-                  (let
-                    [available : i64 (- 64 state.block-length)]
-                    [remaining : i64 (- input-length offset)]
-                    [take : i64
-                      (if (< remaining available)
-                        remaining
-                        available)]
-                    [copy-index : i64 0]
+              (set! state.byte-length length)
+              (while (< offset input-length)
+                (let
+                  [available : i64 (- 64 state.block-length)]
+                  [remaining : i64 (- input-length offset)]
+                  [take : i64
+                    (if (< remaining available)
+                      remaining
+                      available)]
+                  [copy-index : i64 0]
+                  (while (< copy-index take)
+                    (set!
+                      (array-ref state.block (+ state.block-length copy-index))
+                      (unsafe
+                        (ptr-read (ptr-offset input (+ offset copy-index)))))
+                    (set! copy-index (+ copy-index 1)))
+                  (set! state.block-length (+ state.block-length take))
+                  (set! offset (+ offset take))
+                  (if (= state.block-length 64)
                     (begin
-                      (while (< copy-index take)
-                        (begin
-                          (set!
-                            (array-ref
-                              state.block
-                              (+ state.block-length copy-index))
-                            (unsafe
-                              (ptr-read
-                                (ptr-offset input (+ offset copy-index)))))
-                          (set! copy-index (+ copy-index 1))))
-                      (set! state.block-length (+ state.block-length take))
-                      (set! offset (+ offset take))
-                      (if (= state.block-length 64)
-                        (begin
-                          (compress! state)
-                          (set! state.block-length 0))
-                        unit))))
-                (GitSha1UpdateOk)))])])))
+                      (compress! state)
+                      (set! state.block-length 0))
+                    unit)))
+              (GitSha1UpdateOk))])])))
 
 ;: Construct the closed all-zero replacement installed after consumption.
 (define (wiped-state) : GitSha1State
@@ -369,21 +349,18 @@
       (unsafe
         (ptr-cast (ptr-addr-of previous.block) : (MutPtr u64)))]
     [index : i64 0]
-    (begin
-      (set! previous.open false)
-      (set! previous.block-length 0)
-      (set! previous.byte-length (cast 0 : u64))
-      (while (< index 5)
-        (begin
-          (unsafe
-            (volatile-store! (ptr-offset word-data index) (cast 0 : u32)))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index 8)
-        (begin
-          (unsafe
-            (volatile-store! (ptr-offset block-data index) (cast 0 : u64)))
-          (set! index (+ index 1)))))))
+    (set! previous.open false)
+    (set! previous.block-length 0)
+    (set! previous.byte-length (cast 0 : u64))
+    (while (< index 5)
+      (unsafe
+        (volatile-store! (ptr-offset word-data index) (cast 0 : u32)))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index 8)
+      (unsafe
+        (volatile-store! (ptr-offset block-data index) (cast 0 : u64)))
+      (set! index (+ index 1)))))
 
 ;: Finalize into a caller-validated non-overlapping raw 20-byte sink.
 ;: `output` must be non-null and writable for exactly 20 bytes. Prefer
@@ -400,37 +377,32 @@
       [else
         (let
           [cursor : i64 state.block-length]
-          (begin
-            (set! (array-ref state.block cursor) (cast 128 : u8))
-            (set! cursor (+ cursor 1))
-            (if (> cursor 56)
-              (begin
-                (while (< cursor 64)
-                  (begin
-                    (set! (array-ref state.block cursor) (cast 0 : u8))
-                    (set! cursor (+ cursor 1))))
-                (compress! state)
-                (set! cursor 0))
-              unit)
-            (while (< cursor 56)
-              (begin
+          (set! (array-ref state.block cursor) (cast 128 : u8))
+          (set! cursor (+ cursor 1))
+          (if (> cursor 56)
+            (begin
+              (while (< cursor 64)
                 (set! (array-ref state.block cursor) (cast 0 : u8))
-                (set! cursor (+ cursor 1))))
-            (write-bit-length! (&mut state.block) state.byte-length)
-            (compress! state)
-            (let
-              [word-index : i64 0]
-              (begin
-                (while (< word-index 5)
-                  (begin
-                    (unsafe
-                      (store-pointer-word-be!
-                        output
-                        (* word-index 4)
-                        (array-ref state.words word-index)))
-                    (set! word-index (+ word-index 1))))
-                (wipe-state! state)
-                (GitSha1FinalizeIntoOk)))))])))
+                (set! cursor (+ cursor 1)))
+              (compress! state)
+              (set! cursor 0))
+            unit)
+          (while (< cursor 56)
+            (set! (array-ref state.block cursor) (cast 0 : u8))
+            (set! cursor (+ cursor 1)))
+          (write-bit-length! (&mut state.block) state.byte-length)
+          (compress! state)
+          (let
+            [word-index : i64 0]
+            (while (< word-index 5)
+              (unsafe
+                (store-pointer-word-be!
+                  output
+                  (* word-index 4)
+                  (array-ref state.words word-index)))
+              (set! word-index (+ word-index 1)))
+            (wipe-state! state)
+            (GitSha1FinalizeIntoOk)))])))
 
 ;: Finalize `state` once into an ordinary public Git compatibility digest.
 (define (finalize! [state : (&mut state GitSha1State)]) : GitSha1FinalizeResult
@@ -450,9 +422,8 @@
     [state : GitSha1State (new)]
     (match (update! (&mut state) input)
       [(GitSha1UpdateErr error)
-        (begin
-          (wipe-state! (&mut state))
-          (GitSha1FinalizeErr error))]
+        (wipe-state! (&mut state))
+        (GitSha1FinalizeErr error)]
       [(GitSha1UpdateOk) (finalize! (&mut state))])))
 
 ;: Return one public Git digest byte; trap outside `[0, 20)`.
@@ -470,52 +441,48 @@
   (let
     [different : u32 (cast 0 : u32)]
     [index : i64 0]
-    (begin
-      (while (< index 20)
-        (begin
-          (set!
-            different
-            (bit-or
-              different
-              (cast
-                (bit-xor
-                  (array-ref left.octets index)
-                  (array-ref right.octets index))
-                : u32)))
-          (set! index (+ index 1))))
-      (= different (cast 0 : u32)))))
+    (while (< index 20)
+      (set!
+        different
+        (bit-or
+          different
+          (cast
+            (bit-xor
+              (array-ref left.octets index)
+              (array-ref right.octets index))
+            : u32)))
+      (set! index (+ index 1)))
+    (= different (cast 0 : u32))))
 
 ;: Render a public traditional Git object ID as 40 lowercase hex bytes.
 (define (to-hex [digest : (& digest GitSha1Digest)]) : String
   (let
     [output : (MutPtr u8) (string.string-runtime-alloc 40)]
     [index : i64 0]
-    (begin
-      (while (< index 20)
-        (let
-          [byte : i64 (cast (array-ref digest.octets index) : i64)]
-          [high : i64 (/ byte 16)]
-          [low : i64 (% byte 16)]
-          (begin
-            (unsafe
-              (ptr-write!
-                (ptr-offset output (* index 2))
-                (cast
-                  (if (< high 10)
-                    (+ 48 high)
-                    (+ 87 high))
-                  : u8)))
-            (unsafe
-              (ptr-write!
-                (ptr-offset output (+ (* index 2) 1))
-                (cast
-                  (if (< low 10)
-                    (+ 48 low)
-                    (+ 87 low))
-                  : u8)))
-            (set! index (+ index 1)))))
-      (unsafe
-        (string-from-bytes (ptr-cast output : (Ptr u8)) 40)))))
+    (while (< index 20)
+      (let
+        [byte : i64 (cast (array-ref digest.octets index) : i64)]
+        [high : i64 (/ byte 16)]
+        [low : i64 (% byte 16)]
+        (unsafe
+          (ptr-write!
+            (ptr-offset output (* index 2))
+            (cast
+              (if (< high 10)
+                (+ 48 high)
+                (+ 87 high))
+              : u8)))
+        (unsafe
+          (ptr-write!
+            (ptr-offset output (+ (* index 2) 1))
+            (cast
+              (if (< low 10)
+                (+ 48 low)
+                (+ 87 low))
+              : u8)))
+        (set! index (+ index 1))))
+    (unsafe
+      (string-from-bytes (ptr-cast output : (Ptr u8)) 40))))
 
 ;: Zero a public digest, volatile-wiping its previous by-value contents.
 (define (wipe-digest! [digest : (&mut digest GitSha1Digest)]) : unit
@@ -527,10 +494,9 @@
         (ptr-cast (ptr-addr-of previous.octets) : (MutPtr u32)))]
     [index : i64 0]
     (while (< index 5)
-      (begin
-        (unsafe
-          (volatile-store! (ptr-offset data index) (cast 0 : u32)))
-        (set! index (+ index 1))))))
+      (unsafe
+        (volatile-store! (ptr-offset data index) (cast 0 : u32)))
+      (set! index (+ index 1)))))
 
 ;: Consume state into an exact caller-owned 20-byte sink and wipe it on every
 ;: path. Pointer, length, and lifecycle checks happen before destination
@@ -551,6 +517,5 @@
           [else
             (unsafe
               (finalize-into-pointer! state output))])]
-      (begin
-        (wipe-state! state)
-        result))))
+      (wipe-state! state)
+      result)))

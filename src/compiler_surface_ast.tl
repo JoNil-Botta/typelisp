@@ -68,6 +68,10 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 17: AstExpr tag 19 retains the direct while body expression list.
+  ;;
+  ;; 16: AstExpr tag 89 adds the rank-2 Foreach2 domain.
+  ;;
   ;; 15: AstPattern tag 7 adds the `(slice ...)` pattern: a rest flag, then
   ;; the item list.
   ;;
@@ -117,7 +121,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  15)
+  17)
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -598,7 +602,7 @@
       (while (< index count)
         (let
           [item : ast.AstImportedSpmdSpecialization
-            (ast.ast-array-shared-view items.slots index)]
+            (array-ref items.slots index)]
           (codec.surface-ast-write-name!
             out
             context
@@ -992,7 +996,7 @@
       [count : i64 variants.len]
       (codec.surface-ast-write-i64! out count)
       (while (< index count)
-        (match (ast.ast-array-shared-view variants.slots index)
+        (match (array-ref variants.slots index)
           [(Variant isa name)
             (codec.surface-ast-write-i64!
               out

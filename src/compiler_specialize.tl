@@ -735,11 +735,9 @@
   (match param
     [(Param name _ _) name]))
 
-(define (spec-state-ctfe-env [state : (& state SpecState)]) : (&
-    state
-    ctfe.CtfeEnv)
+(define (spec-state-ctfe-env [state : (& state SpecState)]) : ctfe.CtfeEnv
   (match state
-    [(State _ _ env _) env]))
+    [(SpecState.State _ _ env _) env]))
 
 (define (spec-state-owner [state : (& state SpecState)]) : (&
     state
@@ -761,8 +759,7 @@
   [expr : ast.AstExpr]
   [fuel : i64]) : ctfe.ResultCtfe
   (let
-    [ctfe-env : ctfe.CtfeEnv
-      (ctfe.ctfe-env-shared-view (spec-state-ctfe-env state))]
+    [ctfe-env : ctfe.CtfeEnv (spec-state-ctfe-env state)]
     (ctfe.compiler-ctfe-eval expr ctfe-env fuel)))
 
 (define (spec-type-kind? [ty : ast.AstType]) : bool
@@ -3846,96 +3843,92 @@
   [state : SpecState]
   [value : ctfe.CompilerCtfeValue]
   [ty : ast.AstType]) : bool
-  (cbi.compiler-builtin-refresh!)
-  (match value
-    [(I64 _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (I64))]
-    [(F64 _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (F64))]
-    [(F32 _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (F32))]
-    [(Bool _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Bool))]
-    [(Char _) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Char))]
-    [(String _ _)
-      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (String))]
-    [(Name _ _)
-      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (String))]
-    [(Unit) (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Unit))]
-    [(Type _) false]
-    [(Expr _ _)
-      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Expr))]
-    [(CapturedExpr _ _ _)
-      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (Expr))]
-    [(ExprList _)
-      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (ExprList))]
-    [(CapturedExprList _ _)
-      (ctfe.ctfe-type-eq-in-env (spec-state-ctfe-env state) ty (ExprList))]
-    [(ExprClause _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-ExprClause))]
-    [(CapturedExprClause _ _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-ExprClause))]
-    [(ExprClauseList _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
-    [(CapturedExprClauseList _ _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
-    [(ExprBindingClause _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-ExprBindingClause))]
-    [(ExprBindingClauseList _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-ExprBindingClauseList))]
-    [(Pattern _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-Pattern))]
-    [(PatternList _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-PatternList))]
-    [(MatchArm _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-MatchArm))]
-    [(MatchArmList _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-MatchArmList))]
-    [(LetBinding _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-LetBinding))]
-    [(LetBindingList _)
-      (ctfe.ctfe-type-eq-in-env
-        (spec-state-ctfe-env state)
-        ty
-        (Var cbi.compiler-builtin-id-fix-LetBindingList))]
-    [(TypeInfo _) false]
-    [(TypeInfoBox _) false]
-    [(TypeInfoList _) false]
-    [(TypeField _ _) false]
-    [(TypeFieldList _) false]
-    [(TypeVariantPayload _) false]
-    [(TypeVariantPayloadList _) false]
-    [(TypeVariant _ _) false]
-    [(TypeVariantList _) false]))
+  (let
+    [env : ctfe.CtfeEnv (spec-state-ctfe-env state)]
+    (cbi.compiler-builtin-refresh!)
+    (match value
+      [(I64 _) (ctfe.ctfe-type-eq-in-env env ty (I64))]
+      [(F64 _) (ctfe.ctfe-type-eq-in-env env ty (F64))]
+      [(F32 _) (ctfe.ctfe-type-eq-in-env env ty (F32))]
+      [(Bool _) (ctfe.ctfe-type-eq-in-env env ty (Bool))]
+      [(Char _) (ctfe.ctfe-type-eq-in-env env ty (Char))]
+      [(String _ _) (ctfe.ctfe-type-eq-in-env env ty (String))]
+      [(Name _ _) (ctfe.ctfe-type-eq-in-env env ty (String))]
+      [(Unit) (ctfe.ctfe-type-eq-in-env env ty (Unit))]
+      [(Type _) false]
+      [(Expr _ _) (ctfe.ctfe-type-eq-in-env env ty (Expr))]
+      [(CapturedExpr _ _ _) (ctfe.ctfe-type-eq-in-env env ty (Expr))]
+      [(ExprList _) (ctfe.ctfe-type-eq-in-env env ty (ExprList))]
+      [(CapturedExprList _ _) (ctfe.ctfe-type-eq-in-env env ty (ExprList))]
+      [(ExprClause _)
+        (ctfe.ctfe-type-eq-in-env
+          env
+          ty
+          (Var cbi.compiler-builtin-id-fix-ExprClause))]
+      [(CapturedExprClause _ _)
+        (ctfe.ctfe-type-eq-in-env
+          env
+          ty
+          (Var cbi.compiler-builtin-id-fix-ExprClause))]
+      [(ExprClauseList _)
+        (ctfe.ctfe-type-eq-in-env
+          env
+          ty
+          (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
+      [(CapturedExprClauseList _ _)
+        (ctfe.ctfe-type-eq-in-env
+          env
+          ty
+          (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
+      [(ExprBindingClause _)
+        (ctfe.ctfe-type-eq-in-env
+          env
+          ty
+          (Var cbi.compiler-builtin-id-fix-ExprBindingClause))]
+      [(ExprBindingClauseList _)
+        (ctfe.ctfe-type-eq-in-env
+          env
+          ty
+          (Var cbi.compiler-builtin-id-fix-ExprBindingClauseList))]
+      [(Pattern _)
+        (ctfe.ctfe-type-eq-in-env
+          env
+          ty
+          (Var cbi.compiler-builtin-id-fix-Pattern))]
+      [(PatternList _)
+        (ctfe.ctfe-type-eq-in-env
+          env
+          ty
+          (Var cbi.compiler-builtin-id-fix-PatternList))]
+      [(MatchArm _)
+        (ctfe.ctfe-type-eq-in-env
+          env
+          ty
+          (Var cbi.compiler-builtin-id-fix-MatchArm))]
+      [(MatchArmList _)
+        (ctfe.ctfe-type-eq-in-env
+          env
+          ty
+          (Var cbi.compiler-builtin-id-fix-MatchArmList))]
+      [(LetBinding _)
+        (ctfe.ctfe-type-eq-in-env
+          env
+          ty
+          (Var cbi.compiler-builtin-id-fix-LetBinding))]
+      [(LetBindingList _)
+        (ctfe.ctfe-type-eq-in-env
+          env
+          ty
+          (Var cbi.compiler-builtin-id-fix-LetBindingList))]
+      [(TypeInfo _) false]
+      [(TypeInfoBox _) false]
+      [(TypeInfoList _) false]
+      [(TypeField _ _) false]
+      [(TypeFieldList _) false]
+      [(TypeVariantPayload _) false]
+      [(TypeVariantPayloadList _) false]
+      [(TypeVariant _ _) false]
+      [(TypeVariantList _) false])))
 
 (define (spec-value-type-label [value : ctfe.CompilerCtfeValue]) : String
   (match value
@@ -5326,6 +5319,62 @@
                           body-state)]
                       [(Err diag) (Err diag)])]
                   [(Err diag) (Err diag)])]
+              [(Err diag) (Err diag)]))]
+        [(Foreach2
+            outer
+            outer-ty
+            outer-start-box
+            outer-end-box
+            inner
+            inner-ty
+            inner-start-box
+            inner-end-box
+            body-box)
+          (let
+            [outer-start : ast.AstExpr
+              (spec-state-expr-get state outer-start-box)]
+            [outer-end : ast.AstExpr (spec-state-expr-get state outer-end-box)]
+            [inner-start : ast.AstExpr
+              (spec-state-expr-get state inner-start-box)]
+            [inner-end : ast.AstExpr (spec-state-expr-get state inner-end-box)]
+            [body : ast.AstExpr (spec-state-expr-get state body-box)]
+            [outer-templates : SpecTemplateEnv
+              (spec-template-env-shadow-name templates outer)]
+            [body-templates : SpecTemplateEnv
+              (spec-template-env-shadow-name outer-templates inner)]
+            (match (spec-rewrite-expr
+              outer-start
+              templates
+              (spec-place-shared-view state))
+              [(Ok rewritten-outer-start state0)
+                (match (spec-rewrite-expr outer-end templates state0)
+                  [(Ok rewritten-outer-end state1)
+                    (match (spec-rewrite-expr inner-start templates state1)
+                      [(Ok rewritten-inner-start state2)
+                        (match (spec-rewrite-expr inner-end templates state2)
+                          [(Ok rewritten-inner-end state3)
+                            (match (spec-rewrite-expr
+                              body
+                              body-templates
+                              state3)
+                              [(Ok rewritten-body body-state)
+                                (Ok
+                                  (ast.ast-expr-foreach2-id-with-pools
+                                    (spec-state-pools state)
+                                    outer
+                                    outer-ty
+                                    rewritten-outer-start
+                                    rewritten-outer-end
+                                    inner
+                                    inner-ty
+                                    rewritten-inner-start
+                                    rewritten-inner-end
+                                    rewritten-body)
+                                  body-state)]
+                              [(Err diag) (Err diag)])]
+                          [(Err diag) (Err diag)])]
+                      [(Err diag) (Err diag)])]
+                  [(Err diag) (Err diag)])]
               [(Err diag) (Err diag)]))])]
     [(ForeachActive lane body-box)
       (let
@@ -5853,6 +5902,55 @@
                 index-ty
                 rewritten-start
                 rewritten-end
+                rewritten-body)))]
+        [(Foreach2
+            outer
+            outer-ty
+            outer-start-box
+            outer-end-box
+            inner
+            inner-ty
+            inner-start-box
+            inner-end-box
+            body-box)
+          (let
+            [outer-start : ast.AstExpr
+              (spec-owner-expr-get owner outer-start-box)]
+            [outer-end : ast.AstExpr (spec-owner-expr-get owner outer-end-box)]
+            [inner-start : ast.AstExpr
+              (spec-owner-expr-get owner inner-start-box)]
+            [inner-end : ast.AstExpr (spec-owner-expr-get owner inner-end-box)]
+            [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
+            [outer-subs : SpecValueSubst
+              (spec-value-subst-remove-name subs outer)]
+            [body-subs : SpecValueSubst
+              (spec-value-subst-remove-name outer-subs inner)]
+            [rewritten-outer-start : i64
+              (try
+                (spec-substitute-values-expr-with-owner owner outer-start subs))]
+            [rewritten-outer-end : i64
+              (try
+                (spec-substitute-values-expr-with-owner owner outer-end subs))]
+            [rewritten-inner-start : i64
+              (try
+                (spec-substitute-values-expr-with-owner owner inner-start subs))]
+            [rewritten-inner-end : i64
+              (try
+                (spec-substitute-values-expr-with-owner owner inner-end subs))]
+            [rewritten-body : i64
+              (try
+                (spec-substitute-values-expr-with-owner owner body body-subs))]
+            (Ok
+              (ast.ast-expr-foreach2-id-with-pools
+                (spec-owner-pools owner)
+                outer
+                outer-ty
+                rewritten-outer-start
+                rewritten-outer-end
+                inner
+                inner-ty
+                rewritten-inner-start
+                rewritten-inner-end
                 rewritten-body)))])]
     [(ForeachActive lane body-box)
       (let
@@ -6283,6 +6381,52 @@
                 (spec-substitute-type-with-owner owner index-ty subs)
                 rewritten-start
                 rewritten-end
+                rewritten-body)))]
+        [(Foreach2
+            outer
+            outer-ty
+            outer-start-box
+            outer-end-box
+            inner
+            inner-ty
+            inner-start-box
+            inner-end-box
+            body-box)
+          (let
+            [outer-start : ast.AstExpr
+              (spec-owner-expr-get owner outer-start-box)]
+            [outer-end : ast.AstExpr (spec-owner-expr-get owner outer-end-box)]
+            [inner-start : ast.AstExpr
+              (spec-owner-expr-get owner inner-start-box)]
+            [inner-end : ast.AstExpr (spec-owner-expr-get owner inner-end-box)]
+            [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
+            [outer-subs : SpecTypeSubst
+              (spec-type-subst-remove-name subs outer)]
+            [body-subs : SpecTypeSubst
+              (spec-type-subst-remove-name outer-subs inner)]
+            [rewritten-outer-start : i64
+              (try
+                (spec-substitute-types-expr-with-owner owner outer-start subs))]
+            [rewritten-outer-end : i64
+              (try (spec-substitute-types-expr-with-owner owner outer-end subs))]
+            [rewritten-inner-start : i64
+              (try
+                (spec-substitute-types-expr-with-owner owner inner-start subs))]
+            [rewritten-inner-end : i64
+              (try (spec-substitute-types-expr-with-owner owner inner-end subs))]
+            [rewritten-body : i64
+              (try (spec-substitute-types-expr-with-owner owner body body-subs))]
+            (Ok
+              (ast.ast-expr-foreach2-id-with-pools
+                (spec-owner-pools owner)
+                outer
+                (spec-substitute-type-with-owner owner outer-ty subs)
+                rewritten-outer-start
+                rewritten-outer-end
+                inner
+                (spec-substitute-type-with-owner owner inner-ty subs)
+                rewritten-inner-start
+                rewritten-inner-end
                 rewritten-body)))])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)

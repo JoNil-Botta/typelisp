@@ -11902,8 +11902,7 @@
   (unless
     (>= index data.block-len)
     (let
-      [span : ast.AstSourceSpan
-        (tc-global-array-element-shared-view data.block-spans index)]
+      [span : ast.AstSourceSpan (array-ref data.block-spans index)]
       (set!
         (array-ref new-spans index)
         (ast.AstSourceSpan
@@ -38341,10 +38340,7 @@
   [ret : ast.AstType]) : ResultTcType
   (let
     [comptime-args : TcComptimeTypeArgs
-      (tc-call-comptime-type-args
-        (tc-global-shared-view ctx)
-        (tc-global-shared-view func)
-        (& args))]
+      (tc-call-comptime-type-args ctx (tc-global-shared-view func) (& args))]
     (if (= comptime-args.len 0)
       (tc-call-function-type ctx env func args params ret)
       (tc-call-function-type
@@ -38519,9 +38515,7 @@
               [(Func params ret)
                 (if (and
                   (tc-comptime-params-present?)
-                  (tc-call-has-type-literal-arg?
-                    (tc-global-shared-view ctx)
-                    (& args)))
+                  (tc-call-has-type-literal-arg? ctx (& args)))
                   (tc-call-comptime-function-type
                     ctx
                     env
@@ -38835,9 +38829,7 @@
               [(Func params ret)
                 (if (and
                   (tc-comptime-params-present?)
-                  (tc-call-has-type-literal-arg?
-                    (tc-global-shared-view ctx)
-                    (& args)))
+                  (tc-call-has-type-literal-arg? ctx (& args)))
                   (tc-call-comptime-function-type
                     ctx
                     env
@@ -46055,7 +46047,7 @@
     (match (tc-spmd-expr
       ctx
       expr-bases
-      (tc-global-shared-view env)
+      env
       spmd-env
       (ast.ast-expr-segment-bases-get
         expr-bases
@@ -60388,14 +60380,11 @@
   [outer-end : i64]
   [inner-start : i64]
   [inner-end : i64]) : ResultTcUnit
-  (match (tc-foreach2-bound-ok ctx (tc-global-shared-view env) outer-start)
+  (match (tc-foreach2-bound-ok ctx env outer-start)
     [(Ok)
-      (match (tc-foreach2-bound-ok ctx (tc-global-shared-view env) outer-end)
+      (match (tc-foreach2-bound-ok ctx env outer-end)
         [(Ok)
-          (match (tc-foreach2-bound-ok
-            ctx
-            (tc-global-shared-view env)
-            inner-start)
+          (match (tc-foreach2-bound-ok ctx env inner-start)
             [(Ok) (tc-foreach2-bound-ok ctx env inner-end)]
             [(Err message) (Err message)])]
         [(Err message) (Err message)])]
@@ -68800,7 +68789,7 @@
   [region : i64]) : i64
   (if (tc-cleanup-owner-markers-possible?)
     (tc-move-live-cleanup-owner-in-region-scan
-      (tc-global-shared-view env)
+      env
       env
       moved
       owner
@@ -68859,7 +68848,7 @@
   (let
     [live-owner : i64
       (tc-move-live-cleanup-owner-in-region
-        (tc-global-shared-view env)
+        env
         (tc-global-shared-view moved)
         -1
         region)]
@@ -68981,7 +68970,7 @@
   (let
     [live-owner : i64
       (tc-move-live-cleanup-owner-in-region
-        (tc-global-shared-view env)
+        env
         (tc-global-shared-view moved)
         owner
         -1)]
@@ -72686,7 +72675,7 @@
   (match (tc-move-check-expr
     ctx
     expr-bases
-    (tc-global-shared-view env)
+    env
     (tc-global-shared-view locals)
     (tc-global-shared-view loop-carried)
     moved
@@ -78176,9 +78165,9 @@
     [branches : ast.AstExprList
       (tc-borrow-check-composite-pair-list then-box else-box)]
     (match (tc-borrow-check-add-composite-assignment-effect-before
-      (tc-global-shared-view ctx)
+      ctx
       expr-bases
-      (tc-global-shared-view env)
+      env
       (tc-global-shared-view locals)
       borrowed
       bound?
@@ -78189,7 +78178,7 @@
       1
       (& branches)
       branches.len
-      (tc-global-shared-view result-lifetimes))
+      result-lifetimes)
       [(Ok borrowed0)
         (match (tc-borrow-check-add-composite-arg-leaf
           ctx
@@ -78228,9 +78217,9 @@
   (if (<= exprs.len 0)
     (Ok borrowed)
     (match (tc-borrow-check-add-composite-arg-leaf
-      (tc-global-shared-view ctx)
+      ctx
       expr-bases
-      (tc-global-shared-view env)
+      env
       (tc-global-shared-view locals)
       borrowed
       bound?
@@ -78238,7 +78227,7 @@
       (ast.ast-expr-segment-bases-get
         expr-bases
         (ast.ast-expr-list-get (& exprs) (- exprs.len 1) 0))
-      (tc-global-shared-view result-lifetimes))
+      result-lifetimes)
       [(Ok borrowed1)
         (tc-borrow-check-add-composite-sequence-assignments-at
           ctx
@@ -78269,9 +78258,9 @@
   (if (>= index (- exprs.len 1))
     (Ok borrowed)
     (match (tc-borrow-check-add-composite-assignment-effect
-      (tc-global-shared-view ctx)
+      ctx
       expr-bases
-      (tc-global-shared-view env)
+      env
       (tc-global-shared-view locals)
       borrowed
       bound?
@@ -78281,7 +78270,7 @@
         (ast.ast-expr-list-get exprs index 0))
       exprs
       (+ index 1)
-      (tc-global-shared-view result-lifetimes))
+      result-lifetimes)
       [(Ok borrowed1)
         (tc-borrow-check-add-composite-sequence-assignments-at
           ctx
@@ -78320,9 +78309,9 @@
           later
           later-index)]
       (match (tc-borrow-check-add-composite-assignment-effect
-        (tc-global-shared-view ctx)
+        ctx
         expr-bases
-        (tc-global-shared-view env)
+        env
         (tc-global-shared-view locals)
         borrowed
         bound?
@@ -78332,7 +78321,7 @@
           (ast.ast-expr-list-get items index 0))
         (& next)
         0
-        (tc-global-shared-view result-lifetimes))
+        result-lifetimes)
         [(Ok borrowed1)
           (tc-borrow-check-add-composite-assignment-effects-in-list
             ctx
@@ -78366,9 +78355,9 @@
   (if (>= index items.len)
     (Ok borrowed)
     (match (tc-borrow-check-add-composite-assignment-effect
-      (tc-global-shared-view ctx)
+      ctx
       expr-bases
-      (tc-global-shared-view env)
+      env
       (tc-global-shared-view locals)
       borrowed
       bound?
@@ -78378,7 +78367,7 @@
         (ast.ast-expr-list-get items index 0))
       later
       later-index
-      (tc-global-shared-view result-lifetimes))
+      result-lifetimes)
       [(Ok borrowed1)
         (tc-borrow-check-add-composite-assignment-effects-in-each
           ctx
@@ -78456,9 +78445,9 @@
         [value : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases value-box)]
         (match (tc-borrow-check-add-composite-assignment-effect
-          (tc-global-shared-view ctx)
+          ctx
           expr-bases
-          (tc-global-shared-view env)
+          env
           (tc-global-shared-view locals)
           borrowed
           bound?
@@ -78466,7 +78455,7 @@
           (tc-global-shared-view value)
           later
           later-index
-          (tc-global-shared-view result-lifetimes))
+          result-lifetimes)
           [(Ok borrowed1)
             (if (tc-borrow-check-composite-value-uses-name-in-sequence-from?
               expr-bases
@@ -78474,9 +78463,9 @@
               later-index
               target)
               (tc-borrow-check-add-composite-stored-value
-                (tc-global-shared-view ctx)
+                ctx
                 expr-bases
-                (tc-global-shared-view env)
+                env
                 locals
                 borrowed1
                 bound?
@@ -78491,9 +78480,9 @@
         [branches : ast.AstExprList
           (tc-borrow-check-composite-pair-list then-box else-box)]
         (match (tc-borrow-check-add-composite-assignment-effect-before
-          (tc-global-shared-view ctx)
+          ctx
           expr-bases
-          (tc-global-shared-view env)
+          env
           (tc-global-shared-view locals)
           borrowed
           bound?
@@ -78504,7 +78493,7 @@
           branches.len
           later
           later-index
-          (tc-global-shared-view result-lifetimes))
+          result-lifetimes)
           [(Ok borrowed1)
             (tc-borrow-check-add-composite-assignment-effects-in-each
               ctx
@@ -78617,9 +78606,9 @@
           [(tc-borrow-check-composite-binding-form?
               (tc-global-shared-view unspanned))
             (if (tc-borrow-check-composite-untracked-store?
-              (tc-global-shared-view ctx)
+              ctx
               expr-bases
-              (tc-global-shared-view env)
+              env
               unspanned
               result-lifetimes)
               (Err (tc-borrow-check-untracked-store-message))
@@ -78699,9 +78688,9 @@
     [value-id : i64
       (tc-borrow-check-composite-store-value-id (tc-global-shared-view store))]
     (match (tc-borrow-check-add-composite-children-effects
-      (tc-global-shared-view ctx)
+      ctx
       expr-bases
-      (tc-global-shared-view env)
+      env
       (tc-global-shared-view locals)
       borrowed
       bound?
@@ -78709,12 +78698,12 @@
       store
       later
       later-index
-      (tc-global-shared-view result-lifetimes))
+      result-lifetimes)
       [(Ok borrowed1)
         (tc-borrow-check-add-composite-stored-value
-          (tc-global-shared-view ctx)
+          ctx
           expr-bases
-          (tc-global-shared-view env)
+          env
           locals
           borrowed1
           bound?
@@ -78754,10 +78743,7 @@
   [destination-ty : ResultTcType]
   [value : ast.AstExpr]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
-  (match (tc-expr
-    (tc-global-shared-view ctx)
-    (tc-global-shared-view env)
-    (tc-global-shared-view value))
+  (match (tc-expr ctx env (tc-global-shared-view value))
     [(Ok _)
       (tc-borrow-check-add-composite-arg-leaf
         ctx
@@ -78822,15 +78808,12 @@
     [here : bool
       (match (tc-global-shared-view unspanned)
         [(Set target _)
-          (match (tc-lookup-visible-id
-            (tc-global-shared-view ctx)
-            (tc-global-shared-view env)
-            target)
+          (match (tc-lookup-visible-id ctx env target)
             [(Ok ty)
               (tc-borrow-check-composite-destination-holds?
-                (tc-global-shared-view ctx)
+                ctx
                 (Ok ty)
-                (tc-global-shared-view result-lifetimes))]
+                result-lifetimes)]
             [(Err _) false])]
         [_
           (let
@@ -78840,12 +78823,12 @@
             (and
               (>= place-id 0)
               (tc-borrow-check-composite-destination-holds?
-                (tc-global-shared-view ctx)
+                ctx
                 (tc-expr
-                  (tc-global-shared-view ctx)
-                  (tc-global-shared-view env)
+                  ctx
+                  env
                   (ast.ast-expr-segment-bases-get expr-bases place-id))
-                (tc-global-shared-view result-lifetimes))))])]
+                result-lifetimes)))])]
     (if here
       true
       (let
@@ -78855,13 +78838,13 @@
         (while (and (not found) (< index children.len))
           (when
             (tc-borrow-check-composite-untracked-store?
-              (tc-global-shared-view ctx)
+              ctx
               expr-bases
-              (tc-global-shared-view env)
+              env
               (ast.ast-expr-segment-bases-get
                 expr-bases
                 (ast.ast-expr-list-get (& children) index 0))
-              (tc-global-shared-view result-lifetimes))
+              result-lifetimes)
             (set! found true))
           (set! index (+ index 1)))
         found))))
@@ -78882,15 +78865,11 @@
   (let
     [scrut : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases scrut-box)]
     [bodies : ast.AstExprList (tc-borrow-check-composite-match-arm-bodies arms)]
-    [scrut-ty : ResultTcType
-      (tc-expr
-        (tc-global-shared-view ctx)
-        (tc-global-shared-view env)
-        (tc-global-shared-view scrut))]
+    [scrut-ty : ResultTcType (tc-expr ctx env (tc-global-shared-view scrut))]
     (match (tc-borrow-check-add-composite-assignment-effect-before
-      (tc-global-shared-view ctx)
+      ctx
       expr-bases
-      (tc-global-shared-view env)
+      env
       (tc-global-shared-view locals)
       borrowed
       bound?
@@ -78901,12 +78880,12 @@
       bodies.len
       later
       later-index
-      (tc-global-shared-view result-lifetimes))
+      result-lifetimes)
       [(Ok borrowed1)
         (match (tc-borrow-check-add-composite-match-arm-effects-at
-          (tc-global-shared-view ctx)
+          ctx
           expr-bases
-          (tc-global-shared-view env)
+          env
           (tc-global-shared-view locals)
           borrowed1
           bound?
@@ -78916,7 +78895,7 @@
           0
           later
           later-index
-          (tc-global-shared-view result-lifetimes))
+          result-lifetimes)
           [(Ok borrowed2)
             (if (tc-borrow-check-composite-match-arms-feed-pattern?
               expr-bases
@@ -78957,11 +78936,11 @@
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(Arm pattern body-box)
         (match (tc-borrow-check-add-composite-assignment-effect
-          (tc-global-shared-view ctx)
+          ctx
           expr-bases
           (tc-borrow-check-composite-arm-env
-            (tc-global-shared-view ctx)
-            (tc-global-shared-view env)
+            ctx
+            env
             (tc-global-shared-view scrut-ty)
             pattern)
           (tc-global-shared-view locals)
@@ -78971,7 +78950,7 @@
           (ast.ast-expr-segment-bases-get expr-bases body-box)
           later
           later-index
-          (tc-global-shared-view result-lifetimes))
+          result-lifetimes)
           [(Ok borrowed1)
             (tc-borrow-check-add-composite-match-arm-effects-at
               ctx
@@ -78998,7 +78977,7 @@
   [pattern : ast.AstPattern]) : TcTypeEnv
   (match scrut-ty
     [(Ok ty)
-      (match (tc-bind-match-pattern ctx (tc-global-shared-view env) ty pattern)
+      (match (tc-bind-match-pattern ctx env ty pattern)
         [(Ok arm-env) arm-env]
         [(Err _) env])]
     [(Err _) env]))
@@ -79019,9 +78998,9 @@
   (if (>= (+ index 1) children.len)
     (Ok borrowed)
     (match (tc-borrow-check-add-composite-assignment-effect-before
-      (tc-global-shared-view ctx)
+      ctx
       expr-bases
-      (tc-global-shared-view env)
+      env
       (tc-global-shared-view locals)
       borrowed
       bound?
@@ -79034,7 +79013,7 @@
       (- children.len 1)
       children
       children.len
-      (tc-global-shared-view result-lifetimes))
+      result-lifetimes)
       [(Ok borrowed1)
         (tc-borrow-check-add-composite-sibling-effects-at
           ctx
@@ -79115,9 +79094,9 @@
           [init : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases init-box)]
           (match (tc-borrow-check-add-composite-let-init-effects
-            (tc-global-shared-view ctx)
+            ctx
             expr-bases
-            (tc-global-shared-view env)
+            env
             (tc-global-shared-view locals)
             borrowed
             bound?
@@ -79128,7 +79107,7 @@
             (tc-global-shared-view init)
             later
             later-index
-            (tc-global-shared-view result-lifetimes))
+            result-lifetimes)
             [(Ok borrowed0)
               (match (if (tc-borrow-check-composite-let-effect-binding-feeds?
                 expr-bases
@@ -79139,31 +79118,31 @@
                 index
                 name)
                 (tc-borrow-check-add-composite-arg-leaf
-                  (tc-global-shared-view ctx)
+                  ctx
                   expr-bases
-                  (tc-global-shared-view env)
+                  env
                   (tc-global-shared-view locals)
                   borrowed0
                   bound?
                   binding-id
                   (tc-global-shared-view init)
-                  (tc-global-shared-view result-lifetimes))
+                  result-lifetimes)
                 (TcBorrowCheckResult.Ok borrowed0))
                 [(Ok borrowed1)
                   (let
                     [binding-ty : ast.AstType
                       (tc-move-binding-type-id
                         "borrow.return_arg_let_effect"
-                        (tc-global-shared-view ctx)
-                        (tc-global-shared-view env)
+                        ctx
+                        env
                         (tc-global-shared-view maybe-ty)
                         init-box)]
                     (tc-borrow-check-add-composite-let-assignment-effect-at
-                      (tc-global-shared-view ctx)
+                      ctx
                       expr-bases
                       (tc-bind-initialized-value-id
-                        (tc-global-shared-view ctx)
-                        (tc-global-shared-view env)
+                        ctx
+                        env
                         name
                         binding-ty
                         init)
@@ -80362,9 +80341,9 @@
           [init : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases init-box)]
           (match (tc-borrow-check-add-composite-let-init-value-effects
-            (tc-global-shared-view ctx)
+            ctx
             expr-bases
-            (tc-global-shared-view env)
+            env
             (tc-global-shared-view locals)
             borrowed
             bound?
@@ -80373,7 +80352,7 @@
             body-box
             index
             (tc-global-shared-view init)
-            (tc-global-shared-view result-lifetimes))
+            result-lifetimes)
             [(Ok borrowed0)
               (match (if (tc-borrow-check-composite-let-binding-feeds?
                 expr-bases
@@ -80534,9 +80513,9 @@
     [bodies : ast.AstExprList
       (tc-borrow-check-composite-match-arm-bodies (& arms))]
     (match (tc-borrow-check-add-composite-assignment-effect-before
-      (tc-global-shared-view ctx)
+      ctx
       expr-bases
-      (tc-global-shared-view env)
+      env
       (tc-global-shared-view locals)
       borrowed
       bound?
@@ -80547,7 +80526,7 @@
       (- bodies.len 1)
       (& bodies)
       bodies.len
-      (tc-global-shared-view result-lifetimes))
+      result-lifetimes)
       [(Ok borrowed0)
         (match (tc-expr ctx env (tc-global-shared-view scrut))
           [(Ok scrut-ty)
@@ -80598,16 +80577,16 @@
   [exprs : (& exprs ast.AstExprList)]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
   (match (tc-borrow-check-add-composite-sibling-effects-at
-    (tc-global-shared-view ctx)
+    ctx
     expr-bases
-    (tc-global-shared-view env)
+    env
     (tc-global-shared-view locals)
     borrowed
     bound?
     binding-id
     exprs
     0
-    (tc-global-shared-view result-lifetimes))
+    result-lifetimes)
     [(Ok borrowed1)
       (tc-borrow-check-add-composite-all-args-at
         ctx
@@ -80818,16 +80797,16 @@
           [(Tuple items)
             (if (and (>= index 0) (< index items.len))
               (match (tc-borrow-check-add-composite-sibling-effects-at
-                (tc-global-shared-view ctx)
+                ctx
                 expr-bases
-                (tc-global-shared-view env)
+                env
                 (tc-global-shared-view locals)
                 borrowed
                 bound?
                 binding-id
                 (& items)
                 0
-                (tc-global-shared-view result-lifetimes))
+                result-lifetimes)
                 [(Ok borrowed1)
                   (tc-borrow-check-add-composite-arg-leaf
                     ctx
@@ -80885,15 +80864,15 @@
             index-box)]
         (if (>= selected 0)
           (match (tc-borrow-check-add-composite-sibling-effects
-            (tc-global-shared-view ctx)
+            ctx
             expr-bases
-            (tc-global-shared-view env)
+            env
             (tc-global-shared-view locals)
             borrowed
             bound?
             binding-id
             base
-            (tc-global-shared-view result-lifetimes))
+            result-lifetimes)
             [(Ok borrowed1)
               (tc-borrow-check-add-composite-arg-leaf
                 ctx
@@ -81176,16 +81155,16 @@
   [args : ast.AstExprList]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
   (match (tc-borrow-check-add-composite-sibling-effects-at
-    (tc-global-shared-view ctx)
+    ctx
     expr-bases
-    (tc-global-shared-view env)
+    env
     (tc-global-shared-view locals)
     borrowed
     true
     binding-id
     (& args)
     0
-    (tc-global-shared-view result-lifetimes))
+    result-lifetimes)
     [(Ok borrowed1)
       (tc-borrow-check-add-bound-returned-call-borrows-at
         ctx
@@ -84474,16 +84453,16 @@
   [args : ast.AstExprList]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
   (match (tc-borrow-check-add-composite-sibling-effects-at
-    (tc-global-shared-view ctx)
+    ctx
     expr-bases
-    (tc-global-shared-view env)
+    env
     (tc-global-shared-view locals)
     borrowed
     false
     -1
     (& args)
     0
-    (tc-global-shared-view result-lifetimes))
+    result-lifetimes)
     [(Ok borrowed1)
       (tc-borrow-check-add-returned-call-borrows-at
         ctx
@@ -92145,10 +92124,7 @@
             (if (= module-id current-module-id)
               (match expected
                 [(Some target)
-                  (if (tc-module-identity-id-eq?
-                    session
-                    (owned_view.compiler-owned-pattern-copy target)
-                    target-id)
+                  (if (tc-module-identity-id-eq? session target target-id)
                     (set! found true)
                     unit)]
                 [(No) unit])
@@ -92259,7 +92235,7 @@
         [walk.add?
           (match (tc-module-local-env-add-decl
             ctx
-            (tc-global-shared-view env)
+            env
             seen
             (ast.ast-decl-list-ref (deref decls) index))
             [(Ok next-env) next-env]
@@ -92397,12 +92373,7 @@
         true
         "")]
     [_shadows : TcTypeEnv
-      (macro-segmented-module-walk!
-        ctx
-        (& data)
-        (&mut shadows)
-        (&mut seen)
-        (tc-global-shared-view env))]
+      (macro-segmented-module-walk! ctx (& data) (&mut shadows) (&mut seen) env)]
     [adds : MacroSegmentedModuleWalk
       (MacroSegmentedModuleWalk
         target-module-id

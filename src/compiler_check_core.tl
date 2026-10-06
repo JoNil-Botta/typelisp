@@ -484,9 +484,7 @@
     [_binding-tokens : unit
       (parser.compiler-parse-state-set-binding-origins! (& parse-state) true)]
     [parse-cfgs : sym_i64_env.SymI64Env
-      (parser.compiler-parse-state-cfgs
-        parse-state
-        (owned_view.compiler-owned-shared-view request.cfgs))]
+      (parser.compiler-parse-state-cfgs parse-state request.cfgs)]
     [previous : tc.TcSemanticObserver (tc.tc-job-state-semantic-observer job)]
     [_install : unit
       (tc.tc-job-state-set-semantic-observer! job request.observer)]

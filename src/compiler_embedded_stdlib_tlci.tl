@@ -635,9 +635,7 @@
 (define (compiler-comptime-host-ctfe-env) : ctfe_support.CtfeEnv
   (ctfe_support.ctfe-env-empty-with-pools-and-source-names
     (compiler-comptime-host-session-pools)
-    (compiler-comptime-host-array-element-shared-view
-      compiler-comptime-host-session-source-names
-      0)))
+    (array-ref compiler-comptime-host-session-source-names 0)))
 
 (define (compiler-comptime-host-session-close!) : unit
   (set! compiler-comptime-host-session-cookie 0)
@@ -729,9 +727,7 @@
   (compiler-comptime-host-replace! count (Expr node (Expr))))
 
 (define (compiler-comptime-host-session-pools) : ast.AstNodePoolContext
-  (compiler-comptime-host-array-element-shared-view
-    compiler-comptime-host-pools
-    0))
+  (array-ref compiler-comptime-host-pools 0))
 
 (define (compiler-comptime-host-session-reflections) : ctfe_support.CtfeReflectInfoList
   (compiler-comptime-host-array-element-shared-view
@@ -793,10 +789,7 @@
   (if (or
     (< slot 0)
     (>= slot compiler-comptime-host-locals-cap)
-    (not
-      (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-locals-live
-        slot)))
+    (not (array-ref compiler-comptime-host-locals-live slot)))
     (None)
     (let
       [value : ctfe_support.CompilerCtfeValue
@@ -821,10 +814,7 @@
   (if (or
     (< slot 0)
     (>= slot compiler-comptime-host-locals-cap)
-    (not
-      (compiler-comptime-host-array-element-shared-view
-        compiler-comptime-host-locals-live
-        slot)))
+    (not (array-ref compiler-comptime-host-locals-live slot)))
     (None)
     (ctfe_support.ctfe-value-named
       (compiler-comptime-host-array-element-shared-view
@@ -2414,10 +2404,7 @@
     (if (or
       (< arg-a 0)
       (>= arg-a compiler-comptime-host-locals-cap)
-      (not
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-locals-live
-          arg-a)))
+      (not (array-ref compiler-comptime-host-locals-live arg-a)))
       -3
       (match (compiler-comptime-host-array-element-shared-view
         compiler-comptime-host-locals
@@ -2549,10 +2536,7 @@
     (if (or
       (< arg-a 0)
       (>= arg-a compiler-comptime-host-locals-cap)
-      (not
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-locals-live
-          arg-a)))
+      (not (array-ref compiler-comptime-host-locals-live arg-a)))
       tlci.tlci-host-callback-status-bad-request
       (compiler-comptime-host-push!
         (compiler-comptime-host-array-element-shared-view
@@ -4322,10 +4306,7 @@
     (if (or
       (< arg-a 0)
       (>= arg-a compiler-comptime-host-locals-cap)
-      (not
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-locals-live
-          arg-a)))
+      (not (array-ref compiler-comptime-host-locals-live arg-a)))
       -3
       (let
         [value : ctfe_support.CompilerCtfeValue
@@ -4346,10 +4327,7 @@
     (if (or
       (< arg-a 0)
       (>= arg-a compiler-comptime-host-locals-cap)
-      (not
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-locals-live
-          arg-a)))
+      (not (array-ref compiler-comptime-host-locals-live arg-a)))
       tlci.tlci-host-callback-status-bad-request
       (let
         [value : ctfe_support.CompilerCtfeValue
@@ -4474,10 +4452,7 @@
     (if (or
       (< arg-a 0)
       (>= arg-a compiler-comptime-host-locals-cap)
-      (not
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-locals-live
-          arg-a)))
+      (not (array-ref compiler-comptime-host-locals-live arg-a)))
       tlci.tlci-host-callback-status-bad-request
       (let
         [value : ctfe_support.CompilerCtfeValue
@@ -4512,10 +4487,7 @@
     (if (or
       (< arg-a 0)
       (>= arg-a compiler-comptime-host-locals-cap)
-      (not
-        (compiler-comptime-host-array-element-shared-view
-          compiler-comptime-host-locals-live
-          arg-a)))
+      (not (array-ref compiler-comptime-host-locals-live arg-a)))
       -3
       (match (compiler-comptime-host-array-element-shared-view
         compiler-comptime-host-locals

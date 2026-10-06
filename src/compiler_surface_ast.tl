@@ -600,7 +600,7 @@
       (while (< index count)
         (let
           [item : ast.AstImportedSpmdSpecialization
-            (ast.ast-array-shared-view items.slots index)]
+            (array-ref items.slots index)]
           (codec.surface-ast-write-name!
             out
             context
@@ -994,7 +994,7 @@
       [count : i64 variants.len]
       (codec.surface-ast-write-i64! out count)
       (while (< index count)
-        (match (ast.ast-array-shared-view variants.slots index)
+        (match (array-ref variants.slots index)
           [(Variant isa name)
             (codec.surface-ast-write-i64!
               out

@@ -4,7 +4,6 @@
 (import read as reader)
 (import token)
 (import compiler_intern as ci)
-(import compiler_owned_view as owned_view)
 (cfg test (import compiler_allocation_profile as allocation_profile))
 (import stdlib.arena)
 (import stdlib.string)
@@ -207,14 +206,8 @@
             (= position 1)
             (string.eq (ci.intern-str (ci.intern-id-value name)) "atom"))]
         [(token.Token.Int value text)
-          (and
-            (= position 2)
-            (= (owned_view.compiler-owned-pattern-copy value) 123)
-            (string.eq text "0x7b"))]
-        [(token.Token.Char value)
-          (and
-            (= position 3)
-            (= (owned_view.compiler-owned-pattern-copy value) 'q'))]
+          (and (= position 2) (= value 123) (string.eq text "0x7b"))]
+        [(token.Token.Char value) (and (= position 3) (= value 'q'))]
         [(token.Token.Str text)
           (and
             (= position 4)

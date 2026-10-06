@@ -737,7 +737,7 @@
 
 (define (spec-state-ctfe-env [state : (& state SpecState)]) : ctfe.CtfeEnv
   (match state
-    [(SpecState.State _ _ env _) (owned_view.compiler-owned-pattern-copy env)]))
+    [(SpecState.State _ _ env _) env]))
 
 (define (spec-state-owner [state : (& state SpecState)]) : (&
     state

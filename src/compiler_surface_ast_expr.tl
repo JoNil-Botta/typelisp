@@ -236,7 +236,7 @@
       [count : i64 bindings.len]
       (codec.surface-ast-write-i64! out count)
       (while (< index count)
-        (match (ast.ast-array-shared-view bindings.slots index)
+        (match (array-ref bindings.slots index)
           [(Binding name init cleanup fallible)
             (codec.surface-ast-write-name! out context name)
             (codec.surface-ast-write-i64! out init)

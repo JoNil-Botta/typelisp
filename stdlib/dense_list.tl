@@ -262,19 +262,16 @@
                     1
                     (* old-cap 2))]
                 [bigger : (__tl_dyn-array ,T) (__tl_make-array ,T new-cap)]
-                (begin
-                  (,copy-range-name (&mut bigger) (& v.slots) 0 n)
-                  (set! v.slots bigger))))
+                (,copy-range-name (&mut bigger) (& v.slots) 0 n)
+                (set! v.slots bigger)))
             (define (,push-name [v : (&mut v ,list-type)] [value : ,T]) : unit
-              (begin
-                (if (< v.len (array-length v.slots))
-                  unit
-                  (,grow-name v))
-                (let
-                  [index : i64 v.len]
-                  (begin
-                    (set! (array-ref v.slots index) value)
-                    (set! v.len (+ index 1))))))
+              (if (< v.len (array-length v.slots))
+                unit
+                (,grow-name v))
+              (let
+                [index : i64 v.len]
+                (set! (array-ref v.slots index) value)
+                (set! v.len (+ index 1))))
             ,@append-decls)
           (comptime-error
             "compiler-dense-list-operations: expected caller-provided fallback and unique `len`, `empty?`, or `append-from` capabilities"))

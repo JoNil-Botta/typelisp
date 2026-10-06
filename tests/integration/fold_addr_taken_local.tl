@@ -36,7 +36,9 @@
     [i : i64 0]
     (while (< i 2)
       (set! value 1)
-      (write-seven p depth)
+      (begin
+        (write-seven p depth)
+        unit)
       (set! sum (+ sum value))
       (set! i (+ i 1)))
     sum))

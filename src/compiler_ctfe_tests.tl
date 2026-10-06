@@ -3299,11 +3299,16 @@
     [loop-cond : i64 (ast.ast-expr-binary-with-pools pools (Lt) i-var three)]
     [increment : i64 (ast.ast-expr-binary-with-pools pools (Add) i-var one)]
     [set-i : i64 (ast.ast-expr-set-id-with-pools pools i-id increment)]
-    [loop-body : i64
+    [loop : i64
       (ctfe.ctfe-ast-push
         env
-        (Begin (ast.ast-expr-cons set-i (ast.ast-expr-list-new))))]
-    [loop : i64 (ast.ast-expr-while-with-pools pools loop-cond loop-body)]
+        (While
+          loop-cond
+          (ast.ast-expr-cons
+            set-i
+            (ast.ast-expr-cons
+              (ctfe.ctfe-ast-push env (Literal Unit))
+              (ast.ast-expr-list-new)))))]
     [loop-result : i64 (ctfe.ctfe-ast-push env (Var i-id))]
     [loop-body-result : i64
       (ctfe.ctfe-ast-push

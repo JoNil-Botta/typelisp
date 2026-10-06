@@ -68,9 +68,11 @@
     [index : i64 0]
     [count : i64 (clone-root-entries-len roots)]
     (while (< index count)
-      (clone-helper-name-id-materialize-for-key!
-        (clone-root-entries-key-id-at-or roots index -1)
-        (clone-root-entries-helper-id-at-or roots index -1))
+      (begin
+        (clone-helper-name-id-materialize-for-key!
+          (clone-root-entries-key-id-at-or roots index -1)
+          (clone-root-entries-helper-id-at-or roots index -1))
+        unit)
       (set! index (+ index 1)))))
 
 (define (clone-root-module-id) : i64

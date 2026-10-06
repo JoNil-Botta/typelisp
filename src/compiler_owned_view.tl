@@ -112,31 +112,3 @@
         ,value
         ,(comptime.box-element-type value-ty))
       value)))
-
-;; Pattern-binding bridges for the bootstrap seed. A name bound by a pattern
-;; matched through a shared reference binds a Copy part by value and a `(Box T)`
-;; part as `(& T)` (SPEC section 5.13); a seed published before that rule binds
-;; `(& T)` and `(& (Box T))`. Compiler sources compiled by both read such
-;; bindings through these macros until the seed carries the rule, then use the
-;; binding directly.
-;; The value of a Copy part bound through a shared reference: `(deref binding)`
-;; when the binding is a reference or a box, the binding itself otherwise.
-(defmacro (compiler-owned-pattern-copy [binding : Expr]) : Expr
-  (let
-    [kind : String (type-kind (comptime.expr-type binding))]
-    (if (if (string.eq kind "ref")
-      true
-      (string.eq kind "box"))
-      `(deref ,binding)
-      binding)))
-
-;; A shared reference to the boxed `T` of a `(Box T)` part bound through a
-;; shared reference.
-(defmacro (compiler-owned-pattern-box-ref [binding : Expr]) : Expr
-  (let
-    [binding-ty : comptime.Expr (comptime.expr-type binding)]
-    (if (if (string.eq (type-kind binding-ty) "ref")
-      (string.eq (type-kind (comptime.reference-element-type binding-ty)) "box")
-      false)
-      `(& (deref (deref ,binding)))
-      binding)))

@@ -1425,7 +1425,7 @@ the Windows runner cannot create.
 once, in batches of at most 32 files by default, and fails CI on any finding.
 Batches split at `src/` boundaries: all files receive the normal, redundant-name
 and supported name-case rules; only tracked compiler/tooling sources receive
-`--deprecated-string-concat` in that same invocation. The concat rejection
+`--deprecated-string-concat` and `--redundant-begin` in that same invocation. The concat rejection
 probe remains independent. `TYPELISP_LINT_BATCH_SIZE` must be a positive integer.
 Plain `typelisp lint <file.tl>` remains warn-only for reviewable cleanup slices.
 

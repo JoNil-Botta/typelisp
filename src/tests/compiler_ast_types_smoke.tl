@@ -241,7 +241,9 @@
     [decoy-first : i64 (ast.ast-node-pool-context-type-push decoy (Bool))]
     [index : i64 0]
     (while (< index 65533)
-      (ast.ast-node-pool-context-type-push pools (Array first index))
+      (begin
+        (ast.ast-node-pool-context-type-push pools (Array first index))
+        unit)
       (set! index (+ index 1)))
     (ast.ast-node-pool-context-install! decoy)
     (let

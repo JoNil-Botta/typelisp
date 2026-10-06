@@ -5111,16 +5111,18 @@
         (Nil)
         (opt-vector-reduce-stale-instrs))]
     [vector-copy : ir.CompilerIrInstrSeq
-      (opt-test-copy-instrs (Nil) (opt-vector-copy-instrs))]
+      (opt-test-copy-instrs (opt.opt-copy-env-empty) (opt-vector-copy-instrs))]
     [mask-copy : ir.CompilerIrInstrSeq
-      (opt-test-copy-instrs (Nil) (opt-mask-copy-instrs))]
+      (opt-test-copy-instrs (opt.opt-copy-env-empty) (opt-mask-copy-instrs))]
     [mask-reduce-copy : ir.CompilerIrInstrSeq
-      (opt-test-copy-instrs (Nil) (opt-mask-reduce-copy-instrs))]
+      (opt-test-copy-instrs
+        (opt.opt-copy-env-empty)
+        (opt-mask-reduce-copy-instrs))]
     [mask-not-copy : ir.CompilerIrInstrSeq
-      (opt-test-copy-instrs (Nil) (opt-mask-not-copy-instrs))]
+      (opt-test-copy-instrs (opt.opt-copy-env-empty) (opt-mask-not-copy-instrs))]
     [mask-idempotent-copy : ir.CompilerIrInstrSeq
       (opt-test-copy-instrs
-        (Nil)
+        (opt.opt-copy-env-empty)
         (opt-test-fold-instrs
           (ast.ast-node-pool-reader-type-segment-bases)
           (Nil)
@@ -6845,7 +6847,7 @@
         (opt.compiler-opt-global-shared-view input))]
     [copied : ir.CompilerIrInstrSeq
       (opt-test-copy-instrs
-        (Nil)
+        (opt.opt-copy-env-empty)
         (opt.compiler-opt-global-shared-view rewritten))]
     (cond
       [(not (opt.opt-scan-cse-dup-from input.slots 0 input.len)) 1]
@@ -9701,14 +9703,18 @@
 (define (compiler-optimize-copy-self-test) : i64
   (let
     [pos : ir.CompilerIrInstrSeq
-      (opt-test-copy-instrs (Nil) (opt-copy-pos-instrs))]
+      (opt-test-copy-instrs (opt.opt-copy-env-empty) (opt-copy-pos-instrs))]
     [src-redef : ir.CompilerIrInstrSeq
-      (opt-test-copy-instrs (Nil) (opt-copy-src-redef-instrs))]
+      (opt-test-copy-instrs
+        (opt.opt-copy-env-empty)
+        (opt-copy-src-redef-instrs))]
     [dst-redef : ir.CompilerIrInstrSeq
-      (opt-test-copy-instrs (Nil) (opt-copy-dst-redef-instrs))]
+      (opt-test-copy-instrs
+        (opt.opt-copy-env-empty)
+        (opt-copy-dst-redef-instrs))]
     [cse : ir.CompilerIrInstrSeq
       (opt-test-copy-instrs
-        (Nil)
+        (opt.opt-copy-env-empty)
         (opt-test-cse-instrs
           (ast.ast-node-pool-reader-type-segment-bases)
           (opt.opt-expr-table-new)
@@ -9719,15 +9725,21 @@
           (opt-test-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) cse)]
         (opt-test-dce-instrs set cse))]
     [f64 : ir.CompilerIrInstrSeq
-      (opt-test-copy-instrs (Nil) (opt-copy-f64-instrs))]
+      (opt-test-copy-instrs (opt.opt-copy-env-empty) (opt-copy-f64-instrs))]
     [phi : ir.CompilerIrInstrSeq
-      (opt-test-copy-instrs (Nil) (opt-copy-phi-instrs))]
+      (opt-test-copy-instrs (opt.opt-copy-env-empty) (opt-copy-phi-instrs))]
     [pack-word : ir.CompilerIrInstrSeq
-      (opt-test-copy-instrs (Nil) (opt-copy-pack-word-instrs))]
+      (opt-test-copy-instrs
+        (opt.opt-copy-env-empty)
+        (opt-copy-pack-word-instrs))]
     [pack-source-redef : ir.CompilerIrInstrSeq
-      (opt-test-copy-instrs (Nil) (opt-copy-pack-source-redef-instrs))]
+      (opt-test-copy-instrs
+        (opt.opt-copy-env-empty)
+        (opt-copy-pack-source-redef-instrs))]
     [pack-dst-redef : ir.CompilerIrInstrSeq
-      (opt-test-copy-instrs (Nil) (opt-copy-pack-dst-redef-instrs))]
+      (opt-test-copy-instrs
+        (opt.opt-copy-env-empty)
+        (opt-copy-pack-dst-redef-instrs))]
     (cond
       [(not (= (opt-copy-binop-lhs-var-instr-seq pos 2) 0)) 1]
       [(not (= (opt-copy-binop-lhs-var-instr-seq src-redef 2) 1)) 2]
@@ -11785,7 +11797,7 @@
         (ast.ast-node-pool-reader-type-segment-bases)
         (Nil)
         (Empty)
-        (opt-test-copy-instrs (Nil) (opt-bounds-copy-instrs)))]
+        (opt-test-copy-instrs (opt.opt-copy-env-empty) (opt-bounds-copy-instrs)))]
     [dce : ir.CompilerIrInstrSeq
       (let
         [set
@@ -64288,10 +64300,12 @@
                 dump-owner)]
             [i : i64 0]
             (while (< i 16)
-              (opt.compiler-opt-debug-observe-function
-                0
-                "linear-dump"
-                (ir.compiler-ir-global-shared-view func))
+              (begin
+                (opt.compiler-opt-debug-observe-function
+                  0
+                  "linear-dump"
+                  (ir.compiler-ir-global-shared-view func))
+                unit)
               (set! i (+ i 1)))
             (let
               [mid-bytes : i64
@@ -64299,10 +64313,12 @@
                   dump-owner)]
               [mid-length : i64 (opt.compiler-opt-debug-dump-length)]
               (while (< i 32)
-                (opt.compiler-opt-debug-observe-function
-                  0
-                  "linear-dump"
-                  (ir.compiler-ir-global-shared-view func))
+                (begin
+                  (opt.compiler-opt-debug-observe-function
+                    0
+                    "linear-dump"
+                    (ir.compiler-ir-global-shared-view func))
+                  unit)
                 (set! i (+ i 1)))
               (let
                 [end-bytes : i64
@@ -72488,7 +72504,9 @@
       (cond
         [(= mode 0)
           (opt.opt-copy-subst-spmd-call-args
-            (Cons 0 (Bool true) (box (opt.OptCopyEnv.Nil)))
+            (opt.opt-copy-env-push
+              (opt.opt-copy-env-empty)
+              (opt.OptCopyEntry.Copy 0 (Bool true)))
             (owned_view.compiler-owned-shared-view args))]
         [(= mode 1)
           (opt-ssa-rewrite-spmd-call-args

@@ -2041,14 +2041,16 @@
 ;; match or cond arm body) can be spliced into that sequence. The rule reads
 ;; the token stream, so it sees exactly the source forms: a body sequence the
 ;; parser builds is never mistaken for a written `begin`. A begin under a quote
-;; or directly behind a reader prefix, one with a bracket form, and one
-;; projected with `.field` stay as written.
+;; or directly behind a reader prefix, one with a bracket form or a `(cfg ...)`
+;; form, and one projected with `.field` stay as written. A cfg form makes the
+;; body depend on the configuration: spliced into a `let`, the body can shrink
+;; to a lone `let` once cfg drops the rest, which `nested-let` rejects.
 ;;
-;; `when` and `unless` check every body form as `unit`, while `begin` discards
-;; its non-final values, and this rule has no types. Under them it only reports
-;; a begin whose forms the splice exposes to that check (every form but the
-;; last, through nested begins that may be spliced too) are syntactically
-;; unit: `set!`, `while`, `when`, `unless`, `for`, `unit`, and
+;; `when`, `unless` and `while` check every body form as `unit`, while `begin`
+;; discards its non-final values, and this rule has no types. Under them it
+;; only reports a begin whose forms the splice exposes to that check (every
+;; form but the last, through nested begins that may be spliced too) are
+;; syntactically unit: `set!`, `while`, `when`, `unless`, `for`, `unit`, and
 ;; `begin`/`let`/`unsafe`/`if` ending in those.
 ;: Child position from which a form headed by `head` evaluates a body
 ;: sequence, or -1. `nested` is false for a top-level form, where `unsafe` and
@@ -2090,7 +2092,10 @@
     [else -1]))
 
 (define (lint-redundant-begin-unit-guard? [head : (& head str)]) : bool
-  (or (string.eq head "when") (string.eq head "unless")))
+  (or
+    (string.eq head "when")
+    (string.eq head "unless")
+    (string.eq head "while")))
 
 (define (lint-token-tag-at
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
@@ -2227,7 +2232,7 @@
             (lint-redundant-begin-unit-form? toks close-of else-at)))]
       [else false])))
 
-;: Under `when`/`unless`, splicing the begin at `open` (and any begin nested
+;: Under `when`/`unless`/`while`, splicing the begin at `open` (and any begin nested
 ;: directly in it) exposes its forms to the unit check: every form except the
 ;: very last must be syntactically unit, and none may carry a reader prefix.
 (define (lint-redundant-begin-unit-safe?
@@ -2255,7 +2260,7 @@
     ok))
 
 ;: Whether the begin opened at `open` has at least two forms and no bracket
-;: form among them.
+;: or `(cfg ...)` form among them.
 (define (lint-redundant-begin-spliceable?
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
   [close-of : (& close-of (__tl_dyn-array i64))]
@@ -2267,7 +2272,9 @@
     [ok : bool true]
     (while (and ok (< at close))
       (when
-        (= (lint-token-tag-at toks at) (token.tag-lbracket))
+        (or
+          (= (lint-token-tag-at toks at) (token.tag-lbracket))
+          (string.eq (lint-token-paren-head toks at) "cfg"))
         (set! ok false))
       (set! count (+ count 1))
       (set! at (lint-token-form-end toks close-of at)))
@@ -3997,7 +4004,26 @@
                 (owned_view.compiler-owned-shared-view scope))
               (let
                 [scope-arg (lint-unsafe-scope-add-id scope index)]
-                (lint-unsafe-scan-node body scope-arg)))])]
+                (lint-unsafe-scan-node body scope-arg)))]
+          [(Foreach2 outer _ a b inner _ c d body)
+            (let
+              [bounds : LintUnsafeScan
+                (lint-unsafe-scan-combine
+                  (lint-unsafe-scan-two-nodes
+                    a
+                    b
+                    (owned_view.compiler-owned-shared-view scope))
+                  (lint-unsafe-scan-two-nodes
+                    c
+                    d
+                    (owned_view.compiler-owned-shared-view scope)))]
+              [body-scope : LintUnsafeScope
+                (lint-unsafe-scope-add-id
+                  (lint-unsafe-scope-add-id scope outer)
+                  inner)]
+              (lint-unsafe-scan-combine
+                bounds
+                (lint-unsafe-scan-node body body-scope)))])]
       [(SpmdReduce reduce-box)
         (match (__tl-box-place reduce-box)
           [(Reduce _ index _ start end init value)
@@ -4873,6 +4899,45 @@
                 after-range.findings)]
             [with-body : LintCopyOnUpdateState
               (lint-copy-on-update-expr body with-local span)]
+            (lint-copy-on-update-state-with
+              (owned_view.compiler-owned-shared-view with-body)
+              outer-locals
+              with-body.findings))]
+        [(Foreach2 outer outer-ty a b inner inner-ty c d body)
+          (let
+            [after-range : LintCopyOnUpdateState
+              (lint-copy-on-update-expr
+                d
+                (lint-copy-on-update-expr
+                  c
+                  (lint-copy-on-update-expr
+                    b
+                    (lint-copy-on-update-expr
+                      a
+                      (owned_view.compiler-owned-shared-view state)
+                      span)
+                    span)
+                  span)
+                span)]
+            [outer-locals : LintCopyOnUpdateLocalList
+              (owned_view.compiler-owned-shared-view after-range.locals)]
+            [with-locals : LintCopyOnUpdateState
+              (lint-copy-on-update-state-with
+                (owned_view.compiler-owned-shared-view after-range)
+                (lint-copy-on-update-local-add
+                  (lint-copy-on-update-local-add
+                    (owned_view.compiler-owned-shared-view outer-locals)
+                    (ci.intern-str outer)
+                    (lint-copy-on-update-struct-name-from-type
+                      state.shapes
+                      outer-ty))
+                  (ci.intern-str inner)
+                  (lint-copy-on-update-struct-name-from-type
+                    state.shapes
+                    inner-ty))
+                after-range.findings)]
+            [with-body : LintCopyOnUpdateState
+              (lint-copy-on-update-expr body with-locals span)]
             (lint-copy-on-update-state-with
               (owned_view.compiler-owned-shared-view with-body)
               outer-locals
@@ -8740,6 +8805,49 @@
                   end
                   (lint-unused-variable-expr start scanned.state span)
                   span))
+              span))]
+        [(Foreach2 outer outer-ty a b inner inner-ty c d body)
+          (let
+            [outer-scan : LintNameCaseLocalScan
+              (if state.name-case
+                (lint-unused-variable-scan-form-local-name
+                  (owned_view.compiler-owned-shared-view state)
+                  (ci.intern-str outer)
+                  span
+                  "(foreach")
+                (LintNameCaseLocalScan
+                  (owned_view.compiler-owned-shared-view state)
+                  0))]
+            [inner-scan : LintNameCaseLocalScan
+              (if state.name-case
+                (let
+                  [limit : i64 (lint-source-span-end-index state.source span)]
+                  (lint-unused-variable-scan-local-name
+                    outer-scan.state
+                    (ci.intern-str inner)
+                    outer-scan.next-index
+                    (if (< limit 0)
+                      (string.string-length state.source)
+                      limit)))
+                (LintNameCaseLocalScan outer-scan.state 0))]
+            (lint-unused-variable-scan-body-scope
+              inner
+              outer
+              body
+              (lint-unused-variable-type
+                inner-ty
+                (lint-unused-variable-type
+                  outer-ty
+                  (lint-unused-variable-expr
+                    d
+                    (lint-unused-variable-expr
+                      c
+                      (lint-unused-variable-expr
+                        b
+                        (lint-unused-variable-expr a inner-scan.state span)
+                        span)
+                      span)
+                    span)))
               span))])]
     [(SpmdReduce reduce-box)
       (match (__tl-box-place reduce-box)

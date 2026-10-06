@@ -20,6 +20,7 @@
 #   stage-stdlib+expected-stderr:<printf escapes>; $SRC in an expected stderr is
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
+while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
 invariant_loop_call_negative|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|0|-|stage-stdlib
 invariant_loop_call_zero|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|1|-|stage-stdlib
 invariant_loop_call_skipped|all|0,2|tests/integration/invariant_loop_call.tl|0|5\n|2|-|stage-stdlib
@@ -570,6 +571,12 @@ spmd_foreach_active_calls|all|-|tests/integration/spmd_foreach_active.tl|0|0 0 0
 spmd_foreach_active_lane_types|all|-|tests/integration/spmd_foreach_active.tl|0|-2 8 2\n|5|-|stage-stdlib
 spmd_foreach_active_atomics|all|-|tests/integration/spmd_foreach_active.tl|0|9 5 7\n|6|-|stage-stdlib
 spmd_foreach_active_first_fault|all|-|tests/integration/spmd_foreach_active.tl|134|0\n1\n2\n3\n|7|-|stage-stdlib+expected-stderr:tl: $SRC:140:32: array index out of bounds: index=9 length=8\n
+spmd_foreach_2d_order|all|-|tests/integration/spmd_foreach_2d.tl|0|y0=2\ny1=4\nx0=-1\nx1=2\n(2 -1)\n(2 0)\n(2 1)\n(3 -1)\n(3 0)\n(3 1)\ncount=6\n|1|-|stage-stdlib
+spmd_foreach_2d_row_major|all|-|tests/integration/spmd_foreach_2d.tl|0|0 -7 -6 -5 3 4 5 13 14 15\n|2|-|stage-stdlib
+spmd_foreach_2d_empty|all|-|tests/integration/spmd_foreach_2d.tl|0|y0=3\ny1=3\nx0=-9223372036854775808\nx1=9223372036854775807\ncount=0\ny0=-9223372036854775808\ny1=9223372036854775807\nx0=5\nx1=5\ncount=0\ny0=5\ny1=2\nx0=0\nx1=4\ncount=0\ny0=0\ny1=1\nx0=7\nx1=-7\ncount=0\n|3|-|stage-stdlib
+spmd_foreach_2d_outer_span_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=-9223372036854775808\ny1=9223372036854775807\nx0=0\nx1=1\n|4|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+spmd_foreach_2d_inner_span_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=0\ny1=1\nx0=-9223372036854775808\nx1=9223372036854775807\n|5|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+spmd_foreach_2d_product_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=0\ny1=4294967296\nx0=0\nx1=2147483648\n|6|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
 stdlib_io|all|-|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 stdlib_eq_aggregate|all|-|tests/integration/stdlib_eq_aggregate.tl|42|-|-|stdlib/eq.tl stdlib/comptime.tl|-
 stdlib_hash_generated|all|-|tests/integration/stdlib_hash_generated.tl|0|-|-|stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/io.tl stdlib/string.tl|-
@@ -644,6 +651,12 @@ tl_alloc_aligned|all|-|tests/integration/tl_alloc_aligned.tl|42|-|-|stdlib/arena
 tree|all|-|tests/integration/tree.tl|3|-|-|-|-
 tuple_values|all|-|tests/integration/tuple_values.tl|42|-|-|-|-
 tuple_match_pattern|all|-|tests/integration/tuple_match_pattern.tl|42|-|-|stdlib/string.tl|-
+borrowed_struct_pattern_string|all|0,1,2|tests/integration/borrowed_struct_pattern_string.tl|42|-|-|stdlib/string.tl stdlib/io.tl|stage-stdlib
+borrow_temporary_call_arg|all|0,1,2|tests/safety/borrow_temporary_call_arg_ok.tl|42|-|-|stdlib/string.tl|-
+borrow_temporary_cleanup|all|0,1,2|tests/safety/borrow_temporary_cleanup_ok.tl|42|-|-|-|-
+borrowed_pattern_copy_binding|all|0,1,2|tests/safety/borrowed_pattern_copy_binding_ok.tl|42|-|-|stdlib/string.tl|-
+borrowed_pattern_copy_deferred|all|0,1,2|tests/safety/borrowed_pattern_copy_deferred_ok.tl|42|-|-|-|-
+box_deref_copy_projection_reuse|all|0,1,2|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-|-|-|-
 fixed_array_match_pattern|all|-|tests/integration/fixed_array_match_pattern.tl|42|-|-|stdlib/string.tl|-
 slice_match_pattern|all|0,1,2|tests/integration/slice_match_pattern.tl|42|-|-|stdlib/string.tl stdlib/vector.tl|-
 u16_div_zero_trap|all|-|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=1 divisor=0\n

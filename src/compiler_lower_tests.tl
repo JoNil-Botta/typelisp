@@ -2756,15 +2756,15 @@
     (+ (score (Some 7)) (slot-score items))))")
 
 (define (compiler-lower-borrowed-enum-match-ref-struct-array-source) : String
-  "(defenum Slot (Empty) (Occupied i64))
+  "(defenum Slot (Empty) (Occupied String))
 (defstruct Bag (slots (__tl_dyn-array Slot)))
-(defenum SlotLookup (:lifetimes bag) (Missing) (Found (& bag i64)))
-(define (take [v : (& bag i64)]) : i64 41)
+(defenum SlotLookup (:lifetimes bag) (Missing) (Found (& bag str)))
+(define (take [v : (& bag str)]) : i64 41)
 (define (slot-missing [bag : (& bag Bag)]) : (SlotLookup bag) SlotLookup.Missing)
-(define (slot-found [value : (& bag i64)]) : (SlotLookup bag) (SlotLookup.Found value))
+(define (slot-found [value : (& bag str)]) : (SlotLookup bag) (SlotLookup.Found value))
 (define (lookup [bag : (& bag Bag)]) : (SlotLookup bag)
   (match (& (array-ref bag.slots 0))
-    [(Occupied v) (let [same : (& bag i64) v] (slot-found same))]
+    [(Occupied v) (let [same : (& bag str) v] (slot-found same))]
     [Empty (slot-missing bag)]))
 (define (score [bag : (& bag Bag)]) : i64
   (match (& (array-ref bag.slots 0))
@@ -2774,7 +2774,7 @@
   (let
     [slots : (__tl_dyn-array Slot) (__tl_make-array Slot 1)]
     (begin
-      (set! (array-ref slots 0) (Occupied 9))
+      (set! (array-ref slots 0) (Occupied \"nine\"))
       (let [bag : Bag (Bag slots)]
         (+ (score (& bag))
           (match (lookup (& bag))
@@ -12048,7 +12048,7 @@
       [session-b : cis.InternStructuralSessionHandle
         (cis.intern-structural-session-handle-from-source-names
           (ci.intern-source-name-session-handle-from-state intern-b))]
-      [identities : (__tl_dyn-array i64) (__tl_make-array i64 18)]
+      [identities : (__tl_dyn-array i64) (__tl_make-array i64 20)]
       [ok : bool true]
       (set!
         (array-ref identities 0)
@@ -12104,12 +12104,18 @@
       (set!
         (array-ref identities 17)
         (compiler-lower-private-identity-raw session-a (WhileHeader 1)))
+      (set!
+        (array-ref identities 18)
+        (compiler-lower-private-identity-raw session-a (SpmdDomainBound 1)))
+      (set!
+        (array-ref identities 19)
+        (compiler-lower-private-identity-raw session-a (SpmdDomainBound 3)))
       (let
         [left : i64 0]
-        (while (< left 18)
+        (while (< left 20)
           (let
             [right : i64 (+ left 1)]
-            (while (< right 18)
+            (while (< right 20)
               (when
                 (= (array-ref identities left) (array-ref identities right))
                 (set! ok false))
@@ -12195,10 +12201,18 @@
           (array-ref identities 16))
           [(Some (WhileExit ordinal)) (unless (= ordinal 1) (set! ok false))]
           [_ (set! ok false)])
+        (match (cis.intern-structural-session-lower-private-record-for-raw
+          session-a
+          (array-ref identities 19))
+          [(Some (SpmdDomainBound ordinal))
+            (unless (= ordinal 3) (set! ok false))]
+          [_ (set! ok false)])
         (while (< index 700)
-          (compiler-lower-private-identity-raw
-            session-a
-            (CleanupHidden (+ 100000 index)))
+          (begin
+            (compiler-lower-private-identity-raw
+              session-a
+              (CleanupHidden (+ 100000 index)))
+            unit)
           (set! index (+ index 1)))
         (unless
           (=
@@ -12214,10 +12228,10 @@
             (cis.intern-structural-session-kind-count
               session-a
               (ci.intern-structural-kind-lower-private))
-            723)
+            725)
           (set! ok false))
         (unless
-          (= (ci.intern-compat-state-structural-count intern-a) 724)
+          (= (ci.intern-compat-state-structural-count intern-a) 726)
           (set! ok false))
         (unless (= (ci.intern-structural-record-slot-bytes) 37) (set! ok false)))
       (let

@@ -267,11 +267,11 @@
 ;; (`a`/`b`) are pointers to the child enums, passed straight back into `eval`.
 (define (eval [e : (& e Expr)]) : i64
   (match e
-    [(Num n) (deref n)]
-    [(Add a b) (+ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
-    [(Sub a b) (- (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
-    [(Mul a b) (* (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]
-    [(Div a b) (/ (eval (& (deref (deref a)))) (eval (& (deref (deref b)))))]))
+    [(Expr.Num n) n]
+    [(Expr.Add a b) (+ (eval a) (eval b))]
+    [(Expr.Sub a b) (- (eval a) (eval b))]
+    [(Expr.Mul a b) (* (eval a) (eval b))]
+    [(Expr.Div a b) (/ (eval a) (eval b))]))
 
 ;; ============================ End to end ==================================
 ;; Run the full front-end on "2 + 3 * 4":

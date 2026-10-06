@@ -59,8 +59,7 @@
 
 (define (borrowed-nested-array-score [items : (Array (Array i64 2) 2)]) : i64
   (match (& items)
-    [(array (array a b) (array c d))
-      (+ (deref a) (+ (deref b) (+ (deref c) (deref d))))]))
+    [(array (array a b) (array c d)) (+ a (+ b (+ c d)))]))
 
 (define (owned-box-score [items : (Array (Box i64) 2)]) : i64
   (match items

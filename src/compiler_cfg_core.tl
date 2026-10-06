@@ -57,9 +57,7 @@
           (owned_view.compiler-owned-array-element-shared-view
             names.slots
             index)
-          (owned_view.compiler-owned-array-element-shared-view
-            names.values
-            index))))
+          (array-ref names.values index))))
     env))
 
 (defstruct CompilerCfgKey

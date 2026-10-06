@@ -14,8 +14,8 @@
 ; Recursively fold the tree to an integer.
 (define (eval [e : (& e Expr)]) : i64
   (match e
-    [(ENum n) (deref n)]
-    [(EAdd l r) (+ (eval (& (deref (deref l)))) (eval (& (deref (deref r)))))]))
+    [(ENum n) n]
+    [(EAdd l r) (+ (eval l) (eval r))]))
 
 (define (main) : i64
   (let

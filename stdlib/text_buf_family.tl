@@ -482,7 +482,7 @@
               (io.file-write-status raw (byte_buf.str-as-bytes (& chunk))))]
           [(TextBufChunkDense store visible-count)
             (let
-              [count : i64 (deref visible-count)]
+              [count : i64 visible-count]
               [limit : i64 (stdlib.text_buf.batched-write-threshold)]
               [batch : byte_buf.ByteBuf (byte_buf.with-capacity capacity)]
               [index : i64 0]
@@ -491,9 +491,7 @@
                 (while (and (= status io.io-status-ok) (< index count))
                   (let
                     [chunk : String
-                      (stdlib.text_buf.text-buf-store-entry-at
-                        (& (deref (deref store)))
-                        index)]
+                      (stdlib.text_buf.text-buf-store-entry-at store index)]
                     [chunk-len : i64 (string-length chunk)]
                     [pending : i64 (byte_buf.len (& batch))]
                     (begin
@@ -608,10 +606,10 @@
       (append (empty-like text) text))
     (define (empty? [buf : (& buf (TextBufBorrowed text))]) : bool
       (match buf
-        [(TextBufBorrowed _ len) (= (deref len) 0)]))
+        [(TextBufBorrowed _ len) (= len 0)]))
     (define (length [buf : (& buf (TextBufBorrowed text))]) : i64
       (match buf
-        [(TextBufBorrowed _ len) (deref len)]))
+        [(TextBufBorrowed _ len) len]))
     (define (slice-valid? [source : (& text str)] [start : i64] [len : i64]) : bool
       (let
         [n : i64 (string-length source)]
@@ -1037,7 +1035,7 @@
         [(TextBufBorrowedChunkNil _) count]
         [(TextBufBorrowedChunkInline _ _ _) (+ count 1)]
         [(TextBufBorrowedChunkDense _ _ prefix-count _ _)
-          (+ count (+ (deref prefix-count) 1))]))
+          (+ count (+ prefix-count 1))]))
     (define (chunk-count [buf : (& buf (TextBufBorrowed text))]) : i64
       (match buf
         [(TextBufBorrowed chunks _)

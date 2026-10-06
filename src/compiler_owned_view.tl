@@ -9,35 +9,52 @@
 (import stdlib.comptime)
 (import stdlib.string)
 
+;; A non-reference operand is a Copy part already bound by value through a
+;; shared reference (SPEC section 5.13); its copy is its own view.
 (defmacro (compiler-owned-reference-shared-view [reference : Expr]) : Expr
   (let
-    [value-ty : comptime.Expr
-      (comptime.reference-element-type (comptime.expr-type reference))]
-    (match (comptime.type-info value-ty)
-      [(comptime.TypeInfo.DynArray _)
-        `(unsafe
-          (ptr-read
-            (ptr-cast (__tl_array-data (array ,reference)) : (Ptr ,value-ty))))]
-      [(comptime.TypeInfo.Builtin kind)
-        (if (string.eq kind "string")
-          `(unsafe
-            (ptr-read
-              (ptr-cast (__tl_array-data (array ,reference)) : (Ptr ,value-ty))))
-          `(let
-            [address : u64
-              (unsafe
-                (ptr-read
-                  (ptr-cast (__tl_array-data (array ,reference)) : (Ptr u64))))]
-            (unsafe
-              (ptr-read (int->ptr address : (Ptr ,value-ty))))))]
-      [_
-        `(let
-          [address : u64
-            (unsafe
+    [reference-ty : comptime.Expr (comptime.expr-type reference)]
+    [reference-kind : String (type-kind reference-ty)]
+    (if (if (string.eq reference-kind "ref")
+      false
+      (if (string.eq reference-kind "mut-ref")
+        false
+        true))
+      reference
+      (let
+        [value-ty : comptime.Expr
+          (comptime.reference-element-type reference-ty)]
+        (match (comptime.type-info value-ty)
+          [(comptime.TypeInfo.DynArray _)
+            `(unsafe
               (ptr-read
-                (ptr-cast (__tl_array-data (array ,reference)) : (Ptr u64))))]
-          (unsafe
-            (ptr-read (int->ptr address : (Ptr ,value-ty)))))])))
+                (ptr-cast
+                  (__tl_array-data (array ,reference))
+                  : (Ptr ,value-ty))))]
+          [(comptime.TypeInfo.Builtin kind)
+            (if (string.eq kind "string")
+              `(unsafe
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array ,reference))
+                    : (Ptr ,value-ty))))
+              `(let
+                [address : u64
+                  (unsafe
+                    (ptr-read
+                      (ptr-cast
+                        (__tl_array-data (array ,reference))
+                        : (Ptr u64))))]
+                (unsafe
+                  (ptr-read (int->ptr address : (Ptr ,value-ty))))))]
+          [_
+            `(let
+              [address : u64
+                (unsafe
+                  (ptr-read
+                    (ptr-cast (__tl_array-data (array ,reference)) : (Ptr u64))))]
+              (unsafe
+                (ptr-read (int->ptr address : (Ptr ,value-ty)))))])))))
 
 (defmacro (compiler-owned-shared-view [place : Expr]) : Expr
   `(unsafe
@@ -85,8 +102,13 @@
     (unsafe
       (ptr-read (int->ptr address : (Ptr ,value-ty))))))
 
+;; A value that is not a Box is already the boxed value: a `(Box T)` payload
+;; matched through a shared reference binds `(& T)` (SPEC section 5.13).
 (defmacro (compiler-owned-box-shared-view [value : Expr]) : Expr
   (let
-    [inner-ty : comptime.Expr
-      (comptime.box-element-type (comptime.expr-type value))]
-    `(compiler-owned-typed-box-shared-view ,value ,inner-ty)))
+    [value-ty : comptime.Expr (comptime.expr-type value)]
+    (if (string-eq (type-kind value-ty) "box")
+      `(compiler-owned-typed-box-shared-view
+        ,value
+        ,(comptime.box-element-type value-ty))
+      value)))

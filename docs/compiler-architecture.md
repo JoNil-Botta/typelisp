@@ -76,6 +76,28 @@ borrowed-Slice boundaries even on default native declarations. The broader
 explicit-C ABI checker remains separate because private runtime declarations
 also use native contracts outside the ordinary C signature subset.
 
+Borrowed pattern bindings share one type/lowering contract:
+`tc-borrowed-binding-type` copies `Copy` parts, projects boxed storage as a
+shared reference, and otherwise retains a reference to the part. Lowering uses
+`lower-borrowed-binding-expr` for enum, struct, tuple and array name patterns;
+memory-class copies need independent storage, while String references load the
+stored handle before forming a `str` view. Scalar enum copies may retain their
+payload address only when `lower-deferred-copy-scan` proves every read precedes
+any possible memory write. Calls, stores and cleanup boundaries invalidate that
+proof; loops, captures, address-taking and unmodeled uses require an eager copy.
+Deferred IDs name fresh locals and keep their by-value type. Reading one emits
+a load, and borrowing one first copies the loaded value into its own storage.
+
+A direct call argument may explicitly borrow a temporary. Its operand is a
+by-value position evaluated in argument order, and its reserved lifetime ends
+with the call. Typechecking rejects any result or mutable referent that could
+retain that lifetime. The nested-call record is restored on both success and
+error. Lowering keeps storage through the call and records owned cleanup in
+the existing `LowerArgWriteback` sequence, reloading mutable register-class
+storage before cleanup. Such a call cannot become a tail call. A later argument
+that can leave early is rejected when it would bypass an earlier temporary's
+cleanup; cleanup-containing aggregates without their own disposer are rejected.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM
@@ -178,6 +200,30 @@ re-checks each node against independent typechecker queries (type size and
 alignment, member offsets looked up by name, tuple offsets from the
 typechecker's sizes) and fails the compile on the first disagreement. Without
 debug info nothing is recorded.
+
+A rank-2 `foreach` is `AstForeach.Foreach2` (surface schema 16, expression
+tag 89): the outer coordinate's name, type and bounds, then the inner one's,
+then the body, so binding order and ordinal survive every AST walker. The
+SPMD checker binds both coordinates varying and read-only with role
+`ForeachCoordinate ordinal begin end body-id`; the inner role carries the
+header's inner bounds when each is a literal or a variable the body never
+assigns. The body id lets the proof reject uniform offsets that change
+between instances, including assignments from `foreach-active`. Offset
+expressions use the shared child schema and accept only closed scalar
+operations over literals and unassigned outer bindings; memory reads and
+calls need a scalar captured before the domain.
+While a rank-2 coordinate is local, destination and masked-branch indexes go
+through the row-major proof (`tc-spmd-row-major-index?`) instead of the
+rank-1 rule; a nested domain marks the coordinates outer and a helper argument
+drops the role, so neither can prove a row-major write. `lower-foreach2`
+desugars the domain to private bound locals, emptiness tests, checked span and
+product traps, and nested `while` loops in every backend mode (#7190); native
+row-local gangs are #7191.
+
+Borrowed aggregate patterns share `lower-bind-element-access`: a String name
+binding loads the stored handle to expose a `str` view, while nested aggregate
+patterns retain the address of inline storage. Struct fields follow the same
+access rule as tuple slots and array elements, preserving the borrow lifetime.
 
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
@@ -622,6 +668,19 @@ Logical traversal stays newest-first; CSR emission reads physical slots in
 oldest-first order directly, without constructing reversed intermediate lists.
 The integer-sequence and CSR tests cover growth, branches, duplicates and offsets.
 
+Copy environments use a dense `OptCopyEntry` array, a snapshot length and
+an arena-allocated lineage top cell. Slots beneath every retained snapshot
+remain immutable. Push appends at the current top with spare capacity; extending
+an older snapshot copies its live prefix. Growth shallow-copies compiler arena
+values using their inline layout size. Zeroed empty snapshots skip their null
+top until allocating storage. Truncate clamps its mark and declares every
+longer snapshot dead; only consumed block-local clears use it. Invalidation
+first checks for a retired destination/source, returns unchanged snapshots when
+none exists, and otherwise copies retained facts in order. Lookups stay newest
+first and preserve local IDs, negative global keys and pack-word keys. The copy
+environment smoke covers growth, wide entries, forks, zeroed storage, clears,
+source invalidation and retained snapshots.
+
 LICM moves a load only with evidence that its word is readable at the
 preheader. The strongest is that the loop reads it on every entry anyway: in
 the header, or a block the header's chain of unconditional jumps enters, before
@@ -842,6 +901,15 @@ do not allocate. Generated-declaration reuse in `compiler_specialize.tl` compare
 these semantic flags even when the aggregates have identical ABI. The existing
 AST wrapper, surface roundtrip, and specialization selftests guard these rules;
 serialized metadata changes also require a surface-AST schema version change.
+
+`AstExpr.While` keeps its direct body forms in an `AstExprList` (surface AST
+schema 17). Typechecking requires each form to be unit-valued and locates a
+mismatch at that form. An explicit `Begin` remains one body form and may discard
+its non-final values. Shared child traversal, quasiquote, hygiene and declaration
+serialization preserve the ordered list; lowering and ownership analyses reuse
+the existing sequence handling. The public comptime `expr-while` builder keeps
+its one expression as a singleton list. Native quasiquote uses the same host
+callback with its body-list flag so it agrees with interpreted expansion.
 
 `Module` and `Decls` macro output share `macro-wrap-generated-decls` in
 `compiler_typecheck_core.tl`. Ordinary generated imports carry namespace effects
@@ -1119,6 +1187,25 @@ bounded by caller limits. Reading is pure; resolving the names against profile
 roots and recording them in the link manifest belongs to #8304. The fixtures
 under `tests/fixtures/linker-scripts/` are real installed scripts with their
 provenance.
+
+`src/linker_version_map.tl` reuses that scanner for the bounded VERSION-map
+grammar: named nodes, inheritance from an earlier node, an anonymous sole node,
+ordered exact global/local names, and `local: *`. Colon is a separator only in
+this grammar, so implicit-script paths retain their spelling. Duplicate bound
+names, other globs, expressions and extern-language blocks fail with source,
+line and column. Byte/token limits bound scanning; node/symbol and work limits
+also bound retained output and name comparisons. #8263's C-export script and
+#8293's provider resolver consume this pure parser.
+
+`src/linker_elf_version_codec.tl` encodes and decodes the little-endian Versym,
+Verdef/Verdaux and Verneed/Vernaux sections for #8293 and #7042's DSO row.
+Callers supply dynstr and metadata counts explicitly. The codec validates
+ranges, disjoint record ownership, relative chains, counts, ELF name hashes,
+the combined version-index namespace, and the required DSO BASE definition.
+Its models retain physical offsets and padding outside records, preserving
+both GNU ld's interleaved and lld's grouped Verneed layout. Counts, sizes, name
+lengths and work have caller bounds; no component performs I/O or owns linker
+state. The public ELF name hash is reusable by #8296's dynamic-section codec.
 
 The fresh-artifact pipeline prepares the runtime once for checked-surface
 capture, then passes that same result to artifact finishing. Finishers accept

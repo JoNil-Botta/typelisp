@@ -1078,7 +1078,7 @@
                 (let
                   [mid : i64 (/ (+ scope-low scope-high) 2)]
                   [event : CompilerSemanticScopeEvent
-                    (owned_view.compiler-owned-array-element-shared-view
+                    (array-ref
                       index.scope-events
                       (+ info.scope-event-offset mid))]
                   (if (<= event.byte-offset byte-offset)
@@ -1088,7 +1088,7 @@
                 (let
                   [mid : i64 (/ (+ module-low module-high) 2)]
                   [event : CompilerSemanticModuleEvent
-                    (owned_view.compiler-owned-array-element-shared-view
+                    (array-ref
                       index.module-events
                       (+ info.module-event-offset mid))]
                   (if (<= event.byte-offset byte-offset)
@@ -1098,12 +1098,12 @@
                 (CompilerSemanticVisibleBindingQuery
                   path-index
                   (if (> module-low 0)
-                    (owned_view.compiler-owned-array-element-shared-view
+                    (array-ref
                       index.module-events
                       (+ info.module-event-offset (- module-low 1))).module-index
                     info.default-module-index)
                   (if (> scope-low 0)
-                    (owned_view.compiler-owned-array-element-shared-view
+                    (array-ref
                       index.scope-events
                       (+ info.scope-event-offset (- scope-low 1))).head
                     -1))))))))))
@@ -1268,9 +1268,7 @@
           cursor.top-cursor
           cursor.stage)]
       [module-info : CompilerSemanticModuleInfo
-        (owned_view.compiler-owned-array-element-shared-view
-          index.modules
-          cursor.query.module-index)]
+        (array-ref index.modules cursor.query.module-index)]
       [top-end : i64 (+ module-info.candidate-offset module-info.candidate-len)]
       (cond
         [(or
@@ -1318,9 +1316,7 @@
       (while (and (= next.stage 1) (< next.top-cursor top-end))
         (let
           [candidate : CompilerSemanticTopCandidateRef
-            (owned_view.compiler-owned-array-element-shared-view
-              index.top-candidates
-              next.top-cursor)]
+            (array-ref index.top-candidates next.top-cursor)]
           (set! next.top-cursor (+ next.top-cursor 1))
           (cond
             [(and
@@ -3503,6 +3499,75 @@
       body-id)
     (compiler-semantic-walk-node! state bound.scope bound.env body-id)))
 
+;; A rank-2 foreach binds the outer coordinate, then the inner one, over the
+;; body only; all four bounds resolve in the enclosing scope.
+(define (compiler-semantic-walk-foreach2!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingSnapshot]
+  [env : tc.TcTypeEnv]
+  [outer : i64]
+  [outer-ty : ast.AstType]
+  [outer-start-id : i64]
+  [outer-end-id : i64]
+  [inner : i64]
+  [inner-ty : ast.AstType]
+  [inner-start-id : i64]
+  [inner-end-id : i64]
+  [body-id : i64]
+  [maybe-span : CompilerSemanticMaybeSpan]) : unit
+  (let
+    [form-start : i64
+      (compiler-semantic-maybe-span-start
+        (owned_view.compiler-owned-shared-view state)
+        maybe-span
+        0)]
+    [source-end : i64 (string.string-length state.source)]
+    [outer-bound : CompilerSemanticBindResult
+      (compiler-semantic-bind-local!
+        state
+        scope
+        env
+        outer
+        Local
+        (Some
+          (tc.tc-resolve-type
+            state.ctx
+            (owned_view.compiler-owned-shared-view outer-ty)))
+        (compiler-semantic-form-head-end state.source form-start)
+        (compiler-semantic-expr-start-offset state outer-start-id source-end))]
+    [inner-bound : CompilerSemanticBindResult
+      (compiler-semantic-bind-local!
+        state
+        outer-bound.scope
+        outer-bound.env
+        inner
+        Local
+        (Some
+          (tc.tc-resolve-type
+            state.ctx
+            (owned_view.compiler-owned-shared-view inner-ty)))
+        (compiler-semantic-expr-end-offset
+          (owned_view.compiler-owned-shared-view state)
+          outer-end-id
+          outer-bound.next-search)
+        (compiler-semantic-expr-start-offset state inner-start-id source-end))]
+    (compiler-semantic-walk-type! state outer-ty)
+    (compiler-semantic-walk-node! state scope env outer-start-id)
+    (compiler-semantic-walk-node! state scope env outer-end-id)
+    (compiler-semantic-walk-type! state inner-ty)
+    (compiler-semantic-walk-node! state scope env inner-start-id)
+    (compiler-semantic-walk-node! state scope env inner-end-id)
+    (compiler-semantic-scope-node-region-add!
+      (owned_view.compiler-owned-shared-view state)
+      scope
+      inner-bound.scope
+      body-id)
+    (compiler-semantic-walk-node!
+      state
+      inner-bound.scope
+      inner-bound.env
+      body-id)))
+
 ;; `(foreach-active [lane : i64] body...)` binds LANE, an i64, over the body.
 (define (compiler-semantic-walk-foreach-active!
   [state : CompilerSemanticWalkState]
@@ -4778,6 +4843,30 @@
                 start
                 end
                 body
+                maybe-span)]
+            [(Foreach2
+                outer
+                outer-ty
+                outer-start
+                outer-end
+                inner
+                inner-ty
+                inner-start
+                inner-end
+                body)
+              (compiler-semantic-walk-foreach2!
+                state
+                scope
+                env
+                outer
+                outer-ty
+                outer-start
+                outer-end
+                inner
+                inner-ty
+                inner-start
+                inner-end
+                body
                 maybe-span)])]
         [(ForeachActive lane body)
           (compiler-semantic-walk-foreach-active!
@@ -5668,8 +5757,7 @@
     [index : i64 0]
     (while (< index raw-len)
       (let
-        [event : CompilerSemanticScopeEvent
-          (owned_view.compiler-owned-array-element-shared-view raw index)]
+        [event : CompilerSemanticScopeEvent (array-ref raw index)]
         (set!
           (array-ref counts event.path-index)
           (+
@@ -5699,8 +5787,7 @@
     (set! index 0)
     (while (< index raw-len)
       (let
-        [event : CompilerSemanticScopeEvent
-          (owned_view.compiler-owned-array-element-shared-view raw index)]
+        [event : CompilerSemanticScopeEvent (array-ref raw index)]
         [info : CompilerSemanticSourcePathInfo
           (owned_view.compiler-owned-array-element-shared-view
             paths
@@ -5738,8 +5825,7 @@
     [index : i64 0]
     (while (< index raw-len)
       (let
-        [event : CompilerSemanticModuleEvent
-          (owned_view.compiler-owned-array-element-shared-view raw index)]
+        [event : CompilerSemanticModuleEvent (array-ref raw index)]
         (set!
           (array-ref counts event.path-index)
           (+
@@ -5769,8 +5855,7 @@
     (set! index 0)
     (while (< index raw-len)
       (let
-        [event : CompilerSemanticModuleEvent
-          (owned_view.compiler-owned-array-element-shared-view raw index)]
+        [event : CompilerSemanticModuleEvent (array-ref raw index)]
         [info : CompilerSemanticSourcePathInfo
           (owned_view.compiler-owned-array-element-shared-view
             paths

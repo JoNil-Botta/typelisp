@@ -973,8 +973,11 @@
                               "__tl_semantic_origin_start"
                               run-span))
                           (while (< record-index count)
-                            (reader.sp-node-push
-                              (reader.sp-node-get (+ (+ cursor 2) record-index)))
+                            (begin
+                              (reader.sp-node-push
+                                (reader.sp-node-get
+                                  (+ (+ cursor 2) record-index)))
+                              unit)
                             (set! record-index (+ record-index 1))))
                         unit))]
                   [_ unit])]
@@ -6581,14 +6584,13 @@
     [(Cons cond body-tail _)
       (let
         [parsed-cond (try (parse-ast-expr-with-pools dispatch pools cond))]
-        [parsed-body
-          (try
-            (parse-ast-body-tail
-              dispatch
+        [parsed-body (try (parse-ast-expr-list dispatch pools body-tail))]
+        (if (= parsed-body.len 0)
+          (Err "parse: malformed while")
+          (Ok
+            (ast.ast-node-pool-context-expr-push
               pools
-              body-tail
-              "parse: malformed while"))]
-        (Ok (ast.ast-expr-while-with-pools pools parsed-cond parsed-body)))]
+              (While parsed-cond parsed-body)))))]
     [_ (Err "parse: malformed while")]))
 
 (define (parse-ast-set
@@ -8521,14 +8523,17 @@
         (Ok (ast.ast-expr-match-with-pools pools parsed-scrutinee parsed-arms)))]
     [_ (Err "parse: malformed match")]))
 
-(define (parse-ast-foreach-binding
+;; One parsed `[name : type start end]` foreach domain binding.
+(defenum ResultForeachDim
+  (Ok i64 ast.AstType i64 i64)
+  (Err String))
+
+(define (parse-ast-foreach-dim
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
-  [binding : reader.SpannedSexpr]
-  [body : reader.SpannedSexpr]) : ResultAstExpr
+  [binding : reader.SpannedSexpr]) : ResultForeachDim
   (match (reader.spanned-sexpr-view binding)
-    [(BracketList items _)
-      (parse-ast-foreach-binding dispatch pools items body)]
+    [(BracketList items _) (parse-ast-foreach-dim dispatch pools items)]
     [(Cons index-node colon-tail _)
       (let
         [_origin : unit
@@ -8568,20 +8573,11 @@
                                           dispatch
                                           pools
                                           end))]
-                                    [parsed-body
-                                      (try
-                                        (parse-ast-expr-with-pools
-                                          dispatch
-                                          pools
-                                          body))]
                                     (Ok
-                                      (ast.ast-expr-foreach-id-with-pools
-                                        pools
-                                        (ci.intern-syntax-id-value index)
-                                        parsed-index-ty
-                                        parsed-start
-                                        parsed-end
-                                        parsed-body)))
+                                      (ci.intern-syntax-id-value index)
+                                      parsed-index-ty
+                                      parsed-start
+                                      parsed-end))
                                   (Err "parse: expected ':' in foreach"))]
                               [_ (Err "parse: malformed foreach binding")])]
                           [_ (Err "parse: malformed foreach binding")])]
@@ -8591,6 +8587,21 @@
           [_ (Err "parse: malformed foreach binding")]))]
     [_ (Err "parse: malformed foreach binding")]))
 
+;; Parse the single body form of a foreach after its domain bindings.
+(define (parse-ast-foreach-body
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : ast.AstNodePoolContext]
+  [body-tail : reader.SpannedSexpr]) : ResultAstExpr
+  (match (reader.spanned-sexpr-view body-tail)
+    [(Cons body end _)
+      (match (reader.spanned-sexpr-view end)
+        [(Nil _) (parse-ast-expr-with-pools dispatch pools body)]
+        [_ (Err "parse: malformed foreach")])]
+    [_ (Err "parse: malformed foreach")]))
+
+;; `(foreach ([i : T start end]) body)` is a rank-1 domain and
+;; `(foreach ([y : T y0 y1] [x : T x0 x1]) body)` a rank-2 one. Bindings,
+;; then the body, are parsed in source order.
 (define (parse-ast-foreach
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
@@ -8598,16 +8609,60 @@
   (match (reader.spanned-sexpr-view rest)
     [(Cons binding-list body-tail _)
       (match (reader.spanned-sexpr-view binding-list)
+        [(Nil _) (Err "parse: foreach requires one or two domain bindings")]
         [(Cons binding binding-end _)
           (match (reader.spanned-sexpr-view binding-end)
             [(Nil _)
-              (match (reader.spanned-sexpr-view body-tail)
-                [(Cons body end _)
-                  (match (reader.spanned-sexpr-view end)
-                    [(Nil _)
-                      (parse-ast-foreach-binding dispatch pools binding body)]
-                    [_ (Err "parse: malformed foreach")])]
-                [_ (Err "parse: malformed foreach")])]
+              (match (parse-ast-foreach-dim dispatch pools binding)
+                [(Ok name index-ty start end)
+                  (match (parse-ast-foreach-body dispatch pools body-tail)
+                    [(Ok body)
+                      (Ok
+                        (ast.ast-expr-foreach-id-with-pools
+                          pools
+                          name
+                          index-ty
+                          start
+                          end
+                          body))]
+                    [(Err message) (Err message)])]
+                [(Err message) (Err message)])]
+            [(Cons inner-binding rank-end _)
+              (match (reader.spanned-sexpr-view rank-end)
+                [(Nil _)
+                  (match (parse-ast-foreach-dim dispatch pools binding)
+                    [(Ok outer outer-ty outer-start outer-end)
+                      (match (parse-ast-foreach-dim
+                        dispatch
+                        pools
+                        inner-binding)
+                        [(Ok inner inner-ty inner-start inner-end)
+                          (if (= outer inner)
+                            (Err
+                              "parse: foreach domain bindings must use distinct names")
+                            (match (parse-ast-foreach-body
+                              dispatch
+                              pools
+                              body-tail)
+                              [(Ok body)
+                                (Ok
+                                  (ast.ast-expr-foreach2-id-with-pools
+                                    pools
+                                    outer
+                                    outer-ty
+                                    outer-start
+                                    outer-end
+                                    inner
+                                    inner-ty
+                                    inner-start
+                                    inner-end
+                                    body))]
+                              [(Err message) (Err message)]))]
+                        [(Err message) (Err message)])]
+                    [(Err message) (Err message)])]
+                [_
+                  (Err
+                    "parse: foreach supports at most two domain bindings (rank 2)")])]
             [_ (Err "parse: malformed foreach")])]
         [_ (Err "parse: malformed foreach")])]
     [_ (Err "parse: malformed foreach")]))

@@ -2430,7 +2430,12 @@
   ;; keyed by the value's node id; see tc-body-let-init-type-record!.
   (let-init-ids (__tl_dyn-array i64))
   (let-init-types (__tl_dyn-array ast.AstType))
-  (let-init-count i64))
+  (let-init-count i64)
+  ;; The address of the one-slot TcMoveBreakCollection cell; see
+  ;; tc-body-move-breaks-swap!.
+  (move-breaks-cell i64)
+  (move-operand-control bool)
+  (move-operand-edges bool))
 
 ;; TcContext values are copied while resolving modules and rebuilding macro
 ;; views. Keep the mutable body analysis behind a shared one-slot cell so every
@@ -3119,7 +3124,10 @@
         (__tl_make-array i64 1)
         (tc-global-shared-view tc-body-let-init-no-ids)
         (tc-global-shared-view tc-body-let-init-no-types)
-        0))
+        0
+        (tc-move-break-collection-cell-new)
+        false
+        false))
     (TcBodyState
       (cast
         (unsafe
@@ -3231,6 +3239,92 @@
         (= (deref data).early-exit-suppress-depth 0))
         (set! (deref data).early-exit-current true)
         unit))))
+
+;; The move checker's loop walker hands a loop-body form it has no arm for (a
+;; call, operator, `set!`, constructor, `return` value, ...) to the non-loop
+;; walker, which takes a `break` nested in it as divergence and so drops the
+;; moved state on that exit edge (#8575). The loop walker therefore opens a
+;; collecting frame around such a form, each `break` the non-loop walker
+;; reaches unions its moved set into the innermost frame, and the walker
+;; reports the frame as the form's break state. A loop body entered from the
+;; non-loop walker opens a frame that does not collect, so the `break`s it
+;; reaches stay with that inner loop. Frames nest: opening one swaps out the
+;; enclosing frame, and closing it swaps that frame back.
+;;
+;; A `break` or `continue` reached in a collecting frame also sets
+;; `move-operand-control`: the loop flow summaries skip operands, so such a
+;; body is walked again with `move-operand-edges` set (see
+;; `tc-move-check-body-walk`).
+(define (tc-body-move-breaks-cell [state : TcBodyState]) : i64
+  (let
+    [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    (unsafe
+      (deref data).move-breaks-cell)))
+
+;; Installs `next` as the innermost frame and returns the frame it replaces.
+;; The frame read from the cell is rebuilt into fresh storage before the write,
+;; since a bound aggregate read still aliases its source (#7900).
+(define (tc-body-move-breaks-swap!
+  [state : TcBodyState]
+  [next : TcMoveBreakCollection]) : TcMoveBreakCollection
+  (let
+    [cell : i64 (tc-body-move-breaks-cell state)]
+    [read : TcMoveBreakCollection
+      (tc-state-cell-read cell TcMoveBreakCollection)]
+    [replaced : TcMoveBreakCollection
+      (TcMoveBreakCollection read.collecting read.seen read.moved)]
+    (tc-state-cell-write! cell TcMoveBreakCollection next)
+    replaced))
+
+;; A `break` (with its moved set) or a `continue` (without one) reached by the
+;; non-loop walker.
+(define (tc-body-move-loop-exit-note!
+  [state : TcBodyState]
+  [break-moved : (& break-moved TcMovedSet)]
+  [break? : bool]) : unit
+  (let
+    [cell : i64 (tc-body-move-breaks-cell state)]
+    [frame : TcMoveBreakCollection
+      (tc-state-cell-read cell TcMoveBreakCollection)]
+    (if frame.collecting
+      (begin
+        (tc-body-move-operand-control-set! state true)
+        (if break?
+          (tc-state-cell-write!
+            cell
+            TcMoveBreakCollection
+            (TcMoveBreakCollection
+              true
+              true
+              (if frame.seen
+                (tc-moved-union (& frame.moved) (tc-moved-clone break-moved))
+                (tc-moved-clone break-moved))))
+          unit))
+      unit)))
+
+(define (tc-body-move-operand-control? [state : TcBodyState]) : bool
+  (let
+    [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    (unsafe
+      (deref data).move-operand-control)))
+
+(define (tc-body-move-operand-control-set! [state : TcBodyState] [on : bool]) : unit
+  (let
+    [data : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
+    (unsafe
+      (set! (deref data).move-operand-control on))))
+
+(define (tc-body-move-operand-edges? [state : TcBodyState]) : bool
+  (let
+    [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    (unsafe
+      (deref data).move-operand-edges)))
+
+(define (tc-body-move-operand-edges-set! [state : TcBodyState] [on : bool]) : unit
+  (let
+    [data : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
+    (unsafe
+      (set! (deref data).move-operand-edges on))))
 
 (define (tc-body-early-exit-fact [state : TcBodyState] [body-id : i64]) : TcBodyEarlyExitFact
   (let
@@ -64439,6 +64533,28 @@
   (Ok bool (Box TcMovedSet) bool (Box TcMovedSet))
   (Err String))
 
+;; The innermost open frame of `break` states collected for the loop walker
+;; (#8575); `moved` is meaningful only once `seen`. See
+;; `tc-body-move-breaks-swap!`.
+(defstruct TcMoveBreakCollection
+  (collecting bool)
+  (seen bool)
+  (moved TcMovedSet))
+
+(define (tc-move-break-collection-new [collecting : bool]) : TcMoveBreakCollection
+  (TcMoveBreakCollection collecting false (tc-moved-empty)))
+
+(define (tc-move-break-collection-cell-new) : i64
+  (let
+    [cell : (__tl_dyn-array TcMoveBreakCollection)
+      (__tl_make-array TcMoveBreakCollection 1)]
+    (set! (array-ref cell 0) (tc-move-break-collection-new false))
+    (cast
+      (unsafe
+        (ptr->int
+          (ptr-cast (__tl_array-data cell) : (Ptr TcMoveBreakCollection))))
+      : i64)))
+
 (defenum TcMoveBindings
   (Ok TcTypeEnv TcMovedSet TcMovedSet TcMovedSet)
   (Err String))
@@ -71581,12 +71697,70 @@
           [(Err _) false])]
       [_ false])))
 
+;; A form without its own arm in `tc-move-loop-flow-expr` (a call, operator,
+;; `set!`, constructor, ...) continues as the form itself does, but a `break`,
+;; `continue` or exit nested in one of its operands still takes that edge
+;; (#8575). With `move-operand-edges` set, its flow is the form's own `normal`
+;; with the operands' edges added; `normal` stays the form's, an
+;; over-approximation, since an operand that always diverges is rare and only
+;; costs precision. Without it the operands are not walked: every summary would
+;; walk them again, and only a body whose first walk reached such a `break` or
+;; `continue` needs them (`tc-move-check-body-walk`).
+(define (tc-move-loop-flow-add-operand
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [flow : TcMoveLoopFlow]
+  [id : i64]) : TcMoveLoopFlow
+  (if (tc-body-move-operand-edges? (tc-context-body-state ctx))
+    (let
+      [edges : TcMoveLoopFlow
+        (tc-move-loop-flow-expr
+          ctx
+          expr-bases
+          env
+          (ast.ast-expr-segment-bases-get expr-bases id))]
+      (TcMoveLoopFlow
+        flow.normal
+        (or flow.repeat edges.repeat)
+        (or flow.breaks edges.breaks)
+        (or flow.exit edges.exit)))
+    flow))
+
+(define (tc-move-loop-flow-with-operands
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]
+  [own : TcMoveLoopFlow]) : TcMoveLoopFlow
+  (if (tc-body-move-operand-edges? (tc-context-body-state ctx))
+    (let
+      [ids : ast.AstExprList
+        (ast.ast-expr-child-ids
+          (ast.ast-expr-unspan-with-segment-bases expr-bases expr))]
+      [flow : TcMoveLoopFlow own]
+      [index : i64 0]
+      (while (< index (ast.ast-expr-list-len (& ids)))
+        (set!
+          flow
+          (tc-move-loop-flow-add-operand
+            ctx
+            expr-bases
+            env
+            flow
+            (ast.ast-expr-list-get (& ids) index 0)))
+        (set! index (+ index 1)))
+      flow)
+    own))
+
 (define (tc-move-loop-flow-expr
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : TcMoveLoopFlow
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view expr))
     [(Begin exprs) (tc-move-loop-flow-exprs ctx expr-bases env exprs)]
     [(Unsafe exprs) (tc-move-loop-flow-exprs ctx expr-bases env exprs)]
     [(If cond-box then-box else-box)
@@ -71655,17 +71829,64 @@
           inner-flow.repeat
           inner-flow.breaks
           true))]
-    ;; Nested loops own their break/continue edges and can execute zero times,
-    ;; so they normally continue in the surrounding loop.
-    [(While _ _) (tc-move-loop-flow-normal)]
-    [(Foreach _) (tc-move-loop-flow-normal)]
+    ;; Nested loops own their body's break/continue edges and can execute zero
+    ;; times, so they normally continue in the surrounding loop. Their header
+    ;; (condition or bounds) runs in the surrounding loop, so its edges count.
+    [(While cond-box _)
+      (tc-move-loop-flow-add-operand
+        ctx
+        expr-bases
+        env
+        (tc-move-loop-flow-normal)
+        cond-box)]
+    [(Foreach fe-box)
+      (match (__tl-box-place fe-box)
+        [(Foreach _ _ start-box end-box _)
+          (tc-move-loop-flow-add-operand
+            ctx
+            expr-bases
+            env
+            (tc-move-loop-flow-add-operand
+              ctx
+              expr-bases
+              env
+              (tc-move-loop-flow-normal)
+              start-box)
+            end-box)]
+        [(Foreach2 _ _ a-box b-box _ _ c-box d-box _)
+          (let
+            [flow : TcMoveLoopFlow (tc-move-loop-flow-normal)]
+            (set!
+              flow
+              (tc-move-loop-flow-add-operand ctx expr-bases env flow a-box))
+            (set!
+              flow
+              (tc-move-loop-flow-add-operand ctx expr-bases env flow b-box))
+            (set!
+              flow
+              (tc-move-loop-flow-add-operand ctx expr-bases env flow c-box))
+            (tc-move-loop-flow-add-operand ctx expr-bases env flow d-box))])]
+    [(ForeachActive _ _) (tc-move-loop-flow-normal)]
+    ;; A lambda body's edges leave the lambda, not this loop.
+    [(Lambda _) (tc-move-loop-flow-normal)]
     ;; Read the already-bound direct callee signature instead of recursively
     ;; re-running inference over every call in a loop body.
     [(Call func-box _)
-      (if (tc-move-loop-direct-call-diverges? ctx expr-bases env func-box)
-        (tc-move-loop-flow-exit)
-        (tc-move-loop-flow-normal))]
-    [_ (tc-move-loop-flow-normal)]))
+      (tc-move-loop-flow-with-operands
+        ctx
+        expr-bases
+        env
+        expr
+        (if (tc-move-loop-direct-call-diverges? ctx expr-bases env func-box)
+          (tc-move-loop-flow-exit)
+          (tc-move-loop-flow-normal)))]
+    [_
+      (tc-move-loop-flow-with-operands
+        ctx
+        expr-bases
+        env
+        expr
+        (tc-move-loop-flow-normal))]))
 
 (define (tc-move-loop-result-add-breaks
   [prior? : bool]
@@ -72400,18 +72621,15 @@
             (Ok false normal-box breaks? break-box))]
         [(Err message) (Err message)])]
     [(Return _)
-      (let
-        [moved1
-          (try
-            (tc-move-check-expr
-              ctx
-              expr-bases
-              env
-              locals
-              (tc-moved-empty)
-              moved
-              expr))]
-        (Ok false (box moved1) false (box (tc-moved-empty))))]
+      (tc-move-check-loop-operand
+        ctx
+        expr-bases
+        env
+        locals
+        (tc-moved-empty)
+        moved
+        expr
+        false)]
     [(Break)
       (let
         [moved1
@@ -72451,17 +72669,68 @@
             [(tc-move-loop-flow-reaches-break? flow continuation-breaks)
               outer-loop-carried]
             [else (tc-moved-empty)])]
-        [moved1
-          (try
-            (tc-move-check-expr
-              ctx
-              expr-bases
-              env
-              locals
-              active-loop-carried
-              moved
-              expr))]
-        (Ok flow.normal (box moved1) false (box (tc-moved-empty))))]))
+        (tc-move-check-loop-operand
+          ctx
+          expr-bases
+          env
+          locals
+          active-loop-carried
+          moved
+          expr
+          flow.normal))]))
+
+;; A loop-body form the walker has no arm for, checked by the non-loop walker
+;; inside a collecting frame: the moved sets at the `break`s nested in it are
+;; its break state (#8575), as the walker's own `Break` arm reports them.
+(define (tc-move-check-loop-operand
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [expr : ast.AstExpr]
+  [normal? : bool]) : TcMoveLoopResult
+  (let
+    [state : TcBodyState (tc-context-body-state ctx)]
+    [outer : TcMoveBreakCollection
+      (tc-body-move-breaks-swap! state (tc-move-break-collection-new true))]
+    [result : TcMoveResult
+      (tc-move-check-expr ctx expr-bases env locals loop-carried moved expr)]
+    [breaks : TcMoveBreakCollection (tc-body-move-breaks-swap! state outer)]
+    (match result
+      [(Ok moved1) (Ok normal? (box moved1) breaks.seen (box breaks.moved))]
+      [(Err message) (Err message)])))
+
+;; A loop body entered from the non-loop walker; its `break`s belong to this
+;; loop, so its frame keeps them out of an enclosing loop's collection.
+(define (tc-move-check-loop-body
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [outer-loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [body : ast.AstExpr]) : TcMoveLoopResult
+  (let
+    [state : TcBodyState (tc-context-body-state ctx)]
+    [outer : TcMoveBreakCollection
+      (tc-body-move-breaks-swap! state (tc-move-break-collection-new false))]
+    [result : TcMoveLoopResult
+      (tc-move-check-loop-expr
+        ctx
+        expr-bases
+        env
+        locals
+        loop-carried
+        outer-loop-carried
+        moved
+        body
+        true
+        false)]
+    [_ (tc-body-move-breaks-swap! state outer)]
+    result))
 
 ;; #7976: the defining module owns writes to its globals. A safe
 ;; write-capable place operation (assignment, a field/tuple/element/deref
@@ -73734,7 +74003,7 @@
               cond))]
         [body-loop-carried : TcMovedSet
           (tc-moved-union locals (tc-moved-clone loop-carried))]
-        (match (tc-move-check-loop-expr
+        (match (tc-move-check-loop-body
           ctx
           expr-bases
           env
@@ -73742,9 +74011,7 @@
           body-loop-carried
           loop-carried
           (tc-moved-clone movedc)
-          (tc-global-shared-view body)
-          true
-          false)
+          (tc-global-shared-view body))
           [(Ok _ _ body-breaks? body-break-box)
             (if body-breaks?
               (tc-move-join-loop-exit
@@ -73978,7 +74245,7 @@
                   end))]
             [body-loop-carried : TcMovedSet
               (tc-moved-union locals (tc-moved-clone loop-carried))]
-            (match (tc-move-check-loop-expr
+            (match (tc-move-check-loop-body
               ctx
               expr-bases
               (tc-bind-id env index (tc-resolve-type ctx index-ty))
@@ -73988,9 +74255,7 @@
               (tc-moved-remove-root-state body-loop-carried index)
               (tc-moved-remove-root-state loop-carried index)
               (tc-moved-clone moved2)
-              body
-              true
-              false)
+              body)
               [(Ok _ _ breaks? break-moved-box)
                 (if breaks?
                   (tc-move-join-loop-exit
@@ -74040,7 +74305,7 @@
                   (tc-moved-union locals (tc-moved-clone loop-carried))
                   outer)
                 inner)]
-            (match (tc-move-check-loop-expr
+            (match (tc-move-check-loop-body
               ctx
               expr-bases
               (tc-bind-id
@@ -74057,9 +74322,7 @@
                 (tc-moved-remove-root-state loop-carried outer)
                 inner)
               (tc-moved-clone moved2)
-              (ast.ast-expr-segment-bases-get expr-bases body-box)
-              true
-              false)
+              (ast.ast-expr-segment-bases-get expr-bases body-box))
               [(Ok _ _ breaks? break-moved-box)
                 (if breaks?
                   (tc-move-join-loop-exit
@@ -74505,17 +74768,28 @@
             (tc-move-discharge-direct ctx expr-bases locals moved2 inner-box)
             (tc-global-shared-view expr)
             "before this return")))]
+    ;; Its moved set is the break state of the loop it leaves; the loop walker
+    ;; collects it when the `break` sits inside a form it has no arm for.
     [(Break)
       (tc-body-early-exit-note! (tc-context-body-state ctx))
-      (tc-move-check-obligations-exit
-        expr-bases
-        (tc-global-shared-view locals)
-        (tc-move-loop-depth locals)
-        moved
-        (tc-global-shared-view expr)
-        "before this break leaves its loop")]
+      (let
+        [moved1
+          (try
+            (tc-move-check-obligations-exit
+              expr-bases
+              (tc-global-shared-view locals)
+              (tc-move-loop-depth locals)
+              moved
+              (tc-global-shared-view expr)
+              "before this break leaves its loop"))]
+        (tc-body-move-loop-exit-note!
+          (tc-context-body-state ctx)
+          (& moved1)
+          true)
+        (Ok moved1))]
     [(Continue)
       (tc-body-early-exit-note! (tc-context-body-state ctx))
+      (tc-body-move-loop-exit-note! (tc-context-body-state ctx) (& moved) false)
       (tc-move-check-obligations-exit
         expr-bases
         (tc-global-shared-view locals)
@@ -74741,7 +75015,7 @@
       (let
         [body-loop-carried : TcMovedSet
           (tc-moved-union locals (tc-moved-clone loop-carried))]
-        (match (tc-move-check-loop-expr
+        (match (tc-move-check-loop-body
           ctx
           expr-bases
           (tc-bind-id env lane (I64))
@@ -74749,9 +75023,7 @@
           (tc-moved-remove-root-state body-loop-carried lane)
           (tc-moved-remove-root-state loop-carried lane)
           (tc-moved-clone moved)
-          (ast.ast-expr-segment-bases-get expr-bases body-box)
-          true
-          false)
+          (ast.ast-expr-segment-bases-get expr-bases body-box))
           [(Ok _ _ breaks? break-moved-box)
             (if breaks?
               (tc-move-join-loop-exit
@@ -74864,6 +75136,54 @@
       operand
       operand-ty)))
 
+;; The move walk of a function body or global initializer. When it reached a
+;; `break` or `continue` nested in an operand, it runs again with operand-aware
+;; loop flow summaries (#8575); an error from the first walk stands, since
+;; those summaries only add edges.
+(define (tc-move-check-body-walk
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [params : (& params ast.AstParamList)]
+  [expr-id : i64]) : TcMoveResult
+  (let
+    [state : TcBodyState (tc-context-body-state ctx)]
+    [outer-control : bool (tc-body-move-operand-control? state)]
+    [_ (tc-body-move-operand-control-set! state false)]
+    [first : TcMoveResult
+      (tc-move-check-expr-id
+        ctx
+        expr-bases
+        env
+        (tc-global-shared-view locals)
+        (tc-moved-empty)
+        (tc-param-storage-seed-params ctx params (tc-moved-empty))
+        expr-id)]
+    [retry? : bool
+      (and
+        (tc-body-move-operand-control? state)
+        (not (tc-body-move-operand-edges? state))
+        (match (tc-global-shared-view first)
+          [(Ok _) true]
+          [(Err _) false]))]
+    (tc-body-move-operand-control-set! state outer-control)
+    (if retry?
+      (let
+        [_ (tc-body-move-operand-edges-set! state true)]
+        [result : TcMoveResult
+          (tc-move-check-expr-id
+            ctx
+            expr-bases
+            env
+            locals
+            (tc-moved-empty)
+            (tc-param-storage-seed-params ctx params (tc-moved-empty))
+            expr-id)]
+        (tc-body-move-operand-edges-set! state false)
+        result)
+      first)))
+
 (define (tc-move-check-body-id
   [ctx : TcContext]
   [expr-bases : i64]
@@ -74876,13 +75196,12 @@
     [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-id)]
     [moved
       (try
-        (tc-move-check-expr-id
+        (tc-move-check-body-walk
           ctx
           expr-bases
           env
           (tc-global-shared-view locals)
-          (tc-moved-empty)
-          (tc-param-storage-seed-params ctx params (tc-moved-empty))
+          params
           body-id))]
     [_
       (try
@@ -74914,17 +75233,17 @@
   [target-ty : ast.AstType]) : ResultTcUnit
   (let
     [empty : TcMovedSet (tc-moved-empty)]
+    [no-params : ast.AstParamList (ast.ast-param-list-new)]
     [expr-bases : i64 (tc-context-expr-bases ctx)]
     [expr : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases expr-id)]
     [moved
       (try
-        (tc-move-check-expr-id
+        (tc-move-check-body-walk
           ctx
           expr-bases
           env
           (tc-global-shared-view empty)
-          (tc-global-shared-view empty)
-          (tc-global-shared-view empty)
+          (& no-params)
           expr-id))]
     [_
       (try

@@ -913,12 +913,15 @@
         unit))))
 
 ;: Emit the optional fatal backtrace, then terminate with `code`.
+;; The body is two forms with no `begin` on purpose: the fatal-backtrace-debug
+;; case in tests/codegen/integration-fixtures.cases requires this frame to be
+;; filtered as `stdlib/runtime.tl`, which pins that a multi-form body still gets
+;; its source location in the backtrace map (#8651).
 (cfg
   compiler-backtrace
   (define (abort-exit [code : i64]) : never
-    (begin
-      (abort-write-backtrace)
-      (os-exit code))))
+    (abort-write-backtrace)
+    (os-exit code)))
 
 ;: Allocation-free Windows VirtualAlloc failure reporter. KIND is 0 for an
 ;: ordinary arena and 1 for an atomic arena. OPERATION is 0 for reserve, 1 for

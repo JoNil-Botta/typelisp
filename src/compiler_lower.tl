@@ -15630,12 +15630,11 @@
 (define (lower-state-deferred-copy-mark [state : LowerState] [var-id : i64]) : LowerState
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
-    (begin
-      (lower_i64_i64_map.insert-ref!
-        (&mut (__tl-project-field (__tl-box-place data) deferred-copies))
-        var-id
-        1)
-      state)))
+    (lower_i64_i64_map.insert-ref!
+      (&mut (__tl-project-field (__tl-box-place data) deferred-copies))
+      var-id
+      1)
+    state))
 
 (define (lower-state-deferred-arm-body [state : LowerState]) : i64
   (let
@@ -20673,19 +20672,17 @@
         [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
         [index : i64 0]
         [found : bool false]
-        (begin
-          (while (and (not found) (< index children.len))
-            (begin
-              (when
-                (lower-deferred-copy-mentions?
-                  ctx
-                  (lower-context-expr-get
-                    ctx
-                    (ast.ast-expr-list-get (& children) index -1))
-                  name)
-                (set! found true))
-              (set! index (+ index 1))))
-          found))]))
+        (while (and (not found) (< index children.len))
+          (when
+            (lower-deferred-copy-mentions?
+              ctx
+              (lower-context-expr-get
+                ctx
+                (ast.ast-expr-list-get (& children) index -1))
+              name)
+            (set! found true))
+          (set! index (+ index 1)))
+        found)]))
 
 ;; A tuple or fixed-array payload for its element patterns: the loaded value
 ;; when owned, the payload's address when borrowed.
@@ -21724,31 +21721,29 @@
       ;; apply here.
       (let
         [outer-arm-body : i64 (lower-state-deferred-arm-body state)]
-        (begin
-          (lower-state-set-deferred-arm-body! state body-id)
-          (let
-            [bound : ResultLowerEnv
-              (lower-bind-variant-payloads
-                ctx
-                state
-                env
-                type-env
-                (Borrowed lifetime)
-                base
-                patterns
-                types
-                mode
-                enum-id
-                enum-name
-                variant-name
-                variant-name-id
-                index
-                cursor
-                fail-label
-                false)]
-            (begin
-              (lower-state-set-deferred-arm-body! state outer-arm-body)
-              bound))))]))
+        (lower-state-set-deferred-arm-body! state body-id)
+        (let
+          [bound : ResultLowerEnv
+            (lower-bind-variant-payloads
+              ctx
+              state
+              env
+              type-env
+              (Borrowed lifetime)
+              base
+              patterns
+              types
+              mode
+              enum-id
+              enum-name
+              variant-name
+              variant-name-id
+              index
+              cursor
+              fail-label
+              false)]
+          (lower-state-set-deferred-arm-body! state outer-arm-body)
+          bound))]))
 
 ;; A payload subpattern is refutable when it can fail to match at run time.
 ;; Literals, nested enum variants and slice patterns with a length test are
@@ -23372,6 +23367,7 @@
       [function-spans : ir.CompilerSourceSpans
         (lower-record-function-span
           (compiler-lower-state-from-name-cache names)
+          (& (tc_core.tc-context-pools ctx))
           spans
           (ir.compiler-ir-symbol-typed-id logical-name)
           (lower-global-shared-view body))]
@@ -25882,16 +25878,14 @@
     [expr-bases : i64 (tc_core.tc-context-expr-bases ctx)]
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index args.len))
-        (begin
-          (if (tc_core.tc-call-temporary-borrow-arg-id?
-            expr-bases
-            (ast.ast-expr-list-get args index 0))
-            (set! found true)
-            unit)
-          (set! index (+ index 1))))
-      found)))
+    (while (and (not found) (< index args.len))
+      (if (tc_core.tc-call-temporary-borrow-arg-id?
+        expr-bases
+        (ast.ast-expr-list-get args index 0))
+        (set! found true)
+        unit)
+      (set! index (+ index 1)))
+    found))
 
 ;; The symbol of a cleanup-owning type's declared cleanup function.
 (define (lower-cleanup-symbol-for-type
@@ -59248,6 +59242,7 @@
     [function-spans : ir.CompilerSourceSpans
       (lower-record-function-span
         (compiler-lower-state-from-name-cache names)
+        (& (tc_core.tc-context-pools ctx))
         spans
         (ir.compiler-ir-symbol-typed-id hidden-name)
         (lower-global-shared-view body))]
@@ -59407,6 +59402,7 @@
     [function-spans : ir.CompilerSourceSpans
       (lower-record-function-span
         (compiler-lower-state-from-name-cache names)
+        (& (tc_core.tc-context-pools ctx))
         spans
         (ir.compiler-ir-symbol-typed-id hidden-name)
         (lower-global-shared-view body))]
@@ -66877,6 +66873,7 @@
       [function-spans : ir.CompilerSourceSpans
         (lower-record-function-span
           (compiler-lower-state-from-name-cache names)
+          (& (tc_core.tc-context-pools ctx))
           spans
           (ir.compiler-ir-symbol-typed-id logical-name)
           (lower-global-shared-view body))]
@@ -67199,17 +67196,37 @@
           [(Err _) (tc_core.tc-top-decl-type-with-env ctx env actual)])]
       [_ (tc_core.tc-top-decl-type-with-env ctx env actual)])))
 
+;; The span a function's provenance row records: the body's own span. A body
+;; of several forms reaches lowering as the parser's implicit `Begin`
+;; (`parse-ast-body-tail`), which has no `Spanned` wrapper, so it takes its
+;; first form's span -- where an explicit `(begin ...)` around the same forms
+;; would have started. Without it such a function had no location in a
+;; `--backtrace` map, and a `stdlib/runtime.tl` frame escaped the renderer's
+;; runtime-path filter (#8651).
+(define (lower-function-body-span
+  [pools : (& pools ast.AstNodePoolContext)]
+  [body : ast.AstExpr]) : ir.CompilerMaybeSourceSpan
+  (match body
+    [(Spanned _ span) (Some span)]
+    [(Begin exprs)
+      (if (> exprs.len 0)
+        (lower-ast-expr-direct-span
+          (ast.ast-node-pool-context-expr-get
+            pools
+            (ast.ast-expr-list-get (& exprs) 0 0)))
+        (No))]
+    [_ (No)]))
+
 ;; Record `name -> body span` into the provenance table. A function whose
-;;
 ;; body carries no source span leaves the table unchanged, so the backend simply
-;;
 ;; falls back to its default location for that function.
 (define (lower-record-function-span
   [lower-state : CompilerLowerState]
+  [pools : (& pools ast.AstNodePoolContext)]
   [spans : ir.CompilerSourceSpans]
   [name : ir.CompilerIrSymbolId]
   [body : ast.AstExpr]) : ir.CompilerSourceSpans
-  (match (lower-ast-expr-direct-span body)
+  (match (lower-function-body-span pools body)
     [(Some span)
       (if (ir.compiler-debug-info-enabled?)
         (ir.compiler-source-spans-insert-located

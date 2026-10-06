@@ -38,9 +38,9 @@
           field-name-id))]))
 
 (define (build-compiler-symbols-from-source [src : String]) : csym.ResultCompilerSymbols
-  (match (parser.parse-ast-source src)
-    [(Ok program) (csym.build-compiler-symbols program)]
-    [(Err message) (Err message)]))
+  (let
+    [program (try (parser.parse-ast-source src))]
+    (csym.build-compiler-symbols program)))
 
 ;; Registry handles encode the flattened declaration owner index. A generated
 ;; declaration splice before an existing owner therefore needs to move the
@@ -124,9 +124,9 @@
       module-id)))
 
 (define (build-compiler-registries-from-source [src : String]) : csym.ResultCompilerRegistries
-  (match (parser.parse-ast-source src)
-    [(Ok program) (csym.build-compiler-registries program)]
-    [(Err message) (Err message)]))
+  (let
+    [program (try (parser.parse-ast-source src))]
+    (csym.build-compiler-registries program)))
 
 (define (compiler-symbols-owner-module-id-at-index
   [symbols : (& symbols csym.CompilerSymbols)]

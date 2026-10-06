@@ -266,9 +266,9 @@
                       "completion marker mismatch"))]))])])))
 
 (define (package-cache-then-mkdir [result : io.ResultIoUnit] [path : String]) : io.ResultIoUnit
-  (match result
-    [(ErrIoUnit error) (ErrIoUnit error)]
-    [(OkIoUnit) (fs.try-mkdir-if-missing (& path))]))
+  (let
+    [_ (try result)]
+    (fs.try-mkdir-if-missing (& path))))
 
 (define (package-cache-prepare-entry-parents
   [root : (& root str)]
@@ -313,9 +313,9 @@
     [marker-path : String (package-cache-complete-marker-path entry-path)]
     [metadata : String (package-cache-metadata-content key)]
     [marker : String (package-cache-complete-marker-content)]
-    (match (io.try-write-file
-      (& metadata-path)
-      (byte_buf.str-as-bytes (& metadata)))
-      [(ErrIoUnit error) (ErrIoUnit error)]
-      [(OkIoUnit)
-        (io.try-write-file (& marker-path) (byte_buf.str-as-bytes (& marker)))])))
+    [_
+      (try
+        (io.try-write-file
+          (& metadata-path)
+          (byte_buf.str-as-bytes (& metadata))))]
+    (io.try-write-file (& marker-path) (byte_buf.str-as-bytes (& marker)))))

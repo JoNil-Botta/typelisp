@@ -5258,39 +5258,41 @@
         (string.copy name))
         [(Err d) (Err d)]
         [(Ok ty type-fuel)
-          (match (ctfe-eval-i64-arg
-            (ctfe-expr-arg args 1 env)
-            expr
-            env
-            type-fuel
-            (string.copy name))
-            [(Err d) (Err d)]
-            [(Ok first)
-              (if payload?
-                (match (ctfe-eval-i64-arg
-                  (ctfe-expr-arg args 2 env)
+          (let
+            [first
+              (try
+                (ctfe-eval-i64-arg
+                  (ctfe-expr-arg args 1 env)
                   expr
                   env
-                  first.fuel
-                  (string.copy name))
-                  [(Err d) (Err d)]
-                  [(Ok second)
-                    (ctfe-eval-type-reflection-at
-                      name
-                      ty
-                      first.value
-                      second.value
+                  type-fuel
+                  (string.copy name)))]
+            (if payload?
+              (let
+                [second
+                  (try
+                    (ctfe-eval-i64-arg
+                      (ctfe-expr-arg args 2 env)
                       expr
                       env
-                      second.fuel)])
+                      first.fuel
+                      (string.copy name)))]
                 (ctfe-eval-type-reflection-at
                   name
                   ty
                   first.value
-                  0
+                  second.value
                   expr
                   env
-                  first.fuel))])])
+                  second.fuel))
+              (ctfe-eval-type-reflection-at
+                name
+                ty
+                first.value
+                0
+                expr
+                env
+                first.fuel)))])
       (Err
         (box
           (ctfe-diagnostic-at-expr
@@ -5373,31 +5375,30 @@
       (match (ctfe-eval-string-arg text-arg expr env fuel "string-slice")
         [(Err d) (Err d)]
         [(Ok text _ text-fuel)
-          (match (ctfe-eval-i64-arg start-arg expr env text-fuel "string-slice")
-            [(Err d) (Err d)]
-            [(Ok start-value)
-              (match (ctfe-eval-i64-arg
-                len-arg
-                expr
-                env
-                start-value.fuel
-                "string-slice")
-                [(Err d) (Err d)]
-                [(Ok len-value)
-                  (let
-                    [start : i64 start-value.value]
-                    [len : i64 len-value.value]
-                    [text-len : i64 (string.string-length text)]
-                    (if (or (< start 0) (< len 0) (> (+ start len) text-len))
-                      (Err
-                        (box
-                          (ctfe-diagnostic-at-expr
-                            expr
-                            "string-slice range out of bounds")))
-                      (Ok
-                        (ctfe-generated-string-value
-                          (string.substring text start len))
-                        len-value.fuel)))])])]))
+          (let
+            [start-value
+              (try
+                (ctfe-eval-i64-arg start-arg expr env text-fuel "string-slice"))]
+            [len-value
+              (try
+                (ctfe-eval-i64-arg
+                  len-arg
+                  expr
+                  env
+                  start-value.fuel
+                  "string-slice"))]
+            [start : i64 start-value.value]
+            [len : i64 len-value.value]
+            [text-len : i64 (string.string-length text)]
+            (if (or (< start 0) (< len 0) (> (+ start len) text-len))
+              (Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "string-slice range out of bounds")))
+              (Ok
+                (ctfe-generated-string-value (string.substring text start len))
+                len-value.fuel)))]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
@@ -5444,18 +5445,16 @@
   [env : CtfeEnv]
   [fuel : i64]
   [name : String]) : ResultCtfe
-  (match (ctfe-eval-i64-arg index-expr origin env fuel name)
-    [(Err d) (Err d)]
-    [(Ok index-arg-value)
-      (if (or
-        (< index-arg-value.value 0)
-        (>= index-arg-value.value (string.string-length text)))
-        (Err
-          (box
-            (ctfe-diagnostic-at-expr origin "string-ref index out of bounds")))
-        (Ok
-          (Char (string.string-ref text index-arg-value.value))
-          index-arg-value.fuel))]))
+  (let
+    [index-arg-value (try (ctfe-eval-i64-arg index-expr origin env fuel name))]
+    (if (or
+      (< index-arg-value.value 0)
+      (>= index-arg-value.value (string.string-length text)))
+      (Err
+        (box (ctfe-diagnostic-at-expr origin "string-ref index out of bounds")))
+      (Ok
+        (Char (string.string-ref text index-arg-value.value))
+        index-arg-value.fuel))))
 
 (define (ctfe-eval-string-to-int-call
   [name : String]
@@ -5479,12 +5478,11 @@
   (if (= (ctfe-expr-arg-count args) 1)
     (let
       [arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
-      (match (ctfe-eval-i64-arg arg expr env fuel "string.int->string")
-        [(Err d) (Err d)]
-        [(Ok arg-value)
-          (Ok
-            (ctfe-generated-string-value (string.int->string arg-value.value))
-            arg-value.fuel)]))
+      [arg-value
+        (try (ctfe-eval-i64-arg arg expr env fuel "string.int->string"))]
+      (Ok
+        (ctfe-generated-string-value (string.int->string arg-value.value))
+        arg-value.fuel))
     (Err
       (box (ctfe-diagnostic-at-expr expr "string.int->string expects one i64")))))
 
@@ -8301,35 +8299,35 @@
         fuel
         "pattern-list-bindings")
         [(Ok prefix _ prefix-fuel)
-          (match (ctfe-eval-i64-arg
-            count-arg
-            expr
-            env
-            prefix-fuel
-            "pattern-list-bindings")
-            [(Ok count-value)
-              (let
-                [count : i64 count-value.value]
-                [count-fuel : i64 count-value.fuel]
-                (cond
-                  [(< count 0)
-                    (Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "pattern-list-bindings count must be non-negative")))]
-                  [(> count count-fuel)
-                    (Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "compile-time evaluation limit exceeded")))]
-                  [else
-                    (Ok
-                      (PatternList
-                        (ctfe-pattern-list-bindings-build env prefix count))
-                      (- count-fuel count))]))]
-            [(Err diag) (Err diag)])]
+          (let
+            [count-value
+              (try
+                (ctfe-eval-i64-arg
+                  count-arg
+                  expr
+                  env
+                  prefix-fuel
+                  "pattern-list-bindings"))]
+            [count : i64 count-value.value]
+            [count-fuel : i64 count-value.fuel]
+            (cond
+              [(< count 0)
+                (Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      expr
+                      "pattern-list-bindings count must be non-negative")))]
+              [(> count count-fuel)
+                (Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      expr
+                      "compile-time evaluation limit exceeded")))]
+              [else
+                (Ok
+                  (PatternList
+                    (ctfe-pattern-list-bindings-build env prefix count))
+                  (- count-fuel count))]))]
         [(Err diag) (Err diag)]))
     (Err
       (box
@@ -11159,13 +11157,15 @@
         (ctfe-ast-get env (ast.ast-expr-list-get exprs index 0))]
       (match (ctfe-lifetime-syntax-name (ctfe-expr-unspan env head-expr))
         [(Some name)
-          (match (ctfe-expr-list-to-lifetime-list-at
-            exprs
-            (+ index 1)
-            env
-            origin)
-            [(Ok tail) (Ok (ast.ast-lifetime-cons name tail))]
-            [(Err diag) (Err diag)])]
+          (let
+            [tail
+              (try
+                (ctfe-expr-list-to-lifetime-list-at
+                  exprs
+                  (+ index 1)
+                  env
+                  origin))]
+            (Ok (ast.ast-lifetime-cons name tail)))]
         [(None)
           (Err
             (box
@@ -11187,18 +11187,18 @@
         (ast.ast-expr-list-tail-from-ref (& args) 1)]
       (match (ctfe-expr-unspan env name-expr)
         [(Var name-id)
-          (match (ctfe-expr-list-to-lifetime-list lifetime-exprs env origin)
-            [(Ok lifetimes)
-              (Ok
-                (if is-struct
-                  (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                    (Struct name-id)
-                    (ast.ast-ty-struct-args name-id lifetimes))
-                  (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                    (Enum name-id)
-                    (ast.ast-ty-enum-args name-id lifetimes)))
-                fuel)]
-            [(Err diag) (Err diag)])]
+          (let
+            [lifetimes
+              (try (ctfe-expr-list-to-lifetime-list lifetime-exprs env origin))]
+            (Ok
+              (if is-struct
+                (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                  (Struct name-id)
+                  (ast.ast-ty-struct-args name-id lifetimes))
+                (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                  (Enum name-id)
+                  (ast.ast-ty-enum-args name-id lifetimes)))
+              fuel))]
         [_ (ctfe-type-expr-error origin)]))
     (ctfe-type-expr-error origin)))
 
@@ -11583,9 +11583,9 @@
   (let
     [out : ast.AstParamList
       (ast.ast-param-list-with-capacity (ast.ast-param-list-len (& params)))]
-    (match (ctfe-quote-param-list-into (& params) 0 env origin fuel (&mut out))
-      [(Ok out-fuel) (Ok out out-fuel)]
-      [(Err diag) (Err diag)])))
+    [out-fuel
+      (try (ctfe-quote-param-list-into (& params) 0 env origin fuel (&mut out)))]
+    (Ok out out-fuel)))
 
 (define (ctfe-quote-param-list-into
   [params : (& params ast.AstParamList)]
@@ -11671,15 +11671,16 @@
     [out : ast.AstLetBindingList
       (ast.ast-let-binding-list-with-capacity
         (ast.ast-let-binding-list-len (& bindings)))]
-    (match (ctfe-quote-let-binding-list-into
-      (& bindings)
-      0
-      env
-      fuel
-      quasiquote
-      (&mut out))
-      [(Ok out-fuel) (Ok out out-fuel)]
-      [(Err diag) (Err diag)])))
+    [out-fuel
+      (try
+        (ctfe-quote-let-binding-list-into
+          (& bindings)
+          0
+          env
+          fuel
+          quasiquote
+          (&mut out)))]
+    (Ok out out-fuel)))
 
 (define (ctfe-quote-let-binding-list-into
   [bindings : (& bindings ast.AstLetBindingList)]
@@ -11726,15 +11727,16 @@
     [out : ast.AstResourceBindingList
       (ast.ast-resource-binding-list-with-capacity
         (ast.ast-resource-binding-list-len (& bindings)))]
-    (match (ctfe-quote-resource-binding-list-into
-      (& bindings)
-      0
-      env
-      fuel
-      quasiquote
-      (&mut out))
-      [(Ok out-fuel) (Ok out out-fuel)]
-      [(Err diag) (Err diag)])))
+    [out-fuel
+      (try
+        (ctfe-quote-resource-binding-list-into
+          (& bindings)
+          0
+          env
+          fuel
+          quasiquote
+          (&mut out)))]
+    (Ok out out-fuel)))
 
 (define (ctfe-quote-resource-binding-list-into
   [bindings : (& bindings ast.AstResourceBindingList)]
@@ -11781,9 +11783,9 @@
   [quasiquote : bool]) : ResultCtfeQuoteArms
   (let
     [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity arms.len)]
-    (match (ctfe-quote-arm-list-into (& arms) 0 env fuel quasiquote (&mut out))
-      [(Ok out-fuel) (Ok out out-fuel)]
-      [(Err diag) (Err diag)])))
+    [out-fuel
+      (try (ctfe-quote-arm-list-into (& arms) 0 env fuel quasiquote (&mut out)))]
+    (Ok out out-fuel)))
 
 (define (ctfe-quote-arm-list-into
   [arms : (& arms ast.AstMatchArmList)]

@@ -8615,17 +8615,17 @@
             [(Nil _)
               (match (parse-ast-foreach-dim dispatch pools binding)
                 [(Ok name index-ty start end)
-                  (match (parse-ast-foreach-body dispatch pools body-tail)
-                    [(Ok body)
-                      (Ok
-                        (ast.ast-expr-foreach-id-with-pools
-                          pools
-                          name
-                          index-ty
-                          start
-                          end
-                          body))]
-                    [(Err message) (Err message)])]
+                  (let
+                    [body
+                      (try (parse-ast-foreach-body dispatch pools body-tail))]
+                    (Ok
+                      (ast.ast-expr-foreach-id-with-pools
+                        pools
+                        name
+                        index-ty
+                        start
+                        end
+                        body)))]
                 [(Err message) (Err message)])]
             [(Cons inner-binding rank-end _)
               (match (reader.spanned-sexpr-view rank-end)
@@ -8640,24 +8640,25 @@
                           (if (= outer inner)
                             (Err
                               "parse: foreach domain bindings must use distinct names")
-                            (match (parse-ast-foreach-body
-                              dispatch
-                              pools
-                              body-tail)
-                              [(Ok body)
-                                (Ok
-                                  (ast.ast-expr-foreach2-id-with-pools
+                            (let
+                              [body
+                                (try
+                                  (parse-ast-foreach-body
+                                    dispatch
                                     pools
-                                    outer
-                                    outer-ty
-                                    outer-start
-                                    outer-end
-                                    inner
-                                    inner-ty
-                                    inner-start
-                                    inner-end
-                                    body))]
-                              [(Err message) (Err message)]))]
+                                    body-tail))]
+                              (Ok
+                                (ast.ast-expr-foreach2-id-with-pools
+                                  pools
+                                  outer
+                                  outer-ty
+                                  outer-start
+                                  outer-end
+                                  inner
+                                  inner-ty
+                                  inner-start
+                                  inner-end
+                                  body))))]
                         [(Err message) (Err message)])]
                     [(Err message) (Err message)])]
                 [_

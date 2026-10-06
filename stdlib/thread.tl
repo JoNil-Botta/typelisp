@@ -658,9 +658,10 @@
       (unsafe
         (read-i32 addr))
       expected)
-      (unsafe
-        (linux-futex-wait addr (cast expected : i64)))
-      unit)))
+      (begin
+        (unsafe
+          (linux-futex-wait addr (cast expected : i64)))
+        unit))))
 
 ;: Linux implementation of `spawn`.
 (unsafe
@@ -1021,9 +1022,10 @@
           (unsafe
             (read-i32 clear-addr))
           (cast 0 : i32)))
-        (unsafe
-          (linux-futex-wait clear-addr (cast 1 : i64)))
-        unit)
+        (begin
+          (unsafe
+            (linux-futex-wait clear-addr (cast 1 : i64)))
+          unit))
       (ThreadJoinOk
         (unsafe
           (read-i64 thread.result-addr))))))

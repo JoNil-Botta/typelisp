@@ -35208,6 +35208,18 @@
     [(Nil) true]
     [_ false]))
 
+;; Whether a call argument is a String temporary (a literal or a call) for a
+;; `(& str)` formal: it cannot be borrowed as a place, so it skips the place
+;; borrow and the diagnostic that borrow would build.
+(define (tc-call-string-temporary-arg?
+  [ctx : TcContext]
+  [arg : ast.AstExpr]
+  [want : ast.AstType]
+  [got : ast.AstType]) : bool
+  (and
+    (tc-borrow-operand-temporary? (tc-context-expr-bases ctx) arg)
+    (tc-call-string-temporary-ref-compatible? ctx want got)))
+
 (define (tc-call-effective-arg-type
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -35253,19 +35265,29 @@
         [_
           (match (tc-call-arg-expr-type ctx env (tc-global-shared-view arg))
             [(Ok got)
-              (if (tc-call-actual-immutable-reference?
-                ctx
-                (tc-global-shared-view got))
-                (Ok got)
-                (match (tc-call-auto-borrow-type ctx env arg)
-                  [(Ok borrowed) (Ok borrowed)]
-                  [(Err message)
-                    (if (tc-call-string-temporary-ref-compatible?
-                      ctx
-                      (tc-global-shared-view want)
-                      got)
-                      (Ok want)
-                      (Err message))]))]
+              (cond
+                [(tc-call-actual-immutable-reference?
+                    ctx
+                    (tc-global-shared-view got))
+                  (Ok got)]
+                ;; a String temporary (a literal or a call) cannot be borrowed as
+                ;; a place, so skip the place borrow and its diagnostic
+                [(tc-call-string-temporary-arg?
+                    ctx
+                    (tc-global-shared-view arg)
+                    (tc-global-shared-view want)
+                    (tc-global-shared-view got))
+                  (Ok want)]
+                [else
+                  (match (tc-call-auto-borrow-type ctx env arg)
+                    [(Ok borrowed) (Ok borrowed)]
+                    [(Err message)
+                      (if (tc-call-string-temporary-ref-compatible?
+                        ctx
+                        (tc-global-shared-view want)
+                        got)
+                        (Ok want)
+                        (Err message))])])]
             [(Err message) (Err message)])])
       (tc-expr-with-expected-or-actual-call-arg ctx env arg want))))
 
@@ -35328,22 +35350,30 @@
           [_
             (match (tc-call-arg-expr-type ctx env (tc-global-shared-view arg))
               [(Ok got)
-                (if (tc-call-actual-immutable-reference?
-                  ctx
-                  (tc-global-shared-view got))
-                  (Ok arg)
-                  (match (tc-call-auto-borrow-type
-                    ctx
-                    env
-                    (tc-global-shared-view arg))
-                    [(Ok _) (Ok (tc-call-auto-borrow-expr arg))]
-                    [(Err message)
-                      (if (tc-call-string-temporary-ref-compatible?
-                        ctx
-                        want
-                        got)
-                        (Ok arg)
-                        (Err message))]))]
+                (cond
+                  [(tc-call-actual-immutable-reference?
+                      ctx
+                      (tc-global-shared-view got))
+                    (Ok arg)]
+                  [(tc-call-string-temporary-arg?
+                      ctx
+                      (tc-global-shared-view arg)
+                      (tc-global-shared-view want)
+                      (tc-global-shared-view got))
+                    (Ok arg)]
+                  [else
+                    (match (tc-call-auto-borrow-type
+                      ctx
+                      env
+                      (tc-global-shared-view arg))
+                      [(Ok _) (Ok (tc-call-auto-borrow-expr arg))]
+                      [(Err message)
+                        (if (tc-call-string-temporary-ref-compatible?
+                          ctx
+                          want
+                          got)
+                          (Ok arg)
+                          (Err message))])])]
               [(Err message) (Err message)])]))
       (Ok arg))))
 
@@ -52816,6 +52846,12 @@
                   [(ast.AstMaybeType.Some hint-ty)
                     (tc-expr-with-expected-or-actual ctx env operand hint-ty)]
                   [(ast.AstMaybeType.No) (tc-expr ctx env operand)]))]
+            ;; the move and borrow checks read the operand's type back
+            [_recorded : unit
+              (tc-body-type-fact-record!
+                (tc-context-body-state ctx)
+                operand-box
+                (tc-global-shared-view operand-ty))]
             (cond
               [(and
                   (tc-type-contains-reference?

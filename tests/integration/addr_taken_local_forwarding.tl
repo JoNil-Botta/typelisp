@@ -63,10 +63,12 @@
     [value : i64 0]
     [rounds : i64 0]
     (while (and (= value 0) (< rounds 4))
-      (write-seven
-        (unsafe
-          (ptr-addr-of value))
-        depth)
+      (begin
+        (write-seven
+          (unsafe
+            (ptr-addr-of value))
+          depth)
+        unit)
       (set! rounds (+ rounds 1)))
     (+ (* value 5) (+ rounds 6))))
 

@@ -1631,7 +1631,9 @@
       (unsafe
         (atomic-load (ptr-addr-of winsock-test-wave-go)))
       0)
-      (time.sleep-ms 1)
+      (begin
+        (time.sleep-ms 1)
+        unit)
       unit)
     (match (winsock-acquire)
       [(WinsockAcquireErr _) 0]
@@ -1657,7 +1659,9 @@
       (unsafe
         (atomic-load (ptr-addr-of winsock-test-wave-go)))
       0)
-      (time.sleep-ms 1)
+      (begin
+        (time.sleep-ms 1)
+        unit)
       unit)
     (match (unsafe
       (winsock-ensure-table-with 20 -1 false))
@@ -1685,7 +1689,9 @@
             (unsafe
               (atomic-load (ptr-addr-of winsock-test-wave-arrived)))
             total))
-          (time.sleep-ms 1)
+          (begin
+            (time.sleep-ms 1)
+            unit)
           (set! attempts (+ attempts 1)))
         (let
           [all-arrived : bool

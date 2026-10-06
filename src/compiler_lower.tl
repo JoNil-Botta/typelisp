@@ -11861,13 +11861,12 @@
     [(While cond-box body-box)
       (let
         [cond : ast.AstExpr (ast.ast-node-pool-context-expr-get pools cond-box)]
-        [body : ast.AstExpr (ast.ast-node-pool-context-expr-get pools body-box)]
-        (lower-reach-expr
+        (lower-reach-expr-list
           pools
           all-functions
           (lower-global-shared-view names)
           (lower-reach-expr pools all-functions names state cond)
-          body))]
+          body-box))]
     [(ForOwnedState payload)
       (lower-reach-expr
         pools
@@ -29693,7 +29692,7 @@
     [(While cond-box body-box)
       (let
         [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-        [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+        [body : ast.AstExpr (Begin body-box)]
         (lower-while ctx state env type-env cond body))]
     [(ForOwnedState payload)
       (lower-for-owned-state
@@ -43799,7 +43798,7 @@
     [(While cond-box body-box)
       (or
         (lower-spmd-reduce-node-writes-id? ctx name cond-box)
-        (lower-spmd-reduce-node-writes-id? ctx name body-box))]
+        (lower-spmd-reduce-expr-list-writes-id? ctx name body-box))]
     [(Begin exprs) (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
     [(Unsafe exprs) (lower-spmd-reduce-expr-list-writes-id? ctx name exprs)]
     [(Set set-name value-box)
@@ -46414,7 +46413,7 @@
       [(While cond-box body-box)
         (let
           [cond : ast.AstExpr (lower-context-expr-get ctx cond-box)]
-          [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
+          [body : ast.AstExpr (Begin body-box)]
           (lower-masked-vector-lanes-merge
             (lower-masked-vector-expr-lanes-with-locals
               ctx
@@ -46742,7 +46741,7 @@
                   form
                   index
                   lane-locals
-                  (lower-context-expr-get ctx body-box))))]
+                  (Begin body-box))))]
           [_ false])]
       [(Match match-box)
         (match form
@@ -47715,12 +47714,12 @@
           type-env
           index
           (lower-context-expr-get ctx cond-box))
-        (lower-masked-vector-body-has-bool-array-lane?
+        (lower-masked-vector-expr-list-has-bool-array-lane?
           ctx
           env
           type-env
           index
-          (lower-context-expr-get ctx body-box)))]
+          body-box))]
     [(Begin exprs)
       (lower-masked-vector-expr-list-has-bool-array-lane?
         ctx
@@ -48311,12 +48310,12 @@
           type-env
           index
           (lower-context-expr-get ctx cond-box))
-        (lower-masked-vector-array-vars
+        (lower-masked-vector-expr-list-array-vars
           ctx
           env
           type-env
           index
-          (lower-context-expr-get ctx body-box)))]
+          body-box))]
     [(Match match-box)
       (match (__tl-box-place match-box)
         [(Match scrutinee-box arms)
@@ -49060,7 +49059,7 @@
         type-env
         (MaskedControl)
         (lower-context-expr-get ctx condition-box)
-        (lower-context-expr-get ctx body-box))]
+        (Begin body-box))]
     [(Begin exprs)
       (lower-spmd-numeric-failure-in-expr-list
         ctx
@@ -60677,7 +60676,7 @@
             active-mask
             lanes
             (lower-context-expr-get ctx cond-box)
-            (lower-context-expr-get ctx body-box)))]
+            (Begin body-box)))]
       [(Begin exprs)
         (lower-avx512-masked-begin
           ctx

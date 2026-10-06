@@ -699,6 +699,21 @@
     "lint redundant-begin nested fixes"))
 
 (test
+  lint-redundant-begin-reports-unit-while-body
+  (assert
+    (=
+      (lint_core.lint-findings-count
+        (redundant-begin-findings
+          "(define (s) : unit
+  unit)
+
+(define (w [x : i64]) : unit
+  (while (> x 0) (begin (set! x (- x 1)) (s))))
+"))
+      1)
+    "lint redundant-begin reports a while begin whose exposed forms are unit"))
+
+(test
   lint-redundant-begin-keeps-required-begins
   (assert
     (=
@@ -727,6 +742,7 @@
     (let [z : i64 0] (begin z))
     (when (> x 0) (begin (v) (set! x 1)))
     (unless (> x 0) (begin (when true (set! x 2)) (v) (set! x 3)))
+    (while (> x 0) (begin (v) (set! x (- x 1))))
     (set! x (test 1 (begin (v) 2)))
     (let
       [y : i64 0]

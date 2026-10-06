@@ -968,7 +968,9 @@
   (ArrayTake i64 i64 i64)
   (ArrayPush i64 i64)
   (StringRef i64 i64)
-  (While i64 i64)
+  ;; Direct body forms remain distinct from an explicit `Begin`: every form
+  ;; must be unit-valued, whereas `Begin` discards its non-final values.
+  (While i64 AstExprList)
   (Begin AstExprList)
   ;; `(unsafe expr+)`: a `begin`-like block that additionally marks an
   ;; unsafe context (same runtime/type behavior as `begin`; the
@@ -6234,7 +6236,7 @@
   (ast-node-push (Replace place replacement)))
 
 (define (ast-expr-while [cond : i64] [body : i64]) : i64
-  (ast-node-push (While cond body)))
+  (ast-node-push (While cond (ast-expr-cons body (ast-expr-list-new)))))
 
 (define (ast-for-owned-state-payload
   [source-name : i64]
@@ -6564,7 +6566,8 @@
       [(AstExpr.ArrayTake a b d) (ast-fold-3 ,c ,s ,e a b d ,@x)]
       [(AstExpr.ArrayPush a b) (ast-fold-2 ,c ,s ,e a b ,@x)]
       [(AstExpr.StringRef a b) (ast-fold-2 ,c ,s ,e a b ,@x)]
-      [(AstExpr.While a b) (ast-fold-2 ,c ,s ,e a b ,@x)]
+      [(AstExpr.While a items)
+        (ast-expr-list-fold items ,c (ast-fold-1 ,c ,s ,e a ,@x) ,e ,@x)]
       [(AstExpr.Begin items) (ast-expr-list-fold items ,c ,s ,e ,@x)]
       [(AstExpr.Unsafe items) (ast-expr-list-fold items ,c ,s ,e ,@x)]
       [(AstExpr.Set _ a) (ast-fold-1 ,c ,s ,e a ,@x)]
@@ -6926,7 +6929,8 @@
         (AstExpr.ArrayTake (,e ,@x a) (,e ,@x b) (,e ,@x d))]
       [(AstExpr.ArrayPush a b) (AstExpr.ArrayPush (,e ,@x a) (,e ,@x b))]
       [(AstExpr.StringRef a b) (AstExpr.StringRef (,e ,@x a) (,e ,@x b))]
-      [(AstExpr.While a b) (AstExpr.While (,e ,@x a) (,e ,@x b))]
+      [(AstExpr.While a items)
+        (AstExpr.While (,e ,@x a) (ast-expr-list-map items ,e ,@x))]
       [(AstExpr.Begin items) (AstExpr.Begin (ast-expr-list-map items ,e ,@x))]
       [(AstExpr.Unsafe items) (AstExpr.Unsafe (ast-expr-list-map items ,e ,@x))]
       [(AstExpr.Set name a) (AstExpr.Set name (,e ,@x a))]
@@ -7474,9 +7478,10 @@
         (match ,r
           [(AstExpr.StringRef b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
           [_ false])]
-      [(AstExpr.While a0 a1)
+      [(AstExpr.While a0 as)
         (match ,r
-          [(AstExpr.While b0 b1) (and (,e ,@x a0 b0) (,e ,@x a1 b1))]
+          [(AstExpr.While b0 bs)
+            (and (,e ,@x a0 b0) (ast-expr-list-eq? as bs ,e ,@x))]
           [_ false])]
       [(AstExpr.Begin as)
         (match ,r
@@ -8594,7 +8599,9 @@
   [pools : AstNodePoolContext]
   [cond : i64]
   [body : i64]) : i64
-  (ast-node-pool-context-expr-push-borrowed (& pools) (While cond body)))
+  (ast-node-pool-context-expr-push-borrowed
+    (& pools)
+    (While cond (ast-expr-cons body (ast-expr-list-new)))))
 
 (define (ast-expr-for-owned-state-with-pools
   [pools : AstNodePoolContext]

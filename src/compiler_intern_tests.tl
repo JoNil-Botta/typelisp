@@ -396,7 +396,9 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (ci.intern-composite-pair-id (+ 1000000 index) (+ 2000000 index))
+      (begin
+        (ci.intern-composite-pair-id (+ 1000000 index) (+ 2000000 index))
+        unit)
       (if (= (% index 3) 0)
         (begin
           (ci.intern-composite-triple-id
@@ -692,12 +694,14 @@
       ;; Force both retained structural arrays and the open-addressing map
       ;; through their checker-visible target-arena growth extents.
       (while (< structural-grow-index 600)
-        (ci.intern-structural-table-intern
-          (&mut state.structural-table-cell)
-          (ci.intern-structural-kind-pair)
-          (+ 1000000 structural-grow-index)
-          0
-          (+ 2000000 structural-grow-index))
+        (begin
+          (ci.intern-structural-table-intern
+            (&mut state.structural-table-cell)
+            (ci.intern-structural-kind-pair)
+            (+ 1000000 structural-grow-index)
+            0
+            (+ 2000000 structural-grow-index))
+          unit)
         (set! structural-grow-index (+ structural-grow-index 1)))
       (set!
         ok
@@ -850,7 +854,11 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (ci.intern-compat-state-intern state (intern-maps-fill-name prefix index))
+      (begin
+        (ci.intern-compat-state-intern
+          state
+          (intern-maps-fill-name prefix index))
+        unit)
       (when
         (< index generated)
         (begin
@@ -868,7 +876,9 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (ci.intern (intern-maps-fill-name prefix index))
+      (begin
+        (ci.intern (intern-maps-fill-name prefix index))
+        unit)
       (when
         (< index generated)
         (begin
@@ -1296,10 +1306,12 @@
       [index : i64 0]
       (unless (not (= growth-first hash-collision)) (set! ok false))
       (while (< index 300)
-        (ci.intern-compat-state-generated-role-symbol-id
-          (&mut state-a)
-          (ci.intern-generated-symbol-role-global-initializer)
-          (+ 2000 index))
+        (begin
+          (ci.intern-compat-state-generated-role-symbol-id
+            (&mut state-a)
+            (ci.intern-generated-symbol-role-global-initializer)
+            (+ 2000 index))
+          unit)
         (set! index (+ index 1)))
       (unless
         (=

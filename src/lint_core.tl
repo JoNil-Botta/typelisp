@@ -2041,8 +2041,10 @@
 ;; match or cond arm body) can be spliced into that sequence. The rule reads
 ;; the token stream, so it sees exactly the source forms: a body sequence the
 ;; parser builds is never mistaken for a written `begin`. A begin under a quote
-;; or directly behind a reader prefix, one with a bracket form, and one
-;; projected with `.field` stay as written.
+;; or directly behind a reader prefix, one with a bracket form or a `(cfg ...)`
+;; form, and one projected with `.field` stay as written. A cfg form makes the
+;; body depend on the configuration: spliced into a `let`, the body can shrink
+;; to a lone `let` once cfg drops the rest, which `nested-let` rejects.
 ;;
 ;; `when` and `unless` check every body form as `unit`, while `begin` discards
 ;; its non-final values, and this rule has no types. Under them it only reports
@@ -2255,7 +2257,7 @@
     ok))
 
 ;: Whether the begin opened at `open` has at least two forms and no bracket
-;: form among them.
+;: or `(cfg ...)` form among them.
 (define (lint-redundant-begin-spliceable?
   [toks : (& toks (__tl_dyn-array token.SpannedToken))]
   [close-of : (& close-of (__tl_dyn-array i64))]
@@ -2267,7 +2269,9 @@
     [ok : bool true]
     (while (and ok (< at close))
       (when
-        (= (lint-token-tag-at toks at) (token.tag-lbracket))
+        (or
+          (= (lint-token-tag-at toks at) (token.tag-lbracket))
+          (string.eq (lint-token-paren-head toks at) "cfg"))
         (set! ok false))
       (set! count (+ count 1))
       (set! at (lint-token-form-end toks close-of at)))

@@ -107,6 +107,22 @@ storage before cleanup. Such a call cannot become a tail call. A later argument
 that can leave early is rejected when it would bypass an earlier temporary's
 cleanup; cleanup-containing aggregates without their own disposer are rejected.
 
+The call instruction reads its operands only after every argument has been
+lowered, so an argument read from storage would see later arguments' writes.
+That storage is a local's var or a register-resident field var.
+`lower-call-arg-snapshot` copies a scalar, raw-pointer or register-resident
+aggregate argument into a fresh var before the later arguments are lowered,
+when one of them can write that storage. For a read through a name, that is a
+`set!`, `replace!`, field or element store, push, take, mutable borrow or
+`ptr-addr-of` rooted at the name. Other local storage, such as a block result,
+counts any such form. An address-taken local counts any later argument that
+is not a plain read. A global read is not copied yet (#8680). The typed, untyped, call-aware and C ABI
+argument collectors all apply it (#8433). The write scan skips closure bodies.
+Once a call's remaining arguments are found free of writes, the collectors
+pass that on, so the arguments after them are not scanned again. Memory-class
+aggregates pass their storage address and follow the by-value aggregate rules
+instead.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM

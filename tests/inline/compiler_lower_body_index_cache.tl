@@ -9,8 +9,8 @@
     [lower-state : compiler_lower.CompilerLowerState
       (compiler_lower.compiler-lower-state-new)]
     [prev-name-cache : compiler_lower.LowerNameCache
-      (compiler_lower.lower-active-global-name-cache-current lower-state)]
-    (compiler_lower.lower-active-global-name-cache-set!
+      (compiler_lower.compiler-lower-state-active-global-name-cache lower-state)]
+    (compiler_lower.compiler-lower-state-set-active-global-name-cache!
       lower-state
       (compiler_lower.lower-name-cache-from-env lower-state Nil))
     (match (compiler_lower.lower-compiler-source-with-path-mode-and-state
@@ -21,7 +21,7 @@
 (define (main) : i64 (helper))"
       (Scalar))
       [(Ok _ _)
-        (compiler_lower.lower-active-global-name-cache-set!
+        (compiler_lower.compiler-lower-state-set-active-global-name-cache!
           lower-state
           prev-name-cache)
         42]

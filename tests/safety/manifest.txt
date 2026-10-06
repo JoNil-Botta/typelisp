@@ -1278,3 +1278,9 @@ variant_alias_import_bare_reject|check-fail|tests/safety/variant_alias_import_ba
 variant_expected_function_conflict_reject|check-fail|tests/safety/variant_expected_function_conflict_reject.tl|-|typecheck: ambiguous `Fail`: both the variant Outcome.Fail and a module-level declaration of that name are visible; qualify the variant
 variant_expected_struct_conflict_reject|check-fail|tests/safety/variant_expected_struct_conflict_reject.tl|-|typecheck: ambiguous `Pass`: both the variant Outcome.Pass and a module-level declaration of that name are visible; qualify the variant
 variant_payload_binder_reject|check-fail|tests/safety/variant_payload_binder_reject.tl|-|typecheck: pattern binder `Byte` spells a variant of the payload enum Width; write `(Byte)` to match that variant or rename the binder
+
+# Packed compiler state is addressed only through its schema's typed accessors (#7021).
+compiler_state_schema_ok|run-exit|tests/safety/compiler_state_schema_ok.tl|42|-
+compiler_state_schema_field_type_reject|check-fail|tests/safety/compiler_state_schema_field_type_reject.tl|-|let binding `text` type mismatch: expected String, found i64
+compiler_state_schema_init_type_reject|check-fail|tests/safety/compiler_state_schema_init_type_reject.tl|-|array assignment value type mismatch: expected i64, found String
+compiler_state_schema_untyped_field_reject|check-fail|tests/safety/compiler_state_schema_untyped_field_reject.tl|-|compiler-state-directory-schema: every field needs a type

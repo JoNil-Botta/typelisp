@@ -35,8 +35,8 @@
 (import stdlib.text_buf)
 (import stdlib.byte_buf_core)
 (import stdlib.str_cat_runtime as str_cat)
-(import stdlib.comptime)
 (import compiler_owned_view as owned_view)
+(import compiler_state_schema as state_schema)
 (cfg compile-profile (import stdlib.profile))
 (import stdlib.io)
 (import sym_i64_env)
@@ -458,93 +458,6 @@
     (set! (array-ref cache lower-comptime-cache-table-id-index) -1)
     cache))
 
-;; The owner points at a fixed directory of typed cell addresses. Keeping the
-;; directory untyped avoids reflecting one giant aggregate (and recomputing its
-;; layout at every accessor expansion) while every mutable value still has one
-;; stable, owner-private cell.
-(define active-global-name-cache : i64
-  0)
-(define decls-global-type-cache : i64
-  1)
-(define rvo-early-return-functions : i64
-  2)
-(define reach-active-runtime-paths : i64
-  3)
-(define reach-active-body-used-types : i64
-  4)
-(define current-source-path-id : i64
-  5)
-(define current-decl-generated : i64
-  6)
-(define active-symbols : i64
-  7)
-(define active-symbols-ready : i64
-  8)
-(define active-module-name-caches : i64
-  9)
-(define active-module-local-views : i64
-  10)
-(define active-loop-function : i64
-  11)
-(define active-loop-entry-var-limit : i64
-  12)
-(define alias-overlay-ids : i64
-  13)
-(define alias-overlay-valid : i64
-  14)
-(define alias-symbol-memo : i64
-  15)
-(define canonical-path-count : i64
-  16)
-(define canonical-path-recent : i64
-  17)
-(define canonical-path-prior : i64
-  18)
-(define entry-main-module-active : i64
-  19)
-(define entry-main-module : i64
-  20)
-(define entry-main-module-id : i64
-  21)
-(define module-decl-index-ready : i64
-  22)
-(define module-decl-index-decl-count : i64
-  23)
-(define module-decl-index-decl-offset : i64
-  24)
-(define module-decl-index-modules : i64
-  25)
-(define module-decl-index-starts : i64
-  26)
-(define module-decl-index-ends : i64
-  27)
-(define module-decl-index-positions : i64
-  28)
-(define module-decl-index-arena : i64
-  29)
-(define arenas : i64
-  30)
-(define intern-owner : i64
-  31)
-(define comptime-error-cache : i64
-  32)
-(define checked-pools : i64
-  33)
-(define spmd-package-state : i64
-  34)
-(define function-memo-storage : i64
-  35)
-(define structural-session-owner : i64
-  36)
-(define profile-owner : i64
-  37)
-(define advisory-sink-owner : i64
-  (cfg (any compile-profile test) 38 37))
-(define pointer-proof-request : i64
-  (cfg (any compile-profile test) 39 38))
-(define debug-types : i64
-  (cfg (any compile-profile test) 40 39))
-
 ;; Package identity is job-owned. Function-local lowering keeps its four SPMD
 ;; traversal values and two memo generations in a separate one-word capability;
 ;; only the lazily allocated memo backing is retained by the job for reuse.
@@ -643,50 +556,6 @@
 (defstruct CompilerLowerState
   (address i64))
 
-(defmacro (compiler-lower-state-read [state : Expr] [_T : type] [field : Expr]) : Expr
-  `(unsafe
-    (ptr-read
-      (int->ptr
-        (cast
-          (unsafe
-            (ptr-read
-              (ptr-offset
-                (int->ptr
-                  (cast ,(comptime.expr-struct-get state "address") : u64)
-                  : (Ptr i64))
-                ,field)))
-          : u64)
-        : (Ptr ,_T)))))
-
-(defmacro (compiler-lower-state-write!
-  [state : Expr]
-  [_T : type]
-  [field : Expr]
-  [value : Expr]) : Expr
-  `(unsafe
-    (ptr-write!
-      (int->ptr
-        (cast
-          (unsafe
-            (ptr-read
-              (ptr-offset
-                (int->ptr
-                  (cast ,(comptime.expr-struct-get state "address") : u64)
-                  : (Ptr i64))
-                ,field)))
-          : u64)
-        : (MutPtr ,_T))
-      ,value)))
-
-(defmacro (compiler-lower-state-cell [_T : type] [value : Expr]) : Expr
-  `(let
-    [cell : (__tl_dyn-array ,_T) (__tl_make-array ,_T 1)]
-    (set! (array-ref cell 0) ,value)
-    (cast
-      (unsafe
-        (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr ,_T))))
-      : i64)))
-
 (define (compiler-lower-state-from-address [address : i64]) : CompilerLowerState
   (CompilerLowerState address))
 
@@ -694,183 +563,112 @@
   [cache : (& cache LowerNameCache)]) : CompilerLowerState
   (compiler-lower-state-from-address cache.owner-address))
 
+;; A new structural session over the intern state's source names.
+(define (compiler-lower-structural-session-for
+  [intern-state : ci.InternCompatState]) : cis.InternStructuralSessionHandle
+  (cis.intern-structural-session-handle-from-source-names
+    (ci.intern-source-name-session-handle-from-state intern-state)))
+
+;; The constructor inputs the state's initializers read, besides the directory
+;; address.
+(defstruct CompilerLowerStateSeed
+  (intern-state ci.InternCompatState)
+  (profile-state profile_state.CompilerProfileState))
+
+;; The lower state's private fields, in slot order. The profile owner is stored
+;; in every build; only profiling builds read it.
+(state_schema.compiler-state-directory-schema
+  compiler-lower-state
+  CompilerLowerState
+  CompilerLowerStateSeed
+  seed
+  address
+  [active-global-name-cache
+    : LowerNameCache
+    (lower-empty-global-name-cache address)]
+  [decls-global-type-cache : LowerTypeCache (LowerTypeCache.No)]
+  [rvo-early-return-functions
+    : lower_i64_i64_map.Map
+    (lower_i64_i64_map.with-capacity 8)]
+  [reach-active-runtime-paths
+    : lower_i64_i64_map.Map
+    (lower_i64_i64_map.with-capacity 8)]
+  [reach-active-body-used-types
+    : lower_i64_i64_map.Map
+    (lower_i64_i64_map.with-capacity 8)]
+  [current-source-path-id : i64 0]
+  [current-decl-generated : bool false]
+  [active-symbols : csym.CompilerSymbols (csym.compiler-symbols-empty)]
+  [active-symbols-ready : bool false]
+  [active-module-name-caches
+    : LowerModuleNameCacheStore
+    (lower-module-name-cache-store-empty)]
+  [active-module-local-views
+    : LowerModuleLocalViewStore
+    (lower-module-local-view-store-empty)]
+  [active-loop-function : i64 -1]
+  [active-loop-entry-var-limit : i64 -1]
+  [alias-overlay-ids
+    : lower_i64_i64_map.Map
+    (lower_i64_i64_map.with-capacity 16)]
+  [alias-overlay-valid : bool true]
+  [alias-symbol-memo : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+  [canonical-path-count : i64 0]
+  [canonical-path-recent : String ""]
+  [canonical-path-prior : String ""]
+  [entry-main-module-active : bool false]
+  [entry-main-module : String ""]
+  [entry-main-module-id : i64 cbi.compiler-builtin-id-fix-empty]
+  [module-decl-index-ready : bool false]
+  [module-decl-index-decl-count : i64 -1]
+  [module-decl-index-decl-offset : i64 -1]
+  [module-decl-index-modules
+    : lower_i64_i64_map.Map
+    (lower_i64_i64_map.with-capacity 16)]
+  [module-decl-index-starts : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+  [module-decl-index-ends : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+  [module-decl-index-positions : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+  [module-decl-index-arena : i64 0]
+  [arenas
+    : CompilerLowerArenaState
+    (unobserved (compiler-lower-arena-state-new))]
+  [interns : ci.InternCompatState seed.intern-state]
+  [comptime-error-cache
+    : (__tl_dyn-array i64)
+    (observed-by
+      lower-comptime-error-id-cache-fingerprint
+      (lower-comptime-error-id-cache-empty))]
+  [checked-pools
+    : CompilerLowerCheckedPoolsState
+    (observed-by
+      compiler-lower-checked-pools-state-fingerprint
+      (compiler-lower-checked-pools-state-empty))]
+  [spmd-package-state
+    : CompilerLowerSpmdPackageState
+    (compiler-lower-spmd-package-state-empty)]
+  [function-memo-storage
+    : CompilerLowerFunctionMemoStorage
+    (compiler-lower-function-memo-storage-empty)]
+  [structural-session
+    : cis.InternStructuralSessionHandle
+    (observed-by
+      compiler-lower-structural-session-fingerprint
+      (compiler-lower-structural-session-for
+        (lower-global-shared-view seed.intern-state)))]
+  [advisory-sink-owner
+    : cdiag.CompilerAdvisorySink
+    (unobserved (cdiag.compiler-advisory-sink-new))]
+  [pointer-proof-request
+    : pointer_proof.PointerProofRequest
+    (unobserved pointer_proof.PointerProofRequest.Disabled)]
+  [debug-types : LowerDebugTypes (unobserved (lower-debug-types-empty))]
+  [profile : profile_state.CompilerProfileState (unobserved seed.profile-state)])
+
 (define (compiler-lower-state-new-with-intern-state-and-profile-state
   [intern-state : ci.InternCompatState]
-  [_profile-state : profile_state.CompilerProfileState]) : CompilerLowerState
-  (let
-    [cells : (__tl_dyn-array i64)
-      (__tl_make-array i64 (cfg (any compile-profile test) 41 40))]
-    [address : i64
-      (cast
-        (unsafe
-          (ptr->int (ptr-cast (__tl_array-data cells) : (Ptr i64))))
-        : i64)]
-    [state : CompilerLowerState (CompilerLowerState address)]
-    (begin
-      (set!
-        (array-ref cells active-global-name-cache)
-        (compiler-lower-state-cell
-          LowerNameCache
-          (lower-empty-global-name-cache address)))
-      (set!
-        (array-ref cells decls-global-type-cache)
-        (compiler-lower-state-cell LowerTypeCache (LowerTypeCache.No)))
-      (set!
-        (array-ref cells rvo-early-return-functions)
-        (compiler-lower-state-cell
-          lower_i64_i64_map.Map
-          (lower_i64_i64_map.with-capacity 8)))
-      (set!
-        (array-ref cells reach-active-runtime-paths)
-        (compiler-lower-state-cell
-          lower_i64_i64_map.Map
-          (lower_i64_i64_map.with-capacity 8)))
-      (set!
-        (array-ref cells reach-active-body-used-types)
-        (compiler-lower-state-cell
-          lower_i64_i64_map.Map
-          (lower_i64_i64_map.with-capacity 8)))
-      (set!
-        (array-ref cells current-source-path-id)
-        (compiler-lower-state-cell i64 0))
-      (set!
-        (array-ref cells current-decl-generated)
-        (compiler-lower-state-cell bool false))
-      (set!
-        (array-ref cells active-symbols)
-        (compiler-lower-state-cell
-          csym.CompilerSymbols
-          (csym.compiler-symbols-empty)))
-      (set!
-        (array-ref cells active-symbols-ready)
-        (compiler-lower-state-cell bool false))
-      (set!
-        (array-ref cells active-module-name-caches)
-        (compiler-lower-state-cell
-          LowerModuleNameCacheStore
-          (lower-module-name-cache-store-empty)))
-      (set!
-        (array-ref cells active-module-local-views)
-        (compiler-lower-state-cell
-          LowerModuleLocalViewStore
-          (lower-module-local-view-store-empty)))
-      (set!
-        (array-ref cells active-loop-function)
-        (compiler-lower-state-cell i64 -1))
-      (set!
-        (array-ref cells active-loop-entry-var-limit)
-        (compiler-lower-state-cell i64 -1))
-      (set!
-        (array-ref cells alias-overlay-ids)
-        (compiler-lower-state-cell
-          lower_i64_i64_map.Map
-          (lower_i64_i64_map.with-capacity 16)))
-      (set!
-        (array-ref cells alias-overlay-valid)
-        (compiler-lower-state-cell bool true))
-      (set!
-        (array-ref cells alias-symbol-memo)
-        (compiler-lower-state-cell (__tl_dyn-array i64) (__tl_make-array i64 0)))
-      (set!
-        (array-ref cells canonical-path-count)
-        (compiler-lower-state-cell i64 0))
-      (set!
-        (array-ref cells canonical-path-recent)
-        (compiler-lower-state-cell String ""))
-      (set!
-        (array-ref cells canonical-path-prior)
-        (compiler-lower-state-cell String ""))
-      (set!
-        (array-ref cells entry-main-module-active)
-        (compiler-lower-state-cell bool false))
-      (set!
-        (array-ref cells entry-main-module)
-        (compiler-lower-state-cell String ""))
-      (set!
-        (array-ref cells entry-main-module-id)
-        (compiler-lower-state-cell i64 cbi.compiler-builtin-id-fix-empty))
-      (set!
-        (array-ref cells module-decl-index-ready)
-        (compiler-lower-state-cell bool false))
-      (set!
-        (array-ref cells module-decl-index-decl-count)
-        (compiler-lower-state-cell i64 -1))
-      (set!
-        (array-ref cells module-decl-index-decl-offset)
-        (compiler-lower-state-cell i64 -1))
-      (set!
-        (array-ref cells module-decl-index-modules)
-        (compiler-lower-state-cell
-          lower_i64_i64_map.Map
-          (lower_i64_i64_map.with-capacity 16)))
-      (set!
-        (array-ref cells module-decl-index-starts)
-        (compiler-lower-state-cell (__tl_dyn-array i64) (__tl_make-array i64 0)))
-      (set!
-        (array-ref cells module-decl-index-ends)
-        (compiler-lower-state-cell (__tl_dyn-array i64) (__tl_make-array i64 0)))
-      (set!
-        (array-ref cells module-decl-index-positions)
-        (compiler-lower-state-cell (__tl_dyn-array i64) (__tl_make-array i64 0)))
-      (set!
-        (array-ref cells module-decl-index-arena)
-        (compiler-lower-state-cell i64 0))
-      (set!
-        (array-ref cells arenas)
-        (compiler-lower-state-cell
-          CompilerLowerArenaState
-          (compiler-lower-arena-state-new)))
-      (set!
-        (array-ref cells intern-owner)
-        (compiler-lower-state-cell ci.InternCompatState intern-state))
-      (set!
-        (array-ref cells comptime-error-cache)
-        (compiler-lower-state-cell
-          (__tl_dyn-array i64)
-          (lower-comptime-error-id-cache-empty)))
-      (set!
-        (array-ref cells checked-pools)
-        (compiler-lower-state-cell
-          CompilerLowerCheckedPoolsState
-          (compiler-lower-checked-pools-state-empty)))
-      (set!
-        (array-ref cells spmd-package-state)
-        (compiler-lower-state-cell
-          CompilerLowerSpmdPackageState
-          (compiler-lower-spmd-package-state-empty)))
-      (set!
-        (array-ref cells function-memo-storage)
-        (compiler-lower-state-cell
-          CompilerLowerFunctionMemoStorage
-          (compiler-lower-function-memo-storage-empty)))
-      (set!
-        (array-ref cells structural-session-owner)
-        (compiler-lower-state-cell
-          cis.InternStructuralSessionHandle
-          (cis.intern-structural-session-handle-from-source-names
-            (ci.intern-source-name-session-handle-from-state intern-state))))
-      (cfg
-        (any compile-profile test)
-        (set!
-          (array-ref cells profile-owner)
-          (compiler-lower-state-cell
-            profile_state.CompilerProfileState
-            _profile-state))
-        unit)
-      (set!
-        (array-ref cells advisory-sink-owner)
-        (compiler-lower-state-cell
-          cdiag.CompilerAdvisorySink
-          (cdiag.compiler-advisory-sink-new)))
-      (set!
-        (array-ref cells pointer-proof-request)
-        (compiler-lower-state-cell
-          pointer_proof.PointerProofRequest
-          pointer_proof.PointerProofRequest.Disabled))
-      (set!
-        (array-ref cells debug-types)
-        (compiler-lower-state-cell LowerDebugTypes (lower-debug-types-empty)))
-      state)))
+  [profile-state : profile_state.CompilerProfileState]) : CompilerLowerState
+  (compiler-lower-state-from-seed
+    (CompilerLowerStateSeed intern-state profile-state)))
 
 (define (compiler-lower-state-new-with-intern-state
   [intern-state : ci.InternCompatState]) : CompilerLowerState
@@ -884,20 +682,10 @@
   (compiler-lower-state-new-with-intern-state
     (ci.intern-compat-state-capture-active)))
 
-(define (compiler-lower-state-arenas [state : CompilerLowerState]) : CompilerLowerArenaState
-  (compiler-lower-state-read state CompilerLowerArenaState arenas))
-
-(define (compiler-lower-state-interns [state : CompilerLowerState]) : ci.InternCompatState
-  (compiler-lower-state-read state ci.InternCompatState intern-owner))
-
 (define (compiler-lower-state-use-advisory-sink!
   [state : CompilerLowerState]
   [sink : cdiag.CompilerAdvisorySink]) : unit
-  (compiler-lower-state-write!
-    state
-    cdiag.CompilerAdvisorySink
-    advisory-sink-owner
-    sink))
+  (compiler-lower-state-set-advisory-sink-owner! state sink))
 
 (define (compiler-lower-state-intern-str
   [state : CompilerLowerState]
@@ -910,12 +698,6 @@
   (let
     [interns : ci.InternCompatState (compiler-lower-state-interns state)]
     (ci.intern-compat-state-id-str (& interns) id)))
-
-(define (compiler-lower-state-structural-session [state : CompilerLowerState]) : cis.InternStructuralSessionHandle
-  (compiler-lower-state-read
-    state
-    cis.InternStructuralSessionHandle
-    structural-session-owner))
 
 ;; Render a mixed source/structural name through the compile job that owns it.
 ;; Macro expansion can leave table-backed hygiene identities in declaration
@@ -958,26 +740,6 @@
                 ">")])]
         [(No) (str_cat.str-cat "<id:" (string.int->string name-id) ">")]))))
 
-(cfg
-  (any compile-profile test)
-  (define (compiler-lower-state-profile [state : CompilerLowerState]) : profile_state.CompilerProfileState
-    (compiler-lower-state-read
-      state
-      profile_state.CompilerProfileState
-      profile-owner)))
-
-(define (compiler-lower-state-checked-pools [state : CompilerLowerState]) : CompilerLowerCheckedPoolsState
-  (compiler-lower-state-read state CompilerLowerCheckedPoolsState checked-pools))
-
-(define (compiler-lower-state-checked-pools-set!
-  [state : CompilerLowerState]
-  [handoff : CompilerLowerCheckedPoolsState]) : unit
-  (compiler-lower-state-write!
-    state
-    CompilerLowerCheckedPoolsState
-    checked-pools
-    handoff))
-
 (define (compiler-lower-state-use-intern-state!
   [state : CompilerLowerState]
   [intern-state : ci.InternCompatState]) : unit
@@ -993,97 +755,25 @@
   [state : CompilerLowerState]
   [intern-state : ci.InternCompatState]
   [source-names : ci.InternSourceNameSessionHandle]) : unit
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-interns! state intern-state)
+  (compiler-lower-state-set-structural-session!
     state
-    ci.InternCompatState
-    intern-owner
-    intern-state)
-  (compiler-lower-state-write!
-    state
-    cis.InternStructuralSessionHandle
-    structural-session-owner
     (cis.intern-structural-session-handle-from-source-names source-names)))
 
-;; Scalar snapshot used by state-isolation tests. Each fingerprint covers the
-;; complete inline representation stored in the field cell (including map
-;; counts/backing identities) without following storage that a finished phase
-;; may already have rewound.
+;; Scalar snapshot used by state-isolation tests: one fingerprint per observed
+;; field of the schema, in slot order. A cell fingerprint covers the complete
+;; inline representation stored in the cell (including map counts/backing
+;; identities) without following storage that a finished phase may already
+;; have rewound.
 (defstruct CompilerLowerStateObservation
-  (active-global-name-cache i64)
-  (decls-global-type-cache i64)
-  (rvo-early-return-functions i64)
-  (reach-active-runtime-paths i64)
-  (reach-active-body-used-types i64)
-  (current-source-path-id i64)
-  (current-decl-generated i64)
-  (active-symbols i64)
-  (active-symbols-ready i64)
-  (active-module-name-caches i64)
-  (active-module-local-views i64)
-  (active-loop-function i64)
-  (active-loop-entry-var-limit i64)
-  (alias-overlay-ids i64)
-  (alias-overlay-valid i64)
-  (alias-symbol-memo i64)
-  (canonical-path-count i64)
-  (canonical-path-recent i64)
-  (canonical-path-prior i64)
-  (entry-main-module-active i64)
-  (entry-main-module i64)
-  (entry-main-module-id i64)
-  (module-decl-index-ready i64)
-  (module-decl-index-decl-count i64)
-  (module-decl-index-decl-offset i64)
-  (module-decl-index-modules i64)
-  (module-decl-index-starts i64)
-  (module-decl-index-ends i64)
-  (module-decl-index-positions i64)
-  (module-decl-index-arena i64)
-  (intern-owner i64)
-  (comptime-error-cache i64)
-  (checked-pools i64)
-  (spmd-package-state i64)
-  (function-memo-storage i64)
-  (structural-session-owner i64))
+  (fingerprints (__tl_dyn-array i64)))
 
 (define (compiler-lower-state-size) : i64
   (comptime (size-of (type CompilerLowerState))))
 
-(defmacro (compiler-lower-state-field-fingerprint
-  [state : Expr]
-  [_T : type]
-  [field : Expr]) : Expr
-  `(let
-    [base : i64
-      (unsafe
-        (ptr-read
-          (ptr-offset
-            (int->ptr
-              (cast ,(comptime.expr-struct-get state "address") : u64)
-              : (Ptr i64))
-            ,field)))]
-    [word-count : i64 (comptime (/ (+ (size-of (type ,_T)) 7) 8))]
-    [index : i64 0]
-    [out : i64 0]
-    (while (< index word-count)
-      (set!
-        out
-        (hash.combine
-          out
-          (hash.i64
-            (unsafe
-              (ptr-read
-                (int->ptr (cast (+ base (* index 8)) : u64) : (Ptr i64)))))))
-      (set! index (+ index 1)))
-    out))
-
-(define (lower-comptime-error-id-cache-fingerprint [state : CompilerLowerState]) : i64
+(define (lower-comptime-error-id-cache-fingerprint
+  [cache : (__tl_dyn-array i64)]) : i64
   (let
-    [cache : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        state
-        (__tl_dyn-array i64)
-        comptime-error-cache)]
     [index : i64 0]
     [out : i64 0]
     (while (< index lower-comptime-cache-size)
@@ -1092,10 +782,8 @@
     out))
 
 (define (compiler-lower-checked-pools-state-fingerprint
-  [state : CompilerLowerState]) : i64
+  [handoff : CompilerLowerCheckedPoolsState]) : i64
   (let
-    [handoff : CompilerLowerCheckedPoolsState
-      (compiler-lower-state-checked-pools state)]
     [context-fingerprint : i64
       (match handoff.context
         [(NoContext) 0]
@@ -1140,200 +828,56 @@
                           handoff.deferred-type-capacity)))))))))))))
 
 (define (compiler-lower-structural-session-fingerprint
-  [state : CompilerLowerState]) : i64
-  (let
-    [session : cis.InternStructuralSessionHandle
-      (compiler-lower-state-structural-session state)]
-    (hash.combine
-      (cis.intern-structural-session-owner session)
-      (cis.intern-structural-session-current-reset-generation session))))
+  [session : cis.InternStructuralSessionHandle]) : i64
+  (hash.combine
+    (cis.intern-structural-session-owner session)
+    (cis.intern-structural-session-current-reset-generation session)))
 
 (define (compiler-lower-state-observe [state : CompilerLowerState]) : CompilerLowerStateObservation
-  (CompilerLowerStateObservation
-    (compiler-lower-state-field-fingerprint
-      state
-      LowerNameCache
-      active-global-name-cache)
-    (compiler-lower-state-field-fingerprint
-      state
-      LowerTypeCache
-      decls-global-type-cache)
-    (compiler-lower-state-field-fingerprint
-      state
-      lower_i64_i64_map.Map
-      rvo-early-return-functions)
-    (compiler-lower-state-field-fingerprint
-      state
-      lower_i64_i64_map.Map
-      reach-active-runtime-paths)
-    (compiler-lower-state-field-fingerprint
-      state
-      lower_i64_i64_map.Map
-      reach-active-body-used-types)
-    (compiler-lower-state-field-fingerprint state i64 current-source-path-id)
-    (compiler-lower-state-field-fingerprint state bool current-decl-generated)
-    (compiler-lower-state-field-fingerprint
-      state
-      csym.CompilerSymbols
-      active-symbols)
-    (compiler-lower-state-field-fingerprint state bool active-symbols-ready)
-    (compiler-lower-state-field-fingerprint
-      state
-      LowerModuleNameCacheStore
-      active-module-name-caches)
-    (compiler-lower-state-field-fingerprint
-      state
-      LowerModuleLocalViewStore
-      active-module-local-views)
-    (compiler-lower-state-field-fingerprint state i64 active-loop-function)
-    (compiler-lower-state-field-fingerprint
-      state
-      i64
-      active-loop-entry-var-limit)
-    (compiler-lower-state-field-fingerprint
-      state
-      lower_i64_i64_map.Map
-      alias-overlay-ids)
-    (compiler-lower-state-field-fingerprint state bool alias-overlay-valid)
-    (compiler-lower-state-field-fingerprint
-      state
-      (__tl_dyn-array i64)
-      alias-symbol-memo)
-    (compiler-lower-state-field-fingerprint state i64 canonical-path-count)
-    (compiler-lower-state-field-fingerprint state String canonical-path-recent)
-    (compiler-lower-state-field-fingerprint state String canonical-path-prior)
-    (compiler-lower-state-field-fingerprint state bool entry-main-module-active)
-    (compiler-lower-state-field-fingerprint state String entry-main-module)
-    (compiler-lower-state-field-fingerprint state i64 entry-main-module-id)
-    (compiler-lower-state-field-fingerprint state bool module-decl-index-ready)
-    (compiler-lower-state-field-fingerprint
-      state
-      i64
-      module-decl-index-decl-count)
-    (compiler-lower-state-field-fingerprint
-      state
-      i64
-      module-decl-index-decl-offset)
-    (compiler-lower-state-field-fingerprint
-      state
-      lower_i64_i64_map.Map
-      module-decl-index-modules)
-    (compiler-lower-state-field-fingerprint
-      state
-      (__tl_dyn-array i64)
-      module-decl-index-starts)
-    (compiler-lower-state-field-fingerprint
-      state
-      (__tl_dyn-array i64)
-      module-decl-index-ends)
-    (compiler-lower-state-field-fingerprint
-      state
-      (__tl_dyn-array i64)
-      module-decl-index-positions)
-    (compiler-lower-state-field-fingerprint state i64 module-decl-index-arena)
-    (compiler-lower-state-field-fingerprint
-      state
-      ci.InternCompatState
-      intern-owner)
-    (lower-comptime-error-id-cache-fingerprint state)
-    (compiler-lower-checked-pools-state-fingerprint state)
-    (compiler-lower-state-field-fingerprint
-      state
-      CompilerLowerSpmdPackageState
-      spmd-package-state)
-    (compiler-lower-state-field-fingerprint
-      state
-      CompilerLowerFunctionMemoStorage
-      function-memo-storage)
-    (compiler-lower-structural-session-fingerprint state)))
+  (CompilerLowerStateObservation (compiler-lower-state-fingerprints state)))
 
 (define (compiler-lower-state-observation-eq?
-  [left : CompilerLowerStateObservation]
-  [right : CompilerLowerStateObservation]) : bool
-  (and
-    (= left.active-global-name-cache right.active-global-name-cache)
-    (= left.decls-global-type-cache right.decls-global-type-cache)
-    (= left.rvo-early-return-functions right.rvo-early-return-functions)
-    (= left.reach-active-runtime-paths right.reach-active-runtime-paths)
-    (= left.reach-active-body-used-types right.reach-active-body-used-types)
-    (= left.current-source-path-id right.current-source-path-id)
-    (= left.current-decl-generated right.current-decl-generated)
-    (= left.active-symbols right.active-symbols)
-    (= left.active-symbols-ready right.active-symbols-ready)
-    (= left.active-module-name-caches right.active-module-name-caches)
-    (= left.active-module-local-views right.active-module-local-views)
-    (= left.active-loop-function right.active-loop-function)
-    (= left.active-loop-entry-var-limit right.active-loop-entry-var-limit)
-    (= left.alias-overlay-ids right.alias-overlay-ids)
-    (= left.alias-overlay-valid right.alias-overlay-valid)
-    (= left.alias-symbol-memo right.alias-symbol-memo)
-    (= left.canonical-path-count right.canonical-path-count)
-    (= left.canonical-path-recent right.canonical-path-recent)
-    (= left.canonical-path-prior right.canonical-path-prior)
-    (= left.entry-main-module-active right.entry-main-module-active)
-    (= left.entry-main-module right.entry-main-module)
-    (= left.entry-main-module-id right.entry-main-module-id)
-    (= left.module-decl-index-ready right.module-decl-index-ready)
-    (= left.module-decl-index-decl-count right.module-decl-index-decl-count)
-    (= left.module-decl-index-decl-offset right.module-decl-index-decl-offset)
-    (= left.module-decl-index-modules right.module-decl-index-modules)
-    (= left.module-decl-index-starts right.module-decl-index-starts)
-    (= left.module-decl-index-ends right.module-decl-index-ends)
-    (= left.module-decl-index-positions right.module-decl-index-positions)
-    (= left.module-decl-index-arena right.module-decl-index-arena)
-    (= left.intern-owner right.intern-owner)
-    (= left.comptime-error-cache right.comptime-error-cache)
-    (= left.checked-pools right.checked-pools)
-    (= left.spmd-package-state right.spmd-package-state)
-    (= left.function-memo-storage right.function-memo-storage)
-    (= left.structural-session-owner right.structural-session-owner)))
-
-(define (lower-active-global-name-cache-current [state : CompilerLowerState]) : LowerNameCache
-  (compiler-lower-state-read state LowerNameCache active-global-name-cache))
-
-(define (lower-active-global-name-cache-set!
-  [state : CompilerLowerState]
-  [cache : LowerNameCache]) : unit
-  (compiler-lower-state-write!
-    state
-    LowerNameCache
-    active-global-name-cache
-    cache))
+  [left : (& left CompilerLowerStateObservation)]
+  [right : (& right CompilerLowerStateObservation)]) : bool
+  (let
+    [count : i64 (array-length left.fingerprints)]
+    [index : i64 0]
+    [same : bool (= count (array-length right.fingerprints))]
+    (while (and same (< index count))
+      (set!
+        same
+        (=
+          (array-ref left.fingerprints index)
+          (array-ref right.fingerprints index)))
+      (set! index (+ index 1)))
+    same))
 
 ;; IR vars allocated before an enclosing loop survive its backedge. Track the
 ;; active function too so lowering a nested lambda cannot mistake its fresh,
 ;; low-numbered vars for locals owned by the enclosing loop.
 (define (lower-module-phase-caches-reset! [state : CompilerLowerState]) : unit
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-active-module-name-caches!
     state
-    LowerModuleNameCacheStore
-    active-module-name-caches
     (lower-module-name-cache-store-empty))
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-active-module-local-views!
     state
-    LowerModuleLocalViewStore
-    active-module-local-views
     (lower-module-local-view-store-empty))
-  (compiler-lower-state-write! state i64 active-loop-function -1)
-  (compiler-lower-state-write! state i64 active-loop-entry-var-limit -1))
+  (compiler-lower-state-set-active-loop-function! state -1)
+  (compiler-lower-state-set-active-loop-entry-var-limit! state -1))
 
 ;; Reset once per prune reach walk; lower-reach-process records each reachable
 ;; function body's source path so type-decl DCE can keep local support types.
 (define (lower-reach-scratch-state-reset! [state : CompilerLowerState]) : unit
-  (lower-active-global-name-cache-set!
+  (compiler-lower-state-set-active-global-name-cache!
     state
     (lower-empty-global-name-cache state.address))
-  (compiler-lower-state-write! state bool active-symbols-ready false)
+  (compiler-lower-state-set-active-symbols-ready! state false)
   (lower-module-phase-caches-reset! state)
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-reach-active-runtime-paths!
     state
-    lower_i64_i64_map.Map
-    reach-active-runtime-paths
     (lower_i64_i64_map.with-capacity 8))
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-reach-active-body-used-types!
     state
-    lower_i64_i64_map.Map
-    reach-active-body-used-types
     (lower_i64_i64_map.with-capacity 8)))
 
 (defenum LowerReachState
@@ -1959,11 +1503,7 @@
 (define (compiler-lower-state-use-request!
   [state : CompilerLowerState]
   [request : CompilerLowerRequest]) : unit
-  (compiler-lower-state-write!
-    state
-    pointer_proof.PointerProofRequest
-    pointer-proof-request
-    request.pointer-proof))
+  (compiler-lower-state-set-pointer-proof-request! state request.pointer-proof))
 
 (define (lower-compiler-pointer-proof-result
   [request : CompilerLowerRequest]
@@ -1996,7 +1536,7 @@
   [source-release-expr-storage-arena : i64]
   [source-release-type-storage-arena : i64]
   [frontend-release-arena : i64]) : unit
-  (compiler-lower-state-checked-pools-set!
+  (compiler-lower-state-set-checked-pools!
     lower-state
     (CompilerLowerCheckedPoolsState
       true
@@ -2014,7 +1554,7 @@
 
 (define (compiler-lower-checked-dest-pools-clear!
   [lower-state : CompilerLowerState]) : unit
-  (compiler-lower-state-checked-pools-set!
+  (compiler-lower-state-set-checked-pools!
     lower-state
     (compiler-lower-checked-pools-state-empty)))
 
@@ -2060,7 +1600,7 @@
             dest-arena)]
         (set! handoff.context (Context dest-pools))
         (set! handoff.deferred false)
-        (compiler-lower-state-checked-pools-set! lower-state handoff))
+        (compiler-lower-state-set-checked-pools! lower-state handoff))
       unit)))
 
 (define (compiler-lower-checked-dest-pools-current
@@ -2130,7 +1670,7 @@
     (when
       handoff.committed
       (set! handoff.active false)
-      (compiler-lower-state-checked-pools-set! lower-state handoff))))
+      (compiler-lower-state-set-checked-pools! lower-state handoff))))
 
 (define (lower-checked-dest-pools-rollover-for-macro!
   [lower-state : CompilerLowerState]) : unit
@@ -2170,7 +1710,7 @@
         (set! handoff.committed false)
         (set! handoff.rolled-over true)
         (set! handoff.active true)
-        (compiler-lower-state-checked-pools-set! lower-state handoff)
+        (compiler-lower-state-set-checked-pools! lower-state handoff)
         (unsafe
           (arena.tl_arena_set macro-frontend-arena)))
       unit)))
@@ -2208,7 +1748,7 @@
         (set! handoff.committed true)
         (set! handoff.active false)
         (set! handoff.frontend-released true)
-        (compiler-lower-state-checked-pools-set! lower-state handoff))
+        (compiler-lower-state-set-checked-pools! lower-state handoff))
       unit)))
 
 (define (lower-copy-string-into-pools
@@ -2338,7 +1878,7 @@
           (unsafe
             (arena.tl_arena_destroy old-frontend-arena))
           (set! handoff.frontend-released true))
-        (compiler-lower-state-checked-pools-set! lower-state handoff))
+        (compiler-lower-state-set-checked-pools! lower-state handoff))
       unit)))
 
 (defenum LowerFieldInfo
@@ -2804,10 +2344,7 @@
     (let
       [address : u64 (compiler-lower-profile-intern-metrics-address state)]
       [ids : lower_i64_i64_map.Map
-        (compiler-lower-state-read
-          state
-          lower_i64_i64_map.Map
-          alias-overlay-ids)]
+        (compiler-lower-state-alias-overlay-ids state)]
       (compiler-lower-name-env-profile-emit! address)
       (compiler-lower-name-storage-profile-emit! address)
       (counters.profile-counter-live-row!
@@ -3556,10 +3093,7 @@
     [next : (& next lower_i64_i64_map.Map)]) : unit
     (let
       [old : lower_i64_i64_map.Map
-        (compiler-lower-state-read
-          state
-          lower_i64_i64_map.Map
-          alias-overlay-ids)]
+        (compiler-lower-state-alias-overlay-ids state)]
       [old-cap : i64 (lower_i64_i64_map.capacity (& old))]
       [next-cap : i64 (lower_i64_i64_map.capacity next)]
       (when
@@ -3749,7 +3283,8 @@
   (compiler-lower-state-structural-session (lower-name-cache-owner-state cache)))
 
 (define (lower-name-cache-active-global [cache : (& cache LowerNameCache)]) : LowerNameCache
-  (lower-active-global-name-cache-current (lower-name-cache-owner-state cache)))
+  (compiler-lower-state-active-global-name-cache
+    (lower-name-cache-owner-state cache)))
 
 (define (lower-name-cache-global-lookup-logical-id
   [cache : (& cache LowerNameCache)]
@@ -4005,10 +3540,7 @@
   (let
     [result : LowerMaybeModuleNameCache
       (lower-module-name-cache-store-lookup
-        (compiler-lower-state-read
-          lower-state
-          LowerModuleNameCacheStore
-          active-module-name-caches)
+        (compiler-lower-state-active-module-name-caches lower-state)
         module-id)]
     (begin
       (cfg
@@ -4031,15 +3563,10 @@
   [lower-state : CompilerLowerState]
   [module-id : i64]
   [cache : LowerNameCache]) : unit
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-active-module-name-caches!
     lower-state
-    LowerModuleNameCacheStore
-    active-module-name-caches
     (lower-module-name-cache-store-insert
-      (compiler-lower-state-read
-        lower-state
-        LowerModuleNameCacheStore
-        active-module-name-caches)
+      (compiler-lower-state-active-module-name-caches lower-state)
       module-id
       cache)))
 
@@ -4317,15 +3844,9 @@
               [owner-state : CompilerLowerState
                 (lower-name-cache-owner-state cache)]
               [active-symbols : csym.CompilerSymbols
-                (compiler-lower-state-read
-                  owner-state
-                  csym.CompilerSymbols
-                  active-symbols)]
+                (compiler-lower-state-active-symbols owner-state)]
               (if (and
-                (compiler-lower-state-read
-                  owner-state
-                  bool
-                  active-symbols-ready)
+                (compiler-lower-state-active-symbols-ready owner-state)
                 (csym.compiler-symbols-handle-found?
                   (csym.compiler-symbols-lookup-value-in-module-id-or
                     active-symbols
@@ -4504,10 +4025,8 @@
               (Err (str_cat.str-cat "typecheck: unbound name " display-name))]
             [(Global)
               (lower-type-cache-lookup-id
-                (compiler-lower-state-read
-                  (compiler-lower-state-from-address owner-address)
-                  LowerTypeCache
-                  decls-global-type-cache)
+                (compiler-lower-state-decls-global-type-cache
+                  (compiler-lower-state-from-address owner-address))
                 name-id
                 display-name)])))]))
 
@@ -4887,10 +4406,7 @@
 (define (lower-alias-overlay-reset! [lower-state : CompilerLowerState]) : unit
   (let
     [ids : lower_i64_i64_map.Map
-      (compiler-lower-state-read
-        lower-state
-        lower_i64_i64_map.Map
-        alias-overlay-ids)]
+      (compiler-lower-state-alias-overlay-ids lower-state)]
     (begin
       ;; The set is consulted only while constructing the current overlay.
       ;; Keep its largest table for the next build instead of stranding every
@@ -4903,22 +4419,15 @@
           compiler-lower-profile-alias-overlay-resets-metric
           1)
         unit)
-      (compiler-lower-state-write!
-        lower-state
-        lower_i64_i64_map.Map
-        alias-overlay-ids
-        ids)
-      (compiler-lower-state-write! lower-state bool alias-overlay-valid true))))
+      (compiler-lower-state-set-alias-overlay-ids! lower-state ids)
+      (compiler-lower-state-set-alias-overlay-valid! lower-state true))))
 
 (define (lower-alias-overlay-contains?
   [lower-state : CompilerLowerState]
   [source-id : i64]) : bool
   (let
     [ids : lower_i64_i64_map.Map
-      (compiler-lower-state-read
-        lower-state
-        lower_i64_i64_map.Map
-        alias-overlay-ids)]
+      (compiler-lower-state-alias-overlay-ids lower-state)]
     (match (lower_i64_i64_map.get (& ids) source-id)
       [(LookupFound _) true]
       [(LookupMissing) false])))
@@ -4929,10 +4438,7 @@
   [fallback : i64]) : i64
   (let
     [ids : lower_i64_i64_map.Map
-      (compiler-lower-state-read
-        lower-state
-        lower_i64_i64_map.Map
-        alias-overlay-ids)]
+      (compiler-lower-state-alias-overlay-ids lower-state)]
     (lower_i64_i64_map.get-value-or (& ids) source-id fallback)))
 
 (define (lower-alias-overlay-record!
@@ -4941,21 +4447,14 @@
   [logical-id : i64]) : unit
   (let
     [ids : lower_i64_i64_map.Map
-      (compiler-lower-state-read
-        lower-state
-        lower_i64_i64_map.Map
-        alias-overlay-ids)]
+      (compiler-lower-state-alias-overlay-ids lower-state)]
     (begin
       (lower-alias-overlay-insert! lower-state (&mut ids) source-id logical-id)
       (cfg
         (any compile-profile test)
         (lower-alias-overlay-growth-profile lower-state (& ids))
         unit)
-      (compiler-lower-state-write!
-        lower-state
-        lower_i64_i64_map.Map
-        alias-overlay-ids
-        ids))))
+      (compiler-lower-state-set-alias-overlay-ids! lower-state ids))))
 
 ;; Seed the overlay membership set from an existing base environment.
 (define (lower-alias-overlay-seed-from-env!
@@ -4963,10 +4462,7 @@
   [names : LowerNameEnv]) : unit
   (let
     [ids : lower_i64_i64_map.Map
-      (compiler-lower-state-read
-        lower-state
-        lower_i64_i64_map.Map
-        alias-overlay-ids)]
+      (compiler-lower-state-alias-overlay-ids lower-state)]
     [valid : bool true]
     [cur : LowerNameEnv names]
     (begin
@@ -4989,12 +4485,8 @@
         (any compile-profile test)
         (lower-alias-overlay-growth-profile lower-state (& ids))
         unit)
-      (compiler-lower-state-write!
-        lower-state
-        lower_i64_i64_map.Map
-        alias-overlay-ids
-        ids)
-      (compiler-lower-state-write! lower-state bool alias-overlay-valid valid))))
+      (compiler-lower-state-set-alias-overlay-ids! lower-state ids)
+      (compiler-lower-state-set-alias-overlay-valid! lower-state valid))))
 
 ;; Per-declaration memo of the import-alias logical symbol ID, live for exactly
 ;; one lower-name-env-from-import-aliases pass.
@@ -5028,17 +4520,11 @@
     (while (< index count)
       (set! (array-ref slots index) -1)
       (set! index (+ index 1)))
-    (compiler-lower-state-write!
-      lower-state
-      (__tl_dyn-array i64)
-      alias-symbol-memo
-      slots)))
+    (compiler-lower-state-set-alias-symbol-memo! lower-state slots)))
 
 (define (lower-alias-symbol-memo-release! [lower-state : CompilerLowerState]) : unit
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-alias-symbol-memo!
     lower-state
-    (__tl_dyn-array i64)
-    alias-symbol-memo
     (__tl_make-array i64 0)))
 
 (define (lower-alias-symbol-memo-get
@@ -5046,10 +4532,7 @@
   [position : i64]) : i64
   (let
     [memo : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        alias-symbol-memo)]
+      (compiler-lower-state-alias-symbol-memo lower-state)]
     (if (or (< position 0) (>= position (array-length memo)))
       -1
       (array-ref memo position))))
@@ -5060,10 +4543,7 @@
   [symbol-id : i64]) : unit
   (let
     [memo : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        alias-symbol-memo)]
+      (compiler-lower-state-alias-symbol-memo lower-state)]
     (if (or (< position 0) (< symbol-id 0) (>= position (array-length memo)))
       unit
       (set! (array-ref memo position) symbol-id))))
@@ -5079,7 +4559,7 @@
   [symbol-id : i64]) : LowerNameEnv
   (when
     (< source-id 0)
-    (compiler-lower-state-write! lower-state bool alias-overlay-valid false))
+    (compiler-lower-state-set-alias-overlay-valid! lower-state false))
   ;; Re-entering a flattened module can repeat the exact same aliased import.
   ;; Its source and logical IDs are identical, so another shadowing node cannot
   ;; change resolution. A later reuse of the alias for a different logical ID
@@ -5087,7 +4567,7 @@
   (when
     (not (string.eq alias ""))
     (when
-      (compiler-lower-state-read lower-state bool alias-overlay-valid)
+      (compiler-lower-state-alias-overlay-valid lower-state)
       (when
         (=
           (lower-alias-overlay-logical-id-or lower-state source-id -1)
@@ -5104,7 +4584,7 @@
   ;; Empty alias, degraded set (a <0 id appeared): exact linear scan preserves
   ;; the Some/No decision byte-for-byte.
   (when
-    (not (compiler-lower-state-read lower-state bool alias-overlay-valid))
+    (not (compiler-lower-state-alias-overlay-valid lower-state))
     (return
       (match (lower-name-env-lookup-with-id-owned
         lower-state
@@ -5240,14 +4720,14 @@
       (csym.compiler-symbol-module-key-id-by-id alias-id base-id)]
     (when
       (< source-id 0)
-      (compiler-lower-state-write! lower-state bool alias-overlay-valid false))
+      (compiler-lower-state-set-alias-overlay-valid! lower-state false))
     ;; Identical aliased imports may recur when a flattened module is
     ;; re-entered. Skip only an identical source/logical pair; a different
     ;; logical target still shadows and updates the tracked value.
     (when
       (not (string.eq alias ""))
       (when
-        (compiler-lower-state-read lower-state bool alias-overlay-valid)
+        (compiler-lower-state-alias-overlay-valid lower-state)
         (when
           (=
             (lower-alias-overlay-logical-id-or lower-state source-id -1)
@@ -5270,7 +4750,7 @@
     ;; Degraded set (a <0 id appeared): exact linear scan preserves the
     ;; Some/No decision byte-for-byte.
     (when
-      (not (compiler-lower-state-read lower-state bool alias-overlay-valid))
+      (not (compiler-lower-state-alias-overlay-valid lower-state))
       (return
         (match (lower-name-env-lookup-with-id-owned
           lower-state
@@ -5942,23 +5422,23 @@
 ;; lifetime past the call that supplied it, and the lower job reset drops
 ;; the keys with the rest of the per-file lowering state.
 (define (lower-canonical-path-recent-current [lower-state : CompilerLowerState]) : String
-  (compiler-lower-state-read lower-state String canonical-path-recent))
+  (compiler-lower-state-canonical-path-recent lower-state))
 
 (define (lower-canonical-path-prior-current [lower-state : CompilerLowerState]) : String
-  (compiler-lower-state-read lower-state String canonical-path-prior))
+  (compiler-lower-state-canonical-path-prior lower-state))
 
 (define (lower-canonical-path-recent-set!
   [lower-state : CompilerLowerState]
   [path : String]) : unit
-  (compiler-lower-state-write! lower-state String canonical-path-recent path))
+  (compiler-lower-state-set-canonical-path-recent! lower-state path))
 
 (define (lower-canonical-path-prior-set!
   [lower-state : CompilerLowerState]
   [path : String]) : unit
-  (compiler-lower-state-write! lower-state String canonical-path-prior path))
+  (compiler-lower-state-set-canonical-path-prior! lower-state path))
 
 (define (lower-canonical-path-memo-reset! [lower-state : CompilerLowerState]) : unit
-  (compiler-lower-state-write! lower-state i64 canonical-path-count 0)
+  (compiler-lower-state-set-canonical-path-count! lower-state 0)
   (lower-canonical-path-recent-set! lower-state "")
   (lower-canonical-path-prior-set! lower-state ""))
 
@@ -5966,29 +5446,24 @@
   [lower-state : CompilerLowerState]
   [path : (& path str)]) : bool
   (if (and
-    (>= (compiler-lower-state-read lower-state i64 canonical-path-count) 1)
+    (>= (compiler-lower-state-canonical-path-count lower-state) 1)
     (string.eq (lower-canonical-path-recent-current lower-state) path))
     true
     (and
-      (>= (compiler-lower-state-read lower-state i64 canonical-path-count) 2)
+      (>= (compiler-lower-state-canonical-path-count lower-state) 2)
       (string.eq (lower-canonical-path-prior-current lower-state) path))))
 
 (define (lower-canonical-path-remember!
   [lower-state : CompilerLowerState]
   [path : String]) : unit
   (let
-    [count : i64
-      (compiler-lower-state-read lower-state i64 canonical-path-count)]
+    [count : i64 (compiler-lower-state-canonical-path-count lower-state)]
     (lower-canonical-path-prior-set!
       lower-state
       (lower-canonical-path-recent-current lower-state))
     (lower-canonical-path-recent-set! lower-state path)
     (if (< count 2)
-      (compiler-lower-state-write!
-        lower-state
-        i64
-        canonical-path-count
-        (+ count 1))
+      (compiler-lower-state-set-canonical-path-count! lower-state (+ count 1))
       unit)))
 
 (define (lower-path-known-canonical?
@@ -6122,23 +5597,23 @@
 
 (define (lower-entry-main-module-active-current
   [lower-state : CompilerLowerState]) : bool
-  (compiler-lower-state-read lower-state bool entry-main-module-active))
+  (compiler-lower-state-entry-main-module-active lower-state))
 
 (define (lower-entry-main-module-current [lower-state : CompilerLowerState]) : String
-  (compiler-lower-state-read lower-state String entry-main-module))
+  (compiler-lower-state-entry-main-module lower-state))
 
 (define (lower-entry-main-module-set!
   [lower-state : CompilerLowerState]
   [module : String]) : unit
-  (compiler-lower-state-write! lower-state String entry-main-module module))
+  (compiler-lower-state-set-entry-main-module! lower-state module))
 
 (define (lower-entry-main-module-id-current [lower-state : CompilerLowerState]) : i64
-  (compiler-lower-state-read lower-state i64 entry-main-module-id))
+  (compiler-lower-state-entry-main-module-id lower-state))
 
 (define (lower-entry-main-module-match?
   [lower-state : CompilerLowerState]
   [module : String]) : bool
-  (if (compiler-lower-state-read lower-state bool entry-main-module-active)
+  (if (compiler-lower-state-entry-main-module-active lower-state)
     (string.eq module (lower-entry-main-module-current lower-state))
     (or (string.eq module "") (string.eq module "main"))))
 
@@ -6375,38 +5850,24 @@
   [selection : LowerMaybeEntryMainModule]) : unit
   (match selection
     [(No)
-      (compiler-lower-state-write!
-        lower-state
-        bool
-        entry-main-module-active
-        false)
+      (compiler-lower-state-set-entry-main-module-active! lower-state false)
       (lower-entry-main-module-set! lower-state "")
-      (compiler-lower-state-write!
+      (compiler-lower-state-set-entry-main-module-id!
         lower-state
-        i64
-        entry-main-module-id
         cbi.compiler-builtin-id-fix-empty)]
     [(Some module module-id)
-      (compiler-lower-state-write!
-        lower-state
-        bool
-        entry-main-module-active
-        true)
+      (compiler-lower-state-set-entry-main-module-active! lower-state true)
       (lower-entry-main-module-set! lower-state module)
-      (compiler-lower-state-write!
-        lower-state
-        i64
-        entry-main-module-id
-        module-id)]))
+      (compiler-lower-state-set-entry-main-module-id! lower-state module-id)]))
 
 (define (lower-entry-main-selection-restore!
   [lower-state : CompilerLowerState]
   [active : bool]
   [module : String]
   [module-id : i64]) : unit
-  (compiler-lower-state-write! lower-state bool entry-main-module-active active)
+  (compiler-lower-state-set-entry-main-module-active! lower-state active)
   (lower-entry-main-module-set! lower-state module)
-  (compiler-lower-state-write! lower-state i64 entry-main-module-id module-id))
+  (compiler-lower-state-set-entry-main-module-id! lower-state module-id))
 
 (define (lower-entry-main-logical-id
   [all-functions : (& all-functions lower_i64_i64_map.Map)]) : i64
@@ -7376,20 +6837,11 @@
     [_ensure : unit (lower-module-decl-index-ensure! lower-state decls)]
     [slot : i64 (lower-module-decl-index-slot lower-state target-module-id)]
     [starts : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-starts)]
+      (compiler-lower-state-module-decl-index-starts lower-state)]
     [ends : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-ends)]
+      (compiler-lower-state-module-decl-index-ends lower-state)]
     [positions : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-positions)]
+      (compiler-lower-state-module-decl-index-positions lower-state)]
     (if (< slot 0)
       cur-names
       (let
@@ -7449,50 +6901,42 @@
 ;; compiler-lower-state-reset! drops it between programs and the (len, offset)
 ;; stamp re-checks the list shape on every ensure.
 (define (lower-module-decl-index-reset! [lower-state : CompilerLowerState]) : unit
-  (compiler-lower-state-write! lower-state bool module-decl-index-ready false)
-  (compiler-lower-state-write! lower-state i64 module-decl-index-decl-count -1)
-  (compiler-lower-state-write! lower-state i64 module-decl-index-decl-offset -1)
+  (compiler-lower-state-set-module-decl-index-ready! lower-state false)
+  (compiler-lower-state-set-module-decl-index-decl-count! lower-state -1)
+  (compiler-lower-state-set-module-decl-index-decl-offset! lower-state -1)
   ;; The stale array/map handles are never read while ready is false (every
   ;; consumer goes through ensure!), so destroying their owner arena is safe.
   (let
     [index-arena : i64
-      (compiler-lower-state-read lower-state i64 module-decl-index-arena)]
+      (compiler-lower-state-module-decl-index-arena lower-state)]
     (unless
       (= index-arena 0)
       (unsafe
         (arena.tl_arena_destroy index-arena))
-      (compiler-lower-state-write! lower-state i64 module-decl-index-arena 0)))
-  (compiler-lower-state-write!
+      (compiler-lower-state-set-module-decl-index-arena! lower-state 0)))
+  (compiler-lower-state-set-module-decl-index-modules!
     lower-state
-    lower_i64_i64_map.Map
-    module-decl-index-modules
     (lower_i64_i64_map.with-capacity 16))
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-module-decl-index-starts!
     lower-state
-    (__tl_dyn-array i64)
-    module-decl-index-starts
     (__tl_make-array i64 0))
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-module-decl-index-ends!
     lower-state
-    (__tl_dyn-array i64)
-    module-decl-index-ends
     (__tl_make-array i64 0))
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-module-decl-index-positions!
     lower-state
-    (__tl_dyn-array i64)
-    module-decl-index-positions
     (__tl_make-array i64 0)))
 
 (define (lower-module-decl-index-ensure!
   [lower-state : CompilerLowerState]
   [decls : (& decls ast.AstDeclList)]) : unit
   (if (and
-    (compiler-lower-state-read lower-state bool module-decl-index-ready)
+    (compiler-lower-state-module-decl-index-ready lower-state)
     (=
-      (compiler-lower-state-read lower-state i64 module-decl-index-decl-count)
+      (compiler-lower-state-module-decl-index-decl-count lower-state)
       decls.len)
     (=
-      (compiler-lower-state-read lower-state i64 module-decl-index-decl-offset)
+      (compiler-lower-state-module-decl-index-decl-offset lower-state)
       decls.offset))
     unit
     (let
@@ -7506,15 +6950,13 @@
       ;; in whatever arena happens to be active would leave the state fields
       ;; dangling when that scratch arena is destroyed.
       [index-arena : i64
-        (compiler-lower-state-read lower-state i64 module-decl-index-arena)]
+        (compiler-lower-state-module-decl-index-arena lower-state)]
       [_make-arena : unit
         (when
           (= index-arena 0)
           (set! index-arena (arena.tl_arena_make_small))
-          (compiler-lower-state-write!
+          (compiler-lower-state-set-module-decl-index-arena!
             lower-state
-            i64
-            module-decl-index-arena
             index-arena))]
       (in-arena
         (arena.Arena index-arena)
@@ -7571,41 +7013,23 @@
                       (set! (array-ref ends slot) (+ cursor 1)))]
                   [(LookupMissing) unit])])
             (set! i (+ i 1)))
-          (compiler-lower-state-write!
+          (compiler-lower-state-set-module-decl-index-modules!
             lower-state
-            lower_i64_i64_map.Map
-            module-decl-index-modules
             modules)
-          (compiler-lower-state-write!
+          (compiler-lower-state-set-module-decl-index-starts!
             lower-state
-            (__tl_dyn-array i64)
-            module-decl-index-starts
             starts)
-          (compiler-lower-state-write!
+          (compiler-lower-state-set-module-decl-index-ends! lower-state ends)
+          (compiler-lower-state-set-module-decl-index-positions!
             lower-state
-            (__tl_dyn-array i64)
-            module-decl-index-ends
-            ends)
-          (compiler-lower-state-write!
-            lower-state
-            (__tl_dyn-array i64)
-            module-decl-index-positions
             positions)
-          (compiler-lower-state-write!
+          (compiler-lower-state-set-module-decl-index-decl-count!
             lower-state
-            i64
-            module-decl-index-decl-count
             count)
-          (compiler-lower-state-write!
+          (compiler-lower-state-set-module-decl-index-decl-offset!
             lower-state
-            i64
-            module-decl-index-decl-offset
             decl-offset)
-          (compiler-lower-state-write!
-            lower-state
-            bool
-            module-decl-index-ready
-            true))))))
+          (compiler-lower-state-set-module-decl-index-ready! lower-state true))))))
 
 ;; Dense slot for a module id, or -1 when the module owns no declarations.
 (define (lower-module-decl-index-slot
@@ -7613,10 +7037,7 @@
   [module-id : i64]) : i64
   (let
     [modules : lower_i64_i64_map.Map
-      (compiler-lower-state-read
-        lower-state
-        lower_i64_i64_map.Map
-        module-decl-index-modules)]
+      (compiler-lower-state-module-decl-index-modules lower-state)]
     (lower_i64_i64_map.get-value-or (& modules) module-id -1)))
 
 (define (lower-name-env-add-module-aliases-cache
@@ -7634,20 +7055,11 @@
     [_ensure : unit (lower-module-decl-index-ensure! lower-state decls)]
     [slot : i64 (lower-module-decl-index-slot lower-state target-module-id)]
     [starts : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-starts)]
+      (compiler-lower-state-module-decl-index-starts lower-state)]
     [ends : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-ends)]
+      (compiler-lower-state-module-decl-index-ends lower-state)]
     [positions : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-positions)]
+      (compiler-lower-state-module-decl-index-positions lower-state)]
     (if (< slot 0)
       cur-names
       (let
@@ -7853,20 +7265,11 @@
     [slot : i64
       (lower-module-decl-index-slot lower-state target-current-module-id)]
     [starts : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-starts)]
+      (compiler-lower-state-module-decl-index-starts lower-state)]
     [ends : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-ends)]
+      (compiler-lower-state-module-decl-index-ends lower-state)]
     [positions : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-positions)]
+      (compiler-lower-state-module-decl-index-positions lower-state)]
     ;; `names` is always a fresh (empty) overlay here, so seed the overlay
     ;; membership set empty; it then mirrors every alias bound below.
     (lower-alias-overlay-reset! lower-state)
@@ -8158,20 +7561,11 @@
     [_ensure : unit (lower-module-decl-index-ensure! lower-state decls)]
     [slot : i64 (lower-module-decl-index-slot lower-state target-module-id)]
     [starts : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-starts)]
+      (compiler-lower-state-module-decl-index-starts lower-state)]
     [ends : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-ends)]
+      (compiler-lower-state-module-decl-index-ends lower-state)]
     [positions : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        module-decl-index-positions)]
+      (compiler-lower-state-module-decl-index-positions lower-state)]
     [index : i64
       (if (< slot 0)
         0
@@ -8319,10 +7713,7 @@
   (let
     [result : LowerMaybeModuleLocalView
       (lower-module-local-view-store-lookup
-        (compiler-lower-state-read
-          lower-state
-          LowerModuleLocalViewStore
-          active-module-local-views)
+        (compiler-lower-state-active-module-local-views lower-state)
         module-id)]
     (begin
       (cfg
@@ -8345,15 +7736,10 @@
   [lower-state : CompilerLowerState]
   [module-id : i64]
   [view : LowerModuleLocalView]) : unit
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-active-module-local-views!
     lower-state
-    LowerModuleLocalViewStore
-    active-module-local-views
     (lower-module-local-view-store-insert
-      (compiler-lower-state-read
-        lower-state
-        LowerModuleLocalViewStore
-        active-module-local-views)
+      (compiler-lower-state-active-module-local-views lower-state)
       module-id
       view)))
 
@@ -8368,7 +7754,7 @@
     ctx
     top-env
     names
-    (lower-active-global-name-cache-current lower-state)
+    (compiler-lower-state-active-global-name-cache lower-state)
     module
     module-id)
     [(Ok local-top-env local-type-env local-name-only)
@@ -8515,10 +7901,7 @@
     (let
       [epoch : i64 epochs.released]
       [store : LowerModuleLocalViewStore
-        (compiler-lower-state-read
-          lower-state
-          LowerModuleLocalViewStore
-          active-module-local-views)]
+        (compiler-lower-state-active-module-local-views lower-state)]
       [modules : lower_i64_i64_map.Map store.modules]
       [index : i64 0]
       (while (< index epochs.built)
@@ -8537,10 +7920,8 @@
             unit)
           unit)
         (set! index (+ index 1)))
-      (compiler-lower-state-write!
+      (compiler-lower-state-set-active-module-local-views!
         lower-state
-        LowerModuleLocalViewStore
-        active-module-local-views
         (LowerModuleLocalViewStore modules store.values store.len))
       (when
         (> (array-ref epochs.arenas epoch) 0)
@@ -8597,10 +7978,7 @@
   256)
 
 (define (compiler-lower-state-spmd-package [state : CompilerLowerState]) : CompilerLowerSpmdPackageState
-  (compiler-lower-state-read
-    state
-    CompilerLowerSpmdPackageState
-    spmd-package-state))
+  (compiler-lower-state-spmd-package-state state))
 
 (define (compiler-lower-state-set-spmd-package!
   [state : CompilerLowerState]
@@ -8625,11 +8003,7 @@
         unit
         (unsafe
           (arena.tl_arena_destroy previous.arena)))
-      (compiler-lower-state-write!
-        state
-        CompilerLowerSpmdPackageState
-        spmd-package-state
-        package))))
+      (compiler-lower-state-set-spmd-package-state! state package))))
 
 (define (compiler-lower-state-clear-spmd-package! [state : CompilerLowerState]) : unit
   (let
@@ -8639,10 +8013,8 @@
       unit
       (unsafe
         (arena.tl_arena_destroy previous.arena)))
-    (compiler-lower-state-write!
+    (compiler-lower-state-set-spmd-package-state!
       state
-      CompilerLowerSpmdPackageState
-      spmd-package-state
       (compiler-lower-spmd-package-state-empty))))
 
 (define (compiler-lower-state-ensure-spmd-package! [state : CompilerLowerState]) : unit
@@ -8660,19 +8032,12 @@
     package.name))
 
 (define (compiler-lower-function-memo-storage [state : CompilerLowerState]) : CompilerLowerFunctionMemoStorage
-  (compiler-lower-state-read
-    state
-    CompilerLowerFunctionMemoStorage
-    function-memo-storage))
+  (compiler-lower-state-function-memo-storage state))
 
 (define (compiler-lower-function-memo-storage-set!
   [state : CompilerLowerState]
   [storage : CompilerLowerFunctionMemoStorage]) : unit
-  (compiler-lower-state-write!
-    state
-    CompilerLowerFunctionMemoStorage
-    function-memo-storage
-    storage))
+  (compiler-lower-state-set-function-memo-storage! state storage))
 
 (define (compiler-lower-function-memo-storage-ensure!
   [state : CompilerLowerState]) : unit
@@ -8858,24 +8223,18 @@
     false
     ""
     cbi.compiler-builtin-id-fix-empty)
-  (compiler-lower-state-write! lower-state i64 current-source-path-id 0)
-  (compiler-lower-state-write! lower-state bool current-decl-generated false)
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-current-source-path-id! lower-state 0)
+  (compiler-lower-state-set-current-decl-generated! lower-state false)
+  (compiler-lower-state-set-decls-global-type-cache!
     lower-state
-    LowerTypeCache
-    decls-global-type-cache
     (LowerTypeCache.No))
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-rvo-early-return-functions!
     lower-state
-    lower_i64_i64_map.Map
-    rvo-early-return-functions
     (lower_i64_i64_map.with-capacity 8))
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-active-symbols!
     lower-state
-    csym.CompilerSymbols
-    active-symbols
     (csym.compiler-symbols-empty))
-  (compiler-lower-state-write! lower-state bool active-symbols-ready false)
+  (compiler-lower-state-set-active-symbols-ready! lower-state false)
   (lower-alias-overlay-reset! lower-state)
   (lower-alias-symbol-memo-release! lower-state)
   (lower-reach-scratch-state-reset! lower-state)
@@ -10824,16 +10183,11 @@
         (compiler-lower-state-structural-session lower-state)
         name)
       0))
-    (compiler-lower-state-write!
+    (compiler-lower-state-set-reach-active-body-used-types!
       lower-state
-      lower_i64_i64_map.Map
-      reach-active-body-used-types
       (lower-used-type-name-add
         (compiler-lower-state-structural-session lower-state)
-        (compiler-lower-state-read
-          lower-state
-          lower_i64_i64_map.Map
-          reach-active-body-used-types)
+        (compiler-lower-state-reach-active-body-used-types lower-state)
         ""
         name))
     unit))
@@ -12939,10 +12293,8 @@
   [entry-path : String]
   [names : LowerNameEnv]
   [count : i64]) : LowerFunctionBodyIndex
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-active-module-name-caches!
     lower-state
-    LowerModuleNameCacheStore
-    active-module-name-caches
     (lower-module-name-cache-store-empty))
   (let
     [name-cache : LowerNameCache
@@ -12982,18 +12334,14 @@
               [(Some body body-names body-path-owner-id)
                 (let
                   [runtime-paths : lower_i64_i64_map.Map
-                    (compiler-lower-state-read
-                      lower-state
-                      lower_i64_i64_map.Map
-                      reach-active-runtime-paths)]
+                    (compiler-lower-state-reach-active-runtime-paths
+                      lower-state)]
                   (lower_i64_i64_map.insert-ref!
                     (&mut runtime-paths)
                     body-path-owner-id
                     1)
-                  (compiler-lower-state-write!
+                  (compiler-lower-state-set-reach-active-runtime-paths!
                     lower-state
-                    lower_i64_i64_map.Map
-                    reach-active-runtime-paths
                     runtime-paths))
                 (lower-reach-process
                   pools
@@ -14401,10 +13749,7 @@
 (define (lower-comptime-error-ids-reset! [lower-state : CompilerLowerState]) : unit
   (let
     [cache : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        comptime-error-cache)]
+      (compiler-lower-state-comptime-error-cache lower-state)]
     [index : i64 0]
     (while (< index lower-comptime-cache-size)
       (set! (array-ref cache index) 0)
@@ -14421,10 +13766,7 @@
     [generation : i64 (ci.intern-compat-state-generation intern-state)]
     [table-id : i64 (ci.intern-compat-state-table-id intern-state)]
     [cache : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        comptime-error-cache)]
+      (compiler-lower-state-comptime-error-cache lower-state)]
     (unless
       (and
         (= (array-ref cache lower-comptime-cache-table-id-index) table-id)
@@ -14480,10 +13822,7 @@
   [id : i64]) : bool
   (let
     [cache : (__tl_dyn-array i64)
-      (compiler-lower-state-read
-        lower-state
-        (__tl_dyn-array i64)
-        comptime-error-cache)]
+      (compiler-lower-state-comptime-error-cache lower-state)]
     (or
       (= id (array-ref cache lower-comptime-cache-id-index))
       (= id (array-ref cache lower-comptime-cache-comptime-dot-id-index))
@@ -14909,7 +14248,7 @@
         ;; below (the original behavior); decl-lowering re-sets it before use.
         [_set-global : unit
           (begin
-            (lower-active-global-name-cache-set!
+            (compiler-lower-state-set-active-global-name-cache!
               lower-state
               (lower-name-cache-from-env
                 lower-state
@@ -14957,15 +14296,11 @@
           [result : LowerPrunedProgramWithPlan
             (if (>= main-id 0)
               (begin
-                (compiler-lower-state-write!
+                (compiler-lower-state-set-reach-active-runtime-paths!
                   lower-state
-                  lower_i64_i64_map.Map
-                  reach-active-runtime-paths
                   (lower_i64_i64_map.with-capacity 1024))
-                (compiler-lower-state-write!
+                (compiler-lower-state-set-reach-active-body-used-types!
                   lower-state
-                  lower_i64_i64_map.Map
-                  reach-active-body-used-types
                   (lower-used-types-precise-empty))
                 (let
                   [main-state : LowerReachState
@@ -15028,15 +14363,11 @@
                     [(State reachable _ _)
                       (let
                         [runtime-paths : lower_i64_i64_map.Map
-                          (compiler-lower-state-read
-                            lower-state
-                            lower_i64_i64_map.Map
-                            reach-active-runtime-paths)]
+                          (compiler-lower-state-reach-active-runtime-paths
+                            lower-state)]
                         [body-used-types : lower_i64_i64_map.Map
-                          (compiler-lower-state-read
-                            lower-state
-                            lower_i64_i64_map.Map
-                            reach-active-body-used-types)]
+                          (compiler-lower-state-reach-active-body-used-types
+                            lower-state)]
                         [type-path-seed : LowerUsedTypePathSeed
                           (lower-used-types-path-seed-in-module
                             (compiler-lower-state-structural-session
@@ -15152,25 +14483,16 @@
     (compiler-lower-state-from-name-cache names)))
 
 (define (lower-state-current-source-path-id [state : LowerState]) : i64
-  (compiler-lower-state-read
-    (lower-state-owner state)
-    i64
-    current-source-path-id))
+  (compiler-lower-state-current-source-path-id (lower-state-owner state)))
 
 (define (lower-state-current-decl-generated? [state : LowerState]) : bool
-  (compiler-lower-state-read
-    (lower-state-owner state)
-    bool
-    current-decl-generated))
+  (compiler-lower-state-current-decl-generated (lower-state-owner state)))
 
 (define (lower-state-active-loop-function [state : LowerState]) : i64
-  (compiler-lower-state-read (lower-state-owner state) i64 active-loop-function))
+  (compiler-lower-state-active-loop-function (lower-state-owner state)))
 
 (define (lower-state-active-loop-entry-var-limit [state : LowerState]) : i64
-  (compiler-lower-state-read
-    (lower-state-owner state)
-    i64
-    active-loop-entry-var-limit))
+  (compiler-lower-state-active-loop-entry-var-limit (lower-state-owner state)))
 
 (define (lower-state-type-cache [state : LowerState]) : LowerTypeCache
   (let
@@ -43613,28 +42935,20 @@
     [lower-state : CompilerLowerState (lower-state-owner state)]
     [previous-function : i64 (lower-state-active-loop-function state)]
     [previous-var-limit : i64 (lower-state-active-loop-entry-var-limit state)]
-    (compiler-lower-state-write!
+    (compiler-lower-state-set-active-loop-function!
       lower-state
-      i64
-      active-loop-function
       (lower-state-current-function-id state))
-    (compiler-lower-state-write!
+    (compiler-lower-state-set-active-loop-entry-var-limit!
       lower-state
-      i64
-      active-loop-entry-var-limit
       (lower-state-next-var state))
     (let
       [result : ResultLowerExpr
         (lower-while-active ctx state env type-env cond body)]
-      (compiler-lower-state-write!
+      (compiler-lower-state-set-active-loop-function!
         lower-state
-        i64
-        active-loop-function
         previous-function)
-      (compiler-lower-state-write!
+      (compiler-lower-state-set-active-loop-entry-var-limit!
         lower-state
-        i64
-        active-loop-entry-var-limit
         previous-var-limit)
       result)))
 
@@ -58526,11 +57840,7 @@
                 (&mut package.identity-stable-hashes)
                 identity
                 hash))
-            (compiler-lower-state-write!
-              lower-state
-              CompilerLowerSpmdPackageState
-              spmd-package-state
-              package)
+            (compiler-lower-state-set-spmd-package-state! lower-state package)
             hash))])))
 
 (define (lower-spmd-package-structural-symbol
@@ -58699,11 +58009,7 @@
             (&mut package.symbol-identities)
             registration-key
             identity)
-          (compiler-lower-state-write!
-            lower-state
-            CompilerLowerSpmdPackageState
-            spmd-package-state
-            package)
+          (compiler-lower-state-set-spmd-package-state! lower-state package)
           New)])))
 
 (define (lower-spmd-package-lane-width-supported? [lanes : i64]) : bool
@@ -65063,10 +64369,8 @@
           [names : LowerNameCache (lower-state-names state)]
           (lower-name-cache-resolve-logical-id (& names) name-id name-id)))]
     [early-returns : lower_i64_i64_map.Map
-      (compiler-lower-state-read
-        (lower-state-owner state)
-        lower_i64_i64_map.Map
-        rvo-early-return-functions)]
+      (compiler-lower-state-rvo-early-return-functions
+        (lower-state-owner state))]
     (lower_i64_i64_map.contains? (& early-returns) logical-id)))
 
 ;; Call-slot RVO for a tail-position direct CALL whose aggregate result is
@@ -66652,10 +65956,7 @@
   [params : ast.AstParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]) : unit
-  (match (compiler-lower-state-read
-    (lower-state-owner state)
-    pointer_proof.PointerProofRequest
-    pointer-proof-request)
+  (match (compiler-lower-state-pointer-proof-request (lower-state-owner state))
     [(Disabled) unit]
     [(Requested input)
       (let
@@ -67251,7 +66552,7 @@
         (ir.compiler-source-spans-insert-located
           spans
           name
-          (compiler-lower-state-read lower-state i64 current-source-path-id)
+          (compiler-lower-state-current-source-path-id lower-state)
           span)
         (ir.compiler-source-spans-insert spans name span))]
     [(No) spans]))
@@ -69338,12 +68639,10 @@
   [names : LowerNameEnv]
   [clone-roots : clone_support.CloneRootEntries]
   [mode : CompilerLowerMode]) : ResultLowerDecls
-  (compiler-lower-state-write!
+  (compiler-lower-state-set-active-symbols!
     lower-state
-    csym.CompilerSymbols
-    active-symbols
     (csym.compiler-symbols-shared-view (tc_core.tc-context-symbols ctx)))
-  (compiler-lower-state-write! lower-state bool active-symbols-ready true)
+  (compiler-lower-state-set-active-symbols-ready! lower-state true)
   (let
     [dispatch-name-cache : LowerNameCache
       (lower-name-cache-with-clone-roots
@@ -69359,21 +68658,17 @@
     ;; are small overlays that fall through to them. The initial cur caches are
     ;; empty overlays (everything resolves via the global caches) for decls in
     ;; the leading "" module before the first (module ...) marker.
-    (lower-active-global-name-cache-set! lower-state dispatch-name-cache)
-    (compiler-lower-state-write!
+    (compiler-lower-state-set-active-global-name-cache!
       lower-state
-      LowerModuleLocalViewStore
-      active-module-local-views
+      dispatch-name-cache)
+    (compiler-lower-state-set-active-module-local-views!
+      lower-state
       (lower-module-local-view-store-empty))
-    (compiler-lower-state-write!
+    (compiler-lower-state-set-decls-global-type-cache!
       lower-state
-      LowerTypeCache
-      decls-global-type-cache
       (lower-type-cache-from-env lower-state top-env))
-    (compiler-lower-state-write!
+    (compiler-lower-state-set-rvo-early-return-functions!
       lower-state
-      lower_i64_i64_map.Map
-      rvo-early-return-functions
       (lower-rvo-early-return-functions-from-decls
         lower-state
         ctx
@@ -69533,10 +68828,8 @@
             ;; embedded payload does; compiler diagnostics keep the
             ;; physical one.
             [_source-path : unit
-              (compiler-lower-state-write!
+              (compiler-lower-state-set-current-source-path-id!
                 lower-state
-                i64
-                current-source-path-id
                 (if (> (string.string-length decl-path) 0)
                   (let
                     [location-path : String
@@ -69545,10 +68838,8 @@
                     (load.compiler-load-source-path-id location-path))
                   0))]
             [_generated-decl : unit
-              (compiler-lower-state-write!
+              (compiler-lower-state-set-current-decl-generated!
                 lower-state
-                bool
-                current-decl-generated
                 (match (ast.ast-decl-generated-meta decl)
                   [(Some _ _ _ _) true]
                   [(No) false]))]
@@ -70202,12 +69493,11 @@
   (when
     (ir.compiler-debug-info-enabled?)
     (let
-      [types : LowerDebugTypes
-        (compiler-lower-state-read owner LowerDebugTypes debug-types)]
+      [types : LowerDebugTypes (compiler-lower-state-debug-types owner)]
       (in-arena
         (arena.Arena types.arena)
         (lower-debug-type-id! ctx (&mut types) ty))
-      (compiler-lower-state-write! owner LowerDebugTypes debug-types types))))
+      (compiler-lower-state-set-debug-types! owner types))))
 
 ;; Record a function's parameter and result types as debug type roots.
 (define (lower-debug-function-roots!
@@ -70230,8 +69520,7 @@
 
 (define (compiler-lower-state-debug-type-graph [owner : CompilerLowerState]) : ir.CompilerDebugTypeGraph
   (let
-    [types : LowerDebugTypes
-      (compiler-lower-state-read owner LowerDebugTypes debug-types)]
+    [types : LowerDebugTypes (compiler-lower-state-debug-types owner)]
     types.graph))
 
 (define (lower-debug-type-resolve [ctx : tc_core.TcContext] [ty : ast.AstType]) : ast.AstType
@@ -70777,8 +70066,7 @@
 (define (lower-debug-types-error [owner : CompilerLowerState]) : String
   (if (ir.compiler-debug-info-enabled?)
     (let
-      [types : LowerDebugTypes
-        (compiler-lower-state-read owner LowerDebugTypes debug-types)]
+      [types : LowerDebugTypes (compiler-lower-state-debug-types owner)]
       (string.copy (& types.error)))
     ""))
 
@@ -70873,10 +70161,7 @@
   [names : LowerNameEnv]
   [clone-roots : clone_support.CloneRootEntries]
   [mode : CompilerLowerMode]) : ResultCompilerLower
-  (match (compiler-lower-state-read
-    lower-state
-    pointer_proof.PointerProofRequest
-    pointer-proof-request)
+  (match (compiler-lower-state-pointer-proof-request lower-state)
     [(Disabled) unit]
     [(Requested input)
       (let
@@ -70929,10 +70214,7 @@
                   (return
                     (ResultCompilerLower.Err
                       (box (lower-diagnostic debug-error))))))
-              (match (compiler-lower-state-read
-                lower-state
-                pointer_proof.PointerProofRequest
-                pointer-proof-request)
+              (match (compiler-lower-state-pointer-proof-request lower-state)
                 [(Disabled) unit]
                 [(Requested input)
                   (pointer_proof.pointer-proof-input-bind!
@@ -70941,10 +70223,7 @@
                     (lower-global-shared-view success.spans))])
               (Ok program success.spans))]
           [(Err message)
-            (match (compiler-lower-state-read
-              lower-state
-              pointer_proof.PointerProofRequest
-              pointer-proof-request)
+            (match (compiler-lower-state-pointer-proof-request lower-state)
               [(Requested input)
                 (pointer_proof.pointer-proof-input-fail!
                   input

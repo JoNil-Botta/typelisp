@@ -49,7 +49,7 @@ should use a `benchmark-`, `measure-`, or `analyze-` name.
 | Check TypeLisp formatting and lint | `check-tl-format.sh`, `verify-format-large-crlf.sh`, `check-tl-lint.sh` |
 | Check compiler-source coverage | `verify-selfhost-compile-manifest.sh`, `verify-inline-tests.sh` |
 | Check process-tree memory limiting | `verify-linux-memory-limit.sh` (covers `lib-linux-memory-limit.sh`), `verify-windows-memory-limit.ps1` (covers `run-bounded-process.ps1`) |
-| Check structural migration invariants | `check-zero-cons.sh` (`--fixtures` in CI; `--full` for the production backlog) |
+| Check structural migration invariants | `check-zero-cons.sh` (`--fixtures` in CI; `--full` for the production backlog), `check-compiler-state-schema.sh` (packed compiler state stays behind its schema's typed accessors) |
 | Check public CLI behavior | `verify-public-tools.sh`, `verify-selfhost-cli-build-run.sh`, `check-stage1-wrapper.sh` (CLI transcripts in `tests/cli/`, run by `verify-codegen-cases.sh`) |
 | Check application workflows | `verify-app-corpus.sh` (the projects and scenario manifest in `tests/apps/`; see `tests/apps/README.md`) |
 | Check TLCI containers and package catalogs | `verify-tlci-corpus.sh`, `verify-tlci-native-route-stress.sh`, `verify-stdlib-tlci-identity-differential.sh` (all embedded identities; called by compile-profile), `verify-embedded-stdlib-tlci-resources.sh`, `verify-package-metadata-tlci.sh`, `verify-package-native-tlci.sh`, `verify-package-surface-tlci.sh` |

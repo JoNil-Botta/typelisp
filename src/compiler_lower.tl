@@ -23373,6 +23373,7 @@
       [function-spans : ir.CompilerSourceSpans
         (lower-record-function-span
           (compiler-lower-state-from-name-cache names)
+          (& (tc_core.tc-context-pools ctx))
           spans
           (ir.compiler-ir-symbol-typed-id logical-name)
           (lower-global-shared-view body))]
@@ -59249,6 +59250,7 @@
     [function-spans : ir.CompilerSourceSpans
       (lower-record-function-span
         (compiler-lower-state-from-name-cache names)
+        (& (tc_core.tc-context-pools ctx))
         spans
         (ir.compiler-ir-symbol-typed-id hidden-name)
         (lower-global-shared-view body))]
@@ -59408,6 +59410,7 @@
     [function-spans : ir.CompilerSourceSpans
       (lower-record-function-span
         (compiler-lower-state-from-name-cache names)
+        (& (tc_core.tc-context-pools ctx))
         spans
         (ir.compiler-ir-symbol-typed-id hidden-name)
         (lower-global-shared-view body))]
@@ -66878,6 +66881,7 @@
       [function-spans : ir.CompilerSourceSpans
         (lower-record-function-span
           (compiler-lower-state-from-name-cache names)
+          (& (tc_core.tc-context-pools ctx))
           spans
           (ir.compiler-ir-symbol-typed-id logical-name)
           (lower-global-shared-view body))]
@@ -67200,17 +67204,37 @@
           [(Err _) (tc_core.tc-top-decl-type-with-env ctx env actual)])]
       [_ (tc_core.tc-top-decl-type-with-env ctx env actual)])))
 
+;; The span a function's provenance row records: the body's own span. A body
+;; of several forms reaches lowering as the parser's implicit `Begin`
+;; (`parse-ast-body-tail`), which has no `Spanned` wrapper, so it takes its
+;; first form's span -- where an explicit `(begin ...)` around the same forms
+;; would have started. Without it such a function had no location in a
+;; `--backtrace` map, and a `stdlib/runtime.tl` frame escaped the renderer's
+;; runtime-path filter (#8651).
+(define (lower-function-body-span
+  [pools : (& pools ast.AstNodePoolContext)]
+  [body : ast.AstExpr]) : ir.CompilerMaybeSourceSpan
+  (match body
+    [(Spanned _ span) (Some span)]
+    [(Begin exprs)
+      (if (> exprs.len 0)
+        (lower-ast-expr-direct-span
+          (ast.ast-node-pool-context-expr-get
+            pools
+            (ast.ast-expr-list-get (& exprs) 0 0)))
+        (No))]
+    [_ (No)]))
+
 ;; Record `name -> body span` into the provenance table. A function whose
-;;
 ;; body carries no source span leaves the table unchanged, so the backend simply
-;;
 ;; falls back to its default location for that function.
 (define (lower-record-function-span
   [lower-state : CompilerLowerState]
+  [pools : (& pools ast.AstNodePoolContext)]
   [spans : ir.CompilerSourceSpans]
   [name : ir.CompilerIrSymbolId]
   [body : ast.AstExpr]) : ir.CompilerSourceSpans
-  (match (lower-ast-expr-direct-span body)
+  (match (lower-function-body-span pools body)
     [(Some span)
       (if (ir.compiler-debug-info-enabled?)
         (ir.compiler-source-spans-insert-located

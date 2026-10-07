@@ -2374,11 +2374,19 @@
 ;: seeded by the process id (`GetCurrentProcessId` on Windows, `getpid` on
 ;: Linux) and an attempt counter, retrying on collision.
 (define (try-create-temp-dir [prefix : (& prefix str)]) : io.ResultIoString
+  (let
+    [root : String (stdlib.fs.temp-root)]
+    (try-create-temp-dir-in (& root) prefix)))
+
+;: Create a unique directory below `root`, named as `try-create-temp-dir` names
+;: its directories.
+;:
+;: Use it for scratch space that must share a filesystem with `root`, such as
+;: an output staged for `try-atomic-replace`. `root` must already exist.
+(define (try-create-temp-dir-in [root : (& root str)] [prefix : (& prefix str)]) : io.ResultIoString
   (if (= (string-length prefix) 0)
     (ErrIoString (IoInvalidPath (string.copy prefix)))
-    (let
-      [root : String (stdlib.fs.temp-root)]
-      (stdlib.fs.create-temp-dir-loop (& root) prefix (stdlib.fs.process-id) 0))))
+    (stdlib.fs.create-temp-dir-loop root prefix (stdlib.fs.process-id) 0)))
 
 ;; Inline test coverage.
 (cfg
@@ -2928,6 +2936,50 @@
         "temp directories are unique")
       (fs-test-assert-exists dir-a true "temp dir a exists")
       (fs-test-assert-exists dir-b true "temp dir b exists"))))
+
+(cfg
+  test
+  (define (fs-test-assert-created-temp-dir-in) : unit
+    (let
+      [root : String
+        (fs-test-expect-ok-string
+          (fs-api-test-try-create-temp-dir "typelisp fs root")
+          "create temp root: ")]
+      [prefix : String ".typelisp-in"]
+      [dir-a : String
+        (fs-test-expect-ok-string
+          (try-create-temp-dir-in (& root) (& prefix))
+          "create dir in root a: ")]
+      [dir-b : String
+        (fs-test-expect-ok-string
+          (try-create-temp-dir-in (& root) (& prefix))
+          "create dir in root b: ")]
+      [missing : String (fs-api-test-fs-path-join (& root) "missing")]
+      [empty : String ""]
+      (fs-test-assert-true
+        (not (string.eq dir-a dir-b))
+        "directories in a root are unique")
+      (fs-test-assert-true
+        (string.eq (dirname (& dir-a)) root)
+        "directory is created directly below the root")
+      (fs-test-assert-exists (& dir-a) true "dir in root a exists")
+      (fs-test-assert-exists (& dir-b) true "dir in root b exists")
+      (match (try-create-temp-dir-in (& root) (& empty))
+        [(ErrIoString _) unit]
+        [(OkIoString _)
+          (io.panic "empty prefix below a root unexpectedly succeeded")])
+      (match (try-create-temp-dir-in (& missing) (& prefix))
+        [(ErrIoString _) unit]
+        [(OkIoString _) (io.panic "missing root unexpectedly succeeded")])
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-remove-dir (& dir-a))
+        "remove dir a: ")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-remove-dir (& dir-b))
+        "remove dir b: ")
+      (fs-test-assert-ok-unit
+        (fs-api-test-try-remove-dir (& root))
+        "remove root: "))))
 
 (cfg
   test
@@ -3794,6 +3846,7 @@
               (fs-api-test-try-remove-dir-if-exists dir-b)
               "cleanup missing temp dir b: ")
             (fs-test-assert-invalid-temp-dir)
+            (fs-test-assert-created-temp-dir-in)
             (fs-test-assert-file-kind-invalid "" "empty file-kind path invalid")
             (fs-test-assert-file-metadata-invalid
               ""

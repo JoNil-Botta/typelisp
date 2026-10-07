@@ -59,13 +59,13 @@
   [call-expr : i64]
   [name : String]
   [want-args : i64]) : bool
-  (match (ast.ast-expr-unspan (ast.ast-node-get call-expr))
+  (match (ast.ast-expr-unspan (& (ast.ast-node-get call-expr)))
     [(Call head args)
       (let
         [head-expr : ast.AstExpr (ast.ast-node-get head)]
         (and
           (= (compiler-parse-expr-list-count args) want-args)
-          (match (ast.ast-expr-unspan head-expr)
+          (match (ast.ast-expr-unspan (& head-expr))
             [(Var found) (string.eq (ci.intern-str found) name)]
             [_ false])))]
     [_ false]))
@@ -522,7 +522,7 @@
       "parse: malformed defdispatch variant")))
 
 (define (ast-expr-inner-tag [expr : ast.AstExpr]) : i64
-  (ast_tests.ast-expr-tag (ast.ast-expr-unspan expr)))
+  (ast_tests.ast-expr-tag (ast.ast-expr-unspan (& expr))))
 
 (define (ast-main-body-tag [decls : ast.AstDeclList]) : i64
   (match (ast.ast-decl-list-step decls)
@@ -715,7 +715,7 @@
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               (and
                 (= name cbi.compiler-builtin-id-fix-main)
-                (match (ast.ast-expr-unspan body)
+                (match (ast.ast-expr-unspan (& body))
                   [(Literal (Float text)) (string.eq text "1.5")]
                   [_ false])))]
           [_ false]))]
@@ -810,7 +810,7 @@
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               (and
                 (= name cbi.compiler-builtin-id-fix-main)
-                (match (ast.ast-expr-unspan body)
+                (match (ast.ast-expr-unspan (& body))
                   [(WithRegion region _)
                     (= region cbi.compiler-builtin-id-fix-n)]
                   [_ false])))]
@@ -956,8 +956,7 @@
                   (and
                     (= name (reader.stable-symbol-id "local-call"))
                     (string.eq
-                      (ast.ast-extern-metadata-symbol
-                        (parser.compiler-parse-place-shared-view metadata-view))
+                      (ast.ast-extern-metadata-symbol (& metadata-view))
                       "foreign_exact")
                     ;; A user extern is exactly C, never the package TypeLisp ABI.
                     (match (ast.ast-extern-metadata-abi
@@ -1081,7 +1080,7 @@
       (and
         (= name (reader.stable-symbol-id "local-add"))
         (string.eq
-          (ast.ast-extern-metadata-symbol (deref metadata))
+          (ast.ast-extern-metadata-symbol (& (deref metadata)))
           "foreign_add_exact")
         (match ty
           [(Func args ret)
@@ -1142,7 +1141,7 @@
             [done : ast.AstDeclList done-box]
             (and
               (ast_tests.ast-decl-list-empty? (& done))
-              (match (ast.ast-expr-unspan (ast.ast-node-get body-box))
+              (match (ast.ast-expr-unspan (& (ast.ast-node-get body-box)))
                 [(Init ty-id)
                   (match (ast.ast-maybe-type-from-id ty-id)
                     [(Some inner)
@@ -1166,7 +1165,7 @@
                 [done : ast.AstDeclList done-box]
                 (and
                   (ast_tests.ast-decl-list-empty? (& done))
-                  (match (ast.ast-expr-unspan (ast.ast-node-get body-box))
+                  (match (ast.ast-expr-unspan (& (ast.ast-node-get body-box)))
                     [(Init ty-id)
                       (match (ast.ast-maybe-type-from-id ty-id)
                         [(No) true]
@@ -1370,7 +1369,7 @@
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
                 [(Nil)
-                  (match (ast.ast-expr-unspan body)
+                  (match (ast.ast-expr-unspan (& body))
                     [(Begin exprs)
                       (if (>= exprs.len 2)
                         (let
@@ -1380,24 +1379,24 @@
                           [second : ast.AstExpr
                             (ast.ast-node-get
                               (ast.ast-expr-list-get (& exprs) 1 0))]
-                          (match (ast.ast-expr-unspan first)
+                          (match (ast.ast-expr-unspan (& first))
                             [(Borrow _ first-lifetime-id first-place-box)
                               (let
                                 [first-place : ast.AstExpr
                                   (ast.ast-node-get first-place-box)]
-                                (match (ast.ast-expr-unspan first-place)
+                                (match (ast.ast-expr-unspan (& first-place))
                                   [(Var first-name)
                                     (if (=
                                       first-name
                                       cbi.compiler-builtin-id-fix-x)
-                                      (match (ast.ast-expr-unspan second)
+                                      (match (ast.ast-expr-unspan (& second))
                                         [(Borrow _ lifetime second-place-box)
                                           (let
                                             [second-place : ast.AstExpr
                                               (ast.ast-node-get
                                                 second-place-box)]
                                             (match (ast.ast-expr-unspan
-                                              second-place)
+                                              (& second-place))
                                               [(Var second-name)
                                                 (and
                                                   (= first-lifetime-id -1)
@@ -1430,14 +1429,14 @@
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
                 [(Nil)
-                  (match (ast.ast-expr-unspan body)
+                  (match (ast.ast-expr-unspan (& body))
                     [(Call _ args)
                       (if (= args.len 1)
                         (let
                           [arg : ast.AstExpr
                             (ast.ast-node-get
                               (ast.ast-expr-list-get (& args) 0 0))]
-                          (match (ast.ast-expr-unspan arg)
+                          (match (ast.ast-expr-unspan (& arg))
                             [(Try _) true]
                             [_ false]))
                         false)]
@@ -1458,11 +1457,11 @@
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
                 [(Nil)
-                  (match (ast.ast-expr-unspan body)
+                  (match (ast.ast-expr-unspan (& body))
                     [(Return inner-box)
                       (let
                         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
-                        (match (ast.ast-expr-unspan inner)
+                        (match (ast.ast-expr-unspan (& inner))
                           [(Literal (Int 42 _)) true]
                           [_ false]))]
                     [_ false])]
@@ -1471,12 +1470,12 @@
     [(Err _) false]))
 
 (define (compiler-parse-call-head-name? [expr : ast.AstExpr] [name : String]) : bool
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan (& expr))
     [(Var found) (string.eq (ci.intern-str found) name)]
     [_ false]))
 
 (define (compiler-parse-return-expr? [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan (& expr))
     [(Return _) true]
     [_ false]))
 
@@ -1511,7 +1510,7 @@
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
                 [(Nil)
-                  (match (ast.ast-expr-unspan body)
+                  (match (ast.ast-expr-unspan (& body))
                     [(Call func-box args)
                       (let
                         [func : ast.AstExpr (ast.ast-node-get func-box)]
@@ -1899,7 +1898,7 @@
                       [(No) true]
                       [_ false])
                     (not (ast.ast-test-metadata-slow? metadata))
-                    (match (ast.ast-expr-unspan body)
+                    (match (ast.ast-expr-unspan (& body))
                       [(Begin exprs)
                         (= (compiler-parse-expr-list-count exprs) 2)]
                       [_ false]))]
@@ -2706,12 +2705,12 @@
       [(Ok (Program decls-box))
         (match (ast.ast-decl-list-step (deref decls-box))
           [(Cons (DefFn _ _ _ _ body _) _)
-            (match (ast.ast-expr-unspan (ast.ast-node-get body))
+            (match (ast.ast-expr-unspan (& (ast.ast-node-get body)))
               [(While _ forms)
                 (and
                   (= forms.len 3)
                   (match (ast.ast-expr-unspan
-                    (ast.ast-node-get (ast.ast-expr-list-get (& forms) 1 0)))
+                    (& (ast.ast-node-get (ast.ast-expr-list-get (& forms) 1 0))))
                     [(Begin explicit-forms) (= explicit-forms.len 2)]
                     [_ false]))]
               [_ false])]
@@ -2966,7 +2965,7 @@
 (define (compiler-parse-match-arm-single-ok? [arm : ast.AstMatchArm]) : bool
   (match arm
     [(Arm _ body)
-      (match (ast.ast-expr-unspan (ast.ast-node-get body))
+      (match (ast.ast-expr-unspan (& (ast.ast-node-get body)))
         [(Var _) true]
         [_ false])]))
 
@@ -2979,7 +2978,7 @@
     [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
         [(Cons (DefFn _ _ _ _ body-box _) _)
-          (match (ast.ast-expr-unspan (ast.ast-node-get body-box))
+          (match (ast.ast-expr-unspan (& (ast.ast-node-get body-box)))
             [(Match payload)
               (match (__tl-box-place payload)
                 [(Match _ arms)
@@ -3158,7 +3157,7 @@
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
                 [(Nil)
-                  (match (ast.ast-expr-unspan body)
+                  (match (ast.ast-expr-unspan (& body))
                     [(WithResource wr-box)
                       (match (deref wr-box)
                         [(WithResource bindings body-exprs)
@@ -3171,7 +3170,7 @@
                               [nested : ast.AstExpr
                                 (ast.ast-node-get
                                   (ast.ast-expr-list-get (& body-exprs) 1 0))]
-                              (match (ast.ast-expr-unspan nested)
+                              (match (ast.ast-expr-unspan (& nested))
                                 [(WithResource nested-wr-box)
                                   (match (deref nested-wr-box)
                                     [(WithResource nested-bindings nested-body)
@@ -3241,21 +3240,21 @@
                     (match ret-ty
                       [(Var name) (string.eq (ci.intern-str name) "Expr")]
                       [_ false])
-                    (match (ast.ast-expr-unspan body)
+                    (match (ast.ast-expr-unspan (& body))
                       [(Quasiquote template-box)
                         (let
                           [template : ast.AstExpr
                             (ast.ast-node-get template-box)]
-                          (match (ast.ast-expr-unspan template)
+                          (match (ast.ast-expr-unspan (& template))
                             [(If cond-box _ _)
                               (let
                                 [cond : ast.AstExpr (ast.ast-node-get cond-box)]
-                                (match (ast.ast-expr-unspan cond)
+                                (match (ast.ast-expr-unspan (& cond))
                                   [(Unquote unquoted-box)
                                     (let
                                       [unquoted : ast.AstExpr
                                         (ast.ast-node-get unquoted-box)]
-                                      (match (ast.ast-expr-unspan unquoted)
+                                      (match (ast.ast-expr-unspan (& unquoted))
                                         [(Var name)
                                           (string.eq (ci.intern-str name) "e")]
                                         [_ false]))]
@@ -3719,7 +3718,7 @@
           [decls : ast.AstDeclList (deref decls-box)]
           (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
             [(DefFn decl-meta _ _ _ _ metadata)
-              (match (ast.ast-fn-metadata-spmd-callable metadata)
+              (match (ast.ast-fn-metadata-spmd-callable (& metadata))
                 [(Callable specializations)
                   (let
                     [fallback : ast.AstSpmdSpecialization
@@ -3937,13 +3936,13 @@
         [(Ok (Program decls-box))
           (match (ast.ast-decl-list-step (deref decls-box))
             [(Cons (DefFn _ _ _ _ body _) _)
-              (match (ast.ast-expr-unspan (ast.ast-node-get body))
+              (match (ast.ast-expr-unspan (& (ast.ast-node-get body)))
                 [(Match payload)
                   (match (deref payload)
                     [(Match scrutinee arms)
                       (and
                         (match (ast.ast-expr-unspan
-                          (ast.ast-node-get scrutinee))
+                          (& (ast.ast-node-get scrutinee)))
                           [(Literal (Int 42 text)) (string.eq text "0x2a")]
                           [_ false])
                         (match (ast.ast-match-arm-list-get
@@ -3954,7 +3953,7 @@
                             (and
                               (string.eq text "0x2a")
                               (match (ast.ast-expr-unspan
-                                (ast.ast-node-get result))
+                                (& (ast.ast-node-get result)))
                                 [(Literal (Float spelling))
                                   (string.eq spelling "1.25")]
                                 [_ false]))]

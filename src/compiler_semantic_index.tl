@@ -1771,7 +1771,7 @@
           (tc.tc-type-render
             (ast.ast-ty-func
               (tc.tc-macro-param-type-list ctx params)
-              (tc.tc-resolve-type ctx ret)))]
+              (& (tc.tc-resolve-type ctx ret))))]
         [(Unsafe inner)
           (compiler-semantic-decl-type ctx env (deref inner) kind name-id name)]
         [_ "macro"])]
@@ -7051,7 +7051,7 @@
           (cload.compiler-load-decl-list-append prelude-decls entry-decls)
           (cload.compiler-load-decl-path-list-append
             prelude-paths
-            (ast.ast-decl-path-list-with-modules entry-paths entry-modules))
+            (ast.ast-decl-path-list-with-modules entry-paths (& entry-modules)))
           stdlib-roots
           cfgs
           cache-scope))]
@@ -7176,7 +7176,9 @@
           path
           source
           prelude-decls
-          (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
+          (ast.ast-decl-path-list-with-modules
+            prelude-paths
+            (& prelude-modules))
           prelude-seen
           (owned_view.compiler-owned-shared-view stdlib-roots)
           cfgs

@@ -25139,9 +25139,7 @@
 (define (opt-licm-deref-nominal-mask
   [type-segment-bases : i64]
   [ty : ast.AstType]) : i64
-  (match (ast.ast-aggregate-type-key
-    type-segment-bases
-    (compiler-opt-global-shared-view ty))
+  (match (ast.ast-aggregate-type-key type-segment-bases (& ty))
     [(Some key)
       (ir.compiler-ir-representation-index-stable-mask
         (& opt-licm-deref-representations)
@@ -25183,9 +25181,7 @@
 (define (opt-licm-deref-value-mask
   [type-segment-bases : i64]
   [ty : ast.AstType]) : i64
-  (match (ast.ast-aggregate-type-key
-    type-segment-bases
-    (compiler-opt-global-shared-view ty))
+  (match (ast.ast-aggregate-type-key type-segment-bases (& ty))
     [(Some _) (opt-licm-deref-nominal-mask type-segment-bases ty)]
     [(None)
       (let

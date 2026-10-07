@@ -244,7 +244,7 @@
   [callee-node : i64]) : bool
   (match (ast.ast-expr-unspan-with-pools
     pools
-    (ast.ast-node-pool-context-expr-get pools callee-node))
+    (& (ast.ast-node-pool-context-expr-get pools callee-node)))
     [(Var name-id)
       (let
         [base-id : i64
@@ -288,7 +288,7 @@
   [node : i64]) : bool
   (match (ast.ast-expr-unspan-with-pools
     (& pools)
-    (ast.ast-node-pool-context-expr-get (& pools) node))
+    (& (ast.ast-node-pool-context-expr-get (& pools) node)))
     [(Literal _) true]
     [_ false]))
 
@@ -908,7 +908,7 @@
     (match (ci.intern-source-name-session-resolve
       session
       (ci.intern-source-name-session-identity session string-id)
-      text)
+      (& text))
       [(ParsedIdentity source-id) source-id]
       [(GeneratedIdentity generated-id lookup)
         (match lookup
@@ -1013,7 +1013,7 @@
   (ctfe-stdlib-comptime-type-id cbi.compiler-builtin-id-fix-TypeInfo))
 
 (define (ctfe-type-info-box-source-type [pools : ast.AstNodePoolContext]) : ast.AstType
-  (ast.ast-ty-box-with-pools pools (ctfe-type-info-source-type)))
+  (ast.ast-ty-box-with-pools pools (& (ctfe-type-info-source-type))))
 
 (defstruct CtfeValueSeq
   (slots (__tl_dyn-array CompilerCtfeValue))
@@ -1893,7 +1893,7 @@
       (ast.ast-node-pool-context-expr-push-cells
         (ctfe-env-syntax-expr-cell-address-live env)
         (ctfe-env-syntax-type-cell-address-live env)
-        node)]
+        (& node))]
     (ctfe-env-adopt-active-pools! env)
     (ctfe-env-publish-owning-pools! env)
     pushed))
@@ -2373,7 +2373,7 @@
       (ctfe_key_map.insert-ref!
         (&mut data.module-value-type-ids)
         (ctfe-qualified-name-key-id module-id name-id)
-        (ast.ty-node-push ty))
+        (ast.ty-node-push (& ty)))
       (compiler-ctfe-macro-state-data-set! state data))))
 
 (define (ctfe-module-value-type-id-for-state
@@ -2636,7 +2636,7 @@
               current-module-id
               name
               cleanup
-              (ast.ast-decl-meta-aggregate-markers decl-meta)
+              (ast.ast-decl-meta-aggregate-markers (& decl-meta))
               (& repr)
               fields))]
         [(DefStructLifetimes decl-meta name _ repr cleanup fields)
@@ -2648,7 +2648,7 @@
               current-module-id
               name
               cleanup
-              (ast.ast-decl-meta-aggregate-markers decl-meta)
+              (ast.ast-decl-meta-aggregate-markers (& decl-meta))
               (& repr)
               fields))]
         [(DefEnum decl-meta name cleanup variants)
@@ -2660,7 +2660,7 @@
               current-module-id
               name
               cleanup
-              (ast.ast-decl-meta-aggregate-markers decl-meta)
+              (ast.ast-decl-meta-aggregate-markers (& decl-meta))
               variants))]
         [(DefEnumLifetimes decl-meta name _ cleanup variants)
           (set!
@@ -2671,7 +2671,7 @@
               current-module-id
               name
               cleanup
-              (ast.ast-decl-meta-aggregate-markers decl-meta)
+              (ast.ast-decl-meta-aggregate-markers (& decl-meta))
               variants))]
         [_ unit])
       (set! index (+ index 1)))
@@ -3772,42 +3772,47 @@
       (ast.ast-ty-func-with-pools
         pools
         (ctfe-reflect-resolve-type-list-with-pools pools infos (deref args))
-        (ctfe-reflect-resolve-type-with-pools
-          pools
-          infos
-          (ast.ast-node-pool-context-type-get pools ret)))]
+        (&
+          (ctfe-reflect-resolve-type-with-pools
+            pools
+            infos
+            (ast.ast-node-pool-context-type-get pools ret))))]
     [(Tuple elems)
       (ast.ast-ty-tuple
         (ctfe-reflect-resolve-type-list-with-pools pools infos (deref elems)))]
     [(Array elem len)
       (ast.ast-ty-array-with-pools
         pools
-        (ctfe-reflect-resolve-type-with-pools
-          pools
-          infos
-          (ast.ast-node-pool-context-type-get pools elem))
+        (&
+          (ctfe-reflect-resolve-type-with-pools
+            pools
+            infos
+            (ast.ast-node-pool-context-type-get pools elem)))
         len)]
     [(DynArray elem)
       (ast.ast-ty-dyn-array-with-pools
         pools
-        (ctfe-reflect-resolve-type-with-pools
-          pools
-          infos
-          (ast.ast-node-pool-context-type-get pools elem)))]
+        (&
+          (ctfe-reflect-resolve-type-with-pools
+            pools
+            infos
+            (ast.ast-node-pool-context-type-get pools elem))))]
     [(Slice elem)
       (ast.ast-ty-slice-with-pools
         pools
-        (ctfe-reflect-resolve-type-with-pools
-          pools
-          infos
-          (ast.ast-node-pool-context-type-get pools elem)))]
+        (&
+          (ctfe-reflect-resolve-type-with-pools
+            pools
+            infos
+            (ast.ast-node-pool-context-type-get pools elem))))]
     [(Box elem)
       (ast.ast-ty-box-with-pools
         pools
-        (ctfe-reflect-resolve-type-with-pools
-          pools
-          infos
-          (ast.ast-node-pool-context-type-get pools elem)))]
+        (&
+          (ctfe-reflect-resolve-type-with-pools
+            pools
+            infos
+            (ast.ast-node-pool-context-type-get pools elem))))]
     [(CFunc signature mode)
       (let
         [resolved : ast.AstType
@@ -3819,49 +3824,55 @@
     [(Ptr elem)
       (ast.ast-ty-ptr-with-pools
         pools
-        (ctfe-reflect-resolve-type-with-pools
-          pools
-          infos
-          (ast.ast-node-pool-context-type-get pools elem)))]
+        (&
+          (ctfe-reflect-resolve-type-with-pools
+            pools
+            infos
+            (ast.ast-node-pool-context-type-get pools elem))))]
     [(MutPtr elem)
       (ast.ast-ty-mut-ptr-with-pools
         pools
-        (ctfe-reflect-resolve-type-with-pools
-          pools
-          infos
-          (ast.ast-node-pool-context-type-get pools elem)))]
+        (&
+          (ctfe-reflect-resolve-type-with-pools
+            pools
+            infos
+            (ast.ast-node-pool-context-type-get pools elem))))]
     [(Ref region inner)
       (ast.ast-ty-ref-with-pools
         pools
         region
-        (ctfe-reflect-resolve-type-with-pools
-          pools
-          infos
-          (ast.ast-node-pool-context-type-get pools inner)))]
+        (&
+          (ctfe-reflect-resolve-type-with-pools
+            pools
+            infos
+            (ast.ast-node-pool-context-type-get pools inner))))]
     [(MutRef region inner)
       (ast.ast-ty-mut-ref-with-pools
         pools
         region
-        (ctfe-reflect-resolve-type-with-pools
-          pools
-          infos
-          (ast.ast-node-pool-context-type-get pools inner)))]
+        (&
+          (ctfe-reflect-resolve-type-with-pools
+            pools
+            infos
+            (ast.ast-node-pool-context-type-get pools inner))))]
     [(Region region inner)
       (ast.ast-ty-region-with-pools
         pools
         region
-        (ctfe-reflect-resolve-type-with-pools
-          pools
-          infos
-          (ast.ast-node-pool-context-type-get pools inner)))]
+        (&
+          (ctfe-reflect-resolve-type-with-pools
+            pools
+            infos
+            (ast.ast-node-pool-context-type-get pools inner))))]
     [(Invalidate lifetime inner)
       (ast.ast-ty-invalidate-with-pools
         pools
         lifetime
-        (ctfe-reflect-resolve-type-with-pools
-          pools
-          infos
-          (ast.ast-node-pool-context-type-get pools inner)))]
+        (&
+          (ctfe-reflect-resolve-type-with-pools
+            pools
+            infos
+            (ast.ast-node-pool-context-type-get pools inner))))]
     [(Struct name)
       (match (ctfe-reflect-info-canonical-type-lookup infos name)
         [(Some canonical) canonical]
@@ -4651,7 +4662,7 @@
     [(Region _ nested) (ctfe-fat-reference? pools nested)]
     [_
       (ast.ast-type-fat-referent?
-        (ast.ast-node-pool-context-type-get pools inner))]))
+        (& (ast.ast-node-pool-context-type-get pools inner)))]))
 
 ;; A named type's recorded layout size or alignment, or `missing` when no
 ;; layout is recorded for it.
@@ -6139,7 +6150,9 @@
                 (ctfe-syntax-expr-push
                   env
                   (BinaryData bytes)
-                  (ast.ast-ty-dyn-array-with-pools (ctfe-env-pools env) (U8)))
+                  (ast.ast-ty-dyn-array-with-pools
+                    (ctfe-env-pools env)
+                    (& (U8))))
                 arg-fuel)]
             [_
               (Err
@@ -6912,7 +6925,7 @@
                   (match tail-value
                     [(ExprList tail)
                       (Ok
-                        (ExprList (ast.ast-expr-cons head-node tail))
+                        (ExprList (ast.ast-expr-cons head-node (& tail)))
                         tail-fuel)]
                     [_
                       (Err
@@ -6985,7 +6998,7 @@
   [node : i64]) : bool
   (match (ast.ast-expr-unspan-with-pools
     pools
-    (ast.ast-node-pool-context-expr-get pools node))
+    (& (ast.ast-node-pool-context-expr-get pools node)))
     [(Var _) true]
     [(StructGet receiver _)
       (ctfe-expr-borrowable-place-node-with-pools? pools receiver)]
@@ -7009,7 +7022,7 @@
       state
       pools
       callee-node
-      (ast.ast-expr-cons value-node (ast.ast-expr-list-new)))
+      (ast.ast-expr-cons value-node (& (ast.ast-expr-list-new))))
     (let
       [value-name : i64
         (ctfe-materialize-generated-name-id "__tl_shared_call_value")]
@@ -7021,7 +7034,7 @@
           state
           pools
           callee-node
-          (ast.ast-expr-cons local-node (ast.ast-expr-list-new)))]
+          (ast.ast-expr-cons local-node (& (ast.ast-expr-list-new))))]
       (ast.ast-let-binding-list-push
         (&mut bindings)
         (ast.ast-let-binding-id value-name No value-node))
@@ -7095,7 +7108,7 @@
             true
             Inferred
             place)
-          tail))
+          (& tail)))
       (ctfe-untyped-expr-type))
     fuel))
 
@@ -7140,7 +7153,7 @@
                                     place
                                     (ast.ast-expr-cons
                                       first
-                                      (ast.ast-expr-list-new))
+                                      (& (ast.ast-expr-list-new)))
                                     env
                                     first-fuel)
                                   (match (compiler-ctfe-eval
@@ -7155,9 +7168,10 @@
                                             place
                                             (ast.ast-expr-cons
                                               first
-                                              (ast.ast-expr-cons
-                                                second
-                                                (ast.ast-expr-list-new)))
+                                              (&
+                                                (ast.ast-expr-cons
+                                                  second
+                                                  (& (ast.ast-expr-list-new)))))
                                             env
                                             second-fuel)]
                                         [_
@@ -7265,7 +7279,7 @@
                 (Ok
                   (ctfe-syntax-expr-value
                     env
-                    (ast.ast-expr-type-literal-with-pools pools ty)
+                    (ast.ast-expr-type-literal-with-pools pools (& ty))
                     (Expr))
                   arg-fuel))]
             [_
@@ -7997,7 +8011,7 @@
   [node : i64]) : bool
   (match (ast.ast-expr-unspan-with-pools
     pools
-    (ast.ast-node-pool-context-expr-get pools node))
+    (& (ast.ast-node-pool-context-expr-get pools node)))
     [(Var name) (= name cbi.compiler-builtin-id-fix-else)]
     [_ false]))
 
@@ -8318,7 +8332,9 @@
                     [(PatternList rest-patterns)
                       (Ok
                         (PatternList
-                          (ast.ast-pattern-cons head-pattern rest-patterns))
+                          (ast.ast-pattern-cons
+                            (& head-pattern)
+                            (& rest-patterns)))
                         rest-fuel)]
                     [_
                       (Err
@@ -8484,7 +8500,7 @@
                     [(MatchArmList rest-arms)
                       (Ok
                         (MatchArmList
-                          (ast.ast-match-arm-cons head-arm rest-arms))
+                          (ast.ast-match-arm-cons (& head-arm) (& rest-arms)))
                         rest-fuel)]
                     [_
                       (Err
@@ -8739,7 +8755,8 @@
               env
               value-fuel
               builder-name)
-              [(Ok rest next-fuel) (Ok (ast.ast-expr-cons node rest) next-fuel)]
+              [(Ok rest next-fuel)
+                (Ok (ast.ast-expr-cons node (& rest)) next-fuel)]
               [(Err diag) (Err diag)])))]
       [(Err diag) (Err diag)])))
 
@@ -9125,7 +9142,7 @@
     [inspected : ast.AstExpr
       (ast.ast-expr-unspan-with-pools
         pools
-        (ast.ast-node-pool-context-expr-get pools node))]
+        (& (ast.ast-node-pool-context-expr-get pools node)))]
     (cond
       [(string.eq name "expr-bool?")
         (Ok
@@ -10777,7 +10794,7 @@
     marker-id
     (ast.ast-expr-cons
       (ctfe-ast-push env (Var name-id))
-      (ctfe-lifetime-list-to-expr-list lifetimes env))
+      (& (ctfe-lifetime-list-to-expr-list lifetimes env)))
     env))
 
 (define (ctfe-type-list-to-expr-list-at
@@ -10792,7 +10809,7 @@
           env
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
         env)
-      (ctfe-type-list-to-expr-list-at types env (+ index 1)))))
+      (& (ctfe-type-list-to-expr-list-at types env (+ index 1))))))
 
 (define (ctfe-type-list-to-expr-list
   [types : ast.AstTypeList]
@@ -10814,7 +10831,7 @@
       (ctfe-type-syntax-name-id
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback))
         env)
-      (ctfe-lifetime-list-to-expr-list-at lifetimes env (+ index 1)))))
+      (& (ctfe-lifetime-list-to-expr-list-at lifetimes env (+ index 1))))))
 
 (define (ctfe-func-type-to-expr-list
   [args : ast.AstTypeList]
@@ -10828,14 +10845,14 @@
   [env : (& env CtfeEnv)]
   [index : i64]) : ast.AstExprList
   (if (>= index (ast.ast-type-list-len args))
-    (ast.ast-expr-cons (ctfe-type-to-expr ret env) (ast.ast-expr-list-new))
+    (ast.ast-expr-cons (ctfe-type-to-expr ret env) (& (ast.ast-expr-list-new)))
     (ast.ast-expr-cons
       (ctfe-type-to-expr
         (ctfe-ty-get
           env
           (ast.ast-type-list-get args index (ast.ast-type-id-fallback)))
         env)
-      (ctfe-func-type-to-expr-list-at args ret env (+ index 1)))))
+      (& (ctfe-func-type-to-expr-list-at args ret env (+ index 1))))))
 
 (define (ctfe-type-to-expr [ty : ast.AstType] [env : (& env CtfeEnv)]) : i64
   (match ty
@@ -10876,9 +10893,10 @@
                 (cbi.compiler-builtin-ctfe-slot "nullable")
                 (ast.ast-c-function-mode-key mode)))
             env)
-          (ast.ast-expr-cons
-            (ctfe-type-to-expr (ctfe-ty-get env signature) env)
-            (ast.ast-expr-list-new)))
+          (&
+            (ast.ast-expr-cons
+              (ctfe-type-to-expr (ctfe-ty-get env signature) env)
+              (& (ast.ast-expr-list-new)))))
         env)]
     [(Tuple elems)
       (ctfe-type-syntax-call-id
@@ -10890,80 +10908,85 @@
         (ctfe-builtin "Array")
         (ast.ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
-          (ast.ast-expr-cons
-            (ctfe-ast-push env (Literal (ast.ast-lit-int count)))
-            (ast.ast-expr-list-new)))
+          (&
+            (ast.ast-expr-cons
+              (ctfe-ast-push env (Literal (ast.ast-lit-int count)))
+              (& (ast.ast-expr-list-new)))))
         env)]
     [(DynArray elem)
       (ctfe-type-syntax-call-id
         (ctfe-builtin "__tl_dyn-array")
         (ast.ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
-          (ast.ast-expr-list-new))
+          (& (ast.ast-expr-list-new)))
         env)]
     [(Slice elem)
       (ctfe-type-syntax-call-id
         cbi.compiler-builtin-id-comptime-type-info-slice-variant
         (ast.ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
-          (ast.ast-expr-list-new))
+          (& (ast.ast-expr-list-new)))
         env)]
     [(Box elem)
       (ctfe-type-syntax-call-id
         cbi.compiler-builtin-id-fix-Box
         (ast.ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
-          (ast.ast-expr-list-new))
+          (& (ast.ast-expr-list-new)))
         env)]
     [(Ptr elem)
       (ctfe-type-syntax-call-id
         (ctfe-builtin "Ptr")
         (ast.ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
-          (ast.ast-expr-list-new))
+          (& (ast.ast-expr-list-new)))
         env)]
     [(MutPtr elem)
       (ctfe-type-syntax-call-id
         (ctfe-builtin "MutPtr")
         (ast.ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
-          (ast.ast-expr-list-new))
+          (& (ast.ast-expr-list-new)))
         env)]
     [(Ref region elem)
       (ctfe-type-syntax-call-id
         (ctfe-builtin "&")
         (ast.ast-expr-cons
           (ctfe-type-syntax-name-id region env)
-          (ast.ast-expr-cons
-            (ctfe-type-to-expr (ctfe-ty-get env elem) env)
-            (ast.ast-expr-list-new)))
+          (&
+            (ast.ast-expr-cons
+              (ctfe-type-to-expr (ctfe-ty-get env elem) env)
+              (& (ast.ast-expr-list-new)))))
         env)]
     [(MutRef region elem)
       (ctfe-type-syntax-call-id
         (ctfe-builtin "&mut")
         (ast.ast-expr-cons
           (ctfe-type-syntax-name-id region env)
-          (ast.ast-expr-cons
-            (ctfe-type-to-expr (ctfe-ty-get env elem) env)
-            (ast.ast-expr-list-new)))
+          (&
+            (ast.ast-expr-cons
+              (ctfe-type-to-expr (ctfe-ty-get env elem) env)
+              (& (ast.ast-expr-list-new)))))
         env)]
     [(Region region elem)
       (ctfe-type-syntax-call-id
         (ctfe-builtin "in")
         (ast.ast-expr-cons
           (ctfe-type-syntax-name-id region env)
-          (ast.ast-expr-cons
-            (ctfe-type-to-expr (ctfe-ty-get env elem) env)
-            (ast.ast-expr-list-new)))
+          (&
+            (ast.ast-expr-cons
+              (ctfe-type-to-expr (ctfe-ty-get env elem) env)
+              (& (ast.ast-expr-list-new)))))
         env)]
     [(Invalidate lifetime elem)
       (ctfe-type-syntax-call-id
         (cbi.compiler-builtin-ctfe ":invalidate")
         (ast.ast-expr-cons
           (ctfe-type-syntax-name-id lifetime env)
-          (ast.ast-expr-cons
-            (ctfe-type-to-expr (ctfe-ty-get env elem) env)
-            (ast.ast-expr-list-new)))
+          (&
+            (ast.ast-expr-cons
+              (ctfe-type-to-expr (ctfe-ty-get env elem) env)
+              (& (ast.ast-expr-list-new)))))
         env)]
     [(Enum name)
       (ctfe-resolved-nominal-type-to-expr
@@ -11029,7 +11052,10 @@
             head-fuel)
             [(Ok tail tail-fuel)
               (Ok
-                (ast.ast-type-cons-with-pools (ctfe-env-pools env) head-ty tail)
+                (ast.ast-type-cons-with-pools
+                  (ctfe-env-pools env)
+                  (& head-ty)
+                  (& tail))
                 tail-fuel)]
             [(Err diag) (Err diag)])]
         [(Err diag) (Err diag)]))))
@@ -11051,15 +11077,17 @@
               [(or
                   (= name (ctfe-builtin "Array"))
                   (= name (ctfe-builtin "__tl_dyn-array")))
-                (ast.ast-ty-dyn-array-with-pools (ctfe-env-pools env) elem-ty)]
+                (ast.ast-ty-dyn-array-with-pools
+                  (ctfe-env-pools env)
+                  (& elem-ty))]
               [(= name cbi.compiler-builtin-id-comptime-type-info-slice-variant)
-                (ast.ast-ty-slice-with-pools (ctfe-env-pools env) elem-ty)]
+                (ast.ast-ty-slice-with-pools (ctfe-env-pools env) (& elem-ty))]
               [(= name cbi.compiler-builtin-id-fix-Box)
-                (ast.ast-ty-box-with-pools (ctfe-env-pools env) elem-ty)]
+                (ast.ast-ty-box-with-pools (ctfe-env-pools env) (& elem-ty))]
               [(= name (ctfe-builtin "Ptr"))
-                (ast.ast-ty-ptr-with-pools (ctfe-env-pools env) elem-ty)]
+                (ast.ast-ty-ptr-with-pools (ctfe-env-pools env) (& elem-ty))]
               [(= name (ctfe-builtin "MutPtr"))
-                (ast.ast-ty-mut-ptr-with-pools (ctfe-env-pools env) elem-ty)]
+                (ast.ast-ty-mut-ptr-with-pools (ctfe-env-pools env) (& elem-ty))]
               [else elem-ty])
             next-fuel)]
         [(Err diag) (Err diag)]))
@@ -11078,7 +11106,7 @@
         [(Ok elem-ty elem-fuel)
           (if (= args.len 1)
             (Ok
-              (ast.ast-ty-dyn-array-with-pools (ctfe-env-pools env) elem-ty)
+              (ast.ast-ty-dyn-array-with-pools (ctfe-env-pools env) (& elem-ty))
               elem-fuel)
             (let
               [len-expr : ast.AstExpr
@@ -11088,7 +11116,7 @@
                   (Ok
                     (ast.ast-ty-array-with-pools
                       (ctfe-env-pools env)
-                      elem-ty
+                      (& elem-ty)
                       (ast.ast-int-literal-value-or-payload count text))
                     elem-fuel)]
                 [_ (ctfe-type-expr-error origin)])))]
@@ -11120,7 +11148,7 @@
               (ast.ast-ty-func-with-pools
                 (ctfe-env-pools env)
                 (ast.ast-type-list-new)
-                ret-ty)
+                (& ret-ty))
               next-fuel)]
           [(Err diag) (Err diag)])
         (match (ctfe-expr-to-type head-expr (clone origin) env fuel)
@@ -11139,9 +11167,9 @@
                         (ctfe-env-pools env)
                         (ast.ast-type-cons-with-pools
                           (ctfe-env-pools env)
-                          arg-ty
-                          (deref tail-args))
-                        (ctfe-ty-get env ret))
+                          (& arg-ty)
+                          (& (deref tail-args)))
+                        (& (ctfe-ty-get env ret)))
                       next-fuel)]
                   [_ (ctfe-type-expr-error origin)])]
               [(Err diag) (Err diag)])]
@@ -11202,8 +11230,11 @@
     [(Ok inner-ty next-fuel)
       (Ok
         (if mutable
-          (ast.ast-ty-mut-ref-with-pools (ctfe-env-pools env) region inner-ty)
-          (ast.ast-ty-ref-with-pools (ctfe-env-pools env) region inner-ty))
+          (ast.ast-ty-mut-ref-with-pools
+            (ctfe-env-pools env)
+            region
+            (& inner-ty))
+          (ast.ast-ty-ref-with-pools (ctfe-env-pools env) region (& inner-ty)))
         next-fuel)]
     [(Err diag) (Err diag)]))
 
@@ -11228,11 +11259,11 @@
                   (ast.ast-ty-invalidate-with-pools
                     (ctfe-env-pools env)
                     region
-                    inner-ty)
+                    (& inner-ty))
                   (ast.ast-ty-region-with-pools
                     (ctfe-env-pools env)
                     region
-                    inner-ty))
+                    (& inner-ty)))
                 next-fuel)]
             [(Err diag) (Err diag)])]
         [(None) (ctfe-type-expr-error origin)]))
@@ -11264,7 +11295,7 @@
                   (+ index 1)
                   env
                   origin))]
-            (Ok (ast.ast-lifetime-cons name tail)))]
+            (Ok (ast.ast-lifetime-cons name (& tail))))]
         [(None)
           (Err
             (box
@@ -11498,8 +11529,8 @@
               (Ok
                 (ast.ast-type-cons-with-pools
                   (ctfe-env-pools env)
-                  quoted-head
-                  quoted-rest)
+                  (& quoted-head)
+                  (& quoted-rest))
                 rest-fuel)]
             [(Err diag) (Err diag)])]
         [(Err diag) (Err diag)]))))
@@ -11519,7 +11550,7 @@
                 (ast.ast-ty-func-with-pools
                   (ctfe-env-pools env)
                   quoted-args
-                  quoted-ret)
+                  (& quoted-ret))
                 ret-fuel)]
             [(Err diag) (Err diag)])]
         [(Err diag) (Err diag)])]
@@ -11531,27 +11562,29 @@
       (match (ctfe-quote-type (ctfe-ty-get env elem) env origin fuel)
         [(Ok quoted next-fuel)
           (Ok
-            (ast.ast-ty-array-with-pools (ctfe-env-pools env) quoted count)
+            (ast.ast-ty-array-with-pools (ctfe-env-pools env) (& quoted) count)
             next-fuel)]
         [(Err diag) (Err diag)])]
     [(DynArray elem)
       (match (ctfe-quote-type (ctfe-ty-get env elem) env origin fuel)
         [(Ok quoted next-fuel)
           (Ok
-            (ast.ast-ty-dyn-array-with-pools (ctfe-env-pools env) quoted)
+            (ast.ast-ty-dyn-array-with-pools (ctfe-env-pools env) (& quoted))
             next-fuel)]
         [(Err diag) (Err diag)])]
     [(Slice elem)
       (match (ctfe-quote-type (ctfe-ty-get env elem) env origin fuel)
         [(Ok quoted next-fuel)
           (Ok
-            (ast.ast-ty-slice-with-pools (ctfe-env-pools env) quoted)
+            (ast.ast-ty-slice-with-pools (ctfe-env-pools env) (& quoted))
             next-fuel)]
         [(Err diag) (Err diag)])]
     [(Box elem)
       (match (ctfe-quote-type (ctfe-ty-get env elem) env origin fuel)
         [(Ok quoted next-fuel)
-          (Ok (ast.ast-ty-box-with-pools (ctfe-env-pools env) quoted) next-fuel)]
+          (Ok
+            (ast.ast-ty-box-with-pools (ctfe-env-pools env) (& quoted))
+            next-fuel)]
         [(Err diag) (Err diag)])]
     [(CFunc signature mode)
       (match (ctfe-quote-type (ctfe-ty-get env signature) env origin fuel)
@@ -11565,34 +11598,42 @@
     [(Ptr elem)
       (match (ctfe-quote-type (ctfe-ty-get env elem) env origin fuel)
         [(Ok quoted next-fuel)
-          (Ok (ast.ast-ty-ptr-with-pools (ctfe-env-pools env) quoted) next-fuel)]
+          (Ok
+            (ast.ast-ty-ptr-with-pools (ctfe-env-pools env) (& quoted))
+            next-fuel)]
         [(Err diag) (Err diag)])]
     [(MutPtr elem)
       (match (ctfe-quote-type (ctfe-ty-get env elem) env origin fuel)
         [(Ok quoted next-fuel)
           (Ok
-            (ast.ast-ty-mut-ptr-with-pools (ctfe-env-pools env) quoted)
+            (ast.ast-ty-mut-ptr-with-pools (ctfe-env-pools env) (& quoted))
             next-fuel)]
         [(Err diag) (Err diag)])]
     [(Ref region inner)
       (match (ctfe-quote-type (ctfe-ty-get env inner) env origin fuel)
         [(Ok quoted next-fuel)
           (Ok
-            (ast.ast-ty-ref-with-pools (ctfe-env-pools env) region quoted)
+            (ast.ast-ty-ref-with-pools (ctfe-env-pools env) region (& quoted))
             next-fuel)]
         [(Err diag) (Err diag)])]
     [(MutRef region inner)
       (match (ctfe-quote-type (ctfe-ty-get env inner) env origin fuel)
         [(Ok quoted next-fuel)
           (Ok
-            (ast.ast-ty-mut-ref-with-pools (ctfe-env-pools env) region quoted)
+            (ast.ast-ty-mut-ref-with-pools
+              (ctfe-env-pools env)
+              region
+              (& quoted))
             next-fuel)]
         [(Err diag) (Err diag)])]
     [(Region region inner)
       (match (ctfe-quote-type (ctfe-ty-get env inner) env origin fuel)
         [(Ok quoted next-fuel)
           (Ok
-            (ast.ast-ty-region-with-pools (ctfe-env-pools env) region quoted)
+            (ast.ast-ty-region-with-pools
+              (ctfe-env-pools env)
+              region
+              (& quoted))
             next-fuel)]
         [(Err diag) (Err diag)])]
     [(Invalidate lifetime inner)
@@ -11602,7 +11643,7 @@
             (ast.ast-ty-invalidate-with-pools
               (ctfe-env-pools env)
               lifetime
-              quoted)
+              (& quoted))
             next-fuel)]
         [(Err diag) (Err diag)])]
     [(VarArgs name lifetimes)
@@ -11668,7 +11709,9 @@
                     head-fuel
                     quasiquote)
                     [(Ok quoted-rest rest-fuel)
-                      (Ok (ast.ast-expr-cons quoted-head quoted-rest) rest-fuel)]
+                      (Ok
+                        (ast.ast-expr-cons quoted-head (& quoted-rest))
+                        rest-fuel)]
                     [(Err diag) (Err diag)])]
                 [(Err diag) (Err diag)])))]
         [_
@@ -11681,7 +11724,7 @@
                 head-fuel
                 quasiquote)
                 [(Ok quoted-rest rest-fuel)
-                  (Ok (ast.ast-expr-cons quoted-head quoted-rest) rest-fuel)]
+                  (Ok (ast.ast-expr-cons quoted-head (& quoted-rest)) rest-fuel)]
                 [(Err diag) (Err diag)])]
             [(Err diag) (Err diag)])]))))
 
@@ -12341,7 +12384,7 @@
                   (ast.ast-expr-ann-with-pools
                     (ctfe-env-pools env)
                     quoted
-                    (clone quoted-ty))
+                    (& (clone quoted-ty)))
                   quoted-ty
                   next-fuel)]
               [(Err diag) (Err diag)])]
@@ -12357,7 +12400,7 @@
                   (ast.ast-expr-cast-with-pools
                     (ctfe-env-pools env)
                     quoted
-                    (clone quoted-ty))
+                    (& (clone quoted-ty)))
                   quoted-ty
                   next-fuel)]
               [(Err diag) (Err diag)])]
@@ -12741,7 +12784,7 @@
                 (Ok
                   (ast.ast-expr-fixed-make-array-with-pools
                     (ctfe-env-pools env)
-                    quoted-ty
+                    (& quoted-ty)
                     quoted-len)
                   (Expr)
                   next-fuel)]
@@ -12758,7 +12801,7 @@
                   [result : i64
                     (ast.ast-expr-make-array-with-pools
                       (ctfe-env-pools env)
-                      quoted-ty
+                      (& quoted-ty)
                       quoted-len)]
                   (Ok result (Expr) next-fuel))]
               [(Err diag) (Err diag)])]
@@ -12946,7 +12989,9 @@
         fuel)
         [(Ok quoted-ty next-fuel)
           (Ok
-            (ast.ast-expr-init-maybe-with-pools (ctfe-env-pools env) quoted-ty)
+            (ast.ast-expr-init-maybe-with-pools
+              (ctfe-env-pools env)
+              (& quoted-ty))
             (Expr)
             next-fuel)]
         [(Err diag) (Err diag)])]
@@ -13006,7 +13051,7 @@
                   (ast.ast-expr-ptr-cast-with-pools
                     (ctfe-env-pools env)
                     quoted
-                    quoted-ty)
+                    (& quoted-ty))
                   (Expr)
                   next-fuel)]
               [(Err diag) (Err diag)])]
@@ -13029,7 +13074,7 @@
                   (ast.ast-expr-int-to-ptr-with-pools
                     (ctfe-env-pools env)
                     quoted
-                    quoted-ty)
+                    (& quoted-ty))
                   (Expr)
                   next-fuel)]
               [(Err diag) (Err diag)])]
@@ -13461,9 +13506,10 @@
     (ctfe-env-pools env)
     (ast.ast-expr-cons
       (ctfe-expr-clause-first clause)
-      (ast.ast-expr-cons
-        (ctfe-expr-clause-second clause)
-        (ast.ast-expr-list-new)))))
+      (&
+        (ast.ast-expr-cons
+          (ctfe-expr-clause-second clause)
+          (& (ast.ast-expr-list-new)))))))
 
 (define (ctfe-expr-clause-list->expr-list-in-env
   [env : CtfeEnv]
@@ -13536,16 +13582,21 @@
           (ctfe-env-pools env)
           (ast.ast-expr-cons
             name-expr
-            (ast.ast-expr-cons
-              (ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-colon))
+            (&
               (ast.ast-expr-cons
-                clause.ty
-                (ast.ast-expr-cons clause.init (ast.ast-expr-list-new))))))
+                (ctfe-ast-push env (Var cbi.compiler-builtin-id-fix-colon))
+                (&
+                  (ast.ast-expr-cons
+                    clause.ty
+                    (&
+                      (ast.ast-expr-cons
+                        clause.init
+                        (& (ast.ast-expr-list-new))))))))))
         (ast.ast-expr-bracket-clause-with-pools
           (ctfe-env-pools env)
           (ast.ast-expr-cons
             name-expr
-            (ast.ast-expr-cons clause.init (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons clause.init (& (ast.ast-expr-list-new)))))))]
     [span-pools : ast.AstNodePoolContext (ctfe-env-pools env)]
     (ast.ast-expr-spanned-with-pools span-pools bracket clause.span)))
 
@@ -13674,7 +13725,7 @@
   [env : (& env CtfeEnv)]
   [a : ast.AstType]
   [b : ast.AstType]) : bool
-  (ast.ast-type-eq-with-pools? (ctfe-env-pools env) a b))
+  (ast.ast-type-eq-with-pools? (ctfe-env-pools env) (& a) (& b)))
 
 (define (ctfe-type-list-eq [a : ast.AstTypeList] [b : ast.AstTypeList]) : bool
   (let

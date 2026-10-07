@@ -772,8 +772,7 @@
                     [test-count : i64 (array-length test-items)]
                     [private-name : String (tltest-private-name test-count)]
                     [private-id : i64
-                      (ci.intern-generated-name
-                        (owned_view.compiler-owned-shared-view private-name))]
+                      (ci.intern-generated-name (& private-name))]
                     (__tl_array-push!
                       test-items
                       (Case
@@ -880,12 +879,13 @@
         (Literal
           (ast.ast-lit-generated-string
             (owned_view.compiler-owned-shared-view text))))
-      (ast.ast-expr-cons
-        (ast.ast-expr-cast
-          (ast.ast-node-push
-            (Literal (ast.ast-lit-int (string.string-length text))))
-          (I32))
-        (ast.ast-expr-list-new)))))
+      (&
+        (ast.ast-expr-cons
+          (ast.ast-expr-cast
+            (ast.ast-node-push
+              (Literal (ast.ast-lit-int (string.string-length text))))
+            (& (I32)))
+          (& (ast.ast-expr-list-new)))))))
 
 (define (tltest-call-expr-id [name-id : i64]) : i64
   (ast.ast-expr-call (ast.ast-node-push (Var name-id)) (ast.ast-expr-list-new)))
@@ -902,11 +902,13 @@
       (Var (tltest-runtime-call-id (tltest-runtime-suite-finish-id))))
     (ast.ast-expr-cons
       (ast.ast-node-push (Literal (ast.ast-lit-int count)))
-      (ast.ast-expr-cons
-        (ast.ast-node-push (Literal (ast.ast-lit-int ignored)))
+      (&
         (ast.ast-expr-cons
-          (ast.ast-node-push (Literal (ast.ast-lit-int slow-skipped)))
-          (ast.ast-expr-list-new))))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int ignored)))
+          (&
+            (ast.ast-expr-cons
+              (ast.ast-node-push (Literal (ast.ast-lit-int slow-skipped)))
+              (& (ast.ast-expr-list-new)))))))))
 
 (define (tltest-location [path : String] [line : i64]) : String
   (if (string.eq path "")
@@ -929,12 +931,14 @@
 
 (define (tltest-print-runtime-write-params) : ast.AstParamList
   (ast.ast-param-cons
-    (ast.ast-param-id (tltest-fd-id) (I32) false)
-    (ast.ast-param-cons
-      (ast.ast-param-id (tltest-buf-id) (ast.ast-ty-ptr (U8)) false)
+    (& (ast.ast-param-id (tltest-fd-id) (I32) false))
+    (&
       (ast.ast-param-cons
-        (ast.ast-param-id (tltest-n-id) (I32) false)
-        (ast.ast-param-list-new)))))
+        (& (ast.ast-param-id (tltest-buf-id) (ast.ast-ty-ptr (& (U8))) false))
+        (&
+          (ast.ast-param-cons
+            (& (ast.ast-param-id (tltest-n-id) (I32) false))
+            (& (ast.ast-param-list-new))))))))
 
 (define (tltest-linux-write-ptr-arg) : i64
   (ast.ast-node-push
@@ -942,8 +946,8 @@
       (ast.ast-expr-cons
         (ast.ast-expr-cast
           (ast.ast-expr-ptr-to-int (ast.ast-node-push (Var (tltest-buf-id))))
-          (I64))
-        (ast.ast-expr-list-new)))))
+          (& (I64)))
+        (& (ast.ast-expr-list-new))))))
 
 (define (tltest-linux-write-syscall) : i64
   (ast.ast-node-push
@@ -952,23 +956,28 @@
         (ast.ast-expr-syscall
           (ast.ast-expr-cons
             (ast.ast-node-push (Literal (ast.ast-lit-int 1)))
-            (ast.ast-expr-cons
-              (ast.ast-expr-cast (ast.ast-node-push (Var (tltest-fd-id))) (I64))
+            (&
               (ast.ast-expr-cons
-                (tltest-linux-write-ptr-arg)
-                (ast.ast-expr-cons
-                  (ast.ast-expr-cast
-                    (ast.ast-node-push (Var (tltest-n-id)))
-                    (I64))
-                  (ast.ast-expr-list-new))))))
-        (ast.ast-expr-list-new)))))
+                (ast.ast-expr-cast
+                  (ast.ast-node-push (Var (tltest-fd-id)))
+                  (& (I64)))
+                (&
+                  (ast.ast-expr-cons
+                    (tltest-linux-write-ptr-arg)
+                    (&
+                      (ast.ast-expr-cons
+                        (ast.ast-expr-cast
+                          (ast.ast-node-push (Var (tltest-n-id)))
+                          (& (I64)))
+                        (& (ast.ast-expr-list-new))))))))))
+        (& (ast.ast-expr-list-new))))))
 
 (define (tltest-linux-print-runtime-write-decl) : ast.AstDecl
   (ast.ast-decl-def-fn-id
     (tltest-write-id)
     (tltest-print-runtime-write-params)
     (I32)
-    (ast.ast-expr-cast (tltest-linux-write-syscall) (I32))))
+    (ast.ast-expr-cast (tltest-linux-write-syscall) (& (I32)))))
 
 (define (tltest-windows-get-std-handle-decl) : ast.AstDecl
   (ast.ast-decl-extern-id
@@ -980,7 +989,9 @@
       (ast.ast-extern-link-input-list-new)
       (ast.ast-extern-metadata-flags true false)
       No)
-    (ast.ast-ty-func (ast.ast-type-cons (I32) (ast.ast-type-list-new)) (I64))))
+    (ast.ast-ty-func
+      (ast.ast-type-cons (& (I32)) (& (ast.ast-type-list-new)))
+      (& (I64)))))
 
 (define (tltest-windows-write-file-decl) : ast.AstDecl
   (ast.ast-decl-extern-id
@@ -994,15 +1005,19 @@
       No)
     (ast.ast-ty-func
       (ast.ast-type-cons
-        (I64)
-        (ast.ast-type-cons
-          (ast.ast-ty-ptr (U8))
+        (& (I64))
+        (&
           (ast.ast-type-cons
-            (I32)
-            (ast.ast-type-cons
-              (ast.ast-ty-mut-ptr (I32))
-              (ast.ast-type-cons (I64) (ast.ast-type-list-new))))))
-      (I32))))
+            (& (ast.ast-ty-ptr (& (U8))))
+            (&
+              (ast.ast-type-cons
+                (& (I32))
+                (&
+                  (ast.ast-type-cons
+                    (& (ast.ast-ty-mut-ptr (& (I32))))
+                    (&
+                      (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))))))))))
+      (& (I32)))))
 
 (define (tltest-windows-get-stderr-handle-expr) : i64
   (ast.ast-expr-call
@@ -1010,48 +1025,56 @@
     (ast.ast-expr-cons
       (ast.ast-expr-cast
         (ast.ast-node-push (Literal (ast.ast-lit-int -12)))
-        (I32))
-      (ast.ast-expr-list-new))))
+        (& (I32)))
+      (& (ast.ast-expr-list-new)))))
 
 (define (tltest-windows-write-file-call) : i64
   (ast.ast-expr-call
     (ast.ast-node-push (Var (tltest-write-file-id)))
     (ast.ast-expr-cons
       (ast.ast-node-push (Var (tltest-handle-id)))
-      (ast.ast-expr-cons
-        (ast.ast-node-push (Var (tltest-buf-id)))
+      (&
         (ast.ast-expr-cons
-          (ast.ast-node-push (Var (tltest-n-id)))
-          (ast.ast-expr-cons
-            (ast.ast-node-push
-              (PtrNull (ast.ty-node-push (ast.ast-ty-mut-ptr (I32)))))
+          (ast.ast-node-push (Var (tltest-buf-id)))
+          (&
             (ast.ast-expr-cons
-              (ast.ast-node-push (Literal (ast.ast-lit-int 0)))
-              (ast.ast-expr-list-new))))))))
+              (ast.ast-node-push (Var (tltest-n-id)))
+              (&
+                (ast.ast-expr-cons
+                  (ast.ast-node-push
+                    (PtrNull
+                      (ast.ty-node-push (& (ast.ast-ty-mut-ptr (& (I32)))))))
+                  (&
+                    (ast.ast-expr-cons
+                      (ast.ast-node-push (Literal (ast.ast-lit-int 0)))
+                      (& (ast.ast-expr-list-new)))))))))))))
 
 (define (tltest-windows-write-body) : i64
   (ast.ast-expr-let
     (ast.ast-let-binding-cons
-      (ast.ast-let-binding-id
-        (tltest-handle-id)
-        (Some (I64))
-        (tltest-windows-get-stderr-handle-expr))
-      (ast.ast-let-binding-cons
+      (&
         (ast.ast-let-binding-id
-          (tltest-ok-id)
-          (Some (I32))
-          (tltest-windows-write-file-call))
-        (ast.ast-let-binding-list-new)))
+          (tltest-handle-id)
+          (Some (I64))
+          (tltest-windows-get-stderr-handle-expr)))
+      (&
+        (ast.ast-let-binding-cons
+          (&
+            (ast.ast-let-binding-id
+              (tltest-ok-id)
+              (Some (I32))
+              (tltest-windows-write-file-call)))
+          (& (ast.ast-let-binding-list-new)))))
     (ast.ast-expr-if
       (ast.ast-expr-binary
         (Eq)
         (ast.ast-node-push (Var (tltest-ok-id)))
         (ast.ast-expr-cast
           (ast.ast-node-push (Literal (ast.ast-lit-int 0)))
-          (I32)))
+          (& (I32))))
       (ast.ast-expr-cast
         (ast.ast-node-push (Literal (ast.ast-lit-int -1)))
-        (I32))
+        (& (I32)))
       (ast.ast-node-push (Var (tltest-n-id))))))
 
 (define (tltest-windows-print-runtime-write-decl) : ast.AstDecl
@@ -1069,10 +1092,11 @@
 
 (define (tltest-print-param-list) : ast.AstParamList
   (ast.ast-param-cons
-    (ast.ast-param-id (tltest-text-id) (String) false)
-    (ast.ast-param-cons
-      (ast.ast-param-id (tltest-n-id) (I32) false)
-      (ast.ast-param-list-new))))
+    (& (ast.ast-param-id (tltest-text-id) (String) false))
+    (&
+      (ast.ast-param-cons
+        (& (ast.ast-param-id (tltest-n-id) (I32) false))
+        (& (ast.ast-param-list-new))))))
 
 (define (tltest-print-runtime-write-call) : i64
   (ast.ast-expr-call
@@ -1080,17 +1104,19 @@
     (ast.ast-expr-cons
       (ast.ast-expr-cast
         (ast.ast-node-push (Literal (ast.ast-lit-int 2)))
-        (I32))
-      (ast.ast-expr-cons
-        (ast.ast-node-push
-          (Unsafe
-            (ast.ast-expr-cons
-              (ast.ast-expr-string-data
-                (ast.ast-node-push (Var (tltest-text-id))))
-              (ast.ast-expr-list-new))))
+        (& (I32)))
+      (&
         (ast.ast-expr-cons
-          (ast.ast-node-push (Var (tltest-n-id)))
-          (ast.ast-expr-list-new))))))
+          (ast.ast-node-push
+            (Unsafe
+              (ast.ast-expr-cons
+                (ast.ast-expr-string-data
+                  (ast.ast-node-push (Var (tltest-text-id))))
+                (& (ast.ast-expr-list-new)))))
+          (&
+            (ast.ast-expr-cons
+              (ast.ast-node-push (Var (tltest-n-id)))
+              (& (ast.ast-expr-list-new)))))))))
 
 (define (tltest-print-runtime-print-decl) : ast.AstDecl
   (ast.ast-decl-def-fn-id
@@ -1101,9 +1127,10 @@
       (Begin
         (ast.ast-expr-cons
           (tltest-print-runtime-write-call)
-          (ast.ast-expr-cons
-            (ast.ast-node-push (Literal (Unit)))
-            (ast.ast-expr-list-new)))))))
+          (&
+            (ast.ast-expr-cons
+              (ast.ast-node-push (Literal (Unit)))
+              (& (ast.ast-expr-list-new)))))))))
 
 (define (tltest-program-with-print-runtime
   [program : ast.AstProgram]
@@ -1116,16 +1143,24 @@
           (match target
             [(Linux)
               (ast.ast-decl-cons
-                (tltest-print-runtime-write-decl target)
-                (ast.ast-decl-cons (tltest-print-runtime-print-decl) decls))]
+                (& (tltest-print-runtime-write-decl target))
+                (&
+                  (ast.ast-decl-cons
+                    (& (tltest-print-runtime-print-decl))
+                    (& decls))))]
             [(Windows)
               (ast.ast-decl-cons
-                (tltest-windows-get-std-handle-decl)
-                (ast.ast-decl-cons
-                  (tltest-windows-write-file-decl)
+                (& (tltest-windows-get-std-handle-decl))
+                (&
                   (ast.ast-decl-cons
-                    (tltest-print-runtime-write-decl target)
-                    (ast.ast-decl-cons (tltest-print-runtime-print-decl) decls))))])))]))
+                    (& (tltest-windows-write-file-decl))
+                    (&
+                      (ast.ast-decl-cons
+                        (& (tltest-print-runtime-write-decl target))
+                        (&
+                          (ast.ast-decl-cons
+                            (& (tltest-print-runtime-print-decl))
+                            (& decls))))))))])))]))
 
 (define (tltest-paths-with-print-runtime-count
   [count : i64]
@@ -1167,21 +1202,24 @@
                 (- index 1)
                 (ast.ast-expr-cons
                   (tltest-runtime-call-expr-id (tltest-runtime-case-begin-id))
-                  (ast.ast-expr-cons
-                    (tltest-print-expr
-                      (tltest-running-line
-                        (owned_view.compiler-owned-shared-view test)))
+                  (&
                     (ast.ast-expr-cons
-                      (tltest-call-expr-id call-id)
-                      (ast.ast-expr-cons
-                        (ast.ast-expr-if
-                          (tltest-runtime-call-expr-id
-                            (tltest-runtime-case-finish-id))
-                          (tltest-print-expr
-                            (tltest-failed-line
-                              (owned_view.compiler-owned-shared-view test)))
-                          (tltest-print-expr (tltest-ok-line test)))
-                        out)))))]
+                      (tltest-print-expr
+                        (tltest-running-line
+                          (owned_view.compiler-owned-shared-view test)))
+                      (&
+                        (ast.ast-expr-cons
+                          (tltest-call-expr-id call-id)
+                          (&
+                            (ast.ast-expr-cons
+                              (ast.ast-expr-if
+                                (tltest-runtime-call-expr-id
+                                  (tltest-runtime-case-finish-id))
+                                (tltest-print-expr
+                                  (tltest-failed-line
+                                    (owned_view.compiler-owned-shared-view test)))
+                                (tltest-print-expr (tltest-ok-line test)))
+                              (& out)))))))))]
             [_ (tltest-main-exprs-from tests (- index 1) out)])]))))
 
 (define (tltest-selection-counts
@@ -1219,12 +1257,13 @@
     [slow-skipped : i64 (tltest-slow-skipped-count (& tests))]
     (ast.ast-expr-cons
       (tltest-runtime-call-expr-id (tltest-runtime-suite-begin-id))
-      (tltest-main-exprs-from
-        tests
-        (- count 1)
-        (ast.ast-expr-cons
-          (tltest-runtime-suite-finish-expr count ignored slow-skipped)
-          (ast.ast-expr-list-new))))))
+      (&
+        (tltest-main-exprs-from
+          tests
+          (- count 1)
+          (ast.ast-expr-cons
+            (tltest-runtime-suite-finish-expr count ignored slow-skipped)
+            (& (ast.ast-expr-list-new))))))))
 
 (define (tltest-test-decls-onto
   [tests : (__tl_dyn-array InlineTest)]
@@ -1252,17 +1291,22 @@
 
 (define (tltest-main-decls [tests : (__tl_dyn-array InlineTest)]) : ast.AstDeclList
   (ast.ast-decl-cons
-    (ast.ast-decl-module-id (tltest-empty-name-id))
-    (ast.ast-decl-cons
-      (Import
-        (ast.ast-decl-meta-runtime-shared-view)
-        (Spec
-          (Module)
-          "stdlib.runtime"
-          (Some cbi.compiler-builtin-id-runtime-module)
-          (Some (tltest-runtime-import-alias-id))
-          (box (ast.ast-decl-span-fallback))))
-      (ast.ast-decl-cons (tltest-main-decl tests) (ast.ast-decl-list-new)))))
+    (& (ast.ast-decl-module-id (tltest-empty-name-id)))
+    (&
+      (ast.ast-decl-cons
+        (&
+          (Import
+            (ast.ast-decl-meta-runtime-shared-view)
+            (Spec
+              (Module)
+              "stdlib.runtime"
+              (Some cbi.compiler-builtin-id-runtime-module)
+              (Some (tltest-runtime-import-alias-id))
+              (box (ast.ast-decl-span-fallback)))))
+        (&
+          (ast.ast-decl-cons
+            (& (tltest-main-decl tests))
+            (& (ast.ast-decl-list-new))))))))
 
 (define (tltest-main-paths [source : String]) : ast.AstDeclPathList
   (ast.ast-decl-path-cons-with-owner-id
@@ -1552,7 +1596,7 @@
         [called-names : tltest_name_map.Map
           (tltest-reach-mark-expr session func names)]
         [runtime-names : tltest_name_map.Map
-          (match (ast.ast-expr-unspan (ast.ast-node-get func))
+          (match (ast.ast-expr-unspan (& (ast.ast-node-get func)))
             [(Var name)
               (tltest-reach-mark-lowered-runtime-for-call
                 session
@@ -1795,7 +1839,7 @@
         (tltest-reach-mark-expr session expr names)
         names)]
     [(DefFn decl-meta name _ _ body metadata)
-      (match (ast.ast-fn-metadata-export metadata)
+      (match (ast.ast-fn-metadata-export (& metadata))
         [(Export _)
           (tltest-reach-mark-expr
             session
@@ -1908,7 +1952,7 @@
     [(DefFn decl-meta name _ _ _ metadata)
       (let
         [marked : bool (tltest-reachable-name-marked? session names name)]
-        (match (ast.ast-fn-metadata-export metadata)
+        (match (ast.ast-fn-metadata-export (& metadata))
           [(Export _) true]
           [(No) marked]))]
     [(Extern decl-meta name _ _ _)

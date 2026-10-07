@@ -21,7 +21,7 @@
           (compiler_load.compiler-load-contextual-moduleless-decls
             (owned_view.compiler-owned-shared-view input)
             (owned_view.compiler-owned-shared-view fallback)
-            (ci.intern-generated-name fallback))]
+            (ci.intern-generated-name (& fallback)))]
         (test.assert-i64-eq
           (ast.ast-decl-list-len (& decls))
           count
@@ -81,11 +81,9 @@
     [module-name : String "loader.identity.same"]
     [source-id : i64
       (compiler_load.compiler-load-parse-context-name-id module-name)]
-    [generated-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view module-name))]
+    [generated-id : i64 (ci.intern-generated-name (& module-name))]
     [decls : ast.AstDeclList
-      (ast.ast-decl-cons (Module source-id) (ast.ast-decl-list-new))]
+      (ast.ast-decl-cons (& (Module source-id)) (& (ast.ast-decl-list-new)))]
     [fallback-from-source : i64
       (compiler_load.compiler-load-module-fallback-id-for-parse
         (owned_view.compiler-owned-shared-view module-name)

@@ -977,6 +977,7 @@ program_lifetime_return_ok|run-exit|tests/safety/program_lifetime_return_ok.tl|4
 program_lifetime_return_param_borrow_reject|check-fail|tests/safety/program_lifetime_return_param_borrow_reject.tl|-|source lifetime `n` does not outlive required lifetime `program`
 program_lifetime_return_local_reject|check-fail|tests/safety/program_lifetime_return_local_reject.tl|-|reference value would escape lexical scope
 program_lifetime_field_param_borrow_reject|check-fail|tests/safety/program_lifetime_field_param_borrow_reject.tl|-|source lifetime `n` does not outlive required lifetime `program`
+program_lifetime_arena_name_reject|check-fail|tests/safety/program_lifetime_arena_name_reject.tl|-|with-arena region cannot be the reserved lifetime 'program'
 vector_aggregate_ref_rvalue_call_reject|check-fail|tests/safety/vector_aggregate_ref_rvalue_call_reject.tl|-|borrow slots from a vector place or use the generated vector get helper
 vector_aggregate_ref_rvalue_workarounds_ok|check-ok|tests/safety/vector_aggregate_ref_rvalue_workarounds_ok.tl|-|-
 consume_parameter_use_after_move_reject|check-fail|tests/safety/consume_parameter_use_after_move_reject.tl|-|use of moved value `text`

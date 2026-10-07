@@ -1700,7 +1700,9 @@ layout. The tag exists solely to enable static escape checking.
 
 `(with-arena r ...)` creates the scoped arena, produces `(in r T)` region tags
 for allocations inside the body, shadows the calling thread's default arena, and
-lowers to `tl_region_mark` / `tl_region_reset` around the body.
+lowers to `tl_region_mark` / `tl_region_reset` around the body. The region name
+cannot be `program`: that is the reserved lifetime that outlives every region
+(section 3.10).
 
 **Region-taggable types** are the heap-allocated aggregate kinds whose storage
 can be created inside a region scope:

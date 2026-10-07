@@ -2436,7 +2436,21 @@
   ;; tc-body-move-breaks-swap!.
   (move-breaks-cell i64)
   (move-operand-control bool)
-  (move-operand-edges bool))
+  (move-operand-edges bool)
+  ;; By-value parameters written in place (#7901). `param-facts` holds what
+  ;; each checked body recorded: under its node id, the mask of written
+  ;; parameter positions that lowering reads (tc-body-param-write-fact); under
+  ;; tc-body-mut-borrow-key, each root it borrows `&mut`; under
+  ;; tc-body-memory-class-key, a nominal name's memory class
+  ;; (tc-body-memory-class-name?); and under tc-body-param-note-key, the
+  ;; names noted during the current move check, the first
+  ;; `param-writes-count`. A noted name `-1 - name` is a local root the body
+  ;; borrows `&mut` rather than a written parameter.
+  (param-writes-count i64)
+  (param-facts tc_i64_i64_map.Map)
+  ;; These outlive every function's scratch arena, so they grow in the arena
+  ;; the facts started in; 0 until then, when nothing is recorded.
+  (param-write-arena i64))
 
 ;; TcContext values are copied while resolving modules and rebuilding macro
 ;; views. Keep the mutable body analysis behind a shared one-slot cell so every
@@ -3128,7 +3142,10 @@
         0
         (tc-move-break-collection-cell-new)
         false
-        false))
+        false
+        0
+        (tc_i64_i64_map.with-capacity 0)
+        0))
     (TcBodyState
       (cast
         (unsafe
@@ -3169,7 +3186,10 @@
       (set! (deref data).early-exit-suppress-depth 0)
       (set! (deref data).early-exit-source-expr-limit expr-limit)
       (set! (deref data).early-exit-facts-ready false)
-      (set! (deref data).early-exit-facts-collecting true))
+      (set! (deref data).early-exit-facts-collecting true)
+      (set! (deref data).param-writes-count 0)
+      (set! (deref data).param-facts (tc_i64_i64_map.with-capacity 128))
+      (set! (deref data).param-write-arena (arena.tl_arena_current)))
     (tc-body-type-fact-storage-start! state expr-limit)))
 
 (define (tc-body-early-exit-facts-start!
@@ -3326,6 +3346,274 @@
     [data : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
     (unsafe
       (set! (deref data).move-operand-edges on))))
+
+;; Note a name for the current move check (see TcBodyStateData).
+(define (tc-body-move-note-push! [state : TcBodyState] [entry : i64]) : unit
+  (let
+    [view : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    [ptr : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
+    [arena-id : i64
+      (unsafe
+        (deref view).param-write-arena)]
+    (when
+      (!= arena-id 0)
+      (in-arena
+        (arena.Arena arena-id)
+        (let
+          [count : i64
+            (unsafe
+              (deref view).param-writes-count)]
+          [notes : tc_i64_i64_map.Map
+            (unsafe
+              (deref view).param-facts)]
+          (tc_i64_i64_map.insert-ref!
+            (&mut notes)
+            (tc-body-param-note-key count)
+            entry)
+          (unsafe
+            (set! (deref ptr).param-facts notes)
+            (set! (deref ptr).param-writes-count (+ count 1))))))))
+
+;; The `param-facts` key of the move check's noted name at `index`: bits 61
+;; and 60 are 11 (see tc-body-mut-borrow-key).
+(define (tc-body-param-note-key [index : i64]) : i64
+  (bit-or index 3458764513820540928))
+
+;; The noted name at `index` (see TcBodyStateData).
+(define (tc-body-param-note [state : TcBodyState] [index : i64]) : i64
+  (let
+    [view : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    [notes : tc_i64_i64_map.Map
+      (unsafe
+        (deref view).param-facts)]
+    (tc_i64_i64_map.get-value-or (& notes) (tc-body-param-note-key index) 0)))
+
+;; A by-value parameter's storage written in place, by name; see
+;; tc-param-storage-note-write.
+(define (tc-body-param-write-note! [state : TcBodyState] [name-id : i64]) : unit
+  (tc-body-move-note-push! state name-id))
+
+;; The position of the next noted write: a move check notes its own writes
+;; from this mark on.
+(define (tc-body-param-writes-mark [state : TcBodyState]) : i64
+  (let
+    [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    (unsafe
+      (deref data).param-writes-count)))
+
+(define (tc-body-param-writes-truncate! [state : TcBodyState] [mark : i64]) : unit
+  (let
+    [data : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
+    (unsafe
+      (set! (deref data).param-writes-count mark))))
+
+;; Bit i is set when parameter i's name was noted as written since `mark`. A
+;; noted parameter past position 62 sets every bit, so lowering privatizes all
+;; of that function's memory-class parameters.
+(define (tc-body-param-write-mask
+  [state : TcBodyState]
+  [mark : i64]
+  [params : (& params ast.AstParamList)]) : i64
+  (let
+    [count : i64 (tc-body-param-writes-mark state)]
+    [mask : i64 0]
+    ;; No write noted since `mark` leaves the parameters unvisited.
+    [index : i64
+      (if (< mark count)
+        0
+        (ast.ast-param-list-len params))]
+    (while (< index (ast.ast-param-list-len params))
+      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+        [(Param name _ _)
+          (let
+            [noted : i64 mark]
+            (while (< noted count)
+              (if (= (tc-body-param-note state noted) name)
+                (begin
+                  (set!
+                    mask
+                    (if (> index 62)
+                      -1
+                      (bit-or mask (shl 1 index))))
+                  (set! noted count))
+                (set! noted (+ noted 1)))))])
+      (set! index (+ index 1)))
+    mask))
+
+;; Record what a checked body's move check noted since `mark`: its
+;; written-parameter mask, joined with any mask an earlier check of the same
+;; body recorded, and its `&mut` borrow roots. A body's notes include its
+;; lambdas', which record their own as well.
+(define (tc-body-param-write-fact-record!
+  [state : TcBodyState]
+  [body-id : i64]
+  [mark : i64]
+  [params : (& params ast.AstParamList)]) : unit
+  (let
+    [mask : i64 (tc-body-param-write-mask state mark params)]
+    [view : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    [ptr : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
+    [arena-id : i64
+      (unsafe
+        (deref view).param-write-arena)]
+    [noted : i64 mark]
+    (when
+      (!= arena-id 0)
+      (begin
+        (in-arena
+          (arena.Arena arena-id)
+          (let
+            [facts : tc_i64_i64_map.Map
+              (unsafe
+                (deref view).param-facts)]
+            (tc_i64_i64_map.insert-ref!
+              (&mut facts)
+              body-id
+              (bit-or mask (tc_i64_i64_map.get-value-or (& facts) body-id 0)))
+            (unsafe
+              (set! (deref ptr).param-facts facts))))
+        (let
+          [count : i64 (tc-body-param-writes-mark state)]
+          (while (< noted count)
+            (let
+              [entry : i64 (tc-body-param-note state noted)]
+              (when
+                (< entry 0)
+                (tc-body-mut-borrow-record! state body-id (- -1 entry))))
+            (set! noted (+ noted 1))))))))
+
+;; A call's caller-side copy (lowering's lower-call-args-snapshot-mask) needs
+;; another argument that writes the same local root, which takes a `&mut`
+;; borrow of it in the same body; the move check notes each such root.
+(define (tc-body-mut-borrow-note! [state : TcBodyState] [name-id : i64]) : unit
+  (tc-body-move-note-push! state (- -1 name-id)))
+
+;; The `param-facts` key of a body's borrowed root name, or with name -1 of the
+;; body itself, present when it borrows any root. Its bits 61 and 60 are 01,
+;; where a body's node id has 00, tc-body-memory-class-key 10 and
+;; tc-body-param-note-key 11 (node and name ids and note indexes stay below
+;; 2^60), so entries of different kinds never collide. The map's
+;; bucket index sees only a key's low bits, so the body id is spread over all
+;; of them; were two root keys to collide, a call would only copy more often.
+(define (tc-body-mut-borrow-key [body-id : i64] [name-id : i64]) : i64
+  (bit-or
+    (bit-and (+ (* body-id -7046029254386353131) name-id) 1152921504606846975)
+    1152921504606846976))
+
+(define (tc-body-memory-class-key [name-id : i64]) : i64
+  (bit-or name-id 2305843009213693952))
+
+(define (tc-body-mut-borrow-record!
+  [state : TcBodyState]
+  [body-id : i64]
+  [name-id : i64]) : unit
+  (let
+    [view : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    [ptr : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
+    [arena-id : i64
+      (unsafe
+        (deref view).param-write-arena)]
+    (when
+      (and (!= arena-id 0) (>= body-id 0))
+      (in-arena
+        (arena.Arena arena-id)
+        (let
+          [roots : tc_i64_i64_map.Map
+            (unsafe
+              (deref view).param-facts)]
+          (tc_i64_i64_map.insert-ref!
+            (&mut roots)
+            (tc-body-mut-borrow-key body-id name-id)
+            1)
+          (tc_i64_i64_map.insert-ref!
+            (&mut roots)
+            (tc-body-mut-borrow-key body-id -1)
+            1)
+          (unsafe
+            (set! (deref ptr).param-facts roots)))))))
+
+;; Which roots of a body lowering treats as borrowed `&mut` there: -1 for
+;; every root (no recorded body, or before the facts start), -2 for none (the
+;; body borrows no root), or the body id, for the roots recorded with it.
+(define (tc-body-mut-borrow-scope [state : TcBodyState] [body-id : i64]) : i64
+  (let
+    [view : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    (cond
+      [(or
+          (=
+            (unsafe
+              (deref view).param-write-arena)
+            0)
+          (< body-id 0))
+        -1]
+      [(let
+          [roots : tc_i64_i64_map.Map
+            (unsafe
+              (deref view).param-facts)]
+          (tc_i64_i64_map.contains?
+            (& roots)
+            (tc-body-mut-borrow-key body-id -1)))
+        body-id]
+      [else -2])))
+
+(define (tc-body-mut-borrowed-root?
+  [state : TcBodyState]
+  [scope : i64]
+  [name-id : i64]) : bool
+  (cond
+    [(= scope -1) true]
+    [(< scope 0) false]
+    [else
+      (let
+        [view : (Ptr TcBodyStateData) (tc-body-state-view state)]
+        [roots : tc_i64_i64_map.Map
+          (unsafe
+            (deref view).param-facts)]
+        (tc_i64_i64_map.contains?
+          (& roots)
+          (tc-body-mut-borrow-key scope name-id)))]))
+
+;; Note the local a `&mut` borrow's place is rooted at, both as written and
+;; with dotted field names resolved, as lowering resolves them.
+(define (tc-move-note-mut-borrow-root
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [place : ast.AstExpr]) : unit
+  (match (tc-move-root-projection-var-id expr-bases place)
+    [(Some name)
+      (tc-body-mut-borrow-note! (tc-context-body-state ctx) name)
+      (when
+        (tc-dotted-place-name-id? ctx env name)
+        (match (tc-dotted-local-field-expr-id-after-check
+          (tc-context-structural-session ctx)
+          name)
+          [(Ok virtual-id)
+            (tc-move-note-mut-borrow-root
+              ctx
+              expr-bases
+              env
+              (ast.ast-expr-segment-bases-get expr-bases virtual-id))]
+          [(Err _) unit]))]
+    [(No) unit]))
+
+(defenum TcBodyParamWriteFact
+  (Known i64 i64)
+  (Unknown i64))
+
+;; A body's fact, carrying its node id (-1 for none): Known with the mask of
+;; by-value parameter positions a checked body writes in place, or Unknown for
+;; a body no move check recorded (one synthesized after typecheck), which
+;; lowering treats as writing every parameter.
+(define (tc-body-param-write-fact [state : TcBodyState] [body-id : i64]) : TcBodyParamWriteFact
+  (let
+    [view : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    [facts : tc_i64_i64_map.Map
+      (unsafe
+        (deref view).param-facts)]
+    (match (tc_i64_i64_map.get (& facts) body-id)
+      [(LookupFound mask) (Known body-id mask)]
+      [(LookupMissing) (Unknown body-id)])))
 
 (define (tc-body-early-exit-fact [state : TcBodyState] [body-id : i64]) : TcBodyEarlyExitFact
   (let
@@ -67654,21 +67942,100 @@
     [unwrapped : ast.AstType ty]
     (if (tc-poison-type? (tc-global-shared-view unwrapped))
       false
-      (match (tc-type-strip-region (tc-resolve-type ctx unwrapped))
-        [(Struct name) (not (tc-name-register-resident-id? ctx name))]
-        [(StructArgs name _) (not (tc-name-register-resident-id? ctx name))]
-        [(Enum name) (not (tc-name-register-resident-id? ctx name))]
-        [(EnumArgs name _) (not (tc-name-register-resident-id? ctx name))]
-        [_ false]))))
+      (tc-param-storage-memory-class-resolved?
+        ctx
+        (tc-resolve-type ctx unwrapped)))))
+
+;; Whether a resolved type is a memory-class struct or enum: one that is not
+;; register-resident.
+(define (tc-param-storage-memory-class-resolved?
+  [ctx : TcContext]
+  [resolved : ast.AstType]) : bool
+  (match (tc-type-strip-region resolved)
+    [(Struct name) (tc-body-memory-class-name? ctx name)]
+    [(StructArgs name _) (tc-body-memory-class-name? ctx name)]
+    [(Enum name) (tc-body-memory-class-name? ctx name)]
+    [(EnumArgs name _) (tc-body-memory-class-name? ctx name)]
+    [_ false]))
+
+;; Whether nominal `name-id` is memory-class (not register-resident). Every
+;; function's parameters ask, and a layout query walks the type, so a resolved
+;; layout's answer is memoized in the arena the facts started in; a layout not
+;; resolved yet counts as memory-class and is asked again.
+(define (tc-body-memory-class-name? [ctx : TcContext] [name-id : i64]) : bool
+  (let
+    [state : TcBodyState (tc-context-body-state ctx)]
+    [view : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    [ptr : (MutPtr TcBodyStateData) (tc-body-state-ptr state)]
+    [names : tc_i64_i64_map.Map
+      (unsafe
+        (deref view).param-facts)]
+    (match (tc_i64_i64_map.get (& names) (tc-body-memory-class-key name-id))
+      [(LookupFound known) (= known 1)]
+      [(LookupMissing)
+        (match (tc-inline-aggregate-layout-for-id ctx name-id)
+          [(Ok layout)
+            (let
+              [memory? : bool
+                (not (tc-inline-aggregate-layout-register-resident? layout))]
+              [arena-id : i64
+                (unsafe
+                  (deref view).param-write-arena)]
+              (when
+                (!= arena-id 0)
+                (in-arena
+                  (arena.Arena arena-id)
+                  (let
+                    [grown : tc_i64_i64_map.Map
+                      (unsafe
+                        (deref view).param-facts)]
+                    (tc_i64_i64_map.insert-ref!
+                      (&mut grown)
+                      (tc-body-memory-class-key name-id)
+                      (if memory?
+                        1
+                        2))
+                    (unsafe
+                      (set! (deref ptr).param-facts grown)))))
+              memory?)]
+          [(Err _) true])])))
 
 (define (tc-param-storage-seed-params
-  [_ctx : TcContext]
-  [_params : (& _params ast.AstParamList)]
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : (& params ast.AstParamList)]
   [moved : TcMovedSet]) : TcMovedSet
-  ;; Every runtime by-value parameter is owned callee storage. The backend's
-  ;; ABI materialization supplies a private value representation, so no
-  ;; parameter is tracked as a read-only alias of incoming caller storage.
-  moved)
+  ;; A by-value memory-class struct or enum parameter arrives as the address of
+  ;; its caller's storage. Each starts as the origin of its own storage, so an
+  ;; in-place write through it, or through a local that aliases part of it, is
+  ;; noted against the parameter (tc-param-storage-note-write), and lowering
+  ;; gives exactly the noted parameters private callee storage (#7901). Only
+  ;; a declared type that names a type can be one; `env` binds the parameters
+  ;; to their resolved types (tc-bind-params).
+  (let
+    [index : i64 0]
+    [out : TcMovedSet moved]
+    (while (< index (ast.ast-param-list-len params))
+      (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+        [(Param name ty _)
+          (when
+            (and
+              (match (tc-global-shared-view ty)
+                [(Var _) true]
+                [(VarArgs _ _) true]
+                [(Struct _) true]
+                [(StructArgs _ _) true]
+                [(Enum _) true]
+                [(EnumArgs _ _) true]
+                [(Region _ _) true]
+                [(Invalidate _ _) true]
+                [_ false])
+              (match (tc-lookup-id env name)
+                [(Ok bound) (tc-param-storage-memory-class-resolved? ctx bound)]
+                [(Err _) (tc-param-storage-memory-class-type? ctx ty)]))
+            (set! out (tc-param-storage-origin-bind-in-set out name name)))])
+      (set! index (+ index 1)))
+    out))
 
 (define (tc-param-storage-fixed-array-type?
   [ctx : TcContext]
@@ -67765,41 +68132,32 @@
     [(Some parameter-id) parameter-id]
     [(No) -1]))
 
-(define (tc-param-storage-write-message
-  [operation : String]
-  [parameter-id : i64]) : String
-  (str_cat.str-cat
-    (cdiag.compiler-diagnostic-typecheck-tag (BorrowViolation))
-    "typecheck: cannot "
-    operation
-    " storage derived from by-value memory-aggregate parameter `"
-    (tc-hygiene-name-text-id parameter-id)
-    "`; declare the parameter as `&mut` and pass an explicit mutable borrow"))
-
-(define (tc-param-storage-check-write
+;; An in-place write through `place` -- a field, element or `replace!` write,
+;; or a `&mut` borrow -- notes the by-value parameter whose storage it reaches,
+;; if any.
+(define (tc-param-storage-note-write
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [moved : TcMovedSet]
-  [place : ast.AstExpr]
-  [operation : String]) : ResultTcUnit
+  [place : ast.AstExpr]) : unit
   (match (tc-param-storage-place-origin ctx expr-bases env moved place)
     [(Some parameter-id)
-      (Err (tc-param-storage-write-message operation parameter-id))]
-    [(No) Ok]))
+      (tc-body-param-write-note! (tc-context-body-state ctx) parameter-id)]
+    [(No) unit]))
 
-(define (tc-param-storage-check-array-write
+(define (tc-param-storage-note-array-write
   [ctx : TcContext]
   [expr-bases : i64]
   [env : TcTypeEnv]
   [moved : TcMovedSet]
-  [array : ast.AstExpr]) : ResultTcUnit
+  [array : ast.AstExpr]) : unit
   (match (tc-expr ctx env (tc-global-shared-view array))
     [(Ok array-ty)
-      (if (tc-param-storage-fixed-array-type? ctx array-ty)
-        (tc-param-storage-check-write ctx expr-bases env moved array "mutate")
-        Ok)]
-    [(Err _) Ok]))
+      (when
+        (tc-param-storage-fixed-array-type? ctx array-ty)
+        (tc-param-storage-note-write ctx expr-bases env moved array))]
+    [(Err _) unit]))
 
 (define (tc-param-storage-rebind-from-init
   [ctx : TcContext]
@@ -71325,13 +71683,18 @@
                     (ast.ast-expr-list-get (& args) 0 0)
                     "mutably borrow")
                     [(Ok)
-                      (tc-param-storage-check-write
+                      (tc-param-storage-note-write
                         ctx
                         expr-bases
                         env
                         (tc-global-shared-view moved)
-                        (tc-global-shared-view source)
-                        "mutably borrow")]
+                        (tc-global-shared-view source))
+                      (tc-move-note-mut-borrow-root
+                        ctx
+                        expr-bases
+                        env
+                        (tc-global-shared-view source))
+                      Ok]
                     [(Err message) (Err message)])]
                 [_ Ok])]
             [(Err _) Ok])
@@ -73410,6 +73773,8 @@
                     (tc-global-shared-view params)
                     (tc-global-shared-view body))
                   (tc-moved-clone locals)))]
+            [lambda-writes-mark : i64
+              (tc-body-param-writes-mark (tc-context-body-state ctx))]
             [lambda-moved
               (try
                 (tc-move-check-expr-id
@@ -73420,9 +73785,16 @@
                   (tc-moved-empty)
                   (tc-param-storage-seed-params
                     ctx
+                    lambda-env
                     params
                     (tc-moved-clone moved))
                   body-box))]
+            [_
+              (tc-body-param-write-fact-record!
+                (tc-context-body-state ctx)
+                body-box
+                lambda-writes-mark
+                (& params))]
             [result-check : TcMoveResult
               (match (tc-move-check-invalidate-body-end
                 ctx
@@ -73705,13 +74077,12 @@
           [value : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases value-box)]
           [_
-            (try
-              (tc-param-storage-check-array-write
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view moved)
-                (tc-global-shared-view array)))]
+            (tc-param-storage-note-array-write
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view moved)
+              (tc-global-shared-view array))]
           (let
             [moved1
               (try
@@ -73818,14 +74189,12 @@
           [replacement : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases replacement-box)]
           [_
-            (try
-              (tc-param-storage-check-write
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view moved)
-                (tc-global-shared-view place)
-                "replace"))]
+            (tc-param-storage-note-write
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view moved)
+              (tc-global-shared-view place))]
           [moved0
             (try
               (tc-move-check-replace-global-source
@@ -73897,14 +74266,12 @@
           [value : ast.AstExpr
             (ast.ast-expr-segment-bases-get expr-bases value-box)]
           [_
-            (try
-              (tc-param-storage-check-write
-                ctx
-                expr-bases
-                env
-                (tc-global-shared-view moved)
-                (tc-global-shared-view receiver)
-                "mutate"))]
+            (tc-param-storage-note-write
+              ctx
+              expr-bases
+              env
+              (tc-global-shared-view moved)
+              (tc-global-shared-view receiver))]
           (let
             [moved1
               (try
@@ -75070,14 +75437,18 @@
     (if mutable
       (let
         [_
-          (try
-            (tc-param-storage-check-write
-              ctx
-              expr-bases
-              env
-              (tc-global-shared-view moved)
-              (tc-global-shared-view inner)
-              "mutably borrow"))]
+          (tc-param-storage-note-write
+            ctx
+            expr-bases
+            env
+            (tc-global-shared-view moved)
+            (tc-global-shared-view inner))]
+        [_
+          (tc-move-note-mut-borrow-root
+            ctx
+            expr-bases
+            env
+            (tc-global-shared-view inner))]
         (tc-move-check-borrow-place
           ctx
           expr-bases
@@ -75159,7 +75530,7 @@
         env
         (tc-global-shared-view locals)
         (tc-moved-empty)
-        (tc-param-storage-seed-params ctx params (tc-moved-empty))
+        (tc-param-storage-seed-params ctx env params (tc-moved-empty))
         expr-id)]
     [retry? : bool
       (and
@@ -75179,7 +75550,7 @@
             env
             locals
             (tc-moved-empty)
-            (tc-param-storage-seed-params ctx params (tc-moved-empty))
+            (tc-param-storage-seed-params ctx env params (tc-moved-empty))
             expr-id)]
         (tc-body-move-operand-edges-set! state false)
         result)
@@ -75195,6 +75566,8 @@
   (let
     [locals : TcMovedSet (tc-move-params-locals params (tc-moved-empty))]
     [body : ast.AstExpr (ast.ast-expr-segment-bases-get expr-bases body-id)]
+    [state : TcBodyState (tc-context-body-state ctx)]
+    [writes-mark : i64 (tc-body-param-writes-mark state)]
     [moved
       (try
         (tc-move-check-body-walk
@@ -75204,6 +75577,12 @@
           (tc-global-shared-view locals)
           params
           body-id))]
+    ;; The written parameters of this body (its lambdas recorded their own);
+    ;; the noted names are not needed past this function.
+    [_
+      (begin
+        (tc-body-param-write-fact-record! state body-id writes-mark params)
+        (tc-body-param-writes-truncate! state writes-mark))]
     [_
       (try
         (match (tc-move-check-invalidate-body-end

@@ -436,6 +436,7 @@ global_initializer|all|-|tests/integration/global_initializer.tl|120|-|-|-|-
 hello|all|-|tests/integration/hello.tl|42|-|-|-|-
 parameter_set_rebind|all|-|tests/integration/parameter_set_rebind.tl|42|-|-|-|-
 by_value_memory_aggregate_explicit_mut|all|-|tests/integration/by_value_memory_aggregate_explicit_mut.tl|42|-|-|-|-
+by_value_param_private_storage|all|-,0,1,2|tests/integration/by_value_param_private_storage.tl|42|-|-|-|-
 by_value_aggregate_abi|all|-|tests/integration/by_value_aggregate_abi.tl|42|-|-|stdlib/string.tl|-
 i16_min_div_neg1_trap|all|-|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
 i16_min_rem_neg1_trap|all|-|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n

@@ -1,4 +1,4 @@
-;; Owner isolation and diagnostic order for the resource specialization walkers.
+;; Owner isolation and diagnostic order for resource specialization.
 (import compiler_specialize as spec)
 (import compiler_ast_types as ast)
 (import compiler_builtin_ids as cbi)
@@ -77,29 +77,23 @@
         [intern-state (ci.intern-compat-state-capture-active)]
         (spec.spec-owner-context-new pools intern-state))]
     [expr : ast.AstExpr (resource-with-owner (& owner))]
-    [types : spec.SpecTypeSubst
-      (spec.spec-type-subst-cons
-        cbi.compiler-builtin-id-fix-T
-        (I64)
-        (spec.spec-type-subst-new))]
-    [values : spec.SpecValueSubst
-      (spec.spec-value-subst-cons
-        cbi.compiler-builtin-id-fix-x
-        (I64 5)
-        (spec.spec-value-subst-new))]
+    [subs : spec.SpecSubst
+      (spec.SpecSubst
+        (spec.spec-type-subst-cons
+          cbi.compiler-builtin-id-fix-T
+          (I64)
+          (spec.spec-type-subst-new))
+        (spec.spec-value-subst-cons
+          cbi.compiler-builtin-id-fix-x
+          (I64 5)
+          (spec.spec-value-subst-new)))]
     [ambient-count : i64 (ast.ast-node-pool-len)]
-    (match (spec.spec-substitute-types-expr-with-owner (& owner) expr (& types))
-      [(Ok typed)
-        (match (spec.spec-substitute-values-expr-with-owner
-          (& owner)
-          (spec.spec-owner-expr-get (& owner) typed)
-          (& values))
-          [(Ok result)
-            (test.assert-true
-              (rewritten-resource-ok? (& owner) result)
-              "type and value substitution route every resource child through its owner")]
-          [_ (test.assert-true false "value substitution succeeds")])]
-      [_ (test.assert-true false "type substitution succeeds")])
+    (match (spec.spec-substitute-expr-with-owner (& owner) expr (& subs))
+      [(Ok result)
+        (test.assert-true
+          (rewritten-resource-ok? (& owner) result)
+          "type and value substitution route every resource child through its owner")]
+      [_ (test.assert-true false "substitution succeeds")])
     (test.assert-i64-eq
       (ast.ast-node-pool-len)
       ambient-count

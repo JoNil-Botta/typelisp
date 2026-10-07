@@ -1115,6 +1115,11 @@ replace_cleanup_owner_element_reject|check-fail|tests/safety/replace_cleanup_own
 replace_cleanup_owner_slot_reject|check-fail|tests/safety/replace_cleanup_owner_slot_reject.tl|-|replace! cannot replace an active cleanup owner
 replace_cleanup_owner_nested_reject|check-fail|tests/safety/replace_cleanup_owner_nested_reject.tl|-|replace! cannot replace an active cleanup owner
 replace_fixed_array_cleanup_reject|check-fail|tests/safety/replace_fixed_array_cleanup_reject.tl|-|replace! does not support cleanup-owning places
+cleanup_hook_unsafe_field_reject|check-fail|tests/safety/cleanup_hook_unsafe_field_reject.tl|-|struct Handle field fd cleanup function raw-close is an unsafe declaration
+cleanup_hook_unsafe_payload_reject|check-fail|tests/safety/cleanup_hook_unsafe_payload_reject.tl|-|enum Res variant Open cleanup function raw-close is an unsafe declaration
+cleanup_hook_unsafe_imported_reject|check-fail|tests/safety/cleanup_hook_unsafe_imported_reject.tl|-|cleanup function dep/raw-close is an unsafe declaration
+cleanup_hook_imported_safe_ok|check-ok|tests/safety/cleanup_hook_imported_safe_ok.tl|-|-
+cleanup_hook_safe_validating_ok|run-exit|tests/safety/cleanup_hook_safe_validating_ok.tl|42|-
 replace_spmd_reject|check-fail|tests/safety/replace_spmd_reject.tl|-|replace! is not supported in SPMD
 replace_type_mismatch_reject|check-fail|tests/safety/replace_type_mismatch_reject.tl|-|replace! replacement type mismatch
 replace_lifetime_store_reject|check-fail|tests/safety/replace_lifetime_store_reject.tl|-|source lifetime `short-life` does not outlive required lifetime `long-life`

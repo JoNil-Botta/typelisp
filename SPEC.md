@@ -3124,7 +3124,9 @@ expression. A safe direct call is rejected and names the callee. Any
 first-class reference is also rejected, even inside `unsafe`, because assigning
 the ordinary `(-> ...)` value would erase the checker-only unsafe-call effect.
 This fail-closed rule covers inferred and annotated locals and globals,
-branches, arguments and returns, assignment, aggregates, and captures.
+branches, arguments and returns, assignment, aggregates, and captures. A
+field or payload `(:cleanup ...)` hook, which the compiler calls implicitly,
+cannot name an unsafe declaration either.
 
 An unsafe function body is still checked as ordinary safe code unless the body
 itself uses `(unsafe ...)`. The same safe boundary applies to a lambda body:
@@ -3996,7 +3998,10 @@ type:
 
 - `(:cleanup field-cleanup-fn)` marks a direct resource field and names the
   cleanup function for that field. The function must have type `(-> F unit)`,
-  where `F` is the field type.
+  where `F` is the field type. It must not be an unsafe declaration (§4.3.1):
+  the compiler calls it implicitly where the owner's scope ends, in safe code
+  too, so a hook discharges its own unsafety in its body. The same rule applies
+  to an enum payload's `(:cleanup ...)` metadata.
 - `(:owned)` marks a field whose type is itself cleanup-owning. The field uses
   that type's declared cleanup function.
 

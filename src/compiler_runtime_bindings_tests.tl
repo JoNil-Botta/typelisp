@@ -135,12 +135,7 @@
 (define (runtime-bindings-test-program-name? [name : (& name str)]) : bool
   (or
     (string.eq name "main")
-    (and
-      (>= (string.string-length name) 3)
-      (string.eq (string.substring name 0 3) "tl_"))
-    (and
-      (>= (string.string-length name) 4)
-      (string.eq (string.substring name 0 4) "_tl_"))))
+    (bindings.compiler-runtime-binding-compiler-owned? name)))
 
 ;; Every external name the Windows runtime text uses with `features`: its
 ;; `.extern` declarations and the calls and jumps to names it does not define.
@@ -576,45 +571,38 @@
         "a declared assembly-route binding is not object-linkable")]
     [_ (io.panic "GetLastError must stay on the assembly route")]))
 
-;; A runtime definition the image plans as a local symbol but never
-;; materializes is rejected by the image's own target resolution, even under a
-;; name the table admits: the table speaks only for external symbols. The
-;; program's GetStdHandle becomes a local symbol in `section`.
-(define (runtime-bindings-test-planned-local-linkability
-  [section : cobj.CompilerObjectMaybeSection]) : coff.CompilerWindowsCoffLinkability
-  (let
-    [image : cobj.CompilerObjectImage
-      (runtime-bindings-test-image
-        (runtime-bindings-test-extern-program "GetStdHandle"))]
-    [symbols : cobj.CompilerObjectSymbolList image.symbols]
-    [symbol-count : i64 (cobj.compiler-object-symbol-list-count (& symbols))]
-    [symbol-builder : cobj.CompilerObjectSymbolBuilder
-      (cobj.compiler-object-symbol-builder-with-capacity symbol-count)]
-    [index : i64 0]
-    (while (< index symbol-count)
-      (match (cobj.compiler-object-symbol-list-ref (& symbols) index)
-        [(Symbol name binding kind symbol-section)
-          (let
-            [planned? : bool (string.eq name "GetStdHandle")]
-            (set!
-              symbol-builder
-              (cobj.compiler-object-symbol-builder-push
-                symbol-builder
-                (if planned?
-                  (Symbol name (Local) (Runtime) section)
-                  (Symbol name binding kind symbol-section)))))])
-      (set! index (+ index 1)))
-    (coff.compiler-windows-coff-linkability
-      (cobj.CompilerObjectImage
-        image.sections
-        (cobj.compiler-object-symbol-builder-finish symbol-builder)
-        image.relocations))))
-
+;; A runtime definition the plan provides but the image has not materialized
+;; cannot be bound externally instead: the table refuses every name the object
+;; runtime plans. Materializing those bodies is #8317's.
 (test
-  runtime-bindings-unmaterialized-local-definition
-  (match (runtime-bindings-test-planned-local-linkability No)
-    [(Unavailable (UnsupportedCoffImage)) unit]
-    [_ (io.panic "a local definition with no section must not link")])
-  (match (runtime-bindings-test-planned-local-linkability (Some (Text)))
-    [(Unavailable (UnsupportedCoffImage)) unit]
-    [_ (io.panic "a local definition with no .text label must not link")]))
+  runtime-bindings-planned-runtime-definition-is-not-a-binding
+  (let
+    [planned : backend.BackendStringSeq
+      (backend.compiler-backend-object-runtime-symbols-list)]
+    [index : i64 0]
+    (test.assert-true (> planned.len 0) "the object runtime plans definitions")
+    (while (< index planned.len)
+      (let
+        [name : String (string.copy (& (array-ref planned.slots index)))]
+        (test.assert-true
+          (string.eq
+            (runtime-bindings-test-error
+              (str_cat.str-cat
+                "windows-x86_64\t"
+                (string.copy (& name))
+                "\tfunction\tkernel32.lib\talways\tobject"))
+            (str_cat.str-cat "row 1: compiler-owned runtime name " name))
+          "a planned runtime definition is not an external binding"))
+      (set! index (+ index 1)))
+    (test.assert-true
+      (string.eq
+        (runtime-bindings-test-error
+          "windows-x86_64\t_tl_stdlib_runtime_os_write\tfunction\tkernel32.lib\talways\tobject")
+        "row 1: compiler-owned runtime name _tl_stdlib_runtime_os_write")
+      "nor is a stdlib runtime function")
+    (test.assert-true
+      (string.eq
+        (runtime-bindings-test-error
+          "windows-x86_64\ttl\tfunction\tkernel32.lib\talways\tobject")
+        "")
+      "a name shorter than the prefix is not compiler-owned")))

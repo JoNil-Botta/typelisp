@@ -14,6 +14,9 @@
 ;;   when only assembled runtime text uses it. Declaring a binding does not
 ;;   admit it to the object route: admission takes its own semantic, ABI and
 ;;   relocation evidence.
+;; A binding never names a compiler-owned runtime definition (`tl_`/`_tl_`):
+;; such a symbol is defined in the image, and an external binding cannot stand
+;; in for a body the image has not materialized (#8317).
 ;; The Linux runtime text declares and calls no external symbol, so Linux has
 ;; no rows.
 (import stdlib.string)
@@ -100,6 +103,17 @@ windows-x86_64\tNtCreateFile\tfunction\tntdll.lib\tabi-fixture\tobject
         (string.eq (string.substring provider (- length 4) 4) ".lib"))
       (string.eq provider "-"))))
 
+;: Whether `name` lies in the compiler's own runtime namespace, `tl_` or
+;: `_tl_`, which no external binding may name.
+(define (compiler-runtime-binding-compiler-owned? [name : (& name str)]) : bool
+  (or
+    (and
+      (>= (string.string-length name) 3)
+      (string.eq (string.substring name 0 3) "tl_"))
+    (and
+      (>= (string.string-length name) 4)
+      (string.eq (string.substring name 0 4) "_tl_"))))
+
 (define (compiler-runtime-binding-row-error
   [text : (& text str)]
   [start : i64]
@@ -120,6 +134,8 @@ windows-x86_64\tNtCreateFile\tfunction\tntdll.lib\tabi-fixture\tobject
       [(not (compiler-runtime-binding-target-known? (& target)))
         "unknown target"]
       [(= (string.string-length (& name)) 0) "empty name"]
+      [(compiler-runtime-binding-compiler-owned? (& name))
+        (str_cat.str-cat "compiler-owned runtime name " name)]
       [(not (or (string.eq kind "function") (string.eq kind "data")))
         "unknown kind"]
       [(not (compiler-runtime-binding-provider-valid? (& target) (& provider)))

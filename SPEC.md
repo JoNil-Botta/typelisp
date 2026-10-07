@@ -9441,6 +9441,11 @@ After every row succeeds, the compiler writes deterministic
 target-scoped ABI reasons identify, respectively, an ordinary call, a function
 entry signature, or a returned value whose ABI shape is outside the temporary
 proven subset accepted by direct Windows object lowering.
+An external relocation target is linkable only when the compiler's per-target
+runtime binding table declares it with the object route. That table also
+supplies the import libraries Windows source builds link. A relocation against
+any other external symbol falls back with `unsupported-external-relocation`.
+The table never names a compiler-owned runtime symbol (`tl_` or `_tl_`).
 Compile, type, backend, object-serialization, and file-write errors fail the
 batch and do not produce the result plan. Each source is loaded, checked,
 lowered, and optimized once; an automatic assembly fallback renders from that

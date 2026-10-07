@@ -106,49 +106,6 @@
   [relocs : cobj.CompilerObjectRelocationList]) : bool
   (< (compiler-windows-coff-undeclared-relocation symbols relocs) 0))
 
-;; Whether every relocation against a symbol of this image, rather than an
-;; external one, reaches a materialized definition: a label in the symbol's
-;; section. A runtime or program symbol the image only plans has no section
-;; or no label, and the binding table does not speak for it (#8318).
-(define (compiler-windows-coff-local-targets-materialized?
-  [image : cobj.CompilerObjectImage]) : bool
-  (let
-    [count : i64 (cobj.compiler-object-relocation-list-count image.relocations)]
-    [symbol-count : i64 (cobj.compiler-object-symbol-list-count image.symbols)]
-    [index : i64 0]
-    [ok : bool true]
-    (while (and ok (< index count))
-      (match (cobj.compiler-object-relocation-list-ref image.relocations index)
-        [(Relocation _ _ _ target)
-          (let
-            [symbol-index : i64 0]
-            [done : bool false]
-            (while (and (not done) (< symbol-index symbol-count))
-              (match (cobj.compiler-object-symbol-list-ref
-                image.symbols
-                symbol-index)
-                [(Symbol name binding _ section)
-                  (if (string.eq name target)
-                    (begin
-                      (set! done true)
-                      (match binding
-                        [(Extern) unit]
-                        [_
-                          (match section
-                            [(No) (set! ok false)]
-                            [(Some kind)
-                              (when
-                                (<
-                                  (layout.compiler-object-layout-section-label-offset
-                                    image
-                                    kind
-                                    name)
-                                  0)
-                                (set! ok false))])]))
-                    (set! symbol-index (+ symbol-index 1)))])))])
-      (set! index (+ index 1)))
-    ok))
-
 ;; The fallback for relocation `index`: its section, its containing label and
 ;; that label's offset, and the undeclared symbol.
 (define (compiler-windows-coff-undeclared-external
@@ -163,41 +120,36 @@
         target)]))
 
 (define (compiler-windows-coff-linkability [image : cobj.CompilerObjectImage]) : CompilerWindowsCoffLinkability
-  (cond
-    [(not
-        (and
-          (compiler_object_coff.compiler-object-coff-image-supported? image)
-          (compiler-windows-coff-local-targets-materialized?
-            (owned_view.compiler-owned-shared-view image))))
-      (Unavailable UnsupportedCoffImage)]
-    [(>=
-        (compiler-windows-coff-undeclared-relocation
-          (owned_view.compiler-owned-shared-view image.symbols)
-          (owned_view.compiler-owned-shared-view image.relocations))
-        0)
-      (Unavailable
-        (compiler-windows-coff-undeclared-external
-          (owned_view.compiler-owned-shared-view image)
-          (compiler-windows-coff-undeclared-relocation
-            (owned_view.compiler-owned-shared-view image.symbols)
-            (owned_view.compiler-owned-shared-view image.relocations))))]
-    [(not
-        (cobj.compiler-object-symbol-list-contains?
-          image.symbols
-          "_tl_start"
-          (Export)
-          (Function)))
-      (Unavailable MissingEntrySymbol)]
-    [(<
-        (layout.compiler-object-layout-section-label-offset
-          image
-          (Text)
-          "tl_setup_argv")
-        0)
-      (Unavailable MissingRuntimeEntry)]
-    [(<= (layout.compiler-object-layout-section-raw-size image (Text)) 0)
-      (Unavailable EmptyTextSection)]
-    [else (Linkable)]))
+  (let
+    [undeclared : i64
+      (compiler-windows-coff-undeclared-relocation
+        (owned_view.compiler-owned-shared-view image.symbols)
+        (owned_view.compiler-owned-shared-view image.relocations))]
+    (cond
+      [(not (compiler_object_coff.compiler-object-coff-image-supported? image))
+        (Unavailable UnsupportedCoffImage)]
+      [(>= undeclared 0)
+        (Unavailable
+          (compiler-windows-coff-undeclared-external
+            (owned_view.compiler-owned-shared-view image)
+            undeclared))]
+      [(not
+          (cobj.compiler-object-symbol-list-contains?
+            image.symbols
+            "_tl_start"
+            (Export)
+            (Function)))
+        (Unavailable MissingEntrySymbol)]
+      [(<
+          (layout.compiler-object-layout-section-label-offset
+            image
+            (Text)
+            "tl_setup_argv")
+          0)
+        (Unavailable MissingRuntimeEntry)]
+      [(<= (layout.compiler-object-layout-section-raw-size image (Text)) 0)
+        (Unavailable EmptyTextSection)]
+      [else (Linkable)])))
 
 (define (compiler-windows-coff-linkable? [image : cobj.CompilerObjectImage]) : bool
   (match (compiler-windows-coff-linkability image)

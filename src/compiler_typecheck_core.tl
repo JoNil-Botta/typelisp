@@ -57027,6 +57027,8 @@
         (match pattern
           [(Wildcard) true]
           [(Binding _) true]
+          ;; A typed binding, such as `for`'s annotated item (#8581).
+          [(Var _ _) true]
           [_ (tc-match-arms-have-catchall-at? arms (+ index 1))])])))
 
 (define (tc-match-arms-have-catchall-for-type?
@@ -57287,6 +57289,13 @@
         (ast.ast-pattern-list-box-shared-view items-box)
         has-rest
         scrut-ty)]
+    ;; A `Var` pattern binds like `Binding`; its annotation is checked when it
+    ;; is bound (#8581).
+    [(Var name _)
+      (tc-match-pattern-catchall-for-shape?
+        ctx
+        scrut-ty
+        (ast.AstPattern.Binding name))]
     [_ (tc-match-pattern-catchall-for-shape? ctx scrut-ty pattern)]))
 
 ;; The most element patterns any slice arm has, or -1 without slice arms.

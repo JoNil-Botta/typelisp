@@ -986,6 +986,8 @@ consume_parameter_function_metadata_arity_reject|check-fail|tests/safety/consume
 vector_into_iterator_source_reuse_reject|check-fail|tests/safety/vector_into_iterator_source_reuse_reject.tl|-|use of moved value `values`
 for_owned_source_reuse_reject|check-fail|tests/safety/for_owned_source_reuse_reject.tl|-|use of moved value `items`
 for_native_mut_item_capture_reject|check-fail|tests/safety/for_native_mut_item_capture_reject.tl|-|lambda cannot capture mutable reference
+macro_reference_type_unquote_ok|run-exit|tests/safety/macro_reference_type_unquote_ok.tl|42|-
+for_reference_item_annotation_mismatch_reject|check-fail|tests/safety/for_reference_item_annotation_mismatch_reject.tl|-|pattern binding type mismatch: expected (& a i32), found (& a i64)
 vector_into_iterator_borrow_live_reject|check-fail|tests/safety/vector_into_iterator_borrow_live_reject.tl|-|cannot move borrowed place `values`
 vector_into_iterator_mutate_after_reject|check-fail|tests/safety/vector_into_iterator_mutate_after_reject.tl|-|use of moved value `values`
 vector_into_iterator_second_consume_reject|check-fail|tests/safety/vector_into_iterator_second_consume_reject.tl|-|use of moved value `values`

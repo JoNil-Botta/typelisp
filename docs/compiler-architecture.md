@@ -29,6 +29,15 @@ Shared emission reads those facts and never tests the target itself.
 enforces the boundary; [`src/TESTING.md`](../src/TESTING.md) (*Cross-Target
 Codegen Parity*) describes its rules.
 
+The freestanding Linux runtime installs a zeroed TLS mapping before global
+initializers and at each native worker entry. FS:0 holds the mapping's thread
+pointer; named TPOFF relocations locate the arena pointer, optional backtrace
+bounds and one private storage word. `tl_thread_local_word_addr` exposes that
+word through an unsafe native declaration. Its address belongs to the calling
+thread, survives arena changes and must never escape to another thread.
+Issue [#8638](https://github.com/JoNil-Botta/typelisp/issues/8638) consumes this
+primitive for the private I/O error channel; Windows uses its native TLS API.
+
 `compiler_module_name.tl` owns the complete dotted import-name contract used by
 both the parser and LSP: nonempty components, no path separators or colon, and
 no final `.tl` suffix. It preserves the existing byte-level name predicate;
@@ -233,6 +242,18 @@ Borrowed aggregate patterns share `lower-bind-element-access`: a String name
 binding loads the stored handle to expose a `str` view, while nested aggregate
 patterns retain the address of inline storage. Struct fields follow the same
 access rule as tuple slots and array elements, preserving the borrow lifetime.
+
+The lowerer's job state, `CompilerLowerState`, is a one-word handle to a
+directory of typed cells, one per field, so an access reads one directory word
+and the cell and never copies the wide state. The fields are declared once, as
+`[name : Type init]` clauses, by `compiler-state-directory-schema`
+(`compiler_state_schema.tl`, #7021). That schema generates the only code that
+addresses the cells: a typed reader and writer per field
+(`compiler-lower-state-NAME`, `compiler-lower-state-set-NAME!`), the slot
+count, the constructor, and the per-field fingerprints the state-isolation
+tests compare. A call site cannot pair a slot with the wrong type, and adding
+or reordering a field updates every derived item. The safety fixtures
+`compiler_state_schema_*` check the generator on a small synthetic schema.
 
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
@@ -737,9 +758,21 @@ joins with a literal arm are never evidence. An enum pointer spans only its tag
 word, because a nullary variant is an 8-byte tag global. Global extents and
 value representations are captured at program entry, before inlining, so the
 priced and final pipelines see the same roots. A block holding an
-always-failing literal bounds check hoists nothing. The `licm-deref` optimizer
-test and `tests/integration/licm_raw_deref.tl` guard these rules; #8124 tracks
-a checked pointer loaded speculatively from an enum payload.
+always-failing literal bounds check hoists nothing.
+
+A checked pointer loaded from a root is a root in turn, because safe code writes
+every word outside an enum's payload only with its declared type. A payload
+word holds a pointer only under the tag the source tested, so a speculated
+checked-pointer load also needs every word it reads to be type-stable in the
+root's object (#8124). Lowering records one stable-word mask per nominal type
+on the representation index, from the typecheck layouts, before the driver
+releases them. An enum has only its tag word stable unless it has one variant,
+and a type with no recorded mask is all unstable. Parameters and globals take
+the mask of what they point at, homes and elements that of the value they hold,
+and a frame object that of its typed base copy. Global masks are captured with
+the global extents. The `licm-deref` and `licm-payload` optimizer tests,
+`tests/integration/licm_raw_deref.tl` and
+`tests/integration/licm_payload_speculation.tl` guard these rules.
 
 An element read refused only for want of that bound can still leave a counting
 loop whose one exit is the latch's, behind the bound its own check tests. When

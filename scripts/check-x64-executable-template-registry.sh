@@ -33,8 +33,8 @@ count_matches 9 '\.globl' src/compiler_backend_runtime_common.tl
 count_matches 14 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 2 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
 count_matches 7 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_common.tl
-count_matches 32 '\.globl' src/compiler_backend_runtime_linux.tl
-count_matches 44 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
+count_matches 34 '\.globl' src/compiler_backend_runtime_linux.tl
+count_matches 45 '(^|[^[:alnum:]_])ret([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 7 '(^|[^[:alnum:]_])call([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 18 '(^|[^[:alnum:]_])jmp([^[:alnum:]_]|$)' src/compiler_backend_runtime_linux.tl
 count_matches 27 '\.globl' src/compiler_backend_runtime_windows.tl

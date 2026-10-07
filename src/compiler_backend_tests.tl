@@ -22288,9 +22288,10 @@ f:
 
 (define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (backend.compiler-backend-string-count asm "    .globl ") 26)
+    (= (backend.compiler-backend-string-count asm "    .globl ") 27)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
+    (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_local_word_addr")
     (not (compiler-backend-runtime-global-symbol-ok? asm "__chkstk"))
     (not (compiler-backend-runtime-global-symbol-ok? asm "tl_setup_argv"))
     (not (compiler-backend-runtime-global-symbol-ok? asm "_tl_start"))))

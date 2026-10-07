@@ -1496,11 +1496,11 @@
 ;; wrappers the outer span survives as the outer wrapper's ReSpan view, while
 ;; the node-owned canonical span is the inner one.
 (define (compiler-symbols-span-is?
-  [found : csym.CompilerSymbolsMaybeSpan]
+  [found : parser.CompilerParseMaybeDeclSpan]
   [want : ast.AstSourceSpan]) : bool
   (match found
     [(Some span) (ast.ast-source-span-eq? span want)]
-    [(No) false]))
+    [(None) false]))
 
 (define (compiler-symbols-decl-span-view-ok?) : bool
   (let
@@ -1514,17 +1514,17 @@
     [name : i64 (ci.intern-generated-name "span_view")]
     (and
       (compiler-symbols-span-is?
-        (csym.compiler-symbols-decl-maybe-span
+        (parser.compiler-parse-decl-body-span
           (ast.ast-decl-def-id name No outer))
         outer-span)
       (compiler-symbols-span-is?
-        (csym.compiler-symbols-decl-maybe-span
+        (parser.compiler-parse-decl-body-span
           (ast.ast-decl-def-id name No negated))
         inner-span)
-      (match (csym.compiler-symbols-decl-maybe-span
+      (match (parser.compiler-parse-decl-body-span
         (ast.ast-decl-def-id name No bare))
         [(Some _) false]
-        [(No) true])
+        [(None) true])
       (match (ast.ast-expr-canonical-span outer)
         [(Some span) (ast.ast-source-span-eq? span inner-span)]
         [(No) false]))))

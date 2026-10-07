@@ -2085,7 +2085,8 @@
 (define (compiler-driver-representation-index-for-backend
   [pools : compiler_ast_types.AstNodePoolContext]
   [program : compiler_ir_types.CompilerIrProgram]
-  [backend-state : compiler_backend.CompilerBackendState]) : compiler_ir_types.CompilerIrRepresentationIndex
+  [backend-state : compiler_backend.CompilerBackendState]
+  [typecheck-state : compiler_typecheck_core.TcJobState]) : compiler_ir_types.CompilerIrRepresentationIndex
   (let
     [owner : arena.Arena
       (compiler_backend.compiler-backend-state-prepare-representation-arena!
@@ -2093,9 +2094,12 @@
     [representations : compiler_ir_types.CompilerIrRepresentationIndex
       (in-arena
         owner
-        (compiler_ir_types.compiler-ir-representation-index-build
+        (compiler_lower.lower-representation-index-stable-words
           (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-          program))]
+          typecheck-state
+          (compiler_ir_types.compiler-ir-representation-index-build
+            (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
+            program)))]
     (compiler_backend.compiler-backend-state-set-representations!
       backend-state
       (owned_view.compiler-owned-shared-view representations))
@@ -2119,7 +2123,13 @@
     (Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
       (compiler-driver-advisories-for-job typecheck-state))
-    (begin
+    (let
+      [representations : compiler_ir_types.CompilerIrRepresentationIndex
+        (compiler-driver-representation-index-for-backend
+          pools
+          (owned_view.compiler-owned-shared-view program)
+          backend-state
+          typecheck-state)]
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
@@ -2132,10 +2142,7 @@
           opt-level
           profile-state
           true
-          (compiler-driver-representation-index-for-backend
-            pools
-            program
-            backend-state)))
+          representations))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -2217,7 +2224,13 @@
     (Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
       (compiler-driver-advisories-for-job typecheck-state))
-    (begin
+    (let
+      [representations : compiler_ir_types.CompilerIrRepresentationIndex
+        (compiler-driver-representation-index-for-backend
+          pools
+          (owned_view.compiler-owned-shared-view program)
+          backend-state
+          typecheck-state)]
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
@@ -2230,10 +2243,7 @@
           opt-level
           profile-state
           true
-          (compiler-driver-representation-index-for-backend
-            pools
-            program
-            backend-state)))
+          representations))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -2328,7 +2338,13 @@
     (Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
       (compiler-driver-advisories-for-job typecheck-state))
-    (begin
+    (let
+      [representations : compiler_ir_types.CompilerIrRepresentationIndex
+        (compiler-driver-representation-index-for-backend
+          pools
+          (owned_view.compiler-owned-shared-view program)
+          backend-state
+          typecheck-state)]
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
@@ -2341,10 +2357,7 @@
           opt-level
           profile-state
           true
-          (compiler-driver-representation-index-for-backend
-            pools
-            program
-            backend-state)))
+          representations))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -2483,7 +2496,13 @@
     (Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
       (compiler-driver-advisories-for-job typecheck-state))
-    (begin
+    (let
+      [representations : compiler_ir_types.CompilerIrRepresentationIndex
+        (compiler-driver-representation-index-for-backend
+          pools
+          (owned_view.compiler-owned-shared-view program)
+          backend-state
+          typecheck-state)]
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
@@ -2496,10 +2515,7 @@
           opt-level
           profile-state
           true
-          (compiler-driver-representation-index-for-backend
-            pools
-            program
-            backend-state)))
+          representations))
         [(Program optimized optimized-spans)
           (begin
             (cfg
@@ -2681,7 +2697,13 @@
     (Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path))
       (compiler-driver-advisories-for-job typecheck-state))
-    (begin
+    (let
+      [representations : compiler_ir_types.CompilerIrRepresentationIndex
+        (compiler-driver-representation-index-for-backend
+          pools
+          (owned_view.compiler-owned-shared-view program)
+          backend-state
+          typecheck-state)]
       (compiler-driver-release-typecheck-caches-after-lower-for-job!
         typecheck-state)
       (compiler-driver-retire-frontend-arena!)
@@ -2694,10 +2716,7 @@
           opt-level
           profile-state
           true
-          (compiler-driver-representation-index-for-backend
-            pools
-            program
-            backend-state)))
+          representations))
         [(Program optimized optimized-spans)
           (begin
             (cfg

@@ -23844,12 +23844,15 @@
 ;; obligation (SPEC section 7.3), so an integer, a cast or pointer arithmetic
 ;; proves nothing. Roots are values of checked pointer types, valid wherever
 ;; they are available (opt-licm-deref-root-extent). A load of one is a root as
-;; well, which holds while nothing speculates such a load from a word another
-;; type may occupy: #8124 tracks LICM moving a wrong-variant enum payload out of
-;; its arm. A block holding a literal bounds check that always fails reads
-;; nothing past it, so none of its loads hoist: a constant out-of-bounds
-;; fixed-array index there addresses a byte past the array that looks like a
-;; field offset.
+;; well: safe code writes every word outside an enum's payload only with its
+;; declared type (the typed memory ALIAS-3 relies on), so a checked pointer
+;; loaded from such a word of a root is valid wherever the root is. A payload word holds a pointer
+;; only under the tag the source tested, which speculation discards, so a
+;; speculated checked-pointer load also needs every word it reads type-stable
+;; in the root's object (opt-licm-deref-root-mask, #8124). A block holding a
+;; literal bounds check that always fails reads nothing past it, so none of its
+;; loads hoist: a constant out-of-bounds fixed-array index there addresses a
+;; byte past the array that looks like a field offset.
 ;;
 ;; The facts are gathered once per function. LICM only inserts into existing
 ;; preheaders and never moves a check or a branch, so the facts and the
@@ -23888,6 +23891,11 @@
   ;; which spans its whole `alloc` run, or of any other var's home, which holds
   ;; that var's value (opt-licm-deref-home-extent). 0 elsewhere.
   (roots (__tl_dyn-array i64))
+  ;; var -> the type-stable words of what such a root points at: a parameter's
+  ;; pointee (opt-licm-deref-pointee-mask) or a home's value
+  ;; (opt-licm-deref-value-mask). 0 for a frame object, whose type only a typed
+  ;; copy of its base gives, and elsewhere.
+  (root-masks (__tl_dyn-array i64))
   ;; var -> the dense id of its definition's block and its index there.
   (def-blocks (__tl_dyn-array i64))
   (positions (__tl_dyn-array i64))
@@ -24031,16 +24039,21 @@
                 (set! run-last var)
                 (set! run-count 1)))]
           [(AddrOf var src)
-            (if (and (>= var 0) (< var (array-length scan.roots)))
-              (set!
-                (array-ref scan.roots var)
-                (if (and (> run-count 0) (= src run-last))
-                  (* run-count 8)
-                  (match (opt-ssa-var-types-lookup types src)
-                    [(Some ty)
-                      (opt-licm-deref-home-extent type-segment-bases ty)]
-                    [(No) 0])))
-              unit)
+            (when
+              (and (>= var 0) (< var (array-length scan.roots)))
+              (if (and (> run-count 0) (= src run-last))
+                (set! (array-ref scan.roots var) (* run-count 8))
+                (match (opt-ssa-var-types-lookup types src)
+                  [(Some ty)
+                    (set!
+                      (array-ref scan.roots var)
+                      (opt-licm-deref-home-extent
+                        type-segment-bases
+                        (compiler-opt-global-shared-view ty)))
+                    (set!
+                      (array-ref scan.root-masks var)
+                      (opt-licm-deref-value-mask type-segment-bases ty))]
+                  [(No) (set! (array-ref scan.roots var) 0)])))
             (set! run-count 0)]
           [(Jump target)
             (if block?
@@ -24334,6 +24347,7 @@
     [scan : OptLicmDerefScan
       (OptLicmDerefScan
         (__tl_make-array i64 frame)
+        (__tl_make-array i64 frame)
         (let
           [ids : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
           [var : i64 0]
@@ -24351,11 +24365,16 @@
         (while (< position params.len)
           (match (ir.compiler-ir-param-seq-ref params position)
             [(Param _ ty id)
-              (if (and (>= id 0) (< id frame))
+              (when
+                (and (>= id 0) (< id frame))
                 (set!
                   (array-ref scan.roots id)
-                  (opt-licm-deref-type-extent type-segment-bases ty))
-                unit)])
+                  (opt-licm-deref-type-extent
+                    type-segment-bases
+                    (compiler-opt-global-shared-view ty)))
+                (set!
+                  (array-ref scan.root-masks id)
+                  (opt-licm-deref-pointee-mask type-segment-bases ty)))])
           (set! position (+ position 1))))]
     [_defs : unit
       (opt-licm-deref-defs-fill-blocks!
@@ -24945,6 +24964,11 @@
 (define opt-licm-deref-global-extents : opt_i64_i64_map.Map
   (opt_i64_i64_map.with-capacity 1))
 
+;; The type-stable words (opt-licm-deref-pointee-mask) of each such global's
+;; object, captured with the extents.
+(define opt-licm-deref-global-masks : opt_i64_i64_map.Map
+  (opt_i64_i64_map.with-capacity 1))
+
 ;; The program's value representations, for the size of a register group's
 ;; home and for the inliner's multiblock return gate
 ;; (opt-inline-multiblock-return-type-ok?). Captured with the global extents,
@@ -24993,27 +25017,159 @@
   (let
     [count : i64 (ir.compiler-ir-global-seq-count globals)]
     [extents : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity (+ count 1))]
+    [masks : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity (+ count 1))]
     [index : i64 0]
     (while (< index count)
       (match (ir.compiler-ir-global-seq-ref globals index)
         [(Global name ty _)
           (let
-            [extent : i64 (opt-licm-deref-type-extent type-segment-bases ty)]
-            (if (= extent 0)
-              unit
+            [extent : i64
+              (opt-licm-deref-type-extent
+                type-segment-bases
+                (compiler-opt-global-shared-view ty))]
+            (unless
+              (= extent 0)
               (opt_i64_i64_map.insert-ref!
                 (&mut extents)
                 (ir.compiler-ir-symbol-id name)
-                extent)))])
+                extent)
+              (opt_i64_i64_map.insert-ref!
+                (&mut masks)
+                (ir.compiler-ir-symbol-id name)
+                (opt-licm-deref-pointee-mask type-segment-bases ty))))])
       (set! index (+ index 1)))
-    (set! opt-licm-deref-global-extents extents)))
+    (set! opt-licm-deref-global-extents extents)
+    (set! opt-licm-deref-global-masks masks)))
+
+;; A type-stable word mask: bit w set when word w of an object holds a value of
+;; one type whatever value the object holds. An enum's payload words do not:
+;; another variant puts another type there, and a nullary variant writes
+;; nothing. The lowering records each nominal type's mask (#8124); a type it
+;; did not record is all unstable. Word 0 of any object is a field start or a
+;; tag, never payload.
+(define (opt-licm-deref-nominal-mask
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : i64
+  (match (ast.ast-aggregate-type-key
+    type-segment-bases
+    (compiler-opt-global-shared-view ty))
+    [(Some key)
+      (ir.compiler-ir-representation-index-stable-mask
+        (& opt-licm-deref-representations)
+        key)]
+    [(None) 0]))
+
+;; The stable words of the object a checked pointer of type `ty` points at.
+;; A reference reaches its referent's storage: a nominal value laid out
+;; inline, or a descriptor's data and length words.
+(define (opt-licm-deref-pointee-mask
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : i64
+  (match (compiler-opt-global-shared-view ty)
+    [(Struct _) (opt-licm-deref-nominal-mask type-segment-bases ty)]
+    [(StructArgs _ _) (opt-licm-deref-nominal-mask type-segment-bases ty)]
+    [(Enum _) (opt-licm-deref-nominal-mask type-segment-bases ty)]
+    [(EnumArgs _ _) (opt-licm-deref-nominal-mask type-segment-bases ty)]
+    [(Ref _ inner)
+      (opt-licm-deref-pointee-mask
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [(MutRef _ inner)
+      (opt-licm-deref-pointee-mask
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [(Region _ inner)
+      (opt-licm-deref-pointee-mask
+        type-segment-bases
+        (ast.ast-type-segment-bases-get type-segment-bases inner))]
+    [(DynArray _) 3]
+    [(String) 3]
+    [(Str) 3]
+    [(Box _) 1]
+    [_ 0]))
+
+;; The stable words of a value of type `ty` stored inline -- a var's home or
+;; an element: a nominal value's own mask, else every word of a scalar,
+;; handle or reference value.
+(define (opt-licm-deref-value-mask
+  [type-segment-bases : i64]
+  [ty : ast.AstType]) : i64
+  (match (ast.ast-aggregate-type-key
+    type-segment-bases
+    (compiler-opt-global-shared-view ty))
+    [(Some _) (opt-licm-deref-nominal-mask type-segment-bases ty)]
+    [(None)
+      (let
+        [extent : i64 (opt-licm-deref-home-extent type-segment-bases ty)]
+        (cond [(> extent 8) 3] [(> extent 0) 1] [else 0]))]))
+
+;; Does a `width`-byte read at `offset` touch only words `mask` marks stable?
+(define (opt-licm-deref-stable-mask-read?
+  [mask : i64]
+  [offset : i64]
+  [width : i64]) : bool
+  (if (or (< offset 0) (<= width 0) (> width 512) (> offset (- 512 width)))
+    false
+    (let
+      [word : i64 (/ offset 8)]
+      [last : i64 (/ (- (+ offset width) 1) 8)]
+      [stable : bool true]
+      (while (and stable (<= word last))
+        (set! stable (not (= (bit-and mask (shl 1 word)) 0)))
+        (set! word (+ word 1)))
+      stable)))
+
+;; The stable words of the object the root `ptr`, defined as `step`, points
+;; at. A frame object has a type only through a typed copy of its base,
+;; `frame-type`; a pointer derived from it by Gep may name an inactive payload
+;; and never gives one.
+(define (opt-licm-deref-root-mask
+  [type-segment-bases : i64]
+  [facts : (& facts OptLicmDerefFacts)]
+  [step : OptBoolBranchDef]
+  [frame-type : OptMaybeAstType]
+  [ptr : ir.CompilerIrValue]) : i64
+  (match ptr
+    [(Var var)
+      (let
+        [recorded : i64
+          (if (and (>= var 0) (< var (array-length facts.scan.root-masks)))
+            (array-ref facts.scan.root-masks var)
+            0)]
+        (match step
+          [(Some (AddrOf _ _) _)
+            (cond
+              [(not (= recorded 0)) recorded]
+              [else
+                (match frame-type
+                  [(Some ty)
+                    (opt-licm-deref-pointee-mask type-segment-bases ty)]
+                  [(No) 0])])]
+          [(Some (Load _ _ ty) _)
+            (opt-licm-deref-pointee-mask type-segment-bases ty)]
+          [(Some (Call _ _ _ ty) _)
+            (opt-licm-deref-pointee-mask type-segment-bases ty)]
+          [(No) recorded]
+          [_ 0]))]
+    [(Global name)
+      (match (opt_i64_i64_map.get
+        (& opt-licm-deref-global-masks)
+        (ir.compiler-ir-symbol-id name))
+        [(LookupFound mask) mask]
+        [(LookupMissing) 0])]
+    [(String _) 3]
+    [(Bytes _) 3]
+    [_ 0]))
 
 ;; Is a `width`-byte read `offset` bytes past `ptr` inside a live object where
 ;; the site's hoist lands? `ptr` is followed through single-definition copies
 ;; and literal Gep steps -- each adds `index * size(scale)` bytes -- to a trusted
 ;; root, whose extent must cover the whole read. `bytes?` stays true while every
 ;; nonzero step is a byte Gep: only those are field offsets, and only field
-;; offsets stay inside a struct whose size this pass does not know.
+;; offsets stay inside a struct whose size this pass does not know. A
+;; checked-pointer load that is speculated (`stable?`) also needs every word it
+;; reads to be type-stable in the root's object (opt-licm-deref-root-mask): a
+;; payload word holds a pointer only under the tag the source tested (#8124).
 (define (opt-licm-deref-fixed-read?
   [type-segment-bases : i64]
   [facts : (& facts OptLicmDerefFacts)]
@@ -25021,19 +25177,20 @@
   [offset : i64]
   [bytes? : bool]
   [width : i64]
+  [stable? : bool]
   [fuel : i64]) : bool
   (let
     [resolved : ir.CompilerIrValue
       (opt-licm-deref-resolve
         facts.defs
         facts.sources
-        ptr
+        (compiler-opt-global-shared-view ptr)
         (opt-licm-deref-fuel))]
     [step : OptBoolBranchDef
       (match (compiler-opt-global-shared-view resolved)
         [(Var var) (opt-licm-deref-def facts.defs facts.sources var)]
         [_ (No)])]
-    (match step
+    (match (compiler-opt-global-shared-view step)
       [(Some (Gep _ base index scale) _)
         (match index
           [(I64 k)
@@ -25057,6 +25214,7 @@
                     bytes?
                     (or (= k 0) (opt-type-eq type-segment-bases scale (U8))))
                   width
+                  stable?
                   (- fuel 1))))]
           [_ false])]
       [_
@@ -25068,11 +25226,55 @@
               (& facts.defs)
               (& facts.scan.roots)
               (& facts.phis)
-              resolved)]
-          (cond
-            [(> extent 0) (and (>= offset 0) (<= (+ offset width) extent))]
-            [(= extent (- 0 1)) (and bytes? (>= offset 0))]
-            [else false]))])))
+              (compiler-opt-global-shared-view resolved))]
+          (and
+            (cond
+              [(> extent 0) (and (>= offset 0) (<= (+ offset width) extent))]
+              [(= extent (- 0 1)) (and bytes? (>= offset 0))]
+              [else false])
+            (or
+              (not stable?)
+              (opt-licm-deref-stable-mask-read?
+                (opt-licm-deref-root-mask
+                  type-segment-bases
+                  facts
+                  step
+                  (opt-licm-deref-copy-type
+                    type-segment-bases
+                    facts
+                    (compiler-opt-global-shared-view ptr)
+                    (opt-licm-deref-fuel))
+                  (compiler-opt-global-shared-view resolved))
+                offset
+                width))))])))
+
+;; The first checked type a copy on the way from `value` to its root gives.
+;; Copies keep the address, so a typed copy of a frame object's base names the
+;; object's own type.
+(define (opt-licm-deref-copy-type
+  [type-segment-bases : i64]
+  [facts : (& facts OptLicmDerefFacts)]
+  [value : ir.CompilerIrValue]
+  [fuel : i64]) : OptMaybeAstType
+  (match value
+    [(Var var)
+      (if (<= fuel 0)
+        (No)
+        (match (opt-licm-deref-def facts.defs facts.sources var)
+          [(Some (Mov _ src ty) _)
+            (if (=
+              (opt-licm-deref-type-extent
+                type-segment-bases
+                (compiler-opt-global-shared-view ty))
+              0)
+              (opt-licm-deref-copy-type
+                type-segment-bases
+                facts
+                (compiler-opt-global-shared-view src)
+                (- fuel 1))
+              (Some ty))]
+          [_ (No)]))]
+    [_ (No)]))
 
 ;; Does the load defined as `dst`, in dense block `block`, run on every entry to
 ;; the site's loop (the header comment above)? The walk follows the header's
@@ -25167,6 +25369,12 @@
                 (opt-load-loc-type-size
                   type-segment-bases
                   (compiler-opt-global-shared-view load-ty))
+                (not
+                  (=
+                    (opt-licm-deref-type-extent
+                      type-segment-bases
+                      (compiler-opt-global-shared-view load-ty))
+                    0))
                 (opt-licm-deref-fuel)))]
           [(Opaque) false]
           [(Element index key stride)
@@ -25193,14 +25401,31 @@
     [(No) false]
     [(Some elem)
       (let
-        [width : i64 (opt-load-loc-type-size type-segment-bases load-ty)]
+        [width : i64
+          (opt-load-loc-type-size
+            type-segment-bases
+            (compiler-opt-global-shared-view load-ty))]
         (and
           (opt-type-eq
             type-segment-bases
             stride
             (compiler-opt-global-shared-view elem))
           (> width 0)
-          (<= width (opt-load-loc-type-size type-segment-bases elem))))]))
+          (<=
+            width
+            (opt-load-loc-type-size
+              type-segment-bases
+              (compiler-opt-global-shared-view elem)))
+          ;; The element path only admits a read at the element start. Deeper
+          ;; addresses are Opaque, so only the words actually read need proof.
+          (or
+            (= (opt-licm-deref-type-extent type-segment-bases load-ty) 0)
+            (opt-licm-deref-stable-mask-read?
+              (opt-licm-deref-value-mask
+                type-segment-bases
+                (compiler-opt-global-shared-view elem))
+              0
+              width))))]))
 
 ;; --- guarded element reads (#7997) -------------------------------------------
 ;;

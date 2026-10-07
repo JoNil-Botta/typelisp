@@ -11163,30 +11163,49 @@
   [env : CtfeEnv]
   [fuel : i64]
   [mutable : bool]) : ResultCtfeQuoteType
-  (if (= args.len 2)
-    (let
-      [region-expr : ast.AstExpr
-        (ctfe-ast-get env (ast.ast-expr-list-get (& args) 0 0))]
-      [inner-expr : ast.AstExpr
-        (ctfe-ast-get env (ast.ast-expr-list-get (& args) 1 0))]
-      (match (ctfe-lifetime-syntax-name (ctfe-expr-unspan env region-expr))
-        [(Some region)
-          (match (ctfe-expr-to-type inner-expr origin env fuel)
-            [(Ok inner-ty next-fuel)
-              (Ok
-                (if mutable
-                  (ast.ast-ty-mut-ref-with-pools
-                    (ctfe-env-pools env)
-                    region
-                    inner-ty)
-                  (ast.ast-ty-ref-with-pools
-                    (ctfe-env-pools env)
-                    region
-                    inner-ty))
-                next-fuel)]
-            [(Err diag) (Err diag)])]
-        [(None) (ctfe-type-expr-error origin)]))
-    (ctfe-type-expr-error origin)))
+  (cond
+    [(= args.len 2)
+      (let
+        [region-expr : ast.AstExpr
+          (ctfe-ast-get env (ast.ast-expr-list-get (& args) 0 0))]
+        (match (ctfe-lifetime-syntax-name (ctfe-expr-unspan env region-expr))
+          [(Some region)
+            (ctfe-reference-type-of
+              (ctfe-ast-get env (ast.ast-expr-list-get (& args) 1 0))
+              region
+              origin
+              env
+              fuel
+              mutable)]
+          [(None) (ctfe-type-expr-error origin)]))]
+    ;; `(& T)` elides the lifetime, as the type parser does (#8581).
+    [(= args.len 1)
+      (ctfe-reference-type-of
+        (ctfe-ast-get env (ast.ast-expr-list-get (& args) 0 0))
+        cbi.compiler-builtin-id-fix-empty
+        origin
+        env
+        fuel
+        mutable)]
+    [else (ctfe-type-expr-error origin)]))
+
+;; A reference type to `inner-expr` with `region`, which is the empty lifetime
+;; marker when the syntax elides it.
+(define (ctfe-reference-type-of
+  [inner-expr : ast.AstExpr]
+  [region : i64]
+  [origin : ast.AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [mutable : bool]) : ResultCtfeQuoteType
+  (match (ctfe-expr-to-type inner-expr origin env fuel)
+    [(Ok inner-ty next-fuel)
+      (Ok
+        (if mutable
+          (ast.ast-ty-mut-ref-with-pools (ctfe-env-pools env) region inner-ty)
+          (ast.ast-ty-ref-with-pools (ctfe-env-pools env) region inner-ty))
+        next-fuel)]
+    [(Err diag) (Err diag)]))
 
 (define (ctfe-expr-region-type
   [args : ast.AstExprList]
@@ -11375,6 +11394,17 @@
                   [(Err diag) (Err diag)])]
               [else (ctfe-type-expr-error origin)])]
           [_ (ctfe-type-expr-error origin)]))]
+    ;; In an `Expr` operand, `(& a T)` and `(& T)` parse as borrows (#8581).
+    [(Borrow mutable lifetime-id operand-box)
+      (ctfe-reference-type-of
+        (ctfe-ast-get env operand-box)
+        (match (ast.ast-borrow-lifetime-from-id lifetime-id)
+          [(Named region) region]
+          [(Inferred) cbi.compiler-builtin-id-fix-empty])
+        origin
+        env
+        fuel
+        mutable)]
     [_ (ctfe-type-expr-error origin)]))
 
 (define (ctfe-quote-type-unquote

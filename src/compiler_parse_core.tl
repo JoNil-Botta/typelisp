@@ -894,6 +894,44 @@
     (compiler-parse-decl-list-storage-key decls)
     (+ decls.offset slot)))
 
+;; The span of the first source-span wrapper reached from EXPR-ID through
+;; unary, annotation, cast and borrow nodes. A wrapper's own span is its
+;; sidecar view (an outer wrapper keeps its span as a ReSpan).
+(define (compiler-parse-expr-maybe-span [expr-id : i64]) : CompilerParseMaybeDeclSpan
+  (if (>= (ast.ast-expr-span-wrapper-inner expr-id) 0)
+    (match (ast.ast-expr-view-span expr-id)
+      [(Some span) (Some span)]
+      [(No) None])
+    (match (ast.ast-node-get expr-id)
+      [(Unary _ inner) (compiler-parse-expr-maybe-span inner)]
+      [(Ann inner _) (compiler-parse-expr-maybe-span inner)]
+      [(Cast inner _) (compiler-parse-expr-maybe-span inner)]
+      [(Borrow _ _ inner) (compiler-parse-expr-maybe-span inner)]
+      [_ None])))
+
+;; Definitions and tests record no declaration origin
+;; (`compiler-parse-decl-origin-needs-record?`): a definition is located by
+;; its value or body and a test by its own span.
+(define (compiler-parse-decl-body-span [decl : ast.AstDecl]) : CompilerParseMaybeDeclSpan
+  (match decl
+    [(Def _ _ _ body) (compiler-parse-expr-maybe-span body)]
+    [(DefFn _ _ _ _ body _) (compiler-parse-expr-maybe-span body)]
+    [(DefMacro _ _ _ _ body) (compiler-parse-expr-maybe-span body)]
+    [(Test _ _ _ span) (Some span)]
+    [(Unsafe inner-box) (compiler-parse-decl-body-span (deref inner-box))]
+    [_ None]))
+
+;; The source span of declaration SLOT of DECLS: its recorded origin, or the
+;; body span of a declaration that records none.
+(define (compiler-parse-decl-span
+  [decls : (& decls ast.AstDeclList)]
+  [slot : i64]) : CompilerParseMaybeDeclSpan
+  (match (compiler-parse-decl-origin-span decls slot)
+    [(Some span) (Some span)]
+    [(None)
+      (compiler-parse-decl-body-span
+        (ast.ast-array-shared-view decls.slots (+ decls.offset slot)))]))
+
 (define (compiler-parse-decl-origin-register-key-maybe!
   [key : i64]
   [slot : i64]

@@ -46417,23 +46417,28 @@
               "  %21 = gep %1, 1 : i64\n  %18 = load %21 : i64")
             kept))
         13]
-      [(not
-          (=
-            (opt-licm-deref-case
-              (opt-licm-deref-pair)
-              ""
-              "  %21 = gep %1, 8 : u8\n  %22 = load %21 : (__tl_dyn-array i64)\n  %23 = gep %22, 1 : i64\n  %18 = load %23 : i64")
-            20))
+      ;; Speculated, the handle needs its word type-stable in `Pair` (#8124).
+      [(begin
+          (opt-licm-payload-facts! true)
+          (not
+            (=
+              (opt-licm-deref-case
+                (opt-licm-deref-pair)
+                ""
+                "  %21 = gep %1, 8 : u8\n  %22 = load %21 : (__tl_dyn-array i64)\n  %23 = gep %22, 1 : i64\n  %18 = load %23 : i64")
+              20)))
         14]
       ;; A frame object spans its `alloc` run and nothing past it, and the
       ;; home `addr_of` takes of any other var spans that var's value.
-      [(not
-          (=
-            (opt-licm-deref-case
-              (opt-licm-deref-pair)
-              "  %24 = alloc Pair\n  %25 = alloc Pair\n  %26 = addr_of %25"
-              "  %21 = gep %26, 8 : u8\n  %18 = load %21 : i64")
-            hoisted))
+      [(begin
+          (opt-licm-payload-facts! false)
+          (not
+            (=
+              (opt-licm-deref-case
+                (opt-licm-deref-pair)
+                "  %24 = alloc Pair\n  %25 = alloc Pair\n  %26 = addr_of %25"
+                "  %21 = gep %26, 8 : u8\n  %18 = load %21 : i64")
+              hoisted)))
         15]
       [(not
           (=
@@ -46560,6 +46565,149 @@
             kept))
         30]
       [else 42])))
+
+;; --- type-stable words for speculated pointer loads (#8124) -------------------
+;;
+;; A checked-pointer load the loop does not run on every entry hoists only from
+;; a word that holds one type whatever the object's value. The masks stand for
+;; `Val`, a two-variant enum (only its tag word is stable); `Holder`, a struct
+;; whose word 0 is a handle; `One`, a one-variant enum wrapping a `Holder`; and
+;; `Wrap`, a struct holding a handle and then an inline `Val`; `Pair` serves the
+;; readable-storage cases above. Each case loads a dynamic-array handle and then
+;; its length word through it, so `hoisted` is 20 and `kept` 2.
+(define (opt-licm-payload-facts! [masks? : bool]) : unit
+  (let
+    [index : ir.CompilerIrRepresentationIndex
+      (ir.compiler-ir-representation-index-empty)]
+    [globals : ir.CompilerIrGlobalSeq (ir.compiler-ir-global-seq-empty)]
+    (when
+      masks?
+      (opt-licm-payload-mask! (&mut index) "Val" 1)
+      (opt-licm-payload-mask! (&mut index) "Holder" 1)
+      (opt-licm-payload-mask! (&mut index) "One" 3)
+      (opt-licm-payload-mask! (&mut index) "Wrap" 3)
+      (opt-licm-payload-mask! (&mut index) "Pair" 3))
+    (opt.opt-licm-deref-program-facts!
+      (ast.ast-node-pool-reader-type-segment-bases)
+      (& globals)
+      index)))
+
+(define (opt-licm-payload-mask!
+  [index : (&mut index ir.CompilerIrRepresentationIndex)]
+  [name : String]
+  [mask : i64]) : unit
+  (ir.compiler-ir-representation-index-set-stable-mask!
+    index
+    (ast.ast-nominal-name-id-key (ci.intern name))
+    mask))
+
+;; A frame object of `ty` behind a typed copy of its base, `%27`.
+(define (opt-licm-payload-frame [ty : String]) : String
+  (str_cat.str-cat
+    "  %24 = alloc "
+    (string.copy ty)
+    "\n  %25 = alloc "
+    (string.copy ty)
+    "\n  %26 = addr_of %25\n  %27 = mov %26 : "
+    ty))
+
+;; The handle at `offset` bytes past `base`, then its length word.
+(define (opt-licm-payload-read [base : String] [offset : String]) : String
+  (str_cat.str-cat
+    "  %21 = gep "
+    base
+    ", "
+    offset
+    " : u8\n  %22 = load %21 : (__tl_dyn-array i64)\n  %23 = gep %22, 1 : i64\n  %18 = load %23 : i64"))
+
+(define (opt-licm-payload-param-case [params : String] [offset : String]) : i64
+  (opt-licm-deref-case params "" (opt-licm-payload-read "%1" offset)))
+
+(define (compiler-optimize-licm-payload-self-test) : i64
+  (let
+    [hoisted : i64 20]
+    [kept : i64 2]
+    [_facts : unit (opt-licm-payload-facts! true)]
+    [result : i64
+      (cond
+        ;; A two-variant enum's payload handle stays in its arm, and so does
+        ;; the read through it.
+        [(not
+            (=
+              (opt-licm-deref-case
+                (opt-licm-deref-raw)
+                (opt-licm-payload-frame "Val")
+                (opt-licm-payload-read "%27" "8"))
+              kept))
+          1]
+        ;; The same read at the head of the loop runs on every entry.
+        [(not
+            (=
+              (opt-licm-deref-run-blocks
+                (irt.params (opt-licm-deref-raw))
+                (opt-licm-deref-loop-blocks
+                  (opt-licm-payload-frame "Val")
+                  "  %21 = gep %27, 8 : u8\n  %22 = load %21 : (__tl_dyn-array i64)"
+                  "loop"
+                  "  %23 = gep %22, 1 : i64\n  %18 = load %23 : i64")
+                "arm"
+                1)
+              hoisted))
+          2]
+        ;; A struct's handle field behind a parameter, after the branch.
+        [(not
+            (=
+              (opt-licm-payload-param-case
+                "cond=%0:bool, h=%1:(& a Holder), n=%2:i64"
+                "0")
+              hoisted))
+          3]
+        ;; A one-variant enum's payload always holds its one payload type.
+        [(not
+            (=
+              (opt-licm-deref-case
+                (opt-licm-deref-raw)
+                (opt-licm-payload-frame "One")
+                (opt-licm-payload-read "%27" "8"))
+              hoisted))
+          4]
+        ;; An enum inline in a struct parameter: the struct's handle field
+        ;; hoists, the enum's payload word does not.
+        [(not
+            (=
+              (opt-licm-payload-param-case
+                "cond=%0:bool, w=%1:(& a Wrap), n=%2:i64"
+                "0")
+              hoisted))
+          5]
+        [(not
+            (=
+              (opt-licm-payload-param-case
+                "cond=%0:bool, w=%1:(& a Wrap), n=%2:i64"
+                "16")
+              kept))
+          6]
+        ;; Without recorded masks no speculated pointer read is proven.
+        [(begin
+            (opt-licm-payload-facts! false)
+            (not
+              (=
+                (opt-licm-payload-param-case
+                  "cond=%0:bool, h=%1:(& a Holder), n=%2:i64"
+                  "0")
+                kept)))
+          7]
+        [(not
+            (=
+              (opt-licm-deref-case
+                (opt-licm-deref-raw)
+                (opt-licm-payload-frame "One")
+                (opt-licm-payload-read "%27" "8"))
+              kept))
+          8]
+        [else 42])]
+    (opt-licm-payload-facts! false)
+    result))
 
 ;; --- descriptor-header hoist past the return-shaped suppression ---------------
 ;;

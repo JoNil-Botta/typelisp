@@ -3931,6 +3931,10 @@
 
 (test licm-deref (smoke-require-42 (ot.compiler-optimize-licm-deref-self-test)))
 
+(test
+  licm-payload
+  (smoke-require-42 (ot.compiler-optimize-licm-payload-self-test)))
+
 (test licm-guard (smoke-require-42 (ot.compiler-optimize-licm-guard-self-test)))
 
 (test

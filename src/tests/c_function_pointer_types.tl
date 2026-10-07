@@ -7,10 +7,11 @@
   [mode : ast.AstCFunctionMode]
   [result : ast.AstType]) : i64
   (ast.ast-node-pool-reader-type-push
-    (ast_tests.ast-ty-c-func
-      (ast.ast-type-cons I64 (ast.ast-type-list-new))
-      result
-      mode)))
+    (&
+      (ast_tests.ast-ty-c-func
+        (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
+        result
+        mode))))
 
 (define (c-function-test-mode [index : i64]) : ast.AstCFunctionMode
   (cond
@@ -31,7 +32,10 @@
   (let
     [ordinary : i64
       (ast.ast-node-pool-reader-type-push
-        (ast.ast-ty-func (ast.ast-type-cons I64 (ast.ast-type-list-new)) I64))]
+        (&
+          (ast.ast-ty-func
+            (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
+            (& (I64)))))]
     [index : i64 0]
     (while (< index 4)
       (let

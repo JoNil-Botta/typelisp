@@ -1043,8 +1043,8 @@
               (compiler-comptime-host-replace-expr!
                 2
                 (if (= kind 0)
-                  (ast.ast-expr-ptr-cast-with-pools pools value-node ty)
-                  (ast.ast-expr-int-to-ptr-with-pools pools value-node ty))))]
+                  (ast.ast-expr-ptr-cast-with-pools pools value-node (& ty))
+                  (ast.ast-expr-int-to-ptr-with-pools pools value-node (& ty)))))]
           [(Err diag)
             (set!
               (array-ref compiler-comptime-host-diagnostic 0)
@@ -1131,16 +1131,18 @@
                   (cond
                     [(= kind 0)
                       (if (= flag 0)
-                        (ast.ast-ty-ptr-with-pools pools inner)
-                        (ast.ast-ty-mut-ptr-with-pools pools inner))]
-                    [(= kind 1) (ast.ast-ty-box-with-pools pools inner)]
-                    [(= kind 2) (ast.ast-ty-dyn-array-with-pools pools inner)]
-                    [(= kind 3) (ast.ast-ty-array-with-pools pools inner flag)]
+                        (ast.ast-ty-ptr-with-pools pools (& inner))
+                        (ast.ast-ty-mut-ptr-with-pools pools (& inner)))]
+                    [(= kind 1) (ast.ast-ty-box-with-pools pools (& inner))]
+                    [(= kind 2)
+                      (ast.ast-ty-dyn-array-with-pools pools (& inner))]
+                    [(= kind 3)
+                      (ast.ast-ty-array-with-pools pools (& inner) flag)]
                     [(= kind 4)
                       (if (= flag 0)
-                        (ast.ast-ty-ref-with-pools pools region inner)
-                        (ast.ast-ty-mut-ref-with-pools pools region inner))]
-                    [(= kind 5) (ast.ast-ty-slice-with-pools pools inner)]
+                        (ast.ast-ty-ref-with-pools pools region (& inner))
+                        (ast.ast-ty-mut-ref-with-pools pools region (& inner)))]
+                    [(= kind 5) (ast.ast-ty-slice-with-pools pools (& inner))]
                     [else inner]))))]
           [(Err diag)
             (set!
@@ -1529,7 +1531,7 @@
             [(ExprList rest)
               (compiler-comptime-host-replace!
                 2
-                (ExprList (ast.ast-expr-cons head-node rest)))]
+                (ExprList (ast.ast-expr-cons head-node (& rest))))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 (define (compiler-comptime-host-callback-expr-list-append
@@ -1820,7 +1822,7 @@
                   (ast.ast-expr-make-array-with-cells
                     (compiler-comptime-host-pool-cell-address 0)
                     (compiler-comptime-host-pool-cell-address 1)
-                    ty
+                    (& ty)
                     size-node)]
                 (compiler-comptime-host-replace-expr! 2 node))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
@@ -1986,7 +1988,7 @@
               (compiler-comptime-host-session-pools)]
             (compiler-comptime-host-replace-expr!
               1
-              (ast.ast-expr-type-literal-with-pools pools ty)))]
+              (ast.ast-expr-type-literal-with-pools pools (& ty))))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; expr-cast: pop the type value then the operand expression and push the
@@ -2014,7 +2016,7 @@
                 (ast.ast-expr-cast-with-pools
                   (compiler-comptime-host-session-pools)
                   value-node
-                  ty))]
+                  (& ty)))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 ;; expr-ann: pop the type value then the operand expression and preserve the
@@ -2041,7 +2043,7 @@
                 (ast.ast-expr-ann-with-pools
                   (compiler-comptime-host-session-pools)
                   value-node
-                  ty))]
+                  (& ty)))]
             [_ tlci.tlci-host-callback-status-bad-request]))))))
 
 ;; expr-init: pop a type value and push the typed `(init : T)` node produced by
@@ -2944,7 +2946,7 @@
               [(PatternList rest)
                 (compiler-comptime-host-replace!
                   2
-                  (PatternList (ast.ast-pattern-cons head rest)))]
+                  (PatternList (ast.ast-pattern-cons (& head) (& rest))))]
               [_ tlci.tlci-host-callback-status-bad-request])]
           [_ tlci.tlci-host-callback-status-bad-request])))))
 
@@ -3033,7 +3035,7 @@
               [(MatchArmList rest)
                 (compiler-comptime-host-replace!
                   2
-                  (MatchArmList (ast.ast-match-arm-cons head rest)))]
+                  (MatchArmList (ast.ast-match-arm-cons (& head) (& rest))))]
               [_ tlci.tlci-host-callback-status-bad-request])]
           [_ tlci.tlci-host-callback-status-bad-request])))))
 

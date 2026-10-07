@@ -59,8 +59,9 @@
   (ci.intern-generated-role-symbol-materialize!
     (ci.intern-generated-symbol-role-clone-helper)
     helper-id
-    (clone-local-helper-name
-      (ci.intern-str (clone-name-key-base-id type-key-id)))))
+    (&
+      (clone-local-helper-name
+        (ci.intern-str (clone-name-key-base-id type-key-id))))))
 
 (define (clone-root-entries-materialize-helper-names!
   [roots : CloneRootEntries]) : unit
@@ -211,7 +212,7 @@
       ;; carry a payload this alias table reads.
       (if (ast.ast-decl-list-unwrapped-module-or-import-at? decls index)
         (match (ast.ast-decl-unwrapped
-          (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
+          (& (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))))
           [(Module next-module) (set! current-module-id next-module)]
           [(Import decl-meta (Spec kind _ (Some target) (Some alias) _))
             (if (clone-module-alias-import-kind? kind)
@@ -827,7 +828,7 @@
         decls
         index)
         (match (ast.ast-decl-unwrapped
-          (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
+          (& (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))))
           [(Module next-module) (set! current-module-id next-module)]
           [(DefEnum decl-meta name _ variants)
             (if (clone-variant-list-able?
@@ -877,7 +878,7 @@
         decls
         index)
         (match (ast.ast-decl-unwrapped
-          (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
+          (& (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))))
           [(Module next-module) (set! current-module-id next-module)]
           [(DefEnum decl-meta name _ _)
             (set!
@@ -1056,7 +1057,7 @@
         cursor
         index)
         (match (ast.ast-decl-unwrapped
-          (ast.ast-decl-list-get cursor index (ast.ast-decl-fallback)))
+          (& (ast.ast-decl-list-get cursor index (ast.ast-decl-fallback))))
           [(Module next-module) (set! current-module-id next-module)]
           [(DefEnum decl-meta decl-name _ variants)
             (when
@@ -1244,7 +1245,7 @@
   (match (ast.ast-decl-list-step decls)
     [(Nil) 0]
     [(Cons decl rest)
-      (match (ast.ast-decl-unwrapped decl)
+      (match (ast.ast-decl-unwrapped (& decl))
         [(Module next-module)
           (clone-helper-decl-count-in-module
             rest

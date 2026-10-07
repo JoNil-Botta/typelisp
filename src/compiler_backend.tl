@@ -22359,7 +22359,7 @@
     [(Char _) (Some (Char))]
     [(F64 _) (Some (F64))]
     [(String _) (Some (String))]
-    [(Bytes _) (Some (compiler_ast_types.ast-ty-dyn-array (U8)))]
+    [(Bytes _) (Some (compiler_ast_types.ast-ty-dyn-array (& (U8))))]
     [(Function _) (Some (U64))]
     [_ (No)]))
 
@@ -36558,8 +36558,8 @@
     (match (compiler_ir_types.compiler-ir-param-seq-ref params position)
       [(Param _ ty _)
         (compiler_ast_types.ast-type-cons
-          ty
-          (compiler-backend-param-type-list-from params (+ position 1)))])))
+          (& ty)
+          (& (compiler-backend-param-type-list-from params (+ position 1))))])))
 
 (define (compiler-backend-param-type-list
   [params : compiler_ir_types.CompilerIrParamSeq]) : compiler_ast_types.AstTypeList
@@ -36749,9 +36749,7 @@
   [ty : compiler_ast_types.AstType]
   [abi : compiler_ast_types.AstExternAbi]) : i64
   (let
-    [c-abi? : bool
-      (compiler_ast_types.ast-extern-abi-c?
-        (compiler-backend-global-shared-view abi))]
+    [c-abi? : bool (compiler_ast_types.ast-extern-abi-c? (& abi))]
     [aggregate-params? : bool
       (if c-abi?
         (match (compiler-backend-global-shared-view ty)
@@ -36762,7 +36760,7 @@
           [_ false])
         false)]
     [fixed-count : i64
-      (if (compiler_ast_types.ast-extern-abi-c-varargs? abi)
+      (if (compiler_ast_types.ast-extern-abi-c-varargs? (& abi))
         (match ty
           [(Func args _) (compiler-backend-type-list-count (deref args))]
           [_ -1])
@@ -38014,42 +38012,51 @@
   (cond
     [(cbi.compiler-builtin-backend-tl-array-fill8-id? name-id)
       (compiler_ast_types.ast-type-cons
-        (compiler_ast_types.ast-ty-mut-ptr (U8))
-        (compiler_ast_types.ast-type-cons
-          (I64)
+        (& (compiler_ast_types.ast-ty-mut-ptr (& (U8))))
+        (&
           (compiler_ast_types.ast-type-cons
-            (U64)
-            (compiler_ast_types.ast-type-list-new))))]
+            (& (I64))
+            (&
+              (compiler_ast_types.ast-type-cons
+                (& (U64))
+                (& (compiler_ast_types.ast-type-list-new)))))))]
     [(cbi.compiler-builtin-backend-tl-array-zero-id? name-id)
       (compiler_ast_types.ast-type-cons
-        (compiler_ast_types.ast-ty-mut-ptr (U8))
-        (compiler_ast_types.ast-type-cons
-          (I64)
-          (compiler_ast_types.ast-type-list-new)))]
+        (& (compiler_ast_types.ast-ty-mut-ptr (& (U8))))
+        (&
+          (compiler_ast_types.ast-type-cons
+            (& (I64))
+            (& (compiler_ast_types.ast-type-list-new)))))]
     [(cbi.compiler-builtin-backend-tl-mem-fill8-id? name-id)
       (compiler_ast_types.ast-type-cons
-        (compiler_ast_types.ast-ty-mut-ptr (U8))
-        (compiler_ast_types.ast-type-cons
-          (I64)
+        (& (compiler_ast_types.ast-ty-mut-ptr (& (U8))))
+        (&
           (compiler_ast_types.ast-type-cons
-            (U64)
-            (compiler_ast_types.ast-type-list-new))))]
+            (& (I64))
+            (&
+              (compiler_ast_types.ast-type-cons
+                (& (U64))
+                (& (compiler_ast_types.ast-type-list-new)))))))]
     [(cbi.compiler-builtin-backend-tl-mem-copy-fwd-id? name-id)
       (compiler_ast_types.ast-type-cons
-        (compiler_ast_types.ast-ty-mut-ptr (U8))
-        (compiler_ast_types.ast-type-cons
-          (compiler_ast_types.ast-ty-ptr (U8))
+        (& (compiler_ast_types.ast-ty-mut-ptr (& (U8))))
+        (&
           (compiler_ast_types.ast-type-cons
-            (I64)
-            (compiler_ast_types.ast-type-list-new))))]
+            (& (compiler_ast_types.ast-ty-ptr (& (U8))))
+            (&
+              (compiler_ast_types.ast-type-cons
+                (& (I64))
+                (& (compiler_ast_types.ast-type-list-new)))))))]
     [(cbi.compiler-builtin-backend-tl-mem-copy8-fwd-id? name-id)
       (compiler_ast_types.ast-type-cons
-        (compiler_ast_types.ast-ty-mut-ptr (U8))
-        (compiler_ast_types.ast-type-cons
-          (compiler_ast_types.ast-ty-ptr (U8))
+        (& (compiler_ast_types.ast-ty-mut-ptr (& (U8))))
+        (&
           (compiler_ast_types.ast-type-cons
-            (I64)
-            (compiler_ast_types.ast-type-list-new))))]
+            (& (compiler_ast_types.ast-ty-ptr (& (U8))))
+            (&
+              (compiler_ast_types.ast-type-cons
+                (& (I64))
+                (& (compiler_ast_types.ast-type-list-new)))))))]
     [else (compiler_ast_types.ast-type-list-new)]))
 
 (define (compiler-backend-varargs-linux-vector-count
@@ -38234,14 +38241,15 @@
     (compiler_ast_types.ast-type-list-push
       out
       (compiler_ast_types.ast-node-pool-reader-type-push
-        (compiler-backend-call-actual-param-type-for-index
-          type-segment-bases
-          types
-          (compiler-backend-global-shared-view global-types)
-          (compiler-backend-global-shared-view args)
-          fixed-types
-          fixed-count
-          index)))
+        (&
+          (compiler-backend-call-actual-param-type-for-index
+            type-segment-bases
+            types
+            (compiler-backend-global-shared-view global-types)
+            (compiler-backend-global-shared-view args)
+            fixed-types
+            fixed-count
+            index))))
     (compiler-backend-call-actual-param-types-fill
       type-segment-bases
       out
@@ -38328,13 +38336,14 @@
           (begin
             (compiler_ast_types.ast-type-list-push
               out
-              (compiler_ast_types.ast-node-pool-reader-type-push declared-ty))
+              (compiler_ast_types.ast-node-pool-reader-type-push
+                (& declared-ty)))
             (compiler_ast_types.ast-type-list-push
               out
-              (compiler_ast_types.ast-node-pool-reader-type-push (I64)))
+              (compiler_ast_types.ast-node-pool-reader-type-push (& (I64))))
             (compiler_ast_types.ast-type-list-push
               out
-              (compiler_ast_types.ast-node-pool-reader-type-push (Unit)))
+              (compiler_ast_types.ast-node-pool-reader-type-push (& (Unit))))
             (compiler-backend-call-c-abi-param-types-fill
               type-segment-bases
               out
@@ -38359,19 +38368,21 @@
               (compiler_ast_types.ast-type-list-push
                 out
                 (compiler_ast_types.ast-node-pool-reader-type-push
-                  (compiler-backend-call-actual-param-type-at
-                    types
-                    (compiler-backend-global-shared-view global-types)
-                    (compiler-backend-global-shared-view args)
-                    arg-index)))
+                  (&
+                    (compiler-backend-call-actual-param-type-at
+                      types
+                      (compiler-backend-global-shared-view global-types)
+                      (compiler-backend-global-shared-view args)
+                      arg-index))))
               (compiler_ast_types.ast-type-list-push
                 out
                 (compiler_ast_types.ast-node-pool-reader-type-push
-                  (compiler-backend-call-actual-param-type-at
-                    types
-                    (compiler-backend-global-shared-view global-types)
-                    (compiler-backend-global-shared-view args)
-                    (+ arg-index 1))))
+                  (&
+                    (compiler-backend-call-actual-param-type-at
+                      types
+                      (compiler-backend-global-shared-view global-types)
+                      (compiler-backend-global-shared-view args)
+                      (+ arg-index 1)))))
               (compiler-backend-call-c-abi-param-types-fill
                 type-segment-bases
                 out
@@ -38386,11 +38397,12 @@
               (compiler_ast_types.ast-type-list-push
                 out
                 (compiler_ast_types.ast-node-pool-reader-type-push
-                  (compiler-backend-call-actual-param-type-at
-                    types
-                    (compiler-backend-global-shared-view global-types)
-                    (compiler-backend-global-shared-view args)
-                    arg-index)))
+                  (&
+                    (compiler-backend-call-actual-param-type-at
+                      types
+                      (compiler-backend-global-shared-view global-types)
+                      (compiler-backend-global-shared-view args)
+                      arg-index))))
               (compiler-backend-call-c-abi-param-types-fill
                 type-segment-bases
                 out
@@ -46632,7 +46644,7 @@
           (if (or
             (not uniform-only)
             (compiler-backend-spmd-class-uniform? class))
-            (compiler_ast_types.ast-type-cons ty rest)
+            (compiler_ast_types.ast-type-cons (& ty) (& rest))
             rest))])))
 
 (define (compiler-backend-spmd-call-class-count
@@ -47069,8 +47081,8 @@
       (compiler_ir_types.compiler-ir-call-args-from-seq values)]
     [param-types : compiler_ast_types.AstTypeList
       (compiler_ast_types.ast-type-cons
-        (Bool)
-        (compiler-backend-spmd-call-types-from args 0 false))]
+        (& (Bool))
+        (& (compiler-backend-spmd-call-types-from args 0 false)))]
     [call-space : i64
       (compiler-backend-call-arg-space
         target
@@ -49397,14 +49409,16 @@
           ctx.assignments
           dst
           (compiler_ir_types.compiler-ir-label ".L_tl_argv")
-          (compiler_ast_types.ast-ty-ptr (compiler_ast_types.ast-ty-ptr (U8)))
+          (compiler_ast_types.ast-ty-ptr
+            (& (compiler_ast_types.ast-ty-ptr (& (U8)))))
           ctx.backend-state)]
       [(EntryEnvp dst)
         (compiler-backend-emit-entry-load
           ctx.assignments
           dst
           (compiler_ir_types.compiler-ir-label ".L_tl_envp")
-          (compiler_ast_types.ast-ty-ptr (compiler_ast_types.ast-ty-ptr (U8)))
+          (compiler_ast_types.ast-ty-ptr
+            (& (compiler_ast_types.ast-ty-ptr (& (U8)))))
           ctx.backend-state)]
       [(CpuId dst leaf subleaf reg-index)
         (compiler-backend-emit-cpuid

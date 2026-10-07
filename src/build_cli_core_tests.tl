@@ -244,9 +244,10 @@
           (ast.ast-param-list-new)
           (I64)
           cbi.compiler-builtin-id-fix-empty
-          (ast.ast-fn-metadata-full
-            No
-            (Callable (ast.ast-spmd-specialization-list-new))))]
+          (&
+            (ast.ast-fn-metadata-full
+              No
+              (Callable (ast.ast-spmd-specialization-list-new)))))]
       [within : ast.AstDeclPathList
         (build-package-direct-object-test-paths
           budget
@@ -266,7 +267,7 @@
         (build.build-package-decl-has-spmd-callable?
           (owned_view.compiler-owned-shared-view spmd-decl))
         (build.build-package-decls-have-spmd-callable?
-          (ast.ast-decl-cons spmd-decl (ast.ast-decl-list-new)))
+          (ast.ast-decl-cons (& spmd-decl) (& (ast.ast-decl-list-new))))
         (= (build.build-package-direct-object-owned-path-count (& mixed)) 1)
         (build-package-direct-object-within-budget? (& within))
         (not (build-package-direct-object-within-budget? (& over)))))))
@@ -309,11 +310,12 @@
           (ast.ast-param-list-new)
           (I64)
           cbi.compiler-builtin-id-fix-empty
-          (ast.ast-fn-metadata-full
-            No
-            (Callable (ast.ast-spmd-specialization-list-new))))]
+          (&
+            (ast.ast-fn-metadata-full
+              No
+              (Callable (ast.ast-spmd-specialization-list-new)))))]
       [spmd-decls : ast.AstDeclList
-        (ast.ast-decl-cons spmd-decl (ast.ast-decl-list-new))]
+        (ast.ast-decl-cons (& spmd-decl) (& (ast.ast-decl-list-new)))]
       (unless
         (and
           (build-package-preflight-category-is?
@@ -414,15 +416,17 @@
           (if (= spmd-index 0)
             (ast.ast-decl-list-new)
             (ast.ast-decl-cons
-              (ast.ast-decl-def-fn-metadata-id
-                (ci.intern "typed-route-table-spmd")
-                (ast.ast-param-list-new)
-                (I64)
-                cbi.compiler-builtin-id-fix-empty
-                (ast.ast-fn-metadata-full
-                  No
-                  (Callable (ast.ast-spmd-specialization-list-new))))
-              (ast.ast-decl-list-new)))]
+              (&
+                (ast.ast-decl-def-fn-metadata-id
+                  (ci.intern "typed-route-table-spmd")
+                  (ast.ast-param-list-new)
+                  (I64)
+                  cbi.compiler-builtin-id-fix-empty
+                  (&
+                    (ast.ast-fn-metadata-full
+                      No
+                      (Callable (ast.ast-spmd-specialization-list-new))))))
+              (& (ast.ast-decl-list-new))))]
         [paths : ast.AstDeclPathList
           (build-package-direct-object-test-paths
             size-index
@@ -783,10 +787,11 @@
             "pkg"
             helper-id
             (ast.ast-param-cons
-              (ast.ast-param-id x-id (I64) false)
-              (ast.ast-param-cons
-                (ast.ast-param-id scale-id (I64) false)
-                (ast.ast-param-list-new)))
+              (& (ast.ast-param-id x-id (I64) false))
+              (&
+                (ast.ast-param-cons
+                  (& (ast.ast-param-id scale-id (I64) false))
+                  (& (ast.ast-param-list-new)))))
             (I64)
             specializations
             (Scalar))]
@@ -858,8 +863,8 @@
             "pkg"
             helper-id
             (ast.ast-param-cons
-              (ast.ast-param-id x-id (I64) false)
-              (ast.ast-param-list-new))
+              (& (ast.ast-param-id x-id (I64) false))
+              (& (ast.ast-param-list-new)))
             (I64)
             specializations
             (Scalar))]

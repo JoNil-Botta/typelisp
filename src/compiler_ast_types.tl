@@ -113,22 +113,23 @@
         cached
         (ci.intern-composite-rendered-name-record!
           name-id
-          (if (ci.intern-composite-triple-id? name-id)
-            (str_cat.str-cat
-              (ast-nominal-name-id-part-display
-                (ci.intern-composite-left-id-unchecked name-id))
-              "/"
-              (ast-nominal-name-id-part-display
-                (ci.intern-composite-middle-id-unchecked name-id))
-              "."
-              (ast-nominal-name-id-part-display
-                (ci.intern-composite-right-id-unchecked name-id)))
-            (str_cat.str-cat
-              (ast-nominal-name-id-part-display
-                (ci.intern-composite-left-id-unchecked name-id))
-              "/"
-              (ast-nominal-name-id-part-display
-                (ci.intern-composite-right-id-unchecked name-id)))))))
+          (&
+            (if (ci.intern-composite-triple-id? name-id)
+              (str_cat.str-cat
+                (ast-nominal-name-id-part-display
+                  (ci.intern-composite-left-id-unchecked name-id))
+                "/"
+                (ast-nominal-name-id-part-display
+                  (ci.intern-composite-middle-id-unchecked name-id))
+                "."
+                (ast-nominal-name-id-part-display
+                  (ci.intern-composite-right-id-unchecked name-id)))
+              (str_cat.str-cat
+                (ast-nominal-name-id-part-display
+                  (ci.intern-composite-left-id-unchecked name-id))
+                "/"
+                (ast-nominal-name-id-part-display
+                  (ci.intern-composite-right-id-unchecked name-id))))))))
     (ast-nominal-name-id-part-display name-id)))
 
 ;; Explicit display boundary for specialization/normalization.  Unlike the
@@ -151,37 +152,38 @@
           (ci.intern-compat-state-composite-rendered-name-record!
             (&mut mutable-state)
             name-id
-            (if (ci.intern-compat-state-composite-triple-id? state name-id)
-              (str_cat.str-cat
-                (ci.intern-compat-state-str
-                  state
-                  (ci.intern-compat-state-composite-left-id-unchecked
+            (&
+              (if (ci.intern-compat-state-composite-triple-id? state name-id)
+                (str_cat.str-cat
+                  (ci.intern-compat-state-str
                     state
-                    name-id))
-                "/"
-                (ci.intern-compat-state-str
-                  state
-                  (ci.intern-compat-state-composite-middle-id-unchecked
+                    (ci.intern-compat-state-composite-left-id-unchecked
+                      state
+                      name-id))
+                  "/"
+                  (ci.intern-compat-state-str
                     state
-                    name-id))
-                "."
-                (ci.intern-compat-state-str
-                  state
-                  (ci.intern-compat-state-composite-right-id-unchecked
+                    (ci.intern-compat-state-composite-middle-id-unchecked
+                      state
+                      name-id))
+                  "."
+                  (ci.intern-compat-state-str
                     state
-                    name-id)))
-              (str_cat.str-cat
-                (ci.intern-compat-state-str
-                  state
-                  (ci.intern-compat-state-composite-left-id-unchecked
+                    (ci.intern-compat-state-composite-right-id-unchecked
+                      state
+                      name-id)))
+                (str_cat.str-cat
+                  (ci.intern-compat-state-str
                     state
-                    name-id))
-                "/"
-                (ci.intern-compat-state-str
-                  state
-                  (ci.intern-compat-state-composite-right-id-unchecked
+                    (ci.intern-compat-state-composite-left-id-unchecked
+                      state
+                      name-id))
+                  "/"
+                  (ci.intern-compat-state-str
                     state
-                    name-id)))))))
+                    (ci.intern-compat-state-composite-right-id-unchecked
+                      state
+                      name-id))))))))
       (if (ci.intern-renderable-id? name-id)
         (ci.intern-compat-state-str state name-id)
         "<structural-nominal>"))))
@@ -240,7 +242,7 @@
 (define (ast-lit-int [value : i64]) : AstLiteral
   (Int value ""))
 
-(define (ast-lit-int-value [lit : AstLiteral]) : i64
+(define (ast-lit-int-value [lit : (& AstLiteral)]) : i64
   (match lit
     [(Int value _) value]
     [_ 0]))
@@ -1200,12 +1202,16 @@
     (= a.end-col b.end-col)))
 
 (define (ast-expr-span-slot-biased-segment-base
-  [segment : (__tl_dyn-array i32)]
+  [segment : (& (__tl_dyn-array i32))]
   [segment-index : i64]) : i64
   (-
     (cast
       (unsafe
-        (ptr->int (ptr-cast (__tl_array-data segment) : (Ptr u8))))
+        (ptr->int
+          (ptr-cast
+            (__tl_array-data
+              (owned_view.compiler-owned-reference-shared-view segment))
+            : (Ptr u8))))
       : i64)
     (* segment-index ast-expr-span-slot-segment-bytes)))
 
@@ -1303,12 +1309,16 @@
   (__tl_make-array i64 ast-node-pool-max-segments))
 
 (define (ast-expr-node-pool-biased-segment-base
-  [segment : (__tl_dyn-array AstExpr)]
+  [segment : (& (__tl_dyn-array AstExpr))]
   [segment-index : i64]) : i64
   (-
     (cast
       (unsafe
-        (ptr->int (ptr-cast (__tl_array-data segment) : (Ptr u8))))
+        (ptr->int
+          (ptr-cast
+            (__tl_array-data
+              (owned_view.compiler-owned-reference-shared-view segment))
+            : (Ptr u8))))
       : i64)
     (* segment-index ast-expr-node-pool-segment-bytes)))
 
@@ -1320,7 +1330,7 @@
     (set!
       (array-ref bases 0)
       (ast-expr-node-pool-biased-segment-base
-        (ast-global-shared-view ast-node-pool-first-segment)
+        (& (ast-global-shared-view ast-node-pool-first-segment))
         0))
     (cast
       (unsafe
@@ -1340,7 +1350,7 @@
     (set!
       (array-ref bases 0)
       (ast-expr-span-slot-biased-segment-base
-        (ast-global-shared-view ast-node-span-slot-first-segment)
+        (& (ast-global-shared-view ast-node-span-slot-first-segment))
         0))
     (cast
       (unsafe
@@ -1421,13 +1431,15 @@
         (ptr-offset
           (int->ptr ast-node-pool-segment-bases : (MutPtr i64))
           segment-index)
-        (ast-expr-node-pool-biased-segment-base new-segment segment-index)))
+        (ast-expr-node-pool-biased-segment-base (& new-segment) segment-index)))
     (unsafe
       (ptr-write!
         (ptr-offset
           (int->ptr ast-node-span-slot-segment-bases : (MutPtr i64))
           segment-index)
-        (ast-expr-span-slot-biased-segment-base new-span-slots segment-index)))
+        (ast-expr-span-slot-biased-segment-base
+          (& new-span-slots)
+          segment-index)))
     (set! ast-node-pool-storage-arena storage-root)
     (set! ast-node-pool-segment-count (+ segment-index 1))))
 
@@ -1509,9 +1521,9 @@
 
 (define (ast-expr-semantic-node-from-span-slot
   [slot : i64]
-  [canonical-records : (__tl_dyn-array AstExprCanonicalSpanRecord)]
+  [canonical-records : (& (__tl_dyn-array AstExprCanonicalSpanRecord))]
   [canonical-count : i64]
-  [respans : (__tl_dyn-array AstExprReSpan)]
+  [respans : (& (__tl_dyn-array AstExprReSpan))]
   [respan-count : i64]) : i64
   (if (> slot 0)
     (let
@@ -1519,7 +1531,12 @@
       (if (>= index canonical-count)
         -1
         (cast
-          (__tl-project-field (array-ref canonical-records index) semantic-node)
+          (__tl-project-field
+            (array-ref
+              (owned_view.compiler-owned-reference-shared-view
+                canonical-records)
+              index)
+            semantic-node)
           : i64)))
     (if (< slot 0)
       (let
@@ -1527,7 +1544,11 @@
         (if (>= index respan-count)
           -1
           (cast
-            (__tl-project-field (array-ref respans index) semantic-node)
+            (__tl-project-field
+              (array-ref
+                (owned_view.compiler-owned-reference-shared-view respans)
+                index)
+              semantic-node)
             : i64)))
       -1)))
 
@@ -1548,7 +1569,7 @@
       id
       (+ index 1))))
 
-(define (ast-expr-span-note-active! [id : i64] [node : AstExpr]) : unit
+(define (ast-expr-span-note-active! [id : i64] [node : (& AstExpr)]) : unit
   (match node
     [(Spanned inner span)
       (let
@@ -1561,9 +1582,9 @@
         [stored-semantic : i64
           (ast-expr-semantic-node-from-span-slot
             inner-slot
-            (ast-global-shared-view ast-node-canonical-span-records)
+            (& (ast-global-shared-view ast-node-canonical-span-records))
             ast-node-canonical-span-count
-            (ast-global-shared-view ast-node-respan-records)
+            (& (ast-global-shared-view ast-node-respan-records))
             ast-node-respan-count)]
         [semantic : i64
           (if (>= stored-semantic 0)
@@ -1647,9 +1668,9 @@
         [semantic : i64
           (ast-expr-semantic-node-from-span-slot
             inner-slot
-            (ast-global-shared-view ast-node-canonical-span-records)
+            (& (ast-global-shared-view ast-node-canonical-span-records))
             ast-node-canonical-span-count
-            (ast-global-shared-view ast-node-respan-records)
+            (& (ast-global-shared-view ast-node-respan-records))
             ast-node-respan-count)]
         (ast-expr-span-slot-set-in-bases!
           ast-node-span-slot-segment-bases
@@ -1697,7 +1718,7 @@
     (if (or
       (= storage-tag ast-expr-spanned-storage-tag)
       (= storage-tag ast-expr-macro-expansion-storage-tag))
-      (ast-expr-span-note-active! id node)
+      (ast-expr-span-note-active! id (& node))
       unit)
     (ast-node-pool-active-context-capture-expr!)
     id))
@@ -1737,7 +1758,7 @@
     (ast-node-pool-context-expr-set!
       (array-ref ast-node-pool-compat-context-cell 0)
       id
-      node)
+      (& node))
     (let
       [biased-base : i64
         (unsafe
@@ -1770,7 +1791,7 @@
               ast-node-span-slot-segment-bases
               id
               0)
-            (ast-expr-span-note-active! id node)
+            (ast-expr-span-note-active! id (& node))
             (if (or
               (> ast-node-canonical-span-count canonical-before)
               (> ast-node-respan-count respan-before))
@@ -1783,7 +1804,7 @@
             ast-node-span-slot-segment-bases
             id
             0)
-          (ast-expr-span-note-active! id node)
+          (ast-expr-span-note-active! id (& node))
           (ast-node-pool-active-context-capture-expr!)]
         [_
           (if (< prior-slot 0)
@@ -1989,10 +2010,10 @@
             (__tl_make-array i32 ast-expr-node-pool-segment-size))]
         (set!
           (array-ref segment-bases segment-index)
-          (ast-expr-node-pool-biased-segment-base segment segment-index))
+          (ast-expr-node-pool-biased-segment-base (& segment) segment-index))
         (set!
           (array-ref span-slot-segment-bases segment-index)
-          (ast-expr-span-slot-biased-segment-base span-slots segment-index))
+          (ast-expr-span-slot-biased-segment-base (& span-slots) segment-index))
         (set! segment-index (+ segment-index 1))))
     (AstExprNodePoolState
       (cast
@@ -2075,7 +2096,7 @@
     (ast-expr-node-pool-state-with-canonical-spans pool next count)))
 
 (define (ast-expr-node-pool-state-record-direct-span
-  [pool : AstExprNodePoolState]
+  [pool : (& AstExprNodePoolState)]
   [id : i64]
   [span : AstSourceSpan]) : AstExprNodePoolState
   (let
@@ -2083,8 +2104,9 @@
       (if (>=
         pool.canonical-span-count
         (array-length pool.canonical-span-records))
-        (ast-expr-node-pool-state-canonical-records-grow pool)
-        pool)]
+        (ast-expr-node-pool-state-canonical-records-grow
+          (owned_view.compiler-owned-reference-shared-view pool))
+        (owned_view.compiler-owned-reference-shared-view pool))]
     [index : i64 ready.canonical-span-count]
     [records : (__tl_dyn-array AstExprCanonicalSpanRecord)
       (ast-global-shared-view ready.canonical-span-records)]
@@ -2100,7 +2122,7 @@
 (define (ast-expr-node-pool-state-note-span
   [pool : AstExprNodePoolState]
   [id : i64]
-  [node : AstExpr]) : AstExprNodePoolState
+  [node : (& AstExpr)]) : AstExprNodePoolState
   (let
     [next : AstExprNodePoolState pool]
     (ast-expr-node-pool-state-note-span-in-place! (&mut next) id node)
@@ -2251,13 +2273,15 @@
     (unsafe
       (ptr-write!
         (ptr-offset (int->ptr pool.segment-bases : (MutPtr i64)) segment-index)
-        (ast-expr-node-pool-biased-segment-base new-segment segment-index)))
+        (ast-expr-node-pool-biased-segment-base (& new-segment) segment-index)))
     (unsafe
       (ptr-write!
         (ptr-offset
           (int->ptr pool.span-slot-segment-bases : (MutPtr i64))
           segment-index)
-        (ast-expr-span-slot-biased-segment-base new-span-slots segment-index)))
+        (ast-expr-span-slot-biased-segment-base
+          (& new-span-slots)
+          segment-index)))
     (set! pool.segment-count (+ segment-index 1))))
 
 (define (ast-expr-node-pool-state-canonical-records-reserve-in-place!
@@ -2315,7 +2339,7 @@
 (define (ast-expr-node-pool-state-note-span-in-place!
   [pool : (&mut pool AstExprNodePoolState)]
   [id : i64]
-  [node : AstExpr]) : unit
+  [node : (& AstExpr)]) : unit
   (match node
     [(Spanned inner span)
       (let
@@ -2328,17 +2352,19 @@
         [stored-semantic : i64
           (ast-expr-semantic-node-from-span-slot
             inner-slot
-            (unsafe
-              (ptr-read
-                (ptr-cast
-                  (__tl_array-data (array (& pool.canonical-span-records)))
-                  : (Ptr (__tl_dyn-array AstExprCanonicalSpanRecord)))))
+            (&
+              (unsafe
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array (& pool.canonical-span-records)))
+                    : (Ptr (__tl_dyn-array AstExprCanonicalSpanRecord))))))
             pool.canonical-span-count
-            (unsafe
-              (ptr-read
-                (ptr-cast
-                  (__tl_array-data (array (& pool.respan-records)))
-                  : (Ptr (__tl_dyn-array AstExprReSpan)))))
+            (&
+              (unsafe
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array (& pool.respan-records)))
+                    : (Ptr (__tl_dyn-array AstExprReSpan))))))
             pool.respan-count)]
         [semantic : i64
           (if (>= stored-semantic 0)
@@ -2425,17 +2451,19 @@
         [semantic : i64
           (ast-expr-semantic-node-from-span-slot
             inner-slot
-            (unsafe
-              (ptr-read
-                (ptr-cast
-                  (__tl_array-data (array (& pool.canonical-span-records)))
-                  : (Ptr (__tl_dyn-array AstExprCanonicalSpanRecord)))))
+            (&
+              (unsafe
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array (& pool.canonical-span-records)))
+                    : (Ptr (__tl_dyn-array AstExprCanonicalSpanRecord))))))
             pool.canonical-span-count
-            (unsafe
-              (ptr-read
-                (ptr-cast
-                  (__tl_array-data (array (& pool.respan-records)))
-                  : (Ptr (__tl_dyn-array AstExprReSpan)))))
+            (&
+              (unsafe
+                (ptr-read
+                  (ptr-cast
+                    (__tl_array-data (array (& pool.respan-records)))
+                    : (Ptr (__tl_dyn-array AstExprReSpan))))))
             pool.respan-count)]
         (ast-expr-span-slot-set-in-bases!
           pool.span-slot-segment-bases
@@ -2478,7 +2506,7 @@
     (if (or
       (= storage-tag ast-expr-spanned-storage-tag)
       (= storage-tag ast-expr-macro-expansion-storage-tag))
-      (ast-expr-node-pool-state-note-span-in-place! pool id node)
+      (ast-expr-node-pool-state-note-span-in-place! pool id (& node))
       unit)
     id))
 
@@ -2573,10 +2601,11 @@
           pool.respan-count)))))
 
 (define (ast-expr-node-pool-state-canonical-span-count
-  [pool : AstExprNodePoolState]) : i64
+  [pool : (& AstExprNodePoolState)]) : i64
   pool.canonical-span-count)
 
-(define (ast-expr-node-pool-state-respan-count [pool : AstExprNodePoolState]) : i64
+(define (ast-expr-node-pool-state-respan-count
+  [pool : (& AstExprNodePoolState)]) : i64
   pool.respan-count)
 
 (define (ast-expr-node-pool-state-span-oracle
@@ -2599,13 +2628,14 @@
                     (ReSpanMatch))]))])]
       [_ (NotSpanned)])))
 
-(define (ast-expr-node-pool-state-span-oracle-ok? [pool : AstExprNodePoolState]) : bool
+(define (ast-expr-node-pool-state-span-oracle-ok?
+  [pool : (& AstExprNodePoolState)]) : bool
   (let
     [id : i64 0]
     [ok : bool true]
     (while (and ok (< id pool.count))
       (match (ast-expr-node-pool-state-span-oracle
-        (ast-global-shared-view pool)
+        (owned_view.compiler-owned-reference-shared-view pool)
         id)
         [(MissingSidecar) (set! ok false)]
         [(UnexpectedDifference) (set! ok false)]
@@ -2667,7 +2697,7 @@
           (ast-expr-span-slot-set-in-bases! pool.span-slot-segment-bases id 0)
           (let
             [next : AstExprNodePoolState
-              (ast-expr-node-pool-state-note-span pool id node)]
+              (ast-expr-node-pool-state-note-span pool id (& node))]
             (if (or
               (> next.canonical-span-count canonical-before)
               (> next.respan-count respan-before))
@@ -2675,7 +2705,7 @@
               next)))]
       [(MacroExpansion _ _ _)
         (ast-expr-span-slot-set-in-bases! pool.span-slot-segment-bases id 0)
-        (ast-expr-node-pool-state-note-span pool id node)]
+        (ast-expr-node-pool-state-note-span pool id (& node))]
       [_
         (if (< prior-slot 0)
           (let
@@ -2693,7 +2723,8 @@
                     (array-ref pool.respan-records index)
                     span)]
                 (ast-expr-node-pool-state-record-direct-span
-                  (ast-expr-node-pool-state-with-span-record-order pool false)
+                  (&
+                    (ast-expr-node-pool-state-with-span-record-order pool false))
                   id
                   span))))
           pool)])))
@@ -2722,12 +2753,16 @@
 ;; hash-consed pushes (below), a 1K-node first segment covers direct smoke
 ;; callers while additional segments grow on demand.
 (define (ast-type-node-pool-biased-segment-base
-  [segment : (__tl_dyn-array AstType)]
+  [segment : (& (__tl_dyn-array AstType))]
   [segment-index : i64]) : i64
   (-
     (cast
       (unsafe
-        (ptr->int (ptr-cast (__tl_array-data segment) : (Ptr u8))))
+        (ptr->int
+          (ptr-cast
+            (__tl_array-data
+              (owned_view.compiler-owned-reference-shared-view segment))
+            : (Ptr u8))))
       : i64)
     (* segment-index ast-type-node-pool-segment-bytes)))
 
@@ -2739,7 +2774,7 @@
     (set!
       (array-ref bases 0)
       (ast-type-node-pool-biased-segment-base
-        (ast-global-shared-view ty-node-pool-first-segment)
+        (& (ast-global-shared-view ty-node-pool-first-segment))
         0))
     (cast
       (unsafe
@@ -2783,7 +2818,7 @@
         (ptr-offset
           (int->ptr ty-node-pool-segment-bases : (MutPtr i64))
           segment-index)
-        (ast-type-node-pool-biased-segment-base new-segment segment-index)))
+        (ast-type-node-pool-biased-segment-base (& new-segment) segment-index)))
     (set! ty-node-pool-storage-arena storage-root)
     (set! ty-node-pool-segment-count (+ segment-index 1))))
 
@@ -2798,11 +2833,11 @@
       (ast-lifetime-list-get items index (ast-lifetime-fallback)))
     (ty-node-persist-lifetimes-into items out (+ index 1))))
 
-(define (ty-node-persist-lifetimes [items : AstLifetimeList]) : AstLifetimeList
+(define (ty-node-persist-lifetimes [items : (& AstLifetimeList)]) : AstLifetimeList
   (let
     [out : AstLifetimeList
-      (ast-lifetime-list-with-capacity (ast-lifetime-list-len (& items)))]
-    (ty-node-persist-lifetimes-into (& items) (&mut out) 0)
+      (ast-lifetime-list-with-capacity (ast-lifetime-list-len items))]
+    (ty-node-persist-lifetimes-into items (&mut out) 0)
     out))
 
 (define (ty-node-persist-type-list-into
@@ -2816,30 +2851,31 @@
       (ast-type-list-get items index (ast-type-id-fallback)))
     (ty-node-persist-type-list-into items out (+ index 1))))
 
-(define (ty-node-persist-type-list [items : AstTypeList]) : AstTypeList
+(define (ty-node-persist-type-list [items : (& AstTypeList)]) : AstTypeList
   (let
-    [out : AstTypeList
-      (ast-type-list-with-capacity (ast-type-list-len (& items)))]
-    (ty-node-persist-type-list-into (& items) (&mut out) 0)
+    [out : AstTypeList (ast-type-list-with-capacity (ast-type-list-len items))]
+    (ty-node-persist-type-list-into items (&mut out) 0)
     out))
 
-(define (ty-node-persist [node : AstType]) : AstType
+(define (ty-node-persist [node : (& AstType)]) : AstType
   (let
-    [fallback : AstType (ast-global-shared-view node)]
-    (match node
+    [fallback : AstType (owned_view.compiler-owned-reference-shared-view node)]
+    (match (owned_view.compiler-owned-reference-shared-view node)
       [(Func args ret)
-        (Func (box (ty-node-persist-type-list (deref args))) ret)]
-      [(Tuple args) (Tuple (box (ty-node-persist-type-list (deref args))))]
+        (Func (box (ty-node-persist-type-list (& (deref args)))) ret)]
+      [(Tuple args) (Tuple (box (ty-node-persist-type-list (& (deref args)))))]
       [(Region name inner) (Region name inner)]
       [(Ref name inner) (Ref name inner)]
       [(MutRef name inner) (MutRef name inner)]
       [(Invalidate name inner) (Invalidate name inner)]
       [(EnumArgs name lifetimes)
-        (EnumArgs name (box (ty-node-persist-lifetimes (deref lifetimes))))]
+        (EnumArgs name (box (ty-node-persist-lifetimes (& (deref lifetimes)))))]
       [(StructArgs name lifetimes)
-        (StructArgs name (box (ty-node-persist-lifetimes (deref lifetimes))))]
+        (StructArgs
+          name
+          (box (ty-node-persist-lifetimes (& (deref lifetimes)))))]
       [(VarArgs name lifetimes)
-        (VarArgs name (box (ty-node-persist-lifetimes (deref lifetimes))))]
+        (VarArgs name (box (ty-node-persist-lifetimes (& (deref lifetimes)))))]
       [(Slice elem) (Slice elem)]
       [_ fallback])))
 
@@ -2909,7 +2945,7 @@
             (__tl_make-array AstType ast-type-node-pool-segment-size))]
         (set!
           (array-ref segment-bases segment-index)
-          (ast-type-node-pool-biased-segment-base segment segment-index))
+          (ast-type-node-pool-biased-segment-base (& segment) segment-index))
         (set! segment-index (+ segment-index 1))))
     (AstTypeNodePoolState
       (cast
@@ -2978,7 +3014,7 @@
     (unsafe
       (ptr-write!
         (ptr-offset (int->ptr segment-bases : (MutPtr i64)) segment-index)
-        (ast-type-node-pool-biased-segment-base new-segment segment-index)))
+        (ast-type-node-pool-biased-segment-base (& new-segment) segment-index)))
     (AstTypeNodePoolState
       segment-bases
       len
@@ -3006,7 +3042,7 @@
         (ptr-read (ptr-offset (int->ptr segment-bases : (Ptr i64)) (shr id 10))))]
     [base-arena : i64 ready.base-arena]
     [persistent : AstType
-      (in-arena (arena.Arena base-arena) (ty-node-persist node))]
+      (in-arena (arena.Arena base-arena) (ty-node-persist (& node)))]
     [dest : (MutPtr i64)
       (unsafe
         (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (MutPtr i64)))]
@@ -3031,7 +3067,7 @@
 
 (define (ast-type-node-pool-state-push-dedup
   [pool : AstTypeNodePoolState]
-  [node : AstType]
+  [node : (& AstType)]
   [dedup-slots : (__tl_dyn-array i64)]
   [dedup-count : i64]
   [idx : i64]
@@ -3039,7 +3075,9 @@
   (let
     [slot : i64 (array-ref dedup-slots idx)]
     (if (= slot 0)
-      (match (ast-type-node-pool-state-push-raw pool node)
+      (match (ast-type-node-pool-state-push-raw
+        pool
+        (owned_view.compiler-owned-reference-shared-view node))
         [(AstTypeNodePoolPushOk next id)
           (set! (array-ref dedup-slots idx) (+ id 1))
           (ty-node-dedup-note-filled!
@@ -3060,7 +3098,7 @@
             id)])
       (if (ty-node-shallow-value-eq?
         (ast-type-node-pool-state-get pool (- slot 1))
-        (ast-global-shared-view node))
+        (owned_view.compiler-owned-reference-shared-view node))
         (AstTypeNodePoolPushOk pool (- slot 1))
         (ast-type-node-pool-state-push-dedup
           pool
@@ -3072,7 +3110,7 @@
 
 (define (ast-type-node-pool-state-push
   [pool : AstTypeNodePoolState]
-  [node : AstType]) : AstTypeNodePoolPushResult
+  [node : (& AstType)]) : AstTypeNodePoolPushResult
   (let
     [dedup-slots : (__tl_dyn-array i64)
       (ast-place-shared-view pool.dedup-slots)]
@@ -3080,7 +3118,9 @@
     [dedup-count : i64 pool.dedup-count]
     (if (>= (* dedup-count 2) dedup-cap)
       (if (>= dedup-cap ty-node-dedup-max-capacity)
-        (ast-type-node-pool-state-push-raw pool node)
+        (ast-type-node-pool-state-push-raw
+          pool
+          (owned_view.compiler-owned-reference-shared-view node))
         (in-arena
           (arena.Arena pool.base-arena)
           (let
@@ -3108,10 +3148,7 @@
             (ast-type-node-pool-state-push (ast-global-shared-view grown) node))))
       (let
         [mask : i64 (- dedup-cap 1)]
-        [idx : i64
-          (ty-node-dedup-slot-index
-            (ty-node-hash-value (ast-global-shared-view node))
-            mask)]
+        [idx : i64 (ty-node-dedup-slot-index (ty-node-hash-value node) mask)]
         (ast-type-node-pool-state-push-dedup
           pool
           node
@@ -3133,7 +3170,7 @@
         (int->ptr (+ biased-base (* id (ast-type-node-bytes))) : (Ptr AstType))))))
 
 ;: Append `node` to the pool unconditionally and return its ty id.
-(define (ty-node-push-raw [node : AstType]) : i64
+(define (ty-node-push-raw [node : (& AstType)]) : i64
   (if (>=
     ty-node-pool-count
     (* ty-node-pool-segment-count ast-type-node-pool-segment-size))
@@ -3342,7 +3379,7 @@
 (define (ty-node-dedup-slot-index [hash : i64] [mask : i64]) : i64
   (bit-and (* hash 2654435761) mask))
 
-(define (ty-node-hash-value [node : AstType]) : i64
+(define (ty-node-hash-value [node : (& AstType)]) : i64
   (match node
     [(I64) 1]
     [(I32) 2]
@@ -3392,8 +3429,10 @@
 (define (ty-node-shallow-value-eq? [a : AstType] [b : AstType]) : bool
   (ast-type-children-eq? a b ast-type-id-same?))
 
-(define (ty-node-shallow-eq? [a-id : i64] [b : AstType]) : bool
-  (ty-node-shallow-value-eq? (ty-node-get a-id) b))
+(define (ty-node-shallow-eq? [a-id : i64] [b : (& AstType)]) : bool
+  (ty-node-shallow-value-eq?
+    (ty-node-get a-id)
+    (owned_view.compiler-owned-reference-shared-view b)))
 
 ;; Double the dedup table and reinsert every live entry, keeping the index
 ;; effective for the whole compile instead of switching itself off at half load.
@@ -3436,7 +3475,7 @@
               [idx : i64
                 (ty-node-dedup-slot-index
                   (ty-node-hash-value
-                    (ast-type-segment-bases-get type-bases (- slot 1)))
+                    (& (ast-type-segment-bases-get type-bases (- slot 1))))
                   mask)]
               (while (not (= (array-ref new-slots idx) 0))
                 (set! idx (bit-and (+ idx 1) mask)))
@@ -3470,7 +3509,7 @@
 ;; Probe the dedup table for `node`, appending it only on a miss. Split out of
 ;; `ty-node-push-active` so the loaded-table check there stays a single compare
 ;; on the hot path.
-(define (ty-node-dedup-probe-push [node : AstType]) : i64
+(define (ty-node-dedup-probe-push [node : (& AstType)]) : i64
   (let
     [mask : i64 (- ty-node-dedup-capacity 1)]
     ;; Stable for the whole probe: this function cannot replace the table;
@@ -3480,10 +3519,7 @@
     [slots : (MutPtr i64)
       (unsafe
         (int->ptr ty-node-dedup-slots-data-address : (MutPtr i64)))]
-    [idx : i64
-      (ty-node-dedup-slot-index
-        (ty-node-hash-value (ast-global-shared-view node))
-        mask)]
+    [idx : i64 (ty-node-dedup-slot-index (ty-node-hash-value node) mask)]
     [result : i64 (- 0 1)]
     (while (< result 0)
       (let
@@ -3492,20 +3528,20 @@
             (ptr-read (ptr-offset slots idx)))]
         (if (= slot 0)
           (let
-            [id : i64 (ty-node-push-raw (ast-global-shared-view node))]
+            [id : i64 (ty-node-push-raw node)]
             (unsafe
               (ptr-write! (ptr-offset slots idx) (+ id 1)))
             (ty-node-dedup-note-filled! slots ty-node-dedup-capacity idx)
             (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
             (set! result id))
-          (if (ty-node-shallow-eq? (- slot 1) (ast-global-shared-view node))
+          (if (ty-node-shallow-eq? (- slot 1) node)
             (set! result (- slot 1))
             (set! idx (bit-and (+ idx 1) mask))))))
     result))
 
 ;; Half load reached: grow and keep deduplicating. Only a table already at the
 ;; 2^24-slot bound falls back to a plain append.
-(define (ty-node-push-loaded [node : AstType]) : i64
+(define (ty-node-push-loaded [node : (& AstType)]) : i64
   (if (>= ty-node-dedup-capacity ty-node-dedup-max-capacity)
     (ty-node-push-raw node)
     (begin
@@ -3515,17 +3551,17 @@
 ;: Append `node` to the active pool, returning an existing id when an identical node
 ;: was already pushed. The table is probed before appending so the common
 ;: duplicate path does not churn the pool count or temporarily force growth.
-(define (ty-node-push-active [node : AstType]) : i64
+(define (ty-node-push-active [node : (& AstType)]) : i64
   (if (>= (* ty-node-dedup-count 2) ty-node-dedup-capacity)
     (ty-node-push-loaded node)
     (ty-node-dedup-probe-push node)))
 
 ;: Append `node` to the selected type pool.
-(define (ty-node-push [node : AstType]) : i64
+(define (ty-node-push [node : (& AstType)]) : i64
   (if ast-node-pool-compat-context-explicit?
     (ast-node-pool-context-type-push
       (array-ref ast-node-pool-compat-context-cell 0)
-      node)
+      (owned_view.compiler-owned-reference-shared-view node))
     (ty-node-push-active node)))
 
 ;: Read the type node at `id` from the installed type pool.
@@ -3945,12 +3981,12 @@
         pool-owner-arena))))
 
 (define (ast-node-pool-context-new
-  [expr-pool : AstExprNodePoolState]
-  [type-pool : AstTypeNodePoolState]
+  [expr-pool : (& AstExprNodePoolState)]
+  [type-pool : (& AstTypeNodePoolState)]
   [owner-arena : i64]) : AstNodePoolContext
   (ast-node-pool-context-new-with-pool-owner
-    expr-pool
-    type-pool
+    (owned_view.compiler-owned-reference-shared-view expr-pool)
+    (owned_view.compiler-owned-reference-shared-view type-pool)
     owner-arena
     owner-arena))
 
@@ -4461,7 +4497,7 @@
 (define (ast-node-pool-context-expr-push-cells
   [expr-cell-address : u64]
   [type-cell-address : u64]
-  [node : AstExpr]) : i64
+  [node : (& AstExpr)]) : i64
   (let
     [expr-cell : (MutPtr AstExprNodePoolState)
       (unsafe
@@ -4473,7 +4509,9 @@
       (unsafe
         (ptr-read expr-cell))]
     [current-base-arena : i64 current.base-arena]
-    (match (ast-expr-node-pool-state-push current node)
+    (match (ast-expr-node-pool-state-push
+      current
+      (owned_view.compiler-owned-reference-shared-view node))
       [(AstExprNodePoolPushOk next id)
         (let
           [next-base-arena : i64 next.base-arena]
@@ -4492,7 +4530,7 @@
 
 (define (ast-node-pool-context-expr-push-borrowed
   [pools : (& pools AstNodePoolContext)]
-  [node : AstExpr]) : i64
+  [node : (& AstExpr)]) : i64
   (ast-node-pool-context-expr-push-cells
     (ast-pool-cell-data pools.expr-pool)
     (ast-pool-cell-data pools.type-pool)
@@ -4595,12 +4633,12 @@
 (define (ast-node-pool-context-expr-canonical-span-count
   [pools : (& pools AstNodePoolContext)]) : i64
   (ast-expr-node-pool-state-canonical-span-count
-    (ast-expr-pool-cell-read pools.expr-pool)))
+    (& (ast-expr-pool-cell-read pools.expr-pool))))
 
 (define (ast-node-pool-context-expr-respan-count
   [pools : (& pools AstNodePoolContext)]) : i64
   (ast-expr-node-pool-state-respan-count
-    (ast-expr-pool-cell-read pools.expr-pool)))
+    (& (ast-expr-pool-cell-read pools.expr-pool))))
 
 (define (ast-node-pool-context-expr-span-oracle
   [pools : (& pools AstNodePoolContext)]
@@ -4612,18 +4650,18 @@
 (define (ast-node-pool-context-expr-span-oracle-ok?
   [pools : (& pools AstNodePoolContext)]) : bool
   (ast-expr-node-pool-state-span-oracle-ok?
-    (ast-expr-pool-cell-read pools.expr-pool)))
+    (& (ast-expr-pool-cell-read pools.expr-pool))))
 
 (define (ast-node-pool-context-expr-set!
   [pools : AstNodePoolContext]
   [id : i64]
-  [node : AstExpr]) : unit
+  [node : (& AstExpr)]) : unit
   (ast-expr-pool-cell-write!
     pools.expr-pool
     (ast-expr-node-pool-state-set!
       (ast-expr-pool-cell-read pools.expr-pool)
       id
-      node))
+      (owned_view.compiler-owned-reference-shared-view node)))
   (ast-node-pool-compat-context-sync-installed!))
 
 (define (ast-node-pool-context-expr-truncate!
@@ -4641,7 +4679,7 @@
   [node : AstType]) : i64
   (let
     [current : AstTypeNodePoolState (ast-type-pool-cell-read pools.type-pool)]
-    (match (ast-type-node-pool-state-push current node)
+    (match (ast-type-node-pool-state-push current (& node))
       [(AstTypeNodePoolPushOk next id)
         (ast-type-pool-cell-write! pools.type-pool next)
         (ast-node-pool-context-type-sync-installed! pools)
@@ -4650,7 +4688,7 @@
 (define (ast-node-pool-context-type-push-cells
   [expr-cell-address : u64]
   [type-cell-address : u64]
-  [node : AstType]) : i64
+  [node : (& AstType)]) : i64
   (let
     [expr-cell : (MutPtr AstExprNodePoolState)
       (unsafe
@@ -4693,7 +4731,7 @@
 ;; data pointer and then the signed length, with no referent record in memory.
 ;; Every other reference is one pointer word. `referent` is the reference's
 ;; immediate referent with its Region wrappers already stripped.
-(define (ast-type-fat-referent? [referent : AstType]) : bool
+(define (ast-type-fat-referent? [referent : (& AstType)]) : bool
   (match referent
     [(Slice _) true]
     [(Bytes) true]
@@ -4714,7 +4752,7 @@
 ;; Return the canonical nominal identity for aggregate metadata. Region is a
 ;; transparent ownership wrapper; every non-aggregate shape stays explicit as
 ;; None so callers never need an empty-string or integer sentinel.
-(define (ast-aggregate-type-key [type-segment-bases : i64] [ty : AstType]) : AstMaybeNominalKey
+(define (ast-aggregate-type-key [type-segment-bases : i64] [ty : (& AstType)]) : AstMaybeNominalKey
   (match ty
     [(Struct name) (Some (ast-nominal-name-id-key name))]
     [(StructArgs name _) (Some (ast-nominal-name-id-key name))]
@@ -4723,7 +4761,7 @@
     [(Region _ inner)
       (ast-aggregate-type-key
         type-segment-bases
-        (ast-type-segment-bases-get type-segment-bases inner))]
+        (& (ast-type-segment-bases-get type-segment-bases inner)))]
     [_ None]))
 
 ;; Segment-bases pointer of the context's live type-pool cell. The cell is
@@ -4868,9 +4906,11 @@
     (ast-node-pool-context-type-get ast-node-pool-reader-context id)
     (ty-node-get id)))
 
-(define (ast-node-pool-reader-type-push [node : AstType]) : i64
+(define (ast-node-pool-reader-type-push [node : (& AstType)]) : i64
   (if ast-node-pool-reader-explicit?
-    (ast-node-pool-context-type-push ast-node-pool-reader-context node)
+    (ast-node-pool-context-type-push
+      ast-node-pool-reader-context
+      (owned_view.compiler-owned-reference-shared-view node))
     (ty-node-push node)))
 
 (define (ast-node-pool-reader-type-exhausted?) : bool
@@ -5201,18 +5241,18 @@
     (ast-type-list-slice-into (&mut out) items start 0)
     out))
 
-(define (ast-type-list-cons-id [head : i64] [rest : AstTypeList]) : AstTypeList
+(define (ast-type-list-cons-id [head : i64] [rest : (& AstTypeList)]) : AstTypeList
   (let
     [out : AstTypeList
-      (ast-type-list-with-capacity (+ 1 (ast-type-list-len (& rest))))]
+      (ast-type-list-with-capacity (+ 1 (ast-type-list-len rest)))]
     (ast-type-list-push (&mut out) head)
-    (ast-type-list-append-from (&mut out) (& rest) 0)
+    (ast-type-list-append-from (&mut out) rest 0)
     out))
 
-(define (ast-type-cons [head : AstType] [rest : AstTypeList]) : AstTypeList
+(define (ast-type-cons [head : (& AstType)] [rest : (& AstTypeList)]) : AstTypeList
   (ast-type-list-cons-id (ast-node-pool-reader-type-push head) rest))
 
-(define (ast-ty-func [args : AstTypeList] [ret : AstType]) : AstType
+(define (ast-ty-func [args : AstTypeList] [ret : (& AstType)]) : AstType
   (Func (box args) (ast-node-pool-reader-type-push ret)))
 
 ;; Legacy/test adapter. Compile-job callers use the explicit-pools twin below.
@@ -5228,22 +5268,22 @@
 (define (ast-ty-var-args [name : i64] [lifetimes : AstLifetimeList]) : AstType
   (VarArgs name (box lifetimes)))
 
-(define (ast-ty-array [elem : AstType] [count : i64]) : AstType
+(define (ast-ty-array [elem : (& AstType)] [count : i64]) : AstType
   (Array (ast-node-pool-reader-type-push elem) count))
 
-(define (ast-ty-dyn-array [elem : AstType]) : AstType
+(define (ast-ty-dyn-array [elem : (& AstType)]) : AstType
   (DynArray (ast-node-pool-reader-type-push elem)))
 
-(define (ast-ty-slice [elem : AstType]) : AstType
+(define (ast-ty-slice [elem : (& AstType)]) : AstType
   (Slice (ast-node-pool-reader-type-push elem)))
 
-(define (ast-ty-box [elem : AstType]) : AstType
+(define (ast-ty-box [elem : (& AstType)]) : AstType
   (Box (ast-node-pool-reader-type-push elem)))
 
-(define (ast-ty-region [region : i64] [inner : AstType]) : AstType
+(define (ast-ty-region [region : i64] [inner : (& AstType)]) : AstType
   (Region region (ast-node-pool-reader-type-push inner)))
 
-(define (ast-ty-ref [region : i64] [inner : AstType]) : AstType
+(define (ast-ty-ref [region : i64] [inner : (& AstType)]) : AstType
   (Ref region (ast-node-pool-reader-type-push inner)))
 
 ;; How many `(:invalidate r T)` nodes this process has built or decoded (#6670).
@@ -5256,78 +5296,127 @@
   (set! ast-invalidate-type-count (+ ast-invalidate-type-count 1))
   (Invalidate lifetime inner))
 
-(define (ast-ty-invalidate [lifetime : i64] [inner : AstType]) : AstType
+(define (ast-ty-invalidate [lifetime : i64] [inner : (& AstType)]) : AstType
   (ast-ty-invalidate-id lifetime (ast-node-pool-reader-type-push inner)))
 
-(define (ast-ty-mut-ref [region : i64] [inner : AstType]) : AstType
+(define (ast-ty-mut-ref [region : i64] [inner : (& AstType)]) : AstType
   (MutRef region (ast-node-pool-reader-type-push inner)))
 
-(define (ast-ty-ptr [elem : AstType]) : AstType
+(define (ast-ty-ptr [elem : (& AstType)]) : AstType
   (Ptr (ast-node-pool-reader-type-push elem)))
 
-(define (ast-ty-mut-ptr [elem : AstType]) : AstType
+(define (ast-ty-mut-ptr [elem : (& AstType)]) : AstType
   (MutPtr (ast-node-pool-reader-type-push elem)))
 
 (define (ast-type-cons-with-pools
   [pools : AstNodePoolContext]
-  [head : AstType]
-  [rest : AstTypeList]) : AstTypeList
-  (ast-type-list-cons-id (ast-node-pool-context-type-push pools head) rest))
+  [head : (& AstType)]
+  [rest : (& AstTypeList)]) : AstTypeList
+  (ast-type-list-cons-id
+    (ast-node-pool-context-type-push
+      pools
+      (owned_view.compiler-owned-reference-shared-view head))
+    rest))
 
 (define (ast-ty-func-with-pools
   [pools : AstNodePoolContext]
   [args : AstTypeList]
-  [ret : AstType]) : AstType
-  (Func (box args) (ast-node-pool-context-type-push pools ret)))
+  [ret : (& AstType)]) : AstType
+  (Func
+    (box args)
+    (ast-node-pool-context-type-push
+      pools
+      (owned_view.compiler-owned-reference-shared-view ret))))
 
 (define (ast-ty-array-with-pools
   [pools : AstNodePoolContext]
-  [elem : AstType]
+  [elem : (& AstType)]
   [count : i64]) : AstType
-  (Array (ast-node-pool-context-type-push pools elem) count))
+  (Array
+    (ast-node-pool-context-type-push
+      pools
+      (owned_view.compiler-owned-reference-shared-view elem))
+    count))
 
 (define (ast-ty-dyn-array-with-pools
   [pools : AstNodePoolContext]
-  [elem : AstType]) : AstType
-  (DynArray (ast-node-pool-context-type-push pools elem)))
+  [elem : (& AstType)]) : AstType
+  (DynArray
+    (ast-node-pool-context-type-push
+      pools
+      (owned_view.compiler-owned-reference-shared-view elem))))
 
-(define (ast-ty-slice-with-pools [pools : AstNodePoolContext] [elem : AstType]) : AstType
-  (Slice (ast-node-pool-context-type-push pools elem)))
+(define (ast-ty-slice-with-pools
+  [pools : AstNodePoolContext]
+  [elem : (& AstType)]) : AstType
+  (Slice
+    (ast-node-pool-context-type-push
+      pools
+      (owned_view.compiler-owned-reference-shared-view elem))))
 
-(define (ast-ty-box-with-pools [pools : AstNodePoolContext] [elem : AstType]) : AstType
-  (Box (ast-node-pool-context-type-push pools elem)))
+(define (ast-ty-box-with-pools
+  [pools : AstNodePoolContext]
+  [elem : (& AstType)]) : AstType
+  (Box
+    (ast-node-pool-context-type-push
+      pools
+      (owned_view.compiler-owned-reference-shared-view elem))))
 
 (define (ast-ty-region-with-pools
   [pools : AstNodePoolContext]
   [region : i64]
-  [inner : AstType]) : AstType
-  (Region region (ast-node-pool-context-type-push pools inner)))
+  [inner : (& AstType)]) : AstType
+  (Region
+    region
+    (ast-node-pool-context-type-push
+      pools
+      (owned_view.compiler-owned-reference-shared-view inner))))
 
 (define (ast-ty-ref-with-pools
   [pools : AstNodePoolContext]
   [region : i64]
-  [inner : AstType]) : AstType
-  (Ref region (ast-node-pool-context-type-push pools inner)))
+  [inner : (& AstType)]) : AstType
+  (Ref
+    region
+    (ast-node-pool-context-type-push
+      pools
+      (owned_view.compiler-owned-reference-shared-view inner))))
 
 (define (ast-ty-invalidate-with-pools
   [pools : AstNodePoolContext]
   [lifetime : i64]
-  [inner : AstType]) : AstType
-  (ast-ty-invalidate-id lifetime (ast-node-pool-context-type-push pools inner)))
+  [inner : (& AstType)]) : AstType
+  (ast-ty-invalidate-id
+    lifetime
+    (ast-node-pool-context-type-push
+      pools
+      (owned_view.compiler-owned-reference-shared-view inner))))
 
 (define (ast-ty-mut-ref-with-pools
   [pools : AstNodePoolContext]
   [region : i64]
-  [inner : AstType]) : AstType
-  (MutRef region (ast-node-pool-context-type-push pools inner)))
+  [inner : (& AstType)]) : AstType
+  (MutRef
+    region
+    (ast-node-pool-context-type-push
+      pools
+      (owned_view.compiler-owned-reference-shared-view inner))))
 
-(define (ast-ty-ptr-with-pools [pools : AstNodePoolContext] [elem : AstType]) : AstType
-  (Ptr (ast-node-pool-context-type-push pools elem)))
+(define (ast-ty-ptr-with-pools
+  [pools : AstNodePoolContext]
+  [elem : (& AstType)]) : AstType
+  (Ptr
+    (ast-node-pool-context-type-push
+      pools
+      (owned_view.compiler-owned-reference-shared-view elem))))
 
 (define (ast-ty-mut-ptr-with-pools
   [pools : AstNodePoolContext]
-  [elem : AstType]) : AstType
-  (MutPtr (ast-node-pool-context-type-push pools elem)))
+  [elem : (& AstType)]) : AstType
+  (MutPtr
+    (ast-node-pool-context-type-push
+      pools
+      (owned_view.compiler-owned-reference-shared-view elem))))
 
 (define (ast-lifetime-fallback) : i64
   cbi.compiler-builtin-id-fix-empty)
@@ -5396,12 +5485,12 @@
       (ast-lifetime-list-get items index (ast-lifetime-fallback)))
     (ast-lifetime-list-append-from out items (+ index 1))))
 
-(define (ast-lifetime-cons [head : i64] [rest : AstLifetimeList]) : AstLifetimeList
+(define (ast-lifetime-cons [head : i64] [rest : (& AstLifetimeList)]) : AstLifetimeList
   (let
     [out : AstLifetimeList
-      (ast-lifetime-list-with-capacity (+ 1 (ast-lifetime-list-len (& rest))))]
+      (ast-lifetime-list-with-capacity (+ 1 (ast-lifetime-list-len rest)))]
     (ast-lifetime-list-push (&mut out) head)
-    (ast-lifetime-list-append-from (&mut out) (& rest) 0)
+    (ast-lifetime-list-append-from (&mut out) rest 0)
     out))
 
 ;; How many comptime parameters this process has built (#8578). Every one
@@ -5430,12 +5519,14 @@
   len
   append-from)
 
-(define (ast-param-cons [head : AstParam] [rest : AstParamList]) : AstParamList
+(define (ast-param-cons [head : (& AstParam)] [rest : (& AstParamList)]) : AstParamList
   (let
     [out : AstParamList
-      (ast-param-list-with-capacity (+ 1 (ast-param-list-len (& rest))))]
-    (ast-param-list-push (&mut out) head)
-    (ast-param-list-append-from (&mut out) (& rest) 0)
+      (ast-param-list-with-capacity (+ 1 (ast-param-list-len rest)))]
+    (ast-param-list-push
+      (&mut out)
+      (owned_view.compiler-owned-reference-shared-view head))
+    (ast-param-list-append-from (&mut out) rest 0)
     out))
 
 (define (ast-macro-type-kind-list-empty) : AstMacroTypeKindList
@@ -5522,10 +5613,10 @@
   [type-kinds : AstMacroTypeKindList]) : AstMacroParam
   (Param name ty variadic type-kinds))
 
-(define (ast-macro-param [name : i64] [ty : AstType] [variadic : bool]) : AstMacroParam
+(define (ast-macro-param [name : i64] [ty : (& AstType)] [variadic : bool]) : AstMacroParam
   (ast-macro-param-with-type-kinds
     name
-    ty
+    (owned_view.compiler-owned-reference-shared-view ty)
     variadic
     (ast-macro-type-kind-list-empty)))
 
@@ -5564,11 +5655,15 @@
   empty?
   append-from)
 
-(define (ast-field-def-cons [head : AstFieldDef] [rest : AstFieldDefList]) : AstFieldDefList
+(define (ast-field-def-cons
+  [head : (& AstFieldDef)]
+  [rest : (& AstFieldDefList)]) : AstFieldDefList
   (let
     [out : AstFieldDefList (ast-field-def-list-with-capacity (+ 1 rest.len))]
-    (ast-field-def-list-push (&mut out) head)
-    (ast-field-def-list-append-from (&mut out) (& rest) 0)
+    (ast-field-def-list-push
+      (&mut out)
+      (owned_view.compiler-owned-reference-shared-view head))
+    (ast-field-def-list-append-from (&mut out) rest 0)
     out))
 
 (define (ast-extern-link-input-fallback) : AstExternLinkInput
@@ -5932,8 +6027,9 @@
         (set! index (+ index 1))))
     out))
 
-(define (ast-imported-spmd-metadata-clone [metadata : AstImportedSpmdMetadata]) : AstImportedSpmdMetadata
-  (match metadata
+(define (ast-imported-spmd-metadata-clone
+  [metadata : (& AstImportedSpmdMetadata)]) : AstImportedSpmdMetadata
+  (match (owned_view.compiler-owned-reference-shared-view metadata)
     [(No) No]
     [(Package owner version name callables)
       (Package
@@ -5942,8 +6038,8 @@
         name
         (box (ast-imported-spmd-callable-list-clone (& (deref callables)))))]))
 
-(define (ast-fn-metadata-clone [metadata : AstFnMetadata]) : AstFnMetadata
-  (match metadata
+(define (ast-fn-metadata-clone [metadata : (& AstFnMetadata)]) : AstFnMetadata
+  (match (owned_view.compiler-owned-reference-shared-view metadata)
     [(No) No]
     [(Export symbol) (Export symbol)]
     [(SpmdCallable items)
@@ -5962,13 +6058,13 @@
     [(No) (ast-fn-metadata export)]
     [(Callable items) (SpmdCallable (box items))]))
 
-(define (ast-fn-metadata-export [metadata : AstFnMetadata]) : AstFnExport
-  (match metadata
+(define (ast-fn-metadata-export [metadata : (& AstFnMetadata)]) : AstFnExport
+  (match (owned_view.compiler-owned-reference-shared-view metadata)
     [(Export symbol) (Export symbol)]
     [_ No]))
 
-(define (ast-fn-metadata-spmd-callable [metadata : AstFnMetadata]) : AstSpmdCallable
-  (match metadata
+(define (ast-fn-metadata-spmd-callable [metadata : (& AstFnMetadata)]) : AstSpmdCallable
+  (match (owned_view.compiler-owned-reference-shared-view metadata)
     [(SpmdCallable items)
       (Callable (ast-spmd-specialization-list-clone (& (deref items))))]
     [_ No]))
@@ -6032,22 +6128,26 @@
   empty?
   append-from)
 
-(define (ast-variant-def-cons [head : AstVariantDef] [rest : AstVariantDefList]) : AstVariantDefList
+(define (ast-variant-def-cons
+  [head : (& AstVariantDef)]
+  [rest : (& AstVariantDefList)]) : AstVariantDefList
   (let
     [out : AstVariantDefList
       (ast-variant-def-list-with-capacity (+ 1 rest.len))]
-    (ast-variant-def-list-push (&mut out) head)
-    (ast-variant-def-list-append-from (&mut out) (& rest) 0)
+    (ast-variant-def-list-push
+      (&mut out)
+      (owned_view.compiler-owned-reference-shared-view head))
+    (ast-variant-def-list-append-from (&mut out) rest 0)
     out))
 
 (define (ast-variant-payload-cleanup-cons
   [head : AstVariantPayloadCleanup]
-  [rest : AstVariantPayloadCleanupList]) : AstVariantPayloadCleanupList
+  [rest : (& AstVariantPayloadCleanupList)]) : AstVariantPayloadCleanupList
   (let
     [out : AstVariantPayloadCleanupList
       (ast-variant-payload-cleanup-list-with-capacity (+ 1 rest.len))]
     (ast-variant-payload-cleanup-list-push (&mut out) head)
-    (ast-variant-payload-cleanup-list-append-from (&mut out) (& rest) 0)
+    (ast-variant-payload-cleanup-list-append-from (&mut out) rest 0)
     out))
 
 (define (ast-pattern-fallback) : AstPattern
@@ -6064,17 +6164,19 @@
   empty?
   append-from)
 
-(define (ast-pattern-list-tail [items : AstPatternList]) : AstPatternList
+(define (ast-pattern-list-tail [items : (& AstPatternList)]) : AstPatternList
   (let
     [out : AstPatternList (ast-pattern-list-with-capacity (- items.len 1))]
-    (ast-pattern-list-append-from (&mut out) (& items) 1)
+    (ast-pattern-list-append-from (&mut out) items 1)
     out))
 
-(define (ast-pattern-cons [head : AstPattern] [rest : AstPatternList]) : AstPatternList
+(define (ast-pattern-cons [head : (& AstPattern)] [rest : (& AstPatternList)]) : AstPatternList
   (let
     [out : AstPatternList (ast-pattern-list-with-capacity (+ 1 rest.len))]
-    (ast-pattern-list-push (&mut out) head)
-    (ast-pattern-list-append-from (&mut out) (& rest) 0)
+    (ast-pattern-list-push
+      (&mut out)
+      (owned_view.compiler-owned-reference-shared-view head))
+    (ast-pattern-list-append-from (&mut out) rest 0)
     out))
 
 (define (ast-pat-binding-id [name : i64]) : AstPattern
@@ -6111,13 +6213,16 @@
   len
   append-from)
 
-(define (ast-let-binding-cons [head : AstLetBinding] [rest : AstLetBindingList]) : AstLetBindingList
+(define (ast-let-binding-cons
+  [head : (& AstLetBinding)]
+  [rest : (& AstLetBindingList)]) : AstLetBindingList
   (let
     [out : AstLetBindingList
-      (ast-let-binding-list-with-capacity
-        (+ 1 (ast-let-binding-list-len (& rest))))]
-    (ast-let-binding-list-push (&mut out) head)
-    (ast-let-binding-list-append-from (&mut out) (& rest) 0)
+      (ast-let-binding-list-with-capacity (+ 1 (ast-let-binding-list-len rest)))]
+    (ast-let-binding-list-push
+      (&mut out)
+      (owned_view.compiler-owned-reference-shared-view head))
+    (ast-let-binding-list-append-from (&mut out) rest 0)
     out))
 
 (define (ast-resource-binding-id [name : i64] [init : i64] [cleanup : i64]) : AstResourceBinding
@@ -6138,13 +6243,13 @@
 
 (define (ast-resource-binding-cons
   [head : AstResourceBinding]
-  [rest : AstResourceBindingList]) : AstResourceBindingList
+  [rest : (& AstResourceBindingList)]) : AstResourceBindingList
   (let
     [out : AstResourceBindingList
       (ast-resource-binding-list-with-capacity
-        (+ 1 (ast-resource-binding-list-len (& rest))))]
+        (+ 1 (ast-resource-binding-list-len rest)))]
     (ast-resource-binding-list-push (&mut out) head)
-    (ast-resource-binding-list-append-from (&mut out) (& rest) 0)
+    (ast-resource-binding-list-append-from (&mut out) rest 0)
     out))
 
 (define (ast-match-arm [pattern : AstPattern] [body : i64]) : AstMatchArm
@@ -6164,17 +6269,21 @@
   empty?
   append-from)
 
-(define (ast-match-arm-list-tail [items : AstMatchArmList]) : AstMatchArmList
+(define (ast-match-arm-list-tail [items : (& AstMatchArmList)]) : AstMatchArmList
   (let
     [out : AstMatchArmList (ast-match-arm-list-with-capacity (- items.len 1))]
-    (ast-match-arm-list-append-from (&mut out) (& items) 1)
+    (ast-match-arm-list-append-from (&mut out) items 1)
     out))
 
-(define (ast-match-arm-cons [head : AstMatchArm] [rest : AstMatchArmList]) : AstMatchArmList
+(define (ast-match-arm-cons
+  [head : (& AstMatchArm)]
+  [rest : (& AstMatchArmList)]) : AstMatchArmList
   (let
     [out : AstMatchArmList (ast-match-arm-list-with-capacity (+ 1 rest.len))]
-    (ast-match-arm-list-push (&mut out) head)
-    (ast-match-arm-list-append-from (&mut out) (& rest) 0)
+    (ast-match-arm-list-push
+      (&mut out)
+      (owned_view.compiler-owned-reference-shared-view head))
+    (ast-match-arm-list-append-from (&mut out) rest 0)
     out))
 
 (define (ast-expr-list-with-capacity [capacity : i64]) : AstExprList
@@ -6242,10 +6351,10 @@
     (ast-expr-list-push out (ast-expr-list-get items index 0))
     (ast-expr-list-append-from out items (+ index 1))))
 
-(define (ast-expr-list-tail [items : AstExprList]) : AstExprList
+(define (ast-expr-list-tail [items : (& AstExprList)]) : AstExprList
   (let
     [out : AstExprList (ast-expr-list-with-capacity (- items.len 1))]
-    (ast-expr-list-append-from (&mut out) (& items) 1)
+    (ast-expr-list-append-from (&mut out) items 1)
     out))
 
 (define (ast-expr-list-tail-from-ref
@@ -6256,11 +6365,11 @@
     (ast-expr-list-append-from (&mut out) items index)
     out))
 
-(define (ast-expr-cons [head : i64] [rest : AstExprList]) : AstExprList
+(define (ast-expr-cons [head : i64] [rest : (& AstExprList)]) : AstExprList
   (let
     [out : AstExprList (ast-expr-list-with-capacity (+ 1 rest.len))]
     (ast-expr-list-push (&mut out) head)
-    (ast-expr-list-append-from (&mut out) (& rest) 0)
+    (ast-expr-list-append-from (&mut out) rest 0)
     out))
 
 (define (ast-expr-clause [first : i64] [second : i64]) : AstExprClause
@@ -6358,7 +6467,7 @@
   (ast-node-push (Replace place replacement)))
 
 (define (ast-expr-while [cond : i64] [body : i64]) : i64
-  (ast-node-push (While cond (ast-expr-cons body (ast-expr-list-new)))))
+  (ast-node-push (While cond (ast-expr-cons body (& (ast-expr-list-new))))))
 
 (define (ast-for-owned-state-payload
   [source-name : i64]
@@ -8388,7 +8497,7 @@
 (define (ast-expr-ann-id [expr : i64] [ty-id : i64]) : i64
   (ast-node-push (Ann expr ty-id)))
 
-(define (ast-expr-cast [expr : i64] [ty : AstType]) : i64
+(define (ast-expr-cast [expr : i64] [ty : (& AstType)]) : i64
   (ast-node-push (Cast expr (ty-node-push ty))))
 
 (define (ast-expr-cast-id [expr : i64] [ty-id : i64]) : i64
@@ -8476,10 +8585,10 @@
   (ast-node-push (BoxSet target value)))
 
 ;: Intern a maybe-type into the installed type pool, `-1` for absent.
-(define (ast-maybe-type-to-id [maybe-ty : AstMaybeType]) : i64
-  (match maybe-ty
+(define (ast-maybe-type-to-id [maybe-ty : (& AstMaybeType)]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view maybe-ty)
     [(No) ast-maybe-type-id-absent]
-    [(Some ty) (ty-node-push ty)]))
+    [(Some ty) (ty-node-push (& ty))]))
 
 (define (ast-maybe-type-from-id [id : i64]) : AstMaybeType
   (if (< id 0)
@@ -8488,8 +8597,8 @@
 
 (define (ast-maybe-type-to-id-with-pools
   [pools : AstNodePoolContext]
-  [maybe-ty : AstMaybeType]) : i64
-  (match maybe-ty
+  [maybe-ty : (& AstMaybeType)]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view maybe-ty)
     [(No) ast-maybe-type-id-absent]
     [(Some ty) (ast-node-pool-context-type-push pools ty)]))
 
@@ -8500,11 +8609,11 @@
     (No)
     (Some (ast-node-pool-context-type-get pools id))))
 
-(define (ast-expr-init-maybe [maybe-ty : AstMaybeType]) : i64
+(define (ast-expr-init-maybe [maybe-ty : (& AstMaybeType)]) : i64
   (ast-node-push (Init (ast-maybe-type-to-id maybe-ty))))
 
 (define (ast-expr-init [ty : AstType]) : i64
-  (ast-expr-init-maybe (Some ty)))
+  (ast-expr-init-maybe (& (Some ty))))
 
 (define (ast-expr-comptime [inner : i64]) : i64
   (ast-node-push (Comptime inner)))
@@ -8567,7 +8676,7 @@
   [pools : (& pools AstNodePoolContext)]
   [inner : i64]
   [span : AstSourceSpan]) : i64
-  (ast-node-pool-context-expr-push-borrowed pools (Spanned inner span)))
+  (ast-node-pool-context-expr-push-borrowed pools (& (Spanned inner span))))
 
 ;; Transitional per-use source view.  The legacy wrapper remains observable for
 ;; #6329's dual-read migration, while the pool push records either the first
@@ -8584,19 +8693,21 @@
   [op : AstBinOp]
   [left : i64]
   [right : i64]) : i64
-  (ast-node-pool-context-expr-push-borrowed (& pools) (Binary op left right)))
+  (ast-node-pool-context-expr-push-borrowed
+    (& pools)
+    (& (Binary op left right))))
 
 (define (ast-expr-unary-with-pools
   [pools : AstNodePoolContext]
   [op : AstUnOp]
   [inner : i64]) : i64
-  (ast-node-pool-context-expr-push-borrowed (& pools) (Unary op inner)))
+  (ast-node-pool-context-expr-push-borrowed (& pools) (& (Unary op inner))))
 
 (define (ast-expr-call-with-pools
   [pools : AstNodePoolContext]
   [callee : i64]
   [args : AstExprList]) : i64
-  (ast-node-pool-context-expr-push-borrowed (& pools) (Call callee args)))
+  (ast-node-pool-context-expr-push-borrowed (& pools) (& (Call callee args))))
 
 (define (ast-expr-bracket-clause-with-pools
   [pools : AstNodePoolContext]
@@ -8610,7 +8721,7 @@
   [else-expr : i64]) : i64
   (ast-node-pool-context-expr-push-borrowed
     (& pools)
-    (If cond then-expr else-expr)))
+    (& (If cond then-expr else-expr))))
 
 (define (ast-expr-let-with-pools
   [pools : AstNodePoolContext]
@@ -8619,7 +8730,7 @@
   (ast-node-pool-context-expr-push-cells
     (ast-pool-cell-data pools.expr-pool)
     (ast-pool-cell-data pools.type-pool)
-    (Let (box (AstLet.Let bindings body)))))
+    (& (Let (box (AstLet.Let bindings body))))))
 
 (define (ast-expr-lambda-with-pools
   [pools : AstNodePoolContext]
@@ -8638,40 +8749,52 @@
 
 (define (ast-expr-make-array-with-pools
   [pools : AstNodePoolContext]
-  [elem : AstType]
+  [elem : (& AstType)]
   [size : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (MakeArray (ast-node-pool-context-type-push pools elem) size)))
+    (MakeArray
+      (ast-node-pool-context-type-push
+        pools
+        (owned_view.compiler-owned-reference-shared-view elem))
+      size)))
 
 (define (ast-expr-fixed-make-array-with-pools
   [pools : AstNodePoolContext]
-  [elem : AstType]
+  [elem : (& AstType)]
   [size : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (FixedMakeArray (ast-node-pool-context-type-push pools elem) size)))
+    (FixedMakeArray
+      (ast-node-pool-context-type-push
+        pools
+        (owned_view.compiler-owned-reference-shared-view elem))
+      size)))
 
 (define (ast-expr-make-array-with-cells
   [expr-cell-address : u64]
   [type-cell-address : u64]
-  [elem : AstType]
+  [elem : (& AstType)]
   [size : i64]) : i64
   (ast-node-pool-context-expr-push-cells
     expr-cell-address
     type-cell-address
-    (MakeArray
-      (ast-node-pool-context-type-push-cells
-        expr-cell-address
-        type-cell-address
-        elem)
-      size)))
+    (&
+      (MakeArray
+        (ast-node-pool-context-type-push-cells
+          expr-cell-address
+          type-cell-address
+          elem)
+        size))))
 
 (define (ast-expr-type-literal-with-pools
   [pools : AstNodePoolContext]
-  [ty : AstType]) : i64
+  [ty : (& AstType)]) : i64
   (let
-    [ty-id : i64 (ast-node-pool-context-type-push pools ty)]
+    [ty-id : i64
+      (ast-node-pool-context-type-push
+        pools
+        (owned_view.compiler-owned-reference-shared-view ty))]
     (ast-node-pool-context-expr-push pools (TypeLiteral ty-id))))
 
 (define (ast-expr-dyn-array-with-pools
@@ -8683,7 +8806,9 @@
   [pools : AstNodePoolContext]
   [target : i64]
   [index : i64]) : i64
-  (ast-node-pool-context-expr-push-borrowed (& pools) (ArrayRef target index)))
+  (ast-node-pool-context-expr-push-borrowed
+    (& pools)
+    (& (ArrayRef target index))))
 
 (define (ast-expr-array-set-with-pools
   [pools : AstNodePoolContext]
@@ -8723,7 +8848,7 @@
   [body : i64]) : i64
   (ast-node-pool-context-expr-push-borrowed
     (& pools)
-    (While cond (ast-expr-cons body (ast-expr-list-new)))))
+    (& (While cond (ast-expr-cons body (& (ast-expr-list-new)))))))
 
 (define (ast-expr-for-owned-state-with-pools
   [pools : AstNodePoolContext]
@@ -8733,8 +8858,9 @@
   [body : i64]) : i64
   (ast-node-pool-context-expr-push-borrowed
     (& pools)
-    (ForOwnedState
-      (ast-for-owned-state-payload source-name index-name source body))))
+    (&
+      (ForOwnedState
+        (ast-for-owned-state-payload source-name index-name source body)))))
 
 (define (ast-expr-for-owned-step-with-pools
   [pools : AstNodePoolContext]
@@ -8746,28 +8872,33 @@
   [body : i64]) : i64
   (ast-node-pool-context-expr-push-borrowed
     (& pools)
-    (ForOwnedStep
-      (ast-for-owned-step-payload
-        source-name
-        index-name
-        binding-name
-        expected-type
-        done-name
-        body))))
+    (&
+      (ForOwnedStep
+        (ast-for-owned-step-payload
+          source-name
+          index-name
+          binding-name
+          expected-type
+          done-name
+          body)))))
 
 (define (ast-expr-set-id-with-pools
   [pools : AstNodePoolContext]
   [name : i64]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push-borrowed (& pools) (Set name value)))
+  (ast-node-pool-context-expr-push-borrowed (& pools) (& (Set name value))))
 
 (define (ast-expr-ann-with-pools
   [pools : AstNodePoolContext]
   [expr : i64]
-  [ty : AstType]) : i64
+  [ty : (& AstType)]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (Ann expr (ast-node-pool-context-type-push pools ty))))
+    (Ann
+      expr
+      (ast-node-pool-context-type-push
+        pools
+        (owned_view.compiler-owned-reference-shared-view ty)))))
 
 (define (ast-expr-ann-with-pools-id
   [pools : AstNodePoolContext]
@@ -8778,10 +8909,14 @@
 (define (ast-expr-cast-with-pools
   [pools : AstNodePoolContext]
   [expr : i64]
-  [ty : AstType]) : i64
+  [ty : (& AstType)]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (Cast expr (ast-node-pool-context-type-push pools ty))))
+    (Cast
+      expr
+      (ast-node-pool-context-type-push
+        pools
+        (owned_view.compiler-owned-reference-shared-view ty)))))
 
 (define (ast-expr-cast-with-pools-id
   [pools : AstNodePoolContext]
@@ -8796,7 +8931,7 @@
   [expr : i64]) : i64
   (ast-node-pool-context-expr-push-borrowed
     (& pools)
-    (Borrow mutable (ast-borrow-lifetime-to-id lifetime) expr)))
+    (& (Borrow mutable (ast-borrow-lifetime-to-id lifetime) expr))))
 
 (define (ast-expr-match-with-pools
   [pools : AstNodePoolContext]
@@ -8804,7 +8939,7 @@
   [arms : AstMatchArmList]) : i64
   (ast-node-pool-context-expr-push-borrowed
     (& pools)
-    (Match (box (AstMatch.Match scrutinee arms)))))
+    (& (Match (box (AstMatch.Match scrutinee arms))))))
 
 (define (ast-expr-foreach-id-with-pools
   [pools : AstNodePoolContext]
@@ -8967,16 +9102,16 @@
 
 (define (ast-expr-init-maybe-with-pools
   [pools : AstNodePoolContext]
-  [maybe-ty : AstMaybeType]) : i64
+  [maybe-ty : (& AstMaybeType)]) : i64
   (ast-node-pool-context-expr-push
     pools
     (Init (ast-maybe-type-to-id-with-pools pools maybe-ty))))
 
 (define (ast-expr-init-with-pools [pools : AstNodePoolContext] [ty : AstType]) : i64
-  (ast-expr-init-maybe-with-pools pools (Some ty)))
+  (ast-expr-init-maybe-with-pools pools (& (Some ty))))
 
 (define (ast-expr-init-contextual-with-pools [pools : AstNodePoolContext]) : i64
-  (ast-expr-init-maybe-with-pools pools No))
+  (ast-expr-init-maybe-with-pools pools (& (No))))
 
 (define (ast-expr-comptime-with-pools
   [pools : AstNodePoolContext]
@@ -9039,10 +9174,14 @@
 (define (ast-expr-ptr-cast-with-pools
   [pools : AstNodePoolContext]
   [ptr : i64]
-  [ty : AstType]) : i64
+  [ty : (& AstType)]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (PtrCast ptr (ast-node-pool-context-type-push pools ty))))
+    (PtrCast
+      ptr
+      (ast-node-pool-context-type-push
+        pools
+        (owned_view.compiler-owned-reference-shared-view ty)))))
 
 (define (ast-expr-ptr-to-int-with-pools
   [pools : AstNodePoolContext]
@@ -9052,10 +9191,14 @@
 (define (ast-expr-int-to-ptr-with-pools
   [pools : AstNodePoolContext]
   [value : i64]
-  [ty : AstType]) : i64
+  [ty : (& AstType)]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (IntToPtr value (ast-node-pool-context-type-push pools ty))))
+    (IntToPtr
+      value
+      (ast-node-pool-context-type-push
+        pools
+        (owned_view.compiler-owned-reference-shared-view ty)))))
 
 (define (ast-expr-string-data-with-pools
   [pools : AstNodePoolContext]
@@ -9300,20 +9443,24 @@
         rest-len)
       (AstDeclList slots new-offset new-len true))))
 
-(define (ast-decl-cons [head : AstDecl] [rest : AstDeclList]) : AstDeclList
+(define (ast-decl-cons [head : (& AstDecl)] [rest : (& AstDeclList)]) : AstDeclList
   (let
     [out : AstDeclList
-      (ast-decl-list-with-capacity (+ 1 (ast-decl-list-len (& rest))))]
-    (ast-decl-list-push (&mut out) head)
-    (ast-decl-list-append-from (&mut out) (& rest) 0)
+      (ast-decl-list-with-capacity (+ 1 (ast-decl-list-len rest)))]
+    (ast-decl-list-push
+      (&mut out)
+      (owned_view.compiler-owned-reference-shared-view head))
+    (ast-decl-list-append-from (&mut out) rest 0)
     out))
 
-(define (ast-decl-cons-boxed [head : AstDecl] [rest : (Box AstDeclList)]) : AstDeclList
+(define (ast-decl-cons-boxed [head : (& AstDecl)] [rest : (Box AstDeclList)]) : AstDeclList
   (let
     [borrowed-rest : (& rest AstDeclList) (& (deref rest))]
     [out : AstDeclList
       (ast-decl-list-with-capacity (+ 1 (ast-decl-list-len borrowed-rest)))]
-    (ast-decl-list-push (&mut out) head)
+    (ast-decl-list-push
+      (&mut out)
+      (owned_view.compiler-owned-reference-shared-view head))
     (ast-decl-list-append-from (&mut out) borrowed-rest 0)
     out))
 
@@ -9344,7 +9491,7 @@
   [params : AstParamList]
   [ret : AstType]
   [body : i64]
-  [metadata : AstFnMetadata]) : AstDecl
+  [metadata : (& AstFnMetadata)]) : AstDecl
   (DefFn
     (ast-global-shared-view ast-decl-meta-runtime)
     name
@@ -9461,13 +9608,13 @@
 
 ;; Aggregate markers are declaration metadata, not runtime representation.
 ;; Bit 0 is :must-use; higher bits are reserved for future aggregate markers.
-(define (ast-decl-meta-aggregate-markers [meta : AstDeclMeta]) : i64
+(define (ast-decl-meta-aggregate-markers [meta : (& AstDeclMeta)]) : i64
   (match (__tl-box-place meta.value)
     [(Runtime markers) markers]
     [(Comptime _ markers) markers]))
 
 (define (ast-decl-aggregate-markers [decl : (& decl AstDecl)]) : i64
-  (ast-decl-meta-aggregate-markers (ast-decl-meta decl)))
+  (ast-decl-meta-aggregate-markers (& (ast-decl-meta decl))))
 
 (define (ast-decl-must-use? [decl : (& decl AstDecl)]) : bool
   (not (= (bit-and (ast-decl-aggregate-markers decl) 1) 0)))
@@ -9519,12 +9666,10 @@
           (AstDeclMeta (box (AstDeclMetaValue.Comptime generated markers)))])
       inner)))
 
-(define (ast-decl-unwrapped [decl : AstDecl]) : AstDecl
-  (let
-    [fallback : AstDecl (ast-global-shared-view decl)]
-    (match decl
-      [(Unsafe inner-box) (ast-decl-unwrapped (deref inner-box))]
-      [_ fallback])))
+(define (ast-decl-unwrapped [decl : (& AstDecl)]) : AstDecl
+  (match decl
+    [(Unsafe inner) (ast-decl-unwrapped inner)]
+    [_ (owned_view.compiler-owned-reference-shared-view decl)]))
 
 ;; Declaration classifiers for the index/cache builders.
 ;;
@@ -9540,10 +9685,10 @@
 ;; through the by-value form below it. Callers pair these with a by-value
 ;; re-read on the arm that consumes a payload, so a row copy is paid only where
 ;; it is used.
-(define (ast-decl-unwrapped-import? [decl : AstDecl]) : bool
-  (match decl
+(define (ast-decl-unwrapped-import? [decl : (& AstDecl)]) : bool
+  (match (owned_view.compiler-owned-reference-shared-view decl)
     [(Import decl-meta _) true]
-    [(Unsafe inner-box) (ast-decl-unwrapped-import? (deref inner-box))]
+    [(Unsafe inner-box) (ast-decl-unwrapped-import? (& (deref inner-box)))]
     [_ false]))
 
 (define (ast-decl-list-unwrapped-import-at?
@@ -9553,15 +9698,15 @@
     [(Import decl-meta _) true]
     [(Unsafe _)
       (ast-decl-unwrapped-import?
-        (ast-decl-list-get v index (ast-decl-fallback)))]
+        (& (ast-decl-list-get v index (ast-decl-fallback))))]
     [_ false]))
 
-(define (ast-decl-unwrapped-module-or-import? [decl : AstDecl]) : bool
-  (match decl
+(define (ast-decl-unwrapped-module-or-import? [decl : (& AstDecl)]) : bool
+  (match (owned_view.compiler-owned-reference-shared-view decl)
     [(Module _) true]
     [(Import decl-meta _) true]
     [(Unsafe inner-box)
-      (ast-decl-unwrapped-module-or-import? (deref inner-box))]
+      (ast-decl-unwrapped-module-or-import? (& (deref inner-box)))]
     [_ false]))
 
 (define (ast-decl-list-unwrapped-module-or-import-at?
@@ -9572,17 +9717,17 @@
     [(Import decl-meta _) true]
     [(Unsafe _)
       (ast-decl-unwrapped-module-or-import?
-        (ast-decl-list-get v index (ast-decl-fallback)))]
+        (& (ast-decl-list-get v index (ast-decl-fallback))))]
     [_ false]))
 
 ;; Module markers plus the two type-definition kinds the clone fixpoint reads.
-(define (ast-decl-unwrapped-module-or-type-definition? [decl : AstDecl]) : bool
-  (match decl
+(define (ast-decl-unwrapped-module-or-type-definition? [decl : (& AstDecl)]) : bool
+  (match (owned_view.compiler-owned-reference-shared-view decl)
     [(Module _) true]
     [(DefEnum decl-meta _ _ _) true]
     [(DefStruct decl-meta _ _ _ _) true]
     [(Unsafe inner-box)
-      (ast-decl-unwrapped-module-or-type-definition? (deref inner-box))]
+      (ast-decl-unwrapped-module-or-type-definition? (& (deref inner-box)))]
     [_ false]))
 
 (define (ast-decl-list-unwrapped-module-or-type-definition-at?
@@ -9594,7 +9739,7 @@
     [(DefStruct decl-meta _ _ _ _) true]
     [(Unsafe _)
       (ast-decl-unwrapped-module-or-type-definition?
-        (ast-decl-list-get v index (ast-decl-fallback)))]
+        (& (ast-decl-list-get v index (ast-decl-fallback))))]
     [_ false]))
 
 (define (ast-decl-path-list-with-capacity [capacity : i64]) : AstDeclPathList
@@ -9959,18 +10104,17 @@
         rest-len)
       (AstDeclModuleList slots new-offset new-len true))))
 
-(define (ast-decl-module-cons-id [head : i64] [rest : AstDeclModuleList]) : AstDeclModuleList
+(define (ast-decl-module-cons-id [head : i64] [rest : (& AstDeclModuleList)]) : AstDeclModuleList
   (let
     [out : AstDeclModuleList
-      (ast-decl-module-list-with-capacity
-        (+ 1 (ast-decl-module-list-len (& rest))))]
+      (ast-decl-module-list-with-capacity (+ 1 (ast-decl-module-list-len rest)))]
     (ast-decl-module-list-push-id (&mut out) head)
-    (ast-decl-module-list-append-from (&mut out) (& rest) 0)
+    (ast-decl-module-list-append-from (&mut out) rest 0)
     out))
 
 (define (ast-decl-path-list-with-modules
   [paths : AstDeclPathList]
-  [modules : AstDeclModuleList]) : AstDeclPathList
+  [modules : (& AstDeclModuleList)]) : AstDeclPathList
   (let
     [capacity : i64 (array-length paths.slots)]
     [owner-ids : (__tl_dyn-array i64) (__tl_make-array i64 (* capacity 2))]
@@ -9980,7 +10124,7 @@
       (let
         [module-id : i64
           (ast-decl-module-list-get-id
-            (& modules)
+            modules
             index
             cbi.compiler-builtin-id-fix-empty)]
         [recorded-owner-id : i64
@@ -10249,7 +10393,7 @@
 
 (define (ast-compaction-remap-dest-type-push
   [remap : (& remap AstProgramCompactionRemap)]
-  [node : AstType]) : i64
+  [node : (& AstType)]) : i64
   (let
     [current : AstTypeNodePoolState
       (ast-type-pool-cell-read remap.dest-pools.type-pool)]
@@ -10344,7 +10488,8 @@
             [source-ty : AstType
               (ast-compaction-remap-source-type-get remap id)]
             [new-ty : AstType (ast-compaction-remap-type remap source-ty)]
-            [new-id : i64 (ast-compaction-remap-dest-type-push remap new-ty)]
+            [new-id : i64
+              (ast-compaction-remap-dest-type-push remap (& new-ty))]
             (ast-compaction-map-set!
               type-map-address
               slot
@@ -10353,8 +10498,8 @@
 
 (define (ast-compaction-remap-maybe-type
   [remap : (& remap AstProgramCompactionRemap)]
-  [maybe-ty : AstMaybeType]) : AstMaybeType
-  (match maybe-ty
+  [maybe-ty : (& AstMaybeType)]) : AstMaybeType
+  (match (owned_view.compiler-owned-reference-shared-view maybe-ty)
     [(No) No]
     [(Some ty) (Some (ast-compaction-remap-type remap ty))]))
 
@@ -10365,8 +10510,8 @@
 
 (define (ast-compaction-remap-macro-param
   [remap : (& remap AstProgramCompactionRemap)]
-  [param : AstMacroParam]) : AstMacroParam
-  (match param
+  [param : (& AstMacroParam)]) : AstMacroParam
+  (match (owned_view.compiler-owned-reference-shared-view param)
     [(Param name ty variadic type-kinds)
       (Param
         name
@@ -10380,11 +10525,11 @@
 
 (define (ast-compaction-remap-macro-param-list
   [remap : (& remap AstProgramCompactionRemap)]
-  [params : AstMacroParamList]) : AstMacroParamList
+  [params : (& AstMacroParamList)]) : AstMacroParamList
   (let
     [out : AstMacroParamList
-      (ast-macro-param-list-with-capacity (ast-macro-param-list-len (& params)))]
-    (ast-compaction-remap-macro-param-list-into remap (& params) 0 (&mut out))
+      (ast-macro-param-list-with-capacity (ast-macro-param-list-len params))]
+    (ast-compaction-remap-macro-param-list-into remap params 0 (&mut out))
     out))
 
 (define (ast-compaction-remap-macro-param-list-into
@@ -10398,13 +10543,13 @@
       out
       (ast-compaction-remap-macro-param
         remap
-        (ast-macro-param-list-get params index (ast-macro-param-fallback))))
+        (& (ast-macro-param-list-get params index (ast-macro-param-fallback)))))
     (ast-compaction-remap-macro-param-list-into remap params (+ index 1) out)))
 
 (define (ast-compaction-remap-field-def
   [remap : (& remap AstProgramCompactionRemap)]
-  [field : AstFieldDef]) : AstFieldDef
-  (match field
+  [field : (& AstFieldDef)]) : AstFieldDef
+  (match (owned_view.compiler-owned-reference-shared-view field)
     [(Def name ty cleanup)
       (Def
         name
@@ -10428,29 +10573,30 @@
       out
       (ast-compaction-remap-field-def
         remap
-        (ast-field-def-list-get fields index (ast-field-def-fallback))))
+        (& (ast-field-def-list-get fields index (ast-field-def-fallback)))))
     (ast-compaction-remap-field-def-list-into remap fields (+ index 1) out)))
 
 (define (ast-compaction-remap-field-def-list
   [remap : (& remap AstProgramCompactionRemap)]
-  [fields : AstFieldDefList]) : AstFieldDefList
+  [fields : (& AstFieldDefList)]) : AstFieldDefList
   (let
     [out : AstFieldDefList
-      (ast-field-def-list-with-capacity (ast-field-def-list-len (& fields)))]
-    (ast-compaction-remap-field-def-list-into remap (& fields) 0 (&mut out))
+      (ast-field-def-list-with-capacity (ast-field-def-list-len fields))]
+    (ast-compaction-remap-field-def-list-into remap fields 0 (&mut out))
     out))
 
 (define (ast-compaction-remap-extern-abi
   [remap : (& remap AstProgramCompactionRemap)]
-  [abi : AstExternAbi]) : AstExternAbi
-  (match abi
+  [abi : (& AstExternAbi)]) : AstExternAbi
+  (match (owned_view.compiler-owned-reference-shared-view abi)
     [(C) C]
     [(CVarargsOpen) CVarargsOpen]
     [(CVarargsTyped ty) (CVarargsTyped (ast-compaction-remap-type remap ty))]
     [(TypeLisp) TypeLisp]))
 
-(define (ast-compaction-remap-extern-link-input [input : AstExternLinkInput]) : AstExternLinkInput
-  (match input
+(define (ast-compaction-remap-extern-link-input
+  [input : (& AstExternLinkInput)]) : AstExternLinkInput
+  (match (owned_view.compiler-owned-reference-shared-view input)
     [(Lib name) (Lib (ast-compaction-copy-string name))]
     [(Search dir) (Search (ast-compaction-copy-string dir))]
     [(Arg arg) (Arg (ast-compaction-copy-string arg))]))
@@ -10464,32 +10610,33 @@
     (ast-extern-link-input-list-push
       out
       (ast-compaction-remap-extern-link-input
-        (ast-extern-link-input-list-get
-          inputs
-          index
-          (ast-extern-link-input-fallback))))
+        (&
+          (ast-extern-link-input-list-get
+            inputs
+            index
+            (ast-extern-link-input-fallback)))))
     (ast-compaction-remap-extern-link-input-list-into inputs (+ index 1) out)))
 
 (define (ast-compaction-remap-extern-link-input-list
-  [inputs : AstExternLinkInputList]) : AstExternLinkInputList
+  [inputs : (& AstExternLinkInputList)]) : AstExternLinkInputList
   (let
     [out : AstExternLinkInputList
       (ast-extern-link-input-list-with-capacity
-        (ast-extern-link-input-list-len (& inputs)))]
-    (ast-compaction-remap-extern-link-input-list-into (& inputs) 0 (&mut out))
+        (ast-extern-link-input-list-len inputs))]
+    (ast-compaction-remap-extern-link-input-list-into inputs 0 (&mut out))
     out))
 
 (define (ast-compaction-remap-extern-metadata
   [remap : (& remap AstProgramCompactionRemap)]
-  [metadata : AstExternMetadata]) : AstExternMetadata
-  (match metadata
+  [metadata : (& AstExternMetadata)]) : AstExternMetadata
+  (match (owned_view.compiler-owned-reference-shared-view metadata)
     [(Metadata abi symbol links flags imported-spmd)
       (Metadata
-        (ast-compaction-remap-extern-abi remap abi)
+        (ast-compaction-remap-extern-abi remap (& abi))
         symbol
-        (ast-compaction-remap-extern-link-input-list links)
+        (ast-compaction-remap-extern-link-input-list (& links))
         flags
-        (ast-imported-spmd-metadata-clone imported-spmd))]))
+        (ast-imported-spmd-metadata-clone (& imported-spmd)))]))
 
 (define (ast-compaction-remap-variant-payload-cleanup
   [cleanup : AstVariantPayloadCleanup]) : AstVariantPayloadCleanup
@@ -10499,13 +10646,13 @@
     [(Owned) Owned]))
 
 (define (ast-compaction-remap-variant-payload-cleanup-list
-  [cleanups : AstVariantPayloadCleanupList]) : AstVariantPayloadCleanupList
+  [cleanups : (& AstVariantPayloadCleanupList)]) : AstVariantPayloadCleanupList
   (let
     [out : AstVariantPayloadCleanupList
       (ast-variant-payload-cleanup-list-with-capacity
-        (ast-variant-payload-cleanup-list-len (& cleanups)))]
+        (ast-variant-payload-cleanup-list-len cleanups))]
     (ast-compaction-remap-variant-payload-cleanup-list-into
-      (& cleanups)
+      cleanups
       0
       (&mut out))
     out))
@@ -10530,22 +10677,21 @@
 
 (define (ast-compaction-remap-variant-def
   [remap : (& remap AstProgramCompactionRemap)]
-  [variant : AstVariantDef]) : AstVariantDef
-  (match variant
+  [variant : (& AstVariantDef)]) : AstVariantDef
+  (match (owned_view.compiler-owned-reference-shared-view variant)
     [(Def name fields cleanups)
       (Def
         name
         (ast-compaction-remap-type-list remap fields)
-        (ast-compaction-remap-variant-payload-cleanup-list cleanups))]))
+        (ast-compaction-remap-variant-payload-cleanup-list (& cleanups)))]))
 
 (define (ast-compaction-remap-variant-def-list
   [remap : (& remap AstProgramCompactionRemap)]
-  [variants : AstVariantDefList]) : AstVariantDefList
+  [variants : (& AstVariantDefList)]) : AstVariantDefList
   (let
     [out : AstVariantDefList
-      (ast-variant-def-list-with-capacity
-        (ast-variant-def-list-len (& variants)))]
-    (ast-compaction-remap-variant-def-list-into remap (& variants) 0 (&mut out))
+      (ast-variant-def-list-with-capacity (ast-variant-def-list-len variants))]
+    (ast-compaction-remap-variant-def-list-into remap variants 0 (&mut out))
     out))
 
 (define (ast-compaction-remap-variant-def-list-into
@@ -10559,7 +10705,7 @@
       out
       (ast-compaction-remap-variant-def
         remap
-        (ast-variant-def-list-get variants index (ast-variant-def-fallback))))
+        (& (ast-variant-def-list-get variants index (ast-variant-def-fallback)))))
     (ast-compaction-remap-variant-def-list-into remap variants (+ index 1) out)))
 
 (define (ast-compaction-remap-struct-cleanup [cleanup : AstStructCleanup]) : AstStructCleanup
@@ -10601,8 +10747,8 @@
 
 (define (ast-compaction-remap-import-spec
   [remap : (& remap AstProgramCompactionRemap)]
-  [spec : AstImportSpec]) : AstImportSpec
-  (match spec
+  [spec : (& AstImportSpec)]) : AstImportSpec
+  (match (owned_view.compiler-owned-reference-shared-view spec)
     [(Spec kind path module-name alias span)
       (Spec
         (ast-compaction-remap-import-kind remap kind)
@@ -10631,12 +10777,12 @@
     (ast-compaction-remap-dispatch-variant-list-into variants (+ index 1) out)))
 
 (define (ast-compaction-remap-dispatch-variant-list
-  [variants : AstDispatchVariantList]) : AstDispatchVariantList
+  [variants : (& AstDispatchVariantList)]) : AstDispatchVariantList
   (let
     [out : AstDispatchVariantList
       (ast-dispatch-variant-list-with-capacity
-        (ast-dispatch-variant-list-len (& variants)))]
-    (ast-compaction-remap-dispatch-variant-list-into (& variants) 0 (&mut out))
+        (ast-dispatch-variant-list-len variants))]
+    (ast-compaction-remap-dispatch-variant-list-into variants 0 (&mut out))
     out))
 
 (define (ast-compaction-remap-literal [lit : AstLiteral]) : AstLiteral
@@ -10660,21 +10806,21 @@
   [pattern : AstPattern]) : AstPattern
   (match pattern
     [(Var name maybe-ty)
-      (Var name (ast-compaction-remap-maybe-type remap maybe-ty))]
+      (Var name (ast-compaction-remap-maybe-type remap (& maybe-ty)))]
     [(Tuple items)
-      (Tuple (box (ast-compaction-remap-pattern-list remap (deref items))))]
+      (Tuple (box (ast-compaction-remap-pattern-list remap (& (deref items)))))]
     [(Array items)
-      (Array (box (ast-compaction-remap-pattern-list remap (deref items))))]
+      (Array (box (ast-compaction-remap-pattern-list remap (& (deref items)))))]
     [(Slice items has-rest)
       (Slice
-        (box (ast-compaction-remap-pattern-list remap (deref items)))
+        (box (ast-compaction-remap-pattern-list remap (& (deref items))))
         has-rest)]
     [(Wildcard) Wildcard]
     [(Binding name) (Binding name)]
     [(Variant name items)
       (Variant
         name
-        (box (ast-compaction-remap-pattern-list remap (deref items))))]
+        (box (ast-compaction-remap-pattern-list remap (& (deref items)))))]
     [(Literal lit) (Literal (ast-compaction-remap-literal lit))]))
 
 (define (ast-compaction-remap-pattern-list-into
@@ -10693,11 +10839,11 @@
 
 (define (ast-compaction-remap-pattern-list
   [remap : (& remap AstProgramCompactionRemap)]
-  [patterns : AstPatternList]) : AstPatternList
+  [patterns : (& AstPatternList)]) : AstPatternList
   (let
     [out : AstPatternList
-      (ast-pattern-list-with-capacity (ast-pattern-list-len (& patterns)))]
-    (ast-compaction-remap-pattern-list-into remap (& patterns) 0 (&mut out))
+      (ast-pattern-list-with-capacity (ast-pattern-list-len patterns))]
+    (ast-compaction-remap-pattern-list-into remap patterns 0 (&mut out))
     out))
 
 (define (ast-compaction-remap-expr-list
@@ -10804,8 +10950,8 @@
 
 (define (ast-compaction-remap-generated-meta
   [remap : (& remap AstProgramCompactionRemap)]
-  [meta : AstGeneratedDeclMeta]) : AstGeneratedDeclMeta
-  (match meta
+  [meta : (& AstGeneratedDeclMeta)]) : AstGeneratedDeclMeta
+  (match (owned_view.compiler-owned-reference-shared-view meta)
     [(No) No]
     [(Some generator item args key)
       (Some
@@ -10816,14 +10962,14 @@
 
 (define (ast-compaction-remap-decl-meta
   [remap : (& remap AstProgramCompactionRemap)]
-  [meta : AstDeclMeta]) : AstDeclMeta
+  [meta : (& AstDeclMeta)]) : AstDeclMeta
   (match (__tl-box-place meta.value)
     [(Runtime markers) (ast-decl-meta-runtime-with-aggregate-markers markers)]
     [(Comptime generated markers)
       (AstDeclMeta
         (box
           (AstDeclMetaValue.Comptime
-            (ast-compaction-remap-generated-meta remap generated)
+            (ast-compaction-remap-generated-meta remap (& generated))
             markers)))]))
 
 (define (ast-compaction-remap-test-metadata [metadata : AstTestMetadata]) : AstTestMetadata
@@ -10840,8 +10986,8 @@
 
 (define (ast-compaction-remap-decl
   [remap : (& remap AstProgramCompactionRemap)]
-  [decl : AstDecl]) : AstDecl
-  (match decl
+  [decl : (& AstDecl)]) : AstDecl
+  (match (owned_view.compiler-owned-reference-shared-view decl)
     [(Module name) (Module name)]
     [(ModuleBody name body)
       (ModuleBody
@@ -10849,64 +10995,64 @@
         (box (ast-compaction-remap-decl-list remap (deref body))))]
     [(Def decl-meta name maybe-ty value)
       (Def
-        (ast-compaction-remap-decl-meta remap decl-meta)
+        (ast-compaction-remap-decl-meta remap (& decl-meta))
         name
-        (ast-compaction-remap-maybe-type remap maybe-ty)
+        (ast-compaction-remap-maybe-type remap (& maybe-ty))
         (ast-compaction-remap-expr-id remap value))]
     [(DefFn decl-meta name params ret body metadata)
       (DefFn
-        (ast-compaction-remap-decl-meta remap decl-meta)
+        (ast-compaction-remap-decl-meta remap (& decl-meta))
         name
         (ast-compaction-remap-param-list remap params)
         (ast-compaction-remap-type remap ret)
         (ast-compaction-remap-expr-id remap body)
-        (ast-fn-metadata-clone metadata))]
+        (ast-fn-metadata-clone (& metadata)))]
     [(DefMacro decl-meta name params ret body)
       (DefMacro
-        (ast-compaction-remap-decl-meta remap decl-meta)
+        (ast-compaction-remap-decl-meta remap (& decl-meta))
         name
-        (ast-compaction-remap-macro-param-list remap params)
+        (ast-compaction-remap-macro-param-list remap (& params))
         (ast-compaction-remap-type remap ret)
         (ast-compaction-remap-expr-id remap body))]
     [(Extern decl-meta name kind metadata ty)
       (Extern
-        (ast-compaction-remap-decl-meta remap decl-meta)
+        (ast-compaction-remap-decl-meta remap (& decl-meta))
         name
         kind
-        (box (ast-compaction-remap-extern-metadata remap (deref metadata)))
+        (box (ast-compaction-remap-extern-metadata remap (& (deref metadata))))
         (ast-compaction-remap-type remap ty))]
     [(DefEnum decl-meta name cleanup variants)
       (DefEnum
-        (ast-compaction-remap-decl-meta remap decl-meta)
+        (ast-compaction-remap-decl-meta remap (& decl-meta))
         name
         (ast-compaction-remap-enum-cleanup cleanup)
-        (ast-compaction-remap-variant-def-list remap variants))]
+        (ast-compaction-remap-variant-def-list remap (& variants)))]
     [(DefEnumLifetimes decl-meta name lifetimes cleanup variants)
       (DefEnumLifetimes
-        (ast-compaction-remap-decl-meta remap decl-meta)
+        (ast-compaction-remap-decl-meta remap (& decl-meta))
         name
         (ast-lifetime-list-copy lifetimes)
         (ast-compaction-remap-enum-cleanup cleanup)
-        (ast-compaction-remap-variant-def-list remap variants))]
+        (ast-compaction-remap-variant-def-list remap (& variants)))]
     [(DefStruct decl-meta name repr cleanup fields)
       (DefStruct
-        (ast-compaction-remap-decl-meta remap decl-meta)
+        (ast-compaction-remap-decl-meta remap (& decl-meta))
         name
-        (ast-struct-repr-copy repr)
+        (ast-struct-repr-copy (& repr))
         (ast-compaction-remap-struct-cleanup cleanup)
-        (ast-compaction-remap-field-def-list remap fields))]
+        (ast-compaction-remap-field-def-list remap (& fields)))]
     [(DefStructLifetimes decl-meta name lifetimes repr cleanup fields)
       (DefStructLifetimes
-        (ast-compaction-remap-decl-meta remap decl-meta)
+        (ast-compaction-remap-decl-meta remap (& decl-meta))
         name
         (ast-lifetime-list-copy lifetimes)
-        (ast-struct-repr-copy repr)
+        (ast-struct-repr-copy (& repr))
         (ast-compaction-remap-struct-cleanup cleanup)
-        (ast-compaction-remap-field-def-list remap fields))]
+        (ast-compaction-remap-field-def-list remap (& fields)))]
     [(Import decl-meta spec)
       (Import
-        (ast-compaction-remap-decl-meta remap decl-meta)
-        (ast-compaction-remap-import-spec remap spec))]
+        (ast-compaction-remap-decl-meta remap (& decl-meta))
+        (ast-compaction-remap-import-spec remap (& spec)))]
     [(IncludeStr name path) (IncludeStr name (ast-compaction-copy-string path))]
     [(IncludeStrComptime name path)
       (IncludeStrComptime name (ast-compaction-copy-string path))]
@@ -10915,9 +11061,9 @@
     [(IncludeBin name path) (IncludeBin name (ast-compaction-copy-string path))]
     [(DefDispatch decl-meta name variants)
       (DefDispatch
-        (ast-compaction-remap-decl-meta remap decl-meta)
+        (ast-compaction-remap-decl-meta remap (& decl-meta))
         name
-        (ast-compaction-remap-dispatch-variant-list variants))]
+        (ast-compaction-remap-dispatch-variant-list (& variants)))]
     [(Test name body metadata span)
       (Test
         name
@@ -10925,7 +11071,7 @@
         (ast-compaction-remap-test-metadata metadata)
         span)]
     [(Unsafe inner)
-      (Unsafe (box (ast-compaction-remap-decl remap (deref inner))))]))
+      (Unsafe (box (ast-compaction-remap-decl remap (& (deref inner)))))]))
 
 (define (ast-compaction-remap-decl-list
   [remap : (& remap AstProgramCompactionRemap)]
@@ -10944,14 +11090,14 @@
         (&mut out)
         (ast-compaction-remap-decl
           remap
-          (ast-array-shared-view decl-slots (+ decl-offset index))))
+          (& (array-ref decl-slots (+ decl-offset index)))))
       (set! index (+ index 1)))
     out))
 
 (define (ast-compaction-remap-program
   [remap : (& remap AstProgramCompactionRemap)]
-  [program : AstProgram]) : AstProgram
-  (match program
+  [program : (& AstProgram)]) : AstProgram
+  (match (owned_view.compiler-owned-reference-shared-view program)
     [(Program decls)
       (Program (box (ast-compaction-remap-decl-list remap (deref decls))))]))
 
@@ -10961,7 +11107,7 @@
 (define (ast-program-compact-with-pools
   [source-pools : AstNodePoolContext]
   [dest-pools : AstNodePoolContext]
-  [program : AstProgram]) : AstProgramCompaction
+  [program : (& AstProgram)]) : AstProgramCompaction
   (ast-node-pool-context-reset-to! dest-pools 0 0)
   ;; A destination semantic node gets one canonical record, from the first
   ;; wrapper the traversal reaches, and copies a distinct source node that
@@ -11027,7 +11173,7 @@
 (define (ast-program-copy-append-above-with-pools
   [source-pools : AstNodePoolContext]
   [dest-pools : AstNodePoolContext]
-  [program : AstProgram]
+  [program : (& AstProgram)]
   [shared-expr-base : i64]
   [shared-type-base : i64]) : AstProgramCompaction
   (let
@@ -11075,7 +11221,7 @@
 (define (ast-program-copy-append-above-with-maps
   [source-pools : AstNodePoolContext]
   [dest-pools : AstNodePoolContext]
-  [program : AstProgram]
+  [program : (& AstProgram)]
   [shared-expr-base : i64]
   [shared-type-base : i64]
   [expr-map-address : u64]
@@ -11116,10 +11262,10 @@
 (define (ast-program-copy-append-with-pools
   [source-pools : AstNodePoolContext]
   [dest-pools : AstNodePoolContext]
-  [program : AstProgram]) : AstProgramCompaction
+  [program : (& AstProgram)]) : AstProgramCompaction
   (ast-program-copy-append-above-with-pools source-pools dest-pools program 0 0))
 
-(define (ast-type-tag [ty : AstType]) : i64
+(define (ast-type-tag [ty : (& AstType)]) : i64
   (match ty
     [(I64) 1]
     [(I32) 2]
@@ -11168,38 +11314,37 @@
     [(Spanned inner _) inner]
     [_ -1]))
 
-(define (ast-expr-unspan [expr : AstExpr]) : AstExpr
-  (let
-    [fallback : AstExpr (ast-global-shared-view expr)]
-    (match expr
-      [(Spanned inner-id _) (ast-expr-unspan (ast-node-get inner-id))]
-      [(MacroExpansion inner-id _ _) (ast-expr-unspan (ast-node-get inner-id))]
-      [_ fallback])))
+(define (ast-expr-unspan [expr : (& AstExpr)]) : AstExpr
+  (match expr
+    [(Spanned inner-id _) (ast-expr-unspan (& (ast-node-get inner-id)))]
+    [(MacroExpansion inner-id _ _)
+      (ast-expr-unspan (& (ast-node-get inner-id)))]
+    [_ (owned_view.compiler-owned-reference-shared-view expr)]))
 
 (define (ast-expr-unspan-with-pools
   [pools : (& pools AstNodePoolContext)]
-  [expr : AstExpr]) : AstExpr
+  [expr : (& AstExpr)]) : AstExpr
   (ast-expr-unspan-with-segment-bases
     (ast-node-pool-context-expr-segment-bases pools)
     expr))
 
 (define (ast-expr-unspan-with-segment-bases
   [segment-bases : i64]
-  [expr : AstExpr]) : AstExpr
-  (let
-    [fallback : AstExpr (ast-global-shared-view expr)]
-    (match expr
-      [(Spanned inner-id _)
-        (ast-expr-unspan-with-segment-bases
-          segment-bases
-          ;; The callee receives the row directly. Neither this frame nor the
-          ;; recursive walk mutates or installs an expression-pool context.
-          (ast-expr-segment-bases-shared-view segment-bases inner-id))]
-      [(MacroExpansion inner-id _ _)
-        (ast-expr-unspan-with-segment-bases
-          segment-bases
-          (ast-expr-segment-bases-shared-view segment-bases inner-id))]
-      [_ fallback])))
+  [expr : (& AstExpr)]) : AstExpr
+  ;; Only the innermost node is copied out; the wrappers above it are read
+  ;; through the reference.
+  (match expr
+    [(Spanned inner-id _)
+      (ast-expr-unspan-with-segment-bases
+        segment-bases
+        ;; The callee receives the row directly. Neither this frame nor the
+        ;; recursive walk mutates or installs an expression-pool context.
+        (& (ast-expr-segment-bases-shared-view segment-bases inner-id)))]
+    [(MacroExpansion inner-id _ _)
+      (ast-expr-unspan-with-segment-bases
+        segment-bases
+        (& (ast-expr-segment-bases-shared-view segment-bases inner-id)))]
+    [_ (owned_view.compiler-owned-reference-shared-view expr)]))
 
 (define (ast-struct-repr-c? [repr : (& repr AstStructRepr)]) : bool
   (match repr
@@ -11283,8 +11428,8 @@
 
 ;; A copy whose field array owns fresh storage, for moving a declaration into
 ;; another arena.
-(define (ast-struct-repr-copy [repr : AstStructRepr]) : AstStructRepr
-  (match repr
+(define (ast-struct-repr-copy [repr : (& AstStructRepr)]) : AstStructRepr
+  (match (owned_view.compiler-owned-reference-shared-view repr)
     [(C align fields)
       (C
         align
@@ -11310,26 +11455,26 @@
 
 ;; Whether calls use the platform C convention. A package dependency's
 ;; function still does until a TypeLisp-internal convention exists.
-(define (ast-extern-abi-c? [abi : AstExternAbi]) : bool
+(define (ast-extern-abi-c? [abi : (& AstExternAbi)]) : bool
   (match abi
     [(C) true]
     [(CVarargsOpen) true]
     [(CVarargsTyped _) true]
     [(TypeLisp) true]))
 
-(define (ast-extern-abi-c-varargs? [abi : AstExternAbi]) : bool
+(define (ast-extern-abi-c-varargs? [abi : (& AstExternAbi)]) : bool
   (match abi
     [(C) false]
     [(CVarargsOpen) true]
     [(CVarargsTyped _) true]
     [(TypeLisp) false]))
 
-(define (ast-extern-abi-c-varargs-open? [abi : AstExternAbi]) : bool
+(define (ast-extern-abi-c-varargs-open? [abi : (& AstExternAbi)]) : bool
   (match abi
     [(CVarargsOpen) true]
     [_ false]))
 
-(define (ast-extern-abi-c-varargs-typed? [abi : AstExternAbi]) : bool
+(define (ast-extern-abi-c-varargs-typed? [abi : (& AstExternAbi)]) : bool
   (match abi
     [(CVarargsTyped _) true]
     [_ false]))
@@ -11360,8 +11505,8 @@
 (define (ast-type-eq? [a : AstType] [b : AstType]) : bool
   (ast-type-children-eq? a b ast-type-installed-ids-eq?))
 
-(define (ast-extern-abi-eq? [a : AstExternAbi] [b : AstExternAbi]) : bool
-  (match a
+(define (ast-extern-abi-eq? [a : (& AstExternAbi)] [b : (& AstExternAbi)]) : bool
+  (match (owned_view.compiler-owned-reference-shared-view a)
     [(C)
       (match b
         [(C) true]
@@ -11371,7 +11516,7 @@
         [(CVarargsOpen) true]
         [_ false])]
     [(CVarargsTyped aty)
-      (match b
+      (match (owned_view.compiler-owned-reference-shared-view b)
         [(CVarargsTyped bty) (ast-type-eq? aty bty)]
         [_ false])]
     [(TypeLisp)
@@ -11384,12 +11529,12 @@
 ;; Safe because these walkers never push, and pushes are what replace the cell.
 (define (ast-type-eq-with-pools?
   [pools : AstNodePoolContext]
-  [a : AstType]
-  [b : AstType]) : bool
+  [a : (& AstType)]
+  [b : (& AstType)]) : bool
   (ast-type-eq-with-seg-bases?
     (ast-node-pool-context-type-segment-bases pools)
-    a
-    b))
+    (owned_view.compiler-owned-reference-shared-view a)
+    (owned_view.compiler-owned-reference-shared-view b)))
 
 (define (ast-type-eq-with-seg-bases?
   [seg-bases : i64]
@@ -11398,29 +11543,29 @@
   (ast-type-children-eq? a b ast-type-seg-ids-eq? seg-bases))
 
 (define (ast-extern-link-input-eq?
-  [a : AstExternLinkInput]
-  [b : AstExternLinkInput]) : bool
-  (match a
+  [a : (& AstExternLinkInput)]
+  [b : (& AstExternLinkInput)]) : bool
+  (match (owned_view.compiler-owned-reference-shared-view a)
     [(Lib aname)
-      (match b
+      (match (owned_view.compiler-owned-reference-shared-view b)
         [(Lib bname) (string.eq aname bname)]
         [_ false])]
     [(Search adir)
-      (match b
+      (match (owned_view.compiler-owned-reference-shared-view b)
         [(Search bdir) (string.eq adir bdir)]
         [_ false])]
     [(Arg aarg)
-      (match b
+      (match (owned_view.compiler-owned-reference-shared-view b)
         [(Arg barg) (string.eq aarg barg)]
         [_ false])]))
 
 (define (ast-extern-link-input-list-eq?
-  [a : AstExternLinkInputList]
-  [b : AstExternLinkInputList]) : bool
+  [a : (& AstExternLinkInputList)]
+  [b : (& AstExternLinkInputList)]) : bool
   (let
-    [alen : i64 (ast-extern-link-input-list-len (& a))]
-    [blen : i64 (ast-extern-link-input-list-len (& b))]
-    (and (= alen blen) (ast-extern-link-input-list-eq-at? (& a) (& b) 0 alen))))
+    [alen : i64 (ast-extern-link-input-list-len a)]
+    [blen : i64 (ast-extern-link-input-list-len b)]
+    (and (= alen blen) (ast-extern-link-input-list-eq-at? a b 0 alen))))
 
 (define (ast-extern-link-input-list-eq-at?
   [a : (& a AstExternLinkInputList)]
@@ -11431,22 +11576,24 @@
     true
     (and
       (ast-extern-link-input-eq?
-        (ast-extern-link-input-list-get
-          a
-          index
-          (ast-extern-link-input-fallback))
-        (ast-extern-link-input-list-get
-          b
-          index
-          (ast-extern-link-input-fallback)))
+        (&
+          (ast-extern-link-input-list-get
+            a
+            index
+            (ast-extern-link-input-fallback)))
+        (&
+          (ast-extern-link-input-list-get
+            b
+            index
+            (ast-extern-link-input-fallback))))
       (ast-extern-link-input-list-eq-at? a b (+ index 1) len))))
 
-(define (ast-extern-metadata-symbol [metadata : AstExternMetadata]) : String
-  (match metadata
+(define (ast-extern-metadata-symbol [metadata : (& AstExternMetadata)]) : String
+  (match (owned_view.compiler-owned-reference-shared-view metadata)
     [(Metadata _ symbol-id _ _ _) (ci.intern-id-str symbol-id)]))
 
-(define (ast-extern-metadata-symbol-id [metadata : AstExternMetadata]) : ci.InternId
-  (match metadata
+(define (ast-extern-metadata-symbol-id [metadata : (& AstExternMetadata)]) : ci.InternId
+  (match (owned_view.compiler-owned-reference-shared-view metadata)
     [(Metadata _ symbol-id _ _ _) symbol-id]))
 
 (define (ast-extern-metadata-abi [metadata : AstExternMetadata]) : AstExternAbi
@@ -11457,12 +11604,12 @@
   (match metadata
     [(Metadata _ _ link-inputs _ _) link-inputs]))
 
-(define (ast-extern-metadata-explicit-abi? [metadata : AstExternMetadata]) : bool
+(define (ast-extern-metadata-explicit-abi? [metadata : (& AstExternMetadata)]) : bool
   (match metadata
     [(Metadata _ _ _ flags _) (ast-extern-metadata-flags-explicit-abi? flags)]))
 
 (define (ast-extern-metadata-symbol-matches-source?
-  [metadata : AstExternMetadata]) : bool
+  [metadata : (& AstExternMetadata)]) : bool
   (match metadata
     [(Metadata _ _ _ flags _)
       (ast-extern-metadata-flags-symbol-matches-source? flags)]))

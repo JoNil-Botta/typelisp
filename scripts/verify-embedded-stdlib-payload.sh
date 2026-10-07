@@ -1,7 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-# Validate the explicit build inputs and prove every payload decodes exactly.
+# Validate the explicit build inputs and prove every payload decodes exactly to
+# its source with the top-level inline tests blanked (#8713).
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 

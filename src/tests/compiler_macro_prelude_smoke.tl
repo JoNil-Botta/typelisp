@@ -1,4 +1,6 @@
 ;; compiler_macro_prelude_smoke.tl - Implicit stdlib macro prelude smoke.
+(import stdlib.io)
+
 (define (compiler-macro-prelude-selfhost-smoke) : i64
   (let
     [value : i64 0]
@@ -36,5 +38,8 @@
           1000)))
     value))
 
-(define (main) : i64
-  (compiler-macro-prelude-selfhost-smoke))
+(test
+  macro-prelude-selfhost
+  (if (= (compiler-macro-prelude-selfhost-smoke) 42)
+    unit
+    (io.panic "macro prelude smoke mismatch")))

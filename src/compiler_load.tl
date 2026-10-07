@@ -2718,8 +2718,9 @@
 
 ;; Canonical ids of modules whose source matches the embedded stdlib payload.
 ;; The owning session's intern table gives these ids meaning: embedded source
-;; and byte-identical disk source may use the catalog, while modified or
-;; otherwise untrusted roots must expand from their own source.
+;; and disk source byte-identical to it once its inline tests are blanked
+;; (#8713) may use the catalog, while modified or otherwise untrusted roots
+;; must expand from their own source.
 (define (compiler-load-session-state-provenance-arena-value
   [state : CompilerLoadSessionState]) : i64
   (if (array-ref state.intern-state-ready 0)
@@ -2807,10 +2808,12 @@
     (compiler-load-session-state-note-embedded-module! state path)))
 
 ;: A stdlib module resolved from a root (or the working directory) whose
-;: source is byte-identical to the embedded payload's copy carries embedded
-;: provenance for the macro route: the source-bound catalog is exact for it
-;: by construction, and any user modification breaks the equality and keeps
-;: that module on source interpretation. Cached per suffix; the compare runs
+;: source, with its inline tests blanked as the payload blanks them (#8713), is
+;: byte-identical to the embedded payload's copy carries embedded provenance
+;: for the macro route: the source-bound catalog is exact for it by
+;: construction, since inline tests define nothing outside `--cfg test`, and
+;: any other user modification breaks the equality and keeps that module on
+;: source interpretation. Cached per suffix; the compare runs
 ;: once per module per session. Every call also notes the module's canonical
 ;: name identity, whether or not the source matches.
 (define (compiler-load-session-state-note-embedded-equivalent-if-matching!
@@ -2838,7 +2841,9 @@
           (match (compiler-load-embedded-stdlib-source (string.copy suffix))
             [(CompilerEmbeddedStdlibSomeSource embedded-text)
               (let
-                [disk-text : String (compiler-load-read-file-text disk-path)]
+                [disk-text : String
+                  (ces.compiler-embedded-stdlib-source-without-inline-tests
+                    (compiler-load-read-file-text disk-path))]
                 (if (and
                   (=
                     (string.string-length disk-text)
@@ -4489,6 +4494,20 @@
       resolved
       ")")))
 
+;; The bytes an include embeds. An `include-str-lzss` of a TypeLisp `.tl`
+;; source embeds it with its top-level inline tests blanked (#8713); every
+;; other include embeds `contents` exactly.
+(define (compiler-load-include-contents
+  [kind : CompilerLoadIncludeKind]
+  [include-path : (& include-path str)]
+  [contents : String]) : String
+  (match kind
+    [(LzssString)
+      (if (compiler-load-tl-path? include-path)
+        (ces.compiler-embedded-stdlib-source-without-inline-tests contents)
+        contents)]
+    [_ contents]))
+
 (define (compiler-load-include-from-resolved-with-pools
   [kind : CompilerLoadIncludeKind]
   [importer-path : String]
@@ -4502,7 +4521,10 @@
         kind
         pools
         name
-        (compiler-load-session-read-source-text resolved)))
+        (compiler-load-include-contents
+          kind
+          (& include-path)
+          (compiler-load-session-read-source-text resolved))))
     (match (compiler-load-embedded-stdlib-source-for-path
       (string.copy resolved))
       [(CompilerEmbeddedStdlibSomeSource source)
@@ -4510,7 +4532,12 @@
           (compiler-load-active-session-state-shared-view)
           (& resolved)
           (& source))
-        (Ok (compiler-load-include-def-with-pools kind pools name source))]
+        (Ok
+          (compiler-load-include-def-with-pools
+            kind
+            pools
+            name
+            (compiler-load-include-contents kind (& include-path) source)))]
       [(CompilerEmbeddedStdlibNoSource)
         (Err
           (box
@@ -5152,12 +5179,15 @@
   [context-module-id : i64]) : i64
   (ci.intern-composite-pair-id source-path-id context-module-id))
 
-(define (compiler-load-strip-tl-extension [path : String]) : String
+(define (compiler-load-tl-path? [path : (& path str)]) : bool
   (let
     [n : i64 (string.string-length path)]
-    (if (and (>= n 3) (string.eq (string.substring path (- n 3) 3) ".tl"))
-      (string.substring path 0 (- n 3))
-      path)))
+    (and (>= n 3) (string.eq (string.substring path (- n 3) 3) ".tl"))))
+
+(define (compiler-load-strip-tl-extension [path : String]) : String
+  (if (compiler-load-tl-path? (& path))
+    (string.substring path 0 (- (string.string-length path) 3))
+    path))
 
 (define (compiler-load-module-id-from-path-text [path : (& path str)]) : String
   (let

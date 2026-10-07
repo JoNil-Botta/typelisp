@@ -394,7 +394,9 @@ contracts, and intentional panic/exit-status checks.
 5. Add new top-level modules needed by installed compilers to
    `src/compiler_embedded_stdlib_payload.tl`, including its explicit compressed
    build input and lookup arm. The
-   compiler build compresses the exact source bytes directly; never add
+   compiler build compresses the source bytes directly, with each top-level
+   inline test (`(test ...)`, one-body `(cfg test ...)`) blanked to its line
+   breaks, so installed compilers carry no test code; never add
    `stdlib/tests/*.tl` fixtures.
 6. Add inline `(test ...)` items next to declarations for source-local runnable
    API behavior; `scripts/verify-inline-tests.sh` discovers them automatically.
@@ -417,7 +419,9 @@ contracts, and intentional panic/exit-status checks.
 
 Run `scripts/verify-embedded-stdlib-payload.sh` to validate all 62 explicit
 build inputs, prove deterministic one-byte mutation propagation, and decode
-every embedded module against its exact source bytes.
+every embedded module against its source with the inline tests blanked. It
+also re-lexes both texts and proves the blanking removed exactly the top-level
+inline tests and left every other token at its line and column.
 `scripts/verify-stdlib.sh` includes this gate in CI.
 
 The verifier intentionally fails when a new top-level `stdlib/*.tl` module or a

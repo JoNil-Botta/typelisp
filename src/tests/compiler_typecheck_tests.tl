@@ -7344,14 +7344,20 @@
 (define (compiler-typecheck-macro-prelude-for-core-source) : String
   (match (load.compiler-load-embedded-stdlib-source "core_macros.tl")
     [(CompilerEmbeddedStdlibSomeSource source)
+      ;; The `for` macro runs to the next top-level form, which starts a line,
+      ;; or to the end of the source. The embedded copy carries no inline tests
+      ;; (#8713), so nothing need follow it.
       (let
         [start-marker : String
           "(defmacro (for [bindings : ExprBindingClause ...]"]
-        [end-marker : String "(cfg\n  test\n  (defmacro (core-macros-user-fold"]
         [start : i64
           (compiler-typecheck-string-find-from source start-marker 0)]
+        [next-form : i64
+          (compiler-typecheck-string-find-from source "\n(" (+ start 1))]
         [end : i64
-          (compiler-typecheck-string-find-from source end-marker start)]
+          (if (< next-form 0)
+            (string.string-length source)
+            next-form)]
         (if (and (>= start 0) (> end start))
           (str_cat.str-cat
             "(module fixture.core_for)\n(import stdlib.comptime)\n"

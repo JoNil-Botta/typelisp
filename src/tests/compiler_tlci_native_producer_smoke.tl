@@ -1703,7 +1703,7 @@
   [identity : String]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (I64))]
+    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (& (I64)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (set!
@@ -1784,14 +1784,16 @@
       (ast.ast-ty-tuple
         (ast.ast-type-cons-with-pools
           pools
-          (ast.ast-ty-ref-with-pools
-            pools
-            owner-region
-            (Var (ci.intern "package.model/Owner")))
-          (ast.ast-type-cons-with-pools
-            pools
-            (ast.ast-ty-ref-with-pools pools text-region (Str))
-            (ast.ast-type-list-new))))]
+          (&
+            (ast.ast-ty-ref-with-pools
+              pools
+              owner-region
+              (& (Var (ci.intern "package.model/Owner")))))
+          (&
+            (ast.ast-type-cons-with-pools
+              pools
+              (& (ast.ast-ty-ref-with-pools pools text-region (& (Str))))
+              (& (ast.ast-type-list-new))))))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (set!
@@ -1911,14 +1913,16 @@
       (ast.ast-ty-tuple
         (ast.ast-type-cons-with-pools
           pools
-          (ast.ast-ty-ref-with-pools
-            pools
-            owner-region
-            (Var (ci.intern "package.model/Owner")))
-          (ast.ast-type-cons-with-pools
-            pools
-            (ast.ast-ty-ref-with-pools pools text-region (Str))
-            (ast.ast-type-list-new))))]
+          (&
+            (ast.ast-ty-ref-with-pools
+              pools
+              owner-region
+              (& (Var (ci.intern "package.model/Owner")))))
+          (&
+            (ast.ast-type-cons-with-pools
+              pools
+              (& (ast.ast-ty-ref-with-pools pools text-region (& (Str))))
+              (& (ast.ast-type-list-new))))))]
     [operand : i64
       (producer-test-push-spanned (& pools) (Var (ci.intern "anchors")))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
@@ -1957,7 +1961,7 @@
   [identity : String]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (I64))]
+    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (& (I64)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (set!
@@ -2946,7 +2950,7 @@
     [condition : i64
       (producer-test-push-spanned (& pools) (Var (ci.intern "flag")))]
     [items : ast.AstExprList
-      (ast.ast-expr-cons condition (ast.ast-expr-list-new))]
+      (ast.ast-expr-cons condition (& (ast.ast-expr-list-new)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (set!
@@ -2995,7 +2999,7 @@
       (if (= body-count 2)
         (ast.ast-expr-cons
           first
-          (ast.ast-expr-cons second (ast.ast-expr-list-new)))
+          (& (ast.ast-expr-cons second (& (ast.ast-expr-list-new)))))
         (ast.ast-expr-list-new))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 2)]
@@ -3072,7 +3076,7 @@
     [items : ast.AstExprList
       (if (= count 0)
         (ast.ast-expr-list-new)
-        (ast.ast-expr-cons value (ast.ast-expr-list-new)))]
+        (ast.ast-expr-cons value (& (ast.ast-expr-list-new))))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (set!
@@ -3115,7 +3119,7 @@
     [expected : ast.AstExprList
       (ast.ast-expr-cons
         first
-        (ast.ast-expr-cons second (ast.ast-expr-list-new)))]
+        (& (ast.ast-expr-cons second (& (ast.ast-expr-list-new)))))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 2)]
     (set!
@@ -3689,7 +3693,8 @@
         (if (= mode 1)
           (Var (ci.intern "not-a-type"))
           (TypeLiteral outer-id)))]
-    [items : ast.AstExprList (ast.ast-expr-cons node (ast.ast-expr-list-new))]
+    [items : ast.AstExprList
+      (ast.ast-expr-cons node (& (ast.ast-expr-list-new)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (set!
@@ -3768,7 +3773,7 @@
 (define (producer-test-type-expr-callback-ok? [valid : bool]) : bool
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
-    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (I64))]
+    [box-ty : ast.AstType (ast.ast-ty-box-with-pools pools (& (I64)))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (set!
@@ -4094,7 +4099,7 @@
     [items : ast.AstExprList
       (ast.ast-expr-cons
         type-node
-        (ast.ast-expr-cons module-node (ast.ast-expr-list-new)))]
+        (& (ast.ast-expr-cons module-node (& (ast.ast-expr-list-new)))))]
     [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
       (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
     (set!

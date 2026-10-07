@@ -900,7 +900,7 @@
     [value-id : i64 (ci.intern-generated-name "value")]
     [inner : i64 (ast.ast-node-push (Var value-id))]
     [spanned-inner : i64 (ast.ast-expr-spanned inner span)]
-    [wrapped : i64 (ast.ast-expr-cast spanned-inner (I64))]
+    [wrapped : i64 (ast.ast-expr-cast spanned-inner (& (I64)))]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [diag : cdiag.CompilerDiagnostic
       (lower.lower-diagnostic-at-expr-with-pools
@@ -935,25 +935,28 @@
     [items : ast.AstExprList
       (ast.ast-expr-cons
         plain
-        (ast.ast-expr-cons spanned-inner (ast.ast-expr-list-new)))]
+        (& (ast.ast-expr-cons spanned-inner (& (ast.ast-expr-list-new)))))]
     [bindings : ast.AstLetBindingList
       (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id a-id (No) plain)
-        (ast.ast-let-binding-cons
-          (ast.ast-let-binding-id b-id (No) spanned-inner)
-          (ast.ast-let-binding-list-new)))]
+        (& (ast.ast-let-binding-id a-id (No) plain))
+        (&
+          (ast.ast-let-binding-cons
+            (& (ast.ast-let-binding-id b-id (No) spanned-inner))
+            (& (ast.ast-let-binding-list-new)))))]
     [arms : ast.AstMatchArmList
       (ast.ast-match-arm-cons
-        (ast.ast-match-arm (Wildcard) plain)
-        (ast.ast-match-arm-cons
-          (ast.ast-match-arm (Wildcard) spanned-inner)
-          (ast.ast-match-arm-list-new)))]
+        (& (ast.ast-match-arm (Wildcard) plain))
+        (&
+          (ast.ast-match-arm-cons
+            (& (ast.ast-match-arm (Wildcard) spanned-inner))
+            (& (ast.ast-match-arm-list-new)))))]
     [resources : ast.AstResourceBindingList
       (ast.ast-resource-binding-cons
         (ast.ast-resource-binding-id a-id plain plain)
-        (ast.ast-resource-binding-cons
-          (ast.ast-resource-binding-id b-id spanned-inner plain)
-          (ast.ast-resource-binding-list-new)))]
+        (&
+          (ast.ast-resource-binding-cons
+            (ast.ast-resource-binding-id b-id spanned-inner plain)
+            (& (ast.ast-resource-binding-list-new)))))]
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     (and
       (compiler-lower-maybe-span-start-ok?
@@ -5357,15 +5360,16 @@
       (=
         (lower.lower-function-decl-count
           (ast.ast-decl-cons
-            (ast.ast-decl-comptime-decl
-              (ast.ast-decl-unsafe (owned_view.compiler-owned-shared-view fn)))
-            (ast.ast-decl-list-new)))
+            (&
+              (ast.ast-decl-comptime-decl
+                (ast.ast-decl-unsafe (owned_view.compiler-owned-shared-view fn))))
+            (& (ast.ast-decl-list-new))))
         1)
       (=
         (lower.lower-function-decl-count
           (ast.ast-decl-cons
-            (ast.ast-decl-unsafe (ast.ast-decl-comptime-decl fn))
-            (ast.ast-decl-list-new)))
+            (& (ast.ast-decl-unsafe (ast.ast-decl-comptime-decl fn)))
+            (& (ast.ast-decl-list-new))))
         1))))
 
 (define (compiler-lower-module-specialize-source) : String
@@ -5597,7 +5601,7 @@
                   (string.eq (ci.intern-str name-id) "ffi-add")
                   (string.eq name "ffi-add")
                   (string.eq (ci.intern-str symbol-id) "ffi_add")
-                  (ast.ast-extern-abi-c? abi)
+                  (ast.ast-extern-abi-c? (& abi))
                   (compiler-lower-extern-link-inputs-ok? link-inputs))]))])]
     [(Err _) false]))
 
@@ -10740,7 +10744,7 @@
             (let
               [inner : ast.AstDecl (ast.ast-decl-box-shared-view inner-box)]
               (if (let
-                [arg (ast.ast-decl-cons inner (ast.ast-decl-list-new))]
+                [arg (ast.ast-decl-cons (& inner) (& (ast.ast-decl-list-new)))]
                 (lower-test-decl-list-defines?
                   arg
                   (owned_view.compiler-owned-shared-view name)))
@@ -10757,37 +10761,46 @@
     [dead-id : i64 (lower-test-generated-name-id "dead")]
     (ast.ast-program
       (ast.ast-decl-cons
-        (ast.ast-decl-def-id
-          callback-id
-          No
-          (ast.ast-node-push (Var callback-target-id)))
-        (ast.ast-decl-cons
-          (ast.ast-decl-def-fn-id
-            main-id
-            (ast.ast-param-list-new)
-            (I64)
-            (ast.ast-expr-call
-              (ast.ast-node-push (Var helper-id))
-              (ast.ast-expr-list-new)))
+        (&
+          (ast.ast-decl-def-id
+            callback-id
+            No
+            (ast.ast-node-push (Var callback-target-id))))
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-def-fn-id
-              helper-id
-              (ast.ast-param-list-new)
-              (I64)
-              (ast.ast-node-push (Literal (ast.ast-lit-int 7))))
-            (ast.ast-decl-cons
+            (&
               (ast.ast-decl-def-fn-id
-                callback-target-id
+                main-id
                 (ast.ast-param-list-new)
                 (I64)
-                (ast.ast-node-push (Literal (ast.ast-lit-int 11))))
+                (ast.ast-expr-call
+                  (ast.ast-node-push (Var helper-id))
+                  (ast.ast-expr-list-new))))
+            (&
               (ast.ast-decl-cons
-                (ast.ast-decl-def-fn-id
-                  dead-id
-                  (ast.ast-param-list-new)
-                  (I64)
-                  (ast.ast-node-push (Literal (ast.ast-lit-int 9))))
-                (ast.ast-decl-list-new)))))))))
+                (&
+                  (ast.ast-decl-def-fn-id
+                    helper-id
+                    (ast.ast-param-list-new)
+                    (I64)
+                    (ast.ast-node-push (Literal (ast.ast-lit-int 7)))))
+                (&
+                  (ast.ast-decl-cons
+                    (&
+                      (ast.ast-decl-def-fn-id
+                        callback-target-id
+                        (ast.ast-param-list-new)
+                        (I64)
+                        (ast.ast-node-push (Literal (ast.ast-lit-int 11)))))
+                    (&
+                      (ast.ast-decl-cons
+                        (&
+                          (ast.ast-decl-def-fn-id
+                            dead-id
+                            (ast.ast-param-list-new)
+                            (I64)
+                            (ast.ast-node-push (Literal (ast.ast-lit-int 9)))))
+                        (& (ast.ast-decl-list-new))))))))))))))
 
 (define (compiler-lower-dce-test-symbols-ready?) : bool
   (match (parser.parse-ast-source
@@ -10837,89 +10850,111 @@
 (define (compiler-lower-ast-dce-no-main-program) : ast.AstProgram
   (ast.ast-program
     (ast.ast-decl-cons
-      (ast.ast-decl-def-fn-id
-        (lower-test-generated-name-id "helper")
-        (ast.ast-param-list-new)
-        (I64)
-        (ast.ast-node-push (Literal (ast.ast-lit-int 7))))
-      (ast.ast-decl-cons
+      (&
         (ast.ast-decl-def-fn-id
-          (lower-test-generated-name-id "dead")
+          (lower-test-generated-name-id "helper")
           (ast.ast-param-list-new)
           (I64)
-          (ast.ast-node-push (Literal (ast.ast-lit-int 9))))
-        (ast.ast-decl-list-new)))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 7)))))
+      (&
+        (ast.ast-decl-cons
+          (&
+            (ast.ast-decl-def-fn-id
+              (lower-test-generated-name-id "dead")
+              (ast.ast-param-list-new)
+              (I64)
+              (ast.ast-node-push (Literal (ast.ast-lit-int 9)))))
+          (& (ast.ast-decl-list-new)))))))
 
 (define (compiler-lower-macro-body-dce-program) : ast.AstProgram
   (ast.ast-program
     (ast.ast-decl-cons
-      (ast.ast-decl-def-fn-id
-        (lower-test-generated-name-id "main")
-        (ast.ast-param-list-new)
-        (I64)
-        (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-      (ast.ast-decl-cons
+      (&
         (ast.ast-decl-def-fn-id
-          (lower-test-generated-name-id "macro-only-helper")
+          (lower-test-generated-name-id "main")
           (ast.ast-param-list-new)
           (I64)
-          (ast.ast-node-push (Literal (ast.ast-lit-int 7))))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 0)))))
+      (&
         (ast.ast-decl-cons
-          (ast.ast-decl-def-macro-id
-            (lower-test-generated-name-id "macro-uses-helper")
-            (ast.ast-macro-param-list-new)
-            (Expr)
-            (ast.ast-expr-call
-              (ast.ast-node-push
-                (Var cbi.compiler-builtin-id-fix-macro_only_helper))
-              (ast.ast-expr-list-new)))
-          (ast.ast-decl-list-new))))))
+          (&
+            (ast.ast-decl-def-fn-id
+              (lower-test-generated-name-id "macro-only-helper")
+              (ast.ast-param-list-new)
+              (I64)
+              (ast.ast-node-push (Literal (ast.ast-lit-int 7)))))
+          (&
+            (ast.ast-decl-cons
+              (&
+                (ast.ast-decl-def-macro-id
+                  (lower-test-generated-name-id "macro-uses-helper")
+                  (ast.ast-macro-param-list-new)
+                  (Expr)
+                  (ast.ast-expr-call
+                    (ast.ast-node-push
+                      (Var cbi.compiler-builtin-id-fix-macro_only_helper))
+                    (ast.ast-expr-list-new))))
+              (& (ast.ast-decl-list-new)))))))))
 
 (define (compiler-lower-stdlib-comptime-runtime-dce-program) : ast.AstProgram
   (ast.ast-program
     (ast.ast-decl-cons
-      (ast.ast-decl-module-id (lower-test-generated-name-id "stdlib.comptime"))
-      (ast.ast-decl-cons
-        (ast.ast-decl-def-fn-id
-          (lower-test-generated-name-id "ctfe-runtime-helper")
-          (ast.ast-param-list-new)
-          (I64)
-          (ast.ast-node-push (Literal (ast.ast-lit-int 7))))
+      (&
+        (ast.ast-decl-module-id
+          (lower-test-generated-name-id "stdlib.comptime")))
+      (&
         (ast.ast-decl-cons
-          (ast.ast-decl-module-id (lower-test-generated-name-id "main"))
-          (ast.ast-decl-cons
+          (&
             (ast.ast-decl-def-fn-id
-              (lower-test-generated-name-id "main")
+              (lower-test-generated-name-id "ctfe-runtime-helper")
               (ast.ast-param-list-new)
               (I64)
-              (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-            (ast.ast-decl-list-new)))))))
+              (ast.ast-node-push (Literal (ast.ast-lit-int 7)))))
+          (&
+            (ast.ast-decl-cons
+              (& (ast.ast-decl-module-id (lower-test-generated-name-id "main")))
+              (&
+                (ast.ast-decl-cons
+                  (&
+                    (ast.ast-decl-def-fn-id
+                      (lower-test-generated-name-id "main")
+                      (ast.ast-param-list-new)
+                      (I64)
+                      (ast.ast-node-push (Literal (ast.ast-lit-int 0)))))
+                  (& (ast.ast-decl-list-new)))))))))))
 
 (define (compiler-lower-stdlib-comptime-runtime-skip-keeps-types-ok?) : bool
   (let
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        (ast.ast-decl-def-fn-id
-          (lower-test-generated-name-id "ctfe-runtime-helper")
-          (ast.ast-param-list-new)
-          (I64)
-          (ast.ast-node-push (Literal (ast.ast-lit-int 7))))
-        (ast.ast-decl-cons
-          (ast.ast-decl-comptime-decl
-            (ast.ast-decl-def-struct-id
-              (lower-test-generated-name-id "ExprClauseList")
-              Default
-              No
-              (ast.ast-field-def-list-new)))
+        (&
+          (ast.ast-decl-def-fn-id
+            (lower-test-generated-name-id "ctfe-runtime-helper")
+            (ast.ast-param-list-new)
+            (I64)
+            (ast.ast-node-push (Literal (ast.ast-lit-int 7)))))
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-module-id (lower-test-generated-name-id "main"))
-            (ast.ast-decl-cons
-              (ast.ast-decl-def-fn-id
-                (lower-test-generated-name-id "main")
-                (ast.ast-param-list-new)
-                (I64)
-                (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-              (ast.ast-decl-list-new)))))]
+            (&
+              (ast.ast-decl-comptime-decl
+                (ast.ast-decl-def-struct-id
+                  (lower-test-generated-name-id "ExprClauseList")
+                  Default
+                  No
+                  (ast.ast-field-def-list-new))))
+            (&
+              (ast.ast-decl-cons
+                (&
+                  (ast.ast-decl-module-id (lower-test-generated-name-id "main")))
+                (&
+                  (ast.ast-decl-cons
+                    (&
+                      (ast.ast-decl-def-fn-id
+                        (lower-test-generated-name-id "main")
+                        (ast.ast-param-list-new)
+                        (I64)
+                        (ast.ast-node-push (Literal (ast.ast-lit-int 0)))))
+                    (& (ast.ast-decl-list-new)))))))))]
     [kept : ast.AstDeclList (lower-skip-runtime-until-next-module decls)]
     (and
       (= (lower-test-decl-list-count kept) 3)
@@ -10932,30 +10967,40 @@
     [program : ast.AstProgram
       (ast.ast-program
         (ast.ast-decl-cons
-          (ast.ast-decl-module-id
-            (lower-test-generated-name-id "stdlib.comptime"))
-          (ast.ast-decl-cons
-            (ast.ast-decl-def-fn-id
-              (lower-test-generated-name-id "ctfe-runtime-helper")
-              (ast.ast-param-list-new)
-              (I64)
-              (ast.ast-node-push (Literal (ast.ast-lit-int 7))))
+          (&
+            (ast.ast-decl-module-id
+              (lower-test-generated-name-id "stdlib.comptime")))
+          (&
             (ast.ast-decl-cons
-              (ast.ast-decl-comptime-decl
-                (ast.ast-decl-def-struct-id
-                  (lower-test-generated-name-id "ExprClauseList")
-                  Default
-                  No
-                  (ast.ast-field-def-list-new)))
-              (ast.ast-decl-cons
-                (ast.ast-decl-module-id (lower-test-generated-name-id "main"))
+              (&
+                (ast.ast-decl-def-fn-id
+                  (lower-test-generated-name-id "ctfe-runtime-helper")
+                  (ast.ast-param-list-new)
+                  (I64)
+                  (ast.ast-node-push (Literal (ast.ast-lit-int 7)))))
+              (&
                 (ast.ast-decl-cons
-                  (ast.ast-decl-def-fn-id
-                    (lower-test-generated-name-id "main")
-                    (ast.ast-param-list-new)
-                    (I64)
-                    (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-                  (ast.ast-decl-list-new)))))))]
+                  (&
+                    (ast.ast-decl-comptime-decl
+                      (ast.ast-decl-def-struct-id
+                        (lower-test-generated-name-id "ExprClauseList")
+                        Default
+                        No
+                        (ast.ast-field-def-list-new))))
+                  (&
+                    (ast.ast-decl-cons
+                      (&
+                        (ast.ast-decl-module-id
+                          (lower-test-generated-name-id "main")))
+                      (&
+                        (ast.ast-decl-cons
+                          (&
+                            (ast.ast-decl-def-fn-id
+                              (lower-test-generated-name-id "main")
+                              (ast.ast-param-list-new)
+                              (I64)
+                              (ast.ast-node-push (Literal (ast.ast-lit-int 0)))))
+                          (& (ast.ast-decl-list-new))))))))))))]
     [names : lower.LowerNameEnv
       (match (owned_view.compiler-owned-shared-view program)
         [(Program decls-box)
@@ -11011,54 +11056,67 @@
     [used-box-id : i64 cbi.compiler-builtin-id-fix-UsedBox]
     (ast.ast-program
       (ast.ast-decl-cons
-        (ast.ast-decl-def-enum-id
-          used-enum-id
-          No
-          (ast.ast-variant-def-cons
-            (ast.ast-variant-def-id
-              (lower-test-generated-name-id "UsedA")
-              (ast.ast-type-list-new)
-              (ast.ast-variant-payload-cleanup-list-new))
-            (ast.ast-variant-def-list-new)))
-        (ast.ast-decl-cons
+        (&
           (ast.ast-decl-def-enum-id
-            (lower-test-generated-name-id "DeadEnum")
+            used-enum-id
             No
             (ast.ast-variant-def-cons
-              (ast.ast-variant-def-id
-                (lower-test-generated-name-id "DeadA")
-                (ast.ast-type-list-new)
-                (ast.ast-variant-payload-cleanup-list-new))
-              (ast.ast-variant-def-list-new)))
+              (&
+                (ast.ast-variant-def-id
+                  (lower-test-generated-name-id "UsedA")
+                  (ast.ast-type-list-new)
+                  (ast.ast-variant-payload-cleanup-list-new)))
+              (& (ast.ast-variant-def-list-new)))))
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-def-struct-id
-              used-box-id
-              Default
-              No
-              (ast.ast-field-def-cons
-                (ast.ast-field-def-id
-                  (lower-test-generated-syntax-id "value")
-                  (Enum used-enum-id)
-                  No)
-                (ast.ast-field-def-list-new)))
-            (ast.ast-decl-cons
-              (ast.ast-decl-def-struct-id
-                (lower-test-generated-name-id "DeadBox")
-                Default
+            (&
+              (ast.ast-decl-def-enum-id
+                (lower-test-generated-name-id "DeadEnum")
                 No
-                (ast.ast-field-def-cons
-                  (ast.ast-field-def-id
-                    (lower-test-generated-syntax-id "value")
-                    (I64)
-                    No)
-                  (ast.ast-field-def-list-new)))
+                (ast.ast-variant-def-cons
+                  (&
+                    (ast.ast-variant-def-id
+                      (lower-test-generated-name-id "DeadA")
+                      (ast.ast-type-list-new)
+                      (ast.ast-variant-payload-cleanup-list-new)))
+                  (& (ast.ast-variant-def-list-new)))))
+            (&
               (ast.ast-decl-cons
-                (ast.ast-decl-def-fn-id
-                  cbi.compiler-builtin-id-fix-main
-                  (ast.ast-param-list-new)
-                  (Struct used-box-id)
-                  (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-                (ast.ast-decl-list-new)))))))))
+                (&
+                  (ast.ast-decl-def-struct-id
+                    used-box-id
+                    Default
+                    No
+                    (ast.ast-field-def-cons
+                      (&
+                        (ast.ast-field-def-id
+                          (lower-test-generated-syntax-id "value")
+                          (Enum used-enum-id)
+                          No))
+                      (& (ast.ast-field-def-list-new)))))
+                (&
+                  (ast.ast-decl-cons
+                    (&
+                      (ast.ast-decl-def-struct-id
+                        (lower-test-generated-name-id "DeadBox")
+                        Default
+                        No
+                        (ast.ast-field-def-cons
+                          (&
+                            (ast.ast-field-def-id
+                              (lower-test-generated-syntax-id "value")
+                              (I64)
+                              No))
+                          (& (ast.ast-field-def-list-new)))))
+                    (&
+                      (ast.ast-decl-cons
+                        (&
+                          (ast.ast-decl-def-fn-id
+                            cbi.compiler-builtin-id-fix-main
+                            (ast.ast-param-list-new)
+                            (Struct used-box-id)
+                            (ast.ast-node-push (Literal (ast.ast-lit-int 0)))))
+                        (& (ast.ast-decl-list-new))))))))))))))
 
 (define (compiler-lower-type-decl-dce-paths) : ast.AstDeclPathList
   (let
@@ -11089,32 +11147,39 @@
       (load.compiler-load-parse-context-name-id "io.DeadResult")]
     (ast.ast-program
       (ast.ast-decl-cons
-        (ast.ast-decl-def-enum-id
-          result-id
-          No
-          (ast.ast-variant-def-cons
-            (ast.ast-variant-def-id
-              (lower-test-generated-name-id "OkIoString")
-              (ast.ast-type-list-new)
-              (ast.ast-variant-payload-cleanup-list-new))
-            (ast.ast-variant-def-list-new)))
-        (ast.ast-decl-cons
+        (&
           (ast.ast-decl-def-enum-id
-            dead-result-id
+            result-id
             No
             (ast.ast-variant-def-cons
-              (ast.ast-variant-def-id
-                (lower-test-generated-name-id "DeadResultA")
-                (ast.ast-type-list-new)
-                (ast.ast-variant-payload-cleanup-list-new))
-              (ast.ast-variant-def-list-new)))
+              (&
+                (ast.ast-variant-def-id
+                  (lower-test-generated-name-id "OkIoString")
+                  (ast.ast-type-list-new)
+                  (ast.ast-variant-payload-cleanup-list-new)))
+              (& (ast.ast-variant-def-list-new)))))
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-def-fn-id
-              cbi.compiler-builtin-id-fix-main
-              (ast.ast-param-list-new)
-              (Enum result-id)
-              (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-            (ast.ast-decl-list-new)))))))
+            (&
+              (ast.ast-decl-def-enum-id
+                dead-result-id
+                No
+                (ast.ast-variant-def-cons
+                  (&
+                    (ast.ast-variant-def-id
+                      (lower-test-generated-name-id "DeadResultA")
+                      (ast.ast-type-list-new)
+                      (ast.ast-variant-payload-cleanup-list-new)))
+                  (& (ast.ast-variant-def-list-new)))))
+            (&
+              (ast.ast-decl-cons
+                (&
+                  (ast.ast-decl-def-fn-id
+                    cbi.compiler-builtin-id-fix-main
+                    (ast.ast-param-list-new)
+                    (Enum result-id)
+                    (ast.ast-node-push (Literal (ast.ast-lit-int 0)))))
+                (& (ast.ast-decl-list-new))))))))))
 
 (define (compiler-lower-type-decl-dce-qualified-base-paths) : ast.AstDeclPathList
   (let
@@ -11134,61 +11199,82 @@
 (define (compiler-lower-type-decl-dce-arena-support-program) : ast.AstProgram
   (ast.ast-program
     (ast.ast-decl-cons
-      (ast.ast-decl-module-id
-        (load.compiler-load-parse-context-name-id "stdlib.arena"))
-      (ast.ast-decl-cons
-        (ast.ast-decl-def-struct-id
-          (ci.intern-dotted-tail-id cbi.compiler-builtin-id-fix-arena_dot_Arena)
-          Default
-          No
-          (ast.ast-field-def-cons
-            (ast.ast-field-def-id
-              (lower-test-generated-syntax-id "handle")
-              (I64)
-              No)
-            (ast.ast-field-def-list-new)))
+      (&
+        (ast.ast-decl-module-id
+          (load.compiler-load-parse-context-name-id "stdlib.arena")))
+      (&
         (ast.ast-decl-cons
-          (ast.ast-decl-def-struct-id
-            cbi.compiler-builtin-id-fix-ArenaMark
-            Default
-            No
-            (ast.ast-field-def-cons
-              (ast.ast-field-def-id
-                (lower-test-generated-syntax-id "handle")
-                (I64)
-                No)
-              (ast.ast-field-def-list-new)))
-          (ast.ast-decl-cons
+          (&
             (ast.ast-decl-def-struct-id
-              (lower-test-generated-name-id "DeadArenaPeer")
+              (ci.intern-dotted-tail-id
+                cbi.compiler-builtin-id-fix-arena_dot_Arena)
               Default
               No
               (ast.ast-field-def-cons
-                (ast.ast-field-def-id
-                  (lower-test-generated-syntax-id "handle")
-                  (I64)
-                  No)
-                (ast.ast-field-def-list-new)))
+                (&
+                  (ast.ast-field-def-id
+                    (lower-test-generated-syntax-id "handle")
+                    (I64)
+                    No))
+                (& (ast.ast-field-def-list-new)))))
+          (&
             (ast.ast-decl-cons
-              (ast.ast-decl-module-id cbi.compiler-builtin-id-fix-main)
-              (ast.ast-decl-cons
+              (&
                 (ast.ast-decl-def-struct-id
-                  cbi.compiler-builtin-id-fix-ThreadBox
+                  cbi.compiler-builtin-id-fix-ArenaMark
                   Default
                   No
                   (ast.ast-field-def-cons
-                    (ast.ast-field-def-id
-                      (lower-test-generated-syntax-id "owner")
-                      (Struct cbi.compiler-builtin-id-fix-arena_dot_Arena)
-                      No)
-                    (ast.ast-field-def-list-new)))
+                    (&
+                      (ast.ast-field-def-id
+                        (lower-test-generated-syntax-id "handle")
+                        (I64)
+                        No))
+                    (& (ast.ast-field-def-list-new)))))
+              (&
                 (ast.ast-decl-cons
-                  (ast.ast-decl-def-fn-id
-                    cbi.compiler-builtin-id-fix-main
-                    (ast.ast-param-list-new)
-                    (Struct cbi.compiler-builtin-id-fix-ThreadBox)
-                    (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-                  (ast.ast-decl-list-new))))))))))
+                  (&
+                    (ast.ast-decl-def-struct-id
+                      (lower-test-generated-name-id "DeadArenaPeer")
+                      Default
+                      No
+                      (ast.ast-field-def-cons
+                        (&
+                          (ast.ast-field-def-id
+                            (lower-test-generated-syntax-id "handle")
+                            (I64)
+                            No))
+                        (& (ast.ast-field-def-list-new)))))
+                  (&
+                    (ast.ast-decl-cons
+                      (&
+                        (ast.ast-decl-module-id
+                          cbi.compiler-builtin-id-fix-main))
+                      (&
+                        (ast.ast-decl-cons
+                          (&
+                            (ast.ast-decl-def-struct-id
+                              cbi.compiler-builtin-id-fix-ThreadBox
+                              Default
+                              No
+                              (ast.ast-field-def-cons
+                                (&
+                                  (ast.ast-field-def-id
+                                    (lower-test-generated-syntax-id "owner")
+                                    (Struct
+                                      cbi.compiler-builtin-id-fix-arena_dot_Arena)
+                                    No))
+                                (& (ast.ast-field-def-list-new)))))
+                          (&
+                            (ast.ast-decl-cons
+                              (&
+                                (ast.ast-decl-def-fn-id
+                                  cbi.compiler-builtin-id-fix-main
+                                  (ast.ast-param-list-new)
+                                  (Struct cbi.compiler-builtin-id-fix-ThreadBox)
+                                  (ast.ast-node-push
+                                    (Literal (ast.ast-lit-int 0)))))
+                              (& (ast.ast-decl-list-new)))))))))))))))))
 
 (define (compiler-lower-type-decl-dce-arena-support-paths) : ast.AstDeclPathList
   (let
@@ -11224,37 +11310,46 @@
     [test-body : i64
       (ast.ast-expr-let
         (ast.ast-let-binding-cons
-          (ast.ast-let-binding-id
-            (lower-test-generated-name-id "mark")
-            (Some (Struct cbi.compiler-builtin-id-fix-ImportedMark))
-            unit-expr)
-          (ast.ast-let-binding-list-new))
+          (&
+            (ast.ast-let-binding-id
+              (lower-test-generated-name-id "mark")
+              (Some (Struct cbi.compiler-builtin-id-fix-ImportedMark))
+              unit-expr))
+          (& (ast.ast-let-binding-list-new)))
         unit-expr)]
     (ast.ast-program
       (ast.ast-decl-cons
-        (ast.ast-decl-def-struct-id
-          cbi.compiler-builtin-id-fix-ImportedMark
-          Default
-          No
-          (ast.ast-field-def-list-new))
-        (ast.ast-decl-cons
+        (&
           (ast.ast-decl-def-struct-id
-            (lower-test-generated-name-id "DeadMark")
+            cbi.compiler-builtin-id-fix-ImportedMark
             Default
             No
-            (ast.ast-field-def-list-new))
+            (ast.ast-field-def-list-new)))
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-test-id
-              (lower-test-generated-name-id "uses-imported-mark-annotation")
-              test-body
-              (ast.ast-source-span 1 1 1 1))
-            (ast.ast-decl-cons
-              (ast.ast-decl-def-fn-id
-                cbi.compiler-builtin-id-fix-main
-                (ast.ast-param-list-new)
-                (I64)
-                (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-              (ast.ast-decl-list-new))))))))
+            (&
+              (ast.ast-decl-def-struct-id
+                (lower-test-generated-name-id "DeadMark")
+                Default
+                No
+                (ast.ast-field-def-list-new)))
+            (&
+              (ast.ast-decl-cons
+                (&
+                  (ast.ast-decl-test-id
+                    (lower-test-generated-name-id
+                      "uses-imported-mark-annotation")
+                    test-body
+                    (ast.ast-source-span 1 1 1 1)))
+                (&
+                  (ast.ast-decl-cons
+                    (&
+                      (ast.ast-decl-def-fn-id
+                        cbi.compiler-builtin-id-fix-main
+                        (ast.ast-param-list-new)
+                        (I64)
+                        (ast.ast-node-push (Literal (ast.ast-lit-int 0)))))
+                    (& (ast.ast-decl-list-new))))))))))))
 
 (define (compiler-lower-type-decl-dce-test-body-paths) : ast.AstDeclPathList
   (let
@@ -11277,55 +11372,76 @@
 (define (compiler-lower-type-decl-dce-body-pattern-program) : ast.AstProgram
   (ast.ast-program
     (ast.ast-decl-cons
-      (ast.ast-decl-module-id
-        (load.compiler-load-parse-context-name-id "struct.match.geom"))
-      (ast.ast-decl-cons
-        (ast.ast-decl-def-struct-id
-          (load.compiler-load-parse-context-name-id "QPoint")
-          Default
-          No
-          (ast.ast-field-def-cons
-            (ast.ast-field-def-id (lower-test-generated-syntax-id "x") (I64) No)
-            (ast.ast-field-def-cons
-              (ast.ast-field-def-id
-                (lower-test-generated-syntax-id "y")
-                (I64)
-                No)
-              (ast.ast-field-def-list-new))))
+      (&
+        (ast.ast-decl-module-id
+          (load.compiler-load-parse-context-name-id "struct.match.geom")))
+      (&
         (ast.ast-decl-cons
-          (ast.ast-decl-def-struct-id
-            (lower-test-generated-name-id "DeadGeom")
-            Default
-            No
-            (ast.ast-field-def-cons
-              (ast.ast-field-def-id
-                (lower-test-generated-syntax-id "value")
-                (I64)
-                No)
-              (ast.ast-field-def-list-new)))
-          (ast.ast-decl-cons
-            (ast.ast-decl-module-id cbi.compiler-builtin-id-fix-main)
+          (&
+            (ast.ast-decl-def-struct-id
+              (load.compiler-load-parse-context-name-id "QPoint")
+              Default
+              No
+              (ast.ast-field-def-cons
+                (&
+                  (ast.ast-field-def-id
+                    (lower-test-generated-syntax-id "x")
+                    (I64)
+                    No))
+                (&
+                  (ast.ast-field-def-cons
+                    (&
+                      (ast.ast-field-def-id
+                        (lower-test-generated-syntax-id "y")
+                        (I64)
+                        No))
+                    (& (ast.ast-field-def-list-new)))))))
+          (&
             (ast.ast-decl-cons
-              (ast.ast-decl-def-fn-id
-                cbi.compiler-builtin-id-fix-main
-                (ast.ast-param-list-new)
-                (I64)
-                (ast.ast-expr-match
-                  (ast.ast-node-push (Literal (ast.ast-lit-int 0)))
-                  (ast.ast-match-arm-cons
-                    (ast.ast-match-arm
-                      (ast.ast-pat-variant-id
-                        (load.compiler-load-parse-context-name-id "geom.QPoint")
-                        (ast.ast-pattern-cons
-                          (ast.ast-pat-binding-id
-                            (lower-test-generated-name-id "x"))
-                          (ast.ast-pattern-cons
-                            (ast.ast-pat-binding-id
-                              (lower-test-generated-name-id "y"))
-                            (ast.ast-pattern-list-new))))
-                      (ast.ast-node-push (Literal (ast.ast-lit-int 0))))
-                    (ast.ast-match-arm-list-new))))
-              (ast.ast-decl-list-new))))))))
+              (&
+                (ast.ast-decl-def-struct-id
+                  (lower-test-generated-name-id "DeadGeom")
+                  Default
+                  No
+                  (ast.ast-field-def-cons
+                    (&
+                      (ast.ast-field-def-id
+                        (lower-test-generated-syntax-id "value")
+                        (I64)
+                        No))
+                    (& (ast.ast-field-def-list-new)))))
+              (&
+                (ast.ast-decl-cons
+                  (& (ast.ast-decl-module-id cbi.compiler-builtin-id-fix-main))
+                  (&
+                    (ast.ast-decl-cons
+                      (&
+                        (ast.ast-decl-def-fn-id
+                          cbi.compiler-builtin-id-fix-main
+                          (ast.ast-param-list-new)
+                          (I64)
+                          (ast.ast-expr-match
+                            (ast.ast-node-push (Literal (ast.ast-lit-int 0)))
+                            (ast.ast-match-arm-cons
+                              (&
+                                (ast.ast-match-arm
+                                  (ast.ast-pat-variant-id
+                                    (load.compiler-load-parse-context-name-id
+                                      "geom.QPoint")
+                                    (ast.ast-pattern-cons
+                                      (&
+                                        (ast.ast-pat-binding-id
+                                          (lower-test-generated-name-id "x")))
+                                      (&
+                                        (ast.ast-pattern-cons
+                                          (&
+                                            (ast.ast-pat-binding-id
+                                              (lower-test-generated-name-id "y")))
+                                          (& (ast.ast-pattern-list-new))))))
+                                  (ast.ast-node-push
+                                    (Literal (ast.ast-lit-int 0)))))
+                              (& (ast.ast-match-arm-list-new))))))
+                      (& (ast.ast-decl-list-new)))))))))))))
 
 (define (compiler-lower-type-decl-dce-body-pattern-paths) : ast.AstDeclPathList
   (let
@@ -13118,10 +13234,8 @@
     [lower-state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
     [module : String "type_cache_mod_3939"]
     [name : String "TypeCacheThing3939"]
-    [module-id : i64
-      (ci.intern-generated-name (owned_view.compiler-owned-shared-view module))]
-    [name-id : i64
-      (ci.intern-generated-name (owned_view.compiler-owned-shared-view name))]
+    [module-id : i64 (ci.intern-generated-name (& module))]
+    [name-id : i64 (ci.intern-generated-name (& name))]
     [qualified-name : String
       (csym.compiler-symbol-module-key
         (owned_view.compiler-owned-shared-view module)
@@ -13129,9 +13243,7 @@
     [qualified-id : i64
       (csym.compiler-symbol-module-key-id-by-id module-id name-id)]
     [fallback-name : String "TypeCacheFallback3939"]
-    [fallback-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view fallback-name))]
+    [fallback-id : i64 (ci.intern-generated-name (& fallback-name))]
     [fallback-primary : String
       (csym.compiler-symbol-module-key
         module
@@ -13455,25 +13567,25 @@
     [slice-id : i64 (ast.ast-node-pool-context-type-push pools (Slice u8-id))]
     [empty-elements : ast.AstTypeList (ast.ast-type-list-new)]
     [u8-elements : ast.AstTypeList
-      (ast.ast-type-list-cons-id u8-id (ast.ast-type-list-new))]
+      (ast.ast-type-list-cons-id u8-id (& (ast.ast-type-list-new)))]
     [u8-u64-elements : ast.AstTypeList
       (ast.ast-type-list-cons-id
         u8-id
-        (ast.ast-type-list-cons-id u64-id (ast.ast-type-list-new)))]
+        (& (ast.ast-type-list-cons-id u64-id (& (ast.ast-type-list-new)))))]
     [f32-f32-elements : ast.AstTypeList
       (ast.ast-type-list-cons-id
         f32-id
-        (ast.ast-type-list-cons-id f32-id (ast.ast-type-list-new)))]
+        (& (ast.ast-type-list-cons-id f32-id (& (ast.ast-type-list-new)))))]
     [u8-f64-elements : ast.AstTypeList
       (ast.ast-type-list-cons-id
         u8-id
-        (ast.ast-type-list-cons-id f64-id (ast.ast-type-list-new)))]
+        (& (ast.ast-type-list-cons-id f64-id (& (ast.ast-type-list-new)))))]
     [string-elements : ast.AstTypeList
-      (ast.ast-type-list-cons-id string-id (ast.ast-type-list-new))]
+      (ast.ast-type-list-cons-id string-id (& (ast.ast-type-list-new)))]
     [slice-ref-elements : ast.AstTypeList
       (ast.ast-type-list-cons-id
         (ast.ast-node-pool-context-type-push pools (Ref 1 slice-id))
-        (ast.ast-type-list-new))]
+        (& (ast.ast-type-list-new)))]
     [nested-id : i64
       (ast.ast-node-pool-context-type-push pools (Tuple (box u8-u64-elements)))]
     [array-u8-id : i64
@@ -13481,11 +13593,11 @@
     [nested-elements : ast.AstTypeList
       (ast.ast-type-list-cons-id
         nested-id
-        (ast.ast-type-list-cons-id u8-id (ast.ast-type-list-new)))]
+        (& (ast.ast-type-list-cons-id u8-id (& (ast.ast-type-list-new)))))]
     [tuple-array-elements : ast.AstTypeList
       (ast.ast-type-list-cons-id
         array-u8-id
-        (ast.ast-type-list-cons-id u64-id (ast.ast-type-list-new)))]
+        (& (ast.ast-type-list-cons-id u64-id (& (ast.ast-type-list-new)))))]
     [ctx : tc_core.TcContext
       (tc_core.tc-context-new
         (ast.ast-program (ast.ast-decl-list-new))

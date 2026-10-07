@@ -240,7 +240,7 @@
   [want-tag : i64]) : i64
   (match found
     [(Ok ty)
-      (if (= (ast.ast-type-tag ty) want-tag)
+      (if (= (ast.ast-type-tag (& ty)) want-tag)
         1
         0)]
     [(Err _) 0]))
@@ -253,8 +253,9 @@
       (if (= (ast.ast-type-list-len (& types)) 1)
         (if (=
           (ast.ast-type-tag
-            (ast.ty-node-get
-              (ast.ast-type-list-get (& types) 0 (ast.ast-type-id-fallback))))
+            (&
+              (ast.ty-node-get
+                (ast.ast-type-list-get (& types) 0 (ast.ast-type-id-fallback)))))
           want-tag)
           1
           0)
@@ -367,7 +368,7 @@
                     (csym.compiler-registries-struct-field-type-indexed
                       symbols
                       handle)
-                    (ast.ast-type-tag (I64)))]
+                    (ast.ast-type-tag (& (I64))))]
                 [(None) 0])
               (+
                 (match some
@@ -376,7 +377,7 @@
                       (csym.compiler-registries-variant-fields-indexed
                         symbols
                         handle)
-                      (ast.ast-type-tag (I64)))]
+                      (ast.ast-type-tag (& (I64))))]
                   [(None) 0])
                 (+
                   (compiler-symbols-miss-score
@@ -2119,7 +2120,7 @@
         (ast.ast-decl-module-list-push-id (&mut modules) rewritten-owner)
         (let
           [rewritten : ast.AstDeclPathList
-            (ast.ast-decl-path-list-with-modules paths modules)]
+            (ast.ast-decl-path-list-with-modules paths (& modules))]
           (match (csym.build-compiler-symbols-with-paths
             program
             (owned_view.compiler-owned-shared-view rewritten))

@@ -109,7 +109,7 @@
               [(Extern _ _ _ metadata _)
                 (=
                   (ast.ast-extern-metadata-symbol-matches-source?
-                    (deref metadata))
+                    (& (deref metadata)))
                   want)]
               [_ false]))])]
     [(Err _) false]))
@@ -579,7 +579,7 @@
         [mirrored-id : i64
           (ci.intern-compat-state-intern
             (&mut intern-b)
-            (ci.intern-compat-state-str intern-a source-id))]
+            (& (ci.intern-compat-state-str intern-a source-id)))]
         (if (= mirrored-id source-id)
           unit
           (set! ok false))
@@ -590,7 +590,7 @@
         [mirrored-id : i64
           (ci.intern-compat-state-generated-name
             (&mut intern-b)
-            (ci.intern-compat-state-str intern-a source-id))]
+            (& (ci.intern-compat-state-str intern-a source-id)))]
         (if (= mirrored-id source-id)
           unit
           (set! ok false))

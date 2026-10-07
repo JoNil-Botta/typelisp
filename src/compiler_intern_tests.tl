@@ -119,11 +119,11 @@
       (with-scratch
         (let
           [temporary : String (ci.intern-substring "xxhygiene/localyy" 2 13)]
-          (ci.intern-generated-name temporary)))]
+          (ci.intern-generated-name (& temporary))))]
     [opaque-again-id : i64 (ci.intern-generated-name "hygiene/local")]
     [duplicate-display-id : i64
       (ci.intern-generated-name
-        (ci.intern-substring "xxgenerated-source-anchorzz" 2 23))]
+        (& (ci.intern-substring "xxgenerated-source-anchorzz" 2 23)))]
     [qualified-id : i64
       (ci.intern-generated-qualified-name
         "generated-module/generated-base"
@@ -857,7 +857,7 @@
       (begin
         (ci.intern-compat-state-intern
           state
-          (intern-maps-fill-name prefix index))
+          (& (intern-maps-fill-name prefix index)))
         unit)
       (when
         (< index generated)

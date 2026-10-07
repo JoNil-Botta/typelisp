@@ -8483,13 +8483,13 @@
           tc_core.tc-type-resolution-cache-capacity)
         (=
           (array-length scalar-data.size-cache)
-          tc_core.tc-agg-scalar-cache-capacity)
+          tc_core.tc-agg-scalar-cache-length)
         (=
           (array-length scalar-data.align-cache)
-          tc_core.tc-agg-scalar-cache-capacity)
+          tc_core.tc-agg-scalar-cache-length)
         (=
           (array-length scalar-data.regwords-cache)
-          tc_core.tc-agg-scalar-cache-capacity)
+          tc_core.tc-agg-scalar-cache-length)
         (=
           (array-length
             (__tl-project-field

@@ -11271,13 +11271,46 @@
   ;; key still stops the walk. The wrapper peel stays by value -- it needs owned
   ;; `Box` storage to walk an `AstDecl.Unsafe` chain -- but it reads the
   ;; backing slot instead of a stepped-out 104 B copy.
+  ;;
+  ;; The roots are indexed once by helper module: `heads` maps a module to its
+  ;; first root and `next` links the rest in ascending root order, with each
+  ;; helper name rendered once. A function then checks only its own module's
+  ;; roots, in root order, so the first conflict found is the one a scan of
+  ;; every root per function finds.
   (let
+    [root-count : i64 (clone_support.clone-root-entries-len roots)]
+    [heads : lower_i64_i64_map.Map
+      (lower_i64_i64_map.with-capacity (+ root-count 1))]
+    [next : (__tl_dyn-array i64) (__tl_make-array i64 (+ root-count 1))]
+    [keys : (__tl_dyn-array i64) (__tl_make-array i64 (+ root-count 1))]
+    [texts : (__tl_dyn-array String) (__tl_make-array String (+ root-count 1))]
+    [root : i64 (- root-count 1)]
     [count : i64 (ast.ast-decl-list-len (& source-decls))]
     [decl-slots : (__tl_dyn-array ast.AstDecl) source-decls.slots]
     [decl-offset : i64 source-decls.offset]
     [index : i64 0]
     [cur-module-id : i64 module-id]
     [found : i64 -1]
+    ;; Prepend from the last root so each module's chain ascends.
+    (while (>= root 0)
+      (let
+        [root-key-id : i64
+          (clone_support.clone-root-entries-key-id-at-or roots root -1)]
+        [root-module-id : i64
+          (if (clone_support.clone-name-key-qualified? root-key-id)
+            (clone_support.clone-name-key-module-id root-key-id)
+            cbi.compiler-builtin-id-fix-empty)]
+        (set! (array-ref keys root) root-key-id)
+        (set!
+          (array-ref texts root)
+          (compiler-lower-state-intern-str
+            lower-state
+            (clone_support.clone-root-entries-helper-id-at-or roots root -1)))
+        (set!
+          (array-ref next root)
+          (lower_i64_i64_map.get-value-or (& heads) root-module-id -1))
+        (lower_i64_i64_map.insert-ref! (&mut heads) root-module-id root)
+        (set! root (- root 1))))
     (while (and (< found 0) (< index count))
       (match (ast.ast-decl-unwrapped
         (lower-global-array-element-shared-view
@@ -11286,15 +11319,17 @@
         [(Module next-module) (set! cur-module-id next-module)]
         [(DefFn decl-meta name _ _ _ _)
           (let
-            [root-key-id : i64
-              (lower-clone-handoff-source-helper-root-id
-                lower-state
-                name
-                cur-module-id
-                roots)]
-            (if (>= root-key-id 0)
-              (set! found root-key-id)
-              unit))]
+            [candidate : i64
+              (lower_i64_i64_map.get-value-or (& heads) cur-module-id -1)]
+            (when
+              (>= candidate 0)
+              (let
+                [text : String (tc_core.tc-env-key-name-text name)]
+                (while (and (>= candidate 0) (< found 0))
+                  (when
+                    (string.eq text (array-ref texts candidate))
+                    (set! found (array-ref keys candidate)))
+                  (set! candidate (array-ref next candidate))))))]
         [_ unit])
       (set! index (+ index 1)))
     found))

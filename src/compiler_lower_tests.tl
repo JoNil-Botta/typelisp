@@ -14050,6 +14050,125 @@
     (compiler-lower-stdlib-comptime-nullary-enum-runtime-skip-ok?)
     (compiler-lower-unsafe-ast-dce-ok?)))
 
+(cfg
+  test
+  ;; The first conflict the per-function scan finds: the oracle the indexed
+  ;; conflict check must reproduce.
+  (define (compiler-lower-clone-conflict-oracle
+    [lower-state : lower.CompilerLowerState]
+    [decls : (& decls ast.AstDeclList)]
+    [roots : clone_support.CloneRootEntries]) : i64
+    (let
+      [index : i64 0]
+      [module-id : i64 cbi.compiler-builtin-id-fix-empty]
+      [found : i64 -1]
+      (while (and (< found 0) (< index (ast.ast-decl-list-len decls)))
+        (match (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))
+          [(Module next) (set! module-id next)]
+          [(DefFn _ name _ _ _ _)
+            (set!
+              found
+              (lower.lower-clone-handoff-source-helper-root-id
+                lower-state
+                name
+                module-id
+                roots))]
+          [_ unit])
+        (set! index (+ index 1)))
+      found)))
+
+(cfg
+  test
+  (define (compiler-lower-clone-conflict-decls [spec : (& spec str)]) : ast.AstDeclList
+    ;; `spec` is a space-separated list: `@m` enters module `m`, any other word
+    ;; declares a function of that (generated) name.
+    (let
+      [out : ast.AstDeclList (ast.ast-decl-list-new)]
+      [start : i64 0]
+      [index : i64 0]
+      [len : i64 (string.string-length spec)]
+      (while (<= index len)
+        (when
+          (or (= index len) (= (string.string-ref spec index) ' '))
+          (when
+            (> index start)
+            (let
+              [word : String (string.substring spec start (- index start))]
+              (if (= (string.string-ref word 0) '@')
+                (ast.ast-decl-list-push
+                  (&mut out)
+                  (ast.ast-decl-module-id
+                    (ci.intern
+                      (string.substring
+                        word
+                        1
+                        (- (string.string-length word) 1)))))
+                (ast.ast-decl-list-push
+                  (&mut out)
+                  (ast.ast-decl-def-fn-id
+                    (lower-test-generated-name-id word)
+                    (ast.ast-param-list-new)
+                    (ast.AstType.I64)
+                    -1)))))
+          (set! start (+ index 1)))
+        (set! index (+ index 1)))
+      out)))
+
+(cfg
+  test
+  (define (compiler-lower-clone-conflict-index-ok?) : bool
+    (let
+      [lower-state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+      [pair-key : i64 (clone_support.clone-name-key-id (ci.intern "Pair"))]
+      [box-key : i64
+        (clone_support.clone-name-key-id-in-module
+          (ci.intern "m")
+          (ci.intern "Box"))]
+      [no-roots : clone_support.CloneRootEntries Empty]
+      [roots : clone_support.CloneRootEntries
+        (clone_support.clone-root-entries-add-id
+          (clone_support.clone-root-entries-add-id no-roots pair-key)
+          box-key)]
+      [ok : bool true]
+      (clone_support.clone-root-entries-materialize-helper-names! roots)
+      ;; Each case: decls, expected key. A helper name only conflicts in its
+      ;; own module, and the first declaration in order wins.
+      (for
+        [case
+          (array
+            (tuple "keep clone$Pair" pair-key)
+            (tuple "@m clone$Pair" -1)
+            (tuple "clone$Box" -1)
+            (tuple "@m keep clone$Box" box-key)
+            (tuple "@m clone$Box @r clone$Pair" box-key))]
+        (let
+          [decls : ast.AstDeclList
+            (compiler-lower-clone-conflict-decls (& (tuple-ref case 0)))]
+          [got : i64
+            (lower.lower-clone-handoff-source-conflict-in-module
+              lower-state
+              (& decls)
+              roots
+              cbi.compiler-builtin-id-fix-empty)]
+          (when
+            (not
+              (and
+                (= got (tuple-ref case 1))
+                (=
+                  got
+                  (compiler-lower-clone-conflict-oracle
+                    lower-state
+                    (& decls)
+                    roots))))
+            (set! ok false))))
+      ok)))
+
+(test
+  compiler-lower-clone-conflict-index
+  (test.assert-true
+    (compiler-lower-clone-conflict-index-ok?)
+    "the indexed clone conflict check finds the per-function scan's first conflict"))
+
 (test
   compiler-lower-profile-job-isolation
   (test.assert-true

@@ -5514,6 +5514,30 @@
                           seen-cleanup
                           false)]
                       [_ (Err "parse: :must-use metadata takes no arguments")])))]
+              [(=
+                  (ci.intern-syntax-id-value key)
+                  (cbi.compiler-builtin-ctfe ":opaque"))
+                (if seen-field
+                  (Err "parse: defstruct metadata must appear before fields")
+                  (if (not (= (bit-and markers 2) 0))
+                    (Err "parse: duplicate defstruct :opaque metadata")
+                    (match (reader.sexpr-view after-key)
+                      [(Nil)
+                        (parse-ast-defstruct-items
+                          dispatch
+                          pools
+                          tail
+                          lifetimes
+                          repr
+                          cleanup
+                          (+ markers 2)
+                          align
+                          fields
+                          seen-lifetimes
+                          seen-repr
+                          seen-cleanup
+                          false)]
+                      [_ (Err "parse: :opaque metadata takes no arguments")])))]
               [(compiler-parse-metadata-key? dispatch key)
                 (if seen-field
                   (Err "parse: defstruct metadata must appear before fields")
@@ -5879,6 +5903,24 @@
                         seen-cleanup
                         false)]
                     [_ (Err "parse: :must-use metadata takes no arguments")]))]
+              [(=
+                  (ci.intern-syntax-id-value key)
+                  (cbi.compiler-builtin-ctfe ":opaque"))
+                (if (not (= (bit-and markers 2) 0))
+                  (Err "parse: duplicate defenum :opaque metadata")
+                  (match (reader.sexpr-view after-key)
+                    [(Nil)
+                      (parse-ast-defenum-items
+                        dispatch
+                        pools
+                        tail
+                        lifetimes
+                        cleanup
+                        (+ markers 2)
+                        seen-lifetimes
+                        seen-cleanup
+                        false)]
+                    [_ (Err "parse: :opaque metadata takes no arguments")]))]
               [else
                 (Err
                   (str_cat.str-cat

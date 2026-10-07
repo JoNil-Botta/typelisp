@@ -986,6 +986,21 @@ these semantic flags even when the aggregates have identical ABI. The existing
 AST wrapper, surface roundtrip, and specialization selftests guard these rules;
 serialized metadata changes also require a surface-AST schema version change.
 
+Bit 1 of the marker word is `(:opaque)` (#6999, surface AST schema 18). The
+typechecker enforces it with E0221 at a few choke points in
+`compiler_typecheck_core.tl`:
+- the source type policy, where only a pointer or reference referent may name a
+  foreign opaque aggregate;
+- name references, which covers constructors, nullary variants and functions
+  whose signatures hold the type by value;
+- `init`, field access and field borrows;
+- the owned and borrowed struct and variant pattern binders.
+
+`tc-opaque-foreign-index?` decides membership from the symbol's owner module
+against the checking context's module, using dotted-descendant identity.
+`tc-opaque-decls-declare?` sets a per-job flag when the program declares any
+opaque aggregate, so programs without one pay only that flag test.
+
 `AstExpr.While` keeps its direct body forms in an `AstExprList` (surface AST
 schema 17). Typechecking requires each form to be unit-valued and locates a
 mismatch at that form. An explicit `Begin` remains one body form and may discard

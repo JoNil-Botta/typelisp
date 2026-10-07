@@ -68,6 +68,8 @@
 (define surface-ast-magic : i64
   3544386045472754772)
 (define surface-ast-schema-version : i64
+  ;; 18: aggregate marker flags admit bit 1, :opaque (#6999).
+  ;;
   ;; 17: AstExpr tag 19 retains the direct while body expression list.
   ;;
   ;; 16: AstExpr tag 89 adds the rank-2 Foreach2 domain.
@@ -121,7 +123,7 @@
   ;; requires TlciProducerIdentityAdmission.ExactMatch and degrades to re-parse),
   ;; so this is a deployment invariant rather than a format-compatibility one --
   ;; but the version still moves whenever the encoding shape does.
-  17)
+  18)
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -1064,7 +1066,7 @@
     (if (or (= tag 0) (= tag 1))
       (let
         [markers : i64 (codec.surface-ast-read-i64! reader)]
-        (if (or (= markers 0) (= markers 1))
+        (if (and (>= markers 0) (<= markers 3))
           (if (= tag 0)
             (ast.ast-decl-meta-runtime-with-aggregate-markers markers)
             (surface-ast-read-comptime-decl-meta! reader markers))

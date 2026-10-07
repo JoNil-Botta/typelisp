@@ -9460,7 +9460,8 @@
     [(Comptime _ _) true]))
 
 ;; Aggregate markers are declaration metadata, not runtime representation.
-;; Bit 0 is :must-use; higher bits are reserved for future aggregate markers.
+;; Bit 0 is :must-use and bit 1 is :opaque; higher bits are reserved for future
+;; aggregate markers.
 (define (ast-decl-meta-aggregate-markers [meta : AstDeclMeta]) : i64
   (match (__tl-box-place meta.value)
     [(Runtime markers) markers]
@@ -9471,6 +9472,9 @@
 
 (define (ast-decl-must-use? [decl : (& decl AstDecl)]) : bool
   (not (= (bit-and (ast-decl-aggregate-markers decl) 1) 0)))
+
+(define (ast-decl-opaque? [decl : (& decl AstDecl)]) : bool
+  (not (= (bit-and (ast-decl-aggregate-markers decl) 2) 0)))
 
 (define (ast-decl-with-meta [meta : AstDeclMeta] [inner : AstDecl]) : AstDecl
   (let

@@ -18144,13 +18144,59 @@
             (tc-resolve-type ctx ty)
             (tc-name-id-list-add out name)))])))
 
+;: The reserved `program` lifetime, which outlives every other lifetime.
+(define (tc-program-lifetime-id? [lifetime-id : i64]) : bool
+  (and
+    (>= lifetime-id 0)
+    (ci.intern-renderable-id? lifetime-id)
+    (string.eq (ci.intern-str lifetime-id) "program")))
+
+;: The list without the reserved `program` lifetime (itself when it has none).
+(define (tc-name-id-list-without-program [items : TcNameIdList]) : TcNameIdList
+  (let
+    [cursor : TcNameIdList items]
+    [has-program : bool false]
+    (while (and (not has-program) (not (tc-name-id-list-empty? cursor)))
+      (when
+        (tc-program-lifetime-id? (tc-name-id-list-head cursor))
+        (set! has-program true))
+      (set! cursor (tc-name-id-list-rest cursor)))
+    (if has-program
+      (let
+        [out : TcNameIdList Nil]
+        [rest : TcNameIdList items]
+        (while (not (tc-name-id-list-empty? rest))
+          (let
+            [lifetime : i64 (tc-name-id-list-head rest)]
+            (unless
+              (tc-program-lifetime-id? lifetime)
+              (set! out (tc-name-id-list-add out lifetime))))
+          (set! rest (tc-name-id-list-rest rest)))
+        out)
+      items)))
+
+;; A returned reference lifetime must be tied to an input parameter or be the
+;; reserved `program` lifetime (SPEC 3.10, lifetime-parameterized aggregates).
 (define (tc-reference-return-lifetimes-allowed?
   [ctx : TcContext]
   [params : ast.AstParamList]
   [ret : ast.AstType]) : bool
-  (tc-name-id-list-all-in?
-    (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ret))
-    (tc-param-list-reference-return-lifetimes-into ctx params Nil)))
+  (let
+    [allowed : TcNameIdList
+      (tc-param-list-reference-return-lifetimes-into ctx params Nil)]
+    [cursor : TcNameIdList
+      (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ret))]
+    [ok : bool true]
+    (while (and ok (not (tc-name-id-list-empty? cursor)))
+      (let
+        [lifetime : i64 (tc-name-id-list-head cursor)]
+        (unless
+          (or
+            (tc-program-lifetime-id? lifetime)
+            (tc-name-id-list-contains allowed lifetime))
+          (set! ok false)))
+      (set! cursor (tc-name-id-list-rest cursor)))
+    ok))
 
 (define (tc-reference-return-policy-ok
   [ctx : TcContext]
@@ -18422,7 +18468,9 @@
   [value-ty : ast.AstType]
   [context : String]) : ResultTcUnit
   (let
-    [value-regions : TcNameIdList (tc-type-collect-regions value-ty)]
+    ;; `program` outlives every target, so only shorter regions can escape.
+    [value-regions : TcNameIdList
+      (tc-name-id-list-without-program (tc-type-collect-regions value-ty))]
     (match value-regions
       [(Nil) Ok]
       [_
@@ -26096,6 +26144,9 @@
         "typecheck: defdispatch requires exactly one scalar variant")
       (string.eq text "typecheck: duplicate defdispatch ISA variant")
       (string.eq text "typecheck: duplicate lifetime parameter")
+      (string.eq
+        text
+        "typecheck: returned reference lifetime must be tied to a parameter")
       (string.contains (& text) " cannot use repr c")
       (string.contains (& text) " declares (:align "))))
 
@@ -29322,10 +29373,7 @@
   (and
     (>= lifetime-id 0)
     (not (tc-elaborated-lifetime-hidden? lifetime-id))
-    (not
-      (and
-        (ci.intern-renderable-id? lifetime-id)
-        (string.eq (ci.intern-str lifetime-id) "program")))
+    (not (tc-program-lifetime-id? lifetime-id))
     (not (tc-param-list-has-name-id-at? params lifetime-id 0))))
 
 (define (tc-bind-signature-lifetime-markers

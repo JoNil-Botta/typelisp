@@ -29,6 +29,15 @@ Shared emission reads those facts and never tests the target itself.
 enforces the boundary; [`src/TESTING.md`](../src/TESTING.md) (*Cross-Target
 Codegen Parity*) describes its rules.
 
+The freestanding Linux runtime installs a zeroed TLS mapping before global
+initializers and at each native worker entry. FS:0 holds the mapping's thread
+pointer; named TPOFF relocations locate the arena pointer, optional backtrace
+bounds and one private storage word. `tl_thread_local_word_addr` exposes that
+word through an unsafe native declaration. Its address belongs to the calling
+thread, survives arena changes and must never escape to another thread.
+Issue [#8638](https://github.com/JoNil-Botta/typelisp/issues/8638) consumes this
+primitive for the private I/O error channel; Windows uses its native TLS API.
+
 `compiler_module_name.tl` owns the complete dotted import-name contract used by
 both the parser and LSP: nonempty components, no path separators or colon, and
 no final `.tl` suffix. It preserves the existing byte-level name predicate;

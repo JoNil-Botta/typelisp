@@ -636,6 +636,7 @@ thread_runtime|all|-|tests/integration/thread_runtime.tl|42|-|-|stdlib/arena.tl 
 atomic_intrinsics_thread_counter|all|-|tests/integration/atomic_intrinsics_thread_counter.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 runtime_atomic_raw_pointer|all|-|tests/integration/runtime_atomic_raw_pointer.tl|42|-|-|stdlib/runtime.tl|-
 thread_safe_i64|all|-|tests/integration/thread_safe_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+thread_local_word|linux|0,1,2|tests/integration/thread_local_word.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 env_thread_sync|all|-|tests/integration/env_thread_sync.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/env.tl stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/str_cat.tl stdlib/vector.tl stdlib/string.tl|-
 env_arena_publication|all|0,1,2|tests/integration/env_arena_publication.tl|42|-|-|stdlib/arena.tl stdlib/env.tl stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/str_cat.tl stdlib/vector.tl stdlib/string.tl|-
 thread_safe_bool_unit|all|-|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-

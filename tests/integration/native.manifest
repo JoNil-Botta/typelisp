@@ -279,6 +279,9 @@ licm_payload_other|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|
 licm_payload_other_late|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|0 5|stdlib/io.tl stdlib/string.tl|stage-stdlib
 licm_payload_taken_late|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|1 5|stdlib/io.tl stdlib/string.tl|stage-stdlib
 licm_payload_skipped|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|0 20|stdlib/io.tl stdlib/string.tl|stage-stdlib
+borrowed_handle_places_values|all|0,1,2|tests/integration/borrowed_handle_places.tl|42|-|values|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|stage-stdlib
+borrowed_handle_places_empty|all|0,1,2|tests/integration/borrowed_handle_places.tl|42|-|empty|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|stage-stdlib
+borrowed_handle_places_bounds|all|0,2|tests/integration/borrowed_handle_places.tl|134|-|bounds|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|stage-stdlib+expected-stderr:tl: $SRC:74:33: array index out of bounds: index=4 length=4\n
 loadcse_forward|all|-|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl|-
 loadcse_alias|all|-|tests/integration/loadcse_alias.tl|42|-|-|stdlib/io.tl|-
 rotate_multi_exit_live_out|all|-|tests/integration/rotate_multi_exit_live_out.tl|42|-|-|stdlib/io.tl|-
@@ -798,6 +801,7 @@ range_loop_shapes_protocol_abort|all|-,2|tests/integration/range_loop_shapes.tl|
 range_loop_shapes_fields_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 2|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:55:46: array index out of bounds: index=16 length=16\n
 range_loop_shapes_advance_first_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 3|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:116:48: array index out of bounds: index=16 length=16\n
 specialize_resource_scope|all|-|tests/integration/specialize_resource_scope.tl|42|-|-|-|-
+specialize_substitution_forms|all|-|tests/integration/specialize_substitution_forms.tl|42|-|-|stdlib/vector.tl|-
 float_comparisons_embedded|all|-|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|-
 float_comparisons_source|all|0,1,2|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|stage-stdlib
 decls_generated_imports|all|-|tests/integration/decls_generated_imports.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl decls_generated_import_macro_dep.tl|-

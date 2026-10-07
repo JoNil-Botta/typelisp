@@ -219,6 +219,11 @@ alignment, member offsets looked up by name, tuple offsets from the
 typechecker's sizes) and fails the compile on the first disagreement. Without
 debug info nothing is recorded.
 
+Borrowing a dynamic-array element or enum payload loads the descriptor handle
+from its one-word storage slot through the shared slot-reference helper.
+Inline aggregate payloads keep their storage address. Element bounds checks
+precede the handle load, so an invalid outer index cannot read a slot.
+
 A rank-2 `foreach` is `AstForeach.Foreach2` (surface schema 16, expression
 tag 89): the outer coordinate's name, type and bounds, then the inner one's,
 then the body, so binding order and ordinal survive every AST walker. The
@@ -242,6 +247,18 @@ Borrowed aggregate patterns share `lower-bind-element-access`: a String name
 binding loads the stored handle to expose a `str` view, while nested aggregate
 patterns retain the address of inline storage. Struct fields follow the same
 access rule as tuple slots and array elements, preserving the borrow lifetime.
+
+The lowerer's job state, `CompilerLowerState`, is a one-word handle to a
+directory of typed cells, one per field, so an access reads one directory word
+and the cell and never copies the wide state. The fields are declared once, as
+`[name : Type init]` clauses, by `compiler-state-directory-schema`
+(`compiler_state_schema.tl`, #7021). That schema generates the only code that
+addresses the cells: a typed reader and writer per field
+(`compiler-lower-state-NAME`, `compiler-lower-state-set-NAME!`), the slot
+count, the constructor, and the per-field fingerprints the state-isolation
+tests compare. A call site cannot pair a slot with the wrong type, and adding
+or reordering a field updates every derived item. The safety fixtures
+`compiler_state_schema_*` check the generator on a small synthetic schema.
 
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)

@@ -1764,6 +1764,12 @@ Reference types are lifetime-bearing:
   value)` writes through an owned fixed array or a mutable array reference. Private
   `__tl_array-push!` mutates private dynamic buffers. Borrowed `str` source
   semantics are specified in section 3.11.
+- A value read through a reference does not own the referent. `(deref r)`, or
+  a field, tuple-element or element projection through `r` or through
+  `(deref r)`, may be used by value only when its type is `Copy`. A by-value
+  use of a non-`Copy` value read this way is a move out of the reference and
+  is rejected as a move violation (`E0208`): pass, bind or return a borrow
+  `(& ...)` of it, or an owned clone.
 
 In function signatures, the ordinary spelling elides the lifetime name:
 
@@ -3124,7 +3130,9 @@ expression. A safe direct call is rejected and names the callee. Any
 first-class reference is also rejected, even inside `unsafe`, because assigning
 the ordinary `(-> ...)` value would erase the checker-only unsafe-call effect.
 This fail-closed rule covers inferred and annotated locals and globals,
-branches, arguments and returns, assignment, aggregates, and captures.
+branches, arguments and returns, assignment, aggregates, and captures. A
+field or payload `(:cleanup ...)` hook, which the compiler calls implicitly,
+cannot name an unsafe declaration either.
 
 An unsafe function body is still checked as ordinary safe code unless the body
 itself uses `(unsafe ...)`. The same safe boundary applies to a lambda body:
@@ -3996,7 +4004,10 @@ type:
 
 - `(:cleanup field-cleanup-fn)` marks a direct resource field and names the
   cleanup function for that field. The function must have type `(-> F unit)`,
-  where `F` is the field type.
+  where `F` is the field type. It must not be an unsafe declaration (§4.3.1):
+  the compiler calls it implicitly where the owner's scope ends, in safe code
+  too, so a hook discharges its own unsafety in its body. The same rule applies
+  to an enum payload's `(:cleanup ...)` metadata.
 - `(:owned)` marks a field whose type is itself cleanup-owning. The field uses
   that type's declared cleanup function.
 

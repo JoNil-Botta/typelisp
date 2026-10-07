@@ -21,6 +21,7 @@ embedded-stdlib-tlci-resource-verifier-self-tests	all	embedded stdlib TLCI resou
 build-invariance-batch-reuse-self-tests	linux	build-invariance batch reuse self-tests	-	-	256	-	scripts/verify-build-invariance-batch.sh
 selfhost-linked-size-attribution-parser-self-tests	all	selfhost linked-size attribution parser self-tests	-	-	256	-	scripts/analyze-selfhost-build-asm-size.sh --self-test
 cli-help-surface	all	CLI help surface	-	-	256	-	scripts/check-cli-help-surface.sh --self-test
+compiler-state-schema-boundary	all	compiler state schema boundary	-	-	256	-	scripts/check-compiler-state-schema.sh --self-test && scripts/check-compiler-state-schema.sh
 tlci-native-route-size-ratchet-self-tests	all	TLCI native route size ratchet self-tests	-	-	256	-	scripts/check-tlci-native-route-size.sh --self-test
 zero-cons-structural-classifier-self-tests	all	zero-cons structural classifier self-tests	-	-	256	-	scripts/check-zero-cons.sh --self-test
 zero-cons-fixture-and-embedded-source-invariant	all	zero-cons fixture and embedded source invariant	-	-	512	-	scripts/check-zero-cons.sh --fixtures

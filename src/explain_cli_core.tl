@@ -205,6 +205,9 @@ See also:
 Description:
     An owning value or projection was consumed and then used again, or a move
     was attempted through a global/shared place that cannot transfer ownership.
+    A non-Copy value read through a `(& T)` or `(&mut T)` reference is not
+    owned by the reader: passing, binding, constructing with or returning it
+    by value would move it out of the reference.
 
 Minimal failing example:
     (import stdlib.string)
@@ -215,10 +218,12 @@ Minimal failing example:
 
 Fix:
     Use the value only before it is consumed, transfer it once, or explicitly
-    clone data whose type supports an independent owned copy.
+    clone data whose type supports an independent owned copy. For a value
+    read through a reference, borrow it with `(& ...)` instead.
 
 See also:
-    SPEC.md, \"Move semantics\"; tests/safety/box_take_use_after_move_reject.tl.
+    SPEC.md, \"Move semantics\"; tests/safety/box_take_use_after_move_reject.tl;
+    tests/safety/move_out_of_reference_call_arg_reject.tl.
 ")
 
 (define (diagnostic-explain-e0209) : String

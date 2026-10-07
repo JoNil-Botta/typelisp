@@ -25892,15 +25892,16 @@
 
 ;; Whether a by-value argument, whose type passed
 ;; lower-call-arg-aggregate-type?, is copied before later arguments run, since
-;; its storage could change while the callee reads it. It must not be
-;; register-resident, and either another argument of the call can write it
-;; (`snapshot?`, from lower-call-args-snapshot-mask) or its place is a global
-;; value's storage, which any call may write: a plain global, which lowers to
-;; the global's own address, or a projection rooted in one (bound in the type
-;; environment but not locally; a nullary variant is bound in neither, and
-;; constructs a fresh value). A var below `vars-before` (lower-state-next-var
-;; before argument `arg-id` was lowered) is a local's or parameter's own
-;; binding, so its argument is no projection.
+;; its storage could change while the callee reads it. Its type must need
+;; private storage (tc-param-storage-resolved?: memory-class and Copy, since a
+;; moved argument's source is not read again), and either another argument of
+;; the call can write it (`snapshot?`, from lower-call-args-snapshot-mask) or
+;; its place is a global value's storage, which any call may write: a plain
+;; global, which lowers to the global's own address, or a projection rooted in
+;; one (bound in the type environment but not locally; a nullary variant is
+;; bound in neither, and constructs a fresh value). A var below `vars-before`
+;; (lower-state-next-var before argument `arg-id` was lowered) is a local's or
+;; parameter's own binding, so its argument is no projection.
 (define (lower-call-arg-copy?
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
@@ -25932,7 +25933,7 @@
                 (match (tc_core.tc-lookup-id type-env root)
                   [(Ok _) true]
                   [(Err _) false]))))]))
-    (not (lower-type-register-resident? ctx arg-ty))))
+    (tc_core.tc-param-storage-resolved? ctx arg-ty)))
 
 (define (lower-call-args-as-at
   [ctx : tc_core.TcContext]
@@ -66308,13 +66309,9 @@
                   (or
                     (= mask -1)
                     (and (< index 63) (!= (bit-and mask (shl 1 index)) 0)))
-                  (lower-type-inline-struct-or-enum?
+                  (tc_core.tc-param-storage-type?
                     ctx
-                    (lower-global-shared-view ty))
-                  (not
-                    (lower-type-register-resident?
-                      ctx
-                      (lower-global-shared-view ty))))
+                    (lower-global-shared-view ty)))
                 (match (try
                   (lower-copy-inline-aggregate-to-inline
                     ctx

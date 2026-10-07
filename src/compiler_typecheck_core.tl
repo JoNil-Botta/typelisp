@@ -2441,9 +2441,9 @@
   ;; each checked body recorded: under its node id, the mask of written
   ;; parameter positions that lowering reads (tc-body-param-write-fact); under
   ;; tc-body-mut-borrow-key, each root it borrows `&mut`; under
-  ;; tc-body-memory-class-key, a nominal name's memory class
-  ;; (tc-body-memory-class-name?); and under tc-body-param-note-key, the
-  ;; names noted during the current move check, the first
+  ;; tc-body-memory-class-key, whether a nominal name needs private parameter
+  ;; storage (tc-body-param-storage-name?); and under tc-body-param-note-key,
+  ;; the names noted during the current move check, the first
   ;; `param-writes-count`. A noted name `-1 - name` is a local root the body
   ;; borrows `&mut` rather than a written parameter.
   (param-writes-count i64)
@@ -68067,34 +68067,40 @@
               [(No) (tc-moved-add acc name)])
             (tc-moved-add acc name)))])))
 
-(define (tc-param-storage-memory-class-type?
-  [ctx : TcContext]
-  [ty : ast.AstType]) : bool
+(define (tc-param-storage-type? [ctx : TcContext] [ty : ast.AstType]) : bool
   (let
     [unwrapped : ast.AstType ty]
     (if (tc-poison-type? (tc-global-shared-view unwrapped))
       false
-      (tc-param-storage-memory-class-resolved?
-        ctx
-        (tc-resolve-type ctx unwrapped)))))
+      (tc-param-storage-resolved? ctx (tc-resolve-type ctx unwrapped)))))
 
-;; Whether a resolved type is a memory-class struct or enum: one that is not
-;; register-resident.
-(define (tc-param-storage-memory-class-resolved?
+;; Whether a by-value parameter or argument of resolved type needs private
+;; storage (#7901): a memory-class struct or enum, which is passed as the
+;; address of the caller's storage, that is also Copy. A move-only argument's
+;; source is moved by the call, so no safe code can observe the callee write
+;; to it, or a write to the source while the call runs; a Copy argument's
+;; source stays usable. Every part of a Copy aggregate is Copy, so the places
+;; that alias a seeded parameter pass this test too.
+(define (tc-param-storage-resolved? [ctx : TcContext] [resolved : ast.AstType]) : bool
+  (let
+    [stripped : ast.AstType (tc-type-strip-region resolved)]
+    (match (tc-global-shared-view stripped)
+      [(Struct name) (tc-body-param-storage-name? ctx name stripped)]
+      [(StructArgs name _) (tc-body-param-storage-name? ctx name stripped)]
+      [(Enum name) (tc-body-param-storage-name? ctx name stripped)]
+      [(EnumArgs name _) (tc-body-param-storage-name? ctx name stripped)]
+      [_ false])))
+
+;; tc-param-storage-resolved? for nominal `name-id`, whose resolved type is
+;; `ty`: memory-class (not register-resident) and Copy. Lifetime arguments
+;; change neither. Every function's parameters ask, and a layout query walks
+;; the type, so a resolved layout's answer is memoized in the arena the facts
+;; started in; a layout not resolved yet counts as memory-class and is asked
+;; again.
+(define (tc-body-param-storage-name?
   [ctx : TcContext]
-  [resolved : ast.AstType]) : bool
-  (match (tc-type-strip-region resolved)
-    [(Struct name) (tc-body-memory-class-name? ctx name)]
-    [(StructArgs name _) (tc-body-memory-class-name? ctx name)]
-    [(Enum name) (tc-body-memory-class-name? ctx name)]
-    [(EnumArgs name _) (tc-body-memory-class-name? ctx name)]
-    [_ false]))
-
-;; Whether nominal `name-id` is memory-class (not register-resident). Every
-;; function's parameters ask, and a layout query walks the type, so a resolved
-;; layout's answer is memoized in the arena the facts started in; a layout not
-;; resolved yet counts as memory-class and is asked again.
-(define (tc-body-memory-class-name? [ctx : TcContext] [name-id : i64]) : bool
+  [name-id : i64]
+  [ty : ast.AstType]) : bool
   (let
     [state : TcBodyState (tc-context-body-state ctx)]
     [view : (Ptr TcBodyStateData) (tc-body-state-view state)]
@@ -68109,7 +68115,9 @@
           [(Ok layout)
             (let
               [memory? : bool
-                (not (tc-inline-aggregate-layout-register-resident? layout))]
+                (and
+                  (not (tc-inline-aggregate-layout-register-resident? layout))
+                  (tc-type-copyable? ctx ty))]
               [arena-id : i64
                 (unsafe
                   (deref view).param-write-arena)]
@@ -68130,7 +68138,7 @@
                     (unsafe
                       (set! (deref ptr).param-facts grown)))))
               memory?)]
-          [(Err _) true])])))
+          [(Err _) (tc-type-copyable? ctx ty)])])))
 
 (define (tc-param-storage-seed-params
   [ctx : TcContext]
@@ -68163,8 +68171,8 @@
                 [(Invalidate _ _) true]
                 [_ false])
               (match (tc-lookup-id env name)
-                [(Ok bound) (tc-param-storage-memory-class-resolved? ctx bound)]
-                [(Err _) (tc-param-storage-memory-class-type? ctx ty)]))
+                [(Ok bound) (tc-param-storage-resolved? ctx bound)]
+                [(Err _) (tc-param-storage-type? ctx ty)]))
             (set! out (tc-param-storage-origin-bind-in-set out name name)))])
       (set! index (+ index 1)))
     out))
@@ -68228,7 +68236,7 @@
           (ast.ast-expr-segment-bases-get expr-bases receiver-box)]
         (match (tc-expr ctx env (tc-global-shared-view receiver))
           [(Ok receiver-ty)
-            (if (tc-param-storage-memory-class-type? ctx receiver-ty)
+            (if (tc-param-storage-type? ctx receiver-ty)
               (tc-param-storage-place-origin ctx expr-bases env moved receiver)
               No)]
           [(Err _) No]))]
@@ -68301,7 +68309,7 @@
   [init : ast.AstExpr]) : TcMovedSet
   (let
     [origin : TcMaybeNameId
-      (if (tc-param-storage-memory-class-type? ctx binding-ty)
+      (if (tc-param-storage-type? ctx binding-ty)
         (tc-param-storage-place-origin
           ctx
           expr-bases
@@ -68331,7 +68339,7 @@
           [name-id : i64 (tc-name-id-list-head cursor)]
           (match (tc-lookup-id env name-id)
             [(Ok ty)
-              (if (tc-param-storage-memory-class-type? ctx ty)
+              (if (tc-param-storage-type? ctx ty)
                 (set!
                   out
                   (tc-param-storage-origin-bind-in-set out name-id parameter-id))

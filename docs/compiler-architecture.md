@@ -686,7 +686,11 @@ shared by byte-offset projections through `lower-gep-byte`.
 
 A by-value memory-class `Struct` or `Enum` parameter arrives as the address of
 the caller's storage, yet SPEC 4.7.2 makes it private callee storage (#7901).
-Two copies keep that true without copying every parameter:
+Only a Copy aggregate's caller can still read its argument after the call: a
+move-only argument's source is moved, so writes to that storage during or
+after the call are unobservable to safe code. `tc-param-storage-resolved?`
+(memory-class and Copy, memoized per nominal name) therefore gates everything
+below. Two copies keep the rule true without copying every parameter:
 - **Callee side.** The move checker seeds each such parameter as the origin of
   its own storage. `tc-param-storage-note-write` notes the parameter when a
   field, element or `replace!` write, or a `&mut` borrow, reaches its storage,

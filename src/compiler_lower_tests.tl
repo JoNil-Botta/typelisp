@@ -2689,6 +2689,9 @@
   (if (= n 0) t.x (count-down t (- n 1))))
 (define (bump [t : Triple]) : i64
   (begin (set! t.x 9) t.x))
+(defstruct Named (name String) (x i64) (y i64))
+(define (bump-named [t : Named]) : i64
+  (begin (set! t.x 9) t.x))
 (define (read-after-write [t : Triple] [m : (&mut m Triple)]) : i64
   (begin (set! m.x 1) t.x))
 (define (pass-local) : i64
@@ -2715,6 +2718,9 @@
             "count-down")
           1)
         (= (lower-test-count functions "bump" (CopyBytes)) 1)
+        ;; A move-only argument's source is moved by the call, so a written
+        ;; move-only parameter keeps the caller's storage.
+        (= (lower-test-count functions "bump-named" (CopyBytes)) 0)
         (= (lower-test-count functions "read-after-write" (CopyBytes)) 0)
         (= (lower-test-count functions "pass-local" (CopyBytes)) 0)
         (= (lower-test-count functions "pass-global" (CopyBytes)) 1)

@@ -207,6 +207,12 @@
         (spec_ci.intern-str region)
         "_"
         (spec-type-key (ast.ty-node-get inner)))]
+    [(Invalidate lifetime inner)
+      (str_cat.str-cat
+        "invalidate_"
+        (spec_ci.intern-str lifetime)
+        "_"
+        (spec-type-key (ast.ty-node-get inner)))]
     [(Enum name)
       (str_cat.str-cat "enum_" (ast.ast-nominal-name-id-display name))]
     [(EnumArgs name lifetimes)
@@ -325,8 +331,8 @@
 (define (spec-materialize-generated-name-id [name : String]) : i64
   (spec_ci.intern-generated-name name))
 
-;; Self-test compatibility shim for the removed ambient value worker. The
-;; production specialization graph calls only the owner-routed implementation.
+;; Self-test shim for the removed ambient value worker: the combined
+;; substitution walk with no type bindings.
 (define (spec-substitute-values-expr
   [expr : ast.AstExpr]
   [subs : (& subs spec.SpecValueSubst)]) : spec.ResultSpecSubExpr
@@ -336,11 +342,15 @@
       (spec_ci.intern-compat-state-capture-active)]
     [owner : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools intern-state)]
+    [combined : spec.SpecSubst
+      (spec.SpecSubst
+        (spec.spec-type-subst-new)
+        (spec.spec-value-subst-shared-view subs))]
     (ast.ast-node-pool-context-install! pools)
     (spec_ci.intern-compat-state-install! intern-state)
     (let
       [result : spec.ResultSpecSubExpr
-        (spec.spec-substitute-values-expr-with-owner owner expr subs)]
+        (spec.spec-substitute-expr-with-owner owner expr (& combined))]
       (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install! intern-state)
       result)))
@@ -622,12 +632,15 @@
           (spec-template-env-has-template?
             wide
             cbi.compiler-builtin-id-fix-second))
-        ;; A missing-template name creates no record; all real shadows are
-        ;; dense slots, and the state grew beyond its initial capacity.
+        ;; Every shadow of a templated name appends one dense slot, even when
+        ;; the name is already shadowed, and a missing-template name appends
+        ;; none: x, x again, second, second over x, the pattern's two, and
+        ;; three each for the params, the bindings and params-then-bindings
+        ;; (15). The wide state grew beyond its initial capacity.
         (=
           (spec.spec-template-shadow-state-data
             (spec-template-env-shadow-state base)).len
-          18)
+          15)
         (=
           (spec.spec-template-shadow-state-data
             (spec-template-env-shadow-state wide)).len
@@ -1727,6 +1740,15 @@
   (unless (compiler-generated-test-metadata-distinct-ok?) (return 0))
   (unless (compiler-specialize-generated-symbol-records-growth-ok?) (return 0))
   1)
+
+(cfg
+  test
+  (test
+    specialize-self-test
+    (test.assert-i64-eq
+      (compiler-specialize-self-test)
+      1
+      "every specialization self-test check passes")))
 
 (cfg
   test

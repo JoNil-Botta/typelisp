@@ -1,5 +1,5 @@
 ;; tlci_core_tests.tl - image fixtures and the self-test for tlci_core, kept
-;; out of the production module. tlci_core_smoke.tl runs the self-test; the
+;; out of the production module. The inline test below runs the self-test; the
 ;; loader tests, the inspect tests and tests/tlci/corpus_emit.tl reuse the
 ;; fixtures.
 (import stdlib.byte_buf_core)
@@ -1263,11 +1263,6 @@
     [(not (tlci-test-aux-directory-shapes-ok?)) 20]
     [(not (tlci-test-hash-blocks-ok?)) 21]
     [else 0]))
-
-(define (tlci-core-self-test) : i64
-  (if (= (tlci-core-self-test-status) 0)
-    42
-    (io.panic "tlci-core: self-test mismatch")))
 
 (test
   tlci-core-parse-emit-round-trip

@@ -235,7 +235,16 @@ or external runtime orchestration. Pure stdlib API coverage that can run through
   intentionally call `output` / `start`. Its test item also covers pure command
   construction, argv/env vector builders, validation helpers, list conversion,
   and result/error predicates, and calls `process.test-env-dense-api` for
-  duplicate-name order in the dense environment list.
+  duplicate-name order in the dense environment list. It also checks which
+  builders select the inherited or exact environment policy and the exact
+  environment's repeated-name, case-collision, row-error and byte-cap
+  validation.
+- `process_exact_env.tl` inspects real children through `execve` and
+  `CreateProcess`: inherited mode keeps a parent sentinel, exact mode (several
+  rows, no rows, repeated runs) gives the child only its rows, Linux keeps
+  argv, cwd, stdin, inherit-mode status and async start/wait under exact mode,
+  and an unknown runtime policy code fails before spawn at every entry point.
+  It also checks the Windows block order helpers.
 - The process borrowed escape fixture verifies the checker rejects returning a
   borrowed command whose text owner is shorter-lived than the declared command
   lifetime.

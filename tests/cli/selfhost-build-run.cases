@@ -53,6 +53,106 @@ exit 19
 stdout empty
 stderr empty
 
+# A source build links into a private directory beside its destination and
+# replaces the destination only after the linker succeeded (#8192): a failed
+# GNU `ld` deletes the file it was told to write. No private directory
+# survives a success or a failure.
+case selfhost-cli-build-failed-link-keeps-output
+file unresolved.tl
+(extern (missing-8192) : i64 (:symbol "tl_missing_8192"))
+(define (main) : i64 (missing-8192))
+end-file
+sh printf 'previous build output\n' > "{{dir}}/kept{{exe}}"
+sh chmod 640 "{{dir}}/kept{{exe}}"
+# The reference copy keeps the {{exe}} suffix because MSYS derives the mode
+# bits on Windows from the file name.
+sh cp -p "{{dir}}/kept{{exe}}" "{{dir}}/kept-expected{{exe}}"
+run build "{{dir}}/unresolved.tl" -o "{{dir}}/kept{{exe}}"
+exit nonzero
+same "{{dir}}/kept{{exe}}" "{{dir}}/kept-expected{{exe}}"
+test "$(stat -c %a "{{dir}}/kept{{exe}}")" = "$(stat -c %a "{{dir}}/kept-expected{{exe}}")"
+test "$(ls -A "{{dir}}" | grep -c '^[.]typelisp-link')" = 0
+
+case selfhost-cli-build-replaces-output
+file main.tl
+(define (main) : i64 19)
+end-file
+sh printf 'stale output\n' > "{{dir}}/replaced{{exe}}"
+run build "{{dir}}/main.tl" -o "{{dir}}/replaced{{exe}}"
+stderr empty
+stdout match Built[ ].*replaced
+test -x "{{dir}}/replaced{{exe}}"
+test "$(ls -A "{{dir}}" | grep -c '^[.]typelisp-link')" = 0
+exec "{{dir}}/replaced{{exe}}"
+exit 19
+
+# A replace that fails (here onto a directory) leaves the destination alone and
+# nothing private behind.
+case selfhost-cli-build-replace-failure-cleans-up
+file main.tl
+(define (main) : i64 19)
+end-file
+sh mkdir -p "{{dir}}/occupied/inner"
+run build "{{dir}}/main.tl" -o "{{dir}}/occupied"
+exit nonzero
+stderr contains build: failed to replace
+test -d "{{dir}}/occupied/inner"
+test "$(ls -A "{{dir}}" | grep -c '^[.]typelisp-link')" = 0
+
+# Relative default and nested `-o` destinations; a destination whose parent is
+# missing is linked directly, so the linker still reports it.
+case selfhost-cli-build-relative-destinations
+file nested/prog.tl
+(define (main) : i64 23)
+end-file
+sh mkdir -p "{{dir}}/out/bin"
+cwd .
+step default
+run build nested/prog.tl
+stderr empty
+stdout is Built nested/prog{{exe}}
+exec "{{dir}}/nested/prog{{exe}}"
+exit 23
+step nested-output
+run build nested/prog.tl -o out/bin/prog{{exe}}
+stderr empty
+stdout is Built out/bin/prog{{exe}}
+test "$(ls -A out/bin | grep -c '^[.]typelisp-link')" = 0
+exec "{{dir}}/out/bin/prog{{exe}}"
+exit 23
+step missing-parent
+run build nested/prog.tl -o missing/prog{{exe}}
+exit nonzero
+test ! -e missing
+test "$(ls -A nested | grep -c '^[.]typelisp-link')" = 0
+
+# The private directory shares the destination's filesystem, not $TMPDIR's.
+case selfhost-cli-build-tmpdir-other-filesystem
+hosts linux
+file main.tl
+(define (main) : i64 19)
+end-file
+test -d /dev/shm
+test "$(stat -f -c %T /dev/shm)" != "$(stat -f -c %T "{{dir}}")" -o "$(stat -c %d /dev/shm)" != "$(stat -c %d "{{dir}}")"
+sh mkdir -p "/dev/shm/typelisp-8192-$$" && TMPDIR="/dev/shm/typelisp-8192-$$" "{{compiler}}" build "{{dir}}/main.tl" -o "{{dir}}/cross" > "{{dir}}/cross.out" && rmdir "/dev/shm/typelisp-8192-$$"
+in file {{dir}}/cross.out
+contains Built
+exec "{{dir}}/cross"
+exit 19
+
+# A Windows debug build keeps its PDB beside the destination, named after it.
+case selfhost-cli-build-debug-pdb
+hosts windows
+file main.tl
+(define (main) : i64 19)
+end-file
+run build "{{dir}}/main.tl" -g -o "{{dir}}/debug-prog.exe"
+stdout match Built[ ]
+test -f "{{dir}}/debug-prog.pdb"
+test "$(ls -A "{{dir}}" | grep -c '^[.]typelisp-link')" = 0
+exec "{{dir}}/debug-prog.exe"
+exit 19
+
 case selfhost-cli-default-wide-and
 step selfhost-cli-build-default-wide-and
 run build "{{work}}/wide-and.tl" -o "{{dir}}/wide-and{{exe}}" --target {{host-target}}

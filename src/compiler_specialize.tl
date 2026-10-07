@@ -1236,21 +1236,24 @@
     (string.int->string n)))
 
 ;; Build the "_<code>" tail into `buf` without re-copying the accumulated
-;; prefix per character. A recursive string.append form costs O(n^2) per key,
-;; and macro-identity-key-sexpr applies this to already-encoded sub-keys, so
-;; deep syntax identities would allocate quadratically.
+;; prefix per character, which would cost O(n^2) per key. A loop rather than
+;; one call per character keeps a long key off the stack (#8675).
 (define (spec-string-key-from-into
   [text : String]
   [idx : i64]
   [n : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (if (>= idx n)
-    buf
-    (let
-      [code : i64 (cast (string.string-ref text idx) : i64)]
-      [next-buf : text_buf.TextBuf
-        (text_buf.append-int (text_buf.append buf "_") code)]
-      (spec-string-key-from-into text (+ idx 1) n next-buf))))
+  (let
+    [index : i64 idx]
+    [out : text_buf.TextBuf buf]
+    (while (< index n)
+      (set!
+        out
+        (text_buf.append-int
+          (text_buf.append out "_")
+          (cast (string.string-ref text index) : i64)))
+      (set! index (+ index 1)))
+    out))
 
 (define (spec-string-key [text : String]) : String
   (let

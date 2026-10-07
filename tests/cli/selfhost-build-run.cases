@@ -64,11 +64,13 @@ file unresolved.tl
 end-file
 sh printf 'previous build output\n' > "{{dir}}/kept{{exe}}"
 sh chmod 640 "{{dir}}/kept{{exe}}"
-sh cp -p "{{dir}}/kept{{exe}}" "{{dir}}/kept.expected"
+# The reference copy keeps the {{exe}} suffix because MSYS derives the mode
+# bits on Windows from the file name.
+sh cp -p "{{dir}}/kept{{exe}}" "{{dir}}/kept-expected{{exe}}"
 run build "{{dir}}/unresolved.tl" -o "{{dir}}/kept{{exe}}"
 exit nonzero
-same "{{dir}}/kept{{exe}}" "{{dir}}/kept.expected"
-test "$(stat -c %a "{{dir}}/kept{{exe}}")" = "$(stat -c %a "{{dir}}/kept.expected")"
+same "{{dir}}/kept{{exe}}" "{{dir}}/kept-expected{{exe}}"
+test "$(stat -c %a "{{dir}}/kept{{exe}}")" = "$(stat -c %a "{{dir}}/kept-expected{{exe}}")"
 test "$(ls -A "{{dir}}" | grep -c '^[.]typelisp-link')" = 0
 
 case selfhost-cli-build-replaces-output

@@ -49943,7 +49943,9 @@
   ;; condition var, true label, false label, pure link block?
   (Some i64 i64 i64 bool))
 
-(define (opt-bit-test-block-branch [block : ir.CompilerIrBlock]) : OptBitTestBranch
+;; `total?` also reads a TotalEnumBranch terminator, for walks that only
+;; measure a dispatch chain; a rewrite never consumes one.
+(define (opt-bit-test-block-branch [block : ir.CompilerIrBlock] [total? : bool]) : OptBitTestBranch
   (match block
     [(Block _ instrs)
       (let
@@ -49952,15 +49954,27 @@
           (No)
           (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
             [(Branch cond yes no)
-              (match cond
-                [(Var cond-var)
-                  (Some
-                    cond-var
-                    yes
-                    no
-                    (opt-bit-test-block-pure-link? instrs count cond-var))]
-                [_ (No)])]
+              (opt-bit-test-block-branch-on instrs count cond yes no)]
+            [(TotalEnumBranch cond yes no)
+              (if total?
+                (opt-bit-test-block-branch-on instrs count cond yes no)
+                (No))]
             [_ (No)])))]))
+
+(define (opt-bit-test-block-branch-on
+  [instrs : ir.CompilerIrInstrSeq]
+  [count : i64]
+  [cond : ir.CompilerIrValue]
+  [yes : i64]
+  [no : i64]) : OptBitTestBranch
+  (match cond
+    [(Var cond-var)
+      (Some
+        cond-var
+        yes
+        no
+        (opt-bit-test-block-pure-link? instrs count cond-var))]
+    [_ (No)]))
 
 ;; A converted chain must land on blocks whose phis do not name the link labels
 ;; the rewrite stops entering. Requiring the branch targets to be phi-free is
@@ -50027,7 +50041,7 @@
   (match (opt-cfg-index-find-block index inner-label)
     [(No) (No)]
     [(Some block)
-      (match (opt-bit-test-block-branch block)
+      (match (opt-bit-test-block-branch block false)
         [(No) (No)]
         [(Some inner-cond inner-yes inner-no inner-pure?)
           (let
@@ -50088,11 +50102,12 @@
   [facts : (& facts OptBitTestCompareFacts)]
   [value-var : i64]
   [label : i64]
-  [head? : bool]) : OptBitTestMaybeLink
+  [head? : bool]
+  [total? : bool]) : OptBitTestMaybeLink
   (match (opt-cfg-index-find-block index label)
     [(No) (No)]
     [(Some block)
-      (match (opt-bit-test-block-branch block)
+      (match (opt-bit-test-block-branch block total?)
         [(No) (No)]
         [(Some cond-var yes no pure?)
           (let
@@ -50177,7 +50192,13 @@
     [true-label : i64 (- 0 1)]
     [walking? : bool true]
     (while (and walking? (< count limit))
-      (match (opt-bit-test-parse-link index facts value-var label (= count 0))
+      (match (opt-bit-test-parse-link
+        index
+        facts
+        value-var
+        label
+        (= count 0)
+        false)
         [(No) (set! walking? false)]
         [(Some lo hi mask link-true link-next)
           (if (and (> count 0) (!= link-true true-label))
@@ -50364,7 +50385,7 @@
 (define (opt-bit-test-head-value-var
   [facts : (& facts OptBitTestCompareFacts)]
   [block : ir.CompilerIrBlock]) : i64
-  (match (opt-bit-test-block-branch block)
+  (match (opt-bit-test-block-branch block false)
     [(No) (- 0 1)]
     [(Some cond-var _ _ _)
       (if (= (opt-bit-test-fact-kind facts cond-var) 0)
@@ -50383,6 +50404,115 @@
       (set! next (opt-label-add next (array-ref labels index)))
       (set! index (+ index 1)))
     next))
+
+;; An equality run that sits INSIDE a longer equality chain on the same value
+;; is a dispatch, such as an enum match whose or-pattern alternatives share a
+;; target, rather than a classifier. When the whole chain is dense enough for
+;; a jump table it is left to switch formation: a bit test there would split
+;; one table into a table, the bit test and another table, and every tag the
+;; first table misses would pay all three. The chain's TotalEnumBranch links
+;; count, as switch formation consumes them too. A run with no equality link
+;; beside it, a run of range links, and a chain too sparse for a table keep
+;; the bit test.
+(define (opt-bit-test-run-inside-table-chain?
+  [index : (& index OptCfgIndex)]
+  [facts : (& facts OptBitTestCompareFacts)]
+  [chain : (& chain OptBitTestChain)]
+  [length : i64]
+  [value-var : i64]
+  [head-label : i64]
+  [false-label : i64]) : bool
+  (let
+    [los (& chain.los)]
+    [his (& chain.his)]
+    [low : i64 (array-ref los 0)]
+    [high : i64 (array-ref his 0)]
+    [outside : i64 0]
+    [equality? : bool true]
+    [index-at : i64 0]
+    [label : i64 false-label]
+    [walking? : bool true]
+    [steps : i64 0]
+    (while (< index-at length)
+      (let
+        [lo : i64 (array-ref los index-at)]
+        [hi : i64 (array-ref his index-at)]
+        (unless (= lo hi) (set! equality? false))
+        (when (< lo low) (set! low lo))
+        (when (> hi high) (set! high hi))
+        (set! index-at (+ index-at 1))))
+    (if (not equality?)
+      false
+      (begin
+        ;; Forward: equality links after the run's false edge.
+        (while (and walking? (< steps (opt-bit-test-max-links)))
+          (match (opt-bit-test-parse-link
+            index
+            facts
+            value-var
+            label
+            false
+            true)
+            [(Some lo hi _ _ next)
+              (if (= lo hi)
+                (begin
+                  (when (< lo low) (set! low lo))
+                  (when (> hi high) (set! high hi))
+                  (set! outside (+ outside 1))
+                  (set! label next))
+                (set! walking? false))]
+            [(No) (set! walking? false)])
+          (set! steps (+ steps 1)))
+        ;; Backward: single-predecessor equality links whose false edge enters
+        ;; the run. The chain's own head may carry a prefix, so it ends the walk.
+        (set! label head-label)
+        (set! walking? true)
+        (set! steps 0)
+        (while (and walking? (< steps (opt-bit-test-max-links)))
+          (let
+            [preds : OptLabelSet (opt-cfg-index-predecessors index label)]
+            (if (= (opt-label-count preds) 1)
+              (let
+                [pred : i64 (opt-label-ref preds 0)]
+                [pure : OptBitTestMaybeLink
+                  (opt-bit-test-parse-link
+                    index
+                    facts
+                    value-var
+                    pred
+                    false
+                    true)]
+                [link : OptBitTestMaybeLink
+                  (match (& pure)
+                    [(No)
+                      (opt-bit-test-parse-link
+                        index
+                        facts
+                        value-var
+                        pred
+                        true
+                        true)]
+                    [_ pure])]
+                (match link
+                  [(Some lo hi _ _ next)
+                    (if (and (= lo hi) (= next label))
+                      (begin
+                        (when (< lo low) (set! low lo))
+                        (when (> hi high) (set! high hi))
+                        (set! outside (+ outside 1))
+                        (set! label pred)
+                        (when
+                          (match (& pure)
+                            [(No) true]
+                            [_ false])
+                          (set! walking? false)))
+                      (set! walking? false))]
+                  [(No) (set! walking? false)]))
+              (set! walking? false)))
+          (set! steps (+ steps 1)))
+        (and
+          (> outside 0)
+          (opt-switch-span-admissible? (+ length outside) (+ (- high low) 1)))))))
 
 (define (opt-bit-test-plan-head!
   [index : (& index OptCfgIndex)]
@@ -50416,7 +50546,16 @@
                     (= length best)
                     (!= true-label false-label)
                     (opt-bit-test-block-phi-free? index true-label)
-                    (opt-bit-test-block-phi-free? index false-label))
+                    (opt-bit-test-block-phi-free? index false-label)
+                    (not
+                      (opt-bit-test-run-inside-table-chain?
+                        index
+                        facts
+                        chain
+                        length
+                        value-var
+                        head-label
+                        false-label)))
                     (let
                       [base : i64 (opt-bit-test-run-base chain length)]
                       [top : i64 (opt-bit-test-run-top chain length)]

@@ -5267,10 +5267,16 @@ explicit constructors.
   a `slice` alternative whose lengths earlier arms and alternatives already
   cover is unreachable. A nested or-pattern is irrefutable when one
   alternative is or when its alternatives cover the payload type the way a
-  match's arms would. All alternatives jump to one shared arm body. In a
-  match's final arm every alternative but the last is tested, so the last
-  `slice` alternative there performs no length comparison. A nested
-  or-pattern is tested as the whole-arm alternatives it expands to, so
+  match's arms would. The arm body runs once, for whichever alternative
+  matched, and is compiled once. Alternatives that bind every name from the
+  same payload position, or bind nothing, enter it straight from their tag
+  or literal tests, so such an arm dispatches as the separate arms it
+  replaces would, in the same jump table; alternatives that bind from
+  different positions each bind first and then join the body, and a small
+  body (at most ten expression nodes) is compiled once per alternative
+  instead. In a match's final arm every alternative but the last is tested,
+  so the last `slice` alternative there performs no length comparison. A
+  nested or-pattern is tested as the whole-arm alternatives it expands to, so
   `(V (or a b) c)` tries `(V a c)` and then `(V b c)`. A varying `foreach`
   match does not accept or-patterns.
 - `or` and `fields` are reserved pattern heads; in expressions `(or ...)`
@@ -5327,7 +5333,7 @@ as `(& tree Tree)`:
 ```
 
 Every alternative binds `dst`, from a positional payload or by name from the
-boxed payload struct, and all of them share the one arm body.
+boxed payload struct, and all of them run the same arm body.
 
 ```lisp test=run name=or-slice-pattern-lengths exit=42 stdout=""
 (define (pair-sum [xs : (& (Slice i64))]) : i64

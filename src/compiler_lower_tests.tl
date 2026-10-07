@@ -2850,6 +2850,15 @@
     [Seven.P3 43]
     [Seven.P4 44]
     [_ 45]))
+(defenum Eight (Q0 i64) (Q1 i64) (Q2 i64) (Q3 i64) (Q4 i64) (Q5 i64) (Q6) (Q7))
+(define (mix [x : i64] [k : i64]) : i64 (+ x k))
+(define (shared [value : Eight]) : i64
+  (match value
+    [(Eight.Q0 x) x]
+    [(Eight.Q1 x) (+ x 1)]
+    [(or (Eight.Q2 x) (Eight.Q3 x) (Eight.Q4 x) (Eight.Q5 x))
+      (+ (mix x 1) (mix x 2) (mix x 3) (mix x 4) (mix x 5) (mix x 6))]
+    [(or Eight.Q6 Eight.Q7) 9]))
 (define (main) : i64 0)")
 
 ;; A refutable literal payload subpattern: `(Some 0)` tests the payload
@@ -6252,7 +6261,12 @@
         (= (lower-test-count functions "nested" (Branch)) 6)
         ;; A catch-all makes the match exhaustive as source syntax, but it
         ;; does not prove that the compared tags cover the enum domain.
-        (= (lower-test-count functions "partial" (TotalEnumBranch)) 0))]
+        (= (lower-test-count functions "partial" (TotalEnumBranch)) 0)
+        ;; Each or-pattern alternative is one of the last four tag tests,
+        ;; and alternatives binding `x` from one slot bind it in the body
+        ;; block, with no phi.
+        (= (lower-test-count functions "shared" (TotalEnumBranch)) 4)
+        (= (lower-test-function-phi-count functions "shared") 0))]
     [_ false]))
 
 (define (compiler-lower-enum-string-literal-payload-shape-ok?) : bool

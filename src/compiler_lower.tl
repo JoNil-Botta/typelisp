@@ -44546,6 +44546,46 @@
 ;; are tested for emptiness before any span arithmetic, so an empty domain
 ;; never traps; otherwise each span and the domain product are checked against
 ;; i64 overflow before the first body effect.
+;; One evaluated rank-2 bound in its own local, or the bound's diagnostic.
+(defenum LowerForeach2Bound
+  (Ok LowerState i64)
+  (Err (Box cdiag.CompilerDiagnostic)))
+
+(define (lower-foreach2-bound
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [bound-id : i64]) : LowerForeach2Bound
+  (let
+    [bound : ast.AstExpr (lower-context-expr-get ctx bound-id)]
+    (match (lower-expr-expected
+      ctx
+      state
+      env
+      type-env
+      (lower-global-shared-view bound)
+      (I64)
+      bound)
+      [(Err diagnostic) (Err diagnostic)]
+      [(Ok lowered)
+        (match lowered
+          [(Expr bound-state value _)
+            (match (lower-state-alloc-var bound-state)
+              [(Alloc var-state var)
+                (Ok (lower-state-emit var-state (Mov var value (I64))) var)])])])))
+
+;; Rank-2 foreach (#7190, #7191). The four bounds are evaluated once, in
+;; source order, into locals. An empty outer or inner dimension leaves before
+;; anything else, so a huge outer span over empty rows does no per-row work;
+;; a non-empty domain whose span or product overflows then traps before any
+;; body effect. The rows run in a scalar loop over `y`, in source order. Each
+;; row is one 1-D foreach over `x` from the evaluated inner begin, lowered by
+;; the backend mode's own foreach path: it maps the row's consecutive `x`
+;; values to lanes, protects the row's last gang, and restarts `program-index`
+;; for every row, while `y` is an ordinary scalar binding, uniform across each
+;; gang. Nothing flattens the two coordinates, so no gang reaches into the
+;; next row, and `y` advances only after its row completes.
 (define (lower-foreach2
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -44558,25 +44598,200 @@
   [inner-start : i64]
   [inner-end : i64]
   [body : i64]) : ResultLowerExpr
+  (match (lower-foreach2-bound ctx state env type-env outer-start)
+    [(Err diagnostic) (Err diagnostic)]
+    [(Ok y0-state y0)
+      (match (lower-foreach2-bound ctx y0-state env type-env outer-end)
+        [(Err diagnostic) (Err diagnostic)]
+        [(Ok y1-state y1)
+          (match (lower-foreach2-bound ctx y1-state env type-env inner-start)
+            [(Err diagnostic) (Err diagnostic)]
+            [(Ok x0-state x0)
+              (match (lower-foreach2-bound ctx x0-state env type-env inner-end)
+                [(Err diagnostic) (Err diagnostic)]
+                [(Ok x1-state x1)
+                  (lower-foreach2-domain
+                    ctx
+                    x1-state
+                    env
+                    type-env
+                    outer-id
+                    inner-id
+                    y0
+                    y1
+                    x0
+                    x1
+                    body)])])])]))
+
+(define (lower-foreach2-domain
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [outer-id : i64]
+  [inner-id : i64]
+  [y0 : i64]
+  [y1 : i64]
+  [x0 : i64]
+  [x1 : i64]
+  [body : i64]) : ResultLowerExpr
   (let
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
-    [y0 : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-private-identity state (SpmdDomainBound 0)))]
-    [y1 : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-private-identity state (SpmdDomainBound 1)))]
-    [x0 : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-private-identity state (SpmdDomainBound 2)))]
-    [x1 : i64
-      (cis.intern-lower-private-identity-raw
-        (lower-private-identity state (SpmdDomainBound 3)))]
+    [bound-ids : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [bound-vars : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [check-env : sym_i64_env.SymI64Env (lower-global-shared-view env)]
+    [check-type-env : tc_core.TcTypeEnv (lower-global-shared-view type-env)]
+    [index : i64 0]
+    [s : LowerState state]
+    [inner-check-label : i64 (ir.compiler-ir-label-none)]
+    [checks-label : i64 (ir.compiler-ir-label-none)]
+    [header-label : i64 (ir.compiler-ir-label-none)]
+    [row-label : i64 (ir.compiler-ir-label-none)]
+    [exit-label : i64 (ir.compiler-ir-label-none)]
+    [row-var : i64 0]
+    (set! (array-ref bound-vars 0) y0)
+    (set! (array-ref bound-vars 1) y1)
+    (set! (array-ref bound-vars 2) x0)
+    (set! (array-ref bound-vars 3) x1)
+    ;; The span and product checks read the bounds through private names.
+    (while (< index 4)
+      (let
+        [id : i64
+          (cis.intern-lower-private-identity-raw
+            (lower-private-identity s (SpmdDomainBound index)))]
+        (set! (array-ref bound-ids index) id)
+        (set!
+          check-env
+          (sym_i64_env.sym-i64-bind-id
+            check-env
+            id
+            (array-ref bound-vars index)))
+        (set! check-type-env (tc_core.tc-bind-id check-type-env id (I64))))
+      (set! index (+ index 1)))
+    (match (lower-state-fresh-label s "foreach2_inner_check")
+      [(Label next-s label)
+        (set! s next-s)
+        (set! inner-check-label label)])
+    (match (lower-state-fresh-label s "foreach2_checks")
+      [(Label next-s label)
+        (set! s next-s)
+        (set! checks-label label)])
+    (match (lower-state-fresh-label s "foreach2_header")
+      [(Label next-s label)
+        (set! s next-s)
+        (set! header-label label)])
+    (match (lower-state-fresh-label s "foreach2_row")
+      [(Label next-s label)
+        (set! s next-s)
+        (set! row-label label)])
+    (match (lower-state-fresh-label s "foreach2_exit")
+      [(Label next-s label)
+        (set! s next-s)
+        (set! exit-label label)])
+    ;; Empty-domain precedence: either dimension empty skips every check.
+    (match (lower-state-alloc-var s)
+      [(Alloc next-s cond-var)
+        (set!
+          s
+          (lower-state-finish-block
+            (lower-state-emit
+              (lower-state-emit
+                next-s
+                (BinOp cond-var Lt (Var y0) (Var y1) (I64)))
+              (Branch (Var cond-var) inner-check-label exit-label))
+            inner-check-label))])
+    (match (lower-state-alloc-var s)
+      [(Alloc next-s cond-var)
+        (set!
+          s
+          (lower-state-finish-block
+            (lower-state-emit
+              (lower-state-emit
+                next-s
+                (BinOp cond-var Lt (Var x0) (Var x1) (I64)))
+              (Branch (Var cond-var) checks-label exit-label))
+            checks-label))])
+    (let
+      [checked
+        (try
+          (lower-expr
+            ctx
+            s
+            check-env
+            check-type-env
+            (lower-context-expr-get
+              ctx
+              (lower-foreach2-checks pools (& bound-ids)))))]
+      (match checked
+        [(Expr checked-state _ _)
+          (match (lower-state-alloc-var checked-state)
+            [(Alloc row-alloc var)
+              (set! row-var var)
+              (set!
+                s
+                (lower-state-finish-block
+                  (lower-state-emit
+                    (lower-state-emit row-alloc (Mov row-var (Var y0) (I64)))
+                    (Jump header-label))
+                  header-label))])]))
+    (match (lower-state-alloc-var s)
+      [(Alloc next-s cond-var)
+        (set!
+          s
+          (lower-state-finish-block
+            (lower-state-emit
+              (lower-state-emit
+                next-s
+                (BinOp cond-var Lt (Var row-var) (Var y1) (I64)))
+              (Branch (Var cond-var) row-label exit-label))
+            row-label))])
+    (let
+      [row
+        (try
+          (lower-foreach-lowered
+            ctx
+            s
+            (sym_i64_env.sym-i64-bind-id env outer-id row-var)
+            (tc_core.tc-bind-id type-env outer-id (I64))
+            inner-id
+            (tc_core.tc-env-key-name-text inner-id)
+            (I64)
+            (Var x0)
+            (Var x1)
+            (lower-context-expr-get ctx body)
+            true))]
+      (match row
+        [(Expr row-state _ _)
+          (match (lower-state-alloc-var row-state)
+            [(Alloc inc-alloc inc-var)
+              (Ok
+                (Expr
+                  (lower-state-finish-block
+                    (lower-state-emit
+                      (lower-state-emit
+                        (lower-state-emit
+                          inc-alloc
+                          (BinOp inc-var Add (Var row-var) (I64 1) (I64)))
+                        (Mov row-var (Var inc-var) (I64)))
+                      (Jump header-label))
+                    exit-label)
+                  Unit
+                  (Unit)))])]))))
+
+;; Traps when the non-empty domain's span or element count overflows i64, with
+;; the same typed zero-length array read `spmd-compact` uses for its overflow
+;; trap. BOUND-IDS name y0, y1, x0 and x1.
+(define (lower-foreach2-checks
+  [pools : ast.AstNodePoolContext]
+  [bound-ids : (& bound-ids (__tl_dyn-array i64))]) : i64
+  (let
+    [y0 : i64 (array-ref bound-ids 0)]
+    [y1 : i64 (array-ref bound-ids 1)]
+    [x0 : i64 (array-ref bound-ids 2)]
+    [x1 : i64 (array-ref bound-ids 3)]
     [zero-id : i64
       (ast.ast-node-pool-context-expr-push pools (Literal (ast.ast-lit-int 0)))]
     [unit-id : i64 (ast.ast-node-pool-context-expr-push pools (Literal Unit))]
-    ;; The typed zero-length array read is the same checked-access abort that
-    ;; `spmd-compact` uses for its overflow trap.
     [trap-id : i64
       (ast.ast-expr-array-ref-with-pools
         pools
@@ -44584,83 +44799,40 @@
         zero-id)]
     [y-span : i64 (lower-foreach2-binary pools (Sub) y1 y0)]
     [x-span : i64 (lower-foreach2-binary pools (Sub) x1 x0)]
-    [checks : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (Begin
-          (ast.ast-expr-cons
-            (lower-foreach2-trap-if
-              pools
-              (ast.ast-expr-binary-with-pools pools (Lt) y-span zero-id)
-              trap-id
-              unit-id)
-            (&
-              (ast.ast-expr-cons
-                (lower-foreach2-trap-if
-                  pools
-                  (ast.ast-expr-binary-with-pools pools (Lt) x-span zero-id)
-                  trap-id
-                  unit-id)
-                (&
-                  (ast.ast-expr-cons
-                    (lower-foreach2-trap-if
+    (ast.ast-node-pool-context-expr-push
+      pools
+      (Begin
+        (ast.ast-expr-cons
+          (lower-foreach2-trap-if
+            pools
+            (ast.ast-expr-binary-with-pools pools (Lt) y-span zero-id)
+            trap-id
+            unit-id)
+          (&
+            (ast.ast-expr-cons
+              (lower-foreach2-trap-if
+                pools
+                (ast.ast-expr-binary-with-pools pools (Lt) x-span zero-id)
+                trap-id
+                unit-id)
+              (&
+                (ast.ast-expr-cons
+                  (lower-foreach2-trap-if
+                    pools
+                    (ast.ast-expr-binary-with-pools
                       pools
+                      (Gt)
+                      y-span
                       (ast.ast-expr-binary-with-pools
                         pools
-                        (Gt)
-                        y-span
-                        (ast.ast-expr-binary-with-pools
+                        (Div)
+                        (ast.ast-node-pool-context-expr-push
                           pools
-                          (Div)
-                          (ast.ast-node-pool-context-expr-push
-                            pools
-                            (Literal (ast.ast-lit-int 9223372036854775807)))
-                          x-span))
-                      trap-id
-                      unit-id)
-                    (& (ast.ast-expr-list-new)))))))))]
-    [inner-loop : i64 (lower-foreach2-loop pools inner-id x0 x1 body)]
-    [outer-loop : i64 (lower-foreach2-loop pools outer-id y0 y1 inner-loop)]
-    [nonempty : i64
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (Begin
-          (ast.ast-expr-cons
-            checks
-            (& (ast.ast-expr-cons outer-loop (& (ast.ast-expr-list-new)))))))]
-    [root-id : i64
-      (ast.ast-expr-let-with-pools
-        pools
-        (ast.ast-let-binding-cons
-          (& (ast.ast-let-binding-id y0 (Some (I64)) outer-start))
-          (&
-            (ast.ast-let-binding-cons
-              (& (ast.ast-let-binding-id y1 (Some (I64)) outer-end))
-              (&
-                (ast.ast-let-binding-cons
-                  (& (ast.ast-let-binding-id x0 (Some (I64)) inner-start))
-                  (&
-                    (ast.ast-let-binding-cons
-                      (& (ast.ast-let-binding-id x1 (Some (I64)) inner-end))
-                      (& (ast.ast-let-binding-list-new)))))))))
-        (ast.ast-expr-if-with-pools
-          pools
-          (ast.ast-expr-binary-with-pools
-            pools
-            (Lt)
-            (lower-foreach2-var pools y0)
-            (lower-foreach2-var pools y1))
-          (ast.ast-expr-if-with-pools
-            pools
-            (ast.ast-expr-binary-with-pools
-              pools
-              (Lt)
-              (lower-foreach2-var pools x0)
-              (lower-foreach2-var pools x1))
-            nonempty
-            unit-id)
-          unit-id))]
-    (lower-expr ctx state env type-env (lower-context-expr-get ctx root-id))))
+                          (Literal (ast.ast-lit-int 9223372036854775807)))
+                        x-span))
+                    trap-id
+                    unit-id)
+                  (& (ast.ast-expr-list-new)))))))))))
 
 (define (lower-foreach2-var [pools : ast.AstNodePoolContext] [id : i64]) : i64
   (ast.ast-node-pool-context-expr-push pools (Var id)))
@@ -44682,44 +44854,6 @@
   [trap-id : i64]
   [unit-id : i64]) : i64
   (ast.ast-expr-if-with-pools pools cond trap-id unit-id))
-
-;; (let [coord : i64 begin] (while (< coord end) (begin body (set! coord (+ coord 1)))))
-(define (lower-foreach2-loop
-  [pools : ast.AstNodePoolContext]
-  [coord : i64]
-  [begin-id : i64]
-  [end-id : i64]
-  [body : i64]) : i64
-  (ast.ast-expr-let-with-pools
-    pools
-    (ast.ast-let-binding-cons
-      (&
-        (ast.ast-let-binding-id
-          coord
-          (Some (I64))
-          (lower-foreach2-var pools begin-id)))
-      (& (ast.ast-let-binding-list-new)))
-    (ast.ast-expr-while-with-pools
-      pools
-      (lower-foreach2-binary pools (Lt) coord end-id)
-      (ast.ast-node-pool-context-expr-push
-        pools
-        (Begin
-          (ast.ast-expr-cons
-            body
-            (&
-              (ast.ast-expr-cons
-                (ast.ast-expr-set-id-with-pools
-                  pools
-                  coord
-                  (ast.ast-expr-binary-with-pools
-                    pools
-                    (Add)
-                    (lower-foreach2-var pools coord)
-                    (ast.ast-node-pool-context-expr-push
-                      pools
-                      (Literal (ast.ast-lit-int 1)))))
-                (& (ast.ast-expr-list-new))))))))))
 
 (define (lower-spmd-broadcast
   [ctx : tc_core.TcContext]
@@ -61576,7 +61710,8 @@
   [start-value : ir.CompilerIrValue]
   [end-value : ir.CompilerIrValue]
   [diagnostic-body : ast.AstExpr]
-  [body : ast.AstExpr]) : ResultLowerExpr
+  [body : ast.AstExpr]
+  [row? : bool]) : ResultLowerExpr
   (if (and
     (lower-mode-simd? (lower-state-mode state))
     (lower-type-i64? (lower-global-shared-view index-ty)))
@@ -61652,132 +61787,146 @@
                   body
                   (Some lanes))]
               [(No)
-                (match (lower-spmd-numeric-failure
-                  ctx
-                  (lower-state-function-state state)
-                  (lower-state-mode state)
-                  env
-                  (tc_core.tc-bind-id
+                (if row?
+                  ;; A rank-2 row no plan matches runs as the scalar row, as
+                  ;; every rank-2 body did before #7191.
+                  (lower-scalar-foreach-lowered
+                    ctx
+                    state
+                    env
                     type-env
                     index-id
-                    (lower-global-shared-view index-ty))
-                  (DirectMap)
-                  diagnostic-body)
-                  [(Some origin decision)
-                    (Err
-                      (box
-                        (lower-diagnostic-at-expr
-                          ctx
-                          origin
-                          (lower-spmd-numeric-failure-message decision))))]
-                  [(No)
-                    (cond
-                      [facts.varying-while
-                        (Err
-                          (box
-                            (lower-diagnostic-at-expr
-                              ctx
-                              body
-                              (if (lower-mode-avx2? (lower-state-mode state))
-                                (lower-avx2-varying-while-diagnostic)
-                                "lower: SPMD varying while AVX-512 lowering is not available for this backend mode or loop shape"))))]
-                      [facts.varying-if
-                        (Err
-                          (box
-                            (lower-diagnostic-at-expr
-                              ctx
-                              body
-                              (if (lower-mode-avx2? (lower-state-mode state))
-                                (lower-avx2-masked-if-diagnostic)
-                                "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape"))))]
-                      [facts.varying-enum-match
-                        (Err
-                          (box
-                            (lower-diagnostic-at-expr
-                              ctx
-                              body
-                              (if (lower-mode-avx2? (lower-state-mode state))
-                                "lower: AVX2 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"
-                                "lower: AVX-512 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"))))]
-                      [facts.varying-match
-                        (Err
-                          (box
-                            (lower-diagnostic-at-expr
-                              ctx
-                              body
-                              (if (lower-mode-avx2? (lower-state-mode state))
-                                "lower: SPMD varying match AVX2 lowering is not available for this match shape"
-                                "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape"))))]
-                      [(lower-vector-body-has?
-                          ctx
-                          (Shuffle)
-                          (lower-global-shared-view body))
-                        (Err
-                          (box
-                            (lower-diagnostic-at-expr
-                              ctx
-                              body
-                              (lower-spmd-shuffle-diagnostic))))]
-                      [(lower-vector-body-has?
-                          ctx
-                          (ArrayRead)
-                          (lower-global-shared-view body))
-                        (match (lower-simple-vector-map-unsupported-shift-lane
-                          ctx
-                          (lower-state-mode state)
-                          env
-                          type-env
-                          index
-                          true
-                          (lower-global-shared-view body))
-                          [(Some lane-ty)
-                            (Err
-                              (box
-                                (lower-diagnostic-at-expr
-                                  ctx
-                                  body
-                                  (lower-spmd-map-shift-diagnostic
-                                    "shl"
-                                    lane-ty
-                                    (lower-state-mode state)))))]
-                          [(No)
-                            (match (lower-simple-vector-map-unsupported-shift-lane
-                              ctx
-                              (lower-state-mode state)
-                              env
-                              type-env
-                              index
-                              false
-                              (lower-global-shared-view body))
-                              [(Some lane-ty)
-                                (Err
-                                  (box
-                                    (lower-diagnostic-at-expr
-                                      ctx
-                                      body
-                                      (lower-spmd-map-shift-diagnostic
-                                        "shr"
-                                        lane-ty
-                                        (lower-state-mode state)))))]
-                              [(No)
-                                (Err
-                                  (box
-                                    (lower-diagnostic-at-expr
-                                      ctx
-                                      body
-                                      (lower-simd-foreach-fallback-diagnostic))))])])]
-                      [else
-                        (lower-scalar-foreach-lowered
-                          ctx
-                          state
-                          env
-                          type-env
-                          index-id
-                          index
-                          index-ty
-                          start-value
-                          end-value
-                          body)])])])))])
+                    index
+                    index-ty
+                    start-value
+                    end-value
+                    body)
+                  (match (lower-spmd-numeric-failure
+                    ctx
+                    (lower-state-function-state state)
+                    (lower-state-mode state)
+                    env
+                    (tc_core.tc-bind-id
+                      type-env
+                      index-id
+                      (lower-global-shared-view index-ty))
+                    (DirectMap)
+                    diagnostic-body)
+                    [(Some origin decision)
+                      (Err
+                        (box
+                          (lower-diagnostic-at-expr
+                            ctx
+                            origin
+                            (lower-spmd-numeric-failure-message decision))))]
+                    [(No)
+                      (cond
+                        [facts.varying-while
+                          (Err
+                            (box
+                              (lower-diagnostic-at-expr
+                                ctx
+                                body
+                                (if (lower-mode-avx2? (lower-state-mode state))
+                                  (lower-avx2-varying-while-diagnostic)
+                                  "lower: SPMD varying while AVX-512 lowering is not available for this backend mode or loop shape"))))]
+                        [facts.varying-if
+                          (Err
+                            (box
+                              (lower-diagnostic-at-expr
+                                ctx
+                                body
+                                (if (lower-mode-avx2? (lower-state-mode state))
+                                  (lower-avx2-masked-if-diagnostic)
+                                  "lower: SPMD masked if AVX-512 lowering is not available for this backend mode or branch shape"))))]
+                        [facts.varying-enum-match
+                          (Err
+                            (box
+                              (lower-diagnostic-at-expr
+                                ctx
+                                body
+                                (if (lower-mode-avx2? (lower-state-mode state))
+                                  "lower: AVX2 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"
+                                  "lower: AVX-512 varying enum match requires a contiguous dynamic-array lane source and supported payload bindings"))))]
+                        [facts.varying-match
+                          (Err
+                            (box
+                              (lower-diagnostic-at-expr
+                                ctx
+                                body
+                                (if (lower-mode-avx2? (lower-state-mode state))
+                                  "lower: SPMD varying match AVX2 lowering is not available for this match shape"
+                                  "lower: SPMD varying match AVX-512 lowering is not available for this backend mode or match shape"))))]
+                        [(lower-vector-body-has?
+                            ctx
+                            (Shuffle)
+                            (lower-global-shared-view body))
+                          (Err
+                            (box
+                              (lower-diagnostic-at-expr
+                                ctx
+                                body
+                                (lower-spmd-shuffle-diagnostic))))]
+                        [(lower-vector-body-has?
+                            ctx
+                            (ArrayRead)
+                            (lower-global-shared-view body))
+                          (match (lower-simple-vector-map-unsupported-shift-lane
+                            ctx
+                            (lower-state-mode state)
+                            env
+                            type-env
+                            index
+                            true
+                            (lower-global-shared-view body))
+                            [(Some lane-ty)
+                              (Err
+                                (box
+                                  (lower-diagnostic-at-expr
+                                    ctx
+                                    body
+                                    (lower-spmd-map-shift-diagnostic
+                                      "shl"
+                                      lane-ty
+                                      (lower-state-mode state)))))]
+                            [(No)
+                              (match (lower-simple-vector-map-unsupported-shift-lane
+                                ctx
+                                (lower-state-mode state)
+                                env
+                                type-env
+                                index
+                                false
+                                (lower-global-shared-view body))
+                                [(Some lane-ty)
+                                  (Err
+                                    (box
+                                      (lower-diagnostic-at-expr
+                                        ctx
+                                        body
+                                        (lower-spmd-map-shift-diagnostic
+                                          "shr"
+                                          lane-ty
+                                          (lower-state-mode state)))))]
+                                [(No)
+                                  (Err
+                                    (box
+                                      (lower-diagnostic-at-expr
+                                        ctx
+                                        body
+                                        (lower-simd-foreach-fallback-diagnostic))))])])]
+                        [else
+                          (lower-scalar-foreach-lowered
+                            ctx
+                            state
+                            env
+                            type-env
+                            index-id
+                            index
+                            index-ty
+                            start-value
+                            end-value
+                            body)])]))])))])
     (lower-scalar-foreach-lowered
       ctx
       state
@@ -61814,6 +61963,12 @@
   2)
 (define lower-spmd-array-view-other : i64
   4)
+
+;; Set with `other` for a binder, a whole-variable `set!` target, and a `&mut`
+;; borrow of a plain name: uses through which the name's value can change
+;; inside the body, so a row origin cannot read it (#7191).
+(define lower-spmd-array-view-bound : i64
+  8)
 
 (define (lower-spmd-array-view-note!
   [flags : (&mut flags lower_i64_i64_map.Map)]
@@ -61856,9 +62011,15 @@
   [pattern : ast.AstPattern]) : unit
   (match pattern
     [(Var name _)
-      (lower-spmd-array-view-note! flags name lower-spmd-array-view-other)]
+      (lower-spmd-array-view-note!
+        flags
+        name
+        (bit-or lower-spmd-array-view-other lower-spmd-array-view-bound))]
     [(Binding name)
-      (lower-spmd-array-view-note! flags name lower-spmd-array-view-other)]
+      (lower-spmd-array-view-note!
+        flags
+        name
+        (bit-or lower-spmd-array-view-other lower-spmd-array-view-bound))]
     [(Tuple patterns-box)
       (lower-spmd-array-view-note-patterns! flags (deref patterns-box))]
     [(Array patterns-box)
@@ -61881,12 +62042,13 @@
       (set! index (+ index 1)))))
 
 ;; Names a node carries as payload rather than as a `Var` child: binders and
-;; the whole-variable `set!` target. Each counts as an "other" use.
+;; the whole-variable `set!` target. Each counts as an "other" use that binds.
 (define (lower-spmd-array-view-note-payload-names!
   [flags : (&mut flags lower_i64_i64_map.Map)]
   [expr : ast.AstExpr]) : unit
   (let
-    [other : i64 lower-spmd-array-view-other]
+    [other : i64
+      (bit-or lower-spmd-array-view-other lower-spmd-array-view-bound)]
     (match expr
       [(Set name _) (lower-spmd-array-view-note! flags name other)]
       [(Let let-box)
@@ -61974,6 +62136,15 @@
         ctx
         flags
         (lower-context-expr-get ctx value-box))]
+    [(Borrow mutable _ place-box)
+      (let
+        [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
+        [name : i64
+          (lower-spmd-array-view-base-name ctx (lower-global-shared-view place))]
+        (when
+          (and mutable (>= name 0))
+          (lower-spmd-array-view-note! flags name lower-spmd-array-view-bound))
+        (lower-spmd-array-view-scan! ctx flags place))]
     [_
       (let
         [children : ast.AstExprChildList
@@ -62139,6 +62310,904 @@
         failed))
     (Ok (Views state env type-env))))
 
+;; --- Row-origin array views (#7191) ---
+;; A rank-2 row reads and writes its arrays at row-major indexes such as
+;; `base + (y - a) * span + (x - b)`, which the contiguous plans, keyed to the
+;; foreach index alone, do not accept. Such an index is `x + R`, with R fixed
+;; for the whole row. The row's foreach then runs over x' = x - start from 0,
+;; each array accessed at `x + R` is read through a Slice view whose element 0
+;; is element S = R + start, so the access becomes `view[x']`, an exact-index
+;; access every plan supports, and `x` itself becomes `x' + start`.
+;;
+;; `+` and `-` wrap, so the original index equals S + x' modulo 2^64. A view is
+;; built only when 0 <= S <= len, so `view[x']` reaches the same element as the
+;; original access and fails its bounds check at the same x'. A row whose S is
+;; outside that range, or whose span overflows, runs the exact scalar row
+;; instead. R is computed once per row, before the row's first gang.
+;; One view: array NAME read at row origin ORIGIN, the expression id of the
+;; access's index with `x` replaced by 0. WRITE when some access stores.
+(defstruct LowerRowOrigin
+  (name i64)
+  (origin i64)
+  (write bool))
+
+;; DROPPED names arrays whose accesses cannot all be rewritten: such an array
+;; keeps its own accesses.
+(defstruct LowerRowOriginPlan
+  (items (__tl_dyn-array LowerRowOrigin))
+  (count i64)
+  (dropped lower_i64_i64_map.Map))
+
+;; The coefficient of index INDEX-ID in EXPR, or this when EXPR is not an
+;; integer `+`/`-`/`*` combination of the index, literals and stable names.
+(define lower-row-origin-unsupported : i64
+  2)
+
+;; A name a row origin can read: an i64 local of the enclosing scope that the
+;; body neither binds, assigns nor borrows `&mut`.
+(define (lower-row-origin-stable?
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [flags : (& flags lower_i64_i64_map.Map)]
+  [name : i64]) : bool
+  (and
+    (=
+      (bit-and
+        (lower_i64_i64_map.get-value-or flags name 0)
+        lower-spmd-array-view-bound)
+      0)
+    (csym.compiler-symbols-handle-found?
+      (sym_i64_env.sym-i64-lookup-id-or
+        env
+        name
+        (csym.compiler-symbols-missing-handle)))
+    (match (tc_core.tc-lookup-id type-env name)
+      [(Ok ty) (lower-type-i64? ty)]
+      [(Err _) false])))
+
+;; 1 or -1 when the index occurs once in EXPR, reached through `+` and `-`
+;; only; 0 when it does not occur and EXPR is row-stable; otherwise
+;; `lower-row-origin-unsupported`.
+(define (lower-row-origin-coefficient
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [flags : (& flags lower_i64_i64_map.Map)]
+  [index-id : i64]
+  [expr : ast.AstExpr]) : i64
+  (match (lower-global-shared-view expr)
+    [(Spanned inner-box _)
+      (lower-row-origin-coefficient
+        ctx
+        env
+        type-env
+        flags
+        index-id
+        (lower-context-expr-get ctx inner-box))]
+    [(Ann inner-box _)
+      (lower-row-origin-coefficient
+        ctx
+        env
+        type-env
+        flags
+        index-id
+        (lower-context-expr-get ctx inner-box))]
+    [(Literal (Int _ _)) 0]
+    [(Var name)
+      (cond
+        [(= name index-id) 1]
+        [(lower-row-origin-stable? env type-env flags name) 0]
+        [else lower-row-origin-unsupported])]
+    [(Binary op left-box right-box)
+      (let
+        [left : i64
+          (lower-row-origin-coefficient
+            ctx
+            env
+            type-env
+            flags
+            index-id
+            (lower-context-expr-get ctx left-box))]
+        [right : i64
+          (lower-row-origin-coefficient
+            ctx
+            env
+            type-env
+            flags
+            index-id
+            (lower-context-expr-get ctx right-box))]
+        (cond
+          [(or
+              (= left lower-row-origin-unsupported)
+              (= right lower-row-origin-unsupported))
+            lower-row-origin-unsupported]
+          [(and (!= left 0) (!= right 0)) lower-row-origin-unsupported]
+          [else
+            (match op
+              [(Add) (+ left right)]
+              [(Sub) (- left right)]
+              [(Mul)
+                (if (= (+ left right) 0)
+                  0
+                  lower-row-origin-unsupported)]
+              [_ lower-row-origin-unsupported])]))]
+    [_ lower-row-origin-unsupported]))
+
+;; The expression id of index ID with the foreach index replaced by 0. Only
+;; called on an index of coefficient 1, whose other leaves are literals and
+;; stable names.
+(define (lower-row-origin-expr
+  [ctx : tc_core.TcContext]
+  [index-id : i64]
+  [id : i64]) : i64
+  (let
+    [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+    (match (lower-context-expr-get ctx id)
+      [(Spanned inner-box _) (lower-row-origin-expr ctx index-id inner-box)]
+      [(Ann inner-box _) (lower-row-origin-expr ctx index-id inner-box)]
+      [(Var name)
+        (if (= name index-id)
+          (ast.ast-node-pool-context-expr-push
+            pools
+            (Literal (ast.ast-lit-int 0)))
+          id)]
+      [(Binary op left-box right-box)
+        (ast.ast-expr-binary-with-pools
+          pools
+          op
+          (lower-row-origin-expr ctx index-id left-box)
+          (lower-row-origin-expr ctx index-id right-box))]
+      [_ id])))
+
+(define (lower-row-origin-unwrap [ctx : tc_core.TcContext] [expr : ast.AstExpr]) : ast.AstExpr
+  (match (lower-global-shared-view expr)
+    [(Spanned inner-box _)
+      (lower-row-origin-unwrap ctx (lower-context-expr-get ctx inner-box))]
+    [(Ann inner-box _)
+      (lower-row-origin-unwrap ctx (lower-context-expr-get ctx inner-box))]
+    [_ expr]))
+
+(define (lower-row-origin-op-code [op : ast.AstBinOp]) : i64
+  (match op
+    [(Add) 1]
+    [(Sub) 2]
+    [(Mul) 3]
+    [_ 0]))
+
+;; Whether two row origins are the same expression: the same literals and
+;; names combined by the same operators.
+(define (lower-row-origin-same?
+  [ctx : tc_core.TcContext]
+  [left-id : i64]
+  [right-id : i64]) : bool
+  (match (lower-row-origin-unwrap ctx (lower-context-expr-get ctx left-id))
+    [(Literal (Int n text))
+      (match (lower-row-origin-unwrap ctx (lower-context-expr-get ctx right-id))
+        [(Literal (Int other-n other-text))
+          (=
+            (ast.ast-int-literal-value-or-payload n text)
+            (ast.ast-int-literal-value-or-payload other-n other-text))]
+        [_ false])]
+    [(Var name)
+      (match (lower-row-origin-unwrap ctx (lower-context-expr-get ctx right-id))
+        [(Var other) (= name other)]
+        [_ false])]
+    [(Binary op left-box right-box)
+      (match (lower-row-origin-unwrap ctx (lower-context-expr-get ctx right-id))
+        [(Binary other-op other-left other-right)
+          (and
+            (=
+              (lower-row-origin-op-code op)
+              (lower-row-origin-op-code other-op))
+            (lower-row-origin-same? ctx left-box other-left)
+            (lower-row-origin-same? ctx right-box other-right))]
+        [_ false])]
+    [_ false]))
+
+;; Whether origin ID is an integer literal: such an access already has a
+;; contiguous plan.
+(define (lower-row-origin-literal? [ctx : tc_core.TcContext] [id : i64]) : bool
+  (match (lower-row-origin-unwrap ctx (lower-context-expr-get ctx id))
+    [(Literal (Int _ _)) true]
+    [_ false]))
+
+;; The plan item of NAME at an origin the same as ORIGIN, or -1.
+(define (lower-row-origin-find
+  [ctx : tc_core.TcContext]
+  [plan : (& plan LowerRowOriginPlan)]
+  [name : i64]
+  [origin : i64]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (while (and (< found 0) (< index plan.count))
+      (let
+        [item : LowerRowOrigin (array-ref plan.items index)]
+        (when
+          (and
+            (= item.name name)
+            (lower-row-origin-same? ctx item.origin origin))
+          (set! found index)))
+      (set! index (+ index 1)))
+    found))
+
+(define (lower-row-origin-drop!
+  [plan : (&mut plan LowerRowOriginPlan)]
+  [name : i64]) : unit
+  (lower_i64_i64_map.insert-ref! (&mut plan.dropped) name 1))
+
+;; Note one element access of the array the expression BASE-ID names, at index
+;; INDEX-ID.
+(define (lower-row-origin-note-access!
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [flags : (& flags lower_i64_i64_map.Map)]
+  [index-id : i64]
+  [plan : (&mut plan LowerRowOriginPlan)]
+  [base-id : i64]
+  [access-index-id : i64]
+  [write : bool]) : unit
+  (let
+    [name : i64
+      (lower-spmd-array-view-base-name ctx (lower-context-expr-get ctx base-id))]
+    (cond
+      [(< name 0)
+        (lower-row-origin-collect!
+          ctx
+          env
+          type-env
+          flags
+          index-id
+          plan
+          (lower-context-expr-get ctx base-id))]
+      [(or
+          (!=
+            (bit-and
+              (lower_i64_i64_map.get-value-or flags name 0)
+              lower-spmd-array-view-other)
+            0)
+          (!=
+            (lower-row-origin-coefficient
+              ctx
+              env
+              type-env
+              flags
+              index-id
+              (lower-context-expr-get ctx access-index-id))
+            1))
+        (lower-row-origin-drop! plan name)]
+      [else
+        (let
+          [origin : i64 (lower-row-origin-expr ctx index-id access-index-id)]
+          [found : i64 (lower-row-origin-find ctx plan name origin)]
+          (if (< found 0)
+            (begin
+              (__tl_array-push! plan.items (LowerRowOrigin name origin write))
+              (set! plan.count (+ plan.count 1)))
+            (when
+              write
+              (let
+                [item : LowerRowOrigin (array-ref plan.items found)]
+                (set!
+                  (array-ref plan.items found)
+                  (LowerRowOrigin item.name item.origin true))))))])))
+
+(define (lower-row-origin-collect!
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [flags : (& flags lower_i64_i64_map.Map)]
+  [index-id : i64]
+  [plan : (&mut plan LowerRowOriginPlan)]
+  [expr : ast.AstExpr]) : unit
+  (match (lower-global-shared-view expr)
+    [(ArrayRef array-box index-box)
+      (lower-row-origin-note-access!
+        ctx
+        env
+        type-env
+        flags
+        index-id
+        plan
+        array-box
+        index-box
+        false)
+      (lower-row-origin-collect!
+        ctx
+        env
+        type-env
+        flags
+        index-id
+        plan
+        (lower-context-expr-get ctx index-box))]
+    [(ArraySet array-box index-box value-box)
+      (lower-row-origin-note-access!
+        ctx
+        env
+        type-env
+        flags
+        index-id
+        plan
+        array-box
+        index-box
+        true)
+      (lower-row-origin-collect!
+        ctx
+        env
+        type-env
+        flags
+        index-id
+        plan
+        (lower-context-expr-get ctx index-box))
+      (lower-row-origin-collect!
+        ctx
+        env
+        type-env
+        flags
+        index-id
+        plan
+        (lower-context-expr-get ctx value-box))]
+    [_
+      (let
+        [children : ast.AstExprList
+          (ast.ast-expr-child-ids (lower-global-shared-view expr))]
+        [index : i64 0]
+        (while (< index (ast.ast-expr-list-len (& children)))
+          (lower-row-origin-collect!
+            ctx
+            env
+            type-env
+            flags
+            index-id
+            plan
+            (lower-context-expr-get
+              ctx
+              (ast.ast-expr-list-get (& children) index -1)))
+          (set! index (+ index 1))))]))
+
+;; The element type id of NAME's binding when it is a sequence a view can read
+;; in lanes, a dynamic array, fixed array or Slice of scalar lanes or a
+;; reference to one; otherwise -1. Only a local of the enclosing scope counts:
+;; the row reads its data pointer and length once, before its first gang, and a
+;; local can change them only through a use other than an element access,
+;; which keeps the array out of the plan.
+(define (lower-row-origin-elem-id
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [name : i64]) : i64
+  (if (csym.compiler-symbols-handle-found?
+    (sym_i64_env.sym-i64-lookup-id-or
+      env
+      name
+      (csym.compiler-symbols-missing-handle)))
+    (match (tc_core.tc-lookup-id type-env name)
+      [(Err _) -1]
+      [(Ok ty) (lower-row-origin-type-elem-id ctx ty true)])
+    -1))
+
+(define (lower-row-origin-type-elem-id
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]
+  [reference : bool]) : i64
+  (let
+    [elem : i64
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-resolve-type ctx (lower-global-shared-view ty)))
+        [(DynArray elem) elem]
+        [(Array elem _) elem]
+        [(Slice elem)
+          (if reference
+            -1
+            elem)]
+        [(Ref _ inner)
+          (if reference
+            (lower-row-origin-type-elem-id
+              ctx
+              (tc_core.tc-context-type-get ctx inner)
+              false)
+            -1)]
+        [(MutRef _ inner)
+          (if reference
+            (lower-row-origin-type-elem-id
+              ctx
+              (tc_core.tc-context-type-get ctx inner)
+              false)
+            -1)]
+        [_ -1])]
+    (if (and
+      (>= elem 0)
+      (lower-spmd-array-view-elem? (tc_core.tc-context-type-get ctx elem)))
+      elem
+      -1)))
+
+;; The row-origin views of BODY, the foreach body of index INDEX-ID: every
+;; array whose accesses all have coefficient 1, are the array's only uses, and
+;; reach lane elements. A written array keeps one origin, so its reads and
+;; writes stay on one name; a read-only array may have several. The plan is
+;; empty unless some origin is not a literal, or when the body rebinds the
+;; index.
+(define (lower-row-origin-plan
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index-id : i64]
+  [body : ast.AstExpr]) : LowerRowOriginPlan
+  (let
+    [flags : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 16)]
+    [_scan : unit
+      (lower-spmd-array-view-scan!
+        ctx
+        (&mut flags)
+        (lower-global-shared-view body))]
+    [plan : LowerRowOriginPlan
+      (LowerRowOriginPlan
+        (__tl_make-array LowerRowOrigin 0)
+        0
+        (lower_i64_i64_map.with-capacity 8))]
+    [kept : (__tl_dyn-array LowerRowOrigin) (__tl_make-array LowerRowOrigin 0)]
+    [count : i64 0]
+    [dynamic : bool false]
+    [index : i64 0]
+    (lower-row-origin-collect!
+      ctx
+      env
+      type-env
+      (& flags)
+      index-id
+      (&mut plan)
+      body)
+    (while (< index plan.count)
+      (let
+        [item : LowerRowOrigin (array-ref plan.items index)]
+        [other : i64 0]
+        [shared : bool false]
+        (while (< other plan.count)
+          (let
+            [peer : LowerRowOrigin (array-ref plan.items other)]
+            (when
+              (and
+                (!= other index)
+                (= peer.name item.name)
+                (or item.write peer.write))
+              (set! shared true)))
+          (set! other (+ other 1)))
+        (unless
+          (or
+            shared
+            (lower_i64_i64_map.contains? (& plan.dropped) item.name)
+            (< (lower-row-origin-elem-id ctx env type-env item.name) 0))
+          (__tl_array-push! kept item)
+          (set! count (+ count 1))
+          (unless
+            (lower-row-origin-literal? ctx item.origin)
+            (set! dynamic true))))
+      (set! index (+ index 1)))
+    (if (and
+      dynamic
+      (=
+        (bit-and
+          (lower_i64_i64_map.get-value-or (& flags) index-id 0)
+          lower-spmd-array-view-bound)
+        0))
+      (LowerRowOriginPlan kept count (lower_i64_i64_map.with-capacity 0))
+      (LowerRowOriginPlan
+        (__tl_make-array LowerRowOrigin 0)
+        0
+        (lower_i64_i64_map.with-capacity 0)))))
+
+;; BODY rewritten for a native row: each planned access becomes an access of
+;; its view, VIEW-IDS by plan item, at ROW-INDEX, and every other use of the
+;; index INDEX-ID becomes `ROW-INDEX + ROW-START`.
+(define (lower-row-origin-rewrite
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index-id : i64]
+  [plan : (& plan LowerRowOriginPlan)]
+  [view-ids : (& view-ids (__tl_dyn-array i64))]
+  [row-index : i64]
+  [row-start : i64]
+  [id : i64]) : i64
+  (let
+    [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+    [expr : ast.AstExpr (lower-context-expr-get ctx id)]
+    [item : i64
+      (match (lower-global-shared-view expr)
+        [(ArrayRef array-box index-box)
+          (lower-row-origin-item ctx plan index-id array-box index-box)]
+        [(ArraySet array-box index-box _)
+          (lower-row-origin-item ctx plan index-id array-box index-box)]
+        [_ -1])]
+    (cond
+      [(>= item 0)
+        (match (lower-global-shared-view expr)
+          [(ArraySet _ _ value-box)
+            (ast.ast-expr-array-set-with-pools
+              pools
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (Var (array-ref view-ids item)))
+              (ast.ast-node-pool-context-expr-push pools (Var row-index))
+              (lower-row-origin-rewrite
+                ctx
+                env
+                type-env
+                index-id
+                plan
+                view-ids
+                row-index
+                row-start
+                value-box))]
+          [_
+            (ast.ast-expr-array-ref-with-pools
+              pools
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (Var (array-ref view-ids item)))
+              (ast.ast-node-pool-context-expr-push pools (Var row-index)))])]
+      [else
+        (match (lower-global-shared-view expr)
+          [(Var name)
+            (if (= name index-id)
+              (ast.ast-expr-binary-with-pools
+                pools
+                (Add)
+                (ast.ast-node-pool-context-expr-push pools (Var row-index))
+                (ast.ast-node-pool-context-expr-push pools (Var row-start)))
+              id)]
+          [_
+            (let
+              [children : ast.AstExprList
+                (ast.ast-expr-child-ids (lower-global-shared-view expr))]
+              [rewritten : ast.AstExprList (ast.ast-expr-list-new)]
+              [changed : bool false]
+              [index : i64 0]
+              (while (< index (ast.ast-expr-list-len (& children)))
+                (let
+                  [child : i64 (ast.ast-expr-list-get (& children) index -1)]
+                  [next : i64
+                    (lower-row-origin-rewrite
+                      ctx
+                      env
+                      type-env
+                      index-id
+                      plan
+                      view-ids
+                      row-index
+                      row-start
+                      child)]
+                  (when (!= next child) (set! changed true))
+                  (ast.ast-expr-list-push (&mut rewritten) next))
+                (set! index (+ index 1)))
+              (if changed
+                (lower-context-expr-push
+                  ctx
+                  (ast.ast-expr-with-child-ids
+                    (lower-global-shared-view expr)
+                    (& rewritten)))
+                id))])])))
+
+;; The plan item an access of the array BASE-ID at INDEX-BOX reads through, or
+;; -1 when it keeps its own access.
+(define (lower-row-origin-item
+  [ctx : tc_core.TcContext]
+  [plan : (& plan LowerRowOriginPlan)]
+  [index-id : i64]
+  [base-id : i64]
+  [index-box : i64]) : i64
+  (let
+    [name : i64
+      (lower-spmd-array-view-base-name ctx (lower-context-expr-get ctx base-id))]
+    (if (< name 0)
+      -1
+      (let
+        [item : i64 0]
+        [found : i64 -1]
+        (while (and (< found 0) (< item plan.count))
+          (let
+            [entry : LowerRowOrigin (array-ref plan.items item)]
+            (when (= entry.name name) (set! found item)))
+          (set! item (+ item 1)))
+        (if (< found 0)
+          -1
+          (lower-row-origin-find
+            ctx
+            plan
+            name
+            (lower-row-origin-expr ctx index-id index-box)))))))
+
+(define (lower-row-origin-plan-empty) : LowerRowOriginPlan
+  (LowerRowOriginPlan
+    (__tl_make-array LowerRowOrigin 0)
+    0
+    (lower_i64_i64_map.with-capacity 0)))
+
+;; Emit `(BinOp var op left right ty)` into a fresh var.
+(define (lower-row-origin-binop
+  [state : LowerState]
+  [op : ir.CompilerIrBinOp]
+  [left : ir.CompilerIrValue]
+  [right : ir.CompilerIrValue]
+  [ty : ast.AstType]) : LowerAlloc
+  (match (lower-state-alloc-var state)
+    [(Alloc next var)
+      (Alloc (lower-state-emit next (BinOp var op left right ty)) var)]))
+
+(define (lower-row-origin-hold
+  [state : LowerState]
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : LowerAlloc
+  (match (lower-state-alloc-var state)
+    [(Alloc next var) (Alloc (lower-state-emit next (Mov var value ty)) var)]))
+
+;; A rank-2 row whose PLAN has views. The guard, computed once per row, takes
+;; the native row when the row is non-empty, its span does not overflow, and
+;; every view origin S lies in 0..=len; otherwise the exact scalar row runs.
+(define (lower-row-origin-foreach
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [index-id : i64]
+  [index : String]
+  [index-ty : ast.AstType]
+  [start-value : ir.CompilerIrValue]
+  [end-value : ir.CompilerIrValue]
+  [body : ast.AstExpr]
+  [inlined-body : ast.AstExpr]
+  [plan : LowerRowOriginPlan]) : ResultLowerExpr
+  (let
+    [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
+    [s : LowerState state]
+    [start-var : i64 0]
+    [end-var : i64 0]
+    [span-var : i64 0]
+    [ok-var : i64 0]
+    [origin-vars : (__tl_dyn-array i64) (__tl_make-array i64 plan.count)]
+    [ptr-vars : (__tl_dyn-array i64) (__tl_make-array i64 plan.count)]
+    [len-vars : (__tl_dyn-array i64) (__tl_make-array i64 plan.count)]
+    [view-ids : (__tl_dyn-array i64) (__tl_make-array i64 plan.count)]
+    [native-label : i64 (ir.compiler-ir-label-none)]
+    [scalar-label : i64 (ir.compiler-ir-label-none)]
+    [join-label : i64 (ir.compiler-ir-label-none)]
+    [row-index : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-private-identity state SpmdRowIndex))]
+    [row-start : i64
+      (cis.intern-lower-private-identity-raw
+        (lower-private-identity state SpmdRowStart))]
+    [native-env : sym_i64_env.SymI64Env (lower-global-shared-view env)]
+    [native-type-env : tc_core.TcTypeEnv (lower-global-shared-view type-env)]
+    [item-index : i64 0]
+    (match (lower-row-origin-hold s start-value (I64))
+      [(Alloc next var)
+        (set! s next)
+        (set! start-var var)])
+    (match (lower-row-origin-hold s end-value (I64))
+      [(Alloc next var)
+        (set! s next)
+        (set! end-var var)])
+    (match (lower-row-origin-binop s Sub (Var end-var) (Var start-var) (I64))
+      [(Alloc next var)
+        (set! s next)
+        (set! span-var var)])
+    ;; Non-empty with a span that did not wrap.
+    (match (lower-row-origin-binop s Lt (Var start-var) (Var end-var) (I64))
+      [(Alloc next var)
+        (set! s next)
+        (set! ok-var var)])
+    (match (lower-row-origin-binop s Gt (Var span-var) (I64 0) (I64))
+      [(Alloc next var)
+        (match (lower-row-origin-binop next And (Var ok-var) (Var var) (Bool))
+          [(Alloc joined ok)
+            (set! s joined)
+            (set! ok-var ok)])])
+    (while (< item-index plan.count)
+      (let
+        [item : LowerRowOrigin (array-ref plan.items item-index)]
+        [origin
+          (try
+            (lower-expr
+              ctx
+              s
+              env
+              type-env
+              (lower-context-expr-get ctx item.origin)))]
+        (match origin
+          [(Expr origin-state origin-value _)
+            (match (lower-row-origin-binop
+              origin-state
+              Add
+              origin-value
+              (Var start-var)
+              (I64))
+              [(Alloc next var)
+                (set! s next)
+                (set! (array-ref origin-vars item-index) var)])])
+        (let
+          [fields
+            (try
+              (lower-slice-view-source-fields
+                ctx
+                s
+                env
+                type-env
+                (lower-context-expr-get
+                  ctx
+                  (ast.ast-node-pool-context-expr-push pools (Var item.name)))))]
+          (match fields
+            [(Fields fields-state ptr len _)
+              (match (lower-row-origin-hold fields-state ptr (U64))
+                [(Alloc ptr-state ptr-var)
+                  (match (lower-row-origin-hold ptr-state len (I64))
+                    [(Alloc len-state len-var)
+                      (set! s len-state)
+                      (set! (array-ref ptr-vars item-index) ptr-var)
+                      (set! (array-ref len-vars item-index) len-var)])])]))
+        (match (lower-row-origin-binop
+          s
+          Ge
+          (Var (array-ref origin-vars item-index))
+          (I64 0)
+          (I64))
+          [(Alloc ge-state ge)
+            (match (lower-row-origin-binop
+              ge-state
+              Le
+              (Var (array-ref origin-vars item-index))
+              (Var (array-ref len-vars item-index))
+              (I64))
+              [(Alloc le-state le)
+                (match (lower-row-origin-binop
+                  le-state
+                  And
+                  (Var ge)
+                  (Var le)
+                  (Bool))
+                  [(Alloc in-state within)
+                    (match (lower-row-origin-binop
+                      in-state
+                      And
+                      (Var ok-var)
+                      (Var within)
+                      (Bool))
+                      [(Alloc next ok)
+                        (set! s next)
+                        (set! ok-var ok)])])])])
+        (set!
+          (array-ref view-ids item-index)
+          (cis.intern-lower-private-identity-raw
+            (lower-private-identity s (SpmdRowView item-index)))))
+      (set! item-index (+ item-index 1)))
+    (match (lower-state-fresh-label s "row_origin_native")
+      [(Label next label)
+        (set! s next)
+        (set! native-label label)])
+    (match (lower-state-fresh-label s "row_origin_scalar")
+      [(Label next label)
+        (set! s next)
+        (set! scalar-label label)])
+    (match (lower-state-fresh-label s "row_origin_join")
+      [(Label next label)
+        (set! s next)
+        (set! join-label label)])
+    (set!
+      s
+      (lower-state-finish-block
+        (lower-state-emit s (Branch (Var ok-var) native-label scalar-label))
+        native-label))
+    ;; The native row: one view per plan item, then the rewritten body over the
+    ;; row index from 0.
+    (set! item-index 0)
+    (while (< item-index plan.count)
+      (let
+        [item : LowerRowOrigin (array-ref plan.items item-index)]
+        [elem-id : i64 (lower-row-origin-elem-id ctx env type-env item.name)]
+        [slice : i64
+          (ast.ast-node-pool-context-type-push pools (Slice elem-id))]
+        [view-ty : ast.AstType
+          (if item.write
+            (MutRef -1 slice)
+            (Ref -1 slice))]
+        (match (lower-emit-elem-addr-gep
+          ctx
+          s
+          (Var (array-ref ptr-vars item-index))
+          (Var (array-ref origin-vars item-index))
+          (tc_core.tc-context-type-get ctx elem-id))
+          [(Expr ptr-state view-ptr _)
+            (match (lower-row-origin-binop
+              ptr-state
+              Sub
+              (Var (array-ref len-vars item-index))
+              (Var (array-ref origin-vars item-index))
+              (I64))
+              [(Alloc len-state view-len)
+                (match (lower-slice-view-pack
+                  len-state
+                  view-ptr
+                  (Var view-len)
+                  (lower-global-shared-view view-ty))
+                  [(Expr view-state view-value _)
+                    (match (lower-row-origin-hold
+                      view-state
+                      view-value
+                      (lower-global-shared-view view-ty))
+                      [(Alloc next view-var)
+                        (set! s next)
+                        (set!
+                          native-env
+                          (sym_i64_env.sym-i64-bind-id
+                            native-env
+                            (array-ref view-ids item-index)
+                            view-var))
+                        (set!
+                          native-type-env
+                          (tc_core.tc-bind-id
+                            native-type-env
+                            (array-ref view-ids item-index)
+                            view-ty))])])])]))
+      (set! item-index (+ item-index 1)))
+    (let
+      [rewritten : i64
+        (lower-row-origin-rewrite
+          ctx
+          env
+          type-env
+          index-id
+          (& plan)
+          (& view-ids)
+          row-index
+          row-start
+          (lower-context-expr-push ctx (lower-global-shared-view inlined-body)))]
+      [native
+        (try
+          (lower-foreach-lowered-inlined
+            ctx
+            s
+            (sym_i64_env.sym-i64-bind-id native-env row-start start-var)
+            (tc_core.tc-bind-id native-type-env row-start (I64))
+            row-index
+            (tc_core.tc-env-key-name-text row-index)
+            (I64)
+            (I64 0)
+            (Var span-var)
+            body
+            (lower-context-expr-get ctx rewritten)
+            true))]
+      (match native
+        [(Expr native-state _ _)
+          (set!
+            s
+            (lower-state-finish-block
+              (lower-state-emit native-state (Jump join-label))
+              scalar-label))]))
+    (let
+      [scalar
+        (try
+          (lower-scalar-foreach-lowered
+            ctx
+            s
+            env
+            type-env
+            index-id
+            index
+            index-ty
+            (Var start-var)
+            (Var end-var)
+            inlined-body))]
+      (match scalar
+        [(Expr scalar-state _ _)
+          (Ok
+            (Expr
+              (lower-state-finish-block
+                (lower-state-emit scalar-state (Jump join-label))
+                join-label)
+              Unit
+              (Unit)))]))))
+
 (define (lower-foreach-lowered-after-numeric-admission
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -62149,7 +63218,8 @@
   [index-ty : ast.AstType]
   [start-value : ir.CompilerIrValue]
   [end-value : ir.CompilerIrValue]
-  [body : ast.AstExpr]) : ResultLowerExpr
+  [body : ast.AstExpr]
+  [row? : bool]) : ResultLowerExpr
   (let
     [inlined-body
       (try
@@ -62177,18 +63247,43 @@
           (lower-global-shared-view inlined-body)))]
     (match views
       [(Views view-state view-env view-type-env)
-        (lower-foreach-lowered-inlined
-          ctx
-          view-state
-          view-env
-          view-type-env
-          index-id
-          index
-          index-ty
-          start-value
-          end-value
-          body
-          inlined-body)])))
+        (let
+          [plan : LowerRowOriginPlan
+            (if (and row? (lower-mode-simd? (lower-state-mode view-state)))
+              (lower-row-origin-plan
+                ctx
+                view-env
+                view-type-env
+                index-id
+                (lower-global-shared-view inlined-body))
+              (lower-row-origin-plan-empty))]
+          (if (> plan.count 0)
+            (lower-row-origin-foreach
+              ctx
+              view-state
+              view-env
+              view-type-env
+              index-id
+              index
+              index-ty
+              start-value
+              end-value
+              body
+              inlined-body
+              plan)
+            (lower-foreach-lowered-inlined
+              ctx
+              view-state
+              view-env
+              view-type-env
+              index-id
+              index
+              index-ty
+              start-value
+              end-value
+              body
+              inlined-body
+              row?)))])))
 
 (define (lower-foreach-lowered
   [ctx : tc_core.TcContext]
@@ -62200,7 +63295,8 @@
   [index-ty : ast.AstType]
   [start-value : ir.CompilerIrValue]
   [end-value : ir.CompilerIrValue]
-  [body : ast.AstExpr]) : ResultLowerExpr
+  [body : ast.AstExpr]
+  [row? : bool]) : ResultLowerExpr
   (if (and
     (lower-mode-simd? (lower-state-mode state))
     (lower-type-i64? (lower-global-shared-view index-ty))
@@ -62222,12 +63318,24 @@
       [(Some origin decision)
         (match decision.context
           [(PrivateHelper)
-            (Err
-              (box
-                (lower-diagnostic-at-expr
-                  ctx
-                  origin
-                  (lower-spmd-numeric-failure-message decision))))]
+            (if row?
+              (lower-scalar-foreach-lowered
+                ctx
+                state
+                env
+                type-env
+                index-id
+                index
+                index-ty
+                start-value
+                end-value
+                body)
+              (Err
+                (box
+                  (lower-diagnostic-at-expr
+                    ctx
+                    origin
+                    (lower-spmd-numeric-failure-message decision)))))]
           [_
             (lower-foreach-lowered-after-numeric-admission
               ctx
@@ -62239,7 +63347,8 @@
               index-ty
               start-value
               end-value
-              body)])]
+              body
+              row?)])]
       [(No)
         (lower-foreach-lowered-after-numeric-admission
           ctx
@@ -62251,7 +63360,8 @@
           index-ty
           start-value
           end-value
-          body)])
+          body
+          row?)])
     (lower-foreach-lowered-after-numeric-admission
       ctx
       state
@@ -62262,7 +63372,8 @@
       index-ty
       start-value
       end-value
-      body)))
+      body
+      row?)))
 
 ;; --- foreach-active (#8306) ---
 ;; The SIMD backends lower foreach-active in #8307; until then a gang that
@@ -62393,7 +63504,8 @@
                     index-ty
                     start-value
                     end-value
-                    body)]))]))]))
+                    body
+                    false)]))]))]))
 
 ;; Scalar `match` lowering. The scrutinee is lowered once into a fresh
 ;; local, then literal arms become a chain of `CompilerIrBinOp.Eq` tests + `CompilerIrInstr.Branch`

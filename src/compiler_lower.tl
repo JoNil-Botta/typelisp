@@ -18783,9 +18783,17 @@
               [info : LowerFieldInfo
                 (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
               (match info
-                [(Info offset _)
+                [(Info offset field-ty)
                   (match (lower-gep-byte tuple-state tuple-value offset)
-                    [(Expr ptr-state ptr _) (Ok (Expr ptr-state ptr result-ty))])]))]
+                    [(Expr ptr-state ptr _)
+                      (Ok
+                        (lower-borrow-place-slot-reference
+                          ctx
+                          ptr-state
+                          ptr
+                          (lower-global-shared-view field-ty)
+                          result-ty
+                          (lower-owned-handle-type? ctx field-ty)))])]))]
           [(Ref _ referent-ty)
             (match (tc_core.tc-type-strip-region
               (tc_core.tc-resolve-type
@@ -18796,10 +18804,17 @@
                   [info : LowerFieldInfo
                     (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
                   (match info
-                    [(Info offset _)
+                    [(Info offset field-ty)
                       (match (lower-gep-byte tuple-state tuple-value offset)
                         [(Expr ptr-state ptr _)
-                          (Ok (Expr ptr-state ptr result-ty))])]))]
+                          (Ok
+                            (lower-borrow-place-slot-reference
+                              ctx
+                              ptr-state
+                              ptr
+                              (lower-global-shared-view field-ty)
+                              result-ty
+                              (lower-owned-handle-type? ctx field-ty)))])]))]
               [_
                 (Err
                   (box
@@ -18817,10 +18832,17 @@
                   [info : LowerFieldInfo
                     (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
                   (match info
-                    [(Info offset _)
+                    [(Info offset field-ty)
                       (match (lower-gep-byte tuple-state tuple-value offset)
                         [(Expr ptr-state ptr _)
-                          (Ok (Expr ptr-state ptr result-ty))])]))]
+                          (Ok
+                            (lower-borrow-place-slot-reference
+                              ctx
+                              ptr-state
+                              ptr
+                              (lower-global-shared-view field-ty)
+                              result-ty
+                              (lower-owned-handle-type? ctx field-ty)))])]))]
               [_
                 (Err
                   (box
@@ -18869,6 +18891,9 @@
           (tc_core.tc-resolve-type ctx (lower-global-shared-view container-ty)))
           [(Slice elem-ty)
             (let
+              [elem-type : ast.AstType
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-get ctx elem-ty))]
               [arr-lowered : LowerExpr
                 (try (lower-expr ctx state env type-env arr))]
               (match arr-lowered
@@ -18901,21 +18926,26 @@
                               arr-ty
                               idx-value
                               idx-value-ty
-                              (tc_core.tc-type-without-regions
-                                (tc_core.tc-context-type-get ctx elem-ty)))
+                              (lower-global-shared-view elem-type))
                               [(Expr addr-state elem-ptr _)
                                 (Ok
-                                  (Expr
+                                  (lower-borrow-place-slot-reference
+                                    ctx
                                     (lower-state-record-latest-bounds-check-at-expr
                                       ctx
                                       addr-state
                                       origin)
                                     elem-ptr
-                                    result-ty))])]))]
+                                    (lower-global-shared-view elem-type)
+                                    result-ty
+                                    (lower-owned-handle-type? ctx elem-type)))])]))]
                     [(Err message)
                       (Err (box (lower-diagnostic-at-expr ctx index message)))])]))]
           [(DynArray elem-ty)
             (let
+              [elem-type : ast.AstType
+                (tc_core.tc-type-without-regions
+                  (tc_core.tc-context-type-get ctx elem-ty))]
               [arr-lowered : LowerExpr
                 (try (lower-expr ctx state env type-env arr))]
               (match arr-lowered
@@ -18947,17 +18977,19 @@
                               arr-value
                               idx-value
                               idx-value-ty
-                              (tc_core.tc-type-without-regions
-                                (tc_core.tc-context-type-get ctx elem-ty)))
+                              (lower-global-shared-view elem-type))
                               [(Expr addr-state elem-ptr _)
                                 (Ok
-                                  (Expr
+                                  (lower-borrow-place-slot-reference
+                                    ctx
                                     (lower-state-record-latest-bounds-check-at-expr
                                       ctx
                                       addr-state
                                       origin)
                                     elem-ptr
-                                    result-ty))])]))]
+                                    (lower-global-shared-view elem-type)
+                                    result-ty
+                                    (lower-owned-handle-type? ctx elem-type)))])]))]
                     [(Err message)
                       (Err (box (lower-diagnostic-at-expr ctx index message)))])]))]
           [(Array elem-ty elem-count)
@@ -18996,17 +19028,20 @@
                               arr-value
                               idx-value
                               idx-value-ty
-                              fixed-elem-ty
+                              (lower-global-shared-view fixed-elem-ty)
                               elem-count)
                               [(Expr addr-state elem-ptr _)
                                 (Ok
-                                  (Expr
+                                  (lower-borrow-place-slot-reference
+                                    ctx
                                     (lower-state-record-latest-bounds-check-at-expr
                                       ctx
                                       addr-state
                                       origin)
                                     elem-ptr
-                                    result-ty))])]))]
+                                    (lower-global-shared-view fixed-elem-ty)
+                                    result-ty
+                                    (lower-owned-handle-type? ctx fixed-elem-ty)))])]))]
                     [(Err message)
                       (Err (box (lower-diagnostic-at-expr ctx index message)))])]))]
           [_
@@ -21130,13 +21165,21 @@
   ;; Enum payload aggregates are stored inline in the enum slot. Borrowing a
   ;; tuple, fixed array, struct, or enum payload therefore takes the payload's
   ;; address even when that aggregate is normally represented by a pointer.
+  ;; A dynamic array instead stores one descriptor handle in that slot.
   (if (lower-str-ref-type? ctx (lower-global-shared-view ref-ty))
     (let
       [loaded : LowerExpr (lower-load-at-offset state base offset field-ty)]
       (match loaded
         [(Expr loaded-state value _) (Expr loaded-state value ref-ty)]))
     (match (lower-gep-byte state base offset)
-      [(Expr ptr-state ptr _) (Expr ptr-state ptr ref-ty)])))
+      [(Expr ptr-state ptr _)
+        (lower-borrow-place-slot-reference
+          ctx
+          ptr-state
+          ptr
+          (lower-global-shared-view field-ty)
+          ref-ty
+          (lower-owned-handle-type? ctx field-ty))])))
 
 ;; A Copy part read by value out of borrowed storage. An inline memory aggregate
 ;; is copied into fresh storage so the binding does not alias the scrutinee.

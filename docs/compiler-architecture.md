@@ -219,6 +219,11 @@ alignment, member offsets looked up by name, tuple offsets from the
 typechecker's sizes) and fails the compile on the first disagreement. Without
 debug info nothing is recorded.
 
+Borrowing a dynamic-array element or enum payload loads the descriptor handle
+from its one-word storage slot through the shared slot-reference helper.
+Inline aggregate payloads keep their storage address. Element bounds checks
+precede the handle load, so an invalid outer index cannot read a slot.
+
 A rank-2 `foreach` is `AstForeach.Foreach2` (surface schema 16, expression
 tag 89): the outer coordinate's name, type and bounds, then the inner one's,
 then the body, so binding order and ordinal survive every AST walker. The

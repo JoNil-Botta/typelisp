@@ -1764,6 +1764,12 @@ Reference types are lifetime-bearing:
   value)` writes through an owned fixed array or a mutable array reference. Private
   `__tl_array-push!` mutates private dynamic buffers. Borrowed `str` source
   semantics are specified in section 3.11.
+- A value read through a reference does not own the referent. `(deref r)`, or
+  a field, tuple-element or element projection through `r` or through
+  `(deref r)`, may be used by value only when its type is `Copy`. A by-value
+  use of a non-`Copy` value read this way is a move out of the reference and
+  is rejected as a move violation (`E0208`): pass, bind or return a borrow
+  `(& ...)` of it, or an owned clone.
 
 In function signatures, the ordinary spelling elides the lifetime name:
 

@@ -325,8 +325,8 @@
 (define (spec-materialize-generated-name-id [name : String]) : i64
   (spec_ci.intern-generated-name name))
 
-;; Self-test compatibility shim for the removed ambient value worker. The
-;; production specialization graph calls only the owner-routed implementation.
+;; Self-test shim for the removed ambient value worker: the combined
+;; substitution walk with no type bindings.
 (define (spec-substitute-values-expr
   [expr : ast.AstExpr]
   [subs : (& subs spec.SpecValueSubst)]) : spec.ResultSpecSubExpr
@@ -336,11 +336,15 @@
       (spec_ci.intern-compat-state-capture-active)]
     [owner : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools intern-state)]
+    [combined : spec.SpecSubst
+      (spec.SpecSubst
+        (spec.spec-type-subst-new)
+        (spec.spec-value-subst-shared-view subs))]
     (ast.ast-node-pool-context-install! pools)
     (spec_ci.intern-compat-state-install! intern-state)
     (let
       [result : spec.ResultSpecSubExpr
-        (spec.spec-substitute-values-expr-with-owner owner expr subs)]
+        (spec.spec-substitute-expr-with-owner owner expr (& combined))]
       (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install! intern-state)
       result)))

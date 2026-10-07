@@ -134,7 +134,8 @@
             expected-count)
           (= origin.ordinal index)
           (string.eq
-            (parser.compiler-parse-semantic-origin-kind-marker origin.kind)
+            (reader.sp-text
+              (parser.compiler-parse-semantic-origin-kind-marker origin.kind))
             expected-kind)
           (compiler-parse-test-name-id? origin.written-name expected-name)
           (= (ast.ast-source-span-start-line span) start-line)
@@ -188,7 +189,9 @@
                 (string.int->string
                   (parser.compiler-parse-semantic-origin-run-len (& run)))
                 ", kind "
-                (parser.compiler-parse-semantic-origin-kind-marker origin.kind)
+                (reader.sp-text
+                  (parser.compiler-parse-semantic-origin-kind-marker
+                    origin.kind))
                 ", span "
                 (string.int->string (ast.ast-source-span-start-line span))
                 ":"

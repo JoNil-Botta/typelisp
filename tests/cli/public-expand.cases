@@ -118,6 +118,26 @@ run expand long.tl --at 2:4 --max-bytes 4096
 stdout not-contains truncated
 stdout contains (< 3 0)
 
+# The formatter's layout is longer than the one-line rendering. Between the
+# two lengths the one-line text is shown whole, so the output stays within the
+# bound.
+case expand-max-bytes-layout
+file when.tl
+(define (main) : i64
+  (let [total : i64 0] [i : i64 3]
+    (when (> i 0) (set! total (+ total i)) (set! total (+ total 1)) (set! total (+ total 2)))
+    total))
+end-file
+cwd {{dir}}
+run expand when.tl --at 3:6
+stderr empty
+stdout after ^[(]if [(]> i 0[)]$
+next-line ^  [(]begin$
+run expand when.tl --at 3:6 --max-bytes 100
+stderr empty
+stdout contains (if (> i 0) (begin (set! total (+ total i)) (set! total (+ total 1)) (set! total (+ total 2))) unit)
+stdout not-contains truncated
+
 # An expansion that fails to typecheck is still shown, with its diagnostics,
 # and the command fails.
 case expand-ill-typed-expansion

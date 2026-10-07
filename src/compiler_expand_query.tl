@@ -319,8 +319,10 @@
       (compiler-expand-text-append! out (compiler-expand-char-literal c))]
     [(Float text _) (compiler-expand-text-append! out text)]))
 
-;; The expansion `produced` as source text no longer than `max-bytes`, laid out
-;; by the formatter when the whole form fit.
+;; The expansion `produced` as source text no longer than `max-bytes`. The
+;; formatter's layout is used only when it fits too: its line breaks and
+;; indentation make it longer than the one-line rendering, which is kept
+;; otherwise.
 (define (compiler-expand-render
   [ctx : tc.TcContext]
   [produced : i64]
@@ -356,10 +358,14 @@
             (text_buf.render out.buf)
             80)
             [(Ok formatted)
-              (CompilerExpandText
-                (text_buf.append (text_buf.empty) formatted)
-                out.remaining
-                false)]
+              (let
+                [length : i64 (string.string-length (& formatted))]
+                (if (> length max-bytes)
+                  out
+                  (CompilerExpandText
+                    (text_buf.append (text_buf.empty) formatted)
+                    (- max-bytes length)
+                    false)))]
             [(Err _) out]))]
       [(Err diag)
         (CompilerExpandText

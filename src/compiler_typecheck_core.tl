@@ -4528,6 +4528,9 @@
   (owner-arena i64)
   (agg-layout-storage-owner arena.Arena)
   (agg-layout-cache (__tl_dyn-array TcAggLayoutCacheSlot))
+  ;; Slot 0 counts the table slots filled since the last reset; the indices
+  ;; follow (see `tc-agg-layout-cache-note-filled!`).
+  (agg-layout-filled (__tl_dyn-array i64))
   (intern-table-id i64)
   (intern-generation i64))
 
@@ -4563,6 +4566,7 @@
         (arena.raw-handle owner)
         (arena.Arena 0)
         (__tl_make-array TcAggLayoutCacheSlot 0)
+        (__tl_make-array i64 0)
         -1
         -1))
     (tc-job-state-set-agg-layout-cache-address! job-state address)
@@ -4615,15 +4619,33 @@
       [data : (MutPtr TcAggLayoutCacheStateData)
         (tc-agg-layout-cache-state-ptr state)]
       [storage : arena.Arena (deref data).agg-layout-storage-owner]
+      [filled : (__tl_dyn-array i64) (deref data).agg-layout-filled]
+      [count : i64
+        (if (> (array-length filled) 0)
+          (array-ref filled 0)
+          0)]
       [index : i64 0]
       ;; Unpublish every dependent view before destroying its owner. The slot
       ;; backing array belongs to the outer persistent-table owner and is safe
       ;; to reuse; none of its entries may retain the retired payload brand.
-      (while (< index (array-length (deref data).agg-layout-cache))
-        (set!
-          (array-ref (deref data).agg-layout-cache index)
-          (TcAggLayoutCacheSlot.Empty))
-        (set! index (+ index 1)))
+      ;; The logged slots are all the filled ones, unless the log overflowed or
+      ;; the table is fresh, when every slot is reset.
+      (if (> count tc-agg-layout-cache-log-capacity)
+        (while (< index (array-length (deref data).agg-layout-cache))
+          (set!
+            (array-ref (deref data).agg-layout-cache index)
+            (TcAggLayoutCacheSlot.Empty))
+          (set! index (+ index 1)))
+        (while (< index count)
+          (set!
+            (array-ref
+              (deref data).agg-layout-cache
+              (array-ref filled (+ index 1)))
+            (TcAggLayoutCacheSlot.Empty))
+          (set! index (+ index 1))))
+      (if (> (array-length filled) 0)
+        (set! (array-ref filled 0) 0)
+        unit)
       (set! (deref data).agg-layout-storage-owner (arena.Arena 0))
       (if (= (arena.raw-handle storage) 0)
         unit
@@ -18200,13 +18222,59 @@
             (tc-resolve-type ctx ty)
             (tc-name-id-list-add out name)))])))
 
+;: The reserved `program` lifetime, which outlives every other lifetime.
+(define (tc-program-lifetime-id? [lifetime-id : i64]) : bool
+  (and
+    (>= lifetime-id 0)
+    (ci.intern-renderable-id? lifetime-id)
+    (string.eq (ci.intern-str lifetime-id) "program")))
+
+;: The list without the reserved `program` lifetime (itself when it has none).
+(define (tc-name-id-list-without-program [items : TcNameIdList]) : TcNameIdList
+  (let
+    [cursor : TcNameIdList items]
+    [has-program : bool false]
+    (while (and (not has-program) (not (tc-name-id-list-empty? cursor)))
+      (when
+        (tc-program-lifetime-id? (tc-name-id-list-head cursor))
+        (set! has-program true))
+      (set! cursor (tc-name-id-list-rest cursor)))
+    (if has-program
+      (let
+        [out : TcNameIdList Nil]
+        [rest : TcNameIdList items]
+        (while (not (tc-name-id-list-empty? rest))
+          (let
+            [lifetime : i64 (tc-name-id-list-head rest)]
+            (unless
+              (tc-program-lifetime-id? lifetime)
+              (set! out (tc-name-id-list-add out lifetime))))
+          (set! rest (tc-name-id-list-rest rest)))
+        out)
+      items)))
+
+;; A returned reference lifetime must be tied to an input parameter or be the
+;; reserved `program` lifetime (SPEC 3.10, lifetime-parameterized aggregates).
 (define (tc-reference-return-lifetimes-allowed?
   [ctx : TcContext]
   [params : ast.AstParamList]
   [ret : ast.AstType]) : bool
-  (tc-name-id-list-all-in?
-    (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ret))
-    (tc-param-list-reference-return-lifetimes-into ctx params Nil)))
+  (let
+    [allowed : TcNameIdList
+      (tc-param-list-reference-return-lifetimes-into ctx params Nil)]
+    [cursor : TcNameIdList
+      (tc-type-collect-reference-lifetimes (tc-resolve-type ctx ret))]
+    [ok : bool true]
+    (while (and ok (not (tc-name-id-list-empty? cursor)))
+      (let
+        [lifetime : i64 (tc-name-id-list-head cursor)]
+        (unless
+          (or
+            (tc-program-lifetime-id? lifetime)
+            (tc-name-id-list-contains allowed lifetime))
+          (set! ok false)))
+      (set! cursor (tc-name-id-list-rest cursor)))
+    ok))
 
 (define (tc-reference-return-policy-ok
   [ctx : TcContext]
@@ -18478,7 +18546,9 @@
   [value-ty : ast.AstType]
   [context : String]) : ResultTcUnit
   (let
-    [value-regions : TcNameIdList (tc-type-collect-regions value-ty)]
+    ;; `program` outlives every target, so only shorter regions can escape.
+    [value-regions : TcNameIdList
+      (tc-name-id-list-without-program (tc-type-collect-regions value-ty))]
     (match value-regions
       [(Nil) Ok]
       [_
@@ -26152,6 +26222,9 @@
         "typecheck: defdispatch requires exactly one scalar variant")
       (string.eq text "typecheck: duplicate defdispatch ISA variant")
       (string.eq text "typecheck: duplicate lifetime parameter")
+      (string.eq
+        text
+        "typecheck: returned reference lifetime must be tied to a parameter")
       (string.contains (& text) " cannot use repr c")
       (string.contains (& text) " declares (:align "))))
 
@@ -29378,10 +29451,7 @@
   (and
     (>= lifetime-id 0)
     (not (tc-elaborated-lifetime-hidden? lifetime-id))
-    (not
-      (and
-        (ci.intern-renderable-id? lifetime-id)
-        (string.eq (ci.intern-str lifetime-id) "program")))
+    (not (tc-program-lifetime-id? lifetime-id))
     (not (tc-param-list-has-name-id-at? params lifetime-id 0))))
 
 (define (tc-bind-signature-lifetime-markers
@@ -51106,6 +51176,11 @@
 (define tc-agg-layout-cache-capacity : i64
   65536)
 
+;; A reset empties only the table slots filled since the previous one (#8520),
+;; up to this many; past it, the reset empties the whole table.
+(define tc-agg-layout-cache-log-capacity : i64
+  8192)
+
 (define (tc-agg-layout-cache-table-storage-ensure-for-state!
   [state : TcAggLayoutCacheState]) : unit
   (let
@@ -51120,7 +51195,14 @@
           (arena.Arena (deref data).owner-arena)
           (set!
             (deref data).agg-layout-cache
-            (__tl_make-array TcAggLayoutCacheSlot tc-agg-layout-cache-capacity)))))))
+            (__tl_make-array TcAggLayoutCacheSlot tc-agg-layout-cache-capacity))
+          ;; A fresh table holds no valid slots, so its first reset fills it
+          ;; all.
+          (let
+            [filled : (__tl_dyn-array i64)
+              (__tl_make-array i64 (+ tc-agg-layout-cache-log-capacity 1))]
+            (set! (array-ref filled 0) (+ tc-agg-layout-cache-log-capacity 1))
+            (set! (deref data).agg-layout-filled filled)))))))
 
 (define (tc-agg-layout-cache-table-storage-ensure-for-job!
   [job-state : TcJobState]) : unit
@@ -51204,7 +51286,25 @@
       (unsafe
         (deref (tc-agg-layout-cache-state-view state)).agg-layout-cache)
       slot)
-    (TcAggLayoutCacheSlot.Full name-id layout)))
+    (TcAggLayoutCacheSlot.Full name-id layout))
+  (tc-agg-layout-cache-note-filled!
+    (unsafe
+      (deref (tc-agg-layout-cache-state-view state)).agg-layout-filled)
+    slot))
+
+;; Log table slot SLOT as filled in FILLED, the layout cache's fill log: slot 0
+;; is the count and the indices follow. A count above the log capacity means
+;; the next reset empties the whole table.
+(define (tc-agg-layout-cache-note-filled!
+  [filled : (__tl_dyn-array i64)]
+  [slot : i64]) : unit
+  (let
+    [count : i64 (array-ref filled 0)]
+    (if (< count tc-agg-layout-cache-log-capacity)
+      (begin
+        (set! (array-ref filled (+ count 1)) slot)
+        (set! (array-ref filled 0) (+ count 1)))
+      (set! (array-ref filled 0) (+ tc-agg-layout-cache-log-capacity 1)))))
 
 (define (tc-inline-aggregate-layout-kind-dispatch
   [ctx : TcContext]
@@ -51512,12 +51612,61 @@
 ;; The owning source-name session's table and reset generation are the cheap
 ;; clear tokens across programs, while tc-agg-caches-reset-for-job! covers
 ;; lower/test paths that reuse cache arrays without resetting the intern table.
+;;
+;; A scalar cache array ends with its fill log: past the `capacity` table slots,
+;; a count cell, then up to `tc-agg-scalar-cache-log-capacity` keys filled since
+;; the last clear, so a clear costs what the program cached rather than the
+;; whole table (#8520). A count above the log capacity means the log
+;; overflowed, or the array is fresh and its contents unknown: the next clear
+;; then empties the whole table.
+(define tc-agg-scalar-cache-log-capacity : i64
+  16384)
+(define tc-agg-scalar-cache-length : i64
+  (+ tc-agg-scalar-cache-capacity (+ tc-agg-scalar-cache-log-capacity 1)))
+
+(define (tc-agg-scalar-cache-new) : (__tl_dyn-array i64)
+  (let
+    [slots : (__tl_dyn-array i64)
+      (__tl_make-array i64 tc-agg-scalar-cache-length)]
+    (set!
+      (array-ref slots tc-agg-scalar-cache-capacity)
+      (+ tc-agg-scalar-cache-log-capacity 1))
+    slots))
+
+;; Log table slot KEY of SLOTS as filled.
+(define (tc-agg-scalar-cache-note-filled!
+  [slots : (&mut slots (__tl_dyn-array i64))]
+  [key : i64]) : unit
+  (let
+    [count : i64 (array-ref slots tc-agg-scalar-cache-capacity)]
+    (if (< count tc-agg-scalar-cache-log-capacity)
+      (begin
+        (set!
+          (array-ref slots (+ tc-agg-scalar-cache-capacity (+ count 1)))
+          key)
+        (set! (array-ref slots tc-agg-scalar-cache-capacity) (+ count 1)))
+      (set!
+        (array-ref slots tc-agg-scalar-cache-capacity)
+        (+ tc-agg-scalar-cache-log-capacity 1)))))
+
+;; Empty every table slot filled since the last clear: the logged keys, or the
+;; whole table when the log overflowed. The table then caches nothing.
 (define (tc-agg-scalar-cache-clear! [slots : (&mut slots (__tl_dyn-array i64))]) : unit
   (let
+    [count : i64 (array-ref slots tc-agg-scalar-cache-capacity)]
     [index : i64 0]
-    (while (< index (array-length slots))
-      (set! (array-ref slots index) 0)
-      (set! index (+ index 1)))))
+    (if (> count tc-agg-scalar-cache-log-capacity)
+      (while (< index tc-agg-scalar-cache-capacity)
+        (set! (array-ref slots index) 0)
+        (set! index (+ index 1)))
+      (while (< index count)
+        (set!
+          (array-ref
+            slots
+            (array-ref slots (+ tc-agg-scalar-cache-capacity (+ index 1))))
+          0)
+        (set! index (+ index 1))))
+    (set! (array-ref slots tc-agg-scalar-cache-capacity) 0)))
 
 (define (tc-agg-size-cache-storage-ensure-for-state!
   [state : TcAggScalarCacheState]) : unit
@@ -51525,15 +51674,11 @@
     [data : (MutPtr TcAggScalarCacheStateData)
       (tc-agg-scalar-cache-state-ptr state)]
     (unsafe
-      (if (=
-        (array-length (deref data).size-cache)
-        tc-agg-scalar-cache-capacity)
+      (if (= (array-length (deref data).size-cache) tc-agg-scalar-cache-length)
         unit
         (in-arena
           (arena.Arena (deref data).owner-arena)
-          (set!
-            (deref data).size-cache
-            (__tl_make-array i64 tc-agg-scalar-cache-capacity)))))))
+          (set! (deref data).size-cache (tc-agg-scalar-cache-new)))))))
 
 (define (tc-agg-size-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
   (tc-agg-size-cache-storage-ensure-for-state!
@@ -51601,6 +51746,7 @@
                 (let
                   [size : i64 (tc-inline-aggregate-layout-size layout)]
                   (set! (array-ref slots key) (+ size 1))
+                  (tc-agg-scalar-cache-note-filled! (&mut slots) key)
                   size)]
               [(Err _) fallback])))))))
 
@@ -51613,15 +51759,11 @@
     [data : (MutPtr TcAggScalarCacheStateData)
       (tc-agg-scalar-cache-state-ptr state)]
     (unsafe
-      (if (=
-        (array-length (deref data).align-cache)
-        tc-agg-scalar-cache-capacity)
+      (if (= (array-length (deref data).align-cache) tc-agg-scalar-cache-length)
         unit
         (in-arena
           (arena.Arena (deref data).owner-arena)
-          (set!
-            (deref data).align-cache
-            (__tl_make-array i64 tc-agg-scalar-cache-capacity)))))))
+          (set! (deref data).align-cache (tc-agg-scalar-cache-new)))))))
 
 (define (tc-agg-align-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
   (tc-agg-align-cache-storage-ensure-for-state!
@@ -51684,6 +51826,7 @@
                 (let
                   [align : i64 (tc-inline-aggregate-layout-align layout)]
                   (set! (array-ref slots key) (+ align 1))
+                  (tc-agg-scalar-cache-note-filled! (&mut slots) key)
                   align)]
               [(Err _) fallback])))))))
 
@@ -51702,13 +51845,11 @@
     (unsafe
       (if (=
         (array-length (deref data).regwords-cache)
-        tc-agg-scalar-cache-capacity)
+        tc-agg-scalar-cache-length)
         unit
         (in-arena
           (arena.Arena (deref data).owner-arena)
-          (set!
-            (deref data).regwords-cache
-            (__tl_make-array i64 tc-agg-scalar-cache-capacity)))))))
+          (set! (deref data).regwords-cache (tc-agg-scalar-cache-new)))))))
 
 (define (tc-agg-regwords-cache-storage-ensure-for-job! [job-state : TcJobState]) : unit
   (tc-agg-regwords-cache-storage-ensure-for-state!
@@ -51812,6 +51953,7 @@
                       (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
                       0)]
                   (set! (array-ref slots key) (+ words 1))
+                  (tc-agg-scalar-cache-note-filled! (&mut slots) key)
                   words)]
               [(Err _) 0])))))))
 

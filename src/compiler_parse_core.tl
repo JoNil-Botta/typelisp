@@ -7641,21 +7641,30 @@
                 CompilerParseSemanticOriginKind.BindingDefinition)]
             (match (reader.spanned-sexpr-view region-node)
               [(Sym region _)
-                (match (reader.spanned-sexpr-view
-                  (compiler-parse-place-shared-view body))
-                  [(Nil _)
-                    (Err
-                      (str_cat.str-cat
-                        "parse: with-arena '"
-                        (compiler-parse-dispatch-syntax-id-text dispatch region)
-                        "' requires a non-empty body"))]
-                  [_
-                    (let
-                      [exprs (try (parse-ast-expr-list dispatch pools body))]
-                      (Ok
-                        (ast.ast-node-pool-context-expr-push
-                          pools
-                          (WithRegion (ci.intern-syntax-id-value region) exprs))))])]
+                (if (string.eq
+                  (compiler-parse-dispatch-syntax-id-text dispatch region)
+                  "program")
+                  (Err
+                    "parse: with-arena region cannot be the reserved lifetime 'program'")
+                  (match (reader.spanned-sexpr-view
+                    (compiler-parse-place-shared-view body))
+                    [(Nil _)
+                      (Err
+                        (str_cat.str-cat
+                          "parse: with-arena '"
+                          (compiler-parse-dispatch-syntax-id-text
+                            dispatch
+                            region)
+                          "' requires a non-empty body"))]
+                    [_
+                      (let
+                        [exprs (try (parse-ast-expr-list dispatch pools body))]
+                        (Ok
+                          (ast.ast-node-pool-context-expr-push
+                            pools
+                            (WithRegion
+                              (ci.intern-syntax-id-value region)
+                              exprs))))]))]
               [_ (Err "parse: with-arena region name must be an identifier")]))]
         [_ (Err "parse: malformed with-arena")])]
     [_ (Err "parse: malformed with-arena")]))

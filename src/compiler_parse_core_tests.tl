@@ -2409,6 +2409,9 @@
       "(define (main) : i64 (with-arena r))"
       "parse: with-arena 'r' requires a non-empty body")
     (compiler-parse-error-ok?
+      "(define (main) : i64 (with-arena program 1))"
+      "parse: with-arena region cannot be the reserved lifetime 'program'")
+    (compiler-parse-error-ok?
       "(define (main) : (in 1 String) 0)"
       "parse: region name must be an identifier")
     (compiler-parse-error-ok?

@@ -3823,6 +3823,14 @@
   (One i64)
   (Dense i64 i64 i64))
 
+;; Where a store lands: the lifetime its references must outlive, and the
+;; lifetimes known to outlive that target. A place reached through
+;; `(&mut m T)` targets `m`, and the well-formedness of that reference implies
+;; every lifetime in `T` outlives `m` (#8584).
+(defenum ResultTcStorePlaceTarget
+  (Ok i64 TcNameIdList)
+  (Err String))
+
 (defstruct TcSpmdTraversalStateData
   (owner-arena i64)
   (inline-helper-stack TcNameIdList))
@@ -15342,13 +15350,23 @@
 
 ;; Names of `a` that `b` also contains, in `a`'s order.
 (define (tc-name-id-list-intersection [a : TcNameIdList] [b : TcNameIdList]) : TcNameIdList
+  (tc-name-id-list-filter-membership a b true))
+
+;; Names of `a` that `b` does not contain, in `a`'s order.
+(define (tc-name-id-list-difference [a : TcNameIdList] [b : TcNameIdList]) : TcNameIdList
+  (tc-name-id-list-filter-membership a b false))
+
+(define (tc-name-id-list-filter-membership
+  [a : TcNameIdList]
+  [b : TcNameIdList]
+  [keep-members : bool]) : TcNameIdList
   (let
     [out : TcNameIdList Nil]
     [rest : TcNameIdList a]
     (while (not (tc-name-id-list-empty? rest))
       (let
         [name : i64 (tc-name-id-list-head rest)]
-        (if (tc-name-id-list-contains b name)
+        (if (= (tc-name-id-list-contains b name) keep-members)
           (set! out (tc-name-id-list-add out name))
           unit)
         (set! rest (tc-name-id-list-rest rest))))
@@ -52629,6 +52647,14 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : ResultTcNameId
+  (match (tc-store-place-target ctx env expr)
+    [(Ok lifetime _) (ResultTcNameId.Ok lifetime)]
+    [(Err message) (ResultTcNameId.Err message)]))
+
+(define (tc-store-place-target
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]) : ResultTcStorePlaceTarget
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
     expr)
@@ -52640,25 +52666,26 @@
               (tc-dotted-local-field-expr-id-after-check
                 (tc-context-structural-session ctx)
                 name))]
-          (tc-store-place-lifetime ctx env (tc-context-expr-get ctx virtual-id)))
+          (tc-store-place-target ctx env (tc-context-expr-get ctx virtual-id)))
         (let
           [ty : ast.AstType (try (tc-lookup-visible-id ctx env name))]
-          (tc-store-place-lifetime-var name ty)))]
+          [lifetime : i64 (try (tc-store-place-lifetime-var name ty))]
+          (Ok lifetime Nil)))]
     [(StructGet receiver-box _)
       (let
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
-        (tc-store-place-lifetime ctx env receiver))]
+        (tc-store-place-target ctx env receiver))]
     [(TupleRef tuple-box _)
       (let
         [tuple : ast.AstExpr (tc-context-expr-get ctx tuple-box)]
-        (tc-store-place-lifetime ctx env tuple))]
+        (tc-store-place-target ctx env tuple))]
     [(ArrayRef array-box index-box)
       (let
         [array : ast.AstExpr (tc-context-expr-get ctx array-box)]
         [index : ast.AstExpr (tc-context-expr-get ctx index-box)]
         [index-ty : ast.AstType (try (tc-expr ctx env index))]
         (if (tc-integer-type? index-ty)
-          (tc-store-place-lifetime ctx env array)
+          (tc-store-place-target ctx env array)
           (Err "typecheck: array index must be integer")))]
     [(BoxGet box-box)
       (let
@@ -52666,15 +52693,16 @@
         [box-ty (try (tc-expr ctx env (tc-global-shared-view box-expr)))]
         [_ (try (tc-box-set-inner-type ctx (tc-global-shared-view box-ty)))]
         (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
-          [(MutRef lifetime _) (Ok lifetime)]
-          [_ (tc-store-place-lifetime ctx env box-expr)]))]
+          [(MutRef lifetime referent)
+            (tc-store-place-reference-target ctx lifetime referent)]
+          [_ (tc-store-place-target ctx env box-expr)]))]
     [(BoxTake receiver-box)
       (let
         [receiver : ast.AstExpr (tc-context-expr-get ctx receiver-box)]
         [receiver-ty (try (tc-expr ctx env (tc-global-shared-view receiver)))]
         (match (tc-type-strip-region
           (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
-          [(MutPtr _) (Ok (tc-raw-place-lifetime-id))]
+          [(MutPtr _) (Ok (tc-raw-place-lifetime-id) Nil)]
           [(Ptr _) (Err (tc-raw-deref-read-only-message))]
           [_
             (let
@@ -52684,11 +52712,24 @@
                     ctx
                     (tc-global-shared-view receiver-ty)))]
               (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
-                [(MutRef lifetime _) (Ok lifetime)]
-                [_ (tc-store-place-lifetime ctx env receiver)]))]))]
+                [(MutRef lifetime referent)
+                  (tc-store-place-reference-target ctx lifetime referent)]
+                [_ (tc-store-place-target ctx env receiver)]))]))]
     [_
       (Err
         (tc-kind-message (Place) "typecheck: expression is not a storage place"))]))
+
+;; The target of a place reached through `(&mut lifetime referent)`: its
+;; references must outlive `lifetime`, except those whose lifetimes appear in
+;; `referent`, which outlive the reference itself.
+(define (tc-store-place-reference-target
+  [ctx : TcContext]
+  [lifetime : i64]
+  [referent : i64]) : ResultTcStorePlaceTarget
+  (Ok
+    lifetime
+    (tc-type-collect-reference-lifetimes
+      (tc-resolve-type ctx (ast.ty-node-get referent)))))
 
 ;; A place reached through a raw pointer has no checked lifetime: like
 ;; `ptr-write!`, a store through it does not check the references it writes.
@@ -52707,28 +52748,84 @@
     (match lifetimes
       [(Nil) Ok]
       [_
-        (match (tc-store-place-lifetime ctx env place-expr)
-          [(Ok target-lifetime)
-            (if (or
-              (= target-lifetime (tc-raw-place-lifetime-id))
-              (tc-reference-lifetimes-outlive-lifetime?
-                env
-                lifetimes
-                target-lifetime))
-              Ok
-              (Err
-                (str_cat.str-cat
-                  (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
-                  "typecheck: cannot store reference into longer-lived "
-                  context
-                  "; reference value would escape lexical scope")))]
-          [(Err _)
-            (Err
-              (str_cat.str-cat
-                (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
-                "typecheck: cannot store reference into non-place "
-                context
-                "; reference value would escape lexical scope"))])])))
+        (tc-ensure-reference-lifetimes-can-store-at
+          env
+          lifetimes
+          (tc-store-place-target ctx env place-expr)
+          context)])))
+
+;; Whether the nearest binding of LIFETIME-ID in ENV is a signature lifetime.
+;; A local of the same name shadows it, and a borrow of that local carries the
+;; same lifetime name without living as long.
+(define (tc-lifetime-nearest-signature-id?
+  [env : TcTypeEnv]
+  [lifetime-id : i64]) : bool
+  (if (tc-type-env-scoped-runtime-active? env)
+    (let
+      [carrier : TcTypeEnvScopedCarrier
+        (tc-type-env-scoped-runtime-current env)]
+      [stack : TcTypeEnvScopedStack
+        (tc-global-shared-view carrier.sidecar.stack)]
+      (tc-type-env-scoped-stack-signature-lifetime-index?
+        stack
+        (tc-type-env-scoped-stack-find-lifetime-index
+          stack
+          (tc-type-env-structural-session carrier.env)
+          lifetime-id)
+        lifetime-id))
+    (tc-lifetime-nearest-binding-signature-scan-id?
+      env
+      (tc-type-env-structural-session env)
+      lifetime-id
+      (tc-signature-lifetime-marker-id))))
+
+;; The names of NAMES whose nearest binding in ENV is a signature lifetime.
+(define (tc-name-id-list-signature-lifetimes
+  [env : TcTypeEnv]
+  [names : TcNameIdList]) : TcNameIdList
+  (let
+    [out : TcNameIdList Nil]
+    [rest : TcNameIdList names]
+    (while (not (tc-name-id-list-empty? rest))
+      (let
+        [name : i64 (tc-name-id-list-head rest)]
+        (if (tc-lifetime-nearest-signature-id? env name)
+          (set! out (tc-name-id-list-add out name))
+          unit)
+        (set! rest (tc-name-id-list-rest rest))))
+    out))
+
+;; A referent lifetime outlives the `&mut` reference only while its name still
+;; denotes the signature lifetime the referent type was written with.
+(define (tc-ensure-reference-lifetimes-can-store-at
+  [env : TcTypeEnv]
+  [lifetimes : TcNameIdList]
+  [target : ResultTcStorePlaceTarget]
+  [context : String]) : ResultTcUnit
+  (match target
+    [(Ok target-lifetime implied)
+      (if (or
+        (= target-lifetime (tc-raw-place-lifetime-id))
+        (tc-reference-lifetimes-outlive-lifetime?
+          env
+          (tc-name-id-list-difference
+            lifetimes
+            (tc-name-id-list-signature-lifetimes env implied))
+          target-lifetime))
+        Ok
+        (Err
+          (str_cat.str-cat
+            (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
+            "typecheck: cannot store reference into longer-lived "
+            context
+            "; reference value would escape lexical scope")))]
+    [(Err _)
+      (Err
+        (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag (RegionEscape))
+          "typecheck: cannot store reference into non-place "
+          context
+          "; reference value would escape lexical scope"))]))
 
 (define (tc-borrow-place-result-type
   [mutable : bool]
@@ -58681,6 +58778,11 @@
     [_ (try (tc-store-place-lifetime ctx env (tc-global-shared-view box-expr)))]
     (let
       [box-ty (try (tc-expr ctx env (tc-global-shared-view box-expr)))]
+      [target-context : String
+        (match (tc-type-strip-region
+          (tc-resolve-type ctx (tc-global-shared-view box-ty)))
+          [(MutRef _ _) "&mut referent"]
+          [_ "box"])]
       [inner-ty : ast.AstType (try (tc-box-set-inner-type ctx box-ty))]
       [value-ty
         (try
@@ -58715,7 +58817,7 @@
                     ctx
                     (ast.ast-expr-box-get (ast.ast-node-push box-expr)))
                   value-ty
-                  "box"))]
+                  target-context))]
             (Ok (Unit))))))))
 
 (define (tc-init-unsupported-message [ctx : TcContext] [ty : ast.AstType]) : String
@@ -59962,7 +60064,11 @@
             (tc-expr ctx env (tc-global-shared-view receiver))
             (tc-field-receiver-type ctx env (tc-global-shared-view receiver))))]
       [field-ty : ast.AstType
-        (try (tc-struct-set-field-type-id ctx receiver-ty field-id))]
+        (try
+          (tc-struct-set-field-type-id
+            ctx
+            (tc-global-shared-view receiver-ty)
+            field-id))]
       [value-ty
         (try
           (tc-expr-with-expected-or-actual
@@ -59995,16 +60101,27 @@
                   "tuple element"
                   "struct field")))]
           (let
+            [context : String
+              (if (ast.ast-tuple-set-field-id? field-id)
+                "tuple element"
+                "struct field")]
             [_
               (try
-                (tc-ensure-reference-value-can-store-in-place
-                  ctx
-                  env
-                  receiver
-                  value-ty
-                  (if (ast.ast-tuple-set-field-id? field-id)
-                    "tuple element"
-                    "struct field")))]
+                (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+                  ;; `b.f` with `b : (&mut m T)` stores through the reference.
+                  [(MutRef lifetime referent)
+                    (tc-ensure-reference-lifetimes-can-store-at
+                      env
+                      (tc-type-collect-reference-lifetimes value-ty)
+                      (tc-store-place-reference-target ctx lifetime referent)
+                      context)]
+                  [_
+                    (tc-ensure-reference-value-can-store-in-place
+                      ctx
+                      env
+                      receiver
+                      value-ty
+                      context)]))]
             (Ok (Unit))))))))
 
 (define (tc-var-expr-after-local-field-check-mode

@@ -115063,13 +115063,46 @@
     [lookup-name : i64
       (tc-cleanup-field-helper-name ctx struct-name-id cleanup-name-id)]
     [cleanup-ty (try (tc-lookup-visible-id ctx env lookup-name))]
-    (tc-expect
-      cleanup-ty
-      (tc-fn1 (tc-type-without-regions field-ty) (Unit))
-      (tc-struct-field-cleanup-fn-mismatch-message
-        struct-name
-        field-name
-        (ci.intern-syntax-name-text-or cleanup-name-id "<structural-name>")))))
+    [cleanup-display : String
+      (ci.intern-syntax-name-text-or cleanup-name-id "<structural-name>")]
+    [_
+      (try
+        (tc-expect
+          cleanup-ty
+          (tc-fn1 (tc-type-without-regions field-ty) (Unit))
+          (tc-struct-field-cleanup-fn-mismatch-message
+            (tc-global-shared-view struct-name)
+            (tc-global-shared-view field-name)
+            (tc-global-shared-view cleanup-display))))]
+    (tc-check-cleanup-hook-safe
+      env
+      lookup-name
+      (str_cat.str-cat "struct " struct-name " field " field-name)
+      cleanup-display)))
+
+;; A cleanup hook runs implicitly wherever its owner's scope ends, in safe code
+;; too, so no call site can supply the `unsafe` context an unsafe declaration
+;; requires (SPEC 4.3.1). The hook must discharge its own unsafety (#8267).
+(define (tc-check-cleanup-hook-safe
+  [env : TcTypeEnv]
+  [lookup-name : i64]
+  [owner : String]
+  [cleanup-display : String]) : ResultTcUnit
+  (match (tc-lookup-unsafe-key-id
+    env
+    (tc-env-name-key-id (tc-type-env-structural-session env) lookup-name))
+    [(Ok _ unsafe)
+      (if unsafe
+        (Err
+          (str_cat.str-cat
+            (cdiag.compiler-diagnostic-typecheck-tag (UnsafeCallableEffect))
+            "typecheck: "
+            owner
+            " cleanup function "
+            cleanup-display
+            " is an unsafe declaration; a cleanup hook runs implicitly, so it must discharge its own unsafety"))
+        Ok)]
+    [(Err _) Ok]))
 
 (define (tc-check-cleanup-struct-field
   [ctx : TcContext]
@@ -115268,13 +115301,22 @@
     [lookup-name : i64
       (tc-cleanup-field-helper-name ctx enum-name-id cleanup-name-id)]
     [cleanup-ty (try (tc-lookup-visible-id ctx env lookup-name))]
-    (tc-expect
-      cleanup-ty
-      (tc-fn1 (tc-type-without-regions payload-ty) (Unit))
-      (tc-enum-payload-cleanup-fn-mismatch-message
-        enum-name
-        variant-name
-        (ci.intern-syntax-name-text-or cleanup-name-id "<structural-name>")))))
+    [cleanup-display : String
+      (ci.intern-syntax-name-text-or cleanup-name-id "<structural-name>")]
+    [_
+      (try
+        (tc-expect
+          cleanup-ty
+          (tc-fn1 (tc-type-without-regions payload-ty) (Unit))
+          (tc-enum-payload-cleanup-fn-mismatch-message
+            (tc-global-shared-view enum-name)
+            (tc-global-shared-view variant-name)
+            (tc-global-shared-view cleanup-display))))]
+    (tc-check-cleanup-hook-safe
+      env
+      lookup-name
+      (str_cat.str-cat "enum " enum-name " variant " variant-name)
+      cleanup-display)))
 
 (define (tc-check-cleanup-enum-payloads
   [ctx : TcContext]

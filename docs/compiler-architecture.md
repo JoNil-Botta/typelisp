@@ -881,12 +881,16 @@ arena, have fixed capacity, or hold scalars, and the per-walk caller views are
 unpublished before each rewind, so nothing that outlives a caller points into
 its phase.
 
-That final-body clone writes into the optimize call's optimizer-input arena
-(`OptOptimizerInput`), not the stage arena, and records the body's symbol id.
-Every slot is placed, rewritten or not. The input the per-function loop reads is
-the pruned survivors, taken from that arena. A survivor with no recorded
-placement is copied there. So the inline arena is released before the loop with
-no body the loop reads, and no second whole-program copy overlaps it. Level 1
+That final-body clone writes into one of the optimize call's optimizer-input
+chunks (`OptOptimizerInput`), chosen by the body's index slot, not the stage
+arena, and records the body's symbol id, identity (its block storage address)
+and chunk. Every slot is placed, rewritten or not. The input the per-function
+loop reads is the pruned survivors, taken from those chunks. A survivor with no
+matching placement is copied into the call's carrier arena. So the inline arena
+is released before the loop with no body the loop reads, and no second
+whole-program copy overlaps it. The loop reads each survivor once, in order, and
+nothing reads a body after its position, so a chunk is released when no survivor
+is in it (before the loop) or once the loop passes its last survivor. Level 1
 has no input arena and reads the tiny-leaf stage's arena in place.
 
 The checked inliner's literal-argument scan borrows dense block storage directly.

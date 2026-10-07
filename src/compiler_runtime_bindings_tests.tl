@@ -6,6 +6,7 @@
 (import stdlib.test)
 (import compiler_runtime_bindings as bindings)
 (import compiler_backend_runtime_common as runtime_common)
+(import compiler_backend_runtime_linux as runtime_linux)
 (import compiler_backend_runtime_windows as runtime_windows)
 (import compiler_backend_object_target as object_target)
 (import compiler_backend_object_target_windows as object_windows)
@@ -130,6 +131,12 @@
     (runtime_windows.compiler-backend-runtime-functions (& features))
     (runtime_windows.compiler-backend-runtime-externs (& features))))
 
+(define (runtime-bindings-test-linux-runtime-text
+  [features : runtime_common.CompilerBackendRuntimeFeatures]) : String
+  (str_cat.str-cat
+    (runtime_linux.compiler-backend-runtime-functions (& features))
+    (runtime_linux.compiler-backend-runtime-externs (& features))))
+
 ;; A name the compiler's own program output defines: `main`, or a TypeLisp
 ;; runtime label.
 (define (runtime-bindings-test-program-name? [name : (& name str)]) : bool
@@ -137,13 +144,11 @@
     (string.eq name "main")
     (bindings.compiler-runtime-binding-compiler-owned? name)))
 
-;; Every external name the Windows runtime text uses with `features`: its
-;; `.extern` declarations and the calls and jumps to names it does not define.
-(define (runtime-bindings-test-runtime-externals
-  [features : runtime_common.CompilerBackendRuntimeFeatures]) : String
+;; Every external name runtime assembly `text` uses: its `.extern` declarations
+;; and the calls and jumps to names it does not define.
+(define (runtime-bindings-test-text-externals [text : (& text str)]) : String
   (let
-    [text : String (runtime-bindings-test-runtime-text features)]
-    [scan : RuntimeBindingsTestScan (runtime-bindings-test-scan (& text))]
+    [scan : RuntimeBindingsTestScan (runtime-bindings-test-scan text)]
     [out : String scan.externs]
     [start : i64 0]
     [calls : String scan.calls]
@@ -158,6 +163,12 @@
           (set! out (runtime-bindings-test-set-add out name)))
         (set! start (+ end 1))))
     out))
+
+;; Every external name the Windows runtime text uses with `features`.
+(define (runtime-bindings-test-runtime-externals
+  [features : runtime_common.CompilerBackendRuntimeFeatures]) : String
+  (runtime-bindings-test-text-externals
+    (& (runtime-bindings-test-runtime-text features))))
 
 ;; The external symbols the Windows object startup declares.
 (define (runtime-bindings-test-startup-externals) : String
@@ -468,7 +479,19 @@
       "an `abi-fixture` row is used by no runtime or startup text")
     (test.assert-true
       (string.eq (runtime-bindings-test-rows "linux-x86_64" "") "")
-      "Linux has no rows")))
+      "Linux has no rows")
+    (let
+      [linux-text : String
+        (runtime-bindings-test-linux-runtime-text
+          (runtime-bindings-test-features true true))]
+      [linux-scan : RuntimeBindingsTestScan
+        (runtime-bindings-test-scan (& linux-text))]
+      (test.assert-true
+        (> (string.string-length (& linux-scan.calls)) 0)
+        "the scan sees the Linux runtime's calls")
+      (test.assert-true
+        (string.eq (runtime-bindings-test-text-externals (& linux-text)) "")
+        "the Linux runtime text uses no external name"))))
 
 (test
   runtime-bindings-startup-imports-are-object-route

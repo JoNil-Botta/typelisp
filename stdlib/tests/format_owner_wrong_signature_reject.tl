@@ -10,6 +10,5 @@
   "wrong")
 
 (define (main) : i64
-  (begin
-    (format.format "{}" (WrongDisplay 1))
-    42))
+  (format.format "{}" (WrongDisplay 1))
+  42)

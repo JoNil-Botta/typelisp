@@ -26,15 +26,13 @@
     [state : i64 seed]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
-          (set! acc (+ acc (% state 1073741824)))
-          (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
-          (set! acc (+ acc (% state 7340032)))
-          (set! i (+ i 1))))
-      (+ acc state))))
+    (while (< i n)
+      (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
+      (set! acc (+ acc (% state 1073741824)))
+      (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
+      (set! acc (+ acc (% state 7340032)))
+      (set! i (+ i 1)))
+    (+ acc state)))
 
 ;; The same shape with the remainder feeding a store rather than an add: the
 ;; fused divmod+store bundle picks its SRC through a second selector, so it
@@ -46,13 +44,11 @@
   (let
     [state : i64 seed]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
-          (set! (array-ref out i) (% state 16777216))
-          (set! i (+ i 1))))
-      state)))
+    (while (< i n)
+      (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
+      (set! (array-ref out i) (% state 16777216))
+      (set! i (+ i 1)))
+    state))
 
 (define (main) : i64
   (let

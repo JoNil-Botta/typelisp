@@ -565,45 +565,37 @@
 (define (main) : i64
   (let
     [i : i64 0]
-    (begin
-      (while (< i 128)
-        (begin
-          (unless (exp-check-f64-table-tail i) (return (+ 300000 i)))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i 96)
-        (begin
-          (unless (exp-check-f64 i) (return (+ 10 i)))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i 96)
-        (begin
-          (unless (exp-check-f32 i) (return (+ 100010 i)))
-          (set! i (+ i 1))))
-      (unless
-        (=
-          (math.f64-to-bits (math.f64-exp (math.f64-negative-infinity)))
-          (cast 0 : u64))
-        (return 200001))
-      (unless
-        (=
-          (math.f64-to-bits (math.f64-exp (math.f64-positive-infinity)))
-          (cast 0x7ff0000000000000 : u64))
-        (return 200002))
-      (unless
-        (math.f64-nan? (math.f64-exp (math.f64-quiet-nan)))
-        (return 200003))
-      (unless
-        (=
-          (math.f32-to-bits (math.f32-exp (math.f32-negative-infinity)))
-          (cast 0 : u32))
-        (return 200004))
-      (unless
-        (=
-          (math.f32-to-bits (math.f32-exp (math.f32-positive-infinity)))
-          (cast 0x7f800000 : u32))
-        (return 200005))
-      (unless
-        (math.f32-nan? (math.f32-exp (math.f32-quiet-nan)))
-        (return 200006))
-      0)))
+    (while (< i 128)
+      (unless (exp-check-f64-table-tail i) (return (+ 300000 i)))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i 96)
+      (unless (exp-check-f64 i) (return (+ 10 i)))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i 96)
+      (unless (exp-check-f32 i) (return (+ 100010 i)))
+      (set! i (+ i 1)))
+    (unless
+      (=
+        (math.f64-to-bits (math.f64-exp (math.f64-negative-infinity)))
+        (cast 0 : u64))
+      (return 200001))
+    (unless
+      (=
+        (math.f64-to-bits (math.f64-exp (math.f64-positive-infinity)))
+        (cast 0x7ff0000000000000 : u64))
+      (return 200002))
+    (unless (math.f64-nan? (math.f64-exp (math.f64-quiet-nan))) (return 200003))
+    (unless
+      (=
+        (math.f32-to-bits (math.f32-exp (math.f32-negative-infinity)))
+        (cast 0 : u32))
+      (return 200004))
+    (unless
+      (=
+        (math.f32-to-bits (math.f32-exp (math.f32-positive-infinity)))
+        (cast 0x7f800000 : u32))
+      (return 200005))
+    (unless (math.f32-nan? (math.f32-exp (math.f32-quiet-nan))) (return 200006))
+    0))

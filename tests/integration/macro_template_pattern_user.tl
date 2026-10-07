@@ -8,8 +8,8 @@
 
 (define (local-shape-value [shape : MacroTemplateShape]) : i64
   (match shape
-    [(MacroTemplateShape.Dot a) a]
-    [(MacroTemplateShape.Other) 0]))
+    [(Dot a) a]
+    [(Other) 0]))
 
 (define (triple [x : i64]) : i64
   (* x 3))
@@ -20,4 +20,4 @@
       (provider.macro-template-shape-map
         (provider.MacroTemplateShape.Pair 4 9)
         triple))
-    (local-shape-value (MacroTemplateShape.Dot 3))))
+    (local-shape-value (Dot 3))))

@@ -13,6 +13,5 @@
   "qualified")
 
 (define (main) : i64
-  (begin
-    (format.format "{}" (DuplicateDisplay 1))
-    42))
+  (format.format "{}" (DuplicateDisplay 1))
+  42)

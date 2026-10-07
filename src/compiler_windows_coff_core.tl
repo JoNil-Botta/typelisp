@@ -46,9 +46,7 @@
   [name : String]
   [kind : cobj.CompilerObjectSymbolKind]) : bool
   (and
-    (cobj.compiler-object-symbol-kind-eq?
-      kind
-      (cobj.CompilerObjectSymbolKind.Function))
+    (cobj.compiler-object-symbol-kind-eq? kind (Function))
     (or
       (string.eq name "ExitProcess")
       (string.eq name "ConvertThreadToFiber")
@@ -71,19 +69,18 @@
     [index : i64 0]
     [ok : bool true]
     [done : bool false]
-    (begin
-      (while (and (not done) (< index count))
-        (match (cobj.compiler-object-symbol-list-ref symbols index)
-          [(cobj.CompilerObjectSymbol.Symbol name binding kind _)
-            (if (string.eq name target)
-              (begin
-                (match binding
-                  [(cobj.CompilerObjectSymbolBinding.Extern)
-                    (set! ok (compiler-windows-coff-extern-linkable? name kind))]
-                  [_ (set! ok true)])
-                (set! done true))
-              (set! index (+ index 1)))]))
-      ok)))
+    (while (and (not done) (< index count))
+      (match (cobj.compiler-object-symbol-list-ref symbols index)
+        [(Symbol name binding kind _)
+          (if (string.eq name target)
+            (begin
+              (match binding
+                [(Extern)
+                  (set! ok (compiler-windows-coff-extern-linkable? name kind))]
+                [_ (set! ok true)])
+              (set! done true))
+            (set! index (+ index 1)))]))
+    ok))
 
 (define (compiler-windows-coff-relocations-linkable?
   [symbols : cobj.CompilerObjectSymbolList]
@@ -92,57 +89,47 @@
     [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< index count))
-        (match (cobj.compiler-object-relocation-list-ref relocs index)
-          [(cobj.CompilerObjectRelocation.Relocation _ _ _ target)
-            (if (compiler-windows-coff-relocation-target-linkable?
-              (owned_view.compiler-owned-shared-view symbols)
-              target)
-              (set! index (+ index 1))
-              (set! ok false))]))
-      ok)))
+    (while (and ok (< index count))
+      (match (cobj.compiler-object-relocation-list-ref relocs index)
+        [(Relocation _ _ _ target)
+          (if (compiler-windows-coff-relocation-target-linkable?
+            (owned_view.compiler-owned-shared-view symbols)
+            target)
+            (set! index (+ index 1))
+            (set! ok false))]))
+    ok))
 
 (define (compiler-windows-coff-linkability [image : cobj.CompilerObjectImage]) : CompilerWindowsCoffLinkability
   (cond
     [(not (compiler_object_coff.compiler-object-coff-image-supported? image))
-      (CompilerWindowsCoffLinkability.Unavailable
-        compiler_backend.CompilerDirectObjectFallbackReason.UnsupportedCoffImage)]
+      (Unavailable UnsupportedCoffImage)]
     [(not
         (compiler-windows-coff-relocations-linkable?
           (owned_view.compiler-owned-shared-view image.symbols)
           (owned_view.compiler-owned-shared-view image.relocations)))
-      (CompilerWindowsCoffLinkability.Unavailable
-        compiler_backend.CompilerDirectObjectFallbackReason.ObjectRelocation)]
+      (Unavailable ObjectRelocation)]
     [(not
         (cobj.compiler-object-symbol-list-contains?
           image.symbols
           "_tl_start"
-          (cobj.CompilerObjectSymbolBinding.Export)
-          (cobj.CompilerObjectSymbolKind.Function)))
-      (CompilerWindowsCoffLinkability.Unavailable
-        compiler_backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol)]
+          (Export)
+          (Function)))
+      (Unavailable MissingEntrySymbol)]
     [(<
         (layout.compiler-object-layout-section-label-offset
           image
-          (cobj.CompilerObjectSectionKind.Text)
+          (Text)
           "tl_setup_argv")
         0)
-      (CompilerWindowsCoffLinkability.Unavailable
-        compiler_backend.CompilerDirectObjectFallbackReason.MissingRuntimeEntry)]
-    [(<=
-        (layout.compiler-object-layout-section-raw-size
-          image
-          (cobj.CompilerObjectSectionKind.Text))
-        0)
-      (CompilerWindowsCoffLinkability.Unavailable
-        compiler_backend.CompilerDirectObjectFallbackReason.EmptyTextSection)]
-    [else (CompilerWindowsCoffLinkability.Linkable)]))
+      (Unavailable MissingRuntimeEntry)]
+    [(<= (layout.compiler-object-layout-section-raw-size image (Text)) 0)
+      (Unavailable EmptyTextSection)]
+    [else (Linkable)]))
 
 (define (compiler-windows-coff-linkable? [image : cobj.CompilerObjectImage]) : bool
   (match (compiler-windows-coff-linkability image)
-    [(CompilerWindowsCoffLinkability.Linkable) true]
-    [(CompilerWindowsCoffLinkability.Unavailable _) false]))
+    [(Linkable) true]
+    [(Unavailable _) false]))
 
 (cfg
   test
@@ -150,9 +137,7 @@
     compiler-windows-coff-typed-missing-entry
     (match (compiler-windows-coff-linkability
       (compiler_object_coff.compiler-object-coff-smoke-image))
-      [(CompilerWindowsCoffLinkability.Unavailable
-          (compiler_backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol))
-        unit]
+      [(Unavailable (MissingEntrySymbol)) unit]
       [_ (io.panic "COFF missing-entry reason changed")])))
 
 (define (compiler-windows-batch-diagnostic
@@ -188,13 +173,13 @@
       backend-state
       pools
       program
-      (compiler_backend.CompilerBackendTarget.Windows)
+      (Windows)
       mode
       spans
       emit-entry
       false
       profile-state)
-      [(compiler_backend.ResultCompilerBackendBuffer.Ok asm)
+      [(Ok asm)
         (begin
           (cfg
             compile-profile
@@ -204,12 +189,12 @@
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
             typecheck-state
             "backend.assembly")
-          (ResultCompilerWindowsBatchArtifact.Assembly
+          (Assembly
             asm
             category
             (compiler_driver_core.compiler-driver-advisories-for-job
               typecheck-state)))]
-      [(compiler_backend.ResultCompilerBackendBuffer.Err diag)
+      [(Err diag)
         (begin
           (cfg
             compile-profile
@@ -219,7 +204,7 @@
           (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
             typecheck-state
             "backend.assembly-error")
-          (ResultCompilerWindowsBatchArtifact.Err
+          (Err
             (compiler-windows-batch-backend-diagnostic input-path diag)
             (compiler_driver_core.compiler-driver-advisories-for-job
               typecheck-state)))])))
@@ -233,7 +218,7 @@
     backend-state
     pools
     program
-    (compiler_backend.CompilerBackendTarget.Windows)
+    (Windows)
     profile-state))
 
 (define (compiler-windows-batch-emit-optimized
@@ -260,8 +245,8 @@
       mode
       emit-entry
       (if force-assembly
-        compiler_backend.CompilerDirectObjectFallbackReason.ForcedAssembly
-        compiler_backend.CompilerDirectObjectFallbackReason.MissingEntrySymbol)
+        ForcedAssembly
+        MissingEntrySymbol)
       profile-state
       typecheck-state)
     (match (compiler-windows-coff-object-program-eligibility
@@ -269,7 +254,7 @@
       pools
       (owned_view.compiler-owned-shared-view program)
       profile-state)
-      [(compiler_backend.CompilerBackendObjectEligibility.Unsupported category)
+      [(Unsupported category)
         (compiler-windows-batch-emit-assembly
           backend-state
           pools
@@ -281,7 +266,7 @@
           category
           profile-state
           typecheck-state)]
-      [(compiler_backend.CompilerBackendObjectEligibility.Eligible)
+      [(Eligible)
         (begin
           (cfg
             compile-profile
@@ -291,13 +276,13 @@
             backend-state
             pools
             (owned_view.compiler-owned-shared-view program)
-            (compiler_backend.CompilerBackendTarget.Windows)
+            (Windows)
             mode
             (owned_view.compiler-owned-shared-view spans)
             emit-entry
             false
             profile-state)
-            [(compiler_backend.ResultCompilerBackendObject.Ok image)
+            [(Ok image)
               (begin
                 (cfg
                   compile-profile
@@ -309,7 +294,7 @@
                   "backend.object-image")
                 (match (compiler-windows-coff-linkability
                   (owned_view.compiler-owned-shared-view image))
-                  [(CompilerWindowsCoffLinkability.Linkable)
+                  [(Linkable)
                     (begin
                       (cfg
                         compile-profile
@@ -317,8 +302,7 @@
                           profile-state))
                       (match (compiler_object_coff.compiler-object-coff-render
                         image)
-                        [(compiler_object_coff.ResultCompilerObjectCoff.Ok
-                            object)
+                        [(Ok object)
                           (begin
                             (cfg
                               compile-profile
@@ -331,16 +315,14 @@
                             (if emit-side-assembly
                               (match (compiler_object_asm.compiler-object-asm-render
                                 image)
-                                [(compiler_object_asm.ResultCompilerObjectAsm.Ok
-                                    asm)
-                                  (ResultCompilerWindowsBatchArtifact.CoffObject
+                                [(Ok asm)
+                                  (CoffObject
                                     object
-                                    (CompilerWindowsBatchSideAssembly.Some asm)
+                                    (Some asm)
                                     (compiler_driver_core.compiler-driver-advisories-for-job
                                       typecheck-state))]
-                                [(compiler_object_asm.ResultCompilerObjectAsm.Err
-                                    message)
-                                  (ResultCompilerWindowsBatchArtifact.Err
+                                [(Err message)
+                                  (Err
                                     (compiler-windows-batch-diagnostic
                                       input-path
                                       (str_cat.str-cat
@@ -348,20 +330,19 @@
                                         message))
                                     (compiler_driver_core.compiler-driver-advisories-for-job
                                       typecheck-state))])
-                              (ResultCompilerWindowsBatchArtifact.CoffObject
+                              (CoffObject
                                 object
-                                CompilerWindowsBatchSideAssembly.None
+                                None
                                 (compiler_driver_core.compiler-driver-advisories-for-job
                                   typecheck-state))))]
-                        [(compiler_object_coff.ResultCompilerObjectCoff.Err
-                            message)
+                        [(Err message)
                           (begin
                             (cfg
                               compile-profile
                               (compiler_driver_core.compiler-driver-profile-finish-phase
                                 profile-state
                                 "render.coff-object"))
-                            (ResultCompilerWindowsBatchArtifact.Err
+                            (Err
                               (compiler-windows-batch-diagnostic
                                 input-path
                                 (str_cat.str-cat
@@ -369,7 +350,7 @@
                                   message))
                               (compiler_driver_core.compiler-driver-advisories-for-job
                                 typecheck-state)))]))]
-                  [(CompilerWindowsCoffLinkability.Unavailable category)
+                  [(Unavailable category)
                     (compiler-windows-batch-emit-assembly
                       backend-state
                       pools
@@ -381,7 +362,7 @@
                       category
                       profile-state
                       typecheck-state)]))]
-            [(compiler_backend.ResultCompilerBackendObject.Err diag)
+            [(Err diag)
               (begin
                 (cfg
                   compile-profile
@@ -391,7 +372,7 @@
                 (compiler_driver_core.compiler-driver-allocation-profile-snapshot-for-job!
                   typecheck-state
                   "backend.object-image-error")
-                (ResultCompilerWindowsBatchArtifact.Err
+                (Err
                   (compiler-windows-batch-backend-diagnostic input-path diag)
                   (compiler_driver_core.compiler-driver-advisories-for-job
                     typecheck-state)))]))])))
@@ -410,7 +391,7 @@
   [profile-state : profile_state.CompilerProfileState]
   [typecheck-state : compiler_typecheck_core.TcJobState]) : ResultCompilerWindowsBatchArtifact
   (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-    (ResultCompilerWindowsBatchArtifact.Err
+    (Err
       (box
         (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
           input-path))
@@ -431,9 +412,7 @@
           profile-state
           false
           (compiler_ir_types.compiler-ir-representation-index-empty)))
-        [(compiler_optimize.CompilerOptimizedProgram.Program
-            optimized
-            optimized-spans)
+        [(Program optimized optimized-spans)
           (begin
             (cfg
               compile-profile
@@ -445,7 +424,7 @@
               "optimize")
             (compiler_driver_core.compiler-driver-release-lowered-ir! opt-level)
             (if (compiler_ast_types.ast-node-pool-context-type-exhausted? pools)
-              (ResultCompilerWindowsBatchArtifact.Err
+              (Err
                 (box
                   (compiler_driver_core.compiler-driver-ty-node-pool-exhausted-diagnostic
                     input-path))
@@ -477,20 +456,12 @@
   [force-assembly : bool]
   [emit-side-assembly : bool]) : ResultCompilerWindowsBatchArtifact
   (match lowered
-    [(compiler_driver_core.ResultCompilerDriverLowered.Ok
-        program
-        spans
-        pools
-        profile-state
-        backend-state
-        typecheck-state)
+    [(Ok program spans pools profile-state backend-state typecheck-state)
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
             opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell
-              (owned_view.compiler-owned-shared-view pools)
-              program)
+            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
@@ -499,8 +470,7 @@
             spans)]
         [out : ResultCompilerWindowsBatchArtifact
           (begin
-            (compiler_ast_types.ast-node-pool-reader-use!
-              (owned_view.compiler-owned-shared-view pools))
+            (compiler_ast_types.ast-node-pool-reader-use! pools)
             (if (>= opt-level 1)
               (compiler_driver_core.compiler-driver-retire-lowered-source-arena!)
               unit)
@@ -517,17 +487,15 @@
               emit-side-assembly
               profile-state
               typecheck-state))]
-        (begin
-          (if (= opt-level 0)
-            (compiler_driver_core.compiler-driver-retire-lowered-source-arena!)
-            unit)
-          (compiler_ast_types.ast-node-pool-reader-clear!)
-          (compiler_driver_core.compiler-driver-restore-frontend-return-arena!)
-          out))]
-    [(compiler_driver_core.ResultCompilerDriverLowered.Err diag advisories)
-      (begin
+        (if (= opt-level 0)
+          (compiler_driver_core.compiler-driver-retire-lowered-source-arena!)
+          unit)
+        (compiler_ast_types.ast-node-pool-reader-clear!)
         (compiler_driver_core.compiler-driver-restore-frontend-return-arena!)
-        (ResultCompilerWindowsBatchArtifact.Err diag advisories))]))
+        out)]
+    [(Err diag advisories)
+      (compiler_driver_core.compiler-driver-restore-frontend-return-arena!)
+      (Err diag advisories)]))
 
 (define (compiler-windows-batch-state-emit-file
   [state : compiler_driver_core.CompilerDriverState]
@@ -544,8 +512,7 @@
       (compiler_driver_core.compiler-driver-profile-start-total
         (compiler_driver_core.compiler-driver-state-profile state)))
     (let
-      [target : compiler_backend.CompilerBackendTarget
-        (compiler_backend.CompilerBackendTarget.Windows)]
+      [target : compiler_backend.CompilerBackendTarget (Windows)]
       [lowered : compiler_driver_core.ResultCompilerDriverLowered
         (compiler_driver_core.compiler-driver-load-and-lower-escaping-with-state-and-retirement
           (owned_view.compiler-owned-shared-view state)

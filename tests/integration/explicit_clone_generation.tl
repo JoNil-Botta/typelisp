@@ -30,24 +30,23 @@
 (define (make-packet) : HTTPPacket
   (let
     [items : (__tl_dyn-array String) (__tl_make-array String 2)]
-    (begin
-      (set! (array-ref items 0) (string.append "dy" "namic"))
-      (set! (array-ref items 1) (string.append "ar" "ray"))
-      (HTTPPacket
-        (Leaf (string.append "le" "af") 7)
-        (Choice.Item (Leaf (string.append "en" "um") 9) "payload")
-        (tuple (string.append "tu" "ple") 11)
-        (array (string.append "fi" "xed") "array")
-        items
-        (box (Leaf (string.append "bo" "xed") 13))))))
+    (set! (array-ref items 0) (string.append "dy" "namic"))
+    (set! (array-ref items 1) (string.append "ar" "ray"))
+    (HTTPPacket
+      (Leaf (string.append "le" "af") 7)
+      (Item (Leaf (string.append "en" "um") 9) "payload")
+      (tuple (string.append "tu" "ple") 11)
+      (array (string.append "fi" "xed") "array")
+      items
+      (box (Leaf (string.append "bo" "xed") 13)))))
 
 (define (packet-ok? [packet : (& packet HTTPPacket)]) : bool
   (and
     (string.eq packet.leaf.label "leaf")
     (= packet.leaf.rank 7)
     (match packet.choice
-      [(Choice.Empty) false]
-      [(Choice.Item leaf text)
+      [(Empty) false]
+      [(Item leaf text)
         (and
           (string.eq leaf.label "enum")
           (= leaf.rank 9)
@@ -66,12 +65,11 @@
     [source : HTTPPacket (make-packet)]
     [copy : HTTPPacket (clone-http-packet (& source))]
     [copy-started-valid : bool (packet-ok? (& copy))]
-    (begin
-      (set! (array-ref copy.items 0) "changed")
-      (set! (deref copy.boxed).rank 99)
-      (if (and
-        copy-started-valid
-        (packet-ok? (& source))
-        (string.eq (array-ref copy.items 0) "changed"))
-        42
-        1))))
+    (set! (array-ref copy.items 0) "changed")
+    (set! (deref copy.boxed).rank 99)
+    (if (and
+      copy-started-valid
+      (packet-ok? (& source))
+      (string.eq (array-ref copy.items 0) "changed"))
+      42
+      1)))

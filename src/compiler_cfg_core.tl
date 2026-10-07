@@ -16,9 +16,8 @@
 
 (define (compiler-cfg-env-binding-count [cfgs : sym_i64_env.SymI64Env]) : i64
   (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) 0]
-    [(sym_i64_env.SymI64ViewBind _ _ rest)
-      (+ 1 (compiler-cfg-env-binding-count rest))]))
+    [(SymI64ViewNil) 0]
+    [(SymI64ViewBind _ _ rest) (+ 1 (compiler-cfg-env-binding-count rest))]))
 
 (define (compiler-cfg-snapshot-fill!
   [cfgs : sym_i64_env.SymI64Env]
@@ -26,46 +25,40 @@
   [values : (__tl_dyn-array i64)]
   [index : i64]) : unit
   (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) unit]
-    [(sym_i64_env.SymI64ViewBind key value rest)
-      (begin
-        ;; Snapshot names outlive the originating interner and its persistent arena.
-        (set! (array-ref slots index) (string.copy (compiler-cfg-name key)))
-        (set! (array-ref values index) value)
-        (compiler-cfg-snapshot-fill! rest slots values (+ index 1)))]))
+    [(SymI64ViewNil) unit]
+    [(SymI64ViewBind key value rest)
+      ;; Snapshot names outlive the originating interner and its persistent arena.
+      (set! (array-ref slots index) (string.copy (compiler-cfg-name key)))
+      (set! (array-ref values index) value)
+      (compiler-cfg-snapshot-fill! rest slots values (+ index 1))]))
 
 (define (compiler-cfg-snapshot-from-env [cfgs : sym_i64_env.SymI64Env]) : CompilerCfgSnapshot
   (let
     [count : i64 (compiler-cfg-env-binding-count cfgs)]
     [slots : (__tl_dyn-array String) (__tl_make-array String count)]
     [values : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    (begin
-      (compiler-cfg-snapshot-fill!
-        cfgs
-        (owned_view.compiler-owned-shared-view slots)
-        (owned_view.compiler-owned-shared-view values)
-        0)
-      (CompilerCfgSnapshot slots values count))))
+    (compiler-cfg-snapshot-fill!
+      cfgs
+      (owned_view.compiler-owned-shared-view slots)
+      (owned_view.compiler-owned-shared-view values)
+      0)
+    (CompilerCfgSnapshot slots values count)))
 
 (define (compiler-cfg-snapshot-to-env [names : CompilerCfgSnapshot]) : sym_i64_env.SymI64Env
   (let
     [env : sym_i64_env.SymI64Env (sym_i64_env.sym-i64-empty)]
     [index : i64 names.len]
-    (begin
-      (while (> index 0)
-        (begin
-          (set! index (- index 1))
-          (set!
-            env
-            (compiler-cfg-bind
-              env
-              (owned_view.compiler-owned-array-element-shared-view
-                names.slots
-                index)
-              (owned_view.compiler-owned-array-element-shared-view
-                names.values
-                index)))))
-      env)))
+    (while (> index 0)
+      (set! index (- index 1))
+      (set!
+        env
+        (compiler-cfg-bind
+          env
+          (owned_view.compiler-owned-array-element-shared-view
+            names.slots
+            index)
+          (array-ref names.values index))))
+    env))
 
 (defstruct CompilerCfgKey
   (value i64))
@@ -145,8 +138,8 @@
     [remove-key : i64
       (compiler-cfg-key-id (compiler-cfg-key-from-name-id name-id))]
     (match (sym_i64_env.sym-i64-view cfgs)
-      [(sym_i64_env.SymI64ViewNil) (compiler-cfg-empty)]
-      [(sym_i64_env.SymI64ViewBind key value rest)
+      [(SymI64ViewNil) (compiler-cfg-empty)]
+      [(SymI64ViewBind key value rest)
         (let
           [clean-rest : sym_i64_env.SymI64Env
             (compiler-cfg-remove-id rest name-id)]
@@ -198,8 +191,8 @@
   [base : sym_i64_env.SymI64Env]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match (sym_i64_env.sym-i64-view cfgs)
-    [(sym_i64_env.SymI64ViewNil) base]
-    [(sym_i64_env.SymI64ViewBind name-id value rest)
+    [(SymI64ViewNil) base]
+    [(SymI64ViewBind name-id value rest)
       (sym_i64_env.sym-i64-bind-id (compiler-cfg-merge base rest) name-id value)]))
 
 (define (compiler-cfg-enabled?
@@ -242,17 +235,16 @@
           private-id
           2)]
       [clean : sym_i64_env.SymI64Env (compiler-cfg-remove-id cfgs private-id)]
-      (begin
-        (test.assert-false
-          (compiler-cfg-enabled? clean private-id)
-          "private cfg removes every shadowed binding")
-        (test.assert-i64-eq
-          (sym_i64_env.sym-i64-lookup-id-or
-            clean
-            (compiler-cfg-key-id (compiler-cfg-key-from-name-id public-id))
-            -1)
-          7
-          "private cfg removal preserves unrelated values")))))
+      (test.assert-false
+        (compiler-cfg-enabled? clean private-id)
+        "private cfg removes every shadowed binding")
+      (test.assert-i64-eq
+        (sym_i64_env.sym-i64-lookup-id-or
+          clean
+          (compiler-cfg-key-id (compiler-cfg-key-from-name-id public-id))
+          -1)
+        7
+        "private cfg removal preserves unrelated values"))))
 
 (cfg
   test
@@ -277,55 +269,54 @@
           above
           (compiler-cfg-union-value))]
       [cfgs : sym_i64_env.SymI64Env (compiler-cfg-merge cfgs-below cfgs-rest)]
-      (begin
-        (test.assert-i64-eq
-          (compiler-cfg-key-size)
-          8
-          "cfg key remains one machine word")
-        (test.assert-i64-eq
-          (compiler-cfg-key-domain-base)
-          width
-          "cfg domain begins above every u32 source handle")
-        (test.assert-i64-eq
-          (compiler-cfg-key-domain-limit)
-          (ci.intern-ir-symbol-domain-base)
-          "cfg domain ends where the neighboring IR domain begins")
-        (test.assert-i64-eq
-          (compiler-cfg-name-id (compiler-cfg-key-id below))
-          (- capacity 1)
-          "source handle below old capacity round-trips")
-        (test.assert-i64-eq
-          (compiler-cfg-name-id (compiler-cfg-key-id at))
-          capacity
-          "source handle at old capacity round-trips")
-        (test.assert-i64-eq
-          (compiler-cfg-name-id (compiler-cfg-key-id above))
-          (+ capacity 1)
-          "source handle above old capacity round-trips")
-        (test.assert-i64-eq
-          (compiler-cfg-name-id (compiler-cfg-key-id last))
-          (- width 1)
-          "largest u32 source handle round-trips")
-        (test.assert-true
-          (compiler-cfg-enabled-key? cfgs below)
-          "future-sized cfg environment finds lower handle")
-        (test.assert-true
-          (compiler-cfg-enabled-key? cfgs at)
-          "future-sized cfg environment finds boundary handle")
-        (test.assert-true
-          (compiler-cfg-union-key? cfgs above)
-          "future-sized cfg environment finds upper handle value")
-        (test.assert-i64-eq
-          (sym_i64_env.sym-i64-lookup-id-or cfgs (compiler-cfg-key-id below) -1)
-          11
-          "lower handle binding keeps its value")
-        (test.assert-i64-eq
-          (sym_i64_env.sym-i64-lookup-id-or cfgs (compiler-cfg-key-id at) -1)
-          22
-          "boundary handle binding cannot alias its neighbor")
-        (test.assert-true
-          (< (compiler-cfg-key-id last) (ci.intern-structural-key-base))
-          "complete cfg domain stays below session structural records")))))
+      (test.assert-i64-eq
+        (compiler-cfg-key-size)
+        8
+        "cfg key remains one machine word")
+      (test.assert-i64-eq
+        (compiler-cfg-key-domain-base)
+        width
+        "cfg domain begins above every u32 source handle")
+      (test.assert-i64-eq
+        (compiler-cfg-key-domain-limit)
+        (ci.intern-ir-symbol-domain-base)
+        "cfg domain ends where the neighboring IR domain begins")
+      (test.assert-i64-eq
+        (compiler-cfg-name-id (compiler-cfg-key-id below))
+        (- capacity 1)
+        "source handle below old capacity round-trips")
+      (test.assert-i64-eq
+        (compiler-cfg-name-id (compiler-cfg-key-id at))
+        capacity
+        "source handle at old capacity round-trips")
+      (test.assert-i64-eq
+        (compiler-cfg-name-id (compiler-cfg-key-id above))
+        (+ capacity 1)
+        "source handle above old capacity round-trips")
+      (test.assert-i64-eq
+        (compiler-cfg-name-id (compiler-cfg-key-id last))
+        (- width 1)
+        "largest u32 source handle round-trips")
+      (test.assert-true
+        (compiler-cfg-enabled-key? cfgs below)
+        "future-sized cfg environment finds lower handle")
+      (test.assert-true
+        (compiler-cfg-enabled-key? cfgs at)
+        "future-sized cfg environment finds boundary handle")
+      (test.assert-true
+        (compiler-cfg-union-key? cfgs above)
+        "future-sized cfg environment finds upper handle value")
+      (test.assert-i64-eq
+        (sym_i64_env.sym-i64-lookup-id-or cfgs (compiler-cfg-key-id below) -1)
+        11
+        "lower handle binding keeps its value")
+      (test.assert-i64-eq
+        (sym_i64_env.sym-i64-lookup-id-or cfgs (compiler-cfg-key-id at) -1)
+        22
+        "boundary handle binding cannot alias its neighbor")
+      (test.assert-true
+        (< (compiler-cfg-key-id last) (ci.intern-structural-key-base))
+        "complete cfg domain stays below session structural records"))))
 
 (cfg
   test
@@ -356,87 +347,86 @@
       [ir-name : String (compiler-cfg-name ir-base)]
       [ir-key-name : String (compiler-cfg-key-name ir-base)]
       [structural-name : String (compiler-cfg-name structural-base)]
-      (begin
-        (test.assert-true
-          (compiler-cfg-enabled? cfgs name-id)
-          "renderable source name queries through typed cfg key")
-        (test.assert-string-eq
-          (& name)
-          (& expected-name)
-          "cfg key renders its source spelling")
-        (test.assert-string-eq
-          (& key-name)
-          (& expected-key-name)
-          "cfg cache key retains stable prefix rendering")
-        (test.assert-false
-          (compiler-cfg-key-domain? -1)
-          "negative missing sentinel is not a cfg key")
-        (test.assert-false
-          (compiler-cfg-key-domain? compact-last)
-          "source handle domain is not a cfg key")
-        (test.assert-false
-          (compiler-cfg-key-domain? ir-base)
-          "IR symbol domain is not a cfg key")
-        (test.assert-false
-          (compiler-cfg-key-domain? structural-base)
-          "session structural domain is not a cfg key")
-        (test.assert-false
-          (compiler-cfg-enabled? cfgs -1)
-          "missing query fails closed")
-        (test.assert-false
-          (compiler-cfg-enabled? cfgs compact-last)
-          "source handle outside the live pool fails closed")
-        (test.assert-false
-          (compiler-cfg-union? cfgs ir-base)
-          "IR-domain query fails closed")
-        (test.assert-false
-          (compiler-cfg-union? cfgs structural-base)
-          "structural-domain query fails closed")
-        (test.assert-i64-eq
-          (compiler-cfg-name-id -1)
-          -1
-          "missing sentinel decode fails closed")
-        (test.assert-i64-eq
-          (compiler-cfg-name-id compact-last)
-          -1
-          "source-domain decode fails closed")
-        (test.assert-i64-eq
-          (compiler-cfg-name-id ir-base)
-          -1
-          "IR-domain decode fails closed")
-        (test.assert-i64-eq
-          (compiler-cfg-name-id structural-base)
-          -1
-          "structural-domain decode fails closed")
-        (test.assert-string-eq
-          (& future-name)
-          (& empty)
-          "currently unallocated future handle does not reach intern-str")
-        (test.assert-string-eq
-          (& future-key-name)
-          (& empty)
-          "future handle cache rendering does not reach intern-str")
-        (test.assert-string-eq
-          (& missing-name)
-          (& empty)
-          "missing sentinel renders empty")
-        (test.assert-string-eq
-          (& missing-key-name)
-          (& empty)
-          "missing cache key renders empty")
-        (test.assert-string-eq
-          (& compact-name)
-          (& empty)
-          "wrong compact domain renders empty")
-        (test.assert-string-eq
-          (& ir-name)
-          (& empty)
-          "wrong IR domain renders empty")
-        (test.assert-string-eq
-          (& ir-key-name)
-          (& empty)
-          "wrong IR cache key renders empty")
-        (test.assert-string-eq
-          (& structural-name)
-          (& empty)
-          "wrong structural domain renders empty")))))
+      (test.assert-true
+        (compiler-cfg-enabled? cfgs name-id)
+        "renderable source name queries through typed cfg key")
+      (test.assert-string-eq
+        (& name)
+        (& expected-name)
+        "cfg key renders its source spelling")
+      (test.assert-string-eq
+        (& key-name)
+        (& expected-key-name)
+        "cfg cache key retains stable prefix rendering")
+      (test.assert-false
+        (compiler-cfg-key-domain? -1)
+        "negative missing sentinel is not a cfg key")
+      (test.assert-false
+        (compiler-cfg-key-domain? compact-last)
+        "source handle domain is not a cfg key")
+      (test.assert-false
+        (compiler-cfg-key-domain? ir-base)
+        "IR symbol domain is not a cfg key")
+      (test.assert-false
+        (compiler-cfg-key-domain? structural-base)
+        "session structural domain is not a cfg key")
+      (test.assert-false
+        (compiler-cfg-enabled? cfgs -1)
+        "missing query fails closed")
+      (test.assert-false
+        (compiler-cfg-enabled? cfgs compact-last)
+        "source handle outside the live pool fails closed")
+      (test.assert-false
+        (compiler-cfg-union? cfgs ir-base)
+        "IR-domain query fails closed")
+      (test.assert-false
+        (compiler-cfg-union? cfgs structural-base)
+        "structural-domain query fails closed")
+      (test.assert-i64-eq
+        (compiler-cfg-name-id -1)
+        -1
+        "missing sentinel decode fails closed")
+      (test.assert-i64-eq
+        (compiler-cfg-name-id compact-last)
+        -1
+        "source-domain decode fails closed")
+      (test.assert-i64-eq
+        (compiler-cfg-name-id ir-base)
+        -1
+        "IR-domain decode fails closed")
+      (test.assert-i64-eq
+        (compiler-cfg-name-id structural-base)
+        -1
+        "structural-domain decode fails closed")
+      (test.assert-string-eq
+        (& future-name)
+        (& empty)
+        "currently unallocated future handle does not reach intern-str")
+      (test.assert-string-eq
+        (& future-key-name)
+        (& empty)
+        "future handle cache rendering does not reach intern-str")
+      (test.assert-string-eq
+        (& missing-name)
+        (& empty)
+        "missing sentinel renders empty")
+      (test.assert-string-eq
+        (& missing-key-name)
+        (& empty)
+        "missing cache key renders empty")
+      (test.assert-string-eq
+        (& compact-name)
+        (& empty)
+        "wrong compact domain renders empty")
+      (test.assert-string-eq
+        (& ir-name)
+        (& empty)
+        "wrong IR domain renders empty")
+      (test.assert-string-eq
+        (& ir-key-name)
+        (& empty)
+        "wrong IR cache key renders empty")
+      (test.assert-string-eq
+        (& structural-name)
+        (& empty)
+        "wrong structural domain renders empty"))))

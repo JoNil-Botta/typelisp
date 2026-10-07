@@ -13,16 +13,13 @@
     [a : Pair (Pair 1 17)]
     [b : Pair (Pair 2 25)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (let
-            [tmp : Pair (copy-pair (& a))]
-            (begin
-              (set! a (copy-pair (& b)))
-              (set! b tmp)))
-          (set! i (+ i 1))))
-      (+ a.y b.y))))
+    (while (< i n)
+      (let
+        [tmp : Pair (copy-pair (& a))]
+        (set! a (copy-pair (& b)))
+        (set! b tmp))
+      (set! i (+ i 1)))
+    (+ a.y b.y)))
 
 (define (main) : i64
   (swap-sum 5))

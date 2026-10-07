@@ -192,13 +192,12 @@
 
 ;: Return `limits`, trapping unless it satisfies `limits-valid?`.
 (define (require-valid-limits [limits : TlsWireLimits]) : TlsWireLimits
-  (begin
-    (check-length
-      (if (limits-valid? (& limits))
-        1
-        0)
-      1)
-    limits))
+  (check-length
+    (if (limits-valid? (& limits))
+      1
+      0)
+    1)
+  limits)
 
 ;; --- alerts ---------------------------------------------------------------------
 ;: `close_notify` alert description (RFC 9846 section 6).
@@ -488,30 +487,24 @@
   (let
     [value : i64 0]
     [index : i64 0]
-    (begin
-      (while (< index width)
-        (begin
-          (set!
-            value
-            (bit-or
-              (shl value 8)
-              (cast (byte_buf.bytes-ref view (+ offset index)) : i64)))
-          (set! index (+ index 1))))
-      value)))
+    (while (< index width)
+      (set!
+        value
+        (bit-or
+          (shl value 8)
+          (cast (byte_buf.bytes-ref view (+ offset index)) : i64)))
+      (set! index (+ index 1)))
+    value))
 
 ;: Append `value` as a big-endian unsigned integer of `width` bytes.
 (define (push-be [buf : byte_buf.ByteBuf] [value : i64] [width : i64]) : byte_buf.ByteBuf
   (let
     [out : byte_buf.ByteBuf buf]
     [shift : i64 (* 8 (- width 1))]
-    (begin
-      (while (>= shift 0)
-        (begin
-          (set!
-            out
-            (byte_buf.push out (cast (bit-and (shr value shift) 255) : u8)))
-          (set! shift (- shift 8))))
-      out)))
+    (while (>= shift 0)
+      (set! out (byte_buf.push out (cast (bit-and (shr value shift) 255) : u8)))
+      (set! shift (- shift 8)))
+    out))
 
 ;: Trap unless `actual` equals `expected`: a caller passed a value the wire
 ;: cannot carry.
@@ -529,18 +522,16 @@
     [length : i64 (- (byte_buf.len (& buf)) (+ mark width))]
     [out : byte_buf.ByteBuf buf]
     [index : i64 0]
-    (begin
-      (byte_buf.check-range (max-for-width width) 0 length)
-      (while (< index width)
-        (begin
-          (set!
-            out
-            (byte_buf.set!
-              out
-              (+ mark index)
-              (cast (bit-and (shr length (* 8 (- (- width 1) index))) 255) : u8)))
-          (set! index (+ index 1))))
-      out)))
+    (byte_buf.check-range (max-for-width width) 0 length)
+    (while (< index width)
+      (set!
+        out
+        (byte_buf.set!
+          out
+          (+ mark index)
+          (cast (bit-and (shr length (* 8 (- (- width 1) index))) 255) : u8)))
+      (set! index (+ index 1)))
+    out))
 
 ;: Append `data` with a `width`-byte length prefix.
 (define (encode-opaque
@@ -549,9 +540,8 @@
   [width : i64]) : byte_buf.ByteBuf
   (let
     [length : i64 (byte_buf.bytes-length data)]
-    (begin
-      (byte_buf.check-range (max-for-width width) 0 length)
-      (byte_buf.append-bytes (push-be out length width) data))))
+    (byte_buf.check-range (max-for-width width) 0 length)
+    (byte_buf.append-bytes (push-be out length width) data)))
 
 ;; --- reader buffers ------------------------------------------------------------------
 ;: The readers own their buffers behind `&mut`, so they grow and fill them in
@@ -581,20 +571,19 @@
   [count : i64]) : unit
   (let
     [old-len : i64 buf.len]
-    (begin
-      (byte_buf.check-range (byte_buf.bytes-length src) start count)
-      (buffer-reserve! buf (+ old-len count))
-      ;; The source range was checked above and the storage now holds
-      ;; `old-len + count` bytes: the same copy `byte_buf.append-bytes-range`
-      ;; makes, into storage reached through `&mut`.
-      (string.str-copy-bytes-into
-        (unsafe
-          (ptr-offset (byte_buf.bytes-data src) start))
-        (unsafe
-          (__tl_array-data buf.slots))
-        old-len
-        count)
-      (set! buf.len (+ old-len count)))))
+    (byte_buf.check-range (byte_buf.bytes-length src) start count)
+    (buffer-reserve! buf (+ old-len count))
+    ;; The source range was checked above and the storage now holds
+    ;; `old-len + count` bytes: the same copy `byte_buf.append-bytes-range`
+    ;; makes, into storage reached through `&mut`.
+    (string.str-copy-bytes-into
+      (unsafe
+        (ptr-offset (byte_buf.bytes-data src) start))
+      (unsafe
+        (__tl_array-data buf.slots))
+      old-len
+      count)
+    (set! buf.len (+ old-len count))))
 
 ;; --- decoding cursor ----------------------------------------------------------------
 ;: A cursor over one borrowed view, which every call receives again. Reads
@@ -619,24 +608,21 @@
   [offset : i64]) : unit
   (when
     (not d.failed)
-    (begin
-      (set! d.failed true)
-      (set! d.error (TlsWireError code offset alert)))))
+    (set! d.failed true)
+    (set! d.error (TlsWireError code offset alert))))
 
 ;: Take `count` bytes and return their offset.
 (define (decoder-take! [d : (&mut d TlsDecoder)] [count : i64]) : i64
   (cond
     [d.failed 0]
     [(> count (- d.end d.pos))
-      (begin
-        (decoder-fail! d error-truncated alert-decode-error d.pos)
-        0)]
+      (decoder-fail! d error-truncated alert-decode-error d.pos)
+      0]
     [else
       (let
         [at : i64 d.pos]
-        (begin
-          (set! d.pos (+ at count))
-          at))]))
+        (set! d.pos (+ at count))
+        at)]))
 
 ;: Read a big-endian unsigned integer of `width` bytes.
 (define (decoder-uint!
@@ -664,27 +650,23 @@
     (cond
       [d.failed d.end]
       [(or (< length min) (> length max))
-        (begin
-          (decoder-fail! d error-length-range alert-decode-error prefix-at)
-          d.end)]
+        (decoder-fail! d error-length-range alert-decode-error prefix-at)
+        d.end]
       [(> length (- d.end d.pos))
-        (begin
-          (decoder-fail! d error-truncated alert-decode-error prefix-at)
-          d.end)]
+        (decoder-fail! d error-truncated alert-decode-error prefix-at)
+        d.end]
       [else
         (let
           [outer : i64 d.end]
-          (begin
-            (set! d.end (+ d.pos length))
-            outer))])))
+          (set! d.end (+ d.pos length))
+          outer)])))
 
 ;: Leave a vector entered with `decoder-open!`, which must be fully read.
 (define (decoder-close! [d : (&mut d TlsDecoder)] [outer : i64]) : unit
-  (begin
-    (when
-      (and (not d.failed) (!= d.pos d.end))
-      (decoder-fail! d error-trailing alert-decode-error d.pos))
-    (set! d.end outer)))
+  (when
+    (and (not d.failed) (!= d.pos d.end))
+    (decoder-fail! d error-trailing alert-decode-error d.pos))
+  (set! d.end outer))
 
 ;: Require that the whole view was read.
 (define (decoder-finish! [d : (&mut d TlsDecoder)]) : unit
@@ -713,9 +695,8 @@
   (let
     [outer : i64 (decoder-open! d view width min max)]
     [data : byte_buf.ByteBuf (decoder-copy! d view (- d.end d.pos))]
-    (begin
-      (decoder-close! d outer)
-      data)))
+    (decoder-close! d outer)
+    data))
 
 ;: Read a vector `<min..max>` of `item-width`-byte integers (cipher suites,
 ;: groups, signature schemes, versions, modes) into an exact array.
@@ -732,29 +713,26 @@
     [outer : i64 (decoder-open! d view prefix-width min max)]
     [length : i64 (- d.end d.pos)]
     [count : i64 (/ length item-width)]
-    (begin
-      (cond
-        [d.failed unit]
-        [(!= (* count item-width) length)
-          (decoder-fail! d error-length-range alert-decode-error prefix-at)]
-        [(> count limit)
-          (decoder-fail! d error-too-many-entries alert-decode-error prefix-at)]
-        [else unit])
-      (let
-        [out : (__tl_dyn-array i64)
-          (__tl_make-array
-            i64
-            (if d.failed
-              0
-              count))]
-        [index : i64 0]
-        (begin
-          (while (and (not d.failed) (< index count))
-            (begin
-              (set! (array-ref out index) (decoder-uint! d view item-width))
-              (set! index (+ index 1))))
-          (decoder-close! d outer)
-          out)))))
+    (cond
+      [d.failed unit]
+      [(!= (* count item-width) length)
+        (decoder-fail! d error-length-range alert-decode-error prefix-at)]
+      [(> count limit)
+        (decoder-fail! d error-too-many-entries alert-decode-error prefix-at)]
+      [else unit])
+    (let
+      [out : (__tl_dyn-array i64)
+        (__tl_make-array
+          i64
+          (if d.failed
+            0
+            count))]
+      [index : i64 0]
+      (while (and (not d.failed) (< index count))
+        (set! (array-ref out index) (decoder-uint! d view item-width))
+        (set! index (+ index 1)))
+      (decoder-close! d outer)
+      out)))
 
 ;: Count the opaque items `<min..max>` with `width`-byte prefixes from the
 ;: cursor to its end without moving it, failing on the first bad item or the
@@ -769,26 +747,24 @@
   (let
     [cursor : i64 d.pos]
     [count : i64 0]
-    (begin
-      (while (and (not d.failed) (< cursor d.end))
-        (cond
-          [(>= count limit)
-            (decoder-fail! d error-too-many-entries alert-decode-error cursor)]
-          [(> (+ cursor width) d.end)
-            (decoder-fail! d error-truncated alert-decode-error cursor)]
-          [else
-            (let
-              [length : i64 (read-be view cursor width)]
-              (cond
-                [(or (< length min) (> length max))
-                  (decoder-fail! d error-length-range alert-decode-error cursor)]
-                [(> (+ (+ cursor width) length) d.end)
-                  (decoder-fail! d error-truncated alert-decode-error cursor)]
-                [else
-                  (begin
-                    (set! count (+ count 1))
-                    (set! cursor (+ (+ cursor width) length)))]))]))
-      count)))
+    (while (and (not d.failed) (< cursor d.end))
+      (cond
+        [(>= count limit)
+          (decoder-fail! d error-too-many-entries alert-decode-error cursor)]
+        [(> (+ cursor width) d.end)
+          (decoder-fail! d error-truncated alert-decode-error cursor)]
+        [else
+          (let
+            [length : i64 (read-be view cursor width)]
+            (cond
+              [(or (< length min) (> length max))
+                (decoder-fail! d error-length-range alert-decode-error cursor)]
+              [(> (+ (+ cursor width) length) d.end)
+                (decoder-fail! d error-truncated alert-decode-error cursor)]
+              [else
+                (set! count (+ count 1))
+                (set! cursor (+ (+ cursor width) length))]))]))
+    count))
 
 ;: Read a vector of opaque items (protocol names, distinguished names).
 (define (decoder-opaque-list!
@@ -812,15 +788,13 @@
           0
           count))]
     [index : i64 0]
-    (begin
-      (while (and (not d.failed) (< index count))
-        (begin
-          (set!
-            (array-ref out index)
-            (decoder-opaque! d view inner-width inner-min inner-max))
-          (set! index (+ index 1))))
-      (decoder-close! d outer)
-      out)))
+    (while (and (not d.failed) (< index count))
+      (set!
+        (array-ref out index)
+        (decoder-opaque! d view inner-width inner-min inner-max))
+      (set! index (+ index 1)))
+    (decoder-close! d outer)
+    out))
 
 ;; --- records ------------------------------------------------------------------------
 ;: A record header: outer content type, `legacy_record_version`, and fragment
@@ -941,21 +915,19 @@
 (define (record-reader-fail!
   [reader : (&mut reader TlsRecordReader)]
   [error : TlsWireError]) : TlsWireError
-  (begin
-    (set! reader.failed true)
-    (set! reader.error (copy-error (& error)))
-    error))
+  (set! reader.failed true)
+  (set! reader.error (copy-error (& error)))
+  error)
 
 ;: Drop the completed record so the next one can start.
 (define (record-reader-release! [reader : (&mut reader TlsRecordReader)]) : unit
-  (begin
-    (set!
-      reader.stream-offset
-      (+ (+ reader.stream-offset record-header-length) reader.header.length))
-    (set! reader.header-bytes.len 0)
-    (set! reader.fragment.len 0)
-    (set! reader.header-done false)
-    (set! reader.ready false)))
+  (set!
+    reader.stream-offset
+    (+ (+ reader.stream-offset record-header-length) reader.header.length))
+  (set! reader.header-bytes.len 0)
+  (set! reader.fragment.len 0)
+  (set! reader.header-done false)
+  (set! reader.ready false))
 
 ;: Take bytes of `input` into the current record, stopping at its end: returns
 ;: `TlsRecordComplete` once the record is whole, `TlsRecordNeedMore` when
@@ -966,76 +938,67 @@
   [reader : (&mut reader TlsRecordReader)]
   [input : (& input bytes)]
   [protected : bool]) : TlsRecordStep
-  (begin
+  (when reader.failed (return (TlsRecordFailed (copy-error (& reader.error)))))
+  (when reader.ready (record-reader-release! reader))
+  (let
+    [available : i64 (byte_buf.bytes-length input)]
+    [consumed : i64 0]
     (when
-      reader.failed
-      (return (TlsRecordFailed (copy-error (& reader.error)))))
-    (when reader.ready (record-reader-release! reader))
-    (let
-      [available : i64 (byte_buf.bytes-length input)]
-      [consumed : i64 0]
-      (begin
+      (not reader.header-done)
+      (let
+        [want : i64
+          (- record-header-length (byte_buf.len (& reader.header-bytes)))]
+        [take : i64
+          (if (< want available)
+            want
+            available)]
+        (buffer-append! (&mut reader.header-bytes) input 0 take)
+        (set! consumed take)
         (when
-          (not reader.header-done)
-          (let
-            [want : i64
-              (- record-header-length (byte_buf.len (& reader.header-bytes)))]
-            [take : i64
-              (if (< want available)
-                want
-                available)]
-            (begin
-              (buffer-append! (&mut reader.header-bytes) input 0 take)
-              (set! consumed take)
-              (when
-                (< (byte_buf.len (& reader.header-bytes)) record-header-length)
-                (return (TlsRecordNeedMore consumed)))
-              (match (decode-record-header
-                (byte_buf.as-bytes (& reader.header-bytes))
-                0
-                protected
-                (& reader.limits)
-                reader.stream-offset)
-                [(TlsRecordHeaderErr error)
-                  (return (TlsRecordFailed (record-reader-fail! reader error)))]
-                [(TlsRecordHeaderOk header)
-                  (begin
-                    (buffer-reserve! (&mut reader.fragment) header.length)
-                    (set! reader.header header)
-                    (set! reader.header-done true))]))))
-        (let
-          [want : i64
-            (- reader.header.length (byte_buf.len (& reader.fragment)))]
-          [left : i64 (- available consumed)]
-          [take : i64
-            (if (< want left)
-              want
-              left)]
-          (begin
-            (buffer-append! (&mut reader.fragment) input consumed take)
-            (set! consumed (+ consumed take))
-            (cond
-              [(< (byte_buf.len (& reader.fragment)) reader.header.length)
-                (TlsRecordNeedMore consumed)]
-              [(and
-                  (= reader.header.content-type content-type-change-cipher-spec)
-                  (!= (byte_buf.ref (& reader.fragment) 0) 1))
-                (TlsRecordFailed
-                  (record-reader-fail!
-                    reader
-                    (TlsWireError
-                      error-change-cipher-spec
-                      (+ reader.stream-offset record-header-length)
-                      alert-unexpected-message)))]
-              [else
-                (begin
-                  (set! reader.ready true)
-                  (TlsRecordComplete
-                    consumed
-                    (TlsRecordHeader
-                      reader.header.content-type
-                      reader.header.legacy-version
-                      reader.header.length)))])))))))
+          (< (byte_buf.len (& reader.header-bytes)) record-header-length)
+          (return (TlsRecordNeedMore consumed)))
+        (match (decode-record-header
+          (byte_buf.as-bytes (& reader.header-bytes))
+          0
+          protected
+          (& reader.limits)
+          reader.stream-offset)
+          [(TlsRecordHeaderErr error)
+            (return (TlsRecordFailed (record-reader-fail! reader error)))]
+          [(TlsRecordHeaderOk header)
+            (buffer-reserve! (&mut reader.fragment) header.length)
+            (set! reader.header header)
+            (set! reader.header-done true)])))
+    (let
+      [want : i64 (- reader.header.length (byte_buf.len (& reader.fragment)))]
+      [left : i64 (- available consumed)]
+      [take : i64
+        (if (< want left)
+          want
+          left)]
+      (buffer-append! (&mut reader.fragment) input consumed take)
+      (set! consumed (+ consumed take))
+      (cond
+        [(< (byte_buf.len (& reader.fragment)) reader.header.length)
+          (TlsRecordNeedMore consumed)]
+        [(and
+            (= reader.header.content-type content-type-change-cipher-spec)
+            (!= (byte_buf.ref (& reader.fragment) 0) 1))
+          (TlsRecordFailed
+            (record-reader-fail!
+              reader
+              (TlsWireError
+                error-change-cipher-spec
+                (+ reader.stream-offset record-header-length)
+                alert-unexpected-message)))]
+        [else
+          (set! reader.ready true)
+          (TlsRecordComplete
+            consumed
+            (TlsRecordHeader
+              reader.header.content-type
+              reader.header.legacy-version
+              reader.header.length))]))))
 
 ;: The fragment of the record the last `record-reader-next!` completed.
 (define (record-reader-fragment [reader : (& reader TlsRecordReader)]) : (&
@@ -1058,9 +1021,8 @@
   [content-type : i64]
   [legacy-version : i64]
   [length : i64]) : byte_buf.ByteBuf
-  (begin
-    (byte_buf.check-range max-ciphertext-fragment 0 length)
-    (push-be (push-be (push-be out content-type 1) legacy-version 2) length 2)))
+  (byte_buf.check-range max-ciphertext-fragment 0 length)
+  (push-be (push-be (push-be out content-type 1) legacy-version 2) length 2))
 
 ;: Append one record holding `fragment`.
 (define (encode-record
@@ -1088,24 +1050,22 @@
     [total : i64 (byte_buf.bytes-length messages)]
     [offset : i64 0]
     [result : byte_buf.ByteBuf out]
-    (begin
-      (byte_buf.check-range max-plaintext-fragment 1 (- max-fragment 1))
-      (while (< offset total)
-        (let
-          [count : i64
-            (if (< (- total offset) max-fragment)
-              (- total offset)
-              max-fragment)]
-          (begin
-            (set!
-              result
-              (encode-record
-                result
-                content-type-handshake
-                legacy-version
-                (byte_buf.bytes-slice-view messages offset count)))
-            (set! offset (+ offset count)))))
-      result)))
+    (byte_buf.check-range max-plaintext-fragment 1 (- max-fragment 1))
+    (while (< offset total)
+      (let
+        [count : i64
+          (if (< (- total offset) max-fragment)
+            (- total offset)
+            max-fragment)]
+        (set!
+          result
+          (encode-record
+            result
+            content-type-handshake
+            legacy-version
+            (byte_buf.bytes-slice-view messages offset count)))
+        (set! offset (+ offset count))))
+    result))
 
 ;: A decrypted record's real content type and the length of its content,
 ;: which is the prefix of the plaintext before the type byte and padding.
@@ -1129,37 +1089,36 @@
   (let
     [total : i64 (byte_buf.bytes-length plaintext)]
     [index : i64 (- total 1)]
-    (begin
-      (when
-        (> total (+ max-plaintext-fragment 1))
-        (return
-          (TlsInnerPlaintextErr
-            (TlsWireError error-record-overflow 0 alert-record-overflow))))
-      (while (and (>= index 0) (= (byte_buf.bytes-ref plaintext index) 0))
-        (set! index (- index 1)))
-      (if (< index 0)
+    (when
+      (> total (+ max-plaintext-fragment 1))
+      (return
         (TlsInnerPlaintextErr
-          (TlsWireError error-missing-content-type 0 alert-unexpected-message))
-        (let
-          [content-type : i64 (read-be plaintext index 1)]
-          (cond
-            [(not
-                (or
-                  (= content-type content-type-alert)
-                  (= content-type content-type-handshake)
-                  (= content-type content-type-application-data)))
-              (TlsInnerPlaintextErr
-                (TlsWireError error-content-type index alert-unexpected-message))]
-            [(> index limits.max-plaintext-fragment)
-              (TlsInnerPlaintextErr
-                (TlsWireError error-record-overflow index alert-record-overflow))]
-            [(and (= index 0) (!= content-type content-type-application-data))
-              (TlsInnerPlaintextErr
-                (TlsWireError error-empty-fragment 0 alert-unexpected-message))]
-            [(and (= content-type content-type-alert) (!= index 2))
-              (TlsInnerPlaintextErr
-                (TlsWireError error-alert-length index alert-decode-error))]
-            [else (TlsInnerPlaintextOk (TlsInnerPlaintext content-type index))]))))))
+          (TlsWireError error-record-overflow 0 alert-record-overflow))))
+    (while (and (>= index 0) (= (byte_buf.bytes-ref plaintext index) 0))
+      (set! index (- index 1)))
+    (if (< index 0)
+      (TlsInnerPlaintextErr
+        (TlsWireError error-missing-content-type 0 alert-unexpected-message))
+      (let
+        [content-type : i64 (read-be plaintext index 1)]
+        (cond
+          [(not
+              (or
+                (= content-type content-type-alert)
+                (= content-type content-type-handshake)
+                (= content-type content-type-application-data)))
+            (TlsInnerPlaintextErr
+              (TlsWireError error-content-type index alert-unexpected-message))]
+          [(> index limits.max-plaintext-fragment)
+            (TlsInnerPlaintextErr
+              (TlsWireError error-record-overflow index alert-record-overflow))]
+          [(and (= index 0) (!= content-type content-type-application-data))
+            (TlsInnerPlaintextErr
+              (TlsWireError error-empty-fragment 0 alert-unexpected-message))]
+          [(and (= content-type content-type-alert) (!= index 2))
+            (TlsInnerPlaintextErr
+              (TlsWireError error-alert-length index alert-decode-error))]
+          [else (TlsInnerPlaintextOk (TlsInnerPlaintext content-type index))])))))
 
 ;: Append a `TLSInnerPlaintext`: `content`, its type, then `padding` zeros.
 ;: The whole may not exceed 2^14 + 1 bytes, and `padding` may not be negative.
@@ -1173,13 +1132,11 @@
     [result : byte_buf.ByteBuf
       (push-be (byte_buf.append-bytes out content) content-type 1)]
     [index : i64 0]
-    (begin
-      (byte_buf.check-range (- max-plaintext-fragment length) 0 padding)
-      (while (< index padding)
-        (begin
-          (set! result (byte_buf.push result 0))
-          (set! index (+ index 1))))
-      result)))
+    (byte_buf.check-range (- max-plaintext-fragment length) 0 padding)
+    (while (< index padding)
+      (set! result (byte_buf.push result 0))
+      (set! index (+ index 1)))
+    result))
 
 ;; --- handshake reassembly ---------------------------------------------------------
 ;: The outcome of `handshake-reader-next!`: a complete message of `msg-type`
@@ -1221,23 +1178,20 @@
 (define (handshake-reader-fail!
   [reader : (&mut reader TlsHandshakeReader)]
   [error : TlsWireError]) : TlsWireError
-  (begin
-    (set! reader.failed true)
-    (set! reader.error (copy-error (& error)))
-    error))
+  (set! reader.failed true)
+  (set! reader.error (copy-error (& error)))
+  error)
 
 ;: Release the message returned last.
 (define (handshake-reader-release! [reader : (&mut reader TlsHandshakeReader)]) : unit
-  (begin
-    (set! reader.start (+ reader.start reader.held))
-    (set! reader.held 0)
-    (when
-      (= reader.start (byte_buf.len (& reader.pending)))
-      (begin
-        (set! reader.base (+ reader.base reader.start))
-        (set! reader.pending.len 0)
-        (set! reader.start 0)
-        (set! reader.checked 0)))))
+  (set! reader.start (+ reader.start reader.held))
+  (set! reader.held 0)
+  (when
+    (= reader.start (byte_buf.len (& reader.pending)))
+    (set! reader.base (+ reader.base reader.start))
+    (set! reader.pending.len 0)
+    (set! reader.start 0)
+    (set! reader.checked 0)))
 
 ;: Move the unreleased bytes to the front of `pending`, so it never holds more
 ;: than one partial message and the record being added.
@@ -1246,47 +1200,38 @@
     [shift : i64 reader.start]
     [live : i64 (- (byte_buf.len (& reader.pending)) shift)]
     [index : i64 0]
-    (begin
-      (while (< index live)
-        (begin
-          (set!
-            (array-ref reader.pending.slots index)
-            (array-ref reader.pending.slots (+ shift index)))
-          (set! index (+ index 1))))
-      (set! reader.pending.len live)
-      (set! reader.base (+ reader.base shift))
-      (set! reader.checked (- reader.checked shift))
-      (set! reader.start 0))))
+    (while (< index live)
+      (set!
+        (array-ref reader.pending.slots index)
+        (array-ref reader.pending.slots (+ shift index)))
+      (set! index (+ index 1)))
+    (set! reader.pending.len live)
+    (set! reader.base (+ reader.base shift))
+    (set! reader.checked (- reader.checked shift))
+    (set! reader.start 0)))
 
 ;: Check every complete message header not yet checked, so an oversized
 ;: message fails as soon as its header arrives rather than after its body.
 (define (handshake-reader-check-headers!
   [reader : (&mut reader TlsHandshakeReader)]) : TlsWireCheck
-  (begin
-    (while (<=
-      (+ reader.checked handshake-header-length)
-      (byte_buf.len (& reader.pending)))
-      (let
-        [body : i64
-          (read-be
-            (byte_buf.as-bytes (& reader.pending))
-            (+ reader.checked 1)
-            3)]
-        (begin
-          (when
-            (> body reader.limits.max-handshake-body)
-            (return
-              (TlsWireErr
-                (handshake-reader-fail!
-                  reader
-                  (TlsWireError
-                    error-message-too-large
-                    (+ (+ reader.base reader.checked) 1)
-                    alert-decode-error)))))
-          (set!
-            reader.checked
-            (+ (+ reader.checked handshake-header-length) body)))))
-    (TlsWireOk)))
+  (while (<=
+    (+ reader.checked handshake-header-length)
+    (byte_buf.len (& reader.pending)))
+    (let
+      [body : i64
+        (read-be (byte_buf.as-bytes (& reader.pending)) (+ reader.checked 1) 3)]
+      (when
+        (> body reader.limits.max-handshake-body)
+        (return
+          (TlsWireErr
+            (handshake-reader-fail!
+              reader
+              (TlsWireError
+                error-message-too-large
+                (+ (+ reader.base reader.checked) 1)
+                alert-decode-error)))))
+      (set! reader.checked (+ (+ reader.checked handshake-header-length) body))))
+  (TlsWireOk))
 
 ;: Add the content of one handshake record (the fragment of a plaintext
 ;: record or the content of a decrypted one). This releases the message
@@ -1306,15 +1251,14 @@
             (+ reader.base (byte_buf.len (& reader.pending)))
             alert-unexpected-message)))]
     [else
-      (begin
-        (handshake-reader-release! reader)
-        (when (> reader.start 0) (handshake-reader-compact! reader))
-        (buffer-append!
-          (&mut reader.pending)
-          content
-          0
-          (byte_buf.bytes-length content))
-        (handshake-reader-check-headers! reader))]))
+      (handshake-reader-release! reader)
+      (when (> reader.start 0) (handshake-reader-compact! reader))
+      (buffer-append!
+        (&mut reader.pending)
+        content
+        0
+        (byte_buf.bytes-length content))
+      (handshake-reader-check-headers! reader)]))
 
 ;: Return the next complete message, releasing the one returned before, or
 ;: `TlsHandshakeNeedMore` when the buffered bytes end inside a message.
@@ -1465,28 +1409,22 @@
   (let
     [out : byte_buf.ByteBuf (byte_buf.with-capacity 32)]
     [index : i64 0]
-    (begin
-      (while (< index 32)
-        (begin
-          (set! out (push-be out (hello-retry-request-random-byte index) 1))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index 32)
+      (set! out (push-be out (hello-retry-request-random-byte index) 1))
+      (set! index (+ index 1)))
+    out))
 
 ;: Whether a ServerHello `random` marks a HelloRetryRequest.
 (define (hello-retry-request-random? [random : (& random bytes)]) : bool
   (let
     [same : bool (= (byte_buf.bytes-length random) 32)]
     [index : i64 0]
-    (begin
-      (while (and same (< index 32))
-        (begin
-          (when
-            (!=
-              (read-be random index 1)
-              (hello-retry-request-random-byte index))
-            (set! same false))
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index 32))
+      (when
+        (!= (read-be random index 1) (hello-retry-request-random-byte index))
+        (set! same false))
+      (set! index (+ index 1)))
+    same))
 
 ;; --- extensions ------------------------------------------------------------------------
 ;: `server_name` extension type. The extension types are those of RFC 9846
@@ -1773,12 +1711,10 @@
   (let
     [cursor : i64 first]
     [found : bool false]
-    (begin
-      (while (and (not found) (< cursor stop))
-        (begin
-          (when (= (read-be view cursor 2) ext-type) (set! found true))
-          (set! cursor (+ (+ cursor 4) (read-be view (+ cursor 2) 2)))))
-      found)))
+    (while (and (not found) (< cursor stop))
+      (when (= (read-be view cursor 2) ext-type) (set! found true))
+      (set! cursor (+ (+ cursor 4) (read-be view (+ cursor 2) 2))))
+    found))
 
 ;: Check the entries of the extension block the cursor is inside, without
 ;: moving it, and count them.
@@ -1792,61 +1728,55 @@
     [cursor : i64 d.pos]
     [count : i64 0]
     [bit : i64 (context-bit context)]
-    (begin
-      (while (and (not d.failed) (< cursor d.end))
-        (cond
-          [(>= count limits.max-extensions)
-            (decoder-fail!
-              d
-              error-too-many-extensions
-              alert-decode-error
-              cursor)]
-          [(> (+ cursor 4) d.end)
-            (decoder-fail! d error-truncated alert-decode-error cursor)]
-          [else
-            (let
-              [ext-type : i64 (read-be view cursor 2)]
-              [next : i64 (+ (+ cursor 4) (read-be view (+ cursor 2) 2))]
-              [allowed : i64 (extension-contexts ext-type)]
-              (cond
-                [(> next d.end)
-                  (decoder-fail!
-                    d
-                    error-truncated
-                    alert-decode-error
-                    (+ cursor 2))]
-                [(extension-type-before? view first cursor ext-type)
-                  (decoder-fail!
-                    d
-                    error-duplicate-extension
-                    alert-illegal-parameter
-                    cursor)]
-                [(and (= allowed 0) (response-context? context))
-                  (decoder-fail!
-                    d
-                    error-unsolicited-extension
-                    alert-unsupported-extension
-                    cursor)]
-                [(and (!= allowed 0) (= (bit-and allowed bit) 0))
-                  (decoder-fail!
-                    d
-                    error-extension-context
-                    alert-illegal-parameter
-                    cursor)]
-                [(and
-                    (= context context-client-hello)
-                    (= ext-type extension-pre-shared-key)
-                    (!= next d.end))
-                  (decoder-fail!
-                    d
-                    error-psk-not-last
-                    alert-illegal-parameter
-                    cursor)]
-                [else
-                  (begin
-                    (set! count (+ count 1))
-                    (set! cursor next))]))]))
-      count)))
+    (while (and (not d.failed) (< cursor d.end))
+      (cond
+        [(>= count limits.max-extensions)
+          (decoder-fail! d error-too-many-extensions alert-decode-error cursor)]
+        [(> (+ cursor 4) d.end)
+          (decoder-fail! d error-truncated alert-decode-error cursor)]
+        [else
+          (let
+            [ext-type : i64 (read-be view cursor 2)]
+            [next : i64 (+ (+ cursor 4) (read-be view (+ cursor 2) 2))]
+            [allowed : i64 (extension-contexts ext-type)]
+            (cond
+              [(> next d.end)
+                (decoder-fail!
+                  d
+                  error-truncated
+                  alert-decode-error
+                  (+ cursor 2))]
+              [(extension-type-before? view first cursor ext-type)
+                (decoder-fail!
+                  d
+                  error-duplicate-extension
+                  alert-illegal-parameter
+                  cursor)]
+              [(and (= allowed 0) (response-context? context))
+                (decoder-fail!
+                  d
+                  error-unsolicited-extension
+                  alert-unsupported-extension
+                  cursor)]
+              [(and (!= allowed 0) (= (bit-and allowed bit) 0))
+                (decoder-fail!
+                  d
+                  error-extension-context
+                  alert-illegal-parameter
+                  cursor)]
+              [(and
+                  (= context context-client-hello)
+                  (= ext-type extension-pre-shared-key)
+                  (!= next d.end))
+                (decoder-fail!
+                  d
+                  error-psk-not-last
+                  alert-illegal-parameter
+                  cursor)]
+              [else
+                (set! count (+ count 1))
+                (set! cursor next)]))]))
+    count))
 
 ;: Read an extension block `<min..max>` of a message in `context`.
 (define (decoder-extensions!
@@ -1866,16 +1796,14 @@
           0
           count))]
     [index : i64 0]
-    (begin
-      (while (and (not d.failed) (< index count))
-        (let
-          [ext-type : i64 (decoder-uint! d view 2)]
-          [data : byte_buf.ByteBuf (decoder-opaque! d view 2 0 65535)]
-          (begin
-            (set! (array-ref out index) (TlsExtension ext-type data))
-            (set! index (+ index 1)))))
-      (decoder-close! d outer)
-      out)))
+    (while (and (not d.failed) (< index count))
+      (let
+        [ext-type : i64 (decoder-uint! d view 2)]
+        [data : byte_buf.ByteBuf (decoder-opaque! d view 2 0 65535)]
+        (set! (array-ref out index) (TlsExtension ext-type data))
+        (set! index (+ index 1))))
+    (decoder-close! d outer)
+    out))
 
 ;: Decode a standalone extension block (2-byte length and entries) of a
 ;: message in `context`.
@@ -1887,11 +1815,10 @@
     [d : TlsDecoder (decoder-new view)]
     [extensions : (__tl_dyn-array TlsExtension)
       (decoder-extensions! (&mut d) view 0 65535 context limits)]
-    (begin
-      (decoder-finish! (&mut d))
-      (if d.failed
-        (TlsExtensionsErr d.error)
-        (TlsExtensionsOk extensions)))))
+    (decoder-finish! (&mut d))
+    (if d.failed
+      (TlsExtensionsErr d.error)
+      (TlsExtensionsOk extensions))))
 
 ;: The index of the extension of `ext-type`, or -1.
 (define (find-extension
@@ -1900,14 +1827,12 @@
   (let
     [index : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< found 0) (< index (array-length extensions)))
-        (begin
-          (when
-            (= (array-ref extensions index).ext-type ext-type)
-            (set! found index))
-          (set! index (+ index 1))))
-      found)))
+    (while (and (< found 0) (< index (array-length extensions)))
+      (when
+        (= (array-ref extensions index).ext-type ext-type)
+        (set! found index))
+      (set! index (+ index 1)))
+    found))
 
 ;: The data of `extensions[index]`.
 (define (extension-data
@@ -1926,30 +1851,27 @@
   [context : i64]) : TlsWireCheck
   (let
     [index : i64 0]
-    (begin
-      (while (< index (array-length extensions))
-        (let
-          [ext-type : i64 (array-ref extensions index).ext-type]
-          [search : i64 0]
-          [found : bool
-            (and
-              (= context context-hello-retry-request)
-              (= ext-type extension-cookie))]
-          (begin
-            (while (and (not found) (< search (array-length offered)))
-              (begin
-                (when (= (array-ref offered search) ext-type) (set! found true))
-                (set! search (+ search 1))))
-            (when
-              (not found)
-              (return
-                (TlsWireErr
-                  (TlsWireError
-                    error-unsolicited-extension
-                    index
-                    alert-unsupported-extension))))
-            (set! index (+ index 1)))))
-      (TlsWireOk))))
+    (while (< index (array-length extensions))
+      (let
+        [ext-type : i64 (array-ref extensions index).ext-type]
+        [search : i64 0]
+        [found : bool
+          (and
+            (= context context-hello-retry-request)
+            (= ext-type extension-cookie))]
+        (while (and (not found) (< search (array-length offered)))
+          (when (= (array-ref offered search) ext-type) (set! found true))
+          (set! search (+ search 1)))
+        (when
+          (not found)
+          (return
+            (TlsWireErr
+              (TlsWireError
+                error-unsolicited-extension
+                index
+                alert-unsupported-extension))))
+        (set! index (+ index 1))))
+    (TlsWireOk)))
 
 ;: Append an extension block with its 2-byte length.
 (define (encode-extensions
@@ -1959,17 +1881,15 @@
     [mark : i64 (byte_buf.len (& out))]
     [result : byte_buf.ByteBuf (push-be out 0 2)]
     [index : i64 0]
-    (begin
-      (while (< index (array-length extensions))
-        (begin
-          (set!
-            result
-            (encode-opaque
-              (push-be result (array-ref extensions index).ext-type 2)
-              (extension-data extensions index)
-              2))
-          (set! index (+ index 1))))
-      (close-length result mark 2))))
+    (while (< index (array-length extensions))
+      (set!
+        result
+        (encode-opaque
+          (push-be result (array-ref extensions index).ext-type 2)
+          (extension-data extensions index)
+          2))
+      (set! index (+ index 1)))
+    (close-length result mark 2)))
 
 ;; --- extension bodies -------------------------------------------------------------------
 ;: A decoded integer field, or its failure.
@@ -2038,18 +1958,16 @@
         min
         max
         limits.max-list-entries)]
-    (begin
-      (decoder-finish! (&mut d))
-      (codes-result (& d) codes))))
+    (decoder-finish! (&mut d))
+    (codes-result (& d) codes)))
 
 ;: Decode a single `width`-byte code that fills `data`.
 (define (decode-code [data : (& data bytes)] [width : i64]) : TlsCodeResult
   (let
     [d : TlsDecoder (decoder-new data)]
     [code : i64 (decoder-uint! (&mut d) data width)]
-    (begin
-      (decoder-finish! (&mut d))
-      (code-result (& d) code))))
+    (decoder-finish! (&mut d))
+    (code-result (& d) code)))
 
 ;: ClientHello `supported_versions`: `ProtocolVersion versions<2..254>`.
 (define (decode-supported-versions
@@ -2102,9 +2020,8 @@
   (let
     [d : TlsDecoder (decoder-new data)]
     [cookie : byte_buf.ByteBuf (decoder-opaque! (&mut d) data 2 1 65535)]
-    (begin
-      (decoder-finish! (&mut d))
-      (bytes-result (& d) cookie))))
+    (decoder-finish! (&mut d))
+    (bytes-result (& d) cookie)))
 
 ;: `application_layer_protocol_negotiation` in a ClientHello:
 ;: `ProtocolName protocol_name_list<2..2^16-1>`, names `<1..2^8-1>`.
@@ -2115,9 +2032,8 @@
     [d : TlsDecoder (decoder-new data)]
     [names : (__tl_dyn-array byte_buf.ByteBuf)
       (decoder-opaque-list! (&mut d) data 2 2 1 1 255 limits.max-list-entries)]
-    (begin
-      (decoder-finish! (&mut d))
-      (bytes-list-result (& d) names))))
+    (decoder-finish! (&mut d))
+    (bytes-list-result (& d) names)))
 
 ;: `application_layer_protocol_negotiation` in EncryptedExtensions: a list
 ;: of exactly one name (RFC 7301 section 3.1).
@@ -2126,17 +2042,12 @@
     [d : TlsDecoder (decoder-new data)]
     [outer : i64 (decoder-open! (&mut d) data 2 2 65535)]
     [name : byte_buf.ByteBuf (decoder-opaque! (&mut d) data 1 1 255)]
-    (begin
-      (when
-        (and (not d.failed) (!= d.pos d.end))
-        (decoder-fail!
-          (&mut d)
-          error-illegal-value
-          alert-illegal-parameter
-          d.pos))
-      (decoder-close! (&mut d) outer)
-      (decoder-finish! (&mut d))
-      (bytes-result (& d) name))))
+    (when
+      (and (not d.failed) (!= d.pos d.end))
+      (decoder-fail! (&mut d) error-illegal-value alert-illegal-parameter d.pos))
+    (decoder-close! (&mut d) outer)
+    (decoder-finish! (&mut d))
+    (bytes-result (& d) name)))
 
 ;: `server_name` in a ClientHello: a `ServerNameList` holding one `host_name`
 ;: (RFC 6066 section 3), whose bytes are returned without DNS validation.
@@ -2148,31 +2059,30 @@
     [type-at : i64 d.pos]
     [name-type : i64 (decoder-uint! (&mut d) data 1)]
     [host : byte_buf.ByteBuf (decoder-opaque! (&mut d) data 2 1 65535)]
-    (begin
-      (cond
-        [d.failed unit]
-        [(!= name-type 0)
-          (decoder-fail!
-            (&mut d)
-            error-illegal-value
-            alert-illegal-parameter
-            type-at)]
-        [(and (< d.pos d.end) (= (read-be data d.pos 1) 0))
-          (decoder-fail!
-            (&mut d)
-            error-duplicate-entry
-            alert-illegal-parameter
-            d.pos)]
-        [(< d.pos d.end)
-          (decoder-fail!
-            (&mut d)
-            error-illegal-value
-            alert-illegal-parameter
-            d.pos)]
-        [else unit])
-      (decoder-close! (&mut d) outer)
-      (decoder-finish! (&mut d))
-      (bytes-result (& d) host))))
+    (cond
+      [d.failed unit]
+      [(!= name-type 0)
+        (decoder-fail!
+          (&mut d)
+          error-illegal-value
+          alert-illegal-parameter
+          type-at)]
+      [(and (< d.pos d.end) (= (read-be data d.pos 1) 0))
+        (decoder-fail!
+          (&mut d)
+          error-duplicate-entry
+          alert-illegal-parameter
+          d.pos)]
+      [(< d.pos d.end)
+        (decoder-fail!
+          (&mut d)
+          error-illegal-value
+          alert-illegal-parameter
+          d.pos)]
+      [else unit])
+    (decoder-close! (&mut d) outer)
+    (decoder-finish! (&mut d))
+    (bytes-result (& d) host)))
 
 ;: `certificate_authorities`: `DistinguishedName authorities<3..2^16-1>`, each
 ;: `opaque DistinguishedName<1..2^16-1>` kept as DER bytes.
@@ -2183,9 +2093,8 @@
     [d : TlsDecoder (decoder-new data)]
     [names : (__tl_dyn-array byte_buf.ByteBuf)
       (decoder-opaque-list! (&mut d) data 2 3 2 1 65535 limits.max-list-entries)]
-    (begin
-      (decoder-finish! (&mut d))
-      (bytes-list-result (& d) names))))
+    (decoder-finish! (&mut d))
+    (bytes-list-result (& d) names)))
 
 ;: One `KeyShareEntry`: a group and its `key_exchange` bytes.
 (defstruct TlsKeyShareEntry
@@ -2220,77 +2129,72 @@
     [first : i64 d.pos]
     [cursor : i64 d.pos]
     [count : i64 0]
-    (begin
-      (while (and (not d.failed) (< cursor d.end))
-        (cond
-          [(>= count limits.max-list-entries)
-            (decoder-fail!
-              (&mut d)
-              error-too-many-entries
-              alert-decode-error
-              cursor)]
-          [(> (+ cursor 4) d.end)
-            (decoder-fail! (&mut d) error-truncated alert-decode-error cursor)]
-          [else
-            (let
-              [length : i64 (read-be data (+ cursor 2) 2)]
-              [next : i64 (+ (+ cursor 4) length)]
-              (cond
-                [(= length 0)
-                  (decoder-fail!
-                    (&mut d)
-                    error-length-range
-                    alert-decode-error
-                    (+ cursor 2))]
-                [(> next d.end)
-                  (decoder-fail!
-                    (&mut d)
-                    error-truncated
-                    alert-decode-error
-                    (+ cursor 2))]
-                [(extension-type-before?
-                    data
-                    first
-                    cursor
-                    (read-be data cursor 2))
-                  (decoder-fail!
-                    (&mut d)
-                    error-duplicate-entry
-                    alert-illegal-parameter
-                    cursor)]
-                [else
-                  (begin
-                    (set! count (+ count 1))
-                    (set! cursor next))]))]))
-      (let
-        [shares : (__tl_dyn-array TlsKeyShareEntry)
-          (__tl_make-array
-            TlsKeyShareEntry
-            (if d.failed
-              0
-              count))]
-        [index : i64 0]
-        (begin
-          (while (and (not d.failed) (< index count))
-            (begin
-              (set! (array-ref shares index) (decoder-key-share! (&mut d) data))
-              (set! index (+ index 1))))
-          (decoder-close! (&mut d) outer)
-          (decoder-finish! (&mut d))
+    (while (and (not d.failed) (< cursor d.end))
+      (cond
+        [(>= count limits.max-list-entries)
+          (decoder-fail!
+            (&mut d)
+            error-too-many-entries
+            alert-decode-error
+            cursor)]
+        [(> (+ cursor 4) d.end)
+          (decoder-fail! (&mut d) error-truncated alert-decode-error cursor)]
+        [else
+          (let
+            [length : i64 (read-be data (+ cursor 2) 2)]
+            [next : i64 (+ (+ cursor 4) length)]
+            (cond
+              [(= length 0)
+                (decoder-fail!
+                  (&mut d)
+                  error-length-range
+                  alert-decode-error
+                  (+ cursor 2))]
+              [(> next d.end)
+                (decoder-fail!
+                  (&mut d)
+                  error-truncated
+                  alert-decode-error
+                  (+ cursor 2))]
+              [(extension-type-before?
+                  data
+                  first
+                  cursor
+                  (read-be data cursor 2))
+                (decoder-fail!
+                  (&mut d)
+                  error-duplicate-entry
+                  alert-illegal-parameter
+                  cursor)]
+              [else
+                (set! count (+ count 1))
+                (set! cursor next)]))]))
+    (let
+      [shares : (__tl_dyn-array TlsKeyShareEntry)
+        (__tl_make-array
+          TlsKeyShareEntry
           (if d.failed
-            (TlsKeySharesErr d.error)
-            (TlsKeySharesOk shares)))))))
+            0
+            count))]
+      [index : i64 0]
+      (while (and (not d.failed) (< index count))
+        (set! (array-ref shares index) (decoder-key-share! (&mut d) data))
+        (set! index (+ index 1)))
+      (decoder-close! (&mut d) outer)
+      (decoder-finish! (&mut d))
+      (if d.failed
+        (TlsKeySharesErr d.error)
+        (TlsKeySharesOk shares)))))
 
 ;: ServerHello `key_share`: one `KeyShareEntry`.
 (define (decode-key-share-server-hello [data : (& data bytes)]) : TlsKeyShareResult
   (let
     [d : TlsDecoder (decoder-new data)]
     [share : TlsKeyShareEntry (decoder-key-share! (&mut d) data)]
-    (begin
-      (decoder-finish! (&mut d))
-      (if d.failed
-        (TlsKeyShareErr d.error)
-        (TlsKeyShareOk share)))))
+    (decoder-finish! (&mut d))
+    (if d.failed
+      (TlsKeyShareErr d.error)
+      (TlsKeyShareOk share))))
 
 ;: Append a list of `item-width`-byte codes with a `prefix-width`-byte length.
 (define (encode-code-list
@@ -2302,12 +2206,10 @@
     [mark : i64 (byte_buf.len (& out))]
     [result : byte_buf.ByteBuf (push-be out 0 prefix-width)]
     [index : i64 0]
-    (begin
-      (while (< index (array-length codes))
-        (begin
-          (set! result (push-be result (array-ref codes index) item-width))
-          (set! index (+ index 1))))
-      (close-length result mark prefix-width))))
+    (while (< index (array-length codes))
+      (set! result (push-be result (array-ref codes index) item-width))
+      (set! index (+ index 1)))
+    (close-length result mark prefix-width)))
 
 ;: Append a list of opaque items with `inner-width`-byte lengths inside an
 ;: `outer-width`-byte length: ALPN names (2, 1) or distinguished names (2, 2).
@@ -2320,17 +2222,15 @@
     [mark : i64 (byte_buf.len (& out))]
     [result : byte_buf.ByteBuf (push-be out 0 outer-width)]
     [index : i64 0]
-    (begin
-      (while (< index (array-length items))
-        (begin
-          (set!
-            result
-            (encode-opaque
-              result
-              (byte_buf.as-bytes (& (array-ref items index)))
-              inner-width))
-          (set! index (+ index 1))))
-      (close-length result mark outer-width))))
+    (while (< index (array-length items))
+      (set!
+        result
+        (encode-opaque
+          result
+          (byte_buf.as-bytes (& (array-ref items index)))
+          inner-width))
+      (set! index (+ index 1)))
+    (close-length result mark outer-width)))
 
 ;: Append one `KeyShareEntry` (the ServerHello `key_share` data).
 (define (encode-key-share
@@ -2349,12 +2249,10 @@
     [mark : i64 (byte_buf.len (& out))]
     [result : byte_buf.ByteBuf (push-be out 0 2)]
     [index : i64 0]
-    (begin
-      (while (< index (array-length shares))
-        (begin
-          (set! result (encode-key-share result (& (array-ref shares index))))
-          (set! index (+ index 1))))
-      (close-length result mark 2))))
+    (while (< index (array-length shares))
+      (set! result (encode-key-share result (& (array-ref shares index))))
+      (set! index (+ index 1)))
+    (close-length result mark 2)))
 
 ;: Append the ClientHello `server_name` data for one `host_name`.
 (define (encode-server-name [out : byte_buf.ByteBuf] [host : (& host bytes)]) : byte_buf.ByteBuf
@@ -2391,40 +2289,32 @@
       (decoder-codes! (&mut d) body 2 2 2 65534 limits.max-list-entries)]
     [compression-at : i64 d.pos]
     [compression : byte_buf.ByteBuf (decoder-opaque! (&mut d) body 1 1 255)]
-    (begin
-      (when
-        (and
-          (not d.failed)
-          (not
-            (and
-              (= (byte_buf.len (& compression)) 1)
-              (= (byte_buf.ref (& compression) 0) 0))))
-        (decoder-fail!
-          (&mut d)
-          error-illegal-value
-          alert-illegal-parameter
-          compression-at))
-      (let
-        [extensions : (__tl_dyn-array TlsExtension)
-          (decoder-extensions!
-            (&mut d)
-            body
-            8
-            65535
-            context-client-hello
-            limits)]
-        (begin
-          (decoder-finish! (&mut d))
-          (if d.failed
-            (TlsClientHelloErr d.error)
-            (TlsClientHelloOk
-              (TlsClientHello
-                legacy-version
-                random
-                session-id
-                suites
-                compression
-                extensions))))))))
+    (when
+      (and
+        (not d.failed)
+        (not
+          (and
+            (= (byte_buf.len (& compression)) 1)
+            (= (byte_buf.ref (& compression) 0) 0))))
+      (decoder-fail!
+        (&mut d)
+        error-illegal-value
+        alert-illegal-parameter
+        compression-at))
+    (let
+      [extensions : (__tl_dyn-array TlsExtension)
+        (decoder-extensions! (&mut d) body 8 65535 context-client-hello limits)]
+      (decoder-finish! (&mut d))
+      (if d.failed
+        (TlsClientHelloErr d.error)
+        (TlsClientHelloOk
+          (TlsClientHello
+            legacy-version
+            random
+            session-id
+            suites
+            compression
+            extensions))))))
 
 ;: Append a ClientHello message.
 (define (encode-client-hello
@@ -2434,24 +2324,23 @@
     [mark : i64 (+ (byte_buf.len (& out)) 1)]
     [result : byte_buf.ByteBuf
       (push-be (push-be out handshake-client-hello 1) 0 3)]
-    (begin
-      (check-length (byte_buf.len (& hello.random)) 32)
-      (set! result (push-be result hello.legacy-version 2))
-      (set!
+    (check-length (byte_buf.len (& hello.random)) 32)
+    (set! result (push-be result hello.legacy-version 2))
+    (set!
+      result
+      (byte_buf.append-bytes result (byte_buf.as-bytes (& hello.random))))
+    (set!
+      result
+      (encode-opaque result (byte_buf.as-bytes (& hello.legacy-session-id)) 1))
+    (set! result (encode-code-list result (& hello.cipher-suites) 2 2))
+    (set!
+      result
+      (encode-opaque
         result
-        (byte_buf.append-bytes result (byte_buf.as-bytes (& hello.random))))
-      (set!
-        result
-        (encode-opaque result (byte_buf.as-bytes (& hello.legacy-session-id)) 1))
-      (set! result (encode-code-list result (& hello.cipher-suites) 2 2))
-      (set!
-        result
-        (encode-opaque
-          result
-          (byte_buf.as-bytes (& hello.legacy-compression-methods))
-          1))
-      (set! result (encode-extensions result (& hello.extensions)))
-      (close-length result mark 3))))
+        (byte_buf.as-bytes (& hello.legacy-compression-methods))
+        1))
+    (set! result (encode-extensions result (& hello.extensions)))
+    (close-length result mark 3)))
 
 ;: A ServerHello or HelloRetryRequest; `server-hello-retry?` tells them apart.
 (defstruct TlsServerHello
@@ -2488,28 +2377,26 @@
       (if (hello-retry-request-random? (byte_buf.as-bytes (& random)))
         context-hello-retry-request
         context-server-hello)]
-    (begin
-      (when
-        (and (not d.failed) (!= compression 0))
-        (decoder-fail!
-          (&mut d)
-          error-illegal-value
-          alert-illegal-parameter
-          compression-at))
-      (let
-        [extensions : (__tl_dyn-array TlsExtension)
-          (decoder-extensions! (&mut d) body 6 65535 context limits)]
-        (begin
-          (decoder-finish! (&mut d))
-          (if d.failed
-            (TlsServerHelloErr d.error)
-            (TlsServerHelloOk
-              (TlsServerHello
-                legacy-version
-                random
-                session-id
-                cipher-suite
-                extensions))))))))
+    (when
+      (and (not d.failed) (!= compression 0))
+      (decoder-fail!
+        (&mut d)
+        error-illegal-value
+        alert-illegal-parameter
+        compression-at))
+    (let
+      [extensions : (__tl_dyn-array TlsExtension)
+        (decoder-extensions! (&mut d) body 6 65535 context limits)]
+      (decoder-finish! (&mut d))
+      (if d.failed
+        (TlsServerHelloErr d.error)
+        (TlsServerHelloOk
+          (TlsServerHello
+            legacy-version
+            random
+            session-id
+            cipher-suite
+            extensions))))))
 
 ;: Append a ServerHello (or, with the HelloRetryRequest random, a
 ;: HelloRetryRequest) message.
@@ -2520,21 +2407,20 @@
     [mark : i64 (+ (byte_buf.len (& out)) 1)]
     [result : byte_buf.ByteBuf
       (push-be (push-be out handshake-server-hello 1) 0 3)]
-    (begin
-      (check-length (byte_buf.len (& hello.random)) 32)
-      (set! result (push-be result hello.legacy-version 2))
-      (set!
+    (check-length (byte_buf.len (& hello.random)) 32)
+    (set! result (push-be result hello.legacy-version 2))
+    (set!
+      result
+      (byte_buf.append-bytes result (byte_buf.as-bytes (& hello.random))))
+    (set!
+      result
+      (encode-opaque
         result
-        (byte_buf.append-bytes result (byte_buf.as-bytes (& hello.random))))
-      (set!
-        result
-        (encode-opaque
-          result
-          (byte_buf.as-bytes (& hello.legacy-session-id-echo))
-          1))
-      (set! result (push-be (push-be result hello.cipher-suite 2) 0 1))
-      (set! result (encode-extensions result (& hello.extensions)))
-      (close-length result mark 3))))
+        (byte_buf.as-bytes (& hello.legacy-session-id-echo))
+        1))
+    (set! result (push-be (push-be result hello.cipher-suite 2) 0 1))
+    (set! result (encode-extensions result (& hello.extensions)))
+    (close-length result mark 3)))
 
 ;: Decode an EncryptedExtensions body.
 (define (decode-encrypted-extensions
@@ -2550,11 +2436,10 @@
         65535
         context-encrypted-extensions
         limits)]
-    (begin
-      (decoder-finish! (&mut d))
-      (if d.failed
-        (TlsExtensionsErr d.error)
-        (TlsExtensionsOk extensions)))))
+    (decoder-finish! (&mut d))
+    (if d.failed
+      (TlsExtensionsErr d.error)
+      (TlsExtensionsOk extensions))))
 
 ;: Append an EncryptedExtensions message.
 (define (encode-encrypted-extensions
@@ -2596,20 +2481,19 @@
         65535
         context-certificate-request
         limits)]
-    (begin
-      (decoder-finish! (&mut d))
-      (when
-        (and
-          (not d.failed)
-          (< (find-extension (& extensions) extension-signature-algorithms) 0))
-        (decoder-fail!
-          (&mut d)
-          error-missing-extension
-          alert-missing-extension
-          extensions-at))
-      (if d.failed
-        (TlsCertificateRequestErr d.error)
-        (TlsCertificateRequestOk (TlsCertificateRequest context extensions))))))
+    (decoder-finish! (&mut d))
+    (when
+      (and
+        (not d.failed)
+        (< (find-extension (& extensions) extension-signature-algorithms) 0))
+      (decoder-fail!
+        (&mut d)
+        error-missing-extension
+        alert-missing-extension
+        extensions-at))
+    (if d.failed
+      (TlsCertificateRequestErr d.error)
+      (TlsCertificateRequestOk (TlsCertificateRequest context extensions)))))
 
 ;: Append a CertificateRequest message.
 (define (encode-certificate-request
@@ -2653,47 +2537,43 @@
   (let
     [cursor : i64 d.pos]
     [count : i64 0]
-    (begin
-      (while (and (not d.failed) (< cursor d.end))
-        (cond
-          [(>= count limits.max-certificates)
-            (decoder-fail!
-              d
-              error-too-many-certificates
-              alert-decode-error
-              cursor)]
-          [(> (+ cursor 3) d.end)
-            (decoder-fail! d error-truncated alert-decode-error cursor)]
-          [else
-            (let
-              [length : i64 (read-be view cursor 3)]
-              [extensions-at : i64 (+ (+ cursor 3) length)]
-              (cond
-                [(= length 0)
-                  (decoder-fail! d error-length-range alert-decode-error cursor)]
-                [(> length limits.max-certificate-bytes)
-                  (decoder-fail!
-                    d
-                    error-certificate-too-large
-                    alert-decode-error
-                    cursor)]
-                [(> (+ extensions-at 2) d.end)
-                  (decoder-fail! d error-truncated alert-decode-error cursor)]
-                [(>
-                    (+ (+ extensions-at 2) (read-be view extensions-at 2))
-                    d.end)
-                  (decoder-fail!
-                    d
-                    error-truncated
-                    alert-decode-error
-                    extensions-at)]
-                [else
-                  (begin
-                    (set! count (+ count 1))
-                    (set!
-                      cursor
-                      (+ (+ extensions-at 2) (read-be view extensions-at 2))))]))]))
-      count)))
+    (while (and (not d.failed) (< cursor d.end))
+      (cond
+        [(>= count limits.max-certificates)
+          (decoder-fail!
+            d
+            error-too-many-certificates
+            alert-decode-error
+            cursor)]
+        [(> (+ cursor 3) d.end)
+          (decoder-fail! d error-truncated alert-decode-error cursor)]
+        [else
+          (let
+            [length : i64 (read-be view cursor 3)]
+            [extensions-at : i64 (+ (+ cursor 3) length)]
+            (cond
+              [(= length 0)
+                (decoder-fail! d error-length-range alert-decode-error cursor)]
+              [(> length limits.max-certificate-bytes)
+                (decoder-fail!
+                  d
+                  error-certificate-too-large
+                  alert-decode-error
+                  cursor)]
+              [(> (+ extensions-at 2) d.end)
+                (decoder-fail! d error-truncated alert-decode-error cursor)]
+              [(> (+ (+ extensions-at 2) (read-be view extensions-at 2)) d.end)
+                (decoder-fail!
+                  d
+                  error-truncated
+                  alert-decode-error
+                  extensions-at)]
+              [else
+                (set! count (+ count 1))
+                (set!
+                  cursor
+                  (+ (+ extensions-at 2) (read-be view extensions-at 2)))]))]))
+    count))
 
 ;: Decode a Certificate body.
 (define (decode-certificate
@@ -2711,29 +2591,19 @@
           0
           count))]
     [index : i64 0]
-    (begin
-      (while (and (not d.failed) (< index count))
-        (let
-          [data : byte_buf.ByteBuf
-            (decoder-opaque! (&mut d) body 3 1 max-handshake-body)]
-          [extensions : (__tl_dyn-array TlsExtension)
-            (decoder-extensions!
-              (&mut d)
-              body
-              0
-              65535
-              context-certificate
-              limits)]
-          (begin
-            (set!
-              (array-ref entries index)
-              (TlsCertificateEntry data extensions))
-            (set! index (+ index 1)))))
-      (decoder-close! (&mut d) outer)
-      (decoder-finish! (&mut d))
-      (if d.failed
-        (TlsCertificateErr d.error)
-        (TlsCertificateOk (TlsCertificate context entries))))))
+    (while (and (not d.failed) (< index count))
+      (let
+        [data : byte_buf.ByteBuf
+          (decoder-opaque! (&mut d) body 3 1 max-handshake-body)]
+        [extensions : (__tl_dyn-array TlsExtension)
+          (decoder-extensions! (&mut d) body 0 65535 context-certificate limits)]
+        (set! (array-ref entries index) (TlsCertificateEntry data extensions))
+        (set! index (+ index 1))))
+    (decoder-close! (&mut d) outer)
+    (decoder-finish! (&mut d))
+    (if d.failed
+      (TlsCertificateErr d.error)
+      (TlsCertificateOk (TlsCertificate context entries)))))
 
 ;: Append a Certificate message.
 (define (encode-certificate
@@ -2748,20 +2618,18 @@
         1)]
     [list-mark : i64 (byte_buf.len (& result))]
     [index : i64 0]
-    (begin
-      (set! result (push-be result 0 3))
-      (while (< index (array-length certificate.entries))
-        (let
-          [entry : (& certificate TlsCertificateEntry)
-            (& (array-ref certificate.entries index))]
-          (begin
-            (set!
-              result
-              (encode-extensions
-                (encode-opaque result (byte_buf.as-bytes (& entry.data)) 3)
-                (& entry.extensions)))
-            (set! index (+ index 1)))))
-      (close-length (close-length result list-mark 3) mark 3))))
+    (set! result (push-be result 0 3))
+    (while (< index (array-length certificate.entries))
+      (let
+        [entry : (& certificate TlsCertificateEntry)
+          (& (array-ref certificate.entries index))]
+        (set!
+          result
+          (encode-extensions
+            (encode-opaque result (byte_buf.as-bytes (& entry.data)) 3)
+            (& entry.extensions)))
+        (set! index (+ index 1))))
+    (close-length (close-length result list-mark 3) mark 3)))
 
 ;: A CertificateVerify.
 (defstruct TlsCertificateVerify
@@ -2779,11 +2647,10 @@
     [d : TlsDecoder (decoder-new body)]
     [algorithm : i64 (decoder-uint! (&mut d) body 2)]
     [signature : byte_buf.ByteBuf (decoder-opaque! (&mut d) body 2 0 65535)]
-    (begin
-      (decoder-finish! (&mut d))
-      (if d.failed
-        (TlsCertificateVerifyErr d.error)
-        (TlsCertificateVerifyOk (TlsCertificateVerify algorithm signature))))))
+    (decoder-finish! (&mut d))
+    (if d.failed
+      (TlsCertificateVerifyErr d.error)
+      (TlsCertificateVerifyOk (TlsCertificateVerify algorithm signature)))))
 
 ;: Append a CertificateVerify message.
 (define (encode-certificate-verify
@@ -2808,9 +2675,8 @@
   (let
     [d : TlsDecoder (decoder-new body)]
     [verify-data : byte_buf.ByteBuf (decoder-copy! (&mut d) body hash-length)]
-    (begin
-      (decoder-finish! (&mut d))
-      (bytes-result (& d) verify-data))))
+    (decoder-finish! (&mut d))
+    (bytes-result (& d) verify-data)))
 
 ;: Append a Finished message.
 (define (encode-finished
@@ -2849,12 +2715,11 @@
         65534
         context-new-session-ticket
         limits)]
-    (begin
-      (decoder-finish! (&mut d))
-      (if d.failed
-        (TlsNewSessionTicketErr d.error)
-        (TlsNewSessionTicketOk
-          (TlsNewSessionTicket lifetime age-add nonce ticket extensions))))))
+    (decoder-finish! (&mut d))
+    (if d.failed
+      (TlsNewSessionTicketErr d.error)
+      (TlsNewSessionTicketOk
+        (TlsNewSessionTicket lifetime age-add nonce ticket extensions)))))
 
 ;: Append a NewSessionTicket message.
 (define (encode-new-session-ticket
@@ -2886,15 +2751,14 @@
   (let
     [d : TlsDecoder (decoder-new body)]
     [request : i64 (decoder-uint! (&mut d) body 1)]
-    (begin
-      (decoder-finish! (&mut d))
-      (when
-        (and
-          (not d.failed)
-          (!= request key-update-not-requested)
-          (!= request key-update-requested))
-        (decoder-fail! (&mut d) error-illegal-value alert-illegal-parameter 0))
-      (code-result (& d) request))))
+    (decoder-finish! (&mut d))
+    (when
+      (and
+        (not d.failed)
+        (!= request key-update-not-requested)
+        (!= request key-update-requested))
+      (decoder-fail! (&mut d) error-illegal-value alert-illegal-parameter 0))
+    (code-result (& d) request)))
 
 ;: Append a KeyUpdate message.
 (define (encode-key-update [out : byte_buf.ByteBuf] [request : i64]) : byte_buf.ByteBuf

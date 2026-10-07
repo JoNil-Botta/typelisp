@@ -47,25 +47,25 @@
 
 (define (package-cache-pin-kind-name [kind : PackageCachePinKind]) : String
   (match kind
-    [(PackageCachePinKind.Rev) "rev"]
-    [(PackageCachePinKind.Tag) "tag"]
-    [(PackageCachePinKind.Branch) "branch"]))
+    [(Rev) "rev"]
+    [(Tag) "tag"]
+    [(Branch) "branch"]))
 
 (define (package-cache-pin-kind-eq?
   [left : PackageCachePinKind]
   [right : PackageCachePinKind]) : bool
   (match left
-    [(PackageCachePinKind.Rev)
+    [(Rev)
       (match right
-        [(PackageCachePinKind.Rev) true]
+        [(Rev) true]
         [_ false])]
-    [(PackageCachePinKind.Tag)
+    [(Tag)
       (match right
-        [(PackageCachePinKind.Tag) true]
+        [(Tag) true]
         [_ false])]
-    [(PackageCachePinKind.Branch)
+    [(Branch)
       (match right
-        [(PackageCachePinKind.Branch) true]
+        [(Branch) true]
         [_ false])]))
 
 (defenum ResultPackageCachePinKind
@@ -115,18 +115,14 @@
     [n : i64 (string.string-length text)]
     [i : i64 0]
     [out : String ""]
-    (begin
-      (while (< i n)
-        (let
-          [code : i64 (cast (string.string-ref text i) : i64)]
-          (begin
-            (if (package-cache-safe-code? code)
-              (set! out (str_cat.str-cat out (string.substring text i 1) ""))
-              (set!
-                out
-                (str_cat.str-cat out (package-cache-escape-code code) "")))
-            (set! i (+ i 1)))))
-      out)))
+    (while (< i n)
+      (let
+        [code : i64 (cast (string.string-ref text i) : i64)]
+        (if (package-cache-safe-code? code)
+          (set! out (str_cat.str-cat out (string.substring text i 1) ""))
+          (set! out (str_cat.str-cat out (package-cache-escape-code code) "")))
+        (set! i (+ i 1))))
+    out))
 
 (define (package-cache-unversioned-root [package-root : (& package-root str)]) : String
   (let
@@ -220,8 +216,8 @@
 
 (define (package-cache-file-exists? [path : (& path str)]) : bool
   (match (io.try-file-exists? path)
-    [(io.OkIoBool exists) exists]
-    [(io.ErrIoBool _) false]))
+    [(OkIoBool exists) exists]
+    [(ErrIoBool _) false]))
 
 (define (package-cache-entry-state
   [entry-path : (& entry_path str)]
@@ -234,52 +230,45 @@
     [has-marker : bool (package-cache-file-exists? marker-path)]
     (cond
       [(and (not has-entry) (not has-metadata) (not has-marker))
-        (PackageCacheEntryState.Miss (string.copy entry-path))]
+        (Miss (string.copy entry-path))]
       [(not has-metadata)
-        (PackageCacheEntryState.PartialOrCorrupt
-          (string.copy entry-path)
-          "missing metadata")]
+        (PartialOrCorrupt (string.copy entry-path) "missing metadata")]
       [(not has-marker)
-        (PackageCacheEntryState.PartialOrCorrupt
-          (string.copy entry-path)
-          "missing completion marker")]
+        (PartialOrCorrupt (string.copy entry-path) "missing completion marker")]
       [else
         (match (io.try-read-file (& metadata-path))
-          [(io.ErrIoBytes error)
-            (PackageCacheEntryState.PartialOrCorrupt
+          [(ErrIoBytes error)
+            (PartialOrCorrupt
               (string.copy entry-path)
               (str_cat.str-cat
                 "metadata read failed: "
                 (io.error-message error)))]
-          [(io.OkIoBytes metadata)
+          [(OkIoBytes metadata)
             (if (not
               (string.eq
                 (byte_buf.to-string metadata)
                 (package-cache-metadata-content key)))
-              (PackageCacheEntryState.PartialOrCorrupt
-                (string.copy entry-path)
-                "metadata mismatch")
+              (PartialOrCorrupt (string.copy entry-path) "metadata mismatch")
               (match (io.try-read-file (& marker-path))
-                [(io.ErrIoBytes error)
-                  (PackageCacheEntryState.PartialOrCorrupt
+                [(ErrIoBytes error)
+                  (PartialOrCorrupt
                     (string.copy entry-path)
                     (str_cat.str-cat
                       "completion marker read failed: "
                       (io.error-message error)))]
-                [(io.OkIoBytes marker)
+                [(OkIoBytes marker)
                   (if (string.eq
                     (byte_buf.to-string marker)
                     (package-cache-complete-marker-content))
-                    (PackageCacheEntryState.CompleteHit
-                      (string.copy entry-path))
-                    (PackageCacheEntryState.PartialOrCorrupt
+                    (CompleteHit (string.copy entry-path))
+                    (PartialOrCorrupt
                       (string.copy entry-path)
                       "completion marker mismatch"))]))])])))
 
 (define (package-cache-then-mkdir [result : io.ResultIoUnit] [path : String]) : io.ResultIoUnit
-  (match result
-    [(io.ErrIoUnit error) (io.ErrIoUnit error)]
-    [(io.OkIoUnit) (fs.try-mkdir-if-missing (& path))]))
+  (let
+    [_ (try result)]
+    (fs.try-mkdir-if-missing (& path))))
 
 (define (package-cache-prepare-entry-parents
   [root : (& root str)]
@@ -324,9 +313,9 @@
     [marker-path : String (package-cache-complete-marker-path entry-path)]
     [metadata : String (package-cache-metadata-content key)]
     [marker : String (package-cache-complete-marker-content)]
-    (match (io.try-write-file
-      (& metadata-path)
-      (byte_buf.str-as-bytes (& metadata)))
-      [(io.ErrIoUnit error) (io.ErrIoUnit error)]
-      [(io.OkIoUnit)
-        (io.try-write-file (& marker-path) (byte_buf.str-as-bytes (& marker)))])))
+    [_
+      (try
+        (io.try-write-file
+          (& metadata-path)
+          (byte_buf.str-as-bytes (& metadata))))]
+    (io.try-write-file (& marker-path) (byte_buf.str-as-bytes (& marker)))))

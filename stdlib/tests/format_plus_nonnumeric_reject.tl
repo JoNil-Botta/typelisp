@@ -1,6 +1,5 @@
 (import stdlib.format)
 
 (define (main) : i64
-  (begin
-    (format.format "{:+}" "value")
-    42))
+  (format.format "{:+}" "value")
+  42)

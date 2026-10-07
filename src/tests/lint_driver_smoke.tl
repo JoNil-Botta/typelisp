@@ -87,9 +87,8 @@
   [path : String]
   [source : String]) : bool
   (match (parse_core.parse-ast-source-diagnostic path source)
-    [(parse_core.ResultAstProgramDiagnostic.Ok program)
-      (lint_core.lint-program-has-unused-unsafe-candidate? program)]
-    [(parse_core.ResultAstProgramDiagnostic.Err _) true]))
+    [(Ok program) (lint_core.lint-program-has-unused-unsafe-candidate? program)]
+    [(Err _) true]))
 
 (define (lint-driver-smoke-unsafe-surface-safe-source) : String
   "(import dep)
@@ -151,6 +150,7 @@
     "lint_driver_smoke_test.tl"
     source
     (lint_svec.new)
+    false
     false
     false
     false
@@ -239,7 +239,7 @@
   [index : i64]
   [depth : i64]) : bool
   (match (lint_core_tests.lint-findings-get findings index)
-    [(lint_core.LintMaybeFinding.Some finding)
+    [(Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
         (and
@@ -248,20 +248,20 @@
           (string.eq
             finding.rule-id
             (lint_core.lint-rule-deprecated-string-concat-id))))]
-    [(lint_core.LintMaybeFinding.No) false]))
+    [(No) false]))
 
 (define (lint-driver-smoke-finding-rule-ok?
   [findings : lint_core.LintFindings]
   [index : i64]
   [rule-id : String]) : bool
   (match (lint_core_tests.lint-findings-get findings index)
-    [(lint_core.LintMaybeFinding.Some finding)
+    [(Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
         (and
           (> (ast.ast-source-span-start-line fspan) 0)
           (string.eq finding.rule-id rule-id)))]
-    [(lint_core.LintMaybeFinding.No) false]))
+    [(No) false]))
 
 (define (lint-driver-smoke-finding-rule-line-ok?
   [findings : lint_core.LintFindings]
@@ -269,13 +269,100 @@
   [rule-id : String]
   [line : i64]) : bool
   (match (lint_core_tests.lint-findings-get findings index)
-    [(lint_core.LintMaybeFinding.Some finding)
+    [(Some finding)
       (let
         [fspan : ast.AstSourceSpan finding.span]
         (and
           (= (ast.ast-source-span-start-line fspan) line)
           (string.eq finding.rule-id rule-id)))]
-    [(lint_core.LintMaybeFinding.No) false]))
+    [(No) false]))
+
+(define (lint-driver-smoke-redundant-begin-findings
+  [source : String]
+  [enabled : bool]) : lint_core.LintFindings
+  (driver_tests.selfhost-lint-source-with-roots-and-all-options
+    "lint_driver_smoke_test.tl"
+    source
+    (lint_svec.new)
+    false
+    false
+    enabled
+    false
+    false))
+
+(define (lint-driver-smoke-redundant-begin-count
+  [source : String]
+  [enabled : bool]) : i64
+  (let
+    [findings : lint_core.LintFindings
+      (lint-driver-smoke-redundant-begin-findings source enabled)]
+    (driver_tests.selfhost-lint-findings-rule-count
+      (& findings)
+      (lint_core.lint-rule-redundant-begin-id))))
+
+(define (lint-driver-smoke-redundant-begin-source) : String
+  "(define (main) : i64
+  (let
+    [x : i64 0]
+    (begin
+      (set! x 1)
+      (match x
+        [1
+          (begin
+            (set! x 2)
+            x)]
+        [_ x]))))")
+
+;; The staged rule reports a written begin in a body position only behind
+;; --redundant-begin, and honours `lint-allow`.
+(define (lint-driver-smoke-redundant-begin-self-test) : i64
+  (let
+    [reported : lint_core.LintFindings
+      (lint-driver-smoke-redundant-begin-findings
+        (lint-driver-smoke-redundant-begin-source)
+        true)]
+    (cond
+      [(not
+          (=
+            (driver_tests.selfhost-lint-findings-rule-count
+              (& reported)
+              (lint_core.lint-rule-redundant-begin-id))
+            2))
+        200]
+      [(not
+          (or
+            (lint-driver-smoke-finding-rule-line-ok?
+              (owned_view.compiler-owned-shared-view reported)
+              0
+              (lint_core.lint-rule-redundant-begin-id)
+              4)
+            (lint-driver-smoke-finding-rule-line-ok?
+              (owned_view.compiler-owned-shared-view reported)
+              1
+              (lint_core.lint-rule-redundant-begin-id)
+              4)))
+        201]
+      [(not
+          (=
+            (lint-driver-smoke-redundant-begin-count
+              (lint-driver-smoke-redundant-begin-source)
+              false)
+            0))
+        202]
+      [(not
+          (=
+            (lint-driver-smoke-redundant-begin-count
+              "(define (main) : i64
+  (let
+    [x : i64 0]
+    ;; lint-allow: redundant-begin
+    (begin
+      (set! x 1)
+      x)))"
+              true)
+            0))
+        203]
+      [else 42])))
 
 (define (lint-driver-smoke-deprecated-string-concat-self-test) : i64
   (let
@@ -603,71 +690,70 @@
       (match (parse_core.parse-ast-source-diagnostic
         "lint_driver_unused_variable_clean.tl"
         (lint-driver-smoke-clean-unused-variable-source))
-        [(parse_core.ResultAstProgramDiagnostic.Ok _) 42]
-        [(parse_core.ResultAstProgramDiagnostic.Err _) 49])]
-    (begin
-      (if (not
+        [(Ok _) 42]
+        [(Err _) 49])]
+    (if (not
+      (=
+        (lint_core.lint-findings-count
+          (owned_view.compiler-owned-shared-view reported))
+        6))
+      (set! status 50)
+      unit)
+    (if (and
+      (= status 42)
+      (not
+        (lint-driver-smoke-finding-rule-ok?
+          reported
+          0
+          (lint_core.lint-rule-unused-variable-id))))
+      (set! status 51)
+      unit)
+    (if (and (= status 42) (not (= (lint_core.lint-findings-count clean) 0)))
+      (set! status 52)
+      unit)
+    (if (and
+      (= status 42)
+      (not
         (=
           (lint_core.lint-findings-count
-            (owned_view.compiler-owned-shared-view reported))
-          6))
-        (set! status 50)
-        unit)
-      (if (and
-        (= status 42)
-        (not
-          (lint-driver-smoke-finding-rule-ok?
-            reported
-            0
-            (lint_core.lint-rule-unused-variable-id))))
-        (set! status 51)
-        unit)
-      (if (and (= status 42) (not (= (lint_core.lint-findings-count clean) 0)))
-        (set! status 52)
-        unit)
-      (if (and
-        (= status 42)
-        (not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view shadow))
-            1)))
-        (set! status 53)
-        unit)
-      (if (and
-        (= status 42)
-        (not
-          (lint-driver-smoke-finding-rule-ok?
-            shadow
-            0
-            (lint_core.lint-rule-unused-variable-id))))
-        (set! status 54)
-        unit)
-      (if (and
-        (= status 42)
-        (not (= (lint_core.lint-findings-count suppressed) 0)))
-        (set! status 55)
-        unit)
-      (if (and
-        (= status 42)
-        (not
-          (=
-            (lint_core.lint-findings-count
-              (owned_view.compiler-owned-shared-view prefix))
-            1)))
-        (set! status 56)
-        unit)
-      (if (and
-        (= status 42)
-        (not
-          (lint-driver-smoke-finding-rule-line-ok?
-            prefix
-            0
-            (lint_core.lint-rule-unused-variable-id)
-            3)))
-        (set! status 57)
-        unit)
-      status)))
+            (owned_view.compiler-owned-shared-view shadow))
+          1)))
+      (set! status 53)
+      unit)
+    (if (and
+      (= status 42)
+      (not
+        (lint-driver-smoke-finding-rule-ok?
+          shadow
+          0
+          (lint_core.lint-rule-unused-variable-id))))
+      (set! status 54)
+      unit)
+    (if (and
+      (= status 42)
+      (not (= (lint_core.lint-findings-count suppressed) 0)))
+      (set! status 55)
+      unit)
+    (if (and
+      (= status 42)
+      (not
+        (=
+          (lint_core.lint-findings-count
+            (owned_view.compiler-owned-shared-view prefix))
+          1)))
+      (set! status 56)
+      unit)
+    (if (and
+      (= status 42)
+      (not
+        (lint-driver-smoke-finding-rule-line-ok?
+          prefix
+          0
+          (lint_core.lint-rule-unused-variable-id)
+          3)))
+      (set! status 57)
+      unit)
+    status))
 
 (define (lint-driver-smoke-unused-unsafe-self-test) : i64
   (let
@@ -978,33 +1064,30 @@
 (define (lint-driver-smoke-unsafe-surface-paths) : lint_svec.Vec
   (let
     [paths : lint_svec.Vec (lint_svec.new)]
-    (begin
-      (lint_svec.push-ref!
-        (&mut paths)
-        "target/lint_unsafe_surface/required_a.tl")
-      (lint_svec.push-ref!
-        (&mut paths)
-        "target/lint_unsafe_surface/required_b.tl")
-      paths)))
+    (lint_svec.push-ref!
+      (&mut paths)
+      "target/lint_unsafe_surface/required_a.tl")
+    (lint_svec.push-ref!
+      (&mut paths)
+      "target/lint_unsafe_surface/required_b.tl")
+    paths))
 
 (define (lint-driver-smoke-unsafe-surface-error-paths) : lint_svec.Vec
   (let
     [paths : lint_svec.Vec (lint_svec.new)]
-    (begin
-      (lint_svec.push-ref!
-        (&mut paths)
-        "target/lint_unsafe_surface/type_error.tl")
-      (lint_svec.push-ref!
-        (&mut paths)
-        "target/lint_unsafe_surface/required_a.tl")
-      paths)))
+    (lint_svec.push-ref!
+      (&mut paths)
+      "target/lint_unsafe_surface/type_error.tl")
+    (lint_svec.push-ref!
+      (&mut paths)
+      "target/lint_unsafe_surface/required_a.tl")
+    paths))
 
 (define (lint-driver-smoke-unsafe-surface-macro-paths) : lint_svec.Vec
   (let
     [paths : lint_svec.Vec (lint_svec.new)]
-    (begin
-      (lint_svec.push-ref! (&mut paths) "target/lint_unsafe_surface/macro.tl")
-      paths)))
+    (lint_svec.push-ref! (&mut paths) "target/lint_unsafe_surface/macro.tl")
+    paths))
 
 (define (lint-driver-smoke-unsafe-surface-request-count
   [source : String]
@@ -1021,328 +1104,338 @@
       findings.len)))
 
 (define (lint-driver-smoke-unsafe-surface-self-test) : i64
-  (begin
-    (load.compiler-load-test-mkdir "target/lint_unsafe_surface")
-    (lint-driver-smoke-write-text
-      "target/lint_unsafe_surface/dep.tl"
-      "(module dep)
+  (load.compiler-load-test-mkdir "target/lint_unsafe_surface")
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/dep.tl"
+    "(module dep)
 (unsafe
   (define (danger [value : i64]) : i64 value))
 (define (safe [value : i64]) : i64 value)")
-    (lint-driver-smoke-write-text
-      "target/lint_unsafe_surface/legacy_dep.tl"
-      "(unsafe
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/legacy_dep.tl"
+    "(unsafe
   (define (legacy-danger [value : i64]) : i64 value))")
-    (lint-driver-smoke-write-text
-      "target/lint_unsafe_surface/required_a.tl"
-      "(import dep)
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/required_a.tl"
+    "(import dep)
 (define (main) : i64
   (unsafe (dep.danger 42)))")
-    (lint-driver-smoke-write-text
-      "target/lint_unsafe_surface/required_b.tl"
-      "(import dep as d)
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/required_b.tl"
+    "(import dep as d)
 (define (main) : i64
   (unsafe (d.danger 42)))")
-    (lint-driver-smoke-write-text
-      "target/lint_unsafe_surface/safe.tl"
-      (lint-driver-smoke-unsafe-surface-safe-source))
-    (lint-driver-smoke-write-text
-      "target/lint_unsafe_surface/shadow.tl"
-      "(import dep)
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/safe.tl"
+    (lint-driver-smoke-unsafe-surface-safe-source))
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/shadow.tl"
+    "(import dep)
 (defstruct Holder
   (danger i64))
 (define (read [dep : Holder]) : i64
   (unsafe dep.danger))
 (define (main) : i64
   (read (Holder 42)))")
-    (lint-driver-smoke-write-text
-      "target/lint_unsafe_surface/macro.tl"
-      "(defmacro (identity [value : Expr]) : Expr value)
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/macro.tl"
+    "(defmacro (identity [value : Expr]) : Expr value)
 (define (main) : i64
   (unsafe (identity 42)))")
-    (lint-driver-smoke-write-text
-      "target/lint_unsafe_surface/local_value.tl"
-      "(define (main [value : i64]) : i64
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/local_value.tl"
+    "(define (main [value : i64]) : i64
   (unsafe (+ value 1)))")
-    (lint-driver-smoke-write-text
-      "target/lint_unsafe_surface/callable_value.tl"
-      "(define (main) : i64
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/callable_value.tl"
+    "(define (main) : i64
   (let
     [callable (lambda ([value : i64]) : i64 value)]
     (unsafe (callable 42))))")
-    (lint-driver-smoke-write-text
-      "target/lint_unsafe_surface/legacy.tl"
-      "(import legacy_dep)
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/legacy.tl"
+    "(import legacy_dep)
 (define (main) : i64
   (unsafe (legacy_dep.legacy-danger 42)))")
-    (lint-driver-smoke-write-text
-      "target/lint_unsafe_surface/type_error.tl"
-      (lint-driver-smoke-unsafe-surface-type-error-source))
-    ;; Only types tell a raw-pointer field `deref`, which needs unsafe, from a
-    ;; Box or reference one, so the surface classifier defers it.
-    (lint-driver-smoke-write-text
-      "target/lint_unsafe_surface/raw_field.tl"
-      "(defstruct Point (x i64) (y i64))
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/type_error.tl"
+    (lint-driver-smoke-unsafe-surface-type-error-source))
+  ;; Only types tell a raw-pointer field `deref`, which needs unsafe, from a
+  ;; Box or reference one, so the surface classifier defers it.
+  (lint-driver-smoke-write-text
+    "target/lint_unsafe_surface/raw_field.tl"
+    "(defstruct Point (x i64) (y i64))
 (define (main [p : (MutPtr Point)]) : i64
   (begin
     (unsafe (set! (deref p).x 1))
     (unsafe (deref p).y)))")
-    (let
-      [_reset-direct : unit
-        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
-      [direct-count : i64
-        (lint-driver-smoke-unsafe-surface-request-count
-          (lint-driver-smoke-unsafe-surface-safe-source)
-          (lint_svec.new))]
-      [direct-fallbacks : i64
-        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
-      [second-direct-count : i64
-        (lint-driver-smoke-unsafe-surface-request-count
-          (lint-driver-smoke-unsafe-surface-safe-source)
-          (lint_svec.new))]
-      [second-direct-fallbacks : i64
-        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
-      [_reset-safe : unit
-        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
-      [safe-status : i64
-        (lint_driver.selfhost-lint-run-file-in-scratch
-          "target/lint_unsafe_surface/safe.tl"
-          (lint_svec.new)
-          true
-          false
-          false
-          false
-          false)]
-      [safe-parses : i64
-        (driver_tests.selfhost-lint-unsafe-surface-cache-parse-count)]
-      [safe-fallbacks : i64
-        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
-      [_reset-shadow : unit
-        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
-      [_shadow-status : i64
-        (lint_driver.selfhost-lint-run-file-in-scratch
-          "target/lint_unsafe_surface/shadow.tl"
-          (lint_svec.new)
-          false
-          false
-          false
-          false
-          false)]
-      [shadow-fallbacks : i64
-        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
-      [_reset-macro : unit
-        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
-      [macro-status : i64
-        (lint_driver.selfhost-lint-run-file-in-scratch
-          "target/lint_unsafe_surface/macro.tl"
-          (lint_svec.new)
-          true
-          false
-          false
-          false
-          false)]
-      [macro-fallbacks : i64
-        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
-      [_reset-local-value : unit
-        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
-      [local-value-status : i64
-        (lint_driver.selfhost-lint-run-file-in-scratch
-          "target/lint_unsafe_surface/local_value.tl"
-          (lint_svec.new)
-          true
-          false
-          false
-          false
-          false)]
-      [local-value-fallbacks : i64
-        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
-      [_reset-callable-value : unit
-        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
-      [_callable-value-status : i64
-        (lint_driver.selfhost-lint-run-file-in-scratch
-          "target/lint_unsafe_surface/callable_value.tl"
-          (lint_svec.new)
-          false
-          false
-          false
-          false
-          false)]
-      [callable-value-fallbacks : i64
-        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
-      [_reset-dotted : unit
-        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
-      [_dotted-status : i64
-        (lint_driver.selfhost-lint-run-file-in-scratch
-          "target/lint_unsafe_surface/legacy.tl"
-          (lint_svec.new)
-          false
-          false
-          false
-          false
-          false)]
-      [dotted-fallbacks : i64
-        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
-      [_reset-raw-field : unit
-        (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
-      [raw-field-status : i64
-        (lint_driver.selfhost-lint-run-file-in-scratch
-          "target/lint_unsafe_surface/raw_field.tl"
-          (lint_svec.new)
-          true
-          false
-          false
-          false
-          false)]
-      [raw-field-fallbacks : i64
-        (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
-      [_direct-error-findings : lint_core.LintFindings
-        (lint_driver.selfhost-lint-typed-unused-unsafe-findings
-          "target/lint_unsafe_surface/direct_type_error.tl"
-          (lint-driver-smoke-unsafe-surface-type-error-source)
-          (lint_svec.new)
-          (lint_driver.selfhost-lint-language-cfgs))]
-      [direct-error : String
-        (driver_tests.selfhost-lint-typed-unused-unsafe-error-shared-view)]
-      [_direct-parse-error-findings : lint_core.LintFindings
-        (lint_driver.selfhost-lint-typed-unused-unsafe-findings
-          "target/lint_unsafe_surface/direct_parse_error.tl"
-          "(define (main) : i64
+  (let
+    [_reset-direct : unit
+      (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
+    [direct-count : i64
+      (lint-driver-smoke-unsafe-surface-request-count
+        (lint-driver-smoke-unsafe-surface-safe-source)
+        (lint_svec.new))]
+    [direct-fallbacks : i64
+      (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+    [second-direct-count : i64
+      (lint-driver-smoke-unsafe-surface-request-count
+        (lint-driver-smoke-unsafe-surface-safe-source)
+        (lint_svec.new))]
+    [second-direct-fallbacks : i64
+      (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+    [_reset-safe : unit (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
+    [safe-status : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/safe.tl"
+        (lint_svec.new)
+        true
+        false
+        false
+        false
+        false
+        false)]
+    [safe-parses : i64
+      (driver_tests.selfhost-lint-unsafe-surface-cache-parse-count)]
+    [safe-fallbacks : i64
+      (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+    [_reset-shadow : unit
+      (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
+    [_shadow-status : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/shadow.tl"
+        (lint_svec.new)
+        false
+        false
+        false
+        false
+        false
+        false)]
+    [shadow-fallbacks : i64
+      (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+    [_reset-macro : unit
+      (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
+    [macro-status : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/macro.tl"
+        (lint_svec.new)
+        true
+        false
+        false
+        false
+        false
+        false)]
+    [macro-fallbacks : i64
+      (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+    [_reset-local-value : unit
+      (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
+    [local-value-status : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/local_value.tl"
+        (lint_svec.new)
+        true
+        false
+        false
+        false
+        false
+        false)]
+    [local-value-fallbacks : i64
+      (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+    [_reset-callable-value : unit
+      (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
+    [_callable-value-status : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/callable_value.tl"
+        (lint_svec.new)
+        false
+        false
+        false
+        false
+        false
+        false)]
+    [callable-value-fallbacks : i64
+      (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+    [_reset-dotted : unit
+      (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
+    [_dotted-status : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/legacy.tl"
+        (lint_svec.new)
+        false
+        false
+        false
+        false
+        false
+        false)]
+    [dotted-fallbacks : i64
+      (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+    [_reset-raw-field : unit
+      (lint_driver.selfhost-lint-unsafe-surface-cache-reset!)]
+    [raw-field-status : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/raw_field.tl"
+        (lint_svec.new)
+        true
+        false
+        false
+        false
+        false
+        false)]
+    [raw-field-fallbacks : i64
+      (driver_tests.selfhost-lint-unused-unsafe-fallback-count)]
+    [_direct-error-findings : lint_core.LintFindings
+      (lint_driver.selfhost-lint-typed-unused-unsafe-findings
+        "target/lint_unsafe_surface/direct_type_error.tl"
+        (lint-driver-smoke-unsafe-surface-type-error-source)
+        (lint_svec.new)
+        (lint_driver.selfhost-lint-language-cfgs))]
+    [direct-error : String
+      (driver_tests.selfhost-lint-typed-unused-unsafe-error-shared-view)]
+    [_direct-parse-error-findings : lint_core.LintFindings
+      (lint_driver.selfhost-lint-typed-unused-unsafe-findings
+        "target/lint_unsafe_surface/direct_parse_error.tl"
+        "(define (main) : i64
   (unsafe (+ 1 2))"
+        (lint_svec.new)
+        (lint_driver.selfhost-lint-language-cfgs))]
+    [direct-parse-error : String
+      (driver_tests.selfhost-lint-typed-unused-unsafe-error-shared-view)]
+    [file-error-status : i64
+      (lint_driver.selfhost-lint-run-file-in-scratch
+        "target/lint_unsafe_surface/type_error.tl"
+        (lint_svec.new)
+        false
+        false
+        false
+        false
+        false
+        false)]
+    [batch-macro-status : i64
+      (let
+        [smoke-paths (lint-driver-smoke-unsafe-surface-macro-paths)]
+        (lint_driver.selfhost-lint-files
+          smoke-paths
           (lint_svec.new)
-          (lint_driver.selfhost-lint-language-cfgs))]
-      [direct-parse-error : String
-        (driver_tests.selfhost-lint-typed-unused-unsafe-error-shared-view)]
-      [file-error-status : i64
-        (lint_driver.selfhost-lint-run-file-in-scratch
-          "target/lint_unsafe_surface/type_error.tl"
+          true
+          false
+          false
+          false
+          false
+          false
+          false
+          0))]
+    [package-macro-status : i64
+      (let
+        [smoke-paths (lint-driver-smoke-unsafe-surface-macro-paths)]
+        (lint_driver.selfhost-lint-package-files
+          smoke-paths
+          (lint_svec.new)
+          true
+          false
+          false
+          false
+          false
+          false
+          (lint_driver.selfhost-lint-dead-decls-with-capacity 0)
+          false
+          0))]
+    [batch-error-status : i64
+      (let
+        [smoke-paths (lint-driver-smoke-unsafe-surface-error-paths)]
+        (lint_driver.selfhost-lint-files
+          smoke-paths
           (lint_svec.new)
           false
           false
           false
           false
-          false)]
-      [batch-macro-status : i64
-        (let
-          [smoke-paths (lint-driver-smoke-unsafe-surface-macro-paths)]
-          (lint_driver.selfhost-lint-files
-            smoke-paths
-            (lint_svec.new)
-            true
-            false
-            false
-            false
-            false
-            false
-            0))]
-      [package-macro-status : i64
-        (let
-          [smoke-paths (lint-driver-smoke-unsafe-surface-macro-paths)]
-          (lint_driver.selfhost-lint-package-files
-            smoke-paths
-            (lint_svec.new)
-            true
-            false
-            false
-            false
-            false
-            (lint_driver.selfhost-lint-dead-decls-with-capacity 0)
-            false
-            0))]
-      [batch-error-status : i64
-        (let
-          [smoke-paths (lint-driver-smoke-unsafe-surface-error-paths)]
-          (lint_driver.selfhost-lint-files
-            smoke-paths
-            (lint_svec.new)
-            false
-            false
-            false
-            false
-            false
-            false
-            0))]
-      [package-error-status : i64
-        (let
-          [smoke-paths (lint-driver-smoke-unsafe-surface-error-paths)]
-          (lint_driver.selfhost-lint-package-files
-            smoke-paths
-            (lint_svec.new)
-            false
-            false
-            false
-            false
-            false
-            (lint_driver.selfhost-lint-dead-decls-with-capacity 0)
-            false
-            0))]
-      [batch-status : i64
-        (let
-          [smoke-paths (lint-driver-smoke-unsafe-surface-paths)]
-          (lint_driver.selfhost-lint-files
-            smoke-paths
-            (lint_svec.new)
-            false
-            false
-            false
-            false
-            false
-            false
-            0))]
-      (cond
-        [(not (= direct-count 1)) 115]
-        [(not (= direct-fallbacks 1)) 116]
-        [(not (= second-direct-count 1)) 117]
-        [(not (= second-direct-fallbacks 1)) 118]
-        [(not (= safe-status 1)) 100]
-        [(not (= safe-parses 1)) 101]
-        [(not (= safe-fallbacks 0)) 102]
-        [(not (= shadow-fallbacks 1)) 103]
-        [(not (= macro-status 1)) 178]
-        [(not (= macro-fallbacks 1)) 104]
-        [(not (= dotted-fallbacks 0)) 105]
-        [(not (= raw-field-status 0)) 186]
-        [(not (= raw-field-fallbacks 1)) 187]
-        [(not (= batch-status 0)) 106]
-        [(not
-            (= (driver_tests.selfhost-lint-unsafe-surface-cache-parse-count) 1))
-          107]
-        [(not (= (driver_tests.selfhost-lint-unsafe-surface-cache-hit-count) 1))
-          108]
-        [(not (= (driver_tests.selfhost-lint-unused-unsafe-fallback-count) 0))
-          109]
-        [(not
-            (=
-              (driver_tests.selfhost-lint-unused-unsafe-surface-required-total)
-              2))
-          110]
-        [(not
-            (=
-              (driver_tests.selfhost-lint-unused-unsafe-surface-classified-total)
-              2))
-          114]
-        [(not (= local-value-status 1)) 111]
-        [(not (= local-value-fallbacks 0)) 112]
-        [(not (= callable-value-fallbacks 1)) 113]
-        [(not
-            (and
-              (string.contains
-                (& direct-error)
-                "target/lint_unsafe_surface/direct_type_error.tl")
-              (string.contains (& direct-error) "typecheck:")))
-          179]
-        [(not
-            (and
-              (string.contains
-                (& direct-parse-error)
-                "target/lint_unsafe_surface/direct_parse_error.tl")
-              (string.contains (& direct-parse-error) "reader:")))
-          180]
-        [(not (= file-error-status 1)) 181]
-        [(not (= batch-error-status 1)) 182]
-        [(not (= package-error-status 1)) 183]
-        [(not (= batch-macro-status 1)) 184]
-        [(not (= package-macro-status 1)) 185]
-        [else 42]))))
+          false
+          false
+          false
+          0))]
+    [package-error-status : i64
+      (let
+        [smoke-paths (lint-driver-smoke-unsafe-surface-error-paths)]
+        (lint_driver.selfhost-lint-package-files
+          smoke-paths
+          (lint_svec.new)
+          false
+          false
+          false
+          false
+          false
+          false
+          (lint_driver.selfhost-lint-dead-decls-with-capacity 0)
+          false
+          0))]
+    [batch-status : i64
+      (let
+        [smoke-paths (lint-driver-smoke-unsafe-surface-paths)]
+        (lint_driver.selfhost-lint-files
+          smoke-paths
+          (lint_svec.new)
+          false
+          false
+          false
+          false
+          false
+          false
+          false
+          0))]
+    (cond
+      [(not (= direct-count 1)) 115]
+      [(not (= direct-fallbacks 1)) 116]
+      [(not (= second-direct-count 1)) 117]
+      [(not (= second-direct-fallbacks 1)) 118]
+      [(not (= safe-status 1)) 100]
+      [(not (= safe-parses 1)) 101]
+      [(not (= safe-fallbacks 0)) 102]
+      [(not (= shadow-fallbacks 1)) 103]
+      [(not (= macro-status 1)) 178]
+      [(not (= macro-fallbacks 1)) 104]
+      [(not (= dotted-fallbacks 0)) 105]
+      [(not (= raw-field-status 0)) 186]
+      [(not (= raw-field-fallbacks 1)) 187]
+      [(not (= batch-status 0)) 106]
+      [(not (= (driver_tests.selfhost-lint-unsafe-surface-cache-parse-count) 1))
+        107]
+      [(not (= (driver_tests.selfhost-lint-unsafe-surface-cache-hit-count) 1))
+        108]
+      [(not (= (driver_tests.selfhost-lint-unused-unsafe-fallback-count) 0))
+        109]
+      [(not
+          (=
+            (driver_tests.selfhost-lint-unused-unsafe-surface-required-total)
+            2))
+        110]
+      [(not
+          (=
+            (driver_tests.selfhost-lint-unused-unsafe-surface-classified-total)
+            2))
+        114]
+      [(not (= local-value-status 1)) 111]
+      [(not (= local-value-fallbacks 0)) 112]
+      [(not (= callable-value-fallbacks 1)) 113]
+      [(not
+          (and
+            (string.contains
+              (& direct-error)
+              "target/lint_unsafe_surface/direct_type_error.tl")
+            (string.contains (& direct-error) "typecheck:")))
+        179]
+      [(not
+          (and
+            (string.contains
+              (& direct-parse-error)
+              "target/lint_unsafe_surface/direct_parse_error.tl")
+            (string.contains (& direct-parse-error) "reader:")))
+        180]
+      [(not (= file-error-status 1)) 181]
+      [(not (= batch-error-status 1)) 182]
+      [(not (= package-error-status 1)) 183]
+      [(not (= batch-macro-status 1)) 184]
+      [(not (= package-macro-status 1)) 185]
+      [else 42])))
 
 (define (lint-driver-smoke-copy-on-update-struct-self-test) : i64
   (let
@@ -1816,67 +1909,66 @@
       [else 42])))
 
 (define (main) : i64
-  (begin
-    ;; This smoke's manifest intentionally covers the stable machine-readable
-    ;; path while verify-public-tools.sh covers the default rich CLI renderer.
-    (lint_driver.selfhost-lint-set-flat-output! true)
-    ;; The imported driver core defines output helpers; keep the output
-    ;; runtime linked even when this smoke only exercises the pure source path.
-    (io.print-format "{}" "")
-    (let
-      [core-result : i64 (driver_tests.compiler-lint-driver-self-test)]
-      [unused-import-result : i64
-        (driver_tests.selfhost-lint-unused-imports-self-test)]
-      [import-forms-result : i64
-        (driver_tests.selfhost-lint-import-forms-self-test)]
-      [bare-import-result : i64
-        (lint-driver-smoke-bare-self-named-import-macro-unused-test)]
-      [redundant-import-result : i64
-        (lint-driver-smoke-redundant-import-alias-self-test)]
-      [redundant-name-result : i64
-        (lint-driver-smoke-redundant-function-name-self-test)]
-      [dead-code-result : i64
-        (driver_tests.selfhost-lint-package-dead-code-self-test)]
-      [unused-assignment-result : i64
-        (driver_tests.selfhost-lint-unused-assignment-self-test)]
-      [single-cell-result : i64
-        (driver_tests.selfhost-lint-single-element-array-cell-self-test)]
-      [dynamic-array-literal-result : i64
-        (driver_tests.selfhost-lint-dynamic-array-literal-self-test)]
-      [concat-result : i64
-        (lint-driver-smoke-deprecated-string-concat-self-test)]
-      [no-effect-result : i64 (lint-driver-smoke-no-effect-self-test)]
-      [unreachable-result : i64 (lint-driver-smoke-unreachable-self-test)]
-      [divergence-result : i64 (lint-driver-smoke-divergence-padding-self-test)]
-      [unused-variable-result : i64
-        (lint-driver-smoke-unused-variable-self-test)]
-      [unused-unsafe-result : i64 (lint-driver-smoke-unused-unsafe-self-test)]
-      [raw-arena-result : i64 (lint-driver-smoke-raw-arena-op-self-test)]
-      [unsafe-surface-result : i64 (lint-driver-smoke-unsafe-surface-self-test)]
-      [copy-result : i64 (lint-driver-smoke-copy-on-update-struct-self-test)]
-      [dotted-compat-result : i64
-        (lint-driver-smoke-prefer-dotted-field-compat-self-test)]
-      [name-case-result : i64 (lint-driver-smoke-name-case-self-test)]
-      (cond
-        [(not (= core-result 42)) core-result]
-        [(not (= unused-import-result 42)) unused-import-result]
-        [(not (= import-forms-result 42)) import-forms-result]
-        [(not (= bare-import-result 42)) bare-import-result]
-        [(not (= redundant-import-result 42)) redundant-import-result]
-        [(not (= redundant-name-result 42)) redundant-name-result]
-        [(not (= dead-code-result 42)) dead-code-result]
-        [(not (= unused-assignment-result 42)) unused-assignment-result]
-        [(not (= single-cell-result 42)) single-cell-result]
-        [(not (= dynamic-array-literal-result 42)) dynamic-array-literal-result]
-        [(not (= concat-result 42)) concat-result]
-        [(not (= no-effect-result 42)) no-effect-result]
-        [(not (= unreachable-result 42)) unreachable-result]
-        [(not (= divergence-result 42)) divergence-result]
-        [(not (= unused-variable-result 42)) unused-variable-result]
-        [(not (= unused-unsafe-result 42)) unused-unsafe-result]
-        [(not (= raw-arena-result 42)) raw-arena-result]
-        [(not (= unsafe-surface-result 42)) unsafe-surface-result]
-        [(not (= copy-result 42)) copy-result]
-        [(not (= dotted-compat-result 42)) dotted-compat-result]
-        [(not (= name-case-result 42)) name-case-result]
-        [else 42]))))
+  ;; This smoke's manifest intentionally covers the stable machine-readable
+  ;; path while verify-public-tools.sh covers the default rich CLI renderer.
+  (lint_driver.selfhost-lint-set-flat-output! true)
+  ;; The imported driver core defines output helpers; keep the output
+  ;; runtime linked even when this smoke only exercises the pure source path.
+  (io.print-format "{}" "")
+  (let
+    [core-result : i64 (driver_tests.compiler-lint-driver-self-test)]
+    [unused-import-result : i64
+      (driver_tests.selfhost-lint-unused-imports-self-test)]
+    [import-forms-result : i64
+      (driver_tests.selfhost-lint-import-forms-self-test)]
+    [bare-import-result : i64
+      (lint-driver-smoke-bare-self-named-import-macro-unused-test)]
+    [redundant-import-result : i64
+      (lint-driver-smoke-redundant-import-alias-self-test)]
+    [redundant-name-result : i64
+      (lint-driver-smoke-redundant-function-name-self-test)]
+    [dead-code-result : i64
+      (driver_tests.selfhost-lint-package-dead-code-self-test)]
+    [unused-assignment-result : i64
+      (driver_tests.selfhost-lint-unused-assignment-self-test)]
+    [single-cell-result : i64
+      (driver_tests.selfhost-lint-single-element-array-cell-self-test)]
+    [dynamic-array-literal-result : i64
+      (driver_tests.selfhost-lint-dynamic-array-literal-self-test)]
+    [concat-result : i64 (lint-driver-smoke-deprecated-string-concat-self-test)]
+    [redundant-begin-result : i64 (lint-driver-smoke-redundant-begin-self-test)]
+    [no-effect-result : i64 (lint-driver-smoke-no-effect-self-test)]
+    [unreachable-result : i64 (lint-driver-smoke-unreachable-self-test)]
+    [divergence-result : i64 (lint-driver-smoke-divergence-padding-self-test)]
+    [unused-variable-result : i64 (lint-driver-smoke-unused-variable-self-test)]
+    [unused-unsafe-result : i64 (lint-driver-smoke-unused-unsafe-self-test)]
+    [raw-arena-result : i64 (lint-driver-smoke-raw-arena-op-self-test)]
+    [unsafe-surface-result : i64 (lint-driver-smoke-unsafe-surface-self-test)]
+    [copy-result : i64 (lint-driver-smoke-copy-on-update-struct-self-test)]
+    [dotted-compat-result : i64
+      (lint-driver-smoke-prefer-dotted-field-compat-self-test)]
+    [name-case-result : i64 (lint-driver-smoke-name-case-self-test)]
+    (cond
+      [(not (= core-result 42)) core-result]
+      [(not (= unused-import-result 42)) unused-import-result]
+      [(not (= import-forms-result 42)) import-forms-result]
+      [(not (= bare-import-result 42)) bare-import-result]
+      [(not (= redundant-import-result 42)) redundant-import-result]
+      [(not (= redundant-name-result 42)) redundant-name-result]
+      [(not (= dead-code-result 42)) dead-code-result]
+      [(not (= unused-assignment-result 42)) unused-assignment-result]
+      [(not (= single-cell-result 42)) single-cell-result]
+      [(not (= dynamic-array-literal-result 42)) dynamic-array-literal-result]
+      [(not (= concat-result 42)) concat-result]
+      [(not (= redundant-begin-result 42)) redundant-begin-result]
+      [(not (= no-effect-result 42)) no-effect-result]
+      [(not (= unreachable-result 42)) unreachable-result]
+      [(not (= divergence-result 42)) divergence-result]
+      [(not (= unused-variable-result 42)) unused-variable-result]
+      [(not (= unused-unsafe-result 42)) unused-unsafe-result]
+      [(not (= raw-arena-result 42)) raw-arena-result]
+      [(not (= unsafe-surface-result 42)) unsafe-surface-result]
+      [(not (= copy-result 42)) copy-result]
+      [(not (= dotted-compat-result 42)) dotted-compat-result]
+      [(not (= name-case-result 42)) name-case-result]
+      [else 42])))

@@ -55,11 +55,10 @@
       (+ (+ x k) (* k 5)))))
 
 (define (main) : i64
-  (begin
-    (set! gadd-k (gadd-opaque 3 0))
-    (set! gadd-m (gadd-opaque 13 0))
-    (cond
-      [(not (= (probe-rhs 4 0) 22)) 1]
-      [(not (= (probe-lhs 4 0) 32)) 2]
-      [(not (= (probe-refused 4 0) 64)) 3]
-      [else 42])))
+  (set! gadd-k (gadd-opaque 3 0))
+  (set! gadd-m (gadd-opaque 13 0))
+  (cond
+    [(not (= (probe-rhs 4 0) 22)) 1]
+    [(not (= (probe-lhs 4 0) 32)) 2]
+    [(not (= (probe-refused 4 0) 64)) 3]
+    [else 42]))

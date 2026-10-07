@@ -124,7 +124,7 @@
     parts.xdata
     (cobj.compiler-object-symbol-builder-push
       parts.symbols
-      (cobj.CompilerObjectSymbol.Symbol name binding kind section))
+      (Symbol name binding kind section))
     parts.relocations))
 
 (define (compiler-backend-object-add-relocation
@@ -143,42 +143,27 @@
     parts.symbols
     (cobj.compiler-object-relocation-builder-push
       parts.relocations
-      (cobj.CompilerObjectRelocation.Relocation section site kind target))))
+      (Relocation section site kind target))))
 
 (define (compiler-backend-object-symbol-local-section
   [parts : CompilerBackendObjectTargetParts]
   [name : String]
   [section : cobj.CompilerObjectSectionKind]
   [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-symbol
-    parts
-    name
-    (cobj.CompilerObjectSymbolBinding.Local)
-    kind
-    (cobj.CompilerObjectMaybeSection.Some section)))
+  (compiler-backend-object-add-symbol parts name (Local) kind (Some section)))
 
 (define (compiler-backend-object-symbol-export-section
   [parts : CompilerBackendObjectTargetParts]
   [name : String]
   [section : cobj.CompilerObjectSectionKind]
   [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-symbol
-    parts
-    name
-    (cobj.CompilerObjectSymbolBinding.Export)
-    kind
-    (cobj.CompilerObjectMaybeSection.Some section)))
+  (compiler-backend-object-add-symbol parts name (Export) kind (Some section)))
 
 (define (compiler-backend-object-symbol-extern
   [parts : CompilerBackendObjectTargetParts]
   [name : String]
   [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-symbol
-    parts
-    name
-    (cobj.CompilerObjectSymbolBinding.Extern)
-    kind
-    (cobj.CompilerObjectMaybeSection.No)))
+  (compiler-backend-object-add-symbol parts name (Extern) kind (No)))
 
 (define (compiler-backend-object-symbol-extern-once
   [parts : CompilerBackendObjectTargetParts]
@@ -187,7 +172,7 @@
   (if (cobj.compiler-object-symbol-builder-contains?
     parts.symbols
     name
-    (cobj.CompilerObjectSymbolBinding.Extern)
+    (Extern)
     kind)
     parts
     (compiler-backend-object-symbol-extern
@@ -200,55 +185,34 @@
   [site : String]
   [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-relocation
-    parts
-    (cobj.CompilerObjectSectionKind.Text)
-    site
-    kind
-    target))
+  (compiler-backend-object-add-relocation parts (Text) site kind target))
 
 (define (compiler-backend-object-add-data-relocation
   [parts : CompilerBackendObjectTargetParts]
   [site : String]
   [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-relocation
-    parts
-    (cobj.CompilerObjectSectionKind.Data)
-    site
-    kind
-    target))
+  (compiler-backend-object-add-relocation parts (Data) site kind target))
 
 (define (compiler-backend-object-add-rodata-relocation
   [parts : CompilerBackendObjectTargetParts]
   [site : String]
   [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-relocation
-    parts
-    (cobj.CompilerObjectSectionKind.Rodata)
-    site
-    kind
-    target))
+  (compiler-backend-object-add-relocation parts (Rodata) site kind target))
 
 (define (compiler-backend-object-add-pdata-relocation
   [parts : CompilerBackendObjectTargetParts]
   [site : String]
   [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectTargetParts
-  (compiler-backend-object-add-relocation
-    parts
-    (cobj.CompilerObjectSectionKind.Pdata)
-    site
-    kind
-    target))
+  (compiler-backend-object-add-relocation parts (Pdata) site kind target))
 
 (define (compiler-backend-object-bytes-from-hex [hex : String]) : String
   (let
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    (begin
-      (layout.compiler-object-layout-push-hex! (&mut out) hex)
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+    (layout.compiler-object-layout-push-hex! (&mut out) hex)
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 (define (compiler-backend-object-add-text-bytes
   [parts : CompilerBackendObjectTargetParts]
@@ -265,7 +229,7 @@
     (compiler-backend-object-add-text-relocation
       parts
       site
-      (cobj.CompilerObjectRelocationKind.Call)
+      (Call)
       (owned_view.compiler-owned-shared-view target))
     (cobj.CompilerObjectX64Instr.Call target)))
 
@@ -287,27 +251,24 @@
   [target : x64_template.CompilerX64TemplateTarget]
   [entry-template : x64_template.CompilerX64ExecutableTemplateId]
   [macro-template : x64_template.CompilerX64ExecutableTemplateId]) : CompilerBackendObjectTargetParts
-  (begin
-    (x64_catalog.compiler-x64-template-assert-structured! entry-template target)
-    (when
-      macro-entry
-      (x64_catalog.compiler-x64-template-assert-structured!
-        macro-template
-        target))
-    (let
-      [with-image-entry : CompilerBackendObjectTargetParts
-        (compiler-backend-object-add-text-bytes
-          (compiler-backend-object-add-text
-            parts
-            (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
-          entry-bytes)]
-      (if macro-entry
-        (compiler-backend-object-add-text-bytes
-          (compiler-backend-object-add-text
-            with-image-entry
-            (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry"))
-          macro-entry-bytes)
-        with-image-entry))))
+  (x64_catalog.compiler-x64-template-assert-structured! entry-template target)
+  (when
+    macro-entry
+    (x64_catalog.compiler-x64-template-assert-structured! macro-template target))
+  (let
+    [with-image-entry : CompilerBackendObjectTargetParts
+      (compiler-backend-object-add-text-bytes
+        (compiler-backend-object-add-text
+          parts
+          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
+        entry-bytes)]
+    (if macro-entry
+      (compiler-backend-object-add-text-bytes
+        (compiler-backend-object-add-text
+          with-image-entry
+          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry"))
+        macro-entry-bytes)
+      with-image-entry)))
 
 (define (compiler-backend-object-empty-data-records) : cobj.CompilerObjectDataRecordList
   (cobj.compiler-object-data-record-builder-finish
@@ -330,28 +291,28 @@
     [sections1 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections0
-        (cobj.CompilerObjectSection.Section
-          (cobj.CompilerObjectSectionKind.Text)
+        (Section
+          (Text)
           empty-data
           (cobj.compiler-object-instr-builder-finish parts.text)))]
     [sections2 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections1
-        (cobj.CompilerObjectSection.Section
-          (cobj.CompilerObjectSectionKind.Data)
+        (Section
+          (Data)
           (cobj.compiler-object-data-record-builder-finish parts.data)
           (owned_view.compiler-owned-shared-view empty-instrs)))]
     [sections3 : cobj.CompilerObjectSectionBuilder
       (cobj.compiler-object-section-builder-push
         sections2
-        (cobj.CompilerObjectSection.Section
-          (cobj.CompilerObjectSectionKind.Rodata)
+        (Section
+          (Rodata)
           (cobj.compiler-object-data-record-builder-finish parts.rodata)
           (owned_view.compiler-owned-shared-view empty-instrs)))]
     (cobj.compiler-object-section-builder-push
       sections3
-      (cobj.CompilerObjectSection.Section
-        (cobj.CompilerObjectSectionKind.Bss)
+      (Section
+        (Bss)
         (cobj.compiler-object-data-record-builder-finish parts.bss)
         empty-instrs))))
 

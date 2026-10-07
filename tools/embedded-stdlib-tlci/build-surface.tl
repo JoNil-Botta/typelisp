@@ -25,17 +25,14 @@
           source-hash
           build-hash
           (string.eq target "windows"))
-          [(prelude_surface_producer.ResultPreludeSurface.Err message)
-            (begin
-              (io.print-error
-                (str_cat.str-cat "prelude surface: " message "\n"))
-              1)]
-          [(prelude_surface_producer.ResultPreludeSurface.Ok bytes)
+          [(Err message)
+            (io.print-error (str_cat.str-cat "prelude surface: " message "\n"))
+            1]
+          [(Ok bytes)
             (let
               [contents : byte_buf.ByteBuf (byte_buf.from-array bytes)]
-              (begin
-                (io.write-file output (byte_buf.as-bytes (& contents)))
-                0))])
+              (io.write-file output (byte_buf.as-bytes (& contents)))
+              0)])
         (begin
           (io.print-error (str_cat.str-cat "invalid host target: " target "\n"))
           2)))))

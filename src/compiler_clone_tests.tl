@@ -1,7 +1,6 @@
 ;; compiler_clone_tests.tl - White-box tests for the clone name sets and
 ;; root-entry tables.
 (import stdlib.str_cat_runtime as str_cat)
-(import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as clone_id_map)
@@ -9,12 +8,12 @@
 (import compiler_clone as clone_support)
 
 (define (clone-root-entries-empty) : clone_support.CloneRootEntries
-  clone_support.CloneRootEntries.Empty)
+  Empty)
 
 (define (clone-root-entries-capacity [roots : clone_support.CloneRootEntries]) : i64
   (match roots
-    [(clone_support.CloneRootEntries.Empty) 0]
-    [(clone_support.CloneRootEntries.Dense address _ _)
+    [(Empty) 0]
+    [(Dense address _ _)
       (let
         [store : clone_support.CloneRootEntryStore
           (clone_support.clone-root-entries-store-read address)]
@@ -23,8 +22,8 @@
 (define (clone-root-entries-physical-len
   [roots : clone_support.CloneRootEntries]) : i64
   (match roots
-    [(clone_support.CloneRootEntries.Empty) 0]
-    [(clone_support.CloneRootEntries.Dense address _ _)
+    [(Empty) 0]
+    [(Dense address _ _)
       (let
         [store : clone_support.CloneRootEntryStore
           (clone_support.clone-root-entries-store-read address)]
@@ -81,17 +80,11 @@
           base-id
           -1)
         -1)
-      (clone_support.clone-module-alias-import-kind? ast.AstImportKind.Module)
-      (clone_support.clone-module-alias-import-kind?
-        (ast.AstImportKind.Macro 0 ast.AstMaybeModuleName.No))
-      (clone_support.clone-module-alias-import-kind?
-        (ast.AstImportKind.MacroDecls 0 ast.AstMaybeModuleName.No))
-      (not
-        (clone_support.clone-module-alias-import-kind?
-          ast.AstImportKind.ModuleAll))
-      (not
-        (clone_support.clone-module-alias-import-kind?
-          (ast.AstImportKind.ModuleItem 0)))
+      (clone_support.clone-module-alias-import-kind? Module)
+      (clone_support.clone-module-alias-import-kind? (Macro 0 No))
+      (clone_support.clone-module-alias-import-kind? (MacroDecls 0 No))
+      (not (clone_support.clone-module-alias-import-kind? ModuleAll))
+      (not (clone_support.clone-module-alias-import-kind? (ModuleItem 0)))
       (> (clone_support.clone-name-set-capacity grown) seed-capacity))))
 
 (define (clone-root-entries-smoke-key-id [index : i64]) : i64
@@ -104,16 +97,14 @@
   (let
     [out : clone_support.CloneRootEntries roots]
     [index : i64 start]
-    (begin
-      (while (< index end)
-        (begin
-          (set!
-            out
-            (clone_support.clone-root-entries-add-id
-              out
-              (clone-root-entries-smoke-key-id index)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index end)
+      (set!
+        out
+        (clone_support.clone-root-entries-add-id
+          out
+          (clone-root-entries-smoke-key-id index)))
+      (set! index (+ index 1)))
+    out))
 
 (define (clone-root-entries-smoke-order-ok?
   [roots : clone_support.CloneRootEntries]) : bool
@@ -121,16 +112,15 @@
     [index : i64 0]
     [count : i64 (clone_support.clone-root-entries-len roots)]
     [ok : bool true]
-    (begin
-      (while (and (< index count) ok)
-        (if (not
-          (=
-            (clone_support.clone-root-entries-key-id-at-or roots index -1)
-            (clone-root-entries-smoke-key-id (- count (+ index 1)))))
-          (set! ok false)
-          unit)
-        (set! index (+ index 1)))
-      ok)))
+    (while (and (< index count) ok)
+      (if (not
+        (=
+          (clone_support.clone-root-entries-key-id-at-or roots index -1)
+          (clone-root-entries-smoke-key-id (- count (+ index 1)))))
+        (set! ok false)
+        unit)
+      (set! index (+ index 1)))
+    ok))
 
 (define (clone-root-entries-smoke-copy-equal?
   [left : clone_support.CloneRootEntries]
@@ -139,19 +129,18 @@
     [index : i64 0]
     [count : i64 (clone_support.clone-root-entries-len left)]
     [ok : bool (= count (clone_support.clone-root-entries-len right))]
-    (begin
-      (while (and (< index count) ok)
-        (if (and
-          (=
-            (clone_support.clone-root-entries-key-id-at-or left index -1)
-            (clone_support.clone-root-entries-key-id-at-or right index -1))
-          (=
-            (clone_support.clone-root-entries-helper-id-at-or left index -1)
-            (clone_support.clone-root-entries-helper-id-at-or right index -1)))
-          unit
-          (set! ok false))
-        (set! index (+ index 1)))
-      ok)))
+    (while (and (< index count) ok)
+      (if (and
+        (=
+          (clone_support.clone-root-entries-key-id-at-or left index -1)
+          (clone_support.clone-root-entries-key-id-at-or right index -1))
+        (=
+          (clone_support.clone-root-entries-helper-id-at-or left index -1)
+          (clone_support.clone-root-entries-helper-id-at-or right index -1)))
+        unit
+        (set! ok false))
+      (set! index (+ index 1)))
+    ok))
 
 (define (clone-root-entries-smoke-ok?) : bool
   (let

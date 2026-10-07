@@ -44,11 +44,10 @@
     false))
 
 (define (swb-push-case! [si : i64] [se : i64] [di : i64] [de : i64]) : unit
-  (begin
-    (swb_ivec.push-ref! (&mut swb-cases) si)
-    (swb_ivec.push-ref! (&mut swb-cases) se)
-    (swb_ivec.push-ref! (&mut swb-cases) di)
-    (swb_ivec.push-ref! (&mut swb-cases) de)))
+  (swb_ivec.push-ref! (&mut swb-cases) si)
+  (swb_ivec.push-ref! (&mut swb-cases) se)
+  (swb_ivec.push-ref! (&mut swb-cases) di)
+  (swb_ivec.push-ref! (&mut swb-cases) de))
 
 (define (swb-run!
   [src : (& source swb_svec.Vec)]
@@ -65,45 +64,43 @@
             dst
             (swb_ivec.get (& swb-cases) (+ i 2) 0)
             (swb_ivec.get (& swb-cases) (+ i 3) 0))]
-        (begin
-          (set!
-            swb-mask
-            (+
-              (* swb-mask 2)
-              (if hit
-                1
-                0)))
-          (if hit
-            (set! swb-true-count (+ swb-true-count 1))
-            unit)
-          (set! swb-calls (+ swb-calls 1))
-          (set! i (+ i 4)))))))
+        (set!
+          swb-mask
+          (+
+            (* swb-mask 2)
+            (if hit
+              1
+              0)))
+        (if hit
+          (set! swb-true-count (+ swb-true-count 1))
+          unit)
+        (set! swb-calls (+ swb-calls 1))
+        (set! i (+ i 4))))))
 
 (define (main) : i64
   (let
     [src : swb_svec.Vec (swb_svec.new)]
     [dst : swb_svec.Vec (swb_svec.new)]
-    (begin
-      (swb_svec.push-ref! (&mut src) "alpha")
-      (swb_svec.push-ref! (&mut src) "beta")
-      (swb_svec.push-ref! (&mut src) "gamma")
-      (swb_svec.push-ref! (&mut dst) "alpha")
-      (swb_svec.push-ref! (&mut dst) "delta")
-      (swb_svec.push-ref! (&mut dst) "gamma")
-      ;; Framed path, equal pair.
-      (swb-push-case! 0 3 0 3)
-      ;; Framed path, unequal pair.
-      (swb-push-case! 1 3 1 3)
-      ;; First conjunct false: form (a)'s first bypass.
-      (swb-push-case! 3 3 0 3)
-      ;; Second conjunct false: form (a)'s second bypass.
-      (swb-push-case! 0 3 3 3)
-      ;; Framed path again, equal pair at the tail.
-      (swb-push-case! 2 3 2 3)
-      ;; Both conjuncts false.
-      (swb-push-case! 5 3 5 3)
-      (swb-run! (& src) (& dst))
-      (io.print-format "{}\n" swb-calls)
-      (io.print-format "{}\n" swb-true-count)
-      (io.print-format "{}\n" swb-mask)
-      swb-mask)))
+    (swb_svec.push-ref! (&mut src) "alpha")
+    (swb_svec.push-ref! (&mut src) "beta")
+    (swb_svec.push-ref! (&mut src) "gamma")
+    (swb_svec.push-ref! (&mut dst) "alpha")
+    (swb_svec.push-ref! (&mut dst) "delta")
+    (swb_svec.push-ref! (&mut dst) "gamma")
+    ;; Framed path, equal pair.
+    (swb-push-case! 0 3 0 3)
+    ;; Framed path, unequal pair.
+    (swb-push-case! 1 3 1 3)
+    ;; First conjunct false: form (a)'s first bypass.
+    (swb-push-case! 3 3 0 3)
+    ;; Second conjunct false: form (a)'s second bypass.
+    (swb-push-case! 0 3 3 3)
+    ;; Framed path again, equal pair at the tail.
+    (swb-push-case! 2 3 2 3)
+    ;; Both conjuncts false.
+    (swb-push-case! 5 3 5 3)
+    (swb-run! (& src) (& dst))
+    (io.print-format "{}\n" swb-calls)
+    (io.print-format "{}\n" swb-true-count)
+    (io.print-format "{}\n" swb-mask)
+    swb-mask))

@@ -55,9 +55,8 @@
     (and (= (invoke f) 42) (= (f) 42))))
 
 (define (main) : i64
-  (begin
-    (unless (copy-scalar-pointer-function-and-aggregate 1) (return 1))
-    (unless (= (copy-immutable-reference 42) 2) (return 2))
-    (unless (copy-nested-closure 41) (return 3))
-    (unless (copy-through-ordinary-call 41) (return 4))
-    42))
+  (unless (copy-scalar-pointer-function-and-aggregate 1) (return 1))
+  (unless (= (copy-immutable-reference 42) 2) (return 2))
+  (unless (copy-nested-closure 41) (return 3))
+  (unless (copy-through-ordinary-call 41) (return 4))
+  42)

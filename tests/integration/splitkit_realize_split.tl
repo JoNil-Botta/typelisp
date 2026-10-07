@@ -38,36 +38,34 @@
     [h : i64 (+ n 8)]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i 4)
-        (begin
-          ;; use a..h BEFORE the call (pre-call sub-range)
-          (set!
-            acc
+    (while (< i 4)
+      ;; use a..h BEFORE the call (pre-call sub-range)
+      (set!
+        acc
+        (+
+          acc
+          (+
+            (* a 3)
             (+
-              acc
+              (* b 3)
               (+
-                (* a 3)
-                (+
-                  (* b 3)
-                  (+
-                    (* c 3)
-                    (+ (* d 3) (+ (* e 3) (+ (* f 3) (+ (* g 3) (* h 3))))))))))
-          (set! acc (+ acc (clobber i)))
-          ;; use a..h AFTER the call (post-call sub-range: the register piece)
-          (set!
-            acc
+                (* c 3)
+                (+ (* d 3) (+ (* e 3) (+ (* f 3) (+ (* g 3) (* h 3))))))))))
+      (set! acc (+ acc (clobber i)))
+      ;; use a..h AFTER the call (post-call sub-range: the register piece)
+      (set!
+        acc
+        (+
+          acc
+          (+
+            (* a 5)
             (+
-              acc
+              (* b 5)
               (+
-                (* a 5)
-                (+
-                  (* b 5)
-                  (+
-                    (* c 5)
-                    (+ (* d 5) (+ (* e 5) (+ (* f 5) (+ (* g 5) (* h 5))))))))))
-          (set! i (+ i 1))))
-      acc)))
+                (* c 5)
+                (+ (* d 5) (+ (* e 5) (+ (* f 5) (+ (* g 5) (* h 5))))))))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let

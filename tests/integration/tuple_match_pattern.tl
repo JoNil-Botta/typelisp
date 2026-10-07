@@ -18,7 +18,7 @@
   (let
     [borrowed-score : i64
       (match (& pair)
-        [(tuple text number) (+ (string.string-length text) (deref number))])]
+        [(tuple text number) (+ (string.string-length text) number)])]
     ;; The tuple owner remains initialized after the pattern bindings' final use.
     (+ borrowed-score (tuple-ref pair 1))))
 
@@ -59,11 +59,10 @@
     (+ (deref moved) (tuple-ref pair 1))))
 
 (define (main) : i64
-  (begin
-    (unless (= (owned-string-score (tuple "owned" 37)) 42) (return 1))
-    (unless (= (borrowed-string-score (tuple "borrow" 18)) 42) (return 2))
-    (unless (= (copy-tuple-score (tuple 14 14)) 42) (return 3))
-    (unless (= (nested-score) 15) (return 4))
-    (unless (= (aggregate-nesting-score) 51) (return 5))
-    (unless (= (partial-move-score) 42) (return 6))
-    42))
+  (unless (= (owned-string-score (tuple "owned" 37)) 42) (return 1))
+  (unless (= (borrowed-string-score (tuple "borrow" 18)) 42) (return 2))
+  (unless (= (copy-tuple-score (tuple 14 14)) 42) (return 3))
+  (unless (= (nested-score) 15) (return 4))
+  (unless (= (aggregate-nesting-score) 51) (return 5))
+  (unless (= (partial-move-score) 42) (return 6))
+  42)

@@ -34,32 +34,31 @@
   (let
     [packed : (__tl_dyn-array i64)
       (__tl_make-array i64 (channel_i64.raw-field-count))]
-    (begin
-      (unsafe
-        (channel_i64.store-raw! channel (&mut packed) 0))
-      (let
-        [loaded : channel_i64.Channel
-          (unsafe
-            (channel_i64.load-raw packed 0))]
-        [send-a : bool (channel_i64.send-value-ok? loaded 11)]
-        [send-b : bool (channel_i64.send-value-ok? loaded 31)]
-        [first : i64 (channel_i64.recv-or loaded -1)]
-        [send-c : bool (channel_i64.send-value-ok? loaded 43)]
-        [second : i64 (channel_i64.recv-or loaded -1)]
-        [third : i64 (channel_i64.recv-or loaded -1)]
-        [dedup : i64 (sync-api-duplicate-channel-score loaded)]
-        [closed : bool (channel_i64.close loaded)]
-        (if (and
-          send-a
-          send-b
-          send-c
-          closed
-          (= dedup 42)
-          (= first 11)
-          (= second 31)
-          (= third 43))
-          42
-          2)))))
+    (unsafe
+      (channel_i64.store-raw! channel (&mut packed) 0))
+    (let
+      [loaded : channel_i64.Channel
+        (unsafe
+          (channel_i64.load-raw packed 0))]
+      [send-a : bool (channel_i64.send-value-ok? loaded 11)]
+      [send-b : bool (channel_i64.send-value-ok? loaded 31)]
+      [first : i64 (channel_i64.recv-or loaded -1)]
+      [send-c : bool (channel_i64.send-value-ok? loaded 43)]
+      [second : i64 (channel_i64.recv-or loaded -1)]
+      [third : i64 (channel_i64.recv-or loaded -1)]
+      [dedup : i64 (sync-api-duplicate-channel-score loaded)]
+      [closed : bool (channel_i64.close loaded)]
+      (if (and
+        send-a
+        send-b
+        send-c
+        closed
+        (= dedup 42)
+        (= first 11)
+        (= second 31)
+        (= third 43))
+        42
+        2))))
 
 (define (sync-api-pair-sum [value : sync.ChannelI64Pair]) : i64
   (+ value.left value.right))
@@ -68,75 +67,73 @@
   (let
     [packed : (__tl_dyn-array i64)
       (__tl_make-array i64 sync.channel-i64-pair-raw-field-count)]
-    (begin
-      (unsafe
-        (sync.channel-i64-pair-store-raw! channel (&mut packed) 0))
-      (let
-        [loaded : sync.ChannelI64PairChannel
-          (unsafe
-            (sync.channel-i64-pair-load-raw packed 0))]
-        [first-msg : sync.ChannelI64Pair (sync.ChannelI64Pair 5 7)]
-        [second-msg : sync.ChannelI64Pair (sync.ChannelI64Pair 11 13)]
-        [third-msg : sync.ChannelI64Pair (sync.ChannelI64Pair 17 19)]
-        [send-a : bool (sync.channel-i64-pair-send-value-ok? loaded first-msg)]
-        [send-b : bool (sync.channel-i64-pair-send-value-ok? loaded second-msg)]
-        [first : sync.ChannelI64Pair
-          (sync.channel-i64-pair-recv-or loaded (sync.ChannelI64Pair -1 -1))]
-        [send-c : bool (sync.channel-i64-pair-send-value-ok? loaded third-msg)]
-        [second : sync.ChannelI64Pair
-          (sync.channel-i64-pair-recv-or loaded (sync.ChannelI64Pair -1 -1))]
-        [third : sync.ChannelI64Pair
-          (sync.channel-i64-pair-recv-or loaded (sync.ChannelI64Pair -1 -1))]
-        [closed : bool (sync.channel-i64-pair-close loaded)]
-        (if (and
-          send-a
-          send-b
-          send-c
-          closed
-          (= (sync-api-pair-sum first) 12)
-          (= (sync-api-pair-sum second) 24)
-          (= (sync-api-pair-sum third) 36))
-          42
-          8)))))
+    (unsafe
+      (sync.channel-i64-pair-store-raw! channel (&mut packed) 0))
+    (let
+      [loaded : sync.ChannelI64PairChannel
+        (unsafe
+          (sync.channel-i64-pair-load-raw packed 0))]
+      [first-msg : sync.ChannelI64Pair (sync.ChannelI64Pair 5 7)]
+      [second-msg : sync.ChannelI64Pair (sync.ChannelI64Pair 11 13)]
+      [third-msg : sync.ChannelI64Pair (sync.ChannelI64Pair 17 19)]
+      [send-a : bool (sync.channel-i64-pair-send-value-ok? loaded first-msg)]
+      [send-b : bool (sync.channel-i64-pair-send-value-ok? loaded second-msg)]
+      [first : sync.ChannelI64Pair
+        (sync.channel-i64-pair-recv-or loaded (sync.ChannelI64Pair -1 -1))]
+      [send-c : bool (sync.channel-i64-pair-send-value-ok? loaded third-msg)]
+      [second : sync.ChannelI64Pair
+        (sync.channel-i64-pair-recv-or loaded (sync.ChannelI64Pair -1 -1))]
+      [third : sync.ChannelI64Pair
+        (sync.channel-i64-pair-recv-or loaded (sync.ChannelI64Pair -1 -1))]
+      [closed : bool (sync.channel-i64-pair-close loaded)]
+      (if (and
+        send-a
+        send-b
+        send-c
+        closed
+        (= (sync-api-pair-sum first) 12)
+        (= (sync-api-pair-sum second) 24)
+        (= (sync-api-pair-sum third) 36))
+        42
+        8))))
 
 (define (sync-api-run-string-channel [channel : sync.ChannelString]) : i64
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [packed : (__tl_dyn-array i64)
       (__tl_make-array i64 sync.channel-string-raw-field-count)]
-    (begin
-      (unsafe
-        (sync.channel-string-store-raw! channel (&mut packed) 0))
-      (let
-        [loaded : sync.ChannelString
-          (unsafe
-            (sync.channel-string-load-raw packed 0))]
-        [send-a : bool
-          (sync.channel-string-send-value-ok?
-            loaded
-            (in-arena owner (str_cat.str-cat "alpha" ":one")))]
-        [send-b : bool
-          (sync.channel-string-send-value-ok?
-            loaded
-            (in-arena owner (str_cat.str-cat "beta" ":two")))]
-        [first : String (sync.channel-string-recv-or loaded "missing")]
-        [send-c : bool
-          (sync.channel-string-send-value-ok?
-            loaded
-            (in-arena owner (str_cat.str-cat "gamma" ":three")))]
-        [second : String (sync.channel-string-recv-or loaded "missing")]
-        [third : String (sync.channel-string-recv-or loaded "missing")]
-        [closed : bool (sync.channel-string-close loaded)]
-        (if (and
-          send-a
-          send-b
-          send-c
-          closed
-          (string.eq first "alpha:one")
-          (string.eq second "beta:two")
-          (string.eq third "gamma:three"))
-          42
-          9)))))
+    (unsafe
+      (sync.channel-string-store-raw! channel (&mut packed) 0))
+    (let
+      [loaded : sync.ChannelString
+        (unsafe
+          (sync.channel-string-load-raw packed 0))]
+      [send-a : bool
+        (sync.channel-string-send-value-ok?
+          loaded
+          (in-arena owner (str_cat.str-cat "alpha" ":one")))]
+      [send-b : bool
+        (sync.channel-string-send-value-ok?
+          loaded
+          (in-arena owner (str_cat.str-cat "beta" ":two")))]
+      [first : String (sync.channel-string-recv-or loaded "missing")]
+      [send-c : bool
+        (sync.channel-string-send-value-ok?
+          loaded
+          (in-arena owner (str_cat.str-cat "gamma" ":three")))]
+      [second : String (sync.channel-string-recv-or loaded "missing")]
+      [third : String (sync.channel-string-recv-or loaded "missing")]
+      [closed : bool (sync.channel-string-close loaded)]
+      (if (and
+        send-a
+        send-b
+        send-c
+        closed
+        (string.eq first "alpha:one")
+        (string.eq second "beta:two")
+        (string.eq third "gamma:three"))
+        42
+        9))))
 
 (define (sync-api-duplicate-mutex-score
   [_mutex : (& mutex mutex_i64_again.Mutex)]) : i64
@@ -162,9 +159,8 @@
         [first : i64
           (with
             ([guard (mutex_i64.lock (& loaded)) mutex_i64.unlock])
-            (begin
-              (mutex_i64.set! guard 17)
-              (mutex_i64.add! guard 25)))]
+            (mutex_i64.set! guard 17)
+            (mutex_i64.add! guard 25))]
         [second : i64
           (with
             ([guard (mutex_i64.lock (& loaded)) mutex_i64.unlock])
@@ -209,8 +205,8 @@
 
 (define (sync-api-run-mutex-create) : i64
   (match (mutex_i64.create 5)
-    [(mutex_i64.CreateErr _) 5]
-    [(mutex_i64.CreateOk mutex) (sync-api-run-mutex (& mutex))]))
+    [(CreateErr _) 5]
+    [(CreateOk mutex) (sync-api-run-mutex (& mutex))]))
 
 (define (sync-api-run-pair-create) : i64
   (let

@@ -41,75 +41,73 @@
         (profile_state.compiler-profile-state-metrics left)]
       [right-metrics : profile_state.CompilerProfileMetrics
         (profile_state.compiler-profile-state-metrics right)]
-      (begin
-        (spec.spec-profile-reset! left)
-        (spec.spec-profile-reset! right)
-        (spec.spec-profile-note-structural-key
-          (profile_state.compiler-profile-state-shared-view left-metrics)
-          true)
-        (spec.spec-profile-note-structural-key
-          (profile_state.compiler-profile-state-shared-view right-metrics)
-          false)
-        (spec.spec-profile-note-name-render
-          (profile_state.compiler-profile-state-shared-view left-metrics)
-          true)
-        (spec.spec-profile-note-name-render right-metrics false)
-        (spec.spec-profile-note-generated-text-materialized left-metrics)
-        (spec.spec-profile-reset! right)
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            spec.spec-profile-structural-key-created-metric)
-          1
-          "left job retains structural-key creation")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            spec.spec-profile-structural-key-reused-metric)
-          0
-          "left job does not inherit right structural-key reuse")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            spec.spec-profile-name-render-calls-metric)
-          1
-          "left job retains render calls")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            spec.spec-profile-name-render-cache-hits-metric)
-          1
-          "left job retains render cache hits")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            spec.spec-profile-name-render-cache-misses-metric)
-          0
-          "left job does not inherit right render cache misses")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            left
-            spec.spec-profile-generated-text-materialized-metric)
-          1
-          "left job retains generated text materialization")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            right
-            spec.spec-profile-structural-key-created-metric)
-          0
-          "right reset is isolated from left")
-        (test.assert-i64-eq
-          (profile_state.compiler-profile-state-metric-value
-            right
-            spec.spec-profile-name-render-calls-metric)
-          0
-          "right render counters reset independently")))))
+      (spec.spec-profile-reset! left)
+      (spec.spec-profile-reset! right)
+      (spec.spec-profile-note-structural-key
+        (profile_state.compiler-profile-state-shared-view left-metrics)
+        true)
+      (spec.spec-profile-note-structural-key
+        (profile_state.compiler-profile-state-shared-view right-metrics)
+        false)
+      (spec.spec-profile-note-name-render
+        (profile_state.compiler-profile-state-shared-view left-metrics)
+        true)
+      (spec.spec-profile-note-name-render right-metrics false)
+      (spec.spec-profile-note-generated-text-materialized left-metrics)
+      (spec.spec-profile-reset! right)
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          left
+          spec.spec-profile-structural-key-created-metric)
+        1
+        "left job retains structural-key creation")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          left
+          spec.spec-profile-structural-key-reused-metric)
+        0
+        "left job does not inherit right structural-key reuse")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          left
+          spec.spec-profile-name-render-calls-metric)
+        1
+        "left job retains render calls")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          left
+          spec.spec-profile-name-render-cache-hits-metric)
+        1
+        "left job retains render cache hits")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          left
+          spec.spec-profile-name-render-cache-misses-metric)
+        0
+        "left job does not inherit right render cache misses")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          left
+          spec.spec-profile-generated-text-materialized-metric)
+        1
+        "left job retains generated text materialization")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          right
+          spec.spec-profile-structural-key-created-metric)
+        0
+        "right reset is isolated from left")
+      (test.assert-i64-eq
+        (profile_state.compiler-profile-state-metric-value
+          right
+          spec.spec-profile-name-render-calls-metric)
+        0
+        "right render counters reset independently"))))
 
 (define (spec-cache-lookup [cache : spec_id_i64_map.Map] [name-id : i64]) : spec.SpecMaybeId
   (match (spec_id_i64_map.get (& cache) name-id)
-    [(spec_id_i64_map.LookupFound cached-name-id)
-      (spec.SpecMaybeId.Some cached-name-id)]
-    [(spec_id_i64_map.LookupMissing) (spec.SpecMaybeId.None)]))
+    [(LookupFound cached-name-id) (Some cached-name-id)]
+    [(LookupMissing) (None)]))
 
 (define (spec-type-list-key-at
   [types : (& types ast.AstTypeList)]
@@ -142,93 +140,91 @@
 
 (define (spec-type-key [ty : ast.AstType]) : String
   (match ty
-    [(ast.AstType.I64) "i64"]
-    [(ast.AstType.I32) "i32"]
-    [(ast.AstType.I16) "i16"]
-    [(ast.AstType.I8) "i8"]
-    [(ast.AstType.U64) "u64"]
-    [(ast.AstType.U32) "u32"]
-    [(ast.AstType.U16) "u16"]
-    [(ast.AstType.U8) "u8"]
-    [(ast.AstType.F64) "f64"]
-    [(ast.AstType.F32) "f32"]
-    [(ast.AstType.Bool) "bool"]
-    [(ast.AstType.Char) "char"]
-    [(ast.AstType.String) "String"]
-    [(ast.AstType.Str) "str"]
-    [(ast.AstType.Bytes) "bytes"]
-    [(ast.AstType.Unit) "unit"]
-    [(ast.AstType.Never) "never"]
-    [(ast.AstType.Expr) "Expr"]
-    [(ast.AstType.ExprList) "ExprList"]
-    [(ast.AstType.Func args ret)
+    [(I64) "i64"]
+    [(I32) "i32"]
+    [(I16) "i16"]
+    [(I8) "i8"]
+    [(U64) "u64"]
+    [(U32) "u32"]
+    [(U16) "u16"]
+    [(U8) "u8"]
+    [(F64) "f64"]
+    [(F32) "f32"]
+    [(Bool) "bool"]
+    [(Char) "char"]
+    [(String) "String"]
+    [(Str) "str"]
+    [(Bytes) "bytes"]
+    [(Unit) "unit"]
+    [(Never) "never"]
+    [(Expr) "Expr"]
+    [(ExprList) "ExprList"]
+    [(Func args ret)
       (str_cat.str-cat
         "fn_"
         (spec-type-list-key (ast.ast-type-list-box-shared-view args))
         "_to_"
         (spec-type-key (ast.ty-node-get ret)))]
-    [(ast.AstType.CFunc signature mode)
+    [(CFunc signature mode)
       (str_cat.str-cat
         "cfn_"
         (ast.ast-c-function-mode-name mode)
         "_"
         (spec-type-key (ast.ty-node-get signature)))]
-    [(ast.AstType.Tuple elems)
+    [(Tuple elems)
       (str_cat.str-cat
         "tuple_"
         (spec-type-list-key (ast.ast-type-list-box-shared-view elems)))]
-    [(ast.AstType.Array elem count)
+    [(Array elem count)
       (str_cat.str-cat
         "array_"
         (spec-type-key (ast.ty-node-get elem))
         "_"
         (spec.spec-int-key count))]
-    [(ast.AstType.DynArray elem)
+    [(DynArray elem)
       (str_cat.str-cat "dynarray_" (spec-type-key (ast.ty-node-get elem)))]
-    [(ast.AstType.Slice elem)
+    [(Slice elem)
       (str_cat.str-cat "slice_" (spec-type-key (ast.ty-node-get elem)))]
-    [(ast.AstType.Box elem)
-      (str_cat.str-cat "box_" (spec-type-key (ast.ty-node-get elem)))]
-    [(ast.AstType.Ptr elem)
-      (str_cat.str-cat "ptr_" (spec-type-key (ast.ty-node-get elem)))]
-    [(ast.AstType.MutPtr elem)
+    [(Box elem) (str_cat.str-cat "box_" (spec-type-key (ast.ty-node-get elem)))]
+    [(Ptr elem) (str_cat.str-cat "ptr_" (spec-type-key (ast.ty-node-get elem)))]
+    [(MutPtr elem)
       (str_cat.str-cat "mutptr_" (spec-type-key (ast.ty-node-get elem)))]
-    [(ast.AstType.Ref region inner)
+    [(Ref region inner)
       (str_cat.str-cat
         "ref_"
         (spec_ci.intern-str region)
         "_"
         (spec-type-key (ast.ty-node-get inner)))]
-    [(ast.AstType.MutRef region inner)
+    [(MutRef region inner)
       (str_cat.str-cat
         "mutref_"
         (spec_ci.intern-str region)
         "_"
         (spec-type-key (ast.ty-node-get inner)))]
-    [(ast.AstType.Region region inner)
+    [(Region region inner)
       (str_cat.str-cat
         "region_"
         (spec_ci.intern-str region)
         "_"
         (spec-type-key (ast.ty-node-get inner)))]
-    [(ast.AstType.Enum name)
+    [(Enum name)
       (str_cat.str-cat "enum_" (ast.ast-nominal-name-id-display name))]
-    [(ast.AstType.EnumArgs name lifetimes)
+    [(EnumArgs name lifetimes)
       (str_cat.str-cat
         "enumargs_"
         (ast.ast-nominal-name-id-display name)
         "_"
         (spec-lifetime-list-key (deref lifetimes)))]
-    [(ast.AstType.Struct name)
+    [(Struct name)
       (str_cat.str-cat "struct_" (ast.ast-nominal-name-id-display name))]
-    [(ast.AstType.StructArgs name lifetimes)
+    [(StructArgs name lifetimes)
       (str_cat.str-cat
         "structargs_"
         (ast.ast-nominal-name-id-display name)
         "_"
         (spec-lifetime-list-key (deref lifetimes)))]
-    [(ast.AstType.Var name) (str_cat.str-cat "var_" (spec_ci.intern-str name))]
-    [(ast.AstType.VarArgs name lifetimes)
+    [(Var name) (str_cat.str-cat "var_" (spec_ci.intern-str name))]
+    [(VarArgs name lifetimes)
       (str_cat.str-cat
         "varargs_"
         (spec_ci.intern-str name)
@@ -237,58 +233,51 @@
 
 (define (spec-value-key [value : ctfe.CompilerCtfeValue]) : String
   (match value
-    [(ctfe.CompilerCtfeValue.I64 n)
-      (str_cat.str-cat "i64_" (spec.spec-int-key n))]
-    [(ctfe.CompilerCtfeValue.F64 n)
+    [(I64 n) (str_cat.str-cat "i64_" (spec.spec-int-key n))]
+    [(F64 n)
       (str_cat.str-cat
         "f64_"
         (spec.spec-string-key (cfloat.compiler-float-format-f64 n)))]
-    [(ctfe.CompilerCtfeValue.F32 n)
+    [(F32 n)
       (str_cat.str-cat
         "f32_"
         (spec.spec-string-key
           (cfloat.compiler-float-format-f64
             (cfloat.compiler-float-round-f32-as-f64 n))))]
-    [(ctfe.CompilerCtfeValue.Bool b)
+    [(Bool b)
       (if b
         "bool_1"
         "bool_0")]
-    [(ctfe.CompilerCtfeValue.Char c)
-      (str_cat.str-cat "char_" (string.int->string (cast c : i64)))]
-    [(ctfe.CompilerCtfeValue.String text _) (spec.spec-string-key text)]
-    [(ctfe.CompilerCtfeValue.Name text _) (spec.spec-string-key text)]
-    [(ctfe.CompilerCtfeValue.Unit) "unit"]
-    [(ctfe.CompilerCtfeValue.Type ty)
-      (str_cat.str-cat "type_" (spec-type-key ty))]
-    [(ctfe.CompilerCtfeValue.Expr _ _) "Expr"]
-    [(ctfe.CompilerCtfeValue.CapturedExpr _ _ _) "Expr"]
-    [(ctfe.CompilerCtfeValue.ExprList _) "expr-list"]
-    [(ctfe.CompilerCtfeValue.CapturedExprList _ _) "expr-list"]
-    [(ctfe.CompilerCtfeValue.ExprClause _) "expr-clause"]
-    [(ctfe.CompilerCtfeValue.CapturedExprClause _ _) "expr-clause"]
-    [(ctfe.CompilerCtfeValue.ExprClauseList _) "expr-clause-list"]
-    [(ctfe.CompilerCtfeValue.CapturedExprClauseList _ _) "expr-clause-list"]
-    [(ctfe.CompilerCtfeValue.ExprBindingClause _) "expr-binding-clause"]
-    [(ctfe.CompilerCtfeValue.ExprBindingClauseList _)
-      "expr-binding-clause-list"]
-    [(ctfe.CompilerCtfeValue.Pattern _) "pattern"]
-    [(ctfe.CompilerCtfeValue.PatternList _) "pattern-list"]
-    [(ctfe.CompilerCtfeValue.MatchArm _) "match-arm"]
-    [(ctfe.CompilerCtfeValue.MatchArmList _) "match-arm-list"]
-    [(ctfe.CompilerCtfeValue.LetBinding _) "let-binding"]
-    [(ctfe.CompilerCtfeValue.LetBindingList _) "let-binding-list"]
-    [(ctfe.CompilerCtfeValue.TypeInfo ty)
-      (str_cat.str-cat "typeinfo_" (spec-type-key ty))]
-    [(ctfe.CompilerCtfeValue.TypeInfoBox ty)
-      (str_cat.str-cat "typeinfo-box_" (spec-type-key ty))]
-    [(ctfe.CompilerCtfeValue.TypeInfoList _) "typeinfo-list"]
-    [(ctfe.CompilerCtfeValue.TypeField _ _) "type-field"]
-    [(ctfe.CompilerCtfeValue.TypeFieldList _) "type-field-list"]
-    [(ctfe.CompilerCtfeValue.TypeVariantPayload _) "type-variant-payload"]
-    [(ctfe.CompilerCtfeValue.TypeVariantPayloadList _)
-      "type-variant-payload-list"]
-    [(ctfe.CompilerCtfeValue.TypeVariant _ _) "type-variant"]
-    [(ctfe.CompilerCtfeValue.TypeVariantList _) "type-variant-list"]))
+    [(Char c) (str_cat.str-cat "char_" (string.int->string (cast c : i64)))]
+    [(String text _) (spec.spec-string-key text)]
+    [(Name text _) (spec.spec-string-key text)]
+    [(Unit) "unit"]
+    [(Type ty) (str_cat.str-cat "type_" (spec-type-key ty))]
+    [(Expr _ _) "Expr"]
+    [(CapturedExpr _ _ _) "Expr"]
+    [(ExprList _) "expr-list"]
+    [(CapturedExprList _ _) "expr-list"]
+    [(ExprClause _) "expr-clause"]
+    [(CapturedExprClause _ _) "expr-clause"]
+    [(ExprClauseList _) "expr-clause-list"]
+    [(CapturedExprClauseList _ _) "expr-clause-list"]
+    [(ExprBindingClause _) "expr-binding-clause"]
+    [(ExprBindingClauseList _) "expr-binding-clause-list"]
+    [(Pattern _) "pattern"]
+    [(PatternList _) "pattern-list"]
+    [(MatchArm _) "match-arm"]
+    [(MatchArmList _) "match-arm-list"]
+    [(LetBinding _) "let-binding"]
+    [(LetBindingList _) "let-binding-list"]
+    [(TypeInfo ty) (str_cat.str-cat "typeinfo_" (spec-type-key ty))]
+    [(TypeInfoBox ty) (str_cat.str-cat "typeinfo-box_" (spec-type-key ty))]
+    [(TypeInfoList _) "typeinfo-list"]
+    [(TypeField _ _) "type-field"]
+    [(TypeFieldList _) "type-field-list"]
+    [(TypeVariantPayload _) "type-variant-payload"]
+    [(TypeVariantPayloadList _) "type-variant-payload-list"]
+    [(TypeVariant _ _) "type-variant"]
+    [(TypeVariantList _) "type-variant-list"]))
 
 (define (spec-values-key [values : (& values spec.SpecValueList)]) : String
   (spec-values-key-at values 0))
@@ -323,16 +312,14 @@
       (spec_ci.intern-compat-state-capture-active)]
     [owner : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools intern-state)]
-    (begin
+    (ast.ast-node-pool-context-install! pools)
+    (spec_ci.intern-compat-state-install! intern-state)
+    (let
+      [result : ast.AstType
+        (spec.spec-substitute-type-with-owner owner ty subs)]
       (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install! intern-state)
-      (let
-        [result : ast.AstType
-          (spec.spec-substitute-type-with-owner owner ty subs)]
-        (begin
-          (ast.ast-node-pool-context-install! pools)
-          (spec_ci.intern-compat-state-install! intern-state)
-          result)))))
+      result)))
 
 ;; AstDecl names carry generated ids allocated outside the source-name table.
 (define (spec-materialize-generated-name-id [name : String]) : i64
@@ -349,16 +336,14 @@
       (spec_ci.intern-compat-state-capture-active)]
     [owner : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools intern-state)]
-    (begin
+    (ast.ast-node-pool-context-install! pools)
+    (spec_ci.intern-compat-state-install! intern-state)
+    (let
+      [result : spec.ResultSpecSubExpr
+        (spec.spec-substitute-values-expr-with-owner owner expr subs)]
       (ast.ast-node-pool-context-install! pools)
       (spec_ci.intern-compat-state-install! intern-state)
-      (let
-        [result : spec.ResultSpecSubExpr
-          (spec.spec-substitute-values-expr-with-owner owner expr subs)]
-        (begin
-          (ast.ast-node-pool-context-install! pools)
-          (spec_ci.intern-compat-state-install! intern-state)
-          result)))))
+      result)))
 
 (define (compiler-specialize-program-with-paths
   [program : ast.AstProgram]
@@ -372,9 +357,8 @@
         paths
         fallback-path
         pools)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      result)))
+    (ast.ast-node-pool-context-install! pools)
+    result))
 
 (define (compiler-specialize-needed? [program : ast.AstProgram]) : bool
   (spec.compiler-specialize-needed-with-pools
@@ -387,11 +371,11 @@
   (__tl_make-array T n))
 (define (main) : (__tl_dyn-array i64)
   (alloc (type i64) 4))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (spec.compiler-specialize-program program)
-        [(spec.ResultSpecProgram.Ok specialized)
+        [(Ok specialized)
           (match specialized
-            [(ast.AstProgram.Program decls-box)
+            [(Program decls-box)
               (let
                 [decls : ast.AstDeclList
                   (ast.ast-decl-list-box-shared-view decls-box)]
@@ -401,39 +385,39 @@
                   (spec.compiler-specialize-decl-list-defines?
                     decls
                     "__tl_specialized_alloc_type_i64_none")))])]
-        [(spec.ResultSpecProgram.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-specialize-runtime-type-use-rejected?) : bool
   (match (parser.parse-ast-source
     "(define (bad [comptime T : type] [n : i64]) : i64 T)
 (define (main) : i64 (bad (type i64) 4))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (spec.compiler-specialize-program program)
-        [(spec.ResultSpecProgram.Ok _) false]
-        [(spec.ResultSpecProgram.Err _) true])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Ok _) false]
+        [(Err _) true])]
+    [(Err _) false]))
 
 (define (compiler-specialize-template-shadow-ok?) : bool
   (match (parser.parse-ast-source
     "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))
 (define (use-shadow [scale : (-> i64 i64)]) : i64 (scale 7))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (spec.compiler-specialize-program program)
-        [(spec.ResultSpecProgram.Ok _) true]
-        [(spec.ResultSpecProgram.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Ok _) true]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-specialize-template-shadow-sibling-ok?) : bool
   (match (parser.parse-ast-source
     "(define (scale [comptime n : i64] [x : i64]) : i64 (* n x))
 (define (main) : i64
   (+ (let [scale : i64 3] scale) (scale 2 7)))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (spec.compiler-specialize-program program)
-        [(spec.ResultSpecProgram.Ok specialized)
+        [(Ok specialized)
           (match specialized
-            [(ast.AstProgram.Program decls-box)
+            [(Program decls-box)
               (let
                 [decls : ast.AstDeclList
                   (ast.ast-decl-list-box-shared-view decls-box)]
@@ -444,15 +428,15 @@
                     decls
                     "__tl_specialized_scale_i64_2_none")]
                 (and (not original) generated))])]
-        [(spec.ResultSpecProgram.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (spec-template-env-has-template?
   [templates : spec.SpecTemplateEnv]
   [name-id : i64]) : bool
   (match (spec.spec-template-lookup templates name-id)
-    [(spec.SpecMaybeTemplate.Some _) true]
-    [(spec.SpecMaybeTemplate.None) false]))
+    [(Some _) true]
+    [(None) false]))
 
 (define (compiler-specialize-dense-template-shadow-state-ok?) : bool
   (let
@@ -460,19 +444,19 @@
     [_x : unit
       (spec.spec-template-list-push
         (&mut items)
-        (spec.SpecTemplate.Item
+        (Item
           cbi.compiler-builtin-id-fix-x
           (ast.ast-param-list-new)
-          (ast.AstType.I64)
-          (ast.AstExpr.Literal (ast.ast-lit-int 1))))]
+          (I64)
+          (Literal (ast.ast-lit-int 1))))]
     [_second : unit
       (spec.spec-template-list-push
         (&mut items)
-        (spec.SpecTemplate.Item
+        (Item
           cbi.compiler-builtin-id-fix-second
           (ast.ast-param-list-new)
-          (ast.AstType.I64)
-          (ast.AstExpr.Literal (ast.ast-lit-int 2))))]
+          (I64)
+          (Literal (ast.ast-lit-int 2))))]
     [base : spec.SpecTemplateEnv
       (spec.spec-template-env-from-list
         (owned_view.compiler-owned-shared-view items))]
@@ -505,43 +489,39 @@
     [_param-x : unit
       (ast.ast-param-list-push
         (&mut params)
-        (ast.ast-param-id cbi.compiler-builtin-id-fix-x (ast.AstType.I64) false))]
+        (ast.ast-param-id cbi.compiler-builtin-id-fix-x (I64) false))]
     [_param-second : unit
       (ast.ast-param-list-push
         (&mut params)
-        (ast.ast-param-id
-          cbi.compiler-builtin-id-fix-second
-          (ast.AstType.I64)
-          false))]
+        (ast.ast-param-id cbi.compiler-builtin-id-fix-second (I64) false))]
     [_param-x-again : unit
       (ast.ast-param-list-push
         (&mut params)
-        (ast.ast-param-id cbi.compiler-builtin-id-fix-x (ast.AstType.I64) false))]
+        (ast.ast-param-id cbi.compiler-builtin-id-fix-x (I64) false))]
     [param-both : spec.SpecTemplateEnv
       (spec.spec-template-env-shadow-params base params)]
     [bindings : ast.AstLetBindingList (ast.ast-let-binding-list-new)]
-    [binding-value : i64
-      (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 0)))]
+    [binding-value : i64 (ast.ast-node-push (Literal (ast.ast-lit-int 0)))]
     [_binding-x : unit
       (ast.ast-let-binding-list-push
         (&mut bindings)
         (ast.ast-let-binding-id
           cbi.compiler-builtin-id-fix-x
-          (ast.AstMaybeType.No)
+          (No)
           binding-value))]
     [_binding-second : unit
       (ast.ast-let-binding-list-push
         (&mut bindings)
         (ast.ast-let-binding-id
           cbi.compiler-builtin-id-fix-second
-          (ast.AstMaybeType.No)
+          (No)
           binding-value))]
     [_binding-x-again : unit
       (ast.ast-let-binding-list-push
         (&mut bindings)
         (ast.ast-let-binding-id
           cbi.compiler-builtin-id-fix-x
-          (ast.AstMaybeType.No)
+          (No)
           binding-value))]
     [binding-both : spec.SpecTemplateEnv
       (spec.spec-template-env-shadow-let-binding-names base bindings)]
@@ -552,159 +532,155 @@
     [wide : spec.SpecTemplateEnv (spec.spec-template-env-from-list items)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      ;; Cross multiple dense-record growth boundaries with repeated names.
-      (while (< index 64)
-        (begin
-          (set!
-            wide
-            (spec.spec-template-env-shadow-name
-              wide
-              (if (= (bit-and index 1) 0)
-                cbi.compiler-builtin-id-fix-x
-                cbi.compiler-builtin-id-fix-second)))
-          (set! index (+ index 1))))
-      ;; Alternate retained parents, siblings, duplicates, and nested snapshots
-      ;; so the activated dense counts must roll backward and forward exactly.
+    ;; Cross multiple dense-record growth boundaries with repeated names.
+    (while (< index 64)
       (set!
-        ok
-        (and
-          ok
-          (spec-template-env-has-template? base cbi.compiler-builtin-id-fix-x)
-          (spec-template-env-has-template?
-            base
-            cbi.compiler-builtin-id-fix-second)
-          (not
-            (spec-template-env-has-template?
-              shadow-x
-              cbi.compiler-builtin-id-fix-x))
-          (spec-template-env-has-template?
-            shadow-x
-            cbi.compiler-builtin-id-fix-second)
-          (not
-            (spec-template-env-has-template?
-              duplicate-x
-              cbi.compiler-builtin-id-fix-x))
-          (spec-template-env-has-template?
-            duplicate-x
-            cbi.compiler-builtin-id-fix-second)
-          (spec-template-env-has-template?
-            sibling-second
-            cbi.compiler-builtin-id-fix-x)
-          (not
-            (spec-template-env-has-template?
-              sibling-second
-              cbi.compiler-builtin-id-fix-second))
-          (not
-            (spec-template-env-has-template?
-              nested-both
-              cbi.compiler-builtin-id-fix-x))
-          (not
-            (spec-template-env-has-template?
-              nested-both
-              cbi.compiler-builtin-id-fix-second))
-          (not
-            (spec-template-env-has-template?
-              pattern-both
-              cbi.compiler-builtin-id-fix-x))
-          (not
-            (spec-template-env-has-template?
-              pattern-both
-              cbi.compiler-builtin-id-fix-second))
-          (not
-            (spec-template-env-has-template?
-              param-both
-              cbi.compiler-builtin-id-fix-x))
-          (not
-            (spec-template-env-has-template?
-              param-both
-              cbi.compiler-builtin-id-fix-second))
-          (not
-            (spec-template-env-has-template?
-              binding-both
-              cbi.compiler-builtin-id-fix-x))
-          (not
-            (spec-template-env-has-template?
-              binding-both
-              cbi.compiler-builtin-id-fix-second))
-          (not
-            (spec-template-env-has-template?
-              param-then-binding
-              cbi.compiler-builtin-id-fix-x))
-          (not
-            (spec-template-env-has-template?
-              param-then-binding
-              cbi.compiler-builtin-id-fix-second))
-          (spec-template-env-has-template?
-            unrelated
-            cbi.compiler-builtin-id-fix-x)
-          (not
-            (spec-template-env-has-template? wide cbi.compiler-builtin-id-fix-x))
-          (not
-            (spec-template-env-has-template?
-              wide
-              cbi.compiler-builtin-id-fix-second))
-          ;; A missing-template name creates no record; all real shadows are
-          ;; dense slots, and the state grew beyond its initial capacity.
-          (=
-            (spec.spec-template-shadow-state-data
-              (spec-template-env-shadow-state base)).len
-            18)
-          (=
-            (spec.spec-template-shadow-state-data
-              (spec-template-env-shadow-state wide)).len
-            64)
-          (>
-            (array-length
-              (spec.spec-template-shadow-state-data
-                (spec-template-env-shadow-state wide)).slots)
-            8)
-          (= (comptime (size-of (type SpecTemplateShadowState))) 8)
-          (= (comptime (size-of (type SpecTemplateShadowStateData))) 56)))
-      ;; Revisit the root after the deepest snapshot to catch leaked counts.
+        wide
+        (spec.spec-template-env-shadow-name
+          wide
+          (if (= (bit-and index 1) 0)
+            cbi.compiler-builtin-id-fix-x
+            cbi.compiler-builtin-id-fix-second)))
+      (set! index (+ index 1)))
+    ;; Alternate retained parents, siblings, duplicates, and nested snapshots
+    ;; so the activated dense counts must roll backward and forward exactly.
+    (set!
+      ok
       (and
         ok
         (spec-template-env-has-template? base cbi.compiler-builtin-id-fix-x)
         (spec-template-env-has-template?
           base
-          cbi.compiler-builtin-id-fix-second)))))
+          cbi.compiler-builtin-id-fix-second)
+        (not
+          (spec-template-env-has-template?
+            shadow-x
+            cbi.compiler-builtin-id-fix-x))
+        (spec-template-env-has-template?
+          shadow-x
+          cbi.compiler-builtin-id-fix-second)
+        (not
+          (spec-template-env-has-template?
+            duplicate-x
+            cbi.compiler-builtin-id-fix-x))
+        (spec-template-env-has-template?
+          duplicate-x
+          cbi.compiler-builtin-id-fix-second)
+        (spec-template-env-has-template?
+          sibling-second
+          cbi.compiler-builtin-id-fix-x)
+        (not
+          (spec-template-env-has-template?
+            sibling-second
+            cbi.compiler-builtin-id-fix-second))
+        (not
+          (spec-template-env-has-template?
+            nested-both
+            cbi.compiler-builtin-id-fix-x))
+        (not
+          (spec-template-env-has-template?
+            nested-both
+            cbi.compiler-builtin-id-fix-second))
+        (not
+          (spec-template-env-has-template?
+            pattern-both
+            cbi.compiler-builtin-id-fix-x))
+        (not
+          (spec-template-env-has-template?
+            pattern-both
+            cbi.compiler-builtin-id-fix-second))
+        (not
+          (spec-template-env-has-template?
+            param-both
+            cbi.compiler-builtin-id-fix-x))
+        (not
+          (spec-template-env-has-template?
+            param-both
+            cbi.compiler-builtin-id-fix-second))
+        (not
+          (spec-template-env-has-template?
+            binding-both
+            cbi.compiler-builtin-id-fix-x))
+        (not
+          (spec-template-env-has-template?
+            binding-both
+            cbi.compiler-builtin-id-fix-second))
+        (not
+          (spec-template-env-has-template?
+            param-then-binding
+            cbi.compiler-builtin-id-fix-x))
+        (not
+          (spec-template-env-has-template?
+            param-then-binding
+            cbi.compiler-builtin-id-fix-second))
+        (spec-template-env-has-template?
+          unrelated
+          cbi.compiler-builtin-id-fix-x)
+        (not
+          (spec-template-env-has-template? wide cbi.compiler-builtin-id-fix-x))
+        (not
+          (spec-template-env-has-template?
+            wide
+            cbi.compiler-builtin-id-fix-second))
+        ;; A missing-template name creates no record; all real shadows are
+        ;; dense slots, and the state grew beyond its initial capacity.
+        (=
+          (spec.spec-template-shadow-state-data
+            (spec-template-env-shadow-state base)).len
+          18)
+        (=
+          (spec.spec-template-shadow-state-data
+            (spec-template-env-shadow-state wide)).len
+          64)
+        (>
+          (array-length
+            (spec.spec-template-shadow-state-data
+              (spec-template-env-shadow-state wide)).slots)
+          8)
+        (= (comptime (size-of (type SpecTemplateShadowState))) 8)
+        (= (comptime (size-of (type SpecTemplateShadowStateData))) 56)))
+    ;; Revisit the root after the deepest snapshot to catch leaked counts.
+    (and
+      ok
+      (spec-template-env-has-template? base cbi.compiler-builtin-id-fix-x)
+      (spec-template-env-has-template? base cbi.compiler-builtin-id-fix-second))))
 
 (define (compiler-specialize-type-shadow-ok?) : bool
   (match (parser.parse-ast-source
     "(define (pick [comptime T : type] [x : i64]) : i64
   (let [T : i64 x] T))
 (define (main) : i64 (pick (type i64) 7))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (spec.compiler-specialize-program program)
-        [(spec.ResultSpecProgram.Ok specialized)
+        [(Ok specialized)
           (match specialized
-            [(ast.AstProgram.Program decls-box)
+            [(Program decls-box)
               (let
                 [decls : ast.AstDeclList
                   (ast.ast-decl-list-box-shared-view decls-box)]
                 (spec.compiler-specialize-decl-list-defines?
                   decls
                   "__tl_specialized_pick_type_i64_none"))])]
-        [(spec.ResultSpecProgram.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-specialize-raw-pointer-type-ok?) : bool
   (let
     [subs : spec.SpecTypeSubst
       (spec.spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
-        (ast.AstType.I64)
+        (I64)
         (spec.spec-type-subst-new))]
     (and
-      (string.eq (spec-type-key (ast.ast-ty-ptr (ast.AstType.I64))) "ptr_i64")
+      (string.eq (spec-type-key (ast.ast-ty-ptr (I64))) "ptr_i64")
       (string.eq
-        (spec-type-key (ast.ast-ty-mut-ptr (ast.ast-ty-ptr (ast.AstType.U8))))
+        (spec-type-key (ast.ast-ty-mut-ptr (ast.ast-ty-ptr (U8))))
         "mutptr_ptr_u8")
       (ctfe.ctfe-type-eq
         (spec-substitute-type
-          (ast.ast-ty-mut-ptr (ast.AstType.Var cbi.compiler-builtin-id-fix-T))
+          (ast.ast-ty-mut-ptr (Var cbi.compiler-builtin-id-fix-T))
           subs)
-        (ast.ast-ty-mut-ptr (ast.AstType.I64))))))
+        (ast.ast-ty-mut-ptr (I64))))))
 
 (define (compiler-specialize-owner-slice-type-ok?) : bool
   (let
@@ -713,25 +689,22 @@
     [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [owner : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools intern-state)]
-    [slice-i64 : ast.AstType
-      (ast.ast-ty-slice-with-pools pools ast.AstType.I64)]
+    [slice-i64 : ast.AstType (ast.ast-ty-slice-with-pools pools I64)]
     [slice-t : ast.AstType
-      (ast.ast-ty-slice-with-pools
-        pools
-        (ast.AstType.Var cbi.compiler-builtin-id-fix-T))]
+      (ast.ast-ty-slice-with-pools pools (Var cbi.compiler-builtin-id-fix-T))]
     [subs : spec.SpecTypeSubst
       (spec.spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
-        ast.AstType.I64
+        I64
         (spec.spec-type-subst-new))]
     [substituted : ast.AstType
       (spec.spec-substitute-type-with-owner owner slice-t subs)]
     (and
       (string.eq (spec.spec-type-key-with-owner owner slice-i64) "slice_i64")
       (match substituted
-        [(ast.AstType.Slice elem)
+        [(Slice elem)
           (match (spec.spec-owner-type-get owner elem)
-            [(ast.AstType.I64) true]
+            [(I64) true]
             [_ false])]
         [_ false]))))
 
@@ -744,19 +717,13 @@
 (define (compiler-specialize-name-key-ok?) : bool
   (let
     [vals-i64 : spec.SpecValueList
-      (spec.spec-value-cons
-        (ctfe.CompilerCtfeValue.Type (ast.AstType.I64))
-        (spec.spec-value-list-new))]
+      (spec.spec-value-cons (Type (I64)) (spec.spec-value-list-new))]
     [vals-bool : spec.SpecValueList
-      (spec.spec-value-cons
-        (ctfe.CompilerCtfeValue.Type (ast.AstType.Bool))
-        (spec.spec-value-list-new))]
+      (spec.spec-value-cons (Type (Bool)) (spec.spec-value-list-new))]
     [vals-multi : spec.SpecValueList
       (spec.spec-value-cons
-        (ctfe.CompilerCtfeValue.Type (ast.AstType.I64))
-        (spec.spec-value-cons
-          (ctfe.CompilerCtfeValue.I64 5)
-          (spec.spec-value-list-new)))]
+        (Type (I64))
+        (spec.spec-value-cons (I64 5) (spec.spec-value-list-new)))]
     [vals-string : spec.SpecValueList
       (spec.spec-value-cons
         (ctfe.ctfe-generated-string-value "a b")
@@ -778,7 +745,7 @@
       (string.eq
         (spec-specialized-name "pair" vals-multi)
         "__tl_specialized_pair_type_i64_i64_5_none")
-      (string.eq (spec-value-key (ctfe.CompilerCtfeValue.I64 (- 0 3))) "i64_m3")
+      (string.eq (spec-value-key (I64 (- 0 3))) "i64_m3")
       (string.eq
         (spec-specialized-name "name" vals-string)
         "__tl_specialized_name_string_3_97_32_98_none"))))
@@ -795,36 +762,28 @@
       (spec.spec-owner-context-new pools-a intern-a)]
     [owner-b : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools-b intern-b)]
-    [array-a : ast.AstType
-      (ast.ast-ty-array-with-pools pools-a (ast.AstType.I64) 7)]
-    [array-b : ast.AstType
-      (ast.ast-ty-array-with-pools pools-b (ast.AstType.I64) 7)]
+    [array-a : ast.AstType (ast.ast-ty-array-with-pools pools-a (I64) 7)]
+    [array-b : ast.AstType (ast.ast-ty-array-with-pools pools-b (I64) 7)]
     [nested-a : ast.AstType (ast.ast-ty-ptr-with-pools pools-a array-a)]
     [nested-b : ast.AstType (ast.ast-ty-ptr-with-pools pools-b array-b)]
     [values-a : spec.SpecValueList
       (spec.spec-value-cons
-        (ctfe.CompilerCtfeValue.Type (ast.ast-place-shared-view nested-a))
+        (Type (ast.ast-place-shared-view nested-a))
         (spec.spec-value-cons
-          (ctfe.CompilerCtfeValue.I64 -3)
-          (spec.spec-value-cons
-            (ctfe.CompilerCtfeValue.String "a b" 1)
-            (spec.spec-value-list-new))))]
+          (I64 -3)
+          (spec.spec-value-cons (String "a b" 1) (spec.spec-value-list-new))))]
     [values-a-name : spec.SpecValueList
       (spec.spec-value-cons
-        (ctfe.CompilerCtfeValue.Type (ast.ast-place-shared-view nested-a))
+        (Type (ast.ast-place-shared-view nested-a))
         (spec.spec-value-cons
-          (ctfe.CompilerCtfeValue.I64 -3)
-          (spec.spec-value-cons
-            (ctfe.CompilerCtfeValue.Name "a b" 999)
-            (spec.spec-value-list-new))))]
+          (I64 -3)
+          (spec.spec-value-cons (Name "a b" 999) (spec.spec-value-list-new))))]
     [values-b : spec.SpecValueList
       (spec.spec-value-cons
-        (ctfe.CompilerCtfeValue.Type nested-b)
+        (Type nested-b)
         (spec.spec-value-cons
-          (ctfe.CompilerCtfeValue.I64 -3)
-          (spec.spec-value-cons
-            (ctfe.CompilerCtfeValue.Name "a b" 4)
-            (spec.spec-value-list-new))))]
+          (I64 -3)
+          (spec.spec-value-cons (Name "a b" 4) (spec.spec-value-list-new))))]
     [key-a : spec.SpecStructuralKey
       (spec.spec-specialization-structural-key-with-owner
         owner-a
@@ -841,12 +800,10 @@
       (spec_ci.intern-compat-state-structural-count intern-a)]
     [different-values : spec.SpecValueList
       (spec.spec-value-cons
-        (ctfe.CompilerCtfeValue.Type nested-a)
+        (Type nested-a)
         (spec.spec-value-cons
-          (ctfe.CompilerCtfeValue.I64 -4)
-          (spec.spec-value-cons
-            (ctfe.CompilerCtfeValue.String "a b" 1)
-            (spec.spec-value-list-new))))]
+          (I64 -4)
+          (spec.spec-value-cons (String "a b" 1) (spec.spec-value-list-new))))]
     [different : spec.SpecStructuralKey
       (spec.spec-specialization-structural-key-with-owner
         owner-a
@@ -880,9 +837,7 @@
         values-a)]
     [old-raw : i64 (spec.spec-structural-key-raw key-a)]
     [post-reset-values : spec.SpecValueList
-      (spec.spec-value-cons
-        (ctfe.CompilerCtfeValue.I64 -3)
-        (spec.spec-value-list-new))]
+      (spec.spec-value-cons (I64 -3) (spec.spec-value-list-new))]
     (and
       (> count-after-first 0)
       (= count-after-first count-after-repeat)
@@ -927,12 +882,12 @@
   [decls : ast.AstDeclList]
   [name : String]) : i64
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) 0]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) 0]
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         (match (ast.ast-decl-unwrapped decl)
-          [(ast.AstDecl.DefFn decl-meta fn-name _ _ _ _)
+          [(DefFn decl-meta fn-name _ _ _ _)
             (if (string.eq (spec_ci.intern-str fn-name) name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
               (compiler-specialize-decl-list-count-defs rest name))]
@@ -942,8 +897,8 @@
   [decls : ast.AstDeclList]
   [name : String]) : i64
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) 0]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) 0]
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         [tail-count : i64
@@ -951,11 +906,11 @@
             rest
             (spec.spec-place-shared-view name))]
         (match (spec.gen-decl-visible-name decl)
-          [(spec.SpecMaybeString.Some found)
+          [(Some found)
             (if (string.eq found name)
               (+ 1 tail-count)
               tail-count)]
-          [(spec.SpecMaybeString.None) tail-count]))]))
+          [(None) tail-count]))]))
 
 ;: Two call sites that request the SAME specialization (`alloc` at `type i64`)
 ;: must share one generated decl via the specialization cache, not emit two.
@@ -971,11 +926,11 @@
 ;: `alloc` template is removed.
 (define (compiler-specialize-reuse-ok?) : bool
   (match (parser.parse-ast-source (compiler-specialize-reuse-source))
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (spec.compiler-specialize-program program)
-        [(spec.ResultSpecProgram.Ok specialized)
+        [(Ok specialized)
           (match specialized
-            [(ast.AstProgram.Program decls-box)
+            [(Program decls-box)
               (let
                 [decls : ast.AstDeclList
                   (ast.ast-decl-list-box-shared-view decls-box)]
@@ -987,8 +942,8 @@
                       decls
                       "__tl_specialized_alloc_type_i64_none")
                     1)))])]
-        [(spec.ResultSpecProgram.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 ;: Type substitution (mirrors src/specialize.rs substitution coverage):
 ;: `spec-substitute-type` replaces a mapped type variable with its bound type,
@@ -1000,26 +955,23 @@
     [subs : spec.SpecTypeSubst
       (spec.spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
-        (ast.AstType.I64)
+        (I64)
         (spec.spec-type-subst-new))]
     (and
       (string.eq
         (spec-type-key
-          (spec-substitute-type
-            (ast.AstType.Var cbi.compiler-builtin-id-fix-T)
-            subs))
+          (spec-substitute-type (Var cbi.compiler-builtin-id-fix-T) subs))
         "i64")
       (string.eq
         (spec-type-key
           (spec-substitute-type
-            (ast.ast-ty-ptr (ast.AstType.Var cbi.compiler-builtin-id-fix-T))
+            (ast.ast-ty-ptr (Var cbi.compiler-builtin-id-fix-T))
             subs))
         "ptr_i64")
       (string.eq
         (spec-type-key
           (spec-substitute-type
-            (ast.ast-ty-dyn-array
-              (ast.AstType.Var cbi.compiler-builtin-id-fix-T))
+            (ast.ast-ty-dyn-array (Var cbi.compiler-builtin-id-fix-T))
             subs))
         "dynarray_i64")
       (string.eq
@@ -1027,16 +979,14 @@
           (spec-substitute-type
             (ast.ast-ty-func
               (ast.ast-type-cons
-                (ast.AstType.Var cbi.compiler-builtin-id-fix-T)
+                (Var cbi.compiler-builtin-id-fix-T)
                 (ast.ast-type-list-new))
-              (ast.AstType.Var cbi.compiler-builtin-id-fix-T))
+              (Var cbi.compiler-builtin-id-fix-T))
             subs))
         "fn_i64_nil_to_i64")
       (string.eq
         (spec-type-key
-          (spec-substitute-type
-            (ast.AstType.Var cbi.compiler-builtin-id-fix-U)
-            subs))
+          (spec-substitute-type (Var cbi.compiler-builtin-id-fix-U) subs))
         "var_U"))))
 
 ;: Value (comptime-argument) substitution (mirrors src/specialize.rs
@@ -1048,144 +998,137 @@
     [subs : spec.SpecValueSubst
       (spec.spec-value-subst-cons
         cbi.compiler-builtin-id-fix-x
-        (ctfe.CompilerCtfeValue.I64 5)
+        (I64 5)
         (spec.spec-value-subst-new))]
     (and
       ;; mapped variable x -> integer literal 5
       (match (spec-substitute-values-expr
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-x)
+        (Var cbi.compiler-builtin-id-fix-x)
         subs)
-        [(spec.ResultSpecSubExpr.Ok e)
+        [(Ok e)
           (match (ast.ast-node-get e)
-            [(ast.AstExpr.Literal lit)
+            [(Literal lit)
               (match lit
-                [(ast.AstLiteral.Int n _) (= n 5)]
+                [(Int n _) (= n 5)]
                 [_ false])]
             [_ false])]
-        [(spec.ResultSpecSubExpr.Err _) false])
+        [(Err _) false])
       ;; unmapped variable y -> unchanged
       (match (spec-substitute-values-expr
-        (ast.AstExpr.Var cbi.compiler-builtin-id-fix-y)
+        (Var cbi.compiler-builtin-id-fix-y)
         subs)
-        [(spec.ResultSpecSubExpr.Ok e)
+        [(Ok e)
           (match (ast.ast-node-get e)
-            [(ast.AstExpr.Var name) (string.eq (spec_ci.intern-str name) "y")]
+            [(Var name) (string.eq (spec_ci.intern-str name) "y")]
             [_ false])]
-        [(spec.ResultSpecSubExpr.Err _) false])
+        [(Err _) false])
       ;; recursion through `if`: x in the condition becomes 5, unmapped y stays
       (match (spec-substitute-values-expr
-        (ast.AstExpr.If
-          (ast.ast-node-push (ast.AstExpr.Var cbi.compiler-builtin-id-fix-x))
-          (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 1)))
-          (ast.ast-node-push (ast.AstExpr.Var cbi.compiler-builtin-id-fix-y)))
+        (If
+          (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-x))
+          (ast.ast-node-push (Literal (ast.ast-lit-int 1)))
+          (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-y)))
         subs)
-        [(spec.ResultSpecSubExpr.Ok e)
+        [(Ok e)
           (match (ast.ast-node-get e)
-            [(ast.AstExpr.If cond-box _ else-branch-box)
+            [(If cond-box _ else-branch-box)
               (let
                 [cond : ast.AstExpr (ast.ast-node-get cond-box)]
                 [else-branch : ast.AstExpr (ast.ast-node-get else-branch-box)]
                 (and
                   (match cond
-                    [(ast.AstExpr.Literal lit)
+                    [(Literal lit)
                       (match lit
-                        [(ast.AstLiteral.Int n _) (= n 5)]
+                        [(Int n _) (= n 5)]
                         [_ false])]
                     [_ false])
                   (match else-branch
-                    [(ast.AstExpr.Var name)
-                      (string.eq (spec_ci.intern-str name) "y")]
+                    [(Var name) (string.eq (spec_ci.intern-str name) "y")]
                     [_ false])))]
             [_ false])]
-        [(spec.ResultSpecSubExpr.Err _) false]))))
+        [(Err _) false]))))
 
 (define (compiler-specialize-boxed-tails-ok?) : bool
   (let
     [templates : spec.SpecTemplateList
       (let
         [out : spec.SpecTemplateList (spec.spec-template-list-new)]
-        (begin
-          (spec.spec-template-list-push
-            (&mut out)
-            (spec.SpecTemplate.Item
-              cbi.compiler-builtin-id-fix-x
-              (ast.ast-param-list-new)
-              (ast.AstType.I64)
-              (ast.AstExpr.Literal (ast.ast-lit-int 1))))
-          (spec.spec-template-list-push
-            (&mut out)
-            (spec.SpecTemplate.Item
-              cbi.compiler-builtin-id-fix-second
-              (ast.ast-param-list-new)
-              (ast.AstType.Bool)
-              (ast.AstExpr.Literal (ast.AstLiteral.Bool true))))
-          out))]
+        (spec.spec-template-list-push
+          (&mut out)
+          (Item
+            cbi.compiler-builtin-id-fix-x
+            (ast.ast-param-list-new)
+            (I64)
+            (Literal (ast.ast-lit-int 1))))
+        (spec.spec-template-list-push
+          (&mut out)
+          (Item
+            cbi.compiler-builtin-id-fix-second
+            (ast.ast-param-list-new)
+            (Bool)
+            (Literal (Bool true))))
+        out)]
     [template-env : spec.SpecTemplateEnv
       (spec.spec-template-env-from-list templates)]
     [cache : spec_id_i64_map.Map
       (let
         [seed-cache : spec_id_i64_map.Map (spec_id_i64_map.with-capacity 8)]
-        (begin
-          (spec_id_i64_map.insert-ref!
-            (&mut seed-cache)
-            cbi.compiler-builtin-id-fix-second
-            cbi.compiler-builtin-id-fix-second)
-          (spec_id_i64_map.insert-ref!
-            (&mut seed-cache)
-            cbi.compiler-builtin-id-fix-x
-            cbi.compiler-builtin-id-fix-x)
-          seed-cache))]
+        (spec_id_i64_map.insert-ref!
+          (&mut seed-cache)
+          cbi.compiler-builtin-id-fix-second
+          cbi.compiler-builtin-id-fix-second)
+        (spec_id_i64_map.insert-ref!
+          (&mut seed-cache)
+          cbi.compiler-builtin-id-fix-x
+          cbi.compiler-builtin-id-fix-x)
+        seed-cache)]
     [values : spec.SpecValueList
       (spec.spec-value-cons
-        (ctfe.CompilerCtfeValue.I64 1)
-        (spec.spec-value-cons
-          (ctfe.CompilerCtfeValue.Bool true)
-          (spec.spec-value-list-new)))]
+        (I64 1)
+        (spec.spec-value-cons (Bool true) (spec.spec-value-list-new)))]
     [value-subs : spec.SpecValueSubst
       (spec.spec-value-subst-cons
         cbi.compiler-builtin-id-fix-x
-        (ctfe.CompilerCtfeValue.I64 1)
+        (I64 1)
         (spec.spec-value-subst-cons
           cbi.compiler-builtin-id-fix-flag
-          (ctfe.CompilerCtfeValue.Bool true)
+          (Bool true)
           (spec.spec-value-subst-new)))]
     [type-subs : spec.SpecTypeSubst
       (spec.spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
-        (ast.AstType.I64)
+        (I64)
         (spec.spec-type-subst-cons
           cbi.compiler-builtin-id-fix-U
-          (ast.AstType.Bool)
+          (Bool)
           (spec.spec-type-subst-new)))]
     (and
       (match (spec.spec-template-lookup
         template-env
         cbi.compiler-builtin-id-fix-second)
-        [(spec.SpecMaybeTemplate.Some template)
+        [(Some template)
           (match template
-            [(spec.SpecTemplate.Item name _ _ _)
-              (= name cbi.compiler-builtin-id-fix-second)])]
-        [(spec.SpecMaybeTemplate.None) false])
+            [(Item name _ _ _) (= name cbi.compiler-builtin-id-fix-second)])]
+        [(None) false])
       (match (spec-cache-lookup cache cbi.compiler-builtin-id-fix-second)
-        [(spec.SpecMaybeId.Some name-id)
-          (= name-id cbi.compiler-builtin-id-fix-second)]
-        [(spec.SpecMaybeId.None) false])
+        [(Some name-id) (= name-id cbi.compiler-builtin-id-fix-second)]
+        [(None) false])
       (string.eq (spec-values-key values) "i64_1_bool_1_none")
       (match (spec.spec-value-subst-value
         value-subs
         cbi.compiler-builtin-id-fix-flag)
-        [(ctfe.CompilerCtfeValue.Bool flag) flag]
+        [(Bool flag) flag]
         [_ false])
       (ctfe.ctfe-type-eq
         (spec.spec-type-subst-type type-subs cbi.compiler-builtin-id-fix-U)
-        (ast.AstType.Bool)))))
+        (Bool)))))
 
 (define (compiler-specialize-reflection-string-param-ok?) : bool
   (match (parser.parse-ast-source
     "(defstruct Point (x i64))
 (define (tag-helper [comptime key : String] [x : i64]) : i64 x)
 (define (main) : i64 (tag-helper (type-key (type Point)) 7))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (let
         [pools-before : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
@@ -1194,7 +1137,7 @@
         [specialized-result : spec.ResultSpecProgram
           (spec.compiler-specialize-program program)]
         (match specialized-result
-          [(spec.ResultSpecProgram.Ok specialized)
+          [(Ok specialized)
             (let
               [pools-after : ast.AstNodePoolContext
                 (ast.ast-node-pool-context-capture-active)]
@@ -1203,15 +1146,15 @@
                   (ast.ast-node-pool-context-expr-len pools-after)
                   expr-len-before)
                 (match specialized
-                  [(ast.AstProgram.Program decls-box)
+                  [(Program decls-box)
                     (let
                       [decls : ast.AstDeclList
                         (ast.ast-decl-list-box-shared-view decls-box)]
                       (spec.compiler-specialize-decl-list-defines?
                         decls
                         "__tl_specialized_tag-helper_string_12_115_116_114_117_99_116_95_80_111_105_110_116_none"))])))]
-          [(spec.ResultSpecProgram.Err _) false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+          [(Err _) false]))]
+    [(Err _) false]))
 
 (define (compiler-generated-decl-expected-string-key) : String
   (spec.gen-full-key
@@ -1229,21 +1172,19 @@
   (if (< index 0)
     unit
     (match program
-      [(ast.AstProgram.Program decls-box)
+      [(Program decls-box)
         (let
           [decls : ast.AstDeclList
             (ast.ast-decl-list-box-shared-view decls-box)]
           [args : ast.AstExprList (ast.ast-expr-list-new)]
-          (begin
-            (ast.ast-expr-list-push
-              (&mut args)
-              (ast.ast-node-push
-                (ast.AstExpr.Literal (ast.ast-lit-generated-string arg))))
-            (set!
-              (array-ref decls.slots (+ decls.offset index))
-              (ast.ast-decl-comptime-decl-with-meta
-                (ast.AstGeneratedDeclMeta.Some generator item args "")
-                (spec.spec-array-shared-view decls.slots (+ decls.offset index))))))])))
+          (ast.ast-expr-list-push
+            (&mut args)
+            (ast.ast-node-push (Literal (ast.ast-lit-generated-string arg))))
+          (set!
+            (array-ref decls.slots (+ decls.offset index))
+            (ast.ast-decl-comptime-decl-with-meta
+              (Some generator item args "")
+              (spec.spec-array-shared-view decls.slots (+ decls.offset index)))))])))
 
 (define (compiler-generated-decl-pair
   [source : String]
@@ -1253,24 +1194,21 @@
   [first-arg : String]
   [second-index : i64]
   [second-arg : String]) : parser.ResultAstProgram
-  (match (parser.parse-ast-source source)
-    [(parser.ResultAstProgram.Ok program)
-      (begin
-        (compiler-generated-decl-mark!
-          (ast.ast-place-shared-view program)
-          first-index
-          (spec.spec-place-shared-view generator)
-          (spec.spec-place-shared-view item)
-          first-arg)
-        (compiler-generated-decl-mark!
-          (ast.ast-place-shared-view program)
-          second-index
-          generator
-          item
-          second-arg)
-        (parser.ResultAstProgram.Ok program))]
-    [(parser.ResultAstProgram.Err message)
-      (parser.ResultAstProgram.Err message)]))
+  (let
+    [program (try (parser.parse-ast-source source))]
+    (compiler-generated-decl-mark!
+      (ast.ast-place-shared-view program)
+      first-index
+      (spec.spec-place-shared-view generator)
+      (spec.spec-place-shared-view item)
+      first-arg)
+    (compiler-generated-decl-mark!
+      (ast.ast-place-shared-view program)
+      second-index
+      generator
+      item
+      second-arg)
+    (Ok program)))
 
 (define (compiler-generated-decl-reuse-program) : parser.ResultAstProgram
   (compiler-generated-decl-pair
@@ -1318,10 +1256,10 @@
     "same-key"
     1
     "same-key")
-    [(parser.ResultAstProgram.Err _) false]
-    [(parser.ResultAstProgram.Ok program)
+    [(Err _) false]
+    [(Ok program)
       (match (ast.ast-place-shared-view program)
-        [(ast.AstProgram.Program decls-box)
+        [(Program decls-box)
           (let
             [decls : ast.AstDeclList
               (ast.ast-decl-list-box-shared-view decls-box)]
@@ -1332,11 +1270,11 @@
             (and
               (= equal? reuse?)
               (match (spec.compiler-specialize-program program)
-                [(spec.ResultSpecProgram.Ok normalized)
+                [(Ok normalized)
                   (and
                     reuse?
                     (match normalized
-                      [(ast.AstProgram.Program normalized-box)
+                      [(Program normalized-box)
                         (let
                           [normalized-decls : ast.AstDeclList
                             (ast.ast-decl-list-box-shared-view normalized-box)]
@@ -1348,7 +1286,7 @@
                                   (ast.ast-decl-list-ref normalized-decls 0)]
                                 (ast.ast-decl-must-use? decl))
                               marked?)))]))]
-                [(spec.ResultSpecProgram.Err diag)
+                [(Err diag)
                   (let
                     [value : cdiag.CompilerDiagnostic
                       (cdiag.compiler-diagnostic-box-shared-view diag)]
@@ -1396,13 +1334,13 @@
 
 (define (compiler-generated-decl-reuse-ok?) : bool
   (match (compiler-generated-decl-reuse-program)
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (and
         (compiler-specialize-needed? (ast.ast-place-shared-view program))
         (match (spec.compiler-specialize-program program)
-          [(spec.ResultSpecProgram.Ok normalized)
+          [(Ok normalized)
             (match normalized
-              [(ast.AstProgram.Program decls-box)
+              [(Program decls-box)
                 (let
                   [decls : ast.AstDeclList
                     (ast.ast-decl-list-box-shared-view decls-box)]
@@ -1411,16 +1349,16 @@
                       decls
                       "Box_String")
                     1))])]
-          [(spec.ResultSpecProgram.Err _) false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+          [(Err _) false]))]
+    [(Err _) false]))
 
 (define (compiler-generated-decl-function-reuse-ok?) : bool
   (match (compiler-generated-decl-function-reuse-program)
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (spec.compiler-specialize-program program)
-        [(spec.ResultSpecProgram.Ok normalized)
+        [(Ok normalized)
           (match normalized
-            [(ast.AstProgram.Program decls-box)
+            [(Program decls-box)
               (let
                 [decls : ast.AstDeclList
                   (ast.ast-decl-list-box-shared-view decls-box)]
@@ -1429,23 +1367,23 @@
                     decls
                     "make-box-string")
                   1))])]
-        [(spec.ResultSpecProgram.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-generated-decl-incompatible-rejected?) : bool
   (match (compiler-generated-decl-incompatible-program)
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (spec.compiler-specialize-program program)
-        [(spec.ResultSpecProgram.Ok _) false]
-        [(spec.ResultSpecProgram.Err _) true])]
-    [(parser.ResultAstProgram.Err _) false]))
+        [(Ok _) false]
+        [(Err _) true])]
+    [(Err _) false]))
 
 (define (compiler-generated-decl-incompatible-note-ok?) : bool
   (match (compiler-generated-decl-incompatible-program)
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (spec.compiler-specialize-program program)
-        [(spec.ResultSpecProgram.Ok _) false]
-        [(spec.ResultSpecProgram.Err diag)
+        [(Ok _) false]
+        [(Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
               (cdiag.compiler-diagnostic-box-shared-view diag)]
@@ -1464,11 +1402,11 @@
               (string.eq
                 (cdiag.compiler-diagnostic-note-list-get notes 1)
                 "generated declaration: Box_String from sample-family")))])]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-generated-decl-incompatible-path-ok?) : bool
   (match (compiler-generated-decl-incompatible-program)
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (compiler-specialize-program-with-paths
         program
         (ast.ast-decl-root-path-cons
@@ -1477,42 +1415,42 @@
             "generated/second.tl"
             (ast.ast-decl-path-list-new)))
         "generated/fallback.tl")
-        [(spec.ResultSpecProgramWithPaths.Ok _ _) false]
-        [(spec.ResultSpecProgramWithPaths.Err diag)
+        [(Ok _ _) false]
+        [(Err diag)
           (let
             [value : cdiag.CompilerDiagnostic
               (cdiag.compiler-diagnostic-box-shared-view diag)]
             (string.eq
               (cdiag.compiler-diagnostic-path value)
               "generated/second.tl"))])]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-generated-decl-origin-preserved-ok?) : bool
   (match (compiler-generated-decl-reuse-program)
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (spec.compiler-specialize-program program)
-        [(spec.ResultSpecProgram.Ok normalized)
+        [(Ok normalized)
           (match normalized
-            [(ast.AstProgram.Program decls-box)
+            [(Program decls-box)
               (match (ast.ast-decl-list-step (deref decls-box))
-                [(ast.AstDeclListStep.Cons decl _)
+                [(Cons decl _)
                   (and
                     (match (ast.ast-decl-generated-meta decl)
-                      [(ast.AstGeneratedDeclMeta.Some generator item _ key)
+                      [(Some generator item _ key)
                         (and
                           (string.eq generator "sample-family")
                           (string.eq item "Box_String")
                           (string.eq
                             key
                             (compiler-generated-decl-expected-string-key)))]
-                      [(ast.AstGeneratedDeclMeta.No) false])
+                      [(No) false])
                     (match decl
-                      [(ast.AstDecl.DefStruct decl-meta name _ _ _)
+                      [(DefStruct decl-meta name _ _ _)
                         (string.eq (spec_ci.intern-str name) "Box_String")]
                       [_ false]))]
-                [(ast.AstDeclListStep.Nil) false])])]
-        [(spec.ResultSpecProgram.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+                [(Nil) false])])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (define (compiler-generated-registry-map-ok?) : bool
   (let
@@ -1525,8 +1463,8 @@
     [decl : ast.AstDecl
       (ast.ast-decl-def-struct-id
         name-id
-        ast.AstStructRepr.Default
-        ast.AstStructCleanup.No
+        Default
+        No
         (ast.ast-field-def-list-new))]
     [key : spec.SpecStructuralKey
       (spec.gen-registry-structural-key-with-owner
@@ -1542,8 +1480,8 @@
         key
         (ast.ast-place-shared-view decl))]
     (match (spec.gen-registry-lookup-with-owner registry key)
-      [(spec.GenMaybeEntry.Some found) (spec.gen-decl-eq? found decl)]
-      [(spec.GenMaybeEntry.None) false])))
+      [(Some found) (spec.gen-decl-eq? found decl)]
+      [(None) false])))
 
 (define (compiler-generated-decl-spmd-metadata-distinct-ok?) : bool
   (let
@@ -1554,51 +1492,34 @@
     [b-items : ast.AstSpmdSpecializationList
       (ast.ast-spmd-specialization-list-new)]
     [generated-id : i64 (spec_ci.intern-generated-canonical-name "generated")]
-    [body : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 0)))]
-    (begin
-      (ast.ast-spmd-param-class-list-push
-        (&mut a-classes)
-        ast.AstSpmdParamClass.Varying)
-      (ast.ast-spmd-param-class-list-push
-        (&mut b-classes)
-        ast.AstSpmdParamClass.Varying)
-      (ast.ast-spmd-specialization-list-push
-        (&mut a-items)
-        (ast.AstSpmdSpecialization
-          8
-          (box a-classes)
-          ast.AstSpmdResultClass.Varying
-          0))
-      (ast.ast-spmd-specialization-list-push
-        (&mut b-items)
-        (ast.AstSpmdSpecialization
-          16
-          (box b-classes)
-          ast.AstSpmdResultClass.Varying
-          0))
-      (not
-        (spec.gen-decl-eq?
-          (ast.ast-decl-def-fn-metadata-id
-            generated-id
-            (ast.ast-param-list-new)
-            (ast.AstType.I64)
-            body
-            (ast.ast-fn-metadata-full
-              ast.AstFnExport.No
-              (ast.AstSpmdCallable.Callable a-items)))
-          (ast.ast-decl-def-fn-metadata-id
-            generated-id
-            (ast.ast-param-list-new)
-            (ast.AstType.I64)
-            body
-            (ast.ast-fn-metadata-full
-              ast.AstFnExport.No
-              (ast.AstSpmdCallable.Callable b-items))))))))
+    [body : i64 (ast.ast-node-push (Literal (ast.ast-lit-int 0)))]
+    (ast.ast-spmd-param-class-list-push (&mut a-classes) Varying)
+    (ast.ast-spmd-param-class-list-push (&mut b-classes) Varying)
+    (ast.ast-spmd-specialization-list-push
+      (&mut a-items)
+      (ast.AstSpmdSpecialization 8 (box a-classes) Varying 0))
+    (ast.ast-spmd-specialization-list-push
+      (&mut b-items)
+      (ast.AstSpmdSpecialization 16 (box b-classes) Varying 0))
+    (not
+      (spec.gen-decl-eq?
+        (ast.ast-decl-def-fn-metadata-id
+          generated-id
+          (ast.ast-param-list-new)
+          (I64)
+          body
+          (ast.ast-fn-metadata-full No (Callable a-items)))
+        (ast.ast-decl-def-fn-metadata-id
+          generated-id
+          (ast.ast-param-list-new)
+          (I64)
+          body
+          (ast.ast-fn-metadata-full No (Callable b-items)))))))
 
 (define (compiler-generated-test-metadata-distinct-ok?) : bool
   (let
     [name : i64 (spec_ci.intern-generated-canonical-name "generated-test")]
-    [body : i64 (ast.ast-node-push (ast.AstExpr.Literal ast.AstLiteral.Unit))]
+    [body : i64 (ast.ast-node-push (Literal Unit))]
     [span : ast.AstSourceSpan (ast.ast-source-span 1 1 1 2)]
     (and
       (not
@@ -1607,22 +1528,18 @@
           (ast.ast-decl-test-metadata-id
             name
             body
-            (ast.ast-test-metadata-new ast.AstTestIgnoreReason.No true)
+            (ast.ast-test-metadata-new No true)
             span)))
       (spec.gen-decl-eq?
         (ast.ast-decl-test-metadata-id
           name
           body
-          (ast.ast-test-metadata-new
-            (ast.AstTestIgnoreReason.Some "same reason")
-            false)
+          (ast.ast-test-metadata-new (Some "same reason") false)
           span)
         (ast.ast-decl-test-metadata-id
           name
           body
-          (ast.ast-test-metadata-new
-            (ast.AstTestIgnoreReason.Some "same reason")
-            false)
+          (ast.ast-test-metadata-new (Some "same reason") false)
           span)))))
 
 (define (compiler-specialize-generated-symbol-records-growth-ok?) : bool
@@ -1636,56 +1553,47 @@
     [handles : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [index : i64 0]
     [ok : bool true]
-    (begin
-      ;; Cross several recipe-buffer growth boundaries while every generated
-      ;; handle still has no rendered spelling.
-      (while (< index count)
-        (let
-          [values : spec.SpecValueList
-            (spec.spec-value-cons
-              (ctfe.CompilerCtfeValue.I64 index)
-              (spec.spec-value-list-new))]
-          [key : spec.SpecStructuralKey
-            (spec.spec-specialization-structural-key-with-owner
-              owner
-              "wide"
-              values)]
-          [handle : i64
-            (spec.spec-reserve-specialized-symbol-with-owner
-              owner
-              key
-              "wide"
-              values)]
-          (begin
-            (set! (array-ref handles index) handle)
-            (if (string.eq
-              (spec_ci.intern-compat-state-str intern-state handle)
-              "")
-              unit
-              (set! ok false))
-            (set! index (+ index 1)))))
-      (spec.spec-materialize-owner-generated-symbols! owner)
-      (set! index 0)
-      (while (and ok (< index count))
-        (let
-          [values : spec.SpecValueList
-            (spec.spec-value-cons
-              (ctfe.CompilerCtfeValue.I64 index)
-              (spec.spec-value-list-new))]
-          (begin
-            (if (string.eq
-              (spec_ci.intern-compat-state-str
-                intern-state
-                (array-ref handles index))
-              (spec.spec-specialized-name-with-owner owner "wide" values))
-              unit
-              (set! ok false))
-            (set! index (+ index 1)))))
-      (and
-        ok
-        (=
-          (__tl-project-field (array-ref owner.generated-symbol-records 0) len)
-          0)))))
+    ;; Cross several recipe-buffer growth boundaries while every generated
+    ;; handle still has no rendered spelling.
+    (while (< index count)
+      (let
+        [values : spec.SpecValueList
+          (spec.spec-value-cons (I64 index) (spec.spec-value-list-new))]
+        [key : spec.SpecStructuralKey
+          (spec.spec-specialization-structural-key-with-owner
+            owner
+            "wide"
+            values)]
+        [handle : i64
+          (spec.spec-reserve-specialized-symbol-with-owner
+            owner
+            key
+            "wide"
+            values)]
+        (set! (array-ref handles index) handle)
+        (if (string.eq (spec_ci.intern-compat-state-str intern-state handle) "")
+          unit
+          (set! ok false))
+        (set! index (+ index 1))))
+    (spec.spec-materialize-owner-generated-symbols! owner)
+    (set! index 0)
+    (while (and ok (< index count))
+      (let
+        [values : spec.SpecValueList
+          (spec.spec-value-cons (I64 index) (spec.spec-value-list-new))]
+        (if (string.eq
+          (spec_ci.intern-compat-state-str
+            intern-state
+            (array-ref handles index))
+          (spec.spec-specialized-name-with-owner owner "wide" values))
+          unit
+          (set! ok false))
+        (set! index (+ index 1))))
+    (and
+      ok
+      (=
+        (__tl-project-field (array-ref owner.generated-symbol-records 0) len)
+        0))))
 
 ;; Resource cleanup expressions are constrained further by the typechecker;
 ;; these source-local tests isolate the specialization traversal itself.
@@ -1695,92 +1603,79 @@
       "(define (bad [comptime T : type]) : i64 "
       body
       ") (define (main) : i64 (bad (type i64)))"))
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (spec.compiler-specialize-program program)
-        [(spec.ResultSpecProgram.Err _) true]
+        [(Err _) true]
         [_ false])]
     [_ false]))
 
 (define (compiler-specialize-resource-literal? [id : i64]) : bool
   (match (ast.ast-node-get id)
-    [(ast.AstExpr.Literal literal)
+    [(Literal literal)
       (match literal
-        [(ast.AstLiteral.Int value _) (= value 5)]
+        [(Int value _) (= value 5)]
         [_ false])]
     [_ false]))
 
 (define (compiler-specialize-resource-var? [id : i64]) : bool
   (match (ast.ast-node-get id)
-    [(ast.AstExpr.Var name) (= name cbi.compiler-builtin-id-fix-x)]
+    [(Var name) (= name cbi.compiler-builtin-id-fix-x)]
     [_ false]))
 
 (define (compiler-specialize-resource-subst-ok?) : bool
   (let
     [name : i64 cbi.compiler-builtin-id-fix-x]
-    [var : i64 (ast.ast-node-push (ast.AstExpr.Var name))]
+    [var : i64 (ast.ast-node-push (Var name))]
     [bindings : ast.AstResourceBindingList (ast.ast-resource-binding-list-new)]
     [body : ast.AstExprList (ast.ast-expr-list-new)]
     [subs : spec.SpecValueSubst
-      (spec.spec-value-subst-cons
-        name
-        (ctfe.CompilerCtfeValue.I64 5)
-        (spec.spec-value-subst-new))]
-    (begin
-      (ast.ast-resource-binding-list-push
-        (&mut bindings)
-        (ast.AstResourceBinding.Binding name var var true))
-      (ast.ast-resource-binding-list-push
-        (&mut bindings)
-        (ast.AstResourceBinding.Binding
-          cbi.compiler-builtin-id-fix-y
-          var
-          var
-          false))
-      (ast.ast-expr-list-push (&mut body) var)
-      (match (spec-substitute-values-expr
-        (ast.AstExpr.WithResource
-          (box (ast.AstWithResource.WithResource bindings body)))
-        subs)
-        [(spec.ResultSpecSubExpr.Ok rewritten)
-          (match (ast.ast-node-get rewritten)
-            [(ast.AstExpr.WithResource resource)
-              (match (ast.ast-with-resource-box-shared-view resource)
-                [(ast.AstWithResource.WithResource bindings body)
-                  (and
-                    (= bindings.len 2)
-                    (= body.len 1)
-                    (match (ast.ast-resource-binding-list-get
-                      (& bindings)
-                      0
-                      (ast.ast-resource-binding-fallback))
-                      [(ast.AstResourceBinding.Binding
-                          actual
-                          init
-                          cleanup
-                          move-aware?)
-                        (and
-                          (= actual name)
-                          move-aware?
-                          (compiler-specialize-resource-literal? init)
-                          (compiler-specialize-resource-literal? cleanup))])
-                    (match (ast.ast-resource-binding-list-get
-                      (& bindings)
-                      1
-                      (ast.ast-resource-binding-fallback))
-                      [(ast.AstResourceBinding.Binding
-                          actual
-                          init
-                          cleanup
-                          move-aware?)
-                        (and
-                          (= actual cbi.compiler-builtin-id-fix-y)
-                          (not move-aware?)
-                          (compiler-specialize-resource-var? init)
-                          (compiler-specialize-resource-var? cleanup))])
-                    (compiler-specialize-resource-var?
-                      (ast.ast-expr-list-get (& body) 0 0)))])]
-            [_ false])]
-        [_ false]))))
+      (spec.spec-value-subst-cons name (I64 5) (spec.spec-value-subst-new))]
+    (ast.ast-resource-binding-list-push
+      (&mut bindings)
+      (ast.AstResourceBinding.Binding name var var true))
+    (ast.ast-resource-binding-list-push
+      (&mut bindings)
+      (ast.AstResourceBinding.Binding
+        cbi.compiler-builtin-id-fix-y
+        var
+        var
+        false))
+    (ast.ast-expr-list-push (&mut body) var)
+    (match (spec-substitute-values-expr
+      (WithResource (box (ast.AstWithResource.WithResource bindings body)))
+      subs)
+      [(Ok rewritten)
+        (match (ast.ast-node-get rewritten)
+          [(WithResource resource)
+            (match (ast.ast-with-resource-box-shared-view resource)
+              [(WithResource bindings body)
+                (and
+                  (= bindings.len 2)
+                  (= body.len 1)
+                  (match (ast.ast-resource-binding-list-get
+                    (& bindings)
+                    0
+                    (ast.ast-resource-binding-fallback))
+                    [(Binding actual init cleanup move-aware?)
+                      (and
+                        (= actual name)
+                        move-aware?
+                        (compiler-specialize-resource-literal? init)
+                        (compiler-specialize-resource-literal? cleanup))])
+                  (match (ast.ast-resource-binding-list-get
+                    (& bindings)
+                    1
+                    (ast.ast-resource-binding-fallback))
+                    [(Binding actual init cleanup move-aware?)
+                      (and
+                        (= actual cbi.compiler-builtin-id-fix-y)
+                        (not move-aware?)
+                        (compiler-specialize-resource-var? init)
+                        (compiler-specialize-resource-var? cleanup))])
+                  (compiler-specialize-resource-var?
+                    (ast.ast-expr-list-get (& body) 0 0)))])]
+          [_ false])]
+      [_ false])))
 
 (define (compiler-specialize-resource-ok?) : bool
   (and
@@ -1791,11 +1686,11 @@
     (match (parser.parse-ast-source
       "(define (pick [comptime n : i64]) : i64 n)
        (define (main) : i64 (with ([r 0 (pick 7)]) 0))")
-      [(parser.ResultAstProgram.Ok program)
+      [(Ok program)
         (match (spec.compiler-specialize-program program)
-          [(spec.ResultSpecProgram.Ok specialized)
+          [(Ok specialized)
             (match specialized
-              [(ast.AstProgram.Program decls)
+              [(Program decls)
                 (spec.compiler-specialize-decl-list-defines?
                   (deref decls)
                   "__tl_specialized_pick_i64_7_none")])]
@@ -1803,38 +1698,35 @@
       [_ false])))
 
 (define (compiler-specialize-self-test) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (unless (compiler-specialize-type-param-ok?) (return 0))
-    (unless (compiler-specialize-runtime-type-use-rejected?) (return 0))
-    (unless (compiler-specialize-template-shadow-ok?) (return 0))
-    (unless (compiler-specialize-template-shadow-sibling-ok?) (return 0))
-    (unless (compiler-specialize-dense-template-shadow-state-ok?) (return 0))
-    (unless (compiler-specialize-type-shadow-ok?) (return 0))
-    (unless (compiler-specialize-raw-pointer-type-ok?) (return 0))
-    (unless (compiler-specialize-owner-slice-type-ok?) (return 0))
-    (unless (compiler-specialize-name-key-ok?) (return 0))
-    (unless (compiler-specialize-structural-key-ok?) (return 0))
-    (unless (compiler-specialize-reuse-ok?) (return 0))
-    (unless (compiler-specialize-subst-ok?) (return 0))
-    (unless (compiler-specialize-value-subst-ok?) (return 0))
-    (unless (compiler-specialize-resource-ok?) (return 0))
-    (unless (compiler-specialize-boxed-tails-ok?) (return 0))
-    (unless (compiler-specialize-reflection-string-param-ok?) (return 0))
-    (unless (compiler-generated-decl-reuse-ok?) (return 0))
-    (unless (compiler-generated-decl-markers-distinct-ok?) (return 0))
-    (unless (compiler-generated-decl-function-reuse-ok?) (return 0))
-    (unless (compiler-generated-decl-incompatible-rejected?) (return 0))
-    (unless (compiler-generated-decl-incompatible-note-ok?) (return 0))
-    (unless (compiler-generated-decl-incompatible-path-ok?) (return 0))
-    (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
-    (unless (compiler-generated-registry-map-ok?) (return 0))
-    (unless (compiler-generated-decl-spmd-metadata-distinct-ok?) (return 0))
-    (unless (compiler-generated-test-metadata-distinct-ok?) (return 0))
-    (unless
-      (compiler-specialize-generated-symbol-records-growth-ok?)
-      (return 0))
-    1))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (unless (compiler-specialize-type-param-ok?) (return 0))
+  (unless (compiler-specialize-runtime-type-use-rejected?) (return 0))
+  (unless (compiler-specialize-template-shadow-ok?) (return 0))
+  (unless (compiler-specialize-template-shadow-sibling-ok?) (return 0))
+  (unless (compiler-specialize-dense-template-shadow-state-ok?) (return 0))
+  (unless (compiler-specialize-type-shadow-ok?) (return 0))
+  (unless (compiler-specialize-raw-pointer-type-ok?) (return 0))
+  (unless (compiler-specialize-owner-slice-type-ok?) (return 0))
+  (unless (compiler-specialize-name-key-ok?) (return 0))
+  (unless (compiler-specialize-structural-key-ok?) (return 0))
+  (unless (compiler-specialize-reuse-ok?) (return 0))
+  (unless (compiler-specialize-subst-ok?) (return 0))
+  (unless (compiler-specialize-value-subst-ok?) (return 0))
+  (unless (compiler-specialize-resource-ok?) (return 0))
+  (unless (compiler-specialize-boxed-tails-ok?) (return 0))
+  (unless (compiler-specialize-reflection-string-param-ok?) (return 0))
+  (unless (compiler-generated-decl-reuse-ok?) (return 0))
+  (unless (compiler-generated-decl-markers-distinct-ok?) (return 0))
+  (unless (compiler-generated-decl-function-reuse-ok?) (return 0))
+  (unless (compiler-generated-decl-incompatible-rejected?) (return 0))
+  (unless (compiler-generated-decl-incompatible-note-ok?) (return 0))
+  (unless (compiler-generated-decl-incompatible-path-ok?) (return 0))
+  (unless (compiler-generated-decl-origin-preserved-ok?) (return 0))
+  (unless (compiler-generated-registry-map-ok?) (return 0))
+  (unless (compiler-generated-decl-spmd-metadata-distinct-ok?) (return 0))
+  (unless (compiler-generated-test-metadata-distinct-ok?) (return 0))
+  (unless (compiler-specialize-generated-symbol-records-growth-ok?) (return 0))
+  1)
 
 (cfg
   test

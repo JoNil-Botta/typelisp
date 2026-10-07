@@ -21,14 +21,13 @@
       [junk : (__tl_dyn-array u8) (__tl_make-array u8 65536)]
       [index : i64 0]
       (while (< index 65536)
-        (begin
-          (set! (array-ref junk index) (cast 90 : u8))
-          (set! index (+ index 1)))))))
+        (set! (array-ref junk index) (cast 90 : u8))
+        (set! index (+ index 1))))))
 
 (define (env-arena-value-is? [name : String] [want : String]) : bool
   (match (env.get (& name))
-    [(env.EnvSomeString actual) (string.eq actual want)]
-    [(env.EnvNoString) false]))
+    [(EnvSomeString actual) (string.eq actual want)]
+    [(EnvNoString) false]))
 
 ;; A spawned child inherits the published table.
 (define (env-arena-child-sees? [name : String] [want : String]) : bool
@@ -40,11 +39,11 @@
         (process.args-cons
           (str_cat.str-cat "printf '%s' \"$" name "\"")
           (process.args-empty)))))
-    [(process.OkProcessOutput output)
+    [(OkProcessOutput output)
       (and
         (= (process.output-status output) 0)
         (string.eq (process.output-stdout output) want))]
-    [(process.ErrProcessOutput _) false]))
+    [(ErrProcessOutput _) false]))
 
 ;; One job: 0 on success, otherwise the code of the first failed check.
 (define (env-arena-job [job : i64]) : i64
@@ -78,12 +77,11 @@
 (define (env-arena-with-nul) : String
   (let
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 3)]
-    (begin
-      (set! (array-ref bytes 0) (cast 'a' : u8))
-      (set! (array-ref bytes 1) (cast 0 : u8))
-      (set! (array-ref bytes 2) (cast 'b' : u8))
-      (unsafe
-        (string-from-bytes (ptr-cast (__tl_array-data bytes) : (Ptr u8)) 3)))))
+    (set! (array-ref bytes 0) (cast 'a' : u8))
+    (set! (array-ref bytes 1) (cast 0 : u8))
+    (set! (array-ref bytes 2) (cast 'b' : u8))
+    (unsafe
+      (string-from-bytes (ptr-cast (__tl_array-data bytes) : (Ptr u8)) 3))))
 
 ;; The Linux mutator is callable from safe code and validates like `set!`.
 (define (env-arena-direct-mutator-validates?) : bool

@@ -30,39 +30,35 @@
     [acc : i64 0]
     [lo : i64 0]
     [hi : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (match (array-ref ops i)
-            [(Add v) (set! acc (+ acc v))]
-            [(Sub v) (set! acc (- acc v))]
-            [(Mul v) (set! acc (* acc v))])
-          (set! lo (+ lo (bump i)))
-          (set! hi (+ hi i))
-          (set! i (+ i 1))))
-      (+ acc (+ lo hi)))))
+    (while (< i n)
+      (match (array-ref ops i)
+        [(Add v) (set! acc (+ acc v))]
+        [(Sub v) (set! acc (- acc v))]
+        [(Mul v) (set! acc (* acc v))])
+      (set! lo (+ lo (bump i)))
+      (set! hi (+ hi i))
+      (set! i (+ i 1)))
+    (+ acc (+ lo hi))))
 
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 3)]
     [ops : (__tl_dyn-array Op) (__tl_make-array Op n)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            (array-ref ops i)
-            (if (= (% i 3) 0)
-              (Add (+ i 2))
-              (if (= (% i 3) 1)
-                (Sub i)
-                (Mul 3))))
-          (set! i (+ i 1))))
-      (let
-        [r : i64 (run ops n)]
-        ;; n=4 (no args): ops = [Add 2, Sub 1, Mul 3, Add 5].
-        ;; acc: 0+2=2; 2-1=1; 1*3=3; 3+5=8. lo = bump(0..3) = 1+2+3+4 = 10.
-        ;; hi = 0+1+2+3 = 6. r = 8+10+6 = 24.
-        (if (= r 24)
-          42
-          1)))))
+    (while (< i n)
+      (set!
+        (array-ref ops i)
+        (if (= (% i 3) 0)
+          (Add (+ i 2))
+          (if (= (% i 3) 1)
+            (Sub i)
+            (Mul 3))))
+      (set! i (+ i 1)))
+    (let
+      [r : i64 (run ops n)]
+      ;; n=4 (no args): ops = [Add 2, Sub 1, Mul 3, Add 5].
+      ;; acc: 0+2=2; 2-1=1; 1*3=3; 3+5=8. lo = bump(0..3) = 1+2+3+4 = 10.
+      ;; hi = 0+1+2+3 = 6. r = 8+10+6 = 24.
+      (if (= r 24)
+        42
+        1))))

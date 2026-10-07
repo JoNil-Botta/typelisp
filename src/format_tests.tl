@@ -16,8 +16,8 @@
 (test
   fmt-write-failure-diagnostic-includes-path-and-reason
   (match (fcli.fmt-try-write-formatted-file "" "(define x 1)\n")
-    [(fcli.ResultFmtWrite.Ok) (io.panic "fmt write unexpectedly succeeded")]
-    [(fcli.ResultFmtWrite.Err message)
+    [(Ok) (io.panic "fmt write unexpectedly succeeded")]
+    [(Err message)
       (if (string.eq message "fmt: failed to write : io: invalid path: ")
         unit
         (io.panic (string.copy message)))]))
@@ -27,9 +27,8 @@
   (match (format_rules.format-rules-render-source-width-result
     "(define x\n  ]"
     80)
-    [(format_rules.ResultFormatString.Ok _)
-      (io.panic "fmt parse unexpectedly succeeded")]
-    [(format_rules.ResultFormatString.Err err)
+    [(Ok _) (io.panic "fmt parse unexpectedly succeeded")]
+    [(Err err)
       (let
         [message : String (fcli.fmt-source-error-message "bad.tl" err)]
         (if (string.eq
@@ -38,10 +37,54 @@
           unit
           (io.panic message)))]))
 
+(define (fmt-render-80 [source : String]) : String
+  (match (format_rules.format-rules-render-source-width-result source 80)
+    [(format_rules.ResultFormatString.Ok formatted) formatted]
+    [(format_rules.ResultFormatString.Err err)
+      (io.panic (tokens.format-source-error-message err))]))
+
+;; A match or cond arm with several body forms breaks like a `begin` body;
+;; one-form arms, a cond without a multi-form arm and a `cond` macro signature
+;; keep their layout.
+(test
+  fmt-multi-form-arms-break-like-begin
+  (let
+    [expected : String
+      "(define (f [x : i64]) : i64
+  (match x
+    [0
+      (set! x 1)
+      x]
+    [_ x]))
+
+(define (g [x : i64]) : i64
+  (cond [(= x 0) 1] [else x]))
+
+(defmacro (m [a : Expr] [b : Expr ...]) : Expr
+  `(cond
+    [,a
+      (set! x 1)
+      ,@b]
+    [else 0]))
+
+(defmacro (cond [arms : ExprClause ...]) : Expr
+  (fold arms))"]
+    [once : String
+      (fmt-render-80
+        "(define (f [x : i64]) : i64 (match x [0 (set! x 1) x] [_ x]))
+(define (g [x : i64]) : i64 (cond [(= x 0) 1] [else x]))
+(defmacro (m [a : Expr] [b : Expr ...]) : Expr `(cond [,a (set! x 1) ,@b] [else 0]))
+(defmacro (cond [arms : ExprClause ...]) : Expr (fold arms))")]
+    (unless
+      (and
+        (string.eq once expected)
+        (string.eq (fmt-render-80 (string.copy (& once))) expected))
+      (io.panic once))))
+
 (define (fmt-malformed-int-error? [source : String]) : bool
   (match (format_rules.format-rules-render-source-width-result source 80)
-    [(format_rules.ResultFormatString.Ok _) false]
-    [(format_rules.ResultFormatString.Err err)
+    [(Ok _) false]
+    [(Err err)
       (string.eq
         (tokens.format-source-error-message err)
         "format lexer: malformed integer literal")]))
@@ -61,59 +104,55 @@
 
 (define (fmt-cst-count [node : cst.FormatCst]) : i64
   (match node
-    [(cst.FormatCst.Atom _) 1]
-    [(cst.FormatCst.Comment _) 1]
-    [(cst.FormatCst.Prefix _ child) (+ 1 (fmt-cst-count (deref child)))]
-    [(cst.FormatCst.Projection child _) (+ 1 (fmt-cst-count (deref child)))]
-    [(cst.FormatCst.List items) (+ 1 (fmt-cst-list-total (deref items)))]
-    [(cst.FormatCst.BracketList items) (+ 1 (fmt-cst-list-total (deref items)))]
-    [(cst.FormatCst.Forms items) (+ 1 (fmt-cst-list-total (deref items)))]))
+    [(Atom _) 1]
+    [(Comment _) 1]
+    [(Prefix _ child) (+ 1 (fmt-cst-count (deref child)))]
+    [(Projection child _) (+ 1 (fmt-cst-count (deref child)))]
+    [(List items) (+ 1 (fmt-cst-list-total (deref items)))]
+    [(BracketList items) (+ 1 (fmt-cst-list-total (deref items)))]
+    [(Forms items) (+ 1 (fmt-cst-list-total (deref items)))]))
 
 (define (fmt-cst-list-total [items : cst.FormatCstList]) : i64
   (match (cst.fmt-cst-list-step items)
-    [(cst.FormatCstListStep.Empty) 0]
-    [(cst.FormatCstListStep.Item node rest)
-      (+ (fmt-cst-count node) (fmt-cst-list-total rest))]))
+    [(Empty) 0]
+    [(Item node rest) (+ (fmt-cst-count node) (fmt-cst-list-total rest))]))
 
 (define (fmt-cst-comment-count [node : cst.FormatCst]) : i64
   (match node
-    [(cst.FormatCst.Atom _) 0]
-    [(cst.FormatCst.Comment _) 1]
-    [(cst.FormatCst.Prefix _ child) (fmt-cst-comment-count (deref child))]
-    [(cst.FormatCst.Projection child _) (fmt-cst-comment-count (deref child))]
-    [(cst.FormatCst.List items) (fmt-cst-list-comment-count (deref items))]
-    [(cst.FormatCst.BracketList items)
-      (fmt-cst-list-comment-count (deref items))]
-    [(cst.FormatCst.Forms items) (fmt-cst-list-comment-count (deref items))]))
+    [(Atom _) 0]
+    [(Comment _) 1]
+    [(Prefix _ child) (fmt-cst-comment-count (deref child))]
+    [(Projection child _) (fmt-cst-comment-count (deref child))]
+    [(List items) (fmt-cst-list-comment-count (deref items))]
+    [(BracketList items) (fmt-cst-list-comment-count (deref items))]
+    [(Forms items) (fmt-cst-list-comment-count (deref items))]))
 
 (define (fmt-cst-list-comment-count [items : cst.FormatCstList]) : i64
   (match (cst.fmt-cst-list-step items)
-    [(cst.FormatCstListStep.Empty) 0]
-    [(cst.FormatCstListStep.Item node rest)
+    [(Empty) 0]
+    [(Item node rest)
       (+ (fmt-cst-comment-count node) (fmt-cst-list-comment-count rest))]))
 
 (define (fmt-cst-bracket-count [node : cst.FormatCst]) : i64
   (match node
-    [(cst.FormatCst.Atom _) 0]
-    [(cst.FormatCst.Comment _) 0]
-    [(cst.FormatCst.Prefix _ child) (fmt-cst-bracket-count (deref child))]
-    [(cst.FormatCst.Projection child _) (fmt-cst-bracket-count (deref child))]
-    [(cst.FormatCst.List items) (fmt-cst-list-bracket-count (deref items))]
-    [(cst.FormatCst.BracketList items)
-      (+ 1 (fmt-cst-list-bracket-count (deref items)))]
-    [(cst.FormatCst.Forms items) (fmt-cst-list-bracket-count (deref items))]))
+    [(Atom _) 0]
+    [(Comment _) 0]
+    [(Prefix _ child) (fmt-cst-bracket-count (deref child))]
+    [(Projection child _) (fmt-cst-bracket-count (deref child))]
+    [(List items) (fmt-cst-list-bracket-count (deref items))]
+    [(BracketList items) (+ 1 (fmt-cst-list-bracket-count (deref items)))]
+    [(Forms items) (fmt-cst-list-bracket-count (deref items))]))
 
 (define (fmt-cst-list-bracket-count [items : cst.FormatCstList]) : i64
   (match (cst.fmt-cst-list-step items)
-    [(cst.FormatCstListStep.Empty) 0]
-    [(cst.FormatCstListStep.Item node rest)
+    [(Empty) 0]
+    [(Item node rest)
       (+ (fmt-cst-bracket-count node) (fmt-cst-list-bracket-count rest))]))
 
 (define (parse-format-source [src : String]) : cst.FormatCst
   (match (cst.parse-format-source-result src)
-    [(cst.ResultFormatCst.Ok tree) tree]
-    [(cst.ResultFormatCst.Err err)
-      (io.panic (tokens.format-source-error-message err))]))
+    [(Ok tree) tree]
+    [(Err err) (io.panic (tokens.format-source-error-message err))]))
 
 (define (format-cst-fixture) : String
   "(import std)
@@ -169,8 +208,8 @@
 
 (define (format-cst-error-location-ok?) : bool
   (match (cst.parse-format-source-result "(define x\n  ]")
-    [(cst.ResultFormatCst.Ok _) false]
-    [(cst.ResultFormatCst.Err err)
+    [(Ok _) false]
+    [(Err err)
       (and
         (string.eq
           (tokens.format-source-error-message
@@ -181,27 +220,27 @@
 (define (format-cst-legacy-char-rejected-ok?) : bool
   (and
     (match (cst.parse-format-source-result "#x'")
-      [(cst.ResultFormatCst.Ok _) false]
-      [(cst.ResultFormatCst.Err err)
+      [(Ok _) false]
+      [(Err err)
         (string.eq
           (tokens.format-source-error-message err)
           "format lexer: unexpected character")])
     (match (cst.parse-format-source-result "#\\space'")
-      [(cst.ResultFormatCst.Ok _) false]
-      [(cst.ResultFormatCst.Err err)
+      [(Ok _) false]
+      [(Err err)
         (string.eq
           (tokens.format-source-error-message err)
           "format lexer: unexpected character")])))
 
 (define (format-cst-dense-storage-ok?) : bool
   (match (parse-format-source "(a b c)")
-    [(cst.FormatCst.Forms forms)
+    [(Forms forms)
       (and
         (= (fmt-list-count (owned_view.compiler-owned-box-shared-view forms)) 1)
         (match (cst.fmt-cst-list-step (deref forms))
-          [(cst.FormatCstListStep.Item node _)
+          [(Item node _)
             (match node
-              [(cst.FormatCst.List items) (= (fmt-list-count (deref items)) 3)]
+              [(List items) (= (fmt-list-count (deref items)) 3)]
               [_ false])]
           [_ false]))]
     [_ false]))
@@ -210,36 +249,32 @@
   (let
     [stream : tokens.FormatTokenStream (format-lex (format-cst-fixture))]
     [tree : cst.FormatCst (parse-format-source (format-cst-fixture))]
-    (begin
-      (unless (> (tokens.format-token-count stream) 40) (return 1))
-      (unless
-        (> (fmt-cst-count (owned_view.compiler-owned-shared-view tree)) 40)
-        (return 2))
-      (unless
-        (=
-          (fmt-cst-comment-count (owned_view.compiler-owned-shared-view tree))
-          1)
-        (return 3))
-      (unless (> (fmt-cst-bracket-count tree) 4) (return 4))
-      (unless
-        (= (format-token-tag-count stream (tokens.fmt-tag-char)) 1)
-        (return 5))
-      (unless (format-cst-boxed-nested-ok?) (return 6))
-      (unless (format-cst-prefixed-int-ok?) (return 7))
-      (unless (format-cst-apostrophe-char-ok?) (return 8))
-      (unless (format-cst-error-location-ok?) (return 9))
-      (unless (format-cst-legacy-char-rejected-ok?) (return 10))
-      (unless (format-cst-dense-storage-ok?) (return 11))
-      42)))
+    (unless (> (tokens.format-token-count stream) 40) (return 1))
+    (unless
+      (> (fmt-cst-count (owned_view.compiler-owned-shared-view tree)) 40)
+      (return 2))
+    (unless
+      (= (fmt-cst-comment-count (owned_view.compiler-owned-shared-view tree)) 1)
+      (return 3))
+    (unless (> (fmt-cst-bracket-count tree) 4) (return 4))
+    (unless
+      (= (format-token-tag-count stream (tokens.fmt-tag-char)) 1)
+      (return 5))
+    (unless (format-cst-boxed-nested-ok?) (return 6))
+    (unless (format-cst-prefixed-int-ok?) (return 7))
+    (unless (format-cst-apostrophe-char-ok?) (return 8))
+    (unless (format-cst-error-location-ok?) (return 9))
+    (unless (format-cst-legacy-char-rejected-ok?) (return 10))
+    (unless (format-cst-dense-storage-ok?) (return 11))
+    42))
 
 (define (format-rules-render-width [node : cst.FormatCst] [width : i64]) : String
   (rules.format-rules-render-cst-width node width))
 
 (define (format-rules-render-source-width [src : String] [width : i64]) : String
   (match (rules.format-rules-render-source-width-result src width)
-    [(rules.ResultFormatString.Ok formatted) formatted]
-    [(rules.ResultFormatString.Err err)
-      (io.panic (tokens.format-source-error-message err))]))
+    [(Ok formatted) formatted]
+    [(Err err) (io.panic (tokens.format-source-error-message err))]))
 
 (define (format-rules-decls-expected) : String
   "(import std)\n(import ffi)\n\n(extern (io.emit-string [arg0 : String]) : unit (:abi c) (:symbol \"external_emit_string\"))\n(extern (print-int [arg0 : i64]) : unit)\n\n(defenum Maybe\n  (Some i64)\n  (None))\n\n(defstruct Point\n  (x i64)\n  (y i64))\n\n(define KEY_A : i64\n  1)\n(define KEY_B : i64\n  2)")
@@ -343,32 +378,31 @@
 
 (define (format-rules-offset-slice-preserved?) : bool
   (let
-    [head : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Symbol "x"))]
-    [colon : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Colon))]
-    [typ : cst.FormatCst (cst.FormatCst.Atom (tokens.FormatToken.Symbol "i64"))]
+    [head : cst.FormatCst (Atom (Symbol "x"))]
+    [colon : cst.FormatCst (Atom (Colon))]
+    [typ : cst.FormatCst (Atom (Symbol "i64"))]
     [dense-slots : (__tl_dyn-array cst.FormatCst)
       (__tl_make-array cst.FormatCst 3)]
     [offset-slots : (__tl_dyn-array cst.FormatCst)
       (__tl_make-array cst.FormatCst 5)]
-    (begin
-      (set! (array-ref dense-slots 0) head)
-      (set! (array-ref dense-slots 1) colon)
-      (set! (array-ref dense-slots 2) typ)
-      (set! (array-ref offset-slots 1) head)
-      (set! (array-ref offset-slots 2) colon)
-      (set! (array-ref offset-slots 3) typ)
-      (let
-        [dense-render : String
-          (format-rules-render-width
-            (cst.FormatCst.List (box (cst.FormatCstList dense-slots 0 3)))
-            80)]
-        [offset-render : String
-          (format-rules-render-width
-            (cst.FormatCst.List (box (cst.FormatCstList offset-slots 1 3)))
-            80)]
-        (and
-          (string.eq dense-render "(x : i64)")
-          (string.eq offset-render dense-render))))))
+    (set! (array-ref dense-slots 0) head)
+    (set! (array-ref dense-slots 1) colon)
+    (set! (array-ref dense-slots 2) typ)
+    (set! (array-ref offset-slots 1) head)
+    (set! (array-ref offset-slots 2) colon)
+    (set! (array-ref offset-slots 3) typ)
+    (let
+      [dense-render : String
+        (format-rules-render-width
+          (List (box (cst.FormatCstList dense-slots 0 3)))
+          80)]
+      [offset-render : String
+        (format-rules-render-width
+          (List (box (cst.FormatCstList offset-slots 1 3)))
+          80)]
+      (and
+        (string.eq dense-render "(x : i64)")
+        (string.eq offset-render dense-render)))))
 
 (define (format-rules-self-test) : i64
   (let
@@ -433,35 +467,32 @@
       (format-rules-render-source-width
         "(define (main) : i64 (begin (array-ref items 0).value (tuple-ref items 0).value (deref item).inner.value))"
         80)]
-    (begin
-      (unless (string.eq decls (format-rules-decls-expected)) (return 1))
-      (unless (string.eq flow (format-rules-flow-expected)) (return 2))
-      (unless (string.eq flow-fixpoint flow) (return 11))
-      (unless
-        (string.eq empty-let (format-rules-empty-let-expected))
-        (return 12))
-      (unless (string.eq empty-let-fixpoint empty-let) (return 13))
-      (unless (string.eq comments (format-rules-comments-expected)) (return 3))
-      (unless (string.eq quote (format-rules-quote-expected)) (return 4))
-      (unless (string.eq unsafe (format-rules-unsafe-expected)) (return 5))
-      (unless
-        (string.eq metadata (format-rules-define-metadata-expected))
-        (return 6))
-      (unless
-        (string.eq metadata-long (format-rules-define-metadata-long-expected))
-        (return 7))
-      (unless
-        (string.eq spmd-callable (format-rules-spmd-callable-expected))
-        (return 8))
-      (unless
-        (string.eq variadic (format-rules-variadic-macro-expected))
-        (return 9))
-      (unless
-        (string.eq projection-suffix (format-rules-projection-suffix-expected))
-        (return 14))
-      (unless (string.eq loops (format-rules-loops-expected)) (return 15))
-      (unless (format-rules-offset-slice-preserved?) (return 10))
-      42)))
+    (unless (string.eq decls (format-rules-decls-expected)) (return 1))
+    (unless (string.eq flow (format-rules-flow-expected)) (return 2))
+    (unless (string.eq flow-fixpoint flow) (return 11))
+    (unless (string.eq empty-let (format-rules-empty-let-expected)) (return 12))
+    (unless (string.eq empty-let-fixpoint empty-let) (return 13))
+    (unless (string.eq comments (format-rules-comments-expected)) (return 3))
+    (unless (string.eq quote (format-rules-quote-expected)) (return 4))
+    (unless (string.eq unsafe (format-rules-unsafe-expected)) (return 5))
+    (unless
+      (string.eq metadata (format-rules-define-metadata-expected))
+      (return 6))
+    (unless
+      (string.eq metadata-long (format-rules-define-metadata-long-expected))
+      (return 7))
+    (unless
+      (string.eq spmd-callable (format-rules-spmd-callable-expected))
+      (return 8))
+    (unless
+      (string.eq variadic (format-rules-variadic-macro-expected))
+      (return 9))
+    (unless
+      (string.eq projection-suffix (format-rules-projection-suffix-expected))
+      (return 14))
+    (unless (string.eq loops (format-rules-loops-expected)) (return 15))
+    (unless (format-rules-offset-slice-preserved?) (return 10))
+    42))
 
 (define (format-source-span-eq?
   [span : tokens.FormatSourceSpan]
@@ -481,19 +512,14 @@
   (let
     [i : i64 0]
     [hits : i64 0]
-    (begin
-      (while (< i stream.count)
-        (begin
-          (if (=
-            (tokens.format-token-tag (tokens.format-token-at stream i))
-            wanted)
-            (set! hits (+ hits 1))
-            (set! hits hits))
-          (set! i (+ i 1))))
-      hits)))
+    (while (< i stream.count)
+      (if (= (tokens.format-token-tag (tokens.format-token-at stream i)) wanted)
+        (set! hits (+ hits 1))
+        (set! hits hits))
+      (set! i (+ i 1)))
+    hits))
 
 (define (format-lex [src : String]) : tokens.FormatTokenStream
   (match (tokens.format-lex-result src)
-    [(tokens.ResultFormatTokenStream.Ok stream) stream]
-    [(tokens.ResultFormatTokenStream.Err err)
-      (io.panic (tokens.format-source-error-message err))]))
+    [(Ok stream) stream]
+    [(Err err) (io.panic (tokens.format-source-error-message err))]))

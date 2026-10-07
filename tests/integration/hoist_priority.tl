@@ -36,47 +36,43 @@
     [b : i64 2]
     [c : i64 3]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! w (+ (bit-xor w 2654435761) i))
-          (set! w (+ (bit-xor w 2654435763) i))
-          (set! w (+ (bit-xor w 2654435765) i))
-          (set! w (+ (bit-xor w 2654435767) i))
-          (set! w (+ (bit-xor w 2654435769) i))
-          (set! w (+ (bit-xor w 2654435771) i))
-          (set! a (% (+ (* a 131) i) 1000000007))
-          (set! b (% (+ (* b 977) i) 1000000007))
-          (set! c (% (+ (* c 613) i) 1000000007))
-          (set! i (+ i 1))))
-      (if (> rounds 1)
-        (+ w (spread n (- rounds 1)))
-        (+ w (+ a (+ b c)))))))
+    (while (< i n)
+      (set! w (+ (bit-xor w 2654435761) i))
+      (set! w (+ (bit-xor w 2654435763) i))
+      (set! w (+ (bit-xor w 2654435765) i))
+      (set! w (+ (bit-xor w 2654435767) i))
+      (set! w (+ (bit-xor w 2654435769) i))
+      (set! w (+ (bit-xor w 2654435771) i))
+      (set! a (% (+ (* a 131) i) 1000000007))
+      (set! b (% (+ (* b 977) i) 1000000007))
+      (set! c (% (+ (* c 613) i) 1000000007))
+      (set! i (+ i 1)))
+    (if (> rounds 1)
+      (+ w (spread n (- rounds 1)))
+      (+ w (+ a (+ b c))))))
 
 (define (tie [n : i64] [rounds : i64]) : i64
   (let
     [x : i64 5]
     [y : i64 1]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! x (+ (bit-xor x 3141592653589) i))
-          (set! y (+ (bit-xor y 3141592653589) i))
-          (set! x (+ (bit-xor x 2718281828459) i))
-          (set! y (+ (bit-xor y 2718281828459) i))
-          (set! x (+ (bit-xor x 1618033988749) i))
-          (set! y (+ (bit-xor y 1618033988749) i))
-          (set! x (+ (bit-xor x 1414213562373) i))
-          (set! y (+ (bit-xor y 1414213562373) i))
-          (set! x (+ (bit-xor x 1732050807568) i))
-          (set! y (+ (bit-xor y 1732050807568) i))
-          (set! x (% (+ (* x 131) i) 1000000007))
-          (set! y (% (+ (* y 977) i) 1000000007))
-          (set! i (+ i 1))))
-      (if (> rounds 1)
-        (+ x (tie n (- rounds 1)))
-        (+ x y)))))
+    (while (< i n)
+      (set! x (+ (bit-xor x 3141592653589) i))
+      (set! y (+ (bit-xor y 3141592653589) i))
+      (set! x (+ (bit-xor x 2718281828459) i))
+      (set! y (+ (bit-xor y 2718281828459) i))
+      (set! x (+ (bit-xor x 1618033988749) i))
+      (set! y (+ (bit-xor y 1618033988749) i))
+      (set! x (+ (bit-xor x 1414213562373) i))
+      (set! y (+ (bit-xor y 1414213562373) i))
+      (set! x (+ (bit-xor x 1732050807568) i))
+      (set! y (+ (bit-xor y 1732050807568) i))
+      (set! x (% (+ (* x 131) i) 1000000007))
+      (set! y (% (+ (* y 977) i) 1000000007))
+      (set! i (+ i 1)))
+    (if (> rounds 1)
+      (+ x (tie n (- rounds 1)))
+      (+ x y))))
 
 (define (main) : i64
   (let

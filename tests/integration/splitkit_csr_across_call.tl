@@ -42,24 +42,23 @@
     [occ : i64 (+ n 5)]
     [hot : i64 0]
     [acc : i64 0]
-    (begin
-      ;; phase 1: call1; a,b,c,d,occ all live across it (5 CSRs).
-      (set! acc (+ acc (clobber n)))
-      (set! acc (+ acc (+ a (+ b (+ c (+ d occ))))))
-      ;; phase 2: hot born; call2; hot used MANY times after call2. occ is NOT used
-      ;; here -> cold/live-through across hot's post-call2 region (its CSR is the
-      ;; liberation candidate). a,b,c,d still live across call2.
-      (set! hot (+ n 100))
-      (set! acc (+ acc (clobber n)))
-      (set! acc (+ acc (+ a (+ b (+ c d)))))
-      (set! acc (+ acc hot))
-      (set! acc (+ acc hot))
-      (set! acc (+ acc hot))
-      (set! acc (+ acc hot))
-      ;; phase 3: occ used once at the very end (its only late use).
-      (set! acc (+ acc (clobber n)))
-      (set! acc (+ acc occ))
-      acc)))
+    ;; phase 1: call1; a,b,c,d,occ all live across it (5 CSRs).
+    (set! acc (+ acc (clobber n)))
+    (set! acc (+ acc (+ a (+ b (+ c (+ d occ))))))
+    ;; phase 2: hot born; call2; hot used MANY times after call2. occ is NOT used
+    ;; here -> cold/live-through across hot's post-call2 region (its CSR is the
+    ;; liberation candidate). a,b,c,d still live across call2.
+    (set! hot (+ n 100))
+    (set! acc (+ acc (clobber n)))
+    (set! acc (+ acc (+ a (+ b (+ c d)))))
+    (set! acc (+ acc hot))
+    (set! acc (+ acc hot))
+    (set! acc (+ acc hot))
+    (set! acc (+ acc hot))
+    ;; phase 3: occ used once at the very end (its only late use).
+    (set! acc (+ acc (clobber n)))
+    (set! acc (+ acc occ))
+    acc))
 
 (define (main) : i64
   (let

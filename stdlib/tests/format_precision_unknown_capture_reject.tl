@@ -1,6 +1,5 @@
 (import stdlib.format)
 
 (define (main) : i64
-  (begin
-    (format.format "{:.missing$}" (cast 7 : i64))
-    42))
+  (format.format "{:.missing$}" (cast 7 : i64))
+  42)

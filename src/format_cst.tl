@@ -62,11 +62,10 @@
   [src : (& src (__tl_dyn-array FormatCst))]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (set! (array-ref dst index) (array-ref src index))
-      (format-cst-vec-copy-range! dst src (+ index 1) count))))
+  (unless
+    (>= index count)
+    (set! (array-ref dst index) (array-ref src index))
+    (format-cst-vec-copy-range! dst src (+ index 1) count)))
 
 (define (format-cst-vec-grow! [v : (&mut v FormatCstVec)]) : unit
   (let
@@ -77,20 +76,17 @@
         1
         (* old-cap 2))]
     [bigger : (__tl_dyn-array FormatCst) (__tl_make-array FormatCst new-cap)]
-    (begin
-      (format-cst-vec-copy-range! (&mut bigger) (& v.slots) 0 count)
-      (set! v.slots bigger))))
+    (format-cst-vec-copy-range! (&mut bigger) (& v.slots) 0 count)
+    (set! v.slots bigger)))
 
 (define (format-cst-vec-push! [v : (&mut v FormatCstVec)] [value : FormatCst]) : unit
-  (begin
-    (if (< v.len (array-length v.slots))
-      unit
-      (format-cst-vec-grow! v))
-    (let
-      [index : i64 v.len]
-      (begin
-        (set! (array-ref v.slots index) value)
-        (set! v.len (+ index 1))))))
+  (if (< v.len (array-length v.slots))
+    unit
+    (format-cst-vec-grow! v))
+  (let
+    [index : i64 v.len]
+    (set! (array-ref v.slots index) value)
+    (set! v.len (+ index 1))))
 
 (define (fmt-cst-list-nil) : FormatCstList
   (FormatCstList (__tl_make-array FormatCst 0) 0 0))
@@ -102,19 +98,17 @@
   [v : (&mut v FormatCstVec)]
   [items : FormatCstList]) : unit
   (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) unit]
-    [(FormatCstListStep.Item node rest)
-      (begin
-        (format-cst-vec-push! v node)
-        (fmt-cst-vec-push-list! v rest))]))
+    [(Empty) unit]
+    [(Item node rest)
+      (format-cst-vec-push! v node)
+      (fmt-cst-vec-push-list! v rest)]))
 
 (define (fmt-cst-list-cons [head : FormatCst] [rest : FormatCstList]) : FormatCstList
   (let
     [out : FormatCstVec (format-cst-vec-new)]
-    (begin
-      (format-cst-vec-push! (&mut out) head)
-      (fmt-cst-vec-push-list! (&mut out) rest)
-      (fmt-cst-list-from-vec out))))
+    (format-cst-vec-push! (&mut out) head)
+    (fmt-cst-vec-push-list! (&mut out) rest)
+    (fmt-cst-list-from-vec out)))
 
 (define (fmt-cst-list-step [items : (& items FormatCstList)]) : FormatCstListStep
   (let
@@ -123,8 +117,8 @@
     [start : i64 items.start]
     [count : i64 items.len]
     (if (<= count 0)
-      (FormatCstListStep.Empty)
-      (FormatCstListStep.Item
+      (Empty)
+      (Item
         (owned_view.compiler-owned-array-element-shared-view items.slots start)
         (FormatCstList items.slots (+ start 1) (- count 1))))))
 
@@ -151,29 +145,28 @@
     (cond
       [(= tag (tokens.fmt-tag-end))
         (if (= stop-tag 0)
-          (ResultFormatParseSeqEnd.Ok idx)
-          (ResultFormatParseSeqEnd.Err
+          (Ok idx)
+          (Err
             (tokens.FormatSourceError
               "format cst: unclosed delimiter"
               (tokens.format-token-span stream idx))))]
-      [(and (!= stop-tag 0) (= tag stop-tag))
-        (ResultFormatParseSeqEnd.Ok (+ idx 1))]
+      [(and (!= stop-tag 0) (= tag stop-tag)) (Ok (+ idx 1))]
       [(fmt-unexpected-closing tag)
-        (ResultFormatParseSeqEnd.Err
+        (Err
           (tokens.FormatSourceError
             "format cst: unexpected closing delimiter"
             (tokens.format-token-span stream idx)))]
       [else
-        (match (fmt-parse-one-result
-          (owned_view.compiler-owned-shared-view stream)
-          idx)
-          [(ResultFormatParsedCst.Ok parsed)
-            (match parsed
-              [(FormatParsedCst.Parsed node next)
-                (begin
-                  (format-cst-vec-push! items node)
-                  (fmt-parse-seq-into-result stream next stop-tag items))])]
-          [(ResultFormatParsedCst.Err err) (ResultFormatParseSeqEnd.Err err)])])))
+        (let
+          [parsed
+            (try
+              (fmt-parse-one-result
+                (owned_view.compiler-owned-shared-view stream)
+                idx))]
+          (match parsed
+            [(Parsed node next)
+              (format-cst-vec-push! items node)
+              (fmt-parse-seq-into-result stream next stop-tag items)]))])))
 
 (define (fmt-parse-seq-result
   [stream : tokens.FormatTokenStream]
@@ -184,45 +177,38 @@
     (cond
       [(= tag (tokens.fmt-tag-end))
         (if (= stop-tag 0)
-          (ResultFormatParsedCstList.Ok
-            (FormatParsedCstList.ParsedList (fmt-cst-list-nil) idx))
-          (ResultFormatParsedCstList.Err
+          (Ok (ParsedList (fmt-cst-list-nil) idx))
+          (Err
             (tokens.FormatSourceError
               "format cst: unclosed delimiter"
               (tokens.format-token-span stream idx))))]
       [(and (!= stop-tag 0) (= tag stop-tag))
-        (ResultFormatParsedCstList.Ok
-          (FormatParsedCstList.ParsedList (fmt-cst-list-nil) (+ idx 1)))]
+        (Ok (ParsedList (fmt-cst-list-nil) (+ idx 1)))]
       [(fmt-unexpected-closing tag)
-        (ResultFormatParsedCstList.Err
+        (Err
           (tokens.FormatSourceError
             "format cst: unexpected closing delimiter"
             (tokens.format-token-span stream idx)))]
       [else
         (let
           [items : FormatCstVec (format-cst-vec-new)]
-          (match (fmt-parse-one-result
-            (owned_view.compiler-owned-shared-view stream)
-            idx)
-            [(ResultFormatParsedCst.Ok parsed)
-              (match parsed
-                [(FormatParsedCst.Parsed node next)
-                  (begin
-                    (format-cst-vec-push! (&mut items) node)
-                    (match (fmt-parse-seq-into-result
+          [parsed
+            (try
+              (fmt-parse-one-result
+                (owned_view.compiler-owned-shared-view stream)
+                idx))]
+          (match parsed
+            [(Parsed node next)
+              (format-cst-vec-push! (&mut items) node)
+              (let
+                [final
+                  (try
+                    (fmt-parse-seq-into-result
                       stream
                       next
                       stop-tag
-                      (&mut items))
-                      [(ResultFormatParseSeqEnd.Ok final)
-                        (ResultFormatParsedCstList.Ok
-                          (FormatParsedCstList.ParsedList
-                            (fmt-cst-list-from-vec items)
-                            final))]
-                      [(ResultFormatParseSeqEnd.Err err)
-                        (ResultFormatParsedCstList.Err err)]))])]
-            [(ResultFormatParsedCst.Err err)
-              (ResultFormatParsedCstList.Err err)]))])))
+                      (&mut items)))]
+                (Ok (ParsedList (fmt-cst-list-from-vec items) final)))]))])))
 
 (define (fmt-parse-one-primary-result
   [stream : tokens.FormatTokenStream]
@@ -232,51 +218,38 @@
     [tag : i64 (tokens.format-token-tag (tokens.format-token-at stream idx))]
     (cond
       [(= tag (tokens.fmt-tag-lparen))
-        (match (fmt-parse-seq-result stream (+ idx 1) (tokens.fmt-tag-rparen))
-          [(ResultFormatParsedCstList.Ok parsed)
-            (match parsed
-              [(FormatParsedCstList.ParsedList items next)
-                (ResultFormatParsedCst.Ok
-                  (FormatParsedCst.Parsed (FormatCst.List (box items)) next))])]
-          [(ResultFormatParsedCstList.Err err) (ResultFormatParsedCst.Err err)])]
+        (let
+          [parsed
+            (try
+              (fmt-parse-seq-result stream (+ idx 1) (tokens.fmt-tag-rparen)))]
+          (match parsed
+            [(ParsedList items next) (Ok (Parsed (List (box items)) next))]))]
       [(= tag (tokens.fmt-tag-lbracket))
-        (match (fmt-parse-seq-result stream (+ idx 1) (tokens.fmt-tag-rbracket))
-          [(ResultFormatParsedCstList.Ok parsed)
-            (match parsed
-              [(FormatParsedCstList.ParsedList items next)
-                (ResultFormatParsedCst.Ok
-                  (FormatParsedCst.Parsed
-                    (FormatCst.BracketList (box items))
-                    next))])]
-          [(ResultFormatParsedCstList.Err err) (ResultFormatParsedCst.Err err)])]
+        (let
+          [parsed
+            (try
+              (fmt-parse-seq-result stream (+ idx 1) (tokens.fmt-tag-rbracket)))]
+          (match parsed
+            [(ParsedList items next)
+              (Ok (Parsed (BracketList (box items)) next))]))]
       [(= tag (tokens.fmt-tag-comment))
-        (ResultFormatParsedCst.Ok
-          (FormatParsedCst.Parsed
-            (FormatCst.Comment (tokens.format-token-text tok))
-            (+ idx 1)))]
+        (Ok (Parsed (Comment (tokens.format-token-text tok)) (+ idx 1)))]
       [(fmt-prefix-tag? tag)
-        (match (fmt-parse-one-result stream (+ idx 1))
-          [(ResultFormatParsedCst.Ok parsed)
-            (match parsed
-              [(FormatParsedCst.Parsed child next)
-                (ResultFormatParsedCst.Ok
-                  (FormatParsedCst.Parsed
-                    (FormatCst.Prefix tok (box child))
-                    next))])]
-          [(ResultFormatParsedCst.Err err) (ResultFormatParsedCst.Err err)])]
+        (let
+          [parsed (try (fmt-parse-one-result stream (+ idx 1)))]
+          (match parsed
+            [(Parsed child next) (Ok (Parsed (Prefix tok (box child)) next))]))]
       [(fmt-unexpected-closing tag)
-        (ResultFormatParsedCst.Err
+        (Err
           (tokens.FormatSourceError
             "format cst: unexpected closing delimiter"
             (tokens.format-token-span stream idx)))]
       [(= tag (tokens.fmt-tag-end))
-        (ResultFormatParsedCst.Err
+        (Err
           (tokens.FormatSourceError
             "format cst: unexpected end"
             (tokens.format-token-span stream idx)))]
-      [else
-        (ResultFormatParsedCst.Ok
-          (FormatParsedCst.Parsed (FormatCst.Atom tok) (+ idx 1)))])))
+      [else (Ok (Parsed (Atom tok) (+ idx 1)))])))
 
 (define (fmt-token-end [stream : tokens.FormatTokenStream] [idx : i64]) : i64
   (+
@@ -296,7 +269,7 @@
   [stream : tokens.FormatTokenStream]
   [parsed : FormatParsedCst]) : ResultFormatParsedCst
   (match (owned_view.compiler-owned-shared-view parsed)
-    [(FormatParsedCst.Parsed node next)
+    [(Parsed node next)
       (let
         [dot : tokens.FormatToken (tokens.format-token-at stream next)]
         (if (and
@@ -321,32 +294,28 @@
                 field-index))
               (fmt-parse-projection-suffix-result
                 stream
-                (FormatParsedCst.Parsed
-                  (FormatCst.Projection
-                    (box node)
-                    (tokens.format-token-text field))
+                (Parsed
+                  (Projection (box node) (tokens.format-token-text field))
                   (+ field-index 1)))
-              (ResultFormatParsedCst.Ok parsed)))
-          (ResultFormatParsedCst.Ok parsed)))]))
+              (Ok parsed)))
+          (Ok parsed)))]))
 
 (define (fmt-parse-one-result [stream : tokens.FormatTokenStream] [idx : i64]) : ResultFormatParsedCst
-  (match (fmt-parse-one-primary-result
-    (owned_view.compiler-owned-shared-view stream)
-    idx)
-    [(ResultFormatParsedCst.Ok parsed)
-      (fmt-parse-projection-suffix-result stream parsed)]
-    [(ResultFormatParsedCst.Err err) (ResultFormatParsedCst.Err err)]))
+  (let
+    [parsed
+      (try
+        (fmt-parse-one-primary-result
+          (owned_view.compiler-owned-shared-view stream)
+          idx))]
+    (fmt-parse-projection-suffix-result stream parsed)))
 
 (define (parse-format-tokens-result [stream : tokens.FormatTokenStream]) : ResultFormatCst
-  (match (fmt-parse-seq-result stream 0 0)
-    [(ResultFormatParsedCstList.Ok parsed)
-      (match parsed
-        [(FormatParsedCstList.ParsedList items _)
-          (ResultFormatCst.Ok (FormatCst.Forms (box items)))])]
-    [(ResultFormatParsedCstList.Err err) (ResultFormatCst.Err err)]))
+  (let
+    [parsed (try (fmt-parse-seq-result stream 0 0))]
+    (match parsed
+      [(ParsedList items _) (Ok (Forms (box items)))])))
 
 (define (parse-format-source-result [src : String]) : ResultFormatCst
-  (match (tokens.format-lex-result src)
-    [(tokens.ResultFormatTokenStream.Ok stream)
-      (parse-format-tokens-result stream)]
-    [(tokens.ResultFormatTokenStream.Err err) (ResultFormatCst.Err err)]))
+  (let
+    [stream (try (tokens.format-lex-result src))]
+    (parse-format-tokens-result stream)))

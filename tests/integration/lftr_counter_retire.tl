@@ -27,14 +27,12 @@
     [n : i64 (array-length prog)]
     [i : i64 0]
     [acc : i64 1]
-    (begin
-      (while (< i n)
-        (begin
-          (match (array-ref prog i)
-            [(Add value) (set! acc (+ acc value))]
-            [(Mul value) (set! acc (* acc value))])
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (match (array-ref prog i)
+        [(Add value) (set! acc (+ acc value))]
+        [(Mul value) (set! acc (* acc value))])
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let

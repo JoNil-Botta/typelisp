@@ -20,6 +20,5 @@
         (match (thread_i64.join worker)
           [(thread_i64.I64JoinErr _) 2]
           [(thread_i64.I64JoinOk value)
-            (begin
-              (arena.destroy-safe! state.arena)
-              (+ value 30))])])))
+            (arena.destroy-safe! state.arena)
+            (+ value 30)])])))

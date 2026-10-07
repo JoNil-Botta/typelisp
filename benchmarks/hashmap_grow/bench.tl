@@ -28,20 +28,17 @@
     [m : map_i64_i64.Map (map_i64_i64.with-capacity 4)]
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (let
-            [key : i64 (hashmap-grow-key i)]
-            (map_i64_i64.insert! m key (hashmap-grow-value key)))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i n)
-        (begin
-          (let
-            [key : i64 (hashmap-grow-key i)]
-            (set! acc (+ acc (map_i64_i64.get-value-or (& m) key -1))))
-          (set! i (+ i 257))))
-      (bit-and
-        (+ (+ acc (map_i64_i64.len (& m))) (map_i64_i64.capacity (& m)))
-        255))))
+    (while (< i n)
+      (let
+        [key : i64 (hashmap-grow-key i)]
+        (map_i64_i64.insert! m key (hashmap-grow-value key)))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i n)
+      (let
+        [key : i64 (hashmap-grow-key i)]
+        (set! acc (+ acc (map_i64_i64.get-value-or (& m) key -1))))
+      (set! i (+ i 257)))
+    (bit-and
+      (+ (+ acc (map_i64_i64.len (& m))) (map_i64_i64.capacity (& m)))
+      255)))

@@ -32,10 +32,9 @@
       (+
         (cast color.r : i64)
         (+ (cast color.g : i64) (+ (cast color.b : i64) (cast color.a : i64))))]
-    (begin
-      (io.print-format "color={}:{}\n" weighted sum)
-      (if (= weighted 104)
-        (if (= sum 36)
-          42
-          2)
-        1))))
+    (io.print-format "color={}:{}\n" weighted sum)
+    (if (= weighted 104)
+      (if (= sum 36)
+        42
+        2)
+      1)))

@@ -7,26 +7,23 @@
   [counts : (&mut counts (__tl_dyn-array i64))]
   [i : i64]
   [value : i64]) : i64
-  (begin
-    (set! (array-ref counts i) (+ (array-ref counts i) 1))
-    value))
+  (set! (array-ref counts i) (+ (array-ref counts i) 1))
+  value)
 
 ;; Records `tag` in lane `i`'s slot the first time any argument of that lane
 ;; runs, so the slot names the argument evaluated first. Two copies, because
 ;; sibling calls to one helper in a body are refused today (#8368).
 (define (order-a [first : (&mut first (__tl_dyn-array i64))] [i : i64]) : i64
-  (begin
-    (if (= (array-ref first i) 0)
-      (set! (array-ref first i) 1)
-      unit)
-    1))
+  (if (= (array-ref first i) 0)
+    (set! (array-ref first i) 1)
+    unit)
+  1)
 
 (define (order-b [first : (&mut first (__tl_dyn-array i64))] [i : i64]) : i64
-  (begin
-    (if (= (array-ref first i) 0)
-      (set! (array-ref first i) 2)
-      unit)
-    2))
+  (if (= (array-ref first i) 0)
+    (set! (array-ref first i) 2)
+    unit)
+  2)
 
 (define (twice [value : i64]) : i64
   (+ value value))
@@ -122,24 +119,21 @@
           (begin
             (set! x 99)
             0))]
-      (begin
-        (set! (array-ref out i) result)
-        (if (= x 99)
-          unit
-          (set! (array-ref out i) 1000))))))
+      (set! (array-ref out i) result)
+      (if (= x 99)
+        unit
+        (set! (array-ref out i) 1000)))))
 
 (define (all-equal [xs : (& xs (__tl_dyn-array i64))] [n : i64] [want : i64]) : bool
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (= (array-ref xs i) want)
-            unit
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (= (array-ref xs i) want)
+        unit
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 (define (fresh [n : i64]) : (__tl_dyn-array i64)
   (__tl_make-array i64 n))
@@ -155,55 +149,51 @@
     [spelling-counts : (__tl_dyn-array i64) (fresh n)]
     [at-counts : (__tl_dyn-array i64) (fresh n)]
     [over-counts : (__tl_dyn-array i64) (fresh n)]
-    (begin
-      (run-variable-snapshot (&mut out) n)
-      (when
-        (or (!= (array-ref out 0) -1) (!= (array-ref out 6) -7))
-        (return 14))
-      (run-twice (&mut twice-counts) (&mut out) n)
-      (if (not (all-equal (& twice-counts) n 1))
-        1
-        (if (not (= (array-ref out 6) 14))
-          2
-          (begin
-            (run-ignore (&mut ignore-counts) (&mut out) n)
-            (if (not (all-equal (& ignore-counts) n 1))
-              3
-              (begin
-                (run-reversed (&mut first) (&mut out) n)
-                (if (not (all-equal (& first) n 1))
-                  4
-                  (if (not (= (array-ref out 3) 1))
-                    5
-                    (begin
-                      (run-nested (&mut nested-counts) (&mut out) n)
-                      (if (not (all-equal (& nested-counts) n 1))
-                        6
-                        (if (not (= (array-ref out 5) 20))
-                          7
-                          (begin
-                            (run-same-spelling
-                              (&mut spelling-counts)
-                              (&mut out)
-                              n)
-                            (if (not (all-equal (& spelling-counts) n 1))
-                              8
-                              (if (not (= (array-ref out 2) 24))
-                                9
-                                (begin
-                                  (run-at-limit (&mut at-counts) (&mut out) n)
-                                  (if (not (all-equal (& at-counts) n 1))
-                                    10
-                                    (if (not (= (array-ref out 4) 8))
-                                      11
-                                      (begin
-                                        (run-over-limit
-                                          (&mut over-counts)
-                                          (&mut out)
-                                          n)
-                                        (if (not
-                                          (all-equal (& over-counts) n 1))
-                                          12
-                                          (if (not (= (array-ref out 4) 18))
-                                            13
-                                            42))))))))))))))))))))))
+    (run-variable-snapshot (&mut out) n)
+    (when (or (!= (array-ref out 0) -1) (!= (array-ref out 6) -7)) (return 14))
+    (run-twice (&mut twice-counts) (&mut out) n)
+    (if (not (all-equal (& twice-counts) n 1))
+      1
+      (if (not (= (array-ref out 6) 14))
+        2
+        (begin
+          (run-ignore (&mut ignore-counts) (&mut out) n)
+          (if (not (all-equal (& ignore-counts) n 1))
+            3
+            (begin
+              (run-reversed (&mut first) (&mut out) n)
+              (if (not (all-equal (& first) n 1))
+                4
+                (if (not (= (array-ref out 3) 1))
+                  5
+                  (begin
+                    (run-nested (&mut nested-counts) (&mut out) n)
+                    (if (not (all-equal (& nested-counts) n 1))
+                      6
+                      (if (not (= (array-ref out 5) 20))
+                        7
+                        (begin
+                          (run-same-spelling
+                            (&mut spelling-counts)
+                            (&mut out)
+                            n)
+                          (if (not (all-equal (& spelling-counts) n 1))
+                            8
+                            (if (not (= (array-ref out 2) 24))
+                              9
+                              (begin
+                                (run-at-limit (&mut at-counts) (&mut out) n)
+                                (if (not (all-equal (& at-counts) n 1))
+                                  10
+                                  (if (not (= (array-ref out 4) 8))
+                                    11
+                                    (begin
+                                      (run-over-limit
+                                        (&mut over-counts)
+                                        (&mut out)
+                                        n)
+                                      (if (not (all-equal (& over-counts) n 1))
+                                        12
+                                        (if (not (= (array-ref out 4) 18))
+                                          13
+                                          42)))))))))))))))))))))

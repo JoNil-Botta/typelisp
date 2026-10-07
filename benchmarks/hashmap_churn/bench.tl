@@ -25,38 +25,32 @@
     [m : map_i64_i64.Map (map_i64_i64.with-capacity 8)]
     [round : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< round rounds)
-        (begin
+    (while (< round rounds)
+      (let
+        [i : i64 0]
+        (while (< i churn-batch-size)
           (let
-            [i : i64 0]
-            (while (< i churn-batch-size)
-              (begin
-                (let
-                  [key : i64 (hashmap-churn-key round i)]
-                  (map_i64_i64.insert! m key (hashmap-churn-value key)))
-                (set! i (+ i 1)))))
-          (let
-            [i : i64 0]
-            (while (< i churn-batch-size)
-              (begin
-                (if (= (% i 11) 0)
-                  (let
-                    [key : i64 (hashmap-churn-key round i)]
-                    (set! acc (+ acc (map_i64_i64.get-value-or (& m) key -1))))
-                  unit)
-                (set! i (+ i 1)))))
-          (let
-            [i : i64 0]
-            (while (< i churn-batch-size)
-              (begin
-                (if (= (% i 3) 0)
-                  (let
-                    [key : i64 (hashmap-churn-key round i)]
-                    (begin
-                      (map_i64_i64.remove! m key)
-                      unit))
-                  unit)
-                (set! i (+ i 1)))))
-          (set! round (+ round 1))))
-      (bit-and (+ acc (map_i64_i64.len (& m))) 255))))
+            [key : i64 (hashmap-churn-key round i)]
+            (map_i64_i64.insert! m key (hashmap-churn-value key)))
+          (set! i (+ i 1))))
+      (let
+        [i : i64 0]
+        (while (< i churn-batch-size)
+          (if (= (% i 11) 0)
+            (let
+              [key : i64 (hashmap-churn-key round i)]
+              (set! acc (+ acc (map_i64_i64.get-value-or (& m) key -1))))
+            unit)
+          (set! i (+ i 1))))
+      (let
+        [i : i64 0]
+        (while (< i churn-batch-size)
+          (if (= (% i 3) 0)
+            (let
+              [key : i64 (hashmap-churn-key round i)]
+              (map_i64_i64.remove! m key)
+              unit)
+            unit)
+          (set! i (+ i 1))))
+      (set! round (+ round 1)))
+    (bit-and (+ acc (map_i64_i64.len (& m))) 255)))

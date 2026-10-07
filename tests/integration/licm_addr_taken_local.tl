@@ -19,16 +19,16 @@
     [value : i64 seed]
     [sum : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i 3)
-        (begin
-          (set! sum (+ sum (+ value 1)))
-          (write-seven
-            (unsafe
-              (ptr-addr-of value))
-            depth)
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i 3)
+      (set! sum (+ sum (+ value 1)))
+      (begin
+        (write-seven
+          (unsafe
+            (ptr-addr-of value))
+          depth)
+        unit)
+      (set! i (+ i 1)))
+    sum))
 
 (define (main) : i64
   (+ 25 (read-after-call 3 0)))

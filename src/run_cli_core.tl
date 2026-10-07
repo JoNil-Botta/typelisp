@@ -75,11 +75,10 @@
           (process.args-empty))
         (process.args-empty))]
     (match (build_cli_core.build-config-from idx separator)
-      [(build_cli_core.ResultBuildConfig.Err message)
-        (ResultRunCliConfig.Err (run-cli-rewrite-build-error message))]
-      [(build_cli_core.ResultBuildConfig.Ok config)
+      [(Err message) (Err (run-cli-rewrite-build-error message))]
+      [(Ok config)
         (match config
-          [(build_cli_core.BuildConfig.Package
+          [(Package
               manifest-path
               has-manifest
               target-text
@@ -90,8 +89,8 @@
               opt-level
               lock-policy
               stdlib-roots)
-            (ResultRunCliConfig.Ok
-              (RunCliConfig.Package
+            (Ok
+              (Package
                 (build_cli_core.BuildConfig.Package
                   manifest-path
                   has-manifest
@@ -104,8 +103,8 @@
                   lock-policy
                   stdlib-roots)
                 runtime-args))]
-          [(build_cli_core.BuildConfig.Source)
-            (ResultRunCliConfig.Err
+          [(Source)
+            (Err
               "run: source file arguments must appear before run options; use -- before package runtime args")])])))
 
 (define (run-cli-config-from [idx : i64] [count : i64]) : ResultRunCliConfig
@@ -123,97 +122,91 @@
           count)]
       [target : backend.CompilerBackendTarget
         (build_run_core.source-tool-default-target)]
-      [mode : backend.CompilerBackendMode (backend.CompilerBackendMode.Scalar)]
+      [mode : backend.CompilerBackendMode (Scalar)]
       [stdlib-roots : cli_svec.Vec (cli_svec.new)]
       [cfgs : cli_svec.Vec (cli_svec.new)]
       [runtime-args : process.ProcessStringList (process.args-empty)]
       [opt-level : i64 (opt.compiler-optimize-default-level)]
       [link-inputs : build_run_core.SourceToolLinkInputs
         (build_run_core.source-tool-link-inputs-empty)]
-      (begin
-        (while (cli_option.cli-args-next! (&mut args))
-          (cond
-            [(string.eq args.name "--stdlib-root")
-              (cli_svec.push-ref!
-                (&mut stdlib-roots)
-                (cli_option.cli-args-value (& args)))]
-            [(string.eq args.name "--cfg")
-              (cli_svec.push-ref!
-                (&mut cfgs)
-                (cli_option.cli-args-value (& args)))]
-            [(string.eq args.name "--target")
-              (let
-                [value : String (cli_option.cli-args-value (& args))]
-                (match (build_run_core.source-tool-target
-                  (string.copy (& value)))
-                  [(build_run_core.ResultSourceToolTarget.Ok parsed-target)
-                    (set! target parsed-target)]
-                  [(build_run_core.ResultSourceToolTarget.Err _)
-                    (cli_option.cli-args-fail!
-                      (&mut args)
-                      (run-cli-unknown-target value))]))]
-            [(string.eq args.name "--opt-level")
-              (let
-                [value : String (cli_option.cli-args-value (& args))]
-                [level : i64 (cli_option.cli-option-opt-level (& value))]
-                (if (< level 0)
+      (while (cli_option.cli-args-next! (&mut args))
+        (cond
+          [(string.eq args.name "--stdlib-root")
+            (cli_svec.push-ref!
+              (&mut stdlib-roots)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--cfg")
+            (cli_svec.push-ref!
+              (&mut cfgs)
+              (cli_option.cli-args-value (& args)))]
+          [(string.eq args.name "--target")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              (match (build_run_core.source-tool-target (string.copy (& value)))
+                [(Ok parsed-target) (set! target parsed-target)]
+                [(Err _)
                   (cli_option.cli-args-fail!
                     (&mut args)
-                    (run-cli-unknown-opt-level value))
-                  (set! opt-level level)))]
-            [(string.eq args.name "--debug")
-              (ir.compiler-debug-info-set-enabled! true)]
-            [(string.eq args.name "--backend-mode")
-              (match (build_run_core.source-tool-backend-mode
-                "run"
-                (cli_option.cli-args-value (& args)))
-                [(build_run_core.ResultSourceToolBackendMode.Ok parsed-mode)
-                  (set! mode parsed-mode)]
-                [(build_run_core.ResultSourceToolBackendMode.Err message)
-                  (cli_option.cli-args-fail! (&mut args) message)])]
-            [(string.eq args.name "--link-lib")
-              (set!
+                    (run-cli-unknown-target value))]))]
+          [(string.eq args.name "--opt-level")
+            (let
+              [value : String (cli_option.cli-args-value (& args))]
+              [level : i64 (cli_option.cli-option-opt-level (& value))]
+              (if (< level 0)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  (run-cli-unknown-opt-level value))
+                (set! opt-level level)))]
+          [(string.eq args.name "--debug")
+            (ir.compiler-debug-info-set-enabled! true)]
+          [(string.eq args.name "--backend-mode")
+            (match (build_run_core.source-tool-backend-mode
+              "run"
+              (cli_option.cli-args-value (& args)))
+              [(Ok parsed-mode) (set! mode parsed-mode)]
+              [(Err message) (cli_option.cli-args-fail! (&mut args) message)])]
+          [(string.eq args.name "--link-lib")
+            (set!
+              link-inputs
+              (build_run_core.source-tool-link-inputs-add-lib
                 link-inputs
-                (build_run_core.source-tool-link-inputs-add-lib
-                  link-inputs
-                  (cli_option.cli-args-value (& args))))]
-            [(string.eq args.name "--link-search")
-              (set!
+                (cli_option.cli-args-value (& args))))]
+          [(string.eq args.name "--link-search")
+            (set!
+              link-inputs
+              (build_run_core.source-tool-link-inputs-add-search-dir
                 link-inputs
-                (build_run_core.source-tool-link-inputs-add-search-dir
-                  link-inputs
-                  (cli_option.cli-args-value (& args))))]
-            [(string.eq args.name "--link-arg")
-              (set!
+                (cli_option.cli-args-value (& args))))]
+          [(string.eq args.name "--link-arg")
+            (set!
+              link-inputs
+              (build_run_core.source-tool-link-inputs-add-raw-arg
                 link-inputs
-                (build_run_core.source-tool-link-inputs-add-raw-arg
-                  link-inputs
-                  (cli_option.cli-args-value (& args))))]
-            ;; `--`, or the first argument that is no run option, starts the
-            ;; program's own arguments.
-            [else
-              (begin
-                (set!
-                  runtime-args
-                  (build_run_core.source-tool-args-from-argv
-                    (if (string.eq args.arg "--")
-                      args.next
-                      args.index)
-                    count
-                    runtime-args))
-                (cli_option.cli-args-stop! (&mut args)))]))
-        (if args.failed
-          (ResultRunCliConfig.Err args.error)
-          (ResultRunCliConfig.Ok
-            (RunCliConfig.Config
-              source
-              target
-              mode
-              stdlib-roots
-              cfgs
+                (cli_option.cli-args-value (& args))))]
+          ;; `--`, or the first argument that is no run option, starts the
+          ;; program's own arguments.
+          [else
+            (set!
               runtime-args
-              opt-level
-              link-inputs)))))))
+              (build_run_core.source-tool-args-from-argv
+                (if (string.eq args.arg "--")
+                  args.next
+                  args.index)
+                count
+                runtime-args))
+            (cli_option.cli-args-stop! (&mut args))]))
+      (if args.failed
+        (Err args.error)
+        (Ok
+          (Config
+            source
+            target
+            mode
+            stdlib-roots
+            cfgs
+            runtime-args
+            opt-level
+            link-inputs))))))
 
 (define (run-cli-run-source-with-doctests
   [source : String]
@@ -275,21 +268,20 @@
     (string.copy (& bin-path))
     target
     runtime-args)
-    [(process.OkProcessOutput output)
+    [(OkProcessOutput output)
       (let
         [status : i64 (process.output-status output)]
         status)]
-    [(process.ErrProcessOutput error)
-      (begin
-        (io.print-error
-          (str_cat.str-cat
-            "Error: failed to run executable '"
-            bin-path
-            "' for target "
-            (build_run_core.source-tool-target-name target)
-            ": "
-            (process.error-message error)))
-        1)]))
+    [(ErrProcessOutput error)
+      (io.print-error
+        (str_cat.str-cat
+          "Error: failed to run executable '"
+          bin-path
+          "' for target "
+          (build_run_core.source-tool-target-name target)
+          ": "
+          (process.error-message error)))
+      1]))
 
 (define (run-cli-package-artifact-path
   [manifest-path : String]
@@ -321,18 +313,16 @@
   [producer-identity : String]
   [runtime-args : process.ProcessStringList]) : i64
   (match (build_cli_core.build-parse-target (string.copy (& target-text)))
-    [(build_cli_core.ResultBuildTarget.Err message)
-      (begin
-        (io.print-error (run-cli-rewrite-build-error message))
-        1)]
-    [(build_cli_core.ResultBuildTarget.Ok target)
+    [(Err message)
+      (io.print-error (run-cli-rewrite-build-error message))
+      1]
+    [(Ok target)
       (match (build_cli_core.build-load-manifest
         (string.copy (& manifest-path)))
-        [(build_cli_core.ResultBuildManifest.Err message)
-          (begin
-            (io.print-error (str_cat.str-cat "Error: " message))
-            1)]
-        [(build_cli_core.ResultBuildManifest.Ok manifest)
+        [(Err message)
+          (io.print-error (str_cat.str-cat "Error: " message))
+          1]
+        [(Ok manifest)
           (if (not (build_cli_core.build-package-kind-entry? manifest.kind))
             (begin
               (io.print-error
@@ -371,7 +361,7 @@
   [producer-identity : String]
   [runtime-args : process.ProcessStringList]) : i64
   (match config
-    [(build_cli_core.BuildConfig.Package
+    [(Package
         manifest-path
         has-manifest
         target-text
@@ -389,10 +379,9 @@
             (build_cli_core.build-discover-manifest-up "" 256))]
         (match resolved-manifest
           [(CompilerLoadNoPath)
-            (begin
-              (io.print-error
-                "could not find typelisp.pkg from '.' or any parent directory")
-              1)]
+            (io.print-error
+              "could not find typelisp.pkg from '.' or any parent directory")
+            1]
           [(CompilerLoadSomePath path)
             (run-cli-run-package-from-path
               path
@@ -409,9 +398,9 @@
 
 (define (run-direct-from [idx : i64] [count : i64] [producer-identity : String]) : i64
   (match (run-cli-config-from idx count)
-    [(ResultRunCliConfig.Ok config)
+    [(Ok config)
       (match config
-        [(RunCliConfig.Config
+        [(Config
             source
             target
             mode
@@ -429,20 +418,18 @@
             opt-level
             mode
             link-inputs)]
-        [(RunCliConfig.Package package-config runtime-args)
+        [(Package package-config runtime-args)
           (run-cli-run-package package-config producer-identity runtime-args)])]
-    [(ResultRunCliConfig.Err message)
-      (begin
-        (io.print-error message)
-        1)]))
+    [(Err message)
+      (io.print-error message)
+      1]))
 
 ;; Run the `run` command over arguments starting at `start` (the index of the
 ;; first argument after any subcommand name). The bare form builds and executes
 ;; in-process.
 (define (run-run-from [start : i64] [count : i64] [producer-identity : String]) : i64
-  (begin
-    (ir.compiler-debug-info-set-enabled! false)
-    (ir.compiler-debug-path-remap-clear!)
-    (if (and (> count start) (string.eq (io.arg start) "--direct"))
-      (run-direct-from (+ start 1) count producer-identity)
-      (run-direct-from start count producer-identity))))
+  (ir.compiler-debug-info-set-enabled! false)
+  (ir.compiler-debug-path-remap-clear!)
+  (if (and (> count start) (string.eq (io.arg start) "--direct"))
+    (run-direct-from (+ start 1) count producer-identity)
+    (run-direct-from start count producer-identity)))

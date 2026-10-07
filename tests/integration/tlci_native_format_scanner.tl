@@ -20,9 +20,8 @@
   (value i64))
 
 (define (scanner-counted [state : (&mut state ScannerEvalState)] [digit : i64]) : i64
-  (begin
-    (set! state.value (+ (* state.value 10) digit))
-    digit))
+  (set! state.value (+ (* state.value 10) digit))
+  digit)
 
 (define (scanner-checks-ok?) : bool
   (let
@@ -149,10 +148,9 @@
     ;; Referenced by generated call-site capture syntax.
     ;; lint-allow: unused-variable
     [label : String "scanner"]
-    (begin
-      (io.println "{label:.3}: {1:#x} {{}} {0:b}" two one)
-      (io.print-format "{word:.2}\n" (format.named word "done"))
-      true)))
+    (io.println "{label:.3}: {1:#x} {{}} {0:b}" two one)
+    (io.print-format "{word:.2}\n" (format.named word "done"))
+    true))
 
 (define (main) : i64
   (if (and (scanner-checks-ok?) (print-checks-ok?))

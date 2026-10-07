@@ -79,35 +79,34 @@
         (string.string-length source)
         (&mut entries))]
     [results : cli_svec.Vec (cli_svec.new)]
-    (begin
-      (cli_svec.push-ref! (&mut results) "auto.tl")
-      (cli_svec.push-ref! (&mut results) "coff-object")
-      (cli_svec.push-ref! (&mut results) "auto.obj")
-      (cli_svec.push-ref! (&mut results) "none")
-      (cli_svec.push-ref! (&mut results) "forced.tl")
-      (cli_svec.push-ref! (&mut results) "assembly")
-      (cli_svec.push-ref! (&mut results) "forced.s")
-      (cli_svec.push-ref! (&mut results) "forced-assembly")
-      (and
-        (= status 0)
-        (= (cli_svec.len (& entries)) 8)
-        (compile-cli-windows-batch-entry-at?
-          (& entries)
-          0
-          "auto.tl"
-          "auto.obj"
-          "auto.s"
-          "auto")
-        (compile-cli-windows-batch-entry-at?
-          (& entries)
-          1
-          "forced.tl"
-          "forced.obj"
-          "forced.s"
-          "force-assembly")
-        (string.eq
-          (compile_cli_core.compile-cli-windows-batch-result-plan (& results))
-          "auto.tl|coff-object|auto.obj|none\nforced.tl|assembly|forced.s|forced-assembly\n")))))
+    (cli_svec.push-ref! (&mut results) "auto.tl")
+    (cli_svec.push-ref! (&mut results) "coff-object")
+    (cli_svec.push-ref! (&mut results) "auto.obj")
+    (cli_svec.push-ref! (&mut results) "none")
+    (cli_svec.push-ref! (&mut results) "forced.tl")
+    (cli_svec.push-ref! (&mut results) "assembly")
+    (cli_svec.push-ref! (&mut results) "forced.s")
+    (cli_svec.push-ref! (&mut results) "forced-assembly")
+    (and
+      (= status 0)
+      (= (cli_svec.len (& entries)) 8)
+      (compile-cli-windows-batch-entry-at?
+        (& entries)
+        0
+        "auto.tl"
+        "auto.obj"
+        "auto.s"
+        "auto")
+      (compile-cli-windows-batch-entry-at?
+        (& entries)
+        1
+        "forced.tl"
+        "forced.obj"
+        "forced.s"
+        "force-assembly")
+      (string.eq
+        (compile_cli_core.compile-cli-windows-batch-result-plan (& results))
+        "auto.tl|coff-object|auto.obj|none\nforced.tl|assembly|forced.s|forced-assembly\n"))))
 
 (test
   compile-cli-batch-entry-generated-vector-growth-order

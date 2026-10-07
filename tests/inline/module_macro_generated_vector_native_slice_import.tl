@@ -16,15 +16,14 @@
       (define (score [first : ,T]) : i64
         (let
           [items : vec.Vec (vec.new)]
-          (begin
-            (vec.push-ref! (&mut items) first)
-            (let
-              [view : (& items (Slice ,T)) (vec.view (& items))]
-              (if (= (array-length view) 1)
-                (begin
-                  (array-ref view 0)
-                  42)
-                0))))))))
+          (vec.push-ref! (&mut items) first)
+          (let
+            [view : (& items (Slice ,T)) (vec.view (& items))]
+            (if (= (array-length view) 1)
+              (begin
+                (array-ref view 0)
+                42)
+              0)))))))
 
 (import (slice-user i64) as user)
 (import (slice-user Pair) as pair-user)

@@ -9,4 +9,4 @@
   21)
 
 (define (canonical-import-make) : CanonicalImportChoice
-  (CanonicalImportChoice.Chosen (CanonicalImportValue canonical-import-marker)))
+  (Chosen (CanonicalImportValue canonical-import-marker)))

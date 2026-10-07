@@ -37,9 +37,8 @@
     (alias-poke xs ys (+ n 1))
     (let
       [a : i64 (alias-ref xs 0)]
-      (begin
-        (alias-set! ys 0 (+ a n))
-        (+ (alias-ref xs 0) (alias-ref ys 1))))))
+      (alias-set! ys 0 (+ a n))
+      (+ (alias-ref xs 0) (alias-ref ys 1)))))
 
 (define (mirror-sum [xs : AliasView] [ys : AliasView] [n : i64]) : i64
   (if (< n 0)
@@ -47,32 +46,29 @@
     (let
       [i : i64 0]
       [acc : i64 0]
-      (begin
-        (while (< i n)
-          (begin
-            (set! acc (+ acc (alias-ref xs i)))
-            (alias-set! ys (- (- n 1) i) (+ i 1))
-            (set! i (+ i 1))))
-        acc))))
+      (while (< i n)
+        (set! acc (+ acc (alias-ref xs i)))
+        (alias-set! ys (- (- n 1) i) (+ i 1))
+        (set! i (+ i 1)))
+      acc)))
 
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 5)]
     [xs : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [zs : (__tl_dyn-array i64) (__tl_make-array i64 (+ n 1))]
-    (begin
-      (set! (array-ref xs 0) 10)
-      (set! (array-ref xs 1) 20)
-      (let
-        [xs-view : AliasView (alias-view xs)]
-        [zs-view : AliasView (alias-view zs)]
-        ;; n = 6 (io.arg-count is 1 with no args): a=10; xs[0] := 10+6 = 16;
-        ;; r1 = xs[0] + xs[1] = 16 + 20 = 36. A stale cached xs[0] gives 30.
-        [r1 : i64 (alias-poke xs-view xs-view n)]
-        ;; zs len 7, zero-init; reads i=0..6 see writes from earlier
-        ;; iterations only for i>3: acc = 0+0+0+0+3+2+1 = 6. Stale reads
-        ;; (a wrongly surviving element entry) give 0.
-        [r2 : i64 (mirror-sum zs-view zs-view (+ n 1))]
-        (if (and (= r1 36) (= r2 6))
-          42
-          1)))))
+    (set! (array-ref xs 0) 10)
+    (set! (array-ref xs 1) 20)
+    (let
+      [xs-view : AliasView (alias-view xs)]
+      [zs-view : AliasView (alias-view zs)]
+      ;; n = 6 (io.arg-count is 1 with no args): a=10; xs[0] := 10+6 = 16;
+      ;; r1 = xs[0] + xs[1] = 16 + 20 = 36. A stale cached xs[0] gives 30.
+      [r1 : i64 (alias-poke xs-view xs-view n)]
+      ;; zs len 7, zero-init; reads i=0..6 see writes from earlier
+      ;; iterations only for i>3: acc = 0+0+0+0+3+2+1 = 6. Stale reads
+      ;; (a wrongly surviving element entry) give 0.
+      [r2 : i64 (mirror-sum zs-view zs-view (+ n 1))]
+      (if (and (= r1 36) (= r2 6))
+        42
+        1))))

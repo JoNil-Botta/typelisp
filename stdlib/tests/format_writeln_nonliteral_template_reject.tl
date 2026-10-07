@@ -8,5 +8,5 @@
     [bytes : byte_buf.ByteBuf (byte_buf.new)]
     [template : String "value={}"]
     (match (format.writeln! bytes template 7)
-      [(format.FormatOk) 42]
-      [(format.FormatErr _) 1])))
+      [(FormatOk) 42]
+      [(FormatErr _) 1])))

@@ -33,18 +33,17 @@
 (define (export-test-sources [manifest : load.CompilerPkgManifest]) : source_set.PackageSourceSet
   (let
     [sources : strings.Vec (strings.new)]
-    (begin
-      (strings.push-ref! (&mut sources) (string.copy "pkg/src/macros.tl"))
-      (source_set.PackageSourceSet
-        (string.copy "pkg/typelisp.pkg")
-        (string.copy "pkg")
-        manifest
-        sources))))
+    (strings.push-ref! (&mut sources) (string.copy "pkg/src/macros.tl"))
+    (source_set.PackageSourceSet
+      (string.copy "pkg/typelisp.pkg")
+      (string.copy "pkg")
+      manifest
+      sources)))
 
 (define (export-test-paths [decls : ast.AstDeclList]) : ast.AstDeclPathList
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) (ast.ast-decl-path-list-new)]
-    [(ast.AstDeclListStep.Cons _ rest)
+    [(Nil) (ast.ast-decl-path-list-new)]
+    [(Cons _ rest)
       (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
         (string.copy "pkg/src/macros.tl")
         -1
@@ -52,7 +51,7 @@
         (export-test-paths rest))]))
 
 (define (export-test-capture [source : String]) : build.ResultBuildPackageTlciExports
-  (export-test-capture-with-mode source (backend.CompilerBackendMode.Scalar)))
+  (export-test-capture-with-mode source (Scalar)))
 
 (define (export-test-capture-with-mode
   [source : String]
@@ -80,14 +79,10 @@
             (driver.compiler-driver-reset-analysis-state!))]
         [result : build.ResultBuildPackageTlciExports
           (match (parse.parse-ast-source source)
-            [(parse.ResultAstProgram.Err _)
-              (in-arena
-                home
-                (build.ResultBuildPackageTlciExports.Err
-                  (string.copy "fixture parse failed")))]
-            [(parse.ResultAstProgram.Ok program)
+            [(Err _) (in-arena home (Err (string.copy "fixture parse failed")))]
+            [(Ok program)
               (match program
-                [(ast.AstProgram.Program decls-box)
+                [(Program decls-box)
                   (let
                     [decls : ast.AstDeclList
                       (owned_view.compiler-owned-box-shared-view decls-box)]
@@ -109,25 +104,23 @@
         [retired-pools : ast.AstNodePoolContext
           (ast.ast-node-pool-context-capture-active)]
         [intern-arena : i64 (ci.intern-persistent-arena-handle)]
-        (begin
-          (load.compiler-load-session-reset-pools!)
-          (load.compiler-load-transfer-frontend-handoff!)
-          (in-arena
-            home
-            (begin
-              (ci.intern-compat-state-install! home-interns)
-              (ast.ast-node-pool-context-install! home-pools)
-              (tc.compiler-typecheck-reset-intern-owned-state!)
-              (driver.compiler-driver-reset-analysis-state!)
-              (cbi.state-install! (& home-builtins))))
-          (ast.ast-node-pool-context-destroy-storage! retired-pools)
-          (unsafe
-            ;; The opaque interner owns this arena; its active state has been
-            ;; restored above. This test intentionally invalidates all of its
-            ;; names, which must not be reachable from the retained export DTO.
-            ;; lint-allow: raw-arena-op
-            (arena.tl_arena_destroy intern-arena))
-          result)))))
+        (load.compiler-load-session-reset-pools!)
+        (load.compiler-load-transfer-frontend-handoff!)
+        (in-arena
+          home
+          (ci.intern-compat-state-install! home-interns)
+          (ast.ast-node-pool-context-install! home-pools)
+          (tc.compiler-typecheck-reset-intern-owned-state!)
+          (driver.compiler-driver-reset-analysis-state!)
+          (cbi.state-install! (& home-builtins)))
+        (ast.ast-node-pool-context-destroy-storage! retired-pools)
+        (unsafe
+          ;; The opaque interner owns this arena; its active state has been
+          ;; restored above. This test intentionally invalidates all of its
+          ;; names, which must not be reachable from the retained export DTO.
+          ;; lint-allow: raw-arena-op
+          (arena.tl_arena_destroy intern-arena))
+        result))))
 
 (define (export-test-reuse!) : unit
   (with-scratch
@@ -135,9 +128,8 @@
       [slots : (__tl_dyn-array i64) (__tl_make-array i64 1048576)]
       [index : i64 0]
       (while (< index (array-length slots))
-        (begin
-          (set! (array-ref slots index) 7797)
-          (set! index (+ index 1)))))))
+        (set! (array-ref slots index) 7797)
+        (set! index (+ index 1))))))
 
 (define (export-test-emit-ok?
   [metadata : String]
@@ -151,28 +143,27 @@
     (tlci.tlci-empty-bytes)
     names
     source)
-    [(producer.ResultProducerBytes.Err _) false]
-    [(producer.ResultProducerBytes.Ok bytes) (> (array-length bytes) 0)]))
+    [(Err _) false]
+    [(Ok bytes) (> (array-length bytes) 0)]))
 
 (test
   package-export-metadata-survives-frontend-retirement
   (let
     [exports : build.ResultBuildPackageTlciExports
       (export-test-capture "(module capture.macros)\n(define answer : i64 42)")]
-    (begin
-      (export-test-reuse!)
-      (match exports
-        [(build.ResultBuildPackageTlciExports.Err message) (io.panic message)]
-        [(build.ResultBuildPackageTlciExports.Ok metadata names source)
-          (unless
-            (and
-              (= (array-length names) 0)
-              (string.eq source "")
-              (string.eq
-                metadata
-                (tlci.tlci-metadata-emit
-                  (tlci.tlci-make-metadata "v1" "capture" "0.1.0"))))
-            (io.panic "retired package metadata changed"))]))))
+    (export-test-reuse!)
+    (match exports
+      [(Err message) (io.panic message)]
+      [(Ok metadata names source)
+        (unless
+          (and
+            (= (array-length names) 0)
+            (string.eq source "")
+            (string.eq
+              metadata
+              (tlci.tlci-metadata-emit
+                (tlci.tlci-make-metadata "v1" "capture" "0.1.0"))))
+          (io.panic "retired package metadata changed"))])))
 
 (test
   package-export-native-source-survives-frontend-retirement
@@ -180,23 +171,22 @@
     [exports : build.ResultBuildPackageTlciExports
       (export-test-capture
         "(module capture.macros)\n(defmacro (wrap [value : Expr]) : Expr `(identity ,value))\n(defmacro (unsupported [value : Expr]) : Expr (match value [(comptime.Expr.If c t e) c] [_ value]))")]
-    (begin
-      (export-test-reuse!)
-      (match exports
-        [(build.ResultBuildPackageTlciExports.Err message) (io.panic message)]
-        [(build.ResultBuildPackageTlciExports.Ok metadata names source)
-          (unless
-            (and
-              (= (array-length names) 2)
-              (string.eq (array-ref names 0) "capture.macros/unsupported")
-              (string.eq (array-ref names 1) "capture.macros/wrap")
-              (export-test-emit-ok?
-                (owned_view.compiler-owned-shared-view metadata)
-                (owned_view.compiler-owned-shared-view names)
-                (owned_view.compiler-owned-shared-view source)
-                false)
-              (export-test-emit-ok? metadata names source true))
-            (io.panic "captured native source retained frontend references"))]))))
+    (export-test-reuse!)
+    (match exports
+      [(Err message) (io.panic message)]
+      [(Ok metadata names source)
+        (unless
+          (and
+            (= (array-length names) 2)
+            (string.eq (array-ref names 0) "capture.macros/unsupported")
+            (string.eq (array-ref names 1) "capture.macros/wrap")
+            (export-test-emit-ok?
+              (owned_view.compiler-owned-shared-view metadata)
+              (owned_view.compiler-owned-shared-view names)
+              (owned_view.compiler-owned-shared-view source)
+              false)
+            (export-test-emit-ok? metadata names source true))
+          (io.panic "captured native source retained frontend references"))])))
 
 (test
   package-export-callable-metadata-survives-frontend-retirement
@@ -204,42 +194,41 @@
     [exports : build.ResultBuildPackageTlciExports
       (export-test-capture
         "(module capture.macros)\n(define (helper [x : i64] [scale : i64]) (:spmd-callable (specialization (lanes 8) (args varying uniform) (result varying) (index-param 0))) : i64 (+ x scale))")]
-    (begin
-      (export-test-reuse!)
-      (match exports
-        [(build.ResultBuildPackageTlciExports.Err message) (io.panic message)]
-        [(build.ResultBuildPackageTlciExports.Ok metadata names source)
-          (unless
-            (and
-              (= (array-length names) 0)
-              (string.eq source "")
-              (match (tlci.tlci-metadata-parse metadata)
-                [(tlci.ResultTlciMetadata.Err _) false]
-                [(tlci.ResultTlciMetadata.Ok parsed)
-                  (and
-                    (string.eq parsed.version "v2")
-                    (= (tlci.tlci-spmd-callables-len parsed.spmd-callables) 1)
-                    (let
-                      [callable : tlci.TlciSpmdCallable
-                        (tlci.tlci-spmd-callables-ref parsed.spmd-callables 0)]
-                      (and
-                        (string.eq callable.name "capture.macros/helper")
-                        (string.eq callable.signature "(-> i64 i64 i64)")
-                        (=
-                          (tlci.tlci-spmd-specializations-len
-                            callable.specializations)
-                          1)
-                        (let
-                          [specialization : tlci.TlciSpmdSpecialization
-                            (tlci.tlci-spmd-specializations-ref
-                              callable.specializations
-                              0)]
-                          (and
-                            (string.eq specialization.backend "scalar")
-                            (= specialization.lanes 1)
-                            (string.eq specialization.args "vu")
-                            (= specialization.index-param 0))))))]))
-            (io.panic "retired callable metadata lost its resolved signature"))]))))
+    (export-test-reuse!)
+    (match exports
+      [(Err message) (io.panic message)]
+      [(Ok metadata names source)
+        (unless
+          (and
+            (= (array-length names) 0)
+            (string.eq source "")
+            (match (tlci.tlci-metadata-parse metadata)
+              [(Err _) false]
+              [(Ok parsed)
+                (and
+                  (string.eq parsed.version "v2")
+                  (= (tlci.tlci-spmd-callables-len parsed.spmd-callables) 1)
+                  (let
+                    [callable : tlci.TlciSpmdCallable
+                      (tlci.tlci-spmd-callables-ref parsed.spmd-callables 0)]
+                    (and
+                      (string.eq callable.name "capture.macros/helper")
+                      (string.eq callable.signature "(-> i64 i64 i64)")
+                      (=
+                        (tlci.tlci-spmd-specializations-len
+                          callable.specializations)
+                        1)
+                      (let
+                        [specialization : tlci.TlciSpmdSpecialization
+                          (tlci.tlci-spmd-specializations-ref
+                            callable.specializations
+                            0)]
+                        (and
+                          (string.eq specialization.backend "scalar")
+                          (= specialization.lanes 1)
+                          (string.eq specialization.args "vu")
+                          (= specialization.index-param 0))))))]))
+          (io.panic "retired callable metadata lost its resolved signature"))])))
 
 (test
   package-export-error-survives-capture-and-frontend-retirement
@@ -247,14 +236,13 @@
     [exports : build.ResultBuildPackageTlciExports
       (export-test-capture-with-mode
         "(module capture.macros)\n(define (helper [x : i64]) (:spmd-callable (specialization (lanes 8) (args varying) (result varying) (index-param 0))) : i64 x)"
-        (backend.CompilerBackendMode.Avx2))]
-    (begin
-      (export-test-reuse!)
-      (match exports
-        [(build.ResultBuildPackageTlciExports.Err message)
-          (unless
-            (string.eq
-              message
-              "build: :spmd-callable is not supported with --backend-mode avx2")
-            (io.panic "retired package export diagnostic changed"))]
-        [_ (io.panic "unsupported package export unexpectedly captured")]))))
+        (Avx2))]
+    (export-test-reuse!)
+    (match exports
+      [(Err message)
+        (unless
+          (string.eq
+            message
+            "build: :spmd-callable is not supported with --backend-mode avx2")
+          (io.panic "retired package export diagnostic changed"))]
+      [_ (io.panic "unsupported package export unexpectedly captured")])))

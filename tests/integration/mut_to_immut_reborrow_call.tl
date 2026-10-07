@@ -74,6 +74,5 @@
 (define (main) : i64
   (let
     [world : ReborrowWorld (ReborrowWorld 40 7)]
-    (begin
-      (reborrow-update (&mut world))
-      world.ticks)))
+    (reborrow-update (&mut world))
+    world.ticks))

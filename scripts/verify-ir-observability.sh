@@ -127,6 +127,22 @@ grep -F "function @main()" "$WORKDIR/optimizer_fold.final.ir" >/dev/null
 grep -F "optimizer-pass|main|licm|blocks=" "$TRACE" >/dev/null
 grep -F "after licm @main" "$WORKDIR/optimizer_fold.after-licm.ir" >/dev/null
 
+# Compiler AST pool initializers retain nested, macro-local type variables.
+# Dumping them must resolve syntax IDs through their owner, never as pool indexes.
+STRUCTURAL_SOURCE="$ROOT/tests/golden/ir_structural_names.tl"
+for opt in 0 1 2; do
+    "$COMPILER" compile "$STRUCTURAL_SOURCE" --dump-ir --opt-level "$opt" \
+        -o "$WORKDIR/structural-$opt.ir" \
+        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+        >"$WORKDIR/structural-$opt.stdout" 2>"$WORKDIR/structural-$opt.stderr"
+    grep -F 'function @main()' "$WORKDIR/structural-$opt.ir" >/dev/null
+done
+"$COMPILER" compile "$STRUCTURAL_SOURCE" --dump-ir after-ssa --opt-level 2 \
+    -o "$WORKDIR/structural-after-ssa.ir" \
+    --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+    >"$WORKDIR/structural-after-ssa.stdout" 2>"$WORKDIR/structural-after-ssa.stderr"
+grep -F 'after ssa @' "$WORKDIR/structural-after-ssa.ir" >/dev/null
+
 # DCE-2: `dce_late` closes the level-2 pass list, so an omission there is
 # invisible unless the trace is asked for the slot by name -- the pipeline
 # still reports every pass above it. A level-2 compile must observe the slot
@@ -311,4 +327,29 @@ if [ "$(grep -c '^function @' "$WORKDIR/dump_ir_stress.ir")" -ne 6001 ]; then
     exit 1
 fi
 
-echo "[ir-observability] dump golden, pass trace, verifier, and scaled dump passed"
+# Debug type graph (#8237): with debug info, `--verify-ir` re-checks every
+# struct, enum, tuple and array layout in the graph against independent
+# typechecker queries and fails the compile on a disagreement. These fixtures
+# carry the corpus's densest nested, register-resident, C-ABI, generated and
+# tuple aggregates.
+for fixture in \
+    comptime_type_expr_worklist \
+    c_abi_win64_nested_aggregate \
+    c_abi_sysv_register_aggregate_args \
+    factored_addresses \
+    stdlib_hash_generated \
+    nested_tuple_array_projection \
+    generated_option_result_families \
+    aggregate_return_no_alloc; do
+    if ! "$COMPILER" compile "$ROOT/tests/integration/$fixture.tl" \
+        --debug \
+        --verify-ir \
+        -o "$WORKDIR/debug-types-$fixture.s" \
+        --stdlib-root "$ROOT/stdlib" \
+        --stdlib-root "$ROOT/tests/integration"; then
+        echo "debug type graph verification failed for $fixture" >&2
+        exit 1
+    fi
+done
+
+echo "[ir-observability] dump golden, pass trace, verifier, and scaled dump, and debug type graph passed"

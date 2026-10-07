@@ -34,6 +34,31 @@ not-match ^[[:space:]]+leaq -2\(%r[a-z0-9]+\), %r
 count = 1 __unroll_guard:$
 count = 1 ^[[:space:]]+movzbq[ ]
 
+# #8555: the iterator protocol over a range. `into-next` returns the two-word
+# `IntoNext` register group, which the multiblock inliner admits; the match on
+# the inlined result reads a join the group split takes apart, and the
+# `IntoIter` state, `bool` lanes included, lives in registers: no call, no frame.
+case range-protocol-inline
+source tests/integration/range_loop_shapes.tl
+in fn _tl_range_loop_shapes_protocol_sum
+not-contains into_next
+not-match ^[[:space:]]+subq \$[0-9]+, %rsp$
+
+# #8555: a loop over an inlined range's fields, with the advance after the body
+# and (the prelude `for` macro's order) before it. The `inclusive` lane folds,
+# the loop collapses back into one block, and it is bounds-check versioned and
+# unrolled like a counting `while`.
+case range-fields-unroll
+source tests/integration/range_loop_shapes.tl
+in fn _tl_range_loop_shapes_fields_sum
+not-match ^[[:space:]]+subq \$[0-9]+, %rsp$
+count >= 1 __bce_fast:$
+count >= 1 __bce_fast__unroll_body:$
+in fn _tl_range_loop_shapes_advance_first_sum
+not-match ^[[:space:]]+subq \$[0-9]+, %rsp$
+count >= 1 __bce_fast:$
+count >= 1 __bce_fast__unroll_body:$
+
 # Divisor magic hoisting: constant multiplies fold into imm32 imuls; the /7
 # quotient reads the live dividend through %rax (one irreducible copy chain).
 case divmagic-hoist
@@ -1256,3 +1281,29 @@ match ^[[:space:]]+addq 88\(%r[a-z0-9]+\), %r[a-z0-9]+$
 match ^[[:space:]]+movq %r[a-z0-9]+, 88\(%r[a-z0-9]+\)$
 match ^[[:space:]]+movl %[a-z0-9]+, 80\(%r[a-z0-9]+\)$
 match ^[[:space:]]+movb %[a-z0-9]+, 84\(%r[a-z0-9]+\)$
+
+# A `try` error exit returns the enclosing family's Err like a returned
+# constructor: the 32-byte family is written straight into the caller's sret
+# slot (one tag store per exit) and the 16-byte family travels in the register
+# group, with no arena allocation on either path.
+case try-err-return-slot
+source tests/integration/try_propagation.tl
+opt 0 2
+in fn _tl_try_propagation_validate
+not-contains tl_current_arena
+not-match ^[[:space:]]+call .*alloc
+count = 2 ^[[:space:]]+movq \$1, \(%r[a-z0-9]+\)$
+in fn _tl_try_propagation_word_sum
+not-contains tl_current_arena
+not-match ^[[:space:]]+call .*alloc
+
+# A function that uses `try` still takes its caller's sret slot: the try error
+# exit builds its Err in that slot (#8563), so `forward` tail-jumps into
+# `checked` instead of calling into a temporary and copying the 32-byte result.
+case try-sret-forward
+source tests/integration/try_sret_forward.tl
+opt 0 1
+in fn _tl_try_sret_forward_forward
+match ^[[:space:]]+jmp _tl_try_sret_forward_checked$
+not-contains movups
+not-match ^[[:space:]]+call[[:space:]]

@@ -24,18 +24,19 @@ file doc_source.tl
 (define answer : i64 42)
 end-file
 
-# The corpus is exactly these twelve sources, each with an expected output.
+# The corpus is exactly these thirteen sources, each with an expected output.
 case fmt-golden-manifest
-test "$(find tests/format_golden -maxdepth 1 -type f -name '*.tl' | sed 's#.*/##; s#\.tl$##' | sort | tr '\n' ' ')" = "call_wrap char_literal comments decls flow let_bindings loops negative_int quote signature_colon slice_pattern tail_comment "
-test "$(find tests/format_golden -maxdepth 1 -type f -name '*.expected' | sed 's#.*/##; s#\.expected$##' | sort | tr '\n' ' ')" = "call_wrap char_literal comments decls flow let_bindings loops negative_int quote signature_colon slice_pattern tail_comment "
+test "$(find tests/format_golden -maxdepth 1 -type f -name '*.tl' | sed 's#.*/##; s#\.tl$##' | sort | tr '\n' ' ')" = "body_arms call_wrap char_literal comments decls flow let_bindings loops negative_int quote signature_colon slice_pattern tail_comment "
+test "$(find tests/format_golden -maxdepth 1 -type f -name '*.expected' | sed 's#.*/##; s#\.expected$##' | sort | tr '\n' ' ')" = "body_arms call_wrap char_literal comments decls flow let_bindings loops negative_int quote signature_colon slice_pattern tail_comment "
 
 # One multi-file rewrite, then per-file --check and a single-file rewrite.
 case fmt-golden
-sh (for n in call_wrap char_literal comments decls flow let_bindings loops negative_int quote signature_colon slice_pattern tail_comment; do cp "tests/format_golden/$n.tl" "{{dir}}/$n.tl" && printf '%s' "$(tr -d '\r' < "tests/format_golden/$n.expected")" > "{{dir}}/$n.expected" || exit 1; done)
+sh (for n in body_arms call_wrap char_literal comments decls flow let_bindings loops negative_int quote signature_colon slice_pattern tail_comment; do cp "tests/format_golden/$n.tl" "{{dir}}/$n.tl" && printf '%s' "$(tr -d '\r' < "tests/format_golden/$n.expected")" > "{{dir}}/$n.expected" || exit 1; done)
 step fmt-golden
-run fmt "{{dir}}/call_wrap.tl" "{{dir}}/char_literal.tl" "{{dir}}/comments.tl" "{{dir}}/decls.tl" "{{dir}}/flow.tl" "{{dir}}/let_bindings.tl" "{{dir}}/loops.tl" "{{dir}}/negative_int.tl" "{{dir}}/quote.tl" "{{dir}}/signature_colon.tl" "{{dir}}/slice_pattern.tl" "{{dir}}/tail_comment.tl"
+run fmt "{{dir}}/body_arms.tl" "{{dir}}/call_wrap.tl" "{{dir}}/char_literal.tl" "{{dir}}/comments.tl" "{{dir}}/decls.tl" "{{dir}}/flow.tl" "{{dir}}/let_bindings.tl" "{{dir}}/loops.tl" "{{dir}}/negative_int.tl" "{{dir}}/quote.tl" "{{dir}}/signature_colon.tl" "{{dir}}/slice_pattern.tl" "{{dir}}/tail_comment.tl"
 stdout empty
 stderr empty
+same "{{dir}}/body_arms.tl" "{{dir}}/body_arms.expected"
 same "{{dir}}/call_wrap.tl" "{{dir}}/call_wrap.expected"
 same "{{dir}}/char_literal.tl" "{{dir}}/char_literal.expected"
 same "{{dir}}/comments.tl" "{{dir}}/comments.expected"
@@ -50,7 +51,7 @@ same "{{dir}}/slice_pattern.tl" "{{dir}}/slice_pattern.expected"
 same "{{dir}}/tail_comment.tl" "{{dir}}/tail_comment.expected"
 
 case fmt
-each call_wrap char_literal comments decls flow let_bindings loops negative_int quote signature_colon slice_pattern tail_comment
+each body_arms call_wrap char_literal comments decls flow let_bindings loops negative_int quote signature_colon slice_pattern tail_comment
 sh printf '%s' "$(tr -d '\r' < "tests/format_golden/{{each}}.expected")" > "{{dir}}/{{each}}.expected"
 sh cp "{{dir}}/{{each}}.expected" "{{dir}}/{{each}}.tl"
 step fmt-{{each}}-check

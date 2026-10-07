@@ -18,9 +18,8 @@
   (let
     [score : i64 level.score]
     [name-length : i64 (string.string-length level.name)]
-    (begin
-      (arena.destroy-safe! level.arena)
-      (+ score name-length))))
+    (arena.destroy-safe! level.arena)
+    (+ score name-length)))
 
 ;; Forwarding the owner to another `:invalidate` parameter discharges it.
 (define (forward [owner : (arena.Arena s) (:invalidate s)]) : unit
@@ -61,14 +60,13 @@
     [first (arena.make)]
     [second (arena.make)]
     [order : i64 (release-pair first second true)]
-    (begin
-      (forward forwarded)
-      (release-through release through)
-      (test.assert-string-eq
-        (& kept-text)
-        (& expected-kept)
-        "invalidating other arenas preserves this one")
-      (test.assert-true (= unloaded 37) "unload reads fields before destroy")
-      (test.assert-true (= forwarded-length 7) "forwarded arena was readable")
-      (arena.destroy-safe! kept)
-      (+ unloaded (+ order 4)))))
+    (forward forwarded)
+    (release-through release through)
+    (test.assert-string-eq
+      (& kept-text)
+      (& expected-kept)
+      "invalidating other arenas preserves this one")
+    (test.assert-true (= unloaded 37) "unload reads fields before destroy")
+    (test.assert-true (= forwarded-length 7) "forwarded arena was readable")
+    (arena.destroy-safe! kept)
+    (+ unloaded (+ order 4))))

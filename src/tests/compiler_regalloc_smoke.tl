@@ -12,14 +12,13 @@
   (let
     [builder : ir.CompilerIrInstrBuilder
       (ir.compiler-ir-instr-builder-with-capacity (+ rest.len 1))]
-    (begin
-      (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
-      (ir.compiler-ir-instr-builder-append-seq-range!
-        (&mut builder)
-        rest
-        0
-        rest.len)
-      (ir.compiler-ir-instr-builder-to-seq builder))))
+    (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
+    (ir.compiler-ir-instr-builder-append-seq-range!
+      (&mut builder)
+      rest
+      0
+      rest.len)
+    (ir.compiler-ir-instr-builder-to-seq builder)))
 
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
@@ -29,20 +28,14 @@
   (let
     [spmd-args : ir.CompilerIrSpmdCallArgSeq
       (ir.compiler-ir-spmd-call-arg-seq2
-        (ir.CompilerIrSpmdCallArg.Arg
-          (ir.CompilerIrSpmdValueClass.Uniform)
-          (ir.CompilerIrValue.Var 1)
-          (reg_tests.compiler-reg-i64-ty))
-        (ir.CompilerIrSpmdCallArg.Arg
-          (ir.CompilerIrSpmdValueClass.Varying)
-          (ir.CompilerIrValue.Var 2)
-          (reg_tests.compiler-reg-i64-ty)))]
-    (ir.CompilerIrFunction.Function
+        (Arg (Uniform) (Var 1) (reg_tests.compiler-reg-i64-ty))
+        (Arg (Varying) (Var 2) (reg_tests.compiler-reg-i64-ty)))]
+    (Function
       (ci.intern-generated-canonical-name "spmd_call")
       (ir.compiler-ir-param-seq-empty)
       (reg_tests.compiler-reg-i64-ty)
       5
-      (ir.compiler-ir-block-cons
+      (ir.compiler-ir-blocks
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label "entry")
           (compiler-regalloc-smoke-instr-seq-prepend
@@ -54,26 +47,22 @@
                 (compiler-regalloc-smoke-instr-seq-prepend
                   (ir.compiler-ir-test-spmd-private-call
                     (ci.intern-generated-canonical-name "spmd_helper")
-                    (ir.CompilerIrSpmdBackend.Avx512)
+                    (Avx512)
                     8
-                    (ir.CompilerIrValue.Var 0)
+                    (Var 0)
                     spmd-args
-                    (ir.CompilerIrSpmdCallResult.Value
-                      3
-                      (ir.CompilerIrSpmdValueClass.Varying)
-                      (reg_tests.compiler-reg-i64-ty)))
+                    (Value 3 (Varying) (reg_tests.compiler-reg-i64-ty)))
                   (irt.instrs
                     "%4 = mov %3 : i64
-                     return %4"))))))
-        ir.CompilerIrBlockList.Nil)
-      ir.CompilerIrFunctionAbi.Ordinary)))
+                     return %4")))))))
+      Ordinary)))
 
 (define (compiler-reg-smoke-spmd-call-shape-ok?) : bool
   (let
     [func : ir.CompilerIrFunction (compiler-reg-smoke-spmd-call-function)]
     [blocks : ir.CompilerIrBlockList
       (match (clone func)
-        [(ir.CompilerIrFunction.Function _ _ _ _ inner _) inner])]
+        [(Function _ _ _ _ inner _) inner])]
     [call-args : live.CompilerLiveI64Set
       (reg.compiler-reg-call-arg-vars-blocks
         (clone blocks)
@@ -88,7 +77,7 @@
     [direct-calls : live.CompilerLiveI64Set
       (reg_tests.compiler-reg-direct-call-points (clone func))]
     (match (reg_tests.compiler-reg-plan-function func)
-      [(reg.CompilerRegPlan.Plan _ ineligible _ _ _)
+      [(Plan _ ineligible _ _ _)
         (and
           (live.compiler-live-set-eq?
             call-args
@@ -102,12 +91,12 @@
           (live.compiler-live-set-contains? ineligible 2))])))
 
 (define (compiler-reg-smoke-descriptor-pair-function) : ir.CompilerIrFunction
-  (ir.CompilerIrFunction.Function
+  (Function
     (ci.intern-generated-canonical-name "descriptor_pair")
     (irt.params "handle=%0:String")
-    (ast.AstType.I64)
+    (I64)
     8
-    (ir.compiler-ir-block-cons
+    (ir.compiler-ir-blocks
       (ir.CompilerIrBlock.Block
         (ir.compiler-ir-label "entry")
         (compiler-regalloc-smoke-instr-seq-prepend
@@ -121,16 +110,11 @@
                 (compiler-regalloc-smoke-instr-seq-prepend
                   (irt.instr "%5 = mov %4 : String")
                   (compiler-regalloc-smoke-instr-seq-prepend
-                    (ir.ir-instr-descriptor-pair-data
-                      6
-                      (ir.CompilerIrValue.Var 5))
+                    (ir.ir-instr-descriptor-pair-data 6 (Var 5))
                     (compiler-regalloc-smoke-instr-seq-prepend
-                      (ir.ir-instr-descriptor-pair-length
-                        7
-                        (ir.CompilerIrValue.Var 5))
-                      (irt.instrs "return %7")))))))))
-      ir.CompilerIrBlockList.Nil)
-    ir.CompilerIrFunctionAbi.Ordinary))
+                      (ir.ir-instr-descriptor-pair-length 7 (Var 5))
+                      (irt.instrs "return %7"))))))))))
+    Ordinary))
 
 (define (compiler-reg-smoke-descriptor-pair-group-ok?) : bool
   (let
@@ -150,12 +134,12 @@
         (reg.compiler-reg-type-register-group?
           (ast.ast-node-pool-reader-type-segment-bases)
           (reg.compiler-reg-global-shared-view representations)
-          (ast.AstType.String)))
+          (String)))
       (not
         (reg.compiler-reg-type-register-group?
           (ast.ast-node-pool-reader-type-segment-bases)
           representations
-          (ast.AstType.DynArray 1)))
+          (DynArray 1)))
       (= (live.compiler-live-set-count groups) 2)
       (not (live.compiler-live-set-contains? groups 0))
       (live.compiler-live-set-contains? groups 4)
@@ -164,17 +148,16 @@
       (not (live.compiler-live-set-contains? groups 7)))))
 
 (define (main) : i64
-  (begin
-    (reg_tests.compiler-regalloc-self-test-require!
-      "named failure message renderer"
-      (string.eq
-        (reg_tests.compiler-regalloc-self-test-failure-message "register reuse")
-        "regalloc self-test failed: register reuse"))
-    (reg_tests.compiler-regalloc-self-test)
-    (reg_tests.compiler-regalloc-self-test-require!
-      "compiler-reg-smoke-spmd-call-shape-ok?"
-      (compiler-reg-smoke-spmd-call-shape-ok?))
-    (reg_tests.compiler-regalloc-self-test-require!
-      "compiler-reg-smoke-descriptor-pair-group-ok?"
-      (compiler-reg-smoke-descriptor-pair-group-ok?))
-    42))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "named failure message renderer"
+    (string.eq
+      (reg_tests.compiler-regalloc-self-test-failure-message "register reuse")
+      "regalloc self-test failed: register reuse"))
+  (reg_tests.compiler-regalloc-self-test)
+  (reg_tests.compiler-regalloc-self-test-require!
+    "compiler-reg-smoke-spmd-call-shape-ok?"
+    (compiler-reg-smoke-spmd-call-shape-ok?))
+  (reg_tests.compiler-regalloc-self-test-require!
+    "compiler-reg-smoke-descriptor-pair-group-ok?"
+    (compiler-reg-smoke-descriptor-pair-group-ok?))
+  42)

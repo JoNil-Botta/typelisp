@@ -57,22 +57,20 @@
   (let
     [result : (ReadFileOrResult fallback)
       (read-file-or-borrowed-result fallback)]
-    (begin
-      (match (io.try-read-file path)
-        [(io.OkIoBytes contents)
-          (set!
-            result
-            (read-file-or-owned-result-like
-              fallback
-              (byte_buf.to-string contents)))]
-        [(io.ErrIoBytes _) unit])
-      result)))
+    (match (io.try-read-file path)
+      [(OkIoBytes contents)
+        (set!
+          result
+          (read-file-or-owned-result-like
+            fallback
+            (byte_buf.to-string contents)))]
+      [(ErrIoBytes _) unit])
+    result))
 
 ;: Inline test helper that forces an IO caller-result test failure.
 (define (test-fail) : unit
-  (begin
-    (/ 1 0)
-    unit))
+  (/ 1 0)
+  unit)
 
 ;: Inline test assertion for owned string equality.
 (define (test-string-eq [actual : String] [expected : String]) : unit
@@ -92,15 +90,14 @@
       (read-file-or-owned-result-like (& fallback) owned)]
     [manual-borrowed : (ReadFileOrResult fallback)
       (read-file-or-borrowed-result (& fallback))]
-    (begin
-      (test.assert-true
-        (read-file-or-result-borrowed? direct)
-        "io-caller-result-api: (read-file-or-result-borrowed? direct)")
-      (test.assert-true
-        (read-file-or-result-owned? manual-owned)
-        "io-caller-result-api: (read-file-or-result-owned? manual-owned)")
-      (test.assert-true
-        (read-file-or-result-borrowed? manual-borrowed)
-        "io-caller-result-api: (read-file-or-result-borrowed? manual-borrowed)")
-      (test-string-eq (read-file-or-result-string direct) "fallback")
-      (test-string-eq (read-file-or-result-string manual-owned) "contents"))))
+    (test.assert-true
+      (read-file-or-result-borrowed? direct)
+      "io-caller-result-api: (read-file-or-result-borrowed? direct)")
+    (test.assert-true
+      (read-file-or-result-owned? manual-owned)
+      "io-caller-result-api: (read-file-or-result-owned? manual-owned)")
+    (test.assert-true
+      (read-file-or-result-borrowed? manual-borrowed)
+      "io-caller-result-api: (read-file-or-result-borrowed? manual-borrowed)")
+    (test-string-eq (read-file-or-result-string direct) "fallback")
+    (test-string-eq (read-file-or-result-string manual-owned) "contents")))

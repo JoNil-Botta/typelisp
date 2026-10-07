@@ -19,24 +19,22 @@
 (define (dynamic-score) : i64
   (let
     [items : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-    (begin
-      (set! (array-ref items 0) 10)
-      (set! (array-ref items 1) 20)
-      (__tl_array-push! items 5)
-      (put-mut! (&mut items) 2 12)
-      (push-mut! (&mut items) 0)
-      (if (= (array-length items) 4)
-        (+
-          (array-ref items 0)
-          (+ (array-ref items 1) (+ (array-ref items 2) (array-ref items 3))))
-        0))))
+    (set! (array-ref items 0) 10)
+    (set! (array-ref items 1) 20)
+    (__tl_array-push! items 5)
+    (put-mut! (&mut items) 2 12)
+    (push-mut! (&mut items) 0)
+    (if (= (array-length items) 4)
+      (+
+        (array-ref items 0)
+        (+ (array-ref items 1) (+ (array-ref items 2) (array-ref items 3))))
+      0)))
 
 (define (fixed-score) : i64
   (let
     [items : (Array i64 3) (array 1 2 3)]
-    (begin
-      (set! (array-ref items 1) 20)
-      (+ (array-ref items 0) (+ (array-ref items 1) (array-ref items 2))))))
+    (set! (array-ref items 1) 20)
+    (+ (array-ref items 0) (+ (array-ref items 1) (array-ref items 2)))))
 
 (define (main) : i64
   (let

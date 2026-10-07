@@ -32,15 +32,15 @@
 (define (sync-pair-integration-send-ok?
   [result : sync.ChannelI64PairSendResult]) : bool
   (match result
-    [(sync.ChannelI64PairSendOk) true]
-    [(sync.ChannelI64PairSendErr _) false]))
+    [(ChannelI64PairSendOk) true]
+    [(ChannelI64PairSendErr _) false]))
 
 (define (sync-pair-integration-recv-value-or
   [result : sync.ChannelI64PairRecvResult]
   [fallback : sync.ChannelI64Pair]) : sync.ChannelI64Pair
   (match result
-    [(sync.ChannelI64PairRecvOk value) value]
-    [(sync.ChannelI64PairRecvErr _) fallback]))
+    [(ChannelI64PairRecvOk value) value]
+    [(ChannelI64PairRecvErr _) fallback]))
 
 (define (sync-pair-integration-message-sum [value : sync.ChannelI64Pair]) : i64
   (+ value.left value.right))
@@ -49,12 +49,10 @@
   (let
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set! sum (+ sum (+ (+ base i) i)))
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i count)
+      (set! sum (+ sum (+ (+ base i) i)))
+      (set! i (+ i 1)))
+    sum))
 
 (define (sync-pair-integration-producer [ctx : i64]) : i64
   (let
@@ -69,20 +67,19 @@
     [i : i64 0]
     [sum : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< i count))
-        (let
-          [message : sync.ChannelI64Pair (sync.ChannelI64Pair (+ base i) i)]
-          [value : i64 (sync-pair-integration-message-sum message)]
-          (if (sync-pair-integration-send-ok?
-            (sync.channel-i64-pair-send channel message))
-            (begin
-              (set! sum (+ sum value))
-              (set! i (+ i 1)))
-            (set! ok false))))
-      (if ok
-        sum
-        -1))))
+    (while (and ok (< i count))
+      (let
+        [message : sync.ChannelI64Pair (sync.ChannelI64Pair (+ base i) i)]
+        [value : i64 (sync-pair-integration-message-sum message)]
+        (if (sync-pair-integration-send-ok?
+          (sync.channel-i64-pair-send channel message))
+          (begin
+            (set! sum (+ sum value))
+            (set! i (+ i 1)))
+          (set! ok false))))
+    (if ok
+      sum
+      -1)))
 
 (define (sync-pair-integration-join-code [result : ThreadJoinResult]) : i64
   (match result
@@ -94,11 +91,10 @@
   [channel : sync.ChannelI64PairChannel]
   [base : i64]
   [count : i64]) : unit
-  (begin
-    (unsafe
-      (sync.channel-i64-pair-store-raw! channel ctx 0))
-    (set! (array-ref ctx sync.channel-i64-pair-raw-field-count) base)
-    (set! (array-ref ctx (+ sync.channel-i64-pair-raw-field-count 1)) count)))
+  (unsafe
+    (sync.channel-i64-pair-store-raw! channel ctx 0))
+  (set! (array-ref ctx sync.channel-i64-pair-raw-field-count) base)
+  (set! (array-ref ctx (+ sync.channel-i64-pair-raw-field-count 1)) count))
 
 (define (sync-pair-integration-receive-sum
   [channel : sync.ChannelI64PairChannel]
@@ -107,22 +103,21 @@
     [i : i64 0]
     [sum : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< i count))
-        (let
-          [value : sync.ChannelI64Pair
-            (sync-pair-integration-recv-value-or
-              (sync.channel-i64-pair-recv channel)
-              (sync.ChannelI64Pair -1 -1))]
-          [message-sum : i64 (sync-pair-integration-message-sum value)]
-          (if (< message-sum 0)
-            (set! ok false)
-            (begin
-              (set! sum (+ sum message-sum))
-              (set! i (+ i 1))))))
-      (if ok
-        sum
-        -1))))
+    (while (and ok (< i count))
+      (let
+        [value : sync.ChannelI64Pair
+          (sync-pair-integration-recv-value-or
+            (sync.channel-i64-pair-recv channel)
+            (sync.ChannelI64Pair -1 -1))]
+        [message-sum : i64 (sync-pair-integration-message-sum value)]
+        (if (< message-sum 0)
+          (set! ok false)
+          (begin
+            (set! sum (+ sum message-sum))
+            (set! i (+ i 1))))))
+    (if ok
+      sum
+      -1)))
 
 (define (sync-pair-integration-finish
   [channel : sync.ChannelI64PairChannel]
@@ -159,31 +154,30 @@
       (__tl_make-array i64 (+ sync.channel-i64-pair-raw-field-count 2))]
     [ctx-b : (__tl_dyn-array i64)
       (__tl_make-array i64 (+ sync.channel-i64-pair-raw-field-count 2))]
-    (begin
-      (sync-pair-integration-pack-context!
-        (&mut ctx-a)
-        channel
-        100
-        sync-pair-integration-count)
-      (sync-pair-integration-pack-context!
-        (&mut ctx-b)
-        channel
-        1000
-        sync-pair-integration-count)
-      (match (unsafe
-        (thread.spawn
-          sync-pair-integration-producer
-          (sync-pair-integration-array-i64-addr ctx-a)))
-        [(ThreadSpawnErr _) 6]
-        [(ThreadSpawnOk a)
-          (match (unsafe
-            (thread.spawn
-              sync-pair-integration-producer
-              (sync-pair-integration-array-i64-addr ctx-b)))
-            [(ThreadSpawnErr _) 7]
-            [(ThreadSpawnOk b) (sync-pair-integration-finish channel a b)])]))))
+    (sync-pair-integration-pack-context!
+      (&mut ctx-a)
+      channel
+      100
+      sync-pair-integration-count)
+    (sync-pair-integration-pack-context!
+      (&mut ctx-b)
+      channel
+      1000
+      sync-pair-integration-count)
+    (match (unsafe
+      (thread.spawn
+        sync-pair-integration-producer
+        (sync-pair-integration-array-i64-addr ctx-a)))
+      [(ThreadSpawnErr _) 6]
+      [(ThreadSpawnOk a)
+        (match (unsafe
+          (thread.spawn
+            sync-pair-integration-producer
+            (sync-pair-integration-array-i64-addr ctx-b)))
+          [(ThreadSpawnErr _) 7]
+          [(ThreadSpawnOk b) (sync-pair-integration-finish channel a b)])])))
 
 (define (main) : i64
   (match (sync.channel-i64-pair-create 8)
-    [(sync.ChannelI64PairCreateErr _) 1]
-    [(sync.ChannelI64PairCreateOk channel) (sync-pair-integration-run channel)]))
+    [(ChannelI64PairCreateErr _) 1]
+    [(ChannelI64PairCreateOk channel) (sync-pair-integration-run channel)]))

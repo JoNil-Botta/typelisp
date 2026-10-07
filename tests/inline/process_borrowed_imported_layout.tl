@@ -13,12 +13,11 @@
     [owned : process.ProcessMaybeString (process_borrowed.maybe-owned borrowed)]
     (+
       (match borrowed
-        [(process_borrowed.ProcessBorrowedNoString) 0]
-        [(process_borrowed.ProcessBorrowedSomeString view)
-          (string.string-length view)])
+        [(ProcessBorrowedNoString) 0]
+        [(ProcessBorrowedSomeString view) (string.string-length view)])
       (match owned
-        [(process.ProcessNoString) 0]
-        [(process.ProcessSomeString value) (string.string-length value)]))))
+        [(ProcessNoString) 0]
+        [(ProcessSomeString value) (string.string-length value)]))))
 
 (define (process-borrowed-imported-dense-score [text : String]) : i64
   (let

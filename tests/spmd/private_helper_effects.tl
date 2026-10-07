@@ -5,9 +5,8 @@
   [out : (&mut out (__tl_dyn-array i64))]
   [atomic-out : (& atomic-out atomic.AtomicI64Buffer)]
   [i : i64]) : unit
-  (begin
-    (set! (array-ref out i) (+ (+ (+ (+ (+ (+ (+ i 1) 2) 3) 4) 5) 6) 7))
-    (atomic.atomic-i64-add! atomic-out 0 1)))
+  (set! (array-ref out i) (+ (+ (+ (+ (+ (+ (+ i 1) 2) 3) 4) 5) 6) 7))
+  (atomic.atomic-i64-add! atomic-out 0 1))
 
 (define (fill
   [out : (&mut out (__tl_dyn-array i64))]
@@ -23,21 +22,18 @@
   (let
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! sum (+ sum (array-ref xs i)))
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i n)
+      (set! sum (+ sum (array-ref xs i)))
+      (set! i (+ i 1)))
+    sum))
 
 (define (main) : i64
   (let
     [out : (__tl_dyn-array i64) (__tl_make-array i64 16)]
     [atomic-out : atomic.AtomicI64Buffer (atomic.i64-buffer 1)]
-    (begin
-      (fill (&mut out) (& atomic-out) 13)
-      (if (=
-        (+ (sum-array (& out) 16) (atomic.atomic-i64-load (& atomic-out) 0))
-        155)
-        42
-        1))))
+    (fill (&mut out) (& atomic-out) 13)
+    (if (=
+      (+ (sum-array (& out) 16) (atomic.atomic-i64-load (& atomic-out) 0))
+      155)
+      42
+      1)))

@@ -11,19 +11,15 @@
   (let
     [outer : arena.Arena (arena.current)]
     [scratch : arena.Arena (arena.make)]
-    (begin
-      (tl_arena_poison_enable)
+    (tl_arena_poison_enable)
+    (unsafe
+      (arena.set! scratch))
+    (let
+      [source : PoisonPayload (PoisonPayload (string.append "poison" "ok") 34)]
       (unsafe
-        (arena.set! scratch))
+        (arena.set! outer))
       (let
-        [source : PoisonPayload
-          (PoisonPayload (string.append "poison" "ok") 34)]
-        (begin
-          (unsafe
-            (arena.set! outer))
-          (let
-            [copy : PoisonPayload (clone source)]
-            (begin
-              (unsafe
-                (arena.destroy scratch))
-              (+ (string-length copy.label) copy.value))))))))
+        [copy : PoisonPayload (clone source)]
+        (unsafe
+          (arena.destroy scratch))
+        (+ (string-length copy.label) copy.value)))))

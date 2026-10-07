@@ -5,11 +5,9 @@
 (define (main) : i64
   (let
     [items : vec.Vec (vec.new)]
-    (begin
-      (vec.push-ref! (&mut items) 10)
-      (let
-        [exclusive : (&mut items (Slice i64)) (vec.view-mut (&mut items))]
-        [shared : (& items (Slice i64)) (vec.view (& items))]
-        (begin
-          (set! (array-ref exclusive 0) 20)
-          (array-ref shared 0))))))
+    (vec.push-ref! (&mut items) 10)
+    (let
+      [exclusive : (&mut items (Slice i64)) (vec.view-mut (&mut items))]
+      [shared : (& items (Slice i64)) (vec.view (& items))]
+      (set! (array-ref exclusive 0) 20)
+      (array-ref shared 0))))

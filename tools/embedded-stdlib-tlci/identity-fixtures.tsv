@@ -3,6 +3,7 @@ stdlib.clone/clone-fixed-array	6	variadic	expr	tests/integration/explicit_clone_
 stdlib.clone/clone-tuple	6	variadic	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly
 stdlib.clone/clone-nominal-value	4	fixed	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly
 stdlib.clone/clone-value	4	fixed	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly
+stdlib.clone/clone-borrowed-value	4	fixed	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly
 stdlib.clone/clone-struct-root	2	fixed	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly
 stdlib.clone/clone-enum-root	2	fixed	expr	tests/integration/explicit_clone_generation.tl	ok	default	assembly
 stdlib.clone/gen-clone	1	fixed	decls	tests/integration/explicit_clone_generation.tl	ok	default	assembly

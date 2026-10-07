@@ -32,9 +32,8 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : parser.ResultAstProgram
       (parser.parse-ast-program-with-cfg-and-pools toks cfgs pools)]
-    (begin
-      (ast.ast-node-pool-context-install! pools)
-      result)))
+    (ast.ast-node-pool-context-install! pools)
+    result))
 
 (define (parse-ast-program [toks : (__tl_dyn-array token.SpannedToken)]) : parser.ResultAstProgram
   (parse-ast-program-with-cfg toks (parser.compiler-cfg-empty)))
@@ -47,8 +46,8 @@
 
 (define (ast-decl-list-tag-sum [decls : ast.AstDeclList]) : i64
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) 0]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) 0]
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         (+ (ast_tests.ast-decl-tag decl) (ast-decl-list-tag-sum rest)))]))
@@ -61,13 +60,13 @@
   [name : String]
   [want-args : i64]) : bool
   (match (ast.ast-expr-unspan (ast.ast-node-get call-expr))
-    [(ast.AstExpr.Call head args)
+    [(Call head args)
       (let
         [head-expr : ast.AstExpr (ast.ast-node-get head)]
         (and
           (= (compiler-parse-expr-list-count args) want-args)
           (match (ast.ast-expr-unspan head-expr)
-            [(ast.AstExpr.Var found) (string.eq (ci.intern-str found) name)]
+            [(Var found) (string.eq (ci.intern-str found) name)]
             [_ false])))]
     [_ false]))
 
@@ -77,16 +76,7 @@
 
 (define (ast-first-import-ok? [decls : ast.AstDeclList]) : bool
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Cons
-        (ast.AstDecl.Import
-          _
-          (ast.AstImportSpec.Spec
-            (ast.AstImportKind.Module)
-            path
-            (ast.AstMaybeModuleName.Some module-name)
-            (ast.AstMaybeImportAlias.Some alias)
-            _))
-        _)
+    [(Cons (Import _ (Spec (Module) path (Some module-name) (Some alias) _)) _)
       (and
         (string.eq path "stdlib.test")
         (string.eq (ci.intern-str module-name) "stdlib.test")
@@ -95,7 +85,7 @@
 
 (define (ast-first-include-str-ok? [decls : ast.AstDeclList]) : bool
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Cons (ast.AstDecl.IncludeStr name path) _)
+    [(Cons (IncludeStr name path) _)
       (and
         (string.eq (ci.intern-str name) "payload")
         (string.eq path "data.txt"))]
@@ -103,7 +93,7 @@
 
 (define (ast-first-include-str-comptime-ok? [decls : ast.AstDeclList]) : bool
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Cons (ast.AstDecl.IncludeStrComptime name path) _)
+    [(Cons (IncludeStrComptime name path) _)
       (and
         (string.eq (ci.intern-str name) "payload")
         (string.eq path "data.txt"))]
@@ -111,7 +101,7 @@
 
 (define (ast-first-include-str-lzss-ok? [decls : ast.AstDeclList]) : bool
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Cons (ast.AstDecl.IncludeStrLzss name path) _)
+    [(Cons (IncludeStrLzss name path) _)
       (and
         (string.eq (ci.intern-str name) "payload")
         (string.eq path "data.txt"))]
@@ -119,7 +109,7 @@
 
 (define (ast-first-include-bin-ok? [decls : ast.AstDeclList]) : bool
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Cons (ast.AstDecl.IncludeBin name path) _)
+    [(Cons (IncludeBin name path) _)
       (and
         (string.eq (ci.intern-str name) "payload")
         (string.eq path "data.bin"))]
@@ -127,157 +117,129 @@
 
 (define (compiler-parse-module-decl-ok?) : bool
   (match (parser.parse-ast-source "(module std.io)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons (ast.AstDecl.Module name) rest)
+          [(Cons (Module name) rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
-                  (= name (reader.stable-symbol-id "std.io"))]
+                [(Nil) (= name (reader.stable-symbol-id "std.io"))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-module-body-ok?) : bool
   (match (parser.parse-ast-source
     "(module local.helper (define value : i64 1))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.ModuleBody name body-box)
-              rest)
+          [(Cons (ModuleBody name body-box) rest)
             (let
               [rest : ast.AstDeclList rest]
               [body : ast.AstDeclList (deref body-box)]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (match (ast.ast-decl-list-step body)
-                    [(ast.AstDeclListStep.Cons
-                        (ast.AstDecl.Def _ value-name _ _)
-                        body-rest)
+                    [(Cons (Def _ value-name _ _) body-rest)
                       (let
                         [body-rest : ast.AstDeclList body-rest]
                         (and
                           (= name (reader.stable-symbol-id "local.helper"))
                           (= value-name (reader.stable-symbol-id "value"))
                           (match (ast.ast-decl-list-step body-rest)
-                            [(ast.AstDeclListStep.Nil) true]
+                            [(Nil) true]
                             [_ false])))]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-module-body-malformed-ok?) : bool
   (match (parser.parse-ast-source "(module local.helper (define bad))")
-    [(parser.ResultAstProgram.Ok _) false]
-    [(parser.ResultAstProgram.Err message)
-      (string.eq message "parse: malformed value definition")]))
+    [(Ok _) false]
+    [(Err message) (string.eq message "parse: malformed value definition")]))
 
 (define (compiler-parse-import-metadata-ok?) : bool
   (match (parser.parse-ast-source "(import stdlib.core_macros as io)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.Import
-                _
-                (ast.AstImportSpec.Spec
-                  (ast.AstImportKind.Module)
-                  path
-                  (ast.AstMaybeModuleName.Some module-name)
-                  (ast.AstMaybeImportAlias.Some alias)
-                  _))
+          [(Cons
+              (Import _ (Spec (Module) path (Some module-name) (Some alias) _))
               rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (string.eq path "stdlib.core_macros")
                     (string.eq (ci.intern-str module-name) "stdlib.core_macros")
                     (string.eq (ci.intern-str alias) "io"))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-dotted-import-explicit-alias-ok?) : bool
   (match (parser.parse-ast-source "(import stdlib.core_macros as core)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.Import
+          [(Cons
+              (Import
                 _
-                (ast.AstImportSpec.Spec
-                  (ast.AstImportKind.Module)
-                  module-path
-                  (ast.AstMaybeModuleName.Some module-name)
-                  (ast.AstMaybeImportAlias.Some alias)
-                  _))
+                (Spec (Module) module-path (Some module-name) (Some alias) _))
               rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (string.eq module-path "stdlib.core_macros")
                     (string.eq (ci.intern-str module-name) "stdlib.core_macros")
                     (string.eq (ci.intern-str alias) "core"))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-dotted-import-default-alias-ok?) : bool
   (match (parser.parse-ast-source "(import stdlib.core_macros)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.Import
+          [(Cons
+              (Import
                 _
-                (ast.AstImportSpec.Spec
-                  (ast.AstImportKind.Module)
-                  module-path
-                  (ast.AstMaybeModuleName.Some module-name)
-                  (ast.AstMaybeImportAlias.Some alias)
-                  _))
+                (Spec (Module) module-path (Some module-name) (Some alias) _))
               rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (string.eq module-path "stdlib.core_macros")
                     (string.eq (ci.intern-str module-name) "stdlib.core_macros")
                     (string.eq (ci.intern-str alias) "core_macros"))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-dotted-import-wildcard-ok?) : bool
   (match (parser.parse-ast-source "(import stdlib.core_macros.*)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.Import
+          [(Cons
+              (Import
                 _
-                (ast.AstImportSpec.Spec
-                  (ast.AstImportKind.ModuleAll)
-                  module-path
-                  (ast.AstMaybeModuleName.Some module-name)
-                  (ast.AstMaybeImportAlias.Some alias)
-                  _))
+                (Spec (ModuleAll) module-path (Some module-name) (Some alias) _))
               rest)
             (let
               [rest : ast.AstDeclList rest]
@@ -287,7 +249,7 @@
                 (string.eq (ci.intern-str module-name) "stdlib.core_macros")
                 (= alias cbi.compiler-builtin-id-fix-empty)))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-dotted-import-metadata-ok?) : bool
   (and
@@ -297,51 +259,37 @@
 
 (define (compiler-parse-module-macro-call-ok?) : bool
   (match (parser.parse-ast-source "(point-vec i64)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.Import
-                _
-                (ast.AstImportSpec.Spec
-                  (ast.AstImportKind.MacroDecls call-expr _)
-                  path
-                  (ast.AstMaybeModuleName.No)
-                  (ast.AstMaybeImportAlias.No)
-                  _))
+          [(Cons
+              (Import _ (Spec (MacroDecls call-expr _) path (No) (No) _))
               rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (string.eq path "")
                     (compiler-parse-macro-call-node-ok? call-expr "point-vec" 1))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-macro-import-ok?) : bool
   (match (parser.parse-ast-source "(import (vector.vector i64) as svec)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.Import
-                _
-                (ast.AstImportSpec.Spec
-                  (ast.AstImportKind.Macro call-expr _)
-                  path
-                  (ast.AstMaybeModuleName.No)
-                  (ast.AstMaybeImportAlias.Some alias)
-                  _))
+          [(Cons
+              (Import _ (Spec (Macro call-expr _) path (No) (Some alias) _))
               rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (string.eq path "")
                     (string.eq (ci.intern-str alias) "svec")
@@ -351,7 +299,7 @@
                       1))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-module-macro-surface-ok?) : bool
   (and
@@ -388,11 +336,11 @@
 
 (define (compiler-parse-include-str-ok?) : bool
   (match (parser.parse-ast-source "(include-str payload \"data.txt\")")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (ast-first-include-str-ok? decls))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-include-str-errors-ok?) : bool
   (and
@@ -414,9 +362,9 @@
 
 (define (compiler-parse-include-str-comptime-ok?) : bool
   (match (parser.parse-ast-source "(include-str-comptime payload \"data.txt\")")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (ast-first-include-str-comptime-ok? (deref decls-box))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-include-str-comptime-errors-ok?) : bool
   (and
@@ -435,9 +383,9 @@
 
 (define (compiler-parse-include-str-lzss-ok?) : bool
   (match (parser.parse-ast-source "(include-str-lzss payload \"data.txt\")")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (ast-first-include-str-lzss-ok? (deref decls-box))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-include-str-lzss-errors-ok?) : bool
   (and
@@ -464,11 +412,11 @@
 
 (define (compiler-parse-include-bin-ok?) : bool
   (match (parser.parse-ast-source "(include-bin payload \"data.bin\")")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (ast-first-include-bin-ok? decls))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-include-bin-errors-ok?) : bool
   (and
@@ -495,19 +443,17 @@
       (& variants)
       0
       (ast.ast-dispatch-variant-fallback))
-      [(ast.AstDispatchVariant.Variant (ast.AstDispatchIsa.Scalar) scalar-name)
+      [(Variant (Scalar) scalar-name)
         (match (ast.ast-dispatch-variant-list-get
           (& variants)
           1
           (ast.ast-dispatch-variant-fallback))
-          [(ast.AstDispatchVariant.Variant (ast.AstDispatchIsa.Avx2) avx2-name)
+          [(Variant (Avx2) avx2-name)
             (match (ast.ast-dispatch-variant-list-get
               (& variants)
               2
               (ast.ast-dispatch-variant-fallback))
-              [(ast.AstDispatchVariant.Variant
-                  (ast.AstDispatchIsa.Avx512)
-                  avx512-name)
+              [(Variant (Avx512) avx512-name)
                 (and
                   (= scalar-name (reader.stable-symbol-id "dot-scalar"))
                   (= avx2-name (reader.stable-symbol-id "dot-avx2"))
@@ -520,37 +466,33 @@
 (define (compiler-parse-defdispatch-shape-ok?) : bool
   (match (parser.parse-ast-source
     "(defdispatch dot (scalar dot-scalar) (avx2 dot-avx2) (avx512 dot-avx512))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefDispatch decl-meta name variants)
-              rest)
+          [(Cons (DefDispatch decl-meta name variants) rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (= name (reader.stable-symbol-id "dot"))
                     (compiler-parse-defdispatch-variants-ok? variants))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-defdispatch-scalar-only-ok?) : bool
   (match (parser.parse-ast-source "(defdispatch id (scalar id-scalar))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefDispatch decl-meta name variants)
-              rest)
+          [(Cons (DefDispatch decl-meta name variants) rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (= name (reader.stable-symbol-id "id"))
                     (= variants.len 1)
@@ -558,14 +500,12 @@
                       (& variants)
                       0
                       (ast.ast-dispatch-variant-fallback))
-                      [(ast.AstDispatchVariant.Variant
-                          (ast.AstDispatchIsa.Scalar)
-                          scalar-name)
+                      [(Variant (Scalar) scalar-name)
                         (= scalar-name (reader.stable-symbol-id "id-scalar"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-defdispatch-tests-ok?) : bool
   (and
@@ -586,12 +526,12 @@
 
 (define (ast-main-body-tag [decls : ast.AstDeclList]) : i64
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) 0]
-    [(ast.AstDeclListStep.Cons decl rest)
+    [(Nil) 0]
+    [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
         (match decl
-          [(ast.AstDecl.DefFn decl-meta name _ _ body-box _)
+          [(DefFn decl-meta name _ _ body-box _)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               (if (= name cbi.compiler-builtin-id-fix-main)
@@ -601,30 +541,28 @@
 
 (define (compiler-parse-nested-expr-span-ok?) : bool
   (match (parser.parse-ast-source "(define (main) : i64 (+ 1 (* 2 3)))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
-              _)
+          [(Cons (DefFn decl-meta _ _ _ body-box _) _)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               (match body
-                [(ast.AstExpr.Spanned inner-box body-span)
+                [(Spanned inner-box body-span)
                   (let
                     [inner : ast.AstExpr (ast.ast-node-get inner-box)]
                     (match inner
-                      [(ast.AstExpr.Binary _ _ right-box)
+                      [(Binary _ _ right-box)
                         (let
                           [right : ast.AstExpr (ast.ast-node-get right-box)]
                           (match right
-                            [(ast.AstExpr.Spanned right-inner-box right-span)
+                            [(Spanned right-inner-box right-span)
                               (let
                                 [right-inner : ast.AstExpr
                                   (ast.ast-node-get right-inner-box)]
                                 (match right-inner
-                                  [(ast.AstExpr.Binary _ _ _)
+                                  [(Binary _ _ _)
                                     (and
                                       (=
                                         (ast.ast-source-span-start-line
@@ -652,24 +590,22 @@
     (and
       (match (parser.parse-ast-source
         (parser.compiler-parse-place-shared-view src))
-        [(parser.ResultAstProgram.Err message)
-          (string.eq message "parse: malformed define")]
+        [(Err message) (string.eq message "parse: malformed define")]
         [_ false])
       (match (lexer.spanned-result src)
-        [(lexer.ResultSpannedTokens.Ok toks)
+        [(Ok toks)
           (let
             [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-            (begin
-              (set! (array-ref cur 0) 0)
-              (match (reader.form-spanned-result (& toks) (&mut cur))
-                [(reader.ResultSpannedSexpr.Ok form)
-                  (let
-                    [span : token.SourceSpan (reader.spanned-sexpr-span form)]
-                    (and
-                      (= (token.span-start-line span) 1)
-                      (= (token.span-start-col span) 1)))]
-                [(reader.ResultSpannedSexpr.Err _) false])))]
-        [(lexer.ResultSpannedTokens.Err _) false]))))
+            (set! (array-ref cur 0) 0)
+            (match (reader.form-spanned-result (& toks) (&mut cur))
+              [(Ok form)
+                (let
+                  [span : token.SourceSpan (reader.spanned-sexpr-span form)]
+                  (and
+                    (= (token.span-start-line span) 1)
+                    (= (token.span-start-col span) 1)))]
+              [(Err _) false]))]
+        [(Err _) false]))))
 
 (define (compiler-parse-diagnostic-location-ok?
   [path : String]
@@ -680,7 +616,7 @@
   (match (parser.parse-ast-source-diagnostic
     (parser.compiler-parse-place-shared-view path)
     src)
-    [(parser.ResultAstProgramDiagnostic.Err diag)
+    [(Err diag)
       (and
         (string.eq (cdiag.compiler-diagnostic-path (__tl-box-place diag)) path)
         (= (cdiag.compiler-diagnostic-line (__tl-box-place diag)) line)
@@ -688,7 +624,7 @@
         (string.eq
           (cdiag.compiler-diagnostic-message (__tl-box-place diag))
           want))]
-    [(parser.ResultAstProgramDiagnostic.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-parse-nested-diagnostic-spans-ok?) : bool
   (and
@@ -770,27 +706,24 @@
 
 (define (compiler-parse-float-literal-ok?) : bool
   (match (parser.parse-ast-source "(define (main) : f64 1.5)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn _ name _ (ast.AstType.F64) body-box _)
-              _)
+          [(Cons (DefFn _ name _ (F64) body-box _) _)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               (and
                 (= name cbi.compiler-builtin-id-fix-main)
                 (match (ast.ast-expr-unspan body)
-                  [(ast.AstExpr.Literal (ast.AstLiteral.Float text))
-                    (string.eq text "1.5")]
+                  [(Literal (Float text)) (string.eq text "1.5")]
                   [_ false])))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-smoke-score [program : ast.AstProgram]) : i64
   (match program
-    [(ast.AstProgram.Program decls-box)
+    [(Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (+
@@ -811,14 +744,14 @@
 ;; messages so a regression that drops or relabels an error is caught.
 (define (compiler-parse-error-ok? [src : String] [want : String]) : bool
   (match (parser.parse-ast-source src)
-    [(parser.ResultAstProgram.Err message) (string.eq message want)]
-    [(parser.ResultAstProgram.Ok _) false]))
+    [(Err message) (string.eq message want)]
+    [(Ok _) false]))
 
 (define (compiler-parse-diagnostic-code-ok?) : bool
   (match (parser.parse-ast-source-diagnostic
     "parse-code.tl"
     (compiler-parse-malformed-binary-source))
-    [(parser.ResultAstProgramDiagnostic.Err diag)
+    [(Err diag)
       (match (cdiag.compiler-diagnostic-code (__tl-box-place diag))
         [(CompilerDiagnosticSomeString code)
           (and
@@ -828,7 +761,7 @@
                 (string.eq category "parse")]
               [CompilerDiagnosticNoString false]))]
         [CompilerDiagnosticNoString false])]
-    [(parser.ResultAstProgramDiagnostic.Ok _) false]))
+    [(Ok _) false]))
 
 ;; Minimal complete programs that lex cleanly but reach a specific parser
 ;; rejection, one per representative special form.
@@ -842,7 +775,7 @@
   (match (parser.parse-ast-source-diagnostic
     "missing-if-else.tl"
     (compiler-parse-malformed-if-source))
-    [(parser.ResultAstProgramDiagnostic.Err diag)
+    [(Err diag)
       (let
         [rendered : String (cdiag.compiler-diagnostic-render (deref diag))]
         [message-needle : String "parse: if is missing its else branch"]
@@ -854,85 +787,82 @@
           (string.contains (& rendered) (& example-needle))
           (string.contains (& rendered) (& when-needle))
           (string.contains (& rendered) (& unless-needle))))]
-    [(parser.ResultAstProgramDiagnostic.Ok _) false]))
+    [(Ok _) false]))
 
 (define (compiler-parse-region-ok?) : bool
   (match (parser.parse-ast-source
     "(define (main) : (in r String)
   (with-arena r \"x\"))")
-    [(parser.ResultAstProgram.Ok _) true]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Ok _) true]
+    [(Err _) false]))
 
 ;; `with-arena` is the canonical spelling. Assert it parses to
 ;; the `AstExpr.WithRegion` form, not an unbound call.
 (define (compiler-parse-arena-ok?) : bool
   (match (parser.parse-ast-source "(define (main) : i64
   (with-arena n 5))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn _ name _ (ast.AstType.I64) body-box _)
-              _)
+          [(Cons (DefFn _ name _ (I64) body-box _) _)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               (and
                 (= name cbi.compiler-builtin-id-fix-main)
                 (match (ast.ast-expr-unspan body)
-                  [(ast.AstExpr.WithRegion region _)
+                  [(WithRegion region _)
                     (= region cbi.compiler-builtin-id-fix-n)]
                   [_ false])))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-type-ptr-u8? [ty : ast.AstType]) : bool
   (match ty
-    [(ast.AstType.Ptr elem)
+    [(Ptr elem)
       (match (ast.ty-node-get elem)
-        [(ast.AstType.U8) true]
+        [(U8) true]
         [_ false])]
     [_ false]))
 
 (define (compiler-parse-type-ptr-i64? [ty : ast.AstType]) : bool
   (match ty
-    [(ast.AstType.Ptr elem)
+    [(Ptr elem)
       (match (ast.ty-node-get elem)
-        [(ast.AstType.I64) true]
+        [(I64) true]
         [_ false])]
     [_ false]))
 
 (define (compiler-parse-type-mut-ptr-u8? [ty : ast.AstType]) : bool
   (match ty
-    [(ast.AstType.MutPtr elem)
+    [(MutPtr elem)
       (match (ast.ty-node-get elem)
-        [(ast.AstType.U8) true]
+        [(U8) true]
         [_ false])]
     [_ false]))
 
 (define (compiler-parse-type-mut-ptr-ptr-u8? [ty : ast.AstType]) : bool
   (match ty
-    [(ast.AstType.MutPtr elem)
-      (compiler-parse-type-ptr-u8? (ast.ty-node-get elem))]
+    [(MutPtr elem) (compiler-parse-type-ptr-u8? (ast.ty-node-get elem))]
     [_ false]))
 
 (define (compiler-parse-type-ref-string? [ty : ast.AstType] [region : i64]) : bool
   (match ty
-    [(ast.AstType.Ref actual inner)
+    [(Ref actual inner)
       (and
         (= actual region)
         (match (ast.ty-node-get inner)
-          [(ast.AstType.String) true]
+          [(String) true]
           [_ false]))]
     [_ false]))
 
 (define (compiler-parse-type-ref-str? [ty : ast.AstType] [region : i64]) : bool
   (match ty
-    [(ast.AstType.Ref actual inner)
+    [(Ref actual inner)
       (and
         (= actual region)
         (match (ast.ty-node-get inner)
-          [(ast.AstType.Str) true]
+          [(Str) true]
           [_ false]))]
     [_ false]))
 
@@ -940,13 +870,13 @@
   [ty : ast.AstType]
   [region : i64]) : bool
   (match ty
-    [(ast.AstType.MutRef actual inner)
+    [(MutRef actual inner)
       (and
         (= actual region)
         (match (ast.ty-node-get inner)
-          [(ast.AstType.DynArray elem)
+          [(DynArray elem)
             (match (ast.ty-node-get elem)
-              [(ast.AstType.I64) true]
+              [(I64) true]
               [_ false])]
           [_ false]))]
     [_ false]))
@@ -957,21 +887,19 @@
 (define (compiler-parse-raw-pointer-ok?) : bool
   (match (parser.parse-ast-source
     "(extern (raw-map [arg0 : (Ptr i64)]) : (MutPtr (Ptr u8)))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.Extern decl-meta name _ _ ty)
-              rest)
+          [(Cons (Extern decl-meta name _ _ ty) rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (= name (reader.stable-symbol-id "raw-map"))
                     (match ty
-                      [(ast.AstType.Func args ret)
+                      [(Func args ret)
                         (let
                           [args-list : ast.AstTypeList (deref args)]
                           (and
@@ -987,7 +915,7 @@
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-extern-link-inputs-ok?
   [inputs : ast.AstExternLinkInputList]) : bool
@@ -997,37 +925,34 @@
       (& inputs)
       0
       (ast.ast-extern-link-input-fallback))
-      [(ast.AstExternLinkInput.Lib lib) (string.eq lib "m")]
+      [(Lib lib) (string.eq lib "m")]
       [_ false])
     (match (ast.ast-extern-link-input-list-get
       (& inputs)
       1
       (ast.ast-extern-link-input-fallback))
-      [(ast.AstExternLinkInput.Search dir) (string.eq dir "native/lib")]
+      [(Search dir) (string.eq dir "native/lib")]
       [_ false])
     (match (ast.ast-extern-link-input-list-get
       (& inputs)
       2
       (ast.ast-extern-link-input-fallback))
-      [(ast.AstExternLinkInput.Arg arg-value)
-        (string.eq arg-value "-Wl,--as-needed")]
+      [(Arg arg-value) (string.eq arg-value "-Wl,--as-needed")]
       [_ false])))
 
 (define (compiler-parse-extern-metadata-ok?) : bool
   (match (parser.parse-ast-source
     "(extern (local-call [arg0 : i64]) : i64 (:abi c) (:symbol \"foreign_exact\") (:link-lib \"m\") (:link-search \"native/lib\") (:link-arg \"-Wl,--as-needed\"))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.Extern decl-meta name _ metadata ty)
-              rest)
+          [(Cons (Extern decl-meta name _ metadata ty) rest)
             (let
               [rest : ast.AstDeclList rest]
               [metadata-view : ast.AstExternMetadata (deref metadata)]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (= name (reader.stable-symbol-id "local-call"))
                     (string.eq
@@ -1037,12 +962,12 @@
                     ;; A user extern is exactly C, never the package TypeLisp ABI.
                     (match (ast.ast-extern-metadata-abi
                       (parser.compiler-parse-place-shared-view metadata-view))
-                      [(ast.AstExternAbi.C) true]
+                      [(C) true]
                       [_ false])
                     (compiler-parse-extern-link-inputs-ok?
                       (ast.ast-extern-metadata-link-inputs metadata-view))
                     (match ty
-                      [(ast.AstType.Func args ret)
+                      [(Func args ret)
                         (let
                           [args-list : ast.AstTypeList (deref args)]
                           (and
@@ -1052,15 +977,15 @@
                                 (& args-list)
                                 0
                                 (ast.ast-type-id-fallback)))
-                              [(ast.AstType.I64) true]
+                              [(I64) true]
                               [_ false])
                             (match (ast.ty-node-get ret)
-                              [(ast.AstType.I64) true]
+                              [(I64) true]
                               [_ false])))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-extern-varargs-metadata-rejected-ok?) : bool
   (compiler-parse-error-ok?
@@ -1069,23 +994,23 @@
 
 (define (compiler-parse-extern-head-typed-varargs-decl-ok? [decl : ast.AstDecl]) : bool
   (match decl
-    [(ast.AstDecl.Extern decl-meta name _ metadata ty)
+    [(Extern decl-meta name _ metadata ty)
       (and
         (= name (reader.stable-symbol-id "snprintf"))
         (match (ast.ast-extern-metadata-abi (deref metadata))
-          [(ast.AstExternAbi.CVarargsTyped tail-ty)
+          [(CVarargsTyped tail-ty)
             (match tail-ty
-              [(ast.AstType.F64) true]
+              [(F64) true]
               [_ false])]
           [_ false])
         (match ty
-          [(ast.AstType.Func args ret)
+          [(Func args ret)
             (let
               [args-list : ast.AstTypeList (deref args)]
               (and
                 (= (compiler-parse-type-list-count args-list) 3)
                 (match (ast.ty-node-get ret)
-                  [(ast.AstType.I32) true]
+                  [(I32) true]
                   [_ false])
                 (compiler-parse-type-mut-ptr-u8?
                   (ast.ty-node-get
@@ -1098,7 +1023,7 @@
                     (& args-list)
                     1
                     (ast.ast-type-id-fallback)))
-                  [(ast.AstType.I64) true]
+                  [(I64) true]
                   [_ false])
                 (compiler-parse-type-ptr-u8?
                   (ast.ty-node-get
@@ -1111,20 +1036,20 @@
 
 (define (compiler-parse-extern-head-open-varargs-decl-ok? [decl : ast.AstDecl]) : bool
   (match decl
-    [(ast.AstDecl.Extern decl-meta name _ metadata ty)
+    [(Extern decl-meta name _ metadata ty)
       (and
         (= name (reader.stable-symbol-id "printf"))
         (match (ast.ast-extern-metadata-abi (deref metadata))
-          [(ast.AstExternAbi.CVarargsOpen) true]
+          [(CVarargsOpen) true]
           [_ false])
         (match ty
-          [(ast.AstType.Func args ret)
+          [(Func args ret)
             (let
               [args-list : ast.AstTypeList (deref args)]
               (and
                 (= (compiler-parse-type-list-count args-list) 1)
                 (match (ast.ty-node-get ret)
-                  [(ast.AstType.I32) true]
+                  [(I32) true]
                   [_ false])
                 (compiler-parse-type-ptr-u8?
                   (ast.ty-node-get
@@ -1137,7 +1062,7 @@
 
 (define (compiler-parse-i64-type? [ty : ast.AstType]) : bool
   (match ty
-    [(ast.AstType.I64) true]
+    [(I64) true]
     [_ false]))
 
 (define (compiler-parse-two-i64-types? [args : ast.AstTypeList]) : bool
@@ -1152,14 +1077,14 @@
 
 (define (compiler-parse-extern-head-fixed-decl-ok? [decl : ast.AstDecl]) : bool
   (match decl
-    [(ast.AstDecl.Extern decl-meta name _ metadata ty)
+    [(Extern decl-meta name _ metadata ty)
       (and
         (= name (reader.stable-symbol-id "local-add"))
         (string.eq
           (ast.ast-extern-metadata-symbol (deref metadata))
           "foreign_add_exact")
         (match ty
-          [(ast.AstType.Func args ret)
+          [(Func args ret)
             (let
               [args-list : ast.AstTypeList (deref args)]
               (and
@@ -1174,21 +1099,21 @@
     "(extern (snprintf [buf : (MutPtr u8)] [len : i64] [fmt : (Ptr u8)] [arg : ...f64]) : i32 (:symbol \"snprintf\"))
 (extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol \"printf\"))
 (extern (local-add [a : i64] [b : i64]) : i64 (:symbol \"foreign_add_exact\"))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
-        [(ast.AstDeclListStep.Cons first rest0)
+        [(Cons first rest0)
           (let
             [rest0 : ast.AstDeclList rest0]
             (match (ast.ast-decl-list-step rest0)
-              [(ast.AstDeclListStep.Cons second rest1)
+              [(Cons second rest1)
                 (let
                   [rest1 : ast.AstDeclList rest1]
                   (match (ast.ast-decl-list-step rest1)
-                    [(ast.AstDeclListStep.Cons third rest2)
+                    [(Cons third rest2)
                       (let
                         [rest2 : ast.AstDeclList rest2]
                         (match (ast.ast-decl-list-step rest2)
-                          [(ast.AstDeclListStep.Nil)
+                          [(Nil)
                             (and
                               (compiler-parse-extern-head-typed-varargs-decl-ok?
                                 first)
@@ -1199,7 +1124,7 @@
                     [_ false]))]
               [_ false]))]
         [_ false])]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-raw-pointer-ops-ok?) : bool
   (compiler-parse-ok?
@@ -1210,50 +1135,46 @@
 
 (define (compiler-parse-init-ok?) : bool
   (match (parser.parse-ast-source "(define (main) : i64 (init : i64))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
-        [(ast.AstDeclListStep.Cons
-            (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
-            done-box)
+        [(Cons (DefFn decl-meta _ _ _ body-box _) done-box)
           (let
             [done : ast.AstDeclList done-box]
             (and
               (ast_tests.ast-decl-list-empty? (& done))
               (match (ast.ast-expr-unspan (ast.ast-node-get body-box))
-                [(ast.AstExpr.Init ty-id)
+                [(Init ty-id)
                   (match (ast.ast-maybe-type-from-id ty-id)
-                    [(ast.AstMaybeType.Some inner)
+                    [(Some inner)
                       (match inner
-                        [(ast.AstType.I64) true]
+                        [(I64) true]
                         [_ false])]
                     [_ false])]
                 [_ false])))]
         [_ false])]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-contextual-init-ok?) : bool
   (match (parser.parse-ast-source
     "(define (init) : i64 7) (define (main) : i64 (init))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
-        [(ast.AstDeclListStep.Cons _ rest)
+        [(Cons _ rest)
           (match (ast.ast-decl-list-step rest)
-            [(ast.AstDeclListStep.Cons
-                (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
-                done-box)
+            [(Cons (DefFn decl-meta _ _ _ body-box _) done-box)
               (let
                 [done : ast.AstDeclList done-box]
                 (and
                   (ast_tests.ast-decl-list-empty? (& done))
                   (match (ast.ast-expr-unspan (ast.ast-node-get body-box))
-                    [(ast.AstExpr.Init ty-id)
+                    [(Init ty-id)
                       (match (ast.ast-maybe-type-from-id ty-id)
-                        [(ast.AstMaybeType.No) true]
+                        [(No) true]
                         [_ false])]
                     [_ false])))]
             [_ false])]
         [_ false])]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-init-call-name-ok?) : bool
   (compiler-parse-ok?
@@ -1306,24 +1227,22 @@
 (define (compiler-parse-reference-ok?) : bool
   (match (parser.parse-ast-source
     "(define (use [s : (& n String)] [view : (& n str)] [items : (&mut value (__tl_dyn-array i64))]) : unit unit)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn decl-meta _ params _ _ _)
-              rest)
+          [(Cons (DefFn decl-meta _ params _ _ _) rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (= (ast.ast-param-list-len (& params)) 3)
                     (match (ast.ast-param-list-get
                       (& params)
                       0
                       (ast.ast-param-fallback))
-                      [(ast.AstParam.Param _ first-ty false)
+                      [(Param _ first-ty false)
                         (compiler-parse-type-ref-string?
                           first-ty
                           cbi.compiler-builtin-id-fix-n)]
@@ -1332,7 +1251,7 @@
                       (& params)
                       1
                       (ast.ast-param-fallback))
-                      [(ast.AstParam.Param _ second-ty false)
+                      [(Param _ second-ty false)
                         (compiler-parse-type-ref-str?
                           second-ty
                           cbi.compiler-builtin-id-fix-n)]
@@ -1341,22 +1260,22 @@
                       (& params)
                       2
                       (ast.ast-param-fallback))
-                      [(ast.AstParam.Param _ third-ty false)
+                      [(Param _ third-ty false)
                         (compiler-parse-type-mut-ref-dyn-array-i64?
                           third-ty
                           cbi.compiler-builtin-id-fix-value)]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-type-invalidate? [ty : ast.AstType] [lifetime : i64]) : bool
   (match ty
-    [(ast.AstType.Invalidate actual inner)
+    [(Invalidate actual inner)
       (and
         (= actual lifetime)
         (match (ast.ty-node-get inner)
-          [(ast.AstType.VarArgs _ _) true]
+          [(VarArgs _ _) true]
           [_ false]))]
     [_ false]))
 
@@ -1366,23 +1285,23 @@
 (define (compiler-parse-invalidate-ok?) : bool
   (match (parser.parse-ast-source
     "(define (release [owner : (Arena r) (:invalidate r)] [f : (-> (:invalidate q (Arena q)) unit)] [n : i64]) : unit unit)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
-        [(ast.AstDeclListStep.Cons (ast.AstDecl.DefFn _ _ params _ _ _) _)
+        [(Cons (DefFn _ _ params _ _ _) _)
           (and
             (= (ast.ast-param-list-len (& params)) 3)
             (match (ast.ast-param-list-get
               (& params)
               0
               (ast.ast-param-fallback))
-              [(ast.AstParam.Param _ owner-ty false)
+              [(Param _ owner-ty false)
                 (compiler-parse-type-invalidate? owner-ty (ci.intern "r"))]
               [_ false])
             (match (ast.ast-param-list-get
               (& params)
               1
               (ast.ast-param-fallback))
-              [(ast.AstParam.Param _ (ast.AstType.Func args _) false)
+              [(Param _ (Func args _) false)
                 (compiler-parse-type-invalidate?
                   (ast.ty-node-get
                     (ast.ast-type-list-get
@@ -1395,10 +1314,10 @@
               (& params)
               2
               (ast.ast-param-fallback))
-              [(ast.AstParam.Param _ (ast.AstType.I64) false) true]
+              [(Param _ (I64) false) true]
               [_ false]))]
         [_ false])]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-invalidate-error-tests-ok?) : bool
   (and
@@ -1441,20 +1360,18 @@
     (& x x)
     (&mut x)
     x))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
-              rest)
+          [(Cons (DefFn decl-meta _ _ _ body-box _) rest)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (match (ast.ast-expr-unspan body)
-                    [(ast.AstExpr.Begin exprs)
+                    [(Begin exprs)
                       (if (>= exprs.len 2)
                         (let
                           [first : ast.AstExpr
@@ -1464,30 +1381,24 @@
                             (ast.ast-node-get
                               (ast.ast-expr-list-get (& exprs) 1 0))]
                           (match (ast.ast-expr-unspan first)
-                            [(ast.AstExpr.Borrow
-                                _
-                                first-lifetime-id
-                                first-place-box)
+                            [(Borrow _ first-lifetime-id first-place-box)
                               (let
                                 [first-place : ast.AstExpr
                                   (ast.ast-node-get first-place-box)]
                                 (match (ast.ast-expr-unspan first-place)
-                                  [(ast.AstExpr.Var first-name)
+                                  [(Var first-name)
                                     (if (=
                                       first-name
                                       cbi.compiler-builtin-id-fix-x)
                                       (match (ast.ast-expr-unspan second)
-                                        [(ast.AstExpr.Borrow
-                                            _
-                                            lifetime
-                                            second-place-box)
+                                        [(Borrow _ lifetime second-place-box)
                                           (let
                                             [second-place : ast.AstExpr
                                               (ast.ast-node-get
                                                 second-place-box)]
                                             (match (ast.ast-expr-unspan
                                               second-place)
-                                              [(ast.AstExpr.Var second-name)
+                                              [(Var second-name)
                                                 (and
                                                   (= first-lifetime-id -1)
                                                   (=
@@ -1505,72 +1416,68 @@
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-try-ok?) : bool
   (match (parser.parse-ast-source "(define (main) : i64 (wrap (try (read))))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
-              rest)
+          [(Cons (DefFn decl-meta _ _ _ body-box _) rest)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (match (ast.ast-expr-unspan body)
-                    [(ast.AstExpr.Call _ args)
+                    [(Call _ args)
                       (if (= args.len 1)
                         (let
                           [arg : ast.AstExpr
                             (ast.ast-node-get
                               (ast.ast-expr-list-get (& args) 0 0))]
                           (match (ast.ast-expr-unspan arg)
-                            [(ast.AstExpr.Try _) true]
+                            [(Try _) true]
                             [_ false]))
                         false)]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-return-ok?) : bool
   (match (parser.parse-ast-source "(define (main) : i64 (return 42))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
-              rest)
+          [(Cons (DefFn decl-meta _ _ _ body-box _) rest)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (match (ast.ast-expr-unspan body)
-                    [(ast.AstExpr.Return inner-box)
+                    [(Return inner-box)
                       (let
                         [inner : ast.AstExpr (ast.ast-node-get inner-box)]
                         (match (ast.ast-expr-unspan inner)
-                          [(ast.AstExpr.Literal (ast.AstLiteral.Int 42 _)) true]
+                          [(Literal (Int 42 _)) true]
                           [_ false]))]
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-call-head-name? [expr : ast.AstExpr] [name : String]) : bool
   (match (ast.ast-expr-unspan expr)
-    [(ast.AstExpr.Var found) (string.eq (ci.intern-str found) name)]
+    [(Var found) (string.eq (ci.intern-str found) name)]
     [_ false]))
 
 (define (compiler-parse-return-expr? [expr : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan expr)
-    [(ast.AstExpr.Return _) true]
+    [(Return _) true]
     [_ false]))
 
 (define (compiler-parse-guard-call-args-ok? [args : ast.AstExprList]) : bool
@@ -1594,20 +1501,18 @@
   [want-args : i64]
   [check-guard-args : bool]) : bool
   (match (parser.parse-ast-source source)
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
-              rest)
+          [(Cons (DefFn decl-meta _ _ _ body-box _) rest)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (match (ast.ast-expr-unspan body)
-                    [(ast.AstExpr.Call func-box args)
+                    [(Call func-box args)
                       (let
                         [func : ast.AstExpr (ast.ast-node-get func-box)]
                         (and
@@ -1619,7 +1524,7 @@
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-guard-forms-ok?) : bool
   (and
@@ -1686,43 +1591,32 @@
   (match (parser.parse-ast-source
     "(unsafe (define (danger [x : i64]) : i64 x))
 (unsafe (extern (raw-call [arg0 : i64]) : i64))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons first tail)
+          [(Cons first tail)
             (let
               [tail : ast.AstDeclList tail]
               (match first
-                [(ast.AstDecl.Unsafe first-inner-box)
+                [(Unsafe first-inner-box)
                   (let
                     [first-inner : ast.AstDecl (deref first-inner-box)]
                     (match first-inner
-                      [(ast.AstDecl.DefFn
-                          decl-meta
-                          name
-                          _
-                          (ast.AstType.I64)
-                          _
-                          _)
+                      [(DefFn decl-meta name _ (I64) _ _)
                         (match (ast.ast-decl-list-step tail)
-                          [(ast.AstDeclListStep.Cons second done-box)
+                          [(Cons second done-box)
                             (let
                               [done : ast.AstDeclList done-box]
                               (and
                                 (ast_tests.ast-decl-list-empty? (& done))
                                 (match second
-                                  [(ast.AstDecl.Unsafe second-inner-box)
+                                  [(Unsafe second-inner-box)
                                     (let
                                       [second-inner : ast.AstDecl
                                         (deref second-inner-box)]
                                       (match second-inner
-                                        [(ast.AstDecl.Extern
-                                            _
-                                            extern-name
-                                            _
-                                            _
-                                            extern-ty)
+                                        [(Extern _ extern-name _ _ extern-ty)
                                           (and
                                             (=
                                               name
@@ -1732,9 +1626,9 @@
                                               (reader.stable-symbol-id
                                                 "raw-call"))
                                             (match extern-ty
-                                              [(ast.AstType.Func _ ret)
+                                              [(Func _ ret)
                                                 (match (ast.ty-node-get ret)
-                                                  [(ast.AstType.I64) true]
+                                                  [(I64) true]
                                                   [_ false])]
                                               [_ false]))]
                                         [_ false]))]
@@ -1743,16 +1637,16 @@
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-field-count [fields : (& fields ast.AstFieldDefList)]) : i64
   fields.len)
 
 (define (compiler-parse-field-cleanup-score [cleanup : ast.AstFieldCleanup]) : i64
   (match cleanup
-    [(ast.AstFieldCleanup.No) 0]
-    [(ast.AstFieldCleanup.Fn _) 10]
-    [(ast.AstFieldCleanup.Owned) 100]))
+    [(No) 0]
+    [(Fn _) 10]
+    [(Owned) 100]))
 
 (define (compiler-parse-field-cleanup-list-score [fields : ast.AstFieldDefList]) : i64
   (compiler-parse-field-cleanup-list-score-at (& fields) 0))
@@ -1766,7 +1660,7 @@
       fields
       index
       (ast.ast-field-def-fallback))
-      [(ast.AstFieldDef.Def _ _ cleanup)
+      [(Def _ _ cleanup)
         (+
           (compiler-parse-field-cleanup-score cleanup)
           (compiler-parse-field-cleanup-list-score-at fields (+ index 1)))])))
@@ -1774,9 +1668,9 @@
 (define (compiler-parse-variant-payload-cleanup-score
   [cleanup : ast.AstVariantPayloadCleanup]) : i64
   (match cleanup
-    [(ast.AstVariantPayloadCleanup.No) 0]
-    [(ast.AstVariantPayloadCleanup.Fn _) 10]
-    [(ast.AstVariantPayloadCleanup.Owned) 100]))
+    [(No) 0]
+    [(Fn _) 10]
+    [(Owned) 100]))
 
 (define (compiler-parse-variant-payload-cleanup-list-score
   [cleanups : ast.AstVariantPayloadCleanupList]) : i64
@@ -1810,7 +1704,7 @@
       variants
       index
       (ast.ast-variant-def-fallback))
-      [(ast.AstVariantDef.Def _ _ cleanups)
+      [(Def _ _ cleanups)
         (+
           (compiler-parse-variant-payload-cleanup-list-score cleanups)
           (compiler-parse-variant-list-cleanup-score-at variants (+ index 1)))])))
@@ -1822,24 +1716,22 @@
   (fd i64 (:cleanup close-fd))
   (child i64 (:owned))
   (status i64))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefStruct _ name repr cleanup fields)
-              rest)
+          [(Cons (DefStruct _ name repr cleanup fields) rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (= name (reader.stable-symbol-id "Resource"))
                     (match repr
-                      [(ast.AstStructRepr.Default) true]
+                      [(Default) true]
                       [_ false])
                     (match cleanup
-                      [(ast.AstStructCleanup.Fn cleanup-name)
+                      [(Fn cleanup-name)
                         (=
                           (ci.intern-syntax-id-value cleanup-name)
                           (reader.stable-symbol-id "close-resource"))]
@@ -1848,28 +1740,26 @@
                     (= (compiler-parse-field-cleanup-list-score fields) 110))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-enum-cleanup-ok?) : bool
   (match (parser.parse-ast-source
     "(defenum Resource
   (:cleanup close-resource)
   (File i64 (:cleanup close-fd) Child (:owned) i64))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefEnum decl-meta name cleanup variants)
-              rest)
+          [(Cons (DefEnum decl-meta name cleanup variants) rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (= name (reader.stable-symbol-id "Resource"))
                     (match cleanup
-                      [(ast.AstEnumCleanup.Fn cleanup-name)
+                      [(Fn cleanup-name)
                         (=
                           (ci.intern-syntax-id-value cleanup-name)
                           (reader.stable-symbol-id "close-resource"))]
@@ -1877,7 +1767,7 @@
                     (= (compiler-parse-variant-list-cleanup-score variants) 110))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-cleanup-metadata-ok?) : bool
   (and (compiler-parse-struct-cleanup-ok?) (compiler-parse-enum-cleanup-ok?)))
@@ -1888,43 +1778,41 @@
   (:repr c)
   (size i64)
   (mtime i64))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefStruct decl-meta name repr _ fields)
-              rest)
+          [(Cons (DefStruct decl-meta name repr _ fields) rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (= name (reader.stable-symbol-id "Stat"))
                     (ast.ast-struct-repr-c? repr)
                     (= (compiler-parse-field-count fields) 2))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-first-struct-aligns [source : String] [field : i64]) : (Tuple
     i64
     i64)
   (match (parser.parse-ast-source source)
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-          [(ast.AstDecl.DefStruct _ _ repr _ _)
+          [(DefStruct _ _ repr _ _)
             (tuple
               (ast.ast-struct-repr-declared-align repr)
               (ast.ast-struct-repr-field-declared-align repr field))]
-          [(ast.AstDecl.DefStructLifetimes _ _ _ repr _ _)
+          [(DefStructLifetimes _ _ _ repr _ _)
             (tuple
               (ast.ast-struct-repr-declared-align repr)
               (ast.ast-struct-repr-field-declared-align repr field))]
           [_ (tuple -1 -1)]))]
-    [(parser.ResultAstProgram.Err _) (tuple -2 -2)]))
+    [(Err _) (tuple -2 -2)]))
 
 (define (compiler-parse-aligns-are?
   [source : String]
@@ -1938,14 +1826,14 @@
 ;; A struct's field alignment list ends at its last aligned field.
 (define (compiler-parse-field-aligns-len-is? [source : String] [want : i64]) : bool
   (match (parser.parse-ast-source source)
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-          [(ast.AstDecl.DefStruct _ _ (ast.AstStructRepr.C _ aligns) _ _)
+          [(DefStruct _ _ (C _ aligns) _ _)
             (= (ast.ast-field-aligns-len aligns) want)]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 ;; `(:align N)` metadata: the struct-level form joins `(:repr c)` in either
 ;; order, and the field-level form is independent of the field's position.
@@ -1994,49 +1882,46 @@
   (match (parser.parse-ast-source "(test parser-basic
   (+ 1 2)
   3)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.Test name body-box metadata span)
-              tail)
+          [(Cons (Test name body-box metadata span) tail)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               [tail : ast.AstDeclList tail]
               (match (ast.ast-decl-list-step tail)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (= name (reader.stable-symbol-id "parser-basic"))
                     (= (ast.ast-source-span-start-line span) 1)
                     (match (ast.ast-test-metadata-ignore-reason metadata)
-                      [(ast.AstTestIgnoreReason.No) true]
+                      [(No) true]
                       [_ false])
                     (not (ast.ast-test-metadata-slow? metadata))
                     (match (ast.ast-expr-unspan body)
-                      [(ast.AstExpr.Begin exprs)
+                      [(Begin exprs)
                         (= (compiler-parse-expr-list-count exprs) 2)]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-inline-test-metadata-ok?) : bool
   (and
     (match (parser.parse-ast-source
       "(test parser-metadata (:ignore \"not on CI\") (:slow) unit)")
-      [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+      [(Ok (Program decls-box))
         (let
           [decls : ast.AstDeclList (deref decls-box)]
           (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-            [(ast.AstDecl.Test name _ metadata span)
+            [(Test name _ metadata span)
               (and
                 (= name (reader.stable-symbol-id "parser-metadata"))
                 (= (ast.ast-source-span-start-line span) 1)
                 (ast.ast-test-metadata-slow? metadata)
                 (match (ast.ast-test-metadata-ignore-reason metadata)
-                  [(ast.AstTestIgnoreReason.Some reason)
-                    (string.eq reason "not on CI")]
+                  [(Some reason) (string.eq reason "not on CI")]
                   [_ false]))]
             [_ false]))]
       [_ false])
@@ -2182,7 +2067,7 @@
 
 (define (compiler-parse-first-decl-must-use? [source : String]) : bool
   (match (parser.parse-ast-source source)
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (and
@@ -2190,7 +2075,7 @@
           (let
             [decl (ast.ast-decl-list-ref decls 0)]
             (ast.ast-decl-must-use? decl))))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-must-use-metadata-ok?) : bool
   (and
@@ -2303,8 +2188,8 @@
   (match (parser.parse-ast-source
     "(define (id [x : i64]) : i64 x)
 (define (main) : i64 (let [x : i64 41] (id x)))")
-    [(parser.ResultAstProgram.Ok _) true]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Ok _) true]
+    [(Err _) false]))
 
 (define (compiler-parse-let-error-tests-ok?) : bool
   (and
@@ -2539,9 +2424,7 @@
     "(define)
 (define (kept-a) : i64 1)
 (define (kept-b) : i64 2)")
-    [(parser.ResultAstProgramRecovery.Parsed
-        (ast.AstProgram.Program decls-box)
-        diagnostics-box)
+    [(Parsed (Program decls-box) diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList (deref diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
@@ -2553,7 +2436,7 @@
             (cdiag.compiler-diagnostic-message first)
             "parse: malformed define")
           (= (cdiag.compiler-diagnostic-line first) 1)))]
-    [(parser.ResultAstProgramRecovery.Fatal _) false]))
+    [(Fatal _) false]))
 
 (define (compiler-parse-recovery-ordered-errors-ok?) : bool
   (match (parse-ast-source-recovery-diagnostic
@@ -2562,9 +2445,7 @@
 (define (kept-a) : i64 1)
 (define)
 (define (kept-b) : i64 2)")
-    [(parser.ResultAstProgramRecovery.Parsed
-        (ast.AstProgram.Program decls-box)
-        diagnostics-box)
+    [(Parsed (Program decls-box) diagnostics-box)
       (let
         [diagnostics : cdiag.CompilerDiagnosticList (deref diagnostics-box)]
         [first : cdiag.CompilerDiagnostic
@@ -2582,7 +2463,7 @@
           (string.eq
             (cdiag.compiler-diagnostic-message second)
             "parse: malformed define")))]
-    [(parser.ResultAstProgramRecovery.Fatal _) false]))
+    [(Fatal _) false]))
 
 (define (compiler-parse-recovery-reader-progress-ok?) : bool
   (and
@@ -2590,9 +2471,7 @@
       "tests/recovery-mismatch.tl"
       "(define]
 (define (kept) : i64 1)")
-      [(parser.ResultAstProgramRecovery.Parsed
-          (ast.AstProgram.Program decls-box)
-          diagnostics-box)
+      [(Parsed (Program decls-box) diagnostics-box)
         (let
           [diagnostics : cdiag.CompilerDiagnosticList (deref diagnostics-box)]
           [first : cdiag.CompilerDiagnostic
@@ -2603,28 +2482,24 @@
             (= (ast.ast-decl-list-len (& (__tl-box-place decls-box))) 1)
             (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
             (string.contains (& message) (& needle))))]
-      [(parser.ResultAstProgramRecovery.Fatal _) false])
+      [(Fatal _) false])
     (match (parse-ast-source-recovery-diagnostic
       "tests/recovery-stray.tl"
       ") ] (define (kept) : i64 1)")
-      [(parser.ResultAstProgramRecovery.Parsed
-          (ast.AstProgram.Program decls-box)
-          diagnostics-box)
+      [(Parsed (Program decls-box) diagnostics-box)
         (and
           (= (ast.ast-decl-list-len (& (__tl-box-place decls-box))) 1)
           (= (cdiag.compiler-diagnostic-list-count (deref diagnostics-box)) 2))]
-      [(parser.ResultAstProgramRecovery.Fatal _) false])
+      [(Fatal _) false])
     (match (parse-ast-source-recovery-diagnostic
       "tests/recovery-unterminated.tl"
       "(define
 (define (not-a-boundary) : i64 1))")
-      [(parser.ResultAstProgramRecovery.Parsed
-          (ast.AstProgram.Program decls-box)
-          diagnostics-box)
+      [(Parsed (Program decls-box) diagnostics-box)
         (and
           (= (ast.ast-decl-list-len (& (__tl-box-place decls-box))) 0)
           (= (cdiag.compiler-diagnostic-list-count (deref diagnostics-box)) 1))]
-      [(parser.ResultAstProgramRecovery.Fatal _) false])))
+      [(Fatal _) false])))
 
 (define (compiler-parse-recovery-tests-ok?) : bool
   (and
@@ -2669,33 +2544,33 @@
 ;; stable diagnostics. Migrated from src/parser.rs declaration coverage.
 (define (compiler-parse-ok? [src : String]) : bool
   (match (parser.parse-ast-source src)
-    [(parser.ResultAstProgram.Ok _) true]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Ok _) true]
+    [(Err _) false]))
 
 (define (compiler-parse-ok-with-cfg?
   [src : String]
   [cfgs : sym_i64_env.SymI64Env]) : bool
   (match (parser.parse-ast-source-with-cfg src cfgs)
-    [(parser.ResultAstProgram.Ok _) true]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Ok _) true]
+    [(Err _) false]))
 
 (define (compiler-parse-cfg-decl-count-ok?
   [src : String]
   [cfgs : sym_i64_env.SymI64Env]
   [want : i64]) : bool
   (match (parser.parse-ast-source-with-cfg src cfgs)
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (= (parser.ast-decl-list-count decls) want))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-cfg-error?
   [src : String]
   [cfgs : sym_i64_env.SymI64Env]) : bool
   (match (parser.parse-ast-source-with-cfg src cfgs)
-    [(parser.ResultAstProgram.Ok _) false]
-    [(parser.ResultAstProgram.Err _) true]))
+    [(Ok _) false]
+    [(Err _) true]))
 
 (define (compiler-parse-cfg-tests-ok?) : bool
   (let
@@ -2813,12 +2688,35 @@
 
 (define (compiler-parse-implicit-body-tail-ok?) : bool
   (and
+    (compiler-parse-while-body-list-ok?)
     (compiler-parse-ok? "(define (main) : i64 (let [x : i64 1] x (+ x 1)))")
     (compiler-parse-ok? "(define (main) : i64 (let [] 1 2))")
     (compiler-parse-ok?
       "(define (main) : i64 (begin (while false unit unit) 0))")
     (compiler-parse-ok? "(define (main) : i64 unit 42)")
     (compiler-parse-ok? "(define (main) : i64 ((lambda () : i64 unit 42)))")))
+
+(define (compiler-parse-while-body-list-ok?) : bool
+  (and
+    (match (parser.parse-ast-source
+      "(define (main) : unit (while false unit (begin 1 unit) unit))")
+      [(Ok (Program decls-box))
+        (match (ast.ast-decl-list-step (deref decls-box))
+          [(Cons (DefFn _ _ _ _ body _) _)
+            (match (ast.ast-expr-unspan (ast.ast-node-get body))
+              [(While _ forms)
+                (and
+                  (= forms.len 3)
+                  (match (ast.ast-expr-unspan
+                    (ast.ast-node-get (ast.ast-expr-list-get (& forms) 1 0)))
+                    [(Begin explicit-forms) (= explicit-forms.len 2)]
+                    [_ false]))]
+              [_ false])]
+          [_ false])]
+      [(Err _) false])
+    (compiler-parse-error-ok?
+      "(define (main) : unit (while false (cfg missing-feature unit)))"
+      "parse: malformed while")))
 
 (define (compiler-parse-spmd-tests-ok?) : bool
   (and
@@ -2865,6 +2763,31 @@
       "parse: malformed foreach binding")
     (compiler-parse-error-ok?
       "(define (main) : i64 (begin (foreach) 0))"
+      "parse: malformed foreach")
+    ;; A rank-2 domain takes exactly two distinct, well-formed bindings and one
+    ;; body; rank zero and rank three are diagnosed, not flattened (#7190).
+    (compiler-parse-ok?
+      "(define (main [h : i64] [w : i64]) : i64 (begin (foreach ([y : i64 (+ 0 1) h] [x : i64 -2 (* w 2)]) unit) 0))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach () unit) 0))"
+      "parse: foreach requires one or two domain bindings")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([z : i64 0 1] [y : i64 0 1] [x : i64 0 1]) unit) 0))"
+      "parse: foreach supports at most two domain bindings (rank 2)")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([x : i64 0 1] [x : i64 0 1]) unit) 0))"
+      "parse: foreach domain bindings must use distinct names")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([y : i64 0 1] [x : i64 0]) unit) 0))"
+      "parse: malformed foreach binding")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([y : i64 0 1] [x i64 0 1 2]) unit) 0))"
+      "parse: expected ':' in foreach")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([y : i64 0 1] [x : i64 0 1]) unit unit) 0))"
+      "parse: malformed foreach")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (begin (foreach ([y : i64 0 1] [x : i64 0 1])) 0))"
       "parse: malformed foreach")
     (compiler-parse-error-ok?
       "(define (main) : i64 (spmd-reduce sum))"
@@ -3010,8 +2933,86 @@
       "(define (main) : i64 (program-count 0))"
       "parse: program-count expects no arguments")))
 
+;; A match arm with several body forms is an implicit `begin` spanned from its
+;; first to its last form inside the pattern-span wrapper; a one-form arm keeps
+;; its own expression.
+(define (compiler-parse-match-arm-begin-ok?
+  [arm : ast.AstMatchArm]
+  [forms : i64]
+  [line : i64]
+  [start-col : i64]
+  [end-col : i64]) : bool
+  (match arm
+    [(Arm _ body)
+      (match (ast.ast-node-get body)
+        [(Spanned inner _)
+          (match (ast.ast-node-get inner)
+            [(Spanned sequence span)
+              (match (ast.ast-node-get sequence)
+                [(Begin exprs)
+                  (and
+                    (= exprs.len forms)
+                    (= (ast.ast-source-span-start-line span) line)
+                    (= (ast.ast-source-span-start-col span) start-col)
+                    (= (ast.ast-source-span-end-line span) line)
+                    (= (ast.ast-source-span-end-col span) end-col))]
+                [_ false])]
+            [_ false])]
+        [_ false])]))
+
+(define (compiler-parse-match-arm-single-ok? [arm : ast.AstMatchArm]) : bool
+  (match arm
+    [(Arm _ body)
+      (match (ast.ast-expr-unspan (ast.ast-node-get body))
+        [(Var _) true]
+        [_ false])]))
+
+(define (compiler-parse-multiform-match-arm-ok?) : bool
+  (match (parser.parse-ast-source
+    "(define (main [x : i64]) : i64
+  (match x
+    [0 (set! x 1) (set! x 2) x]
+    [_ x]))")
+    [(Ok (Program decls-box))
+      (match (ast.ast-decl-list-step (deref decls-box))
+        [(Cons (DefFn _ _ _ _ body-box _) _)
+          (match (ast.ast-expr-unspan (ast.ast-node-get body-box))
+            [(Match payload)
+              (match (__tl-box-place payload)
+                [(Match _ arms)
+                  (and
+                    (= (ast.ast-match-arm-list-len (& arms)) 2)
+                    (compiler-parse-match-arm-begin-ok?
+                      (ast.ast-match-arm-list-get
+                        (& arms)
+                        0
+                        (ast.ast-match-arm-fallback))
+                      3
+                      3
+                      8
+                      30)
+                    (compiler-parse-match-arm-single-ok?
+                      (ast.ast-match-arm-list-get
+                        (& arms)
+                        1
+                        (ast.ast-match-arm-fallback))))])]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
 (define (compiler-parse-pattern-tests-ok?) : bool
   (and
+    (compiler-parse-multiform-match-arm-ok?)
+    (compiler-parse-ok?
+      "(define (main [b : bool]) : i64
+  (match b
+    [true
+      (when b (return 1))
+      (match 2 [2 (set! b false) 3] [_ 4])]
+    [false 0 1]))")
+    (compiler-parse-error-ok?
+      "(define (main) : i64 (match 1 [0 (set! x 1) (if true 1)] [_ 0]))"
+      "parse: if is missing its else branch")
     (compiler-parse-ok? "(define (main) : i64 (match 1 [0 1] [_ 0]))")
     (compiler-parse-ok?
       "(define (main [b : bool]) : i64 (match b [true 1] [false 0]))")
@@ -3144,22 +3145,20 @@
     (use h)
     (with ([inner (open-inner tmp) close-inner])
       42)))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn decl-meta _ _ _ body-box _)
-              rest)
+          [(Cons (DefFn decl-meta _ _ _ body-box _) rest)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (match (ast.ast-expr-unspan body)
-                    [(ast.AstExpr.WithResource wr-box)
+                    [(WithResource wr-box)
                       (match (deref wr-box)
-                        [(ast.AstWithResource.WithResource bindings body-exprs)
+                        [(WithResource bindings body-exprs)
                           (if (and
                             (=
                               (compiler-parse-resource-binding-count bindings)
@@ -3170,11 +3169,9 @@
                                 (ast.ast-node-get
                                   (ast.ast-expr-list-get (& body-exprs) 1 0))]
                               (match (ast.ast-expr-unspan nested)
-                                [(ast.AstExpr.WithResource nested-wr-box)
+                                [(WithResource nested-wr-box)
                                   (match (deref nested-wr-box)
-                                    [(ast.AstWithResource.WithResource
-                                        nested-bindings
-                                        nested-body)
+                                    [(WithResource nested-bindings nested-body)
                                       (and
                                         (=
                                           (compiler-parse-resource-binding-count
@@ -3189,7 +3186,7 @@
                     [_ false])]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-resource-with-tests-ok?) : bool
   (and
@@ -3227,39 +3224,36 @@
 (define (compiler-parse-quote-syntax-shape-ok?) : bool
   (match (parser.parse-ast-source
     "(define (mk [e : Expr]) : Expr `(if ,e true false))")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn decl-meta _ _ ret-ty body-box _)
-              rest)
+          [(Cons (DefFn decl-meta _ _ ret-ty body-box _) rest)
             (let
               [body : ast.AstExpr (ast.ast-node-get body-box)]
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (match ret-ty
-                      [(ast.AstType.Var name)
-                        (string.eq (ci.intern-str name) "Expr")]
+                      [(Var name) (string.eq (ci.intern-str name) "Expr")]
                       [_ false])
                     (match (ast.ast-expr-unspan body)
-                      [(ast.AstExpr.Quasiquote template-box)
+                      [(Quasiquote template-box)
                         (let
                           [template : ast.AstExpr
                             (ast.ast-node-get template-box)]
                           (match (ast.ast-expr-unspan template)
-                            [(ast.AstExpr.If cond-box _ _)
+                            [(If cond-box _ _)
                               (let
                                 [cond : ast.AstExpr (ast.ast-node-get cond-box)]
                                 (match (ast.ast-expr-unspan cond)
-                                  [(ast.AstExpr.Unquote unquoted-box)
+                                  [(Unquote unquoted-box)
                                     (let
                                       [unquoted : ast.AstExpr
                                         (ast.ast-node-get unquoted-box)]
                                       (match (ast.ast-expr-unspan unquoted)
-                                        [(ast.AstExpr.Var name)
+                                        [(Var name)
                                           (string.eq (ci.intern-str name) "e")]
                                         [_ false]))]
                                   [_ false]))]
@@ -3267,7 +3261,7 @@
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-quote-syntax-tests-ok?) : bool
   (and
@@ -3286,38 +3280,38 @@
 ;; parser's `parse_repl_item` tests.
 (define (compiler-parse-repl-decl-ok? [src : String]) : bool
   (match (parser.parse-ast-repl-source src)
-    [(parser.ResultAstReplItem.Ok item)
+    [(Ok item)
       (match item
         [(AstReplDecl _) true]
         [(AstReplExpr _) false])]
-    [(parser.ResultAstReplItem.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-repl-expr-ok? [src : String]) : bool
   (match (parser.parse-ast-repl-source src)
-    [(parser.ResultAstReplItem.Ok item)
+    [(Ok item)
       (match item
         [(AstReplExpr _) true]
         [(AstReplDecl _) false])]
-    [(parser.ResultAstReplItem.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-repl-error-ok? [src : String] [expected : String]) : bool
   (match (parser.parse-ast-repl-source src)
-    [(parser.ResultAstReplItem.Ok _) false]
-    [(parser.ResultAstReplItem.Err diag)
+    [(Ok _) false]
+    [(Err diag)
       (let
         [error : cdiag.CompilerDiagnostic (deref diag)]
         (and
           (string.eq (cdiag.compiler-diagnostic-message error) expected)
           (match (cdiag.compiler-diagnostic-code error)
-            [(cdiag.CompilerDiagnosticSomeString code)
+            [(CompilerDiagnosticSomeString code)
               (string.eq code (cdiag.compiler-diagnostic-code-parse))]
-            [cdiag.CompilerDiagnosticNoString false])
+            [CompilerDiagnosticNoString false])
           (>= (cdiag.compiler-diagnostic-line error) 1)))]))
 
 (define (compiler-parse-repl-error-at? [src : String] [line : i64] [col : i64]) : bool
   (match (parser.parse-ast-repl-source src)
-    [(parser.ResultAstReplItem.Ok _) false]
-    [(parser.ResultAstReplItem.Err diag)
+    [(Ok _) false]
+    [(Err diag)
       (let
         [error : cdiag.CompilerDiagnostic (deref diag)]
         (and
@@ -3355,16 +3349,14 @@
 ;; _comptime_lambda_param_rejected.
 (define (compiler-parse-first-fn-has-comptime-param? [src : String]) : bool
   (match (parser.parse-ast-source src)
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefFn decl-meta _ params _ _ _)
-              _)
+          [(Cons (DefFn decl-meta _ params _ _ _) _)
             (parser.ast-param-list-has-comptime? params)]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-comptime-param-tests-ok?) : bool
   (and
@@ -3379,17 +3371,15 @@
 (define (compiler-parse-defmacro-shape-ok?) : bool
   (match (parser.parse-ast-source
     "(defmacro (all [first : bool] [rest : bool ...]) : bool first)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-step decls)
-          [(ast.AstDeclListStep.Cons
-              (ast.AstDecl.DefMacro _ name params (ast.AstType.Bool) _)
-              rest)
+          [(Cons (DefMacro _ name params (Bool) _) rest)
             (let
               [rest : ast.AstDeclList rest]
               (match (ast.ast-decl-list-step rest)
-                [(ast.AstDeclListStep.Nil)
+                [(Nil)
                   (and
                     (= name (reader.stable-symbol-id "all"))
                     (= (ast.ast-macro-param-list-len (& params)) 2)
@@ -3397,11 +3387,7 @@
                       (& params)
                       0
                       (ast.ast-macro-param-fallback))
-                      [(ast.AstMacroParam.Param
-                          first
-                          (ast.AstType.Bool)
-                          false
-                          first-kinds)
+                      [(Param first (Bool) false first-kinds)
                         (and
                           (= first (reader.stable-symbol-id "first"))
                           (ast.ast-macro-type-kind-list-empty? (& first-kinds)))]
@@ -3410,18 +3396,14 @@
                       (& params)
                       1
                       (ast.ast-macro-param-fallback))
-                      [(ast.AstMacroParam.Param
-                          rest
-                          (ast.AstType.Bool)
-                          true
-                          rest-kinds)
+                      [(Param rest (Bool) true rest-kinds)
                         (and
                           (= rest (reader.stable-symbol-id "rest"))
                           (ast.ast-macro-type-kind-list-empty? (& rest-kinds)))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-macro-type-kind-list-shape-ok?
   [kinds : (& kinds ast.AstMacroTypeKindList)]) : bool
@@ -3440,33 +3422,27 @@
 (define (compiler-parse-defmacro-type-kind-constraint-shape-ok?) : bool
   (match (parser.parse-ast-source
     "(defmacro (catalog [T : type (:kind i64 struct type-var)]) : Module unit)")
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
-        [(ast.AstDeclListStep.Cons
-            (ast.AstDecl.DefMacro decl-meta name params _ _)
-            rest)
+        [(Cons (DefMacro decl-meta name params _ _) rest)
           (and
             (string.eq (ci.intern-str name) "catalog")
             (match (ast.ast-decl-list-step rest)
-              [(ast.AstDeclListStep.Nil) true]
+              [(Nil) true]
               [_ false])
             (= (ast.ast-macro-param-list-len (& params)) 1)
             (match (ast.ast-macro-param-list-get
               (& params)
               0
               (ast.ast-macro-param-fallback))
-              [(ast.AstMacroParam.Param
-                  param-name
-                  (ast.AstType.Var type-name)
-                  false
-                  type-kinds)
+              [(Param param-name (Var type-name) false type-kinds)
                 (and
                   (string.eq (ci.intern-str param-name) "T")
                   (string.eq (ci.intern-str type-name) "type")
                   (compiler-parse-macro-type-kind-list-shape-ok? (& type-kinds)))]
               [_ false]))]
         [_ false])]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-macro-type-kind-expected-all-id [index : i64]) : i64
   (cond
@@ -3520,19 +3496,19 @@
   [expected-last : String]
   [verify-all : bool]) : bool
   (match (parser.parse-ast-source source)
-    [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+    [(Ok (Program decls-box))
       (match (ast.ast-decl-list-step (deref decls-box))
-        [(ast.AstDeclListStep.Cons (ast.AstDecl.DefMacro _ _ params _ _) rest)
+        [(Cons (DefMacro _ _ params _ _) rest)
           (and
             (match (ast.ast-decl-list-step rest)
-              [(ast.AstDeclListStep.Nil) true]
+              [(Nil) true]
               [_ false])
             (= (ast.ast-macro-param-list-len (& params)) 1)
             (match (ast.ast-macro-param-list-get
               (& params)
               0
               (ast.ast-macro-param-fallback))
-              [(ast.AstMacroParam.Param _ _ _ type-kinds)
+              [(Param _ _ _ type-kinds)
                 (let
                   [count : i64
                     (ast.ast-macro-type-kind-list-len (& type-kinds))]
@@ -3562,7 +3538,7 @@
                       true)))]
               [_ false]))]
         [_ false])]
-    [(parser.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (compiler-parse-defmacro-type-kind-storage-shapes-ok?) : bool
   (and
@@ -3712,16 +3688,16 @@
     ;; Prime the fixed dispatch-name ids before measuring source parsing.
     [_dispatch : sym_i64_env.SymI64Env (parser.parse-ast-program-dispatch)]
     (match (lexer.spanned-result "(define (f [x : User]) : User x)")
-      [(lexer.ResultSpannedTokens.Ok toks)
+      [(Ok toks)
         (let
           [before : i64 (ci.intern-pool-len)]
           [parsed : parser.ResultAstProgram (parse-ast-program toks)]
           (and
             (= before (ci.intern-pool-len))
             (match parsed
-              [(parser.ResultAstProgram.Ok _) true]
-              [(parser.ResultAstProgram.Err _) false])))]
-      [(lexer.ResultSpannedTokens.Err _) false])))
+              [(Ok _) true]
+              [(Err _) false])))]
+      [(Err _) false])))
 
 (define (compiler-parse-spmd-callable-metadata-ok?) : bool
   (and
@@ -3735,19 +3711,19 @@
       (lanes 8)))
   : i64
   (+ x scale))")
-      [(parser.ResultAstProgram.Ok (ast.AstProgram.Program decls-box))
+      [(Ok (Program decls-box))
         (let
           [decls : ast.AstDeclList (deref decls-box)]
           (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-            [(ast.AstDecl.DefFn decl-meta _ _ _ _ metadata)
+            [(DefFn decl-meta _ _ _ _ metadata)
               (match (ast.ast-fn-metadata-spmd-callable metadata)
-                [(ast.AstSpmdCallable.Callable specializations)
+                [(Callable specializations)
                   (let
                     [fallback : ast.AstSpmdSpecialization
                       (ast.AstSpmdSpecialization
                         2
                         (box (ast.ast-spmd-param-class-list-new))
-                        ast.AstSpmdResultClass.Unit
+                        Unit
                         -1)]
                     [specialization : ast.AstSpmdSpecialization
                       (ast.ast-spmd-specialization-list-get
@@ -3765,19 +3741,19 @@
                       (= specialization.lanes 8)
                       (= specialization.index-param 0)
                       (match specialization.result
-                        [(ast.AstSpmdResultClass.Varying) true]
+                        [(Varying) true]
                         [_ false])
                       (match (ast.ast-spmd-param-class-list-get
                         (& args)
                         0
-                        ast.AstSpmdParamClass.Uniform)
-                        [(ast.AstSpmdParamClass.Varying) true]
+                        Uniform)
+                        [(Varying) true]
                         [_ false])
                       (match (ast.ast-spmd-param-class-list-get
                         (& args)
                         1
-                        ast.AstSpmdParamClass.Varying)
-                        [(ast.AstSpmdParamClass.Uniform) true]
+                        Varying)
+                        [(Uniform) true]
                         [_ false])))]
                 [_ false])]
             [_ false]))]
@@ -3814,41 +3790,39 @@
       "parse: duplicate :spmd-callable lanes field")))
 
 (define (compiler-parse-origin-lookup-cache-tests-ok?) : bool
-  (begin
+  (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
+  (parser.compiler-parse-semantic-origin-lookup-insert! 1 101 7 1 11 2 0 0)
+  ;; Re-registering the same query must replace, rather than duplicate, the
+  ;; earlier value because append-order defines the authoritative sidecar.
+  (parser.compiler-parse-semantic-origin-lookup-insert! 1 101 7 1 29 3 0 0)
+  (parser.compiler-parse-semantic-origin-lookup-insert! 2 101 7 3 4 5 6 7)
+  (parser.compiler-parse-semantic-origin-lookup-insert! 1 202 9 2 0 0 101 7)
+  (let
+    [direct : parser.CompilerParseSemanticOriginLookupSlot
+      (parser.compiler-parse-semantic-origin-lookup 1 101 7)]
+    [separate-domain : parser.CompilerParseSemanticOriginLookupSlot
+      (parser.compiler-parse-semantic-origin-lookup 2 101 7)]
+    [alias : parser.CompilerParseSemanticOriginLookupSlot
+      (parser.compiler-parse-semantic-origin-lookup 1 202 9)]
+    [missing : parser.CompilerParseSemanticOriginLookupSlot
+      (parser.compiler-parse-semantic-origin-lookup 1 303 11)]
+    [ok : bool
+      (and
+        (= parser.compiler-parse-semantic-origin-lookup-len 3)
+        (= direct.kind 1)
+        (= direct.run-start 29)
+        (= direct.run-count 3)
+        (= separate-domain.kind 3)
+        (= separate-domain.run-start 4)
+        (= separate-domain.run-count 5)
+        (= separate-domain.source-key 6)
+        (= separate-domain.source-slot 7)
+        (= alias.kind 2)
+        (= alias.source-key 101)
+        (= alias.source-slot 7)
+        (= missing.kind 0))]
     (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
-    (parser.compiler-parse-semantic-origin-lookup-insert! 1 101 7 1 11 2 0 0)
-    ;; Re-registering the same query must replace, rather than duplicate, the
-    ;; earlier value because append-order defines the authoritative sidecar.
-    (parser.compiler-parse-semantic-origin-lookup-insert! 1 101 7 1 29 3 0 0)
-    (parser.compiler-parse-semantic-origin-lookup-insert! 2 101 7 3 4 5 6 7)
-    (parser.compiler-parse-semantic-origin-lookup-insert! 1 202 9 2 0 0 101 7)
-    (let
-      [direct : parser.CompilerParseSemanticOriginLookupSlot
-        (parser.compiler-parse-semantic-origin-lookup 1 101 7)]
-      [separate-domain : parser.CompilerParseSemanticOriginLookupSlot
-        (parser.compiler-parse-semantic-origin-lookup 2 101 7)]
-      [alias : parser.CompilerParseSemanticOriginLookupSlot
-        (parser.compiler-parse-semantic-origin-lookup 1 202 9)]
-      [missing : parser.CompilerParseSemanticOriginLookupSlot
-        (parser.compiler-parse-semantic-origin-lookup 1 303 11)]
-      [ok : bool
-        (and
-          (= parser.compiler-parse-semantic-origin-lookup-len 3)
-          (= direct.kind 1)
-          (= direct.run-start 29)
-          (= direct.run-count 3)
-          (= separate-domain.kind 3)
-          (= separate-domain.run-start 4)
-          (= separate-domain.run-count 5)
-          (= separate-domain.source-key 6)
-          (= separate-domain.source-slot 7)
-          (= alias.kind 2)
-          (= alias.source-key 101)
-          (= alias.source-slot 7)
-          (= missing.kind 0))]
-      (begin
-        (parser.compiler-parse-semantic-origin-lookup-cache-reset!)
-        ok))))
+    ok))
 
 (define (compiler-parse-smoke) : i64
   (match (parser.parse-ast-source
@@ -3867,7 +3841,7 @@
           [(and (= x 42) true)
           (match (Some x) [(Some v) v] [_ 0])]
           [else 0]))))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (if (and
         (= (compiler-parse-smoke-score program) 36)
         (compiler-parse-nested-expr-span-ok?)
@@ -3940,4 +3914,51 @@
           42
           (io.panic "parse: error-path self-tests failed"))
         (io.panic "parse: compiler AST smoke score mismatch"))]
-    [(parser.ResultAstProgram.Err message) (io.panic message)]))
+    [(Err message) (io.panic message)]))
+
+(test
+  compiler-parse-numeric-text-outlives-intern-arena
+  (let
+    [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [state : ci.InternCompatState (ci.intern-compat-state-new)]
+    [_install : unit (ci.intern-compat-state-install! (& state))]
+    [parsed : parser.ResultAstProgram
+      (parser.parse-ast-source
+        "(define (literal) : f64 (match 0x2a [0x2a 1.25] [_ 0.0]))")]
+    [_reset : unit (ci.intern-reset!)]
+    [_retire : unit (ci.intern-persistent-arena-reset!)]
+    [_reader-reset : unit (reader.sp-node-pool-reset!)]
+    [_restore : unit (ci.intern-compat-state-install! (& installed))]
+    [valid : bool
+      (match parsed
+        [(Ok (Program decls-box))
+          (match (ast.ast-decl-list-step (deref decls-box))
+            [(Cons (DefFn _ _ _ _ body _) _)
+              (match (ast.ast-expr-unspan (ast.ast-node-get body))
+                [(Match payload)
+                  (match (deref payload)
+                    [(Match scrutinee arms)
+                      (and
+                        (match (ast.ast-expr-unspan
+                          (ast.ast-node-get scrutinee))
+                          [(Literal (Int 42 text)) (string.eq text "0x2a")]
+                          [_ false])
+                        (match (ast.ast-match-arm-list-get
+                          (& arms)
+                          0
+                          (ast.ast-match-arm-fallback))
+                          [(Arm (Literal (Int 42 text)) result)
+                            (and
+                              (string.eq text "0x2a")
+                              (match (ast.ast-expr-unspan
+                                (ast.ast-node-get result))
+                                [(Literal (Float spelling))
+                                  (string.eq spelling "1.25")]
+                                [_ false]))]
+                          [_ false]))])]
+                [_ false])]
+            [_ false])]
+        [(Err _) false])]
+    (unless
+      valid
+      (io.panic "parse: numeric expression or pattern text died with interner"))))

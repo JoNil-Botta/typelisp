@@ -12,61 +12,59 @@
   (string.string-length (string.append \"a\" (string.append \"b\" \"c\"))))")
 
 (define (lint-smoke-deprecated-string-concat-self-test) : i64
-  (begin
-    (if (=
-      (lint_core.lint-findings-count
-        (lint_core.lint-deprecated-string-concat-scan
-          "(define (main) : i64 (string.string-length (string.append \"a\" \"b\")))"
-          (lint_core.lint-findings-empty)))
-      1)
-      unit
-      (io.panic "lint: string-append call should be flagged"))
-    (match (lint_core_tests.lint-findings-get
+  (if (=
+    (lint_core.lint-findings-count
       (lint_core.lint-deprecated-string-concat-scan
-        "(define (main) : i64 (string.string-length (string.concat \"a\" \"b\")))"
-        (lint_core.lint-findings-empty))
-      0)
-      [(lint_core.LintMaybeFinding.Some finding)
-        (if (and
-          (= finding.depth 0)
-          (string.eq
-            finding.rule-id
-            (lint_core.lint-rule-deprecated-string-concat-id)))
-          unit
-          (io.panic "lint: string-concat finding should carry default metadata"))]
-      [(lint_core.LintMaybeFinding.No)
-        (io.panic "lint: string-concat call should produce a finding")])
-    (if (=
-      (lint_core.lint-findings-count
-        (lint_core.lint-deprecated-string-concat-scan
-          "(define (main) : i64
-  (string.string-length (string.concat5 \"a\" \"b\" \"c\" \"d\" \"e\")))"
-          (lint_core.lint-findings-empty)))
-      1)
-      unit
-      (io.panic "lint: string.concat5 call should be flagged"))
-    (if (=
-      (lint_core.lint-findings-count
-        (lint_core.lint-deprecated-string-concat-scan
-          (lint-smoke-nested-string-append-source)
-          (lint_core.lint-findings-empty)))
-      2)
-      unit
-      (io.panic "lint: nested string append should produce two findings"))
-    (match (lint_core_tests.lint-findings-get
-      (lint_core.lint-deprecated-string-concat-scan
-        (lint-smoke-nested-string-append-source)
-        (lint_core.lint-findings-empty))
-      1)
-      [(lint_core.LintMaybeFinding.Some finding)
-        (if (= finding.depth 1)
-          unit
-          (io.panic "lint: nested string append should carry chain depth"))]
-      [(lint_core.LintMaybeFinding.No)
-        (io.panic "lint: nested string append should produce a chain finding")])
-    (match (lint_core_tests.lint-findings-get
+        "(define (main) : i64 (string.string-length (string.append \"a\" \"b\")))"
+        (lint_core.lint-findings-empty)))
+    1)
+    unit
+    (io.panic "lint: string-append call should be flagged"))
+  (match (lint_core_tests.lint-findings-get
+    (lint_core.lint-deprecated-string-concat-scan
+      "(define (main) : i64 (string.string-length (string.concat \"a\" \"b\")))"
+      (lint_core.lint-findings-empty))
+    0)
+    [(Some finding)
+      (if (and
+        (= finding.depth 0)
+        (string.eq
+          finding.rule-id
+          (lint_core.lint-rule-deprecated-string-concat-id)))
+        unit
+        (io.panic "lint: string-concat finding should carry default metadata"))]
+    [(No) (io.panic "lint: string-concat call should produce a finding")])
+  (if (=
+    (lint_core.lint-findings-count
       (lint_core.lint-deprecated-string-concat-scan
         "(define (main) : i64
+  (string.string-length (string.concat5 \"a\" \"b\" \"c\" \"d\" \"e\")))"
+        (lint_core.lint-findings-empty)))
+    1)
+    unit
+    (io.panic "lint: string.concat5 call should be flagged"))
+  (if (=
+    (lint_core.lint-findings-count
+      (lint_core.lint-deprecated-string-concat-scan
+        (lint-smoke-nested-string-append-source)
+        (lint_core.lint-findings-empty)))
+    2)
+    unit
+    (io.panic "lint: nested string append should produce two findings"))
+  (match (lint_core_tests.lint-findings-get
+    (lint_core.lint-deprecated-string-concat-scan
+      (lint-smoke-nested-string-append-source)
+      (lint_core.lint-findings-empty))
+    1)
+    [(Some finding)
+      (if (= finding.depth 1)
+        unit
+        (io.panic "lint: nested string append should carry chain depth"))]
+    [(No)
+      (io.panic "lint: nested string append should produce a chain finding")])
+  (match (lint_core_tests.lint-findings-get
+    (lint_core.lint-deprecated-string-concat-scan
+      "(define (main) : i64
   (let
     [i : i64 0]
     [out : String \"\"]
@@ -76,15 +74,14 @@
           (set! out (string.append out \"x\"))
           (set! i (+ i 1))))
       (string.string-length out))))"
-        (lint_core.lint-findings-empty))
-      0)
-      [(lint_core.LintMaybeFinding.Some finding)
-        (if (= finding.depth 2)
-          unit
-          (io.panic "lint: loop string append should carry loop depth"))]
-      [(lint_core.LintMaybeFinding.No)
-        (io.panic "lint: loop string append should produce a finding")])
-    42))
+      (lint_core.lint-findings-empty))
+    0)
+    [(Some finding)
+      (if (= finding.depth 2)
+        unit
+        (io.panic "lint: loop string append should carry loop depth"))]
+    [(No) (io.panic "lint: loop string append should produce a finding")])
+  42)
 
 (define (lint-smoke-nested-str-cat-self-test) : i64
   (let
@@ -108,59 +105,53 @@
       (lint_core_tests.lint-test-source-view
         nested-str-cat
         (ast.ast-source-span 23 4 23 36))]
-    (begin
-      (if (=
-        (lint_core.lint-findings-count
-          (lint_core_tests.lint-test-walk
-            nested-str-cat
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        1)
-        unit
-        (io.panic "lint: nested str-cat should be flagged once"))
-      (match (lint_core_tests.lint-findings-get
+    (if (=
+      (lint_core.lint-findings-count
         (lint_core_tests.lint-test-walk
-          spanned-str-cat
+          nested-str-cat
           (lint_core.lint-default-ladder-threshold)
-          (lint_core.lint-findings-empty))
-        0)
-        [(lint_core.LintMaybeFinding.Some finding)
-          (let
-            [span : ast.AstSourceSpan finding.span]
-            (if (and
-              (string.eq
-                finding.rule-id
-                (lint_core.lint-rule-nested-str-cat-id))
-              (string.eq
-                finding.message
-                "nested str-cat: prefer one flat str-cat call")
-              (= (ast.ast-source-span-start-line span) 23))
-              unit
-              (io.panic "lint: nested str-cat finding metadata mismatch")))]
-        [(lint_core.LintMaybeFinding.No)
-          (io.panic "lint: spanned nested str-cat should produce a finding")])
-      (if (=
-        (lint_core.lint-findings-count
-          (lint_core_tests.lint-test-walk
-            flat-str-cat
-            (lint_core.lint-default-ladder-threshold)
-            (lint_core.lint-findings-empty)))
-        0)
-        42
-        (io.panic "lint: flat str-cat should not be flagged")))))
+          (lint_core.lint-findings-empty)))
+      1)
+      unit
+      (io.panic "lint: nested str-cat should be flagged once"))
+    (match (lint_core_tests.lint-findings-get
+      (lint_core_tests.lint-test-walk
+        spanned-str-cat
+        (lint_core.lint-default-ladder-threshold)
+        (lint_core.lint-findings-empty))
+      0)
+      [(Some finding)
+        (let
+          [span : ast.AstSourceSpan finding.span]
+          (if (and
+            (string.eq finding.rule-id (lint_core.lint-rule-nested-str-cat-id))
+            (string.eq
+              finding.message
+              "nested str-cat: prefer one flat str-cat call")
+            (= (ast.ast-source-span-start-line span) 23))
+            unit
+            (io.panic "lint: nested str-cat finding metadata mismatch")))]
+      [(No) (io.panic "lint: spanned nested str-cat should produce a finding")])
+    (if (=
+      (lint_core.lint-findings-count
+        (lint_core_tests.lint-test-walk
+          flat-str-cat
+          (lint_core.lint-default-ladder-threshold)
+          (lint_core.lint-findings-empty)))
+      0)
+      42
+      (io.panic "lint: flat str-cat should not be flagged"))))
 
 (define (main) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (let
-      [pools : ast.AstNodePoolContext
-        (ast.ast-node-pool-context-capture-active)]
-      [_install : unit (ast.ast-node-pool-context-install! pools)]
-      [policy-result : i64
-        (lint_policy_core_tests.compiler-lint-policy-self-test)]
-      [core-result : i64 (lint_core_tests.compiler-lint-self-test)]
-      (if (and (= policy-result 42) (= core-result 42))
-        (if (= (lint-smoke-deprecated-string-concat-self-test) 42)
-          (lint-smoke-nested-str-cat-self-test)
-          1)
-        core-result))))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [policy-result : i64
+      (lint_policy_core_tests.compiler-lint-policy-self-test)]
+    [core-result : i64 (lint_core_tests.compiler-lint-self-test)]
+    (if (and (= policy-result 42) (= core-result 42))
+      (if (= (lint-smoke-deprecated-string-concat-self-test) 42)
+        (lint-smoke-nested-str-cat-self-test)
+        1)
+      core-result)))

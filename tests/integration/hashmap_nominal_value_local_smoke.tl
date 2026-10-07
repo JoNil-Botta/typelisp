@@ -15,13 +15,11 @@
   (let
     [structs : local_struct_map.Map (local_struct_map.new)]
     [states : local_enum_map.Map (local_enum_map.new)]
-    (begin
-      (local_struct_map.insert! structs "answer" (LocalHashmapValue 40 "ok"))
-      (local_enum_map.insert! states 1 (LocalHashmapPresent "ready"))
-      (match (local_struct_map.get (& structs) "answer")
-        [(local_struct_map.LookupFound value)
-          (match (local_enum_map.get (& states) 1)
-            [(local_enum_map.LookupFound (LocalHashmapPresent _))
-              (+ value.score 2)]
-            [_ 1])]
-        [(local_struct_map.LookupMissing) 1]))))
+    (local_struct_map.insert! structs "answer" (LocalHashmapValue 40 "ok"))
+    (local_enum_map.insert! states 1 (LocalHashmapPresent "ready"))
+    (match (local_struct_map.get (& structs) "answer")
+      [(LookupFound value)
+        (match (local_enum_map.get (& states) 1)
+          [(LookupFound (LocalHashmapPresent _)) (+ value.score 2)]
+          [_ 1])]
+      [(LookupMissing) 1])))

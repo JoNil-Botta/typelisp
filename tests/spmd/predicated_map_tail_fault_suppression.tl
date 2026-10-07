@@ -23,12 +23,11 @@
     (let
       [descriptor : i64 (cast (tl_alloc (cast 16 : u64)) : i64)]
       [handle : i64 (cast (tl_alloc (cast 8 : u64)) : i64)]
-      (begin
-        (write-i64! descriptor data)
-        (write-i64! (+ descriptor 8) len)
-        (write-i64! handle descriptor)
-        (unsafe
-          (ptr-read (int->ptr (cast handle : u64) : (Ptr (__tl_dyn-array i64)))))))))
+      (write-i64! descriptor data)
+      (write-i64! (+ descriptor 8) len)
+      (write-i64! handle descriptor)
+      (unsafe
+        (ptr-read (int->ptr (cast handle : u64) : (Ptr (__tl_dyn-array i64))))))))
 
 (cfg
   linux
@@ -71,31 +70,26 @@
                 (array-i64-from-raw destination-data n)]
               [index : i64 0]
               [ok : bool true]
-              (begin
-                (while (< index n)
-                  (begin
-                    (write-i64! (+ source-data (* index 8)) (+ 40 index))
-                    (write-i64! (+ destination-data (* index 8)) 0)
-                    (set! index (+ index 1))))
-                (copy-tail source destination n)
-                (set! index 0)
-                (while (< index n)
-                  (begin
-                    (if (not
-                      (=
-                        (read-i64 (+ destination-data (* index 8)))
-                        (+ 41 index)))
-                      (set! ok false)
-                      unit)
-                    (set! index (+ index 1))))
-                (let
-                  [source-free : i64
-                    (unsafe
-                      (syscall 11 source-map 4096))]
-                  [destination-free : i64
-                    (unsafe
-                      (syscall 11 destination-map 4096))]
-                  (and ok (= source-free 0) (= destination-free 0)))))))))))
+              (while (< index n)
+                (write-i64! (+ source-data (* index 8)) (+ 40 index))
+                (write-i64! (+ destination-data (* index 8)) 0)
+                (set! index (+ index 1)))
+              (copy-tail source destination n)
+              (set! index 0)
+              (while (< index n)
+                (if (not
+                  (= (read-i64 (+ destination-data (* index 8))) (+ 41 index)))
+                  (set! ok false)
+                  unit)
+                (set! index (+ index 1)))
+              (let
+                [source-free : i64
+                  (unsafe
+                    (syscall 11 source-map 4096))]
+                [destination-free : i64
+                  (unsafe
+                    (syscall 11 destination-map 4096))]
+                (and ok (= source-free 0) (= destination-free 0))))))))))
 
 (cfg
   linux

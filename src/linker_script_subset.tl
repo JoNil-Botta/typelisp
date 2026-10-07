@@ -166,6 +166,13 @@
   (Ok token_vec.Vec)
   (Err LinkerScriptError))
 
+(defstruct ScriptTokenRequest
+  (:lifetimes source input limits)
+  (source (& source str))
+  (data (& input (__tl_dyn-array u8)))
+  (limits (& limits LinkerScriptLimits))
+  (colon-separator bool))
+
 (define (byte-at [data : (& d (__tl_dyn-array u8))] [index : i64]) : i64
   (cast (array-ref data index) : i64))
 
@@ -173,7 +180,7 @@
   (or (= byte 32) (and (>= byte 9) (<= byte 13))))
 
 ;; A byte that ends a word without belonging to it.
-(define (delimiter? [byte : i64]) : bool
+(define (delimiter? [byte : i64] [version-map : bool]) : bool
   (or
     (space? byte)
     (= byte (cast '(' : i64))
@@ -181,6 +188,7 @@
     (= byte (cast ',' : i64))
     (= byte (cast '"' : i64))
     (= byte (cast ';' : i64))
+    (and version-map (= byte (cast ':' : i64)))
     (= byte (cast '{' : i64))
     (= byte (cast '}' : i64))))
 
@@ -200,6 +208,7 @@
     [(= byte (cast ')' : i64)) ")"]
     [(= byte (cast ',' : i64)) ","]
     [(= byte (cast ';' : i64)) ";"]
+    [(= byte (cast ':' : i64)) ":"]
     [(= byte (cast '{' : i64)) "{"]
     [else "}"]))
 
@@ -222,251 +231,224 @@
 (define (check-plain-byte [source : (& s str)] [byte : i64] [cursor : Cursor]) : Step
   (cond
     [(= byte 0)
-      (Step.Err
-        (script-error
-          source
-          (LinkerScriptErrorKind.NulByte)
-          cursor.line
-          cursor.column
-          "NUL byte"))]
+      (Err (script-error source (NulByte) cursor.line cursor.column "NUL byte"))]
     [(>= byte 128)
-      (Step.Err
+      (Err
         (script-error
           source
-          (LinkerScriptErrorKind.NonAscii)
+          (NonAscii)
           cursor.line
           cursor.column
           "non-ASCII byte outside a quoted path"))]
     [(or (= byte 127) (and (< byte 32) (not (space? byte))))
-      (Step.Err
+      (Err
         (script-error
           source
-          (LinkerScriptErrorKind.ControlByte)
+          (ControlByte)
           cursor.line
           cursor.column
           (cat.str-cat "control byte " (string.int->string byte))))]
-    [else (Step.Ok)]))
+    [else (Ok)]))
 
-(define (tokenize
-  [source : (& s str)]
-  [data : (& d (__tl_dyn-array u8))]
-  [limits : (& l LinkerScriptLimits)]) : ResultTokens
+(define (tokenize [request : (& r (ScriptTokenRequest s d l))]) : ResultTokens
   (let
+    [source : (& s str) request.source]
+    [data : (& d (__tl_dyn-array u8)) request.data]
+    [limits : (& l LinkerScriptLimits) request.limits]
+    [version-map : bool request.colon-separator]
     [size : i64 (array-length data)]
     [tokens : token_vec.Vec (token_vec.new)]
     [cursor : Cursor (Cursor 0 1 1)]
-    [failure : LinkerScriptError
-      (LinkerScriptError (LinkerScriptErrorKind.InvalidLimits) 0 0 "")]
+    [failure : LinkerScriptError (LinkerScriptError (InvalidLimits) 0 0 "")]
     [failed : bool false]
-    (begin
-      (while (and (not failed) (< cursor.pos size))
-        (let
-          [byte : i64 (byte-at data cursor.pos)]
-          (cond
-            [(space? byte) (set! cursor (advance cursor byte))]
-            [(comment-start? data cursor.pos size)
+    (while (and (not failed) (< cursor.pos size))
+      (let
+        [byte : i64 (byte-at data cursor.pos)]
+        (cond
+          [(space? byte) (set! cursor (advance cursor byte))]
+          [(comment-start? data cursor.pos size)
+            (let
+              [start : Cursor cursor]
+              [closed : bool false]
+              (set! cursor (advance (advance cursor byte) 42))
+              (while (and (not closed) (not failed) (< cursor.pos size))
+                (let
+                  [inner : i64 (byte-at data cursor.pos)]
+                  (cond
+                    [(and
+                      (= inner (cast '*' : i64))
+                      (< (+ cursor.pos 1) size)
+                      (= (byte-at data (+ cursor.pos 1)) (cast '/' : i64)))
+                      (set! cursor (advance (advance cursor inner) 47))
+                      (set! closed true)]
+                    [else
+                      (match (check-plain-byte source inner cursor)
+                        [(Err error)
+                          (set! failed true)
+                          (set! failure error)]
+                        [(Ok) (set! cursor (advance cursor inner))])])))
+              (when
+                (and (not failed) (not closed))
+                (set! failed true)
+                (set!
+                  failure
+                  (script-error
+                    source
+                    (UnterminatedComment)
+                    start.line
+                    start.column
+                    "unterminated comment"))))]
+          [else
+            (if (>= (token_vec.len (& tokens)) limits.max-tokens)
+              (begin
+                (set! failed true)
+                (set!
+                  failure
+                  (script-error
+                    source
+                    (TooManyTokens)
+                    cursor.line
+                    cursor.column
+                    (cat.str-cat
+                      "more than "
+                      (string.int->string limits.max-tokens)
+                      " tokens"))))
               (let
                 [start : Cursor cursor]
-                [closed : bool false]
-                (begin
-                  (set! cursor (advance (advance cursor byte) 42))
-                  (while (and (not closed) (not failed) (< cursor.pos size))
+                (cond
+                  [(= byte (cast '"' : i64))
                     (let
-                      [inner : i64 (byte-at data cursor.pos)]
+                      [text : bytes.ByteBufBuilder (bytes.byte-buf-builder-new)]
+                      [closed : bool false]
+                      (set! cursor (advance cursor byte))
+                      (while (and (not closed) (not failed) (< cursor.pos size))
+                        (let
+                          [inner : i64 (byte-at data cursor.pos)]
+                          (cond
+                            [(= inner (cast '"' : i64))
+                              (set! cursor (advance cursor inner))
+                              (set! closed true)]
+                            [(= inner 0)
+                              (set! failed true)
+                              (set!
+                                failure
+                                (script-error
+                                  source
+                                  (NulByte)
+                                  cursor.line
+                                  cursor.column
+                                  "NUL byte"))]
+                            [(= inner 10) (set! cursor (Cursor size 0 0))]
+                            [(>=
+                              (bytes.byte-buf-builder-len (& text))
+                              limits.max-token-bytes)
+                              (set! failed true)
+                              (set!
+                                failure
+                                (script-error
+                                  source
+                                  (TokenTooLong)
+                                  start.line
+                                  start.column
+                                  (cat.str-cat
+                                    "quoted name exceeds "
+                                    (string.int->string limits.max-token-bytes)
+                                    " bytes")))]
+                            [else
+                              (bytes.byte-buf-builder-push
+                                (&mut text)
+                                (cast inner : u8))
+                              (set! cursor (advance cursor inner))])))
                       (cond
-                        [(and
-                            (= inner (cast '*' : i64))
-                            (< (+ cursor.pos 1) size)
-                            (= (byte-at data (+ cursor.pos 1)) (cast '/' : i64)))
-                          (begin
-                            (set! cursor (advance (advance cursor inner) 47))
-                            (set! closed true))]
+                        [failed unit]
+                        [closed
+                          (token_vec.push-ref!
+                            (&mut tokens)
+                            (Token
+                              (Quoted)
+                              (bytes.byte-buf-builder-to-string (& text))
+                              start.line
+                              start.column))]
                         [else
-                          (match (check-plain-byte source inner cursor)
-                            [(Step.Err error)
-                              (begin
-                                (set! failed true)
-                                (set! failure error))]
-                            [(Step.Ok) (set! cursor (advance cursor inner))])])))
-                  (when
-                    (and (not failed) (not closed))
-                    (set! failed true)
-                    (set!
-                      failure
-                      (script-error
-                        source
-                        (LinkerScriptErrorKind.UnterminatedComment)
+                          (set! failed true)
+                          (set!
+                            failure
+                            (script-error
+                              source
+                              (UnterminatedQuote)
+                              start.line
+                              start.column
+                              "unterminated quote"))]))]
+                  [(or
+                    (= byte (cast '(' : i64))
+                    (= byte (cast ')' : i64))
+                    (= byte (cast ',' : i64))
+                    (= byte (cast ';' : i64))
+                    (and version-map (= byte (cast ':' : i64)))
+                    (= byte (cast '{' : i64))
+                    (= byte (cast '}' : i64)))
+                    (token_vec.push-ref!
+                      (&mut tokens)
+                      (Token
+                        (cond
+                          [(= byte (cast '(' : i64)) (Open)]
+                          [(= byte (cast ')' : i64)) (Close)]
+                          [(= byte (cast ',' : i64)) (Comma)]
+                          [else (Punct)])
+                        (punct-text byte)
                         start.line
-                        start.column
-                        "unterminated comment")))))]
-            [else
-              (if (>= (token_vec.len (& tokens)) limits.max-tokens)
-                (begin
-                  (set! failed true)
-                  (set!
-                    failure
-                    (script-error
-                      source
-                      (LinkerScriptErrorKind.TooManyTokens)
-                      cursor.line
-                      cursor.column
-                      (cat.str-cat
-                        "more than "
-                        (string.int->string limits.max-tokens)
-                        " tokens"))))
-                (let
-                  [start : Cursor cursor]
-                  (cond
-                    [(= byte (cast '"' : i64))
-                      (let
-                        [text : bytes.ByteBufBuilder
-                          (bytes.byte-buf-builder-new)]
-                        [closed : bool false]
-                        (begin
-                          (set! cursor (advance cursor byte))
-                          (while (and
-                            (not closed)
-                            (not failed)
-                            (< cursor.pos size))
-                            (let
-                              [inner : i64 (byte-at data cursor.pos)]
-                              (cond
-                                [(= inner (cast '"' : i64))
-                                  (begin
-                                    (set! cursor (advance cursor inner))
-                                    (set! closed true))]
-                                [(= inner 0)
+                        start.column))
+                    (set! cursor (advance cursor byte))]
+                  [else
+                    (let
+                      [text : bytes.ByteBufBuilder (bytes.byte-buf-builder-new)]
+                      [done : bool false]
+                      (while (and (not done) (not failed) (< cursor.pos size))
+                        (let
+                          [inner : i64 (byte-at data cursor.pos)]
+                          (if (or
+                            (delimiter? inner version-map)
+                            (comment-start? data cursor.pos size))
+                            (set! done true)
+                            (match (check-plain-byte source inner cursor)
+                              [(Err error)
+                                (set! failed true)
+                                (set! failure error)]
+                              [(Ok)
+                                (if (>=
+                                  (bytes.byte-buf-builder-len (& text))
+                                  limits.max-token-bytes)
                                   (begin
                                     (set! failed true)
                                     (set!
                                       failure
                                       (script-error
                                         source
-                                        (LinkerScriptErrorKind.NulByte)
-                                        cursor.line
-                                        cursor.column
-                                        "NUL byte")))]
-                                [(= inner 10) (set! cursor (Cursor size 0 0))]
-                                [(>=
-                                    (bytes.byte-buf-builder-len (& text))
-                                    limits.max-token-bytes)
-                                  (begin
-                                    (set! failed true)
-                                    (set!
-                                      failure
-                                      (script-error
-                                        source
-                                        (LinkerScriptErrorKind.TokenTooLong)
+                                        (TokenTooLong)
                                         start.line
                                         start.column
                                         (cat.str-cat
-                                          "quoted name exceeds "
+                                          "name exceeds "
                                           (string.int->string
                                             limits.max-token-bytes)
-                                          " bytes"))))]
-                                [else
+                                          " bytes"))))
                                   (begin
                                     (bytes.byte-buf-builder-push
                                       (&mut text)
                                       (cast inner : u8))
-                                    (set! cursor (advance cursor inner)))])))
-                          (cond
-                            [failed unit]
-                            [closed
-                              (token_vec.push-ref!
-                                (&mut tokens)
-                                (Token
-                                  (TokenKind.Quoted)
-                                  (bytes.byte-buf-builder-to-string (& text))
-                                  start.line
-                                  start.column))]
-                            [else
-                              (begin
-                                (set! failed true)
-                                (set!
-                                  failure
-                                  (script-error
-                                    source
-                                    (LinkerScriptErrorKind.UnterminatedQuote)
-                                    start.line
-                                    start.column
-                                    "unterminated quote")))])))]
-                    [(or
-                        (= byte (cast '(' : i64))
-                        (= byte (cast ')' : i64))
-                        (= byte (cast ',' : i64))
-                        (= byte (cast ';' : i64))
-                        (= byte (cast '{' : i64))
-                        (= byte (cast '}' : i64)))
-                      (begin
+                                    (set! cursor (advance cursor inner))))]))))
+                      (unless
+                        failed
                         (token_vec.push-ref!
                           (&mut tokens)
                           (Token
-                            (cond
-                              [(= byte (cast '(' : i64)) (TokenKind.Open)]
-                              [(= byte (cast ')' : i64)) (TokenKind.Close)]
-                              [(= byte (cast ',' : i64)) (TokenKind.Comma)]
-                              [else (TokenKind.Punct)])
-                            (punct-text byte)
+                            (Word)
+                            (bytes.byte-buf-builder-to-string (& text))
                             start.line
-                            start.column))
-                        (set! cursor (advance cursor byte)))]
-                    [else
-                      (let
-                        [text : bytes.ByteBufBuilder
-                          (bytes.byte-buf-builder-new)]
-                        [done : bool false]
-                        (begin
-                          (while (and
-                            (not done)
-                            (not failed)
-                            (< cursor.pos size))
-                            (let
-                              [inner : i64 (byte-at data cursor.pos)]
-                              (if (or
-                                (delimiter? inner)
-                                (comment-start? data cursor.pos size))
-                                (set! done true)
-                                (match (check-plain-byte source inner cursor)
-                                  [(Step.Err error)
-                                    (begin
-                                      (set! failed true)
-                                      (set! failure error))]
-                                  [(Step.Ok)
-                                    (if (>=
-                                      (bytes.byte-buf-builder-len (& text))
-                                      limits.max-token-bytes)
-                                      (begin
-                                        (set! failed true)
-                                        (set!
-                                          failure
-                                          (script-error
-                                            source
-                                            (LinkerScriptErrorKind.TokenTooLong)
-                                            start.line
-                                            start.column
-                                            (cat.str-cat
-                                              "name exceeds "
-                                              (string.int->string
-                                                limits.max-token-bytes)
-                                              " bytes"))))
-                                      (begin
-                                        (bytes.byte-buf-builder-push
-                                          (&mut text)
-                                          (cast inner : u8))
-                                        (set! cursor (advance cursor inner))))]))))
-                          (unless
-                            failed
-                            (token_vec.push-ref!
-                              (&mut tokens)
-                              (Token
-                                (TokenKind.Word)
-                                (bytes.byte-buf-builder-to-string (& text))
-                                start.line
-                                start.column)))))])))])))
-      (if failed
-        (ResultTokens.Err failure)
-        (ResultTokens.Ok tokens)))))
+                            start.column))))])))])))
+    (if failed
+      (Err failure)
+      (Ok tokens))))
 
 ;; --- commands ---------------------------------------------------------------
 ;; GNU ld commands and constructs outside the subset, named in the diagnostic so
@@ -530,14 +512,12 @@
   (let
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and (not found) (< index (string.string-length text)))
-        (begin
-          (when
-            (= (cast (string.string-ref text index) : i64) byte)
-            (set! found true))
-          (set! index (+ index 1))))
-      found)))
+    (while (and (not found) (< index (string.string-length text)))
+      (when
+        (= (cast (string.string-ref text index) : i64) byte)
+        (set! found true))
+      (set! index (+ index 1)))
+    found))
 
 (define (starts-with? [text : (& t str)] [prefix : (& p str)]) : bool
   (and
@@ -560,12 +540,12 @@
   (let
     [token : (& p Token) (token-at parser index)]
     (match token.kind
-      [(TokenKind.Word) (TokenKind.Word)]
-      [(TokenKind.Quoted) (TokenKind.Quoted)]
-      [(TokenKind.Open) (TokenKind.Open)]
-      [(TokenKind.Close) (TokenKind.Close)]
-      [(TokenKind.Comma) (TokenKind.Comma)]
-      [(TokenKind.Punct) (TokenKind.Punct)])))
+      [(Word) (Word)]
+      [(Quoted) (Quoted)]
+      [(Open) (Open)]
+      [(Close) (Close)]
+      [(Comma) (Comma)]
+      [(Punct) (Punct)])))
 
 (define (token-has-byte? [parser : (& p Parser)] [index : i64] [byte : i64]) : bool
   (let
@@ -604,15 +584,15 @@
   (if (and
     (< parser.index (token-count parser))
     (match (token-kind-at parser parser.index)
-      [(TokenKind.Open) true]
+      [(Open) true]
       [_ false]))
     (begin
       (set! parser.index (+ parser.index 1))
-      (Step.Ok))
-    (Step.Err
+      (Ok))
+    (Err
       (script-error
         source
-        (LinkerScriptErrorKind.MissingParen)
+        (MissingParen)
         keyword.line
         keyword.column
         (cat.str-cat (string.copy keyword.text) " without its `(`")))))
@@ -629,197 +609,180 @@
     [listed : i64 0]
     [separated : bool true]
     [closed : bool false]
-    [failure : LinkerScriptError
-      (LinkerScriptError (LinkerScriptErrorKind.InvalidLimits) 0 0 "")]
+    [failure : LinkerScriptError (LinkerScriptError (InvalidLimits) 0 0 "")]
     [failed : bool false]
-    (begin
-      (while (and
-        (not closed)
-        (not failed)
-        (< parser.index (token-count parser)))
-        (let
-          [token : Token (token-copy-at parser parser.index)]
-          (begin
-            (set! parser.index (+ parser.index 1))
-            (match token.kind
-              [(TokenKind.Close)
-                (if (and (= listed 0) separated)
+    (while (and (not closed) (not failed) (< parser.index (token-count parser)))
+      (let
+        [token : Token (token-copy-at parser parser.index)]
+        (set! parser.index (+ parser.index 1))
+        (match token.kind
+          [(Close)
+            (if (and (= listed 0) separated)
+              (begin
+                (set! failed true)
+                (set!
+                  failure
+                  (script-error
+                    source
+                    (EmptyArgument)
+                    token.line
+                    token.column
+                    "empty file list")))
+              (set! closed true))]
+          [(Comma)
+            (if separated
+              (begin
+                (set! failed true)
+                (set!
+                  failure
+                  (script-error
+                    source
+                    (EmptyArgument)
+                    token.line
+                    token.column
+                    "empty entry before `,`")))
+              (set! separated true))]
+          [(Quoted)
+            (if (= (string.string-length token.text) 0)
+              (begin
+                (set! failed true)
+                (set!
+                  failure
+                  (script-error
+                    source
+                    (EmptyArgument)
+                    token.line
+                    token.column
+                    "empty quoted name")))
+              (begin
+                (input_vec.push-ref!
+                  (&mut parser.inputs)
+                  (LinkerScriptInput
+                    (Path)
+                    (string.copy token.text)
+                    true
+                    as-needed
+                    token.line
+                    token.column))
+                (set! listed (+ listed 1))
+                (set! separated false)))]
+          [(Word)
+            (cond
+              [(string.eq token.text "AS_NEEDED")
+                (cond
+                  [(>= depth limits.max-depth)
+                    (set! failed true)
+                    (set!
+                      failure
+                      (script-error
+                        source
+                        (TooDeep)
+                        token.line
+                        token.column
+                        (cat.str-cat
+                          "AS_NEEDED nests deeper than "
+                          (string.int->string limits.max-depth)
+                          " parentheses")))]
+                  [else
+                    (match (expect-open source parser (& token))
+                      [(Err error)
+                        (set! failed true)
+                        (set! failure error)]
+                      [(Ok)
+                        (match (parse-files
+                          source
+                          parser
+                          limits
+                          (+ depth 1)
+                          true)
+                          [(Err error)
+                            (set! failed true)
+                            (set! failure error)]
+                          [(Ok)
+                            (set! listed (+ listed 1))
+                            (set! separated false)])])])]
+              [(starts-with? token.text "-l")
+                (if (= (string.string-length token.text) 2)
                   (begin
                     (set! failed true)
                     (set!
                       failure
                       (script-error
                         source
-                        (LinkerScriptErrorKind.EmptyArgument)
+                        (EmptyLibrary)
                         token.line
                         token.column
-                        "empty file list")))
-                  (set! closed true))]
-              [(TokenKind.Comma)
-                (if separated
-                  (begin
-                    (set! failed true)
-                    (set!
-                      failure
-                      (script-error
-                        source
-                        (LinkerScriptErrorKind.EmptyArgument)
-                        token.line
-                        token.column
-                        "empty entry before `,`")))
-                  (set! separated true))]
-              [(TokenKind.Quoted)
-                (if (= (string.string-length token.text) 0)
-                  (begin
-                    (set! failed true)
-                    (set!
-                      failure
-                      (script-error
-                        source
-                        (LinkerScriptErrorKind.EmptyArgument)
-                        token.line
-                        token.column
-                        "empty quoted name")))
+                        "`-l` without a library name")))
                   (begin
                     (input_vec.push-ref!
                       (&mut parser.inputs)
                       (LinkerScriptInput
-                        (LinkerScriptInputKind.Path)
-                        (string.copy token.text)
-                        true
+                        (Library)
+                        (string.substring
+                          token.text
+                          2
+                          (- (string.string-length token.text) 2))
+                        false
                         as-needed
                         token.line
                         token.column))
                     (set! listed (+ listed 1))
                     (set! separated false)))]
-              [(TokenKind.Word)
-                (cond
-                  [(string.eq token.text "AS_NEEDED")
-                    (cond
-                      [(>= depth limits.max-depth)
-                        (begin
-                          (set! failed true)
-                          (set!
-                            failure
-                            (script-error
-                              source
-                              (LinkerScriptErrorKind.TooDeep)
-                              token.line
-                              token.column
-                              (cat.str-cat
-                                "AS_NEEDED nests deeper than "
-                                (string.int->string limits.max-depth)
-                                " parentheses"))))]
-                      [else
-                        (match (expect-open source parser (& token))
-                          [(Step.Err error)
-                            (begin
-                              (set! failed true)
-                              (set! failure error))]
-                          [(Step.Ok)
-                            (match (parse-files
-                              source
-                              parser
-                              limits
-                              (+ depth 1)
-                              true)
-                              [(Step.Err error)
-                                (begin
-                                  (set! failed true)
-                                  (set! failure error))]
-                              [(Step.Ok)
-                                (begin
-                                  (set! listed (+ listed 1))
-                                  (set! separated false))])])])]
-                  [(starts-with? token.text "-l")
-                    (if (= (string.string-length token.text) 2)
-                      (begin
-                        (set! failed true)
-                        (set!
-                          failure
-                          (script-error
-                            source
-                            (LinkerScriptErrorKind.EmptyLibrary)
-                            token.line
-                            token.column
-                            "`-l` without a library name")))
-                      (begin
-                        (input_vec.push-ref!
-                          (&mut parser.inputs)
-                          (LinkerScriptInput
-                            (LinkerScriptInputKind.Library)
-                            (string.substring
-                              token.text
-                              2
-                              (- (string.string-length token.text) 2))
-                            false
-                            as-needed
-                            token.line
-                            token.column))
-                        (set! listed (+ listed 1))
-                        (set! separated false)))]
-                  [(starts-with? token.text "-")
-                    (begin
-                      (set! failed true)
-                      (set!
-                        failure
-                        (script-error
-                          source
-                          (LinkerScriptErrorKind.Option)
-                          token.line
-                          token.column
-                          (cat.str-cat
-                            "option `"
-                            (string.copy token.text)
-                            "` in a file list; only `-lNAME` is admitted"))))]
-                  [else
-                    (begin
-                      (input_vec.push-ref!
-                        (&mut parser.inputs)
-                        (LinkerScriptInput
-                          (LinkerScriptInputKind.Path)
-                          (string.copy token.text)
-                          false
-                          as-needed
-                          token.line
-                          token.column))
-                      (set! listed (+ listed 1))
-                      (set! separated false))])]
-              [(TokenKind.Open)
-                (begin
-                  (set! failed true)
-                  (set!
-                    failure
-                    (script-error
-                      source
-                      (LinkerScriptErrorKind.UnbalancedParen)
-                      token.line
-                      token.column
-                      "`(` without AS_NEEDED before it")))]
-              [(TokenKind.Punct)
-                (begin
-                  (set! failed true)
-                  (set!
-                    failure
-                    (script-error
-                      source
-                      (LinkerScriptErrorKind.UnexpectedToken)
-                      token.line
-                      token.column
-                      (cat.str-cat
-                        "`"
-                        (string.copy token.text)
-                        "` in a file list"))))]))))
-      (cond
-        [failed (Step.Err failure)]
-        [closed (Step.Ok)]
-        [else
-          (Step.Err
-            (end-of-script-error
-              source
-              parser
-              (LinkerScriptErrorKind.UnbalancedParen)
-              "file list without its `)`"))]))))
+              [(starts-with? token.text "-")
+                (set! failed true)
+                (set!
+                  failure
+                  (script-error
+                    source
+                    (Option)
+                    token.line
+                    token.column
+                    (cat.str-cat
+                      "option `"
+                      (string.copy token.text)
+                      "` in a file list; only `-lNAME` is admitted")))]
+              [else
+                (input_vec.push-ref!
+                  (&mut parser.inputs)
+                  (LinkerScriptInput
+                    (Path)
+                    (string.copy token.text)
+                    false
+                    as-needed
+                    token.line
+                    token.column))
+                (set! listed (+ listed 1))
+                (set! separated false)])]
+          [(Open)
+            (set! failed true)
+            (set!
+              failure
+              (script-error
+                source
+                (UnbalancedParen)
+                token.line
+                token.column
+                "`(` without AS_NEEDED before it"))]
+          [(Punct)
+            (set! failed true)
+            (set!
+              failure
+              (script-error
+                source
+                (UnexpectedToken)
+                token.line
+                token.column
+                (cat.str-cat "`" (string.copy token.text) "` in a file list")))])))
+    (cond
+      [failed (Err failure)]
+      [closed (Ok)]
+      [else
+        (Err
+          (end-of-script-error
+            source
+            parser
+            (UnbalancedParen)
+            "file list without its `)`"))])))
 
 ;; One name for OUTPUT_FORMAT or SEARCH_DIR.
 (define (parse-name
@@ -827,36 +790,35 @@
   [parser : (&mut p Parser)]
   [keyword : (& k Token)]) : ResultName
   (if (>= parser.index (token-count parser))
-    (ResultName.Err
+    (Err
       (end-of-script-error
         source
         parser
-        (LinkerScriptErrorKind.UnbalancedParen)
+        (UnbalancedParen)
         (cat.str-cat (string.copy keyword.text) " without its `)`")))
     (let
       [token : Token (token-copy-at parser parser.index)]
       (match token.kind
-        [(TokenKind.Word)
-          (begin
-            (set! parser.index (+ parser.index 1))
-            (ResultName.Ok (string.copy token.text)))]
-        [(TokenKind.Quoted)
+        [(Word)
+          (set! parser.index (+ parser.index 1))
+          (Ok (string.copy token.text))]
+        [(Quoted)
           (if (= (string.string-length token.text) 0)
-            (ResultName.Err
+            (Err
               (script-error
                 source
-                (LinkerScriptErrorKind.EmptyArgument)
+                (EmptyArgument)
                 token.line
                 token.column
                 "empty quoted name"))
             (begin
               (set! parser.index (+ parser.index 1))
-              (ResultName.Ok (string.copy token.text))))]
+              (Ok (string.copy token.text))))]
         [_
-          (ResultName.Err
+          (Err
             (script-error
               source
-              (LinkerScriptErrorKind.ArgumentCount)
+              (ArgumentCount)
               token.line
               token.column
               (cat.str-cat
@@ -870,8 +832,8 @@
   (if (and
     (< parser.index (token-count parser))
     (match (token-kind-at parser parser.index)
-      [(TokenKind.Comma) comma?]
-      [(TokenKind.Close) (not comma?)]
+      [(Comma) comma?]
+      [(Close) (not comma?)]
       [_ false]))
     (begin
       (set! parser.index (+ parser.index 1))
@@ -891,7 +853,7 @@
       [token : (& p Token) (token-at parser parser.index)]
       (script-error
         source
-        (LinkerScriptErrorKind.ArgumentCount)
+        (ArgumentCount)
         token.line
         token.column
         (cat.str-cat
@@ -906,7 +868,7 @@
     (end-of-script-error
       source
       parser
-      (LinkerScriptErrorKind.UnbalancedParen)
+      (UnbalancedParen)
       (cat.str-cat (string.copy keyword.text) " without its `)`"))))
 
 (define (parse-output-format
@@ -916,58 +878,50 @@
   (let
     [names : (__tl_dyn-array String) (__tl_make-array String 3)]
     [count : i64 0]
-    [failure : LinkerScriptError
-      (LinkerScriptError (LinkerScriptErrorKind.InvalidLimits) 0 0 "")]
+    [failure : LinkerScriptError (LinkerScriptError (InvalidLimits) 0 0 "")]
     [failed : bool false]
     [done : bool false]
-    (begin
-      (while (and (not failed) (not done))
-        (match (parse-name source parser keyword)
-          [(ResultName.Err error)
-            (begin
+    (while (and (not failed) (not done))
+      (match (parse-name source parser keyword)
+        [(Err error)
+          (set! failed true)
+          (set! failure error)]
+        [(Ok name)
+          (set! (array-ref names count) name)
+          (set! count (+ count 1))
+          (cond
+            [(accept? parser false) (set! done true)]
+            [(and (< count 3) (accept? parser true)) unit]
+            [else
               (set! failed true)
-              (set! failure error))]
-          [(ResultName.Ok name)
-            (begin
-              (set! (array-ref names count) name)
-              (set! count (+ count 1))
-              (cond
-                [(accept? parser false) (set! done true)]
-                [(and (< count 3) (accept? parser true)) unit]
-                [else
-                  (begin
-                    (set! failed true)
-                    (set! failure (close-error source parser keyword)))]))]))
-      (cond
-        [failed (ResultCommand.Err failure)]
-        [(= count 2)
-          (ResultCommand.Err
-            (script-error
-              source
-              (LinkerScriptErrorKind.ArgumentCount)
-              keyword.line
-              keyword.column
-              "OUTPUT_FORMAT takes one or three names, not two"))]
-        [(= count 1)
-          (ResultCommand.Ok
-            (LinkerScriptCommand.OutputFormat (string.copy (array-ref names 0))))]
-        [else
-          (ResultCommand.Ok
-            (LinkerScriptCommand.OutputFormatEndian
-              (string.copy (array-ref names 0))
-              (string.copy (array-ref names 1))
-              (string.copy (array-ref names 2))))]))))
+              (set! failure (close-error source parser keyword))])]))
+    (cond
+      [failed (Err failure)]
+      [(= count 2)
+        (Err
+          (script-error
+            source
+            (ArgumentCount)
+            keyword.line
+            keyword.column
+            "OUTPUT_FORMAT takes one or three names, not two"))]
+      [(= count 1) (Ok (OutputFormat (string.copy (array-ref names 0))))]
+      [else
+        (Ok
+          (OutputFormatEndian
+            (string.copy (array-ref names 0))
+            (string.copy (array-ref names 1))
+            (string.copy (array-ref names 2))))])))
 
 (define (parse-search-dir
   [source : (& s str)]
   [parser : (&mut p Parser)]
   [keyword : (& k Token)]) : ResultCommand
-  (match (parse-name source parser keyword)
-    [(ResultName.Err error) (ResultCommand.Err error)]
-    [(ResultName.Ok name)
-      (if (accept? parser false)
-        (ResultCommand.Ok (LinkerScriptCommand.SearchDir name))
-        (ResultCommand.Err (close-error source parser keyword)))]))
+  (let
+    [name (try (parse-name source parser keyword))]
+    (if (accept? parser false)
+      (Ok (SearchDir name))
+      (Err (close-error source parser keyword)))))
 
 ;; The diagnostic for a top-level word that is not one of the subset's commands.
 (define (refused-word-error
@@ -978,7 +932,7 @@
     [(string.eq word.text "AS_NEEDED")
       (script-error
         source
-        (LinkerScriptErrorKind.UnexpectedToken)
+        (UnexpectedToken)
         word.line
         word.column
         "AS_NEEDED outside INPUT or GROUP")]
@@ -987,11 +941,11 @@
         (and
           (< parser.index (token-count parser))
           (match (token-kind-at parser parser.index)
-            [(TokenKind.Word) (token-has-byte? parser parser.index 61)]
+            [(Word) (token-has-byte? parser parser.index 61)]
             [_ false])))
       (script-error
         source
-        (LinkerScriptErrorKind.Assignment)
+        (Assignment)
         word.line
         word.column
         (cat.str-cat
@@ -1001,7 +955,7 @@
     [(expression-word? word.text)
       (script-error
         source
-        (LinkerScriptErrorKind.Expression)
+        (Expression)
         word.line
         word.column
         (cat.str-cat
@@ -1011,7 +965,7 @@
     [(unsupported-command? word.text)
       (script-error
         source
-        (LinkerScriptErrorKind.UnsupportedCommand)
+        (UnsupportedCommand)
         word.line
         word.column
         (cat.str-cat
@@ -1020,7 +974,7 @@
     [else
       (script-error
         source
-        (LinkerScriptErrorKind.UnknownCommand)
+        (UnknownCommand)
         word.line
         word.column
         (cat.str-cat "unknown command `" (string.copy word.text) "`"))]))
@@ -1032,98 +986,81 @@
   (let
     [parser : Parser (Parser tokens 0 (input_vec.new))]
     [items : item_vec.Vec (item_vec.new)]
-    [failure : LinkerScriptError
-      (LinkerScriptError (LinkerScriptErrorKind.InvalidLimits) 0 0 "")]
+    [failure : LinkerScriptError (LinkerScriptError (InvalidLimits) 0 0 "")]
     [failed : bool false]
-    (begin
-      (while (and (not failed) (< parser.index (token-count (& parser))))
+    (while (and (not failed) (< parser.index (token-count (& parser))))
+      (let
+        [token : Token (token-copy-at (& parser) parser.index)]
+        (set! parser.index (+ parser.index 1))
         (let
-          [token : Token (token-copy-at (& parser) parser.index)]
-          (begin
-            (set! parser.index (+ parser.index 1))
-            (let
-              [result : ResultCommand
-                (match token.kind
-                  [(TokenKind.Word)
-                    (cond
-                      [(or
-                          (string.eq token.text "OUTPUT_FORMAT")
-                          (string.eq token.text "INPUT")
-                          (string.eq token.text "GROUP")
-                          (string.eq token.text "SEARCH_DIR"))
-                        (match (expect-open source (&mut parser) (& token))
-                          [(Step.Err error) (ResultCommand.Err error)]
-                          [(Step.Ok)
-                            (cond
-                              [(string.eq token.text "OUTPUT_FORMAT")
-                                (parse-output-format
-                                  source
-                                  (&mut parser)
-                                  (& token))]
-                              [(string.eq token.text "SEARCH_DIR")
-                                (parse-search-dir
-                                  source
-                                  (&mut parser)
-                                  (& token))]
-                              [else
-                                (let
-                                  [first : i64
-                                    (input_vec.len (& parser.inputs))]
-                                  (match (parse-files
-                                    source
-                                    (&mut parser)
-                                    limits
-                                    1
-                                    false)
-                                    [(Step.Err error) (ResultCommand.Err error)]
-                                    [(Step.Ok)
-                                      (let
-                                        [count : i64
-                                          (-
-                                            (input_vec.len (& parser.inputs))
-                                            first)]
-                                        (ResultCommand.Ok
-                                          (if (string.eq token.text "INPUT")
-                                            (LinkerScriptCommand.Input
-                                              first
-                                              count)
-                                            (LinkerScriptCommand.Group
-                                              first
-                                              count))))]))])])]
-                      [else
-                        (ResultCommand.Err
-                          (refused-word-error source (& parser) (& token)))])]
-                  [(TokenKind.Close)
-                    (ResultCommand.Err
-                      (script-error
-                        source
-                        (LinkerScriptErrorKind.UnbalancedParen)
-                        token.line
-                        token.column
-                        "`)` without its `(`"))]
-                  [_
-                    (ResultCommand.Err
-                      (script-error
-                        source
-                        (LinkerScriptErrorKind.UnexpectedToken)
-                        token.line
-                        token.column
-                        (cat.str-cat
-                          "`"
-                          (string.copy token.text)
-                          "` where a command is expected")))])]
-              (match result
-                [(ResultCommand.Err error)
-                  (begin
-                    (set! failed true)
-                    (set! failure error))]
-                [(ResultCommand.Ok command)
-                  (item_vec.push-ref!
-                    (&mut items)
-                    (LinkerScriptItem command token.line token.column))])))))
-      (if failed
-        (ResultLinkerScript.Err failure)
-        (ResultLinkerScript.Ok (LinkerScript items parser.inputs))))))
+          [result : ResultCommand
+            (match token.kind
+              [(Word)
+                (cond
+                  [(or
+                      (string.eq token.text "OUTPUT_FORMAT")
+                      (string.eq token.text "INPUT")
+                      (string.eq token.text "GROUP")
+                      (string.eq token.text "SEARCH_DIR"))
+                    (match (expect-open source (&mut parser) (& token))
+                      [(Err error) (Err error)]
+                      [(Ok)
+                        (cond
+                          [(string.eq token.text "OUTPUT_FORMAT")
+                            (parse-output-format source (&mut parser) (& token))]
+                          [(string.eq token.text "SEARCH_DIR")
+                            (parse-search-dir source (&mut parser) (& token))]
+                          [else
+                            (let
+                              [first : i64 (input_vec.len (& parser.inputs))]
+                              (match (parse-files
+                                source
+                                (&mut parser)
+                                limits
+                                1
+                                false)
+                                [(Err error) (Err error)]
+                                [(Ok)
+                                  (let
+                                    [count : i64
+                                      (-
+                                        (input_vec.len (& parser.inputs))
+                                        first)]
+                                    (Ok
+                                      (if (string.eq token.text "INPUT")
+                                        (Input first count)
+                                        (Group first count))))]))])])]
+                  [else (Err (refused-word-error source (& parser) (& token)))])]
+              [(Close)
+                (Err
+                  (script-error
+                    source
+                    (UnbalancedParen)
+                    token.line
+                    token.column
+                    "`)` without its `(`"))]
+              [_
+                (Err
+                  (script-error
+                    source
+                    (UnexpectedToken)
+                    token.line
+                    token.column
+                    (cat.str-cat
+                      "`"
+                      (string.copy token.text)
+                      "` where a command is expected")))])]
+          (match result
+            [(Err error)
+              (set! failed true)
+              (set! failure error)]
+            [(Ok command)
+              (item_vec.push-ref!
+                (&mut items)
+                (LinkerScriptItem command token.line token.column))]))))
+    (if failed
+      (Err failure)
+      (Ok (LinkerScript items parser.inputs)))))
 
 ;: Read `data`, the bytes of a linker-script input named `source` in
 ;: diagnostics, into its ordered commands. Every limit must be positive.
@@ -1137,18 +1074,18 @@
         (<= limits.max-tokens 0)
         (<= limits.max-token-bytes 0)
         (<= limits.max-depth 0))
-      (ResultLinkerScript.Err
+      (Err
         (script-error
           source
-          (LinkerScriptErrorKind.InvalidLimits)
+          (InvalidLimits)
           0
           0
           "every linker-script limit must be positive"))]
     [(> (array-length data) limits.max-bytes)
-      (ResultLinkerScript.Err
+      (Err
         (script-error
           source
-          (LinkerScriptErrorKind.TooLarge)
+          (TooLarge)
           1
           1
           (cat.str-cat
@@ -1157,6 +1094,8 @@
             " bytes exceeds "
             (string.int->string limits.max-bytes))))]
     [else
-      (match (tokenize source data limits)
-        [(ResultTokens.Err error) (ResultLinkerScript.Err error)]
-        [(ResultTokens.Ok tokens) (parse-tokens source tokens limits)])]))
+      (let
+        [request : (ScriptTokenRequest s d l)
+          (ScriptTokenRequest source data limits false)]
+        [tokens (try (tokenize (& request)))]
+        (parse-tokens source tokens limits))]))

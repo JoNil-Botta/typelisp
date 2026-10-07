@@ -7,6 +7,5 @@
 (import compiler_builtin_ids as cbi)
 
 (define (main) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (reader_tests.span-self-test)))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (reader_tests.span-self-test))

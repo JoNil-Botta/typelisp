@@ -34,11 +34,10 @@
     [_ 0]))
 
 (define (main) : i64
-  (begin
-    (unless (= (unconstrained-default) 3) (return 1))
-    (unless (= (contextual-i64) 1) (return 2))
-    (unless (= (explicit-wide-cast) 4294967296) (return 3))
-    (unless (= (contextual-return-i64 false) 0) (return 4))
-    (unless (= (contextual-make-array-len 0) 1) (return 5))
-    (unless (= (contextual-match-if false) 0) (return 6))
-    42))
+  (unless (= (unconstrained-default) 3) (return 1))
+  (unless (= (contextual-i64) 1) (return 2))
+  (unless (= (explicit-wide-cast) 4294967296) (return 3))
+  (unless (= (contextual-return-i64 false) 0) (return 4))
+  (unless (= (contextual-make-array-len 0) 1) (return 5))
+  (unless (= (contextual-match-if false) 0) (return 6))
+  42)

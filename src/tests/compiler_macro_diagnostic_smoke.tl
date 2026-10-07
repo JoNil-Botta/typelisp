@@ -10,7 +10,6 @@
 (import compiler_load as load)
 (import compiler_parse_core as parser)
 (import compiler_typecheck_api as tc_api)
-(import compiler_typecheck_core as tc_core)
 (import sym_i64_env)
 
 (define (macro-diagnostic-write-text [path : (& path str)] [contents : String]) : unit
@@ -51,7 +50,7 @@
   [second-col : i64]
   [second-name : String]) : bool
   (match (tc_api.typecheck-compiler-source src)
-    [(tc_core.ResultCompilerTypecheck.Err diagnostics)
+    [(Err diagnostics)
       (let
         [diag : diagnostic.CompilerDiagnostic
           (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]
@@ -84,7 +83,7 @@
               second-line
               second-col
               second-name))))]
-    [(tc_core.ResultCompilerTypecheck.Ok _) false]))
+    [(Ok _) false]))
 
 (define (macro-diagnostic-generated-frame-ok?) : bool
   (macro-diagnostic-source-shape?
@@ -210,11 +209,11 @@
     (sym_i64_env.sym-i64-empty)
     roots
     (parser.compiler-cfg-empty))
-    [(load.ResultCompilerLoadWithPaths.Ok decls paths _ _)
+    [(Ok decls paths _ _)
       (match (tc_api.typecheck-compiler-program-with-paths
         (ast.ast-program decls)
         paths)
-        [(tc_core.ResultCompilerTypecheck.Err diagnostics)
+        [(Err diagnostics)
           (let
             [diag : diagnostic.CompilerDiagnostic
               (diagnostic.compiler-diagnostic-list-first (deref diagnostics))]
@@ -247,8 +246,8 @@
                     (diagnostic.compiler-diagnostic-render diag)
                     "\n"))
                 false)))]
-        [(tc_core.ResultCompilerTypecheck.Ok _) false])]
-    [(load.ResultCompilerLoadWithPaths.Err _) false]))
+        [(Ok _) false])]
+    [(Err _) false]))
 
 (define (macro-diagnostic-import-frames-ok?) : bool
   (let
@@ -274,102 +273,96 @@
         (load.compiler-load-global-shared-view dir)
         "native_entry.tl")]
     [roots : svec.Vec (svec.new)]
-    (begin
-      (load.compiler-load-test-mkdir dir)
-      (macro-diagnostic-write-text
-        provider
-        "(module tc_macro_diagnostic_provider)
+    (load.compiler-load-test-mkdir dir)
+    (macro-diagnostic-write-text
+      provider
+      "(module tc_macro_diagnostic_provider)
 (defmacro (bad [value : Expr]) : Expr
   `(+ ,value true))
 (defmacro (callerbad [value : Expr]) : Expr
   value)
 (defmacro (bindingbad [binding : ExprBindingClause]) : Expr
   (comptime.expr-binding-clause-init binding))")
-      (macro-diagnostic-write-text
-        generated-entry
-        "(import tc_macro_diagnostic_provider as dep)
+    (macro-diagnostic-write-text
+      generated-entry
+      "(import tc_macro_diagnostic_provider as dep)
 (define (main) : i64 (dep.bad 1))")
-      (macro-diagnostic-write-text
-        caller-entry
-        "(import tc_macro_diagnostic_provider as dep)
+    (macro-diagnostic-write-text
+      caller-entry
+      "(import tc_macro_diagnostic_provider as dep)
 (define (main) : i64 (dep.callerbad missing))")
-      (macro-diagnostic-write-text
-        binding-entry
-        "(import tc_macro_diagnostic_provider as dep)
+    (macro-diagnostic-write-text
+      binding-entry
+      "(import tc_macro_diagnostic_provider as dep)
 (define (main) : i64 (dep.bindingbad [item missing]))")
-      (macro-diagnostic-write-text
-        native-entry
-        "(import stdlib.core_macros)
+    (macro-diagnostic-write-text
+      native-entry
+      "(import stdlib.core_macros)
 (import stdlib.fs as fs)
 (define (main) : String (fs.path-join-many missing))")
+    (tc_api.compiler-typecheck-reset-load-session!)
+    (let
+      [generated-ok : bool
+        (macro-diagnostic-loaded-shape?
+          generated-entry
+          (load.compiler-load-global-shared-view roots)
+          provider
+          3
+          14
+          2
+          22
+          "tc_macro_diagnostic_provider/bad")]
+      (unless
+        generated-ok
+        (io.panic "typecheck: imported generated macro frame smoke failed"))
       (tc_api.compiler-typecheck-reset-load-session!)
       (let
-        [generated-ok : bool
+        [caller-ok : bool
           (macro-diagnostic-loaded-shape?
-            generated-entry
+            (load.compiler-load-global-shared-view caller-entry)
             (load.compiler-load-global-shared-view roots)
-            provider
-            3
-            14
+            caller-entry
+            2
+            37
             2
             22
-            "tc_macro_diagnostic_provider/bad")]
-        (begin
+            "tc_macro_diagnostic_provider/callerbad")]
+        (unless
+          caller-ok
+          (io.panic "typecheck: imported caller macro frame smoke failed"))
+        (tc_api.compiler-typecheck-reset-load-session!)
+        (let
+          [binding-ok : bool
+            (macro-diagnostic-loaded-shape?
+              (load.compiler-load-global-shared-view binding-entry)
+              (load.compiler-load-global-shared-view roots)
+              binding-entry
+              2
+              44
+              2
+              22
+              "tc_macro_diagnostic_provider/bindingbad")]
           (unless
-            generated-ok
-            (io.panic "typecheck: imported generated macro frame smoke failed"))
+            binding-ok
+            (io.panic
+              "typecheck: imported binding-clause macro frame smoke failed"))
           (tc_api.compiler-typecheck-reset-load-session!)
           (let
-            [caller-ok : bool
+            [native-ok : bool
               (macro-diagnostic-loaded-shape?
-                (load.compiler-load-global-shared-view caller-entry)
-                (load.compiler-load-global-shared-view roots)
-                caller-entry
-                2
-                37
-                2
-                22
-                "tc_macro_diagnostic_provider/callerbad")]
-            (begin
-              (unless
-                caller-ok
-                (io.panic "typecheck: imported caller macro frame smoke failed"))
-              (tc_api.compiler-typecheck-reset-load-session!)
-              (let
-                [binding-ok : bool
-                  (macro-diagnostic-loaded-shape?
-                    (load.compiler-load-global-shared-view binding-entry)
-                    (load.compiler-load-global-shared-view roots)
-                    binding-entry
-                    2
-                    44
-                    2
-                    22
-                    "tc_macro_diagnostic_provider/bindingbad")]
-                (begin
-                  (unless
-                    binding-ok
-                    (io.panic
-                      "typecheck: imported binding-clause macro frame smoke failed"))
-                  (tc_api.compiler-typecheck-reset-load-session!)
-                  (let
-                    [native-ok : bool
-                      (macro-diagnostic-loaded-shape?
-                        (load.compiler-load-global-shared-view native-entry)
-                        roots
-                        native-entry
-                        3
-                        44
-                        3
-                        26
-                        "stdlib.fs/path-join-many")]
-                    (begin
-                      (unless
-                        native-ok
-                        (io.panic
-                          "typecheck: native stdlib macro frame smoke failed"))
-                      (tc_api.compiler-typecheck-reset-load-session!)
-                      true)))))))))))
+                (load.compiler-load-global-shared-view native-entry)
+                roots
+                native-entry
+                3
+                44
+                3
+                26
+                "stdlib.fs/path-join-many")]
+            (unless
+              native-ok
+              (io.panic "typecheck: native stdlib macro frame smoke failed"))
+            (tc_api.compiler-typecheck-reset-load-session!)
+            true))))))
 
 (define (main) : i64
   (unless

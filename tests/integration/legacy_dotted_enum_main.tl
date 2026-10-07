@@ -4,9 +4,8 @@
 
 (define (main) : i64
   (let
-    [item : legacy_dotted_enum_provider.LegacyDottedEnum
-      (legacy_dotted_enum_provider.LegacyDottedEnum.Value 42)]
+    [item : legacy_dotted_enum_provider.LegacyDottedEnum (Value 42)]
     (+
       (match (legacy_dotted_enum_bridge.legacy-dotted-enum-roundtrip item)
-        [(legacy_dotted_enum_provider.LegacyDottedEnum.Value value) value])
+        [(Value value) value])
       (legacy_dotted_enum_bridge.legacy-dotted-struct-recursive-smoke))))

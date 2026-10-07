@@ -17,17 +17,15 @@
 (define (dot-write) : i64
   (let
     [p : Pair (Pair 1 2)]
-    (begin
-      (set! p.x 17)
-      (set! p.y 25)
-      (+ p.x p.y))))
+    (set! p.x 17)
+    (set! p.y 25)
+    (+ p.x p.y)))
 
 (define (dot-chain) : i64
   (let
     [o : Outer (Outer (Pair 5 6) 30)]
-    (begin
-      (set! o.p.y 12)
-      (+ o.p.x (+ o.p.y o.z)))))
+    (set! o.p.y 12)
+    (+ o.p.x (+ o.p.y o.z))))
 
 (define (take-field [_r : (& n i64)]) : i64
   5)

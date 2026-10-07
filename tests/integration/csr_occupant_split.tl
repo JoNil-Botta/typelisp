@@ -48,19 +48,18 @@
     [e : i64 (+ n 5)]
     [v : i64 0]
     [acc : i64 0]
-    (begin
-      ;; phase 1: call1, then a,b,c,d,e used after it (all 5 call-spanning here)
-      (set! acc (+ acc (clobber n)))
-      (set! acc (+ acc (+ a (+ b (+ c (+ d e))))))
-      ;; phase 2: e is DEAD (its hole); v born and used across call2 with a,b,c,d
-      (set! v (+ n 100))
-      (set! acc (+ acc (clobber n)))
-      (set! acc (+ acc (+ a (+ b (+ c (+ d v))))))
-      ;; phase 3: reassign e (new value), used across call3
-      (set! e (+ n 200))
-      (set! acc (+ acc (clobber n)))
-      (set! acc (+ acc (+ a (+ b (+ c (+ d e))))))
-      acc)))
+    ;; phase 1: call1, then a,b,c,d,e used after it (all 5 call-spanning here)
+    (set! acc (+ acc (clobber n)))
+    (set! acc (+ acc (+ a (+ b (+ c (+ d e))))))
+    ;; phase 2: e is DEAD (its hole); v born and used across call2 with a,b,c,d
+    (set! v (+ n 100))
+    (set! acc (+ acc (clobber n)))
+    (set! acc (+ acc (+ a (+ b (+ c (+ d v))))))
+    ;; phase 3: reassign e (new value), used across call3
+    (set! e (+ n 200))
+    (set! acc (+ acc (clobber n)))
+    (set! acc (+ acc (+ a (+ b (+ c (+ d e))))))
+    acc))
 
 (define (main) : i64
   (let

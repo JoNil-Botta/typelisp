@@ -34,15 +34,13 @@
   (let
     [i : i64 0]
     [acc : i64 seed]
-    (begin
-      (while (< i (array-length a))
-        (begin
-          (set! acc (bit-and (array-ref a i) acc))
-          (set! acc (bit-or (array-ref b i) acc))
-          (set! acc (bit-xor (array-ref c i) acc))
-          (set! acc (+ (array-ref d i) acc))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i (array-length a))
+      (set! acc (bit-and (array-ref a i) acc))
+      (set! acc (bit-or (array-ref b i) acc))
+      (set! acc (bit-xor (array-ref c i) acc))
+      (set! acc (+ (array-ref d i) acc))
+      (set! i (+ i 1)))
+    acc))
 
 ;; The UNFORCED spelling of the same four folds, and the forcing test for the
 ;; `load_sink` scheduling pass. Written as ONE nested expression, source
@@ -64,18 +62,16 @@
   (let
     [i : i64 0]
     [acc : i64 seed]
-    (begin
-      (while (< i (array-length a))
-        (begin
-          (set!
-            acc
-            (bit-or
-              (array-ref d i)
-              (bit-and
-                (array-ref c i)
-                (bit-xor (array-ref b i) (bit-and (array-ref a i) acc)))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i (array-length a))
+      (set!
+        acc
+        (bit-or
+          (array-ref d i)
+          (bit-and
+            (array-ref c i)
+            (bit-xor (array-ref b i) (bit-and (array-ref a i) acc)))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
@@ -84,13 +80,11 @@
     [c : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [d : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [i : i64 0]
-    (begin
-      (while (< i 8)
-        (begin
-          (set! (array-ref a i) -1)
-          (set! i (+ i 1))))
-      (unless (= (fold-words (& a) (& b) (& c) (& d) -1) -1) (return 1))
-      (unless (= (fold-words (& a) (& b) (& c) (& d) 0) 0) (return 1))
-      (unless (= (fold-nested (& a) (& b) (& c) (& d) -1) 0) (return 1))
-      (unless (= (fold-nested (& a) (& b) (& c) (& d) 0) 0) (return 1))
-      42)))
+    (while (< i 8)
+      (set! (array-ref a i) -1)
+      (set! i (+ i 1)))
+    (unless (= (fold-words (& a) (& b) (& c) (& d) -1) -1) (return 1))
+    (unless (= (fold-words (& a) (& b) (& c) (& d) 0) 0) (return 1))
+    (unless (= (fold-nested (& a) (& b) (& c) (& d) -1) 0) (return 1))
+    (unless (= (fold-nested (& a) (& b) (& c) (& d) 0) 0) (return 1))
+    42))

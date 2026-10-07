@@ -6,24 +6,21 @@
 (define (thread-safe-i64-vec-build [base : i64]) : i64-vec.Vec
   (let
     [items : i64-vec.Vec (i64-vec.with-capacity 5)]
-    (begin
-      (i64-vec.push-ref! (&mut items) base)
-      (i64-vec.push-ref! (&mut items) (+ base 1))
-      (i64-vec.push-ref! (&mut items) (+ base 2))
-      (i64-vec.push-ref! (&mut items) (+ base 3))
-      (i64-vec.push-ref! (&mut items) (+ base 4))
-      items)))
+    (i64-vec.push-ref! (&mut items) base)
+    (i64-vec.push-ref! (&mut items) (+ base 1))
+    (i64-vec.push-ref! (&mut items) (+ base 2))
+    (i64-vec.push-ref! (&mut items) (+ base 3))
+    (i64-vec.push-ref! (&mut items) (+ base 4))
+    items))
 
 (define (thread-safe-i64-vec-sum [items : (& items i64-vec.Vec)]) : i64
   (let
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (while (< i (i64-vec.len items))
-        (begin
-          (set! sum (+ sum (i64-vec.get items i 0)))
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i (i64-vec.len items))
+      (set! sum (+ sum (i64-vec.get items i 0)))
+      (set! i (+ i 1)))
+    sum))
 
 (define (thread-safe-i64-vec-join-code
   [worker : ThreadI64Vec]

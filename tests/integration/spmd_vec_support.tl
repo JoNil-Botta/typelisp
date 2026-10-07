@@ -20,9 +20,7 @@
         (let
           [out : vec.Vec (vec.with-capacity n)]
           [i : i64 0]
-          (begin
-            (while (< i n)
-              (begin
-                (vec.push-ref! (&mut out) ,zero)
-                (set! i (+ i 1))))
-            out))))))
+          (while (< i n)
+            (vec.push-ref! (&mut out) ,zero)
+            (set! i (+ i 1)))
+          out)))))

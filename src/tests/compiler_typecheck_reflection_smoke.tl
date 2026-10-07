@@ -3,8 +3,7 @@
 (import compiler_builtin_ids as cbi)
 
 (define (main) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (if (tc_tests.compiler-typecheck-reflection-tests-ok?)
-      42
-      1)))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (if (tc_tests.compiler-typecheck-reflection-tests-ok?)
+    42
+    1))

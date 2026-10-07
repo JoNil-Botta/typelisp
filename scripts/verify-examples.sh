@@ -87,6 +87,7 @@ for source in "$ROOT/examples/"*.tl; do
     "$COMPILER" lint "$source" --check \
         --deprecated-string-concat \
         --redundant-function-name \
+        --redundant-begin \
         --prefer-dotted-field \
         --name-case
 

@@ -8,31 +8,28 @@
 
 (define (ssa-nominal-score [state : SsaNominalState]) : i64
   (match state
-    [(SsaNominalState.Zero) 0]
-    [(SsaNominalState.One) 1]
-    [(SsaNominalState.Answer) 42]))
+    [(Zero) 0]
+    [(One) 1]
+    [(Answer) 42]))
 
 (define (ssa-nominal-diamond [cond : bool]) : SsaNominalState
   (let
-    [state : SsaNominalState SsaNominalState.Zero]
-    (begin
-      (if cond
-        (set! state SsaNominalState.Answer)
-        (set! state SsaNominalState.One))
-      state)))
+    [state : SsaNominalState Zero]
+    (if cond
+      (set! state Answer)
+      (set! state One))
+    state))
 
 (define (ssa-nominal-loop [count : i64]) : SsaNominalState
   (let
-    [state : SsaNominalState SsaNominalState.Zero]
+    [state : SsaNominalState Zero]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (if (= index 4)
-            (set! state SsaNominalState.Answer)
-            (set! state SsaNominalState.One))
-          (set! index (+ index 1))))
-      state)))
+    (while (< index count)
+      (if (= index 4)
+        (set! state Answer)
+        (set! state One))
+      (set! index (+ index 1)))
+    state))
 
 (define (main) : i64
   (if (and

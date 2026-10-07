@@ -6,17 +6,16 @@
 (cfg
   test
   (define (test-zero-digest [message : String]) : sha.Sha512Digest
-    (begin
-      (test.assert-true false message)
-      (sha.Sha512Digest (make-array u8 64)))))
+    (test.assert-true false message)
+    (sha.Sha512Digest (make-array u8 64))))
 
 ;: Require one successful SHA-512 state update in inline tests.
 (cfg
   test
   (define (test-require-update [result : sha.Sha512UpdateResult]) : unit
     (match result
-      [(sha.Sha512UpdateOk) unit]
-      [(sha.Sha512UpdateErr _)
+      [(Sha512UpdateOk) unit]
+      [(Sha512UpdateErr _)
         (test.assert-true false "SHA-512 update should succeed")])))
 
 ;: Extract one successful final digest in inline tests.
@@ -24,8 +23,8 @@
   test
   (define (test-require-finalize [result : sha.Sha512FinalizeResult]) : sha.Sha512Digest
     (match result
-      [(sha.Sha512FinalizeOk value) value]
-      [(sha.Sha512FinalizeErr _)
+      [(Sha512FinalizeOk value) value]
+      [(Sha512FinalizeErr _)
         (test-zero-digest "SHA-512 finalization should succeed")])))
 
 ;: Hash one borrowed test byte range.
@@ -41,16 +40,15 @@
     (let
       [result : sha.Sha512Digest (test-digest (byte_buf.str-as-bytes (& text)))]
       [actual : String (sha.to-hex (& result))]
-      (begin
-        (test.assert-i64-eq
-          (array-length (sha.digest-bytes (& result)))
-          64
-          "SHA-512 digest width")
-        (test.assert-i64-eq
-          (string-length (& actual))
-          128
-          "SHA-512 hexadecimal width")
-        (test.assert-string-eq (& actual) (& expected) "SHA-512 vector")))))
+      (test.assert-i64-eq
+        (array-length (sha.digest-bytes (& result)))
+        64
+        "SHA-512 digest width")
+      (test.assert-i64-eq
+        (string-length (& actual))
+        128
+        "SHA-512 hexadecimal width")
+      (test.assert-string-eq (& actual) (& expected) "SHA-512 vector"))))
 
 ;: Construct `count` copies of one byte for padding-boundary tests.
 (cfg
@@ -59,12 +57,10 @@
     (let
       [buf : byte_buf.ByteBuf (byte_buf.from-array (__tl_make-array u8 count))]
       [index : i64 0]
-      (begin
-        (while (< index count)
-          (begin
-            (set! buf (byte_buf.set! buf index value))
-            (set! index (+ index 1))))
-        buf))))
+      (while (< index count)
+        (set! buf (byte_buf.set! buf index value))
+        (set! index (+ index 1)))
+      buf)))
 
 ;: Assert one repeated-byte padding-boundary vector.
 (cfg
@@ -85,47 +81,41 @@
       [expected : sha.Sha512Digest (test-digest input)]
       [input-length : i64 (byte_buf.bytes-length input)]
       [split : i64 0]
-      (begin
-        (while (<= split input-length)
-          (let
-            [state : sha.Sha512State (sha.new)]
-            [left : (& text bytes) (byte_buf.bytes-slice-view input 0 split)]
-            [right : (& text bytes)
-              (byte_buf.bytes-slice-view input split (- input-length split))]
-            (begin
-              (test-require-update (sha.update! (&mut state) left))
-              (test-require-update (sha.update! (&mut state) right))
-              (let
-                [actual : sha.Sha512Digest
-                  (test-require-finalize (sha.finalize! (&mut state)))]
-                (test.assert-true
-                  (sha.digest-eq? (& actual) (& expected))
-                  "SHA-512 split digest"))
-              (set! split (+ split 1)))))
+      (while (<= split input-length)
         (let
           [state : sha.Sha512State (sha.new)]
-          [index : i64 0]
-          (begin
-            (while (< index input-length)
-              (begin
-                (test-require-update
-                  (sha.update!
-                    (&mut state)
-                    (byte_buf.bytes-slice-view input index 1)))
-                (set! index (+ index 1))))
-            (let
-              [actual : sha.Sha512Digest
-                (test-require-finalize (sha.finalize! (&mut state)))]
-              (test.assert-true
-                (sha.digest-eq? (& actual) (& expected))
-                "SHA-512 byte-at-a-time digest"))))))))
+          [left : (& text bytes) (byte_buf.bytes-slice-view input 0 split)]
+          [right : (& text bytes)
+            (byte_buf.bytes-slice-view input split (- input-length split))]
+          (test-require-update (sha.update! (&mut state) left))
+          (test-require-update (sha.update! (&mut state) right))
+          (let
+            [actual : sha.Sha512Digest
+              (test-require-finalize (sha.finalize! (&mut state)))]
+            (test.assert-true
+              (sha.digest-eq? (& actual) (& expected))
+              "SHA-512 split digest"))
+          (set! split (+ split 1))))
+      (let
+        [state : sha.Sha512State (sha.new)]
+        [index : i64 0]
+        (while (< index input-length)
+          (test-require-update
+            (sha.update! (&mut state) (byte_buf.bytes-slice-view input index 1)))
+          (set! index (+ index 1)))
+        (let
+          [actual : sha.Sha512Digest
+            (test-require-finalize (sha.finalize! (&mut state)))]
+          (test.assert-true
+            (sha.digest-eq? (& actual) (& expected))
+            "SHA-512 byte-at-a-time digest"))))))
 
 ;: Require the common finalized-state lifecycle error.
 (cfg
   test
   (define (test-assert-finalized-update [result : sha.Sha512UpdateResult]) : unit
     (match result
-      [(sha.Sha512UpdateErr (sha.Sha512Finalized)) unit]
+      [(Sha512UpdateErr (Sha512Finalized)) unit]
       [_ (test.assert-true false "expected finalized SHA-512 update error")])))
 
 ;: Require the common finalized-state finalization error.
@@ -133,7 +123,7 @@
   test
   (define (test-assert-finalized-finalize [result : sha.Sha512FinalizeResult]) : unit
     (match result
-      [(sha.Sha512FinalizeErr (sha.Sha512Finalized)) unit]
+      [(Sha512FinalizeErr (Sha512Finalized)) unit]
       [_
         (test.assert-true false "expected finalized SHA-512 finalization error")])))
 
@@ -142,7 +132,7 @@
   test
   (define (test-assert-length-error [result : sha.Sha512LengthResult]) : unit
     (match result
-      [(sha.Sha512LengthErr (sha.Sha512MessageTooLong _ _ _)) unit]
+      [(Sha512LengthErr (Sha512MessageTooLong _ _ _)) unit]
       [_ (test.assert-true false "expected SHA-512 length error")])))
 
 ;: Require a raw-source validation error without inspecting pointer contents.
@@ -150,8 +140,8 @@
   test
   (define (test-assert-source-error [result : sha.Sha512UpdateResult]) : unit
     (match result
-      [(sha.Sha512UpdateErr (sha.Sha512InvalidSource)) unit]
-      [(sha.Sha512UpdateErr (sha.Sha512InvalidSourceLength _)) unit]
+      [(Sha512UpdateErr (Sha512InvalidSource)) unit]
+      [(Sha512UpdateErr (Sha512InvalidSourceLength _)) unit]
       [_ (test.assert-true false "expected SHA-512 source error")])))
 
 ;: Require an exact-output validation error without inspecting sink contents.
@@ -159,8 +149,8 @@
   test
   (define (test-assert-output-error [result : sha.Sha512FinalizeIntoResult]) : unit
     (match result
-      [(sha.Sha512FinalizeIntoErr (sha.Sha512InvalidOutput)) unit]
-      [(sha.Sha512FinalizeIntoErr (sha.Sha512InvalidOutputLength _)) unit]
+      [(Sha512FinalizeIntoErr (Sha512InvalidOutput)) unit]
+      [(Sha512FinalizeIntoErr (Sha512InvalidOutputLength _)) unit]
       [_ (test.assert-true false "expected SHA-512 output error")])))
 
 ;: Require successful finalization through the raw exact-sink seam.
@@ -168,8 +158,8 @@
   test
   (define (test-require-finalize-into [result : sha.Sha512FinalizeIntoResult]) : unit
     (match result
-      [(sha.Sha512FinalizeIntoOk) unit]
-      [(sha.Sha512FinalizeIntoErr _)
+      [(Sha512FinalizeIntoOk) unit]
+      [(Sha512FinalizeIntoErr _)
         (test.assert-true false "SHA-512 sink finalization should succeed")])))
 
 (cfg
@@ -229,22 +219,20 @@
       [chunk : byte_buf.ByteBuf (test-repeated-bytes 1000 (cast 'a' : u8))]
       [state : sha.Sha512State (sha.new)]
       [count : i64 0]
-      (begin
-        (while (< count 1000)
-          (begin
-            (test-require-update
-              (sha.update! (&mut state) (byte_buf.as-bytes (& chunk))))
-            (set! count (+ count 1))))
-        (let
-          [result : sha.Sha512Digest
-            (test-require-finalize (sha.finalize! (&mut state)))]
-          [actual : String (sha.to-hex (& result))]
-          [expected : String
-            "e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973ebde0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b"]
-          (test.assert-string-eq
-            (& actual)
-            (& expected)
-            "SHA-512 million-a vector"))))))
+      (while (< count 1000)
+        (test-require-update
+          (sha.update! (&mut state) (byte_buf.as-bytes (& chunk))))
+        (set! count (+ count 1)))
+      (let
+        [result : sha.Sha512Digest
+          (test-require-finalize (sha.finalize! (&mut state)))]
+        [actual : String (sha.to-hex (& result))]
+        [expected : String
+          "e718483d0ce769644e2e42c7bc15b4638e1f98b13b2044285632a803afa973ebde0ff244877ea60a4cb0432ce577c31beb009c5c2c49aa2e4eadb217ad8cc09b"]
+        (test.assert-string-eq
+          (& actual)
+          (& expected)
+          "SHA-512 million-a vector")))))
 
 (cfg
   test
@@ -263,87 +251,79 @@
       [sink : (MutPtr u8)
         (unsafe
           (ptr-cast (ptr-addr-of output) : (MutPtr u8)))]
-      (begin
+      (test-require-update
+        (unsafe
+          (sha.update-from-pointer!
+            (&mut state)
+            source
+            (byte_buf.bytes-length input))))
+      (test-require-finalize-into
+        (unsafe
+          (sha.consume-finalize-into! (&mut state) sink 64)))
+      (let
+        [actual : sha.Sha512Digest (sha.Sha512Digest output)]
+        (test.assert-true
+          (sha.digest-eq? (& actual) (& expected))
+          "SHA-512 raw source/sink equivalence"))
+      (test.assert-true state.finalized "SHA-512 consumed state poison")
+      (test.assert-true
+        (= (array-ref state.words 0) (cast 0 : u64))
+        "SHA-512 consumed state wipe")
+      (let
+        [rejected-state : sha.Sha512State (sha.new)]
+        [rejected-output : (Array u8 64) (make-array u8 64)]
+        [rejected-sink : (MutPtr u8)
+          (unsafe
+            (ptr-cast (ptr-addr-of rejected-output) : (MutPtr u8)))]
+        (set! (array-ref rejected-output 0) (cast 165 : u8))
+        (test-assert-output-error
+          (unsafe
+            (sha.consume-finalize-into! (&mut rejected-state) rejected-sink 63)))
+        (test.assert-i64-eq
+          (cast (array-ref rejected-output 0) : i64)
+          165
+          "SHA-512 rejected sink remains unchanged")
+        (test.assert-true
+          rejected-state.finalized
+          "SHA-512 rejected sink still consumes state"))
+      (let
+        [null-sink-state : sha.Sha512State (sha.new)]
+        (test-assert-output-error
+          (unsafe
+            (sha.consume-finalize-into!
+              (&mut null-sink-state)
+              (ptr-null : (MutPtr u8))
+              64)))
+        (test.assert-true
+          null-sink-state.finalized
+          "SHA-512 null sink still consumes state"))
+      (let
+        [invalid-source-state : sha.Sha512State (sha.new)]
+        (test-assert-source-error
+          (unsafe
+            (sha.update-from-pointer!
+              (&mut invalid-source-state)
+              (ptr-null : (Ptr u8))
+              1)))
+        (test-assert-source-error
+          (unsafe
+            (sha.update-from-pointer!
+              (&mut invalid-source-state)
+              (ptr-null : (Ptr u8))
+              -1)))
+        (test.assert-i64-eq
+          invalid-source-state.block-length
+          0
+          "SHA-512 invalid source leaves state unchanged"))
+      (let
+        [empty-state : sha.Sha512State (sha.new)]
         (test-require-update
           (unsafe
             (sha.update-from-pointer!
-              (&mut state)
-              source
-              (byte_buf.bytes-length input))))
-        (test-require-finalize-into
-          (unsafe
-            (sha.consume-finalize-into! (&mut state) sink 64)))
-        (let
-          [actual : sha.Sha512Digest (sha.Sha512Digest output)]
-          (test.assert-true
-            (sha.digest-eq? (& actual) (& expected))
-            "SHA-512 raw source/sink equivalence"))
-        (test.assert-true state.finalized "SHA-512 consumed state poison")
-        (test.assert-true
-          (= (array-ref state.words 0) (cast 0 : u64))
-          "SHA-512 consumed state wipe")
-        (let
-          [rejected-state : sha.Sha512State (sha.new)]
-          [rejected-output : (Array u8 64) (make-array u8 64)]
-          [rejected-sink : (MutPtr u8)
-            (unsafe
-              (ptr-cast (ptr-addr-of rejected-output) : (MutPtr u8)))]
-          (begin
-            (set! (array-ref rejected-output 0) (cast 165 : u8))
-            (test-assert-output-error
-              (unsafe
-                (sha.consume-finalize-into!
-                  (&mut rejected-state)
-                  rejected-sink
-                  63)))
-            (test.assert-i64-eq
-              (cast (array-ref rejected-output 0) : i64)
-              165
-              "SHA-512 rejected sink remains unchanged")
-            (test.assert-true
-              rejected-state.finalized
-              "SHA-512 rejected sink still consumes state")))
-        (let
-          [null-sink-state : sha.Sha512State (sha.new)]
-          (begin
-            (test-assert-output-error
-              (unsafe
-                (sha.consume-finalize-into!
-                  (&mut null-sink-state)
-                  (ptr-null : (MutPtr u8))
-                  64)))
-            (test.assert-true
-              null-sink-state.finalized
-              "SHA-512 null sink still consumes state")))
-        (let
-          [invalid-source-state : sha.Sha512State (sha.new)]
-          (begin
-            (test-assert-source-error
-              (unsafe
-                (sha.update-from-pointer!
-                  (&mut invalid-source-state)
-                  (ptr-null : (Ptr u8))
-                  1)))
-            (test-assert-source-error
-              (unsafe
-                (sha.update-from-pointer!
-                  (&mut invalid-source-state)
-                  (ptr-null : (Ptr u8))
-                  -1)))
-            (test.assert-i64-eq
-              invalid-source-state.block-length
-              0
-              "SHA-512 invalid source leaves state unchanged")))
-        (let
-          [empty-state : sha.Sha512State (sha.new)]
-          (begin
-            (test-require-update
-              (unsafe
-                (sha.update-from-pointer!
-                  (&mut empty-state)
-                  (ptr-null : (Ptr u8))
-                  0)))
-            (sha.wipe-state! (&mut empty-state))))))))
+              (&mut empty-state)
+              (ptr-null : (Ptr u8))
+              0)))
+        (sha.wipe-state! (&mut empty-state))))))
 
 (cfg
   test
@@ -354,27 +334,26 @@
         (cast 7 : u64)
         (cast 0xffffffffffffffff : u64)
         (cast 1 : u64))
-        [(sha.Sha512LengthOk length)
-          (begin
-            (test.assert-true
-              (= length.high (cast 8 : u64))
-              "SHA-512 low-half carry high")
-            (test.assert-true
-              (= length.low (cast 0 : u64))
-              "SHA-512 low-half carry low"))]
-        [(sha.Sha512LengthErr _)
+        [(Sha512LengthOk length)
+          (test.assert-true
+            (= length.high (cast 8 : u64))
+            "SHA-512 low-half carry high")
+          (test.assert-true
+            (= length.low (cast 0 : u64))
+            "SHA-512 low-half carry low")]
+        [(Sha512LengthErr _)
           (test.assert-true false "SHA-512 carry should be admitted")])
       (match (sha.length-add
         (sha.max-byte-length-high)
         (cast 0xfffffffffffffffe : u64)
         (cast 1 : u64))
-        [(sha.Sha512LengthOk length)
+        [(Sha512LengthOk length)
           (test.assert-true
             (and
               (= length.high (sha.max-byte-length-high))
               (= length.low (cast 0xffffffffffffffff : u64)))
             "SHA-512 maximum byte length should be admitted")]
-        [(sha.Sha512LengthErr _)
+        [(Sha512LengthErr _)
           (test.assert-true false "SHA-512 maximum should be admitted")])
       (test-assert-length-error
         (sha.length-add
@@ -384,62 +363,58 @@
       (let
         [state : sha.Sha512State (sha.new)]
         [one-byte : String "x"]
-        (begin
-          ; Synthetic valid bookkeeping exercises update admission at the
-          ; FIPS limit without constructing a 2^125-byte input.
-          (set! state.byte-length-high (sha.max-byte-length-high))
-          (set! state.byte-length-low (cast 0xffffffffffffffff : u64))
-          (set! state.block-length 127)
-          (match (sha.update! (&mut state) (byte_buf.str-as-bytes (& one-byte)))
-            [(sha.Sha512UpdateErr (sha.Sha512MessageTooLong _ _ _)) unit]
-            [_
-              (test.assert-true
-                false
-                "SHA-512 update should reject the first out-of-domain byte")])
-          (test.assert-true
-            (= state.byte-length-high (sha.max-byte-length-high))
-            "SHA-512 rejected update preserves high length")
-          (test.assert-true
-            (= state.byte-length-low (cast 0xffffffffffffffff : u64))
-            "SHA-512 rejected update preserves low length")
-          (test.assert-i64-eq
-            state.block-length
-            127
-            "SHA-512 rejected update preserves partial block length")))
+        ; Synthetic valid bookkeeping exercises update admission at the
+        ; FIPS limit without constructing a 2^125-byte input.
+        (set! state.byte-length-high (sha.max-byte-length-high))
+        (set! state.byte-length-low (cast 0xffffffffffffffff : u64))
+        (set! state.block-length 127)
+        (match (sha.update! (&mut state) (byte_buf.str-as-bytes (& one-byte)))
+          [(Sha512UpdateErr (Sha512MessageTooLong _ _ _)) unit]
+          [_
+            (test.assert-true
+              false
+              "SHA-512 update should reject the first out-of-domain byte")])
+        (test.assert-true
+          (= state.byte-length-high (sha.max-byte-length-high))
+          "SHA-512 rejected update preserves high length")
+        (test.assert-true
+          (= state.byte-length-low (cast 0xffffffffffffffff : u64))
+          "SHA-512 rejected update preserves low length")
+        (test.assert-i64-eq
+          state.block-length
+          127
+          "SHA-512 rejected update preserves partial block length"))
       (let
         [block : (Array u8 128) (make-array u8 128)]
-        (begin
-          (sha.write-bit-length! (&mut block) (cast 1 : u64) (cast 2 : u64))
-          (test.assert-i64-eq
-            (cast (array-ref block 119) : i64)
-            8
-            "SHA-512 encoded high bit length")
-          (test.assert-i64-eq
-            (cast (array-ref block 127) : i64)
-            16
-            "SHA-512 encoded low bit length")))
+        (sha.write-bit-length! (&mut block) (cast 1 : u64) (cast 2 : u64))
+        (test.assert-i64-eq
+          (cast (array-ref block 119) : i64)
+          8
+          "SHA-512 encoded high bit length")
+        (test.assert-i64-eq
+          (cast (array-ref block 127) : i64)
+          16
+          "SHA-512 encoded low bit length"))
       (let
         [state : sha.Sha512State (sha.new)]
         [empty : String ""]
-        (begin
-          (let
-            [first : sha.Sha512Digest
-              (test-require-finalize (sha.finalize! (&mut state)))]
-            (begin
-              (sha.wipe-digest! (&mut first))
-              (test.assert-i64-eq
-                (cast (sha.digest-byte (& first) 0) : i64)
-                0
-                "SHA-512 digest wipe")))
-          (test-assert-finalized-update
-            (sha.update! (&mut state) (byte_buf.str-as-bytes (& empty))))
-          (test-assert-finalized-finalize (sha.finalize! (&mut state)))
-          (sha.wipe-state! (&mut state))
-          (test.assert-true state.finalized "SHA-512 state wipe poison")
-          (test.assert-true
-            (= (array-ref state.words 0) (cast 0 : u64))
-            "SHA-512 state wipe words")
+        (let
+          [first : sha.Sha512Digest
+            (test-require-finalize (sha.finalize! (&mut state)))]
+          (sha.wipe-digest! (&mut first))
           (test.assert-i64-eq
-            (cast (array-ref state.block 127) : i64)
+            (cast (sha.digest-byte (& first) 0) : i64)
             0
-            "SHA-512 state wipe block"))))))
+            "SHA-512 digest wipe"))
+        (test-assert-finalized-update
+          (sha.update! (&mut state) (byte_buf.str-as-bytes (& empty))))
+        (test-assert-finalized-finalize (sha.finalize! (&mut state)))
+        (sha.wipe-state! (&mut state))
+        (test.assert-true state.finalized "SHA-512 state wipe poison")
+        (test.assert-true
+          (= (array-ref state.words 0) (cast 0 : u64))
+          "SHA-512 state wipe words")
+        (test.assert-i64-eq
+          (cast (array-ref state.block 127) : i64)
+          0
+          "SHA-512 state wipe block")))))

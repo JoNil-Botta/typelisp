@@ -35,20 +35,18 @@
           writer.remaining
           count)]
       [index : i64 0]
-      (begin
-        (while (< index accepted)
-          (begin
-            (set!
-              writer.bytes
-              (byte_buf.push writer.bytes (byte_buf.bytes-ref contents index)))
-            (set! index (+ index 1))))
-        (set! writer.remaining (- writer.remaining accepted))
-        (set! writer.calls (+ writer.calls 1))
-        (unsafe
-          (ptr-write! slot writer))
-        (if (= accepted count)
-          0
-          77)))))
+      (while (< index accepted)
+        (set!
+          writer.bytes
+          (byte_buf.push writer.bytes (byte_buf.bytes-ref contents index)))
+        (set! index (+ index 1)))
+      (set! writer.remaining (- writer.remaining accepted))
+      (set! writer.calls (+ writer.calls 1))
+      (unsafe
+        (ptr-write! slot writer))
+      (if (= accepted count)
+        0
+        77))))
 
 (define (format-write-capability [context : i64] [data : String]) : i64
   (let
@@ -63,20 +61,19 @@
         [status : i64
           (unsafe
             (format-write-raw address data))]
-        (begin
-          (unsafe
-            (format_writer_core.format-writer-release context))
-          status)))))
+        (unsafe
+          (format_writer_core.format-writer-release context))
+        status))))
 
 (define (ok? [result : format.FormatResult]) : bool
   (match result
-    [(format.FormatOk) true]
-    [(format.FormatErr _) false]))
+    [(FormatOk) true]
+    [(FormatErr _) false]))
 
 (define (error-77? [result : format.FormatResult]) : bool
   (match result
-    [(format.FormatOk) false]
-    [(format.FormatErr status) (= status 77)]))
+    [(FormatOk) false]
+    [(FormatErr status) (= status 77)]))
 
 (define (main) : i64
   (let

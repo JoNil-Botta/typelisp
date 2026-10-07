@@ -2,11 +2,10 @@
   0)
 
 (define (dynamic-array-literal-mark [value : i64]) : i64
-  (begin
-    (set!
-      dynamic-array-literal-trace
-      (+ (* dynamic-array-literal-trace 10) value))
-    (* value 2)))
+  (set!
+    dynamic-array-literal-trace
+    (+ (* dynamic-array-literal-trace 10) value))
+  (* value 2))
 
 (define (dynamic-array-literal-score) : i64
   (let

@@ -345,11 +345,8 @@
         [(not (= (bit-and mode policy.forbidden-mode) 0)) rejected-mode]
         [else 0])]
     (if (= rejection 0)
-      (local_ipc.LocalIpcStatus.Ok)
-      (local_ipc.LocalIpcStatus.Err
-        (local_ipc.make-error
-          (local_ipc.LocalIpcErrorKind.PolicyRejected)
-          rejection)))))
+      (Ok)
+      (Err (local_ipc.make-error (PolicyRejected) rejection)))))
 
 ;: The errno of a raw syscall result, or 0 when it is not in -4095..-1.
 (define (host-errno [result : i64]) : i64
@@ -359,7 +356,7 @@
 
 ;: An adapter-corruption error.
 (define (corrupt) : local_ipc.LocalIpcError
-  (local_ipc.make-error (local_ipc.LocalIpcErrorKind.AdapterCorrupt) 0))
+  (local_ipc.make-error (AdapterCorrupt) 0))
 
 ;: The error for errno `code` from `newfstatat`, `socket` or `connect`.
 (define (construction-error [code : i64]) : local_ipc.LocalIpcError
@@ -370,35 +367,31 @@
           (= code enotdir)
           (= code econnrefused)
           (= code eprototype))
-        (local_ipc.LocalIpcErrorKind.Unavailable)]
-      [(or (= code eacces) (= code eperm))
-        (local_ipc.LocalIpcErrorKind.PermissionDenied)]
+        (Unavailable)]
+      [(or (= code eacces) (= code eperm)) (PermissionDenied)]
       [(or (= code emfile) (= code enfile) (= code enobufs) (= code enomem))
-        (local_ipc.LocalIpcErrorKind.ResourceExhausted)]
-      [(or (= code enametoolong) (= code eloop))
-        (local_ipc.LocalIpcErrorKind.InvalidEndpoint)]
+        (ResourceExhausted)]
+      [(or (= code enametoolong) (= code eloop)) (InvalidEndpoint)]
       [(or
           (= code enosys)
           (= code eafnosupport)
           (= code eprotonosupport)
           (= code einval))
-        (local_ipc.LocalIpcErrorKind.UnsupportedTarget)]
+        (UnsupportedTarget)]
       [(or (= code einprogress) (= code ealready) (= code eisconn))
-        (local_ipc.LocalIpcErrorKind.AdapterCorrupt)]
-      [else (local_ipc.LocalIpcErrorKind.HostFailure)])
+        (AdapterCorrupt)]
+      [else (HostFailure)])
     code))
 
 ;: The error for errno `code` from a data, peer or readiness call.
 (define (connection-error [code : i64]) : local_ipc.LocalIpcError
   (local_ipc.make-error
     (cond
-      [(or (= code epipe) (= code econnreset) (= code enotconn))
-        (local_ipc.LocalIpcErrorKind.PeerClosed)]
-      [(or (= code enobufs) (= code enomem))
-        (local_ipc.LocalIpcErrorKind.ResourceExhausted)]
-      [(= code ebadf) (local_ipc.LocalIpcErrorKind.AdapterCorrupt)]
-      [(= code enosys) (local_ipc.LocalIpcErrorKind.UnsupportedTarget)]
-      [else (local_ipc.LocalIpcErrorKind.HostFailure)])
+      [(or (= code epipe) (= code econnreset) (= code enotconn)) (PeerClosed)]
+      [(or (= code enobufs) (= code enomem)) (ResourceExhausted)]
+      [(= code ebadf) (AdapterCorrupt)]
+      [(= code enosys) (UnsupportedTarget)]
+      [else (HostFailure)])
     code))
 
 ;: One raw syscall. Other targets report ENOSYS. Under `typelisp test` it
@@ -521,26 +514,24 @@
     (let
       [slot : i64 0]
       [found : i64 -1]
-      (begin
-        (while (and (< found 0) (< slot slot-capacity))
-          (let
-            [word : i64
+      (while (and (< found 0) (< slot slot-capacity))
+        (let
+          [word : i64
+            (unsafe
+              (atomic-load (slot-word slot 0)))]
+          (if (and
+            (= (% word 8) state-free)
+            (=
               (unsafe
-                (atomic-load (slot-word slot 0)))]
-            (begin
-              (if (and
-                (= (% word 8) state-free)
-                (=
-                  (unsafe
-                    (atomic-cas!
-                      (slot-word slot 0)
-                      word
-                      (+ (- word state-free) state-reserved)))
-                  word))
-                (set! found slot)
-                unit)
-              (set! slot (+ slot 1)))))
-        found))))
+                (atomic-cas!
+                  (slot-word slot 0)
+                  word
+                  (+ (- word state-free) state-reserved)))
+              word))
+            (set! found slot)
+            unit)
+          (set! slot (+ slot 1))))
+      found)))
 
 ;: Return a reserved slot that published nothing.
 (unsafe
@@ -618,23 +609,21 @@
               (atomic-fetch-add! (slot-word slot 2) 1))]
           (cond
             [(not
-                (=
-                  (unsafe
-                    (atomic-load (slot-word slot 0)))
-                  expected))
-              (begin
+              (=
                 (unsafe
-                  (lease-release! slot))
-                lease-stale)]
+                  (atomic-load (slot-word slot 0)))
+                expected))
+              (unsafe
+                (lease-release! slot))
+              lease-stale]
             [(not
-                (=
-                  (unsafe
-                    (atomic-load (slot-word slot 3)))
-                  poison-none))
-              (begin
+              (=
                 (unsafe
-                  (lease-release! slot))
-                lease-poisoned)]
+                  (atomic-load (slot-word slot 3)))
+                poison-none))
+              (unsafe
+                (lease-release! slot))
+              lease-poisoned]
             [else
               (unsafe
                 (atomic-load (slot-word slot 1)))]))))))
@@ -691,8 +680,7 @@
             word
             (+ (- word state-closing) state-close-claimed)))
         word))
-      (local_ipc.LocalIpcStatus.Err
-        (local_ipc.make-error (local_ipc.LocalIpcErrorKind.Closed) 0))
+      (Err (local_ipc.make-error (Closed) 0))
       (let
         [fd : i64
           (unsafe
@@ -707,25 +695,21 @@
             0
             (unsafe
               (host syscall-close fd 0 0 0 0 0)))]
-        (begin
-          (unsafe
-            (atomic-store! (slot-word slot 1) -1))
-          (unsafe
-            (atomic-store! (slot-word slot 3) poison-none))
-          (unsafe
-            (atomic-store!
-              (slot-word slot 0)
-              (+ (- word state-closing) state-free)))
-          (cond
-            [lost (local_ipc.LocalIpcStatus.Err (corrupt))]
-            ;; Linux releases the descriptor even when close reports EINTR, so
-            ;; it is never retried.
-            [(or (= result 0) (= (host-errno result) eintr))
-              (local_ipc.LocalIpcStatus.Ok)]
-            [(= (host-errno result) 0) (local_ipc.LocalIpcStatus.Err (corrupt))]
-            [else
-              (local_ipc.LocalIpcStatus.Err
-                (connection-error (host-errno result)))]))))))
+        (unsafe
+          (atomic-store! (slot-word slot 1) -1))
+        (unsafe
+          (atomic-store! (slot-word slot 3) poison-none))
+        (unsafe
+          (atomic-store!
+            (slot-word slot 0)
+            (+ (- word state-closing) state-free)))
+        (cond
+          [lost (Err (corrupt))]
+          ;; Linux releases the descriptor even when close reports EINTR, so
+          ;; it is never retried.
+          [(or (= result 0) (= (host-errno result) eintr)) (Ok)]
+          [(= (host-errno result) 0) (Err (corrupt))]
+          [else (Err (connection-error (host-errno result)))])))))
 
 ;: Close the connection a token names. The slot stops accepting leases first;
 ;: the descriptor is closed now if no lease is held, else by the last lease,
@@ -745,30 +729,27 @@
                 live
                 (+ (- live state-live) state-closing)))
             live)))
-        (local_ipc.LocalIpcStatus.Err
-          (local_ipc.make-error (local_ipc.LocalIpcErrorKind.Closed) 0))
+        (Err (local_ipc.make-error (Closed) 0))
         (if (=
           (unsafe
             (atomic-load (slot-word slot 2)))
           0)
           (match (unsafe
             (slot-claim-close! slot (+ (- live state-live) state-closing)))
-            [(local_ipc.LocalIpcStatus.Err failure)
+            [(Err failure)
               (match failure.kind
-                [(local_ipc.LocalIpcErrorKind.Closed)
-                  (local_ipc.LocalIpcStatus.Ok)]
-                [_ (local_ipc.LocalIpcStatus.Err failure)])]
-            [(local_ipc.LocalIpcStatus.Ok) (local_ipc.LocalIpcStatus.Ok)])
-          (local_ipc.LocalIpcStatus.Ok))))))
+                [(Closed) (Ok)]
+                [_ (Err failure)])]
+            [(Ok) (Ok)])
+          (Ok))))))
 
 ;: Close a construction descriptor exactly once. Its result is not reported:
 ;: the attempt's own outcome is.
 (unsafe
   (define (close-construction [fd : i64]) : unit
-    (begin
-      (unsafe
-        (host syscall-close fd 0 0 0 0 0))
-      unit)))
+    (unsafe
+      (host syscall-close fd 0 0 0 0 0))
+    unit))
 
 ;: Copy the validated name into zeroed `sockaddr_un` storage.
 ;:
@@ -779,16 +760,14 @@
     (let
       [index : i64 0]
       [length : i64 (byte_buf.bytes-length name)]
-      (begin
+      (unsafe
+        (ptr-write! address (cast af-unix : u8)))
+      (while (< index length)
         (unsafe
-          (ptr-write! address (cast af-unix : u8)))
-        (while (< index length)
-          (begin
-            (unsafe
-              (ptr-write!
-                (ptr-offset address (+ sockaddr-path-offset index))
-                (byte_buf.bytes-ref name index)))
-            (set! index (+ index 1))))))))
+          (ptr-write!
+            (ptr-offset address (+ sockaddr-path-offset index))
+            (byte_buf.bytes-ref name index)))
+        (set! index (+ index 1))))))
 
 ;: The pathname check of one attempt, on the NUL-terminated path in `address`.
 (unsafe
@@ -817,10 +796,8 @@
               (native-u32 status stat-uid-offset))
             (unsafe
               (native-u32 status stat-gid-offset)))]
-        [(= (host-errno result) 0) (local_ipc.LocalIpcStatus.Err (corrupt))]
-        [else
-          (local_ipc.LocalIpcStatus.Err
-            (construction-error (host-errno result)))]))))
+        [(= (host-errno result) 0) (Err (corrupt))]
+        [else (Err (construction-error (host-errno result)))]))))
 
 ;: The socket and connect of one attempt, in reserved `slot`. The slot is
 ;: published or returned, and the descriptor is published or closed once; a
@@ -835,7 +812,7 @@
         (begin
           (unsafe
             (slot-unreserve! slot))
-          (local_ipc.LocalIpcConnectStep.ConnectFailed
+          (ConnectFailed
             (if (> (host-errno fd) 0)
               (construction-error (host-errno fd))
               (corrupt))))
@@ -852,26 +829,18 @@
                 (begin
                   (unsafe
                     (close-construction fd))
-                  (local_ipc.LocalIpcConnectStep.ConnectFailed
-                    (local_ipc.make-error
-                      (local_ipc.LocalIpcErrorKind.ResourceExhausted)
-                      0)))
-                (local_ipc.LocalIpcConnectStep.Connected token)))
+                  (ConnectFailed (local_ipc.make-error (ResourceExhausted) 0)))
+                (Connected token)))
             (let
               [code : i64 (host-errno result)]
-              (begin
-                (unsafe
-                  (close-construction fd))
-                (unsafe
-                  (slot-unreserve! slot))
-                (cond
-                  [(or (= code eagain) (= code eintr))
-                    (local_ipc.LocalIpcConnectStep.RetryConnect)]
-                  [(= code 0)
-                    (local_ipc.LocalIpcConnectStep.ConnectFailed (corrupt))]
-                  [else
-                    (local_ipc.LocalIpcConnectStep.ConnectFailed
-                      (construction-error code))])))))))))
+              (unsafe
+                (close-construction fd))
+              (unsafe
+                (slot-unreserve! slot))
+              (cond
+                [(or (= code eagain) (= code eintr)) (RetryConnect)]
+                [(= code 0) (ConnectFailed (corrupt))]
+                [else (ConnectFailed (construction-error code))]))))))))
 
 ;: True when a handed buffer's live length fits its storage.
 (define (buffer-sound? [buffer : (& buffer byte_buf.ByteBuf)]) : bool
@@ -892,33 +861,24 @@
         (ptr-cast (ptr-addr-of status-storage) : (MutPtr u8)))]
     (cond
       [(not (path-policy-valid? policy))
-        (local_ipc.LocalIpcConnectStep.ConnectFailed
-          (local_ipc.make-error
-            (local_ipc.LocalIpcErrorKind.PolicyRejected)
-            einval))]
+        (ConnectFailed (local_ipc.make-error (PolicyRejected) einval))]
       [(not (local_ipc.unix-path-bytes-valid? name))
-        (local_ipc.LocalIpcConnectStep.ConnectFailed
-          (local_ipc.make-error (local_ipc.LocalIpcErrorKind.InvalidEndpoint) 0))]
+        (ConnectFailed (local_ipc.make-error (InvalidEndpoint) 0))]
       [else
-        (begin
-          (unsafe
-            (address-fill! address name))
-          (match (unsafe
-            (path-check policy address status))
-            [(local_ipc.LocalIpcStatus.Err failure)
-              (local_ipc.LocalIpcConnectStep.ConnectFailed failure)]
-            [(local_ipc.LocalIpcStatus.Ok)
-              (let
-                [slot : i64
-                  (unsafe
-                    (slot-reserve!))]
-                (if (< slot 0)
-                  (local_ipc.LocalIpcConnectStep.ConnectFailed
-                    (local_ipc.make-error
-                      (local_ipc.LocalIpcErrorKind.ResourceExhausted)
-                      0))
-                  (unsafe
-                    (socket-connect slot address (byte_buf.bytes-length name)))))]))])))
+        (unsafe
+          (address-fill! address name))
+        (match (unsafe
+          (path-check policy address status))
+          [(Err failure) (ConnectFailed failure)]
+          [(Ok)
+            (let
+              [slot : i64
+                (unsafe
+                  (slot-reserve!))]
+              (if (< slot 0)
+                (ConnectFailed (local_ipc.make-error (ResourceExhausted) 0))
+                (unsafe
+                  (socket-connect slot address (byte_buf.bytes-length name)))))])])))
 
 ;: Adapter `connect-attempt` under `policy`. Any code holding the adapter can
 ;: call this with any family and bytes.
@@ -930,15 +890,9 @@
     [step : local_ipc.LocalIpcConnectStep
       (cond
         [(not (= family local_ipc.family-unix-path))
-          (local_ipc.LocalIpcConnectStep.ConnectFailed
-            (local_ipc.make-error
-              (local_ipc.LocalIpcErrorKind.UnsupportedTarget)
-              0))]
+          (ConnectFailed (local_ipc.make-error (UnsupportedTarget) 0))]
         [(not (buffer-sound? (& name)))
-          (local_ipc.LocalIpcConnectStep.ConnectFailed
-            (local_ipc.make-error
-              (local_ipc.LocalIpcErrorKind.InvalidEndpoint)
-              0))]
+          (ConnectFailed (local_ipc.make-error (InvalidEndpoint) 0))]
         [else (attempt policy (byte_buf.as-bytes (& name)))])]
     (local_ipc.LocalIpcConnectReply step name)))
 
@@ -956,12 +910,10 @@
         (= result 0)
         (= length (comptime (size-of (type LinuxUcred))))
         (>= pid 0))
-      (local_ipc.LocalIpcPeerStep.PeerKnown
-        (local_ipc.LocalIpcPeer pid uid gid -1))]
+      (PeerKnown (local_ipc.LocalIpcPeer pid uid gid -1))]
     [(> (host-errno result) 0)
-      (local_ipc.LocalIpcPeerStep.PeerFailed
-        (connection-error (host-errno result)))]
-    [else (local_ipc.LocalIpcPeerStep.PeerFailed (corrupt))]))
+      (PeerFailed (connection-error (host-errno result)))]
+    [else (PeerFailed (corrupt))]))
 
 ;: Adapter `peer`.
 (define (linux-peer [_context : i64] [handle : i64]) : local_ipc.LocalIpcPeerStep
@@ -970,10 +922,8 @@
       (unsafe
         (lease-acquire handle))]
     (cond
-      [(= fd lease-stale)
-        (local_ipc.LocalIpcPeerStep.PeerFailed
-          (local_ipc.make-error (local_ipc.LocalIpcErrorKind.Closed) 0))]
-      [(= fd lease-poisoned) (local_ipc.LocalIpcPeerStep.PeerFailed (corrupt))]
+      [(= fd lease-stale) (PeerFailed (local_ipc.make-error (Closed) 0))]
+      [(= fd lease-poisoned) (PeerFailed (corrupt))]
       [else
         (let
           [credentials : LinuxUcred
@@ -1002,15 +952,14 @@
           [seen-length : LinuxSockLen
             (unsafe
               (ptr-read (ptr-cast length-ptr : (Ptr LinuxSockLen))))]
-          (begin
-            (unsafe
-              (lease-release! (token-slot handle)))
-            (peer-step
-              result
-              (cast seen-length.value : i64)
-              (cast seen.pid : i64)
-              (cast seen.uid : i64)
-              (cast seen.gid : i64))))])))
+          (unsafe
+            (lease-release! (token-slot handle)))
+          (peer-step
+            result
+            (cast seen-length.value : i64)
+            (cast seen.pid : i64)
+            (cast seen.uid : i64)
+            (cast seen.gid : i64)))])))
 
 ;: A data or readiness step and the poison it leaves on the slot.
 (defstruct LinuxIoOutcome
@@ -1025,20 +974,15 @@
     [code : i64 (host-errno result)]
     (cond
       [(and (>= result 1) (<= result requested))
-        (LinuxIoOutcome (local_ipc.LocalIpcIoStep.Progress result) poison-none)]
+        (LinuxIoOutcome (Progress result) poison-none)]
       [(and (= result 0) (not writing))
-        (LinuxIoOutcome (local_ipc.LocalIpcIoStep.PeerClosed) poison-none)]
-      [(= code eagain)
-        (LinuxIoOutcome (local_ipc.LocalIpcIoStep.WouldBlock) poison-none)]
-      [(= code eintr)
-        (LinuxIoOutcome (local_ipc.LocalIpcIoStep.Interrupted) poison-none)]
-      [(= code 0)
-        (LinuxIoOutcome
-          (local_ipc.LocalIpcIoStep.IoFailed (corrupt))
-          poison-corrupt)]
+        (LinuxIoOutcome (PeerClosed) poison-none)]
+      [(= code eagain) (LinuxIoOutcome (WouldBlock) poison-none)]
+      [(= code eintr) (LinuxIoOutcome (Interrupted) poison-none)]
+      [(= code 0) (LinuxIoOutcome (IoFailed (corrupt)) poison-corrupt)]
       [else
         (LinuxIoOutcome
-          (local_ipc.LocalIpcIoStep.IoFailed (connection-error code))
+          (IoFailed (connection-error code))
           (if (= code ebadf)
             poison-lost
             poison-none))])))
@@ -1052,17 +996,14 @@
   (let
     [requested : i64 buffer.len]
     (if (or (< requested 1) (not (buffer-sound? (& (deref buffer)))))
-      (local_ipc.LocalIpcIoStep.IoFailed
-        (local_ipc.make-error (local_ipc.LocalIpcErrorKind.InvalidRange) 0))
+      (IoFailed (local_ipc.make-error (InvalidRange) 0))
       (let
         [fd : i64
           (unsafe
             (lease-acquire handle))]
         (cond
-          [(= fd lease-stale)
-            (local_ipc.LocalIpcIoStep.IoFailed
-              (local_ipc.make-error (local_ipc.LocalIpcErrorKind.Closed) 0))]
-          [(= fd lease-poisoned) (local_ipc.LocalIpcIoStep.IoFailed (corrupt))]
+          [(= fd lease-stale) (IoFailed (local_ipc.make-error (Closed) 0))]
+          [(= fd lease-poisoned) (IoFailed (corrupt))]
           [else
             (let
               [data : i64
@@ -1076,12 +1017,11 @@
                     (host syscall-read fd data requested 0 0 0)))]
               [outcome : LinuxIoOutcome
                 (transfer-outcome result requested writing)]
-              (begin
-                (unsafe
-                  (slot-poison! (token-slot handle) outcome.poison))
-                (unsafe
-                  (lease-release! (token-slot handle)))
-                outcome.step))])))))
+              (unsafe
+                (slot-poison! (token-slot handle) outcome.poison))
+              (unsafe
+                (lease-release! (token-slot handle)))
+              outcome.step)])))))
 
 ;: Adapter `read-once`: `read` into the front of `buffer`.
 (define (linux-read-once
@@ -1108,9 +1048,7 @@
   [_handle : i64]
   [buffer : byte_buf.ByteBuf]
   [_slice-ms : i64]) : local_ipc.LocalIpcIoReply
-  (local_ipc.LocalIpcIoReply
-    (local_ipc.LocalIpcIoStep.IoFailed (corrupt))
-    buffer))
+  (local_ipc.LocalIpcIoReply (IoFailed (corrupt)) buffer))
 
 ;: Adapter `cancel-pending`: nothing is ever pending.
 (define (linux-cancel-pending [_context : i64] [_handle : i64]) : unit
@@ -1144,34 +1082,26 @@
   (let
     [known : i64 (bit-or events (bit-or pollerr (bit-or pollhup pollnval)))]
     [broken : LinuxWaitOutcome
-      (LinuxWaitOutcome
-        (local_ipc.LocalIpcWaitStep.WaitFailed (corrupt))
-        poison-corrupt)]
+      (LinuxWaitOutcome (WaitFailed (corrupt)) poison-corrupt)]
     (cond
       [(or (not (= seen-fd fd)) (not (= seen-events events))) broken]
       [(= result 0)
         (if (= revents 0)
-          (LinuxWaitOutcome (local_ipc.LocalIpcWaitStep.NotReady) poison-none)
+          (LinuxWaitOutcome (NotReady) poison-none)
           broken)]
       [(= result 1)
         (cond
           [(or (= revents 0) (not (= (bit-and revents (- 65535 known)) 0)))
             broken]
           [(not (= (bit-and revents pollnval) 0))
-            (LinuxWaitOutcome
-              (local_ipc.LocalIpcWaitStep.WaitFailed (corrupt))
-              poison-lost)]
-          [else
-            (LinuxWaitOutcome (local_ipc.LocalIpcWaitStep.Ready) poison-none)])]
+            (LinuxWaitOutcome (WaitFailed (corrupt)) poison-lost)]
+          [else (LinuxWaitOutcome (Ready) poison-none)])]
       [(= (host-errno result) eintr)
-        (LinuxWaitOutcome
-          (local_ipc.LocalIpcWaitStep.WaitInterrupted)
-          poison-none)]
+        (LinuxWaitOutcome (WaitInterrupted) poison-none)]
       [(= (host-errno result) 0) broken]
       [else
         (LinuxWaitOutcome
-          (local_ipc.LocalIpcWaitStep.WaitFailed
-            (connection-error (host-errno result)))
+          (WaitFailed (connection-error (host-errno result)))
           poison-none)])))
 
 ;: Adapter `wait-ready`: one `poll` of the leased descriptor for at most one
@@ -1187,18 +1117,14 @@
     (or
       (= interest local_ipc.interest-read)
       (= interest local_ipc.interest-write)))
-    (local_ipc.LocalIpcWaitStep.WaitFailed
-      (local_ipc.make-error (local_ipc.LocalIpcErrorKind.InvalidRange) 0))
+    (WaitFailed (local_ipc.make-error (InvalidRange) 0))
     (let
       [fd : i64
         (unsafe
           (lease-acquire handle))]
       (cond
-        [(= fd lease-stale)
-          (local_ipc.LocalIpcWaitStep.WaitFailed
-            (local_ipc.make-error (local_ipc.LocalIpcErrorKind.Closed) 0))]
-        [(= fd lease-poisoned)
-          (local_ipc.LocalIpcWaitStep.WaitFailed (corrupt))]
+        [(= fd lease-stale) (WaitFailed (local_ipc.make-error (Closed) 0))]
+        [(= fd lease-poisoned) (WaitFailed (corrupt))]
         [else
           (let
             [events : i64
@@ -1231,12 +1157,11 @@
                 (cast seen.fd : i64)
                 (bit-and (cast seen.events : i64) 65535)
                 (bit-and (cast seen.revents : i64) 65535))]
-            (begin
-              (unsafe
-                (slot-poison! (token-slot handle) outcome.poison))
-              (unsafe
-                (lease-release! (token-slot handle)))
-              outcome.step))]))))
+            (unsafe
+              (slot-poison! (token-slot handle) outcome.poison))
+            (unsafe
+              (lease-release! (token-slot handle)))
+            outcome.step)]))))
 
 ;: Adapter `delay`: `poll` with no descriptors for one bounded slice. It
 ;: returns 0 or EINTR; anything else is corruption.
@@ -1246,8 +1171,8 @@
       (unsafe
         (host syscall-poll 0 0 (bounded-slice ms) 0 0 0))]
     (if (or (= result 0) (= (host-errno result) eintr))
-      (local_ipc.LocalIpcStatus.Ok)
-      (local_ipc.LocalIpcStatus.Err (corrupt)))))
+      (Ok)
+      (Err (corrupt)))))
 
 ;: Adapter `close`.
 (define (linux-close [_context : i64] [handle : i64]) : local_ipc.LocalIpcStatus
@@ -1325,16 +1250,13 @@
   (define (test-reset!) : unit
     (let
       [index : i64 0]
-      (begin
-        (while (< index test-number-limit)
-          (begin
-            (set! (array-ref test-calls index) 0)
-            (set! index (+ index 1))))
-        (set! index 0)
-        (while (< index (* test-row-capacity test-row-words))
-          (begin
-            (set! (array-ref test-rows index) 0)
-            (set! index (+ index 1))))))))
+      (while (< index test-number-limit)
+        (set! (array-ref test-calls index) 0)
+        (set! index (+ index 1)))
+      (set! index 0)
+      (while (< index (* test-row-capacity test-row-words))
+        (set! (array-ref test-rows index) 0)
+        (set! index (+ index 1))))))
 
 ;: Calls of syscall `number` since the last reset.
 (cfg
@@ -1356,28 +1278,25 @@
     (let
       [row : i64 0]
       [placed : bool false]
-      (begin
-        (while (and (not placed) (< row test-row-capacity))
-          (let
-            [base : i64 (* row test-row-words)]
-            (begin
-              (if (= (array-ref test-rows (+ base 1)) 0)
-                (begin
-                  (set! (array-ref test-rows base) number)
-                  (set! (array-ref test-rows (+ base 1)) call)
-                  (set! (array-ref test-rows (+ base 2)) result)
-                  (set! (array-ref test-rows (+ base 3)) out0)
-                  (set! (array-ref test-rows (+ base 4)) out1)
-                  (set! (array-ref test-rows (+ base 5)) out2)
-                  (set! (array-ref test-rows (+ base 6)) out3)
-                  (set! placed true))
-                unit)
-              (set! row (+ row 1)))))
-        (if placed
-          unit
-          (begin
-            (/ 1 0)
-            unit))))))
+      (while (and (not placed) (< row test-row-capacity))
+        (let
+          [base : i64 (* row test-row-words)]
+          (when
+            (= (array-ref test-rows (+ base 1)) 0)
+            (set! (array-ref test-rows base) number)
+            (set! (array-ref test-rows (+ base 1)) call)
+            (set! (array-ref test-rows (+ base 2)) result)
+            (set! (array-ref test-rows (+ base 3)) out0)
+            (set! (array-ref test-rows (+ base 4)) out1)
+            (set! (array-ref test-rows (+ base 5)) out2)
+            (set! (array-ref test-rows (+ base 6)) out3)
+            (set! placed true))
+          (set! row (+ row 1))))
+      (if placed
+        unit
+        (begin
+          (/ 1 0)
+          unit)))))
 
 ;: Script only a result.
 (cfg
@@ -1427,31 +1346,28 @@
         [out3 : i64 (array-ref test-rows (+ base 6))]
         (cond
           [(= number syscall-newfstatat)
-            (begin
-              (unsafe
-                (test-put-u32! c stat-mode-offset out0))
-              (unsafe
-                (test-put-u32! c stat-uid-offset out1))
-              (unsafe
-                (test-put-u32! c stat-gid-offset out2)))]
+            (unsafe
+              (test-put-u32! c stat-mode-offset out0))
+            (unsafe
+              (test-put-u32! c stat-uid-offset out1))
+            (unsafe
+              (test-put-u32! c stat-gid-offset out2))]
           [(= number syscall-getsockopt)
-            (begin
-              (unsafe
-                (test-put-u32! e 0 out0))
-              (unsafe
-                (test-put-u32! d 0 out1))
-              (unsafe
-                (test-put-u32! d 4 out2))
-              (unsafe
-                (test-put-u32! d 8 out3)))]
+            (unsafe
+              (test-put-u32! e 0 out0))
+            (unsafe
+              (test-put-u32! d 0 out1))
+            (unsafe
+              (test-put-u32! d 4 out2))
+            (unsafe
+              (test-put-u32! d 8 out3))]
           [(and (= number syscall-poll) (not (= a 0)))
-            (begin
-              (unsafe
-                (test-put-u32! a 0 out0))
-              (unsafe
-                (test-put-i16! a 4 out1))
-              (unsafe
-                (test-put-i16! a 6 out2)))]
+            (unsafe
+              (test-put-u32! a 0 out0))
+            (unsafe
+              (test-put-i16! a 4 out1))
+            (unsafe
+              (test-put-i16! a 6 out2))]
           [else unit])))))
 
 ;: `host` under `typelisp test`.
@@ -1470,25 +1386,22 @@
         [call : i64 (+ (array-ref test-calls number) 1)]
         [row : i64 0]
         [scripted : i64 -1]
-        (begin
-          (set! (array-ref test-calls number) call)
-          (while (and (< scripted 0) (< row test-row-capacity))
-            (let
-              [base : i64 (* row test-row-words)]
-              (begin
-                (if (and
-                  (= (array-ref test-rows base) number)
-                  (= (array-ref test-rows (+ base 1)) call)
-                  (= (array-ref test-rows (+ base 7)) 0))
-                  (begin
-                    (set! (array-ref test-rows (+ base 7)) 1)
-                    (set! scripted base))
-                  unit)
-                (set! row (+ row 1)))))
-          (if (< scripted 0)
+        (set! (array-ref test-calls number) call)
+        (while (and (< scripted 0) (< row test-row-capacity))
+          (let
+            [base : i64 (* row test-row-words)]
+            (when
+              (and
+                (= (array-ref test-rows base) number)
+                (= (array-ref test-rows (+ base 1)) call)
+                (= (array-ref test-rows (+ base 7)) 0))
+              (set! (array-ref test-rows (+ base 7)) 1)
+              (set! scripted base))
+            (set! row (+ row 1))))
+        (if (< scripted 0)
+          (unsafe
+            (host-raw number a b c d e f))
+          (begin
             (unsafe
-              (host-raw number a b c d e f))
-            (begin
-              (unsafe
-                (test-write-outputs! number a c d e scripted))
-              (array-ref test-rows (+ scripted 2)))))))))
+              (test-write-outputs! number a c d e scripted))
+            (array-ref test-rows (+ scripted 2))))))))

@@ -30,14 +30,12 @@
     [i : i64 0]
     [n : i64 (string.string-length text)]
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity n)]
-    (begin
-      (while (< i n)
-        (begin
-          (byte_buf.byte-buf-builder-append-string
-            (&mut out)
-            (doc-html-escape-one text i))
-          (set! i (+ i 1))))
-      (byte_buf.byte-buf-builder-finish-string (& out)))))
+    (while (< i n)
+      (byte_buf.byte-buf-builder-append-string
+        (&mut out)
+        (doc-html-escape-one text i))
+      (set! i (+ i 1)))
+    (byte_buf.byte-buf-builder-finish-string (& out))))
 
 (define (doc-html-escape-text-one [text : (& text str)] [idx : i64]) : String
   (let
@@ -53,14 +51,12 @@
     [i : i64 0]
     [n : i64 (string.string-length text)]
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity n)]
-    (begin
-      (while (< i n)
-        (begin
-          (byte_buf.byte-buf-builder-append-string
-            (&mut out)
-            (doc-html-escape-text-one text i))
-          (set! i (+ i 1))))
-      (byte_buf.byte-buf-builder-finish-string (& out)))))
+    (while (< i n)
+      (byte_buf.byte-buf-builder-append-string
+        (&mut out)
+        (doc-html-escape-text-one text i))
+      (set! i (+ i 1)))
+    (byte_buf.byte-buf-builder-finish-string (& out))))
 
 (define (doc-html-page-open [title : String]) : String
   (str_cat.str-cat
@@ -198,12 +194,11 @@
     [i : i64 start]
     [n : i64 (string.string-length source)]
     [done : bool false]
-    (begin
-      (while (and (not done) (< i n))
-        (if (doc-html-syntax-token-delim? (string.string-ref source i))
-          (set! done true)
-          (set! i (+ i 1))))
-      i)))
+    (while (and (not done) (< i n))
+      (if (doc-html-syntax-token-delim? (string.string-ref source i))
+        (set! done true)
+        (set! i (+ i 1))))
+    i))
 
 (define (doc-html-syntax-number-start? [source : (& source str)] [start : i64]) : bool
   (let
@@ -231,18 +226,17 @@
     [i : i64 (+ start 1)]
     [n : i64 (string.string-length source)]
     [done : bool false]
-    (begin
-      (while (and (< i n) (not done))
-        (let
-          [c : char (string.string-ref source i)]
-          (if (= c '\\')
-            (set! i (+ i 2))
-            (if (= c '"')
-              (begin
-                (set! done true)
-                (set! i (+ i 1)))
-              (set! i (+ i 1))))))
-      i)))
+    (while (and (< i n) (not done))
+      (let
+        [c : char (string.string-ref source i)]
+        (if (= c '\\')
+          (set! i (+ i 2))
+          (if (= c '"')
+            (begin
+              (set! done true)
+              (set! i (+ i 1)))
+            (set! i (+ i 1))))))
+    i))
 
 (define (doc-html-syntax-valid-escape-end
   [source : (& source str)]
@@ -279,36 +273,35 @@
     [i : i64 start]
     [out : byte_buf.ByteBufBuilder
       (byte_buf.byte-buf-builder-with-capacity (- end start))]
-    (begin
-      (byte_buf.byte-buf-builder-append-string
-        (&mut out)
-        "<span class=\"tl-syn-string\">")
-      (while (< i end)
-        (if (= (string.string-ref source i) '\\')
-          (let
-            [escape-end : i64 (doc-html-syntax-valid-escape-end source i end)]
-            (if (> escape-end i)
-              (begin
-                (byte_buf.byte-buf-builder-append-string
-                  (&mut out)
-                  "<span class=\"tl-syn-escape\">")
-                (byte_buf.byte-buf-builder-append-string
-                  (&mut out)
-                  (doc-html-escape (string.substring source i (- escape-end i))))
-                (byte_buf.byte-buf-builder-append-string (&mut out) "</span>")
-                (set! i escape-end))
-              (begin
-                (byte_buf.byte-buf-builder-append-string
-                  (&mut out)
-                  (doc-html-escape-one source i))
-                (set! i (+ i 1)))))
-          (begin
-            (byte_buf.byte-buf-builder-append-string
-              (&mut out)
-              (doc-html-escape-one source i))
-            (set! i (+ i 1)))))
-      (byte_buf.byte-buf-builder-append-string (&mut out) "</span>")
-      (byte_buf.byte-buf-builder-finish-string (& out)))))
+    (byte_buf.byte-buf-builder-append-string
+      (&mut out)
+      "<span class=\"tl-syn-string\">")
+    (while (< i end)
+      (if (= (string.string-ref source i) '\\')
+        (let
+          [escape-end : i64 (doc-html-syntax-valid-escape-end source i end)]
+          (if (> escape-end i)
+            (begin
+              (byte_buf.byte-buf-builder-append-string
+                (&mut out)
+                "<span class=\"tl-syn-escape\">")
+              (byte_buf.byte-buf-builder-append-string
+                (&mut out)
+                (doc-html-escape (string.substring source i (- escape-end i))))
+              (byte_buf.byte-buf-builder-append-string (&mut out) "</span>")
+              (set! i escape-end))
+            (begin
+              (byte_buf.byte-buf-builder-append-string
+                (&mut out)
+                (doc-html-escape-one source i))
+              (set! i (+ i 1)))))
+        (begin
+          (byte_buf.byte-buf-builder-append-string
+            (&mut out)
+            (doc-html-escape-one source i))
+          (set! i (+ i 1)))))
+    (byte_buf.byte-buf-builder-append-string (&mut out) "</span>")
+    (byte_buf.byte-buf-builder-finish-string (& out))))
 
 (define (doc-html-syntax-char-escape? [c : char]) : bool
   (or (= c 'n') (= c 't') (= c 'r') (= c '0') (= c '\\') (= c '\'')))
@@ -374,40 +367,37 @@
   (let
     [i : i64 pos]
     [done : bool false]
-    (begin
-      (while (and (not done) (>= i 0))
-        (if (doc-html-syntax-space? (string.string-ref source i))
-          (set! i (- i 1))
-          (set! done true)))
-      i)))
+    (while (and (not done) (>= i 0))
+      (if (doc-html-syntax-space? (string.string-ref source i))
+        (set! i (- i 1))
+        (set! done true)))
+    i))
 
 (define (doc-html-syntax-word-start-back [source : (& source str)] [pos : i64]) : i64
   (let
     [i : i64 pos]
     [done : bool false]
-    (begin
-      (while (and (not done) (>= i 0))
-        (if (doc-html-syntax-ident-part? (string.string-ref source i))
-          (set! i (- i 1))
-          (set! done true)))
-      (+ i 1))))
+    (while (and (not done) (>= i 0))
+      (if (doc-html-syntax-ident-part? (string.string-ref source i))
+        (set! i (- i 1))
+        (set! done true)))
+    (+ i 1)))
 
 (define (doc-html-syntax-preceding-form [source : (& source str)] [start : i64]) : String
   (let
     [before : i64 (doc-html-syntax-skip-back-spaces source (- start 1))]
-    (begin
-      (if (and (>= before 0) (= (string.string-ref source before) '('))
-        (set! before (doc-html-syntax-skip-back-spaces source (- before 1)))
-        unit)
-      (if (< before 0)
-        ""
-        (let
-          [word-start : i64 (doc-html-syntax-word-start-back source before)]
-          (if (and
-            (> word-start 0)
-            (= (string.string-ref source (- word-start 1)) '('))
-            (string.substring source word-start (+ (- before word-start) 1))
-            ""))))))
+    (if (and (>= before 0) (= (string.string-ref source before) '('))
+      (set! before (doc-html-syntax-skip-back-spaces source (- before 1)))
+      unit)
+    (if (< before 0)
+      ""
+      (let
+        [word-start : i64 (doc-html-syntax-word-start-back source before)]
+        (if (and
+          (> word-start 0)
+          (= (string.string-ref source (- word-start 1)) '('))
+          (string.substring source word-start (+ (- before word-start) 1))
+          "")))))
 
 (define (doc-html-syntax-definition-name?
   [source : (& source str)]
@@ -463,85 +453,79 @@
     [i : i64 0]
     [n : i64 (string.string-length source)]
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-with-capacity n)]
-    (begin
-      (while (< i n)
-        (let
-          [c : char (string.string-ref source i)]
-          (cond
-            [(= c ';')
-              (let
-                [end : i64 (source_text.line-end source i)]
-                [line : String (string.substring source i (- end i))]
-                [class-name : String
-                  (if (and
-                    (< (+ i 1) n)
-                    (or
-                      (= (string.string-ref source (+ i 1)) '#')
-                      (= (string.string-ref source (+ i 1)) ':')))
-                    "tl-syn-doc-comment"
-                    "tl-syn-comment")]
-                (begin
-                  (byte_buf.byte-buf-builder-append-string
-                    (&mut out)
-                    (doc-html-syntax-span class-name line))
-                  (set! i end)))]
-            [(= c '"')
-              (let
-                [end : i64 (doc-html-syntax-string-end source i)]
-                (begin
-                  (byte_buf.byte-buf-builder-append-string
-                    (&mut out)
-                    (doc-html-syntax-render-string source i end))
-                  (set! i end)))]
-            [(= c '\'')
-              (let
-                [end : i64 (doc-html-syntax-char-literal-end source i)]
-                (if (> end i)
-                  (begin
-                    (byte_buf.byte-buf-builder-append-string
-                      (&mut out)
-                      (doc-html-syntax-span
-                        "tl-syn-string"
-                        (string.substring source i (- end i))))
-                    (set! i end))
-                  (begin
-                    (byte_buf.byte-buf-builder-append-string
-                      (&mut out)
-                      (doc-html-escape-one source i))
-                    (set! i (+ i 1)))))]
-            [(doc-html-syntax-number-start? source i)
-              (let
-                [end : i64 (doc-html-syntax-token-end source i)]
+    (while (< i n)
+      (let
+        [c : char (string.string-ref source i)]
+        (cond
+          [(= c ';')
+            (let
+              [end : i64 (source_text.line-end source i)]
+              [line : String (string.substring source i (- end i))]
+              [class-name : String
+                (if (and
+                  (< (+ i 1) n)
+                  (or
+                    (= (string.string-ref source (+ i 1)) '#')
+                    (= (string.string-ref source (+ i 1)) ':')))
+                  "tl-syn-doc-comment"
+                  "tl-syn-comment")]
+              (byte_buf.byte-buf-builder-append-string
+                (&mut out)
+                (doc-html-syntax-span class-name line))
+              (set! i end))]
+          [(= c '"')
+            (let
+              [end : i64 (doc-html-syntax-string-end source i)]
+              (byte_buf.byte-buf-builder-append-string
+                (&mut out)
+                (doc-html-syntax-render-string source i end))
+              (set! i end))]
+          [(= c '\'')
+            (let
+              [end : i64 (doc-html-syntax-char-literal-end source i)]
+              (if (> end i)
                 (begin
                   (byte_buf.byte-buf-builder-append-string
                     (&mut out)
                     (doc-html-syntax-span
-                      "tl-syn-number"
+                      "tl-syn-string"
                       (string.substring source i (- end i))))
-                  (set! i end)))]
-            [(doc-html-syntax-token-start? c)
-              (let
-                [end : i64 (doc-html-syntax-token-end source i)]
-                [token : String (string.substring source i (- end i))]
-                [class-name : String
-                  (doc-html-syntax-token-class
-                    source
-                    i
-                    (owned_view.compiler-owned-shared-view token))]
+                  (set! i end))
                 (begin
                   (byte_buf.byte-buf-builder-append-string
                     (&mut out)
-                    (if (= (string.string-length class-name) 0)
-                      (doc-html-escape token)
-                      (doc-html-syntax-span class-name token)))
-                  (set! i end)))]
-            [else
-              (begin
-                (byte_buf.byte-buf-builder-append-string
-                  (&mut out)
-                  (doc-html-escape-one source i))
-                (set! i (+ i 1)))])))
-      (byte_buf.byte-buf-builder-finish-string (& out)))))
+                    (doc-html-escape-one source i))
+                  (set! i (+ i 1)))))]
+          [(doc-html-syntax-number-start? source i)
+            (let
+              [end : i64 (doc-html-syntax-token-end source i)]
+              (byte_buf.byte-buf-builder-append-string
+                (&mut out)
+                (doc-html-syntax-span
+                  "tl-syn-number"
+                  (string.substring source i (- end i))))
+              (set! i end))]
+          [(doc-html-syntax-token-start? c)
+            (let
+              [end : i64 (doc-html-syntax-token-end source i)]
+              [token : String (string.substring source i (- end i))]
+              [class-name : String
+                (doc-html-syntax-token-class
+                  source
+                  i
+                  (owned_view.compiler-owned-shared-view token))]
+              (byte_buf.byte-buf-builder-append-string
+                (&mut out)
+                (if (= (string.string-length class-name) 0)
+                  (doc-html-escape token)
+                  (doc-html-syntax-span class-name token)))
+              (set! i end))]
+          [else
+            (byte_buf.byte-buf-builder-append-string
+              (&mut out)
+              (doc-html-escape-one source i))
+            (set! i (+ i 1))])))
+    (byte_buf.byte-buf-builder-finish-string (& out))))
 
 (define (doc-html-code-block-with-info
   [language : String]
@@ -712,16 +696,14 @@
     [n : i64 (string.string-length text)]
     [out : byte_buf.ByteBufBuilder
       (byte_buf.byte-buf-builder-with-capacity (+ n 2))]
-    (begin
-      (byte_buf.byte-buf-builder-append-string (&mut out) "\"")
-      (while (< i n)
-        (begin
-          (byte_buf.byte-buf-builder-append-string
-            (&mut out)
-            (doc-html-json-escape-one text i))
-          (set! i (+ i 1))))
-      (byte_buf.byte-buf-builder-append-string (&mut out) "\"")
-      (byte_buf.byte-buf-builder-finish-string (& out)))))
+    (byte_buf.byte-buf-builder-append-string (&mut out) "\"")
+    (while (< i n)
+      (byte_buf.byte-buf-builder-append-string
+        (&mut out)
+        (doc-html-json-escape-one text i))
+      (set! i (+ i 1)))
+    (byte_buf.byte-buf-builder-append-string (&mut out) "\"")
+    (byte_buf.byte-buf-builder-finish-string (& out))))
 
 (define (doc-html-short-doc [doc-text : String]) : String
   (let
@@ -948,7 +930,7 @@
         "TypeLisp API"
         (owned_view.compiler-owned-shared-view path))
       "<main>\n"
-      (doc-html-module-section (doc_render.DocModule.Module path docs))
+      (doc-html-module-section (Module path docs))
       "</main>\n"
       (doc-html-page-close))))
 

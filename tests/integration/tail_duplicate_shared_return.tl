@@ -17,20 +17,18 @@
   0)
 
 (define (td-sink [x : i64]) : i64
-  (begin
-    (set! td-calls (+ td-calls 1))
-    (+ x 1)))
+  (set! td-calls (+ td-calls 1))
+  (+ x 1))
 
 ;; (a) The merge shape: the two arms join at a tail that computes from a phi, so
 ;; the duplicated tail carries real instructions, not just a return.
 (define (td-merge [x : i64]) : i64
   (let
     [r : i64 0]
-    (begin
-      (if (= td-armed 0)
-        (set! r (+ x 1))
-        (set! r (+ (td-sink x) (td-sink (+ x 1)))))
-      (+ r 5))))
+    (if (= td-armed 0)
+      (set! r (+ x 1))
+      (set! r (+ (td-sink x) (td-sink (+ x 1)))))
+    (+ r 5)))
 
 ;; (b) The `gvn_table_invalidate_var` shape: a guarded walk whose loop exits and
 ;; whose bypass all return through the SHARED epilogue label, so the duplicated
@@ -46,14 +44,12 @@
   (let
     [node : i64 td-head]
     [found : bool false]
-    (begin
-      (while (and (>= node 0) (not found))
-        (begin
-          (set! td-steps (+ td-steps 1))
-          (if (= (td-sink node) var)
-            (set! found true)
-            (set! node (- node 1)))))
-      (when found (set! td-hits (+ td-hits 1))))))
+    (while (and (>= node 0) (not found))
+      (set! td-steps (+ td-steps 1))
+      (if (= (td-sink node) var)
+        (set! found true)
+        (set! node (- node 1))))
+    (when found (set! td-hits (+ td-hits 1)))))
 
 (define keep-merge : (-> i64 i64)
   td-merge)
@@ -71,14 +67,13 @@
     (+ a (* w2 1000))))
 
 (define (main) : i64
-  (begin
-    ;; Both guards bypass: every call returns through a duplicated tail.
-    (io.print-format "{}\n" (td-probe 7))
-    (set! td-armed 3)
-    (set! td-head 4)
-    ;; Both guards taken: every call returns through the framed tail.
-    (io.print-format "{}\n" (td-probe 7))
-    (io.print-format "{}\n" td-hits)
-    (io.print-format "{}\n" td-steps)
-    (io.print-format "{}\n" td-calls)
-    42))
+  ;; Both guards bypass: every call returns through a duplicated tail.
+  (io.print-format "{}\n" (td-probe 7))
+  (set! td-armed 3)
+  (set! td-head 4)
+  ;; Both guards taken: every call returns through the framed tail.
+  (io.print-format "{}\n" (td-probe 7))
+  (io.print-format "{}\n" td-hits)
+  (io.print-format "{}\n" td-steps)
+  (io.print-format "{}\n" td-calls)
+  42)

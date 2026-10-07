@@ -40,10 +40,9 @@
     ;; mem-then-two:   4 + (4*3 + 5*5)       = 4 + 37 = 41
     [r1 : i64 (mem-then-three v n (+ n 1) (+ n 2))]
     [r2 : i64 (mem-then-two v (+ n 3) (+ n 4))]
-    (begin
-      (io.println "{}" (+ r1 r2))
-      ;; With the bug a == b == c: 2 + (3 + 5 + 7) = 17 and 4 + (12 + 20) = 36,
-      ;; a total of 53 instead of 77.
-      (if (= (+ r1 r2) 77)
-        42
-        1))))
+    (io.println "{}" (+ r1 r2))
+    ;; With the bug a == b == c: 2 + (3 + 5 + 7) = 17 and 4 + (12 + 20) = 36,
+    ;; a total of 53 instead of 77.
+    (if (= (+ r1 r2) 77)
+      42
+      1)))

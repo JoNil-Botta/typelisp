@@ -8,13 +8,11 @@
     [sum : f64 1.0]
     [term : f64 1.0]
     [n : i64 1]
-    (begin
-      (while (<= n 12)
-        (begin
-          (set! term (/ (* term x) (cast n : f64)))
-          (set! sum (+ sum term))
-          (set! n (+ n 1))))
-      sum)))
+    (while (<= n 12)
+      (set! term (/ (* term x) (cast n : f64)))
+      (set! sum (+ sum term))
+      (set! n (+ n 1)))
+    sum))
 
 (define (main) : i64
   (let
@@ -22,15 +20,13 @@
     [i : i64 0]
     [x : f64 -0.5]
     [sum : f64 0.0]
-    (begin
-      (while (< i iterations)
-        (begin
-          (set! sum (+ sum (taylor-exp x)))
-          (set! x (+ x 0.000001))
-          (if (> x 0.5)
-            (set! x -0.5)
-            unit)
-          (set! i (+ i 1))))
-      (if (> sum 0.0)
-        42
-        1))))
+    (while (< i iterations)
+      (set! sum (+ sum (taylor-exp x)))
+      (set! x (+ x 0.000001))
+      (if (> x 0.5)
+        (set! x -0.5)
+        unit)
+      (set! i (+ i 1)))
+    (if (> sum 0.0)
+      42
+      1)))

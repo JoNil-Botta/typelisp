@@ -22,26 +22,22 @@
     [i : i64 0]
     [j : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 97)
-        (begin
-          (set!
-            (array-ref values i)
-            (Slot3x2
-              (cast (+ (* i 101) 7) : u16)
-              (cast (+ (* i 101) 14) : u16)
-              (cast (+ (* i 101) 21) : u16)))
-          (set! i (+ i 1))))
-      (while (< j 257)
-        (begin
-          (set! i (% (+ (* j 37) seed) 97))
-          (let
-            [actual : i64 (read-slot3x2 (& values) i)]
-            (begin
-              (when (!= actual (+ (* (* i 101) 6) 98)) (return -1))
-              (set! total (+ total actual))))
-          (set! j (+ j 1))))
-      total)))
+    (while (< i 97)
+      (set!
+        (array-ref values i)
+        (Slot3x2
+          (cast (+ (* i 101) 7) : u16)
+          (cast (+ (* i 101) 14) : u16)
+          (cast (+ (* i 101) 21) : u16)))
+      (set! i (+ i 1)))
+    (while (< j 257)
+      (set! i (% (+ (* j 37) seed) 97))
+      (let
+        [actual : i64 (read-slot3x2 (& values) i)]
+        (when (!= actual (+ (* (* i 101) 6) 98)) (return -1))
+        (set! total (+ total actual)))
+      (set! j (+ j 1)))
+    total))
 
 (defstruct Slot5x2
   (f0 u16)
@@ -69,28 +65,24 @@
     [i : i64 0]
     [j : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 97)
-        (begin
-          (set!
-            (array-ref values i)
-            (Slot5x2
-              (cast (+ (* i 101) 7) : u16)
-              (cast (+ (* i 101) 14) : u16)
-              (cast (+ (* i 101) 21) : u16)
-              (cast (+ (* i 101) 28) : u16)
-              (cast (+ (* i 101) 35) : u16)))
-          (set! i (+ i 1))))
-      (while (< j 257)
-        (begin
-          (set! i (% (+ (* j 37) seed) 97))
-          (let
-            [actual : i64 (read-slot5x2 (& values) i)]
-            (begin
-              (when (!= actual (+ (* (* i 101) 15) 385)) (return -1))
-              (set! total (+ total actual))))
-          (set! j (+ j 1))))
-      total)))
+    (while (< i 97)
+      (set!
+        (array-ref values i)
+        (Slot5x2
+          (cast (+ (* i 101) 7) : u16)
+          (cast (+ (* i 101) 14) : u16)
+          (cast (+ (* i 101) 21) : u16)
+          (cast (+ (* i 101) 28) : u16)
+          (cast (+ (* i 101) 35) : u16)))
+      (set! i (+ i 1)))
+    (while (< j 257)
+      (set! i (% (+ (* j 37) seed) 97))
+      (let
+        [actual : i64 (read-slot5x2 (& values) i)]
+        (when (!= actual (+ (* (* i 101) 15) 385)) (return -1))
+        (set! total (+ total actual)))
+      (set! j (+ j 1)))
+    total))
 
 (defstruct Slot9x2
   (f0 u16)
@@ -132,32 +124,28 @@
     [i : i64 0]
     [j : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 97)
-        (begin
-          (set!
-            (array-ref values i)
-            (Slot9x2
-              (cast (+ (* i 101) 7) : u16)
-              (cast (+ (* i 101) 14) : u16)
-              (cast (+ (* i 101) 21) : u16)
-              (cast (+ (* i 101) 28) : u16)
-              (cast (+ (* i 101) 35) : u16)
-              (cast (+ (* i 101) 42) : u16)
-              (cast (+ (* i 101) 49) : u16)
-              (cast (+ (* i 101) 56) : u16)
-              (cast (+ (* i 101) 63) : u16)))
-          (set! i (+ i 1))))
-      (while (< j 257)
-        (begin
-          (set! i (% (+ (* j 37) seed) 97))
-          (let
-            [actual : i64 (read-slot9x2 (& values) i)]
-            (begin
-              (when (!= actual (+ (* (* i 101) 45) 1995)) (return -1))
-              (set! total (+ total actual))))
-          (set! j (+ j 1))))
-      total)))
+    (while (< i 97)
+      (set!
+        (array-ref values i)
+        (Slot9x2
+          (cast (+ (* i 101) 7) : u16)
+          (cast (+ (* i 101) 14) : u16)
+          (cast (+ (* i 101) 21) : u16)
+          (cast (+ (* i 101) 28) : u16)
+          (cast (+ (* i 101) 35) : u16)
+          (cast (+ (* i 101) 42) : u16)
+          (cast (+ (* i 101) 49) : u16)
+          (cast (+ (* i 101) 56) : u16)
+          (cast (+ (* i 101) 63) : u16)))
+      (set! i (+ i 1)))
+    (while (< j 257)
+      (set! i (% (+ (* j 37) seed) 97))
+      (let
+        [actual : i64 (read-slot9x2 (& values) i)]
+        (when (!= actual (+ (* (* i 101) 45) 1995)) (return -1))
+        (set! total (+ total actual)))
+      (set! j (+ j 1)))
+    total))
 
 (defstruct Slot3x4
   (f0 i32)
@@ -179,26 +167,22 @@
     [i : i64 0]
     [j : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 97)
-        (begin
-          (set!
-            (array-ref values i)
-            (Slot3x4
-              (cast (+ (* i 101) 7) : i32)
-              (cast (+ (* i 101) 14) : i32)
-              (cast (+ (* i 101) 21) : i32)))
-          (set! i (+ i 1))))
-      (while (< j 257)
-        (begin
-          (set! i (% (+ (* j 37) seed) 97))
-          (let
-            [actual : i64 (read-slot3x4 (& values) i)]
-            (begin
-              (when (!= actual (+ (* (* i 101) 6) 98)) (return -1))
-              (set! total (+ total actual))))
-          (set! j (+ j 1))))
-      total)))
+    (while (< i 97)
+      (set!
+        (array-ref values i)
+        (Slot3x4
+          (cast (+ (* i 101) 7) : i32)
+          (cast (+ (* i 101) 14) : i32)
+          (cast (+ (* i 101) 21) : i32)))
+      (set! i (+ i 1)))
+    (while (< j 257)
+      (set! i (% (+ (* j 37) seed) 97))
+      (let
+        [actual : i64 (read-slot3x4 (& values) i)]
+        (when (!= actual (+ (* (* i 101) 6) 98)) (return -1))
+        (set! total (+ total actual)))
+      (set! j (+ j 1)))
+    total))
 
 (defstruct Slot5x4
   (f0 i32)
@@ -226,28 +210,24 @@
     [i : i64 0]
     [j : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 97)
-        (begin
-          (set!
-            (array-ref values i)
-            (Slot5x4
-              (cast (+ (* i 101) 7) : i32)
-              (cast (+ (* i 101) 14) : i32)
-              (cast (+ (* i 101) 21) : i32)
-              (cast (+ (* i 101) 28) : i32)
-              (cast (+ (* i 101) 35) : i32)))
-          (set! i (+ i 1))))
-      (while (< j 257)
-        (begin
-          (set! i (% (+ (* j 37) seed) 97))
-          (let
-            [actual : i64 (read-slot5x4 (& values) i)]
-            (begin
-              (when (!= actual (+ (* (* i 101) 15) 385)) (return -1))
-              (set! total (+ total actual))))
-          (set! j (+ j 1))))
-      total)))
+    (while (< i 97)
+      (set!
+        (array-ref values i)
+        (Slot5x4
+          (cast (+ (* i 101) 7) : i32)
+          (cast (+ (* i 101) 14) : i32)
+          (cast (+ (* i 101) 21) : i32)
+          (cast (+ (* i 101) 28) : i32)
+          (cast (+ (* i 101) 35) : i32)))
+      (set! i (+ i 1)))
+    (while (< j 257)
+      (set! i (% (+ (* j 37) seed) 97))
+      (let
+        [actual : i64 (read-slot5x4 (& values) i)]
+        (when (!= actual (+ (* (* i 101) 15) 385)) (return -1))
+        (set! total (+ total actual)))
+      (set! j (+ j 1)))
+    total))
 
 (defstruct Slot9x4
   (f0 i32)
@@ -289,32 +269,28 @@
     [i : i64 0]
     [j : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 97)
-        (begin
-          (set!
-            (array-ref values i)
-            (Slot9x4
-              (cast (+ (* i 101) 7) : i32)
-              (cast (+ (* i 101) 14) : i32)
-              (cast (+ (* i 101) 21) : i32)
-              (cast (+ (* i 101) 28) : i32)
-              (cast (+ (* i 101) 35) : i32)
-              (cast (+ (* i 101) 42) : i32)
-              (cast (+ (* i 101) 49) : i32)
-              (cast (+ (* i 101) 56) : i32)
-              (cast (+ (* i 101) 63) : i32)))
-          (set! i (+ i 1))))
-      (while (< j 257)
-        (begin
-          (set! i (% (+ (* j 37) seed) 97))
-          (let
-            [actual : i64 (read-slot9x4 (& values) i)]
-            (begin
-              (when (!= actual (+ (* (* i 101) 45) 1995)) (return -1))
-              (set! total (+ total actual))))
-          (set! j (+ j 1))))
-      total)))
+    (while (< i 97)
+      (set!
+        (array-ref values i)
+        (Slot9x4
+          (cast (+ (* i 101) 7) : i32)
+          (cast (+ (* i 101) 14) : i32)
+          (cast (+ (* i 101) 21) : i32)
+          (cast (+ (* i 101) 28) : i32)
+          (cast (+ (* i 101) 35) : i32)
+          (cast (+ (* i 101) 42) : i32)
+          (cast (+ (* i 101) 49) : i32)
+          (cast (+ (* i 101) 56) : i32)
+          (cast (+ (* i 101) 63) : i32)))
+      (set! i (+ i 1)))
+    (while (< j 257)
+      (set! i (% (+ (* j 37) seed) 97))
+      (let
+        [actual : i64 (read-slot9x4 (& values) i)]
+        (when (!= actual (+ (* (* i 101) 45) 1995)) (return -1))
+        (set! total (+ total actual)))
+      (set! j (+ j 1)))
+    total))
 
 (defstruct Slot3x8
   (f0 i64)
@@ -336,26 +312,22 @@
     [i : i64 0]
     [j : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 97)
-        (begin
-          (set!
-            (array-ref values i)
-            (Slot3x8
-              (cast (+ (* i 101) 7) : i64)
-              (cast (+ (* i 101) 14) : i64)
-              (cast (+ (* i 101) 21) : i64)))
-          (set! i (+ i 1))))
-      (while (< j 257)
-        (begin
-          (set! i (% (+ (* j 37) seed) 97))
-          (let
-            [actual : i64 (read-slot3x8 (& values) i)]
-            (begin
-              (when (!= actual (+ (* (* i 101) 6) 98)) (return -1))
-              (set! total (+ total actual))))
-          (set! j (+ j 1))))
-      total)))
+    (while (< i 97)
+      (set!
+        (array-ref values i)
+        (Slot3x8
+          (cast (+ (* i 101) 7) : i64)
+          (cast (+ (* i 101) 14) : i64)
+          (cast (+ (* i 101) 21) : i64)))
+      (set! i (+ i 1)))
+    (while (< j 257)
+      (set! i (% (+ (* j 37) seed) 97))
+      (let
+        [actual : i64 (read-slot3x8 (& values) i)]
+        (when (!= actual (+ (* (* i 101) 6) 98)) (return -1))
+        (set! total (+ total actual)))
+      (set! j (+ j 1)))
+    total))
 
 (defstruct Slot5x8
   (f0 i64)
@@ -383,28 +355,24 @@
     [i : i64 0]
     [j : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 97)
-        (begin
-          (set!
-            (array-ref values i)
-            (Slot5x8
-              (cast (+ (* i 101) 7) : i64)
-              (cast (+ (* i 101) 14) : i64)
-              (cast (+ (* i 101) 21) : i64)
-              (cast (+ (* i 101) 28) : i64)
-              (cast (+ (* i 101) 35) : i64)))
-          (set! i (+ i 1))))
-      (while (< j 257)
-        (begin
-          (set! i (% (+ (* j 37) seed) 97))
-          (let
-            [actual : i64 (read-slot5x8 (& values) i)]
-            (begin
-              (when (!= actual (+ (* (* i 101) 15) 385)) (return -1))
-              (set! total (+ total actual))))
-          (set! j (+ j 1))))
-      total)))
+    (while (< i 97)
+      (set!
+        (array-ref values i)
+        (Slot5x8
+          (cast (+ (* i 101) 7) : i64)
+          (cast (+ (* i 101) 14) : i64)
+          (cast (+ (* i 101) 21) : i64)
+          (cast (+ (* i 101) 28) : i64)
+          (cast (+ (* i 101) 35) : i64)))
+      (set! i (+ i 1)))
+    (while (< j 257)
+      (set! i (% (+ (* j 37) seed) 97))
+      (let
+        [actual : i64 (read-slot5x8 (& values) i)]
+        (when (!= actual (+ (* (* i 101) 15) 385)) (return -1))
+        (set! total (+ total actual)))
+      (set! j (+ j 1)))
+    total))
 
 (defstruct Slot9x8
   (f0 i64)
@@ -446,32 +414,28 @@
     [i : i64 0]
     [j : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 97)
-        (begin
-          (set!
-            (array-ref values i)
-            (Slot9x8
-              (cast (+ (* i 101) 7) : i64)
-              (cast (+ (* i 101) 14) : i64)
-              (cast (+ (* i 101) 21) : i64)
-              (cast (+ (* i 101) 28) : i64)
-              (cast (+ (* i 101) 35) : i64)
-              (cast (+ (* i 101) 42) : i64)
-              (cast (+ (* i 101) 49) : i64)
-              (cast (+ (* i 101) 56) : i64)
-              (cast (+ (* i 101) 63) : i64)))
-          (set! i (+ i 1))))
-      (while (< j 257)
-        (begin
-          (set! i (% (+ (* j 37) seed) 97))
-          (let
-            [actual : i64 (read-slot9x8 (& values) i)]
-            (begin
-              (when (!= actual (+ (* (* i 101) 45) 1995)) (return -1))
-              (set! total (+ total actual))))
-          (set! j (+ j 1))))
-      total)))
+    (while (< i 97)
+      (set!
+        (array-ref values i)
+        (Slot9x8
+          (cast (+ (* i 101) 7) : i64)
+          (cast (+ (* i 101) 14) : i64)
+          (cast (+ (* i 101) 21) : i64)
+          (cast (+ (* i 101) 28) : i64)
+          (cast (+ (* i 101) 35) : i64)
+          (cast (+ (* i 101) 42) : i64)
+          (cast (+ (* i 101) 49) : i64)
+          (cast (+ (* i 101) 56) : i64)
+          (cast (+ (* i 101) 63) : i64)))
+      (set! i (+ i 1)))
+    (while (< j 257)
+      (set! i (% (+ (* j 37) seed) 97))
+      (let
+        [actual : i64 (read-slot9x8 (& values) i)]
+        (when (!= actual (+ (* (* i 101) 45) 1995)) (return -1))
+        (set! total (+ total actual)))
+      (set! j (+ j 1)))
+    total))
 
 (define (check-live-offset [seed : i64]) : i64
   (let
@@ -479,82 +443,67 @@
     [i : i64 0]
     [j : i64 0]
     [total : i64 0]
-    (begin
-      (while (< i 97)
-        (begin
-          (set!
-            (array-ref values i)
-            (Slot3x8
-              (cast (+ (* i 101) 7) : i64)
-              (cast (+ (* i 101) 14) : i64)
-              (cast (+ (* i 101) 21) : i64)))
-          (set! i (+ i 1))))
-      (while (< j 257)
-        (begin
-          (set! i (% (+ (* j 37) seed) 97))
-          (let
-            [actual : i64 (read-slot3x8 (& values) i)]
-            (begin
-              (when (!= actual (+ (* (* i 101) 6) 98)) (return -1))
-              ;; Keep the complete byte offset observable as well as its address.
-              (set! total (+ total (+ actual (* i 24))))))
-          (set! j (+ j 1))))
-      total)))
+    (while (< i 97)
+      (set!
+        (array-ref values i)
+        (Slot3x8
+          (cast (+ (* i 101) 7) : i64)
+          (cast (+ (* i 101) 14) : i64)
+          (cast (+ (* i 101) 21) : i64)))
+      (set! i (+ i 1)))
+    (while (< j 257)
+      (set! i (% (+ (* j 37) seed) 97))
+      (let
+        [actual : i64 (read-slot3x8 (& values) i)]
+        (when (!= actual (+ (* (* i 101) 6) 98)) (return -1))
+        ;; Keep the complete byte offset observable as well as its address.
+        (set! total (+ total (+ actual (* i 24)))))
+      (set! j (+ j 1)))
+    total))
 
 (define (main) : i64
   (let
     [seed : i64 (io.arg-count)]
     [total : i64 0]
-    (begin
-      (let
-        [value : i64 (check-slot3x2 seed)]
-        (begin
-          (when (< value 0) (return 1))
-          (set! total (+ total value))))
-      (let
-        [value : i64 (check-slot5x2 seed)]
-        (begin
-          (when (< value 0) (return 1))
-          (set! total (+ total value))))
-      (let
-        [value : i64 (check-slot9x2 seed)]
-        (begin
-          (when (< value 0) (return 1))
-          (set! total (+ total value))))
-      (let
-        [value : i64 (check-slot3x4 seed)]
-        (begin
-          (when (< value 0) (return 1))
-          (set! total (+ total value))))
-      (let
-        [value : i64 (check-slot5x4 seed)]
-        (begin
-          (when (< value 0) (return 1))
-          (set! total (+ total value))))
-      (let
-        [value : i64 (check-slot9x4 seed)]
-        (begin
-          (when (< value 0) (return 1))
-          (set! total (+ total value))))
-      (let
-        [value : i64 (check-slot3x8 seed)]
-        (begin
-          (when (< value 0) (return 1))
-          (set! total (+ total value))))
-      (let
-        [value : i64 (check-slot5x8 seed)]
-        (begin
-          (when (< value 0) (return 1))
-          (set! total (+ total value))))
-      (let
-        [value : i64 (check-slot9x8 seed)]
-        (begin
-          (when (< value 0) (return 1))
-          (set! total (+ total value))))
-      (let
-        [value : i64 (check-live-offset seed)]
-        (begin
-          (when (< value 0) (return 1))
-          (set! total (+ total value))))
-      (io.println "{}" total)
-      0)))
+    (let
+      [value : i64 (check-slot3x2 seed)]
+      (when (< value 0) (return 1))
+      (set! total (+ total value)))
+    (let
+      [value : i64 (check-slot5x2 seed)]
+      (when (< value 0) (return 1))
+      (set! total (+ total value)))
+    (let
+      [value : i64 (check-slot9x2 seed)]
+      (when (< value 0) (return 1))
+      (set! total (+ total value)))
+    (let
+      [value : i64 (check-slot3x4 seed)]
+      (when (< value 0) (return 1))
+      (set! total (+ total value)))
+    (let
+      [value : i64 (check-slot5x4 seed)]
+      (when (< value 0) (return 1))
+      (set! total (+ total value)))
+    (let
+      [value : i64 (check-slot9x4 seed)]
+      (when (< value 0) (return 1))
+      (set! total (+ total value)))
+    (let
+      [value : i64 (check-slot3x8 seed)]
+      (when (< value 0) (return 1))
+      (set! total (+ total value)))
+    (let
+      [value : i64 (check-slot5x8 seed)]
+      (when (< value 0) (return 1))
+      (set! total (+ total value)))
+    (let
+      [value : i64 (check-slot9x8 seed)]
+      (when (< value 0) (return 1))
+      (set! total (+ total value)))
+    (let
+      [value : i64 (check-live-offset seed)]
+      (when (< value 0) (return 1))
+      (set! total (+ total value)))
+    (io.println "{}" total)
+    0))

@@ -325,17 +325,16 @@
 (cfg
   test
   (define (winsock-test-reset-counters!) : unit
-    (begin
-      (unsafe
-        (atomic-store! (ptr-addr-of winsock-test-load-count) 0))
-      (unsafe
-        (atomic-store! (ptr-addr-of winsock-test-resolve-count) 0))
-      (unsafe
-        (atomic-store! (ptr-addr-of winsock-test-release-count) 0))
-      (unsafe
-        (atomic-store! (ptr-addr-of winsock-test-startup-count) 0))
-      (unsafe
-        (atomic-store! (ptr-addr-of winsock-test-cleanup-count) 0)))))
+    (unsafe
+      (atomic-store! (ptr-addr-of winsock-test-load-count) 0))
+    (unsafe
+      (atomic-store! (ptr-addr-of winsock-test-resolve-count) 0))
+    (unsafe
+      (atomic-store! (ptr-addr-of winsock-test-release-count) 0))
+    (unsafe
+      (atomic-store! (ptr-addr-of winsock-test-startup-count) 0))
+    (unsafe
+      (atomic-store! (ptr-addr-of winsock-test-cleanup-count) 0))))
 
 (cfg
   test
@@ -481,11 +480,10 @@
         [name : (Array u16 11) (winsock-dll-wide-name)]
         [index : i64 0]
         (while (< index 11)
-          (begin
-            (set!
-              (array-ref system-path (+ system-length separator index))
-              (array-ref name index))
-            (set! index (+ index 1)))))
+          (set!
+            (array-ref system-path (+ system-length separator index))
+            (array-ref name index))
+          (set! index (+ index 1))))
       (let
         [comparison : i32
           (winsock-compare-string-ordinal
@@ -569,11 +567,8 @@
       [out : (Array u16 1024) (init : (Array u16 1024))]
       [index : i64 0]
       (while (< index (string.string-length name))
-        (begin
-          (set!
-            (array-ref out index)
-            (cast (string.string-ref name index) : u16))
-          (set! index (+ index 1))))
+        (set! (array-ref out index) (cast (string.string-ref name index) : u16))
+        (set! index (+ index 1)))
       out)))
 
 (cfg
@@ -644,24 +639,23 @@
           (winsock-test-identity-case-ok? 2 0 real-result)
           (winsock-test-identity-case-ok? 3 1 truncated-result)
           (winsock-test-identity-case-ok? 4 1 failed-result))]
-      (begin
-        (when
-          (not ok)
-          (io.eprintln
-            "winsock: caller system-path[{}] after a by-value call = {} (must be 0); real-path[{}] = {}; direct CompareStringOrdinal(real, expected) = {}"
-            system-length
-            system-after-call
-            real-length
-            (cast (array-ref real-path real-length) : i64)
-            (winsock-compare-string-ordinal
-              (unsafe
-                (ptr-cast (__tl_array-data real-path) : (Ptr u16)))
-              (cast real-length : i32)
-              (unsafe
-                (ptr-cast (__tl_array-data expected-path) : (Ptr u16)))
-              (cast (string.string-length (& expected)) : i32)
-              (cast 1 : i32))))
-        ok))))
+      (when
+        (not ok)
+        (io.eprintln
+          "winsock: caller system-path[{}] after a by-value call = {} (must be 0); real-path[{}] = {}; direct CompareStringOrdinal(real, expected) = {}"
+          system-length
+          system-after-call
+          real-length
+          (cast (array-ref real-path real-length) : i64)
+          (winsock-compare-string-ordinal
+            (unsafe
+              (ptr-cast (__tl_array-data real-path) : (Ptr u16)))
+            (cast real-length : i32)
+            (unsafe
+              (ptr-cast (__tl_array-data expected-path) : (Ptr u16)))
+            (cast (string.string-length (& expected)) : i32)
+            (cast 1 : i32))))
+      ok)))
 
 ;: Resolve the fixed schema in order. A failed slot stops before the next lookup.
 ;: The injected index is -1 in production and is used only by bounded tests.
@@ -1135,13 +1129,11 @@
             [else (winsock-check-module-identity module)])]
         (match identity
           [(WinsockIdentityQueryFailed)
-            (begin
-              (winsock-release-candidate module)
-              (return (WinsockTableErr (WinsockIdentityUnavailable))))]
+            (winsock-release-candidate module)
+            (return (WinsockTableErr (WinsockIdentityUnavailable)))]
           [(WinsockIdentityWrongModule)
-            (begin
-              (winsock-release-candidate module)
-              (return (WinsockTableErr (WinsockIdentityMismatch))))]
+            (winsock-release-candidate module)
+            (return (WinsockTableErr (WinsockIdentityMismatch)))]
           [(WinsockIdentityOk) unit])
         (when
           (or (= identity-fault 3) (not (winsock-abi-layout-ok?)))
@@ -1151,9 +1143,8 @@
         (match (unsafe
           (winsock-resolve-table module missing-at))
           [(WinsockTableErr error)
-            (begin
-              (winsock-release-candidate module)
-              (WinsockTableErr error))]
+            (winsock-release-candidate module)
+            (WinsockTableErr error)]
           [(WinsockTableOk table) (WinsockTableOk table)])))))
 
 ;: Serialize first use. Contenders wait for the winner's complete table, or
@@ -1183,17 +1174,15 @@
               (match (unsafe
                 (winsock-build-candidate missing-at identity-fault load-fault))
                 [(WinsockTableErr error)
-                  (begin
-                    (unsafe
-                      (atomic-store! (ptr-addr-of winsock-publication-state) 0))
-                    (return (WinsockTableErr error)))]
+                  (unsafe
+                    (atomic-store! (ptr-addr-of winsock-publication-state) 0))
+                  (return (WinsockTableErr error))]
                 [(WinsockTableOk table)
-                  (begin
-                    (unsafe
-                      (winsock-write-published-table! table))
-                    (unsafe
-                      (atomic-store! (ptr-addr-of winsock-publication-state) 2))
-                    (return (WinsockTableOk table)))]))]
+                  (unsafe
+                    (winsock-write-published-table! table))
+                  (unsafe
+                    (atomic-store! (ptr-addr-of winsock-publication-state) 2))
+                  (return (WinsockTableOk table))]))]
           [else unit])))
     (WinsockTableErr (WinsockIdentityUnavailable))))
 
@@ -1372,14 +1361,13 @@
         (let
           [index : i64 0]
           (while (and (< index (winsock-lease-capacity)) (< slot 0))
-            (begin
-              (when
-                (=
-                  (unsafe
-                    (winsock-lease-slot-ref index))
-                  address)
-                (set! slot index))
-              (set! index (+ index 1))))))
+            (when
+              (=
+                (unsafe
+                  (winsock-lease-slot-ref index))
+                address)
+              (set! slot index))
+            (set! index (+ index 1)))))
       (when
         (>= slot 0)
         (unsafe
@@ -1400,10 +1388,9 @@
       (match (unsafe
         (winsock-ensure-table))
         [(WinsockTableOk table)
-          (begin
-            (unsafe
-              (winsock-call-cleanup table))
-            unit)]
+          (unsafe
+            (winsock-call-cleanup table))
+          unit]
         [(WinsockTableErr _) unit]))))
 
 ;: Only a checked live lease grants a copy of the immutable function table.
@@ -1577,25 +1564,22 @@
     (let
       [slot : i64 0]
       (while (< slot 21)
-        (begin
-          (winsock-test-reset-counters!)
-          (match (unsafe
-            (winsock-ensure-table-with slot -1 false))
-            [(WinsockTableErr (WinsockMissingExport name))
-              (let
-                [expected : String (winsock-test-schema-name slot)]
-                (when (not (string.eq (& name) (& expected))) (return false)))]
-            [_ (return false)])
-          (when
-            (not (winsock-test-counters-match? 1 slot 1 0 0))
-            (return false))
-          (when
-            (!=
-              (unsafe
-                (atomic-load (ptr-addr-of winsock-publication-state)))
-              0)
-            (return false))
-          (set! slot (+ slot 1)))))
+        (winsock-test-reset-counters!)
+        (match (unsafe
+          (winsock-ensure-table-with slot -1 false))
+          [(WinsockTableErr (WinsockMissingExport name))
+            (let
+              [expected : String (winsock-test-schema-name slot)]
+              (when (not (string.eq (& name) (& expected))) (return false)))]
+          [_ (return false)])
+        (when (not (winsock-test-counters-match? 1 slot 1 0 0)) (return false))
+        (when
+          (!=
+            (unsafe
+              (atomic-load (ptr-addr-of winsock-publication-state)))
+            0)
+          (return false))
+        (set! slot (+ slot 1))))
     true))
 
 ;: Published pointer access rejects a source-constructed Box authority.
@@ -1628,14 +1612,13 @@
           (ptr-cast (ptr-addr-of table) : (Ptr u64)))]
       [index : i64 0]
       (while (< index 22)
-        (begin
-          (when
-            (=
-              (unsafe
-                (ptr-read (ptr-offset words index)))
-              (cast 0 : u64))
-            (return false))
-          (set! index (+ index 1))))
+        (when
+          (=
+            (unsafe
+              (ptr-read (ptr-offset words index)))
+            (cast 0 : u64))
+          (return false))
+        (set! index (+ index 1)))
       true)))
 
 ;: Hold every worker at a barrier so first publication has real contention.
@@ -1650,7 +1633,8 @@
       0)
       (begin
         (time.sleep-ms 1)
-        unit))
+        unit)
+      unit)
     (match (winsock-acquire)
       [(WinsockAcquireErr _) 0]
       [(WinsockAcquired lease)
@@ -1677,7 +1661,8 @@
       0)
       (begin
         (time.sleep-ms 1)
-        unit))
+        unit)
+      unit)
     (match (unsafe
       (winsock-ensure-table-with 20 -1 false))
       [(WinsockTableErr (WinsockMissingExport name))
@@ -1706,35 +1691,34 @@
             total))
           (begin
             (time.sleep-ms 1)
-            (set! attempts (+ attempts 1))))
+            unit)
+          (set! attempts (+ attempts 1)))
         (let
           [all-arrived : bool
             (=
               (unsafe
                 (atomic-load (ptr-addr-of winsock-test-wave-arrived)))
               total)]
-          (begin
-            (unsafe
-              (atomic-store! (ptr-addr-of winsock-test-wave-go) 1))
-            all-arrived)))
+          (unsafe
+            (atomic-store! (ptr-addr-of winsock-test-wave-go) 1))
+          all-arrived))
       (match (if failing
         (unsafe
           (thread.spawn winsock-test-failing-worker 0))
         (unsafe
           (thread.spawn winsock-test-worker 0)))
-        [(thread.ThreadSpawnErr _)
-          (begin
-            (unsafe
-              (atomic-store! (ptr-addr-of winsock-test-wave-go) 1))
-            false)]
-        [(thread.ThreadSpawnOk worker)
+        [(ThreadSpawnErr _)
+          (unsafe
+            (atomic-store! (ptr-addr-of winsock-test-wave-go) 1))
+          false]
+        [(ThreadSpawnOk worker)
           (let
             [later-ok : bool
               (winsock-test-spawn-wave (- remaining 1) total failing)]
             (match (unsafe
               (thread.join worker))
-              [(thread.ThreadJoinErr _) false]
-              [(thread.ThreadJoinOk code) (and later-ok (= code 1))]))]))))
+              [(ThreadJoinErr _) false]
+              [(ThreadJoinOk code) (and later-ok (= code 1))]))]))))
 
 (cfg
   test
@@ -1807,33 +1791,31 @@
     (match (winsock-acquire)
       [(WinsockAcquireErr _) false]
       [(WinsockAcquired lease)
-        (begin
-          (with
-            ([owned lease cleanup-winsock-lease])
-            (let
-              [hint : i64 (deref owned.token)]
-              (with
-                ([forged (WinsockLease (box hint)) cleanup-winsock-lease])
-                (match (unsafe
-                  (winsock-table-for-lease (& forged)))
-                  [(WinsockTableErr (WinsockLeaseInvalid)) unit]
-                  [_ (return false)]))
+        (with
+          ([owned lease cleanup-winsock-lease])
+          (let
+            [hint : i64 (deref owned.token)]
+            (with
+              ([forged (WinsockLease (box hint)) cleanup-winsock-lease])
               (match (unsafe
-                (winsock-table-for-lease (& owned)))
-                [(WinsockTableErr _) (return false)]
-                [(WinsockTableOk _) unit])
-              (set! (deref owned.token) 0)
-              (match (unsafe
-                (winsock-table-for-lease (& owned)))
+                (winsock-table-for-lease (& forged)))
                 [(WinsockTableErr (WinsockLeaseInvalid)) unit]
-                [_ (return false)])))
-          (when (not (winsock-test-counters-match? 0 0 0 2 2)) (return false))
-          (match (winsock-acquire)
-            [(WinsockAcquireErr _) false]
-            [(WinsockAcquired second)
-              (begin
-                (with ([owned second cleanup-winsock-lease]) unit)
-                (winsock-test-counters-match? 0 0 0 3 3))]))])))
+                [_ (return false)]))
+            (match (unsafe
+              (winsock-table-for-lease (& owned)))
+              [(WinsockTableErr _) (return false)]
+              [(WinsockTableOk _) unit])
+            (set! (deref owned.token) 0)
+            (match (unsafe
+              (winsock-table-for-lease (& owned)))
+              [(WinsockTableErr (WinsockLeaseInvalid)) unit]
+              [_ (return false)])))
+        (when (not (winsock-test-counters-match? 0 0 0 2 2)) (return false))
+        (match (winsock-acquire)
+          [(WinsockAcquireErr _) false]
+          [(WinsockAcquired second)
+            (with ([owned second cleanup-winsock-lease]) unit)
+            (winsock-test-counters-match? 0 0 0 3 3)])])))
 
 ;: Exercise both construction paths with independent leases and close both
 ;: raw descriptors before either startup authorization is released.
@@ -1903,16 +1885,14 @@
               (!= code (cast 0 : i32))]
             [(WinsockSocketErr _) false]
             [(WinsockSocketOk socket)
-              (begin
-                (match (unsafe
-                  (winsock-table-for-lease (& owned)))
-                  [(WinsockTableOk table)
-                    (begin
-                      (unsafe
-                        (table.close socket))
-                      unit)]
-                  [(WinsockTableErr _) unit])
-                false)]))])))
+              (match (unsafe
+                (winsock-table-for-lease (& owned)))
+                [(WinsockTableOk table)
+                  (unsafe
+                    (table.close socket))
+                  unit]
+                [(WinsockTableErr _) unit])
+              false]))])))
 
 (cfg
   test

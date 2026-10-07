@@ -8,31 +8,31 @@
 
 (define (result-code [result : rooted.FsLinuxRootedResult]) : i64
   (match result
-    [(rooted.LinuxRootedOk) 0]
-    [(rooted.LinuxRootedInvalidComponent) 1]
-    [(rooted.LinuxRootedNotFound) 2]
-    [(rooted.LinuxRootedAlreadyExists) 3]
-    [(rooted.LinuxRootedUnsafeResolution) 4]
-    [(rooted.LinuxRootedWrongKind) 5]
-    [(rooted.LinuxRootedPermissionDenied) 6]
-    [(rooted.LinuxRootedUnsupported) 7]
-    [(rooted.LinuxRootedIoFailure) 8]
-    [(rooted.LinuxRootedCancelled) 9]
-    [(rooted.LinuxRootedWriteFailure) 10]
-    [(rooted.LinuxRootedModeFailure) 11]
-    [(rooted.LinuxRootedFlushFailure) 12]
-    [(rooted.LinuxRootedCloseFailure) 13]
-    [(rooted.LinuxRootedClosed) 14]
-    [(rooted.LinuxRootedCrossDevice) 15]
-    [(rooted.LinuxRootedDirectoryNotEmpty) 16]
-    [(rooted.LinuxRootedInvalidLength) 17]
-    [(rooted.LinuxRootedLengthMismatch) 18]
-    [(rooted.LinuxRootedReadFailure) 19]
-    [(rooted.LinuxRootedIdentityChanged) 20]
-    [(rooted.LinuxRootedSourceChanged) 21]
-    [(rooted.LinuxRootedInvalidPermissions) 22]
-    [(rooted.LinuxRootedModeMismatch) 23]
-    [(rooted.LinuxRootedLockConflict) 24]))
+    [(LinuxRootedOk) 0]
+    [(LinuxRootedInvalidComponent) 1]
+    [(LinuxRootedNotFound) 2]
+    [(LinuxRootedAlreadyExists) 3]
+    [(LinuxRootedUnsafeResolution) 4]
+    [(LinuxRootedWrongKind) 5]
+    [(LinuxRootedPermissionDenied) 6]
+    [(LinuxRootedUnsupported) 7]
+    [(LinuxRootedIoFailure) 8]
+    [(LinuxRootedCancelled) 9]
+    [(LinuxRootedWriteFailure) 10]
+    [(LinuxRootedModeFailure) 11]
+    [(LinuxRootedFlushFailure) 12]
+    [(LinuxRootedCloseFailure) 13]
+    [(LinuxRootedClosed) 14]
+    [(LinuxRootedCrossDevice) 15]
+    [(LinuxRootedDirectoryNotEmpty) 16]
+    [(LinuxRootedInvalidLength) 17]
+    [(LinuxRootedLengthMismatch) 18]
+    [(LinuxRootedReadFailure) 19]
+    [(LinuxRootedIdentityChanged) 20]
+    [(LinuxRootedSourceChanged) 21]
+    [(LinuxRootedInvalidPermissions) 22]
+    [(LinuxRootedModeMismatch) 23]
+    [(LinuxRootedLockConflict) 24]))
 
 (define (finish-is?
   [result : rooted.FsLinuxRootedFinishResult]
@@ -64,7 +64,7 @@
             (&mut file)
             (byte_buf.str-as-bytes (& contents))
             (string-length (& contents))
-            rooted.LinuxRootedRegularFile
+            LinuxRootedRegularFile
             true
             rooted.linux-rooted-never-cancelled)]
         (if (rooted.linux-rooted-result-ok?
@@ -115,7 +115,7 @@
     (if (not (rooted.linux-rooted-file-open? (& stage)))
       (rooted.FsLinuxRootedFinishResult
         (rooted.linux-rooted-file-result (& stage))
-        rooted.LinuxRootedClosed)
+        LinuxRootedClosed)
       (rooted.linux-rooted-file-finish-with-source-permissions!
         (&mut stage)
         (byte_buf.str-as-bytes (& contents))
@@ -313,7 +313,7 @@
   [owner-delta : u32]
   [permissions : i64]) : rooted.FsLinuxRootedSourceSnapshot
   (rooted.FsLinuxRootedSourceSnapshot
-    rooted.LinuxRootedOk
+    LinuxRootedOk
     source.device
     source.inode
     source.length
@@ -400,22 +400,20 @@
             "source.txt"
             rooted.linux-rooted-never-cancelled)
           rooted.cleanup-linux-rooted-read-file])
-      (begin
+      (rooted.linux-rooted-test-reset!)
+      (rooted.linux-rooted-test-fail-on!
+        rooted.fs-linux-rooted-syscall-kind-fstat
+        1
+        5)
+      (let
+        [snapshot : rooted.FsLinuxRootedSourceSnapshot
+          (rooted.linux-rooted-read-file-source-snapshot
+            (& reader)
+            rooted.linux-rooted-never-cancelled)]
+        [ok : bool
+          (= (result-code (rooted.linux-rooted-source-result (& snapshot))) 8)]
         (rooted.linux-rooted-test-reset!)
-        (rooted.linux-rooted-test-fail-on!
-          rooted.fs-linux-rooted-syscall-kind-fstat
-          1
-          5)
-        (let
-          [snapshot : rooted.FsLinuxRootedSourceSnapshot
-            (rooted.linux-rooted-read-file-source-snapshot
-              (& reader)
-              rooted.linux-rooted-never-cancelled)]
-          [ok : bool
-            (= (result-code (rooted.linux-rooted-source-result (& snapshot))) 8)]
-          (begin
-            (rooted.linux-rooted-test-reset!)
-            ok))))))
+        ok))))
 
 (define (fault-revalidate
   [kind : i64]
@@ -432,18 +430,16 @@
     (let
       [source : rooted.FsLinuxRootedSourceSnapshot
         (snapshot-of (& root) "source.txt")]
-      (begin
+      (rooted.linux-rooted-test-reset!)
+      (rooted.linux-rooted-test-fail-on! kind call errno-code)
+      (let
+        [ok : bool
+          (finish-is?
+            (revalidate (& root) "source.txt" (& source))
+            operation
+            close)]
         (rooted.linux-rooted-test-reset!)
-        (rooted.linux-rooted-test-fail-on! kind call errno-code)
-        (let
-          [ok : bool
-            (finish-is?
-              (revalidate (& root) "source.txt" (& source))
-              operation
-              close)]
-          (begin
-            (rooted.linux-rooted-test-reset!)
-            ok))))))
+        ok))))
 
 ;; An operation failure and a cleanup failure in one revalidation: the name
 ;; denotes another file and the one close fails. Both are reported.
@@ -457,18 +453,16 @@
     (let
       [source : rooted.FsLinuxRootedSourceSnapshot
         (snapshot-of (& root) "source.txt")]
-      (begin
+      (rooted.linux-rooted-test-reset!)
+      (rooted.linux-rooted-test-fail-on!
+        rooted.fs-linux-rooted-syscall-kind-close
+        1
+        5)
+      (let
+        [ok : bool
+          (finish-is? (revalidate (& root) "other.txt" (& source)) 20 13)]
         (rooted.linux-rooted-test-reset!)
-        (rooted.linux-rooted-test-fail-on!
-          rooted.fs-linux-rooted-syscall-kind-close
-          1
-          5)
-        (let
-          [ok : bool
-            (finish-is? (revalidate (& root) "other.txt" (& source)) 20 13)]
-          (begin
-            (rooted.linux-rooted-test-reset!)
-            ok))))))
+        ok))))
 
 ;; A stage finished with a mask that was never admitted, whose close also
 ;; fails: both outcomes are reported and no byte is written.
@@ -492,28 +486,26 @@
               (& stage)
               rooted.linux-rooted-never-cancelled)
             rooted.cleanup-linux-rooted-file])
-        (begin
+        (rooted.linux-rooted-test-reset!)
+        (rooted.linux-rooted-test-fail-on!
+          rooted.fs-linux-rooted-syscall-kind-close
+          1
+          5)
+        (let
+          [contents : String "never\n"]
+          [ok : bool
+            (finish-is?
+              (rooted.linux-rooted-file-finish-with-source-permissions!
+                (&mut file)
+                (byte_buf.str-as-bytes (& contents))
+                (string-length (& contents))
+                (& wide)
+                true
+                rooted.linux-rooted-never-cancelled)
+              22
+              13)]
           (rooted.linux-rooted-test-reset!)
-          (rooted.linux-rooted-test-fail-on!
-            rooted.fs-linux-rooted-syscall-kind-close
-            1
-            5)
-          (let
-            [contents : String "never\n"]
-            [ok : bool
-              (finish-is?
-                (rooted.linux-rooted-file-finish-with-source-permissions!
-                  (&mut file)
-                  (byte_buf.str-as-bytes (& contents))
-                  (string-length (& contents))
-                  (& wide)
-                  true
-                  rooted.linux-rooted-never-cancelled)
-                22
-                13)]
-            (begin
-              (rooted.linux-rooted-test-reset!)
-              ok)))))))
+          ok)))))
 
 (define (fault-finish
   [stage : String]
@@ -538,25 +530,23 @@
               (& stage)
               rooted.linux-rooted-never-cancelled)
             rooted.cleanup-linux-rooted-file])
-        (begin
+        (rooted.linux-rooted-test-reset!)
+        (rooted.linux-rooted-test-fail-on! kind call errno-code)
+        (let
+          [contents : String "faulted\n"]
+          [ok : bool
+            (finish-is?
+              (rooted.linux-rooted-file-finish-with-source-permissions!
+                (&mut file)
+                (byte_buf.str-as-bytes (& contents))
+                (string-length (& contents))
+                (& source)
+                true
+                rooted.linux-rooted-never-cancelled)
+              operation
+              close)]
           (rooted.linux-rooted-test-reset!)
-          (rooted.linux-rooted-test-fail-on! kind call errno-code)
-          (let
-            [contents : String "faulted\n"]
-            [ok : bool
-              (finish-is?
-                (rooted.linux-rooted-file-finish-with-source-permissions!
-                  (&mut file)
-                  (byte_buf.str-as-bytes (& contents))
-                  (string-length (& contents))
-                  (& source)
-                  true
-                  rooted.linux-rooted-never-cancelled)
-                operation
-                close)]
-            (begin
-              (rooted.linux-rooted-test-reset!)
-              ok)))))))
+          ok)))))
 
 ;; The harness creates `source.txt` (0640) and checks that the stages whose
 ;; ownership check failed received no bytes.
@@ -633,23 +623,22 @@
     (let
       [mode : String (io.arg 1)]
       [root-path : String (io.arg 2)]
-      (begin
-        (set! fault-root-path (io.arg 2))
-        (with
-          ([root
-              (rooted.linux-rooted-open-root
-                (& root-path)
-                rooted.linux-rooted-never-cancelled)
-              rooted.cleanup-linux-rooted-directory])
-          (if (not (rooted.linux-rooted-directory-open? (& root)))
-            3
-            (let
-              [status : i64
-                (cond
-                  [(string.eq (& mode) "revalidate") (run-revalidate (& root))]
-                  [(string.eq (& mode) "finish") (run-finish (& root))]
-                  [(string.eq (& mode) "faults") (run-faults)]
-                  [else 4])]
-              (if (= status 0)
-                42
-                status))))))))
+      (set! fault-root-path (io.arg 2))
+      (with
+        ([root
+            (rooted.linux-rooted-open-root
+              (& root-path)
+              rooted.linux-rooted-never-cancelled)
+            rooted.cleanup-linux-rooted-directory])
+        (if (not (rooted.linux-rooted-directory-open? (& root)))
+          3
+          (let
+            [status : i64
+              (cond
+                [(string.eq (& mode) "revalidate") (run-revalidate (& root))]
+                [(string.eq (& mode) "finish") (run-finish (& root))]
+                [(string.eq (& mode) "faults") (run-faults)]
+                [else 4])]
+            (if (= status 0)
+              42
+              status)))))))

@@ -17,15 +17,14 @@
       (define (score [first : ,T] [fallback : ,T]) : i64
         (let
           [items : Vec (new)]
-          (begin
-            (push! items first)
-            (if (if (= (len (& items)) 1)
-              (not (is-empty? (& items)))
-              false)
-              (begin
-                (get (& items) 0 fallback)
-                42)
-              0)))))))
+          (push! items first)
+          (if (if (= (len (& items)) 1)
+            (not (is-empty? (& items)))
+            false)
+            (begin
+              (get (& items) 0 fallback)
+              42)
+            0))))))
 
 (import (vector-user i64) as user)
 (import (vector-user String) as string-user)

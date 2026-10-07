@@ -19,13 +19,12 @@
         (live.compiler-live-set-max
           (live.compiler-live-set-max (live.compiler-live-set-max a b) c)
           (live.compiler-live-set-max d e)))]
-    (begin
-      (live.compiler-live-set-builder-insert! (&mut words) a)
-      (live.compiler-live-set-builder-insert! (&mut words) b)
-      (live.compiler-live-set-builder-insert! (&mut words) c)
-      (live.compiler-live-set-builder-insert! (&mut words) d)
-      (live.compiler-live-set-builder-insert! (&mut words) e)
-      (live.CompilerLiveI64Set words))))
+    (live.compiler-live-set-builder-insert! (&mut words) a)
+    (live.compiler-live-set-builder-insert! (&mut words) b)
+    (live.compiler-live-set-builder-insert! (&mut words) c)
+    (live.compiler-live-set-builder-insert! (&mut words) d)
+    (live.compiler-live-set-builder-insert! (&mut words) e)
+    (live.CompilerLiveI64Set words)))
 
 (define (compiler-live-set6
   [a : i64]
@@ -40,14 +39,13 @@
         (live.compiler-live-set-max
           (live.compiler-live-set-max (live.compiler-live-set-max a b) c)
           (live.compiler-live-set-max (live.compiler-live-set-max d e) f)))]
-    (begin
-      (live.compiler-live-set-builder-insert! (&mut words) a)
-      (live.compiler-live-set-builder-insert! (&mut words) b)
-      (live.compiler-live-set-builder-insert! (&mut words) c)
-      (live.compiler-live-set-builder-insert! (&mut words) d)
-      (live.compiler-live-set-builder-insert! (&mut words) e)
-      (live.compiler-live-set-builder-insert! (&mut words) f)
-      (live.CompilerLiveI64Set words))))
+    (live.compiler-live-set-builder-insert! (&mut words) a)
+    (live.compiler-live-set-builder-insert! (&mut words) b)
+    (live.compiler-live-set-builder-insert! (&mut words) c)
+    (live.compiler-live-set-builder-insert! (&mut words) d)
+    (live.compiler-live-set-builder-insert! (&mut words) e)
+    (live.compiler-live-set-builder-insert! (&mut words) f)
+    (live.CompilerLiveI64Set words)))
 
 (define (compiler-live-set7
   [a : i64]
@@ -65,15 +63,14 @@
             (live.compiler-live-set-max (live.compiler-live-set-max a b) c)
             (live.compiler-live-set-max d e))
           (live.compiler-live-set-max f g)))]
-    (begin
-      (live.compiler-live-set-builder-insert! (&mut words) a)
-      (live.compiler-live-set-builder-insert! (&mut words) b)
-      (live.compiler-live-set-builder-insert! (&mut words) c)
-      (live.compiler-live-set-builder-insert! (&mut words) d)
-      (live.compiler-live-set-builder-insert! (&mut words) e)
-      (live.compiler-live-set-builder-insert! (&mut words) f)
-      (live.compiler-live-set-builder-insert! (&mut words) g)
-      (live.CompilerLiveI64Set words))))
+    (live.compiler-live-set-builder-insert! (&mut words) a)
+    (live.compiler-live-set-builder-insert! (&mut words) b)
+    (live.compiler-live-set-builder-insert! (&mut words) c)
+    (live.compiler-live-set-builder-insert! (&mut words) d)
+    (live.compiler-live-set-builder-insert! (&mut words) e)
+    (live.compiler-live-set-builder-insert! (&mut words) f)
+    (live.compiler-live-set-builder-insert! (&mut words) g)
+    (live.CompilerLiveI64Set words)))
 
 (define (compiler-live-set-ops-ok?) : bool
   (let
@@ -98,41 +95,38 @@
         32)]
     [deduplicated : live.CompilerLiveI64Set (compiler-live-set4 -1 31 31 66)]
     [ok : bool true]
-    (begin
-      (set! ok (and ok (live.compiler-live-set-eq? empty with-negative)))
-      (set! ok (and ok (= (live.compiler-live-set-count a) 4)))
-      (set! ok (and ok (live.compiler-live-set-contains? a 0)))
-      (set! ok (and ok (live.compiler-live-set-contains? a 31)))
-      (set! ok (and ok (live.compiler-live-set-contains? a 32)))
-      (set! ok (and ok (live.compiler-live-set-contains? a 66)))
-      (set! ok (and ok (not (live.compiler-live-set-contains? a -1))))
-      (set! ok (and ok (not (live.compiler-live-set-contains? a 33))))
-      (set!
+    (set! ok (and ok (live.compiler-live-set-eq? empty with-negative)))
+    (set! ok (and ok (= (live.compiler-live-set-count a) 4)))
+    (set! ok (and ok (live.compiler-live-set-contains? a 0)))
+    (set! ok (and ok (live.compiler-live-set-contains? a 31)))
+    (set! ok (and ok (live.compiler-live-set-contains? a 32)))
+    (set! ok (and ok (live.compiler-live-set-contains? a 66)))
+    (set! ok (and ok (not (live.compiler-live-set-contains? a -1))))
+    (set! ok (and ok (not (live.compiler-live-set-contains? a 33))))
+    (set!
+      ok
+      (and
         ok
-        (and
-          ok
-          (live.compiler-live-set-eq?
-            (live.compiler-live-shared-view a)
-            (live.compiler-live-shared-view b))))
-      (set!
+        (live.compiler-live-set-eq?
+          (live.compiler-live-shared-view a)
+          (live.compiler-live-shared-view b))))
+    (set!
+      ok
+      (and ok (= (compiler-live-set-score a) (compiler-live-set-score b))))
+    (set! ok (and ok (= (live.compiler-live-set-count removed) 3)))
+    (set! ok (and ok (not (live.compiler-live-set-contains? removed 31))))
+    (set! ok (and ok (= (live.compiler-live-set-count unioned) 5)))
+    (set!
+      ok
+      (and ok (live.compiler-live-set-eq? minus (compiler-live-set3 31 32 66))))
+    (set! ok (and ok (= (live.compiler-live-set-count trimmed) 2)))
+    (set! ok (and ok (= (live.compiler-live-set-word-count trimmed) 1)))
+    (set!
+      ok
+      (and
         ok
-        (and ok (= (compiler-live-set-score a) (compiler-live-set-score b))))
-      (set! ok (and ok (= (live.compiler-live-set-count removed) 3)))
-      (set! ok (and ok (not (live.compiler-live-set-contains? removed 31))))
-      (set! ok (and ok (= (live.compiler-live-set-count unioned) 5)))
-      (set!
-        ok
-        (and
-          ok
-          (live.compiler-live-set-eq? minus (compiler-live-set3 31 32 66))))
-      (set! ok (and ok (= (live.compiler-live-set-count trimmed) 2)))
-      (set! ok (and ok (= (live.compiler-live-set-word-count trimmed) 1)))
-      (set!
-        ok
-        (and
-          ok
-          (live.compiler-live-set-eq? deduplicated (compiler-live-set2 31 66))))
-      ok)))
+        (live.compiler-live-set-eq? deduplicated (compiler-live-set2 31 66))))
+    ok))
 
 (define (compiler-live-scratch-ops-ok?) : bool
   (let
@@ -217,21 +211,19 @@
     [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
     [index : i64 0]
     [ok : bool (= id-count (live.compiler-live-set-count uses))]
-    (begin
-      (while (< index id-count)
-        (begin
-          (if (live.compiler-live-set-contains? uses (array-ref ids index))
-            unit
-            (set! ok false))
-          (set! index (+ index 1))))
-      (and
-        ok
-        (=
-          (live.compiler-live-set-count defs)
-          (if (< def-var 0)
-            0
-            1))
-        (or (< def-var 0) (live.compiler-live-set-contains? defs def-var))))))
+    (while (< index id-count)
+      (if (live.compiler-live-set-contains? uses (array-ref ids index))
+        unit
+        (set! ok false))
+      (set! index (+ index 1)))
+    (and
+      ok
+      (=
+        (live.compiler-live-set-count defs)
+        (if (< def-var 0)
+          0
+          1))
+      (or (< def-var 0) (live.compiler-live-set-contains? defs def-var)))))
 
 (define (compiler-live-instr-ids-seq-match-set-from?
   [instrs : ir.CompilerIrInstrSeq]
@@ -359,7 +351,7 @@
       (compiler-live-instr-ids-seq-match-set? (compiler-live-ids-sample-instrs)))))
 
 (define (compiler-live-i64-ty) : ast.AstType
-  (ast.AstType.I64))
+  (I64))
 
 (define (compiler-live-instr-seq7
   [first : ir.CompilerIrInstr]
@@ -372,15 +364,14 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (__tl_make-array ir.CompilerIrInstr 7)]
-    (begin
-      (set! (array-ref slots 0) first)
-      (set! (array-ref slots 1) second)
-      (set! (array-ref slots 2) third)
-      (set! (array-ref slots 3) fourth)
-      (set! (array-ref slots 4) fifth)
-      (set! (array-ref slots 5) sixth)
-      (set! (array-ref slots 6) seventh)
-      (ir.CompilerIrInstrSeq slots 7))))
+    (set! (array-ref slots 0) first)
+    (set! (array-ref slots 1) second)
+    (set! (array-ref slots 2) third)
+    (set! (array-ref slots 3) fourth)
+    (set! (array-ref slots 4) fifth)
+    (set! (array-ref slots 5) sixth)
+    (set! (array-ref slots 6) seventh)
+    (ir.CompilerIrInstrSeq slots 7)))
 
 (define (compiler-live-straight-function) : ir.CompilerIrFunction
   (irt.func
@@ -491,28 +482,28 @@
     [use-def : live.CompilerLiveUseDef
       (compiler-live-block-use-def
         (compiler-live-instr-seq7
-          (ir.CompilerIrInstr.LaneId 0 4 (compiler-live-i64-ty))
+          (LaneId 0 4 (compiler-live-i64-ty))
           (irt.instr "%1 = splat %10 lanes 4 : i64")
           (ir.ir-instr-vector-bin-op
             2
-            (ir.CompilerIrBinOp.Add)
-            (ir.CompilerIrValue.Var 0)
-            (ir.CompilerIrValue.Var 1)
+            (Add)
+            (Var 0)
+            (Var 1)
             4
             (compiler-live-i64-ty))
           (irt.instr "%3 = tail_mask %11, %12 lanes 4")
           (ir.ir-instr-predicated-load
             4
-            (ir.CompilerIrValue.Var 13)
-            (ir.CompilerIrValue.Var 11)
-            (ir.CompilerIrValue.Var 3)
+            (Var 13)
+            (Var 11)
+            (Var 3)
             4
             (compiler-live-i64-ty))
           (ir.ir-instr-predicated-store
-            (ir.CompilerIrValue.Var 14)
-            (ir.CompilerIrValue.Var 11)
-            (ir.CompilerIrValue.Var 2)
-            (ir.CompilerIrValue.Var 3)
+            (Var 14)
+            (Var 11)
+            (Var 2)
+            (Var 3)
             4
             (compiler-live-i64-ty))
           (irt.instr "%5 = mask_reduce_any %3 lanes 4")))]
@@ -529,7 +520,7 @@
     (match (live.compiler-live-function-find-block
       (live.compiler-live-shared-view liveness)
       (ir.compiler-ir-label "entry"))
-      [(live.CompilerLiveMaybeBlock.Some block)
+      [(Some block)
         (and
           (live.compiler-live-set-eq?
             (compiler-live-block-uses block)
@@ -560,7 +551,7 @@
           (live.compiler-live-set-eq?
             (live.compiler-live-after liveness (ir.compiler-ir-label "entry") 2)
             (live.compiler-live-set-empty)))]
-      [(live.CompilerLiveMaybeBlock.No) false])))
+      [(No) false])))
 
 (define (compiler-live-branch-ok?) : bool
   (let
@@ -569,7 +560,7 @@
     (match (live.compiler-live-function-find-block
       liveness
       (ir.compiler-ir-label "entry"))
-      [(live.CompilerLiveMaybeBlock.Some block)
+      [(Some block)
         (and
           (=
             (live.compiler-live-label-set-count
@@ -584,7 +575,7 @@
           (live.compiler-live-set-eq?
             (live.compiler-live-block-live-in block)
             (compiler-live-set3 0 1 2)))]
-      [(live.CompilerLiveMaybeBlock.No) false])))
+      [(No) false])))
 
 (define (compiler-live-phi-ok?) : bool
   (let
@@ -593,7 +584,7 @@
     (match (live.compiler-live-function-find-block
       (live.compiler-live-shared-view liveness)
       (ir.compiler-ir-label "join"))
-      [(live.CompilerLiveMaybeBlock.Some block)
+      [(Some block)
         (and
           (live.compiler-live-set-eq?
             (compiler-live-block-uses block)
@@ -614,12 +605,12 @@
           (match (live.compiler-live-function-find-block
             liveness
             (ir.compiler-ir-label "left"))
-            [(live.CompilerLiveMaybeBlock.Some left-block)
+            [(Some left-block)
               (live.compiler-live-label-set-contains?
                 (compiler-live-block-successor-labels left-block)
                 (ir.compiler-ir-label "join"))]
-            [(live.CompilerLiveMaybeBlock.No) false]))]
-      [(live.CompilerLiveMaybeBlock.No) false])))
+            [(No) false]))]
+      [(No) false])))
 
 (define (compiler-live-phi-edge-precise-ok?) : bool
   (let
@@ -631,23 +622,23 @@
     (match (live.compiler-live-function-find-block
       (live.compiler-live-shared-view baseline)
       (ir.compiler-ir-label "join"))
-      [(live.CompilerLiveMaybeBlock.Some baseline-join)
+      [(Some baseline-join)
         (match (live.compiler-live-function-find-block
           (live.compiler-live-shared-view edge-precise)
           (ir.compiler-ir-label "join"))
-          [(live.CompilerLiveMaybeBlock.Some edge-precise-join)
+          [(Some edge-precise-join)
             (match (live.compiler-live-function-find-block
               baseline
               (ir.compiler-ir-label "left"))
-              [(live.CompilerLiveMaybeBlock.Some baseline-left)
+              [(Some baseline-left)
                 (match (live.compiler-live-function-find-block
                   (live.compiler-live-shared-view edge-precise)
                   (ir.compiler-ir-label "left"))
-                  [(live.CompilerLiveMaybeBlock.Some edge-precise-left)
+                  [(Some edge-precise-left)
                     (match (live.compiler-live-function-find-block
                       edge-precise
                       (ir.compiler-ir-label "right"))
-                      [(live.CompilerLiveMaybeBlock.Some edge-precise-right)
+                      [(Some edge-precise-right)
                         (and
                           (live.compiler-live-set-eq?
                             (compiler-live-block-uses baseline-join)
@@ -669,11 +660,11 @@
                             (live.compiler-live-block-live-out
                               edge-precise-right)
                             (live.compiler-live-set1 2)))]
-                      [(live.CompilerLiveMaybeBlock.No) false])]
-                  [(live.CompilerLiveMaybeBlock.No) false])]
-              [(live.CompilerLiveMaybeBlock.No) false])]
-          [(live.CompilerLiveMaybeBlock.No) false])]
-      [(live.CompilerLiveMaybeBlock.No) false])))
+                      [(No) false])]
+                  [(No) false])]
+              [(No) false])]
+          [(No) false])]
+      [(No) false])))
 
 (define (compiler-live-switch-ok?) : bool
   (let
@@ -681,7 +672,7 @@
       (irt.instr "switch %9 base 4 [4:four, 5:five] default other")]
     [instrs : ir.CompilerIrInstrSeq (ir.compiler-ir-instr-seq1 instr)]
     [block : ir.CompilerIrBlock
-      (ir.CompilerIrBlock.Block (ir.compiler-ir-label "entry") (clone instrs))]
+      (Block (ir.compiler-ir-label "entry") (clone instrs))]
     [successors : live.CompilerLiveLabelSet
       (live.compiler-live-block-successors block)]
     [use-def : live.CompilerLiveUseDef (compiler-live-block-use-def instrs)]
@@ -737,11 +728,10 @@
             (let
               [out : (__tl_dyn-array i64)
                 (live.compiler-live-set-copy-with-capacity set capacity)]
-              (begin
-                (set!
-                  (array-ref out word-index)
-                  (bit-and old-bits (bit-xor mask -1)))
-                (live.compiler-live-set-from-words-trimmed out capacity)))))))))
+              (set!
+                (array-ref out word-index)
+                (bit-and old-bits (bit-xor mask -1)))
+              (live.compiler-live-set-from-words-trimmed out capacity))))))))
 
 (define (compiler-live-set-score-word-desc
   [bits : i64]
@@ -762,38 +752,34 @@
   (let
     [index : i64 (- (live.compiler-live-set-word-count set) 1)]
     [score : i64 0]
-    (begin
-      (while (>= index 0)
-        (begin
-          (set!
-            score
-            (compiler-live-set-score-word-desc
-              (live.compiler-live-set-word-at-bounded set index)
-              (* index (live.compiler-live-set-word-bits))
-              (- (live.compiler-live-set-word-bits) 1)
-              score))
-          (set! index (- index 1))))
-      score)))
+    (while (>= index 0)
+      (set!
+        score
+        (compiler-live-set-score-word-desc
+          (live.compiler-live-set-word-at-bounded set index)
+          (* index (live.compiler-live-set-word-bits))
+          (- (live.compiler-live-set-word-bits) 1)
+          score))
+      (set! index (- index 1)))
+    score))
 
 (define (compiler-live-set2 [a : i64] [b : i64]) : live.CompilerLiveI64Set
   (let
     [words : (__tl_dyn-array i64)
       (live.compiler-live-set-builder (live.compiler-live-set-max a b))]
-    (begin
-      (live.compiler-live-set-builder-insert! (&mut words) a)
-      (live.compiler-live-set-builder-insert! (&mut words) b)
-      (live.CompilerLiveI64Set words))))
+    (live.compiler-live-set-builder-insert! (&mut words) a)
+    (live.compiler-live-set-builder-insert! (&mut words) b)
+    (live.CompilerLiveI64Set words)))
 
 (define (compiler-live-set3 [a : i64] [b : i64] [c : i64]) : live.CompilerLiveI64Set
   (let
     [words : (__tl_dyn-array i64)
       (live.compiler-live-set-builder
         (live.compiler-live-set-max (live.compiler-live-set-max a b) c))]
-    (begin
-      (live.compiler-live-set-builder-insert! (&mut words) a)
-      (live.compiler-live-set-builder-insert! (&mut words) b)
-      (live.compiler-live-set-builder-insert! (&mut words) c)
-      (live.CompilerLiveI64Set words))))
+    (live.compiler-live-set-builder-insert! (&mut words) a)
+    (live.compiler-live-set-builder-insert! (&mut words) b)
+    (live.compiler-live-set-builder-insert! (&mut words) c)
+    (live.CompilerLiveI64Set words)))
 
 (define (compiler-live-set4 [a : i64] [b : i64] [c : i64] [d : i64]) : live.CompilerLiveI64Set
   (let
@@ -802,12 +788,11 @@
         (live.compiler-live-set-max
           (live.compiler-live-set-max a b)
           (live.compiler-live-set-max c d)))]
-    (begin
-      (live.compiler-live-set-builder-insert! (&mut words) a)
-      (live.compiler-live-set-builder-insert! (&mut words) b)
-      (live.compiler-live-set-builder-insert! (&mut words) c)
-      (live.compiler-live-set-builder-insert! (&mut words) d)
-      (live.CompilerLiveI64Set words))))
+    (live.compiler-live-set-builder-insert! (&mut words) a)
+    (live.compiler-live-set-builder-insert! (&mut words) b)
+    (live.compiler-live-set-builder-insert! (&mut words) c)
+    (live.compiler-live-set-builder-insert! (&mut words) d)
+    (live.CompilerLiveI64Set words)))
 
 (define (compiler-live-block-use-def-instrs
   [instrs : ir.CompilerIrInstrSeq]
@@ -825,41 +810,38 @@
         0)]
     [out-uses : live.CompilerLiveI64Set uses]
     [out-defs : live.CompilerLiveI64Set defs]
-    (begin
-      (while (< cursor count)
-        (let
-          [instr : ir.CompilerIrInstr
-            (ir.compiler-ir-instr-seq-ref instrs cursor)]
-          [instr-uses : live.CompilerLiveI64Set
-            (live.compiler-live-instr-uses instr)]
-          [instr-defs : live.CompilerLiveI64Set
-            (if (< cursor phi-end)
-              (live.compiler-live-set-empty)
-              (live.compiler-live-instr-defs instr))]
-          (begin
-            (set!
-              out-uses
-              (live.compiler-live-set-union
-                out-uses
-                (live.compiler-live-set-minus
-                  instr-uses
-                  (live.compiler-live-shared-view out-defs))))
-            (set! out-defs (live.compiler-live-set-union out-defs instr-defs))
-            (when
-              (= (+ cursor 1) phi-end)
-              (let
-                [j : i64 0]
-                (while (< j phi-end)
-                  (begin
-                    (set!
-                      out-defs
-                      (live.compiler-live-set-union
-                        out-defs
-                        (live.compiler-live-instr-defs
-                          (ir.compiler-ir-instr-seq-ref instrs j))))
-                    (set! j (+ j 1))))))
-            (set! cursor (+ cursor 1)))))
-      (live.CompilerLiveUseDef out-uses out-defs))))
+    (while (< cursor count)
+      (let
+        [instr : ir.CompilerIrInstr
+          (ir.compiler-ir-instr-seq-ref instrs cursor)]
+        [instr-uses : live.CompilerLiveI64Set
+          (live.compiler-live-instr-uses instr)]
+        [instr-defs : live.CompilerLiveI64Set
+          (if (< cursor phi-end)
+            (live.compiler-live-set-empty)
+            (live.compiler-live-instr-defs instr))]
+        (set!
+          out-uses
+          (live.compiler-live-set-union
+            out-uses
+            (live.compiler-live-set-minus
+              instr-uses
+              (live.compiler-live-shared-view out-defs))))
+        (set! out-defs (live.compiler-live-set-union out-defs instr-defs))
+        (when
+          (= (+ cursor 1) phi-end)
+          (let
+            [j : i64 0]
+            (while (< j phi-end)
+              (set!
+                out-defs
+                (live.compiler-live-set-union
+                  out-defs
+                  (live.compiler-live-instr-defs
+                    (ir.compiler-ir-instr-seq-ref instrs j))))
+              (set! j (+ j 1)))))
+        (set! cursor (+ cursor 1))))
+    (live.CompilerLiveUseDef out-uses out-defs)))
 
 (define (compiler-live-block-use-def [instrs : ir.CompilerIrInstrSeq]) : live.CompilerLiveUseDef
   (compiler-live-block-use-def-instrs

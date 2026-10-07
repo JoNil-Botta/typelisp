@@ -35,23 +35,22 @@
   (Err String))
 
 (define (prelude-surface-target-cfgs [windows-target : bool]) : cfg_env.SymI64Env
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (let
-      [cfgs : cfg_env.SymI64Env (cfg_core.compiler-cfg-empty)]
-      (if windows-target
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [cfgs : cfg_env.SymI64Env (cfg_core.compiler-cfg-empty)]
+    (if windows-target
+      (cfg_core.compiler-cfg-enable
+        (cfg_core.compiler-cfg-enable
+          (cfg_core.compiler-cfg-enable cfgs "windows")
+          "target-windows")
+        "os-windows")
+      (cfg_core.compiler-cfg-enable
         (cfg_core.compiler-cfg-enable
           (cfg_core.compiler-cfg-enable
-            (cfg_core.compiler-cfg-enable cfgs "windows")
-            "target-windows")
-          "os-windows")
-        (cfg_core.compiler-cfg-enable
-          (cfg_core.compiler-cfg-enable
-            (cfg_core.compiler-cfg-enable
-              (cfg_core.compiler-cfg-enable cfgs "linux")
-              "unix")
-            "target-linux")
-          "os-linux")))))
+            (cfg_core.compiler-cfg-enable cfgs "linux")
+            "unix")
+          "target-linux")
+        "os-linux"))))
 
 (define (prelude-surface-load-cold
   [load-state : load.CompilerLoadSessionState]
@@ -65,39 +64,28 @@
     (owned_view.compiler-owned-shared-view roots)
     (cfg_env.sym-i64-shared-view (& cfgs))
     pools)
-    [(load.ResultCompilerLoadWithPaths.Ok
-        runtime-decls
-        runtime-paths
-        runtime-modules
-        runtime-seen)
+    [(Ok runtime-decls runtime-paths runtime-modules runtime-seen)
       (match (load.compiler-load-core-macro-prelude-with-roots-cfg-with-pools
         (load.compiler-load-session-state-shared-view (& load-state))
         runtime-seen
         (owned_view.compiler-owned-shared-view roots)
         (cfg_env.sym-i64-shared-view (& cfgs))
         pools)
-        [(load.ResultCompilerLoadWithPaths.Ok
-            macro-decls
-            macro-paths
-            macro-modules
-            macro-seen)
-          (load.ResultCompilerLoadWithPaths.Ok
+        [(Ok macro-decls macro-paths macro-modules macro-seen)
+          (Ok
             (load.compiler-load-decl-list-append runtime-decls macro-decls)
             (load.compiler-load-decl-path-list-append runtime-paths macro-paths)
             (load.compiler-load-decl-module-list-append
               runtime-modules
               macro-modules)
             macro-seen)]
-        [(load.ResultCompilerLoadWithPaths.Err diag)
-          (load.ResultCompilerLoadWithPaths.Err diag)])]
-    [(load.ResultCompilerLoadWithPaths.Err diag)
-      (load.ResultCompilerLoadWithPaths.Err diag)]))
+        [(Err diag) (Err diag)])]
+    [(Err diag) (Err diag)]))
 
 (define (prelude-surface-facts-error
   [prefix : String]
   [diag : (Box cdiag.CompilerDiagnostic)]) : ResultPreludeSurfaceFacts
-  (ResultPreludeSurfaceFacts.Err
-    (str_cat.str-cat prefix (cdiag.compiler-diagnostic-render (deref diag)))))
+  (Err (str_cat.str-cat prefix (cdiag.compiler-diagnostic-render (deref diag)))))
 
 (define (prelude-surface-typecheck-facts-specialized
   [load-state : load.CompilerLoadSessionState]
@@ -114,7 +102,7 @@
   (let
     [decl-count : i64
       (match (ast.ast-place-shared-view program)
-        [(ast.AstProgram.Program decls-box)
+        [(Program decls-box)
           (let
             [decls : ast.AstDeclList
               (ast.ast-decl-list-box-shared-view decls-box)]
@@ -139,27 +127,25 @@
         source-names
         (ci.intern-compat-state-capture-active))]
     (match checked
-      [(tc.ResultCompilerTypecheckChecked.Partial diag _ _ _)
-        (begin
-          (tc.tc-clone-root-collection-abort! job-state)
-          (surface_facts.surface-typecheck-facts-recording-abort!)
-          (prelude-surface-facts-error
-            "prelude surface typecheck failed: "
-            (box (cdiag.compiler-diagnostic-list-first (deref diag)))))]
-      [(tc.ResultCompilerTypecheckChecked.Err diag)
-        (begin
-          (tc.tc-clone-root-collection-abort! job-state)
-          (surface_facts.surface-typecheck-facts-recording-abort!)
-          (prelude-surface-facts-error
-            "prelude surface typecheck failed: "
-            (box (cdiag.compiler-diagnostic-list-first (deref diag)))))]
-      [(tc.ResultCompilerTypecheckChecked.Ok summary ctx _ _)
+      [(Partial diag _ _ _)
+        (tc.tc-clone-root-collection-abort! job-state)
+        (surface_facts.surface-typecheck-facts-recording-abort!)
+        (prelude-surface-facts-error
+          "prelude surface typecheck failed: "
+          (box (cdiag.compiler-diagnostic-list-first (deref diag))))]
+      [(Err diag)
+        (tc.tc-clone-root-collection-abort! job-state)
+        (surface_facts.surface-typecheck-facts-recording-abort!)
+        (prelude-surface-facts-error
+          "prelude surface typecheck failed: "
+          (box (cdiag.compiler-diagnostic-list-first (deref diag))))]
+      [(Ok summary ctx _ _)
         (let
           [_finish-clone-roots : clone.CloneRootEntries
             (tc.tc-clone-root-collection-finish! ctx)]
           (match summary
-            [(tc.CompilerTypecheckSummary values functions externs)
-              (ResultPreludeSurfaceFacts.Ok
+            [(CompilerTypecheckSummary values functions externs)
+              (Ok
                 (surface_facts.surface-typecheck-facts-recording-finish
                   macro-decl-count
                   decl-count
@@ -182,7 +168,7 @@
   (let
     [macro-decl-count : i64
       (match (ast.ast-place-shared-view expanded)
-        [(ast.AstProgram.Program decls-box)
+        [(Program decls-box)
           (let
             [decls : ast.AstDeclList
               (ast.ast-decl-list-box-shared-view decls-box)]
@@ -195,11 +181,11 @@
         (ast.ast-place-shared-view expanded-paths)
         ""
         pools)
-        [(spec.ResultSpecProgramWithPaths.Err diag)
+        [(Err diag)
           (prelude-surface-facts-error
             "prelude surface specialization failed: "
             diag)]
-        [(spec.ResultSpecProgramWithPaths.Ok specialized specialized-paths)
+        [(Ok specialized specialized-paths)
           (prelude-surface-typecheck-facts-specialized
             load-state
             prefix-cache
@@ -251,11 +237,11 @@
     ;; Publish the owner's interner before the legacy expansion phase reads it.
     [_publish : unit (ci.intern-compat-state-install! intern-state)]
     (match generated-result
-      [(spec.ResultGenProgramWithPaths.Err diag)
+      [(Err diag)
         (prelude-surface-facts-error
           "prelude surface normalization failed: "
           diag)]
-      [(spec.ResultGenProgramWithPaths.Ok generated generated-paths)
+      [(Ok generated generated-paths)
         (match (tc.macro-expand-program-with-paths-and-pools-roots-cfg-and-source-names-and-job-state
           (load.compiler-load-session-state-shared-view (& load-state))
           generated
@@ -265,11 +251,11 @@
           job-state
           (owned_view.compiler-owned-shared-view roots)
           (cfg_env.sym-i64-shared-view (& cfgs)))
-          [(tc.ResultMacroExpand.Err diag)
+          [(Err diag)
             (prelude-surface-facts-error
               "prelude surface expansion failed: "
               diag)]
-          [(tc.ResultMacroExpand.Ok expanded expanded-paths)
+          [(Ok expanded expanded-paths)
             (prelude-surface-typecheck-facts-expanded
               load-state
               prefix-cache
@@ -287,34 +273,30 @@
   (let
     [sections : (__tl_dyn-array tlci.TlciAuxSection)
       (__tl_make-array tlci.TlciAuxSection 3)]
-    (begin
-      (set!
-        (array-ref sections 0)
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-package-identity
-          surface_identity.surface-identity-schema-version
-          identity-bytes))
-      (set!
-        (array-ref sections 1)
-        ;; The aux section's schema-version is what
-        ;; `compiler_surface_hydrate.tl` compares against
-        ;; `surface-ast-schema-version`; it must BE that constant, not a
-        ;; literal that happens to equal it. The facts section below does
-        ;; the same.
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-frontend-ast
-          surface_ast.surface-ast-schema-version
-          ast-bytes))
-      (set!
-        (array-ref sections 2)
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-frontend-facts
-          surface_facts.surface-typecheck-facts-schema-version
-          fact-bytes))
-      (match (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)
-        [(tlci.ResultTlciAuxBytes.Err message)
-          (ResultPreludeSurface.Err message)]
-        [(tlci.ResultTlciAuxBytes.Ok rodata) (ResultPreludeSurface.Ok rodata)]))))
+    (set!
+      (array-ref sections 0)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-package-identity
+        surface_identity.surface-identity-schema-version
+        identity-bytes))
+    (set!
+      (array-ref sections 1)
+      ;; The aux section's schema-version is what
+      ;; `compiler_surface_hydrate.tl` compares against
+      ;; `surface-ast-schema-version`; it must BE that constant, not a
+      ;; literal that happens to equal it. The facts section below does
+      ;; the same.
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-frontend-ast
+        surface_ast.surface-ast-schema-version
+        ast-bytes))
+    (set!
+      (array-ref sections 2)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-frontend-facts
+        surface_facts.surface-typecheck-facts-schema-version
+        fact-bytes))
+    (Ok (try (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)))))
 
 (define (prelude-surface-encode-payloads
   [structural-session : cis.InternStructuralSessionHandle]
@@ -327,31 +309,28 @@
   [pools : ast.AstNodePoolContext]
   [source-count : i64]
   [identity-count : i64]) : ResultPreludeSurface
-  (match (surface_identity.surface-identity-encode identity-payload)
-    [(surface_identity.ResultSurfaceIdentityBytes.Err message)
-      (ResultPreludeSurface.Err message)]
-    [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
-      (match (surface_ast.surface-ast-encode
-        structural-session
-        decls
-        paths
-        modules
-        seen
-        pools
-        source-count
-        identity-count)
-        [(surface_ast.ResultSurfaceAstBytes.Err message)
-          (ResultPreludeSurface.Err message)]
-        [(surface_ast.ResultSurfaceAstBytes.Ok ast-bytes)
-          (match (surface_facts.surface-typecheck-facts-encode
-            facts
-            structural-session
-            source-count
-            identity-count)
-            [(surface_facts.ResultSurfaceTypecheckFactBytes.Err message)
-              (ResultPreludeSurface.Err message)]
-            [(surface_facts.ResultSurfaceTypecheckFactBytes.Ok fact-bytes)
-              (prelude-surface-pack identity-bytes ast-bytes fact-bytes)])])]))
+  (let
+    [identity-bytes
+      (try (surface_identity.surface-identity-encode identity-payload))]
+    [ast-bytes
+      (try
+        (surface_ast.surface-ast-encode
+          structural-session
+          decls
+          paths
+          modules
+          seen
+          pools
+          source-count
+          identity-count))]
+    [fact-bytes
+      (try
+        (surface_facts.surface-typecheck-facts-encode
+          facts
+          structural-session
+          source-count
+          identity-count))]
+    (prelude-surface-pack identity-bytes ast-bytes fact-bytes)))
 
 (define (prelude-surface-build
   [root : String]
@@ -363,7 +342,7 @@
       (when
         (load.compiler-load-active-session-live?)
         (return
-          (ResultPreludeSurface.Err
+          (Err
             "prelude-surface-build: standalone resetting compiler entry cannot run inside an active compiler load session")))]
     [previous-arena : i64 (arena.tl_arena_current)]
     [surface-arena : i64 (arena.tl_arena_make)]
@@ -380,73 +359,64 @@
         surface-arena)]
     [load-state : load.CompilerLoadSessionState
       (load.compiler-load-session-state-new)]
-    (begin
-      (surface_svec.push-ref! (&mut roots) root)
-      (match (prelude-surface-load-cold
-        (load.compiler-load-session-state-shared-view (& load-state))
-        (owned_view.compiler-owned-shared-view roots)
-        (prelude-surface-target-cfgs windows-target)
-        pools)
-        [(load.ResultCompilerLoadWithPaths.Err diag)
-          (begin
+    (surface_svec.push-ref! (&mut roots) root)
+    (match (prelude-surface-load-cold
+      (load.compiler-load-session-state-shared-view (& load-state))
+      (owned_view.compiler-owned-shared-view roots)
+      (prelude-surface-target-cfgs windows-target)
+      pools)
+      [(Err diag)
+        (unsafe
+          (arena.tl_arena_set previous-arena))
+        (Err
+          (str_cat.str-cat
+            "prelude surface load failed: "
+            (cdiag.compiler-diagnostic-render (deref diag))))]
+      [(Ok decls paths modules seen)
+        (match (prelude-surface-typecheck-facts
+          load-state
+          decls
+          (ast.ast-place-shared-view paths)
+          roots
+          (prelude-surface-target-cfgs windows-target)
+          pools)
+          [(Err message)
             (unsafe
               (arena.tl_arena_set previous-arena))
-            (ResultPreludeSurface.Err
-              (str_cat.str-cat
-                "prelude surface load failed: "
-                (cdiag.compiler-diagnostic-render (deref diag)))))]
-        [(load.ResultCompilerLoadWithPaths.Ok decls paths modules seen)
-          (match (prelude-surface-typecheck-facts
-            load-state
-            decls
-            (ast.ast-place-shared-view paths)
-            roots
-            (prelude-surface-target-cfgs windows-target)
-            pools)
-            [(ResultPreludeSurfaceFacts.Err message)
-              (begin
-                (unsafe
-                  (arena.tl_arena_set previous-arena))
-                (ResultPreludeSurface.Err message))]
-            [(ResultPreludeSurfaceFacts.Ok
+            (Err message)]
+          [(Ok facts surface-program surface-paths source-names)
+            (let
+              [module-set : (__tl_dyn-array String)
+                (prelude_shared.prelude-surface-module-set paths)]
+              [surface-decls : ast.AstDeclList
+                (match surface-program
+                  [(Program decls-box)
+                    (ast.ast-decl-list-box-shared-view decls-box)])]
+              [key : surface_identity.SurfaceIdentityKey
+                (surface_identity.SurfaceIdentityKey
+                  "stdlib.prelude"
+                  module-set
+                  source-hash
+                  build-hash
+                  (if windows-target
+                    "windows-default"
+                    "linux-default"))]
+              [identity-payload : surface_identity.SurfaceIdentityPayload
+                (surface_identity.surface-identity-capture key)]
+              [source-count : i64 (array-length identity-payload.source-names)]
+              [identity-count : i64
+                (+ source-count (array-length identity-payload.generated))]
+              (unsafe
+                (arena.tl_arena_set previous-arena))
+              (prelude-surface-encode-payloads
+                (cis.intern-structural-session-handle-from-source-names
+                  source-names)
+                identity-payload
                 facts
-                surface-program
+                surface-decls
                 surface-paths
-                source-names)
-              (let
-                [module-set : (__tl_dyn-array String)
-                  (prelude_shared.prelude-surface-module-set paths)]
-                [surface-decls : ast.AstDeclList
-                  (match surface-program
-                    [(ast.AstProgram.Program decls-box)
-                      (ast.ast-decl-list-box-shared-view decls-box)])]
-                [key : surface_identity.SurfaceIdentityKey
-                  (surface_identity.SurfaceIdentityKey
-                    "stdlib.prelude"
-                    module-set
-                    source-hash
-                    build-hash
-                    (if windows-target
-                      "windows-default"
-                      "linux-default"))]
-                [identity-payload : surface_identity.SurfaceIdentityPayload
-                  (surface_identity.surface-identity-capture key)]
-                [source-count : i64
-                  (array-length identity-payload.source-names)]
-                [identity-count : i64
-                  (+ source-count (array-length identity-payload.generated))]
-                (begin
-                  (unsafe
-                    (arena.tl_arena_set previous-arena))
-                  (prelude-surface-encode-payloads
-                    (cis.intern-structural-session-handle-from-source-names
-                      source-names)
-                    identity-payload
-                    facts
-                    surface-decls
-                    surface-paths
-                    modules
-                    seen
-                    pools
-                    source-count
-                    identity-count)))])]))))
+                modules
+                seen
+                pools
+                source-count
+                identity-count))])])))

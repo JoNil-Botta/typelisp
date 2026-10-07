@@ -11,7 +11,8 @@
     (while (< i (compiler_intern.intern-capacity))
       (begin
         (compiler_intern.intern-generated-name "opaque")
-        (set! i (+ i 1))))))
+        unit)
+      (set! i (+ i 1)))))
 
 (define (fill-state-generated
   [state : (&mut state compiler_intern.InternCompatState)]) : unit
@@ -20,39 +21,34 @@
     (while (< i (compiler_intern.intern-capacity))
       (begin
         (compiler_intern.intern-compat-state-generated-name state "opaque")
-        (set! i (+ i 1))))))
+        unit)
+      (set! i (+ i 1)))))
 
 (define (active-source-exhaustion) : i64
-  (begin
-    (compiler_intern.intern-reset!)
-    (fill-active-generated)
-    (compiler_intern.intern "source-overflow")))
+  (compiler_intern.intern-reset!)
+  (fill-active-generated)
+  (compiler_intern.intern "source-overflow"))
 
 (define (active-generated-exhaustion) : i64
-  (begin
-    (compiler_intern.intern-reset!)
-    (fill-active-generated)
-    (compiler_intern.intern-generated-name "generated-overflow")))
+  (compiler_intern.intern-reset!)
+  (fill-active-generated)
+  (compiler_intern.intern-generated-name "generated-overflow"))
 
 (define (state-source-exhaustion) : i64
   (let
     [state : compiler_intern.InternCompatState
       (compiler_intern.intern-compat-state-new)]
-    (begin
-      (fill-state-generated (&mut state))
-      (compiler_intern.intern-compat-state-intern
-        (&mut state)
-        "source-overflow"))))
+    (fill-state-generated (&mut state))
+    (compiler_intern.intern-compat-state-intern (&mut state) "source-overflow")))
 
 (define (state-generated-exhaustion) : i64
   (let
     [state : compiler_intern.InternCompatState
       (compiler_intern.intern-compat-state-new)]
-    (begin
-      (fill-state-generated (&mut state))
-      (compiler_intern.intern-compat-state-generated-name
-        (&mut state)
-        "generated-overflow"))))
+    (fill-state-generated (&mut state))
+    (compiler_intern.intern-compat-state-generated-name
+      (&mut state)
+      "generated-overflow")))
 
 (define (main) : i64
   (match (string.>int (io.arg 1))

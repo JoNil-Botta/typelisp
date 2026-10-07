@@ -136,18 +136,17 @@
       (and
         (< start n)
         (not (and (> n (+ start 1)) (= (string.string-ref text start) '0'))))]
-    (begin
-      (while (and valid (< i n))
-        (let
-          [digit : i64 (cast (string.string-ref text i) : i64)]
-          (if (and (>= digit 48) (<= digit 57))
-            (begin
-              (set! value (+ (* value 10) (- digit 48)))
-              (set! i (+ i 1)))
-            (set! valid false))))
-      (if (and valid (<= value max))
-        value
-        -1))))
+    (while (and valid (< i n))
+      (let
+        [digit : i64 (cast (string.string-ref text i) : i64)]
+        (if (and (>= digit 48) (<= digit 57))
+          (begin
+            (set! value (+ (* value 10) (- digit 48)))
+            (set! i (+ i 1)))
+          (set! valid false))))
+    (if (and valid (<= value max))
+      value
+      -1)))
 
 (define (compiler-abi-register-id-from-spelling [spelling : String]) : i64
   (cond
@@ -243,34 +242,34 @@
 
 (define (compiler-abi-linux? [abi : CompilerRegTargetAbi]) : bool
   (match abi
-    [(CompilerRegTargetAbi.Linux) true]
-    [(CompilerRegTargetAbi.Windows) false]))
+    [(Linux) true]
+    [(Windows) false]))
 
 (define (compiler-abi-windows? [abi : CompilerRegTargetAbi]) : bool
   (match abi
-    [(CompilerRegTargetAbi.Linux) false]
-    [(CompilerRegTargetAbi.Windows) true]))
+    [(Linux) false]
+    [(Windows) true]))
 
 (define (compiler-abi-gp-arg-register-count [abi : CompilerRegTargetAbi]) : i64
   (match abi
-    [(CompilerRegTargetAbi.Linux) 6]
-    [(CompilerRegTargetAbi.Windows) 4]))
+    [(Linux) 6]
+    [(Windows) 4]))
 
 (define (compiler-abi-float-arg-register-count [abi : CompilerRegTargetAbi]) : i64
   (match abi
-    [(CompilerRegTargetAbi.Linux) 8]
-    [(CompilerRegTargetAbi.Windows) 4]))
+    [(Linux) 8]
+    [(Windows) 4]))
 
 (define (compiler-abi-arg-banks-independent? [abi : CompilerRegTargetAbi]) : bool
   (match abi
-    [(CompilerRegTargetAbi.Linux) true]
-    [(CompilerRegTargetAbi.Windows) false]))
+    [(Linux) true]
+    [(Windows) false]))
 
 (define (compiler-abi-gp-arg-register-id
   [abi : CompilerRegTargetAbi]
   [idx : i64]) : i64
   (match abi
-    [(CompilerRegTargetAbi.Linux)
+    [(Linux)
       (cond
         [(= idx 0) compiler-reg-id-rdi]
         [(= idx 1) compiler-reg-id-rsi]
@@ -279,7 +278,7 @@
         [(= idx 4) compiler-reg-id-r8]
         [(= idx 5) compiler-reg-id-r9]
         [else compiler-reg-id-invalid])]
-    [(CompilerRegTargetAbi.Windows)
+    [(Windows)
       (cond
         [(= idx 0) compiler-reg-id-rcx]
         [(= idx 1) compiler-reg-id-rdx]
@@ -294,11 +293,11 @@
   [abi : CompilerRegTargetAbi]
   [idx : i64]) : i64
   (match abi
-    [(CompilerRegTargetAbi.Linux)
+    [(Linux)
       (if (and (>= idx 0) (< idx 8))
         (compiler-abi-xmm-register-id idx)
         compiler-reg-id-invalid)]
-    [(CompilerRegTargetAbi.Windows)
+    [(Windows)
       (if (and (>= idx 0) (< idx 4))
         (compiler-abi-xmm-register-id idx)
         compiler-reg-id-invalid)]))
@@ -310,24 +309,24 @@
 
 (define (compiler-abi-outgoing-shadow-space [abi : CompilerRegTargetAbi]) : i64
   (match abi
-    [(CompilerRegTargetAbi.Linux) 0]
-    [(CompilerRegTargetAbi.Windows) 32]))
+    [(Linux) 0]
+    [(Windows) 32]))
 
 ;; System V classifies a by-value aggregate into eightbytes: it travels in
 ;; registers when its classes fit and is copied onto the stack otherwise. Win64
 ;; passes any aggregate wider than eight bytes by reference instead.
 (define (compiler-abi-aggregate-eightbyte-classes? [abi : CompilerRegTargetAbi]) : bool
   (match abi
-    [(CompilerRegTargetAbi.Linux) true]
-    [(CompilerRegTargetAbi.Windows) false]))
+    [(Linux) true]
+    [(Windows) false]))
 
 ;; System V variadic calls report the number of vector registers they use in
 ;; `%al`. Win64 instead duplicates each floating variadic argument into its
 ;; integer register.
 (define (compiler-abi-varargs-vector-count-in-al? [abi : CompilerRegTargetAbi]) : bool
   (match abi
-    [(CompilerRegTargetAbi.Linux) true]
-    [(CompilerRegTargetAbi.Windows) false]))
+    [(Linux) true]
+    [(Windows) false]))
 
 (define (compiler-abi-caller-saved-gp-register?
   [abi : CompilerRegTargetAbi]
@@ -335,16 +334,14 @@
   (let
     [index : i64 0]
     [found : bool false]
-    (begin
-      (while (and
-        (not found)
-        (< index (compiler-abi-caller-saved-gp-register-count abi)))
-        (begin
-          (set!
-            found
-            (= (compiler-abi-caller-saved-gp-register-id abi index) reg-id))
-          (set! index (+ index 1))))
-      found)))
+    (while (and
+      (not found)
+      (< index (compiler-abi-caller-saved-gp-register-count abi)))
+      (set!
+        found
+        (= (compiler-abi-caller-saved-gp-register-id abi index) reg-id))
+      (set! index (+ index 1)))
+    found))
 
 (define (compiler-abi-stack-call-arg-for-banks?
   [abi : CompilerRegTargetAbi]
@@ -361,14 +358,14 @@
 (define (compiler-abi-caller-saved-gp-register-count
   [abi : CompilerRegTargetAbi]) : i64
   (match abi
-    [(CompilerRegTargetAbi.Linux) 9]
-    [(CompilerRegTargetAbi.Windows) 7]))
+    [(Linux) 9]
+    [(Windows) 7]))
 
 (define (compiler-abi-caller-saved-gp-register-id
   [abi : CompilerRegTargetAbi]
   [idx : i64]) : i64
   (match abi
-    [(CompilerRegTargetAbi.Linux)
+    [(Linux)
       (cond
         [(= idx 0) compiler-reg-id-rax]
         [(= idx 1) compiler-reg-id-rcx]
@@ -380,7 +377,7 @@
         [(= idx 7) compiler-reg-id-r10]
         [(= idx 8) compiler-reg-id-r11]
         [else compiler-reg-id-invalid])]
-    [(CompilerRegTargetAbi.Windows)
+    [(Windows)
       (cond
         [(= idx 0) compiler-reg-id-r9]
         [(= idx 1) compiler-reg-id-rcx]
@@ -394,14 +391,14 @@
 (define (compiler-abi-callee-saved-gp-register-count
   [abi : CompilerRegTargetAbi]) : i64
   (match abi
-    [(CompilerRegTargetAbi.Linux) 5]
-    [(CompilerRegTargetAbi.Windows) 7]))
+    [(Linux) 5]
+    [(Windows) 7]))
 
 (define (compiler-abi-callee-saved-gp-register-id
   [abi : CompilerRegTargetAbi]
   [idx : i64]) : i64
   (match abi
-    [(CompilerRegTargetAbi.Linux)
+    [(Linux)
       (cond
         [(= idx 0) compiler-reg-id-rbx]
         [(= idx 1) compiler-reg-id-r12]
@@ -409,7 +406,7 @@
         [(= idx 3) compiler-reg-id-r14]
         [(= idx 4) compiler-reg-id-r15]
         [else compiler-reg-id-invalid])]
-    [(CompilerRegTargetAbi.Windows)
+    [(Windows)
       (cond
         [(= idx 0) compiler-reg-id-rbx]
         [(= idx 1) compiler-reg-id-rsi]
@@ -423,8 +420,8 @@
 (define (compiler-abi-caller-saved-xmm-register-count
   [abi : CompilerRegTargetAbi]) : i64
   (match abi
-    [(CompilerRegTargetAbi.Linux) 16]
-    [(CompilerRegTargetAbi.Windows) 6]))
+    [(Linux) 16]
+    [(Windows) 6]))
 
 (define (compiler-abi-caller-saved-xmm-register-id
   [abi : CompilerRegTargetAbi]
@@ -432,11 +429,11 @@
   (if (< idx 0)
     compiler-reg-id-invalid
     (match abi
-      [(CompilerRegTargetAbi.Linux)
+      [(Linux)
         (if (< idx 16)
           (compiler-abi-xmm-register-id idx)
           compiler-reg-id-invalid)]
-      [(CompilerRegTargetAbi.Windows)
+      [(Windows)
         (if (< idx 6)
           (compiler-abi-xmm-register-id idx)
           compiler-reg-id-invalid)])))
@@ -444,15 +441,15 @@
 (define (compiler-abi-callee-saved-xmm-register-count
   [abi : CompilerRegTargetAbi]) : i64
   (match abi
-    [(CompilerRegTargetAbi.Linux) 0]
-    [(CompilerRegTargetAbi.Windows) 10]))
+    [(Linux) 0]
+    [(Windows) 10]))
 
 (define (compiler-abi-callee-saved-xmm-register-id
   [abi : CompilerRegTargetAbi]
   [idx : i64]) : i64
   (match abi
-    [(CompilerRegTargetAbi.Linux) compiler-reg-id-invalid]
-    [(CompilerRegTargetAbi.Windows)
+    [(Linux) compiler-reg-id-invalid]
+    [(Windows)
       (if (and (>= idx 0) (< idx 10))
         (compiler-abi-xmm-register-id (+ idx 6))
         compiler-reg-id-invalid)]))

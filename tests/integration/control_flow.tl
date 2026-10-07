@@ -2,12 +2,10 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! i (+ i 1))
-          (set! acc (+ acc i))))
-      acc)))
+    (while (< i n)
+      (set! i (+ i 1))
+      (set! acc (+ acc i)))
+    acc))
 
 (define (main) : i64
   (sum-to 5))

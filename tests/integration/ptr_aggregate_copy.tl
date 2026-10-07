@@ -22,22 +22,21 @@
     [pair-data : (MutPtr Pair)
       (unsafe
         (ptr-cast (__tl_array-data pairs) : (MutPtr Pair)))]
-    (begin
-      (set! (array-ref slots 0) (Occupied 11 22 33))
-      (set! (array-ref pairs 0) (Pair 44 55))
-      (unsafe
-        (ptr-write! (ptr-offset data 1) (ptr-read (ptr-cast data : (Ptr Slot)))))
-      (unsafe
-        (ptr-write!
-          (ptr-offset pair-data 1)
-          (ptr-read (ptr-cast pair-data : (Ptr Pair)))))
-      (match (array-ref slots 1)
-        [(Occupied key value hash)
-          (if (and (= key 11) (= value 22) (= hash 33))
-            (let
-              [pair : Pair (array-ref pairs 1)]
-              (if (and (= pair.left 44) (= pair.right 55))
-                0
-                3))
-            1)]
-        [_ 2]))))
+    (set! (array-ref slots 0) (Occupied 11 22 33))
+    (set! (array-ref pairs 0) (Pair 44 55))
+    (unsafe
+      (ptr-write! (ptr-offset data 1) (ptr-read (ptr-cast data : (Ptr Slot)))))
+    (unsafe
+      (ptr-write!
+        (ptr-offset pair-data 1)
+        (ptr-read (ptr-cast pair-data : (Ptr Pair)))))
+    (match (array-ref slots 1)
+      [(Occupied key value hash)
+        (if (and (= key 11) (= value 22) (= hash 33))
+          (let
+            [pair : Pair (array-ref pairs 1)]
+            (if (and (= pair.left 44) (= pair.right 55))
+              0
+              3))
+          1)]
+      [_ 2])))

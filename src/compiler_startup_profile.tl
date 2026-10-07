@@ -93,26 +93,25 @@
 (define (compiler-startup-profile-print!) : unit
   (let
     [frequency : i64 (profile.ticks-per-second)]
-    (begin
-      (io.print-error "compile-startup-profile|marker|tick|frequency\n")
-      (compiler-startup-profile-print-tick-row!
-        "process.entry"
-        (startup_clock.compiler-startup-clock-process-entry-tick)
-        frequency)
-      (compiler-startup-profile-print-tick-row!
-        "globals.start"
-        (startup_clock.compiler-startup-clock-globals-start)
-        frequency)
-      (compiler-startup-profile-print-row! "main.entry" 0 frequency)
-      (compiler-startup-profile-print-row! "cli.compile_action" 1 frequency)
-      (compiler-startup-profile-print-row! "driver_state.begin" 2 frequency)
-      (compiler-startup-profile-print-row! "driver_state.end" 3 frequency)
-      (compiler-startup-profile-print-row! "preflight.begin" 4 frequency)
-      (compiler-startup-profile-print-row! "preflight.end" 5 frequency)
-      (compiler-startup-profile-print-row! "file_state_reset.end" 6 frequency)
-      (compiler-startup-profile-print-row! "compile_driver.start" 7 frequency)
-      (compiler-startup-profile-print-row! "prelude.begin" 8 frequency)
-      (compiler-startup-profile-print-row! "surface.begin" 9 frequency)
-      (compiler-startup-profile-print-row! "surface.end" 10 frequency)
-      (compiler-startup-profile-print-row! "prelude.end" 11 frequency)
-      (compiler-startup-profile-print-row! "user_entry.start" 12 frequency))))
+    (io.print-error "compile-startup-profile|marker|tick|frequency\n")
+    (compiler-startup-profile-print-tick-row!
+      "process.entry"
+      (startup_clock.compiler-startup-clock-process-entry-tick)
+      frequency)
+    (compiler-startup-profile-print-tick-row!
+      "globals.start"
+      (startup_clock.compiler-startup-clock-globals-start)
+      frequency)
+    (compiler-startup-profile-print-row! "main.entry" 0 frequency)
+    (compiler-startup-profile-print-row! "cli.compile_action" 1 frequency)
+    (compiler-startup-profile-print-row! "driver_state.begin" 2 frequency)
+    (compiler-startup-profile-print-row! "driver_state.end" 3 frequency)
+    (compiler-startup-profile-print-row! "preflight.begin" 4 frequency)
+    (compiler-startup-profile-print-row! "preflight.end" 5 frequency)
+    (compiler-startup-profile-print-row! "file_state_reset.end" 6 frequency)
+    (compiler-startup-profile-print-row! "compile_driver.start" 7 frequency)
+    (compiler-startup-profile-print-row! "prelude.begin" 8 frequency)
+    (compiler-startup-profile-print-row! "surface.begin" 9 frequency)
+    (compiler-startup-profile-print-row! "surface.end" 10 frequency)
+    (compiler-startup-profile-print-row! "prelude.end" 11 frequency)
+    (compiler-startup-profile-print-row! "user_entry.start" 12 frequency)))

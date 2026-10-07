@@ -360,12 +360,11 @@
   (match (borrowed-string-list-shared-view (& args))
     [(ProcessBorrowedStringNil _) unit]
     [(ProcessBorrowedStringCons value rest)
-      (begin
-        (set! (array-ref slots index) (string-owned value))
-        (args-owned-fill
-          (borrowed-string-list-box-shared-view rest)
-          slots
-          (+ index 1)))]))
+      (set! (array-ref slots index) (string-owned value))
+      (args-owned-fill
+        (borrowed-string-list-box-shared-view rest)
+        slots
+        (+ index 1))]))
 
 ;: Copy borrowed argv storage to the owned process argv representation.
 (define (args-owned [args : (& args (ProcessBorrowedStringList text))]) : process.ProcessStringList
@@ -375,12 +374,8 @@
       (io.panic "process: command storage limit exceeded")
       (let
         [slots : (__tl_dyn-array String) (__tl_make-array String n)]
-        (begin
-          (args-owned-fill
-            (borrowed-string-list-shared-view args)
-            (&mut slots)
-            0)
-          (process.ProcessStringList slots))))))
+        (args-owned-fill (borrowed-string-list-shared-view args) (&mut slots) 0)
+        (process.ProcessStringList slots)))))
 
 ;: Copy one typed borrowed environment spine into parallel owned storage.
 (define (env-owned-fill
@@ -391,14 +386,13 @@
   (match (borrowed-env-list-shared-view (& env))
     [(ProcessBorrowedEnvNil _) unit]
     [(ProcessBorrowedEnvCons name value rest)
-      (begin
-        (set! (array-ref names index) (string-owned name))
-        (set! (array-ref values index) (string-owned value))
-        (env-owned-fill
-          (borrowed-env-list-box-shared-view rest)
-          names
-          values
-          (+ index 1)))]))
+      (set! (array-ref names index) (string-owned name))
+      (set! (array-ref values index) (string-owned value))
+      (env-owned-fill
+        (borrowed-env-list-box-shared-view rest)
+        names
+        values
+        (+ index 1))]))
 
 ;: Copy borrowed env storage to the owned process env representation.
 (define (env-owned [env : (& env (ProcessBorrowedEnvList text))]) : process.ProcessEnvList
@@ -409,13 +403,12 @@
       (let
         [names : (__tl_dyn-array String) (__tl_make-array String n)]
         [values : (__tl_dyn-array String) (__tl_make-array String n)]
-        (begin
-          (env-owned-fill
-            (borrowed-env-list-shared-view env)
-            (&mut names)
-            (&mut values)
-            0)
-          (process.ProcessEnvList names values))))))
+        (env-owned-fill
+          (borrowed-env-list-shared-view env)
+          (&mut names)
+          (&mut values)
+          0)
+        (process.ProcessEnvList names values)))))
 
 ;: Copy a borrowed optional string to the owned process representation.
 (define (maybe-owned [value : (ProcessBorrowedMaybeString text)]) : process.ProcessMaybeString
@@ -654,8 +647,8 @@
         (process.stdin-string "process: executable path contains NUL")]
       [else
         (match (args-validation-error argv-view)
-          [(process.ProcessSomeString message) (process.stdin-string message)]
-          [(process.ProcessNoString)
+          [(ProcessSomeString message) (process.stdin-string message)]
+          [(ProcessNoString)
             (match (maybe-normalize (command-cwd command))
               [(ProcessBorrowedSomeString cwd)
                 (cond
@@ -687,8 +680,8 @@
     [info : process.ProcessMaybeStringInfo
       (process.maybe-string-info (command-validation-error command))]
     (if (process.maybe-string-info-present? info)
-      (process.ErrProcessOutput
-        (process.ProcessInvalidCommand (process.maybe-string-info-value info)))
+      (ErrProcessOutput
+        (ProcessInvalidCommand (process.maybe-string-info-value info)))
       (process.output (command-owned command)))))
 
 ;: Run a borrowed command using the same captured-output path as
@@ -704,15 +697,14 @@
     [info : process.ProcessMaybeStringInfo
       (process.maybe-string-info (command-validation-error command))]
     (if (process.maybe-string-info-present? info)
-      (process.ErrProcessChild
-        (process.ProcessInvalidCommand (process.maybe-string-info-value info)))
+      (ErrProcessChild
+        (ProcessInvalidCommand (process.maybe-string-info-value info)))
       (process.start (command-owned command)))))
 
 ;: Inline test helper that forces a borrowed process test failure.
 (define (test-fail) : unit
-  (begin
-    (/ 1 0)
-    unit))
+  (/ 1 0)
+  unit)
 
 ;: Build one owned test string with an embedded NUL byte.
 (define (test-string-with-nul) : String
@@ -721,12 +713,11 @@
     [dst : (MutPtr u8)
       (unsafe
         (__tl_array-data bytes))]
-    (begin
-      (set! (array-ref bytes 0) (cast 'a' : u8))
-      (set! (array-ref bytes 1) (cast 0 : u8))
-      (set! (array-ref bytes 2) (cast 'b' : u8))
-      (unsafe
-        (string-from-bytes (ptr-cast dst : (Ptr u8)) 3)))))
+    (set! (array-ref bytes 0) (cast 'a' : u8))
+    (set! (array-ref bytes 1) (cast 0 : u8))
+    (set! (array-ref bytes 2) (cast 'b' : u8))
+    (unsafe
+      (string-from-bytes (ptr-cast dst : (Ptr u8)) 3))))
 
 ;: Inline test assertion for boolean true.
 (define (test-assert-true [condition : bool]) : unit
@@ -813,9 +804,8 @@
 (define (test-assert-borrowed-string-list1
   [items : (& items (ProcessBorrowedStringList text))]
   [expected : String]) : unit
-  (begin
-    (test-assert-i64-eq (args-count items) 1)
-    (test-assert-true (string.eq (args-ref items 0) (& expected)))))
+  (test-assert-i64-eq (args-count items) 1)
+  (test-assert-true (string.eq (args-ref items 0) (& expected))))
 
 ;: Inline test assertion for a borrowed optional process string.
 (define (test-assert-borrowed-some-string
@@ -881,10 +871,9 @@
   [env : (& env (ProcessBorrowedEnvList text))]
   [expected-name : String]
   [expected-value : String]) : unit
-  (begin
-    (test-assert-true (> (env-count env) 0))
-    (test-assert-true (string.eq (env-name-ref env 0) (& expected-name)))
-    (test-assert-true (string.eq (env-value-ref env 0) (& expected-value)))))
+  (test-assert-true (> (env-count env) 0))
+  (test-assert-true (string.eq (env-name-ref env 0) (& expected-name)))
+  (test-assert-true (string.eq (env-value-ref env 0) (& expected-value))))
 
 ;: Inline test assertion for invalid borrowed process output results.
 (define (test-assert-invalid-output
@@ -928,26 +917,25 @@
     [owned : process.ProcessCommand (command-owned borrowed)]
     [borrowed-argv : (ProcessBorrowedStringList arg) (command-argv borrowed)]
     [borrowed-env : (ProcessBorrowedEnvList env-pair) (command-env borrowed)]
-    (begin
-      (test-assert-true (string.eq (command-executable borrowed) (& exe)))
-      (test-assert-borrowed-string-list1 borrowed-argv "hello")
-      (test-assert-i64-eq (args-count borrowed-argv) 1)
-      (test-assert-borrowed-some-string (command-cwd borrowed) "target")
-      (test-assert-borrowed-some-string (command-stdin borrowed) "stdin")
-      (test-assert-borrowed-env-head
-        borrowed-env
-        "TL_BORROWED_PROCESS"
-        "TL_BORROWED_PROCESS")
-      (test-assert-i64-eq (env-count borrowed-env) 1)
-      (test-assert-owned-string-eq (process.command-executable owned) "echo")
-      (test-assert-process-string-list1 (process.command-argv owned) "hello")
-      (test-assert-process-some-string (process.command-cwd owned) "target")
-      (test-assert-process-some-string (process.command-stdin owned) "stdin")
-      (test-assert-process-env-head
-        (process.command-env owned)
-        "TL_BORROWED_PROCESS"
-        "TL_BORROWED_PROCESS")
-      (test-assert-true (command-valid? borrowed)))))
+    (test-assert-true (string.eq (command-executable borrowed) (& exe)))
+    (test-assert-borrowed-string-list1 borrowed-argv "hello")
+    (test-assert-i64-eq (args-count borrowed-argv) 1)
+    (test-assert-borrowed-some-string (command-cwd borrowed) "target")
+    (test-assert-borrowed-some-string (command-stdin borrowed) "stdin")
+    (test-assert-borrowed-env-head
+      borrowed-env
+      "TL_BORROWED_PROCESS"
+      "TL_BORROWED_PROCESS")
+    (test-assert-i64-eq (env-count borrowed-env) 1)
+    (test-assert-owned-string-eq (process.command-executable owned) "echo")
+    (test-assert-process-string-list1 (process.command-argv owned) "hello")
+    (test-assert-process-some-string (process.command-cwd owned) "target")
+    (test-assert-process-some-string (process.command-stdin owned) "stdin")
+    (test-assert-process-env-head
+      (process.command-env owned)
+      "TL_BORROWED_PROCESS"
+      "TL_BORROWED_PROCESS")
+    (test-assert-true (command-valid? borrowed))))
 
 (cfg
   test
@@ -984,27 +972,26 @@
       [owned : process.ProcessCommand (command-owned cmd)]
       [cmd-argv : (ProcessBorrowedStringList argv-pack) (command-argv cmd)]
       [cmd-env : (ProcessBorrowedEnvList env-pack) (command-env cmd)]
-      (begin
-        (test-assert-i64-eq (args-count empty-args) 0)
-        (test-assert-i64-eq (args-count single-arg) 1)
-        (test-assert-true (string.eq (args-ref single-arg 0) first-arg))
-        (test-assert-i64-eq (env-count empty-env) 0)
-        (test-assert-i64-eq (env-count single-env) 1)
-        (test-assert-true (string.eq (env-name-ref single-env 0) env-name))
-        (test-assert-true (string.eq (env-value-ref single-env 0) env-first))
-        (test-assert-i64-eq (args-count cmd-argv) 3)
-        (test-assert-process-string-list3
-          (process.command-argv owned)
-          "first"
-          "second"
-          "third")
-        (test-assert-i64-eq (env-count cmd-env) 2)
-        (test-assert-process-env-list2
-          (process.command-env owned)
-          "TL_DUP"
-          "first"
-          "TL_DUP"
-          "second")))))
+      (test-assert-i64-eq (args-count empty-args) 0)
+      (test-assert-i64-eq (args-count single-arg) 1)
+      (test-assert-true (string.eq (args-ref single-arg 0) first-arg))
+      (test-assert-i64-eq (env-count empty-env) 0)
+      (test-assert-i64-eq (env-count single-env) 1)
+      (test-assert-true (string.eq (env-name-ref single-env 0) env-name))
+      (test-assert-true (string.eq (env-value-ref single-env 0) env-first))
+      (test-assert-i64-eq (args-count cmd-argv) 3)
+      (test-assert-process-string-list3
+        (process.command-argv owned)
+        "first"
+        "second"
+        "third")
+      (test-assert-i64-eq (env-count cmd-env) 2)
+      (test-assert-process-env-list2
+        (process.command-env owned)
+        "TL_DUP"
+        "first"
+        "TL_DUP"
+        "second"))))
 
 ;: Inline test body for borrowed process validation helpers.
 (define (test-validation-check) : unit
@@ -1052,43 +1039,41 @@
         (env-cons nul-valid-name (& with-nul) (env-empty-like (& with-nul))))]
     [nul-stdin-command : (ProcessBorrowedCommand exe exe exe exe with-nul)
       (command-with-stdin base (& with-nul))]
-    (begin
-      (test-assert-invalid-output
-        (output empty-command)
-        "process: executable path is empty")
-      (test-assert-invalid-child
-        (start empty-command)
-        "process: executable path is empty")
-      (test-assert-invalid-output
-        (output empty-cwd-command)
-        "process: cwd path is empty")
-      (test-assert-invalid-output
-        (output empty-env-command)
-        "process: environment variable name is empty")
-      (test-assert-invalid-output
-        (output bad-env-command)
-        "process: environment variable name contains '='")
-      (test-assert-invalid-output
-        (output nul-executable-command)
-        "process: executable path contains NUL")
-      (test-assert-invalid-output
-        (output nul-argument-command)
-        "process: argument contains NUL")
-      (test-assert-invalid-output
-        (output nul-cwd-command)
-        "process: cwd path contains NUL")
-      (test-assert-invalid-output
-        (output nul-env-name-command)
-        "process: environment variable name contains NUL")
-      (test-assert-invalid-output
-        (output nul-env-value-command)
-        "process: environment variable value contains NUL")
-      (test-assert-true (command-valid? nul-stdin-command))
-      (test-assert-false (command-valid? empty-command)))))
+    (test-assert-invalid-output
+      (output empty-command)
+      "process: executable path is empty")
+    (test-assert-invalid-child
+      (start empty-command)
+      "process: executable path is empty")
+    (test-assert-invalid-output
+      (output empty-cwd-command)
+      "process: cwd path is empty")
+    (test-assert-invalid-output
+      (output empty-env-command)
+      "process: environment variable name is empty")
+    (test-assert-invalid-output
+      (output bad-env-command)
+      "process: environment variable name contains '='")
+    (test-assert-invalid-output
+      (output nul-executable-command)
+      "process: executable path contains NUL")
+    (test-assert-invalid-output
+      (output nul-argument-command)
+      "process: argument contains NUL")
+    (test-assert-invalid-output
+      (output nul-cwd-command)
+      "process: cwd path contains NUL")
+    (test-assert-invalid-output
+      (output nul-env-name-command)
+      "process: environment variable name contains NUL")
+    (test-assert-invalid-output
+      (output nul-env-value-command)
+      "process: environment variable value contains NUL")
+    (test-assert-true (command-valid? nul-stdin-command))
+    (test-assert-false (command-valid? empty-command))))
 
 (test
   process-borrowed-api
-  (begin
-    (test-api-check)
-    (process-borrowed-test-ordered-builders-check)
-    (test-validation-check)))
+  (test-api-check)
+  (process-borrowed-test-ordered-builders-check)
+  (test-validation-check))

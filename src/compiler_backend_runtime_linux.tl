@@ -13,6 +13,9 @@
     .globl tl_current_arena
 tl_current_arena:
     .zero 8
+    .globl tl_thread_local_word
+tl_thread_local_word:
+    .zero 8
 "
     (if backtrace
       "    .globl tl_backtrace_stack_low
@@ -575,6 +578,9 @@ tl_alloc_aligned:
 (define (compiler-backend-runtime-linux-arena-functions-base
   [profile : bool]
   [arena-debug : bool]) : String
+  ;; The native entry and each clone worker install a fresh zeroed TLS mapping.
+  ;; Its negative TPOFF words and FS:0 self pointer fit in the 4096-byte mapping;
+  ;; the storage word is independent of arena switching and reclamation.
   (str_cat.str-cat
     "    .globl tl_thread_init
     .type tl_thread_init,@function
@@ -589,9 +595,9 @@ tl_thread_init:
     syscall
     testq %rax, %rax
     js .L_tl_thread_init_abort
-    movq $tl_current_arena@tpoff, %rdi
-    subq %rdi, %rax
     movq %rax, %rsi
+    subq $tl_current_arena@tpoff, %rsi
+    movq %rsi, 0(%rsi)
     movq $0x1002, %rdi
     movq $158, %rax
     syscall
@@ -603,6 +609,14 @@ tl_thread_init:
     movq $134, %rdi
     syscall
     .size tl_thread_init, . - tl_thread_init
+
+    .globl tl_thread_local_word_addr
+    .type tl_thread_local_word_addr,@function
+tl_thread_local_word_addr:
+    movq %fs:0, %rax
+    addq $tl_thread_local_word@tpoff, %rax
+    ret
+    .size tl_thread_local_word_addr, . - tl_thread_local_word_addr
 
     .globl tl_arena_current
     .type tl_arena_current,@function
@@ -1371,10 +1385,7 @@ tl_backtrace_stack_set:
   [id : x64_template.CompilerX64ExecutableTemplateId]
   [text : String]) : String
   (if enabled
-    (x64_catalog.compiler-x64-template-render-assembly
-      id
-      (x64_template.CompilerX64TemplateTarget.LinuxX64)
-      text)
+    (x64_catalog.compiler-x64-template-render-assembly id (LinuxX64) text)
     ""))
 
 (define (compiler-backend-runtime-functions
@@ -1387,65 +1398,65 @@ tl_backtrace_stack_set:
     (str_cat.str-cat
       (compiler-backend-runtime-linux-render
         true
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemcpy)
+        (LinuxRuntimeMemcpy)
         (compiler-backend-runtime-memcpy-functions))
       (compiler-backend-runtime-linux-render
         (runtime_common.compiler-backend-runtime-features-leaf? features 4)
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeCopyFwd)
+        (LinuxRuntimeCopyFwd)
         (compiler-backend-runtime-copy-fwd-functions))
       (compiler-backend-runtime-linux-render
         (runtime_common.compiler-backend-runtime-features-leaf? features 8)
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeCopy8Fwd)
+        (LinuxRuntimeCopy8Fwd)
         (compiler-backend-runtime-copy8-fwd-functions))
       (compiler-backend-runtime-linux-render
         (runtime_common.compiler-backend-runtime-features-leaf? features 1)
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemchr)
+        (LinuxRuntimeMemchr)
         (compiler-backend-runtime-memchr-functions))
       (compiler-backend-runtime-linux-render
         true
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArrayZero)
+        (LinuxRuntimeArrayZero)
         (compiler-backend-runtime-array-zero-functions))
       (compiler-backend-runtime-linux-render
         (runtime_common.compiler-backend-runtime-features-leaf? features 16)
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeMemFill8)
+        (LinuxRuntimeMemFill8)
         (compiler-backend-runtime-mem-fill8-functions))
       (compiler-backend-runtime-linux-render
         (runtime_common.compiler-backend-runtime-features-leaf? features 2)
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciImage)
+        (LinuxRuntimeTlciImage)
         (compiler-backend-runtime-tlci-entry-functions))
       (compiler-backend-runtime-linux-render
         features.tlci-macro-entry
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeTlciMacro)
+        (LinuxRuntimeTlciMacro)
         (compiler-backend-runtime-tlci-macro-entry-functions))
       (compiler-backend-runtime-linux-render
         features.backtrace
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeBacktrace)
+        (LinuxRuntimeBacktrace)
         (compiler-backend-runtime-backtrace-functions))
       (compiler-backend-runtime-linux-render
         true
         (x64_catalog.compiler-x64-template-select-four
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArena)
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaDebug)
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaProfile)
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeArenaProfileDebug)
+          (LinuxRuntimeArena)
+          (LinuxRuntimeArenaDebug)
+          (LinuxRuntimeArenaProfile)
+          (LinuxRuntimeArenaProfileDebug)
           profile
           arena-debug)
         (compiler-backend-runtime-linux-arena-functions profile debug-text))
       (compiler-backend-runtime-linux-render
         profile
-        (x64_template.CompilerX64ExecutableTemplateId.CommonProfile)
+        (CommonProfile)
         (runtime_common.compiler-backend-runtime-profile-functions))
       (compiler-backend-runtime-linux-render
         features.startup-profile
-        (x64_template.CompilerX64ExecutableTemplateId.CommonStartupProfile)
+        (CommonStartupProfile)
         (runtime_common.compiler-backend-runtime-startup-profile-functions true))
       (compiler-backend-runtime-linux-render
         features.alloc
         (x64_catalog.compiler-x64-template-select-four
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAlloc)
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocDebug)
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocProfile)
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeAllocProfileDebug)
+          (LinuxRuntimeAlloc)
+          (LinuxRuntimeAllocDebug)
+          (LinuxRuntimeAllocProfile)
+          (LinuxRuntimeAllocProfileDebug)
           profile
           arena-debug)
         (str_cat.str-cat
@@ -1457,15 +1468,15 @@ tl_backtrace_stack_set:
             debug-text)))
       (compiler-backend-runtime-linux-render
         features.region-mark
-        (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionMark)
+        (LinuxRuntimeRegionMark)
         (compiler-backend-runtime-region-mark-functions))
       (compiler-backend-runtime-linux-render
         features.region-reset
         (x64_catalog.compiler-x64-template-select-four
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionReset)
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetDebug)
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfile)
-          (x64_template.CompilerX64ExecutableTemplateId.LinuxRuntimeRegionResetProfileDebug)
+          (LinuxRuntimeRegionReset)
+          (LinuxRuntimeRegionResetDebug)
+          (LinuxRuntimeRegionResetProfile)
+          (LinuxRuntimeRegionResetProfileDebug)
           profile
           arena-debug)
         (compiler-backend-runtime-region-reset-functions profile debug-text)))))

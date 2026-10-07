@@ -275,14 +275,12 @@
   (let
     [equal? : bool (= (string.string-length left) (string.string-length right))]
     [index : i64 0]
-    (begin
-      (while (and equal? (< index (string.string-length left)))
-        (begin
-          (if (= (string.string-ref left index) (string.string-ref right index))
-            unit
-            (set! equal? false))
-          (set! index (+ index 1))))
-      equal?)))
+    (while (and equal? (< index (string.string-length left)))
+      (if (= (string.string-ref left index) (string.string-ref right index))
+        unit
+        (set! equal? false))
+      (set! index (+ index 1)))
+    equal?))
 
 (define (compiler-incremental-string-bytes [text : (& text str)]) : (__tl_dyn-array
     u8)
@@ -290,14 +288,10 @@
     [length : i64 (string.string-length text)]
     [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
     [index : i64 0]
-    (begin
-      (while (< index length)
-        (begin
-          (set!
-            (array-ref out index)
-            (cast (string.string-ref text index) : u8))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index length)
+      (set! (array-ref out index) (cast (string.string-ref text index) : u8))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-incremental-text-valid?
   [text : (& text str)]
@@ -335,19 +329,18 @@
     [length : i64 (string.string-length domain)]
     [index : i64 0]
     [ok? : bool (and (> length 0) (<= length max-string-bytes))]
-    (begin
-      (while (and ok? (< index length))
-        (let
-          [code : i64 (cast (string.string-ref domain index) : i64)]
-          (if (or
-            (and (>= code 97) (<= code 122))
-            (and (>= code 48) (<= code 57))
-            (= code 45)
-            (= code 46)
-            (= code 47))
-            (set! index (+ index 1))
-            (set! ok? false))))
-      ok?)))
+    (while (and ok? (< index length))
+      (let
+        [code : i64 (cast (string.string-ref domain index) : i64)]
+        (if (or
+          (and (>= code 97) (<= code 122))
+          (and (>= code 48) (<= code 57))
+          (= code 45)
+          (= code 46)
+          (= code 47))
+          (set! index (+ index 1))
+          (set! ok? false))))
+    ok?))
 
 (define (compiler-incremental-child-valid?
   [child : (& child CompilerIncrementalChildIdentity)]
@@ -386,28 +379,28 @@
 (define (compiler-incremental-query-kind-tag
   [kind : (& kind CompilerIncrementalQueryKind)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view kind)
-    [(CompilerIncrementalQueryKind.Parse) 1]
-    [(CompilerIncrementalQueryKind.Typecheck) 2]
-    [(CompilerIncrementalQueryKind.Lower) 3]
-    [(CompilerIncrementalQueryKind.Optimize) 4]
-    [(CompilerIncrementalQueryKind.Assembly) 5]
-    [(CompilerIncrementalQueryKind.Object) 6]
-    [(CompilerIncrementalQueryKind.IrSummary) 7]
-    [(CompilerIncrementalQueryKind.IrDump _) 8]))
+    [(Parse) 1]
+    [(Typecheck) 2]
+    [(Lower) 3]
+    [(Optimize) 4]
+    [(Assembly) 5]
+    [(Object) 6]
+    [(IrSummary) 7]
+    [(IrDump _) 8]))
 
 (define (compiler-incremental-input-tag
   [input : (& input CompilerIncrementalInput)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view input)
-    [(CompilerIncrementalInput.SourceContent _ _) 1]
-    [(CompilerIncrementalInput.LogicalName _ _) 2]
-    [(CompilerIncrementalInput.ImportedSurface _ _ _) 3]
-    [(CompilerIncrementalInput.ImportedArtifact _ _ _ _) 4]
-    [(CompilerIncrementalInput.PackageProvenance _ _ _) 5]
-    [(CompilerIncrementalInput.StdlibProvenance _ _) 6]
-    [(CompilerIncrementalInput.Configuration _) 7]
-    [(CompilerIncrementalInput.MacroComptime _ _ _) 8]
-    [(CompilerIncrementalInput.CodegenTarget _ _ _) 9]
-    [(CompilerIncrementalInput.OrderedChild _ _ _) 10]))
+    [(SourceContent _ _) 1]
+    [(LogicalName _ _) 2]
+    [(ImportedSurface _ _ _) 3]
+    [(ImportedArtifact _ _ _ _) 4]
+    [(PackageProvenance _ _ _) 5]
+    [(StdlibProvenance _ _) 6]
+    [(Configuration _) 7]
+    [(MacroComptime _ _ _) 8]
+    [(CodegenTarget _ _ _) 9]
+    [(OrderedChild _ _ _) 10]))
 
 (define (compiler-incremental-push-digest!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -415,29 +408,26 @@
   (let
     [index : i64 0]
     (while (< index 32)
-      (begin
-        (byte_buf_core.byte-buf-builder-push
-          out
-          (sha256.digest-byte digest index))
-        (set! index (+ index 1))))))
+      (byte_buf_core.byte-buf-builder-push
+        out
+        (sha256.digest-byte digest index))
+      (set! index (+ index 1)))))
 
 (define (compiler-incremental-push-child!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [child : (& child CompilerIncrementalChildIdentity)]) : unit
-  (begin
-    (binary.compiler-incremental-binary-push-string! out (& child.domain))
-    (byte_le.push-u32! out child.schema)
-    (byte_le.push-u64! out child.material-length)
-    (compiler-incremental-push-digest! out (& child.fingerprint))))
+  (binary.compiler-incremental-binary-push-string! out (& child.domain))
+  (byte_le.push-u32! out child.schema)
+  (byte_le.push-u64! out child.material-length)
+  (compiler-incremental-push-digest! out (& child.fingerprint)))
 
 (define (compiler-incremental-push-content!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [content : (& content CompilerIncrementalContentIdentity)]) : unit
-  (begin
-    (binary.compiler-incremental-binary-push-string! out (& content.domain))
-    (byte_le.push-u32! out content.schema)
-    (byte_le.push-u64! out content.exact-length)
-    (compiler-incremental-push-digest! out (& content.fingerprint))))
+  (binary.compiler-incremental-binary-push-string! out (& content.domain))
+  (byte_le.push-u32! out content.schema)
+  (byte_le.push-u64! out content.exact-length)
+  (compiler-incremental-push-digest! out (& content.fingerprint)))
 
 (define (compiler-incremental-digest-array
   [bytes : (& bytes (__tl_dyn-array u8))]) : sha256.Sha256FinalizeResult
@@ -460,7 +450,7 @@
       (compiler-incremental-add-size material-size material-size)]
     (cond
       [(not (compiler-incremental-limits-valid? limits))
-        (ResultCompilerIncrementalContentIdentity.Err
+        (Err
           (compiler-incremental-error
             compiler-incremental-error-invalid-limits
             0
@@ -472,13 +462,13 @@
               (& domain)
               limits.max-string-bytes))
           (> material-size limits.max-transcript-bytes))
-        (ResultCompilerIncrementalContentIdentity.Err
+        (Err
           (compiler-incremental-error
             compiler-incremental-error-value
             0
             "content identity domain or byte length is invalid"))]
       [(or (< owned-size 0) (> owned-size limits.max-owned-bytes))
-        (ResultCompilerIncrementalContentIdentity.Err
+        (Err
           (compiler-incremental-error
             compiler-incremental-error-owned-limit
             0
@@ -487,30 +477,29 @@
         (let
           [out : byte_buf_core.ByteBufBuilder
             (byte_buf_core.byte-buf-builder-with-capacity material-size)]
-          (begin
-            (binary.compiler-incremental-binary-push-string!
-              (&mut out)
-              (& domain))
-            (byte_le.push-u32! (&mut out) 1)
-            (byte_le.push-u64! (&mut out) (array-length bytes))
-            (binary.compiler-incremental-binary-push-array! (&mut out) bytes)
-            (let
-              [material : (__tl_dyn-array u8)
-                (byte_buf_core.byte-buf-builder-finish-array (& out))]
-              (match (compiler-incremental-digest-array (& material))
-                [(sha256.Sha256FinalizeErr _)
-                  (ResultCompilerIncrementalContentIdentity.Err
-                    (compiler-incremental-error
-                      compiler-incremental-error-fingerprint
-                      0
-                      "SHA-256 rejected content identity material"))]
-                [(sha256.Sha256FinalizeOk digest)
-                  (ResultCompilerIncrementalContentIdentity.Ok
-                    (CompilerIncrementalContentIdentity
-                      domain
-                      1
-                      (array-length bytes)
-                      digest))]))))])))
+          (binary.compiler-incremental-binary-push-string!
+            (&mut out)
+            (& domain))
+          (byte_le.push-u32! (&mut out) 1)
+          (byte_le.push-u64! (&mut out) (array-length bytes))
+          (binary.compiler-incremental-binary-push-array! (&mut out) bytes)
+          (let
+            [material : (__tl_dyn-array u8)
+              (byte_buf_core.byte-buf-builder-finish-array (& out))]
+            (match (compiler-incremental-digest-array (& material))
+              [(Sha256FinalizeErr _)
+                (Err
+                  (compiler-incremental-error
+                    compiler-incremental-error-fingerprint
+                    0
+                    "SHA-256 rejected content identity material"))]
+              [(Sha256FinalizeOk digest)
+                (Ok
+                  (CompilerIncrementalContentIdentity
+                    domain
+                    1
+                    (array-length bytes)
+                    digest))])))])))
 
 (define (compiler-incremental-record-less?
   [left : CompilerIncrementalEncodedRecord]
@@ -549,40 +538,37 @@
         (compiler-incremental-string-frame-size (& config.profile))
         (compiler-incremental-string-frame-size (& config.backend))
         5)]
-    (begin
-      (set!
+    (set!
+      size
+      (compiler-incremental-add-size
         size
-        (compiler-incremental-add-size
-          size
-          (compiler-incremental-string-frame-size (& config.path-remap))))
-      (set!
+        (compiler-incremental-string-frame-size (& config.path-remap))))
+    (set!
+      size
+      (compiler-incremental-add-size
         size
-        (compiler-incremental-add-size
-          size
-          (compiler-incremental-string-frame-size
-            (& config.generated-source-policy))))
-      (set! size (compiler-incremental-add-size size 4))
-      (let
-        [index : i64 0]
-        (begin
-          (while (and (>= size 0) (< index (array-length config.extensions)))
-            (let
-              [field : CompilerIncrementalConfigField
-                (owned_view.compiler-owned-array-element-shared-view
-                  config.extensions
-                  index)]
-              [field-payload : i64
-                (compiler-incremental-size-chain2
-                  (compiler-incremental-string-frame-size (& field.name))
-                  (compiler-incremental-string-frame-size (& field.value)))]
-              (begin
-                (set!
-                  size
-                  (compiler-incremental-add-size
-                    size
-                    (compiler-incremental-add-size 4 field-payload)))
-                (set! index (+ index 1)))))
-          size)))))
+        (compiler-incremental-string-frame-size
+          (& config.generated-source-policy))))
+    (set! size (compiler-incremental-add-size size 4))
+    (let
+      [index : i64 0]
+      (while (and (>= size 0) (< index (array-length config.extensions)))
+        (let
+          [field : CompilerIncrementalConfigField
+            (owned_view.compiler-owned-array-element-shared-view
+              config.extensions
+              index)]
+          [field-payload : i64
+            (compiler-incremental-size-chain2
+              (compiler-incremental-string-frame-size (& field.name))
+              (compiler-incremental-string-frame-size (& field.value)))]
+          (set!
+            size
+            (compiler-incremental-add-size
+              size
+              (compiler-incremental-add-size 4 field-payload)))
+          (set! index (+ index 1))))
+      size)))
 
 (define (compiler-incremental-config-valid?
   [config : (& config CompilerIncrementalConfiguration)]
@@ -614,24 +600,23 @@
           false
           limits.max-string-bytes)
         (<= (array-length config.extensions) limits.max-records))]
-    (begin
-      (while (and ok? (< index (array-length config.extensions)))
-        (let
-          [field : CompilerIncrementalConfigField
-            (owned_view.compiler-owned-array-element-shared-view
-              config.extensions
-              index)]
-          (if (and
-            (compiler-incremental-domain-valid?
-              (& field.name)
-              limits.max-string-bytes)
-            (compiler-incremental-text-valid?
-              (& field.value)
-              true
-              limits.max-string-bytes))
-            (set! index (+ index 1))
-            (set! ok? false))))
-      ok?)))
+    (while (and ok? (< index (array-length config.extensions)))
+      (let
+        [field : CompilerIncrementalConfigField
+          (owned_view.compiler-owned-array-element-shared-view
+            config.extensions
+            index)]
+        (if (and
+          (compiler-incremental-domain-valid?
+            (& field.name)
+            limits.max-string-bytes)
+          (compiler-incremental-text-valid?
+            (& field.value)
+            true
+            limits.max-string-bytes))
+          (set! index (+ index 1))
+          (set! ok? false))))
+    ok?))
 
 (define (compiler-incremental-content-domain?
   [content : (& content CompilerIncrementalContentIdentity)]
@@ -642,14 +627,14 @@
   [input : (& input CompilerIncrementalInput)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view input)
-    [(CompilerIncrementalInput.SourceContent path content)
+    [(SourceContent path content)
       (and
         (compiler-incremental-path-valid? (& path) limits.max-string-bytes)
         (compiler-incremental-content-valid? (& content) limits)
         (compiler-incremental-content-domain?
           (& content)
           "typelisp.source-content"))]
-    [(CompilerIncrementalInput.LogicalName module declaration)
+    [(LogicalName module declaration)
       (and
         (compiler-incremental-text-valid?
           (& module)
@@ -659,7 +644,7 @@
           (& declaration)
           true
           limits.max-string-bytes))]
-    [(CompilerIncrementalInput.ImportedSurface package module semantic)
+    [(ImportedSurface package module semantic)
       (and
         (compiler-incremental-text-valid?
           (& package)
@@ -673,11 +658,7 @@
         (compiler-incremental-string-eq?
           (& semantic.identity.domain)
           (& compiler-incremental-semantic-output-domain)))]
-    [(CompilerIncrementalInput.ImportedArtifact
-        package
-        path
-        artifact-kind
-        child)
+    [(ImportedArtifact package path artifact-kind child)
       (and
         (compiler-incremental-text-valid?
           (& package)
@@ -688,7 +669,7 @@
           (& artifact-kind)
           limits.max-string-bytes)
         (compiler-incremental-child-valid? (& child) limits))]
-    [(CompilerIncrementalInput.PackageProvenance package version content)
+    [(PackageProvenance package version content)
       (and
         (compiler-incremental-text-valid?
           (& package)
@@ -702,7 +683,7 @@
         (compiler-incremental-content-domain?
           (& content)
           "typelisp.package-content"))]
-    [(CompilerIncrementalInput.StdlibProvenance distribution content)
+    [(StdlibProvenance distribution content)
       (and
         (compiler-incremental-text-valid?
           (& distribution)
@@ -712,14 +693,14 @@
         (compiler-incremental-content-domain?
           (& content)
           "typelisp.stdlib-content"))]
-    [(CompilerIncrementalInput.Configuration config)
+    [(Configuration config)
       (compiler-incremental-config-valid? (& config) limits)]
-    [(CompilerIncrementalInput.MacroComptime phase request result)
+    [(MacroComptime phase request result)
       (and
         (compiler-incremental-domain-valid? (& phase) limits.max-string-bytes)
         (compiler-incremental-child-valid? (& request) limits)
         (compiler-incremental-child-valid? (& result) limits))]
-    [(CompilerIncrementalInput.CodegenTarget target backend feature-set)
+    [(CodegenTarget target backend feature-set)
       (and
         (compiler-incremental-text-valid?
           (& target)
@@ -733,7 +714,7 @@
           (& feature-set)
           false
           limits.max-string-bytes))]
-    [(CompilerIncrementalInput.OrderedChild sequence ordinal child)
+    [(OrderedChild sequence ordinal child)
       (and
         (compiler-incremental-domain-valid?
           (& sequence)
@@ -744,51 +725,47 @@
 (define (compiler-incremental-input-payload-size
   [input : (& input CompilerIncrementalInput)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view input)
-    [(CompilerIncrementalInput.SourceContent path content)
+    [(SourceContent path content)
       (compiler-incremental-size-chain2
         (compiler-incremental-string-frame-size (& path))
         (compiler-incremental-content-size (& content)))]
-    [(CompilerIncrementalInput.LogicalName module declaration)
+    [(LogicalName module declaration)
       (compiler-incremental-size-chain2
         (compiler-incremental-string-frame-size (& module))
         (compiler-incremental-string-frame-size (& declaration)))]
-    [(CompilerIncrementalInput.ImportedSurface package module semantic)
+    [(ImportedSurface package module semantic)
       (compiler-incremental-size-chain3
         (compiler-incremental-string-frame-size (& package))
         (compiler-incremental-string-frame-size (& module))
         (compiler-incremental-child-size (& semantic.identity)))]
-    [(CompilerIncrementalInput.ImportedArtifact
-        package
-        path
-        artifact-kind
-        child)
+    [(ImportedArtifact package path artifact-kind child)
       (compiler-incremental-size-chain4
         (compiler-incremental-string-frame-size (& package))
         (compiler-incremental-string-frame-size (& path))
         (compiler-incremental-string-frame-size (& artifact-kind))
         (compiler-incremental-child-size (& child)))]
-    [(CompilerIncrementalInput.PackageProvenance package version content)
+    [(PackageProvenance package version content)
       (compiler-incremental-size-chain3
         (compiler-incremental-string-frame-size (& package))
         (compiler-incremental-string-frame-size (& version))
         (compiler-incremental-content-size (& content)))]
-    [(CompilerIncrementalInput.StdlibProvenance distribution content)
+    [(StdlibProvenance distribution content)
       (compiler-incremental-size-chain2
         (compiler-incremental-string-frame-size (& distribution))
         (compiler-incremental-content-size (& content)))]
-    [(CompilerIncrementalInput.Configuration config)
+    [(Configuration config)
       (compiler-incremental-config-payload-size (& config))]
-    [(CompilerIncrementalInput.MacroComptime phase request result)
+    [(MacroComptime phase request result)
       (compiler-incremental-size-chain3
         (compiler-incremental-string-frame-size (& phase))
         (compiler-incremental-child-size (& request))
         (compiler-incremental-child-size (& result)))]
-    [(CompilerIncrementalInput.CodegenTarget target backend feature-set)
+    [(CodegenTarget target backend feature-set)
       (compiler-incremental-size-chain3
         (compiler-incremental-string-frame-size (& target))
         (compiler-incremental-string-frame-size (& backend))
         (compiler-incremental-string-frame-size (& feature-set)))]
-    [(CompilerIncrementalInput.OrderedChild sequence _ child)
+    [(OrderedChild sequence _ child)
       (compiler-incremental-size-chain3
         (compiler-incremental-string-frame-size (& sequence))
         8
@@ -803,20 +780,15 @@
         (compiler-incremental-string-frame-size (& field.value)))]
     [out : byte_buf_core.ByteBufBuilder
       (byte_buf_core.byte-buf-builder-with-capacity (+ 4 payload-size))]
-    (begin
-      (byte_le.push-u32! (&mut out) payload-size)
-      (binary.compiler-incremental-binary-push-string!
-        (&mut out)
-        (& field.name))
-      (binary.compiler-incremental-binary-push-string!
-        (&mut out)
-        (& field.value))
-      (CompilerIncrementalEncodedRecord
-        0
-        (byte_buf_core.byte-buf-builder-finish-string (& out))
-        false
-        ""
-        -1))))
+    (byte_le.push-u32! (&mut out) payload-size)
+    (binary.compiler-incremental-binary-push-string! (&mut out) (& field.name))
+    (binary.compiler-incremental-binary-push-string! (&mut out) (& field.value))
+    (CompilerIncrementalEncodedRecord
+      0
+      (byte_buf_core.byte-buf-builder-finish-string (& out))
+      false
+      ""
+      -1)))
 
 (define (compiler-incremental-encode-config-extensions
   [config : (& config CompilerIncrementalConfiguration)]) : ResultCompilerIncrementalConfigBytes
@@ -825,67 +797,60 @@
       (incremental_config_vec.with-capacity (array-length config.extensions))]
     [index : i64 0]
     [duplicate? : bool false]
-    (begin
-      (while (< index (array-length config.extensions))
-        (let
-          [field : CompilerIncrementalConfigField
-            (owned_view.compiler-owned-array-element-shared-view
-              config.extensions
-              index)]
-          (begin
-            (incremental_config_vec.push-ref! (&mut fields) field)
-            (set! index (+ index 1)))))
-      (incremental_config_sort.sort!
-        (&mut fields)
-        compiler-incremental-config-field-less?)
-      (set! index 1)
-      (while (and
-        (not duplicate?)
-        (< index (incremental_config_vec.len (& fields))))
-        (let
-          [slots (incremental_config_vec.slots (& fields))]
-          (if (compiler-incremental-string-eq?
-            (& (array-ref slots (- index 1)).name)
-            (& (array-ref slots index).name))
-            (set! duplicate? true)
-            (set! index (+ index 1)))))
-      (if duplicate?
-        (ResultCompilerIncrementalConfigBytes.Err
-          (compiler-incremental-error
-            compiler-incremental-error-order
-            0
-            "duplicate canonical configuration field"))
-        (let
-          [out : byte_buf_core.ByteBufBuilder
-            (byte_buf_core.byte-buf-builder-new)]
-          [record-index : i64 0]
-          (begin
-            (byte_le.push-u32!
+    (while (< index (array-length config.extensions))
+      (let
+        [field : CompilerIncrementalConfigField
+          (owned_view.compiler-owned-array-element-shared-view
+            config.extensions
+            index)]
+        (incremental_config_vec.push-ref! (&mut fields) field)
+        (set! index (+ index 1))))
+    (incremental_config_sort.sort!
+      (&mut fields)
+      compiler-incremental-config-field-less?)
+    (set! index 1)
+    (while (and
+      (not duplicate?)
+      (< index (incremental_config_vec.len (& fields))))
+      (let
+        [slots (incremental_config_vec.slots (& fields))]
+        (if (compiler-incremental-string-eq?
+          (& (array-ref slots (- index 1)).name)
+          (& (array-ref slots index).name))
+          (set! duplicate? true)
+          (set! index (+ index 1)))))
+    (if duplicate?
+      (Err
+        (compiler-incremental-error
+          compiler-incremental-error-order
+          0
+          "duplicate canonical configuration field"))
+      (let
+        [out : byte_buf_core.ByteBufBuilder
+          (byte_buf_core.byte-buf-builder-new)]
+        [record-index : i64 0]
+        (byte_le.push-u32! (&mut out) (incremental_config_vec.len (& fields)))
+        (while (< record-index (incremental_config_vec.len (& fields)))
+          (let
+            [slots (incremental_config_vec.slots (& fields))]
+            [record : CompilerIncrementalEncodedRecord
+              (compiler-incremental-encode-config-field
+                (& (array-ref slots record-index)))]
+            (byte_buf_core.byte-buf-builder-append-string
               (&mut out)
-              (incremental_config_vec.len (& fields)))
-            (while (< record-index (incremental_config_vec.len (& fields)))
-              (let
-                [slots (incremental_config_vec.slots (& fields))]
-                [record : CompilerIncrementalEncodedRecord
-                  (compiler-incremental-encode-config-field
-                    (& (array-ref slots record-index)))]
-                (begin
-                  (byte_buf_core.byte-buf-builder-append-string
-                    (&mut out)
-                    record.bytes)
-                  (set! record-index (+ record-index 1)))))
-            (ResultCompilerIncrementalConfigBytes.Ok
-              (byte_buf_core.byte-buf-builder-finish-string (& out)))))))))
+              record.bytes)
+            (set! record-index (+ record-index 1))))
+        (Ok (byte_buf_core.byte-buf-builder-finish-string (& out)))))))
 
 (define (compiler-incremental-input-invalid-code
   [input : (& input CompilerIncrementalInput)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view input)
-    [(CompilerIncrementalInput.SourceContent path _)
+    [(SourceContent path _)
       (if (compiler-incremental-path-valid? (& path) limits.max-string-bytes)
         compiler-incremental-error-value
         compiler-incremental-error-path)]
-    [(CompilerIncrementalInput.ImportedArtifact _ path _ _)
+    [(ImportedArtifact _ path _ _)
       (if (compiler-incremental-path-valid? (& path) limits.max-string-bytes)
         compiler-incremental-error-value
         compiler-incremental-error-path)]
@@ -898,7 +863,7 @@
     [payload-size : i64 (compiler-incremental-input-payload-size input)]
     [tag : i64 (compiler-incremental-input-tag input)]
     (if (not (compiler-incremental-input-valid? input limits))
-      (ResultCompilerIncrementalEncodedRecord.Err
+      (Err
         (compiler-incremental-error
           (compiler-incremental-input-invalid-code input limits)
           0
@@ -907,7 +872,7 @@
         (< payload-size 0)
         (> payload-size limits.max-record-bytes)
         (> payload-size 4294967295))
-        (ResultCompilerIncrementalEncodedRecord.Err
+        (Err
           (compiler-incremental-error
             compiler-incremental-error-input-limit
             0
@@ -918,158 +883,129 @@
           [ordered? : bool false]
           [sequence : String ""]
           [ordinal : i64 -1]
-          (begin
-            (binary.compiler-incremental-binary-push-u8! (&mut out) tag)
-            (byte_le.push-u32! (&mut out) payload-size)
-            (match (owned_view.compiler-owned-reference-shared-view input)
-              [(CompilerIncrementalInput.SourceContent path content)
-                (begin
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& path))
-                  (compiler-incremental-push-content! (&mut out) (& content)))]
-              [(CompilerIncrementalInput.LogicalName module declaration)
-                (begin
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& module))
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& declaration)))]
-              [(CompilerIncrementalInput.ImportedSurface
-                  package
-                  module
-                  semantic)
-                (begin
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& package))
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& module))
-                  (compiler-incremental-push-child!
-                    (&mut out)
-                    (& semantic.identity)))]
-              [(CompilerIncrementalInput.ImportedArtifact
-                  package
-                  path
-                  artifact-kind
-                  child)
-                (begin
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& package))
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& path))
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& artifact-kind))
-                  (compiler-incremental-push-child! (&mut out) (& child)))]
-              [(CompilerIncrementalInput.PackageProvenance
-                  package
-                  version
-                  content)
-                (begin
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& package))
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& version))
-                  (compiler-incremental-push-content! (&mut out) (& content)))]
-              [(CompilerIncrementalInput.StdlibProvenance distribution content)
-                (begin
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& distribution))
-                  (compiler-incremental-push-content! (&mut out) (& content)))]
-              [(CompilerIncrementalInput.Configuration config)
-                (begin
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& config.target))
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& config.profile))
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& config.backend))
-                  (byte_le.push-u32! (&mut out) config.opt-level)
-                  (binary.compiler-incremental-binary-push-u8!
-                    (&mut out)
-                    (if config.debug?
-                      1
-                      0))
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& config.path-remap))
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& config.generated-source-policy))
-                  (match (compiler-incremental-encode-config-extensions
-                    (& config))
-                    [(ResultCompilerIncrementalConfigBytes.Err error)
-                      (return
-                        (ResultCompilerIncrementalEncodedRecord.Err error))]
-                    [(ResultCompilerIncrementalConfigBytes.Ok extension-bytes)
-                      (byte_buf_core.byte-buf-builder-append-string
-                        (&mut out)
-                        extension-bytes)]))]
-              [(CompilerIncrementalInput.MacroComptime phase request result)
-                (begin
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& phase))
-                  (compiler-incremental-push-child! (&mut out) (& request))
-                  (compiler-incremental-push-child! (&mut out) (& result)))]
-              [(CompilerIncrementalInput.CodegenTarget
-                  target
-                  backend
-                  feature-set)
-                (begin
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& target))
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& backend))
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& feature-set)))]
-              [(CompilerIncrementalInput.OrderedChild
-                  actual-sequence
-                  actual-ordinal
-                  child)
-                (begin
-                  (set! ordered? true)
-                  (set! sequence actual-sequence)
-                  (set! ordinal actual-ordinal)
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& sequence))
-                  (byte_le.push-u64! (&mut out) ordinal)
-                  (compiler-incremental-push-child! (&mut out) (& child)))])
-            (ResultCompilerIncrementalEncodedRecord.Ok
-              (CompilerIncrementalEncodedRecord
-                tag
-                (byte_buf_core.byte-buf-builder-finish-string (& out))
-                ordered?
-                sequence
-                ordinal))))))))
+          (binary.compiler-incremental-binary-push-u8! (&mut out) tag)
+          (byte_le.push-u32! (&mut out) payload-size)
+          (match (owned_view.compiler-owned-reference-shared-view input)
+            [(SourceContent path content)
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& path))
+              (compiler-incremental-push-content! (&mut out) (& content))]
+            [(LogicalName module declaration)
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& module))
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& declaration))]
+            [(ImportedSurface package module semantic)
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& package))
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& module))
+              (compiler-incremental-push-child!
+                (&mut out)
+                (& semantic.identity))]
+            [(ImportedArtifact package path artifact-kind child)
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& package))
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& path))
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& artifact-kind))
+              (compiler-incremental-push-child! (&mut out) (& child))]
+            [(PackageProvenance package version content)
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& package))
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& version))
+              (compiler-incremental-push-content! (&mut out) (& content))]
+            [(StdlibProvenance distribution content)
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& distribution))
+              (compiler-incremental-push-content! (&mut out) (& content))]
+            [(Configuration config)
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& config.target))
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& config.profile))
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& config.backend))
+              (byte_le.push-u32! (&mut out) config.opt-level)
+              (binary.compiler-incremental-binary-push-u8!
+                (&mut out)
+                (if config.debug?
+                  1
+                  0))
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& config.path-remap))
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& config.generated-source-policy))
+              (let
+                [extension-bytes
+                  (try
+                    (compiler-incremental-encode-config-extensions (& config)))]
+                (byte_buf_core.byte-buf-builder-append-string
+                  (&mut out)
+                  extension-bytes))]
+            [(MacroComptime phase request result)
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& phase))
+              (compiler-incremental-push-child! (&mut out) (& request))
+              (compiler-incremental-push-child! (&mut out) (& result))]
+            [(CodegenTarget target backend feature-set)
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& target))
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& backend))
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& feature-set))]
+            [(OrderedChild actual-sequence actual-ordinal child)
+              (set! ordered? true)
+              (set! sequence actual-sequence)
+              (set! ordinal actual-ordinal)
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& sequence))
+              (byte_le.push-u64! (&mut out) ordinal)
+              (compiler-incremental-push-child! (&mut out) (& child))])
+          (Ok
+            (CompilerIncrementalEncodedRecord
+              tag
+              (byte_buf_core.byte-buf-builder-finish-string (& out))
+              ordered?
+              sequence
+              ordinal)))))))
 
 (define (compiler-incremental-query-kind-valid?
   [kind : (& kind CompilerIncrementalQueryKind)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view kind)
-    [(CompilerIncrementalQueryKind.IrDump pass)
+    [(IrDump pass)
       (compiler-incremental-text-valid? (& pass) false limits.max-string-bytes)]
     [_ true]))
 
 (define (compiler-incremental-query-kind-size
   [kind : (& kind CompilerIncrementalQueryKind)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view kind)
-    [(CompilerIncrementalQueryKind.IrDump pass)
+    [(IrDump pass)
       (compiler-incremental-add-size
         1
         (compiler-incremental-string-frame-size (& pass)))]
@@ -1078,20 +1014,19 @@
 (define (compiler-incremental-push-query-kind!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [kind : (& kind CompilerIncrementalQueryKind)]) : unit
-  (begin
-    (binary.compiler-incremental-binary-push-u8!
-      out
-      (compiler-incremental-query-kind-tag kind))
-    (match (owned_view.compiler-owned-reference-shared-view kind)
-      [(CompilerIncrementalQueryKind.IrDump pass)
-        (binary.compiler-incremental-binary-push-string! out (& pass))]
-      [_ unit])))
+  (binary.compiler-incremental-binary-push-u8!
+    out
+    (compiler-incremental-query-kind-tag kind))
+  (match (owned_view.compiler-owned-reference-shared-view kind)
+    [(IrDump pass)
+      (binary.compiler-incremental-binary-push-string! out (& pass))]
+    [_ unit]))
 
 (define (compiler-incremental-build-available
   [build : (& build CompilerIncrementalBuildIdentity)]) : CompilerIncrementalChildIdentity
   (match (owned_view.compiler-owned-reference-shared-view build)
-    [(CompilerIncrementalBuildIdentity.Available child) child]
-    [(CompilerIncrementalBuildIdentity.Unavailable _)
+    [(Available child) child]
+    [(Unavailable _)
       (CompilerIncrementalChildIdentity
         "invalid"
         0
@@ -1102,8 +1037,8 @@
   [build : (& build CompilerIncrementalBuildIdentity)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view build)
-    [(CompilerIncrementalBuildIdentity.Unavailable _) false]
-    [(CompilerIncrementalBuildIdentity.Available child)
+    [(Unavailable _) false]
+    [(Available child)
       (and
         (compiler-incremental-child-valid? (& child) limits)
         (compiler-incremental-string-eq?
@@ -1123,24 +1058,21 @@
         (compiler-incremental-query-kind-size (& query.kind))
         (compiler-incremental-child-size (& build)))]
     [index : i64 0]
-    (begin
-      (set! size (compiler-incremental-add-size size 4))
-      (while (and (>= size 0) (< index (array-length query.inputs)))
-        (let
-          [input : CompilerIncrementalInput
-            (owned_view.compiler-owned-array-element-shared-view
-              query.inputs
-              index)]
-          [payload-size : i64
-            (compiler-incremental-input-payload-size (& input))]
-          (begin
-            (set!
-              size
-              (compiler-incremental-add-size
-                size
-                (compiler-incremental-add-size 5 payload-size)))
-            (set! index (+ index 1)))))
-      size)))
+    (set! size (compiler-incremental-add-size size 4))
+    (while (and (>= size 0) (< index (array-length query.inputs)))
+      (let
+        [input : CompilerIncrementalInput
+          (owned_view.compiler-owned-array-element-shared-view
+            query.inputs
+            index)]
+        [payload-size : i64 (compiler-incremental-input-payload-size (& input))]
+        (set!
+          size
+          (compiler-incremental-add-size
+            size
+            (compiler-incremental-add-size 5 payload-size)))
+        (set! index (+ index 1))))
+    size))
 
 (define (compiler-incremental-owned-plan-valid?
   [transcript-size : i64]
@@ -1150,19 +1082,17 @@
     ;; SHA adapter each retain at most one transcript-sized byte population.
     [owned : i64 transcript-size]
     [copy-index : i64 1]
-    (begin
-      (while (and (>= owned 0) (< copy-index 5))
-        (begin
-          (set! owned (compiler-incremental-add-size owned transcript-size))
-          (set! copy-index (+ copy-index 1))))
-      (and (>= owned 0) (<= owned limits.max-owned-bytes)))))
+    (while (and (>= owned 0) (< copy-index 5))
+      (set! owned (compiler-incremental-add-size owned transcript-size))
+      (set! copy-index (+ copy-index 1)))
+    (and (>= owned 0) (<= owned limits.max-owned-bytes))))
 
 (define (compiler-incremental-identity-encode
   [query : CompilerIncrementalQuery]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : ResultCompilerIncrementalIdentity
   (cond
     [(not (compiler-incremental-limits-valid? limits))
-      (ResultCompilerIncrementalIdentity.Err
+      (Err
         (compiler-incremental-error
           compiler-incremental-error-invalid-limits
           0
@@ -1172,25 +1102,25 @@
         (if (> (array-length query.inputs) 0)
           3
           2))
-      (ResultCompilerIncrementalIdentity.Err
+      (Err
         (compiler-incremental-error
           compiler-incremental-error-depth-limit
           0
           "incremental query exceeds the nesting-depth limit"))]
     [(> (array-length query.inputs) limits.max-records)
-      (ResultCompilerIncrementalIdentity.Err
+      (Err
         (compiler-incremental-error
           compiler-incremental-error-record-limit
           0
           "incremental query has too many input records"))]
     [(not (compiler-incremental-query-kind-valid? (& query.kind) limits))
-      (ResultCompilerIncrementalIdentity.Err
+      (Err
         (compiler-incremental-error
           compiler-incremental-error-value
           0
           "incremental query kind payload is invalid"))]
     [(not (compiler-incremental-build-valid? (& query.compiler-build) limits))
-      (ResultCompilerIncrementalIdentity.Err
+      (Err
         (compiler-incremental-error
           compiler-incremental-error-build-unavailable
           0
@@ -1202,7 +1132,7 @@
           (< planned-size 0)
           (> planned-size limits.max-transcript-bytes)
           (not (compiler-incremental-owned-plan-valid? planned-size limits)))
-          (ResultCompilerIncrementalIdentity.Err
+          (Err
             (compiler-incremental-error
               (if (> planned-size limits.max-transcript-bytes)
                 compiler-incremental-error-input-limit
@@ -1213,115 +1143,103 @@
             [records : incremental_record_vec.Vec
               (incremental_record_vec.with-capacity (array-length query.inputs))]
             [index : i64 0]
-            (begin
-              (while (< index (array-length query.inputs))
-                (let
-                  [input : CompilerIncrementalInput
-                    (owned_view.compiler-owned-array-element-shared-view
-                      query.inputs
-                      index)]
-                  (match (compiler-incremental-encode-input (& input) limits)
-                    [(ResultCompilerIncrementalEncodedRecord.Err error)
-                      (return (ResultCompilerIncrementalIdentity.Err error))]
-                    [(ResultCompilerIncrementalEncodedRecord.Ok record)
-                      (begin
-                        (incremental_record_vec.push-ref! (&mut records) record)
-                        (set! index (+ index 1)))])))
-              (incremental_record_sort.sort!
-                (&mut records)
-                compiler-incremental-record-less?)
-              (set! index 1)
-              (while (< index (incremental_record_vec.len (& records)))
-                (let
-                  [previous : CompilerIncrementalEncodedRecord
-                    (owned_view.compiler-owned-array-element-shared-view
-                      records.slots
-                      (- index 1))]
-                  [current : CompilerIncrementalEncodedRecord
-                    (owned_view.compiler-owned-array-element-shared-view
-                      records.slots
-                      index)]
-                  (cond
-                    [(compiler-incremental-record-bytes-eq?
-                        (& previous)
-                        (& current))
-                      (return
-                        (ResultCompilerIncrementalIdentity.Err
-                          (compiler-incremental-error
-                            compiler-incremental-error-order
-                            0
-                            "duplicate canonical input record")))]
-                    [(and
-                        previous.ordered?
-                        current.ordered?
-                        (= previous.ordinal current.ordinal)
-                        (compiler-incremental-string-eq?
-                          (& previous.sequence)
-                          (& current.sequence)))
-                      (return
-                        (ResultCompilerIncrementalIdentity.Err
-                          (compiler-incremental-error
-                            compiler-incremental-error-order
-                            0
-                            "duplicate ordered-child sequence ordinal")))]
-                    [else (set! index (+ index 1))])))
+            (while (< index (array-length query.inputs))
               (let
-                [build : CompilerIncrementalChildIdentity
-                  (compiler-incremental-build-available
-                    (& query.compiler-build))]
-                [out : byte_buf_core.ByteBufBuilder
-                  (byte_buf_core.byte-buf-builder-with-capacity planned-size)]
-                [record-index : i64 0]
-                (begin
-                  (binary.compiler-incremental-binary-push-string!
-                    (&mut out)
-                    (& compiler-incremental-identity-domain))
-                  (byte_le.push-u32!
-                    (&mut out)
-                    compiler-incremental-identity-schema)
-                  (compiler-incremental-push-query-kind!
-                    (&mut out)
-                    (& query.kind))
-                  (compiler-incremental-push-child! (&mut out) (& build))
-                  (byte_le.push-u32!
-                    (&mut out)
-                    (incremental_record_vec.len (& records)))
-                  (while (<
-                    record-index
-                    (incremental_record_vec.len (& records)))
-                    (let
-                      [slots (incremental_record_vec.slots (& records))]
-                      (begin
-                        (byte_buf_core.byte-buf-builder-append-string
-                          (&mut out)
-                          (owned_view.compiler-owned-string-place-shared-view
-                            (array-ref slots record-index).bytes))
-                        (set! record-index (+ record-index 1)))))
-                  (let
-                    [transcript : (__tl_dyn-array u8)
-                      (byte_buf_core.byte-buf-builder-finish-array (& out))]
-                    (if (!= (array-length transcript) planned-size)
-                      (ResultCompilerIncrementalIdentity.Err
+                [input : CompilerIncrementalInput
+                  (owned_view.compiler-owned-array-element-shared-view
+                    query.inputs
+                    index)]
+                [record
+                  (try (compiler-incremental-encode-input (& input) limits))]
+                (incremental_record_vec.push-ref! (&mut records) record)
+                (set! index (+ index 1))))
+            (incremental_record_sort.sort!
+              (&mut records)
+              compiler-incremental-record-less?)
+            (set! index 1)
+            (while (< index (incremental_record_vec.len (& records)))
+              (let
+                [previous : CompilerIncrementalEncodedRecord
+                  (owned_view.compiler-owned-array-element-shared-view
+                    records.slots
+                    (- index 1))]
+                [current : CompilerIncrementalEncodedRecord
+                  (owned_view.compiler-owned-array-element-shared-view
+                    records.slots
+                    index)]
+                (cond
+                  [(compiler-incremental-record-bytes-eq?
+                      (& previous)
+                      (& current))
+                    (return
+                      (Err
                         (compiler-incremental-error
-                          compiler-incremental-error-layout
+                          compiler-incremental-error-order
                           0
-                          "incremental identity size plan disagrees with encoder"))
-                      (match (compiler-incremental-digest-array (& transcript))
-                        [(sha256.Sha256FinalizeErr _)
-                          (ResultCompilerIncrementalIdentity.Err
-                            (compiler-incremental-error
-                              compiler-incremental-error-fingerprint
-                              0
-                              "SHA-256 rejected incremental transcript"))]
-                        [(sha256.Sha256FinalizeOk digest)
-                          (ResultCompilerIncrementalIdentity.Ok
-                            (CompilerIncrementalIdentity
-                              compiler-incremental-identity-schema
-                              (compiler-incremental-query-kind-tag
-                                (& query.kind))
-                              (array-length query.inputs)
-                              transcript
-                              digest))])))))))))]))
+                          "duplicate canonical input record")))]
+                  [(and
+                      previous.ordered?
+                      current.ordered?
+                      (= previous.ordinal current.ordinal)
+                      (compiler-incremental-string-eq?
+                        (& previous.sequence)
+                        (& current.sequence)))
+                    (return
+                      (Err
+                        (compiler-incremental-error
+                          compiler-incremental-error-order
+                          0
+                          "duplicate ordered-child sequence ordinal")))]
+                  [else (set! index (+ index 1))])))
+            (let
+              [build : CompilerIncrementalChildIdentity
+                (compiler-incremental-build-available (& query.compiler-build))]
+              [out : byte_buf_core.ByteBufBuilder
+                (byte_buf_core.byte-buf-builder-with-capacity planned-size)]
+              [record-index : i64 0]
+              (binary.compiler-incremental-binary-push-string!
+                (&mut out)
+                (& compiler-incremental-identity-domain))
+              (byte_le.push-u32!
+                (&mut out)
+                compiler-incremental-identity-schema)
+              (compiler-incremental-push-query-kind! (&mut out) (& query.kind))
+              (compiler-incremental-push-child! (&mut out) (& build))
+              (byte_le.push-u32!
+                (&mut out)
+                (incremental_record_vec.len (& records)))
+              (while (< record-index (incremental_record_vec.len (& records)))
+                (let
+                  [slots (incremental_record_vec.slots (& records))]
+                  (byte_buf_core.byte-buf-builder-append-string
+                    (&mut out)
+                    (owned_view.compiler-owned-string-place-shared-view
+                      (array-ref slots record-index).bytes))
+                  (set! record-index (+ record-index 1))))
+              (let
+                [transcript : (__tl_dyn-array u8)
+                  (byte_buf_core.byte-buf-builder-finish-array (& out))]
+                (if (!= (array-length transcript) planned-size)
+                  (Err
+                    (compiler-incremental-error
+                      compiler-incremental-error-layout
+                      0
+                      "incremental identity size plan disagrees with encoder"))
+                  (match (compiler-incremental-digest-array (& transcript))
+                    [(Sha256FinalizeErr _)
+                      (Err
+                        (compiler-incremental-error
+                          compiler-incremental-error-fingerprint
+                          0
+                          "SHA-256 rejected incremental transcript"))]
+                    [(Sha256FinalizeOk digest)
+                      (Ok
+                        (CompilerIncrementalIdentity
+                          compiler-incremental-identity-schema
+                          (compiler-incremental-query-kind-tag (& query.kind))
+                          (array-length query.inputs)
+                          transcript
+                          digest))])))))))]))
 
 (define (compiler-incremental-reader-error
   [reader : (& reader binary.CompilerIncrementalBinaryReader)]) : CompilerIncrementalIdentityError
@@ -1350,14 +1268,12 @@
   (let
     [octets : (Array u8 32) (make-array u8 32)]
     [index : i64 0]
-    (begin
-      (while (< index 32)
-        (begin
-          (set!
-            (array-ref octets index)
-            (cast (byte_reader.read-u8! (&mut reader.cursor)) : u8))
-          (set! index (+ index 1))))
-      (sha256.Sha256Digest octets))))
+    (while (< index 32)
+      (set!
+        (array-ref octets index)
+        (cast (byte_reader.read-u8! (&mut reader.cursor)) : u8))
+      (set! index (+ index 1)))
+    (sha256.Sha256Digest octets)))
 
 (define (compiler-incremental-read-child!
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]
@@ -1370,17 +1286,16 @@
     [digest : sha256.Sha256Digest (compiler-incremental-read-digest! reader)]
     [child : CompilerIncrementalChildIdentity
       (CompilerIncrementalChildIdentity domain schema material-length digest)]
-    (begin
-      (if (if reader.cursor.ok?
-        (not (compiler-incremental-child-valid? (& child) limits))
-        false)
-        (binary.compiler-incremental-binary-fail!
-          reader
-          compiler-incremental-error-value
-          reader.cursor.offset
-          "incremental child identity is invalid")
-        unit)
-      child)))
+    (if (if reader.cursor.ok?
+      (not (compiler-incremental-child-valid? (& child) limits))
+      false)
+      (binary.compiler-incremental-binary-fail!
+        reader
+        compiler-incremental-error-value
+        reader.cursor.offset
+        "incremental child identity is invalid")
+      unit)
+    child))
 
 (define (compiler-incremental-read-content!
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]
@@ -1393,17 +1308,16 @@
     [digest : sha256.Sha256Digest (compiler-incremental-read-digest! reader)]
     [content : CompilerIncrementalContentIdentity
       (CompilerIncrementalContentIdentity domain schema exact-length digest)]
-    (begin
-      (if (if reader.cursor.ok?
-        (not (compiler-incremental-content-valid? (& content) limits))
-        false)
-        (binary.compiler-incremental-binary-fail!
-          reader
-          compiler-incremental-error-value
-          reader.cursor.offset
-          "incremental content identity is invalid")
-        unit)
-      content)))
+    (if (if reader.cursor.ok?
+      (not (compiler-incremental-content-valid? (& content) limits))
+      false)
+      (binary.compiler-incremental-binary-fail!
+        reader
+        compiler-incremental-error-value
+        reader.cursor.offset
+        "incremental content identity is invalid")
+      unit)
+    content))
 
 (define (compiler-incremental-range-less?
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -1419,21 +1333,19 @@
     [index : i64 0]
     [decided? : bool false]
     [less? : bool false]
-    (begin
-      (while (and (not decided?) (< index limit))
-        (let
-          [left-byte : u8 (array-ref bytes (+ left-start index))]
-          [right-byte : u8 (array-ref bytes (+ right-start index))]
-          (cond
-            [(< left-byte right-byte)
-              (begin
-                (set! less? true)
-                (set! decided? true))]
-            [(> left-byte right-byte) (set! decided? true)]
-            [else (set! index (+ index 1))])))
-      (if decided?
-        less?
-        (< left-length right-length)))))
+    (while (and (not decided?) (< index limit))
+      (let
+        [left-byte : u8 (array-ref bytes (+ left-start index))]
+        [right-byte : u8 (array-ref bytes (+ right-start index))]
+        (cond
+          [(< left-byte right-byte)
+            (set! less? true)
+            (set! decided? true)]
+          [(> left-byte right-byte) (set! decided? true)]
+          [else (set! index (+ index 1))])))
+    (if decided?
+      less?
+      (< left-length right-length))))
 
 (define (compiler-incremental-reader-charge-work!
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]
@@ -1458,24 +1370,22 @@
     [tag-offset : i64 reader.cursor.offset]
     [tag : i64 (byte_reader.read-u8! (&mut reader.cursor))]
     (cond
-      [(= tag 1) (CompilerIncrementalQueryKind.Parse)]
-      [(= tag 2) (CompilerIncrementalQueryKind.Typecheck)]
-      [(= tag 3) (CompilerIncrementalQueryKind.Lower)]
-      [(= tag 4) (CompilerIncrementalQueryKind.Optimize)]
-      [(= tag 5) (CompilerIncrementalQueryKind.Assembly)]
-      [(= tag 6) (CompilerIncrementalQueryKind.Object)]
-      [(= tag 7) (CompilerIncrementalQueryKind.IrSummary)]
+      [(= tag 1) (Parse)]
+      [(= tag 2) (Typecheck)]
+      [(= tag 3) (Lower)]
+      [(= tag 4) (Optimize)]
+      [(= tag 5) (Assembly)]
+      [(= tag 6) (Object)]
+      [(= tag 7) (IrSummary)]
       [(= tag 8)
-        (CompilerIncrementalQueryKind.IrDump
-          (binary.compiler-incremental-binary-read-string! reader false))]
+        (IrDump (binary.compiler-incremental-binary-read-string! reader false))]
       [else
-        (begin
-          (binary.compiler-incremental-binary-fail!
-            reader
-            compiler-incremental-error-unknown-tag
-            tag-offset
-            "unknown incremental query-kind tag")
-          (CompilerIncrementalQueryKind.Parse))])))
+        (binary.compiler-incremental-binary-fail!
+          reader
+          compiler-incremental-error-unknown-tag
+          tag-offset
+          "unknown incremental query-kind tag")
+        (Parse)])))
 
 (define (compiler-incremental-reader-reserve-owned-records!
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]
@@ -1529,96 +1439,85 @@
         (__tl_make-array CompilerIncrementalConfigField count)
         (__tl_make-array CompilerIncrementalConfigField 0))]
     [index : i64 0]
-    (begin
-      (if (and reader.cursor.ok? (> count limits.max-records))
-        (binary.compiler-incremental-binary-fail!
-          reader
-          compiler-incremental-error-record-limit
-          count-offset
-          "configuration extension count exceeds limit")
-        unit)
-      (if (and reader.cursor.ok? (not (or (= debug-byte 0) (= debug-byte 1))))
-        (binary.compiler-incremental-binary-fail!
-          reader
-          compiler-incremental-error-value
-          debug-byte-offset
-          "configuration debug byte must be zero or one")
-        unit)
-      (while (and reader.cursor.ok? (< index count))
-        (let
-          [frame-start : i64 reader.cursor.offset]
-          [payload-length : i64 (byte_reader.read-u32! (&mut reader.cursor))]
-          [payload-start : i64 reader.cursor.offset]
-          [outer-end : i64 reader.cursor.end]
-          (if (> payload-length limits.max-record-bytes)
+    (if (and reader.cursor.ok? (> count limits.max-records))
+      (binary.compiler-incremental-binary-fail!
+        reader
+        compiler-incremental-error-record-limit
+        count-offset
+        "configuration extension count exceeds limit")
+      unit)
+    (if (and reader.cursor.ok? (not (or (= debug-byte 0) (= debug-byte 1))))
+      (binary.compiler-incremental-binary-fail!
+        reader
+        compiler-incremental-error-value
+        debug-byte-offset
+        "configuration debug byte must be zero or one")
+      unit)
+    (while (and reader.cursor.ok? (< index count))
+      (let
+        [frame-start : i64 reader.cursor.offset]
+        [payload-length : i64 (byte_reader.read-u32! (&mut reader.cursor))]
+        [payload-start : i64 reader.cursor.offset]
+        [outer-end : i64 reader.cursor.end]
+        (if (> payload-length limits.max-record-bytes)
+          (binary.compiler-incremental-binary-fail!
+            reader
+            compiler-incremental-error-input-limit
+            frame-start
+            "configuration extension frame exceeds its byte limit")
+          (if (not
+            (byte_reader.range-present? outer-end payload-start payload-length))
             (binary.compiler-incremental-binary-fail!
               reader
-              compiler-incremental-error-input-limit
+              compiler-incremental-error-truncated
               frame-start
-              "configuration extension frame exceeds its byte limit")
-            (if (not
-              (byte_reader.range-present?
-                outer-end
-                payload-start
-                payload-length))
-              (binary.compiler-incremental-binary-fail!
-                reader
-                compiler-incremental-error-truncated
-                frame-start
-                "configuration extension frame is truncated")
+              "configuration extension frame is truncated")
+            (let
+              [payload-end : i64 (+ payload-start payload-length)]
+              (set! reader.cursor.end payload-end)
               (let
-                [payload-end : i64 (+ payload-start payload-length)]
-                (begin
-                  (set! reader.cursor.end payload-end)
-                  (let
-                    [name : String
-                      (binary.compiler-incremental-binary-read-string!
-                        reader
-                        false)]
-                    [value : String
-                      (binary.compiler-incremental-binary-read-string!
-                        reader
-                        false)]
-                    (begin
-                      (if (and
-                        reader.cursor.ok?
-                        (!= reader.cursor.offset payload-end))
-                        (binary.compiler-incremental-binary-fail!
-                          reader
-                          compiler-incremental-error-layout
-                          reader.cursor.offset
-                          "configuration extension has trailing bytes")
-                        unit)
-                      (set! reader.cursor.end outer-end)
-                      (if (and
-                        reader.cursor.ok?
-                        (> index 0)
-                        (not
-                          (stdlib.sort.string-less-borrowed?
-                            (& (array-ref extensions (- index 1)).name)
-                            (& name))))
-                        (binary.compiler-incremental-binary-fail!
-                          reader
-                          compiler-incremental-error-order
-                          frame-start
-                          "configuration field names are duplicate or out of order")
-                        unit)
-                      (if reader.cursor.ok?
-                        (begin
-                          (set!
-                            (array-ref extensions index)
-                            (CompilerIncrementalConfigField name value))
-                          (set! index (+ index 1)))
-                        unit)))))))))
-      (CompilerIncrementalConfiguration
-        target
-        profile
-        backend
-        opt-level
-        (= debug-byte 1)
-        path-remap
-        generated-source-policy
-        extensions))))
+                [name : String
+                  (binary.compiler-incremental-binary-read-string! reader false)]
+                [value : String
+                  (binary.compiler-incremental-binary-read-string! reader false)]
+                (if (and
+                  reader.cursor.ok?
+                  (!= reader.cursor.offset payload-end))
+                  (binary.compiler-incremental-binary-fail!
+                    reader
+                    compiler-incremental-error-layout
+                    reader.cursor.offset
+                    "configuration extension has trailing bytes")
+                  unit)
+                (set! reader.cursor.end outer-end)
+                (if (and
+                  reader.cursor.ok?
+                  (> index 0)
+                  (not
+                    (stdlib.sort.string-less-borrowed?
+                      (& (array-ref extensions (- index 1)).name)
+                      (& name))))
+                  (binary.compiler-incremental-binary-fail!
+                    reader
+                    compiler-incremental-error-order
+                    frame-start
+                    "configuration field names are duplicate or out of order")
+                  unit)
+                (when
+                  reader.cursor.ok?
+                  (set!
+                    (array-ref extensions index)
+                    (CompilerIncrementalConfigField name value))
+                  (set! index (+ index 1)))))))))
+    (CompilerIncrementalConfiguration
+      target
+      profile
+      backend
+      opt-level
+      (= debug-byte 1)
+      path-remap
+      generated-source-policy
+      extensions)))
 
 (define (compiler-incremental-read-input!
   [reader : (&mut reader binary.CompilerIncrementalBinaryReader)]
@@ -1628,79 +1527,76 @@
     [input : CompilerIncrementalInput
       (cond
         [(= tag 1)
-          (CompilerIncrementalInput.SourceContent
+          (SourceContent
             (binary.compiler-incremental-binary-read-string! reader true)
             (compiler-incremental-read-content! reader limits))]
         [(= tag 2)
-          (CompilerIncrementalInput.LogicalName
+          (LogicalName
             (binary.compiler-incremental-binary-read-string! reader false)
             (binary.compiler-incremental-binary-read-string! reader false))]
         [(= tag 3)
-          (CompilerIncrementalInput.ImportedSurface
+          (ImportedSurface
             (binary.compiler-incremental-binary-read-string! reader false)
             (binary.compiler-incremental-binary-read-string! reader false)
             (CompilerIncrementalSemanticOutputIdentity
               (compiler-incremental-read-child! reader limits)))]
         [(= tag 4)
-          (CompilerIncrementalInput.ImportedArtifact
+          (ImportedArtifact
             (binary.compiler-incremental-binary-read-string! reader false)
             (binary.compiler-incremental-binary-read-string! reader true)
             (binary.compiler-incremental-binary-read-string! reader false)
             (compiler-incremental-read-child! reader limits))]
         [(= tag 5)
-          (CompilerIncrementalInput.PackageProvenance
+          (PackageProvenance
             (binary.compiler-incremental-binary-read-string! reader false)
             (binary.compiler-incremental-binary-read-string! reader false)
             (compiler-incremental-read-content! reader limits))]
         [(= tag 6)
-          (CompilerIncrementalInput.StdlibProvenance
+          (StdlibProvenance
             (binary.compiler-incremental-binary-read-string! reader false)
             (compiler-incremental-read-content! reader limits))]
         [(= tag 7)
-          (CompilerIncrementalInput.Configuration
-            (compiler-incremental-read-config! reader limits))]
+          (Configuration (compiler-incremental-read-config! reader limits))]
         [(= tag 8)
-          (CompilerIncrementalInput.MacroComptime
+          (MacroComptime
             (binary.compiler-incremental-binary-read-string! reader false)
             (compiler-incremental-read-child! reader limits)
             (compiler-incremental-read-child! reader limits))]
         [(= tag 9)
-          (CompilerIncrementalInput.CodegenTarget
+          (CodegenTarget
             (binary.compiler-incremental-binary-read-string! reader false)
             (binary.compiler-incremental-binary-read-string! reader false)
             (binary.compiler-incremental-binary-read-string! reader false))]
         [(= tag 10)
-          (CompilerIncrementalInput.OrderedChild
+          (OrderedChild
             (binary.compiler-incremental-binary-read-string! reader false)
             (byte_reader.read-u64! (&mut reader.cursor))
             (compiler-incremental-read-child! reader limits))]
         [else
-          (begin
-            (binary.compiler-incremental-binary-fail!
-              reader
-              compiler-incremental-error-unknown-tag
-              (- reader.cursor.offset 5)
-              "unknown incremental input tag")
-            (CompilerIncrementalInput.LogicalName "invalid" ""))])]
-    (begin
-      (if (if reader.cursor.ok?
-        (not (compiler-incremental-input-valid? (& input) limits))
-        false)
-        (binary.compiler-incremental-binary-fail!
-          reader
-          (compiler-incremental-input-invalid-code (& input) limits)
-          reader.cursor.offset
-          "decoded incremental input is invalid")
-        unit)
-      input)))
+          (binary.compiler-incremental-binary-fail!
+            reader
+            compiler-incremental-error-unknown-tag
+            (- reader.cursor.offset 5)
+            "unknown incremental input tag")
+          (LogicalName "invalid" "")])]
+    (if (if reader.cursor.ok?
+      (not (compiler-incremental-input-valid? (& input) limits))
+      false)
+      (binary.compiler-incremental-binary-fail!
+        reader
+        (compiler-incremental-input-invalid-code (& input) limits)
+        reader.cursor.offset
+        "decoded incremental input is invalid")
+      unit)
+    input))
 
 (define (compiler-incremental-ordered-key-eq?
   [left : (& left CompilerIncrementalInput)]
   [right : (& right CompilerIncrementalInput)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view left)
-    [(CompilerIncrementalInput.OrderedChild left-sequence left-ordinal _)
+    [(OrderedChild left-sequence left-ordinal _)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalInput.OrderedChild right-sequence right-ordinal _)
+        [(OrderedChild right-sequence right-ordinal _)
           (and
             (= left-ordinal right-ordinal)
             (compiler-incremental-string-eq?
@@ -1713,13 +1609,13 @@
   [transcript : (& transcript (__tl_dyn-array u8))]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : ResultCompilerIncrementalDecodedQuery
   (if (not (compiler-incremental-limits-valid? limits))
-    (ResultCompilerIncrementalDecodedQuery.Err
+    (Err
       (compiler-incremental-error
         compiler-incremental-error-invalid-limits
         0
         "incremental identity limits are invalid"))
     (if (> (array-length transcript) limits.max-transcript-bytes)
-      (ResultCompilerIncrementalDecodedQuery.Err
+      (Err
         (compiler-incremental-error
           compiler-incremental-error-input-limit
           0
@@ -1762,158 +1658,149 @@
         [index : i64 0]
         [previous-start : i64 -1]
         [previous-length : i64 0]
-        (begin
-          (if (and
-            reader.cursor.ok?
-            (not
-              (compiler-incremental-string-eq?
-                (& domain)
-                (& compiler-incremental-identity-domain))))
-            (binary.compiler-incremental-binary-fail!
-              (&mut reader)
-              compiler-incremental-error-schema
-              0
-              "incremental transcript domain is unknown")
-            unit)
-          (if (and
-            reader.cursor.ok?
-            (!= schema compiler-incremental-identity-schema))
-            (binary.compiler-incremental-binary-fail!
-              (&mut reader)
-              compiler-incremental-error-schema
-              schema-offset
-              "incremental transcript schema is unknown")
-            unit)
-          (if (and
-            reader.cursor.ok?
-            (not
-              (compiler-incremental-string-eq?
-                (& build.domain)
-                (& compiler-incremental-build-domain))))
-            (binary.compiler-incremental-binary-fail!
-              (&mut reader)
-              compiler-incremental-error-value
-              count-offset
-              "compiler-build identity has the wrong nominal domain")
-            unit)
-          (if (and reader.cursor.ok? (> count limits.max-records))
-            (binary.compiler-incremental-binary-fail!
-              (&mut reader)
-              compiler-incremental-error-record-limit
-              count-offset
-              "incremental transcript record count exceeds limit")
-            unit)
-          (if (and
-            reader.cursor.ok?
-            (< limits.max-nesting-depth required-depth))
-            (binary.compiler-incremental-binary-fail!
-              (&mut reader)
-              compiler-incremental-error-depth-limit
-              count-offset
-              "incremental transcript exceeds the nesting-depth limit")
-            unit)
-          (while (and reader.cursor.ok? (< index count))
-            (let
-              [frame-start : i64 reader.cursor.offset]
-              [tag : i64 (byte_reader.read-u8! (&mut reader.cursor))]
-              [payload-length : i64
-                (byte_reader.read-u32! (&mut reader.cursor))]
-              [payload-start : i64 reader.cursor.offset]
-              [query-end : i64 reader.cursor.end]
-              (if (> payload-length limits.max-record-bytes)
+        (if (and
+          reader.cursor.ok?
+          (not
+            (compiler-incremental-string-eq?
+              (& domain)
+              (& compiler-incremental-identity-domain))))
+          (binary.compiler-incremental-binary-fail!
+            (&mut reader)
+            compiler-incremental-error-schema
+            0
+            "incremental transcript domain is unknown")
+          unit)
+        (if (and
+          reader.cursor.ok?
+          (!= schema compiler-incremental-identity-schema))
+          (binary.compiler-incremental-binary-fail!
+            (&mut reader)
+            compiler-incremental-error-schema
+            schema-offset
+            "incremental transcript schema is unknown")
+          unit)
+        (if (and
+          reader.cursor.ok?
+          (not
+            (compiler-incremental-string-eq?
+              (& build.domain)
+              (& compiler-incremental-build-domain))))
+          (binary.compiler-incremental-binary-fail!
+            (&mut reader)
+            compiler-incremental-error-value
+            count-offset
+            "compiler-build identity has the wrong nominal domain")
+          unit)
+        (if (and reader.cursor.ok? (> count limits.max-records))
+          (binary.compiler-incremental-binary-fail!
+            (&mut reader)
+            compiler-incremental-error-record-limit
+            count-offset
+            "incremental transcript record count exceeds limit")
+          unit)
+        (if (and reader.cursor.ok? (< limits.max-nesting-depth required-depth))
+          (binary.compiler-incremental-binary-fail!
+            (&mut reader)
+            compiler-incremental-error-depth-limit
+            count-offset
+            "incremental transcript exceeds the nesting-depth limit")
+          unit)
+        (while (and reader.cursor.ok? (< index count))
+          (let
+            [frame-start : i64 reader.cursor.offset]
+            [tag : i64 (byte_reader.read-u8! (&mut reader.cursor))]
+            [payload-length : i64 (byte_reader.read-u32! (&mut reader.cursor))]
+            [payload-start : i64 reader.cursor.offset]
+            [query-end : i64 reader.cursor.end]
+            (if (> payload-length limits.max-record-bytes)
+              (binary.compiler-incremental-binary-fail!
+                (&mut reader)
+                compiler-incremental-error-input-limit
+                frame-start
+                "incremental input frame exceeds its byte limit")
+              (if (not
+                (byte_reader.range-present?
+                  query-end
+                  payload-start
+                  payload-length))
                 (binary.compiler-incremental-binary-fail!
                   (&mut reader)
-                  compiler-incremental-error-input-limit
+                  compiler-incremental-error-truncated
                   frame-start
-                  "incremental input frame exceeds its byte limit")
-                (if (not
-                  (byte_reader.range-present?
-                    query-end
-                    payload-start
-                    payload-length))
-                  (binary.compiler-incremental-binary-fail!
-                    (&mut reader)
-                    compiler-incremental-error-truncated
-                    frame-start
-                    "incremental input frame is truncated")
+                  "incremental input frame is truncated")
+                (let
+                  [payload-end : i64 (+ payload-start payload-length)]
+                  [frame-length : i64 (+ 5 payload-length)]
+                  (set! reader.cursor.end payload-end)
                   (let
-                    [payload-end : i64 (+ payload-start payload-length)]
-                    [frame-length : i64 (+ 5 payload-length)]
-                    (begin
-                      (set! reader.cursor.end payload-end)
+                    [input : CompilerIncrementalInput
+                      (compiler-incremental-read-input!
+                        (&mut reader)
+                        tag
+                        limits)]
+                    (if (and
+                      reader.cursor.ok?
+                      (!= reader.cursor.offset payload-end))
+                      (binary.compiler-incremental-binary-fail!
+                        (&mut reader)
+                        compiler-incremental-error-layout
+                        reader.cursor.offset
+                        "incremental input frame has trailing bytes")
+                      unit)
+                    (set! reader.cursor.end query-end)
+                    (if (and
+                      reader.cursor.ok?
+                      (>= previous-start 0)
+                      (compiler-incremental-reader-charge-work!
+                        (&mut reader)
+                        (+ previous-length frame-length))
+                      (not
+                        (compiler-incremental-range-less?
+                          (& reader.cursor.bytes)
+                          previous-start
+                          previous-length
+                          frame-start
+                          frame-length)))
+                      (binary.compiler-incremental-binary-fail!
+                        (&mut reader)
+                        compiler-incremental-error-order
+                        frame-start
+                        "incremental input records are duplicate or out of order")
+                      unit)
+                    (if (and reader.cursor.ok? (> index 0))
                       (let
-                        [input : CompilerIncrementalInput
-                          (compiler-incremental-read-input!
+                        [previous : CompilerIncrementalInput
+                          (owned_view.compiler-owned-array-element-shared-view
+                            inputs
+                            (- index 1))]
+                        (if (compiler-incremental-ordered-key-eq?
+                          (& previous)
+                          (& input))
+                          (binary.compiler-incremental-binary-fail!
                             (&mut reader)
-                            tag
-                            limits)]
-                        (begin
-                          (if (and
-                            reader.cursor.ok?
-                            (!= reader.cursor.offset payload-end))
-                            (binary.compiler-incremental-binary-fail!
-                              (&mut reader)
-                              compiler-incremental-error-layout
-                              reader.cursor.offset
-                              "incremental input frame has trailing bytes")
-                            unit)
-                          (set! reader.cursor.end query-end)
-                          (if (and
-                            reader.cursor.ok?
-                            (>= previous-start 0)
-                            (compiler-incremental-reader-charge-work!
-                              (&mut reader)
-                              (+ previous-length frame-length))
-                            (not
-                              (compiler-incremental-range-less?
-                                (& reader.cursor.bytes)
-                                previous-start
-                                previous-length
-                                frame-start
-                                frame-length)))
-                            (binary.compiler-incremental-binary-fail!
-                              (&mut reader)
-                              compiler-incremental-error-order
-                              frame-start
-                              "incremental input records are duplicate or out of order")
-                            unit)
-                          (if (and reader.cursor.ok? (> index 0))
-                            (let
-                              [previous : CompilerIncrementalInput
-                                (owned_view.compiler-owned-array-element-shared-view
-                                  inputs
-                                  (- index 1))]
-                              (if (compiler-incremental-ordered-key-eq?
-                                (& previous)
-                                (& input))
-                                (binary.compiler-incremental-binary-fail!
-                                  (&mut reader)
-                                  compiler-incremental-error-order
-                                  frame-start
-                                  "duplicate ordered-child sequence ordinal")
-                                unit))
-                            unit)
-                          (if reader.cursor.ok?
-                            (begin
-                              (set! (array-ref inputs index) input)
-                              (set! previous-start frame-start)
-                              (set! previous-length frame-length)
-                              (set! index (+ index 1)))
-                            unit)))))))))
-          (if (and
-            reader.cursor.ok?
-            (!= reader.cursor.offset (array-length reader.cursor.bytes)))
-            (binary.compiler-incremental-binary-fail!
-              (&mut reader)
-              compiler-incremental-error-trailing
-              reader.cursor.offset
-              "incremental transcript has trailing bytes")
-            unit)
-          (if reader.cursor.ok?
-            (ResultCompilerIncrementalDecodedQuery.Ok
-              (CompilerIncrementalDecodedQuery kind build inputs))
-            (ResultCompilerIncrementalDecodedQuery.Err
-              (compiler-incremental-reader-error (& reader)))))))))
+                            compiler-incremental-error-order
+                            frame-start
+                            "duplicate ordered-child sequence ordinal")
+                          unit))
+                      unit)
+                    (when
+                      reader.cursor.ok?
+                      (set! (array-ref inputs index) input)
+                      (set! previous-start frame-start)
+                      (set! previous-length frame-length)
+                      (set! index (+ index 1)))))))))
+        (if (and
+          reader.cursor.ok?
+          (!= reader.cursor.offset (array-length reader.cursor.bytes)))
+          (binary.compiler-incremental-binary-fail!
+            (&mut reader)
+            compiler-incremental-error-trailing
+            reader.cursor.offset
+            "incremental transcript has trailing bytes")
+          unit)
+        (if reader.cursor.ok?
+          (Ok (CompilerIncrementalDecodedQuery kind build inputs))
+          (Err (compiler-incremental-reader-error (& reader))))))))
 
 (define (compiler-incremental-child-eq?
   [left : (& left CompilerIncrementalChildIdentity)]
@@ -1928,37 +1815,37 @@
   [left : (& left CompilerIncrementalQueryKind)]
   [right : (& right CompilerIncrementalQueryKind)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view left)
-    [(CompilerIncrementalQueryKind.Parse)
+    [(Parse)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.Parse) true]
+        [(Parse) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.Typecheck)
+    [(Typecheck)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.Typecheck) true]
+        [(Typecheck) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.Lower)
+    [(Lower)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.Lower) true]
+        [(Lower) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.Optimize)
+    [(Optimize)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.Optimize) true]
+        [(Optimize) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.Assembly)
+    [(Assembly)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.Assembly) true]
+        [(Assembly) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.Object)
+    [(Object)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.Object) true]
+        [(Object) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.IrSummary)
+    [(IrSummary)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.IrSummary) true]
+        [(IrSummary) true]
         [_ false])]
-    [(CompilerIncrementalQueryKind.IrDump left-pass)
+    [(IrDump left-pass)
       (match (owned_view.compiler-owned-reference-shared-view right)
-        [(CompilerIncrementalQueryKind.IrDump right-pass)
+        [(IrDump right-pass)
           (compiler-incremental-string-eq? (& left-pass) (& right-pass))]
         [_ false])]))
 
@@ -1975,24 +1862,24 @@
 (define (compiler-incremental-identity-fingerprint-valid?
   [identity : (& identity CompilerIncrementalIdentity)]) : bool
   (match (compiler-incremental-digest-array (& identity.transcript))
-    [(sha256.Sha256FinalizeErr _) false]
-    [(sha256.Sha256FinalizeOk actual)
+    [(Sha256FinalizeErr _) false]
+    [(Sha256FinalizeOk actual)
       (sha256.digest-eq? (& actual) (& identity.fingerprint))]))
 
 (define (compiler-incremental-decode-identity-metadata
   [identity : (& identity CompilerIncrementalIdentity)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : ResultCompilerIncrementalDecodedQuery
-  (match (compiler-incremental-identity-decode (& identity.transcript) limits)
-    [(ResultCompilerIncrementalDecodedQuery.Err error)
-      (ResultCompilerIncrementalDecodedQuery.Err error)]
-    [(ResultCompilerIncrementalDecodedQuery.Ok query)
-      (if (compiler-incremental-identity-metadata-valid? identity (& query))
-        (ResultCompilerIncrementalDecodedQuery.Ok query)
-        (ResultCompilerIncrementalDecodedQuery.Err
-          (compiler-incremental-error
-            compiler-incremental-error-fingerprint
-            0
-            "incremental identity metadata disagrees with transcript")))]))
+  (let
+    [query
+      (try
+        (compiler-incremental-identity-decode (& identity.transcript) limits))]
+    (if (compiler-incremental-identity-metadata-valid? identity (& query))
+      (Ok query)
+      (Err
+        (compiler-incremental-error
+          compiler-incremental-error-fingerprint
+          0
+          "incremental identity metadata disagrees with transcript")))))
 
 ;; Exact 32-byte fixture boundary expected by the opaque store work in #7023.
 ;; Store policy and result serialization are intentionally not selected here.
@@ -2005,24 +1892,21 @@
   [record-index : i64]
   [path : String]
   [explanation : String]) : CompilerIncrementalCompareResult
-  (CompilerIncrementalCompareResult.Miss
-    (CompilerIncrementalMiss category record-index path explanation)))
+  (Miss (CompilerIncrementalMiss category record-index path explanation)))
 
 (define (compiler-incremental-input-miss-path
   [input : (& input CompilerIncrementalInput)]) : String
   (match (owned_view.compiler-owned-reference-shared-view input)
-    [(CompilerIncrementalInput.SourceContent _ _) "inputs.source-content"]
-    [(CompilerIncrementalInput.LogicalName _ _) "inputs.logical-name"]
-    [(CompilerIncrementalInput.ImportedSurface _ _ _) "inputs.imported-surface"]
-    [(CompilerIncrementalInput.ImportedArtifact _ _ _ _)
-      "inputs.imported-artifact"]
-    [(CompilerIncrementalInput.PackageProvenance _ _ _)
-      "inputs.package-provenance"]
-    [(CompilerIncrementalInput.StdlibProvenance _ _) "inputs.stdlib-provenance"]
-    [(CompilerIncrementalInput.Configuration _) "inputs.configuration"]
-    [(CompilerIncrementalInput.MacroComptime _ _ _) "inputs.macro-comptime"]
-    [(CompilerIncrementalInput.CodegenTarget _ _ _) "inputs.codegen-target"]
-    [(CompilerIncrementalInput.OrderedChild _ _ _) "inputs.ordered-child"]))
+    [(SourceContent _ _) "inputs.source-content"]
+    [(LogicalName _ _) "inputs.logical-name"]
+    [(ImportedSurface _ _ _) "inputs.imported-surface"]
+    [(ImportedArtifact _ _ _ _) "inputs.imported-artifact"]
+    [(PackageProvenance _ _ _) "inputs.package-provenance"]
+    [(StdlibProvenance _ _) "inputs.stdlib-provenance"]
+    [(Configuration _) "inputs.configuration"]
+    [(MacroComptime _ _ _) "inputs.macro-comptime"]
+    [(CodegenTarget _ _ _) "inputs.codegen-target"]
+    [(OrderedChild _ _ _) "inputs.ordered-child"]))
 
 (define (compiler-incremental-decoded-inputs-miss
   [left : (& left CompilerIncrementalDecodedQuery)]
@@ -2039,61 +1923,57 @@
       [different? : bool false]
       [different-kind? : bool false]
       [different-path : String "inputs"]
-      (begin
-        (while (and (not different?) (< index (array-length left.inputs)))
-          (let
-            [left-input : CompilerIncrementalInput
-              (owned_view.compiler-owned-array-element-shared-view
-                left.inputs
-                index)]
-            [right-input : CompilerIncrementalInput
-              (owned_view.compiler-owned-array-element-shared-view
-                right.inputs
-                index)]
-            (if (!=
-              (compiler-incremental-input-tag (& left-input))
-              (compiler-incremental-input-tag (& right-input)))
-              (begin
-                (set! different? true)
-                (set! different-kind? true)
-                (set!
-                  different-path
-                  (compiler-incremental-input-miss-path (& left-input))))
-              (match (compiler-incremental-encode-input (& left-input) limits)
-                [(ResultCompilerIncrementalEncodedRecord.Err error)
-                  (return (CompilerIncrementalCompareResult.Corrupt error))]
-                [(ResultCompilerIncrementalEncodedRecord.Ok left-record)
-                  (match (compiler-incremental-encode-input
-                    (& right-input)
-                    limits)
-                    [(ResultCompilerIncrementalEncodedRecord.Err error)
-                      (return (CompilerIncrementalCompareResult.Corrupt error))]
-                    [(ResultCompilerIncrementalEncodedRecord.Ok right-record)
-                      (if (compiler-incremental-record-bytes-eq?
-                        (& left-record)
-                        (& right-record))
-                        (set! index (+ index 1))
-                        (begin
-                          (set! different? true)
-                          (set!
-                            different-path
-                            (compiler-incremental-input-miss-path
-                              (& left-input)))))])]))))
-        (if different?
-          (compiler-incremental-compare-miss
-            (if different-kind?
-              compiler-incremental-miss-input-kind
-              compiler-incremental-miss-input-value)
-            index
-            different-path
-            (if different-kind?
-              "first canonical input record kind differs"
-              "first canonical input record value differs"))
-          (CompilerIncrementalCompareResult.Corrupt
-            (compiler-incremental-error
-              compiler-incremental-error-layout
-              0
-              "distinct canonical transcripts decoded to the same query")))))))
+      (while (and (not different?) (< index (array-length left.inputs)))
+        (let
+          [left-input : CompilerIncrementalInput
+            (owned_view.compiler-owned-array-element-shared-view
+              left.inputs
+              index)]
+          [right-input : CompilerIncrementalInput
+            (owned_view.compiler-owned-array-element-shared-view
+              right.inputs
+              index)]
+          (if (!=
+            (compiler-incremental-input-tag (& left-input))
+            (compiler-incremental-input-tag (& right-input)))
+            (begin
+              (set! different? true)
+              (set! different-kind? true)
+              (set!
+                different-path
+                (compiler-incremental-input-miss-path (& left-input))))
+            (match (compiler-incremental-encode-input (& left-input) limits)
+              [(Err error) (return (Corrupt error))]
+              [(Ok left-record)
+                (match (compiler-incremental-encode-input
+                  (& right-input)
+                  limits)
+                  [(Err error) (return (Corrupt error))]
+                  [(Ok right-record)
+                    (if (compiler-incremental-record-bytes-eq?
+                      (& left-record)
+                      (& right-record))
+                      (set! index (+ index 1))
+                      (begin
+                        (set! different? true)
+                        (set!
+                          different-path
+                          (compiler-incremental-input-miss-path (& left-input)))))])]))))
+      (if different?
+        (compiler-incremental-compare-miss
+          (if different-kind?
+            compiler-incremental-miss-input-kind
+            compiler-incremental-miss-input-value)
+          index
+          different-path
+          (if different-kind?
+            "first canonical input record kind differs"
+            "first canonical input record value differs"))
+        (Corrupt
+          (compiler-incremental-error
+            compiler-incremental-error-layout
+            0
+            "distinct canonical transcripts decoded to the same query"))))))
 
 ;; Compare complete identities and report the first stable typed difference.
 ;; Any decode or metadata failure is Corrupt.  Equal claimed digests with
@@ -2103,13 +1983,11 @@
   [right : (& right CompilerIncrementalIdentity)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : CompilerIncrementalCompareResult
   (match (compiler-incremental-decode-identity-metadata left limits)
-    [(ResultCompilerIncrementalDecodedQuery.Err error)
-      (CompilerIncrementalCompareResult.Corrupt error)]
-    [(ResultCompilerIncrementalDecodedQuery.Ok left-query)
+    [(Err error) (Corrupt error)]
+    [(Ok left-query)
       (match (compiler-incremental-decode-identity-metadata right limits)
-        [(ResultCompilerIncrementalDecodedQuery.Err error)
-          (CompilerIncrementalCompareResult.Corrupt error)]
-        [(ResultCompilerIncrementalDecodedQuery.Ok right-query)
+        [(Err error) (Corrupt error)]
+        [(Ok right-query)
           (let
             [same-transcript? : bool
               (binary.compiler-incremental-binary-bytes-eq?
@@ -2125,18 +2003,18 @@
                   "fingerprint"
                   "equal SHA-256 fingerprints name distinct canonical transcripts")]
               [(not (compiler-incremental-identity-fingerprint-valid? left))
-                (CompilerIncrementalCompareResult.Corrupt
+                (Corrupt
                   (compiler-incremental-error
                     compiler-incremental-error-fingerprint
                     0
                     "left incremental identity fingerprint is corrupt"))]
               [(not (compiler-incremental-identity-fingerprint-valid? right))
-                (CompilerIncrementalCompareResult.Corrupt
+                (Corrupt
                   (compiler-incremental-error
                     compiler-incremental-error-fingerprint
                     0
                     "right incremental identity fingerprint is corrupt"))]
-              [same-transcript? (CompilerIncrementalCompareResult.Hit)]
+              [same-transcript? (Hit)]
               [(not
                   (compiler-incremental-query-kind-eq?
                     (& left-query.kind)

@@ -3,8 +3,8 @@
 
 (define (thread-safe-unit-join-ok? [thread : thread_unit.Handle]) : bool
   (match (thread_unit.join thread)
-    [(thread_unit.UnitJoinOk) true]
-    [(thread_unit.UnitJoinErr _) false]))
+    [(UnitJoinOk) true]
+    [(UnitJoinErr _) false]))
 
 (define (thread-safe-unit-run) : i64
   (let
@@ -14,8 +14,8 @@
         (if (= (+ base 2) 42)
           unit
           unit)))
-      [(thread_unit.UnitSpawnErr _) 3]
-      [(thread_unit.UnitSpawnOk worker)
+      [(UnitSpawnErr _) 3]
+      [(UnitSpawnOk worker)
         (if (thread-safe-unit-join-ok? worker)
           42
           4)])))

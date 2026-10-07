@@ -96,7 +96,7 @@
   [session : cis.InternStructuralSessionHandle]
   [name-id : i64]) : String
   (match (cis.intern-structural-session-record-for-raw session name-id)
-    [(cis.InternMaybeStructuralRecord.Some record)
+    [(Some record)
       (cond
         [(and
             (= record.kind (ci.intern-structural-kind-macro-global))
@@ -144,8 +144,7 @@
                   "."
                   (doc-expand-name-text ctx record.right-id)))))]
         [else (doc-cat3 "<structural-id:" (string.int->string name-id) ">")])]
-    [(cis.InternMaybeStructuralRecord.No)
-      (doc-cat3 "<structural-id:" (string.int->string name-id) ">")]))
+    [(No) (doc-cat3 "<structural-id:" (string.int->string name-id) ">")]))
 
 (define (doc-expand-name-text [ctx : DocExpandContext] [name-id : i64]) : String
   (let
@@ -202,8 +201,8 @@
   [ctx : DocExpandContext]
   [alias : ast.AstMaybeImportAlias]) : String
   (match alias
-    [(ast.AstMaybeImportAlias.Some name) (doc-expand-source-name ctx name)]
-    [(ast.AstMaybeImportAlias.No) ""]))
+    [(Some name) (doc-expand-source-name ctx name)]
+    [(No) ""]))
 
 (define (doc-symbol-text [ctx : DocExpandContext] [name-id : i64]) : String
   (doc-expand-name-text ctx name-id))
@@ -265,92 +264,88 @@
 
 (define (doc-ast-type-source [ctx : DocExpandContext] [ty : ast.AstType]) : String
   (match ty
-    [(ast.AstType.I64) "i64"]
-    [(ast.AstType.I32) "i32"]
-    [(ast.AstType.I16) "i16"]
-    [(ast.AstType.I8) "i8"]
-    [(ast.AstType.U64) "u64"]
-    [(ast.AstType.U32) "u32"]
-    [(ast.AstType.U16) "u16"]
-    [(ast.AstType.U8) "u8"]
-    [(ast.AstType.F64) "f64"]
-    [(ast.AstType.F32) "f32"]
-    [(ast.AstType.Bool) "bool"]
-    [(ast.AstType.Char) "char"]
-    [(ast.AstType.String) "String"]
-    [(ast.AstType.Str) "str"]
-    [(ast.AstType.Bytes) "bytes"]
-    [(ast.AstType.Unit) "unit"]
-    [(ast.AstType.Never) "never"]
-    [(ast.AstType.Expr) "Expr"]
-    [(ast.AstType.ExprList) "ExprList"]
-    [(ast.AstType.Func args-box ret)
+    [(I64) "i64"]
+    [(I32) "i32"]
+    [(I16) "i16"]
+    [(I8) "i8"]
+    [(U64) "u64"]
+    [(U32) "u32"]
+    [(U16) "u16"]
+    [(U8) "u8"]
+    [(F64) "f64"]
+    [(F32) "f32"]
+    [(Bool) "bool"]
+    [(Char) "char"]
+    [(String) "String"]
+    [(Str) "str"]
+    [(Bytes) "bytes"]
+    [(Unit) "unit"]
+    [(Never) "never"]
+    [(Expr) "Expr"]
+    [(ExprList) "ExprList"]
+    [(Func args-box ret)
       (doc-cat5
         "(-> "
         (doc-ast-type-list-source ctx (deref args-box))
         " "
         (doc-ast-type-id-source ctx ret)
         ")")]
-    [(ast.AstType.CFunc signature mode)
+    [(CFunc signature mode)
       (doc-cat5
         "(CFunc "
         (ast.ast-c-function-mode-name mode)
         " "
         (doc-ast-type-id-source ctx signature)
         ")")]
-    [(ast.AstType.Tuple elems-box)
+    [(Tuple elems-box)
       (doc-cat3 "(Tuple " (doc-ast-type-list-source ctx (deref elems-box)) ")")]
-    [(ast.AstType.Array elem size)
+    [(Array elem size)
       (doc-cat5
         "(Array "
         (doc-ast-type-id-source ctx elem)
         " "
         (string.int->string size)
         ")")]
-    [(ast.AstType.DynArray elem)
+    [(DynArray elem)
       (doc-cat3 "(__tl_dyn-array " (doc-ast-type-id-source ctx elem) ")")]
-    [(ast.AstType.Slice elem)
-      (doc-cat3 "(Slice " (doc-ast-type-id-source ctx elem) ")")]
-    [(ast.AstType.Box elem)
-      (doc-cat3 "(Box " (doc-ast-type-id-source ctx elem) ")")]
-    [(ast.AstType.Region region elem)
+    [(Slice elem) (doc-cat3 "(Slice " (doc-ast-type-id-source ctx elem) ")")]
+    [(Box elem) (doc-cat3 "(Box " (doc-ast-type-id-source ctx elem) ")")]
+    [(Region region elem)
       (doc-cat5
         "(Region "
         (doc-symbol-text ctx region)
         " "
         (doc-ast-type-id-source ctx elem)
         ")")]
-    [(ast.AstType.Invalidate lifetime elem)
+    [(Invalidate lifetime elem)
       (doc-cat5
         "(:invalidate "
         (doc-symbol-text ctx lifetime)
         " "
         (doc-ast-type-id-source ctx elem)
         ")")]
-    [(ast.AstType.Ref lifetime elem)
+    [(Ref lifetime elem)
       (doc-cat5
         "(& "
         (doc-symbol-text ctx lifetime)
         " "
         (doc-ast-type-id-source ctx elem)
         ")")]
-    [(ast.AstType.MutRef lifetime elem)
+    [(MutRef lifetime elem)
       (doc-cat5
         "(&mut "
         (doc-symbol-text ctx lifetime)
         " "
         (doc-ast-type-id-source ctx elem)
         ")")]
-    [(ast.AstType.Enum name) (doc-symbol-text ctx name)]
-    [(ast.AstType.EnumArgs name _) (doc-symbol-text ctx name)]
-    [(ast.AstType.Struct name) (doc-symbol-text ctx name)]
-    [(ast.AstType.StructArgs name _) (doc-symbol-text ctx name)]
-    [(ast.AstType.Var name) (doc-symbol-text ctx name)]
-    [(ast.AstType.VarArgs name _) (doc-symbol-text ctx name)]
-    [(ast.AstType.Ptr elem)
-      (doc-cat3 "(Ptr " (doc-ast-type-id-source ctx elem) ")")]
-    [(ast.AstType.MutPtr elem)
-      (doc-cat3 "(MutPtr " (doc-ast-type-id-source ctx elem) ")")]))
+    [(Enum name) (doc-symbol-text ctx name)]
+    [(EnumArgs name _) (doc-symbol-text ctx name)]
+    [(Struct name) (doc-symbol-text ctx name)]
+    [(StructArgs name _) (doc-symbol-text ctx name)]
+    [(Var name) (doc-symbol-text ctx name)]
+    [(VarArgs name _) (doc-symbol-text ctx name)]
+    [(Ptr elem) (doc-cat3 "(Ptr " (doc-ast-type-id-source ctx elem) ")")]
+    [(MutPtr elem) (doc-cat3 "(MutPtr " (doc-ast-type-id-source ctx elem) ")")]))
 
 (define (doc-expand-escape-string-loop
   [text : (& text str)]
@@ -378,19 +373,19 @@
 
 (define (doc-ast-literal-source [ctx : DocExpandContext] [lit : ast.AstLiteral]) : String
   (match (owned_view.compiler-owned-shared-view lit)
-    [(ast.AstLiteral.Int _ _) (ast.ast-lit-int-text lit)]
-    [(ast.AstLiteral.Float text) text]
-    [(ast.AstLiteral.Bool value)
+    [(Int _ _) (ast.ast-lit-int-text lit)]
+    [(Float text) text]
+    [(Bool value)
       (if value
         "true"
         "false")]
-    [(ast.AstLiteral.Char _) "'?'"]
-    [(ast.AstLiteral.String string-id)
+    [(Char _) "'?'"]
+    [(String string-id)
       (doc-cat3
         "\""
         (doc-expand-escape-string (doc-expand-source-name ctx string-id))
         "\"")]
-    [(ast.AstLiteral.Unit) "unit"]))
+    [(Unit) "unit"]))
 
 (define (doc-ast-expr-list-source-from
   [ctx : DocExpandContext]
@@ -413,17 +408,17 @@
   (match (ast.ast-expr-unspan-with-segment-bases
     ctx.expr-segment-bases
     (ast.ast-expr-segment-bases-get ctx.expr-segment-bases expr-id))
-    [(ast.AstExpr.Literal lit) (doc-ast-literal-source ctx lit)]
-    [(ast.AstExpr.Var name) (doc-expand-source-name ctx name)]
-    [(ast.AstExpr.Call callee args)
+    [(Literal lit) (doc-ast-literal-source ctx lit)]
+    [(Var name) (doc-expand-source-name ctx name)]
+    [(Call callee args)
       (doc-cat4
         "("
         (doc-ast-expr-source ctx callee)
         (doc-ast-expr-list-source ctx args)
         ")")]
-    [(ast.AstExpr.TypeLiteral ty-id)
+    [(TypeLiteral ty-id)
       (doc-cat3 "(type " (doc-ast-type-id-source ctx ty-id) ")")]
-    [(ast.AstExpr.Ann inner _) (doc-ast-expr-source ctx inner)]
+    [(Ann inner _) (doc-ast-expr-source ctx inner)]
     [_ "..."]))
 
 (define (doc-macro-import-example-fallback) : DocMacroImportExample
@@ -466,32 +461,31 @@
   [call-id : i64]
   [alias : ast.AstMaybeImportAlias]) : String
   (match alias
-    [(ast.AstMaybeImportAlias.Some name)
+    [(Some name)
       (doc-cat5
         "(import "
         (doc-ast-expr-source ctx call-id)
         " as "
         (doc-expand-source-name ctx name)
         ")")]
-    [(ast.AstMaybeImportAlias.No)
-      (doc-cat3 "(import " (doc-ast-expr-source ctx call-id) ")")]))
+    [(No) (doc-cat3 "(import " (doc-ast-expr-source ctx call-id) ")")]))
 
 (define (doc-macro-import-examples-from-decl
   [ctx : DocExpandContext]
   [decl : ast.AstDecl]
   [examples : (&mut examples doc_macro_import_example_vec.Vec)]) : unit
   (match decl
-    [(ast.AstDecl.Import decl-meta (ast.AstImportSpec.Spec kind _ _ alias _))
+    [(Import decl-meta (Spec kind _ _ alias _))
       (match kind
-        [(ast.AstImportKind.Macro call-id _)
+        [(Macro call-id _)
           (doc-macro-import-example-push!
             examples
             (doc-import-alias-string ctx alias)
             (doc-macro-import-form ctx call-id alias))]
         [_ unit])]
-    [(ast.AstDecl.Unsafe inner-box)
+    [(Unsafe inner-box)
       (doc-macro-import-examples-from-decl ctx (deref inner-box) examples)]
-    [(ast.AstDecl.ModuleBody _ body-box)
+    [(ModuleBody _ body-box)
       (doc-macro-import-examples-from-decls-into ctx (deref body-box) examples)]
     [_ unit]))
 
@@ -500,11 +494,10 @@
   [decls : ast.AstDeclList]
   [examples : (&mut examples doc_macro_import_example_vec.Vec)]) : unit
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) unit]
-    [(ast.AstDeclListStep.Cons decl rest)
-      (begin
-        (doc-macro-import-examples-from-decl ctx decl examples)
-        (doc-macro-import-examples-from-decls-into ctx rest examples))]))
+    [(Nil) unit]
+    [(Cons decl rest)
+      (doc-macro-import-examples-from-decl ctx decl examples)
+      (doc-macro-import-examples-from-decls-into ctx rest examples)]))
 
 (define (doc-macro-import-examples-from-decls
   [ctx : DocExpandContext]
@@ -512,9 +505,8 @@
   (let
     [examples : doc_macro_import_example_vec.Vec
       (doc_macro_import_example_vec.new)]
-    (begin
-      (doc-macro-import-examples-from-decls-into ctx decls (&mut examples))
-      examples)))
+    (doc-macro-import-examples-from-decls-into ctx decls (&mut examples))
+    examples))
 
 (define (doc-generated-target-example-fallback) : DocGeneratedTargetExample
   (DocGeneratedTargetExample "" ""))
@@ -591,13 +583,11 @@
   [macro-examples : (& macro-examples doc_macro_import_example_vec.Vec)]
   [targets : (&mut targets doc_generated_target_example_vec.Vec)]) : unit
   (match decl
-    [(ast.AstDecl.Import
-        decl-meta
-        (ast.AstImportSpec.Spec kind _ expected alias _))
+    [(Import decl-meta (Spec kind _ expected alias _))
       (match kind
-        [(ast.AstImportKind.Module)
+        [(Module)
           (match expected
-            [(ast.AstMaybeModuleName.Some target-module)
+            [(Some target-module)
               (let
                 [form : String
                   (doc-macro-import-example-find
@@ -607,15 +597,15 @@
                   targets
                   (doc-expand-source-name ctx target-module)
                   form))]
-            [(ast.AstMaybeModuleName.No) unit])]
+            [(No) unit])]
         [_ unit])]
-    [(ast.AstDecl.Unsafe inner-box)
+    [(Unsafe inner-box)
       (doc-generated-target-examples-from-decl
         ctx
         (deref inner-box)
         macro-examples
         targets)]
-    [(ast.AstDecl.ModuleBody _ body-box)
+    [(ModuleBody _ body-box)
       (doc-generated-target-examples-from-decls-into
         ctx
         (deref body-box)
@@ -629,19 +619,14 @@
   [macro-examples : (& macro-examples doc_macro_import_example_vec.Vec)]
   [targets : (&mut targets doc_generated_target_example_vec.Vec)]) : unit
   (match (ast.ast-decl-list-step decls)
-    [(ast.AstDeclListStep.Nil) unit]
-    [(ast.AstDeclListStep.Cons decl rest)
-      (begin
-        (doc-generated-target-examples-from-decl
-          ctx
-          decl
-          macro-examples
-          targets)
-        (doc-generated-target-examples-from-decls-into
-          ctx
-          rest
-          macro-examples
-          targets))]))
+    [(Nil) unit]
+    [(Cons decl rest)
+      (doc-generated-target-examples-from-decl ctx decl macro-examples targets)
+      (doc-generated-target-examples-from-decls-into
+        ctx
+        rest
+        macro-examples
+        targets)]))
 
 (define (doc-generated-target-examples-from-decls
   [ctx : DocExpandContext]
@@ -650,24 +635,23 @@
   (let
     [targets : doc_generated_target_example_vec.Vec
       (doc_generated_target_example_vec.new)]
-    (begin
-      (doc-generated-target-examples-from-decls-into
-        ctx
-        decls
-        macro-examples
-        (&mut targets))
-      targets)))
+    (doc-generated-target-examples-from-decls-into
+      ctx
+      decls
+      macro-examples
+      (&mut targets))
+    targets))
 
 (define (doc-ast-maybe-type-source
   [ctx : DocExpandContext]
   [maybe-ty : ast.AstMaybeType]) : String
   (match maybe-ty
-    [(ast.AstMaybeType.No) ""]
-    [(ast.AstMaybeType.Some ty) (doc-cat2 " : " (doc-ast-type-source ctx ty))]))
+    [(No) ""]
+    [(Some ty) (doc-cat2 " : " (doc-ast-type-source ctx ty))]))
 
 (define (doc-ast-param-source [ctx : DocExpandContext] [param : ast.AstParam]) : String
   (match param
-    [(ast.AstParam.Param name ty _)
+    [(Param name ty _)
       (doc-cat5
         "["
         (doc-expand-source-name ctx name)
@@ -689,7 +673,7 @@
         (ast.ast-param-list-get
           (& params)
           index
-          (ast.AstParam.Param 0 (ast.AstType.Unit) false)))
+          (ast.AstParam.Param 0 (Unit) false)))
       (doc-ast-param-list-source-from ctx params (+ index 1) count))))
 
 (define (doc-ast-param-list-source
@@ -728,7 +712,7 @@
   [ctx : DocExpandContext]
   [param : ast.AstMacroParam]) : String
   (match param
-    [(ast.AstMacroParam.Param name ty _ type-kinds)
+    [(Param name ty _ type-kinds)
       (doc-cat6
         "["
         (doc-expand-source-name ctx name)
@@ -774,7 +758,7 @@
   [field : ast.AstFieldDef]
   [align : i64]) : String
   (match field
-    [(ast.AstFieldDef.Def name ty _)
+    [(Def name ty _)
       (doc-cat5
         "\n  ("
         (doc-expand-source-name ctx (ci.intern-syntax-id-value name))
@@ -836,7 +820,7 @@
   [ctx : DocExpandContext]
   [variant : ast.AstVariantDef]) : String
   (match variant
-    [(ast.AstVariantDef.Def name fields _)
+    [(Def name fields _)
       (doc-cat4
         "\n  ("
         (doc-expand-source-name ctx name)
@@ -949,50 +933,50 @@
 
 (define (doc-ast-decl-item [ctx : DocExpandContext] [decl : ast.AstDecl]) : DocMaybeItem
   (match decl
-    [(ast.AstDecl.Def decl-meta name maybe-ty _)
-      (DocMaybeItem.Some
-        (doc_extract.DocItem.Item
-          (doc_extract.DocItemKind.Define)
+    [(Def decl-meta name maybe-ty _)
+      (Some
+        (Item
+          (Define)
           (doc-expand-source-name ctx name)
           ""
           (doc-ast-define-signature ctx name maybe-ty)
           0))]
-    [(ast.AstDecl.DefFn decl-meta name params ret _ _)
-      (DocMaybeItem.Some
-        (doc_extract.DocItem.Item
-          (doc_extract.DocItemKind.Function)
+    [(DefFn decl-meta name params ret _ _)
+      (Some
+        (Item
+          (Function)
           (doc-expand-source-name ctx name)
           ""
           (doc-ast-function-signature ctx name params ret)
           0))]
-    [(ast.AstDecl.DefMacro decl-meta name params ret _)
-      (DocMaybeItem.Some
-        (doc_extract.DocItem.Item
-          (doc_extract.DocItemKind.DefMacro)
+    [(DefMacro decl-meta name params ret _)
+      (Some
+        (Item
+          (DefMacro)
           (doc-expand-source-name ctx name)
           ""
           (doc-ast-macro-signature ctx name params ret)
           0))]
-    [(ast.AstDecl.Extern decl-meta name _ _ ty)
-      (DocMaybeItem.Some
-        (doc_extract.DocItem.Item
-          (doc_extract.DocItemKind.Extern)
+    [(Extern decl-meta name _ _ ty)
+      (Some
+        (Item
+          (Extern)
           (doc-expand-source-name ctx name)
           ""
           (doc-ast-extern-signature ctx name ty)
           0))]
-    [(ast.AstDecl.DefEnum decl-meta name _ variants)
-      (DocMaybeItem.Some
-        (doc_extract.DocItem.Item
-          (doc_extract.DocItemKind.DefEnum)
+    [(DefEnum decl-meta name _ variants)
+      (Some
+        (Item
+          (DefEnum)
           (doc-expand-source-name ctx name)
           ""
           (doc-ast-enum-signature ctx name "" variants)
           0))]
-    [(ast.AstDecl.DefEnumLifetimes decl-meta name lifetimes _ variants)
-      (DocMaybeItem.Some
-        (doc_extract.DocItem.Item
-          (doc_extract.DocItemKind.DefEnum)
+    [(DefEnumLifetimes decl-meta name lifetimes _ variants)
+      (Some
+        (Item
+          (DefEnum)
           (doc-expand-source-name ctx name)
           ""
           (doc-ast-enum-signature
@@ -1001,18 +985,18 @@
             (doc-ast-lifetime-list-source ctx lifetimes)
             variants)
           0))]
-    [(ast.AstDecl.DefStruct decl-meta name repr _ fields)
-      (DocMaybeItem.Some
-        (doc_extract.DocItem.Item
-          (doc_extract.DocItemKind.DefStruct)
+    [(DefStruct decl-meta name repr _ fields)
+      (Some
+        (Item
+          (DefStruct)
           (doc-expand-source-name ctx name)
           ""
           (doc-ast-struct-signature ctx name "" repr fields)
           0))]
-    [(ast.AstDecl.DefStructLifetimes decl-meta name lifetimes repr _ fields)
-      (DocMaybeItem.Some
-        (doc_extract.DocItem.Item
-          (doc_extract.DocItemKind.DefStruct)
+    [(DefStructLifetimes decl-meta name lifetimes repr _ fields)
+      (Some
+        (Item
+          (DefStruct)
           (doc-expand-source-name ctx name)
           ""
           (doc-ast-struct-signature
@@ -1022,19 +1006,19 @@
             repr
             fields)
           0))]
-    [(ast.AstDecl.Unsafe inner-box) (doc-ast-decl-item ctx (deref inner-box))]
-    [_ (DocMaybeItem.No)]))
+    [(Unsafe inner-box) (doc-ast-decl-item ctx (deref inner-box))]
+    [_ (No)]))
 
 (define (doc-ast-generated-decl-item
   [ctx : DocExpandContext]
   [decl : ast.AstDecl]) : DocMaybeItem
   (match (ast.ast-decl-generated-meta decl)
-    [(ast.AstGeneratedDeclMeta.Some _ _ _ _) (doc-ast-decl-item ctx decl)]
-    [(ast.AstGeneratedDeclMeta.No) (DocMaybeItem.No)]))
+    [(Some _ _ _ _) (doc-ast-decl-item ctx decl)]
+    [(No) (No)]))
 
 (define (doc-generated-import-item [form : String]) : doc_extract.DocItem
-  (doc_extract.DocItem.Item
-    (doc_extract.DocItemKind.GeneratedImport)
+  (Item
+    (GeneratedImport)
     "import"
     "Concrete generated-module import that produced this API."
     form
@@ -1045,20 +1029,18 @@
   [items : doc_item_vec.Vec]
   [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (doc_item_vec.push-ref! out (doc_extract.doc-item-list-ref items index))
-      (doc-generated-copy-items out items (+ index 1) count))))
+  (unless
+    (>= index count)
+    (doc_item_vec.push-ref! out (doc_extract.doc-item-list-ref items index))
+    (doc-generated-copy-items out items (+ index 1) count)))
 
 (define (doc-generated-module-items [form : String] [items : doc_item_vec.Vec]) : doc_item_vec.Vec
   (let
     [count : i64 (doc_extract.doc-item-list-count items)]
     [out : doc_item_vec.Vec (doc_item_vec.with-capacity (+ count 1))]
-    (begin
-      (doc_item_vec.push-ref! (&mut out) (doc-generated-import-item form))
-      (doc-generated-copy-items (&mut out) items 0 count)
-      out)))
+    (doc_item_vec.push-ref! (&mut out) (doc-generated-import-item form))
+    (doc-generated-copy-items (&mut out) items 0 count)
+    out))
 
 (define (doc-generated-flush-module!
   [module-name : String]
@@ -1076,7 +1058,7 @@
         modules
         (doc_render.DocModule.Module
           module-name
-          (doc_extract.DocExtraction.Extraction
+          (Extraction
             "Generated module API."
             (doc-generated-module-items form items))))
       unit)))
@@ -1092,52 +1074,47 @@
     [has-generated : bool false]
     [modules : doc_module_vec.Vec (doc_module_vec.new)]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast.ast-decl-list-step cursor)
-          [(ast.AstDeclListStep.Nil)
-            (begin
+    (while (not done)
+      (match (ast.ast-decl-list-step cursor)
+        [(Nil)
+          (doc-generated-flush-module!
+            (owned_view.compiler-owned-shared-view current-module)
+            (owned_view.compiler-owned-shared-view items)
+            has-generated
+            targets
+            (&mut modules))
+          (set! done true)]
+        [(Cons decl rest)
+          (match (owned_view.compiler-owned-shared-view decl)
+            [(Module next-module)
               (doc-generated-flush-module!
                 (owned_view.compiler-owned-shared-view current-module)
                 (owned_view.compiler-owned-shared-view items)
                 has-generated
                 targets
                 (&mut modules))
-              (set! done true))]
-          [(ast.AstDeclListStep.Cons decl rest)
-            (begin
-              (match (owned_view.compiler-owned-shared-view decl)
-                [(ast.AstDecl.Module next-module)
-                  (begin
-                    (doc-generated-flush-module!
-                      (owned_view.compiler-owned-shared-view current-module)
-                      (owned_view.compiler-owned-shared-view items)
-                      has-generated
-                      targets
-                      (&mut modules))
-                    (set!
-                      current-module
-                      (let
-                        [source-id : i64
-                          (cis.intern-structural-session-syntax-source-name-id-or
-                            (cis.intern-structural-session-handle-from-source-names
-                              ctx.source-names)
-                            next-module
-                            -1)]
-                        (if (>= source-id 0)
-                          (doc-expand-source-name ctx source-id)
-                          "<structural-module>")))
-                    (set! items (doc_item_vec.new))
-                    (set! has-generated false))]
-                [_
-                  (match (doc-ast-generated-decl-item ctx decl)
-                    [(DocMaybeItem.Some item)
-                      (begin
-                        (doc_item_vec.push-ref! (&mut items) item)
-                        (set! has-generated true))]
-                    [(DocMaybeItem.No) unit])])
-              (set! cursor rest))]))
-      modules)))
+              (set!
+                current-module
+                (let
+                  [source-id : i64
+                    (cis.intern-structural-session-syntax-source-name-id-or
+                      (cis.intern-structural-session-handle-from-source-names
+                        ctx.source-names)
+                      next-module
+                      -1)]
+                  (if (>= source-id 0)
+                    (doc-expand-source-name ctx source-id)
+                    "<structural-module>")))
+              (set! items (doc_item_vec.new))
+              (set! has-generated false)]
+            [_
+              (match (doc-ast-generated-decl-item ctx decl)
+                [(Some item)
+                  (doc_item_vec.push-ref! (&mut items) item)
+                  (set! has-generated true)]
+                [(No) unit])])
+          (set! cursor rest)]))
+    modules))
 
 (define (doc-expanded-generated-modules-from-loaded-decls-with-state-and-pools-and-intern-state
   [load-state : compiler_load.CompilerLoadSessionState]
@@ -1162,9 +1139,9 @@
       stdlib-roots
       pools
       intern-state)
-      [(compiler_typecheck_api.ResultCompilerDocExpand.Ok expanded _)
+      [(Ok expanded _)
         (match expanded
-          [(ast.AstProgram.Program expanded-box)
+          [(Program expanded-box)
             (let
               [expanded-decls : ast.AstDeclList
                 (ast.ast-decl-list-box-shared-view expanded-box)]
@@ -1173,14 +1150,12 @@
                   ctx
                   (owned_view.compiler-owned-shared-view expanded-decls)
                   macro-examples)]
-              (ResultDocExpandedModules.Ok
+              (Ok
                 (doc-generated-modules-from-expanded-decls
                   ctx
                   expanded-decls
                   targets)))])]
-      [(compiler_typecheck_api.ResultCompilerDocExpand.Err diag)
-        (ResultDocExpandedModules.Err
-          (cdiag.compiler-diagnostic-render (deref diag)))])))
+      [(Err diag) (Err (cdiag.compiler-diagnostic-render (deref diag)))])))
 
 (define (doc-expand-find-prefix
   [text : (& text str)]
@@ -1190,14 +1165,12 @@
     [i : i64 from]
     [n : i64 (string.string-length text)]
     [found : i64 n]
-    (begin
-      (while (and (< i n) (= found n))
-        (begin
-          (if (string.is-string-prefix-at text prefix i)
-            (set! found i)
-            unit)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (< i n) (= found n))
+      (if (string.is-string-prefix-at text prefix i)
+        (set! found i)
+        unit)
+      (set! i (+ i 1)))
+    found))
 
 (define (doc-expand-fence-line-start
   [text : (& text str)]
@@ -1228,32 +1201,29 @@
   (let
     [pos : i64 cursor]
     [found : i64 n]
-    (begin
-      (while (and (< pos n) (= found n))
-        (let
-          [line-end : i64 (source_text.line-end text pos)]
-          (begin
-            (if (doc-expand-ignored-fence-line? text pos line-end)
-              (set! found pos)
-              unit)
-            (set! pos (source_text.next-line-start text line-end)))))
-      found)))
+    (while (and (< pos n) (= found n))
+      (let
+        [line-end : i64 (source_text.line-end text pos)]
+        (if (doc-expand-ignored-fence-line? text pos line-end)
+          (set! found pos)
+          unit)
+        (set! pos (source_text.next-line-start text line-end))))
+    found))
 
 (define (doc-expand-skip-fence [text : (& text str)] [cursor : i64] [n : i64]) : i64
   (let
     [open-end : i64 (source_text.line-end text cursor)]
     [pos : i64 (source_text.next-line-start text open-end)]
     [done : bool false]
-    (begin
-      (while (and (< pos n) (not done))
-        (let
-          [line-end : i64 (source_text.line-end text pos)]
-          (if (< (doc-expand-fence-line-start text pos line-end) line-end)
-            (begin
-              (set! pos (source_text.next-line-start text line-end))
-              (set! done true))
-            (set! pos (source_text.next-line-start text line-end)))))
-      pos)))
+    (while (and (< pos n) (not done))
+      (let
+        [line-end : i64 (source_text.line-end text pos)]
+        (if (< (doc-expand-fence-line-start text pos line-end) line-end)
+          (begin
+            (set! pos (source_text.next-line-start text line-end))
+            (set! done true))
+          (set! pos (source_text.next-line-start text line-end)))))
+    pos))
 
 (define (doc-import-forms-from-doc-text [doc-text : (& doc-text str)]) : DocImportFormScan
   (let
@@ -1261,26 +1231,23 @@
     [n : i64 (string.string-length doc-text)]
     [forms : doc_import_form_vec.Vec (doc_import_form_vec.new)]
     [has-macro : bool false]
-    (begin
-      (while (< cursor n)
-        (let
-          [ignored-fence : i64
-            (doc-expand-next-ignored-fence doc-text cursor n)]
-          [start : i64 (doc-expand-find-prefix doc-text "(import " cursor)]
-          (if (< ignored-fence start)
-            (set! cursor (doc-expand-skip-fence doc-text ignored-fence n))
-            (if (< start n)
-              (let
-                [end : i64 (doc_extract.doc-scan-form-end doc-text start n)]
-                [form : String (string.substring doc-text start (- end start))]
-                (begin
-                  (doc-import-form-list-push-unique! (&mut forms) form)
-                  (if (string.is-string-prefix-at doc-text "(import (" start)
-                    (set! has-macro true)
-                    unit)
-                  (set! cursor end)))
-              (set! cursor n)))))
-      (DocImportFormScan forms has-macro))))
+    (while (< cursor n)
+      (let
+        [ignored-fence : i64 (doc-expand-next-ignored-fence doc-text cursor n)]
+        [start : i64 (doc-expand-find-prefix doc-text "(import " cursor)]
+        (if (< ignored-fence start)
+          (set! cursor (doc-expand-skip-fence doc-text ignored-fence n))
+          (if (< start n)
+            (let
+              [end : i64 (doc_extract.doc-scan-form-end doc-text start n)]
+              [form : String (string.substring doc-text start (- end start))]
+              (doc-import-form-list-push-unique! (&mut forms) form)
+              (if (string.is-string-prefix-at doc-text "(import (" start)
+                (set! has-macro true)
+                unit)
+              (set! cursor end))
+            (set! cursor n)))))
+    (DocImportFormScan forms has-macro)))
 
 (define (doc-expanded-example-source [forms : doc_import_form_vec.Vec]) : String
   (doc-cat2
@@ -1296,50 +1263,42 @@
   [pools : ast.AstNodePoolContext]
   [intern-state : ci.InternCompatState]) : ResultDocExpandedModules
   (match docs
-    [(doc_extract.DocExtraction.Extraction module-doc _)
+    [(Extraction module-doc _)
       (let
         [scan : DocImportFormScan (doc-import-forms-from-doc-text module-doc)]
         (if (not scan.has-macro)
-          (ResultDocExpandedModules.Ok (doc_module_vec.new))
+          (Ok (doc_module_vec.new))
           (let
             [intern-state : ci.InternCompatState intern-state]
-            (begin
-              (compiler_load.compiler-load-session-state-use-with-intern-state!
-                load-state
-                (owned_view.compiler-owned-shared-view intern-state))
+            (compiler_load.compiler-load-session-state-use-with-intern-state!
+              load-state
+              (owned_view.compiler-owned-shared-view intern-state))
+            (ast.ast-node-pool-context-install! pools)
+            (ci.intern-compat-state-install! intern-state)
+            (let
+              [loaded : compiler_load.ResultCompilerLoadWithPaths
+                (compiler_load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
+                  (owned_view.compiler-owned-shared-view load-state)
+                  (doc-cat2 source-path ".doc-examples.tl")
+                  (doc-expanded-example-source scan.forms)
+                  (sym_i64_env.sym-i64-empty)
+                  (owned_view.compiler-owned-shared-view stdlib-roots)
+                  No
+                  (parser.compiler-cfg-empty)
+                  pools)]
+              ;; Preserve segments appended through the explicit loader and
+              ;; publish that completed owner for legacy expansion readers.
               (ast.ast-node-pool-context-install! pools)
-              (ci.intern-compat-state-install! intern-state)
-              (let
-                [loaded : compiler_load.ResultCompilerLoadWithPaths
-                  (compiler_load.compiler-load-source-with-paths-and-roots-expect-cfg-with-pools
-                    (owned_view.compiler-owned-shared-view load-state)
-                    (doc-cat2 source-path ".doc-examples.tl")
-                    (doc-expanded-example-source scan.forms)
-                    (sym_i64_env.sym-i64-empty)
-                    (owned_view.compiler-owned-shared-view stdlib-roots)
-                    ast.AstMaybeModuleName.No
-                    (parser.compiler-cfg-empty)
-                    pools)]
-                (begin
-                  ;; Preserve segments appended through the explicit loader and
-                  ;; publish that completed owner for legacy expansion readers.
-                  (ast.ast-node-pool-context-install! pools)
-                  (ci.intern-compat-state-capture-from-globals!
-                    (&mut intern-state))
-                  (match loaded
-                    [(compiler_load.ResultCompilerLoadWithPaths.Ok
-                        decls
-                        paths
-                        _
-                        _)
-                      (doc-expanded-generated-modules-from-loaded-decls-with-state-and-pools-and-intern-state
-                        load-state
-                        job-state
-                        decls
-                        paths
-                        stdlib-roots
-                        pools
-                        intern-state)]
-                    [(compiler_load.ResultCompilerLoadWithPaths.Err diag)
-                      (ResultDocExpandedModules.Err
-                        (cdiag.compiler-diagnostic-render (deref diag)))])))))))]))
+              (ci.intern-compat-state-capture-from-globals! (&mut intern-state))
+              (match loaded
+                [(Ok decls paths _ _)
+                  (doc-expanded-generated-modules-from-loaded-decls-with-state-and-pools-and-intern-state
+                    load-state
+                    job-state
+                    decls
+                    paths
+                    stdlib-roots
+                    pools
+                    intern-state)]
+                [(Err diag)
+                  (Err (cdiag.compiler-diagnostic-render (deref diag)))])))))]))

@@ -50,7 +50,7 @@
 ;; before the frontend owner is released.
 (define package-surface-capture-state : (__tl_dyn-array
     PackageSurfaceCaptureState)
-  (__tl_make-array (PackageSurfaceCaptureState.Inactive)))
+  (__tl_make-array (Inactive)))
 (define package-surface-capture-result-arena : i64
   0)
 
@@ -77,85 +77,76 @@
       (prelude_surface.prelude-surface-module-set paths)]
     [count : i64 0]
     [index : i64 0]
-    (begin
-      (while (< index (array-length all-modules))
-        (begin
-          (if (>
-            (string.string-length
+    (while (< index (array-length all-modules))
+      (if (>
+        (string.string-length
+          (owned_view.compiler-owned-array-element-shared-view
+            all-modules
+            index))
+        0)
+        (set! count (+ count 1))
+        unit)
+      (set! index (+ index 1)))
+    (let
+      [modules : (__tl_dyn-array String)
+        (__tl_make-array
+          String
+          (if (= count 0)
+            1
+            count))]
+      [source-index : i64 0]
+      [dest-index : i64 0]
+      (while (< source-index (array-length all-modules))
+        (let
+          [module-name : String
+            (string.copy
               (owned_view.compiler-owned-array-element-shared-view
                 all-modules
-                index))
-            0)
-            (set! count (+ count 1))
-            unit)
-          (set! index (+ index 1))))
-      (let
-        [modules : (__tl_dyn-array String)
-          (__tl_make-array
-            String
-            (if (= count 0)
-              1
-              count))]
-        [source-index : i64 0]
-        [dest-index : i64 0]
-        (begin
-          (while (< source-index (array-length all-modules))
-            (let
-              [module-name : String
-                (string.copy
-                  (owned_view.compiler-owned-array-element-shared-view
-                    all-modules
-                    source-index))]
-              (begin
-                (if (> (string.string-length module-name) 0)
-                  (begin
-                    (set! (array-ref modules dest-index) module-name)
-                    (set! dest-index (+ dest-index 1)))
-                  unit)
-                (set! source-index (+ source-index 1)))))
-          (if (= count 0)
-            (set! (array-ref modules 0) (string.copy (& package-name)))
-            unit)
-          (surface_identity.SurfaceIdentityKey
-            package-name
-            modules
-            (string.int->string source-digest)
-            producer-identity
-            configuration))))))
+                source-index))]
+          (when
+            (> (string.string-length module-name) 0)
+            (set! (array-ref modules dest-index) module-name)
+            (set! dest-index (+ dest-index 1)))
+          (set! source-index (+ source-index 1))))
+      (if (= count 0)
+        (set! (array-ref modules 0) (string.copy (& package-name)))
+        unit)
+      (surface_identity.SurfaceIdentityKey
+        package-name
+        modules
+        (string.int->string source-digest)
+        producer-identity
+        configuration))))
 
 (define (package-surface-capture-start!
   [key : surface_identity.SurfaceIdentityKey]
   [seen : sym_i64_env.SymI64Env]) : unit
-  (begin
-    (surface_facts.surface-typecheck-facts-recording-abort!)
-    (set! package-surface-capture-result-arena (arena.tl_arena_current))
-    (set!
-      (array-ref package-surface-capture-state 0)
-      (PackageSurfaceCaptureState.Pending key seen (arena.tl_arena_current)))))
+  (surface_facts.surface-typecheck-facts-recording-abort!)
+  (set! package-surface-capture-result-arena (arena.tl_arena_current))
+  (set!
+    (array-ref package-surface-capture-state 0)
+    (Pending key seen (arena.tl_arena_current))))
 
 (define (package-surface-program-decl-count [program : ast.AstProgram]) : i64
   (match program
-    [(ast.AstProgram.Program decls-box)
-      (ast.ast-decl-list-len (& (__tl-box-place decls-box)))]))
+    [(Program decls-box) (ast.ast-decl-list-len (& (__tl-box-place decls-box)))]))
 
 (define (package-surface-modules [program : ast.AstProgram]) : ast.AstDeclModuleList
   (match program
-    [(ast.AstProgram.Program decls-box)
+    [(Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         [count : i64 (ast.ast-decl-list-len (& decls))]
         [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [module-id : i64 cbi.compiler-builtin-id-fix-empty]
         [index : i64 0]
-        (begin
-          (while (< index count)
-            (begin
-              (set! (array-ref slots index) module-id)
-              (set!
-                module-id
-                (ast.ast-decl-list-module-id-at (& decls) index module-id))
-              (set! index (+ index 1))))
-          (ast.AstDeclModuleList slots 0 count true)))]))
+        (while (< index count)
+          (set! (array-ref slots index) module-id)
+          (set!
+            module-id
+            (ast.ast-decl-list-module-id-at (& decls) index module-id))
+          (set! index (+ index 1)))
+        (ast.AstDeclModuleList slots 0 count true))]))
 
 (define (package-surface-capture-expanded!
   [structural-session : cis.InternStructuralSessionHandle]
@@ -163,31 +154,29 @@
   [paths : ast.AstDeclPathList]
   [pools : ast.AstNodePoolContext]) : unit
   (match (package-surface-capture-state-shared-view)
-    [(PackageSurfaceCaptureState.Pending key seen result-arena)
+    [(Pending key seen result-arena)
       (let
         [macro-decl-count : i64
           (package-surface-program-decl-count
             (owned_view.compiler-owned-shared-view program))]
-        (begin
-          (surface_facts.surface-typecheck-facts-recording-start! result-arena)
-          (set!
-            (array-ref package-surface-capture-state 0)
-            (PackageSurfaceCaptureState.Expanded
-              key
-              structural-session
-              seen
-              program
-              paths
-              pools
-              macro-decl-count
-              result-arena))))]
-    [(PackageSurfaceCaptureState.Inactive) unit]
-    [(PackageSurfaceCaptureState.Err _) unit]
+        (surface_facts.surface-typecheck-facts-recording-start! result-arena)
+        (set!
+          (array-ref package-surface-capture-state 0)
+          (Expanded
+            key
+            structural-session
+            seen
+            program
+            paths
+            pools
+            macro-decl-count
+            result-arena)))]
+    [(Inactive) unit]
+    [(Err _) unit]
     [_
-      (begin
-        (surface_facts.surface-typecheck-facts-recording-abort!)
-        (package-surface-capture-error!
-          "package surface: duplicate checked compilation capture"))]))
+      (surface_facts.surface-typecheck-facts-recording-abort!)
+      (package-surface-capture-error!
+        "package surface: duplicate checked compilation capture")]))
 
 (define (package-surface-capture-store-encoded!
   [key : surface_identity.SurfaceIdentityKey]
@@ -206,11 +195,10 @@
     [modules : ast.AstDeclModuleList
       (package-surface-modules (owned_view.compiler-owned-shared-view program))]
     (match (surface_identity.surface-identity-encode identity-payload)
-      [(surface_identity.ResultSurfaceIdentityBytes.Err message)
-        (package-surface-capture-error! message)]
-      [(surface_identity.ResultSurfaceIdentityBytes.Ok identity-bytes)
+      [(Err message) (package-surface-capture-error! message)]
+      [(Ok identity-bytes)
         (match program
-          [(ast.AstProgram.Program decls-box)
+          [(Program decls-box)
             (match (surface_ast.surface-ast-encode
               structural-session
               (deref decls-box)
@@ -220,20 +208,18 @@
               pools
               source-count
               identity-count)
-              [(surface_ast.ResultSurfaceAstBytes.Err message)
-                (package-surface-capture-error! message)]
-              [(surface_ast.ResultSurfaceAstBytes.Ok ast-bytes)
+              [(Err message) (package-surface-capture-error! message)]
+              [(Ok ast-bytes)
                 (match (surface_facts.surface-typecheck-facts-encode
                   facts
                   structural-session
                   source-count
                   identity-count)
-                  [(surface_facts.ResultSurfaceTypecheckFactBytes.Err message)
-                    (package-surface-capture-error! message)]
-                  [(surface_facts.ResultSurfaceTypecheckFactBytes.Ok fact-bytes)
+                  [(Err message) (package-surface-capture-error! message)]
+                  [(Ok fact-bytes)
                     (set!
                       (array-ref package-surface-capture-state 0)
-                      (PackageSurfaceCaptureState.Ready
+                      (Ready
                         (PackageSurfacePayloads
                           identity-bytes
                           ast-bytes
@@ -245,7 +231,7 @@
   [summary-functions : i64]
   [summary-externs : i64]) : unit
   (match (package-surface-capture-state-shared-view)
-    [(PackageSurfaceCaptureState.Expanded
+    [(Expanded
         key
         structural-session
         seen
@@ -272,52 +258,37 @@
             paths
             pools
             facts)))]
-    [(PackageSurfaceCaptureState.Inactive) unit]
+    [(Inactive) unit]
     [_
-      (begin
-        (surface_facts.surface-typecheck-facts-recording-abort!)
-        (package-surface-capture-error!
-          "package surface: checked frontend capture was not armed"))]))
+      (surface_facts.surface-typecheck-facts-recording-abort!)
+      (package-surface-capture-error!
+        "package surface: checked frontend capture was not armed")]))
 
 (define (package-surface-capture-abort! [message : String]) : unit
   (match (package-surface-capture-state-shared-view)
-    [(PackageSurfaceCaptureState.Inactive) unit]
+    [(Inactive) unit]
     [_
-      (begin
-        (surface_facts.surface-typecheck-facts-recording-abort!)
-        (package-surface-capture-error! message))]))
+      (surface_facts.surface-typecheck-facts-recording-abort!)
+      (package-surface-capture-error! message)]))
 
 (define (package-surface-capture-take) : ResultPackageSurfacePayloads
   (match (package-surface-capture-state-shared-view)
-    [(PackageSurfaceCaptureState.Ready payload)
+    [(Ready payload)
       (let
-        [result : ResultPackageSurfacePayloads
-          (ResultPackageSurfacePayloads.Ok payload)]
-        (begin
-          (set!
-            (array-ref package-surface-capture-state 0)
-            (PackageSurfaceCaptureState.Inactive))
-          result))]
-    [(PackageSurfaceCaptureState.Err message)
+        [result : ResultPackageSurfacePayloads (Ok payload)]
+        (set! (array-ref package-surface-capture-state 0) (Inactive))
+        result)]
+    [(Err message)
       (let
-        [result : ResultPackageSurfacePayloads
-          (ResultPackageSurfacePayloads.Err message)]
-        (begin
-          (set!
-            (array-ref package-surface-capture-state 0)
-            (PackageSurfaceCaptureState.Inactive))
-          result))]
-    [(PackageSurfaceCaptureState.Inactive)
-      (ResultPackageSurfacePayloads.Err
-        "package surface: no checked frontend capture was requested")]
+        [result : ResultPackageSurfacePayloads (Err message)]
+        (set! (array-ref package-surface-capture-state 0) (Inactive))
+        result)]
+    [(Inactive)
+      (Err "package surface: no checked frontend capture was requested")]
     [_
-      (begin
-        (surface_facts.surface-typecheck-facts-recording-abort!)
-        (set!
-          (array-ref package-surface-capture-state 0)
-          (PackageSurfaceCaptureState.Inactive))
-        (ResultPackageSurfacePayloads.Err
-          "package surface: checked frontend capture did not complete"))]))
+      (surface_facts.surface-typecheck-facts-recording-abort!)
+      (set! (array-ref package-surface-capture-state 0) (Inactive))
+      (Err "package surface: checked frontend capture did not complete")]))
 
 (define (package-surface-pack
   [payload : PackageSurfacePayloads]
@@ -325,29 +296,28 @@
   (let
     [sections : (__tl_dyn-array tlci.TlciAuxSection)
       (__tl_make-array tlci.TlciAuxSection 4)]
-    (begin
-      (set!
-        (array-ref sections 0)
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-package-identity
-          surface_identity.surface-identity-schema-version
-          payload.identity))
-      (set!
-        (array-ref sections 1)
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-frontend-ast
-          surface_ast.surface-ast-schema-version
-          payload.ast))
-      (set!
-        (array-ref sections 2)
-        (tlci.TlciAuxSection
-          tlci.tlci-aux-kind-frontend-facts
-          surface_facts.surface-typecheck-facts-schema-version
-          payload.facts))
-      (set!
-        (array-ref sections 3)
-        (tlci.tlci-package-source-binding-section source-digest))
-      (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections))))
+    (set!
+      (array-ref sections 0)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-package-identity
+        surface_identity.surface-identity-schema-version
+        payload.identity))
+    (set!
+      (array-ref sections 1)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-frontend-ast
+        surface_ast.surface-ast-schema-version
+        payload.ast))
+    (set!
+      (array-ref sections 2)
+      (tlci.TlciAuxSection
+        tlci.tlci-aux-kind-frontend-facts
+        surface_facts.surface-typecheck-facts-schema-version
+        payload.facts))
+    (set!
+      (array-ref sections 3)
+      (tlci.tlci-package-source-binding-section source-digest))
+    (tlci.tlci-aux-pack-rodata (tlci.tlci-empty-bytes) sections)))
 
 (cfg
   (all
@@ -358,37 +328,33 @@
     (let
       [round : i64 0]
       (while (< round 8)
-        (begin
+        (with-scratch
+          (package-surface-capture-start!
+            (surface_identity.SurfaceIdentityKey
+              "capture"
+              (__tl_make-array "capture")
+              "source"
+              "compiler"
+              "linux-x86_64")
+            (sym_i64_env.sym-i64-empty))
           (with-scratch
-            (begin
-              (package-surface-capture-start!
-                (surface_identity.SurfaceIdentityKey
-                  "capture"
-                  (__tl_make-array "capture")
-                  "source"
-                  "compiler"
-                  "linux-x86_64")
-                (sym_i64_env.sym-i64-empty))
-              (with-scratch
-                (package-surface-capture-abort!
-                  (string.copy "retained diagnostic")))
-              (unless
-                (match (package-surface-capture-take)
-                  [(ResultPackageSurfacePayloads.Err message)
-                    (string.eq message "retained diagnostic")]
-                  [_ false])
-                (io.panic "package capture lost its retired error"))))
-          ;; The inactive carrier must also survive its former result arena.
-          (package-surface-capture-abort! "inactive abort")
+            (package-surface-capture-abort! (string.copy "retained diagnostic")))
           (unless
             (match (package-surface-capture-take)
-              [(ResultPackageSurfacePayloads.Err message)
-                (string.eq
-                  message
-                  "package surface: no checked frontend capture was requested")]
+              [(Err message) (string.eq message "retained diagnostic")]
               [_ false])
-            (io.panic "package capture retained a retired active state"))
-          (set! round (+ round 1)))))))
+            (io.panic "package capture lost its retired error")))
+        ;; The inactive carrier must also survive its former result arena.
+        (package-surface-capture-abort! "inactive abort")
+        (unless
+          (match (package-surface-capture-take)
+            [(Err message)
+              (string.eq
+                message
+                "package surface: no checked frontend capture was requested")]
+            [_ false])
+          (io.panic "package capture retained a retired active state"))
+        (set! round (+ round 1))))))
 
 (cfg
   test
@@ -402,19 +368,19 @@
           (tlci.tlci-string->bytes "facts"))]
       [ok : bool
         (match (package-surface-pack payload 42)
-          [(tlci.ResultTlciAuxBytes.Err _) false]
-          [(tlci.ResultTlciAuxBytes.Ok rodata)
+          [(Err _) false]
+          [(Ok rodata)
             (and
               (match (tlci.tlci-aux-find
                 rodata
                 tlci.tlci-aux-kind-package-identity)
-                [(tlci.ResultTlciAuxLookup.Ok schema bytes)
+                [(Ok schema bytes)
                   (and
                     (= schema surface_identity.surface-identity-schema-version)
                     (= (array-length bytes) 8))]
                 [_ false])
               (match (tlci.tlci-aux-find rodata tlci.tlci-aux-kind-frontend-ast)
-                [(tlci.ResultTlciAuxLookup.Ok schema bytes)
+                [(Ok schema bytes)
                   (and
                     (= schema surface_ast.surface-ast-schema-version)
                     (= (array-length bytes) 0))]
@@ -422,7 +388,7 @@
               (match (tlci.tlci-aux-find
                 rodata
                 tlci.tlci-aux-kind-frontend-facts)
-                [(tlci.ResultTlciAuxLookup.Ok schema bytes)
+                [(Ok schema bytes)
                   (and
                     (=
                       schema
@@ -430,6 +396,6 @@
                     (= (array-length bytes) 5))]
                 [_ false])
               (match (tlci.tlci-package-source-binding-read rodata)
-                [(tlci.TlciPackageSourceBindingRead.Bound digest) (= digest 42)]
+                [(Bound digest) (= digest 42)]
                 [_ false]))])]
       (unless ok (io.panic "package surface section packing failed")))))

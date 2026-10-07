@@ -24,23 +24,18 @@
   (compiler_load.compiler-load-parse-context-name-id text))
 
 (define (compiler-load-decl-run-def [name : String]) : ast.AstDecl
-  (ast.ast-decl-def-id
-    (compiler-load-decl-run-name-id name)
-    (ast.AstMaybeType.No)
-    0))
+  (ast.ast-decl-def-id (compiler-load-decl-run-name-id name) (No) 0))
 
 (define (compiler-load-decl-run-macro-import
   [path : String]
   [macro-name : String]) : ast.AstDecl
-  (ast.AstDecl.Import
+  (Import
     (ast.ast-decl-meta-runtime-shared-view)
-    (ast.AstImportSpec.Spec
-      (ast.AstImportKind.Macro
-        (compiler-load-decl-run-name-id macro-name)
-        (ast.AstMaybeModuleName.No))
+    (Spec
+      (Macro (compiler-load-decl-run-name-id macro-name) (No))
       path
-      (ast.AstMaybeModuleName.No)
-      (ast.AstMaybeImportAlias.No)
+      (No)
+      (No)
       (box (ast.ast-source-span 1 1 1 1)))))
 
 ;; Declarations in source order: two ordinary definitions, a module body holding
@@ -78,14 +73,12 @@
 
 (define (compiler-load-decl-run-decl-text [decl : ast.AstDecl]) : String
   (match decl
-    [(ast.AstDecl.Module name) (str_cat.str-cat "Module:" (ci.intern-str name))]
-    [(ast.AstDecl.ModuleBody name _)
-      (str_cat.str-cat "ModuleBody:" (ci.intern-str name))]
-    [(ast.AstDecl.Def _ name _ _) (str_cat.str-cat "Def:" (ci.intern-str name))]
-    [(ast.AstDecl.DefStruct _ name _ _ _)
+    [(Module name) (str_cat.str-cat "Module:" (ci.intern-str name))]
+    [(ModuleBody name _) (str_cat.str-cat "ModuleBody:" (ci.intern-str name))]
+    [(Def _ name _ _) (str_cat.str-cat "Def:" (ci.intern-str name))]
+    [(DefStruct _ name _ _ _)
       (str_cat.str-cat "DefStruct:" (ci.intern-str name))]
-    [(ast.AstDecl.Import _ (ast.AstImportSpec.Spec _ path _ _ _))
-      (str_cat.str-cat "Import:" path)]
+    [(Import _ (Spec _ path _ _ _)) (str_cat.str-cat "Import:" path)]
     [_ "Other"]))
 
 (define (compiler-load-decl-run-render-decls [decls : ast.AstDeclList]) : String
@@ -93,41 +86,35 @@
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [index : i64 0]
     [out : String ""]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              (compiler-load-decl-run-decl-text
-                (ast.ast-decl-list-ref decls index))
-              ";"))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set!
+        out
+        (str_cat.str-cat
+          out
+          (compiler-load-decl-run-decl-text (ast.ast-decl-list-ref decls index))
+          ";"))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-load-decl-run-render-paths [paths : ast.AstDeclPathList]) : String
   (let
     [count : i64 (ast.ast-decl-path-list-len (& paths))]
     [index : i64 0]
     [out : String ""]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              (ast.ast-decl-path-list-get (& paths) index "?")
-              "@"
-              (ci.intern-str
-                (ast.ast-decl-path-list-owner-id (& paths) index -1))
-              "/"
-              (ci.intern-str
-                (ast.ast-decl-path-list-provenance-id (& paths) index -1))
-              ";"))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set!
+        out
+        (str_cat.str-cat
+          out
+          (ast.ast-decl-path-list-get (& paths) index "?")
+          "@"
+          (ci.intern-str (ast.ast-decl-path-list-owner-id (& paths) index -1))
+          "/"
+          (ci.intern-str
+            (ast.ast-decl-path-list-provenance-id (& paths) index -1))
+          ";"))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-load-decl-run-render-modules
   [modules : ast.AstDeclModuleList]) : String
@@ -135,40 +122,35 @@
     [count : i64 (ast.ast-decl-module-list-len (& modules))]
     [index : i64 0]
     [out : String ""]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            out
-            (str_cat.str-cat
-              out
-              (ci.intern-str
-                (ast.ast-decl-module-list-get-id (& modules) index -1))
-              ";"))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index count)
+      (set!
+        out
+        (str_cat.str-cat
+          out
+          (ci.intern-str (ast.ast-decl-module-list-get-id (& modules) index -1))
+          ";"))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-load-decl-run-render-seen [seen : sym_i64_env.SymI64Env]) : String
   (let
     [cursor : sym_i64_env.SymI64Env seen]
     [out : String ""]
     [done : bool false]
-    (begin
-      (while (not done)
-        (match (sym_i64_env.sym-i64-view cursor)
-          [(sym_i64_env.SymI64ViewNil) (set! done true)]
-          [(sym_i64_env.SymI64ViewBind key value rest)
-            (begin
-              (set!
-                out
-                (str_cat.str-cat
-                  out
-                  (ci.intern-str key)
-                  "="
-                  (string.int->string value)
-                  ";"))
-              (set! cursor rest))]))
-      out)))
+    (while (not done)
+      (match (sym_i64_env.sym-i64-view cursor)
+        [(SymI64ViewNil) (set! done true)]
+        [(SymI64ViewBind key value rest)
+          (set!
+            out
+            (str_cat.str-cat
+              out
+              (ci.intern-str key)
+              "="
+              (string.int->string value)
+              ";"))
+          (set! cursor rest)]))
+    out))
 
 (define (compiler-load-decl-run-shape) : String
   (let
@@ -194,11 +176,7 @@
       (svec.new)
       "src/tests"
       (cfg.compiler-cfg-empty))
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok
-          decls
-          paths
-          modules
-          out-seen)
+      [(Ok decls paths modules out-seen)
         (str_cat.str-cat
           "decls["
           (compiler-load-decl-run-render-decls decls)
@@ -209,7 +187,7 @@
           "] seen["
           (compiler-load-decl-run-render-seen out-seen)
           "]")]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) "ERR"])))
+      [(Err _) "ERR"])))
 
 (define (compiler-load-decl-run-expected-path [owner : String]) : String
   (str_cat.str-cat
@@ -240,17 +218,16 @@
 
 (test
   compiler-load-decl-ordinary-run-shape
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (let
-      [got : String (compiler-load-decl-run-shape)]
-      (if (string.eq got (compiler-load-decl-run-expected-shape))
-        unit
-        (io.panic
-          (string.copy
-            (str_cat.str-cat
-              "compiler-load: ordinary-run walk changed the loaded shape: "
-              got)))))))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [got : String (compiler-load-decl-run-shape)]
+    (if (string.eq got (compiler-load-decl-run-expected-shape))
+      unit
+      (io.panic
+        (string.copy
+          (str_cat.str-cat
+            "compiler-load: ordinary-run walk changed the loaded shape: "
+            got))))))
 
 ;; Per-position source attribution. Every flattened declaration carries a decl
 ;; origin alias back to the slot it was read from, and the semantic origin
@@ -267,7 +244,7 @@
   [decls : (& decls ast.AstDeclList)]
   [index : i64]) : String
   (match (parser.compiler-parse-semantic-origin-run decls index)
-    [(parser.CompilerParseMaybeSemanticOriginRun.Some run)
+    [(Some run)
       (let
         [origin : parser.CompilerParseSemanticOrigin
           (parser.compiler-parse-semantic-origin-run-get
@@ -279,43 +256,40 @@
           (ci.intern-str origin.written-name)
           "@"
           (string.int->string (ast.ast-source-span-start-line span))))]
-    [(parser.CompilerParseMaybeSemanticOriginRun.None) "none"]))
+    [(None) "none"]))
 
 (define (compiler-load-decl-run-origin-shape) : String
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [source : String (compiler-load-decl-run-origin-source)]
     [out : String "ERR"]
-    (begin
-      (io.write-file
-        "target/cl_decl_run_origin.tl"
-        (byte_buf.str-as-bytes (& source)))
-      (match (load_tests.compiler-load-file-with-paths
-        "target/cl_decl_run_origin.tl"
-        (sym_i64_env.sym-i64-empty))
-        [(compiler_load.ResultCompilerLoadWithPaths.Ok decls _ _ _)
-          (let
-            [count : i64 (ast.ast-decl-list-len (& decls))]
-            [index : i64 0]
-            [text : String ""]
-            (begin
-              (while (< index count)
-                (begin
-                  (set!
-                    text
-                    (str_cat.str-cat
-                      text
-                      (compiler-load-decl-run-decl-text
-                        (ast.ast-decl-list-ref decls index))
-                      "/"
-                      (compiler-load-decl-run-origin-text (& decls) index)
-                      ";"))
-                  (set! index (+ index 1))))
-              (set! out text)))]
-        [(compiler_load.ResultCompilerLoadWithPaths.Err _) unit])
-      (reader.sp-node-pool-truncate! mark)
-      (parser.compiler-parse-decl-origin-cache-reset!)
-      out)))
+    (io.write-file
+      "target/cl_decl_run_origin.tl"
+      (byte_buf.str-as-bytes (& source)))
+    (match (load_tests.compiler-load-file-with-paths
+      "target/cl_decl_run_origin.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(Ok decls _ _ _)
+        (let
+          [count : i64 (ast.ast-decl-list-len (& decls))]
+          [index : i64 0]
+          [text : String ""]
+          (while (< index count)
+            (set!
+              text
+              (str_cat.str-cat
+                text
+                (compiler-load-decl-run-decl-text
+                  (ast.ast-decl-list-ref decls index))
+                "/"
+                (compiler-load-decl-run-origin-text (& decls) index)
+                ";"))
+            (set! index (+ index 1)))
+          (set! out text))]
+      [(Err _) unit])
+    (reader.sp-node-pool-truncate! mark)
+    (parser.compiler-parse-decl-origin-cache-reset!)
+    out))
 
 ;; Captured from the per-declaration recursion before the run-iteration landed.
 (define (compiler-load-decl-run-expected-origin-shape) : String
@@ -327,14 +301,13 @@
 
 (test
   compiler-load-decl-ordinary-run-origin-attribution
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (let
-      [got : String (compiler-load-decl-run-origin-shape)]
-      (if (string.eq got (compiler-load-decl-run-expected-origin-shape))
-        unit
-        (io.panic
-          (string.copy
-            (str_cat.str-cat
-              "compiler-load: ordinary-run walk changed source attribution: "
-              got)))))))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (let
+    [got : String (compiler-load-decl-run-origin-shape)]
+    (if (string.eq got (compiler-load-decl-run-expected-origin-shape))
+      unit
+      (io.panic
+        (string.copy
+          (str_cat.str-cat
+            "compiler-load: ordinary-run walk changed source attribution: "
+            got))))))

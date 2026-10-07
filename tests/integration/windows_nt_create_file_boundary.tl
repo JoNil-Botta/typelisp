@@ -13,14 +13,10 @@
     [n : i64 (string.string-length text)]
     [out : (__tl_dyn-array u16) (__tl_make-array u16 n)]
     [index : i64 0]
-    (begin
-      (while (< index n)
-        (begin
-          (set!
-            (array-ref out index)
-            (cast (string.string-ref text index) : u16))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index n)
+      (set! (array-ref out index) (cast (string.string-ref text index) : u16))
+      (set! index (+ index 1)))
+    out))
 
 (define (fixture-open-directory [_path : (& _path str)]) : i64
   (cfg

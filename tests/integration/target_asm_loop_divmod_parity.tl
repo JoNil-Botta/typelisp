@@ -14,19 +14,16 @@
     [n : i64 target-asm-loop-divmod-seed]
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (% i 1000000007)))
-          (set! acc (+ acc (/ i 10)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (+ acc (% i 1000000007)))
+      (set! acc (+ acc (/ i 10)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [fn : (-> i64) loop-divmod-parity]
-    (begin
-      (set! target-asm-loop-divmod-seed (+ 99 (io.arg-count)))
-      (if (= (fn) 5400)
-        42
-        1))))
+    (set! target-asm-loop-divmod-seed (+ 99 (io.arg-count)))
+    (if (= (fn) 5400)
+      42
+      1)))

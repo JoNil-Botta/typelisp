@@ -42,16 +42,14 @@
     [keys (i64vec.slots-mut keys-vec)]
     [src (i64vec.slots src-vec)]
     [i : i64 0]
-    (begin
-      (set! (array-ref single 0) 0)
-      (while (< i count)
-        (let
-          [v : i64 (array-ref src i)]
-          (begin
-            (set! (array-ref keys v) 0)
-            (set! (array-ref single i) v)
-            (set! i (+ i 1)))))
-      count)))
+    (set! (array-ref single 0) 0)
+    (while (< i count)
+      (let
+        [v : i64 (array-ref src i)]
+        (set! (array-ref keys v) 0)
+        (set! (array-ref single i) v)
+        (set! i (+ i 1))))
+    count))
 
 ;; Clause (b). `slot` is assigned once outside the loop and once inside it, so
 ;; it has more than one definition; the `keys[slot]` check
@@ -68,14 +66,12 @@
     [src (i64vec.slots src-vec)]
     [slot : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set! slot (array-ref src i))
-          (set! (array-ref keys slot) 0)
-          (set! (array-ref many i) slot)
-          (set! i (+ i 1))))
-      count)))
+    (while (< i count)
+      (set! slot (array-ref src i))
+      (set! (array-ref keys slot) 0)
+      (set! (array-ref many i) slot)
+      (set! i (+ i 1)))
+    count))
 
 ;; Clause (c). Nothing checks the stored value here: it is loaded out of
 ;; `chk-single`, whose elements are all in range for this family.
@@ -87,12 +83,10 @@
     [copy (i64vec.slots-mut copy-vec)]
     [single (i64vec.slots single-vec)]
     [j : i64 0]
-    (begin
-      (while (< j count)
-        (begin
-          (set! (array-ref copy j) (array-ref single j))
-          (set! j (+ j 1))))
-      count)))
+    (while (< j count)
+      (set! (array-ref copy j) (array-ref single j))
+      (set! j (+ j 1)))
+    count))
 
 ;; The load side: three element loads used as indices into a length-equal
 ;; sibling, which are the checks the three facts retire.
@@ -109,36 +103,32 @@
     [marks (i64vec.slots-mut marks-vec)]
     [j : i64 0]
     [acc : i64 0]
-    (begin
-      (set! (array-ref marks 0) 1)
-      (while (< j total)
-        (begin
-          (set! (array-ref marks (array-ref single j)) 2)
-          (set! (array-ref marks (array-ref many j)) 3)
-          (set! (array-ref marks (array-ref copy j)) 4)
-          (set! acc (+ acc (array-ref marks (array-ref copy j))))
-          (set! j (+ j 1))))
-      acc)))
+    (set! (array-ref marks 0) 1)
+    (while (< j total)
+      (set! (array-ref marks (array-ref single j)) 2)
+      (set! (array-ref marks (array-ref many j)) 3)
+      (set! (array-ref marks (array-ref copy j)) 4)
+      (set! acc (+ acc (array-ref marks (array-ref copy j))))
+      (set! j (+ j 1)))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (string.>int (io.arg 1))]
     [i : i64 0]
-    (begin
-      (set! chk-keys (zero-vec n))
-      (set! chk-marks (zero-vec n))
-      (set! chk-src (zero-vec n))
-      (set! chk-single (zero-vec n))
-      (set! chk-many (zero-vec n))
-      (set! chk-copy (zero-vec n))
-      (while (< i n)
-        (begin
-          (set! (array-ref (i64vec.slots-mut (&mut chk-src)) i) (- (- n 1) i))
-          (set! i (+ i 1))))
-      (chk-fill (&mut chk-single) (&mut chk-keys) (& chk-src) n)
-      (chk-many-fill (&mut chk-many) (&mut chk-keys) (& chk-src) n)
-      (chk-copy-fill (&mut chk-copy) (& chk-single) n)
-      (io.print-format
-        "{}\n"
-        (chk-walk (& chk-single) (& chk-many) (& chk-copy) (&mut chk-marks) n))
-      42)))
+    (set! chk-keys (zero-vec n))
+    (set! chk-marks (zero-vec n))
+    (set! chk-src (zero-vec n))
+    (set! chk-single (zero-vec n))
+    (set! chk-many (zero-vec n))
+    (set! chk-copy (zero-vec n))
+    (while (< i n)
+      (set! (array-ref (i64vec.slots-mut (&mut chk-src)) i) (- (- n 1) i))
+      (set! i (+ i 1)))
+    (chk-fill (&mut chk-single) (&mut chk-keys) (& chk-src) n)
+    (chk-many-fill (&mut chk-many) (&mut chk-keys) (& chk-src) n)
+    (chk-copy-fill (&mut chk-copy) (& chk-single) n)
+    (io.print-format
+      "{}\n"
+      (chk-walk (& chk-single) (& chk-many) (& chk-copy) (&mut chk-marks) n))
+    42))

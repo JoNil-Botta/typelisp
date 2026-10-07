@@ -20,19 +20,16 @@
   (let
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! sum (+ sum (array-ref xs i)))
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i n)
+      (set! sum (+ sum (array-ref xs i)))
+      (set! i (+ i 1)))
+    sum))
 
 (define (main) : i64
   (let
     [n : i64 13]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
-    (begin
-      (fill (&mut out) n)
-      (if (= (sum-array (& out) n) 442)
-        42
-        1))))
+    (fill (&mut out) n)
+    (if (= (sum-array (& out) n) 442)
+      42
+      1)))

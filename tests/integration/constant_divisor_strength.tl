@@ -139,130 +139,129 @@
     [min : i64 (- (- 0 9223372036854775807) 1)]
     [umax : u64 (cast -1 : u64)]
     [errors : i64 0]
-    (begin
-      ;; Signed opt0/opt2 parity corpus. Every helper keeps its divisor literal
-      ;; in the function body, and the expected quotient truncates toward zero;
-      ;; the remainder therefore has the dividend's sign.
-      (set! errors (+ errors (check-s2 min -4611686018427387904 0)))
-      (set! errors (+ errors (check-s2 (+ min 1) -4611686018427387903 -1)))
-      (set! errors (+ errors (check-s2 -3 -1 -1)))
-      (set! errors (+ errors (check-s2 -2 -1 0)))
-      (set! errors (+ errors (check-s2 -1 0 -1)))
-      (set! errors (+ errors (check-s2 0 0 0)))
-      (set! errors (+ errors (check-s2 1 0 1)))
-      (set! errors (+ errors (check-s2 2 1 0)))
-      (set! errors (+ errors (check-s2 3 1 1)))
-      (set!
+    ;; Signed opt0/opt2 parity corpus. Every helper keeps its divisor literal
+    ;; in the function body, and the expected quotient truncates toward zero;
+    ;; the remainder therefore has the dividend's sign.
+    (set! errors (+ errors (check-s2 min -4611686018427387904 0)))
+    (set! errors (+ errors (check-s2 (+ min 1) -4611686018427387903 -1)))
+    (set! errors (+ errors (check-s2 -3 -1 -1)))
+    (set! errors (+ errors (check-s2 -2 -1 0)))
+    (set! errors (+ errors (check-s2 -1 0 -1)))
+    (set! errors (+ errors (check-s2 0 0 0)))
+    (set! errors (+ errors (check-s2 1 0 1)))
+    (set! errors (+ errors (check-s2 2 1 0)))
+    (set! errors (+ errors (check-s2 3 1 1)))
+    (set!
+      errors
+      (+ errors (check-s2 9223372036854775807 4611686018427387903 1)))
+    (set! errors (+ errors (check-s3 min -3074457345618258602 -2)))
+    (set! errors (+ errors (check-s3 (+ min 1) -3074457345618258602 -1)))
+    (set! errors (+ errors (check-s3 -4 -1 -1)))
+    (set! errors (+ errors (check-s3 -3 -1 0)))
+    (set! errors (+ errors (check-s3 -2 0 -2)))
+    (set! errors (+ errors (check-s3 -1 0 -1)))
+    (set! errors (+ errors (check-s3 0 0 0)))
+    (set! errors (+ errors (check-s3 1 0 1)))
+    (set! errors (+ errors (check-s3 2 0 2)))
+    (set! errors (+ errors (check-s3 3 1 0)))
+    (set! errors (+ errors (check-s3 4 1 1)))
+    (set!
+      errors
+      (+ errors (check-s3 9223372036854775807 3074457345618258602 1)))
+    (set! errors (+ errors (check-s7 min -1317624576693539401 -1)))
+    (set! errors (+ errors (check-s7 (+ min 1) -1317624576693539401 0)))
+    (set! errors (+ errors (check-s7 -8 -1 -1)))
+    (set! errors (+ errors (check-s7 -7 -1 0)))
+    (set! errors (+ errors (check-s7 -6 0 -6)))
+    (set! errors (+ errors (check-s7 -1 0 -1)))
+    (set! errors (+ errors (check-s7 0 0 0)))
+    (set! errors (+ errors (check-s7 1 0 1)))
+    (set! errors (+ errors (check-s7 6 0 6)))
+    (set! errors (+ errors (check-s7 7 1 0)))
+    (set! errors (+ errors (check-s7 8 1 1)))
+    (set!
+      errors
+      (+ errors (check-s7 9223372036854775807 1317624576693539401 0)))
+    (set! errors (+ errors (check-s10 min -922337203685477580 -8)))
+    (set! errors (+ errors (check-s10 (+ min 1) -922337203685477580 -7)))
+    (set! errors (+ errors (check-s10 -11 -1 -1)))
+    (set! errors (+ errors (check-s10 -10 -1 0)))
+    (set! errors (+ errors (check-s10 -9 0 -9)))
+    (set! errors (+ errors (check-s10 -1 0 -1)))
+    (set! errors (+ errors (check-s10 0 0 0)))
+    (set! errors (+ errors (check-s10 1 0 1)))
+    (set! errors (+ errors (check-s10 9 0 9)))
+    (set! errors (+ errors (check-s10 10 1 0)))
+    (set! errors (+ errors (check-s10 11 1 1)))
+    (set!
+      errors
+      (+ errors (check-s10 9223372036854775807 922337203685477580 7)))
+    (set! errors (+ errors (check-sprime min -9223371972 -291172004)))
+    (set! errors (+ errors (check-sprime (+ min 1) -9223371972 -291172003)))
+    (set! errors (+ errors (check-sprime -1000000008 -1 -1)))
+    (set! errors (+ errors (check-sprime -1000000007 -1 0)))
+    (set! errors (+ errors (check-sprime -1000000006 0 -1000000006)))
+    (set! errors (+ errors (check-sprime -1 0 -1)))
+    (set! errors (+ errors (check-sprime 0 0 0)))
+    (set! errors (+ errors (check-sprime 1 0 1)))
+    (set! errors (+ errors (check-sprime 1000000006 0 1000000006)))
+    (set! errors (+ errors (check-sprime 1000000007 1 0)))
+    (set! errors (+ errors (check-sprime 1000000008 1 1)))
+    (set!
+      errors
+      (+ errors (check-sprime 9223372036854775807 9223371972 291172003)))
+    (set! errors (+ errors (check-swide min -2 -2)))
+    (set! errors (+ errors (check-swide (+ min 1) -2 -1)))
+    (set! errors (+ errors (check-swide -4611686018427387904 -1 -1)))
+    (set! errors (+ errors (check-swide -4611686018427387903 -1 0)))
+    (set!
+      errors
+      (+ errors (check-swide -4611686018427387902 0 -4611686018427387902)))
+    (set! errors (+ errors (check-swide -1 0 -1)))
+    (set! errors (+ errors (check-swide 0 0 0)))
+    (set! errors (+ errors (check-swide 1 0 1)))
+    (set!
+      errors
+      (+ errors (check-swide 4611686018427387902 0 4611686018427387902)))
+    (set! errors (+ errors (check-swide 4611686018427387903 1 0)))
+    (set! errors (+ errors (check-swide 4611686018427387904 1 1)))
+    (set! errors (+ errors (check-swide 9223372036854775807 2 1)))
+    (set! errors (+ errors (check-i64 (sdiv3 min) -3074457345618258602 1)))
+    (set! errors (+ errors (check-i64 (smod3 min) -2 2)))
+    (set! errors (+ errors (check-i64 (sdiv3 -10) -3 3)))
+    (set! errors (+ errors (check-i64 (smod3 -10) -1 4)))
+    (set! errors (+ errors (check-i64 (sdiv-neg3 min) 3074457345618258602 5)))
+    (set! errors (+ errors (check-i64 (smod-neg3 min) -2 6)))
+    (set! errors (+ errors (check-i64 (sdiv8 -10) -1 7)))
+    (set! errors (+ errors (check-i64 (smod8 -10) -2 8)))
+    (set! errors (+ errors (check-i64 (sdiv-neg8 10) -1 9)))
+    (set! errors (+ errors (check-i64 (smod-neg8 10) 2 10)))
+    (set! errors (+ errors (check-i64 (sdiv-prime min) -9223371972 11)))
+    (set! errors (+ errors (check-i64 (smod-prime min) -291172004 12)))
+    (set!
+      errors
+      (+ errors (check-i64 (cast (sdiv-i32-3 (cast -10 : i32)) : i64) -3 21)))
+    (set!
+      errors
+      (+ errors (check-i64 (cast (smod-i8-3 (cast -10 : i8)) : i64) -1 22)))
+    (set! errors (+ errors (check-u64 (udiv3 umax) 6148914691236517205 13)))
+    (set! errors (+ errors (check-u64 (umod3 umax) 0 14)))
+    (set! errors (+ errors (check-u64 (udiv7 umax) 2635249153387078802 15)))
+    (set! errors (+ errors (check-u64 (umod7 umax) 1 16)))
+    (set! errors (+ errors (check-u64 (udiv8 umax) 2305843009213693951 17)))
+    (set! errors (+ errors (check-u64 (umod8 umax) 7 18)))
+    (set! errors (+ errors (check-u64 (udiv-prime umax) 18446743944 19)))
+    (set! errors (+ errors (check-u64 (umod-prime umax) 582344007 20)))
+    (set! errors (+ errors (check-u64 (udiv-high umax) 1 25)))
+    (set! errors (+ errors (check-u64 (umod-high umax) 1 26)))
+    (set!
+      errors
+      (+
         errors
-        (+ errors (check-s2 9223372036854775807 4611686018427387903 1)))
-      (set! errors (+ errors (check-s3 min -3074457345618258602 -2)))
-      (set! errors (+ errors (check-s3 (+ min 1) -3074457345618258602 -1)))
-      (set! errors (+ errors (check-s3 -4 -1 -1)))
-      (set! errors (+ errors (check-s3 -3 -1 0)))
-      (set! errors (+ errors (check-s3 -2 0 -2)))
-      (set! errors (+ errors (check-s3 -1 0 -1)))
-      (set! errors (+ errors (check-s3 0 0 0)))
-      (set! errors (+ errors (check-s3 1 0 1)))
-      (set! errors (+ errors (check-s3 2 0 2)))
-      (set! errors (+ errors (check-s3 3 1 0)))
-      (set! errors (+ errors (check-s3 4 1 1)))
-      (set!
-        errors
-        (+ errors (check-s3 9223372036854775807 3074457345618258602 1)))
-      (set! errors (+ errors (check-s7 min -1317624576693539401 -1)))
-      (set! errors (+ errors (check-s7 (+ min 1) -1317624576693539401 0)))
-      (set! errors (+ errors (check-s7 -8 -1 -1)))
-      (set! errors (+ errors (check-s7 -7 -1 0)))
-      (set! errors (+ errors (check-s7 -6 0 -6)))
-      (set! errors (+ errors (check-s7 -1 0 -1)))
-      (set! errors (+ errors (check-s7 0 0 0)))
-      (set! errors (+ errors (check-s7 1 0 1)))
-      (set! errors (+ errors (check-s7 6 0 6)))
-      (set! errors (+ errors (check-s7 7 1 0)))
-      (set! errors (+ errors (check-s7 8 1 1)))
-      (set!
-        errors
-        (+ errors (check-s7 9223372036854775807 1317624576693539401 0)))
-      (set! errors (+ errors (check-s10 min -922337203685477580 -8)))
-      (set! errors (+ errors (check-s10 (+ min 1) -922337203685477580 -7)))
-      (set! errors (+ errors (check-s10 -11 -1 -1)))
-      (set! errors (+ errors (check-s10 -10 -1 0)))
-      (set! errors (+ errors (check-s10 -9 0 -9)))
-      (set! errors (+ errors (check-s10 -1 0 -1)))
-      (set! errors (+ errors (check-s10 0 0 0)))
-      (set! errors (+ errors (check-s10 1 0 1)))
-      (set! errors (+ errors (check-s10 9 0 9)))
-      (set! errors (+ errors (check-s10 10 1 0)))
-      (set! errors (+ errors (check-s10 11 1 1)))
-      (set!
-        errors
-        (+ errors (check-s10 9223372036854775807 922337203685477580 7)))
-      (set! errors (+ errors (check-sprime min -9223371972 -291172004)))
-      (set! errors (+ errors (check-sprime (+ min 1) -9223371972 -291172003)))
-      (set! errors (+ errors (check-sprime -1000000008 -1 -1)))
-      (set! errors (+ errors (check-sprime -1000000007 -1 0)))
-      (set! errors (+ errors (check-sprime -1000000006 0 -1000000006)))
-      (set! errors (+ errors (check-sprime -1 0 -1)))
-      (set! errors (+ errors (check-sprime 0 0 0)))
-      (set! errors (+ errors (check-sprime 1 0 1)))
-      (set! errors (+ errors (check-sprime 1000000006 0 1000000006)))
-      (set! errors (+ errors (check-sprime 1000000007 1 0)))
-      (set! errors (+ errors (check-sprime 1000000008 1 1)))
-      (set!
-        errors
-        (+ errors (check-sprime 9223372036854775807 9223371972 291172003)))
-      (set! errors (+ errors (check-swide min -2 -2)))
-      (set! errors (+ errors (check-swide (+ min 1) -2 -1)))
-      (set! errors (+ errors (check-swide -4611686018427387904 -1 -1)))
-      (set! errors (+ errors (check-swide -4611686018427387903 -1 0)))
-      (set!
-        errors
-        (+ errors (check-swide -4611686018427387902 0 -4611686018427387902)))
-      (set! errors (+ errors (check-swide -1 0 -1)))
-      (set! errors (+ errors (check-swide 0 0 0)))
-      (set! errors (+ errors (check-swide 1 0 1)))
-      (set!
-        errors
-        (+ errors (check-swide 4611686018427387902 0 4611686018427387902)))
-      (set! errors (+ errors (check-swide 4611686018427387903 1 0)))
-      (set! errors (+ errors (check-swide 4611686018427387904 1 1)))
-      (set! errors (+ errors (check-swide 9223372036854775807 2 1)))
-      (set! errors (+ errors (check-i64 (sdiv3 min) -3074457345618258602 1)))
-      (set! errors (+ errors (check-i64 (smod3 min) -2 2)))
-      (set! errors (+ errors (check-i64 (sdiv3 -10) -3 3)))
-      (set! errors (+ errors (check-i64 (smod3 -10) -1 4)))
-      (set! errors (+ errors (check-i64 (sdiv-neg3 min) 3074457345618258602 5)))
-      (set! errors (+ errors (check-i64 (smod-neg3 min) -2 6)))
-      (set! errors (+ errors (check-i64 (sdiv8 -10) -1 7)))
-      (set! errors (+ errors (check-i64 (smod8 -10) -2 8)))
-      (set! errors (+ errors (check-i64 (sdiv-neg8 10) -1 9)))
-      (set! errors (+ errors (check-i64 (smod-neg8 10) 2 10)))
-      (set! errors (+ errors (check-i64 (sdiv-prime min) -9223371972 11)))
-      (set! errors (+ errors (check-i64 (smod-prime min) -291172004 12)))
-      (set!
-        errors
-        (+ errors (check-i64 (cast (sdiv-i32-3 (cast -10 : i32)) : i64) -3 21)))
-      (set!
-        errors
-        (+ errors (check-i64 (cast (smod-i8-3 (cast -10 : i8)) : i64) -1 22)))
-      (set! errors (+ errors (check-u64 (udiv3 umax) 6148914691236517205 13)))
-      (set! errors (+ errors (check-u64 (umod3 umax) 0 14)))
-      (set! errors (+ errors (check-u64 (udiv7 umax) 2635249153387078802 15)))
-      (set! errors (+ errors (check-u64 (umod7 umax) 1 16)))
-      (set! errors (+ errors (check-u64 (udiv8 umax) 2305843009213693951 17)))
-      (set! errors (+ errors (check-u64 (umod8 umax) 7 18)))
-      (set! errors (+ errors (check-u64 (udiv-prime umax) 18446743944 19)))
-      (set! errors (+ errors (check-u64 (umod-prime umax) 582344007 20)))
-      (set! errors (+ errors (check-u64 (udiv-high umax) 1 25)))
-      (set! errors (+ errors (check-u64 (umod-high umax) 1 26)))
-      (set!
-        errors
-        (+
-          errors
-          (check-u64 (cast (udiv-u32-3 (cast -1 : u32)) : u64) 1431655765 23)))
-      (set!
-        errors
-        (+ errors (check-u64 (cast (umod-u16-7 (cast -1 : u16)) : u64) 1 24)))
-      (if (= errors 0)
-        42
-        errors))))
+        (check-u64 (cast (udiv-u32-3 (cast -1 : u32)) : u64) 1431655765 23)))
+    (set!
+      errors
+      (+ errors (check-u64 (cast (umod-u16-7 (cast -1 : u16)) : u64) 1 24)))
+    (if (= errors 0)
+      42
+      errors)))

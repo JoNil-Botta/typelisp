@@ -12,15 +12,14 @@
   0)
 
 (define (make-point-once) : point.Point
-  (begin
-    (set! make-count (+ make-count 1))
-    (point.make "rvalue" 5 6)))
+  (set! make-count (+ make-count 1))
+  (point.make "rvalue" 5 6))
 
 (define (main) : i64
   (let
     [p : point.Point (point.make "point" 1 2)]
     [wrapped : nested.Nested (nested.Nested (point.make "inner" 3 4))]
-    [status : state.State (state.Count 7)]
+    [status : state.State (Count 7)]
     [primary : multi.Primary (multi.Primary 8)]
     [secondary : multi.Secondary (multi.Secondary 9)]
     [left : alpha.Token (alpha.Token 1)]

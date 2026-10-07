@@ -9,19 +9,17 @@
     [out : i64v.Vec (i64z.make n)]
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (let
-        [out-slots (i64v.slots-mut (&mut out))]
-        (foreach
-          ([lane : i64 0 n])
-          (set!
-            (array-ref out-slots lane)
-            (+ (* (program-count) 10) (program-index)))))
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (i64v.get (& out) i 0)))
-          (set! i (+ i 1))))
-      acc)))
+    (let
+      [out-slots (i64v.slots-mut (&mut out))]
+      (foreach
+        ([lane : i64 0 n])
+        (set!
+          (array-ref out-slots lane)
+          (+ (* (program-count) 10) (program-index)))))
+    (while (< i n)
+      (set! acc (+ acc (i64v.get (& out) i 0)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (reduce-checksum [n : i64]) : i64
   (spmd-reduce sum ([i : i64 0 n]) 0 (+ (program-count) (program-index))))

@@ -47,12 +47,10 @@
   (let
     [acc : i64 seed]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (ccc-classify (array-ref a i) acc))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (ccc-classify (array-ref a i) acc))
+      (set! i (+ i 1)))
+    acc))
 
 ;; The same arithmetic with no call in it, so nothing is cloned into it.
 (define (ccc-scan-fused [a : (& a (__tl_dyn-array i64))] [n : i64] [seed : i64]) : i64
@@ -61,21 +59,19 @@
     [i : i64 0]
     [v : i64 0]
     [x : i64 0]
-    (begin
-      (while (< i n)
+    (while (< i n)
+      (set! v (array-ref a i))
+      (if (= (- v (* (/ v 2) 2)) 0)
         (begin
-          (set! v (array-ref a i))
-          (if (= (- v (* (/ v 2) 2)) 0)
-            (begin
-              (set! x (+ (* acc 31) v))
-              (set! acc (+ (- x (* (/ x 1000003) 1000003)) 1)))
-            (if (> v 100)
-              (begin
-                (set! x (+ (* acc 31) (- v 100)))
-                (set! acc (+ (- x (* (/ x 1000003) 1000003)) 2)))
-              (set! acc (+ acc v))))
-          (set! i (+ i 1))))
-      acc)))
+          (set! x (+ (* acc 31) v))
+          (set! acc (+ (- x (* (/ x 1000003) 1000003)) 1)))
+        (if (> v 100)
+          (begin
+            (set! x (+ (* acc 31) (- v 100)))
+            (set! acc (+ (- x (* (/ x 1000003) 1000003)) 2)))
+          (set! acc (+ acc v))))
+      (set! i (+ i 1)))
+    acc))
 
 ;; A runtime-filled list: the optimizer does not constant-fold loads out of a
 ;; dynamically allocated array, so both scanners really run.
@@ -84,11 +80,10 @@
     [i : i64 0]
     [x : i64 step]
     (while (< i n)
-      (begin
-        (set! (array-ref a i) x)
-        (set! x (+ (* x 7) 13))
-        (set! x (- x (* (/ x 251) 251)))
-        (set! i (+ i 1))))))
+      (set! (array-ref a i) x)
+      (set! x (+ (* x 7) 13))
+      (set! x (- x (* (/ x 251) 251)))
+      (set! i (+ i 1)))))
 
 (define (main) : i64
   (let
@@ -98,16 +93,15 @@
     [defs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [inlined : i64 1]
     [fused : i64 1]
-    (begin
-      (ccc-fill (&mut uses) n 3)
-      (ccc-fill (&mut nophi) n 11)
-      (ccc-fill (&mut defs) n 29)
-      (set! inlined (ccc-scan (& uses) n inlined))
-      (set! inlined (ccc-scan (& nophi) n inlined))
-      (set! inlined (ccc-scan (& defs) n inlined))
-      (set! fused (ccc-scan-fused (& uses) n fused))
-      (set! fused (ccc-scan-fused (& nophi) n fused))
-      (set! fused (ccc-scan-fused (& defs) n fused))
-      (if (= inlined fused)
-        42
-        1))))
+    (ccc-fill (&mut uses) n 3)
+    (ccc-fill (&mut nophi) n 11)
+    (ccc-fill (&mut defs) n 29)
+    (set! inlined (ccc-scan (& uses) n inlined))
+    (set! inlined (ccc-scan (& nophi) n inlined))
+    (set! inlined (ccc-scan (& defs) n inlined))
+    (set! fused (ccc-scan-fused (& uses) n fused))
+    (set! fused (ccc-scan-fused (& nophi) n fused))
+    (set! fused (ccc-scan-fused (& defs) n fused))
+    (if (= inlined fused)
+      42
+      1)))

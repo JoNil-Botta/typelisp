@@ -24,10 +24,9 @@
     (array-ref gtab i)))
 
 (define (main) : i64
-  (begin
-    (set! (array-ref gtab 3) 42)
-    (let
-      [r : i64 (probe 3)]
-      (if (= r 42)
-        42
-        1))))
+  (set! (array-ref gtab 3) 42)
+  (let
+    [r : i64 (probe 3)]
+    (if (= r 42)
+      42
+      1)))

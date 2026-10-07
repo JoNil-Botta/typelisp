@@ -3,14 +3,12 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [cell : (Box i64) (box i)]
-          (begin
-            (set! acc (+ acc (__tl-box-place cell)))
-            (set! i (+ i 1)))))
-      acc)))
+    (while (< i n)
+      (let
+        [cell : (Box i64) (box i)]
+        (set! acc (+ acc (__tl-box-place cell)))
+        (set! i (+ i 1))))
+    acc))
 
 (define (main) : i64
   (if (= (scratch-sum 1000) 499500)

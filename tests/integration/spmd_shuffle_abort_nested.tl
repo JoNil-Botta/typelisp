@@ -23,9 +23,8 @@
         (spmd-shuffle (array-ref xs-slots i) selector)))))
 
 (define (middle [xs : (& xs i64v.Vec)] [out : (&mut out i64v.Vec)] [n : i64]) : i64
-  (begin
-    (permute-kernel xs out n 99)
-    n))
+  (permute-kernel xs out n 99)
+  n)
 
 (define (outer [n : i64]) : i64
   (let

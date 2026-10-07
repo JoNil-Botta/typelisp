@@ -39,14 +39,12 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (match (wrap (Triple (+ i 1) (* i 2) 7) i)
-            [(WrapSome t) (set! acc (+ acc (+ t.a (+ t.b t.c))))]
-            [(WrapNone) (set! acc (- 0 1000000))])
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (match (wrap (Triple (+ i 1) (* i 2) 7) i)
+        [(WrapSome t) (set! acc (+ acc (+ t.a (+ t.b t.c))))]
+        [(WrapNone) (set! acc (- 0 1000000))])
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let

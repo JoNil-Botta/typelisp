@@ -32,39 +32,37 @@
     [w : i64 (+ n 100)]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i 4)
-        (begin
-          ;; use a..h AND w BEFORE the call (pressure + keep w live across it)
-          (set!
-            acc
-            (+
-              acc
-              (+
-                w
-                (+
-                  (* a 3)
-                  (+
-                    (* b 3)
-                    (+
-                      (* c 3)
-                      (+ (* d 3) (+ (* e 3) (+ (* f 3) (+ (* g 3) (* h 3)))))))))))
-          (set! acc (+ acc (clobber i)))
-          ;; post-call clobber-free sub-range: REDEFINE w (write-back piece)
-          (set!
+    (while (< i 4)
+      ;; use a..h AND w BEFORE the call (pressure + keep w live across it)
+      (set!
+        acc
+        (+
+          acc
+          (+
             w
             (+
-              w
+              (* a 3)
               (+
-                (* a 5)
+                (* b 3)
                 (+
-                  (* b 5)
-                  (+
-                    (* c 5)
-                    (+ (* d 5) (+ (* e 5) (+ (* f 5) (+ (* g 5) (* h 5))))))))))
-          (set! acc (+ acc w))
-          (set! i (+ i 1))))
-      (+ acc w))))
+                  (* c 3)
+                  (+ (* d 3) (+ (* e 3) (+ (* f 3) (+ (* g 3) (* h 3)))))))))))
+      (set! acc (+ acc (clobber i)))
+      ;; post-call clobber-free sub-range: REDEFINE w (write-back piece)
+      (set!
+        w
+        (+
+          w
+          (+
+            (* a 5)
+            (+
+              (* b 5)
+              (+
+                (* c 5)
+                (+ (* d 5) (+ (* e 5) (+ (* f 5) (+ (* g 5) (* h 5))))))))))
+      (set! acc (+ acc w))
+      (set! i (+ i 1)))
+    (+ acc w)))
 
 (define (main) : i64
   (let

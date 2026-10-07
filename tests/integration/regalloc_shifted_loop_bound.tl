@@ -13,18 +13,15 @@
         (ptr-cast buf : (MutPtr u64)))]
     [w : i64 0]
     [i : i64 tail-start]
-    (begin
-      (while (< w word-count)
-        (begin
-          (unsafe
-            (ptr-write! (ptr-offset slots w) (cast 0 : u64)))
-          (set! w (+ w 1))))
-      (while (< i byte-count)
-        (begin
-          (unsafe
-            (ptr-write! (ptr-offset buf i) (cast 0 : u8)))
-          (set! i (+ i 1))))
-      w)))
+    (while (< w word-count)
+      (unsafe
+        (ptr-write! (ptr-offset slots w) (cast 0 : u64)))
+      (set! w (+ w 1)))
+    (while (< i byte-count)
+      (unsafe
+        (ptr-write! (ptr-offset buf i) (cast 0 : u8)))
+      (set! i (+ i 1)))
+    w))
 
 ;; Taking the function value prevents the opt2 inliner from absorbing the
 ;; helper into main and changing the register-allocation shape under test.

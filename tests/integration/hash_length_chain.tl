@@ -8,16 +8,14 @@
   (let
     [at : i64 0]
     [value : i64 0]
-    (begin
-      (while (< at (string.string-length key))
-        (begin
-          (set!
-            value
-            (%
-              (+ (+ (* value 131) (cast (string.string-ref key at) : i64)) 1)
-              2147483647))
-          (set! at (+ at 1))))
-      value)))
+    (while (< at (string.string-length key))
+      (set!
+        value
+        (%
+          (+ (+ (* value 131) (cast (string.string-ref key at) : i64)) 1)
+          2147483647))
+      (set! at (+ at 1)))
+    value))
 
 (define (hash-prefixes-agree?) : bool
   (let
@@ -25,16 +23,12 @@
       "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
     [length : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (<= length (string.string-length text)))
-        (let
-          [prefix : String (string.substring text 0 length)]
-          (begin
-            (set!
-              ok
-              (= (hash.string-key (& prefix)) (hash-reference (& prefix))))
-            (set! length (+ length 1)))))
-      ok)))
+    (while (and ok (<= length (string.string-length text)))
+      (let
+        [prefix : String (string.substring text 0 length)]
+        (set! ok (= (hash.string-key (& prefix)) (hash-reference (& prefix))))
+        (set! length (+ length 1))))
+    ok))
 
 (define (main) : i64
   (let

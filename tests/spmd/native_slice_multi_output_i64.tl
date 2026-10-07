@@ -20,16 +20,14 @@
   (let
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (and ok (< i n))
-        (begin
-          (if (and
-            (= (array-ref sums i) (+ (* i 2) 105))
-            (= (array-ref differences i) -101))
-            unit
-            (set! ok false))
-          (set! i (+ i 1))))
-      ok)))
+    (while (and ok (< i n))
+      (if (and
+        (= (array-ref sums i) (+ (* i 2) 105))
+        (= (array-ref differences i) -101))
+        unit
+        (set! ok false))
+      (set! i (+ i 1)))
+    ok))
 
 (define (main) : i64
   (let
@@ -122,9 +120,8 @@
           (slice-mut-view sum-storage 2 n)]
         [difference-view : (&mut difference-storage (Slice i64))
           (slice-mut-view difference-storage 3 n)]
-        (begin
-          (map-two-outputs a-view b-view sum-view difference-view n)
-          (outputs-ok? sum-view difference-view n)))]
+        (map-two-outputs a-view b-view sum-view difference-view n)
+        (outputs-ok? sum-view difference-view n))]
     (if (and
       ok
       (= (array-ref sum-storage 0) -777)

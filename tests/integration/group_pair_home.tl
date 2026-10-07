@@ -3,8 +3,9 @@
 ;; FORCING TEST for GAP2b: register-PAIR homing for 16-byte group values.
 ;;
 ;; `mk` returns a 16-byte enum (MaybeI64 shape: tag word + i64 payload), so its
-;; call result in `probe` is a register-group var. The never-taken
-;; self-recursion blocks inlining, keeping a real call in probe's loop. The
+;; call result in `probe` is a register-group var. The multiblock inliner takes
+;; such a callee since #8555, so `main` calls `mk` too: with two call sites the
+;; cost band keeps a real call in probe's loop. The
 ;; scrutinee is matched directly (no Mov, no phi), so it is a GAP2b v1 pair
 ;; candidate; probe's other loop values leave at least two callee-saved
 ;; registers free over its short interval. Before GAP2b every iteration
@@ -38,19 +39,23 @@
     (let
       [i : i64 0]
       [acc : i64 0]
-      (begin
-        (while (< i n)
-          (begin
-            (match (mk i i)
-              [(MSome v) (set! acc (+ acc v))]
-              [(MNone) (set! acc (+ acc 1))])
-            (set! i (+ i 1))))
-        acc))))
+      (while (< i n)
+        (match (mk i i)
+          [(MSome v) (set! acc (+ acc v))]
+          [(MNone) (set! acc (+ acc 1))])
+        (set! i (+ i 1)))
+      acc)))
 
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 8)]
-    [r : i64 (probe n)]
+    ;; mk 3 3 is MNone, which adds nothing.
+    [r : i64
+      (+
+        (probe n)
+        (match (mk 3 3)
+          [(MSome v) v]
+          [(MNone) 0]))]
     ;; n = 9 (no args): i in 0..8; i%3==0 -> +1 (i=0,3,6 -> 3);
     ;; others: 5i+1 for i in {1,2,4,5,7,8} = 6+11+21+26+36+41 = 141.
     ;; total = 144.

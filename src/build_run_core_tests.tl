@@ -19,14 +19,12 @@
     [n : i64 (process.args-count left)]
     [i : i64 0]
     [same : bool (= n (process.args-count right))]
-    (begin
-      (while (and same (< i n))
-        (begin
-          (if (string.eq (process.args-ref left i) (process.args-ref right i))
-            unit
-            (set! same false))
-          (set! i (+ i 1))))
-      same)))
+    (while (and same (< i n))
+      (if (string.eq (process.args-ref left i) (process.args-ref right i))
+        unit
+        (set! same false))
+      (set! i (+ i 1)))
+    same))
 
 (define (source-tool-link-inputs-eq?
   [left : build_run.SourceToolLinkInputs]
@@ -98,11 +96,9 @@
 
 (define (source-tool-linux-direct-object-linkable?
   [image : cobj.CompilerObjectImage]) : bool
-  (match (build_run.source-tool-linux-direct-object-eligibility
-    backend.CompilerDirectObjectArtifactKind.Bin
-    image)
-    [(build_run.SourceToolLinuxDirectObjectEligibility.Eligible) true]
-    [(build_run.SourceToolLinuxDirectObjectEligibility.Fallback _) false]))
+  (match (build_run.source-tool-linux-direct-object-eligibility Bin image)
+    [(Eligible) true]
+    [(Fallback _) false]))
 
 (define (source-tool-windows-direct-object-relocations-linkable?
   [symbols : (& symbols cobj.CompilerObjectSymbolList)]
@@ -146,35 +142,33 @@
   (let
     [previous : bool (ir.compiler-debug-info-enabled?)]
     [ok : bool false]
-    (begin
-      (ir.compiler-debug-info-set-enabled! true)
-      (set!
-        ok
-        (let
-          [linker-args
-            (build_run.source-tool-windows-linker-args
-              "input.obj"
-              "output.exe"
-              (build_run.source-tool-link-inputs-empty))]
-          (build_run.source-tool-string-list-contains? linker-args "/DEBUG")))
-      (ir.compiler-debug-info-set-enabled! previous)
-      ok)))
+    (ir.compiler-debug-info-set-enabled! true)
+    (set!
+      ok
+      (let
+        [linker-args
+          (build_run.source-tool-windows-linker-args
+            "input.obj"
+            "output.exe"
+            (build_run.source-tool-link-inputs-empty))]
+        (build_run.source-tool-string-list-contains? linker-args "/DEBUG")))
+    (ir.compiler-debug-info-set-enabled! previous)
+    ok))
 
 (define (source-tool-linux-direct-object-linkability-smoke-ok?) : bool
   (match (backend.compiler-backend-emit-source-object-image-for-target
     "(define answer : i64 40)
 (define (inc [x : i64]) : i64 (+ x 1))
 (define (main) : i64 (inc answer))"
-    (backend.CompilerBackendTarget.Linux))
-    [(backend.ResultCompilerBackendObject.Ok image)
+    (Linux))
+    [(Ok image)
       (if (source-tool-linux-direct-object-linkable?
         (owned_view.compiler-owned-shared-view image))
         (match (build_run.source-tool-render-linkable-linux-elf-object image)
-          [(build_run.ResultSourceToolString.Ok obj)
-            (> (string.string-length obj) 0)]
-          [(build_run.ResultSourceToolString.Err _) false])
+          [(Ok obj) (> (string.string-length obj) 0)]
+          [(Err _) false])
         false)]
-    [(backend.ResultCompilerBackendObject.Err _) false]))
+    [(Err _) false]))
 
 (define (source-tool-windows-direct-object-linkability-smoke-ok?) : bool
   (match (backend.compiler-backend-emit-source-object-image-for-target
@@ -183,26 +177,25 @@
 (extern unused-data (:symbol \"typelisp_unused_data\") : i64)
 (extern unused-fnptr (:symbol \"typelisp_unused_fnptr\") : (CFunc non-null (-> i64 i64)))
 (define (main) : i64 0)"
-    (backend.CompilerBackendTarget.Windows))
-    [(backend.ResultCompilerBackendObject.Ok image)
+    (Windows))
+    [(Ok image)
       (if (build_run.source-tool-windows-direct-object-linkable?
         (owned_view.compiler-owned-shared-view image))
         (match (build_run.source-tool-render-linkable-windows-coff-object image)
-          [(build_run.ResultSourceToolString.Ok obj)
-            (> (string.string-length obj) 0)]
-          [(build_run.ResultSourceToolString.Err _) false])
+          [(Ok obj) (> (string.string-length obj) 0)]
+          [(Err _) false])
         false)]
-    [(backend.ResultCompilerBackendObject.Err _) false]))
+    [(Err _) false]))
 
 (define (source-tool-windows-direct-object-runtime-fallback-smoke-ok?) : bool
   (match (backend.compiler-backend-emit-source-object-image-for-target
     "(define (main) : i64
   (let [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (array-length items)))"
-    (backend.CompilerBackendTarget.Windows))
-    [(backend.ResultCompilerBackendObject.Ok image)
+    (Windows))
+    [(Ok image)
       (not (build_run.source-tool-windows-direct-object-linkable? image))]
-    [(backend.ResultCompilerBackendObject.Err _) false]))
+    [(Err _) false]))
 
 (define (source-tool-windows-direct-object-relocation-gate-smoke-ok?) : bool
   (let
@@ -211,35 +204,19 @@
     [symbols1 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols0
-        (cobj.CompilerObjectSymbol.Symbol
-          "GetStdHandle"
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
+        (Symbol "GetStdHandle" (Extern) (Function) No))]
     [symbols2 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols1
-        (cobj.CompilerObjectSymbol.Symbol
-          "NtCreateFile"
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
+        (Symbol "NtCreateFile" (Extern) (Function) No))]
     [symbols3 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols2
-        (cobj.CompilerObjectSymbol.Symbol
-          "GetCurrentProcessId"
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
+        (Symbol "GetCurrentProcessId" (Extern) (Function) No))]
     [symbols4 : cobj.CompilerObjectSymbolBuilder
       (cobj.compiler-object-symbol-builder-push
         symbols3
-        (cobj.CompilerObjectSymbol.Symbol
-          "NtOpenFile"
-          (cobj.CompilerObjectSymbolBinding.Extern)
-          (cobj.CompilerObjectSymbolKind.Function)
-          cobj.CompilerObjectMaybeSection.No))]
+        (Symbol "NtOpenFile" (Extern) (Function) No))]
     [symbols : cobj.CompilerObjectSymbolList
       (cobj.compiler-object-symbol-builder-finish symbols4)]
     [empty-relocs : cobj.CompilerObjectRelocationList
@@ -250,34 +227,18 @@
         (cobj.compiler-object-relocation-builder-push
           (cobj.compiler-object-relocation-builder-push
             (cobj.compiler-object-relocation-builder-with-capacity 2)
-            (cobj.CompilerObjectRelocation.Relocation
-              (cobj.CompilerObjectSectionKind.Text)
-              "main"
-              (cobj.CompilerObjectRelocationKind.Call)
-              "GetStdHandle"))
-          (cobj.CompilerObjectRelocation.Relocation
-            (cobj.CompilerObjectSectionKind.Text)
-            "main"
-            (cobj.CompilerObjectRelocationKind.Call)
-            "NtCreateFile")))]
+            (Relocation (Text) "main" (Call) "GetStdHandle"))
+          (Relocation (Text) "main" (Call) "NtCreateFile")))]
     [blocked-win32-relocs : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish
         (cobj.compiler-object-relocation-builder-push
           (cobj.compiler-object-relocation-builder-with-capacity 1)
-          (cobj.CompilerObjectRelocation.Relocation
-            (cobj.CompilerObjectSectionKind.Text)
-            "main"
-            (cobj.CompilerObjectRelocationKind.Call)
-            "GetCurrentProcessId")))]
+          (Relocation (Text) "main" (Call) "GetCurrentProcessId")))]
     [blocked-ntdll-relocs : cobj.CompilerObjectRelocationList
       (cobj.compiler-object-relocation-builder-finish
         (cobj.compiler-object-relocation-builder-push
           (cobj.compiler-object-relocation-builder-with-capacity 1)
-          (cobj.CompilerObjectRelocation.Relocation
-            (cobj.CompilerObjectSectionKind.Text)
-            "main"
-            (cobj.CompilerObjectRelocationKind.Call)
-            "NtOpenFile")))]
+          (Relocation (Text) "main" (Call) "NtOpenFile")))]
     (and
       (source-tool-windows-direct-object-relocations-linkable?
         symbols
@@ -298,16 +259,14 @@
   (let
     [out : process.ProcessStringList (process.args-empty)]
     [index : i64 0]
-    (begin
-      (while (< index (cli_svec.len (& items)))
-        (begin
-          (set!
-            out
-            (process.args-append
-              out
-              (process.args-single (cli_svec.get (& items) index ""))))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index (cli_svec.len (& items)))
+      (set!
+        out
+        (process.args-append
+          out
+          (process.args-single (cli_svec.get (& items) index ""))))
+      (set! index (+ index 1)))
+    out))
 
 (define (source-tool-test-strings2 [a : String] [b : String]) : process.ProcessStringList
   (process.args-cons a (process.args-single b)))
@@ -350,27 +309,24 @@
           "m"))]
     [expected-linux : cli_svec.Vec (cli_svec.new)]
     [expected-windows : cli_svec.Vec (cli_svec.new)]
-    (begin
-      (cli_svec.push-ref! (&mut expected-linux) "-Lnative dir")
-      (cli_svec.push-ref! (&mut expected-linux) "-Wl,--start-group")
-      (cli_svec.push-ref! (&mut expected-linux) "-lm")
-      (cli_svec.push-ref! (&mut expected-linux) "-Wl,--as-needed")
-      (cli_svec.push-ref! (&mut expected-linux) "wa.a")
-      (cli_svec.push-ref! (&mut expected-linux) "wb.a")
-      (cli_svec.push-ref! (&mut expected-linux) "-Wl,--end-group")
-      (cli_svec.push-ref! (&mut expected-windows) "/LIBPATH:native dir")
-      (cli_svec.push-ref! (&mut expected-windows) "m.lib")
-      (cli_svec.push-ref! (&mut expected-windows) "-Wl,--as-needed")
-      (cli_svec.push-ref! (&mut expected-windows) "wa.a")
-      (cli_svec.push-ref! (&mut expected-windows) "wb.a")
-      (and
-        (source-tool-string-list-eq?
-          linux
-          (source-tool-test-list expected-linux))
-        (source-tool-string-list-eq?
-          windows
-          (source-tool-test-list expected-windows))
-        (source-tool-string-list-eq? no-archives (process.args-single "-lm"))))))
+    (cli_svec.push-ref! (&mut expected-linux) "-Lnative dir")
+    (cli_svec.push-ref! (&mut expected-linux) "-Wl,--start-group")
+    (cli_svec.push-ref! (&mut expected-linux) "-lm")
+    (cli_svec.push-ref! (&mut expected-linux) "-Wl,--as-needed")
+    (cli_svec.push-ref! (&mut expected-linux) "wa.a")
+    (cli_svec.push-ref! (&mut expected-linux) "wb.a")
+    (cli_svec.push-ref! (&mut expected-linux) "-Wl,--end-group")
+    (cli_svec.push-ref! (&mut expected-windows) "/LIBPATH:native dir")
+    (cli_svec.push-ref! (&mut expected-windows) "m.lib")
+    (cli_svec.push-ref! (&mut expected-windows) "-Wl,--as-needed")
+    (cli_svec.push-ref! (&mut expected-windows) "wa.a")
+    (cli_svec.push-ref! (&mut expected-windows) "wb.a")
+    (and
+      (source-tool-string-list-eq? linux (source-tool-test-list expected-linux))
+      (source-tool-string-list-eq?
+        windows
+        (source-tool-test-list expected-windows))
+      (source-tool-string-list-eq? no-archives (process.args-single "-lm")))))
 
 ;; Libraries, search paths and archives merge once; raw arguments merge once
 ;; only when asked, since another package's copy may be half of a positional

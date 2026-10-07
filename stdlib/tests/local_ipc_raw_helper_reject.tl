@@ -5,7 +5,7 @@
 (import stdlib.local_ipc_fake as fake)
 
 (define agent-socket : local_ipc.LocalIpcEndpoint
-  (local_ipc.LocalIpcEndpoint.UnixPath "/run/agent.sock"))
+  (UnixPath "/run/agent.sock"))
 
 (define (main) : i64
   (let
@@ -20,6 +20,5 @@
             local_ipc.never-canceled
             16)
           local_ipc.cleanup-local-ipc-connection])
-      (begin
-        (local_ipc.io-once (&mut connection) false 64 8)
-        42))))
+      (local_ipc.io-once (&mut connection) false 64 8)
+      42)))

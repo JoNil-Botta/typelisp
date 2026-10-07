@@ -6,15 +6,13 @@
 (define (wide-leaf [n : i64] [rounds : i64]) : i64
   (let
     [acc : i64 1]
-    (begin
-      (while (> n 0)
-        (begin
-          (set! acc (bit-xor (* acc 2654435761) 2654435761))
-          (set! n (/ n 2))))
-      ;; Non-tail self-recursion keeps the named function out of the inliner.
-      (if (> rounds 1)
-        (+ acc (wide-leaf n (- rounds 1)))
-        acc))))
+    (while (> n 0)
+      (set! acc (bit-xor (* acc 2654435761) 2654435761))
+      (set! n (/ n 2)))
+    ;; Non-tail self-recursion keeps the named function out of the inliner.
+    (if (> rounds 1)
+      (+ acc (wide-leaf n (- rounds 1)))
+      acc)))
 
 (define (opaque [value : i64] [rounds : i64]) : i64
   (if (> rounds 1)
@@ -36,15 +34,13 @@
   (let
     [original : i64 n]
     [acc : i64 1]
-    (begin
-      (while (> n 0)
-        (begin
-          (set! acc (bit-xor (* acc 2654435761) 2654435761))
-          (set! acc (opaque acc rounds))
-          (set! n (/ n 2))))
-      (if (> rounds 1)
-        (+ acc (wide-call original (- rounds 1)))
-        acc))))
+    (while (> n 0)
+      (set! acc (bit-xor (* acc 2654435761) 2654435761))
+      (set! acc (opaque acc rounds))
+      (set! n (/ n 2)))
+    (if (> rounds 1)
+      (+ acc (wide-call original (- rounds 1)))
+      acc)))
 
 (define (main) : i64
   (let

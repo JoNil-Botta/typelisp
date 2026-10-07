@@ -22,30 +22,28 @@
 (define (case-empty) : bool
   (let
     [out : (__tl_dyn-array i64) (__tl_make-array i64 1)]
-    (begin
-      (set! (array-ref out 0) 91)
-      (and
-        (=
-          (spmd-compact
-            ([i : i64 7 7] [slot : i64 12])
-            (= (array-ref out i) 0)
-            (set! (array-ref out slot) i))
-          12)
-        (= (array-ref out 0) 91)))))
+    (set! (array-ref out 0) 91)
+    (and
+      (=
+        (spmd-compact
+          ([i : i64 7 7] [slot : i64 12])
+          (= (array-ref out i) 0)
+          (set! (array-ref out slot) i))
+        12)
+      (= (array-ref out 0) 91))))
 
 (define (case-none) : bool
   (let
     [out : (__tl_dyn-array i64) (__tl_make-array i64 3)]
-    (begin
-      (set! (array-ref out 0) 17)
-      (and
-        (=
-          (spmd-compact
-            ([i : i64 0 65] [slot : i64 3])
-            false
-            (set! (array-ref out slot) i))
-          3)
-        (= (array-ref out 0) 17)))))
+    (set! (array-ref out 0) 17)
+    (and
+      (=
+        (spmd-compact
+          ([i : i64 0 65] [slot : i64 3])
+          false
+          (set! (array-ref out slot) i))
+        3)
+      (= (array-ref out 0) 17))))
 
 (define (case-max-cursor-unselected) : bool
   (=

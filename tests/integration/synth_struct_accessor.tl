@@ -47,7 +47,7 @@
 (define (sa-lookup-in [var : i64]) : SynthValue
   (if (and (>= var 0) (< var sa-len))
     (clone (array-ref sa-slots var))
-    (SynthValue.Unknown)))
+    (Unknown)))
 
 ;; The wrapper, and the site this fixture exists for: the accessor call is the
 ;; first thing its ENTRY block does, and the struct it returns is rebuilt once
@@ -56,23 +56,23 @@
   (let
     [found : SynthValue (sa-lookup-in payload)]
     (match found
-      [(SynthValue.Const k a b) (SynthValue.Const (+ k bump) a b)]
-      [(SynthValue.Unknown) (SynthValue.Unknown)]
-      [(SynthValue.Over) (SynthValue.Over)])))
+      [(Const k a b) (Const (+ k bump) a b)]
+      [(Unknown) (Unknown)]
+      [(Over) (Over)])))
 
 ;; The consumer, which takes the struct BY VALUE.
 (define (sa-bind [slot : i64] [value : SynthValue]) : i64
   (match value
-    [(SynthValue.Unknown) 0]
-    [(SynthValue.Const k a b) (+ (+ k a) (+ b slot))]
-    [(SynthValue.Over) 1]))
+    [(Unknown) 0]
+    [(Const k a b) (+ (+ k a) (+ b slot))]
+    [(Over) 1]))
 
 ;; The cold second reference to the accessor, so it is not a single-site callee.
 (define (sa-peek [var : i64]) : i64
   (match (sa-lookup-in var)
-    [(SynthValue.Const k _ _) k]
-    [(SynthValue.Unknown) 0]
-    [(SynthValue.Over) 2]))
+    [(Const k _ _) k]
+    [(Unknown) 0]
+    [(Over) 2]))
 
 ;; The nested loop the whole chain hangs from: two levels, so the sites below it
 ;; carry a depth-2 census weight once the counts are propagated.
@@ -80,43 +80,36 @@
   (let
     [acc : i64 0]
     [r : i64 0]
-    (begin
-      (while (< r rows)
-        (let
-          [c : i64 0]
-          (begin
-            (while (< c cols)
-              (begin
-                (set!
-                  acc
-                  (+ acc (sa-bind c (sa-value (bit-and (+ (* r 7) c) 63) r))))
-                (set! c (+ c 1))))
-            (set! r (+ r 1)))))
-      acc)))
+    (while (< r rows)
+      (let
+        [c : i64 0]
+        (while (< c cols)
+          (set! acc (+ acc (sa-bind c (sa-value (bit-and (+ (* r 7) c) 63) r))))
+          (set! c (+ c 1)))
+        (set! r (+ r 1))))
+    acc))
 
 (define (main) : i64
   (let
     [i : i64 0]
     [total : i64 0]
     [cold : i64 0]
-    (begin
-      (set! sa-len 64)
-      (while (< i 64)
-        (begin
-          (set!
-            (array-ref sa-slots i)
-            (if (= (% i 3) 0)
-              (SynthValue.Unknown)
-              (if (= (% i 3) 1)
-                (SynthValue.Const (* i 3) (+ i 5) (- (* i 2) 7))
-                (SynthValue.Over))))
-          (set! i (+ i 1))))
-      (set! total (sa-walk 16 16))
-      ;; The cold second references: one apiece for the accessor and for the
-      ;; wrapper the tier splices it into, so no single-site band can claim
-      ;; either and both keep an out-of-line body for the asm-shape gate to
-      ;; read.
-      (set! cold (+ (sa-peek 4) (+ (sa-peek 9) (sa-bind 1 (sa-value 4 2)))))
-      (unless (= total 16042) (return 1))
-      (unless (= cold 37) (return 2))
-      42)))
+    (set! sa-len 64)
+    (while (< i 64)
+      (set!
+        (array-ref sa-slots i)
+        (if (= (% i 3) 0)
+          (Unknown)
+          (if (= (% i 3) 1)
+            (Const (* i 3) (+ i 5) (- (* i 2) 7))
+            (Over))))
+      (set! i (+ i 1)))
+    (set! total (sa-walk 16 16))
+    ;; The cold second references: one apiece for the accessor and for the
+    ;; wrapper the tier splices it into, so no single-site band can claim
+    ;; either and both keep an out-of-line body for the asm-shape gate to
+    ;; read.
+    (set! cold (+ (sa-peek 4) (+ (sa-peek 9) (sa-bind 1 (sa-value 4 2)))))
+    (unless (= total 16042) (return 1))
+    (unless (= cold 37) (return 2))
+    42))

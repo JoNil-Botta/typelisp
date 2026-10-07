@@ -205,6 +205,7 @@ crypto_p256.tl
 crypto_rsa_core.tl
 crypto_rsa_verify.tl
 crypto_random.tl
+crypto_secret.tl
 crypto_sha1_git.tl
 crypto_sha256.tl
 crypto_sha512.tl
@@ -360,6 +361,11 @@ stdlib/tests/crypto_sha1_git_inline.tl|pass|-
 stdlib/tests/crypto_sha1_git_unsafe_adapter_reject.tl|fail|requires unsafe context
 stdlib/tests/crypto_sha256_inline.tl|pass|-
 stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl|fail|requires unsafe context
+stdlib/tests/crypto_secret_inline.tl|pass|-
+stdlib/tests/crypto_secret_unsafe_accessor_reject.tl|fail|crypto_secret/fixed-read-pointer requires unsafe context
+stdlib/tests/crypto_secret_storage_read_reject.tl|fail|ptr-read requires unsafe context
+stdlib/tests/crypto_secret_clone_reject.tl|fail|clone unsupported type stdlib.crypto_secret/SecretFixed
+stdlib/tests/crypto_secret_use_after_close_reject.tl|fail|use of moved value `owner`
 stdlib/tests/env_nonmatching_count_unsafe_reject.tl|fail|env/linux-nonmatching-count requires unsafe context
 stdlib/tests/env_rebuild_unsafe_reject.tl|fail|env/linux-rebuild! requires unsafe context
 stdlib/tests/env_rebuild_alias_unsafe_reject.tl|fail|e/linux-rebuild! requires unsafe context

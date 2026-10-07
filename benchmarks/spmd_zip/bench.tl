@@ -26,12 +26,10 @@
   (let
     [out : i64v.Vec (i64v.with-capacity capacity)]
     [i : i64 0]
-    (begin
-      (while (< i capacity)
-        (begin
-          (i64v.push-ref! (&mut out) 0)
-          (set! i (+ i 1))))
-      out)))
+    (while (< i capacity)
+      (i64v.push-ref! (&mut out) 0)
+      (set! i (+ i 1)))
+    out))
 
 (define (init
   [a : (&mut a (Slice i64))]
@@ -41,11 +39,10 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref a i) (+ i 1))
-        (set! (array-ref b i) (* i 2))
-        (set! (array-ref c i) (+ i 3))
-        (set! i (+ i 1))))))
+      (set! (array-ref a i) (+ i 1))
+      (set! (array-ref b i) (* i 2))
+      (set! (array-ref c i) (+ i 3))
+      (set! i (+ i 1)))))
 
 (define (main) : i64
   (let
@@ -60,19 +57,17 @@
     [reps : i64 (+ base-reps (io.arg-count))]
     [acc : i64 0]
     [r : i64 0]
-    (begin
-      (init a-view b-view c-view array-len)
-      (while (< r reps)
-        (begin
-          (foreach
-            ([i : i64 0 array-len])
-            (set!
-              (array-ref out-view i)
-              (+
-                (+
-                  (* (array-ref a-view i) (array-ref b-view i))
-                  (array-ref c-view i))
-                r)))
-          (set! acc (+ acc (array-ref out-view (bit-and r (- array-len 1)))))
-          (set! r (+ r 1))))
-      (bit-and acc 255))))
+    (init a-view b-view c-view array-len)
+    (while (< r reps)
+      (foreach
+        ([i : i64 0 array-len])
+        (set!
+          (array-ref out-view i)
+          (+
+            (+
+              (* (array-ref a-view i) (array-ref b-view i))
+              (array-ref c-view i))
+            r)))
+      (set! acc (+ acc (array-ref out-view (bit-and r (- array-len 1)))))
+      (set! r (+ r 1)))
+    (bit-and acc 255)))

@@ -138,14 +138,13 @@
   (let
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (if (is-digit (__tl_string_ref src j))
-            (set! j (+ j 1))
-            (set! keep false))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (if (is-digit (__tl_string_ref src j))
+          (set! j (+ j 1))
+          (set! keep false))
+        (set! keep false)))
+    j))
 
 (define (scan-based-int-end
   [src : (& src str)]
@@ -155,18 +154,17 @@
   (let
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (let
-            [c : char (__tl_string_ref src j)]
-            (if (if (= base 16)
-              (is-hex-digit c)
-              (is-binary-digit c))
-              (set! j (+ j 1))
-              (set! keep false)))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (let
+          [c : char (__tl_string_ref src j)]
+          (if (if (= base 16)
+            (is-hex-digit c)
+            (is-binary-digit c))
+            (set! j (+ j 1))
+            (set! keep false)))
+        (set! keep false)))
+    j))
 
 (define (float-tail? [src : (& src str)] [int-end : i64] [n : i64]) : bool
   (if (< (+ int-end 1) n)
@@ -180,36 +178,34 @@
     [digits-start : i64 (number-digits-start src start)]
     [int-end : i64 (scan-int-end src digits-start n)]
     [j : i64 int-end]
-    (begin
-      ;; A decimal fraction is accepted only when the dot is followed by at
-      ;; least one digit.  The exponent is scanned after the complete
-      ;; mantissa, so both integer and fraction forms share the same path.
-      (if (float-tail? src int-end n)
-        (set! j (scan-int-end src (+ int-end 1) n))
+    ;; A decimal fraction is accepted only when the dot is followed by at
+    ;; least one digit.  The exponent is scanned after the complete
+    ;; mantissa, so both integer and fraction forms share the same path.
+    (if (float-tail? src int-end n)
+      (set! j (scan-int-end src (+ int-end 1) n))
+      unit)
+    (if (< j n)
+      (if (or (= (__tl_string_ref src j) 'e') (= (__tl_string_ref src j) 'E'))
+        (let
+          [mark : i64 j]
+          [exp-digits : i64 (+ j 1)]
+          (if (< exp-digits n)
+            (if (or
+              (= (__tl_string_ref src exp-digits) '+')
+              (= (__tl_string_ref src exp-digits) '-'))
+              (set! exp-digits (+ exp-digits 1))
+              unit)
+            unit)
+          ;; Leave an exponent marker with no digits unconsumed.  The
+          ;; result-producing wrapper below diagnoses it at the token start.
+          (if (< exp-digits n)
+            (if (is-digit (__tl_string_ref src exp-digits))
+              (set! j (scan-int-end src exp-digits n))
+              (set! j mark))
+            (set! j mark)))
         unit)
-      (if (< j n)
-        (if (or (= (__tl_string_ref src j) 'e') (= (__tl_string_ref src j) 'E'))
-          (let
-            [mark : i64 j]
-            [exp-digits : i64 (+ j 1)]
-            (begin
-              (if (< exp-digits n)
-                (if (or
-                  (= (__tl_string_ref src exp-digits) '+')
-                  (= (__tl_string_ref src exp-digits) '-'))
-                  (set! exp-digits (+ exp-digits 1))
-                  unit)
-                unit)
-              ;; Leave an exponent marker with no digits unconsumed.  The
-              ;; result-producing wrapper below diagnoses it at the token start.
-              (if (< exp-digits n)
-                (if (is-digit (__tl_string_ref src exp-digits))
-                  (set! j (scan-int-end src exp-digits n))
-                  (set! j mark))
-                (set! j mark))))
-          unit)
-        unit)
-      j)))
+      unit)
+    j))
 
 (define (number-digits-start [src : (& src str)] [start : i64]) : i64
   (if (= (__tl_string_ref src start) '-')
@@ -244,12 +240,12 @@
     [value-start : i64 (+ digits-start 2)]
     [end : i64 (scan-based-int-end src value-start n base)]
     (if (= end value-start)
-      (result_lex_i64.Err "lexer: malformed integer literal")
+      (Err "lexer: malformed integer literal")
       (if (if (< end n)
         (is-symbol-char (__tl_string_ref src end))
         false)
-        (result_lex_i64.Err "lexer: malformed integer literal")
-        (result_lex_i64.Ok end)))))
+        (Err "lexer: malformed integer literal")
+        (Ok end)))))
 
 (define (scan-number-end-result [src : (& src str)] [start : i64] [n : i64]) : result_lex_i64.Result
   (if (number-prefixed? src start n)
@@ -271,12 +267,12 @@
             (is-symbol-char (__tl_string_ref src end))
             false))]
       (if malformed
-        (result_lex_i64.Err
+        (Err
           (str_cat.str-cat
             (string.substring "lexer: malformed integer literal" 0 17)
             "number"
             (string.substring "lexer: malformed integer literal" 24 8)))
-        (result_lex_i64.Ok end)))))
+        (Ok end)))))
 
 (define (parse-based-int
   [src : (& src str)]
@@ -286,14 +282,10 @@
   (let
     [j : i64 start]
     [value : i64 0]
-    (begin
-      (while (< j end)
-        (begin
-          (set!
-            value
-            (+ (* value base) (hex-digit-value (__tl_string_ref src j))))
-          (set! j (+ j 1))))
-      value)))
+    (while (< j end)
+      (set! value (+ (* value base) (hex-digit-value (__tl_string_ref src j))))
+      (set! j (+ j 1)))
+    value))
 
 (define (parse-prefixed-int [src : (& src str)] [start : i64] [end : i64]) : i64
   (let
@@ -322,14 +314,12 @@
   (let
     [i : i64 start]
     [zero? : bool true]
-    (begin
-      (while (and zero? (< i end))
-        (begin
-          (if (= (__tl_string_ref src i) '0')
-            unit
-            (set! zero? false))
-          (set! i (+ i 1))))
-      zero?)))
+    (while (and zero? (< i end))
+      (if (= (__tl_string_ref src i) '0')
+        unit
+        (set! zero? false))
+      (set! i (+ i 1)))
+    zero?))
 
 (define (number-int-text-needed?
   [src : (& src str)]
@@ -362,15 +352,14 @@
     (let
       [i : i64 (number-digits-start src start)]
       [found : bool false]
-      (begin
-        (while (and (< i end) (not found))
-          (let
-            [c : char (__tl_string_ref src i)]
-            (if (or (= c '.') (= c 'e') (= c 'E'))
-              (set! found true)
-              unit)
-            (set! i (+ i 1))))
-        found))))
+      (while (and (< i end) (not found))
+        (let
+          [c : char (__tl_string_ref src i)]
+          (if (or (= c '.') (= c 'e') (= c 'E'))
+            (set! found true)
+            unit)
+          (set! i (+ i 1))))
+      found)))
 
 (define (negative-number-start? [src : (& src str)] [start : i64] [n : i64]) : bool
   (if (= (__tl_string_ref src start) '-')
@@ -406,30 +395,28 @@
   (let
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (let
-            [code : i64 (bit-and (cast (__tl_string_ref src j) : i64) 255)]
-            [folded : i64 (bit-or code 32)]
-            [member : bool
-              (cond
-                [(and (>= folded 97) (<= folded 122)) true]
-                [(and (>= code 48) (<= code 57)) true]
-                [(and (>= code 42) (<= code 63))
-                  (and (!= code 44) (!= code 59))]
-                [else
-                  (or (= code 33) (and (>= code 37) (<= code 38)) (= code 95))])]
-            (if member
-              (if (and
-                (= code 58)
-                (> j start)
-                (not (symbol-slice-eq? src start j "pkg")))
-                (set! keep false)
-                (set! j (+ j 1)))
-              (set! keep false)))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (let
+          [code : i64 (bit-and (cast (__tl_string_ref src j) : i64) 255)]
+          [folded : i64 (bit-or code 32)]
+          [member : bool
+            (cond
+              [(and (>= folded 97) (<= folded 122)) true]
+              [(and (>= code 48) (<= code 57)) true]
+              [(and (>= code 42) (<= code 63)) (and (!= code 44) (!= code 59))]
+              [else
+                (or (= code 33) (and (>= code 37) (<= code 38)) (= code 95))])]
+          (if member
+            (if (and
+              (= code 58)
+              (> j start)
+              (not (symbol-slice-eq? src start j "pkg")))
+              (set! keep false)
+              (set! j (+ j 1)))
+            (set! keep false)))
+        (set! keep false)))
+    j))
 
 ;; A `:` starts a colon-prefixed metadata/keyword symbol only when it is the
 ;; first non-space token in a list, such as `(:symbol ...)` or `(:link ...)`.
@@ -440,18 +427,17 @@
     [j : i64 (- start 1)]
     [keep : bool true]
     [result : bool true]
-    (begin
-      (while keep
-        (if (< j 0)
-          (set! keep false)
-          (let
-            [c : char (__tl_string_ref src j)]
-            (if (is-space c)
-              (set! j (- j 1))
-              (begin
-                (set! result (= c '('))
-                (set! keep false))))))
-      result)))
+    (while keep
+      (if (< j 0)
+        (set! keep false)
+        (let
+          [c : char (__tl_string_ref src j)]
+          (if (is-space c)
+            (set! j (- j 1))
+            (begin
+              (set! result (= c '('))
+              (set! keep false))))))
+    result))
 
 (define (colon-token-end [src : (& src str)] [start : i64] [n : i64]) : i64
   (let
@@ -474,26 +460,25 @@
     [j : i64 start]
     [keep : bool true]
     [message : String ""]
-    (begin
-      (while keep
-        (if (< j n)
-          (let
-            [c : char (__tl_string_ref src j)]
-            (if (= c '"')
-              (set! keep false)
-              (if (= c '\\')
-                (if (< (+ j 1) n)
-                  (set! j (+ j 2))
-                  (begin
-                    (set! message "lexer: unterminated string escape")
-                    (set! keep false)))
-                (set! j (+ j 1)))))
-          (begin
-            (set! message "lexer: unterminated string literal")
-            (set! keep false))))
-      (if (ok? message)
-        (result_lex_i64.Ok j)
-        (result_lex_i64.Err message)))))
+    (while keep
+      (if (< j n)
+        (let
+          [c : char (__tl_string_ref src j)]
+          (if (= c '"')
+            (set! keep false)
+            (if (= c '\\')
+              (if (< (+ j 1) n)
+                (set! j (+ j 2))
+                (begin
+                  (set! message "lexer: unterminated string escape")
+                  (set! keep false)))
+              (set! j (+ j 1)))))
+        (begin
+          (set! message "lexer: unterminated string literal")
+          (set! keep false))))
+    (if (ok? message)
+      (Ok j)
+      (Err message))))
 
 (define (string-escape-piece [src : (& src str)] [idx : i64]) : String
   (let
@@ -510,24 +495,21 @@
   (let
     [i : i64 start]
     [buf : text_buf.TextBuf (text_buf.empty)]
-    (begin
-      (while (< i end)
-        (let
-          [c : char (__tl_string_ref src i)]
-          (if (= c '\\')
-            (if (< (+ i 1) end)
-              (begin
-                (set!
-                  buf
-                  (text_buf.append buf (string-escape-piece src (+ i 1))))
-                (set! i (+ i 2)))
-              (begin
-                (set! buf (text_buf.append buf "\\"))
-                (set! i (+ i 1))))
+    (while (< i end)
+      (let
+        [c : char (__tl_string_ref src i)]
+        (if (= c '\\')
+          (if (< (+ i 1) end)
             (begin
-              (set! buf (text_buf.append buf (string.substring src i 1)))
-              (set! i (+ i 1))))))
-      (text_buf.render buf))))
+              (set! buf (text_buf.append buf (string-escape-piece src (+ i 1))))
+              (set! i (+ i 2)))
+            (begin
+              (set! buf (text_buf.append buf "\\"))
+              (set! i (+ i 1))))
+          (begin
+            (set! buf (text_buf.append buf (string.substring src i 1)))
+            (set! i (+ i 1))))))
+    (text_buf.render buf)))
 
 ;; Return the index of the end-of-line that ends a `;` line comment whose body
 ;; starts at `start`. `n` is the source length. Scans forward until a newline
@@ -538,14 +520,13 @@
   (let
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (if (= (__tl_string_ref src j) '\n')
-            (set! keep false)
-            (set! j (+ j 1)))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (if (= (__tl_string_ref src j) '\n')
+          (set! keep false)
+          (set! j (+ j 1)))
+        (set! keep false)))
+    j))
 
 ;; Return an empty string when a character literal has a closing `'` at `idx`,
 ;; otherwise return the recoverable lexer diagnostic.
@@ -558,13 +539,13 @@
 
 (define (apostrophe-escaped-char-result [c : char]) : ResultLexChar
   (cond
-    [(= c 'n') (ResultLexChar.Ok '\n')]
-    [(= c 't') (ResultLexChar.Ok '\t')]
-    [(= c 'r') (ResultLexChar.Ok '\r')]
-    [(= c '0') (ResultLexChar.Ok '\0')]
-    [(= c '\\') (ResultLexChar.Ok '\\')]
-    [(= c '\'') (ResultLexChar.Ok '\'')]
-    [else (ResultLexChar.Err "lexer: unknown character escape")]))
+    [(= c 'n') (Ok '\n')]
+    [(= c 't') (Ok '\t')]
+    [(= c 'r') (Ok '\r')]
+    [(= c '0') (Ok '\0')]
+    [(= c '\\') (Ok '\\')]
+    [(= c '\'') (Ok '\'')]
+    [else (Err "lexer: unknown character escape")]))
 
 (define (apostrophe-char-literal-result [src : (& src str)] [i : i64] [n : i64]) : ResultMaybeLexCharLiteral
   (if (< (+ i 1) n)
@@ -577,25 +558,22 @@
             (if (< esc-idx n)
               (match (apostrophe-escaped-char-result
                 (__tl_string_ref src esc-idx))
-                [(ResultLexChar.Ok c)
+                [(Ok c)
                   (let
                     [message : String (char-close-error src (+ i 3) n)]
                     (if (ok? message)
-                      (ResultMaybeLexCharLiteral.Ok c (+ i 4))
-                      (ResultMaybeLexCharLiteral.Err message)))]
-                [(ResultLexChar.Err message)
-                  (ResultMaybeLexCharLiteral.Err message)])
-              (ResultMaybeLexCharLiteral.Err
-                "lexer: unterminated character literal")))]
-        [(or (= payload '\'') (= payload '\n') (= payload '\r'))
-          (ResultMaybeLexCharLiteral.No)]
+                      (Ok c (+ i 4))
+                      (Err message)))]
+                [(Err message) (Err message)])
+              (Err "lexer: unterminated character literal")))]
+        [(or (= payload '\'') (= payload '\n') (= payload '\r')) (No)]
         [else
           (if (< (+ i 2) n)
             (if (= (__tl_string_ref src (+ i 2)) '\'')
-              (ResultMaybeLexCharLiteral.Ok payload (+ i 3))
-              (ResultMaybeLexCharLiteral.No))
-            (ResultMaybeLexCharLiteral.No))]))
-    (ResultMaybeLexCharLiteral.No)))
+              (Ok payload (+ i 3))
+              (No))
+            (No))]))
+    (No)))
 
 (defenum LexPosition
   (Position i64 i64))
@@ -610,16 +588,14 @@
     [j : i64 start]
     [next-line : i64 line]
     [next-col : i64 col]
-    (begin
-      (while (< j end)
+    (while (< j end)
+      (if (= (__tl_string_ref src j) '\n')
         (begin
-          (if (= (__tl_string_ref src j) '\n')
-            (begin
-              (set! next-line (+ next-line 1))
-              (set! next-col 1))
-            (set! next-col (+ next-col 1)))
-          (set! j (+ j 1))))
-      (LexPosition.Position next-line next-col))))
+          (set! next-line (+ next-line 1))
+          (set! next-col 1))
+        (set! next-col (+ next-col 1)))
+      (set! j (+ j 1)))
+    (Position next-line next-col)))
 
 ;; Scan `src` into the shared spanned-token buffer, growing it on demand.
 ;; `limit` mirrors the global buffer capacity and is refreshed whenever it moves;
@@ -642,251 +618,224 @@
     (begin
       (cfg compile-profile (lexer-intern-profile-note-source-bytes owner n))
       (while (and (< i n) ok)
-        (begin
-          (if (> (+ count 2) limit)
-            (begin
-              (spanned-token-buffer-ensure! (+ count 2) count)
-              (set! limit (array-length lex-spanned-token-buffer)))
-            unit)
-          (let
-            [c : char (__tl_string_ref src i)]
-            (cond
-              [(is-space c)
+        (when
+          (> (+ count 2) limit)
+          (spanned-token-buffer-ensure! (+ count 2) count)
+          (set! limit (array-length lex-spanned-token-buffer)))
+        (let
+          [c : char (__tl_string_ref src i)]
+          (cond
+            [(is-space c)
+              (if (= c '\n')
                 (begin
-                  (if (= c '\n')
-                    (begin
-                      (set! line (+ line 1))
-                      (set! col 1))
-                    (set! col (+ col 1)))
-                  (set! i (+ i 1)))]
-              [(= c '(')
-                (begin
-                  (set!
-                    (array-ref lex-spanned-token-buffer count)
-                    (token.spanned-token-new token.Token.LParen line col))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1))
-                  (set! col (+ col 1)))]
-              [(= c '[')
-                (begin
-                  (set!
-                    (array-ref lex-spanned-token-buffer count)
-                    (token.spanned-token-new token.Token.LBracket line col))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1))
-                  (set! col (+ col 1)))]
-              [(= c ')')
-                (begin
-                  (set!
-                    (array-ref lex-spanned-token-buffer count)
-                    (token.spanned-token-new token.Token.RParen line col))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1))
-                  (set! col (+ col 1)))]
-              [(= c ']')
-                (begin
-                  (set!
-                    (array-ref lex-spanned-token-buffer count)
-                    (token.spanned-token-new token.Token.RBracket line col))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1))
-                  (set! col (+ col 1)))]
-              [(= c '\'')
-                (let
-                  [token-line : i64 line]
-                  [token-col : i64 col]
-                  (match (apostrophe-char-literal-result src i n)
-                    [(ResultMaybeLexCharLiteral.Ok value end)
-                      (begin
-                        (set!
-                          (array-ref lex-spanned-token-buffer count)
-                          (token.spanned-token-new
-                            (token.Token.Char value)
-                            token-line
-                            token-col))
-                        (set! count (+ count 1))
-                        (set! col (+ col (- end i)))
-                        (set! i end))]
-                    [(ResultMaybeLexCharLiteral.Err err)
-                      (begin
-                        (set! ok false)
-                        (set! message err)
-                        (set! err-pos i))]
-                    [(ResultMaybeLexCharLiteral.No)
-                      (begin
-                        (set!
-                          (array-ref lex-spanned-token-buffer count)
-                          (token.spanned-token-new token.Token.Quote line col))
-                        (set! count (+ count 1))
-                        (set! i (+ i 1))
-                        (set! col (+ col 1)))]))]
-              [(= c '`')
-                (begin
-                  (set!
-                    (array-ref lex-spanned-token-buffer count)
-                    (token.spanned-token-new token.Token.Backtick line col))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1))
-                  (set! col (+ col 1)))]
-              [(= c ',')
-                (begin
-                  (if (< (+ i 1) n)
-                    (if (= (__tl_string_ref src (+ i 1)) '@')
-                      (begin
-                        (set!
-                          (array-ref lex-spanned-token-buffer count)
-                          (token.spanned-token-new token.Token.CommaAt line col))
-                        (set! i (+ i 2))
-                        (set! col (+ col 2)))
-                      (begin
-                        (set!
-                          (array-ref lex-spanned-token-buffer count)
-                          (token.spanned-token-new token.Token.Comma line col))
-                        (set! i (+ i 1))
-                        (set! col (+ col 1))))
-                    (begin
-                      (set!
-                        (array-ref lex-spanned-token-buffer count)
-                        (token.spanned-token-new token.Token.Comma line col))
-                      (set! i (+ i 1))
-                      (set! col (+ col 1))))
-                  (set! count (+ count 1)))]
-              [(= c '"')
-                (let
-                  [start : i64 (+ i 1)]
-                  [token-line : i64 line]
-                  [token-col : i64 col]
-                  (match (scan-str-end-result src start n)
-                    [(result_lex_i64.Ok end)
-                      (let
-                        [text : String (unescape-string-literal src start end)]
-                        [string-id : ci.InternId
-                          (lexer-intern-source-slice-id
-                            owner
-                            text
-                            0
-                            (string.string-length text))]
-                        (begin
-                          (set!
-                            (array-ref lex-spanned-token-buffer count)
-                            (token.spanned-token-new
-                              (token.Token.Str
-                                (token.token-intern-payload string-id))
-                              token-line
-                              token-col))
-                          (set! count (+ count 1))
-                          (match (advance-position src i (+ end 1) line col)
-                            [(LexPosition.Position next-line next-col)
-                              (begin
-                                (set! line next-line)
-                                (set! col next-col))])
-                          (set! i (+ end 1))))]
-                    [(result_lex_i64.Err err)
-                      (begin
-                        (set! ok false)
-                        (set! message err)
-                        (set! err-pos i))]))]
-              [(= c ';')
-                (let
-                  [end : i64 (scan-comment-end src (+ i 1) n)]
-                  (begin
+                  (set! line (+ line 1))
+                  (set! col 1))
+                (set! col (+ col 1)))
+              (set! i (+ i 1))]
+            [(= c '(')
+              (set!
+                (array-ref lex-spanned-token-buffer count)
+                (token.spanned-token-new LParen line col))
+              (set! count (+ count 1))
+              (set! i (+ i 1))
+              (set! col (+ col 1))]
+            [(= c '[')
+              (set!
+                (array-ref lex-spanned-token-buffer count)
+                (token.spanned-token-new LBracket line col))
+              (set! count (+ count 1))
+              (set! i (+ i 1))
+              (set! col (+ col 1))]
+            [(= c ')')
+              (set!
+                (array-ref lex-spanned-token-buffer count)
+                (token.spanned-token-new RParen line col))
+              (set! count (+ count 1))
+              (set! i (+ i 1))
+              (set! col (+ col 1))]
+            [(= c ']')
+              (set!
+                (array-ref lex-spanned-token-buffer count)
+                (token.spanned-token-new RBracket line col))
+              (set! count (+ count 1))
+              (set! i (+ i 1))
+              (set! col (+ col 1))]
+            [(= c '\'')
+              (let
+                [token-line : i64 line]
+                [token-col : i64 col]
+                (match (apostrophe-char-literal-result src i n)
+                  [(Ok value end)
+                    (set!
+                      (array-ref lex-spanned-token-buffer count)
+                      (token.spanned-token-new
+                        (Char value)
+                        token-line
+                        token-col))
+                    (set! count (+ count 1))
                     (set! col (+ col (- end i)))
-                    (set! i end)))]
-              [(or (is-digit c) (negative-number-start? src i n))
-                (match (scan-number-end-result src i n)
-                  [(result_lex_i64.Ok end)
+                    (set! i end)]
+                  [(Err err)
+                    (set! ok false)
+                    (set! message err)
+                    (set! err-pos i)]
+                  [(No)
+                    (set!
+                      (array-ref lex-spanned-token-buffer count)
+                      (token.spanned-token-new Quote line col))
+                    (set! count (+ count 1))
+                    (set! i (+ i 1))
+                    (set! col (+ col 1))]))]
+            [(= c '`')
+              (set!
+                (array-ref lex-spanned-token-buffer count)
+                (token.spanned-token-new Backtick line col))
+              (set! count (+ count 1))
+              (set! i (+ i 1))
+              (set! col (+ col 1))]
+            [(= c ',')
+              (if (< (+ i 1) n)
+                (if (= (__tl_string_ref src (+ i 1)) '@')
+                  (begin
+                    (set!
+                      (array-ref lex-spanned-token-buffer count)
+                      (token.spanned-token-new CommaAt line col))
+                    (set! i (+ i 2))
+                    (set! col (+ col 2)))
+                  (begin
+                    (set!
+                      (array-ref lex-spanned-token-buffer count)
+                      (token.spanned-token-new Comma line col))
+                    (set! i (+ i 1))
+                    (set! col (+ col 1))))
+                (begin
+                  (set!
+                    (array-ref lex-spanned-token-buffer count)
+                    (token.spanned-token-new Comma line col))
+                  (set! i (+ i 1))
+                  (set! col (+ col 1))))
+              (set! count (+ count 1))]
+            [(= c '"')
+              (let
+                [start : i64 (+ i 1)]
+                [token-line : i64 line]
+                [token-col : i64 col]
+                (match (scan-str-end-result src start n)
+                  [(Ok end)
                     (let
-                      [token-line : i64 line]
-                      [token-col : i64 col]
-                      (begin
-                        (if (number-float? src i end n)
-                          (set!
-                            (array-ref lex-spanned-token-buffer count)
-                            (token.spanned-token-new
-                              (token.Token.Float
-                                (string.substring src i (- end i)))
-                              token-line
-                              token-col))
-                          (set!
-                            (array-ref lex-spanned-token-buffer count)
-                            (token.spanned-token-new
-                              (token.Token.Int
-                                (number-int-value src i end n)
-                                (number-int-source-text src i end n))
-                              token-line
-                              token-col)))
-                        (set! count (+ count 1))
-                        (set! col (+ col (- end i)))
-                        (set! i end)))]
-                  [(result_lex_i64.Err err)
-                    (begin
-                      (set! ok false)
-                      (set! message err)
-                      (set! err-pos i))])]
-              [(= c ':')
-                (let
-                  [end : i64 (colon-token-end src i n)]
-                  (if (> end (+ i 1))
-                    (begin
+                      [text : String (unescape-string-literal src start end)]
+                      [string-id : ci.InternId
+                        (lexer-intern-source-slice-id
+                          owner
+                          text
+                          0
+                          (string.string-length text))]
                       (set!
                         (array-ref lex-spanned-token-buffer count)
                         (token.spanned-token-new
-                          (token.Token.Sym
-                            (token.token-intern-payload
-                              (lexer-intern-source-slice-id
-                                owner
-                                src
-                                i
-                                (- end i))))
-                          line
-                          col))
+                          (Str (token.token-intern-payload string-id))
+                          token-line
+                          token-col))
                       (set! count (+ count 1))
-                      (set! col (+ col (- end i)))
-                      (set! i end))
-                    (begin
+                      (match (advance-position src i (+ end 1) line col)
+                        [(Position next-line next-col)
+                          (set! line next-line)
+                          (set! col next-col)])
+                      (set! i (+ end 1)))]
+                  [(Err err)
+                    (set! ok false)
+                    (set! message err)
+                    (set! err-pos i)]))]
+            [(= c ';')
+              (let
+                [end : i64 (scan-comment-end src (+ i 1) n)]
+                (set! col (+ col (- end i)))
+                (set! i end))]
+            [(or (is-digit c) (negative-number-start? src i n))
+              (match (scan-number-end-result src i n)
+                [(Ok end)
+                  (let
+                    [token-line : i64 line]
+                    [token-col : i64 col]
+                    (if (number-float? src i end n)
                       (set!
                         (array-ref lex-spanned-token-buffer count)
                         (token.spanned-token-new
-                          (token.Token.Sym
-                            (token.token-intern-payload
-                              (colon-intern-id owner src i)))
-                          line
-                          col))
-                      (set! count (+ count 1))
-                      (set! col (+ col 1))
-                      (set! i (+ i 1)))))]
-              [(is-symbol-char c)
-                (let
-                  [end : i64 (scan-symbol-end src i n)]
+                          (Float (string.substring src i (- end i)))
+                          token-line
+                          token-col))
+                      (set!
+                        (array-ref lex-spanned-token-buffer count)
+                        (token.spanned-token-new
+                          (Int
+                            (number-int-value src i end n)
+                            (number-int-source-text src i end n))
+                          token-line
+                          token-col)))
+                    (set! count (+ count 1))
+                    (set! col (+ col (- end i)))
+                    (set! i end))]
+                [(Err err)
+                  (set! ok false)
+                  (set! message err)
+                  (set! err-pos i)])]
+            [(= c ':')
+              (let
+                [end : i64 (colon-token-end src i n)]
+                (if (> end (+ i 1))
                   (begin
                     (set!
                       (array-ref lex-spanned-token-buffer count)
                       (token.spanned-token-new
-                        (token.Token.Sym
+                        (Sym
                           (token.token-intern-payload
                             (lexer-intern-source-slice-id owner src i (- end i))))
                         line
                         col))
                     (set! count (+ count 1))
                     (set! col (+ col (- end i)))
-                    (set! i end)))]
-              [else
-                (begin
-                  (set! ok false)
-                  (set! message "lexer: unexpected character")
-                  (set! err-pos i))]))))
+                    (set! i end))
+                  (begin
+                    (set!
+                      (array-ref lex-spanned-token-buffer count)
+                      (token.spanned-token-new
+                        (Sym
+                          (token.token-intern-payload
+                            (colon-intern-id owner src i)))
+                        line
+                        col))
+                    (set! count (+ count 1))
+                    (set! col (+ col 1))
+                    (set! i (+ i 1)))))]
+            [(is-symbol-char c)
+              (let
+                [end : i64 (scan-symbol-end src i n)]
+                (set!
+                  (array-ref lex-spanned-token-buffer count)
+                  (token.spanned-token-new
+                    (Sym
+                      (token.token-intern-payload
+                        (lexer-intern-source-slice-id owner src i (- end i))))
+                    line
+                    col))
+                (set! count (+ count 1))
+                (set! col (+ col (- end i)))
+                (set! i end))]
+            [else
+              (set! ok false)
+              (set! message "lexer: unexpected character")
+              (set! err-pos i)])))
       (if ok
         (begin
-          (if (>= count limit)
-            (begin
-              (spanned-token-buffer-ensure! (+ count 1) count)
-              unit)
+          (when
+            (>= count limit)
+            (spanned-token-buffer-ensure! (+ count 1) count)
             unit)
           (set!
             (array-ref lex-spanned-token-buffer count)
-            (token.spanned-token-new token.Token.End line col))
-          (ResultLexIntoSpanned.Ok count))
-        (ResultLexIntoSpanned.Err (source-error-at src err-pos message))))))
+            (token.spanned-token-new End line col))
+          (Ok count))
+        (Err (source-error-at src err-pos message))))))
 
 ;; ---- Spanned token stream ----------------------------------------------------
 ;; Each token is paired with the 1-based line/column of its starting byte; the
@@ -897,14 +846,12 @@
   (let
     [line : i64 1]
     [k : i64 0]
-    (begin
-      (while (< k idx)
-        (begin
-          (if (= (__tl_string_ref src k) '\n')
-            (set! line (+ line 1))
-            unit)
-          (set! k (+ k 1))))
-      line)))
+    (while (< k idx)
+      (if (= (__tl_string_ref src k) '\n')
+        (set! line (+ line 1))
+        unit)
+      (set! k (+ k 1)))
+    line))
 
 ;; 1-based column of byte index `idx`: characters since the last newline (the
 ;; first column is 1).
@@ -912,14 +859,12 @@
   (let
     [col : i64 1]
     [k : i64 0]
-    (begin
-      (while (< k idx)
-        (begin
-          (if (= (__tl_string_ref src k) '\n')
-            (set! col 1)
-            (set! col (+ col 1)))
-          (set! k (+ k 1))))
-      col)))
+    (while (< k idx)
+      (if (= (__tl_string_ref src k) '\n')
+        (set! col 1)
+        (set! col (+ col 1)))
+      (set! k (+ k 1)))
+    col))
 
 (define (source-error-at [src : (& src str)] [idx : i64] [message : String]) : token.SourceError
   (let
@@ -968,10 +913,9 @@
       (if (< current 1024)
         1024
         current)]
-    (begin
-      (while (< next required)
-        (set! next (* next 2)))
-      next)))
+    (while (< next required)
+      (set! next (* next 2)))
+    next))
 
 ;; Install a larger buffer holding at least `required` slots, preserving the
 ;; first `used` records. `in-arena` restores the caller before the copy so the
@@ -990,26 +934,24 @@
         (__tl_make-array
           token.SpannedToken
           (spanned-token-buffer-next-capacity required)))]
-    (begin
-      ;; Fresh disjoint storage; initialized inline records move as bytes.
-      ;; `used` is the completed scanner prefix, excluding the next token.
+    ;; Fresh disjoint storage; initialized inline records move as bytes.
+    ;; `used` is the completed scanner prefix, excluding the next token.
+    (unsafe
+      (string.string-runtime-copy-bytes!
+        (ptr-cast (__tl_array-data new-buffer) : (MutPtr u8))
+        (ptr-cast (__tl_array-data lex-spanned-token-buffer) : (Ptr u8))
+        (cast
+          (-
+            (ptr->int (ptr-offset (__tl_array-data new-buffer) used))
+            (ptr->int (__tl_array-data new-buffer)))
+          : i64)))
+    (set! lex-spanned-token-buffer-arena storage-root)
+    (set! lex-spanned-token-buffer new-buffer)
+    (unless
+      (= old-storage-arena 0)
       (unsafe
-        (string.string-runtime-copy-bytes!
-          (ptr-cast (__tl_array-data new-buffer) : (MutPtr u8))
-          (ptr-cast (__tl_array-data lex-spanned-token-buffer) : (Ptr u8))
-          (cast
-            (-
-              (ptr->int (ptr-offset (__tl_array-data new-buffer) used))
-              (ptr->int (__tl_array-data new-buffer)))
-            : i64)))
-      (set! lex-spanned-token-buffer-arena storage-root)
-      (set! lex-spanned-token-buffer new-buffer)
-      (unless
-        (= old-storage-arena 0)
-        (unsafe
-          (begin
-            (arena.tl_arena_destroy old-storage-arena)
-            (arena.tl_arena_set caller-arena)))))))
+        (arena.tl_arena_destroy old-storage-arena)
+        (arena.tl_arena_set caller-arena)))))
 
 (define (spanned-token-buffer-ensure! [required : i64] [used : i64]) : unit
   (if (> required (array-length lex-spanned-token-buffer))
@@ -1057,19 +999,17 @@
     (let
       [retire-arena : i64 lex-spanned-token-buffer-arena]
       [retained-arena : i64 (arena.tl_arena_current)]
-      (begin
-        ;; The sentinel remains owned by its permanent global. Reinstall only
-        ;; a shared representation view; a direct RHS would move a non-Copy
-        ;; dynamic array out of that global.
-        (set!
-          lex-spanned-token-buffer
-          (unsafe
-            (ptr-read (ptr-addr-of lex-spanned-token-buffer-released))))
-        (set! lex-spanned-token-buffer-arena 0)
+      ;; The sentinel remains owned by its permanent global. Reinstall only
+      ;; a shared representation view; a direct RHS would move a non-Copy
+      ;; dynamic array out of that global.
+      (set!
+        lex-spanned-token-buffer
         (unsafe
-          (begin
-            (arena.tl_arena_destroy retire-arena)
-            (arena.tl_arena_set retained-arena)))))))
+          (ptr-read (ptr-addr-of lex-spanned-token-buffer-released))))
+      (set! lex-spanned-token-buffer-arena 0)
+      (unsafe
+        (arena.tl_arena_destroy retire-arena)
+        (arena.tl_arena_set retained-arena)))))
 
 ;; `spanned-result : (-> String ResultSpannedTokens)` - lex into the shared
 ;; spanned-token buffer and hand back that buffer; slot `count` holds the
@@ -1078,23 +1018,19 @@
 (define (spanned-result-with-intern-owner
   [src : String]
   [owner : (LexerInternOwner intern-state)]) : ResultSpannedTokens
-  (match (into-spanned-tokens-result-with-intern-owner (& src) owner)
-    [(ResultLexIntoSpanned.Ok _)
-      (ResultSpannedTokens.Ok (global-shared-view lex-spanned-token-buffer))]
-    [(ResultLexIntoSpanned.Err err) (ResultSpannedTokens.Err err)]))
+  (let
+    [_ (try (into-spanned-tokens-result-with-intern-owner (& src) owner))]
+    (Ok (global-shared-view lex-spanned-token-buffer))))
 
 ;; Serial/tool compatibility adapter. Compile jobs use the explicit twin below.
 (define (spanned-result [src : String]) : ResultSpannedTokens
-  (spanned-result-with-intern-owner src LexerInternOwner.Active))
+  (spanned-result-with-intern-owner src Active))
 
 (define (spanned-result-with-intern-state
   [src : String]
   [intern-state : (&mut intern-state ci.InternCompatState)]) : ResultSpannedTokens
-  (begin
-    (ci.intern-compat-state-ensure-ready! intern-state)
-    (spanned-result-with-intern-owner
-      src
-      (LexerInternOwner.State (& intern-state)))))
+  (ci.intern-compat-state-ensure-ready! intern-state)
+  (spanned-result-with-intern-owner src (State (& intern-state))))
 
 ;; The spanned token stream without positions, copied into a fresh array that
 ;; ends in `token.Token.End`, for callers that compare token streams.
@@ -1102,29 +1038,26 @@
   [src : String]
   [owner : (LexerInternOwner intern-state)]) : ResultTokens
   (match (spanned-result-with-intern-owner src owner)
-    [(ResultSpannedTokens.Err err)
-      (ResultTokens.Err (token.source-error-message err))]
-    [(ResultSpannedTokens.Ok spanned)
+    [(Err err) (Err (token.source-error-message err))]
+    [(Ok spanned)
       (let
         [toks : (__tl_dyn-array token.Token)
           (__tl_make-array token.Token (array-length spanned))]
         [index : i64 0]
         [more : bool true]
-        (begin
-          (while more
-            (let
-              [tok : token.Token
-                (token.spanned-token-tok (array-shared-view spanned index))]
-              (begin
-                (set! more (!= (token.tag-ref (& tok)) (token.tag-end)))
-                (set! (array-ref toks index) tok)
-                (set! index (+ index 1)))))
-          (ResultTokens.Ok toks)))]))
+        (while more
+          (let
+            [tok : token.Token
+              (token.spanned-token-tok (array-shared-view spanned index))]
+            (set! more (!= (token.tag-ref (& tok)) (token.tag-end)))
+            (set! (array-ref toks index) tok)
+            (set! index (+ index 1))))
+        (Ok toks))]))
 
 (define (result [src : String]) : ResultTokens
-  (result-with-intern-owner src LexerInternOwner.Active))
+  (result-with-intern-owner src Active))
 
 (define (lex [src : String]) : (__tl_dyn-array token.Token)
   (match (result src)
-    [(ResultTokens.Ok toks) toks]
-    [(ResultTokens.Err message) (io.panic message)]))
+    [(Ok toks) toks]
+    [(Err message) (io.panic message)]))

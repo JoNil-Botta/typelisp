@@ -58,24 +58,23 @@
     ;; The program name is argument 0, so `base` is 0 with no arguments.
     [base : i64 (- (io.arg-count) 1)]
     [acc : i64 0]
-    (begin
-      (set! rm-len (string.string-length rm-text))
-      (set! acc (+ acc (literal-window (+ base 3))))
-      (set! acc (+ acc (literal-window (+ base 15))))
-      (set! acc (+ acc (literal-window (+ base 16))))
-      (set! acc (+ acc (literal-window (- base 1))))
-      (set! acc (+ acc (literal-window (- base 4096))))
-      ;; 6 + 30 - 1 - 1 - 1 = 33
-      (set! acc (+ acc (paired-window (+ base 8) (+ base 2) (+ base 5))))
-      (set! acc (+ acc (paired-window (+ base 8) (+ base 2) (+ base 8))))
-      (set! acc (+ acc (paired-window (+ base 8) (- base 1) (+ base 5))))
-      (set! acc (+ acc (paired-window (- base 1) (+ base 2) (+ base 5))))
-      ;; 7 - 1 - 1 - 1 = 4; running total 37
-      (set! acc (+ acc (global-window (+ base 4))))
-      (set! acc (+ acc (global-window (+ base 9))))
-      (set! acc (+ acc (global-window (+ base 10))))
-      (set! acc (+ acc (global-window (- base 1))))
-      ;; rm-len is 10: 28 + 63 - 1 - 1 = 89; total 126
-      (if (= acc 126)
-        42
-        1))))
+    (set! rm-len (string.string-length rm-text))
+    (set! acc (+ acc (literal-window (+ base 3))))
+    (set! acc (+ acc (literal-window (+ base 15))))
+    (set! acc (+ acc (literal-window (+ base 16))))
+    (set! acc (+ acc (literal-window (- base 1))))
+    (set! acc (+ acc (literal-window (- base 4096))))
+    ;; 6 + 30 - 1 - 1 - 1 = 33
+    (set! acc (+ acc (paired-window (+ base 8) (+ base 2) (+ base 5))))
+    (set! acc (+ acc (paired-window (+ base 8) (+ base 2) (+ base 8))))
+    (set! acc (+ acc (paired-window (+ base 8) (- base 1) (+ base 5))))
+    (set! acc (+ acc (paired-window (- base 1) (+ base 2) (+ base 5))))
+    ;; 7 - 1 - 1 - 1 = 4; running total 37
+    (set! acc (+ acc (global-window (+ base 4))))
+    (set! acc (+ acc (global-window (+ base 9))))
+    (set! acc (+ acc (global-window (+ base 10))))
+    (set! acc (+ acc (global-window (- base 1))))
+    ;; rm-len is 10: 28 + 63 - 1 - 1 = 89; total 126
+    (if (= acc 126)
+      42
+      1)))

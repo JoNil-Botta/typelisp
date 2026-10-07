@@ -214,13 +214,45 @@ global_shared_mutable_borrow_reject|check-fail|tests/safety/global_shared_mutabl
 global_shared_borrow_mutation_reject|check-fail|tests/safety/global_shared_borrow_mutation_reject.tl|-|cannot assign to borrowed place `global-cell.value`
 mutable_reference_by_value_binding_reject|check-fail|tests/safety/mutable_reference_by_value_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_reference_scalar_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
+mutable_reference_lifetime_field_store_ok|run-exit|tests/safety/mutable_reference_lifetime_field_store_ok.tl|42|-
+mutable_reference_lifetime_field_store_shorter_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shorter_reject.tl|-|struct field assignment type mismatch: expected (& a i64), found (& m i64)
+mutable_reference_lifetime_field_store_local_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_local_reject.tl|-|struct field assignment type mismatch: expected (& a i64), found (& x i64)
+mutable_reference_lifetime_field_store_shadow_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_reject.tl|-|cannot store reference into longer-lived struct field
+mutable_reference_lifetime_field_store_shadow_deref_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_deref_reject.tl|-|cannot store reference into longer-lived struct field
+mutable_reference_lifetime_field_store_shadow_whole_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_whole_reject.tl|-|cannot store reference into longer-lived &mut referent
+mutable_reference_lifetime_field_store_param_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_param_reject.tl|-|cannot store reference into longer-lived struct field
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
-comptime_mut_borrow_rvalue_reject|check-fail|tests/safety/comptime_mut_borrow_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
-comptime_mut_call_rvalue_reject|check-fail|tests/safety/comptime_mut_call_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
-queue_bang_rvalue_reject|check-fail|tests/safety/queue_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
-set_bang_rvalue_reject|check-fail|tests/safety/set_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
-hashmap_bang_rvalue_reject|check-fail|tests/safety/hashmap_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
-vector_bang_rvalue_reject|check-fail|tests/safety/vector_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
+# Borrowed call-argument temporaries: an explicit `(& value)` or `(&mut value)`
+# call argument borrows hidden storage that lives until the call returns and is
+# cleaned after it; no borrow of it may outlive the call.
+borrow_temporary_call_arg_ok|run-exit|tests/safety/borrow_temporary_call_arg_ok.tl|42|-
+borrow_temporary_cleanup_ok|run-exit|tests/safety/borrow_temporary_cleanup_ok.tl|42|-
+borrow_temporary_result_escape_reject|check-fail|tests/safety/borrow_temporary_result_escape_reject.tl|-|typecheck: temporary dropped while still borrowed
+borrow_temporary_nested_escape_reject|check-fail|tests/safety/borrow_temporary_nested_escape_reject.tl|-|typecheck: temporary dropped while still borrowed
+borrow_temporary_constructor_escape_reject|check-fail|tests/safety/borrow_temporary_constructor_escape_reject.tl|-|typecheck: temporary dropped while still borrowed
+borrow_temporary_mut_param_escape_reject|check-fail|tests/safety/borrow_temporary_mut_param_escape_reject.tl|-|typecheck: temporary dropped while still borrowed
+borrow_temporary_let_reject|check-fail|tests/safety/borrow_temporary_let_reject.tl|-|typecheck: a borrowed temporary must be a direct function-call argument
+borrow_temporary_match_scrutinee_reject|check-fail|tests/safety/borrow_temporary_match_scrutinee_reject.tl|-|typecheck: a borrowed temporary must be a direct function-call argument
+borrow_temporary_named_lifetime_reject|check-fail|tests/safety/borrow_temporary_named_lifetime_reject.tl|-|typecheck: a borrowed temporary has no lifetime to name
+borrow_temporary_moved_operand_reject|check-fail|tests/safety/borrow_temporary_moved_operand_reject.tl|-|use of moved value `name`
+borrow_temporary_cleanup_early_exit_reject|check-fail|tests/safety/borrow_temporary_cleanup_early_exit_reject.tl|-|skip the cleanup of this borrowed cleanup-owning temporary
+borrow_temporary_cleanup_aggregate_reject|check-fail|tests/safety/borrow_temporary_cleanup_aggregate_reject.tl|-|a borrowed temporary that holds a cleanup-owning value must itself declare a cleanup function
+# A body whose only borrows are arguments of calls that keep no borrow past the
+# call skips the borrow check unless two arguments of one call use the same
+# variable, so conflicts inside one call are still found.
+call_scoped_borrow_args_ok|check-ok|tests/safety/call_scoped_borrow_args_ok.tl|-|-
+call_scoped_mut_shared_same_call_reject|check-fail|tests/safety/call_scoped_mut_shared_same_call_reject.tl|-|cannot mutably borrow borrowed place `x`
+call_scoped_shared_move_same_call_reject|check-fail|tests/safety/call_scoped_shared_move_same_call_reject.tl|-|cannot move borrowed place `x`
+call_scoped_mut_assign_same_call_reject|check-fail|tests/safety/call_scoped_mut_assign_same_call_reject.tl|-|cannot assign to borrowed place `x.a`
+call_scoped_mut_set_same_call_reject|check-fail|tests/safety/call_scoped_mut_set_same_call_reject.tl|-|cannot assign to borrowed place `x`
+call_scoped_mut_field_move_same_call_reject|check-fail|tests/safety/call_scoped_mut_field_move_same_call_reject.tl|-|cannot move borrowed place `x.b`
+call_scoped_nested_mut_reject|check-fail|tests/safety/call_scoped_nested_mut_reject.tl|-|cannot mutably borrow borrowed place `x`
+comptime_mut_borrow_rvalue_temporary_ok|check-ok|tests/safety/comptime_mut_borrow_rvalue_temporary_ok.tl|-|-
+comptime_mut_call_rvalue_temporary_ok|check-ok|tests/safety/comptime_mut_call_rvalue_temporary_ok.tl|-|-
+queue_bang_rvalue_temporary_ok|check-ok|tests/safety/queue_bang_rvalue_temporary_ok.tl|-|-
+set_bang_rvalue_temporary_ok|check-ok|tests/safety/set_bang_rvalue_temporary_ok.tl|-|-
+hashmap_bang_rvalue_temporary_ok|check-ok|tests/safety/hashmap_bang_rvalue_temporary_ok.tl|-|-
+vector_bang_rvalue_temporary_ok|check-ok|tests/safety/vector_bang_rvalue_temporary_ok.tl|-|-
 hashmap_bang_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `m`
 hashmap_bang_projected_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_projected_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `holder.map`
 nested_call_loan_enum_reject|check-fail|tests/safety/nested_call_loan_enum_reject.tl|-|cannot mutably borrow borrowed place `wire`
@@ -250,6 +282,24 @@ composite_arg_loan_dynamic_array_index_reject|check-fail|tests/safety/composite_
 composite_arg_loan_box_reject|check-fail|tests/safety/composite_arg_loan_box_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_try_reject|check-fail|tests/safety/composite_arg_loan_try_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_with_resource_reject|check-fail|tests/safety/composite_arg_loan_with_resource_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_assigned_view_begin_reject|check-fail|tests/safety/composite_arg_loan_assigned_view_begin_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_assigned_bound_view_reject|check-fail|tests/safety/composite_arg_loan_assigned_bound_view_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_assignment_chain_reject|check-fail|tests/safety/composite_arg_loan_assignment_chain_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_nested_assignment_chain_reject|check-fail|tests/safety/composite_arg_loan_nested_assignment_chain_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_nested_let_assignment_reject|check-fail|tests/safety/composite_arg_loan_nested_let_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_match_assignment_reject|check-fail|tests/safety/composite_arg_loan_match_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_match_pattern_assignment_reject|check-fail|tests/safety/composite_arg_loan_match_pattern_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_conditional_assigned_view_reject|check-fail|tests/safety/composite_arg_loan_conditional_assigned_view_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_condition_assignment_reject|check-fail|tests/safety/composite_arg_loan_condition_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_let_init_assignment_reject|check-fail|tests/safety/composite_arg_loan_let_init_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_loop_assignment_reject|check-fail|tests/safety/composite_arg_loan_loop_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_loop_carried_assignment_reject|check-fail|tests/safety/composite_arg_loan_loop_carried_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_loop_break_assignment_reject|check-fail|tests/safety/composite_arg_loan_loop_break_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_field_store_reject|check-fail|tests/safety/composite_arg_loan_field_store_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_shadowed_assignment_reject|check-fail|tests/safety/composite_arg_loan_shadowed_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+composite_arg_loan_assignment_move_reject|check-fail|tests/safety/composite_arg_loan_assignment_move_reject.tl|-|cannot move borrowed place `pair.left`
+composite_arg_loan_untracked_for_store_reject|check-fail|tests/safety/composite_arg_loan_untracked_for_store_reject.tl|-|under bindings the borrow checker does not track
+composite_arg_loan_returned_assignment_reject|check-fail|tests/safety/composite_arg_loan_returned_assignment_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
 composite_arg_loan_mut_lend_reject|check-fail|tests/safety/composite_arg_loan_mut_lend_reject.tl|-|cannot read mutably borrowed place `pair.left`
 composite_arg_loan_move_reject|check-fail|tests/safety/composite_arg_loan_move_reject.tl|-|cannot move borrowed place `pair`
 composite_arg_loan_returned_reject|check-fail|tests/safety/composite_arg_loan_returned_reject.tl|-|cannot mutably borrow borrowed place `pair.right`
@@ -262,6 +312,13 @@ composite_arg_loan_unselected_tuple_view_ok|check-ok|tests/safety/composite_arg_
 composite_arg_loan_unselected_array_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_array_view_ok.tl|-|-
 composite_arg_loan_unselected_fixed_array_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_fixed_array_view_ok.tl|-|-
 composite_arg_loan_unselected_match_scrutinee_ok|check-ok|tests/safety/composite_arg_loan_unselected_match_scrutinee_ok.tl|-|-
+composite_arg_loan_unselected_assigned_view_ok|check-ok|tests/safety/composite_arg_loan_unselected_assigned_view_ok.tl|-|-
+composite_arg_loan_unrelated_nested_let_assignment_ok|check-ok|tests/safety/composite_arg_loan_unrelated_nested_let_assignment_ok.tl|-|-
+composite_arg_loan_overwritten_assignment_ok|check-ok|tests/safety/composite_arg_loan_overwritten_assignment_ok.tl|-|-
+composite_arg_loan_overwritten_origin_ok|check-ok|tests/safety/composite_arg_loan_overwritten_origin_ok.tl|-|-
+composite_arg_loan_loop_then_overwrite_ok|check-ok|tests/safety/composite_arg_loan_loop_then_overwrite_ok.tl|-|-
+composite_arg_loan_assignment_after_last_use_ok|check-ok|tests/safety/composite_arg_loan_assignment_after_last_use_ok.tl|-|-
+composite_arg_loan_for_unrelated_store_ok|check-ok|tests/safety/composite_arg_loan_for_unrelated_store_ok.tl|-|-
 hashmap_nominal_value_noncloneable_reject|check-fail|tests/safety/hashmap_nominal_value_noncloneable_reject.tl|-|typecheck: clone unsupported type HashmapNoncloneableValue at HashmapNoncloneableValue.choice.Raw[0].raw: (Ptr i64) has no clone capability
 hashmap_unsupported_value_kind_reject|check-fail|tests/safety/hashmap_unsupported_value_kind_reject.tl|-|hashmap: value type tuple_i64_i64_nil has unsupported value kind tuple
 hashmap_string_probe_forged_capacity_trap|run-trap|tests/safety/hashmap_string_probe_forged_capacity_trap.tl|134|array index out of bounds
@@ -309,6 +366,12 @@ borrow_call_outer_pending_reject|check-fail|tests/safety/borrow_call_outer_pendi
 borrow_let_final_use_before_owner_write_ok|check-ok|tests/safety/borrow_let_final_use_before_owner_write_ok.tl|-|-
 borrow_let_three_binding_order_ok|check-ok|tests/safety/borrow_let_three_binding_order_ok.tl|-|-
 borrow_let_later_binding_reject|check-fail|tests/safety/borrow_let_later_binding_reject.tl|-|cannot assign to borrowed place `n`
+# The move and borrow checks read an annotated let binding's type from body
+# typing: loans, arena regions and moves still follow the binding.
+let_annotated_types_ok|check-ok|tests/safety/let_annotated_types_ok.tl|-|-
+let_annotated_ref_loan_reject|check-fail|tests/safety/let_annotated_ref_loan_reject.tl|-|cannot assign to borrowed place `x.a`
+let_annotated_region_escape_reject|check-fail|tests/safety/let_annotated_region_escape_reject.tl|-|region-tagged value cannot escape with-arena 'phase'
+let_annotated_move_only_reject|check-fail|tests/safety/let_annotated_move_only_reject.tl|-|use of moved value `s`
 borrow_let_closure_call_initializer_ok|check-ok|tests/safety/borrow_let_closure_call_initializer_ok.tl|-|-
 borrow_lambda_capture_final_use_ok|check-ok|tests/safety/borrow_lambda_capture_final_use_ok.tl|-|-
 borrow_if_result_before_last_use_reject|check-fail|tests/safety/borrow_if_result_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
@@ -352,6 +415,7 @@ runtime_memory_abort_site_safe_reject|check-fail|tests/safety/runtime_memory_abo
 runtime_memory_abort_forward_safe_reject|check-fail|tests/safety/runtime_memory_abort_forward_safe_reject.tl|-|runtime/oob-abort-at requires unsafe context
 runtime_memory_callable_launder_reject|check-fail|tests/safety/runtime_memory_callable_launder_reject.tl|-|runtime/mem-copy-fwd is an unsafe callable and cannot be used as a plain function value
 runtime_memory_unsafe_call_ok|check-ok|tests/safety/runtime_memory_unsafe_call_ok.tl|-|-
+thread_local_word_unsafe_call_reject|check-fail|tests/safety/thread_local_word_unsafe_call_reject.tl|-|storage requires unsafe context
 sync_atomic_raw_alias_safe_reject|check-fail|tests/safety/sync_atomic_raw_alias_safe_reject.tl|-|sync/atomic-i64-load-ptr requires unsafe context
 format_byte_buf_raw_safe_reject|check-fail|tests/safety/format_byte_buf_raw_safe_reject.tl|-|byte_buf/format-write-raw requires unsafe context
 format_text_buf_raw_safe_reject|check-fail|tests/safety/format_text_buf_raw_safe_reject.tl|-|text_buf/format-write-raw requires unsafe context
@@ -361,6 +425,16 @@ format_formatter_result_at_safe_reject|check-fail|tests/safety/format_formatter_
 format_formatter_status_at_safe_reject|check-fail|tests/safety/format_formatter_status_at_safe_reject.tl|-|format/formatter-status-at requires unsafe context
 format_raw_helper_callable_launder_reject|check-fail|tests/safety/format_raw_helper_callable_launder_reject.tl|-|byte_buf/format-write-raw is an unsafe callable and cannot be used as a plain function value
 format_raw_helper_unsafe_call_ok|check-ok|tests/safety/format_raw_helper_unsafe_call_ok.tl|-|-
+format_debug_source_byte_safe_reject|check-fail|tests/safety/format_debug_source_byte_safe_reject.tl|-|format/format-debug-source-byte requires unsafe context
+format_debug_rendered_length_safe_reject|check-fail|tests/safety/format_debug_rendered_length_safe_reject.tl|-|format/format-debug-rendered-length requires unsafe context
+format_debug_write_code_safe_reject|check-fail|tests/safety/format_debug_write_code_safe_reject.tl|-|format/format-debug-write-code! requires unsafe context
+format_debug_write_byte_safe_reject|check-fail|tests/safety/format_debug_write_byte_safe_reject.tl|-|format/format-debug-write-byte! requires unsafe context
+format_debug_bytes_core_safe_reject|check-fail|tests/safety/format_debug_bytes_core_safe_reject.tl|-|format/format-debug-bytes-core requires unsafe context
+format_write_fill_safe_reject|check-fail|tests/safety/format_write_fill_safe_reject.tl|-|format/format-write-fill! requires unsafe context
+format_copy_rendered_range_safe_reject|check-fail|tests/safety/format_copy_rendered_range_safe_reject.tl|-|format/format-copy-rendered-range! requires unsafe context
+format_renderer_call_at_safe_reject|check-fail|tests/safety/format_renderer_call_at_safe_reject.tl|-|format/arguments-renderer-call-at requires unsafe context
+format_raw_range_alias_safe_reject|check-fail|tests/safety/format_raw_range_alias_safe_reject.tl|-|fmt/format-write-fill! requires unsafe context
+format_raw_range_callable_launder_reject|check-fail|tests/safety/format_raw_range_callable_launder_reject.tl|-|format/format-write-fill! is an unsafe callable and cannot be used as a plain function value
 format_capability_callback_value_ok|check-ok|tests/safety/format_capability_callback_value_ok.tl|-|-
 format_writer_missing_capability_reject|check-fail|tests/safety/format_writer_missing_capability_reject.tl|-|format: writer capability adapter is missing from canonical module
 format_registry_state_safe_reject|check-fail|tests/safety/format_registry_state_safe_reject.tl|-|ptr-write! requires unsafe context
@@ -395,7 +469,15 @@ while_break_lambda_boundary_reject|check-fail|tests/safety/while_break_lambda_bo
 while_when_break_lambda_boundary_reject|check-fail|tests/safety/while_when_break_lambda_boundary_reject.tl|-|typecheck: macro operand typecheck failed: typecheck: break requires enclosing scalar while
 while_break_value_reject|check-fail|tests/safety/while_break_value_reject.tl|-|parse: break expects no arguments
 while_continue_value_reject|check-fail|tests/safety/while_continue_value_reject.tl|-|parse: continue expects no arguments
+while_nonunit_first_reject|check-fail|tests/safety/while_nonunit_first_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
+while_nonunit_macro_reject|check-fail|tests/safety/while_nonunit_macro_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
+while_nonunit_decls_reject|check-fail|tests/safety/while_nonunit_decls_reject.tl|-|typecheck: while body must be unit: expected unit, found i64
+while_empty_splice_reject|check-fail|tests/safety/while_empty_splice_reject.tl|-|typecheck: while requires at least one body expression
+while_ignored_result_reject|check-fail|tests/safety/while_ignored_result_reject.tl|-|typecheck: while body must be unit: expected unit, found Outcome
 integer_literal_i8_overflow_reject|check-fail|tests/safety/integer_literal_i8_overflow_reject.tl|-|integer literal 128 does not fit expected type i8
+if_literal_branch_join_range_reject|check-fail|tests/safety/if_literal_branch_join_range_reject.tl|-|if branches must match
+if_value_branch_join_reject|check-fail|tests/safety/if_value_branch_join_reject.tl|-|if branches must match
+if_bool_int_branch_join_reject|check-fail|tests/safety/if_bool_int_branch_join_reject.tl|-|if branches must match
 integer_literal_u8_overflow_reject|check-fail|tests/safety/integer_literal_u8_overflow_reject.tl|-|integer literal 256 does not fit expected type u8
 integer_literal_unsigned_negative_reject|check-fail|tests/safety/integer_literal_unsigned_negative_reject.tl|-|integer literal -1 does not fit expected type u8
 integer_literal_i64_overflow_reject|check-fail|tests/safety/integer_literal_i64_overflow_reject.tl|-|integer literal 9223372036854775808 does not fit expected type i64
@@ -491,6 +573,36 @@ foreach_active_gang_scalar_defined|run-exit|tests/safety/foreach_active_gang_sca
 foreach_active_masked_defined|run-exit|tests/safety/foreach_active_masked_defined.tl|42|-
 foreach_active_bounds_trap|run-trap|tests/safety/foreach_active_bounds_trap.tl|134|array index out of bounds: index=4 length=4
 
+# Rank-2 foreach domains (#7190): one or two distinct i64 bindings with bounds
+# outside both coordinates, read-only coordinates, and the row-major proof for
+# full-domain disjoint writes (helpers and nested domains see no coordinate).
+spmd_foreach2_rank0_reject|check-fail|tests/safety/spmd_foreach2_rank0_reject.tl|-|parse: foreach requires one or two domain bindings
+spmd_foreach2_rank3_reject|check-fail|tests/safety/spmd_foreach2_rank3_reject.tl|-|parse: foreach supports at most two domain bindings (rank 2)
+spmd_foreach2_duplicate_name_reject|check-fail|tests/safety/spmd_foreach2_duplicate_name_reject.tl|-|parse: foreach domain bindings must use distinct names
+spmd_foreach2_coordinate_type_reject|check-fail|tests/safety/spmd_foreach2_coordinate_type_reject.tl|-|rank-2 foreach coordinate types must be i64
+spmd_foreach2_bound_type_reject|check-fail|tests/safety/spmd_foreach2_bound_type_reject.tl|-|rank-2 foreach bounds must have type i64
+spmd_foreach2_bound_scope_reject|check-fail|tests/safety/spmd_foreach2_bound_scope_reject.tl|-|unbound name y
+spmd_foreach2_body_type_reject|check-fail|tests/safety/spmd_foreach2_body_type_reject.tl|-|foreach body must be unit
+spmd_foreach2_return_reject|check-fail|tests/safety/spmd_foreach2_return_reject.tl|-|return inside foreach is not supported
+spmd_foreach2_nonuniform_bound_reject|check-fail|tests/safety/spmd_foreach2_nonuniform_bound_reject.tl|-|foreach bounds must be uniform
+spmd_foreach2_coordinate_mutation_reject|check-fail|tests/safety/spmd_foreach2_coordinate_mutation_reject.tl|-|rank-2 foreach coordinate bindings are read-only
+spmd_foreach2_inner_write_reject|check-fail|tests/safety/spmd_foreach2_inner_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_outer_write_reject|check-fail|tests/safety/spmd_foreach2_outer_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_diagonal_write_reject|check-fail|tests/safety/spmd_foreach2_diagonal_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_stride_write_reject|check-fail|tests/safety/spmd_foreach2_stride_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_negated_column_write_reject|check-fail|tests/safety/spmd_foreach2_negated_column_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_shadowed_span_write_reject|check-fail|tests/safety/spmd_foreach2_shadowed_span_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_assigned_span_write_reject|check-fail|tests/safety/spmd_foreach2_assigned_span_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major
+spmd_foreach2_masked_write_reject|check-fail|tests/safety/spmd_foreach2_masked_write_reject.tl|-|SPMD masked if does not support rank-2 array indexes other than the row-major form
+spmd_foreach2_helper_write_reject|check-fail|tests/safety/spmd_foreach2_helper_write_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_foreach2_nested_write_reject|check-fail|tests/safety/spmd_foreach2_nested_write_reject.tl|-|foreach does not support non-contiguous array element destination indexes
+spmd_foreach2_assigned_base_write_reject|check-fail|tests/safety/spmd_foreach2_assigned_base_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major with stable uniform offsets
+spmd_foreach2_assigned_row_offset_write_reject|check-fail|tests/safety/spmd_foreach2_assigned_row_offset_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major with stable uniform offsets
+spmd_foreach2_assigned_column_offset_write_reject|check-fail|tests/safety/spmd_foreach2_assigned_column_offset_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major with stable uniform offsets
+spmd_foreach2_memory_offset_write_reject|check-fail|tests/safety/spmd_foreach2_memory_offset_write_reject.tl|-|rank-2 foreach array element destination indexes must be row-major with stable uniform offsets
+spmd_foreach2_assigned_base_masked_reject|check-fail|tests/safety/spmd_foreach2_assigned_base_masked_reject.tl|-|SPMD masked if does not support rank-2 array indexes other than the row-major form with stable uniform offsets
+spmd_foreach2_row_major_ok|run-exit|tests/safety/spmd_foreach2_row_major_ok.tl|42|-
+
 # SPMD v1 private-call ABI policy: public vector/mask/varying source types
 # stay rejected, and function-value calls remain outside the direct helper ABI.
 spmd_public_vector_type_reject|check-fail|tests/safety/spmd_public_vector_type_reject.tl|-|public SPMD vector source types are deferred
@@ -545,8 +657,16 @@ tuple_match_pattern_arity_reject|check-fail|tests/safety/tuple_match_pattern_ari
 tuple_match_pattern_source_reuse_reject|check-fail|tests/safety/tuple_match_pattern_source_reuse_reject.tl|-|use of moved value `pair`
 tuple_element_use_after_move_reject|check-fail|tests/safety/tuple_element_use_after_move_reject.tl|-|use of moved value `pair.0`
 tuple_partial_move_root_reject|check-fail|tests/safety/tuple_partial_move_root_reject.tl|-|use of moved value `pair`
-tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move non-Copy value through shared reference
+tuple_shared_element_move_reject|check-fail|tests/safety/tuple_shared_element_move_reject.tl|-|cannot move a `(Tuple (Box i64) i64)` out of a shared reference
 tuple_match_pattern_borrow_escape_reject|check-fail|tests/safety/tuple_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
+# A pattern matched through a shared reference binds Copy parts by value and a
+# `(Box T)` part as `(& T)`; reading a Copy projection through `(deref box)`
+# leaves the box usable.
+borrowed_pattern_copy_binding_ok|run-exit|tests/safety/borrowed_pattern_copy_binding_ok.tl|42|-
+borrowed_pattern_copy_deferred_ok|run-exit|tests/safety/borrowed_pattern_copy_deferred_ok.tl|42|-
+borrowed_pattern_copy_deref_reject|check-fail|tests/safety/borrowed_pattern_copy_deref_reject.tl|-|deref requires Box or reference type
+box_deref_copy_projection_reuse_ok|run-exit|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-
+box_deref_non_copy_projection_move_reject|check-fail|tests/safety/box_deref_non_copy_projection_move_reject.tl|-|cannot move owner-consuming value out of aggregate path
 # Value forms (#8268): a consumer moves the places at the value tails of the
 # `if`, `match`, `begin`, `let` or `with` it consumes when the value carries a
 # cleanup obligation. Each reject fails on main by acceptance.
@@ -605,6 +725,8 @@ fixed_array_match_pattern_refutable_nested_reject|check-fail|tests/safety/fixed_
 fixed_array_match_pattern_source_reuse_reject|check-fail|tests/safety/fixed_array_match_pattern_source_reuse_reject.tl|-|use of moved value `items`
 fixed_array_match_pattern_borrow_escape_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_escape_reject.tl|-|does not outlive required lifetime `outer`
 fixed_array_match_pattern_borrow_conflict_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[0]`
+borrowed_struct_pattern_string_escape_reject|check-fail|tests/safety/borrowed_struct_pattern_string_escape_reject.tl|-|does not outlive required lifetime `outer`
+borrowed_struct_pattern_string_mutation_reject|check-fail|tests/safety/borrowed_struct_pattern_string_mutation_reject.tl|-|cannot assign to borrowed place `items[0]`
 slice_match_pattern_exhaustive_ok|check-ok|tests/safety/slice_match_pattern_exhaustive_ok.tl|-|-
 slice_match_pattern_scrutinee_reject|check-fail|tests/safety/slice_match_pattern_scrutinee_reject.tl|-|slice pattern requires a borrowed Slice or fixed-array scrutinee
 slice_match_pattern_element_type_reject|check-fail|tests/safety/slice_match_pattern_element_type_reject.tl|-|typecheck: literal pattern type mismatch
@@ -871,6 +993,8 @@ consume_parameter_function_metadata_arity_reject|check-fail|tests/safety/consume
 vector_into_iterator_source_reuse_reject|check-fail|tests/safety/vector_into_iterator_source_reuse_reject.tl|-|use of moved value `values`
 for_owned_source_reuse_reject|check-fail|tests/safety/for_owned_source_reuse_reject.tl|-|use of moved value `items`
 for_native_mut_item_capture_reject|check-fail|tests/safety/for_native_mut_item_capture_reject.tl|-|lambda cannot capture mutable reference
+macro_reference_type_unquote_ok|run-exit|tests/safety/macro_reference_type_unquote_ok.tl|42|-
+for_reference_item_annotation_mismatch_reject|check-fail|tests/safety/for_reference_item_annotation_mismatch_reject.tl|-|pattern binding type mismatch: expected (& a i32), found (& a i64)
 vector_into_iterator_borrow_live_reject|check-fail|tests/safety/vector_into_iterator_borrow_live_reject.tl|-|cannot move borrowed place `values`
 vector_into_iterator_mutate_after_reject|check-fail|tests/safety/vector_into_iterator_mutate_after_reject.tl|-|use of moved value `values`
 vector_into_iterator_second_consume_reject|check-fail|tests/safety/vector_into_iterator_second_consume_reject.tl|-|use of moved value `values`
@@ -918,9 +1042,25 @@ float_exponent_malformed_fraction|check-fail|tests/safety/float_exponent_malform
 float_exponent_malformed_fraction_minus|check-fail|tests/safety/float_exponent_malformed_fraction_minus.tl.invalid|-|lexer: malformed number literal
 float_exponent_overflow_f64|check-fail|tests/safety/float_exponent_overflow_f64.tl|-|non-finite f64 literal is not supported
 float_exponent_overflow_f32|check-fail|tests/safety/float_exponent_overflow_f32.tl|-|non-finite f32 literal is not supported
-deref_shared_noncopy_move_reject|check-fail|tests/safety/deref_shared_noncopy_move_reject.tl|-|cannot move non-Copy value through shared reference
+deref_shared_noncopy_move_reject|check-fail|tests/safety/deref_shared_noncopy_move_reject.tl|-|error[E0208]: typecheck: cannot move a `(Box i64)` out of a shared reference; `(Box i64)` is not Copy
 deref_immutable_set_reject|check-fail|tests/safety/deref_immutable_set_reject.tl|-|set! deref requires mutable access
 deref_box_use_after_move_reject|check-fail|tests/safety/deref_box_use_after_move_reject.tl|-|use of moved value `outer`
+# A by-value use of a non-Copy value read through a reference is a move out
+# of the reference (E0208), with help for the use's position (#8554).
+move_out_of_reference_call_arg_reject|check-fail|tests/safety/move_out_of_reference_call_arg_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
+move_out_of_reference_call_arg_help_reject|check-fail|tests/safety/move_out_of_reference_call_arg_reject.tl|-|help: pass an owned clone, or make the parameter a reference and pass `(& ...)`
+move_out_of_reference_local_borrow_reject|check-fail|tests/safety/move_out_of_reference_local_borrow_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
+move_out_of_reference_let_reject|check-fail|tests/safety/move_out_of_reference_let_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
+move_out_of_reference_let_help_reject|check-fail|tests/safety/move_out_of_reference_let_reject.tl|-|help: bind a borrow `(& ...)` of it instead, or an owned clone
+move_out_of_reference_let_inferred_reject|check-fail|tests/safety/move_out_of_reference_let_inferred_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
+move_out_of_reference_constructor_reject|check-fail|tests/safety/move_out_of_reference_constructor_reject.tl|-|help: construct with an owned clone of it, or make the field a reference
+move_out_of_reference_return_reject|check-fail|tests/safety/move_out_of_reference_return_reject.tl|-|help: return an owned clone, or return a reference tied to a parameter's lifetime
+move_out_of_reference_field_reject|check-fail|tests/safety/move_out_of_reference_field_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a shared reference; `Pt` is not Copy
+move_out_of_reference_string_field_reject|check-fail|tests/safety/move_out_of_reference_string_field_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+move_out_of_reference_tuple_element_reject|check-fail|tests/safety/move_out_of_reference_tuple_element_reject.tl|-|error[E0208]: typecheck: cannot move a `String` out of a shared reference; `String` is not Copy
+move_out_of_reference_mut_reject|check-fail|tests/safety/move_out_of_reference_mut_reject.tl|-|error[E0208]: typecheck: cannot move a `Pt` out of a mutable reference; `Pt` is not Copy
+move_out_of_reference_branch_reject|check-fail|tests/safety/move_out_of_reference_branch_reject.tl|-|help: borrow it with `(& ...)` instead, or use an owned clone
+move_out_of_reference_borrow_ok|run-exit|tests/safety/move_out_of_reference_borrow_ok.tl|42|-
 deref_raw_pointer_reject|check-fail|tests/safety/deref_raw_pointer_reject.tl|-|typecheck: deref of a raw pointer must be projected to a struct field, as in (deref p).field; read or write the whole pointee with ptr-read or ptr-write!
 # A raw-pointer deref is an unsafe place only as a struct-field projection
 # receiver; a (Ptr T) pointee is read-only.
@@ -991,6 +1131,11 @@ replace_cleanup_owner_element_reject|check-fail|tests/safety/replace_cleanup_own
 replace_cleanup_owner_slot_reject|check-fail|tests/safety/replace_cleanup_owner_slot_reject.tl|-|replace! cannot replace an active cleanup owner
 replace_cleanup_owner_nested_reject|check-fail|tests/safety/replace_cleanup_owner_nested_reject.tl|-|replace! cannot replace an active cleanup owner
 replace_fixed_array_cleanup_reject|check-fail|tests/safety/replace_fixed_array_cleanup_reject.tl|-|replace! does not support cleanup-owning places
+cleanup_hook_unsafe_field_reject|check-fail|tests/safety/cleanup_hook_unsafe_field_reject.tl|-|struct Handle field fd cleanup function raw-close is an unsafe declaration
+cleanup_hook_unsafe_payload_reject|check-fail|tests/safety/cleanup_hook_unsafe_payload_reject.tl|-|enum Res variant Open cleanup function raw-close is an unsafe declaration
+cleanup_hook_unsafe_imported_reject|check-fail|tests/safety/cleanup_hook_unsafe_imported_reject.tl|-|cleanup function dep/raw-close is an unsafe declaration
+cleanup_hook_imported_safe_ok|check-ok|tests/safety/cleanup_hook_imported_safe_ok.tl|-|-
+cleanup_hook_safe_validating_ok|run-exit|tests/safety/cleanup_hook_safe_validating_ok.tl|42|-
 replace_spmd_reject|check-fail|tests/safety/replace_spmd_reject.tl|-|replace! is not supported in SPMD
 replace_type_mismatch_reject|check-fail|tests/safety/replace_type_mismatch_reject.tl|-|replace! replacement type mismatch
 replace_lifetime_store_reject|check-fail|tests/safety/replace_lifetime_store_reject.tl|-|source lifetime `short-life` does not outlive required lifetime `long-life`
@@ -1011,11 +1156,23 @@ loop_move_nested_return_ok|check-ok|tests/safety/loop_move_nested_return_ok.tl|-
 loop_move_generated_for_return_ok|check-ok|tests/safety/loop_move_generated_for_return_ok.tl|-|-
 loop_move_generated_for_backedge_reject|check-fail|tests/safety/loop_move_generated_for_backedge_reject.tl|-|cannot move loop-carried owner value `text`
 loop_move_diverge_ok|check-ok|tests/safety/loop_move_diverge_ok.tl|-|-
+loop_move_operand_edges_ok|run-exit|tests/safety/loop_move_operand_edges_ok.tl|42|-
+loop_move_operand_break_post_use_reject|check-fail|tests/safety/loop_move_operand_break_post_use_reject.tl|-|use of moved value `text`
 loop_mut_borrow_exit_paths_ok|check-ok|tests/safety/loop_mut_borrow_exit_paths_ok.tl|-|-
 loop_mut_borrow_stored_return_ok|check-ok|tests/safety/loop_mut_borrow_stored_return_ok.tl|-|-
 loop_mut_borrow_stored_break_reject|check-fail|tests/safety/loop_mut_borrow_stored_break_reject.tl|-|cannot assign to borrowed place `items[0]`
 loop_mut_borrow_return_or_continue_ok|check-ok|tests/safety/loop_mut_borrow_return_or_continue_ok.tl|-|-
 loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot assign to borrowed place `items[0]`
+# A `try` operand keeps its own break, continue and return edges in the loop
+# move and borrow walkers.
+try_loop_break_move_reject|check-fail|tests/safety/try_loop_break_move_reject.tl|-|use of moved value `t`
+try_loop_carried_move_reject|check-fail|tests/safety/try_loop_carried_move_reject.tl|-|cannot move loop-carried owner value `t`
+try_loop_return_move_ok|run-exit|tests/safety/try_loop_return_move_ok.tl|42|-
+try_loop_return_borrow_ok|check-ok|tests/safety/try_loop_return_borrow_ok.tl|-|-
+# `try` shapes: quoted operands are checked, and the enclosing family's Ok
+# variant may carry several payloads.
+try_quasiquote_unquote_reject|check-fail|tests/safety/try_quasiquote_unquote_reject.tl|-|typecheck: unquote expects Expr
+try_multi_payload_return_ok|run-exit|tests/safety/try_multi_payload_return_ok.tl|42|-
 
 # Raw thread/sync effects stay on the adapters, including generated modules.
 thread_raw_spawn_safe_reject|check-fail|tests/safety/thread_raw_spawn_safe_reject.tl|-|thread/spawn requires unsafe context
@@ -1062,6 +1219,11 @@ decls_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/decls_
 module_generated_selected_conflict_reject|check-fail|tests/safety/module_generated_selected_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_wildcard_conflict_reject|check-fail|tests/safety/module_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/module_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import
+# An unqualified import that binds a name the module declares itself is a
+# namespace collision too; a generated declaration counts once expanded and is
+# labelled at its generator.
+import_local_collision_generated_reject|check-fail|tests/safety/import_local_collision_generated_reject.tl|-|collides with the declaration of 'answer' in the entry module
+import_local_collision_generated_label_reject|check-fail|tests/safety/import_local_collision_generated_reject.tl|-|import_local_collision_generated_reject.tl:10:1
 generated_cfg_missing_decls_import_reject|check-fail|tests/safety/generated_cfg_missing_decls_import_reject.tl|-|cannot read import
 
 # Struct fields and enum variants past the former 1000-member registry stride
@@ -1150,3 +1312,20 @@ function_set_wildcard_reject|check-fail|tests/safety/function_set_wildcard_rejec
 function_set_imported_extern_reject|check-fail|tests/safety/function_set_imported_extern_reject.tl|-|typecheck: cannot assign to function
 function_set_macro_reject|check-fail|tests/safety/function_set_macro_reject.tl|-|typecheck: cannot assign to function
 function_storage_assignment|run-exit|tests/safety/function_storage_assignment.tl|42|-
+
+# Bare variant names (SPEC 3.5.1, 4.4.3): an expected enum type resolves them,
+# even for an imported enum; without one they see only enums the module
+# declares or imports with `.*`. A same-named module function or struct
+# constructor, or a payload binder spelling a payload variant, is rejected.
+variant_expected_imported_ok|check-ok|tests/safety/variant_expected_imported_ok.tl|-|-
+variant_unimported_module_reject|check-fail|tests/safety/variant_unimported_module_reject.tl|-|typecheck: unbound name Pass
+variant_alias_import_bare_reject|check-fail|tests/safety/variant_alias_import_bare_reject.tl|-|typecheck: unbound name Pass
+variant_expected_function_conflict_reject|check-fail|tests/safety/variant_expected_function_conflict_reject.tl|-|typecheck: ambiguous `Fail`: both the variant Outcome.Fail and a module-level declaration of that name are visible; qualify the variant
+variant_expected_struct_conflict_reject|check-fail|tests/safety/variant_expected_struct_conflict_reject.tl|-|typecheck: ambiguous `Pass`: both the variant Outcome.Pass and a module-level declaration of that name are visible; qualify the variant
+variant_payload_binder_reject|check-fail|tests/safety/variant_payload_binder_reject.tl|-|typecheck: pattern binder `Byte` spells a variant of the payload enum Width; write `(Byte)` to match that variant or rename the binder
+
+# Packed compiler state is addressed only through its schema's typed accessors (#7021).
+compiler_state_schema_ok|run-exit|tests/safety/compiler_state_schema_ok.tl|42|-
+compiler_state_schema_field_type_reject|check-fail|tests/safety/compiler_state_schema_field_type_reject.tl|-|let binding `text` type mismatch: expected String, found i64
+compiler_state_schema_init_type_reject|check-fail|tests/safety/compiler_state_schema_init_type_reject.tl|-|array assignment value type mismatch: expected i64, found String
+compiler_state_schema_untyped_field_reject|check-fail|tests/safety/compiler_state_schema_untyped_field_reject.tl|-|compiler-state-directory-schema: every field needs a type

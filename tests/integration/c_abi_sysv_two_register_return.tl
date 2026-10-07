@@ -39,15 +39,14 @@
     [mix-if : MixIF (mix-if-make 5)]
     [mix-fi : MixFI (mix-fi-make 7)]
     [floats : PairF64 (pair-f64-make 10)]
-    (begin
-      (unless (= pair.lo 14) (return 1))
-      (unless (= pair.hi 24) (return 2))
-      (unless (= pair-via-ptr.lo 36) (return 3))
-      (unless (= pair-via-ptr.hi 46) (return 4))
-      (unless (= mix-if.tag 8) (return 5))
-      (unless (= mix-if.value 9.0) (return 6))
-      (unless (= mix-fi.value 12.0) (return 7))
-      (unless (= mix-fi.tag 13) (return 8))
-      (unless (= floats.x 11.0) (return 9))
-      (unless (= floats.y 12.0) (return 10))
-      42)))
+    (unless (= pair.lo 14) (return 1))
+    (unless (= pair.hi 24) (return 2))
+    (unless (= pair-via-ptr.lo 36) (return 3))
+    (unless (= pair-via-ptr.hi 46) (return 4))
+    (unless (= mix-if.tag 8) (return 5))
+    (unless (= mix-if.value 9.0) (return 6))
+    (unless (= mix-fi.value 12.0) (return 7))
+    (unless (= mix-fi.tag 13) (return 8))
+    (unless (= floats.x 11.0) (return 9))
+    (unless (= floats.y 12.0) (return 10))
+    42))

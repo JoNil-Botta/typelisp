@@ -17,12 +17,11 @@
 (define (case-dynarray-elem) : bool
   (let
     [a : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-    (begin
-      (set! (array-ref a 2) 9)
-      (=
-        ((lambda () : i64
-            (array-ref a 2)))
-        9))))
+    (set! (array-ref a 2) 9)
+    (=
+      ((lambda () : i64
+          (array-ref a 2)))
+      9)))
 
 ; Mixed capture: a scalar and a String captured together.
 (define (case-mixed) : bool
@@ -35,8 +34,7 @@
       42)))
 
 (define (main) : i64
-  (begin
-    (unless (case-string-immediate) (return 1))
-    (unless (case-dynarray-elem) (return 2))
-    (unless (case-mixed) (return 3))
-    42))
+  (unless (case-string-immediate) (return 1))
+  (unless (case-dynarray-elem) (return 2))
+  (unless (case-mixed) (return 3))
+  42)

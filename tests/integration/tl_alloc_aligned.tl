@@ -72,14 +72,13 @@
         (= (- total-after total-before) payload)
         (= (- live-after live-before) (- expected-finish start))
         (= peak-after live-after))]
-    (begin
-      (unsafe
-        ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
-        (arena.set! home))
-      (unsafe
-        ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
-        (arena.destroy owner))
-      ok)))
+    (unsafe
+      ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
+      (arena.set! home))
+    (unsafe
+      ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
+      (arena.destroy owner))
+    ok))
 
 (define (rewind-reuses-aligned-start?) : bool
   (let
@@ -97,14 +96,13 @@
         (arena.rewind mark))]
     [second : i64 (tl_alloc_aligned 57 4096)]
     [ok : bool (and (= first second) (aligned? second 4096))]
-    (begin
-      (unsafe
-        ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
-        (arena.set! home))
-      (unsafe
-        ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
-        (arena.destroy owner))
-      ok)))
+    (unsafe
+      ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
+      (arena.set! home))
+    (unsafe
+      ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
+      (arena.destroy owner))
+    ok))
 
 (define (exact-end-fit-grows-afterward?) : bool
   (let
@@ -131,14 +129,13 @@
         (aligned? overflow 4096)
         (not (= overflow exact-end))
         (= root-after root))]
-    (begin
-      (unsafe
-        ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
-        (arena.set! home))
-      (unsafe
-        ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
-        (arena.destroy owner))
-      ok)))
+    (unsafe
+      ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
+      (arena.set! home))
+    (unsafe
+      ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
+      (arena.destroy owner))
+    ok))
 
 (defmacro (array-i64-address [items : Expr]) : i64
   `(unsafe
@@ -158,29 +155,27 @@
     [i : i64 0]
     [last : i64 0]
     [valid : bool true]
-    (begin
-      (unsafe
-        ;; lint-allow: raw-arena-op -- install the shared atomic arena in this worker.
-        (arena.tl_arena_set owner))
-      (while (< i 4096)
-        (let
-          [current : i64 (tl_alloc_aligned 17 64)]
-          (begin
-            (unsafe
-              (ptr-write! (ptr-offset context-ptr (+ i 1)) current))
-            (if (or
-              (not (aligned? current 64))
-              (and (not (= last 0)) (<= current last)))
-              (set! valid false)
-              unit)
-            (set! last current)
-            (set! i (+ i 1)))))
-      (unsafe
-        ;; lint-allow: raw-arena-op -- restore the worker's original arena.
-        (arena.tl_arena_set home))
-      (if valid
-        last
-        0))))
+    (unsafe
+      ;; lint-allow: raw-arena-op -- install the shared atomic arena in this worker.
+      (arena.tl_arena_set owner))
+    (while (< i 4096)
+      (let
+        [current : i64 (tl_alloc_aligned 17 64)]
+        (unsafe
+          (ptr-write! (ptr-offset context-ptr (+ i 1)) current))
+        (if (or
+          (not (aligned? current 64))
+          (and (not (= last 0)) (<= current last)))
+          (set! valid false)
+          unit)
+        (set! last current)
+        (set! i (+ i 1))))
+    (unsafe
+      ;; lint-allow: raw-arena-op -- restore the worker's original arena.
+      (arena.tl_arena_set home))
+    (if valid
+      last
+      0)))
 
 (define (atomic-records-nonoverlap?
   [left : (& left (__tl_dyn-array i64))]
@@ -190,103 +185,96 @@
     [right-index : i64 1]
     [previous : i64 0]
     [valid : bool true]
-    (begin
-      (while (or (< left-index 4097) (< right-index 4097))
-        (let
-          [take-left : bool
-            (and
-              (< left-index 4097)
-              (or
-                (>= right-index 4097)
-                (<= (array-ref left left-index) (array-ref right right-index))))]
-          [current : i64
-            (if take-left
-              (array-ref left left-index)
-              (array-ref right right-index))]
-          (begin
-            (if (or
-              (not (aligned? current 64))
-              (and (not (= previous 0)) (< current (+ previous 24))))
-              (set! valid false)
-              unit)
-            (set! previous current)
-            (if take-left
-              (set! left-index (+ left-index 1))
-              (set! right-index (+ right-index 1))))))
-      valid)))
+    (while (or (< left-index 4097) (< right-index 4097))
+      (let
+        [take-left : bool
+          (and
+            (< left-index 4097)
+            (or
+              (>= right-index 4097)
+              (<= (array-ref left left-index) (array-ref right right-index))))]
+        [current : i64
+          (if take-left
+            (array-ref left left-index)
+            (array-ref right right-index))]
+        (if (or
+          (not (aligned? current 64))
+          (and (not (= previous 0)) (< current (+ previous 24))))
+          (set! valid false)
+          unit)
+        (set! previous current)
+        (if take-left
+          (set! left-index (+ left-index 1))
+          (set! right-index (+ right-index 1)))))
+    valid))
 
 (define (joined-address [result : thread.ThreadJoinResult]) : i64
   (match result
-    [(thread.ThreadJoinOk value) value]
-    [(thread.ThreadJoinErr _) 0]))
+    [(ThreadJoinOk value) value]
+    [(ThreadJoinErr _) 0]))
 
 (define (atomic-contention-ok?) : bool
   (let
     [owner : arena.Arena (arena.make-atomic)]
     [context-a : (__tl_dyn-array i64) (__tl_make-array i64 4097)]
     [context-b : (__tl_dyn-array i64) (__tl_make-array i64 4097)]
-    (begin
-      (set! (array-ref context-a 0) (arena.raw-handle owner))
-      (set! (array-ref context-b 0) (arena.raw-handle owner))
-      (match (unsafe
-        (thread.spawn atomic-aligned-worker (array-i64-address context-a)))
-        [(thread.ThreadSpawnErr _) false]
-        [(thread.ThreadSpawnOk worker-a)
-          (match (unsafe
-            (thread.spawn atomic-aligned-worker (array-i64-address context-b)))
-            [(thread.ThreadSpawnErr _)
-              (begin
-                (unsafe
-                  (thread.join worker-a))
-                false)]
-            [(thread.ThreadSpawnOk worker-b)
-              (let
-                [address-a : i64
-                  (joined-address
-                    (unsafe
-                      (thread.join worker-a)))]
-                [address-b : i64
-                  (joined-address
-                    (unsafe
-                      (thread.join worker-b)))]
-                [ok : bool
-                  (and
-                    (not (= address-a 0))
-                    (not (= address-b 0))
-                    (not (= address-a address-b))
-                    (aligned? address-a 64)
-                    (aligned? address-b 64)
-                    (atomic-records-nonoverlap? (& context-a) (& context-b)))]
-                (begin
-                  (arena.destroy-safe! owner)
-                  ok))])]))))
+    (set! (array-ref context-a 0) (arena.raw-handle owner))
+    (set! (array-ref context-b 0) (arena.raw-handle owner))
+    (match (unsafe
+      (thread.spawn atomic-aligned-worker (array-i64-address context-a)))
+      [(ThreadSpawnErr _) false]
+      [(ThreadSpawnOk worker-a)
+        (match (unsafe
+          (thread.spawn atomic-aligned-worker (array-i64-address context-b)))
+          [(ThreadSpawnErr _)
+            (unsafe
+              (thread.join worker-a))
+            false]
+          [(ThreadSpawnOk worker-b)
+            (let
+              [address-a : i64
+                (joined-address
+                  (unsafe
+                    (thread.join worker-a)))]
+              [address-b : i64
+                (joined-address
+                  (unsafe
+                    (thread.join worker-b)))]
+              [ok : bool
+                (and
+                  (not (= address-a 0))
+                  (not (= address-b 0))
+                  (not (= address-a address-b))
+                  (aligned? address-a 64)
+                  (aligned? address-b 64)
+                  (atomic-records-nonoverlap? (& context-a) (& context-b)))]
+              (arena.destroy-safe! owner)
+              ok)])])))
 
 (define (poison-reset-reuses-aligned-start?) : bool
   (let
     [owner : arena.Arena (arena.make)]
     [home : arena.Arena (arena.current)]
-    (begin
-      (tl_arena_poison_enable)
+    (tl_arena_poison_enable)
+    (unsafe
+      ;; lint-allow: raw-arena-op -- isolate poisoned rewind behavior.
+      (arena.set! owner))
+    (let
+      [mark : arena.ArenaMark (arena.mark)]
+      [first : i64 (tl_alloc_aligned 257 4096)]
+      [_reset : unit
+        (unsafe
+          ;; lint-allow: raw-arena-op -- the fixture deliberately exercises rewind.
+          (arena.rewind mark))]
+      [second : i64 (tl_alloc_aligned 257 4096)]
+      [ok : bool (and (= first second) (aligned? second 4096))]
       (unsafe
-        ;; lint-allow: raw-arena-op -- isolate poisoned rewind behavior.
-        (arena.set! owner))
-      (let
-        [mark : arena.ArenaMark (arena.mark)]
-        [first : i64 (tl_alloc_aligned 257 4096)]
-        [_reset : unit
-          (unsafe
-            ;; lint-allow: raw-arena-op -- the fixture deliberately exercises rewind.
-            (arena.rewind mark))]
-        [second : i64 (tl_alloc_aligned 257 4096)]
-        [ok : bool (and (= first second) (aligned? second 4096))]
-        (begin
-          (unsafe
-            ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
-            (arena.set! home))
-          (unsafe
-            ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
-            (arena.destroy owner))
-          ok)))))
+        ;; lint-allow: raw-arena-op -- restore the caller before retiring owner.
+        (arena.set! home))
+      (unsafe
+        ;; lint-allow: raw-arena-op -- final retirement after restoring the caller.
+        (arena.destroy owner))
+      ok)))
 
 (define (main) : i64
   (cond

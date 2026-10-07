@@ -4,9 +4,8 @@
   (value i64))
 
 (define (increment-and-view [item : (&mut ElisionItem)]) : (& ElisionItem)
-  (begin
-    (set! item.value (+ item.value 1))
-    (& item)))
+  (set! item.value (+ item.value 1))
+  (& item))
 
 (define (same-value? [left : (& ElisionItem)] [right : (& ElisionItem)]) : bool
   (= left.value right.value))

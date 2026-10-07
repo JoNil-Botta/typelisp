@@ -6,13 +6,13 @@
 
 (define (parse-bits-eq? [text : String] [want : u64]) : bool
   (match (io.float-parse-f64 text)
-    [(io.IoFloatSomeF64 value) (= (io.float-f64-bits value) want)]
-    [(io.IoFloatNoF64) false]))
+    [(IoFloatSomeF64 value) (= (io.float-f64-bits value) want)]
+    [(IoFloatNoF64) false]))
 
 (define (parse-overflows? [text : String]) : bool
   (match (io.float-parse-f64 text)
-    [(io.IoFloatSomeF64 _) false]
-    [(io.IoFloatNoF64) true]))
+    [(IoFloatSomeF64 _) false]
+    [(IoFloatNoF64) true]))
 
 (define (parse-table-ok?) : bool
   (and

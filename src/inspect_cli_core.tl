@@ -18,8 +18,8 @@ Summary:
 (define (tlci-inspect-classification-name
   [image : (& image tlci_core.TlciImage)]) : String
   (match (tlci_core.tlci-image-classify image)
-    [(tlci_core.TlciImageClassification.MetadataOnly) "metadata-only"]
-    [(tlci_core.TlciImageClassification.CodeBearing) "code-bearing"]))
+    [(MetadataOnly) "metadata-only"]
+    [(CodeBearing) "code-bearing"]))
 
 (define (tlci-inspect-section-line [name : String] [offset : i64] [len : i64]) : String
   (str_cat.str-cat
@@ -63,33 +63,31 @@ Summary:
     [count : i64 (tlci_core.tlci-spmd-specializations-len items)]
     [index : i64 0]
     [out : String ""]
-    (begin
-      (while (< index count)
-        (let
-          [item : tlci_core.TlciSpmdSpecialization
-            (tlci_core.tlci-spmd-specializations-ref items index)]
-          (begin
-            (set!
-              out
-              (str_cat.str-cat
-                out
-                "    specialization: abi="
-                item.abi
-                " backend="
-                item.backend
-                " lanes="
-                (string.int->string item.lanes)
-                " args="
-                item.args
-                " result="
-                item.result
-                " index-param="
-                (string.int->string item.index-param)
-                " symbol="
-                item.symbol
-                "\n"))
-            (set! index (+ index 1)))))
-      out)))
+    (while (< index count)
+      (let
+        [item : tlci_core.TlciSpmdSpecialization
+          (tlci_core.tlci-spmd-specializations-ref items index)]
+        (set!
+          out
+          (str_cat.str-cat
+            out
+            "    specialization: abi="
+            item.abi
+            " backend="
+            item.backend
+            " lanes="
+            (string.int->string item.lanes)
+            " args="
+            item.args
+            " result="
+            item.result
+            " index-param="
+            (string.int->string item.index-param)
+            " symbol="
+            item.symbol
+            "\n"))
+        (set! index (+ index 1))))
+    out))
 
 (define (tlci-inspect-spmd-callables
   [items : (& items tlci_core.TlciSpmdCallables)]) : String
@@ -97,24 +95,22 @@ Summary:
     [count : i64 (tlci_core.tlci-spmd-callables-len items)]
     [index : i64 0]
     [out : String ""]
-    (begin
-      (while (< index count)
-        (let
-          [item : tlci_core.TlciSpmdCallable
-            (tlci_core.tlci-spmd-callables-ref items index)]
-          (begin
-            (set!
-              out
-              (str_cat.str-cat
-                out
-                "  helper: name="
-                item.name
-                " signature="
-                item.signature
-                "\n"
-                (tlci-inspect-spmd-specializations item.specializations)))
-            (set! index (+ index 1)))))
-      out)))
+    (while (< index count)
+      (let
+        [item : tlci_core.TlciSpmdCallable
+          (tlci_core.tlci-spmd-callables-ref items index)]
+        (set!
+          out
+          (str_cat.str-cat
+            out
+            "  helper: name="
+            item.name
+            " signature="
+            item.signature
+            "\n"
+            (tlci-inspect-spmd-specializations item.specializations)))
+        (set! index (+ index 1))))
+    out))
 
 (define (tlci-inspect-spmd-section
   [metadata : (& metadata tlci_core.TlciMetadata)]) : String
@@ -126,7 +122,7 @@ Summary:
 
 (define (tlci-inspect-source-binding [rodata : (__tl_dyn-array u8)]) : String
   (match (tlci_core.tlci-package-source-binding-read rodata)
-    [(tlci_core.TlciPackageSourceBindingRead.Bound digest)
+    [(Bound digest)
       (str_cat.str-cat
         "source-set-binding-schema: "
         (string.int->string
@@ -135,15 +131,15 @@ Summary:
         "source-set-digest: "
         (string.int->string digest)
         "\n")]
-    [(tlci_core.TlciPackageSourceBindingRead.MissingOrLegacy)
+    [(MissingOrLegacy)
       "source-set-binding-schema: missing-or-legacy\nsource-set-digest: unavailable\n"]
-    [(tlci_core.TlciPackageSourceBindingRead.UnsupportedSchema schema)
+    [(UnsupportedSchema schema)
       (str_cat.str-cat
         "source-set-binding-schema: unsupported ("
         (string.int->string schema)
         ")\n"
         "source-set-digest: unavailable\n")]
-    [(tlci_core.TlciPackageSourceBindingRead.Malformed message)
+    [(Malformed message)
       (str_cat.str-cat
         "source-set-binding-schema: malformed\n"
         "source-set-digest: unavailable\n"
@@ -156,9 +152,8 @@ Summary:
   [rodata : (& rodata (__tl_dyn-array u8))]
   [kind : i64]) : String
   (match (tlci_core.tlci-aux-find rodata kind)
-    [(tlci_core.ResultTlciAuxLookup.Missing)
-      (str_cat.str-cat name ": missing\n")]
-    [(tlci_core.ResultTlciAuxLookup.Err message)
+    [(Missing) (str_cat.str-cat name ": missing\n")]
+    [(Err message)
       (str_cat.str-cat
         (owned_view.compiler-owned-shared-view name)
         ": malformed\n"
@@ -166,7 +161,7 @@ Summary:
         "-error: "
         message
         "\n")]
-    [(tlci_core.ResultTlciAuxLookup.Ok schema payload)
+    [(Ok schema payload)
       (str_cat.str-cat
         name
         ": present schema-version="
@@ -292,46 +287,39 @@ Summary:
   [bytes : (__tl_dyn-array u8)]) : i64
   (match (tlci_core.tlci-parse-image
     (owned_view.compiler-owned-shared-view bytes))
-    [(tlci_core.ResultTlciImage.Err message)
-      (begin
-        (io.print-error (tlci-inspect-error path message))
-        1)]
-    [(tlci_core.ResultTlciImage.Ok image)
-      (begin
-        (io.print-format "{}" (tlci-inspect-render bytes image))
-        0)]))
+    [(Err message)
+      (io.print-error (tlci-inspect-error path message))
+      1]
+    [(Ok image)
+      (io.print-format "{}" (tlci-inspect-render bytes image))
+      0]))
 
 (cfg
   (not embedded-stdlib-tlci)
   (define (tlci-inspect-embedded-stdlib) : i64
-    (begin
-      (io.print-error
-        (tlci-inspect-error
-          "embedded:stdlib.tlci"
-          "embedded stdlib tlci is unavailable in this compiler build"))
-      1)))
+    (io.print-error
+      (tlci-inspect-error
+        "embedded:stdlib.tlci"
+        "embedded stdlib tlci is unavailable in this compiler build"))
+    1))
 
 (cfg
   embedded-stdlib-tlci
   (define (tlci-inspect-embedded-stdlib) : i64
     (match (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-validate)
-      [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Err
-          message)
-        (begin
-          (io.print-error (tlci-inspect-error "embedded:stdlib.tlci" message))
-          1)]
-      [(compiler_embedded_stdlib_tlci.CompilerEmbeddedStdlibTlciValidation.Ok
-          count)
-        (begin
-          (io.print-format
-            "{}"
-            (str_cat.str-cat
-              "embedded-loader-macro-count: "
-              (string.int->string count)
-              "\n"))
-          (tlci-inspect-render-bytes
-            "embedded:stdlib.tlci"
-            (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy)))])))
+      [(Err message)
+        (io.print-error (tlci-inspect-error "embedded:stdlib.tlci" message))
+        1]
+      [(Ok count)
+        (io.print-format
+          "{}"
+          (str_cat.str-cat
+            "embedded-loader-macro-count: "
+            (string.int->string count)
+            "\n"))
+        (tlci-inspect-render-bytes
+          "embedded:stdlib.tlci"
+          (compiler_embedded_stdlib_tlci.compiler-embedded-stdlib-tlci-copy))])))
 
 (define (tlci-inspect-run-from [idx : i64] [count : i64]) : i64
   (if (not (= count (+ idx 1)))
@@ -343,10 +331,8 @@ Summary:
       (if (string.eq path "embedded:stdlib.tlci")
         (tlci-inspect-embedded-stdlib)
         (match (io.try-read-file (& path))
-          [(io.ErrIoBytes error)
-            (begin
-              (io.print-error
-                (tlci-inspect-error path (io.error-message error)))
-              1)]
-          [(io.OkIoBytes contents)
+          [(ErrIoBytes error)
+            (io.print-error (tlci-inspect-error path (io.error-message error)))
+            1]
+          [(OkIoBytes contents)
             (tlci-inspect-render-bytes path (byte_buf.to-array contents))])))))

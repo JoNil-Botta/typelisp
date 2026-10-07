@@ -29,6 +29,15 @@ Shared emission reads those facts and never tests the target itself.
 enforces the boundary; [`src/TESTING.md`](../src/TESTING.md) (*Cross-Target
 Codegen Parity*) describes its rules.
 
+The freestanding Linux runtime installs a zeroed TLS mapping before global
+initializers and at each native worker entry. FS:0 holds the mapping's thread
+pointer; named TPOFF relocations locate the arena pointer, optional backtrace
+bounds and one private storage word. `tl_thread_local_word_addr` exposes that
+word through an unsafe native declaration. Its address belongs to the calling
+thread, survives arena changes and must never escape to another thread.
+Issue [#8638](https://github.com/JoNil-Botta/typelisp/issues/8638) consumes this
+primitive for the private I/O error channel; Windows uses its native TLS API.
+
 `compiler_module_name.tl` owns the complete dotted import-name contract used by
 both the parser and LSP: nonempty components, no path separators or colon, and
 no final `.tl` suffix. It preserves the existing byte-level name predicate;
@@ -76,6 +85,28 @@ borrowed-Slice boundaries even on default native declarations. The broader
 explicit-C ABI checker remains separate because private runtime declarations
 also use native contracts outside the ordinary C signature subset.
 
+Borrowed pattern bindings share one type/lowering contract:
+`tc-borrowed-binding-type` copies `Copy` parts, projects boxed storage as a
+shared reference, and otherwise retains a reference to the part. Lowering uses
+`lower-borrowed-binding-expr` for enum, struct, tuple and array name patterns;
+memory-class copies need independent storage, while String references load the
+stored handle before forming a `str` view. Scalar enum copies may retain their
+payload address only when `lower-deferred-copy-scan` proves every read precedes
+any possible memory write. Calls, stores and cleanup boundaries invalidate that
+proof; loops, captures, address-taking and unmodeled uses require an eager copy.
+Deferred IDs name fresh locals and keep their by-value type. Reading one emits
+a load, and borrowing one first copies the loaded value into its own storage.
+
+A direct call argument may explicitly borrow a temporary. Its operand is a
+by-value position evaluated in argument order, and its reserved lifetime ends
+with the call. Typechecking rejects any result or mutable referent that could
+retain that lifetime. The nested-call record is restored on both success and
+error. Lowering keeps storage through the call and records owned cleanup in
+the existing `LowerArgWriteback` sequence, reloading mutable register-class
+storage before cleanup. Such a call cannot become a tail call. A later argument
+that can leave early is rejected when it would bypass an earlier temporary's
+cleanup; cleanup-containing aggregates without their own disposer are rejected.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM
@@ -83,6 +114,15 @@ alias. `compiler-reg-vector-reduce-mask-scratch?` owns this shape distinction,
 and emission takes the mask from the scavenger as a third XMM scratch that
 excludes the source, accumulator and sibling. AVX-512 native min/max and the
 other reduction shapes use two scratch registers.
+
+IR type rendering takes the compile's structural-session handle and type-pool
+segment bases. `Var` and `VarArgs` names, like lifetime names, may carry either
+source intern IDs or hygienic syntax IDs. `compiler-ir-syntax-name-render`
+checks both the raw and decoded ID domains through that session before any
+intern-pool read; opaque, unresolved, stale and wrong-owner IDs render as `<id:N>`.
+Recursive type rendering retains both owners through nested pointer, slice,
+function and nominal arguments. The compatibility type-name entry deliberately
+uses the installed structural owner through the zero-handle adapter.
 
 A function's frame is laid out before its body is emitted. Below the slot and
 maximum callee-save area it holds, from the top down: the SIMD staging region,
@@ -102,6 +142,13 @@ over every instruction) sizes the staging region to the largest request.
   no region.
 - Each staged route claims its bytes. A claim beyond the plan fails at its
   instruction, and the region the body used must equal the plan (#7497).
+
+A function body's blocks are one dense `CompilerIrBlockSeq`:
+`CompilerIrBlockList` has only its `Array` arm. Walkers borrow the live blocks
+as a slice (`compiler-ir-block-list-view`) and match it with slice patterns.
+Passes that rebuild a body push into one `CompilerIrBlockBuilder` sized from
+their input. Appending a list copies it, so a walk must not append each block's
+rewrite onto an already-built rest.
 
 Every `CompilerIrFunction` states its calling convention as a
 `CompilerIrFunctionAbi`: `Ordinary`, or `SpmdPrivate` for a generated
@@ -150,6 +197,68 @@ storage pointer and static length, and rebinds the name to it for the body.
 The view aliases the array, so element accesses and bounds checks are
 unchanged; any other occurrence keeps the array binding, and a shared reference
 never gets a writable view (#8346).
+
+Under debug info (`--debug`), lowering also builds the debug type graph
+(#8237): one target-independent description of every type a debug binding can
+have, which the DWARF and CodeView emitters lower without reconstructing a
+layout or asking the typechecker. Until the binding table (#8236) lands, its
+roots are every function's parameter and result types and every `let`
+binding's type, interned in lowering order into a job-owned
+`CompilerLowerState` cell in the job's own arena. Nodes (`CompilerDebugTypeNode`
+in `compiler_ir_types.tl`) are dense and preordered: scalars; structs and
+tuples with field offsets and register-resident words; enums with an i64 tag
+at offset 0 and variants in declaration (tag) order with payload offsets;
+fixed arrays; pointers; `{data, len}` views for borrowed Slices and bytes;
+handles to a `{data, len}` header for String, str, dynamic arrays and borrows
+of str or a dynamic array; function pointers; and forward nodes, so a nominal
+type reached again while its own layout is being built never forms a cycle.
+Every struct and enum layout comes from `tc-inline-aggregate-layout-for-id`,
+and tuple offsets follow lowering's own addressing. `--debug --verify-ir`
+re-checks each node against independent typechecker queries (type size and
+alignment, member offsets looked up by name, tuple offsets from the
+typechecker's sizes) and fails the compile on the first disagreement. Without
+debug info nothing is recorded.
+
+Borrowing a dynamic-array element or enum payload loads the descriptor handle
+from its one-word storage slot through the shared slot-reference helper.
+Inline aggregate payloads keep their storage address. Element bounds checks
+precede the handle load, so an invalid outer index cannot read a slot.
+
+A rank-2 `foreach` is `AstForeach.Foreach2` (surface schema 16, expression
+tag 89): the outer coordinate's name, type and bounds, then the inner one's,
+then the body, so binding order and ordinal survive every AST walker. The
+SPMD checker binds both coordinates varying and read-only with role
+`ForeachCoordinate ordinal begin end body-id`; the inner role carries the
+header's inner bounds when each is a literal or a variable the body never
+assigns. The body id lets the proof reject uniform offsets that change
+between instances, including assignments from `foreach-active`. Offset
+expressions use the shared child schema and accept only closed scalar
+operations over literals and unassigned outer bindings; memory reads and
+calls need a scalar captured before the domain.
+While a rank-2 coordinate is local, destination and masked-branch indexes go
+through the row-major proof (`tc-spmd-row-major-index?`) instead of the
+rank-1 rule; a nested domain marks the coordinates outer and a helper argument
+drops the role, so neither can prove a row-major write. `lower-foreach2`
+desugars the domain to private bound locals, emptiness tests, checked span and
+product traps, and nested `while` loops in every backend mode (#7190); native
+row-local gangs are #7191.
+
+Borrowed aggregate patterns share `lower-bind-element-access`: a String name
+binding loads the stored handle to expose a `str` view, while nested aggregate
+patterns retain the address of inline storage. Struct fields follow the same
+access rule as tuple slots and array elements, preserving the borrow lifetime.
+
+The lowerer's job state, `CompilerLowerState`, is a one-word handle to a
+directory of typed cells, one per field, so an access reads one directory word
+and the cell and never copies the wide state. The fields are declared once, as
+`[name : Type init]` clauses, by `compiler-state-directory-schema`
+(`compiler_state_schema.tl`, #7021). That schema generates the only code that
+addresses the cells: a typed reader and writer per field
+(`compiler-lower-state-NAME`, `compiler-lower-state-set-NAME!`), the slot
+count, the constructor, and the per-field fingerprints the state-isolation
+tests compare. A call site cannot pair a slot with the wrong type, and adding
+or reordering a field updates every derived item. The safety fixtures
+`compiler_state_schema_*` check the generator on a small synthetic schema.
 
 The lowerer's checked expression dispatcher delegates complete families to
 focused helpers. The [expression-family ledger](../docs/compiler-lowering-dispatch.md)
@@ -216,6 +325,59 @@ by a store handle or node address cannot match a later fork reallocated at the
 same address, and clears the unbound-name suggestion snapshot that names the
 fork.
 
+Checked semantic consumers use `compiler_semantic_lint_facts.CompilerSemanticCheckRequest`
+for a source, file, or package entry. The request carries the existing job,
+cfgs and roots, a caller-owned facts arena, and a borrowed consumer callback.
+`checked-generated-source` is the caller's assertion that the physical input is
+a checked-in generated file; generated declarations and expression expansions
+remain synthetic. The collector supplies `compiler_check_core.CompilerObservedCheckRequest`, which
+runs the canonical checked-program pipeline once and invokes publication before
+checker pools retire. The ordinary CLI does not import the collector module.
+The observer belongs to the shared context, separately from the hot body-analysis
+descriptor. Context rebuilds carry it explicitly, including a suppressed probe.
+It is installed only in the final checked context, and is removed before checker
+state or facts storage can be retired. Macro probes and discarded
+speculative checks cannot publish observations. A disabled observer allocates no
+snapshot, walks no additional AST, and does not extend body-fact lifetimes.
+A balanced count of observed jobs lets disabled hooks skip observer state reads.
+Nested jobs preserve that count; their own context still selects the observer. Binding
+token capture samples its parse-control option at the existing capture boundary
+and saves/restores it with that scope, so disabled token hooks inspect no dispatch
+views or source tokens.
+
+`compiler_semantic_lint_facts.CompilerSemanticFacts` is a read-only capability.
+Count and lookup operations return owned records in the consumer's active arena;
+the capability itself is valid only until its request's facts arena is destroyed.
+Consumers finish the callback, destroy that arena before the next entry, and use
+the host driver's normal file-job cleanup for checker, pool and interner owners.
+The owned driver scope is exercised by the batch lifetime test. The check result
+contains diagnostics and advisories, never a facts or checker capability.
+
+Expression IDs, function indexes, declaration ordinals and lexical scope IDs are
+local to one snapshot. Persistent consumers derive anchors from owned module,
+name, path and declaring-token spans rather than retaining those ordinals or a
+`TcTypeEnv`. Shared resolver hooks publish the selected lookup key or member
+handle, including definition-site macro hygiene. Scoped bindings retain their
+per-job stack epoch, slot and generation together, so temporary SPMD imports cannot overwrite
+an active slot version and recycled slots cannot identify an older local. Declaring
+spans come from opt-in parser tokens and the checked initializer's source span;
+checker markers and imported captured bindings do not create declarations.
+Let scopes use their body IDs, which survive by-value SPMD rechecks. Rechecking a
+source body for SPMD reuses its source-function identity. `try` compatibility
+uses `tc-try-query`; foreach and SPMD bodies forbid early exit, while a nested
+lambda establishes a new return owner. Observed SPMD classification calls keep
+that policy scope around by-value operand rechecks, including let initializers;
+the scope is tied to its function owner and closes on both success and error.
+
+Source and exact macro-argument provenance can authorize edits only when the
+expression also has a reliable result and a complete source span. Unknown,
+synthetic, unresolved, poisoned and dependent facts fail closed. A failed check
+after observing poison is dependent rather than a new unresolved primary error. An imported
+generated nominal may have an owned declaration identity without an editable
+defining-token span. The snapshot retains no pooled types, intern spellings,
+parser sidecars or mutable checker environments. Lint policy and command/LSP
+adoption are separate consumers of this interface.
+
 File, package, check, test and semantic-index entry points pass their actual cfg
 environment through the lowerer/typecheck interfaces; a cache-scope String is
 only an identity key and cannot replace those semantic inputs.
@@ -249,16 +411,30 @@ scanning returns. Token literal payloads remain in their source/interner
 owners, so growth preserves records and indices without retaining all previous
 capacities. The spanned reader pool is the only s-expression tree; plain data
 reads (lockfiles, TLCI metadata) use its `data-result` mode. It also owns
-declaration/member origins. Its load handoff transfers the live prefix into an
-exclusive owner without changing row ids. Subsequent node growth moves both
-rows and live builders to a replacement owner with bounded slack, then destroys
-the old owner. Reset revokes exclusive ownership before another load session
-can share the reader arena; pre-handoff growth must preserve that shared arena.
-The final handoff compacts the prefix again after lowering. The compile-profile
-verifier checks retained arena bytes before that compaction, and
-`src/tests/scan_storage_growth.tl` covers relocation, current-owner retirement,
-failed reads and shared-session reuse. Whole-load scan release empties the
+declaration/member origins. Rows live in fixed 1024-row segments that never
+move or get freed while the pool is live, so a borrowed view of a list's
+children stays valid while the parser and the macro expander keep pushing rows.
+A list never straddles a segment (the rows it skips hold an inert filler), and
+a list longer than a segment gets one dedicated array. Truncated long-list
+storage reuses a sufficiently large array found in its covered directory slots,
+restoring fragmented mappings. Long arrays grow geometrically, keeping both
+repeated and increasing forms' storage bounded. The load handoff copies
+the live prefix into an exclusive owner, in whole segments, without changing
+row ids; a handoff is the only point where rows move. Subsequent growth appends
+segments to that owner. Reset revokes exclusive ownership before another load
+session can share the reader arena; pre-handoff growth must preserve that
+shared arena. The final handoff compacts the prefix again after lowering. The
+compile-profile verifier checks retained arena bytes before that compaction,
+and `src/tests/scan_storage_growth.tl` covers retained growth in place, the
+handoff's owner retirement, failed reads and shared-session reuse. Whole-load scan release empties the
 token scratch, while reusable sessions retain their current capacity.
+
+Reader rows are Copy. `Sym`, `Str`, `Int` and `Float` rows carry intern ids,
+so a row's text lives as long as the active intern table, not as a String the
+row owns. Origin records are written and scanned by marker id (reset-aware
+builtin ids). The views render Int and Float text as a shared view of the
+interned spelling. A consumer that keeps a spelling past an intern reset copies
+it out, as the parser's literal AST nodes do (`reader.sp-text-copy`).
 
 The IR source-span table (`CompilerSourceSpans`) keeps two dense lists of flat
 inline records: function entries (symbol, path id, span; 32 bytes) and
@@ -534,6 +710,19 @@ Logical traversal stays newest-first; CSR emission reads physical slots in
 oldest-first order directly, without constructing reversed intermediate lists.
 The integer-sequence and CSR tests cover growth, branches, duplicates and offsets.
 
+Copy environments use a dense `OptCopyEntry` array, a snapshot length and
+an arena-allocated lineage top cell. Slots beneath every retained snapshot
+remain immutable. Push appends at the current top with spare capacity; extending
+an older snapshot copies its live prefix. Growth shallow-copies compiler arena
+values using their inline layout size. Zeroed empty snapshots skip their null
+top until allocating storage. Truncate clamps its mark and declares every
+longer snapshot dead; only consumed block-local clears use it. Invalidation
+first checks for a retired destination/source, returns unchanged snapshots when
+none exists, and otherwise copies retained facts in order. Lookups stay newest
+first and preserve local IDs, negative global keys and pack-word keys. The copy
+environment smoke covers growth, wide entries, forks, zeroed storage, clears,
+source invalidation and retained snapshots.
+
 LICM moves a load only with evidence that its word is readable at the
 preheader. The strongest is that the loop reads it on every entry anyway: in
 the header, or a block the header's chain of unconditional jumps enters, before
@@ -548,9 +737,21 @@ joins with a literal arm are never evidence. An enum pointer spans only its tag
 word, because a nullary variant is an 8-byte tag global. Global extents and
 value representations are captured at program entry, before inlining, so the
 priced and final pipelines see the same roots. A block holding an
-always-failing literal bounds check hoists nothing. The `licm-deref` optimizer
-test and `tests/integration/licm_raw_deref.tl` guard these rules; #8124 tracks
-a checked pointer loaded speculatively from an enum payload.
+always-failing literal bounds check hoists nothing.
+
+A checked pointer loaded from a root is a root in turn, because safe code writes
+every word outside an enum's payload only with its declared type. A payload
+word holds a pointer only under the tag the source tested, so a speculated
+checked-pointer load also needs every word it reads to be type-stable in the
+root's object (#8124). Lowering records one stable-word mask per nominal type
+on the representation index, from the typecheck layouts, before the driver
+releases them. An enum has only its tag word stable unless it has one variant,
+and a type with no recorded mask is all unstable. Parameters and globals take
+the mask of what they point at, homes and elements that of the value they hold,
+and a frame object that of its typed base copy. Global masks are captured with
+the global extents. The `licm-deref` and `licm-payload` optimizer tests,
+`tests/integration/licm_raw_deref.tl` and
+`tests/integration/licm_payload_speculation.tl` guard these rules.
 
 An element read refused only for want of that bound can still leave a counting
 loop whose one exit is the latch's, behind the bound its own check tests. When
@@ -588,9 +789,8 @@ These internal shallow reads require valid storage and an index below logical le
 The instruction helpers remain authoritative for effects and provenance. Root
 updates retain forward order and both existing passes; unresolved candidates and
 successful predicates stop before reading later blocks. No scanner mutates block
-storage or consumes spare capacity. The linked/dense/mixed differential fixture
-covers retained inputs, delayed definitions, unstable bindings and early exits;
-this traversal optimization leaves the wider block-storage migration in #5729 open.
+storage or consumes spare capacity. The `call-memory-dense-scan` test covers
+delayed definitions, unstable bindings and early exits.
 
 Affine folding keeps one mutable fact table per function: local vreg IDs index
 compact binding slots, and only live bindings are scanned for key/base
@@ -621,6 +821,28 @@ retaining capacity without scanning it; generation rollover resets all stamps.
 Entries are added only after a lookup miss, so live keys are unique. No caller
 retains an older table or a view across vector growth.
 
+Aggregate scalar replacement tracks each eight-byte word as either one scalar
+or disjoint, naturally aligned integer/bool lanes. Every access to a lane must
+agree on its type. Whole-word accesses and copies covering a lane word refuse
+the candidate, because padding bytes have no scalar representation. Refused
+candidates never index the fixed-size word table. The aggregate-split tests
+cover lane folding, overlapping accesses and copies across lane words.
+
+Register-group splitting also accepts a single-definition phi when every input
+is a variable and every use extracts a word. It emits scalar definitions in
+the predecessor blocks and lets SSA repair join them. An input pack may supply
+its operands directly only when those operands are literals or have one
+definition; otherwise the edge extracts the original group value. Escaping
+group joins retain their aggregate representation.
+
+The multiblock inliner admits known one-word nominal results and register groups
+within the group splitter's word limit, using the installed program
+representation index. Unknown representations stay out of line. CFG cleanup
+may merge a split loop test or a straight scalar loop chain while preserving
+phi predecessor keys; those loop-shape merges stay disabled in the inliner's
+priced pipeline. The range-loop integration and assembly cases check the
+resulting code and preserve located bounds failures.
+
 The level-2 inline stage rewrites each caller inside one phase of a scratch
 arena and keeps only the caller's final body, cloned through the job's explicit
 pools, and the span rows its rewrite added; the phase is rewound before the
@@ -638,12 +860,11 @@ no body the loop reads, and no second whole-program copy overlaps it. Level 1
 has no input arena and reads the tiny-leaf stage's arena in place.
 
 The checked inliner's literal-argument scan borrows dense block storage directly.
-It visits blocks and instructions in forward order without building linked
+It visits blocks and instructions in forward order without building
 copies. Its result includes every matching definition and the last integer
 literal, even after a duplicate makes specialization ineligible. Keep traversal
 separate from that admission decision; stopping the scan early changes its
-recorded result. This read-only path does not change block ownership or the
-remaining mixed block-list representation.
+recorded result. This read-only path does not change block ownership.
 
 Register analyses share one ownership budget: the conservative number of
 32-bit-set words per instruction is compared against 32,768 words (256 KiB),
@@ -735,6 +956,15 @@ these semantic flags even when the aggregates have identical ABI. The existing
 AST wrapper, surface roundtrip, and specialization selftests guard these rules;
 serialized metadata changes also require a surface-AST schema version change.
 
+`AstExpr.While` keeps its direct body forms in an `AstExprList` (surface AST
+schema 17). Typechecking requires each form to be unit-valued and locates a
+mismatch at that form. An explicit `Begin` remains one body form and may discard
+its non-final values. Shared child traversal, quasiquote, hygiene and declaration
+serialization preserve the ordered list; lowering and ownership analyses reuse
+the existing sequence handling. The public comptime `expr-while` builder keeps
+its one expression as a singleton list. Native quasiquote uses the same host
+callback with its body-list flag so it agrees with interpreted expansion.
+
 `Module` and `Decls` macro output share `macro-wrap-generated-decls` in
 `compiler_typecheck_core.tl`. Ordinary generated imports carry namespace effects
 without a visible declaration name; retain their generated metadata so the
@@ -818,8 +1048,8 @@ Structured object branches reuse flags only from the immediately preceding
 integer comparison in the same IR block, when that comparison defines the
 branch operand. Its `setcc`, zero extension and frame store preserve flags;
 floating comparisons and intervening instructions invalidate this fact.
-Fallthrough uses the next block in emission order, including dense block
-sequences. The absent-next-block sentinel cannot match a branch target; an
+Fallthrough uses the next block in emission order. The absent-next-block
+sentinel cannot match a branch target; an
 invalid target must remain an unresolved edge for the serializer to reject.
 Phi copies remain edge-specific: a conditional jump selects the
 false copies, and the true copies must jump past them before entering their
@@ -827,6 +1057,14 @@ successor. `Jcc` accepts only x86 condition codes 0–15. Its six-byte encoding
 places the rel32 field at byte 2; ELF, COFF and native TLCI relocation use that
 same site. The object branch tests check all conditions, forward/backward
 targets, invalid codes and unresolved symbols across these serializers.
+
+Both installed and explicit type pools preserve canonical IDs while their
+private hash indexes grow. At half occupancy they rehash the immutable prefix
+in the pool's base arena, including when the pending push finds an existing ID.
+The replacement descriptor and backing storage survive caller scratch resets;
+index growth never changes node IDs or publishes into a different pool owner.
+At the maximum index capacity both append paths retain the raw-append fallback.
+
 
 Expression node IDs belong to an AST pool. Literal analysis in
 `compiler_typecheck_core.tl` snapshots the context's expression owner for its
@@ -1003,6 +1241,25 @@ bounded by caller limits. Reading is pure; resolving the names against profile
 roots and recording them in the link manifest belongs to #8304. The fixtures
 under `tests/fixtures/linker-scripts/` are real installed scripts with their
 provenance.
+
+`src/linker_version_map.tl` reuses that scanner for the bounded VERSION-map
+grammar: named nodes, inheritance from an earlier node, an anonymous sole node,
+ordered exact global/local names, and `local: *`. Colon is a separator only in
+this grammar, so implicit-script paths retain their spelling. Duplicate bound
+names, other globs, expressions and extern-language blocks fail with source,
+line and column. Byte/token limits bound scanning; node/symbol and work limits
+also bound retained output and name comparisons. #8263's C-export script and
+#8293's provider resolver consume this pure parser.
+
+`src/linker_elf_version_codec.tl` encodes and decodes the little-endian Versym,
+Verdef/Verdaux and Verneed/Vernaux sections for #8293 and #7042's DSO row.
+Callers supply dynstr and metadata counts explicitly. The codec validates
+ranges, disjoint record ownership, relative chains, counts, ELF name hashes,
+the combined version-index namespace, and the required DSO BASE definition.
+Its models retain physical offsets and padding outside records, preserving
+both GNU ld's interleaved and lld's grouped Verneed layout. Counts, sizes, name
+lengths and work have caller bounds; no component performs I/O or owns linker
+state. The public ELF name hash is reusable by #8296's dynamic-section codec.
 
 The fresh-artifact pipeline prepares the runtime once for checked-surface
 capture, then passes that same result to artifact finishing. Finishers accept

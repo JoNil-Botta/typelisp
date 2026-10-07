@@ -29,8 +29,8 @@
     (if (= remaining 0)
       (winsock-measure-now)
       (match (winsock.winsock-acquire)
-        [(winsock.WinsockAcquireErr _) -1]
-        [(winsock.WinsockAcquired lease)
+        [(WinsockAcquireErr _) -1]
+        [(WinsockAcquired lease)
           (with
             ([owned lease winsock.cleanup-winsock-lease])
             (winsock-measure-warm-end (- remaining 1)))]))))
@@ -52,8 +52,8 @@
         [first-start : i64 (winsock-measure-now)]
         [first-end : i64
           (match (winsock.winsock-acquire)
-            [(winsock.WinsockAcquireErr _) -1]
-            [(winsock.WinsockAcquired lease)
+            [(WinsockAcquireErr _) -1]
+            [(WinsockAcquired lease)
               (with
                 ([owned lease winsock.cleanup-winsock-lease])
                 (winsock-measure-now))])]

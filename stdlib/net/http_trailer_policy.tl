@@ -181,18 +181,16 @@
   (let
     [index : i64 0]
     [forbidden : bool false]
-    (begin
-      (while (and (< index (forbidden-trailer-name-count)) (not forbidden))
-        (let
-          [spelling : String (forbidden-trailer-name index)]
-          [spelling-bytes : (& spelling bytes)
-            (byte_buf.str-as-bytes (& spelling))]
-          (begin
-            (if (http_types.bytes-eq-ascii-case name spelling-bytes)
-              (set! forbidden true)
-              unit)
-            (set! index (+ index 1)))))
-      forbidden)))
+    (while (and (< index (forbidden-trailer-name-count)) (not forbidden))
+      (let
+        [spelling : String (forbidden-trailer-name index)]
+        [spelling-bytes : (& spelling bytes)
+          (byte_buf.str-as-bytes (& spelling))]
+        (if (http_types.bytes-eq-ascii-case name spelling-bytes)
+          (set! forbidden true)
+          unit)
+        (set! index (+ index 1))))
+    forbidden))
 
 ;: True when a checked header name is forbidden in a trailer section.
 (define (trailer-name-forbidden? [name : (& name http_types.HttpHeaderName)]) : bool
@@ -213,30 +211,26 @@
   (let
     [index : i64 0]
     [valid : bool (> (byte_buf.bytes-length name) 0)]
-    (begin
-      (while (and valid (< index (byte_buf.bytes-length name)))
-        (begin
-          (if (not (http_types.token-byte? (byte_buf.bytes-ref name index)))
-            (set! valid false)
-            unit)
-          (set! index (+ index 1))))
-      valid)))
+    (while (and valid (< index (byte_buf.bytes-length name)))
+      (if (not (http_types.token-byte? (byte_buf.bytes-ref name index)))
+        (set! valid false)
+        unit)
+      (set! index (+ index 1)))
+    valid))
 
 ;: True when stored policy bytes already use deterministic lowercase ASCII.
 (define (trailer-name-normalized? [name : (& name bytes)]) : bool
   (let
     [index : i64 0]
     [normalized : bool true]
-    (begin
-      (while (and normalized (< index (byte_buf.bytes-length name)))
-        (begin
-          (if (=
-            (byte_buf.bytes-ref name index)
-            (http_types.ascii-lower (byte_buf.bytes-ref name index)))
-            unit
-            (set! normalized false))
-          (set! index (+ index 1))))
-      normalized)))
+    (while (and normalized (< index (byte_buf.bytes-length name)))
+      (if (=
+        (byte_buf.bytes-ref name index)
+        (http_types.ascii-lower (byte_buf.bytes-ref name index)))
+        unit
+        (set! normalized false))
+      (set! index (+ index 1)))
+    normalized))
 
 ;: Return the first policy index matching name bytes, or `-1` when absent.
 (define (trailer-policy-find-unchecked
@@ -245,19 +239,17 @@
   (let
     [index : i64 0]
     [found : i64 -1]
-    (begin
-      (while (and (< index policy.len) (< found 0))
-        (let
-          [entry : (& policy HttpTrailerPolicyEntry)
-            (& (array-ref policy.slots index))]
-          [stored : (& policy bytes)
-            (http_types.header-name-bytes (& entry.name))]
-          (begin
-            (if (http_types.bytes-eq-ascii-case stored name)
-              (set! found index)
-              unit)
-            (set! index (+ index 1)))))
-      found)))
+    (while (and (< index policy.len) (< found 0))
+      (let
+        [entry : (& policy HttpTrailerPolicyEntry)
+          (& (array-ref policy.slots index))]
+        [stored : (& policy bytes)
+          (http_types.header-name-bytes (& entry.name))]
+        (if (http_types.bytes-eq-ascii-case stored name)
+          (set! found index)
+          unit)
+        (set! index (+ index 1))))
+    found))
 
 ;: Validate the representational invariants of a possibly directly-constructed
 ;: policy before any indexed access is trusted.
@@ -266,53 +258,49 @@
     [valid : bool (trailer-policy-limits-valid? (& policy.limits))]
     [index : i64 0]
     [computed-total : i64 0]
-    (begin
-      (if (or
-        (< policy.len 0)
-        (> policy.len (array-length policy.slots))
-        (> policy.len policy.limits.max-entries)
-        (< policy.total-name-bytes 0)
-        (> policy.total-name-bytes policy.limits.max-total-name-bytes))
-        (set! valid false)
-        unit)
-      (while (and valid (< index policy.len))
-        (let
-          [entry : (& policy HttpTrailerPolicyEntry)
-            (& (array-ref policy.slots index))]
-          [name : (& policy bytes)
-            (http_types.header-name-bytes (& entry.name))]
-          [name-len : i64 (byte_buf.bytes-length name)]
-          [prior : i64 0]
-          (begin
-            (if (or
-              (> name-len policy.limits.max-name-bytes)
-              (not (trailer-name-syntax-valid? name))
-              (not (trailer-name-normalized? name))
-              (trailer-name-forbidden-bytes? name))
+    (if (or
+      (< policy.len 0)
+      (> policy.len (array-length policy.slots))
+      (> policy.len policy.limits.max-entries)
+      (< policy.total-name-bytes 0)
+      (> policy.total-name-bytes policy.limits.max-total-name-bytes))
+      (set! valid false)
+      unit)
+    (while (and valid (< index policy.len))
+      (let
+        [entry : (& policy HttpTrailerPolicyEntry)
+          (& (array-ref policy.slots index))]
+        [name : (& policy bytes) (http_types.header-name-bytes (& entry.name))]
+        [name-len : i64 (byte_buf.bytes-length name)]
+        [prior : i64 0]
+        (if (or
+          (> name-len policy.limits.max-name-bytes)
+          (not (trailer-name-syntax-valid? name))
+          (not (trailer-name-normalized? name))
+          (trailer-name-forbidden-bytes? name))
+          (set! valid false)
+          unit)
+        (while (and valid (< prior index))
+          (let
+            [other : (& policy HttpTrailerPolicyEntry)
+              (& (array-ref policy.slots prior))]
+            [other-name : (& policy bytes)
+              (http_types.header-name-bytes (& other.name))]
+            (if (http_types.bytes-eq-ascii-case other-name name)
               (set! valid false)
               unit)
-            (while (and valid (< prior index))
-              (let
-                [other : (& policy HttpTrailerPolicyEntry)
-                  (& (array-ref policy.slots prior))]
-                [other-name : (& policy bytes)
-                  (http_types.header-name-bytes (& other.name))]
-                (begin
-                  (if (http_types.bytes-eq-ascii-case other-name name)
-                    (set! valid false)
-                    unit)
-                  (set! prior (+ prior 1)))))
-            (set!
-              computed-total
-              (bounded-add
-                computed-total
-                name-len
-                policy.limits.max-total-name-bytes))
-            (if (< computed-total 0)
-              (set! valid false)
-              unit)
-            (set! index (+ index 1)))))
-      (and valid (= computed-total policy.total-name-bytes)))))
+            (set! prior (+ prior 1))))
+        (set!
+          computed-total
+          (bounded-add
+            computed-total
+            name-len
+            policy.limits.max-total-name-bytes))
+        (if (< computed-total 0)
+          (set! valid false)
+          unit)
+        (set! index (+ index 1))))
+    (and valid (= computed-total policy.total-name-bytes))))
 
 ;: Number of approved extension names. Directly-constructed corrupt policies
 ;: are rejected by construction/validation APIs before this accessor is used.
@@ -386,49 +374,41 @@
             (__tl_make-array HttpTrailerPolicyEntry (+ policy.len 1))]
           [normalized : byte_buf.ByteBuf (byte_buf.with-capacity name-len)]
           [index : i64 0]
-          (begin
-            (while (< index policy.len)
-              (begin
-                (set!
-                  (array-ref slots index)
-                  (clone (array-ref policy.slots index)))
-                (set! index (+ index 1))))
-            (set! index 0)
-            (while (< index name-len)
-              (begin
-                (set!
-                  normalized
-                  (byte_buf.push
-                    normalized
-                    (http_types.ascii-lower
-                      (byte_buf.bytes-ref name-bytes index))))
-                (set! index (+ index 1))))
+          (while (< index policy.len)
             (set!
-              (array-ref slots policy.len)
-              (HttpTrailerPolicyEntry
-                (http_types.HttpHeaderName normalized)
-                sensitivity
-                multiplicity))
-            (HttpTrailerPolicyAddOk
-              (HttpTrailerPolicy
-                slots
-                (+ policy.len 1)
-                next-total
-                policy.limits))))])))
+              (array-ref slots index)
+              (clone (array-ref policy.slots index)))
+            (set! index (+ index 1)))
+          (set! index 0)
+          (while (< index name-len)
+            (set!
+              normalized
+              (byte_buf.push
+                normalized
+                (http_types.ascii-lower (byte_buf.bytes-ref name-bytes index))))
+            (set! index (+ index 1)))
+          (set!
+            (array-ref slots policy.len)
+            (HttpTrailerPolicyEntry
+              (http_types.HttpHeaderName normalized)
+              sensitivity
+              multiplicity))
+          (HttpTrailerPolicyAddOk
+            (HttpTrailerPolicy slots (+ policy.len 1) next-total policy.limits)))])))
 
 ;: True when two closed sensitivity values agree.
 (define (trailer-sensitivity-eq?
   [left : http_types.HttpHeaderSensitivity]
   [right : http_types.HttpHeaderSensitivity]) : bool
   (match left
-    [(http_types.HttpHeaderPublic)
+    [(HttpHeaderPublic)
       (match right
-        [(http_types.HttpHeaderPublic) true]
-        [(http_types.HttpHeaderSensitive) false])]
-    [(http_types.HttpHeaderSensitive)
+        [(HttpHeaderPublic) true]
+        [(HttpHeaderSensitive) false])]
+    [(HttpHeaderSensitive)
       (match right
-        [(http_types.HttpHeaderPublic) false]
-        [(http_types.HttpHeaderSensitive) true])]))
+        [(HttpHeaderPublic) false]
+        [(HttpHeaderSensitive) true])]))
 
 ;: True when field name already appeared before `end` in wire order.
 (define (trailer-name-seen-before?
@@ -438,19 +418,17 @@
   (let
     [index : i64 0]
     [seen : bool false]
-    (begin
-      (while (and (< index end) (not seen))
-        (let
-          [prior : (& fields http_types.HttpHeaderField)
-            (& (array-ref fields.slots index))]
-          [prior-name : (& fields bytes)
-            (http_types.header-name-bytes (& prior.name))]
-          (begin
-            (if (http_types.bytes-eq-ascii-case prior-name name)
-              (set! seen true)
-              unit)
-            (set! index (+ index 1)))))
-      seen)))
+    (while (and (< index end) (not seen))
+      (let
+        [prior : (& fields http_types.HttpHeaderField)
+          (& (array-ref fields.slots index))]
+        [prior-name : (& fields bytes)
+          (http_types.header-name-bytes (& prior.name))]
+        (if (http_types.bytes-eq-ascii-case prior-name name)
+          (set! seen true)
+          unit)
+        (set! index (+ index 1))))
+    seen))
 
 ;: Classify one syntactically checked trailer name through the shared closed
 ;: policy. `field-index` is the insertion position in `fields`, so only the
@@ -545,78 +523,73 @@
         [failed : bool false]
         [failure : HttpTrailerError
           (HttpTrailerError (HttpTrailerInvalidFieldCollection) 0 0)]
-        (begin
-          (while (and (< index fields.len) (not failed))
-            (let
-              [field : (& fields http_types.HttpHeaderField)
-                (& (array-ref fields.slots index))]
-              [name : (& fields bytes)
-                (http_types.header-name-bytes (& field.name))]
-              [value : (& fields bytes)
-                (http_types.header-value-bytes (& field.value))]
-              [name-len : i64 (byte_buf.bytes-length name)]
-              [value-len : i64 (byte_buf.bytes-length value)]
-              [line-size-0 : i64
-                (bounded-add name-len 2 limits.max-total-bytes)]
-              [line-size-1 : i64
-                (bounded-add line-size-0 value-len limits.max-total-bytes)]
-              [line-size-2 : i64
-                (bounded-add line-size-1 2 limits.max-total-bytes)]
-              [next-total : i64
-                (bounded-add total line-size-2 limits.max-total-bytes)]
-              (match (http_types.validate-typed-field field total limits)
-                [(http_types.HttpTypedFieldErr error)
+        (while (and (< index fields.len) (not failed))
+          (let
+            [field : (& fields http_types.HttpHeaderField)
+              (& (array-ref fields.slots index))]
+            [name : (& fields bytes)
+              (http_types.header-name-bytes (& field.name))]
+            [value : (& fields bytes)
+              (http_types.header-value-bytes (& field.value))]
+            [name-len : i64 (byte_buf.bytes-length name)]
+            [value-len : i64 (byte_buf.bytes-length value)]
+            [line-size-0 : i64 (bounded-add name-len 2 limits.max-total-bytes)]
+            [line-size-1 : i64
+              (bounded-add line-size-0 value-len limits.max-total-bytes)]
+            [line-size-2 : i64
+              (bounded-add line-size-1 2 limits.max-total-bytes)]
+            [next-total : i64
+              (bounded-add total line-size-2 limits.max-total-bytes)]
+            (match (http_types.validate-typed-field field total limits)
+              [(HttpTypedFieldErr error)
+                (set!
+                  failure
+                  (HttpTrailerError
+                    (HttpTrailerInvalidField (clone error.kind))
+                    index
+                    error.offset))
+                (set! failed true)]
+              [(HttpTypedFieldOk)
+                (if (< next-total 0)
                   (begin
                     (set!
                       failure
                       (HttpTrailerError
-                        (HttpTrailerInvalidField (clone error.kind))
+                        (HttpTrailerFieldBytesExceeded)
                         index
-                        error.offset))
-                    (set! failed true))]
-                [(http_types.HttpTypedFieldOk)
-                  (if (< next-total 0)
-                    (begin
-                      (set!
-                        failure
-                        (HttpTrailerError
-                          (HttpTrailerFieldBytesExceeded)
-                          index
-                          limits.max-total-bytes))
-                      (set! failed true))
-                    (match (trailer-field-disposition
-                      policy
-                      fields
-                      index
-                      name
-                      declared
-                      require-declared
-                      total)
-                      [(HttpTrailerFieldDispositionErr error)
-                        (begin
-                          (set! failure error)
-                          (set! failed true))]
-                      [(HttpTrailerFieldDispositionOk sensitivity)
-                        (if (not
+                        limits.max-total-bytes))
+                    (set! failed true))
+                  (match (trailer-field-disposition
+                    policy
+                    fields
+                    index
+                    name
+                    declared
+                    require-declared
+                    total)
+                    [(HttpTrailerFieldDispositionErr error)
+                      (set! failure error)
+                      (set! failed true)]
+                    [(HttpTrailerFieldDispositionOk sensitivity)
+                      (when
+                        (not
                           (trailer-sensitivity-eq?
                             sensitivity
                             (clone field.sensitivity)))
-                          (begin
-                            (set!
-                              failure
-                              (HttpTrailerError
-                                (HttpTrailerSensitivityMismatch)
-                                index
-                                total))
-                            (set! failed true))
-                          unit)]))])
-              (if (not failed)
-                (set! total next-total)
-                unit)
-              (set! index (+ index 1))))
-          (if failed
-            (HttpTrailerValidationErr failure)
-            (HttpTrailerValidationOk))))]))
+                        (set!
+                          failure
+                          (HttpTrailerError
+                            (HttpTrailerSensitivityMismatch)
+                            index
+                            total))
+                        (set! failed true))]))])
+            (if (not failed)
+              (set! total next-total)
+              unit)
+            (set! index (+ index 1))))
+        (if failed
+          (HttpTrailerValidationErr failure)
+          (HttpTrailerValidationOk)))]))
 
 ;: Validate request trailers, requiring independent normalized declaration
 ;: membership for every policy-approved field.

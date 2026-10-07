@@ -11,10 +11,9 @@
   (let
     [index : i64 start]
     [length : i64 (string.string-length manifest)]
-    (begin
-      (while (and (< index length) (!= (string.string-ref manifest index) '\n'))
-        (set! index (+ index 1)))
-      index)))
+    (while (and (< index length) (!= (string.string-ref manifest index) '\n'))
+      (set! index (+ index 1)))
+    index))
 
 (define (embedded-stdlib-verify-trim-cr [line : String]) : String
   (let
@@ -29,9 +28,8 @@
       (byte_buf.to-string (io.read-file (str_cat.str-cat "stdlib/" suffix)))]
     (match (embedded.compiler-embedded-stdlib-lookup
       (string.substring suffix 0 (string.string-length suffix)))
-      [(embedded.CompilerEmbeddedStdlibSomeSource actual)
-        (string.eq expected actual)]
-      [(embedded.CompilerEmbeddedStdlibNoSource) false])))
+      [(CompilerEmbeddedStdlibSomeSource actual) (string.eq expected actual)]
+      [(CompilerEmbeddedStdlibNoSource) false])))
 
 (define (embedded-stdlib-verify-lines [manifest : String] [start : i64]) : bool
   (if (>= start (string.string-length manifest))

@@ -39,87 +39,80 @@
   (let
     [home : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
-    (begin
-      (unsafe
-        (arena.tl_arena_set owner))
-      ;; Fill the 64 MiB root without touching its payload pages, then force
-      ;; one overflow segment. Public current remains the stable `owner` root.
-      (compiler-driver-smoke-runtime-alloc 67108800)
-      (compiler-driver-smoke-runtime-alloc 8)
+    (unsafe
+      (arena.tl_arena_set owner))
+    ;; Fill the 64 MiB root without touching its payload pages, then force
+    ;; one overflow segment. Public current remains the stable `owner` root.
+    (compiler-driver-smoke-runtime-alloc 67108800)
+    (compiler-driver-smoke-runtime-alloc 8)
+    (let
+      [stable? : bool (= (arena.tl_arena_current) owner)]
+      (driver.compiler-driver-restore-arena-owner-current! owner)
       (let
-        [stable? : bool (= (arena.tl_arena_current) owner)]
-        (begin
-          (driver.compiler-driver-restore-arena-owner-current! owner)
-          (let
-            [preserved? : bool (= (arena.tl_arena_current) owner)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set home))
-              (driver.compiler-driver-restore-arena-owner-current! owner)
-              (let
-                [resumed? : bool (= (arena.tl_arena_current) owner)]
-                (begin
-                  (unsafe
-                    (arena.tl_arena_set home)
-                    (arena.tl_arena_destroy owner))
-                  (and stable? preserved? resumed?))))))))))
+        [preserved? : bool (= (arena.tl_arena_current) owner)]
+        (unsafe
+          (arena.tl_arena_set home))
+        (driver.compiler-driver-restore-arena-owner-current! owner)
+        (let
+          [resumed? : bool (= (arena.tl_arena_current) owner)]
+          (unsafe
+            (arena.tl_arena_set home)
+            (arena.tl_arena_destroy owner))
+          (and stable? preserved? resumed?))))))
 
 (define (compiler-driver-lower-name-store-owner-current-ok?) : bool
   (let
     [home : i64 (arena.tl_arena_current)]
     [owner : i64 (arena.tl_arena_make)]
-    (begin
+    (unsafe
+      (arena.tl_arena_set owner))
+    ;; Advance this owner beyond its root before constructing the store. Arena
+    ;; handles are stable roots (#6285): growth keeps the public handle valid,
+    ;; and add-segment! allocates through in-arena on that root.
+    (compiler-driver-smoke-runtime-alloc 67108800)
+    (compiler-driver-smoke-runtime-alloc 8)
+    (let
+      [store : (Box lower.LowerNameStore) (box (lower.lower-name-store-new))]
+      [store-owner : i64 (__tl-project-field (__tl-box-place store) arena)]
       (unsafe
-        (arena.tl_arena_set owner))
-      ;; Advance this owner beyond its root before constructing the store. Arena
-      ;; handles are stable roots (#6285): growth keeps the public handle valid,
-      ;; and add-segment! allocates through in-arena on that root.
-      (compiler-driver-smoke-runtime-alloc 67108800)
-      (compiler-driver-smoke-runtime-alloc 8)
+        (arena.tl_arena_set home))
+      (lower.lower-name-store-add-segment! (&mut (__tl-box-place store)))
       (let
-        [store : (Box lower.LowerNameStore) (box (lower.lower-name-store-new))]
-        [store-owner : i64 (__tl-project-field (__tl-box-place store) arena)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set home))
-          (lower.lower-name-store-add-segment! (&mut (__tl-box-place store)))
-          (let
-            [home-restored? : bool (= (arena.tl_arena_current) home)]
-            [segment-count : i64
-              (__tl-project-field (__tl-box-place store) segment-count)]
-            (begin
-              (unsafe
-                (arena.tl_arena_set home)
-                (arena.tl_arena_destroy owner))
-              (and (= store-owner owner) home-restored? (= segment-count 2)))))))))
+        [home-restored? : bool (= (arena.tl_arena_current) home)]
+        [segment-count : i64
+          (__tl-project-field (__tl-box-place store) segment-count)]
+        (unsafe
+          (arena.tl_arena_set home)
+          (arena.tl_arena_destroy owner))
+        (and (= store-owner owner) home-restored? (= segment-count 2))))))
 
 (define (lower-symbol-smoke-extern-metadata
   [link-id : i64]
   [matches-source : bool]) : ast.AstExternMetadata
-  (ast.AstExternMetadata.Metadata
-    (ast.AstExternAbi.C)
+  (Metadata
+    (C)
     (ci.intern-id-from-renderable link-id)
     (ast.ast-extern-link-input-list-new)
     (ast.ast-extern-metadata-flags false matches-source)
-    ast.AstImportedSpmdMetadata.No))
+    No))
 
 (define (lower-symbol-smoke-parsed-extern-match?
   [source : String]
   [want : bool]) : bool
   (match (compiler_parse_core.parse-ast-source source)
-    [(compiler_parse_core.ResultAstProgram.Ok program)
+    [(Ok program)
       (match program
-        [(ast.AstProgram.Program decls-box)
+        [(Program decls-box)
           (let
             [decls : ast.AstDeclList (deref decls-box)]
             (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-              [(ast.AstDecl.Extern _ _ _ metadata _)
+              [(Extern _ _ _ metadata _)
                 (=
                   (ast.ast-extern-metadata-symbol-matches-source?
                     (deref metadata))
                   want)]
               [_ false]))])]
-    [(compiler_parse_core.ResultAstProgram.Err _) false]))
+    [(Err _) false]))
 
 (define (lower-symbol-smoke-ok?) : bool
   (let
@@ -127,188 +120,185 @@
     [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
     [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
     [ok : bool true]
-    (begin
+    (set!
+      ok
+      (and
+        ok
+        (lower-symbol-smoke-parsed-extern-match?
+          "(extern same-name (:symbol \"same-name\") : i64)"
+          true)
+        (lower-symbol-smoke-parsed-extern-match?
+          "(extern source-name (:symbol \"link-name\") : i64)"
+          false)))
+    (ci.intern-compat-state-capture-from-globals! (&mut home))
+    (ci.intern-compat-state-install! state-a)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (let
+      [lower-state : lower.CompilerLowerState (lower.compiler-lower-state-new)]
+      [source-id : i64 (ci.intern "same-name")]
+      [module-id : i64 (ci.intern "identity-module")]
+      [link-id : i64 (ci.intern-generated-name "same-name")]
+      [opaque-logical-id : i64 (ci.intern-generated-name "same-name")]
+      [module-logical-id : i64
+        (compiler_symbols.compiler-symbol-module-key-id-by-id
+          module-id
+          source-id)]
+      [module-name : String
+        (compiler_symbols.compiler-symbol-module-key
+          "identity-module"
+          "same-name")]
+      [root-env : lower.LowerNameEnv
+        (lower.lower-name-env-add-module-binding-id
+          Nil
+          ""
+          (compiler_symbols.compiler-symbol-root-module-id)
+          "same-name"
+          source-id
+          "same-name"
+          source-id
+          true)]
+      [root-cache : lower.LowerNameCache
+        (lower.lower-name-cache-from-env lower-state root-env)]
+      [entry-main-source-id : i64 (ci.intern-generated-name "main")]
+      [entry-main-env : lower.LowerNameEnv
+        (lower.lower-name-env-add-decl-module-binding-id
+          lower-state
+          Nil
+          "entry.tl"
+          "entry.tl"
+          ""
+          (compiler_symbols.compiler-symbol-root-module-id)
+          "main"
+          entry-main-source-id)]
+      [entry-main-cache : lower.LowerNameCache
+        (lower.lower-name-cache-from-env lower-state entry-main-env)]
+      [stale-main-symbol-id : i64
+        (ci.intern-generated-name "package-entry-main")]
+      [stale-main-cache : lower.LowerNameCache
+        (lower.lower-name-cache-from-env
+          lower-state
+          (lower.lower-name-env-bind-logical-symbol-id
+            entry-main-source-id
+            cbi.compiler-builtin-id-fix-main
+            stale-main-symbol-id
+            Nil))]
+      [derived-env : lower.LowerNameEnv
+        (compiler_lower_tests.lower-name-env-bind-logical-id
+          source-id
+          "same-name"
+          opaque-logical-id
+          Nil)]
+      ;; A composite module key can numerically equal the source key passed
+      ;; through a later boundary, but it is not an interned symbol id.
       (set!
         ok
         (and
           ok
-          (lower-symbol-smoke-parsed-extern-match?
-            "(extern same-name (:symbol \"same-name\") : i64)"
-            true)
-          (lower-symbol-smoke-parsed-extern-match?
-            "(extern source-name (:symbol \"link-name\") : i64)"
-            false)))
-      (ci.intern-compat-state-capture-from-globals! (&mut home))
-      (ci.intern-compat-state-install! state-a)
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (let
-        [lower-state : lower.CompilerLowerState
-          (lower.compiler-lower-state-new)]
-        [source-id : i64 (ci.intern "same-name")]
-        [module-id : i64 (ci.intern "identity-module")]
-        [link-id : i64 (ci.intern-generated-name "same-name")]
-        [opaque-logical-id : i64 (ci.intern-generated-name "same-name")]
-        [module-logical-id : i64
-          (compiler_symbols.compiler-symbol-module-key-id-by-id
-            module-id
-            source-id)]
-        [module-name : String
-          (compiler_symbols.compiler-symbol-module-key
-            "identity-module"
-            "same-name")]
-        [root-env : lower.LowerNameEnv
-          (lower.lower-name-env-add-module-binding-id
-            lower.LowerNameEnv.Nil
-            ""
-            (compiler_symbols.compiler-symbol-root-module-id)
-            "same-name"
-            source-id
-            "same-name"
-            source-id
-            true)]
-        [root-cache : lower.LowerNameCache
-          (lower.lower-name-cache-from-env lower-state root-env)]
-        [entry-main-source-id : i64 (ci.intern-generated-name "main")]
-        [entry-main-env : lower.LowerNameEnv
-          (lower.lower-name-env-add-decl-module-binding-id
-            lower-state
-            lower.LowerNameEnv.Nil
-            "entry.tl"
-            "entry.tl"
-            ""
-            (compiler_symbols.compiler-symbol-root-module-id)
-            "main"
-            entry-main-source-id)]
-        [entry-main-cache : lower.LowerNameCache
-          (lower.lower-name-cache-from-env lower-state entry-main-env)]
-        [stale-main-symbol-id : i64
-          (ci.intern-generated-name "package-entry-main")]
-        [stale-main-cache : lower.LowerNameCache
-          (lower.lower-name-cache-from-env
-            lower-state
-            (lower.lower-name-env-bind-logical-symbol-id
-              entry-main-source-id
-              cbi.compiler-builtin-id-fix-main
-              stale-main-symbol-id
-              lower.LowerNameEnv.Nil))]
-        [derived-env : lower.LowerNameEnv
-          (compiler_lower_tests.lower-name-env-bind-logical-id
-            source-id
-            "same-name"
-            opaque-logical-id
-            lower.LowerNameEnv.Nil)]
-        (begin
-          ;; A composite module key can numerically equal the source key passed
-          ;; through a later boundary, but it is not an interned symbol id.
-          (set!
-            ok
-            (and
-              ok
-              (not
-                (lower.lower-logical-symbol-id-direct?
-                  module-logical-id
-                  module-logical-id))
-              (=
-                (lower.lower-extern-logical-symbol-id
-                  lower-state
-                  source-id
-                  "same-name"
-                  source-id
-                  (lower-symbol-smoke-extern-metadata source-id true))
-                source-id)
-              (=
-                (lower.lower-extern-logical-symbol-id
-                  lower-state
-                  source-id
-                  "same-name"
-                  source-id
-                  (lower-symbol-smoke-extern-metadata link-id true))
-                link-id)
-              (=
-                (lower.lower-extern-logical-symbol-id
-                  lower-state
-                  source-id
-                  "same-name"
-                  source-id
-                  (lower-symbol-smoke-extern-metadata link-id false))
-                source-id)))
-          (let
-            [module-symbol : i64
-              (lower.lower-extern-logical-symbol-id
-                lower-state
-                module-logical-id
-                (owned_view.compiler-owned-shared-view module-name)
-                source-id
-                (lower-symbol-smoke-extern-metadata link-id true))]
-            (unless (not (= module-symbol link-id)) (set! ok false))
-            (unless
-              (string.eq
-                (compiler_ir_types.compiler-ir-symbol-text module-symbol)
-                module-name)
-              (set! ok false)))
-          (set!
-            ok
-            (and
-              ok
-              (=
-                (lower.lower-name-cache-lookup-symbol-id
-                  (& root-cache)
-                  source-id
-                  -1)
-                source-id)
-              ;; Entry-main's fixed logical ID can differ from the current parsed
-              ;; source symbol after state reuse. Preserve the typed entry-main
-              ;; decision while selecting the active source symbol for emission.
-              (not (= entry-main-source-id cbi.compiler-builtin-id-fix-main))
-              (=
-                (lower.lower-name-cache-lookup-symbol-id
-                  (& entry-main-cache)
-                  cbi.compiler-builtin-id-fix-main
-                  -1)
-                entry-main-source-id)
-              (=
-                (lower.lower-decl-function-symbol-id
-                  stale-main-cache
-                  cbi.compiler-builtin-id-fix-main
-                  entry-main-source-id
-                  "main")
-                entry-main-source-id)))
-          (match (lower.lower-name-env-view derived-env)
-            [(lower.LowerNameEnvView.Bind _ logical-id symbol-id _)
-              (set!
-                ok
-                (and
-                  ok
-                  (= logical-id opaque-logical-id)
-                  (not (= symbol-id opaque-logical-id))
-                  (string.eq
-                    (compiler_ir_types.compiler-ir-symbol-text symbol-id)
-                    "same-name")))]
-            [_ (set! ok false)])))
-      (ci.intern-compat-state-install! state-b)
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (let
-        [source-id : i64 (ci.intern "other-name")]
-        [link-id : i64 (ci.intern-generated-name "other-name")]
-        [lower-state-b : lower.CompilerLowerState
-          (lower.compiler-lower-state-new-with-intern-state
-            (ci.intern-compat-state-capture-active))]
-        (unless
+          (not
+            (lower.lower-logical-symbol-id-direct?
+              module-logical-id
+              module-logical-id))
           (=
             (lower.lower-extern-logical-symbol-id
-              lower-state-b
+              lower-state
               source-id
-              "other-name"
+              "same-name"
+              source-id
+              (lower-symbol-smoke-extern-metadata source-id true))
+            source-id)
+          (=
+            (lower.lower-extern-logical-symbol-id
+              lower-state
+              source-id
+              "same-name"
               source-id
               (lower-symbol-smoke-extern-metadata link-id true))
             link-id)
+          (=
+            (lower.lower-extern-logical-symbol-id
+              lower-state
+              source-id
+              "same-name"
+              source-id
+              (lower-symbol-smoke-extern-metadata link-id false))
+            source-id)))
+      (let
+        [module-symbol : i64
+          (lower.lower-extern-logical-symbol-id
+            lower-state
+            module-logical-id
+            (owned_view.compiler-owned-shared-view module-name)
+            source-id
+            (lower-symbol-smoke-extern-metadata link-id true))]
+        (unless (not (= module-symbol link-id)) (set! ok false))
+        (unless
+          (string.eq
+            (compiler_ir_types.compiler-ir-symbol-text module-symbol)
+            module-name)
           (set! ok false)))
-      (ci.intern-compat-state-install! home)
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      ok)))
+      (set!
+        ok
+        (and
+          ok
+          (=
+            (lower.lower-name-cache-lookup-symbol-id
+              (& root-cache)
+              source-id
+              -1)
+            source-id)
+          ;; Entry-main's fixed logical ID can differ from the current parsed
+          ;; source symbol after state reuse. Preserve the typed entry-main
+          ;; decision while selecting the active source symbol for emission.
+          (not (= entry-main-source-id cbi.compiler-builtin-id-fix-main))
+          (=
+            (lower.lower-name-cache-lookup-symbol-id
+              (& entry-main-cache)
+              cbi.compiler-builtin-id-fix-main
+              -1)
+            entry-main-source-id)
+          (=
+            (lower.lower-decl-function-symbol-id
+              stale-main-cache
+              cbi.compiler-builtin-id-fix-main
+              entry-main-source-id
+              "main")
+            entry-main-source-id)))
+      (match (lower.lower-name-env-view derived-env)
+        [(Bind _ logical-id symbol-id _)
+          (set!
+            ok
+            (and
+              ok
+              (= logical-id opaque-logical-id)
+              (not (= symbol-id opaque-logical-id))
+              (string.eq
+                (compiler_ir_types.compiler-ir-symbol-text symbol-id)
+                "same-name")))]
+        [_ (set! ok false)]))
+    (ci.intern-compat-state-install! state-b)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (let
+      [source-id : i64 (ci.intern "other-name")]
+      [link-id : i64 (ci.intern-generated-name "other-name")]
+      [lower-state-b : lower.CompilerLowerState
+        (lower.compiler-lower-state-new-with-intern-state
+          (ci.intern-compat-state-capture-active))]
+      (unless
+        (=
+          (lower.lower-extern-logical-symbol-id
+            lower-state-b
+            source-id
+            "other-name"
+            source-id
+            (lower-symbol-smoke-extern-metadata link-id true))
+          link-id)
+        (set! ok false)))
+    (ci.intern-compat-state-install! home)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    ok))
 
 ;; Derived logical symbols are minted into the IR's own growable table, not the
 ;; intern pool's generated lane, whose fixed ceiling a whole-program compile's
@@ -325,8 +315,8 @@
 (define (first [x : i64]) : i64 (shared x))
 (define (second [x : i64]) : i64 (shared (first x)))
 (define (main) : i64 (+ (first 1) (second 2)))")
-        [(compiler_backend.ResultCompilerBackend.Ok _) true]
-        [(compiler_backend.ResultCompilerBackend.Err _) false])]
+        [(Ok _) true]
+        [(Err _) false])]
     [lane-after-compile : i64 (ci.intern-generated-count)]
     [derived-after-compile : i64
       (compiler_ir_types.compiler-ir-symbol-count-value)]
@@ -342,23 +332,21 @@
       (= derived-after-mint (+ derived-after-compile 1)))))
 
 (define (compiler-lower-symbol-identity-smoke-main) : i64
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (unless
-      (lower-symbol-smoke-ok?)
-      (io.panic "lower: typed symbol identity smoke mismatch"))
-    (unless
-      (lower-symbol-generated-lane-budget-ok?)
-      (io.panic "lower: derived symbol generated-lane budget exceeded"))
-    42))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (unless
+    (lower-symbol-smoke-ok?)
+    (io.panic "lower: typed symbol identity smoke mismatch"))
+  (unless
+    (lower-symbol-generated-lane-budget-ok?)
+    (io.panic "lower: derived symbol generated-lane budget exceeded"))
+  42)
 
 (define (compiler-driver-pic-smoke-roots) : svec.Vec
   (let
     [roots : svec.Vec (svec.new)]
-    (begin
-      (svec.push-ref! (&mut roots) "stdlib")
-      (svec.push-ref! (&mut roots) "../stdlib")
-      roots)))
+    (svec.push-ref! (&mut roots) "stdlib")
+    (svec.push-ref! (&mut roots) "../stdlib")
+    roots))
 
 (define (compiler-driver-pic-smoke-contains?
   [text : (& text str)]
@@ -369,8 +357,8 @@
   [paths : ast.AstDeclPathList]
   [needle : String]) : bool
   (match (ast.ast-decl-path-list-step paths)
-    [(ast.AstDeclPathListStep.Nil) false]
-    [(ast.AstDeclPathListStep.Cons path rest)
+    [(Nil) false]
+    [(Cons path rest)
       (or
         (compiler-driver-pic-smoke-contains?
           (& path)
@@ -390,11 +378,11 @@
   (in-arena
     caller
     (match (compiler-driver-load-runtime-prelude-cache-miss key roots cfgs)
-      [(compiler_load.ResultCompilerLoadWithPaths.Ok _ paths _ _)
+      [(Ok _ paths _ _)
         (and
           (= (arena.tl_arena_current) caller-handle)
           (compiler-driver-pic-smoke-paths-contain? paths "stdlib/runtime.tl"))]
-      [(compiler_load.ResultCompilerLoadWithPaths.Err _) false])))
+      [(Err _) false])))
 
 (define (compiler-driver-runtime-prelude-cache-arena-scope-ok?) : bool
   (let
@@ -415,15 +403,14 @@
         roots
         cfgs)]
     [home-restored? : bool (= (arena.tl_arena_current) home-handle)]
-    (begin
-      (arena.destroy-safe! caller)
-      (match (driver.compiler-driver-runtime-prelude-cache-lookup key)
-        [(compiler_load.CompilerLoadPreludeCacheHit _ paths _ _)
-          (and
-            scoped-ok?
-            home-restored?
-            (compiler-driver-pic-smoke-paths-contain? paths "stdlib/runtime.tl"))]
-        [(compiler_load.CompilerLoadPreludeCacheMiss) false]))))
+    (arena.destroy-safe! caller)
+    (match (driver.compiler-driver-runtime-prelude-cache-lookup key)
+      [(CompilerLoadPreludeCacheHit _ paths _ _)
+        (and
+          scoped-ok?
+          home-restored?
+          (compiler-driver-pic-smoke-paths-contain? paths "stdlib/runtime.tl"))]
+      [(CompilerLoadPreludeCacheMiss) false])))
 
 (define (compiler-driver-pic-smoke-output-ok?
   [output : compiler_backend.CompilerBackendPicOutput]) : bool
@@ -450,11 +437,10 @@
     true
     (compiler-driver-pic-smoke-roots)
     (compiler_optimize.compiler-optimize-default-level)
-    (compiler_backend.CompilerBackendMode.Scalar)
+    (Scalar)
     (compiler_cfg_core.compiler-cfg-empty))
-    [(driver.ResultCompilerDriverPic.Ok output _)
-      (compiler-driver-pic-smoke-output-ok? output)]
-    [(driver.ResultCompilerDriverPic.Err _ _) false]))
+    [(Ok output _) (compiler-driver-pic-smoke-output-ok? output)]
+    [(Err _ _) false]))
 
 (define (compiler-driver-pic-smoke-core-macros-ok?
   [target : compiler_backend.CompilerBackendTarget]) : bool
@@ -470,8 +456,8 @@
   [path : (& path str)]
   [contents : (& contents str)]) : bool
   (match (io.try-write-file path (byte_buf.str-as-bytes contents))
-    [(io.OkIoUnit) true]
-    [(io.ErrIoUnit _) false]))
+    [(OkIoUnit) true]
+    [(ErrIoUnit _) false]))
 
 (define (compiler-driver-pic-smoke-write-extern-fixture) : String
   (let
@@ -513,15 +499,15 @@
 (define (compiler-driver-smoke-module-macro-diagnostic-ok?) : bool
   (match (driver.compiler-driver-emit-file-with-target-roots-level-mode-cfg-and-crt
     (compiler-driver-smoke-write-module-macro-diagnostic-fixture)
-    (compiler_backend.CompilerBackendTarget.Linux)
+    (Linux)
     true
     (compiler-driver-pic-smoke-roots)
     (compiler_optimize.compiler-optimize-default-level)
-    (compiler_backend.CompilerBackendMode.Scalar)
+    (Scalar)
     (compiler_cfg_core.compiler-cfg-empty)
     true)
-    [(driver.ResultCompilerDriver.Ok _ _) false]
-    [(driver.ResultCompilerDriver.Err diag _)
+    [(Ok _ _) false]
+    [(Err diag _)
       (let
         [rendered : String (cdiag.compiler-diagnostic-render (deref diag))]
         (and
@@ -567,12 +553,11 @@
       (= (ast.ast-node-pool-context-base-arena installed) base-arena))))
 
 (define (compiler-driver-reader-context-smoke-fail [message : String]) : bool
-  (begin
-    (io.print-format
-      "{}"
-      (str_cat.str-cat "driver reader-context smoke: " message))
-    (io.print-format "{}" "\n")
-    false))
+  (io.print-format
+    "{}"
+    (str_cat.str-cat "driver reader-context smoke: " message))
+  (io.print-format "{}" "\n")
+  false)
 
 (define (compiler-driver-reader-context-smoke-mirror-intern-state-ok?
   [intern-a : ci.InternCompatState]
@@ -585,42 +570,39 @@
     [ok : bool (and (= source-count-b 0) (= generated-count-b 0))]
     [source-index : i64 0]
     [generated-index : i64 0]
-    (begin
-      ;; The cloned IR retains A's numeric symbol identities. Rebuild those
-      ;; spellings in B's still-fresh capability without installing either
-      ;; table, so B remains an independently owned backend job.
-      (while (and ok (< source-index source-count-a))
-        (let
-          [source-id : i64 source-index]
-          [mirrored-id : i64
-            (ci.intern-compat-state-intern
-              (&mut intern-b)
-              (ci.intern-compat-state-str intern-a source-id))]
-          (begin
-            (if (= mirrored-id source-id)
-              unit
-              (set! ok false))
-            (set! source-index (+ source-index 1)))))
-      (while (and ok (< generated-index generated-count-a))
-        (let
-          [source-id : i64 (- (- (ci.intern-capacity) 1) generated-index)]
-          [mirrored-id : i64
-            (ci.intern-compat-state-generated-name
-              (&mut intern-b)
-              (ci.intern-compat-state-str intern-a source-id))]
-          (begin
-            (if (= mirrored-id source-id)
-              unit
-              (set! ok false))
-            (set! generated-index (+ generated-index 1)))))
-      (and
-        ok
-        (= source-count-a (ci.intern-compat-state-pool-len intern-b))
-        (= generated-count-a (ci.intern-compat-state-generated-count intern-b))
-        (not
-          (=
-            (ci.intern-compat-state-table-id intern-a)
-            (ci.intern-compat-state-table-id intern-b)))))))
+    ;; The cloned IR retains A's numeric symbol identities. Rebuild those
+    ;; spellings in B's still-fresh capability without installing either
+    ;; table, so B remains an independently owned backend job.
+    (while (and ok (< source-index source-count-a))
+      (let
+        [source-id : i64 source-index]
+        [mirrored-id : i64
+          (ci.intern-compat-state-intern
+            (&mut intern-b)
+            (ci.intern-compat-state-str intern-a source-id))]
+        (if (= mirrored-id source-id)
+          unit
+          (set! ok false))
+        (set! source-index (+ source-index 1))))
+    (while (and ok (< generated-index generated-count-a))
+      (let
+        [source-id : i64 (- (- (ci.intern-capacity) 1) generated-index)]
+        [mirrored-id : i64
+          (ci.intern-compat-state-generated-name
+            (&mut intern-b)
+            (ci.intern-compat-state-str intern-a source-id))]
+        (if (= mirrored-id source-id)
+          unit
+          (set! ok false))
+        (set! generated-index (+ generated-index 1))))
+    (and
+      ok
+      (= source-count-a (ci.intern-compat-state-pool-len intern-b))
+      (= generated-count-a (ci.intern-compat-state-generated-count intern-b))
+      (not
+        (=
+          (ci.intern-compat-state-table-id intern-a)
+          (ci.intern-compat-state-table-id intern-b))))))
 
 (define (compiler-driver-reader-context-smoke-emit
   [backend-state : compiler_backend.CompilerBackendState]
@@ -631,8 +613,8 @@
     backend-state
     pools
     program
-    (compiler_backend.CompilerBackendTarget.Linux)
-    (compiler_backend.CompilerBackendMode.Scalar)
+    (Linux)
+    (Scalar)
     spans
     true
     false
@@ -657,7 +639,7 @@
     pools-b
     program-b
     spans-b)
-    [(compiler_backend.ResultCompilerBackend.Ok asm-b)
+    [(Ok asm-b)
       (if (not
         (compiler-driver-reader-context-smoke-installed?
           expr-segment-bases
@@ -670,7 +652,7 @@
           pools-a
           program-a
           spans-a)
-          [(compiler_backend.ResultCompilerBackend.Ok asm-a)
+          [(Ok asm-a)
             (cond
               [(not
                   (compiler-driver-reader-context-smoke-installed?
@@ -691,12 +673,12 @@
                 (compiler-driver-reader-context-smoke-fail
                   "backend scalar options changed")]
               [else true])]
-          [(compiler_backend.ResultCompilerBackend.Err diag)
+          [(Err diag)
             (compiler-driver-reader-context-smoke-fail
               (str_cat.str-cat
                 "state A backend failed: "
                 (cdiag.compiler-diagnostic-render (deref diag))))]))]
-    [(compiler_backend.ResultCompilerBackend.Err diag)
+    [(Err diag)
       (compiler-driver-reader-context-smoke-fail
         (str_cat.str-cat
           "state B backend failed: "
@@ -718,9 +700,7 @@
     program-a
     spans-a
     (compiler_optimize.optimize-request pools-a 1))
-    [(compiler_optimize.CompilerOptimizedProgram.Program
-        optimized-a
-        optimized-spans-a)
+    [(Program optimized-a optimized-spans-a)
       (if (not
         (compiler-driver-reader-context-smoke-installed?
           expr-segment-bases
@@ -732,9 +712,7 @@
           program-b
           spans-b
           (compiler_optimize.optimize-request pools-b 1))
-          [(compiler_optimize.CompilerOptimizedProgram.Program
-              optimized-b
-              optimized-spans-b)
+          [(Program optimized-b optimized-spans-b)
             (if (not
               (compiler-driver-reader-context-smoke-installed?
                 expr-segment-bases
@@ -759,21 +737,9 @@
   [lowered-a : driver.ResultCompilerDriverLowered]
   [lowered-b : driver.ResultCompilerDriverLowered]) : bool
   (match lowered-a
-    [(driver.ResultCompilerDriverLowered.Ok
-        program-a
-        spans-a
-        pools-a
-        _profile-a
-        backend-state-a
-        _typecheck-a)
+    [(Ok program-a spans-a pools-a _profile-a backend-state-a _typecheck-a)
       (match lowered-b
-        [(driver.ResultCompilerDriverLowered.Ok
-            program-b
-            spans-b
-            pools-b
-            _profile-b
-            backend-state-b
-            _typecheck-b)
+        [(Ok program-b spans-b pools-b _profile-b backend-state-b _typecheck-b)
           (let
             [intern-a : ci.InternCompatState
               (compiler_backend.compiler-backend-state-exact-intern
@@ -818,15 +784,14 @@
                     expr-segment-bases
                     type-segment-bases
                     base-arena)))]
-            (begin
-              (ast.ast-node-pool-reader-use! restore-reader)
-              ok))]
-        [(driver.ResultCompilerDriverLowered.Err diag _)
+            (ast.ast-node-pool-reader-use! restore-reader)
+            ok)]
+        [(Err diag _)
           (compiler-driver-reader-context-smoke-fail
             (str_cat.str-cat
               "state B lower failed: "
               (cdiag.compiler-diagnostic-render (deref diag))))])]
-    [(driver.ResultCompilerDriverLowered.Err diag _)
+    [(Err diag _)
       (compiler-driver-reader-context-smoke-fail
         (str_cat.str-cat
           "state A lower failed: "
@@ -939,30 +904,27 @@
               (not (= pool-arena caller-handle))
               (= (ast.ast-node-pool-context-expr-len pools) 0)
               (= (ast.ast-node-pool-context-type-len pools) 0))]
-          (begin
-            (driver.compiler-driver-state-destroy-uncommitted-pools! pools)
-            (and
-              state-restored?
-              pools-restored?
-              (= (arena.tl_arena_current) caller-handle)))))]
-    (begin
-      (unsafe
-        (arena.tl_arena_destroy caller-handle))
-      ok)))
+          (driver.compiler-driver-state-destroy-uncommitted-pools! pools)
+          (and
+            state-restored?
+            pools-restored?
+            (= (arena.tl_arena_current) caller-handle))))]
+    (unsafe
+      (arena.tl_arena_destroy caller-handle))
+    ok))
 
 (define (compiler-driver-reader-context-smoke-prepare-state!
   [state : driver.CompilerDriverState]) : unit
   (let
     [intern-state : ci.InternCompatState
       (driver.compiler-driver-state-owned-interns state)]
-    (begin
-      (if (= (driver.compiler-driver-state-intern-generation state) 0)
-        (ci.intern-compat-state-reset! (&mut intern-state))
-        unit)
-      (driver.compiler-driver-state-install-pools! state)
-      (driver.compiler-driver-state-install-interns! state)
-      (driver.compiler-driver-state-reset-file-state! state)
-      unit)))
+    (if (= (driver.compiler-driver-state-intern-generation state) 0)
+      (ci.intern-compat-state-reset! (&mut intern-state))
+      unit)
+    (driver.compiler-driver-state-install-pools! state)
+    (driver.compiler-driver-state-install-interns! state)
+    (driver.compiler-driver-state-reset-file-state! state)
+    unit))
 
 (define (compiler-driver-reader-context-smoke-ok?) : bool
   (let
@@ -971,10 +933,8 @@
     [state-b : driver.CompilerDriverState
       (driver.compiler-driver-state-new-for-compile)]
     [source : String (compiler-driver-reader-context-smoke-write-fixture)]
-    [target : compiler_backend.CompilerBackendTarget
-      (compiler_backend.CompilerBackendTarget.Linux)]
-    [mode : compiler_backend.CompilerBackendMode
-      (compiler_backend.CompilerBackendMode.Scalar)]
+    [target : compiler_backend.CompilerBackendTarget (Linux)]
+    [mode : compiler_backend.CompilerBackendMode (Scalar)]
     [roots-a : svec.Vec (compiler-driver-pic-smoke-roots)]
     [idle-backend-state-ok? : bool
       (compiler-driver-reader-context-smoke-backend-states-idle?
@@ -1004,13 +964,7 @@
           ;; state-owned reader context here, then interleave the phases covered
           ;; by this smoke: optimizer, regalloc, and backend.
           (match (owned_view.compiler-owned-shared-view lowered-a)
-            [(driver.ResultCompilerDriverLowered.Ok
-                program-a
-                spans-a
-                pools-a
-                _profile-a
-                _backend-a
-                _typecheck-a)
+            [(Ok program-a spans-a pools-a _profile-a _backend-a _typecheck-a)
               (let
                 [pools-b : ast.AstNodePoolContext
                   (ast.ast-node-pool-context-clone-types-only pools-a)]
@@ -1020,18 +974,17 @@
                     program-a)]
                 [spans-b : compiler_ir_types.CompilerSourceSpans
                   (clone spans-a)]
-                (begin
-                  (driver.compiler-driver-state-adopt-pools! state-b pools-b)
-                  (compiler-driver-reader-context-smoke-lowered-ok?
-                    lowered-a
-                    (driver.ResultCompilerDriverLowered.Ok
-                      program-b
-                      spans-b
-                      pools-b
-                      (driver.compiler-driver-state-profile state-b)
-                      (driver.compiler-driver-state-backend state-b)
-                      (driver.compiler-driver-state-typecheck state-b)))))]
-            [(driver.ResultCompilerDriverLowered.Err diag _)
+                (driver.compiler-driver-state-adopt-pools! state-b pools-b)
+                (compiler-driver-reader-context-smoke-lowered-ok?
+                  lowered-a
+                  (Ok
+                    program-b
+                    spans-b
+                    pools-b
+                    (driver.compiler-driver-state-profile state-b)
+                    (driver.compiler-driver-state-backend state-b)
+                    (driver.compiler-driver-state-typecheck state-b))))]
+            [(Err diag _)
               (compiler-driver-reader-context-smoke-fail
                 (str_cat.str-cat
                   "state A lower failed: "
@@ -1047,32 +1000,31 @@
   (let
     [state : driver.CompilerDriverState
       (owned_view.compiler-owned-reference-shared-view state)]
-    (begin
-      (compiler-driver-reader-context-smoke-prepare-state!
-        (owned_view.compiler-owned-shared-view state))
-      (let
-        [cfgs : sym_i64_env.SymI64Env
-          (if enabled
-            (compiler_cfg_core.compiler-cfg-enable-with-intern-state
-              (compiler_cfg_core.compiler-cfg-empty)
-              "generated-cfg-feature"
-              (driver.compiler-driver-state-owned-interns-mut
-                (owned_view.compiler-owned-shared-view state)))
-            (compiler_cfg_core.compiler-cfg-empty))]
-        (match (driver.compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
-          state
-          "tests/integration/generated_cfg.tl"
-          target
-          true
-          (compiler-driver-pic-smoke-roots)
-          0
-          compiler_backend.CompilerBackendMode.Scalar
-          cfgs
-          true)
-          [(driver.ResultCompilerDriverBuffer.Ok _ _) true]
-          [(driver.ResultCompilerDriverBuffer.Err diagnostic _)
-            (compiler-driver-reader-context-smoke-fail
-              (cdiag.compiler-diagnostic-render (deref diagnostic)))])))))
+    (compiler-driver-reader-context-smoke-prepare-state!
+      (owned_view.compiler-owned-shared-view state))
+    (let
+      [cfgs : sym_i64_env.SymI64Env
+        (if enabled
+          (compiler_cfg_core.compiler-cfg-enable-with-intern-state
+            (compiler_cfg_core.compiler-cfg-empty)
+            "generated-cfg-feature"
+            (driver.compiler-driver-state-owned-interns-mut
+              (owned_view.compiler-owned-shared-view state)))
+          (compiler_cfg_core.compiler-cfg-empty))]
+      (match (driver.compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+        state
+        "tests/integration/generated_cfg.tl"
+        target
+        true
+        (compiler-driver-pic-smoke-roots)
+        0
+        Scalar
+        cfgs
+        true)
+        [(Ok _ _) true]
+        [(Err diagnostic _)
+          (compiler-driver-reader-context-smoke-fail
+            (cdiag.compiler-diagnostic-render (deref diagnostic)))]))))
 
 (define (compiler-driver-generated-cfg-isolation-ok?) : bool
   (let
@@ -1081,10 +1033,7 @@
     [state-b : driver.CompilerDriverState
       (driver.compiler-driver-state-new-for-compile)]
     [a-enabled : bool
-      (compiler-driver-generated-cfg-job-ok?
-        state-a
-        compiler_backend.CompilerBackendTarget.Linux
-        true)]
+      (compiler-driver-generated-cfg-job-ok? state-a Linux true)]
     [a-intern : ci.InternCompatState
       (driver.compiler-driver-state-owned-interns state-a)]
     [a-table : i64 (ci.intern-compat-state-table-id a-intern)]
@@ -1094,10 +1043,7 @@
     [a-exprs : i64 (ast.ast-node-pool-context-expr-len a-pools)]
     [a-types : i64 (ast.ast-node-pool-context-type-len a-pools)]
     [b-disabled : bool
-      (compiler-driver-generated-cfg-job-ok?
-        state-b
-        compiler_backend.CompilerBackendTarget.Windows
-        false)]
+      (compiler-driver-generated-cfg-job-ok? state-b Windows false)]
     [a-unchanged : bool
       (let
         [intern : ci.InternCompatState
@@ -1109,44 +1055,32 @@
           (= (ci.intern-compat-state-pool-len intern) a-count)
           (= (ast.ast-node-pool-context-expr-len pools) a-exprs)
           (= (ast.ast-node-pool-context-type-len pools) a-types)))]
-    [a-reused : bool
-      (compiler-driver-generated-cfg-job-ok?
-        state-a
-        compiler_backend.CompilerBackendTarget.Linux
-        true)]
+    [a-reused : bool (compiler-driver-generated-cfg-job-ok? state-a Linux true)]
     [a-disabled : bool
-      (compiler-driver-generated-cfg-job-ok?
-        state-a
-        compiler_backend.CompilerBackendTarget.Linux
-        false)]
+      (compiler-driver-generated-cfg-job-ok? state-a Linux false)]
     [b-enabled : bool
-      (compiler-driver-generated-cfg-job-ok?
-        state-b
-        compiler_backend.CompilerBackendTarget.Windows
-        true)]
+      (compiler-driver-generated-cfg-job-ok? state-b Windows true)]
     (and a-enabled b-disabled a-unchanged a-reused a-disabled b-enabled)))
 
 (define (compiler-driver-reader-context-smoke-main) : i64
-  (begin
-    (cbi.compiler-builtin-reset!)
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (unless (compiler-driver-construction-arena-scope-ok?) (return 2))
-    (unless
-      (compiler-driver-reader-context-smoke-ok?)
-      (io.panic "compiler-driver: reader context isolation failed"))
-    42))
+  (cbi.compiler-builtin-reset!)
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (unless (compiler-driver-construction-arena-scope-ok?) (return 2))
+  (unless
+    (compiler-driver-reader-context-smoke-ok?)
+    (io.panic "compiler-driver: reader context isolation failed"))
+  42)
 
 ;; The reader-context smoke intentionally exercises low-level pool/reader
 ;; switching. Keep this end-to-end frontend sequence in its own suite child,
 ;; while all A/B cfg jobs remain in one process to test their isolation.
 (define (compiler-driver-generated-cfg-smoke-main) : i64
-  (begin
-    (cbi.compiler-builtin-reset!)
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (unless
-      (compiler-driver-generated-cfg-isolation-ok?)
-      (io.panic "compiler-driver: generated cfg isolation failed"))
-    42))
+  (cbi.compiler-builtin-reset!)
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (unless
+    (compiler-driver-generated-cfg-isolation-ok?)
+    (io.panic "compiler-driver: generated cfg isolation failed"))
+  42)
 
 ;; A batch reset advances the owned intern generation before the next loader
 ;; pass. Lazy aliases recorded by that loader must already carry the new
@@ -1157,54 +1091,46 @@
       (driver.compiler-driver-state-new-for-compile)]
     [job-state : tc.TcJobState (driver.compiler-driver-state-typecheck state)]
     [macro-state : tc.TcMacroState (tc.tc-job-state-macro-state job-state)]
-    (begin
-      (driver.compiler-driver-state-install-pools! state)
-      (driver.compiler-driver-state-install-interns! state)
-      (driver.compiler-driver-state-reset-file-state!
-        (owned_view.compiler-owned-shared-view state))
-      (let
-        [intern-state : ci.InternCompatState
-          (driver.compiler-driver-state-owned-interns state)]
-        [importer : i64
-          (ci.intern-compat-state-intern
-            (&mut intern-state)
-            "driver.lazy.entry")]
-        [alias : i64
-          (ci.intern-compat-state-intern
-            (&mut intern-state)
-            "driver-lazy-alias")]
-        [target : i64
-          (ci.intern-compat-state-intern
-            (&mut intern-state)
-            "driver.lazy.target")]
-        ;; The first insert may lazily reset a fresh table and advance its
-        ;; generation, so snapshot the identity only after populating it.
-        [generation : i64 (ci.intern-compat-state-generation intern-state)]
-        (begin
-          (tc.tc-lazy-import-stub-record-for-job!
-            job-state
-            importer
-            alias
-            target
-            true)
-          ;; Parsing grows the same-generation source-name table. Model the
-          ;; driver's post-load refresh and require its freshly recorded alias
-          ;; to survive.
-          (tc.tc-macro-state-bind-source-names!
-            macro-state
-            (ci.intern-source-name-session-handle-from-state intern-state))
-          (and
-            (=
-              generation
-              (ci.intern-source-name-session-handle-reset-generation
-                (tc.tc-macro-state-source-names macro-state)))
-            (= (tc.tc-lazy-import-stub-count-for-state macro-state) 1)
-            (match (tc.tc-lazy-import-stub-target-id-for-state
-              macro-state
-              importer
-              alias)
-              [(tc.TcMaybeNameId.Some actual) (= actual target)]
-              [(tc.TcMaybeNameId.No) false])))))))
+    (driver.compiler-driver-state-install-pools! state)
+    (driver.compiler-driver-state-install-interns! state)
+    (driver.compiler-driver-state-reset-file-state!
+      (owned_view.compiler-owned-shared-view state))
+    (let
+      [intern-state : ci.InternCompatState
+        (driver.compiler-driver-state-owned-interns state)]
+      [importer : i64
+        (ci.intern-compat-state-intern (&mut intern-state) "driver.lazy.entry")]
+      [alias : i64
+        (ci.intern-compat-state-intern (&mut intern-state) "driver-lazy-alias")]
+      [target : i64
+        (ci.intern-compat-state-intern (&mut intern-state) "driver.lazy.target")]
+      ;; The first insert may lazily reset a fresh table and advance its
+      ;; generation, so snapshot the identity only after populating it.
+      [generation : i64 (ci.intern-compat-state-generation intern-state)]
+      (tc.tc-lazy-import-stub-record-for-job!
+        job-state
+        importer
+        alias
+        target
+        true)
+      ;; Parsing grows the same-generation source-name table. Model the
+      ;; driver's post-load refresh and require its freshly recorded alias
+      ;; to survive.
+      (tc.tc-macro-state-bind-source-names!
+        macro-state
+        (ci.intern-source-name-session-handle-from-state intern-state))
+      (and
+        (=
+          generation
+          (ci.intern-source-name-session-handle-reset-generation
+            (tc.tc-macro-state-source-names macro-state)))
+        (= (tc.tc-lazy-import-stub-count-for-state macro-state) 1)
+        (match (tc.tc-lazy-import-stub-target-id-for-state
+          macro-state
+          importer
+          alias)
+          [(Some actual) (= actual target)]
+          [(No) false])))))
 
 ;; The lowered-result boundary must reset the job that produced the IR while
 ;; retaining its compact definition-site alias handoff for package surface
@@ -1222,30 +1148,28 @@
     [job-b : tc.TcJobState (driver.compiler-driver-state-typecheck state-b)]
     [macro-a : tc.TcMacroState (tc.tc-job-state-macro-state job-a)]
     [macro-b : tc.TcMacroState (tc.tc-job-state-macro-state job-b)]
-    (begin
-      (driver.compiler-driver-state-install-pools! state-a)
-      (driver.compiler-driver-state-install-interns! state-a)
-      (driver.compiler-driver-state-reset-file-state! state-a)
-      (tc.tc-lazy-import-stub-record-for-job! job-a 11 12 13 true)
-      (tc.tc-lazy-import-summary-macro-force-record-for-state! macro-a)
-      (driver.compiler-driver-state-install-pools! state-b)
-      (driver.compiler-driver-state-install-interns! state-b)
-      (driver.compiler-driver-state-reset-file-state! state-b)
-      (tc.tc-lazy-import-stub-record-for-job! job-b 11 12 14 false)
-      (tc.tc-lazy-import-summary-macro-force-record-for-state! macro-b)
-      (driver.compiler-driver-release-typecheck-caches-after-lower-for-job!
-        job-a)
-      (and
-        (= (tc.tc-lazy-import-summary-macro-force-count-for-state macro-a) 0)
-        (= (tc.tc-lazy-import-summary-macro-force-count-for-state macro-b) 1)
-        (= (tc.tc-lazy-import-stub-count-for-state macro-a) 1)
-        (= (tc.tc-lazy-import-stub-count-for-state macro-b) 1)
-        (match (tc.tc-lazy-import-stub-target-id-for-state macro-a 11 12)
-          [(tc.TcMaybeNameId.Some target) (= target 13)]
-          [(tc.TcMaybeNameId.No) false])
-        (match (tc.tc-lazy-import-stub-target-id-for-state macro-b 11 12)
-          [(tc.TcMaybeNameId.Some target) (= target 14)]
-          [(tc.TcMaybeNameId.No) false])))))
+    (driver.compiler-driver-state-install-pools! state-a)
+    (driver.compiler-driver-state-install-interns! state-a)
+    (driver.compiler-driver-state-reset-file-state! state-a)
+    (tc.tc-lazy-import-stub-record-for-job! job-a 11 12 13 true)
+    (tc.tc-lazy-import-summary-macro-force-record-for-state! macro-a)
+    (driver.compiler-driver-state-install-pools! state-b)
+    (driver.compiler-driver-state-install-interns! state-b)
+    (driver.compiler-driver-state-reset-file-state! state-b)
+    (tc.tc-lazy-import-stub-record-for-job! job-b 11 12 14 false)
+    (tc.tc-lazy-import-summary-macro-force-record-for-state! macro-b)
+    (driver.compiler-driver-release-typecheck-caches-after-lower-for-job! job-a)
+    (and
+      (= (tc.tc-lazy-import-summary-macro-force-count-for-state macro-a) 0)
+      (= (tc.tc-lazy-import-summary-macro-force-count-for-state macro-b) 1)
+      (= (tc.tc-lazy-import-stub-count-for-state macro-a) 1)
+      (= (tc.tc-lazy-import-stub-count-for-state macro-b) 1)
+      (match (tc.tc-lazy-import-stub-target-id-for-state macro-a 11 12)
+        [(Some target) (= target 13)]
+        [(No) false])
+      (match (tc.tc-lazy-import-stub-target-id-for-state macro-b 11 12)
+        [(Some target) (= target 14)]
+        [(No) false]))))
 
 (define (compiler-driver-typecheck-cache-owner-smoke-ok?) : bool
   (let
@@ -1275,41 +1199,40 @@
         "driver-state.cache.module")]
     [name-b : i64
       (ci.intern-compat-state-intern (&mut intern-b) "driver-state.cache.name")]
-    (begin
-      (tc.tc-source-dotted-alias-key-cache-put-for-state!
-        (owned_view.compiler-owned-shared-view cache-a)
-        (ci.intern-compat-state-table-id (& intern-a))
-        (ci.intern-compat-state-generation (& intern-a))
-        module-a
-        name-a
-        71)
-      (tc.tc-source-dotted-alias-key-cache-put-for-state!
-        (owned_view.compiler-owned-shared-view cache-b)
-        (ci.intern-compat-state-table-id (& intern-b))
-        (ci.intern-compat-state-generation (& intern-b))
-        module-b
-        name-b
+    (tc.tc-source-dotted-alias-key-cache-put-for-state!
+      (owned_view.compiler-owned-shared-view cache-a)
+      (ci.intern-compat-state-table-id (& intern-a))
+      (ci.intern-compat-state-generation (& intern-a))
+      module-a
+      name-a
+      71)
+    (tc.tc-source-dotted-alias-key-cache-put-for-state!
+      (owned_view.compiler-owned-shared-view cache-b)
+      (ci.intern-compat-state-table-id (& intern-b))
+      (ci.intern-compat-state-generation (& intern-b))
+      module-b
+      name-b
+      72)
+    (driver.compiler-driver-state-reset-typecheck! state-a)
+    (and
+      (=
+        (tc.tc-source-dotted-alias-key-cache-get-for-state
+          cache-a
+          (ci.intern-compat-state-table-id (& intern-a))
+          (ci.intern-compat-state-generation (& intern-a))
+          module-a
+          name-a)
+        -2)
+      (=
+        (tc.tc-source-dotted-alias-key-cache-get-for-state
+          cache-b
+          (ci.intern-compat-state-table-id (& intern-b))
+          (ci.intern-compat-state-generation (& intern-b))
+          module-b
+          name-b)
         72)
-      (driver.compiler-driver-state-reset-typecheck! state-a)
-      (and
-        (=
-          (tc.tc-source-dotted-alias-key-cache-get-for-state
-            cache-a
-            (ci.intern-compat-state-table-id (& intern-a))
-            (ci.intern-compat-state-generation (& intern-a))
-            module-a
-            name-a)
-          -2)
-        (=
-          (tc.tc-source-dotted-alias-key-cache-get-for-state
-            cache-b
-            (ci.intern-compat-state-table-id (& intern-b))
-            (ci.intern-compat-state-generation (& intern-b))
-            module-b
-            name-b)
-          72)
-        (compiler-driver-lazy-import-reset-source-names-ok?)
-        (compiler-driver-post-lower-typecheck-owner-ok?)))))
+      (compiler-driver-lazy-import-reset-source-names-ok?)
+      (compiler-driver-post-lower-typecheck-owner-ok?))))
 
 ;; Base-transient A/B interleaving smoke (refs #4723). Builtin/CTFE id state
 ;; and lower scratch/IR arenas are owned by each driver state: a state-owned
@@ -1325,74 +1248,64 @@
     [lower-b : lower.CompilerLowerArenaState
       (driver.compiler-driver-state-owned-lower-arenas
         (owned_view.compiler-owned-shared-view state-b))]
-    (begin
-      ;; A installs empty cells; the lazy selectors create its arenas.
-      (driver.compiler-driver-state-install-lower-arenas!
+    ;; A installs empty cells; the lazy selectors create its arenas.
+    (driver.compiler-driver-state-install-lower-arenas!
+      (owned_view.compiler-owned-shared-view state-a))
+    (let
+      [_a-scratch : i64 (lower.lower-scratch-arena-get)]
+      [_a-ir : i64 (lower.lower-ir-arena-get)]
+      (driver.compiler-driver-state-capture-active-lower-arenas!
+        (owned_view.compiler-owned-shared-view state-a))
+      ;; Installed release: A's cells and the selectors both zero.
+      (driver.compiler-driver-state-release-lower-arenas!
         (owned_view.compiler-owned-shared-view state-a))
       (let
-        [_a-scratch : i64 (lower.lower-scratch-arena-get)]
-        [_a-ir : i64 (lower.lower-ir-arena-get)]
-        (begin
-          (driver.compiler-driver-state-capture-active-lower-arenas!
-            (owned_view.compiler-owned-shared-view state-a))
-          ;; Installed release: A's cells and the selectors both zero.
-          (driver.compiler-driver-state-release-lower-arenas!
-            (owned_view.compiler-owned-shared-view state-a))
+        [released-ok? : bool
+          (and
+            (= (lower.compiler-lower-arena-state-scratch-arena lower-a) 0)
+            (= (lower.compiler-lower-arena-state-ir-arena lower-a) 0)
+            (= lower.lower-scratch-arena 0)
+            (= lower.lower-ir-arena 0))]
+        ;; State reuse: fresh arenas recreate through the selectors.
+        [_a-scratch-2 : i64 (lower.lower-scratch-arena-get)]
+        [_a-ir-2 : i64 (lower.lower-ir-arena-get)]
+        (driver.compiler-driver-state-capture-active-lower-arenas!
+          (owned_view.compiler-owned-shared-view state-a))
+        ;; B parks its own arena chain in the selectors.
+        (lower.compiler-lower-arena-state-set!
+          lower-b
+          (arena.tl_arena_make)
+          (arena.tl_arena_make))
+        (driver.compiler-driver-state-install-lower-arenas!
+          (owned_view.compiler-owned-shared-view state-b))
+        ;; Isolation: A's release must not zero or destroy B's arenas.
+        (driver.compiler-driver-state-release-lower-arenas! state-a)
+        (let
+          [isolated-ok? : bool
+            (and
+              released-ok?
+              (> _a-scratch-2 0)
+              (> _a-ir-2 0)
+              (=
+                (lower.lower-scratch-arena-get)
+                (lower.compiler-lower-arena-state-scratch-arena lower-b))
+              (=
+                (lower.lower-ir-arena-get)
+                (lower.compiler-lower-arena-state-ir-arena lower-b)))]
+          ;; B's own release still zeroes the selectors it owns.
+          (driver.compiler-driver-state-release-lower-arenas! state-b)
           (let
-            [released-ok? : bool
+            [b-released-ok? : bool
               (and
-                (= (lower.compiler-lower-arena-state-scratch-arena lower-a) 0)
-                (= (lower.compiler-lower-arena-state-ir-arena lower-a) 0)
+                (= (lower.compiler-lower-arena-state-scratch-arena lower-b) 0)
+                (= (lower.compiler-lower-arena-state-ir-arena lower-b) 0)
                 (= lower.lower-scratch-arena 0)
                 (= lower.lower-ir-arena 0))]
-            ;; State reuse: fresh arenas recreate through the selectors.
-            [_a-scratch-2 : i64 (lower.lower-scratch-arena-get)]
-            [_a-ir-2 : i64 (lower.lower-ir-arena-get)]
-            (begin
-              (driver.compiler-driver-state-capture-active-lower-arenas!
-                (owned_view.compiler-owned-shared-view state-a))
-              ;; B parks its own arena chain in the selectors.
-              (lower.compiler-lower-arena-state-set!
-                lower-b
-                (arena.tl_arena_make)
-                (arena.tl_arena_make))
-              (driver.compiler-driver-state-install-lower-arenas!
-                (owned_view.compiler-owned-shared-view state-b))
-              ;; Isolation: A's release must not zero or destroy B's arenas.
-              (driver.compiler-driver-state-release-lower-arenas! state-a)
-              (let
-                [isolated-ok? : bool
-                  (and
-                    released-ok?
-                    (> _a-scratch-2 0)
-                    (> _a-ir-2 0)
-                    (=
-                      (lower.lower-scratch-arena-get)
-                      (lower.compiler-lower-arena-state-scratch-arena lower-b))
-                    (=
-                      (lower.lower-ir-arena-get)
-                      (lower.compiler-lower-arena-state-ir-arena lower-b)))]
-                (begin
-                  ;; B's own release still zeroes the selectors it owns.
-                  (driver.compiler-driver-state-release-lower-arenas! state-b)
-                  (let
-                    [b-released-ok? : bool
-                      (and
-                        (=
-                          (lower.compiler-lower-arena-state-scratch-arena
-                            lower-b)
-                          0)
-                        (=
-                          (lower.compiler-lower-arena-state-ir-arena lower-b)
-                          0)
-                        (= lower.lower-scratch-arena 0)
-                        (= lower.lower-ir-arena 0))]
-                    (begin
-                      ;; Reuse once more after B's release, then clean up.
-                      (lower.lower-scratch-arena-get)
-                      (lower.lower-ir-arena-get)
-                      (lower.lower-arenas-release!)
-                      (and isolated-ok? b-released-ok?))))))))))))
+            ;; Reuse once more after B's release, then clean up.
+            (lower.lower-scratch-arena-get)
+            (lower.lower-ir-arena-get)
+            (lower.lower-arenas-release!)
+            (and isolated-ok? b-released-ok?)))))))
 
 ;; The driver owns one opaque lower job state per compile state. Run real
 ;; frontend lowers with deliberately identical source/AST IDs in A and B, plus
@@ -1415,10 +1328,10 @@
         lower-b
         "<state-b-pre-failure>"
         "(define"
-        (lower.CompilerLowerMode.Scalar)
+        (Scalar)
         "package-b-pre-failure")
-        [(lower.ResultCompilerLower.Err _) true]
-        [(lower.ResultCompilerLower.Ok _ _) false])]
+        [(Err _) true]
+        [(Ok _ _) false])]
     [a-after-b-prepopulate-failure : lower.CompilerLowerStateObservation
       (lower.compiler-lower-state-observe lower-a)]
     (match (lower.lower-compiler-source-with-path-mode-package-and-state
@@ -1427,14 +1340,14 @@
       "(define (helper) : i64 42)
 (module main)
 (define (main) : i64 (helper))"
-      (lower.CompilerLowerMode.Scalar)
+      (Scalar)
       "package-a")
-      [(lower.ResultCompilerLower.Err diag)
+      [(Err diag)
         (compiler-driver-reader-context-smoke-fail
           (str_cat.str-cat
             "lower state A failed: "
             (cdiag.compiler-diagnostic-render (deref diag))))]
-      [(lower.ResultCompilerLower.Ok _ _)
+      [(Ok _ _)
         (let
           [a-before : lower.CompilerLowerStateObservation
             (lower.compiler-lower-state-observe lower-a)]
@@ -1444,97 +1357,95 @@
               "<state-b-failure>"
               "(module main)
 (define (main) : i64 lower-state-controlled-failure)"
-              (lower.CompilerLowerMode.Scalar)
+              (Scalar)
               "package-b-failure")
-              [(lower.ResultCompilerLower.Err _) true]
-              [(lower.ResultCompilerLower.Ok _ _) false])]
-          (begin
-            (driver.compiler-driver-state-reset-lower!
-              (owned_view.compiler-owned-shared-view state-b))
-            (let
-              [b-reset-before-reuse : bool
-                (compiler_lower_tests.compiler-lower-state-reset? lower-b)]
-              (match (lower.lower-compiler-source-with-path-mode-package-and-state
-                lower-b
-                "<state-b-reuse>"
-                "(define (helper) : i64 42)
+              [(Err _) true]
+              [(Ok _ _) false])]
+          (driver.compiler-driver-state-reset-lower!
+            (owned_view.compiler-owned-shared-view state-b))
+          (let
+            [b-reset-before-reuse : bool
+              (compiler_lower_tests.compiler-lower-state-reset? lower-b)]
+            (match (lower.lower-compiler-source-with-path-mode-package-and-state
+              lower-b
+              "<state-b-reuse>"
+              "(define (helper) : i64 42)
 (module main)
 (define (main) : i64 (helper))"
-                (lower.CompilerLowerMode.Scalar)
-                "package-b-reuse")
-                [(lower.ResultCompilerLower.Err diag)
-                  (compiler-driver-reader-context-smoke-fail
-                    (str_cat.str-cat
-                      "lower state B reuse failed: "
-                      (cdiag.compiler-diagnostic-render (deref diag))))]
-                [(lower.ResultCompilerLower.Ok _ _)
+              (Scalar)
+              "package-b-reuse")
+              [(Err diag)
+                (compiler-driver-reader-context-smoke-fail
+                  (str_cat.str-cat
+                    "lower state B reuse failed: "
+                    (cdiag.compiler-diagnostic-render (deref diag))))]
+              [(Ok _ _)
+                (let
+                  [a-after-b-reuse : lower.CompilerLowerStateObservation
+                    (lower.compiler-lower-state-observe lower-a)]
+                  [b-package-reused : bool
+                    (string.eq
+                      (lower.compiler-lower-state-spmd-package-name lower-b)
+                      "package-b-reuse")]
+                  (driver.compiler-driver-state-reset-lower! state-b)
                   (let
-                    [a-after-b-reuse : lower.CompilerLowerStateObservation
+                    [a-after-b-final-reset : lower.CompilerLowerStateObservation
                       (lower.compiler-lower-state-observe lower-a)]
-                    [b-package-reused : bool
-                      (string.eq
-                        (lower.compiler-lower-state-spmd-package-name lower-b)
-                        "package-b-reuse")]
-                    (begin
-                      (driver.compiler-driver-state-reset-lower! state-b)
-                      (let
-                        [a-after-b-final-reset : lower.CompilerLowerStateObservation
-                          (lower.compiler-lower-state-observe lower-a)]
-                        (cond
-                          [(not (= (lower.compiler-lower-state-size) 8))
-                            (compiler-driver-reader-context-smoke-fail
-                              "lower state carrier is not one word")]
-                          [(= lower-a.address lower-b.address)
-                            (compiler-driver-reader-context-smoke-fail
-                              "lower state owners alias")]
-                          [(not b-prepopulate-failed)
-                            (compiler-driver-reader-context-smoke-fail
-                              "controlled pre-cache lower state B failure succeeded")]
-                          [(not
-                              (lower.compiler-lower-state-observation-eq?
-                                initial-a
-                                a-after-b-prepopulate-failure))
-                            (compiler-driver-reader-context-smoke-fail
-                              "pre-cache state B failure mutated state A")]
-                          [(lower.compiler-lower-state-observation-eq?
-                              initial-a
-                              a-before)
-                            (compiler-driver-reader-context-smoke-fail
-                              "successful lower did not populate state A")]
-                          [(not
-                              (string.eq
-                                (lower.compiler-lower-state-spmd-package-name
-                                  lower-a)
-                                "package-a"))
-                            (compiler-driver-reader-context-smoke-fail
-                              "state A package identity changed")]
-                          [(not b-failed)
-                            (compiler-driver-reader-context-smoke-fail
-                              "controlled lower state B failure succeeded")]
-                          [(not b-reset-before-reuse)
-                            (compiler-driver-reader-context-smoke-fail
-                              "state B reset did not restore logical fresh state")]
-                          [(not b-package-reused)
-                            (compiler-driver-reader-context-smoke-fail
-                              "state B package identity was not reusable")]
-                          [(not
-                              (lower.compiler-lower-state-observation-eq?
-                                a-before
-                                a-after-b-reuse))
-                            (compiler-driver-reader-context-smoke-fail
-                              "state B reuse mutated state A")]
-                          [(not
-                              (lower.compiler-lower-state-observation-eq?
-                                a-before
-                                a-after-b-final-reset))
-                            (compiler-driver-reader-context-smoke-fail
-                              "state B final reset mutated state A")]
-                          [(not
-                              (compiler_lower_tests.compiler-lower-state-reset?
-                                lower-b))
-                            (compiler-driver-reader-context-smoke-fail
-                              "state B final reset did not restore logical fresh state")]
-                          [else true]))))]))))])))
+                    (cond
+                      [(not (= (lower.compiler-lower-state-size) 8))
+                        (compiler-driver-reader-context-smoke-fail
+                          "lower state carrier is not one word")]
+                      [(= lower-a.address lower-b.address)
+                        (compiler-driver-reader-context-smoke-fail
+                          "lower state owners alias")]
+                      [(not b-prepopulate-failed)
+                        (compiler-driver-reader-context-smoke-fail
+                          "controlled pre-cache lower state B failure succeeded")]
+                      [(not
+                          (lower.compiler-lower-state-observation-eq?
+                            (& initial-a)
+                            (& a-after-b-prepopulate-failure)))
+                        (compiler-driver-reader-context-smoke-fail
+                          "pre-cache state B failure mutated state A")]
+                      [(lower.compiler-lower-state-observation-eq?
+                          (& initial-a)
+                          (& a-before))
+                        (compiler-driver-reader-context-smoke-fail
+                          "successful lower did not populate state A")]
+                      [(not
+                          (string.eq
+                            (lower.compiler-lower-state-spmd-package-name
+                              lower-a)
+                            "package-a"))
+                        (compiler-driver-reader-context-smoke-fail
+                          "state A package identity changed")]
+                      [(not b-failed)
+                        (compiler-driver-reader-context-smoke-fail
+                          "controlled lower state B failure succeeded")]
+                      [(not b-reset-before-reuse)
+                        (compiler-driver-reader-context-smoke-fail
+                          "state B reset did not restore logical fresh state")]
+                      [(not b-package-reused)
+                        (compiler-driver-reader-context-smoke-fail
+                          "state B package identity was not reusable")]
+                      [(not
+                          (lower.compiler-lower-state-observation-eq?
+                            (& a-before)
+                            (& a-after-b-reuse)))
+                        (compiler-driver-reader-context-smoke-fail
+                          "state B reuse mutated state A")]
+                      [(not
+                          (lower.compiler-lower-state-observation-eq?
+                            (& a-before)
+                            (& a-after-b-final-reset)))
+                        (compiler-driver-reader-context-smoke-fail
+                          "state B final reset mutated state A")]
+                      [(not
+                          (compiler_lower_tests.compiler-lower-state-reset?
+                            lower-b))
+                        (compiler-driver-reader-context-smoke-fail
+                          "state B final reset did not restore logical fresh state")]
+                      [else true])))])))])))
 
 (define (compiler-driver-base-transients-smoke-ok?) : bool
   (let
@@ -1554,71 +1465,65 @@
         (owned_view.compiler-owned-shared-view state-b))]
     [table-a : i64 (ci.intern-compat-state-table-id intern-a)]
     [table-b : i64 (ci.intern-compat-state-table-id intern-b)]
-    (begin
-      ;; Derive A's builtin table from A's own intern state. The first intern
-      ;; into the fresh table lazily resets it, so read the owning intern
-      ;; identity from the freshly captured cells, as production validation
-      ;; does after the session-floor capture.
-      (ci.intern-compat-state-install! intern-a)
-      (cbi.compiler-builtin-reset!)
-      (cbi.compiler-builtin-initialize-for-parse!)
-      (driver.compiler-driver-state-capture-active-builtins! state-a)
-      (driver.compiler-driver-state-capture-active-interns! state-a)
+    ;; Derive A's builtin table from A's own intern state. The first intern
+    ;; into the fresh table lazily resets it, so read the owning intern
+    ;; identity from the freshly captured cells, as production validation
+    ;; does after the session-floor capture.
+    (ci.intern-compat-state-install! intern-a)
+    (cbi.compiler-builtin-reset!)
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (driver.compiler-driver-state-capture-active-builtins! state-a)
+    (driver.compiler-driver-state-capture-active-interns! state-a)
+    (let
+      [gen-a : i64 (driver.compiler-driver-state-intern-generation state-a)]
+      [gen-b0 : i64 (driver.compiler-driver-state-intern-generation state-b)]
+      [loaded-ok? : bool
+        (and
+          ;; Builtin lookup + CTFE success: A's snapshot serves the ids and
+          ;; validates against A's own intern identity.
+          (cbi.state-table-current-with? builtins-a gen-a table-a)
+          (not (cbi.state-table-current-with? builtins-a gen-b0 table-b))
+          (>= (cbi.state-ctfe-ref builtins-a 0) 0)
+          (=
+            (cbi.state-ctfe-ref builtins-a 0)
+            (cbi.compiler-builtin-ctfe "size-of"))
+          ;; Decoy: B's compatibility state never saw a load.
+          (not (cbi.state-table-current-with? builtins-b gen-b0 table-b)))]
+      ;; CTFE failure/reset: A is installed, so its state-owned reset
+      ;; invalidates the compatibility table too.
+      (driver.compiler-driver-state-reset-builtins!
+        (owned_view.compiler-owned-shared-view state-a))
       (let
-        [gen-a : i64 (driver.compiler-driver-state-intern-generation state-a)]
-        [gen-b0 : i64 (driver.compiler-driver-state-intern-generation state-b)]
-        [loaded-ok? : bool
+        [reset-ok? : bool
           (and
-            ;; Builtin lookup + CTFE success: A's snapshot serves the ids and
-            ;; validates against A's own intern identity.
-            (cbi.state-table-current-with? builtins-a gen-a table-a)
-            (not (cbi.state-table-current-with? builtins-a gen-b0 table-b))
-            (>= (cbi.state-ctfe-ref builtins-a 0) 0)
-            (=
-              (cbi.state-ctfe-ref builtins-a 0)
-              (cbi.compiler-builtin-ctfe "size-of"))
-            ;; Decoy: B's compatibility state never saw a load.
-            (not (cbi.state-table-current-with? builtins-b gen-b0 table-b)))]
-        (begin
-          ;; CTFE failure/reset: A is installed, so its state-owned reset
-          ;; invalidates the compatibility table too.
-          (driver.compiler-driver-state-reset-builtins!
-            (owned_view.compiler-owned-shared-view state-a))
-          (let
-            [reset-ok? : bool
-              (and
-                (not (cbi.state-table-current-with? builtins-a gen-a table-a))
-                (not (cbi.compiler-builtin-table-current?)))]
-            (begin
-              ;; Install B: derive B's table from B's own intern state.
-              (ci.intern-compat-state-install! intern-b)
-              (cbi.compiler-builtin-reset!)
-              (cbi.compiler-builtin-initialize-for-parse!)
-              (driver.compiler-driver-state-capture-active-builtins! state-b)
-              (driver.compiler-driver-state-capture-active-interns! state-b)
-              ;; Isolation: resetting uninstalled A must not disturb B's
-              ;; installed compatibility table -- the retired install/reset
-              ;; bridge invalidated it unconditionally.
-              (driver.compiler-driver-state-reset-builtins!
-                (owned_view.compiler-owned-shared-view state-a))
-              (let
-                [gen-b : i64
-                  (driver.compiler-driver-state-intern-generation state-b)]
-                [isolated-ok? : bool
-                  (and
-                    (cbi.compiler-builtin-table-current?)
-                    (cbi.state-table-current-with? builtins-b gen-b table-b)
-                    (=
-                      (cbi.state-ctfe-ref builtins-b 0)
-                      (cbi.compiler-builtin-ctfe "size-of")))]
-                (and
-                  loaded-ok?
-                  reset-ok?
-                  isolated-ok?
-                  (compiler-driver-base-transients-lower-arenas-ok?
-                    state-a
-                    state-b)
-                  (compiler-driver-lower-state-isolation-ok?))))))))))
+            (not (cbi.state-table-current-with? builtins-a gen-a table-a))
+            (not (cbi.compiler-builtin-table-current?)))]
+        ;; Install B: derive B's table from B's own intern state.
+        (ci.intern-compat-state-install! intern-b)
+        (cbi.compiler-builtin-reset!)
+        (cbi.compiler-builtin-initialize-for-parse!)
+        (driver.compiler-driver-state-capture-active-builtins! state-b)
+        (driver.compiler-driver-state-capture-active-interns! state-b)
+        ;; Isolation: resetting uninstalled A must not disturb B's
+        ;; installed compatibility table -- the retired install/reset
+        ;; bridge invalidated it unconditionally.
+        (driver.compiler-driver-state-reset-builtins!
+          (owned_view.compiler-owned-shared-view state-a))
+        (let
+          [gen-b : i64 (driver.compiler-driver-state-intern-generation state-b)]
+          [isolated-ok? : bool
+            (and
+              (cbi.compiler-builtin-table-current?)
+              (cbi.state-table-current-with? builtins-b gen-b table-b)
+              (=
+                (cbi.state-ctfe-ref builtins-b 0)
+                (cbi.compiler-builtin-ctfe "size-of")))]
+          (and
+            loaded-ok?
+            reset-ok?
+            isolated-ok?
+            (compiler-driver-base-transients-lower-arenas-ok? state-a state-b)
+            (compiler-driver-lower-state-isolation-ok?)))))))
 
 (define (compiler-driver-base-transients-smoke-main) : i64
   (if (compiler-driver-base-transients-smoke-ok?)
@@ -1628,14 +1533,14 @@
 (define (compiler-driver-pic-smoke-extern-reject-ok?) : bool
   (match (compiler-driver-emit-file-pic-with-target-roots-level-mode-and-cfg
     (compiler-driver-pic-smoke-write-extern-fixture)
-    (compiler_backend.CompilerBackendTarget.Windows)
+    (Windows)
     true
     (compiler-driver-pic-smoke-roots)
     (compiler_optimize.compiler-optimize-default-level)
-    (compiler_backend.CompilerBackendMode.Scalar)
+    (Scalar)
     (compiler_cfg_core.compiler-cfg-empty))
-    [(driver.ResultCompilerDriverPic.Ok _ _) false]
-    [(driver.ResultCompilerDriverPic.Err diag _)
+    [(Ok _ _) false]
+    [(Err diag _)
       (let
         [rendered : String (cdiag.compiler-diagnostic-render (deref diag))]
         (compiler-driver-pic-smoke-contains?
@@ -1655,7 +1560,7 @@
 (define (compiler-driver-advisory-fixture [message : String]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-level
     (cdiag.compiler-diagnostic-simple "tests/advisories.tl" 1 1 message)
-    cdiag.CompilerDiagnosticWarning))
+    CompilerDiagnosticWarning))
 
 (define (compiler-driver-advisory-phase-is?
   [advisories : (& advisories cdiag.CompilerAdvisoryList)]
@@ -1665,25 +1570,25 @@
     [advisory : cdiag.CompilerAdvisory
       (cdiag.compiler-advisory-list-get advisories index)]
     (match phase
-      [(cdiag.CompilerAdvisoryPhase.Semantic)
+      [(Semantic)
         (match (cdiag.compiler-advisory-phase (& advisory))
-          [(cdiag.CompilerAdvisoryPhase.Semantic) true]
+          [(Semantic) true]
           [_ false])]
-      [(cdiag.CompilerAdvisoryPhase.Lowering)
+      [(Lowering)
         (match (cdiag.compiler-advisory-phase (& advisory))
-          [(cdiag.CompilerAdvisoryPhase.Lowering) true]
+          [(Lowering) true]
           [_ false])]
-      [(cdiag.CompilerAdvisoryPhase.Optimization)
+      [(Optimization)
         (match (cdiag.compiler-advisory-phase (& advisory))
-          [(cdiag.CompilerAdvisoryPhase.Optimization) true]
+          [(Optimization) true]
           [_ false])]
-      [(cdiag.CompilerAdvisoryPhase.RegisterAllocation)
+      [(RegisterAllocation)
         (match (cdiag.compiler-advisory-phase (& advisory))
-          [(cdiag.CompilerAdvisoryPhase.RegisterAllocation) true]
+          [(RegisterAllocation) true]
           [_ false])]
-      [(cdiag.CompilerAdvisoryPhase.Backend)
+      [(Backend)
         (match (cdiag.compiler-advisory-phase (& advisory))
-          [(cdiag.CompilerAdvisoryPhase.Backend) true]
+          [(Backend) true]
           [_ false])])))
 
 (define (compiler-driver-advisory-transport-ok?) : bool
@@ -1714,77 +1619,62 @@
         (cdiag_tests.compiler-advisory-sink-push!
           (tc.tc-job-state-advisory-sink
             (driver.compiler-driver-state-typecheck state-a))
-          cdiag.CompilerAdvisoryPhase.Semantic
+          Semantic
           (& semantic))
         (cdiag_tests.compiler-advisory-sink-push!
           (compiler_lower_tests.compiler-lower-state-advisory-sink
             (driver.compiler-driver-state-owned-lower-state state-a))
-          cdiag.CompilerAdvisoryPhase.Lowering
+          Lowering
           (& lowering))
         (cdiag_tests.compiler-advisory-sink-push!
           sink-a
-          cdiag.CompilerAdvisoryPhase.Optimization
+          Optimization
           (& optimization))
         (cdiag_tests.compiler-advisory-sink-push!
           sink-a
-          cdiag.CompilerAdvisoryPhase.RegisterAllocation
+          RegisterAllocation
           (& regalloc))
         (cdiag_tests.compiler-advisory-sink-push!
           (compiler_backend.compiler-backend-state-advisory-sink
             (driver.compiler-driver-state-backend state-a))
-          cdiag.CompilerAdvisoryPhase.Backend
+          Backend
           (& backend))
         (cdiag_tests.compiler-advisory-sink-push!
           (tc.tc-job-state-advisory-sink
             (driver.compiler-driver-state-typecheck state-b))
-          cdiag.CompilerAdvisoryPhase.Semantic
+          Semantic
           (& other))
         unit)]
     [advisories : cdiag.CompilerAdvisoryList
       (driver.compiler-driver-state-advisories
         (owned_view.compiler-owned-shared-view state-a))]
     [success : driver.ResultCompilerDriver
-      (driver.ResultCompilerDriver.Ok
+      (Ok
         "artifact"
         (driver.compiler-driver-state-advisories
           (owned_view.compiler-owned-shared-view state-a)))]
     [failure : driver.ResultCompilerDriver
-      (driver.ResultCompilerDriver.Err
+      (Err
         (box fatal)
         (driver.compiler-driver-state-advisories
           (owned_view.compiler-owned-shared-view state-a)))]
     [transport-ok? : bool
       (and
         (= (cdiag.compiler-advisory-list-count (& advisories)) 5)
-        (compiler-driver-advisory-phase-is?
-          (& advisories)
-          0
-          cdiag.CompilerAdvisoryPhase.Semantic)
-        (compiler-driver-advisory-phase-is?
-          (& advisories)
-          1
-          cdiag.CompilerAdvisoryPhase.Lowering)
-        (compiler-driver-advisory-phase-is?
-          (& advisories)
-          2
-          cdiag.CompilerAdvisoryPhase.Optimization)
-        (compiler-driver-advisory-phase-is?
-          (& advisories)
-          3
-          cdiag.CompilerAdvisoryPhase.RegisterAllocation)
-        (compiler-driver-advisory-phase-is?
-          (& advisories)
-          4
-          cdiag.CompilerAdvisoryPhase.Backend)
+        (compiler-driver-advisory-phase-is? (& advisories) 0 Semantic)
+        (compiler-driver-advisory-phase-is? (& advisories) 1 Lowering)
+        (compiler-driver-advisory-phase-is? (& advisories) 2 Optimization)
+        (compiler-driver-advisory-phase-is? (& advisories) 3 RegisterAllocation)
+        (compiler-driver-advisory-phase-is? (& advisories) 4 Backend)
         (match success
-          [(driver.ResultCompilerDriver.Ok artifact carried)
+          [(Ok artifact carried)
             (and
               (string.eq artifact "artifact")
               (= (cdiag.compiler-advisory-list-count (& carried)) 5))]
-          [(driver.ResultCompilerDriver.Err _ _) false])
+          [(Err _ _) false])
         (match failure
-          [(driver.ResultCompilerDriver.Ok _ _) false]
-          [(driver.ResultCompilerDriver.Err diag carried)
+          [(Ok _ _) false]
+          [(Err diag carried)
             (let
               [fatal-diagnostic : cdiag.CompilerDiagnostic (deref diag)]
               (and
@@ -1792,42 +1682,34 @@
                   (cdiag.compiler-diagnostic-message fatal-diagnostic)
                   "fatal")
                 (= (cdiag.compiler-advisory-list-count (& carried)) 5)))]))]
-    (begin
-      ;; Reset A as a cache/retry boundary. B is interleaved and must retain
-      ;; its own advisory; A's retired payload strings must not leak forward.
-      (driver.compiler-driver-state-prefix-cache-enable! state-a)
-      (driver.compiler-driver-state-reset-typecheck!
-        (owned_view.compiler-owned-shared-view state-a))
-      (let
-        [after-reset : cdiag.CompilerAdvisoryList
-          (driver.compiler-driver-state-advisories state-a)]
-        [still-b : cdiag.CompilerAdvisoryList
-          (driver.compiler-driver-state-advisories state-b)]
-        (and
-          transport-ok?
-          (= (cdiag.compiler-advisory-list-count (& after-reset)) 0)
-          (= (cdiag.compiler-advisory-list-count (& still-b)) 1))))))
+    ;; Reset A as a cache/retry boundary. B is interleaved and must retain
+    ;; its own advisory; A's retired payload strings must not leak forward.
+    (driver.compiler-driver-state-prefix-cache-enable! state-a)
+    (driver.compiler-driver-state-reset-typecheck!
+      (owned_view.compiler-owned-shared-view state-a))
+    (let
+      [after-reset : cdiag.CompilerAdvisoryList
+        (driver.compiler-driver-state-advisories state-a)]
+      [still-b : cdiag.CompilerAdvisoryList
+        (driver.compiler-driver-state-advisories state-b)]
+      (and
+        transport-ok?
+        (= (cdiag.compiler-advisory-list-count (& after-reset)) 0)
+        (= (cdiag.compiler-advisory-list-count (& still-b)) 1)))))
 
 (define (compiler-driver-pic-smoke-main) : i64
-  (begin
-    (unless (compiler-driver-restore-arena-owner-current-ok?) (return 5))
-    (unless (compiler-driver-lower-name-store-owner-current-ok?) (return 6))
-    (unless
-      (compiler-driver-pic-smoke-core-macros-ok?
-        (compiler_backend.CompilerBackendTarget.Linux))
-      (return 1))
-    (unless
-      (compiler-driver-pic-smoke-core-macros-ok?
-        (compiler_backend.CompilerBackendTarget.Windows))
-      (return 2))
-    (unless (compiler-driver-pic-smoke-extern-reject-ok?) (return 3))
-    (unless (compiler-driver-smoke-module-macro-diagnostic-ok?) (return 7))
-    (unless
-      (compiler-driver-pic-smoke-user-cfg-keeps-runtime-prelude?)
-      (return 4))
-    (unless (compiler-driver-runtime-prelude-cache-arena-scope-ok?) (return 8))
-    (unless (compiler-driver-advisory-transport-ok?) (return 9))
-    42))
+  (unless (compiler-driver-restore-arena-owner-current-ok?) (return 5))
+  (unless (compiler-driver-lower-name-store-owner-current-ok?) (return 6))
+  (unless (compiler-driver-pic-smoke-core-macros-ok? (Linux)) (return 1))
+  (unless (compiler-driver-pic-smoke-core-macros-ok? (Windows)) (return 2))
+  (unless (compiler-driver-pic-smoke-extern-reject-ok?) (return 3))
+  (unless (compiler-driver-smoke-module-macro-diagnostic-ok?) (return 7))
+  (unless
+    (compiler-driver-pic-smoke-user-cfg-keeps-runtime-prelude?)
+    (return 4))
+  (unless (compiler-driver-runtime-prelude-cache-arena-scope-ok?) (return 8))
+  (unless (compiler-driver-advisory-transport-ok?) (return 9))
+  42)
 
 (cfg test (import stdlib.test))
 
@@ -1848,29 +1730,26 @@
             [session : ci.InternSourceNameSessionHandle
               (driver.compiler-driver-state-source-name-session
                 (owned_view.compiler-owned-shared-view state))]
-            (begin
-              (unsafe
-                (arena.tl_arena_set return-arena))
-              session)))]
+            (unsafe
+              (arena.tl_arena_set return-arena))
+            session))]
       [intern-state : ci.InternCompatState
         (driver.compiler-driver-state-owned-interns state)]
-      (begin
-        (unsafe
-          (arena.tl_arena_destroy transient-arena))
-        (test.assert-i64-eq
-          (ci.intern-source-name-session-handle-table-id source-names)
-          (ci.intern-compat-state-table-id (& intern-state))
-          "source-name capability survives retirement of the caller arena")
-        (test.assert-i64-eq
-          (cast
-            (ci.intern-compat-state-profile-metrics-address-ref
-              (& intern-state))
-            : i64)
-          (cast
-            (profile_state.compiler-profile-state-metrics-address
-              (driver.compiler-driver-state-profile state))
-            : i64)
-          "intern owner shares the driver profile metric array")))))
+      (unsafe
+        (arena.tl_arena_destroy transient-arena))
+      (test.assert-i64-eq
+        (ci.intern-source-name-session-handle-table-id source-names)
+        (ci.intern-compat-state-table-id (& intern-state))
+        "source-name capability survives retirement of the caller arena")
+      (test.assert-i64-eq
+        (cast
+          (ci.intern-compat-state-profile-metrics-address-ref (& intern-state))
+          : i64)
+        (cast
+          (profile_state.compiler-profile-state-metrics-address
+            (driver.compiler-driver-state-profile state))
+          : i64)
+        "intern owner shares the driver profile metric array"))))
 
 (cfg
   test
@@ -1881,38 +1760,37 @@
         (profile_state.compiler-profile-state-new)]
       [right : profile_state.CompilerProfileState
         (profile_state.compiler-profile-state-new)]
-      (begin
-        (driver.compiler-driver-profile-reset-prelude! left)
-        (driver.compiler-driver-profile-reset-prelude! right)
-        (driver.compiler-driver-profile-note-prelude-source-pipeline! left)
-        (driver.compiler-driver-profile-note-prelude-hydration! right)
-        (driver.compiler-driver-profile-note-prelude-source-pipeline! left)
-        (driver.compiler-driver-profile-note-prelude-hydration! left)
-        (driver.compiler-driver-profile-reset-prelude! right)
-        (test.assert-i64-eq
-          (driver.compiler-driver-profile-value
-            left
-            driver.compiler-driver-profile-prelude-source-pipeline-entries-metric)
-          2
-          "left job keeps interleaved source-pipeline count")
-        (test.assert-i64-eq
-          (driver.compiler-driver-profile-value
-            left
-            driver.compiler-driver-profile-prelude-hydrations-metric)
-          1
-          "right reset does not erase left hydration count")
-        (test.assert-i64-eq
-          (driver.compiler-driver-profile-value
-            right
-            driver.compiler-driver-profile-prelude-source-pipeline-entries-metric)
-          0
-          "right source-pipeline count resets independently")
-        (test.assert-i64-eq
-          (driver.compiler-driver-profile-value
-            right
-            driver.compiler-driver-profile-prelude-hydrations-metric)
-          0
-          "right hydration count resets independently")))))
+      (driver.compiler-driver-profile-reset-prelude! left)
+      (driver.compiler-driver-profile-reset-prelude! right)
+      (driver.compiler-driver-profile-note-prelude-source-pipeline! left)
+      (driver.compiler-driver-profile-note-prelude-hydration! right)
+      (driver.compiler-driver-profile-note-prelude-source-pipeline! left)
+      (driver.compiler-driver-profile-note-prelude-hydration! left)
+      (driver.compiler-driver-profile-reset-prelude! right)
+      (test.assert-i64-eq
+        (driver.compiler-driver-profile-value
+          left
+          driver.compiler-driver-profile-prelude-source-pipeline-entries-metric)
+        2
+        "left job keeps interleaved source-pipeline count")
+      (test.assert-i64-eq
+        (driver.compiler-driver-profile-value
+          left
+          driver.compiler-driver-profile-prelude-hydrations-metric)
+        1
+        "right reset does not erase left hydration count")
+      (test.assert-i64-eq
+        (driver.compiler-driver-profile-value
+          right
+          driver.compiler-driver-profile-prelude-source-pipeline-entries-metric)
+        0
+        "right source-pipeline count resets independently")
+      (test.assert-i64-eq
+        (driver.compiler-driver-profile-value
+          right
+          driver.compiler-driver-profile-prelude-hydrations-metric)
+        0
+        "right hydration count resets independently"))))
 
 (cfg
   test
@@ -1927,36 +1805,33 @@
         (profile_state.compiler-profile-state-metrics-address left)]
       [right-address : u64
         (profile_state.compiler-profile-state-metrics-address right)]
-      (begin
-        (ci.intern-profile-reset! left-address)
-        (ci.intern-profile-reset! right-address)
-        (ci.intern-profile-note-intern left-address)
-        (ci.intern-profile-note-slice left-address 7)
-        (ci.intern-profile-note-lookup right-address)
-        (ci.intern-profile-note-generated right-address)
-        (ci.intern-profile-reset! right-address)
-        (test.assert-i64-eq
-          (ci.intern-profile-value left-address ci.intern-profile-intern-metric)
-          1
-          "left job keeps interleaved intern count")
-        (test.assert-i64-eq
-          (ci.intern-profile-value
-            left-address
-            ci.intern-profile-slice-bytes-metric)
-          7
-          "right reset does not erase left slice bytes")
-        (test.assert-i64-eq
-          (ci.intern-profile-value
-            right-address
-            ci.intern-profile-lookup-metric)
-          0
-          "right reset clears its lookup count")
-        (test.assert-i64-eq
-          (ci.intern-profile-value
-            right-address
-            ci.intern-profile-generated-metric)
-          0
-          "right reset clears its generated count")))))
+      (ci.intern-profile-reset! left-address)
+      (ci.intern-profile-reset! right-address)
+      (ci.intern-profile-note-intern left-address)
+      (ci.intern-profile-note-slice left-address 7)
+      (ci.intern-profile-note-lookup right-address)
+      (ci.intern-profile-note-generated right-address)
+      (ci.intern-profile-reset! right-address)
+      (test.assert-i64-eq
+        (ci.intern-profile-value left-address ci.intern-profile-intern-metric)
+        1
+        "left job keeps interleaved intern count")
+      (test.assert-i64-eq
+        (ci.intern-profile-value
+          left-address
+          ci.intern-profile-slice-bytes-metric)
+        7
+        "right reset does not erase left slice bytes")
+      (test.assert-i64-eq
+        (ci.intern-profile-value right-address ci.intern-profile-lookup-metric)
+        0
+        "right reset clears its lookup count")
+      (test.assert-i64-eq
+        (ci.intern-profile-value
+          right-address
+          ci.intern-profile-generated-metric)
+        0
+        "right reset clears its generated count"))))
 
 (cfg
   test
@@ -1975,117 +1850,115 @@
         (ci.intern-compat-state-new-with-profile-metrics-address left-address)]
       [right-intern : ci.InternCompatState
         (ci.intern-compat-state-new-with-profile-metrics-address right-address)]
-      (begin
-        (ci.intern-profile-reset! left-address)
+      (ci.intern-profile-reset! left-address)
+      (ci.intern-profile-reset! right-address)
+      (ci.intern-compat-state-reset! (&mut left-intern))
+      (ci.intern-compat-state-reset! (&mut right-intern))
+      (let
+        [left-source : i64
+          (ci.intern-compat-state-intern
+            (&mut left-intern)
+            "left-profile-source")]
+        [right-source : i64
+          (ci.intern-compat-state-intern
+            (&mut right-intern)
+            "right-profile-source")]
+        [left-canonical : i64
+          (ci.intern-compat-state-generated-canonical-name
+            (&mut left-intern)
+            "left-profile-canonical")]
+        [left-canonical-again : i64
+          (ci.intern-compat-state-generated-canonical-name
+            (&mut left-intern)
+            "left-profile-canonical")]
+        [right-generated : i64
+          (ci.intern-compat-state-generated-name
+            (&mut right-intern)
+            "right-profile-generated")]
+        ;; A known larger observation proves max and total use the same
+        ;; numeric slots in one owner without touching the other owner.
+        (ci.intern-profile-note-source-map-probe! left-address 4)
+        (test.assert-i64-eq
+          left-source
+          right-source
+          "independent owners may assign the same source record id")
+        (test.assert-i64-eq
+          left-canonical
+          right-generated
+          "independent owners may assign the same generated record id")
+        (test.assert-i64-eq
+          left-canonical
+          left-canonical-again
+          "canonical generated insertion is counted once")
         (ci.intern-profile-reset! right-address)
-        (ci.intern-compat-state-reset! (&mut left-intern))
         (ci.intern-compat-state-reset! (&mut right-intern))
-        (let
-          [left-source : i64
-            (ci.intern-compat-state-intern
-              (&mut left-intern)
-              "left-profile-source")]
-          [right-source : i64
-            (ci.intern-compat-state-intern
-              (&mut right-intern)
-              "right-profile-source")]
-          [left-canonical : i64
-            (ci.intern-compat-state-generated-canonical-name
-              (&mut left-intern)
-              "left-profile-canonical")]
-          [left-canonical-again : i64
-            (ci.intern-compat-state-generated-canonical-name
-              (&mut left-intern)
-              "left-profile-canonical")]
-          [right-generated : i64
-            (ci.intern-compat-state-generated-name
-              (&mut right-intern)
-              "right-profile-generated")]
-          (begin
-            ;; A known larger observation proves max and total use the same
-            ;; numeric slots in one owner without touching the other owner.
-            (ci.intern-profile-note-source-map-probe! left-address 4)
-            (test.assert-i64-eq
-              left-source
-              right-source
-              "independent owners may assign the same source record id")
-            (test.assert-i64-eq
-              left-canonical
-              right-generated
-              "independent owners may assign the same generated record id")
-            (test.assert-i64-eq
-              left-canonical
-              left-canonical-again
-              "canonical generated insertion is counted once")
-            (ci.intern-profile-reset! right-address)
-            (ci.intern-compat-state-reset! (&mut right-intern))
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-source-record-live-metric)
-              1
-              "right reset preserves left source record live count")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-generated-record-live-metric)
-              1
-              "right reset preserves left generated record live count")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-source-map-live-metric)
-              1
-              "left source map owns its occupancy")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-canonical-map-live-metric)
-              1
-              "left canonical map counts only the new record")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-source-map-probe-total-metric)
-              5
-              "source probe total accumulates per owner")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-source-map-probe-max-metric)
-              4
-              "source probe maximum is per owner")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                left-address
-                ci.intern-profile-canonical-map-probe-total-metric)
-              2
-              "canonical insert and reuse each record one probe")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                right-address
-                ci.intern-profile-source-record-live-metric)
-              0
-              "right reset clears only right live observations")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                right-address
-                ci.intern-profile-source-record-capacity-metric)
-              (ci.intern-capacity)
-              "right reset restores fixed source record capacity")
-            (test.assert-i64-eq
-              (ci.intern-profile-value
-                right-address
-                ci.intern-profile-source-map-resize-metric)
-              0
-              "fixed source map reports zero resizes")
-            (test.assert-true
-              (>
-                (ci.intern-profile-value
-                  right-address
-                  ci.intern-profile-record-reserved-bytes-metric)
-                0)
-              "right owner restores fixed record reserved bytes")))))))
+        (test.assert-i64-eq
+          (ci.intern-profile-value
+            left-address
+            ci.intern-profile-source-record-live-metric)
+          1
+          "right reset preserves left source record live count")
+        (test.assert-i64-eq
+          (ci.intern-profile-value
+            left-address
+            ci.intern-profile-generated-record-live-metric)
+          1
+          "right reset preserves left generated record live count")
+        (test.assert-i64-eq
+          (ci.intern-profile-value
+            left-address
+            ci.intern-profile-source-map-live-metric)
+          1
+          "left source map owns its occupancy")
+        (test.assert-i64-eq
+          (ci.intern-profile-value
+            left-address
+            ci.intern-profile-canonical-map-live-metric)
+          1
+          "left canonical map counts only the new record")
+        (test.assert-i64-eq
+          (ci.intern-profile-value
+            left-address
+            ci.intern-profile-source-map-probe-total-metric)
+          5
+          "source probe total accumulates per owner")
+        (test.assert-i64-eq
+          (ci.intern-profile-value
+            left-address
+            ci.intern-profile-source-map-probe-max-metric)
+          4
+          "source probe maximum is per owner")
+        (test.assert-i64-eq
+          (ci.intern-profile-value
+            left-address
+            ci.intern-profile-canonical-map-probe-total-metric)
+          2
+          "canonical insert and reuse each record one probe")
+        (test.assert-i64-eq
+          (ci.intern-profile-value
+            right-address
+            ci.intern-profile-source-record-live-metric)
+          0
+          "right reset clears only right live observations")
+        (test.assert-i64-eq
+          (ci.intern-profile-value
+            right-address
+            ci.intern-profile-source-record-capacity-metric)
+          (ci.intern-capacity)
+          "right reset restores fixed source record capacity")
+        (test.assert-i64-eq
+          (ci.intern-profile-value
+            right-address
+            ci.intern-profile-source-map-resize-metric)
+          0
+          "fixed source map reports zero resizes")
+        (test.assert-true
+          (>
+            (ci.intern-profile-value
+              right-address
+              ci.intern-profile-record-reserved-bytes-metric)
+            0)
+          "right owner restores fixed record reserved bytes")))))
 
 (define (compiler-driver-load-runtime-prelude-cold
   [stdlib-roots : svec.Vec]
@@ -2183,17 +2056,16 @@
         (driver.compiler-driver-render-source-diagnostic-from
           (&mut sources)
           (clone a-first))]
-      (begin
-        (test.assert-owned-string-eq
-          out-a-second
-          (driver.compiler-driver-render-source-diagnostic a-second)
-          "a's second line renders as a one-shot render does")
-        (test.assert-owned-string-eq
-          out-b-first
-          (driver.compiler-driver-render-source-diagnostic b-first)
-          "b renders as a one-shot render does")
-        (test.assert-owned-string-eq
-          out-a-first
-          (driver.compiler-driver-render-source-diagnostic a-first)
-          "returning to a, an earlier line renders as a one-shot render does")
-        (test.assert-i64-eq sources.count 2 "each file is read once")))))
+      (test.assert-owned-string-eq
+        out-a-second
+        (driver.compiler-driver-render-source-diagnostic a-second)
+        "a's second line renders as a one-shot render does")
+      (test.assert-owned-string-eq
+        out-b-first
+        (driver.compiler-driver-render-source-diagnostic b-first)
+        "b renders as a one-shot render does")
+      (test.assert-owned-string-eq
+        out-a-first
+        (driver.compiler-driver-render-source-diagnostic a-first)
+        "returning to a, an earlier line renders as a one-shot render does")
+      (test.assert-i64-eq sources.count 2 "each file is read once"))))

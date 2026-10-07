@@ -63,20 +63,19 @@
 
 (test
   generated-enum-match-pattern-api
-  (begin
-    (test.assert-i64-eq
-      (generated-choice-score (GeneratedEmpty))
-      0
-      "generated match handles qualified nullary variant pattern")
-    (test.assert-i64-eq
-      (generated-choice-score (GeneratedOne 42))
-      42
-      "generated match binds unary enum payload")
-    (test.assert-i64-eq
-      (generated-choice-score (GeneratedPair 20 22))
-      42
-      "generated match binds binary enum payloads")
-    (test.assert-i64-eq
-      (generated-choice-score (GeneratedWide 1 2 3 4 5 6 7 8 9))
-      45
-      "generated binding lists preserve arbitrary payload order")))
+  (test.assert-i64-eq
+    (generated-choice-score (GeneratedEmpty))
+    0
+    "generated match handles qualified nullary variant pattern")
+  (test.assert-i64-eq
+    (generated-choice-score (GeneratedOne 42))
+    42
+    "generated match binds unary enum payload")
+  (test.assert-i64-eq
+    (generated-choice-score (GeneratedPair 20 22))
+    42
+    "generated match binds binary enum payloads")
+  (test.assert-i64-eq
+    (generated-choice-score (GeneratedWide 1 2 3 4 5 6 7 8 9))
+    45
+    "generated binding lists preserve arbitrary payload order"))

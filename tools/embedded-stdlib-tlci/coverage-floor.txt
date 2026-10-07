@@ -22,7 +22,7 @@
 #
 # Every checked-in entry is fully native, so every fallback dimension is pinned
 # to zero rather than allowing a future catalog addition to hide one.
-native-entries-min 163
+native-entries-min 164
 shell-entries-max 0
 partial-entries-max 0
 interpreted-arms-max 0

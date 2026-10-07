@@ -59,8 +59,7 @@
 
 (define (borrowed-nested-array-score [items : (Array (Array i64 2) 2)]) : i64
   (match (& items)
-    [(array (array a b) (array c d))
-      (+ (deref a) (+ (deref b) (+ (deref c) (deref d))))]))
+    [(array (array a b) (array c d)) (+ a (+ b (+ c d)))]))
 
 (define (owned-box-score [items : (Array (Box i64) 2)]) : i64
   (match items
@@ -91,20 +90,19 @@
             [(tuple (array a b) _) (+ a b)]))))))
 
 (define (main) : i64
-  (begin
-    (unless (= (owned-string-score (array "owned" "xx" "yyyy")) 11) (return 1))
-    (unless
-      (= (borrowed-string-score (array "borrow" "xx" "owner")) 13)
-      (return 2))
-    (unless (= (copy-array-score (array 7 8 9)) 31) (return 3))
-    (unless (= (empty-array-score) 42) (return 4))
-    (unless (= (nested-score) 10) (return 5))
-    (unless (= (nested-array-score) 10) (return 6))
-    (unless
-      (= (borrowed-nested-array-score (array (array 9 10) (array 11 12))) 42)
-      (return 7))
-    (unless (= (owned-box-score (array (box 20) (box 22))) 42) (return 8))
-    (unless (= (struct-element-score) 10) (return 9))
-    (unless (= (aggregate-nesting-score) 68) (return 10))
-    (unless (= (generated-array-score (array 13 14 15)) 42) (return 11))
-    42))
+  (unless (= (owned-string-score (array "owned" "xx" "yyyy")) 11) (return 1))
+  (unless
+    (= (borrowed-string-score (array "borrow" "xx" "owner")) 13)
+    (return 2))
+  (unless (= (copy-array-score (array 7 8 9)) 31) (return 3))
+  (unless (= (empty-array-score) 42) (return 4))
+  (unless (= (nested-score) 10) (return 5))
+  (unless (= (nested-array-score) 10) (return 6))
+  (unless
+    (= (borrowed-nested-array-score (array (array 9 10) (array 11 12))) 42)
+    (return 7))
+  (unless (= (owned-box-score (array (box 20) (box 22))) 42) (return 8))
+  (unless (= (struct-element-score) 10) (return 9))
+  (unless (= (aggregate-nesting-score) 68) (return 10))
+  (unless (= (generated-array-score (array 13 14 15)) 42) (return 11))
+  42)

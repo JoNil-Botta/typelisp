@@ -104,13 +104,11 @@
     [slots : (__tl_dyn-array ArgsOptionSpec)
       (__tl_make-array ArgsOptionSpec (+ len 1))]
     [index : i64 0]
-    (begin
-      (set! (array-ref slots 0) spec)
-      (while (< index len)
-        (begin
-          (set! (array-ref slots (+ index 1)) (array-ref rest.slots index))
-          (set! index (+ index 1))))
-      (ArgsOptionSpecList slots (+ len 1)))))
+    (set! (array-ref slots 0) spec)
+    (while (< index len)
+      (set! (array-ref slots (+ index 1)) (array-ref rest.slots index))
+      (set! index (+ index 1)))
+    (ArgsOptionSpecList slots (+ len 1))))
 
 ;: Construct a boolean flag spec.
 (define (flag-option [name : String] [long : String] [short : String]) : ArgsOptionSpec
@@ -181,9 +179,8 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (begin
-        (set! (array-ref dst (+ index offset)) (array-ref src index))
-        (set! index (+ index 1))))))
+      (set! (array-ref dst (+ index offset)) (array-ref src index))
+      (set! index (+ index 1)))))
 
 ;: Return an empty parsed option list.
 (define (option-list-empty) : ArgsOptionList
@@ -196,21 +193,19 @@
     [len : i64 items.len]
     [slots : (__tl_dyn-array ArgsOption) items.slots]
     [capacity : i64 (array-length slots)]
-    (begin
-      (if (< len capacity)
-        unit
-        (let
-          [bigger : (__tl_dyn-array ArgsOption)
-            (__tl_make-array
-              ArgsOption
-              (if (< capacity 1)
-                4
-                (* capacity 2)))]
-          (begin
-            (option-list-copy! (&mut bigger) (& slots) 0 len)
-            (set! slots bigger))))
-      (set! (array-ref slots len) option)
-      (ArgsOptionList slots (+ len 1)))))
+    (if (< len capacity)
+      unit
+      (let
+        [bigger : (__tl_dyn-array ArgsOption)
+          (__tl_make-array
+            ArgsOption
+            (if (< capacity 1)
+              4
+              (* capacity 2)))]
+        (option-list-copy! (&mut bigger) (& slots) 0 len)
+        (set! slots bigger)))
+    (set! (array-ref slots len) option)
+    (ArgsOptionList slots (+ len 1))))
 
 ;: Return a parsed option occurrence's canonical name.
 (define (option-name [option : (& option ArgsOption)]) : String
@@ -231,14 +226,12 @@
   (let
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index items.len)
-        (begin
-          (if (string.eq (option-name (& (array-ref items.slots index))) name)
-            (set! count (+ count 1))
-            unit)
-          (set! index (+ index 1))))
-      count)))
+    (while (< index items.len)
+      (if (string.eq (option-name (& (array-ref items.slots index))) name)
+        (set! count (+ count 1))
+        unit)
+      (set! index (+ index 1)))
+    count))
 
 ;: Return true when `items` contains at least one option with `name`.
 (define (option-list-present?
@@ -255,18 +248,16 @@
   (let
     [index : i64 0]
     [result : String fallback]
-    (begin
-      (while (< index items.len)
-        (let
-          [head : (& items ArgsOption) (& (array-ref items.slots index))]
-          (begin
-            (if (if (string.eq (option-name head) name)
-              (option-has-value? head)
-              false)
-              (set! result (option-value head))
-              unit)
-            (set! index (+ index 1)))))
-      result)))
+    (while (< index items.len)
+      (let
+        [head : (& items ArgsOption) (& (array-ref items.slots index))]
+        (if (if (string.eq (option-name head) name)
+          (option-has-value? head)
+          false)
+          (set! result (option-value head))
+          unit)
+        (set! index (+ index 1))))
+    result))
 
 ;: Return the parsed option occurrence list.
 (define (parsed-options [parsed : (& parsed ArgsParsed)]) : (&
@@ -421,48 +412,31 @@
     [positionals : svec.Vec (svec.new)]
     [stop-options : bool false]
     [failed : bool false]
-    [error : ArgsError (stdlib.args.ArgsUnknownOption "")]
-    (begin
-      (while (and (< i last) (not failed))
-        (let
-          [current : String (string.copy (array-ref argv i))]
-          [has-next : bool (< (+ i 1) last)]
-          [next-value : String
-            (if has-next
-              (string.copy (array-ref argv (+ i 1)))
-              "")]
-          (cond
-            [stop-options
-              (begin
-                (svec.push-ref! (&mut positionals) current)
-                (set! i (+ i 1)))]
-            [(stdlib.args.end-of-options-token? current)
-              (begin
-                (set! stop-options true)
-                (set! i (+ i 1)))]
-            [(stdlib.args.option-looking-token? current)
-              (match (stdlib.args.find-spec-token specs current)
-                [(stdlib.args.ArgsNoOptionSpec)
-                  (begin
-                    (set! error (stdlib.args.ArgsUnknownOption current))
-                    (set! failed true))]
-                [(stdlib.args.ArgsSomeOptionSpec spec)
-                  (if (stdlib.args.option-arity-value?
-                    (stdlib.args.option-spec-arity spec))
-                    (if has-next
-                      (begin
-                        (set!
-                          options
-                          (stdlib.args.option-list-push
-                            options
-                            (stdlib.args.ArgsOption
-                              (stdlib.args.option-spec-name spec)
-                              next-value
-                              true)))
-                        (set! i (+ i 2)))
-                      (begin
-                        (set! error (stdlib.args.ArgsMissingValue current))
-                        (set! failed true)))
+    [error : ArgsError (ArgsUnknownOption "")]
+    (while (and (< i last) (not failed))
+      (let
+        [current : String (string.copy (array-ref argv i))]
+        [has-next : bool (< (+ i 1) last)]
+        [next-value : String
+          (if has-next
+            (string.copy (array-ref argv (+ i 1)))
+            "")]
+        (cond
+          [stop-options
+            (svec.push-ref! (&mut positionals) current)
+            (set! i (+ i 1))]
+          [(stdlib.args.end-of-options-token? current)
+            (set! stop-options true)
+            (set! i (+ i 1))]
+          [(stdlib.args.option-looking-token? current)
+            (match (stdlib.args.find-spec-token specs current)
+              [(ArgsNoOptionSpec)
+                (set! error (ArgsUnknownOption current))
+                (set! failed true)]
+              [(ArgsSomeOptionSpec spec)
+                (if (stdlib.args.option-arity-value?
+                  (stdlib.args.option-spec-arity spec))
+                  (if has-next
                     (begin
                       (set!
                         options
@@ -470,16 +444,28 @@
                           options
                           (stdlib.args.ArgsOption
                             (stdlib.args.option-spec-name spec)
-                            ""
-                            false)))
-                      (set! i (+ i 1))))])]
-            [else
-              (begin
-                (svec.push-ref! (&mut positionals) current)
-                (set! i (+ i 1)))])))
-      (if failed
-        (stdlib.args.ErrArgsParsed error)
-        (stdlib.args.OkArgsParsed (parse-finish-fields options positionals))))))
+                            next-value
+                            true)))
+                      (set! i (+ i 2)))
+                    (begin
+                      (set! error (ArgsMissingValue current))
+                      (set! failed true)))
+                  (begin
+                    (set!
+                      options
+                      (stdlib.args.option-list-push
+                        options
+                        (stdlib.args.ArgsOption
+                          (stdlib.args.option-spec-name spec)
+                          ""
+                          false)))
+                    (set! i (+ i 1))))])]
+          [else
+            (svec.push-ref! (&mut positionals) current)
+            (set! i (+ i 1))])))
+    (if failed
+      (ErrArgsParsed error)
+      (OkArgsParsed (parse-finish-fields options positionals)))))
 
 ;: Parse a borrowed argv Slice.
 (define (parse-slice
@@ -505,48 +491,31 @@
     [positionals : svec.Vec (svec.new)]
     [stop-options : bool false]
     [failed : bool false]
-    [error : ArgsError (stdlib.args.ArgsUnknownOption "")]
-    (begin
-      (while (and (< i last) (not failed))
-        (let
-          [current : String (io.arg i)]
-          [has-next : bool (< (+ i 1) last)]
-          [next-value : String
-            (if has-next
-              (io.arg (+ i 1))
-              "")]
-          (cond
-            [stop-options
-              (begin
-                (svec.push-ref! (&mut positionals) current)
-                (set! i (+ i 1)))]
-            [(stdlib.args.end-of-options-token? current)
-              (begin
-                (set! stop-options true)
-                (set! i (+ i 1)))]
-            [(stdlib.args.option-looking-token? current)
-              (match (stdlib.args.find-spec-token specs current)
-                [(stdlib.args.ArgsNoOptionSpec)
-                  (begin
-                    (set! error (stdlib.args.ArgsUnknownOption current))
-                    (set! failed true))]
-                [(stdlib.args.ArgsSomeOptionSpec spec)
-                  (if (stdlib.args.option-arity-value?
-                    (stdlib.args.option-spec-arity spec))
-                    (if has-next
-                      (begin
-                        (set!
-                          options
-                          (stdlib.args.option-list-push
-                            options
-                            (stdlib.args.ArgsOption
-                              (stdlib.args.option-spec-name spec)
-                              next-value
-                              true)))
-                        (set! i (+ i 2)))
-                      (begin
-                        (set! error (stdlib.args.ArgsMissingValue current))
-                        (set! failed true)))
+    [error : ArgsError (ArgsUnknownOption "")]
+    (while (and (< i last) (not failed))
+      (let
+        [current : String (io.arg i)]
+        [has-next : bool (< (+ i 1) last)]
+        [next-value : String
+          (if has-next
+            (io.arg (+ i 1))
+            "")]
+        (cond
+          [stop-options
+            (svec.push-ref! (&mut positionals) current)
+            (set! i (+ i 1))]
+          [(stdlib.args.end-of-options-token? current)
+            (set! stop-options true)
+            (set! i (+ i 1))]
+          [(stdlib.args.option-looking-token? current)
+            (match (stdlib.args.find-spec-token specs current)
+              [(ArgsNoOptionSpec)
+                (set! error (ArgsUnknownOption current))
+                (set! failed true)]
+              [(ArgsSomeOptionSpec spec)
+                (if (stdlib.args.option-arity-value?
+                  (stdlib.args.option-spec-arity spec))
+                  (if has-next
                     (begin
                       (set!
                         options
@@ -554,16 +523,28 @@
                           options
                           (stdlib.args.ArgsOption
                             (stdlib.args.option-spec-name spec)
-                            ""
-                            false)))
-                      (set! i (+ i 1))))])]
-            [else
-              (begin
-                (svec.push-ref! (&mut positionals) current)
-                (set! i (+ i 1)))])))
-      (if failed
-        (stdlib.args.ErrArgsParsed error)
-        (stdlib.args.OkArgsParsed (parse-finish-fields options positionals))))))
+                            next-value
+                            true)))
+                      (set! i (+ i 2)))
+                    (begin
+                      (set! error (ArgsMissingValue current))
+                      (set! failed true)))
+                  (begin
+                    (set!
+                      options
+                      (stdlib.args.option-list-push
+                        options
+                        (stdlib.args.ArgsOption
+                          (stdlib.args.option-spec-name spec)
+                          ""
+                          false)))
+                    (set! i (+ i 1))))])]
+          [else
+            (svec.push-ref! (&mut positionals) current)
+            (set! i (+ i 1))])))
+    (if failed
+      (ErrArgsParsed error)
+      (OkArgsParsed (parse-finish-fields options positionals)))))
 
 ;: Parse process argv from `start` through `(arg-count)`.
 (define (parse-argv [specs : ArgsOptionSpecList] [start : i64]) : ResultArgsParsed

@@ -19,33 +19,30 @@
     [out-view (i64v.slots-mut out)]
     [k : i64 0]
     [ok : bool true]
-    (begin
-      (while (< k 20)
-        (begin
-          (if (< (array-ref values-view k) 0)
-            (set! ok false)
-            unit)
-          (set! k (+ k 1))))
-      (foreach
-        ([i
-            : i64
-            0
-            (if (> n 18)
-              18
-              n)])
-        (set!
-          (array-ref out-view i)
-          (array-ref values-view (+ i (array-ref offsets-view (program-index))))))
-      (set! k 0)
-      (while (< k n)
-        (begin
-          (if (and
-            (< k 18)
-            (not (= (array-ref out-view k) (array-ref values-view (+ k 2)))))
-            (set! ok false)
-            unit)
-          (set! k (+ k 1))))
-      ok)))
+    (while (< k 20)
+      (if (< (array-ref values-view k) 0)
+        (set! ok false)
+        unit)
+      (set! k (+ k 1)))
+    (foreach
+      ([i
+          : i64
+          0
+          (if (> n 18)
+            18
+            n)])
+      (set!
+        (array-ref out-view i)
+        (array-ref values-view (+ i (array-ref offsets-view (program-index))))))
+    (set! k 0)
+    (while (< k n)
+      (if (and
+        (< k 18)
+        (not (= (array-ref out-view k) (array-ref values-view (+ k 2)))))
+        (set! ok false)
+        unit)
+      (set! k (+ k 1)))
+    ok))
 
 (define (main) : i64
   (let
@@ -53,16 +50,14 @@
     [offsets : i64v.Vec (i64z.make 16)]
     [out : i64v.Vec (i64z.make 20)]
     [k : i64 0]
-    (begin
-      (while (< k 20)
-        (begin
-          (i64v.set-ref! (&mut values) k (+ 100 (* k 3)))
-          (if (< k 16)
-            (i64v.set-ref! (&mut offsets) k 2)
-            unit)
-          (set! k (+ k 1))))
-      (if (and
-        (check (& values) (& offsets) (&mut out) 9)
-        (check (& values) (& offsets) (&mut out) 20))
-        42
-        1))))
+    (while (< k 20)
+      (i64v.set-ref! (&mut values) k (+ 100 (* k 3)))
+      (if (< k 16)
+        (i64v.set-ref! (&mut offsets) k 2)
+        unit)
+      (set! k (+ k 1)))
+    (if (and
+      (check (& values) (& offsets) (&mut out) 9)
+      (check (& values) (& offsets) (&mut out) 20))
+      42
+      1)))

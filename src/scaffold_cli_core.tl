@@ -59,10 +59,10 @@
 ;; create failure is an error.
 (define (scaffold-ensure-dir [path : String]) : io.ResultIoUnit
   (match (scaffold-try-mkdir path)
-    [(io.OkIoUnit) io.OkIoUnit]
-    [(io.ErrIoUnit _)
+    [(OkIoUnit) OkIoUnit]
+    [(ErrIoUnit _)
       (if (io.file-exists? (owned_view.compiler-owned-shared-view path))
-        io.OkIoUnit
+        OkIoUnit
         (scaffold-try-mkdir path))]))
 
 ;; Write `contents` to `path`, refusing to overwrite an existing file.
@@ -76,12 +76,11 @@
           "\n"))
       1)
     (match (scaffold-try-write-file path contents)
-      [(io.OkIoUnit) 0]
-      [(io.ErrIoUnit _)
-        (begin
-          (io.print-error
-            (str_cat.str-cat "scaffold: could not write " path "\n"))
-          1)])))
+      [(OkIoUnit) 0]
+      [(ErrIoUnit _)
+        (io.print-error
+          (str_cat.str-cat "scaffold: could not write " path "\n"))
+        1])))
 
 ;; Create the package-local build-output ignore without changing an existing
 ;; repository policy during `typelisp init`.
@@ -111,15 +110,11 @@
         (scaffold-lib-source)
         (scaffold-bin-source))]
     (match (scaffold-ensure-dir (owned_view.compiler-owned-shared-view src-dir))
-      [(io.ErrIoUnit _)
-        (begin
-          (io.print-error
-            (str_cat.str-cat
-              "scaffold: could not create directory "
-              src-dir
-              "\n"))
-          1)]
-      [(io.OkIoUnit)
+      [(ErrIoUnit _)
+        (io.print-error
+          (str_cat.str-cat "scaffold: could not create directory " src-dir "\n"))
+        1]
+      [(OkIoUnit)
         (let
           [pkg-code : i64
             (scaffold-write-new
@@ -157,12 +152,11 @@
         (str_cat.str-cat "scaffold: invalid package name: " name "\n"))
       2)
     (match (scaffold-ensure-dir (owned_view.compiler-owned-shared-view name))
-      [(io.ErrIoUnit _)
-        (begin
-          (io.print-error
-            (str_cat.str-cat "scaffold: could not create directory " name "\n"))
-          1)]
-      [(io.OkIoUnit)
+      [(ErrIoUnit _)
+        (io.print-error
+          (str_cat.str-cat "scaffold: could not create directory " name "\n"))
+        1]
+      [(OkIoUnit)
         (scaffold-emit (owned_view.compiler-owned-shared-view name) name is-lib)])))
 
 (define (scaffold-init [name : String] [is-lib : bool]) : i64
@@ -174,9 +168,8 @@
     (scaffold-emit "." name is-lib)))
 
 (define (scaffold-usage) : i64
-  (begin
-    (io.print-error "scaffold: usage: (new|init) [--lib] <name>\n")
-    2))
+  (io.print-error "scaffold: usage: (new|init) [--lib] <name>\n")
+  2)
 
 ;; Parse `[--lib] <name>` from argv starting at `idx`, bounded by `count`, then
 ;; dispatch to `new` or `init`.

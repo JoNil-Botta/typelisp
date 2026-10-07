@@ -209,29 +209,25 @@
   (let
     [index : i64 7]
     [result : i64 0]
-    (begin
-      (while (and (>= index 0) (= result 0))
-        (begin
-          (cond
-            [(> (array-ref a index) (array-ref b index)) (set! result 1)]
-            [(< (array-ref a index) (array-ref b index)) (set! result -1)]
-            [else unit])
-          (set! index (- index 1))))
-      result)))
+    (while (and (>= index 0) (= result 0))
+      (cond
+        [(> (array-ref a index) (array-ref b index)) (set! result 1)]
+        [(< (array-ref a index) (array-ref b index)) (set! result -1)]
+        [else unit])
+      (set! index (- index 1)))
+    result))
 
 ;: Whether every limb is zero.
 (define (limbs-zero? [a : (Array u32 8)]) : bool
   (let
     [index : i64 0]
     [zero : bool true]
-    (begin
-      (while (< index 8)
-        (begin
-          (if (= (array-ref a index) (cast 0 : u32))
-            unit
-            (set! zero false))
-          (set! index (+ index 1))))
-      zero)))
+    (while (< index 8)
+      (if (= (array-ref a index) (cast 0 : u32))
+        unit
+        (set! zero false))
+      (set! index (+ index 1)))
+    zero))
 
 ;: `a - b mod 2^256`, and whether it borrowed.
 (defstruct P256LimbsBorrow
@@ -244,23 +240,21 @@
     [out : (Array u32 8) (make-array u32 8)]
     [borrow : u64 (cast 0 : u64)]
     [index : i64 0]
-    (begin
-      (while (< index 8)
-        (let
-          [minuend : u64 (cast (array-ref a index) : u64)]
-          [subtrahend : u64 (+ (cast (array-ref b index) : u64) borrow)]
+    (while (< index 8)
+      (let
+        [minuend : u64 (cast (array-ref a index) : u64)]
+        [subtrahend : u64 (+ (cast (array-ref b index) : u64) borrow)]
+        (if (< minuend subtrahend)
           (begin
-            (if (< minuend subtrahend)
-              (begin
-                (set!
-                  (array-ref out index)
-                  (cast (- (+ minuend (+ p256-limb-mask 1)) subtrahend) : u32))
-                (set! borrow (cast 1 : u64)))
-              (begin
-                (set! (array-ref out index) (cast (- minuend subtrahend) : u32))
-                (set! borrow (cast 0 : u64))))
-            (set! index (+ index 1)))))
-      (P256LimbsBorrow out (> borrow (cast 0 : u64))))))
+            (set!
+              (array-ref out index)
+              (cast (- (+ minuend (+ p256-limb-mask 1)) subtrahend) : u32))
+            (set! borrow (cast 1 : u64)))
+          (begin
+            (set! (array-ref out index) (cast (- minuend subtrahend) : u32))
+            (set! borrow (cast 0 : u64))))
+        (set! index (+ index 1))))
+    (P256LimbsBorrow out (> borrow (cast 0 : u64)))))
 
 ;: `a - b mod 2^256`, dropping the final borrow.
 (define (limbs-minus [a : (Array u32 8)] [b : (Array u32 8)]) : (Array u32 8)
@@ -276,22 +270,18 @@
     [out : (Array u32 8) (make-array u32 8)]
     [carry : u64 (cast 0 : u64)]
     [index : i64 0]
-    (begin
-      (while (< index 8)
-        (let
-          [sum : u64
+    (while (< index 8)
+      (let
+        [sum : u64
+          (+
             (+
-              (+
-                (cast (array-ref a index) : u64)
-                (cast (array-ref b index) : u64))
-              carry)]
-          (begin
-            (set!
-              (array-ref out index)
-              (cast (bit-and sum p256-limb-mask) : u32))
-            (set! carry (shr sum 32))
-            (set! index (+ index 1)))))
-      out)))
+              (cast (array-ref a index) : u64)
+              (cast (array-ref b index) : u64))
+            carry)]
+        (set! (array-ref out index) (cast (bit-and sum p256-limb-mask) : u32))
+        (set! carry (shr sum 32))
+        (set! index (+ index 1))))
+    out))
 
 ;: `a + b mod m` for `a, b < m`. The sum is below 2m, so one subtraction
 ;: reduces it; when the 257th bit is set, that subtraction borrows it back.
@@ -303,24 +293,20 @@
     [out : (Array u32 8) (make-array u32 8)]
     [carry : u64 (cast 0 : u64)]
     [index : i64 0]
-    (begin
-      (while (< index 8)
-        (let
-          [sum : u64
+    (while (< index 8)
+      (let
+        [sum : u64
+          (+
             (+
-              (+
-                (cast (array-ref a index) : u64)
-                (cast (array-ref b index) : u64))
-              carry)]
-          (begin
-            (set!
-              (array-ref out index)
-              (cast (bit-and sum p256-limb-mask) : u32))
-            (set! carry (shr sum 32))
-            (set! index (+ index 1)))))
-      (if (or (> carry (cast 0 : u64)) (>= (limbs-compare out modulus.limbs) 0))
-        (limbs-minus out modulus.limbs)
-        out))))
+              (cast (array-ref a index) : u64)
+              (cast (array-ref b index) : u64))
+            carry)]
+        (set! (array-ref out index) (cast (bit-and sum p256-limb-mask) : u32))
+        (set! carry (shr sum 32))
+        (set! index (+ index 1))))
+    (if (or (> carry (cast 0 : u64)) (>= (limbs-compare out modulus.limbs) 0))
+      (limbs-minus out modulus.limbs)
+      out)))
 
 ;: `a - b mod m` for `a, b < m`.
 (define (mod-sub
@@ -344,82 +330,68 @@
   (let
     [t : (Array u64 10) (make-array u64 10)]
     [outer : i64 0]
-    (begin
-      (while (< outer 8)
-        (let
-          [factor : u64 (cast (array-ref b outer) : u64)]
-          [carry : u64 (cast 0 : u64)]
-          [inner : i64 0]
-          (begin
-            (while (< inner 8)
-              (let
-                [sum : u64
-                  (+
-                    (+
-                      (array-ref t inner)
-                      (* (cast (array-ref a inner) : u64) factor))
-                    carry)]
-                (begin
-                  (set! (array-ref t inner) (bit-and sum p256-limb-mask))
-                  (set! carry (shr sum 32))
-                  (set! inner (+ inner 1)))))
-            (let
-              [top : u64 (+ (array-ref t 8) carry)]
-              (begin
-                (set! (array-ref t 8) (bit-and top p256-limb-mask))
-                (set! (array-ref t 9) (shr top 32))))
-            (let
-              [q : u64 (bit-and (* (array-ref t 0) modulus.n0) p256-limb-mask)]
-              [first : u64
-                (+
-                  (array-ref t 0)
-                  (* q (cast (array-ref modulus.limbs 0) : u64)))]
-              [reduce-carry : u64 (shr first 32)]
-              [reduce-index : i64 1]
-              (begin
-                (while (< reduce-index 8)
-                  (let
-                    [sum : u64
-                      (+
-                        (+
-                          (array-ref t reduce-index)
-                          (*
-                            q
-                            (cast (array-ref modulus.limbs reduce-index) : u64)))
-                        reduce-carry)]
-                    (begin
-                      (set!
-                        (array-ref t (- reduce-index 1))
-                        (bit-and sum p256-limb-mask))
-                      (set! reduce-carry (shr sum 32))
-                      (set! reduce-index (+ reduce-index 1)))))
-                (let
-                  [top : u64 (+ (array-ref t 8) reduce-carry)]
-                  (begin
-                    (set! (array-ref t 7) (bit-and top p256-limb-mask))
-                    (set! (array-ref t 8) (+ (array-ref t 9) (shr top 32)))))))
-            (set! outer (+ outer 1)))))
+    (while (< outer 8)
       (let
-        [out : (Array u32 8) (make-array u32 8)]
-        [index : i64 0]
-        (begin
-          (while (< index 8)
-            (begin
-              (set! (array-ref out index) (cast (array-ref t index) : u32))
-              (set! index (+ index 1))))
-          (if (or
-            (> (array-ref t 8) (cast 0 : u64))
-            (>= (limbs-compare out modulus.limbs) 0))
-            (limbs-minus out modulus.limbs)
-            out))))))
+        [factor : u64 (cast (array-ref b outer) : u64)]
+        [carry : u64 (cast 0 : u64)]
+        [inner : i64 0]
+        (while (< inner 8)
+          (let
+            [sum : u64
+              (+
+                (+
+                  (array-ref t inner)
+                  (* (cast (array-ref a inner) : u64) factor))
+                carry)]
+            (set! (array-ref t inner) (bit-and sum p256-limb-mask))
+            (set! carry (shr sum 32))
+            (set! inner (+ inner 1))))
+        (let
+          [top : u64 (+ (array-ref t 8) carry)]
+          (set! (array-ref t 8) (bit-and top p256-limb-mask))
+          (set! (array-ref t 9) (shr top 32)))
+        (let
+          [q : u64 (bit-and (* (array-ref t 0) modulus.n0) p256-limb-mask)]
+          [first : u64
+            (+ (array-ref t 0) (* q (cast (array-ref modulus.limbs 0) : u64)))]
+          [reduce-carry : u64 (shr first 32)]
+          [reduce-index : i64 1]
+          (while (< reduce-index 8)
+            (let
+              [sum : u64
+                (+
+                  (+
+                    (array-ref t reduce-index)
+                    (* q (cast (array-ref modulus.limbs reduce-index) : u64)))
+                  reduce-carry)]
+              (set!
+                (array-ref t (- reduce-index 1))
+                (bit-and sum p256-limb-mask))
+              (set! reduce-carry (shr sum 32))
+              (set! reduce-index (+ reduce-index 1))))
+          (let
+            [top : u64 (+ (array-ref t 8) reduce-carry)]
+            (set! (array-ref t 7) (bit-and top p256-limb-mask))
+            (set! (array-ref t 8) (+ (array-ref t 9) (shr top 32)))))
+        (set! outer (+ outer 1))))
+    (let
+      [out : (Array u32 8) (make-array u32 8)]
+      [index : i64 0]
+      (while (< index 8)
+        (set! (array-ref out index) (cast (array-ref t index) : u32))
+        (set! index (+ index 1)))
+      (if (or
+        (> (array-ref t 8) (cast 0 : u64))
+        (>= (limbs-compare out modulus.limbs) 0))
+        (limbs-minus out modulus.limbs)
+        out))))
 
 ;: The normal-form limbs of 1.
 (define (limbs-one) : (Array u32 8)
   (let
     [out : (Array u32 8) (make-array u32 8)]
-    (begin
-      (set! (array-ref out 0) (cast 1 : u32))
-      out)))
+    (set! (array-ref out 0) (cast 1 : u32))
+    out))
 
 ;: `a * 2^256 mod m` for a normal-form `a < m`.
 (define (to-montgomery [a : (Array u32 8)] [modulus : (& modulus P256Modulus)]) : (Array
@@ -443,19 +415,17 @@
       (limbs-minus modulus.limbs (limbs-add-wrapping (limbs-one) (limbs-one)))]
     [result : (Array u32 8) (to-montgomery (limbs-one) modulus)]
     [bit : i64 255]
-    (begin
-      (while (>= bit 0)
-        (begin
-          (set! result (mont-mul result result modulus))
-          (if (=
-            (bit-and
-              (shr (cast (array-ref exponent (/ bit 32)) : u64) (% bit 32))
-              (cast 1 : u64))
-            (cast 1 : u64))
-            (set! result (mont-mul result a modulus))
-            unit)
-          (set! bit (- bit 1))))
-      result)))
+    (while (>= bit 0)
+      (set! result (mont-mul result result modulus))
+      (if (=
+        (bit-and
+          (shr (cast (array-ref exponent (/ bit 32)) : u64) (% bit 32))
+          (cast 1 : u64))
+        (cast 1 : u64))
+        (set! result (mont-mul result a modulus))
+        unit)
+      (set! bit (- bit 1)))
+    result))
 
 ;: The 32 big-endian bytes at `offset` as normal-form limbs.
 (define (limbs-from-bytes [bytes : (& bytes bytes)] [offset : i64]) : (Array
@@ -464,43 +434,35 @@
   (let
     [out : (Array u32 8) (make-array u32 8)]
     [from-end : i64 0]
-    (begin
-      (while (< from-end 32)
-        (let
-          [limb-index : i64 (/ from-end 4)]
-          [shift : i64 (* (% from-end 4) 8)]
-          [byte : u64
-            (cast (byte_buf.bytes-ref bytes (- (+ offset 31) from-end)) : u64)]
-          (begin
-            (set!
-              (array-ref out limb-index)
-              (cast
-                (bit-or
-                  (cast (array-ref out limb-index) : u64)
-                  (shl byte shift))
-                : u32))
-            (set! from-end (+ from-end 1)))))
-      out)))
+    (while (< from-end 32)
+      (let
+        [limb-index : i64 (/ from-end 4)]
+        [shift : i64 (* (% from-end 4) 8)]
+        [byte : u64
+          (cast (byte_buf.bytes-ref bytes (- (+ offset 31) from-end)) : u64)]
+        (set!
+          (array-ref out limb-index)
+          (cast
+            (bit-or (cast (array-ref out limb-index) : u64) (shl byte shift))
+            : u32))
+        (set! from-end (+ from-end 1))))
+    out))
 
 ;: Append normal-form limbs to `out` as 32 big-endian bytes.
 (define (limbs-push-bytes [out : byte_buf.ByteBuf] [a : (Array u32 8)]) : byte_buf.ByteBuf
   (let
     [result : byte_buf.ByteBuf out]
     [index : i64 0]
-    (begin
-      (while (< index 32)
-        (let
-          [from-end : i64 (- 31 index)]
-          [byte : u64
-            (bit-and
-              (shr
-                (cast (array-ref a (/ from-end 4)) : u64)
-                (* (% from-end 4) 8))
-              (cast 255 : u64))]
-          (begin
-            (set! result (byte_buf.push result (cast byte : u8)))
-            (set! index (+ index 1)))))
-      result)))
+    (while (< index 32)
+      (let
+        [from-end : i64 (- 31 index)]
+        [byte : u64
+          (bit-and
+            (shr (cast (array-ref a (/ from-end 4)) : u64) (* (% from-end 4) 8))
+            (cast 255 : u64))]
+        (set! result (byte_buf.push result (cast byte : u8)))
+        (set! index (+ index 1))))
+    result))
 
 ;: Parse one canonical element: exactly the 32 bytes at `offset`, below `m`.
 (define (canonical-limbs-from-bytes
@@ -601,12 +563,11 @@
 
 ;: The canonical scalar in [1, n-1], as ECDSA's r and s must be.
 (define (scalar-from-bytes-nonzero [bytes : (& bytes bytes)]) : ResultP256Scalar
-  (match (scalar-from-bytes bytes)
-    [(OkP256Scalar scalar)
-      (if (limbs-zero? scalar.limbs)
-        (ErrP256Scalar (p256-error (P256Zero) 0))
-        (OkP256Scalar scalar))]
-    [(ErrP256Scalar error) (ErrP256Scalar error)]))
+  (let
+    [scalar (try (scalar-from-bytes bytes))]
+    (if (limbs-zero? scalar.limbs)
+      (ErrP256Scalar (p256-error (P256Zero) 0))
+      (OkP256Scalar scalar))))
 
 ;: Any 32 big-endian bytes reduced modulo n, as FIPS 186-5 turns a 256-bit
 ;: digest into `e`. 2^256 < 2n, so one subtraction reduces.
@@ -782,15 +743,13 @@
     [bits : (Array u32 8) (from-montgomery k.limbs (& p256-order-modulus))]
     [result : P256Point (point-identity)]
     [bit : i64 255]
-    (begin
-      (while (>= bit 0)
-        (begin
-          (set! result (point-double result))
-          (if (limbs-bit bits bit)
-            (set! result (point-add result a))
-            unit)
-          (set! bit (- bit 1))))
-      result)))
+    (while (>= bit 0)
+      (set! result (point-double result))
+      (if (limbs-bit bits bit)
+        (set! result (point-add result a))
+        unit)
+      (set! bit (- bit 1)))
+    result))
 
 ;: `[u]G + [v]Q` for PUBLIC scalars, as ECDSA verification needs: variable time,
 ;: one shared doubling chain (Shamir's trick).
@@ -802,20 +761,18 @@
     [g-plus-q : P256Point (point-add (point-generator) q)]
     [result : P256Point (point-identity)]
     [bit : i64 255]
-    (begin
-      (while (>= bit 0)
-        (let
-          [u-set : bool (limbs-bit u-bits bit)]
-          [v-set : bool (limbs-bit v-bits bit)]
-          (begin
-            (set! result (point-double result))
-            (cond
-              [(and u-set v-set) (set! result (point-add result g-plus-q))]
-              [u-set (set! result (point-add result g))]
-              [v-set (set! result (point-add result q))]
-              [else unit])
-            (set! bit (- bit 1)))))
-      result)))
+    (while (>= bit 0)
+      (let
+        [u-set : bool (limbs-bit u-bits bit)]
+        [v-set : bool (limbs-bit v-bits bit)]
+        (set! result (point-double result))
+        (cond
+          [(and u-set v-set) (set! result (point-add result g-plus-q))]
+          [u-set (set! result (point-add result g))]
+          [v-set (set! result (point-add result q))]
+          [else unit])
+        (set! bit (- bit 1))))
+    result))
 
 ;; --- SEC1 uncompressed public points -----------------------------------------
 ;: A validated public point from exactly the 65 bytes `0x04 || X || Y`.
@@ -827,15 +784,12 @@
     [(not (= (byte_buf.bytes-ref bytes 0) (cast 4 : u8)))
       (ErrP256PublicPoint (p256-error (P256InvalidPrefix) 0))]
     [else
-      (match (field-from-bytes-at bytes 1)
-        [(ErrP256Field error) (ErrP256PublicPoint error)]
-        [(OkP256Field x)
-          (match (field-from-bytes-at bytes 33)
-            [(ErrP256Field error) (ErrP256PublicPoint error)]
-            [(OkP256Field y)
-              (if (on-curve? x y)
-                (OkP256PublicPoint (P256PublicPoint x y))
-                (ErrP256PublicPoint (p256-error (P256NotOnCurve) 0)))])])]))
+      (let
+        [x (try (field-from-bytes-at bytes 1))]
+        [y (try (field-from-bytes-at bytes 33))]
+        (if (on-curve? x y)
+          (OkP256PublicPoint (P256PublicPoint x y))
+          (ErrP256PublicPoint (p256-error (P256NotOnCurve) 0))))]))
 
 ;: The 65-byte SEC1 uncompressed encoding `0x04 || X || Y`.
 (define (public-point-to-bytes [a : P256PublicPoint]) : byte_buf.ByteBuf

@@ -13,7 +13,7 @@
 ;# One hashed group index, one three-color dependency walk, and memoized
 ;# group/rule membership keep resolution O(G + M + A) for G group declarations,
 ;# M group members, and A assignments with the fixed registry. Finding lookup
-;# is O(F) with the fixed 27-rule decision table.
+;# is O(F) with the fixed 28-rule decision table.
 (import compiler_owned_view as owned_view)
 (import lint_core)
 (import stdlib.str_cat_runtime as str_cat)
@@ -31,21 +31,21 @@
 
 (define (lint-policy-layer-rank [layer : (& layer LintPolicyLayer)]) : i64
   (match layer
-    [(LintPolicyLayer.Builtin) 0]
-    [(LintPolicyLayer.Project) 1]
-    [(LintPolicyLayer.TargetProfile) 2]
-    [(LintPolicyLayer.Cli) 3]
-    [(LintPolicyLayer.ModuleItem) 4]
-    [(LintPolicyLayer.Local) 5]))
+    [(Builtin) 0]
+    [(Project) 1]
+    [(TargetProfile) 2]
+    [(Cli) 3]
+    [(ModuleItem) 4]
+    [(Local) 5]))
 
 (define (lint-policy-layer-name [layer : LintPolicyLayer]) : String
   (match layer
-    [(LintPolicyLayer.Builtin) "built-in"]
-    [(LintPolicyLayer.Project) "project"]
-    [(LintPolicyLayer.TargetProfile) "target/profile"]
-    [(LintPolicyLayer.Cli) "cli"]
-    [(LintPolicyLayer.ModuleItem) "module/item"]
-    [(LintPolicyLayer.Local) "local"]))
+    [(Builtin) "built-in"]
+    [(Project) "project"]
+    [(TargetProfile) "target/profile"]
+    [(Cli) "cli"]
+    [(ModuleItem) "module/item"]
+    [(Local) "local"]))
 
 (defenum LintPolicyAssignmentMode
   (Exact)
@@ -57,12 +57,12 @@
 
 (define (lint-policy-subject-name [subject : (& subject LintPolicySubject)]) : String
   (match subject
-    [(LintPolicySubject.Rule name) (string.copy name)]
-    [(LintPolicySubject.Group name) (string.copy name)]))
+    [(Rule name) (string.copy name)]
+    [(Group name) (string.copy name)]))
 
 (define (lint-policy-subject-is-rule? [subject : (& subject LintPolicySubject)]) : bool
   (match subject
-    [(LintPolicySubject.Rule _) true]
+    [(Rule _) true]
     [_ false]))
 
 ;: Parser-neutral source origin retained verbatim through policy resolution.
@@ -163,9 +163,8 @@
 (define (lint-policy-diagnostics-add
   [items : LintPolicyDiagnostics]
   [diagnostic : LintPolicyDiagnostic]) : LintPolicyDiagnostics
-  (begin
-    (set! (array-ref items.slots items.len) diagnostic)
-    (LintPolicyDiagnostics items.slots (+ items.len 1))))
+  (set! (array-ref items.slots items.len) diagnostic)
+  (LintPolicyDiagnostics items.slots (+ items.len 1)))
 
 (defstruct LintPolicyDecision
   (rule-id String)
@@ -222,9 +221,8 @@
 (define (lint-policy-trace-add
   [items : LintPolicyTrace]
   [entry : LintPolicyTraceEntry]) : LintPolicyTrace
-  (begin
-    (set! (array-ref items.slots items.len) entry)
-    (LintPolicyTrace items.slots (+ items.len 1))))
+  (set! (array-ref items.slots items.len) entry)
+  (LintPolicyTrace items.slots (+ items.len 1)))
 
 ;: Deterministic work census used by bounded-overhead tests and measurements.
 (defstruct LintPolicyStats
@@ -245,14 +243,10 @@
   (let
     [index : i64 0]
     [count : i64 0]
-    (begin
-      (while (< index groups.len)
-        (begin
-          (set!
-            count
-            (+ count (lint-policy-groups-ref groups index).members.len))
-          (set! index (+ index 1))))
-      count)))
+    (while (< index groups.len)
+      (set! count (+ count (lint-policy-groups-ref groups index).members.len))
+      (set! index (+ index 1)))
+    count))
 
 ;: Build one deterministic open-addressed name index for this resolution.
 ;: The first declaration wins the index; duplicate validation reports later
@@ -262,17 +256,15 @@
     [index-map : lint_policy_string_i64_map.Map
       (lint_policy_string_i64_map.with-capacity (+ groups.len 1))]
     [index : i64 0]
-    (begin
-      (while (< index groups.len)
-        (let
-          [group : LintPolicyGroup (lint-policy-groups-ref groups index)]
-          (begin
-            (lint_policy_string_i64_map.insert-if-absent-ref!
-              (&mut index-map)
-              (string.copy group.name)
-              index)
-            (set! index (+ index 1)))))
-      index-map)))
+    (while (< index groups.len)
+      (let
+        [group : LintPolicyGroup (lint-policy-groups-ref groups index)]
+        (lint_policy_string_i64_map.insert-if-absent-ref!
+          (&mut index-map)
+          (string.copy group.name)
+          index)
+        (set! index (+ index 1))))
+    index-map))
 
 (define (lint-policy-group-indexed
   [index-map : (& index-map lint_policy_string_i64_map.Map)]
@@ -309,7 +301,7 @@
   [layer : LintPolicyLayer]
   [origin : LintPolicyOrigin]) : LintPolicyDiagnostic
   (lint-policy-diagnostic
-    LintPolicyDiagnosticKind.UnknownRule
+    UnknownRule
     (owned_view.compiler-owned-shared-view name)
     layer
     origin
@@ -320,7 +312,7 @@
   [layer : LintPolicyLayer]
   [origin : LintPolicyOrigin]) : LintPolicyDiagnostic
   (lint-policy-diagnostic
-    LintPolicyDiagnosticKind.UnknownGroup
+    UnknownGroup
     (owned_view.compiler-owned-shared-view name)
     layer
     origin
@@ -340,47 +332,41 @@
   (let
     [index : i64 0]
     [out : LintPolicyDiagnostics diagnostics]
-    (begin
-      (while (< index groups.len)
-        (let
-          [group : LintPolicyGroup (lint-policy-groups-ref groups index)]
-          [first : i64 (lint-policy-group-indexed index-map group.name)]
-          (begin
-            (if (> (lint_core.lint-built-in-group-mask group.name) 0)
-              (begin
-                (set! (array-ref valid index) false)
-                (set!
-                  out
-                  (lint-policy-diagnostics-add
-                    out
-                    (lint-policy-diagnostic
-                      LintPolicyDiagnosticKind.DuplicateGroup
-                      (owned_view.compiler-owned-shared-view group.name)
-                      group.layer
-                      (owned_view.compiler-owned-shared-view group.origin)
-                      (str_cat.str-cat
-                        "custom lint group redefines built-in group: "
-                        (owned_view.compiler-owned-shared-view group.name))))))
-              unit)
-            (if (and (>= first 0) (not (= first index)))
-              (begin
-                (set! (array-ref valid first) false)
-                (set! (array-ref valid index) false)
-                (set!
-                  out
-                  (lint-policy-diagnostics-add
-                    out
-                    (lint-policy-diagnostic
-                      LintPolicyDiagnosticKind.DuplicateGroup
-                      (owned_view.compiler-owned-shared-view group.name)
-                      group.layer
-                      group.origin
-                      (str_cat.str-cat
-                        "duplicate lint group definition: "
-                        group.name)))))
-              unit)
-            (set! index (+ index 1)))))
-      out)))
+    (while (< index groups.len)
+      (let
+        [group : LintPolicyGroup (lint-policy-groups-ref groups index)]
+        [first : i64 (lint-policy-group-indexed index-map group.name)]
+        (when
+          (> (lint_core.lint-built-in-group-mask group.name) 0)
+          (set! (array-ref valid index) false)
+          (set!
+            out
+            (lint-policy-diagnostics-add
+              out
+              (lint-policy-diagnostic
+                DuplicateGroup
+                (owned_view.compiler-owned-shared-view group.name)
+                group.layer
+                (owned_view.compiler-owned-shared-view group.origin)
+                (str_cat.str-cat
+                  "custom lint group redefines built-in group: "
+                  (owned_view.compiler-owned-shared-view group.name))))))
+        (when
+          (and (>= first 0) (not (= first index)))
+          (set! (array-ref valid first) false)
+          (set! (array-ref valid index) false)
+          (set!
+            out
+            (lint-policy-diagnostics-add
+              out
+              (lint-policy-diagnostic
+                DuplicateGroup
+                (owned_view.compiler-owned-shared-view group.name)
+                group.layer
+                group.origin
+                (str_cat.str-cat "duplicate lint group definition: " group.name)))))
+        (set! index (+ index 1))))
+    out))
 
 (define (lint-policy-validate-group-members
   [rules : (& rules lint_core.LintRuleList)]
@@ -391,48 +377,41 @@
   (let
     [group-index : i64 0]
     [out : LintPolicyDiagnostics diagnostics]
-    (begin
-      (while (< group-index groups.len)
-        (let
-          [group : LintPolicyGroup (lint-policy-groups-ref groups group-index)]
-          [member-index : i64 0]
-          (begin
-            (while (< member-index group.members.len)
-              (begin
-                (match (lint-policy-group-members-ref
-                  group.members
-                  member-index)
-                  [(LintPolicyGroupMember.Rule name)
-                    (if (< (lint-policy-rule-index rules name) 0)
-                      (begin
-                        (set! (array-ref valid group-index) false)
-                        (set!
-                          out
-                          (lint-policy-diagnostics-add
-                            out
-                            (lint-policy-unknown-rule-diagnostic
-                              name
-                              group.layer
-                              group.origin))))
-                      unit)]
-                  [(LintPolicyGroupMember.Group name)
-                    (if (and
-                      (= (lint_core.lint-built-in-group-mask name) 0)
-                      (< (lint-policy-group-indexed index-map name) 0))
-                      (begin
-                        (set! (array-ref valid group-index) false)
-                        (set!
-                          out
-                          (lint-policy-diagnostics-add
-                            out
-                            (lint-policy-unknown-group-diagnostic
-                              name
-                              group.layer
-                              group.origin))))
-                      unit)])
-                (set! member-index (+ member-index 1))))
-            (set! group-index (+ group-index 1)))))
-      out)))
+    (while (< group-index groups.len)
+      (let
+        [group : LintPolicyGroup (lint-policy-groups-ref groups group-index)]
+        [member-index : i64 0]
+        (while (< member-index group.members.len)
+          (match (lint-policy-group-members-ref group.members member-index)
+            [(Rule name)
+              (when
+                (< (lint-policy-rule-index rules name) 0)
+                (set! (array-ref valid group-index) false)
+                (set!
+                  out
+                  (lint-policy-diagnostics-add
+                    out
+                    (lint-policy-unknown-rule-diagnostic
+                      name
+                      group.layer
+                      group.origin))))]
+            [(Group name)
+              (when
+                (and
+                  (= (lint_core.lint-built-in-group-mask name) 0)
+                  (< (lint-policy-group-indexed index-map name) 0))
+                (set! (array-ref valid group-index) false)
+                (set!
+                  out
+                  (lint-policy-diagnostics-add
+                    out
+                    (lint-policy-unknown-group-diagnostic
+                      name
+                      group.layer
+                      group.origin))))])
+          (set! member-index (+ member-index 1)))
+        (set! group-index (+ group-index 1))))
+    out))
 
 ;; A graph walk returns an owned diagnostic buffer plus an in-flight cycle
 ;; root while unwinding. The root clears propagation, so groups that merely
@@ -462,85 +441,78 @@
         [cycle-here : bool false]
         [invalid-reference : bool false]
         [done : bool false]
-        (begin
-          (set! (array-ref colors current) 1)
-          (while (and (not done) (< member-index group.members.len))
-            (begin
-              (match (lint-policy-group-members-ref group.members member-index)
-                [(LintPolicyGroupMember.Rule _) unit]
-                [(LintPolicyGroupMember.Group name)
-                  (let
-                    [child : i64 (lint-policy-group-indexed index-map name)]
-                    (when
-                      (>= child 0)
-                      (if (not (array-ref valid child))
-                        (set! invalid-reference true)
-                        (if (= (array-ref colors child) 1)
-                          (begin
-                            (set! cycle-root child)
-                            (set! propagating true))
-                          (when
-                            (= (array-ref colors child) 0)
-                            (let
-                              [child-walk : LintPolicyGroupGraphWalk
-                                (lint-policy-validate-group-graph-from
-                                  groups
-                                  index-map
-                                  valid
-                                  colors
-                                  child
-                                  (owned_view.compiler-owned-shared-view out))]
-                              (begin
-                                (set! out child-walk.diagnostics)
-                                (if child-walk.propagating-cycle
-                                  (begin
-                                    (set! cycle-root child-walk.cycle-root)
-                                    (set! propagating true))
-                                  (when
-                                    (not (array-ref valid child))
-                                    (set! invalid-reference true))))))))
+        (set! (array-ref colors current) 1)
+        (while (and (not done) (< member-index group.members.len))
+          (match (lint-policy-group-members-ref group.members member-index)
+            [(Rule _) unit]
+            [(Group name)
+              (let
+                [child : i64 (lint-policy-group-indexed index-map name)]
+                (when
+                  (>= child 0)
+                  (if (not (array-ref valid child))
+                    (set! invalid-reference true)
+                    (if (= (array-ref colors child) 1)
+                      (begin
+                        (set! cycle-root child)
+                        (set! propagating true))
                       (when
-                        propagating
-                        (begin
-                          (when
-                            (array-ref valid current)
+                        (= (array-ref colors child) 0)
+                        (let
+                          [child-walk : LintPolicyGroupGraphWalk
+                            (lint-policy-validate-group-graph-from
+                              groups
+                              index-map
+                              valid
+                              colors
+                              child
+                              (owned_view.compiler-owned-shared-view out))]
+                          (set! out child-walk.diagnostics)
+                          (if child-walk.propagating-cycle
                             (begin
-                              (set! (array-ref valid current) false)
-                              (set!
-                                out
-                                (lint-policy-diagnostics-add
-                                  out
-                                  (lint-policy-diagnostic
-                                    LintPolicyDiagnosticKind.GroupCycle
-                                    (owned_view.compiler-owned-shared-view
-                                      group.name)
-                                    group.layer
-                                    group.origin
-                                    (str_cat.str-cat
-                                      "cyclic lint group definition: "
-                                      group.name))))))
-                          (set! cycle-here true)
-                          (set! done true)
-                          (when (= current cycle-root) (set! propagating false))))))])
-              (set! member-index (+ member-index 1))))
-          (when
-            (and invalid-reference (not cycle-here) (array-ref valid current))
-            (begin
-              (set! (array-ref valid current) false)
-              (set!
-                out
-                (lint-policy-diagnostics-add
-                  out
-                  (lint-policy-diagnostic
-                    LintPolicyDiagnosticKind.InvalidGroupReference
-                    (owned_view.compiler-owned-shared-view group.name)
-                    group.layer
-                    group.origin
-                    (str_cat.str-cat
-                      "lint group depends on an invalid group: "
-                      group.name))))))
-          (set! (array-ref colors current) 2)
-          (LintPolicyGroupGraphWalk out cycle-root propagating))))))
+                              (set! cycle-root child-walk.cycle-root)
+                              (set! propagating true))
+                            (when
+                              (not (array-ref valid child))
+                              (set! invalid-reference true)))))))
+                  (when
+                    propagating
+                    (when
+                      (array-ref valid current)
+                      (set! (array-ref valid current) false)
+                      (set!
+                        out
+                        (lint-policy-diagnostics-add
+                          out
+                          (lint-policy-diagnostic
+                            GroupCycle
+                            (owned_view.compiler-owned-shared-view group.name)
+                            group.layer
+                            group.origin
+                            (str_cat.str-cat
+                              "cyclic lint group definition: "
+                              group.name)))))
+                    (set! cycle-here true)
+                    (set! done true)
+                    (when (= current cycle-root) (set! propagating false)))))])
+          (set! member-index (+ member-index 1)))
+        (when
+          (and invalid-reference (not cycle-here) (array-ref valid current))
+          (set! (array-ref valid current) false)
+          (set!
+            out
+            (lint-policy-diagnostics-add
+              out
+              (lint-policy-diagnostic
+                InvalidGroupReference
+                (owned_view.compiler-owned-shared-view group.name)
+                group.layer
+                group.origin
+                (str_cat.str-cat
+                  "lint group depends on an invalid group: "
+                  group.name)))))
+        (set! (array-ref colors current) 2)
+        (LintPolicyGroupGraphWalk out cycle-root propagating)))))
 
 (define (lint-policy-validate-group-graph
   [groups : (& groups LintPolicyGroups)]
@@ -551,23 +523,21 @@
     [colors : (__tl_dyn-array i64) (__tl_make-array i64 groups.len)]
     [index : i64 0]
     [out : LintPolicyDiagnostics diagnostics]
-    (begin
-      (while (< index groups.len)
-        (begin
-          (when
-            (and (array-ref valid index) (= (array-ref colors index) 0))
-            (let
-              [walk : LintPolicyGroupGraphWalk
-                (lint-policy-validate-group-graph-from
-                  groups
-                  index-map
-                  valid
-                  (&mut colors)
-                  index
-                  (owned_view.compiler-owned-shared-view out))]
-              (set! out walk.diagnostics)))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index groups.len)
+      (when
+        (and (array-ref valid index) (= (array-ref colors index) 0))
+        (let
+          [walk : LintPolicyGroupGraphWalk
+            (lint-policy-validate-group-graph-from
+              groups
+              index-map
+              valid
+              (&mut colors)
+              index
+              (owned_view.compiler-owned-shared-view out))]
+          (set! out walk.diagnostics)))
+      (set! index (+ index 1)))
+    out))
 
 (define (lint-policy-validate-groups
   [rules : (& rules lint_core.LintRuleList)]
@@ -580,38 +550,36 @@
     [index : i64 0]
     [diagnostics : LintPolicyDiagnostics
       (lint-policy-diagnostics-with-capacity capacity)]
-    (begin
-      (while (< index groups.len)
-        (begin
-          (set! (array-ref valid index) true)
-          (set! index (+ index 1))))
-      (set!
-        diagnostics
-        (lint-policy-validate-group-names
-          groups
-          index-map
-          (&mut valid)
-          diagnostics))
-      (set!
-        diagnostics
-        (lint-policy-validate-group-members
-          rules
-          groups
-          index-map
-          (&mut valid)
-          diagnostics))
-      (set!
-        diagnostics
-        (lint-policy-validate-group-graph
-          groups
-          index-map
-          (&mut valid)
-          diagnostics))
-      (LintPolicyGroupValidation
-        valid
-        diagnostics
-        (lint-policy-group-member-total groups)
-        index-map))))
+    (while (< index groups.len)
+      (set! (array-ref valid index) true)
+      (set! index (+ index 1)))
+    (set!
+      diagnostics
+      (lint-policy-validate-group-names
+        groups
+        index-map
+        (&mut valid)
+        diagnostics))
+    (set!
+      diagnostics
+      (lint-policy-validate-group-members
+        rules
+        groups
+        index-map
+        (&mut valid)
+        diagnostics))
+    (set!
+      diagnostics
+      (lint-policy-validate-group-graph
+        groups
+        index-map
+        (&mut valid)
+        diagnostics))
+    (LintPolicyGroupValidation
+      valid
+      diagnostics
+      (lint-policy-group-member-total groups)
+      index-map)))
 
 (define (lint-policy-group-contains-rule?
   [rules : (& rules lint_core.LintRuleList)]
@@ -630,34 +598,31 @@
       [(= state 2) (array-ref membership slot)]
       [(= state 1) false]
       [(not (array-ref valid group-index))
-        (begin
-          (set! (array-ref membership slot) false)
-          (set! (array-ref states slot) 2)
-          false)]
+        (set! (array-ref membership slot) false)
+        (set! (array-ref states slot) 2)
+        false]
       [else
         (let
           [group : LintPolicyGroup (lint-policy-groups-ref groups group-index)]
           [rule : lint_core.LintRule
             (lint_core.lint-rule-list-ref rules rule-index)]
-          (begin
-            (set! (array-ref states slot) 1)
-            (let
-              [found : bool
-                (lint-policy-group-members-contain-rule?
-                  rules
-                  groups
-                  index-map
-                  valid
-                  membership
-                  states
-                  group.members
-                  rule
-                  rule-index
-                  0)]
-              (begin
-                (set! (array-ref membership slot) found)
-                (set! (array-ref states slot) 2)
-                found))))])))
+          (set! (array-ref states slot) 1)
+          (let
+            [found : bool
+              (lint-policy-group-members-contain-rule?
+                rules
+                groups
+                index-map
+                valid
+                membership
+                states
+                group.members
+                rule
+                rule-index
+                0)]
+            (set! (array-ref membership slot) found)
+            (set! (array-ref states slot) 2)
+            found))])))
 
 (define (lint-policy-group-members-contain-rule?
   [rules : (& rules lint_core.LintRuleList)]
@@ -673,7 +638,7 @@
   (if (>= index members.len)
     false
     (match (lint-policy-group-members-ref members index)
-      [(LintPolicyGroupMember.Rule name)
+      [(Rule name)
         (if (string.eq name rule.rule-id)
           true
           (lint-policy-group-members-contain-rule?
@@ -687,7 +652,7 @@
             rule
             rule-index
             (+ index 1)))]
-      [(LintPolicyGroupMember.Group name)
+      [(Group name)
         (let
           [mask : i64 (lint_core.lint-built-in-group-mask name)]
           [child : i64 (lint-policy-group-indexed index-map name)]
@@ -729,25 +694,24 @@
     [states : (__tl_dyn-array i64)
       (__tl_make-array i64 (* groups.len rule-count))]
     [group-index : i64 0]
-    (begin
-      (while (< group-index groups.len)
-        (let
-          [rule-index : i64 0]
+    (while (< group-index groups.len)
+      (let
+        [rule-index : i64 0]
+        (while (< rule-index rule-count)
           (begin
-            (while (< rule-index rule-count)
-              (begin
-                (lint-policy-group-contains-rule?
-                  rules
-                  groups
-                  index-map
-                  valid
-                  (&mut membership)
-                  (&mut states)
-                  group-index
-                  rule-index)
-                (set! rule-index (+ rule-index 1))))
-            (set! group-index (+ group-index 1)))))
-      membership)))
+            (lint-policy-group-contains-rule?
+              rules
+              groups
+              index-map
+              valid
+              (&mut membership)
+              (&mut states)
+              group-index
+              rule-index)
+            unit)
+          (set! rule-index (+ rule-index 1)))
+        (set! group-index (+ group-index 1))))
+    membership))
 
 (define (lint-policy-default-decisions
   [rules : (& rules lint_core.LintRuleList)]) : LintPolicyDecisions
@@ -756,33 +720,31 @@
     [slots : (__tl_dyn-array LintPolicyDecision)
       (__tl_make-array LintPolicyDecision count)]
     [index : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [rule : lint_core.LintRule (lint_core.lint-rule-list-ref rules index)]
-          (begin
-            (set!
-              (array-ref slots index)
-              (LintPolicyDecision
-                rule.rule-id
-                rule.default-level
-                LintPolicyLayer.Builtin
-                -1
-                (lint-policy-built-in-origin)))
-            (set! index (+ index 1)))))
-      (LintPolicyDecisions slots count))))
+    (while (< index count)
+      (let
+        [rule : lint_core.LintRule (lint_core.lint-rule-list-ref rules index)]
+        (set!
+          (array-ref slots index)
+          (LintPolicyDecision
+            rule.rule-id
+            rule.default-level
+            Builtin
+            -1
+            (lint-policy-built-in-origin)))
+        (set! index (+ index 1))))
+    (LintPolicyDecisions slots count)))
 
 (define (lint-policy-decision-find-from
   [decisions : (& decisions LintPolicyDecisions)]
   [rule-id : (& rule-id str)]
   [index : i64]) : LintMaybePolicyDecision
   (if (>= index decisions.len)
-    LintMaybePolicyDecision.NotFound
+    NotFound
     (let
       [decision : LintPolicyDecision
         (lint-policy-decisions-ref decisions index)]
       (if (string.eq decision.rule-id rule-id)
-        (LintMaybePolicyDecision.Found decision)
+        (Found decision)
         (lint-policy-decision-find-from decisions rule-id (+ index 1))))))
 
 (define (lint-policy-decision-find
@@ -806,8 +768,8 @@
   (+
     (* (lint_core.lint-level-rank assignment.level) 2)
     (match assignment.mode
-      [(LintPolicyAssignmentMode.Exact) 0]
-      [(LintPolicyAssignmentMode.Minimum) 1])))
+      [(Exact) 0]
+      [(Minimum) 1])))
 
 (define (lint-policy-validate-assignments
   [rules : (& rules lint_core.LintRuleList)]
@@ -821,92 +783,86 @@
     [out : LintPolicyDiagnostics diagnostics]
     [seen : lint_policy_string_i64_map.Map
       (lint_policy_string_i64_map.with-capacity (+ assignments.len 1))]
-    (begin
-      (while (< index assignments.len)
-        (let
-          [assignment : LintPolicyAssignment
-            (lint-policy-assignments-ref assignments index)]
-          [subject-name : String (lint-policy-subject-name assignment.subject)]
-          [assignment-key : String
-            (lint-policy-assignment-key assignment subject-name)]
-          [signature : i64 (lint-policy-assignment-signature assignment)]
-          [prior-signature : i64
-            (lint_policy_string_i64_map.lookup-value-or
-              (lint_policy_string_i64_map.get-borrowed
-                (& seen)
-                (& assignment-key))
-              -1)]
-          (begin
-            (match assignment.subject
-              [(LintPolicySubject.Rule name)
-                (if (< (lint-policy-rule-index rules name) 0)
-                  (set!
+    (while (< index assignments.len)
+      (let
+        [assignment : LintPolicyAssignment
+          (lint-policy-assignments-ref assignments index)]
+        [subject-name : String (lint-policy-subject-name assignment.subject)]
+        [assignment-key : String
+          (lint-policy-assignment-key assignment subject-name)]
+        [signature : i64 (lint-policy-assignment-signature assignment)]
+        [prior-signature : i64
+          (lint_policy_string_i64_map.lookup-value-or
+            (lint_policy_string_i64_map.get-borrowed
+              (& seen)
+              (& assignment-key))
+            -1)]
+        (match assignment.subject
+          [(Rule name)
+            (if (< (lint-policy-rule-index rules name) 0)
+              (set!
+                out
+                (lint-policy-diagnostics-add
+                  out
+                  (lint-policy-unknown-rule-diagnostic
+                    name
+                    assignment.layer
+                    (owned_view.compiler-owned-shared-view assignment.origin))))
+              unit)]
+          [(Group name)
+            (let
+              [custom : i64 (lint-policy-group-indexed index-map name)]
+              (if (and
+                (= (lint_core.lint-built-in-group-mask name) 0)
+                (< custom 0))
+                (set!
+                  out
+                  (lint-policy-diagnostics-add
                     out
-                    (lint-policy-diagnostics-add
-                      out
-                      (lint-policy-unknown-rule-diagnostic
-                        name
-                        assignment.layer
-                        (owned_view.compiler-owned-shared-view
-                          assignment.origin))))
-                  unit)]
-              [(LintPolicySubject.Group name)
-                (let
-                  [custom : i64 (lint-policy-group-indexed index-map name)]
-                  (if (and
-                    (= (lint_core.lint-built-in-group-mask name) 0)
-                    (< custom 0))
-                    (set!
-                      out
-                      (lint-policy-diagnostics-add
-                        out
-                        (lint-policy-unknown-group-diagnostic
-                          name
-                          assignment.layer
-                          (owned_view.compiler-owned-shared-view
-                            assignment.origin))))
-                    (if (and
-                      (>= custom 0)
-                      (not (array-ref valid-groups custom)))
-                      (set!
-                        out
-                        (lint-policy-diagnostics-add
-                          out
-                          (lint-policy-diagnostic
-                            LintPolicyDiagnosticKind.InvalidGroupReference
-                            (owned_view.compiler-owned-shared-view name)
-                            assignment.layer
-                            (owned_view.compiler-owned-shared-view
-                              assignment.origin)
-                            (str_cat.str-cat
-                              "lint assignment references invalid group: "
-                              name))))
-                      unit)))])
-            (when
-              assignment.selected
-              (if (>= prior-signature 0)
-                (when
-                  (not (= prior-signature signature))
+                    (lint-policy-unknown-group-diagnostic
+                      name
+                      assignment.layer
+                      (owned_view.compiler-owned-shared-view assignment.origin))))
+                (if (and (>= custom 0) (not (array-ref valid-groups custom)))
                   (set!
                     out
                     (lint-policy-diagnostics-add
                       out
                       (lint-policy-diagnostic
-                        LintPolicyDiagnosticKind.ContradictoryAssignment
-                        (owned_view.compiler-owned-shared-view subject-name)
+                        InvalidGroupReference
+                        (owned_view.compiler-owned-shared-view name)
                         assignment.layer
-                        assignment.origin
+                        (owned_view.compiler-owned-shared-view
+                          assignment.origin)
                         (str_cat.str-cat
-                          "contradictory lint assignments in "
-                          (lint-policy-layer-name assignment.layer)
-                          " layer for "
-                          subject-name)))))
-                (lint_policy_string_i64_map.insert-ref!
-                  (&mut seen)
-                  assignment-key
-                  signature)))
-            (set! index (+ index 1)))))
-      out)))
+                          "lint assignment references invalid group: "
+                          name))))
+                  unit)))])
+        (when
+          assignment.selected
+          (if (>= prior-signature 0)
+            (when
+              (not (= prior-signature signature))
+              (set!
+                out
+                (lint-policy-diagnostics-add
+                  out
+                  (lint-policy-diagnostic
+                    ContradictoryAssignment
+                    (owned_view.compiler-owned-shared-view subject-name)
+                    assignment.layer
+                    assignment.origin
+                    (str_cat.str-cat
+                      "contradictory lint assignments in "
+                      (lint-policy-layer-name assignment.layer)
+                      " layer for "
+                      subject-name)))))
+            (lint_policy_string_i64_map.insert-ref!
+              (&mut seen)
+              assignment-key
+              signature)))
+        (set! index (+ index 1))))
+    out))
 
 (defstruct LintPolicyApplyState
   (diagnostics LintPolicyDiagnostics)
@@ -943,7 +899,7 @@
     [requested-rank : i64 (lint_core.lint-level-rank assignment.level)]
     [is-minimum : bool
       (match assignment.mode
-        [(LintPolicyAssignmentMode.Minimum) true]
+        [(Minimum) true]
         [_ false])]
     [forbid-lowering : bool
       (and (= current-rank 3) (not is-minimum) (< requested-rank current-rank))]
@@ -952,7 +908,7 @@
         (lint-policy-diagnostics-add
           state.diagnostics
           (lint-policy-diagnostic
-            LintPolicyDiagnosticKind.ForbidLowering
+            ForbidLowering
             (owned_view.compiler-owned-shared-view current.rule-id)
             assignment.layer
             (owned_view.compiler-owned-shared-view assignment.origin)
@@ -966,7 +922,7 @@
             current.rule-id
             current.level
             assignment
-            LintPolicyTraceOutcome.Rejected
+            Rejected
             "forbid cannot be lowered"))
         (+ state.expanded-rule-updates 1))
       (if (and is-minimum (>= current-rank requested-rank))
@@ -979,7 +935,7 @@
               current.rule-id
               current.level
               assignment
-              LintPolicyTraceOutcome.Shadowed
+              Shadowed
               "minimum already satisfied"))
           (+ state.expanded-rule-updates 1))
         (begin
@@ -1000,7 +956,7 @@
                 current.rule-id
                 assignment.level
                 assignment
-                LintPolicyTraceOutcome.Applied
+                Applied
                 (if is-minimum
                   "minimum raised effective level"
                   "exact assignment")))
@@ -1049,8 +1005,8 @@
   [assignment-index : i64]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
   (match assignment.subject
-    [(LintPolicySubject.Rule _) state]
-    [(LintPolicySubject.Group name)
+    [(Rule _) state]
+    [(Group name)
       (if (not
         (lint-policy-group-assignment-valid? groups index-map valid-groups name))
         (LintPolicyApplyState
@@ -1060,52 +1016,49 @@
             (lint-policy-trace-entry
               assignment-index
               ""
-              (lint_core.LintLevel.Allow)
+              (Allow)
               assignment
-              LintPolicyTraceOutcome.Rejected
+              Rejected
               "unknown or invalid group"))
           state.expanded-rule-updates)
         (let
           [rule-index : i64 0]
           [matched : bool false]
           [out : LintPolicyApplyState state]
-          (begin
-            (while (< rule-index (lint_core.lint-rule-list-count rules))
-              (begin
-                (if (lint-policy-group-assignment-matches-rule?
-                  rules
-                  groups
-                  index-map
-                  valid-groups
-                  membership
-                  name
-                  rule-index)
-                  (begin
-                    (set! matched true)
-                    (set!
-                      out
-                      (lint-policy-apply-to-rule
-                        decisions
-                        rule-index
-                        (owned_view.compiler-owned-shared-view assignment)
-                        assignment-index
-                        out)))
-                  unit)
-                (set! rule-index (+ rule-index 1))))
-            (if matched
-              out
-              (LintPolicyApplyState
-                out.diagnostics
-                (lint-policy-trace-add
-                  out.trace
-                  (lint-policy-trace-entry
-                    assignment-index
-                    ""
-                    assignment.level
-                    assignment
-                    LintPolicyTraceOutcome.Shadowed
-                    "group expands to no rules"))
-                out.expanded-rule-updates)))))]))
+          (while (< rule-index (lint_core.lint-rule-list-count rules))
+            (when
+              (lint-policy-group-assignment-matches-rule?
+                rules
+                groups
+                index-map
+                valid-groups
+                membership
+                name
+                rule-index)
+              (set! matched true)
+              (set!
+                out
+                (lint-policy-apply-to-rule
+                  decisions
+                  rule-index
+                  (owned_view.compiler-owned-shared-view assignment)
+                  assignment-index
+                  out)))
+            (set! rule-index (+ rule-index 1)))
+          (if matched
+            out
+            (LintPolicyApplyState
+              out.diagnostics
+              (lint-policy-trace-add
+                out.trace
+                (lint-policy-trace-entry
+                  assignment-index
+                  ""
+                  assignment.level
+                  assignment
+                  Shadowed
+                  "group expands to no rules"))
+              out.expanded-rule-updates))))]))
 
 (define (lint-policy-apply-rule-assignment
   [rules : (& rules lint_core.LintRuleList)]
@@ -1114,8 +1067,8 @@
   [assignment-index : i64]
   [state : LintPolicyApplyState]) : LintPolicyApplyState
   (match assignment.subject
-    [(LintPolicySubject.Group _) state]
-    [(LintPolicySubject.Rule name)
+    [(Group _) state]
+    [(Rule name)
       (let
         [rule-index : i64 (lint-policy-rule-index rules name)]
         (if (< rule-index 0)
@@ -1126,9 +1079,9 @@
               (lint-policy-trace-entry
                 assignment-index
                 name
-                (lint_core.LintLevel.Allow)
+                (Allow)
                 assignment
-                LintPolicyTraceOutcome.Rejected
+                Rejected
                 "unknown rule"))
             state.expanded-rule-updates)
           (lint-policy-apply-to-rule
@@ -1152,40 +1105,38 @@
   (let
     [index : i64 0]
     [out : LintPolicyApplyState state]
-    (begin
-      (while (< index assignments.len)
-        (let
-          [assignment : LintPolicyAssignment
-            (lint-policy-assignments-ref assignments index)]
-          (begin
-            (if (and
-              assignment.selected
-              (= (lint-policy-layer-rank assignment.layer) layer-rank)
-              (if rules-only
-                (lint-policy-subject-is-rule? assignment.subject)
-                (not (lint-policy-subject-is-rule? assignment.subject))))
-              (set!
-                out
-                (if rules-only
-                  (lint-policy-apply-rule-assignment
-                    rules
-                    decisions
-                    assignment
-                    index
-                    out)
-                  (lint-policy-apply-group-assignment
-                    rules
-                    groups
-                    index-map
-                    valid-groups
-                    membership
-                    decisions
-                    assignment
-                    index
-                    out)))
-              unit)
-            (set! index (+ index 1)))))
-      out)))
+    (while (< index assignments.len)
+      (let
+        [assignment : LintPolicyAssignment
+          (lint-policy-assignments-ref assignments index)]
+        (if (and
+          assignment.selected
+          (= (lint-policy-layer-rank assignment.layer) layer-rank)
+          (if rules-only
+            (lint-policy-subject-is-rule? assignment.subject)
+            (not (lint-policy-subject-is-rule? assignment.subject))))
+          (set!
+            out
+            (if rules-only
+              (lint-policy-apply-rule-assignment
+                rules
+                decisions
+                assignment
+                index
+                out)
+              (lint-policy-apply-group-assignment
+                rules
+                groups
+                index-map
+                valid-groups
+                membership
+                decisions
+                assignment
+                index
+                out)))
+          unit)
+        (set! index (+ index 1))))
+    out))
 
 (define (lint-policy-record-inactive-assignments
   [assignments : (& assignments LintPolicyAssignments)]
@@ -1193,27 +1144,25 @@
   (let
     [index : i64 0]
     [out : LintPolicyTrace trace]
-    (begin
-      (while (< index assignments.len)
-        (let
-          [assignment : LintPolicyAssignment
-            (lint-policy-assignments-ref assignments index)]
-          (begin
-            (unless
-              assignment.selected
-              (set!
-                out
-                (lint-policy-trace-add
-                  out
-                  (lint-policy-trace-entry
-                    index
-                    ""
-                    (lint_core.LintLevel.Allow)
-                    assignment
-                    LintPolicyTraceOutcome.Inactive
-                    "cfg input not selected"))))
-            (set! index (+ index 1)))))
-      out)))
+    (while (< index assignments.len)
+      (let
+        [assignment : LintPolicyAssignment
+          (lint-policy-assignments-ref assignments index)]
+        (unless
+          assignment.selected
+          (set!
+            out
+            (lint-policy-trace-add
+              out
+              (lint-policy-trace-entry
+                index
+                ""
+                (Allow)
+                assignment
+                Inactive
+                "cfg input not selected"))))
+        (set! index (+ index 1))))
+    out))
 
 (define (lint-policy-resolve
   [groups : LintPolicyGroups]
@@ -1250,49 +1199,47 @@
           (+ 1 (* assignments.len (+ rule-count 1)))))]
     [state : LintPolicyApplyState (LintPolicyApplyState diagnostics trace 0)]
     [layer : i64 0]
-    (begin
-      (while (< layer 6)
-        (begin
-          (set!
-            state
-            (lint-policy-apply-layer-kind
-              rules
-              groups
-              group-index-map
-              valid-groups
-              membership
-              assignments
-              decisions
-              layer
-              false
-              state))
-          (set!
-            state
-            (lint-policy-apply-layer-kind
-              rules
-              groups
-              group-index-map
-              valid-groups
-              membership
-              assignments
-              decisions
-              layer
-              true
-              state))
-          (set! layer (+ layer 1))))
-      (let
-        [trace-count : i64 (lint-policy-trace-count state.trace)]
-        (LintPolicyResolution
+    (while (< layer 6)
+      (set!
+        state
+        (lint-policy-apply-layer-kind
+          rules
+          groups
+          group-index-map
+          valid-groups
+          membership
+          assignments
           decisions
-          state.diagnostics
-          state.trace
-          (LintPolicyStats
-            rule-count
-            groups.len
-            validation.member-count
-            assignments.len
-            state.expanded-rule-updates
-            trace-count))))))
+          layer
+          false
+          state))
+      (set!
+        state
+        (lint-policy-apply-layer-kind
+          rules
+          groups
+          group-index-map
+          valid-groups
+          membership
+          assignments
+          decisions
+          layer
+          true
+          state))
+      (set! layer (+ layer 1)))
+    (let
+      [trace-count : i64 (lint-policy-trace-count state.trace)]
+      (LintPolicyResolution
+        decisions
+        state.diagnostics
+        state.trace
+        (LintPolicyStats
+          rule-count
+          groups.len
+          validation.member-count
+          assignments.len
+          state.expanded-rule-updates
+          trace-count)))))
 
 (define (lint-policy-rule-assignment
   [name : String]
@@ -1301,13 +1248,7 @@
   [mode : LintPolicyAssignmentMode]
   [selected : bool]
   [origin : LintPolicyOrigin]) : LintPolicyAssignment
-  (LintPolicyAssignment
-    (LintPolicySubject.Rule name)
-    level
-    layer
-    mode
-    selected
-    origin))
+  (LintPolicyAssignment (Rule name) level layer mode selected origin))
 
 (define (lint-policy-level-enabled? [level : lint_core.LintLevel]) : bool
   (> (lint_core.lint-level-rank level) 0))
@@ -1316,26 +1257,24 @@
   [resolution : (& resolution LintPolicyResolution)]
   [rule-id : (& rule-id str)]) : bool
   (match (lint-policy-decision-find resolution rule-id)
-    [(LintMaybePolicyDecision.NotFound) false]
-    [(LintMaybePolicyDecision.Found decision)
-      (lint-policy-level-enabled? decision.level)]))
+    [(NotFound) false]
+    [(Found decision) (lint-policy-level-enabled? decision.level)]))
 
 (define (lint-policy-legacy-assignment-add
   [slots : (&mut slots (__tl_dyn-array LintPolicyAssignment))]
   [len : i64]
   [name : String]
   [reason : String]) : i64
-  (begin
-    (set!
-      (array-ref slots len)
-      (lint-policy-rule-assignment
-        name
-        (lint_core.LintLevel.Warn)
-        LintPolicyLayer.Cli
-        LintPolicyAssignmentMode.Minimum
-        true
-        (lint-policy-origin "legacy-cli" reason)))
-    (+ len 1)))
+  (set!
+    (array-ref slots len)
+    (lint-policy-rule-assignment
+      name
+      (Warn)
+      Cli
+      Minimum
+      true
+      (lint-policy-origin "legacy-cli" reason)))
+  (+ len 1))
 
 ;: Compatibility policy for the existing staged lint flags. Enabled flags are
 ;: monotonic at-least-warn floors, so they never lower project deny/forbid.
@@ -1344,62 +1283,70 @@
 (define (lint-policy-legacy-resolution
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
+  [redundant-begin : bool]
   [_prefer-dotted-field : bool]
   [name-case : bool]) : LintPolicyResolution
   (let
     [slots : (__tl_dyn-array LintPolicyAssignment)
-      (__tl_make-array LintPolicyAssignment 6)]
+      (__tl_make-array LintPolicyAssignment 7)]
     [len : i64 0]
-    (begin
-      (if deprecated-string-concat
-        (set!
+    (if deprecated-string-concat
+      (set!
+        len
+        (lint-policy-legacy-assignment-add
+          (&mut slots)
           len
-          (lint-policy-legacy-assignment-add
-            (&mut slots)
-            len
-            (lint_core.lint-rule-deprecated-string-concat-id)
-            "--deprecated-string-concat at-least-warn"))
-        unit)
-      (if redundant-function-name
-        (set!
+          (lint_core.lint-rule-deprecated-string-concat-id)
+          "--deprecated-string-concat at-least-warn"))
+      unit)
+    (if redundant-function-name
+      (set!
+        len
+        (lint-policy-legacy-assignment-add
+          (&mut slots)
           len
-          (lint-policy-legacy-assignment-add
-            (&mut slots)
-            len
-            (lint_core.lint-rule-redundant-function-name-id)
-            "--redundant-function-name at-least-warn"))
-        unit)
-      (if name-case
-        (begin
-          (set!
-            len
-            (lint-policy-legacy-assignment-add
-              (&mut slots)
-              len
-              (lint_core.lint-rule-global-name-case-id)
-              "--name-case expands global-name-case at-least-warn"))
-          (set!
-            len
-            (lint-policy-legacy-assignment-add
-              (&mut slots)
-              len
-              (lint_core.lint-rule-function-name-case-id)
-              "--name-case expands function-name-case at-least-warn"))
-          (set!
-            len
-            (lint-policy-legacy-assignment-add
-              (&mut slots)
-              len
-              (lint_core.lint-rule-local-name-case-id)
-              "--name-case expands local-name-case at-least-warn"))
-          (set!
-            len
-            (lint-policy-legacy-assignment-add
-              (&mut slots)
-              len
-              (lint_core.lint-rule-type-name-case-id)
-              "--name-case expands type-name-case at-least-warn")))
-        unit)
-      (lint-policy-resolve
-        (lint-policy-groups-empty)
-        (LintPolicyAssignments slots len)))))
+          (lint_core.lint-rule-redundant-function-name-id)
+          "--redundant-function-name at-least-warn"))
+      unit)
+    (if redundant-begin
+      (set!
+        len
+        (lint-policy-legacy-assignment-add
+          (&mut slots)
+          len
+          (lint_core.lint-rule-redundant-begin-id)
+          "--redundant-begin at-least-warn"))
+      unit)
+    (when
+      name-case
+      (set!
+        len
+        (lint-policy-legacy-assignment-add
+          (&mut slots)
+          len
+          (lint_core.lint-rule-global-name-case-id)
+          "--name-case expands global-name-case at-least-warn"))
+      (set!
+        len
+        (lint-policy-legacy-assignment-add
+          (&mut slots)
+          len
+          (lint_core.lint-rule-function-name-case-id)
+          "--name-case expands function-name-case at-least-warn"))
+      (set!
+        len
+        (lint-policy-legacy-assignment-add
+          (&mut slots)
+          len
+          (lint_core.lint-rule-local-name-case-id)
+          "--name-case expands local-name-case at-least-warn"))
+      (set!
+        len
+        (lint-policy-legacy-assignment-add
+          (&mut slots)
+          len
+          (lint_core.lint-rule-type-name-case-id)
+          "--name-case expands type-name-case at-least-warn")))
+    (lint-policy-resolve
+      (lint-policy-groups-empty)
+      (LintPolicyAssignments slots len))))

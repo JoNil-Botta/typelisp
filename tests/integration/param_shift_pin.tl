@@ -22,15 +22,13 @@
   (let
     [i : i64 0]
     [acc : i64 a]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (+ acc (shr acc 1)))
-          (set! acc (bit-and acc 1023))
-          (set! acc (+ acc (shl i 2)))
-          (set! acc (+ acc a))
-          (set! i (+ i 1))))
-      (+ acc n))))
+    (while (< i n)
+      (set! acc (+ acc (shr acc 1)))
+      (set! acc (bit-and acc 1023))
+      (set! acc (+ acc (shl i 2)))
+      (set! acc (+ acc a))
+      (set! i (+ i 1)))
+    (+ acc n)))
 
 ;; Never executed (n < 100 always); its only job is to take shift-mix's
 ;; address so no inliner path may absorb it.

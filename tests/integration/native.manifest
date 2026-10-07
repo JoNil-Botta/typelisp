@@ -20,6 +20,7 @@
 #   stage-stdlib+expected-stderr:<printf escapes>; $SRC in an expected stderr is
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
+while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
 invariant_loop_call_negative|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|0|-|stage-stdlib
 invariant_loop_call_zero|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|1|-|stage-stdlib
 invariant_loop_call_skipped|all|0,2|tests/integration/invariant_loop_call.tl|0|5\n|2|-|stage-stdlib
@@ -163,6 +164,7 @@ compile_profile_vector_one_core|all|-|tests/integration/compile_profile_vector_o
 compile_profile_vector_struct_full|all|-|tests/integration/compile_profile_vector_struct_full.tl|42|-|-|stdlib/vector.tl|-
 compile_profile_layout_spec|all|-|tests/integration/compile_profile_layout_spec.tl|42|-|-|stdlib/comptime.tl|-
 decls_macro_scoped_forms|all|-,0,2|tests/integration/decls_macro_scoped_forms.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+decls_macro_nested_arguments|all|-|tests/integration/decls_macro_nested_arguments.tl|42|-|-|stdlib/comptime.tl|-
 compile_profile_nested_peak_reset|all|-|tests/integration/compile_profile_nested_peak_reset.tl|42|-|-|stdlib/profile.tl|-
 compile_profile_optimizer_escape|all|-|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-|-
 compile_profile_result_import|all|-|tests/integration/compile_profile_result_import.tl|42|-|-|-|-
@@ -276,6 +278,13 @@ licm_guarded_read_opt2|all|2|tests/integration/licm_guarded_read.tl|42|254\n122\
 licm_guarded_read_abort_opt2|all|2|tests/integration/licm_guarded_read.tl|134|254\n122\n0\n|9 3 8|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:49:44: array index out of bounds: index=9 length=8\n
 licm_raw_deref|all|-|tests/integration/licm_raw_deref.tl|42|0\n0\n0\n0\n50\n16\n|0 16 1 20|stdlib/io.tl stdlib/string.tl|-
 licm_raw_deref|all|0,1,2|tests/integration/licm_raw_deref.tl|42|0\n0\n0\n0\n50\n16\n|0 16 1 20|stdlib/io.tl stdlib/string.tl|stage-stdlib
+licm_payload_other|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|0 0|stdlib/io.tl stdlib/string.tl|stage-stdlib
+licm_payload_other_late|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|0 5|stdlib/io.tl stdlib/string.tl|stage-stdlib
+licm_payload_taken_late|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|1 5|stdlib/io.tl stdlib/string.tl|stage-stdlib
+licm_payload_skipped|all|0,1,2|tests/integration/licm_payload_speculation.tl|42|-|0 20|stdlib/io.tl stdlib/string.tl|stage-stdlib
+borrowed_handle_places_values|all|0,1,2|tests/integration/borrowed_handle_places.tl|42|-|values|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|stage-stdlib
+borrowed_handle_places_empty|all|0,1,2|tests/integration/borrowed_handle_places.tl|42|-|empty|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|stage-stdlib
+borrowed_handle_places_bounds|all|0,2|tests/integration/borrowed_handle_places.tl|134|-|bounds|stdlib/io.tl stdlib/string.tl stdlib/byte_buf.tl|stage-stdlib+expected-stderr:tl: $SRC:74:33: array index out of bounds: index=4 length=4\n
 loadcse_forward|all|-|tests/integration/loadcse_forward.tl|42|-|-|stdlib/io.tl|-
 loadcse_alias|all|-|tests/integration/loadcse_alias.tl|42|-|-|stdlib/io.tl|-
 rotate_multi_exit_live_out|all|-|tests/integration/rotate_multi_exit_live_out.tl|42|-|-|stdlib/io.tl|-
@@ -347,11 +356,14 @@ generated_cfg|all|0,1,2|tests/integration/generated_cfg.tl|42|-|-|-|stage-stdlib
 clone_imported_nominal_direct|all|-|tests/integration/clone_imported_nominal_direct.tl|41|-|-|clone_imported_nominal_dep.tl stdlib/string.tl|-
 comptime_layout_imported|all|0,1,2|tests/integration/comptime_layout_imported.tl|42|-|-|comptime_layout_imported_dep.tl comptime_layout_imported_other.tl|-
 clone_imported_nominal_wrapper|all|-|tests/integration/clone_imported_nominal_wrapper.tl|42|-|-|clone_imported_nominal_dep.tl stdlib/string.tl|-
+entry_names_like_imported_variants|all|-|tests/integration/entry_names_like_imported_variants.tl|42|-|-|entry_names_like_imported_variants_dep.tl stdlib/iterator.tl|-
 comptime_scalar|all|-|tests/integration/comptime_scalar.tl|42|-|-|-|-
 comptime_type_specialization|all|-|tests/integration/comptime_type_specialization.tl|42|-|-|-|-
+comptime_type_macro_operand|all|-,0,2|tests/integration/comptime_type_macro_operand.tl|42|-|-|-|-
 generated_option_result_families|all|-|tests/integration/generated_option_result_families.tl|146|-|-|stdlib/string.tl stdlib/option.tl stdlib/result.tl|-
 generated_string_vector_private_intrinsics|all|-|tests/integration/generated_string_vector_private_intrinsics.tl|42|-|-|stdlib/vector.tl stdlib/string.tl|-
 cond|all|-|tests/integration/cond.tl|42|-|-|-|-
+multiform_arms|all|-,0,1,2|tests/integration/multiform_arms.tl|42|-|-|stdlib/comptime.tl|-
 control_flow|all|-|tests/integration/control_flow.tl|15|-|-|-|-
 scalar_while_break_continue|all|-|tests/integration/scalar_while_break_continue.tl|42|-|-|stdlib/string.tl|-
 tail_call_stack_args|all|-|tests/integration/tail_call_stack_args.tl|42|-|-|-|-
@@ -459,6 +471,9 @@ min_div_neg1_trap|all|-|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expecte
 modules_main|all|-|tests/integration/modules_main.tl|30|-|-|modules_helper.tl|-
 dotted_nested_variant|all|-|tests/integration/dotted_nested_variant_main.tl|0|-|-|dotted_nested_variant_consumer.tl dotted_nested_variant_provider.tl|-
 legacy_dotted_enum|all|-|tests/integration/legacy_dotted_enum_main.tl|42|-|-|legacy_dotted_enum_bridge.tl legacy_dotted_enum_provider.tl|-
+variant_expected_resolution|all|-|tests/integration/variant_expected_resolution.tl|42|-|-|variant_expected_resolution_lib.tl stdlib/option.tl|-
+variant_root_clash|all|-,0|tests/integration/variant_root_clash.tl|42|-|-|variant_root_clash_mid.tl variant_root_clash_lib.tl|-
+macro_view_root_shadow|all|-,0|tests/integration/macro_view_root_shadow.tl|42|-|-|macro_view_root_shadow_lib.tl|-
 mixed_global_annotation|all|-|tests/integration/mixed_global_annotation_main.tl|42|-|-|mixed_global_annotation_bridge.tl mixed_global_annotation_provider.tl|-
 narrow_div_mod|all|-|tests/integration/narrow_div_mod.tl|30|-|-|-|-
 nested_eval|all|-|tests/integration/nested_eval.tl|7|-|-|stdlib/io.tl stdlib/string.tl|-
@@ -469,6 +484,7 @@ integer_literal_default_i32|all|-|tests/integration/integer_literal_default_i32.
 integer_literal_default_i32_and_wide_cast|all|-|tests/integration/integer_literal_default_i32_and_wide_cast.tl|42|-|-|-|-
 integer_literal_boundary_matrix|all|-,0,2|tests/integration/integer_literal_boundary_matrix.tl|42|-|-|stdlib/comptime.tl|-
 integer_literal_u64_full_range|all|-|tests/integration/integer_literal_u64_full_range.tl|42|-|-|-|-
+if_literal_branch_join|all|-,0,2|tests/integration/if_literal_branch_join.tl|42|-|-|-|-
 inline_alloc_scavenge_live_through|all|-,2|tests/integration/inline_alloc_scavenge_live_through.tl|42|-|-|stdlib/io.tl|-
 parser|all|-|tests/integration/parser.tl|14|-|-|-|-
 process_runtime|all|-|tests/integration/process_runtime.tl|42|inherit-stdout\n|-|stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/test.tl stdlib/io.tl stdlib/env.tl stdlib/vector.tl stdlib/string.tl|expected-stderr:inherit-stderr\n
@@ -566,6 +582,12 @@ spmd_foreach_active_calls|all|-|tests/integration/spmd_foreach_active.tl|0|0 0 0
 spmd_foreach_active_lane_types|all|-|tests/integration/spmd_foreach_active.tl|0|-2 8 2\n|5|-|stage-stdlib
 spmd_foreach_active_atomics|all|-|tests/integration/spmd_foreach_active.tl|0|9 5 7\n|6|-|stage-stdlib
 spmd_foreach_active_first_fault|all|-|tests/integration/spmd_foreach_active.tl|134|0\n1\n2\n3\n|7|-|stage-stdlib+expected-stderr:tl: $SRC:140:32: array index out of bounds: index=9 length=8\n
+spmd_foreach_2d_order|all|-|tests/integration/spmd_foreach_2d.tl|0|y0=2\ny1=4\nx0=-1\nx1=2\n(2 -1)\n(2 0)\n(2 1)\n(3 -1)\n(3 0)\n(3 1)\ncount=6\n|1|-|stage-stdlib
+spmd_foreach_2d_row_major|all|-|tests/integration/spmd_foreach_2d.tl|0|0 -7 -6 -5 3 4 5 13 14 15\n|2|-|stage-stdlib
+spmd_foreach_2d_empty|all|-|tests/integration/spmd_foreach_2d.tl|0|y0=3\ny1=3\nx0=-9223372036854775808\nx1=9223372036854775807\ncount=0\ny0=-9223372036854775808\ny1=9223372036854775807\nx0=5\nx1=5\ncount=0\ny0=5\ny1=2\nx0=0\nx1=4\ncount=0\ny0=0\ny1=1\nx0=7\nx1=-7\ncount=0\n|3|-|stage-stdlib
+spmd_foreach_2d_outer_span_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=-9223372036854775808\ny1=9223372036854775807\nx0=0\nx1=1\n|4|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+spmd_foreach_2d_inner_span_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=0\ny1=1\nx0=-9223372036854775808\nx1=9223372036854775807\n|5|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
+spmd_foreach_2d_product_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=0\ny1=4294967296\nx0=0\nx1=2147483648\n|6|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
 stdlib_io|all|-|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 stdlib_eq_aggregate|all|-|tests/integration/stdlib_eq_aggregate.tl|42|-|-|stdlib/eq.tl stdlib/comptime.tl|-
 stdlib_hash_generated|all|-|tests/integration/stdlib_hash_generated.tl|0|-|-|stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/io.tl stdlib/string.tl|-
@@ -624,6 +646,7 @@ thread_runtime|all|-|tests/integration/thread_runtime.tl|42|-|-|stdlib/arena.tl 
 atomic_intrinsics_thread_counter|all|-|tests/integration/atomic_intrinsics_thread_counter.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 runtime_atomic_raw_pointer|all|-|tests/integration/runtime_atomic_raw_pointer.tl|42|-|-|stdlib/runtime.tl|-
 thread_safe_i64|all|-|tests/integration/thread_safe_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+thread_local_word|linux|0,1,2|tests/integration/thread_local_word.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 env_thread_sync|all|-|tests/integration/env_thread_sync.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/env.tl stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/str_cat.tl stdlib/vector.tl stdlib/string.tl|-
 env_arena_publication|all|0,1,2|tests/integration/env_arena_publication.tl|42|-|-|stdlib/arena.tl stdlib/env.tl stdlib/process_borrowed.tl stdlib/process.tl stdlib/process_runtime.tl stdlib/str_cat.tl stdlib/vector.tl stdlib/string.tl|-
 thread_safe_bool_unit|all|-|tests/integration/thread_safe_bool_unit.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
@@ -640,6 +663,12 @@ tl_alloc_aligned|all|-|tests/integration/tl_alloc_aligned.tl|42|-|-|stdlib/arena
 tree|all|-|tests/integration/tree.tl|3|-|-|-|-
 tuple_values|all|-|tests/integration/tuple_values.tl|42|-|-|-|-
 tuple_match_pattern|all|-|tests/integration/tuple_match_pattern.tl|42|-|-|stdlib/string.tl|-
+borrowed_struct_pattern_string|all|0,1,2|tests/integration/borrowed_struct_pattern_string.tl|42|-|-|stdlib/string.tl stdlib/io.tl|stage-stdlib
+borrow_temporary_call_arg|all|0,1,2|tests/safety/borrow_temporary_call_arg_ok.tl|42|-|-|stdlib/string.tl|-
+borrow_temporary_cleanup|all|0,1,2|tests/safety/borrow_temporary_cleanup_ok.tl|42|-|-|-|-
+borrowed_pattern_copy_binding|all|0,1,2|tests/safety/borrowed_pattern_copy_binding_ok.tl|42|-|-|stdlib/string.tl|-
+borrowed_pattern_copy_deferred|all|0,1,2|tests/safety/borrowed_pattern_copy_deferred_ok.tl|42|-|-|-|-
+box_deref_copy_projection_reuse|all|0,1,2|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-|-|-|-
 fixed_array_match_pattern|all|-|tests/integration/fixed_array_match_pattern.tl|42|-|-|stdlib/string.tl|-
 slice_match_pattern|all|0,1,2|tests/integration/slice_match_pattern.tl|42|-|-|stdlib/string.tl stdlib/vector.tl|-
 u16_div_zero_trap|all|-|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=1 divisor=0\n
@@ -695,6 +724,9 @@ float_phi_swap_cycle|all|-|tests/integration/float_phi_swap_cycle.tl|42|-|-|-|-
 register_group_borrowed_match|all|-|tests/integration/register_group_borrowed_match.tl|42|-|-|-|-
 borrowed_enum_inline_struct_payload|all|-|tests/integration/borrowed_enum_inline_struct_payload.tl|42|-|-|-|-
 register_group_try|all|-|tests/integration/register_group_try.tl|42|-|-|-|-
+try_propagation|all|-,0,1,2|tests/integration/try_propagation.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+try_err_payloads|all|-,0,1,2|tests/integration/try_err_payloads.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
+try_sret_forward|all|-,0,1,2|tests/integration/try_sret_forward.tl|42|-|-|stdlib/io.tl|-
 register_resident_enum16|all|-|tests/integration/register_resident_enum16.tl|42|-|-|-|-
 selfloop_redef_writeback|all|-|tests/integration/selfloop_redef_writeback.tl|42|-|-|-|-
 loopcarried_phi_home|all|-|tests/integration/loopcarried_phi_home.tl|42|-|-|-|-
@@ -767,6 +799,10 @@ lattice_join_split|all|-|tests/integration/lattice_join_split.tl|42|1908610000 1
 lattice_join_split_abort|all|-,2|tests/integration/lattice_join_split.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:48:30: array index out of bounds: index=5 length=5\n
 short_trip_copy|all|-|tests/integration/short_trip_copy.tl|42|7757762194516093604 39\n|5 0|stdlib/io.tl stdlib/string.tl|-
 short_trip_copy_abort|all|-,2|tests/integration/short_trip_copy.tl|134|-|5 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:115:50: array index out of bounds: index=39 length=39\n
+range_loop_shapes|all|-|tests/integration/range_loop_shapes.tl|42|80 76 77 77 76\n|16 0|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|-
+range_loop_shapes_protocol_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 1|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:35:69: array index out of bounds: index=16 length=16\n
+range_loop_shapes_fields_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 2|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:55:46: array index out of bounds: index=16 length=16\n
+range_loop_shapes_advance_first_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 3|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:116:48: array index out of bounds: index=16 length=16\n
 specialize_resource_scope|all|-|tests/integration/specialize_resource_scope.tl|42|-|-|-|-
 float_comparisons_embedded|all|-|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|-
 float_comparisons_source|all|0,1,2|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|stage-stdlib

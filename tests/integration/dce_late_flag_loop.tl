@@ -15,13 +15,12 @@
     [i : i64 0]
     [found : i64 -1]
     [done : bool false]
-    (begin
-      (while (and (< i n) (not done))
-        (if (= (* i i) 49)
-          (begin
-            (set! found i)
-            (set! done true))
-          (set! i (+ i 1))))
-      (if done
-        (+ found 35)
-        42))))
+    (while (and (< i n) (not done))
+      (if (= (* i i) 49)
+        (begin
+          (set! found i)
+          (set! done true))
+        (set! i (+ i 1))))
+    (if done
+      (+ found 35)
+      42)))

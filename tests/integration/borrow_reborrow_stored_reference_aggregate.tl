@@ -18,10 +18,10 @@
   (let
     [index : i64 iter.index]
     (if (>= index 1)
-      (AggregateReborrowNext.Done)
+      (Done)
       (begin
         (set! iter.index (+ index 1))
-        (AggregateReborrowNext.Item (&mut (array-ref iter.slots index)))))))
+        (Item (&mut (array-ref iter.slots index)))))))
 
 (define (main) : i64
   (let
@@ -30,8 +30,7 @@
     [iter : (AggregateReborrowIter items)
       (AggregateReborrowIter (&mut items) 0)]
     (match (next (&mut iter))
-      [(AggregateReborrowNext.Done) 1]
-      [(AggregateReborrowNext.Item item)
-        (begin
-          (set! item.value 42)
-          item.value)])))
+      [(Done) 1]
+      [(Item item)
+        (set! item.value 42)
+        item.value])))

@@ -50,128 +50,111 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref items i) (+ i 7))
-        (set! i (+ i 1))))))
+      (set! (array-ref items i) (+ i 7))
+      (set! i (+ i 1)))))
 
 (define (count-nonzero-i64 [items : (__tl_dyn-array i64)] [n : i64]) : i64
   (let
     [i : i64 0]
     [bad : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (if (= (array-ref items i) 0)
-            unit
-            (set! bad (+ bad 1)))
-          (set! i (+ i 1))))
-      bad)))
+    (while (< i n)
+      (if (= (array-ref items i) 0)
+        unit
+        (set! bad (+ bad 1)))
+      (set! i (+ i 1)))
+    bad))
 
 (define (count-true-bool [items : (__tl_dyn-array bool)] [n : i64]) : i64
   (let
     [i : i64 0]
     [bad : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (if (array-ref items i)
-            (set! bad (+ bad 1))
-            unit)
-          (set! i (+ i 1))))
-      bad)))
+    (while (< i n)
+      (if (array-ref items i)
+        (set! bad (+ bad 1))
+        unit)
+      (set! i (+ i 1)))
+    bad))
 
 (define (count-non-empty-slot [items : (__tl_dyn-array Slot)] [n : i64]) : i64
   (let
     [i : i64 0]
     [bad : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (match (array-ref items i)
-            [(Slot.Empty) unit]
-            [(Slot.Filled _) (set! bad (+ bad 1))])
-          (set! i (+ i 1))))
-      bad)))
+    (while (< i n)
+      (match (array-ref items i)
+        [(Empty) unit]
+        [(Filled _) (set! bad (+ bad 1))])
+      (set! i (+ i 1)))
+    bad))
 
 (define (count-non-default-cell [items : (__tl_dyn-array Cell)] [n : i64]) : i64
   (let
     [i : i64 0]
     [bad : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (match (array-ref items i)
-            [(Cell.At at span)
-              (if (and (= at 0) (= span.start 0) (= span.end 0))
-                unit
-                (set! bad (+ bad 1)))]
-            [(Cell.Gone) (set! bad (+ bad 1))])
-          (set! i (+ i 1))))
-      bad)))
+    (while (< i n)
+      (match (array-ref items i)
+        [(At at span)
+          (if (and (= at 0) (= span.start 0) (= span.end 0))
+            unit
+            (set! bad (+ bad 1)))]
+        [(Gone) (set! bad (+ bad 1))])
+      (set! i (+ i 1)))
+    bad))
 
 (define (count-non-default-named [items : (__tl_dyn-array Named)] [n : i64]) : i64
   (let
     [i : i64 0]
     [bad : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (match (array-ref items i)
-            [(Named.Label text)
-              (if (= (string-length text) 0)
-                unit
-                (set! bad (+ bad 1)))]
-            [(Named.Anon) (set! bad (+ bad 1))])
-          (set! i (+ i 1))))
-      bad)))
+    (while (< i n)
+      (match (array-ref items i)
+        [(Label text)
+          (if (= (string-length text) 0)
+            unit
+            (set! bad (+ bad 1)))]
+        [(Anon) (set! bad (+ bad 1))])
+      (set! i (+ i 1)))
+    bad))
 
 (define (count-non-default-holder [items : (__tl_dyn-array Holder)] [n : i64]) : i64
   (let
     [i : i64 0]
     [bad : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (match (array-ref items i)
-            [(Holder.Has value)
-              (if (= (deref value) 0)
-                unit
-                (set! bad (+ bad 1)))]
-            [(Holder.Empty) (set! bad (+ bad 1))])
-          (set! i (+ i 1))))
-      bad)))
+    (while (< i n)
+      (match (array-ref items i)
+        [(Has value)
+          (if (= (deref value) 0)
+            unit
+            (set! bad (+ bad 1)))]
+        [(Empty) (set! bad (+ bad 1))])
+      (set! i (+ i 1)))
+    bad))
 
 (define (count-non-default-mixed [items : (__tl_dyn-array Mixed)] [n : i64]) : i64
   (let
     [i : i64 0]
     [bad : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (match (array-ref items i)
-            [(Mixed.Vals value code flag)
-              (if (and (= value 0.0) (= code '\0') (not flag))
-                unit
-                (set! bad (+ bad 1)))]
-            [(Mixed.NoVals) (set! bad (+ bad 1))])
-          (set! i (+ i 1))))
-      bad)))
+    (while (< i n)
+      (match (array-ref items i)
+        [(Vals value code flag)
+          (if (and (= value 0.0) (= code '\0') (not flag))
+            unit
+            (set! bad (+ bad 1)))]
+        [(NoVals) (set! bad (+ bad 1))])
+      (set! i (+ i 1)))
+    bad))
 
 (define (count-non-default-wrapped [items : (__tl_dyn-array Wrapped)] [n : i64]) : i64
   (let
     [i : i64 0]
     [bad : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (match (array-ref items i)
-            [(Wrapped.Wrap (Named.Label text))
-              (if (= (string-length text) 0)
-                unit
-                (set! bad (+ bad 1)))]
-            [_ (set! bad (+ bad 1))])
-          (set! i (+ i 1))))
-      bad)))
+    (while (< i n)
+      (match (array-ref items i)
+        [(Wrap (Label text))
+          (if (= (string-length text) 0)
+            unit
+            (set! bad (+ bad 1)))]
+        [_ (set! bad (+ bad 1))])
+      (set! i (+ i 1)))
+    bad))
 
 (define (defaults-bad [n : i64]) : i64
   (+
@@ -198,20 +181,19 @@
     ;; Virgin arena: tl_array_zero is allowed to skip, the pages must still
     ;; read as the default.
     [virgin-bad : i64 (defaults-bad 4096)]
-    (begin
-      ;; Rewind, then dirty a range strictly larger than everything the checked
-      ;; allocations will occupy, with NONZERO bytes, then rewind again. The
-      ;; second round therefore lands entirely on dirtied memory and the fill
-      ;; has to run -- without this the checked arrays would be reusing the
-      ;; first round's own (already zero) storage and the test would pass even
-      ;; with the fill wrongly skipped.
-      (unsafe
-        (arena.rewind mark))
-      (dirty-i64! (__tl_make-array i64 65536) 65536)
-      (unsafe
-        (arena.rewind mark))
-      (let
-        [reused-bad : i64 (defaults-bad 4096)]
-        (if (and (= virgin-bad 0) (= reused-bad 0))
-          42
-          1)))))
+    ;; Rewind, then dirty a range strictly larger than everything the checked
+    ;; allocations will occupy, with NONZERO bytes, then rewind again. The
+    ;; second round therefore lands entirely on dirtied memory and the fill
+    ;; has to run -- without this the checked arrays would be reusing the
+    ;; first round's own (already zero) storage and the test would pass even
+    ;; with the fill wrongly skipped.
+    (unsafe
+      (arena.rewind mark))
+    (dirty-i64! (__tl_make-array i64 65536) 65536)
+    (unsafe
+      (arena.rewind mark))
+    (let
+      [reused-bad : i64 (defaults-bad 4096)]
+      (if (and (= virgin-bad 0) (= reused-bad 0))
+        42
+        1))))

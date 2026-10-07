@@ -6,9 +6,8 @@
 (import doc_site_core)
 
 (define (doc-site-usage) : i64
-  (begin
-    (io.print-error "doc-site: expected zero args or output directory")
-    1))
+  (io.print-error "doc-site: expected zero args or output directory")
+  1)
 
 (define (main) : i64
   (if (= (io.arg-count) 1)

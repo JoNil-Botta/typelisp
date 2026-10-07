@@ -51,44 +51,36 @@
 
 (define (incremental-test-minimal-query) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
-    (identity.CompilerIncrementalQueryKind.Parse)
-    (identity.CompilerIncrementalBuildIdentity.Available
-      (incremental-test-build 5))
+    (Parse)
+    (Available (incremental-test-build 5))
     (incremental-test-empty-inputs)))
 
 (define (incremental-test-source-query [reverse? : bool]) : identity.CompilerIncrementalQuery
   (let
     [a : identity.CompilerIncrementalInput
-      (identity.CompilerIncrementalInput.SourceContent
-        "a.tl"
-        (incremental-test-source-content 10))]
+      (SourceContent "a.tl" (incremental-test-source-content 10))]
     [b : identity.CompilerIncrementalInput
-      (identity.CompilerIncrementalInput.SourceContent
-        "b.tl"
-        (incremental-test-source-content 20))]
+      (SourceContent "b.tl" (incremental-test-source-content 20))]
     [inputs : (__tl_dyn-array identity.CompilerIncrementalInput)
       (__tl_make-array identity.CompilerIncrementalInput 2)]
-    (begin
-      (if reverse?
-        (begin
-          (set! (array-ref inputs 0) b)
-          (set! (array-ref inputs 1) a))
-        (begin
-          (set! (array-ref inputs 0) a)
-          (set! (array-ref inputs 1) b)))
-      (identity.CompilerIncrementalQuery
-        (identity.CompilerIncrementalQueryKind.Typecheck)
-        (identity.CompilerIncrementalBuildIdentity.Available
-          (incremental-test-build 5))
-        inputs))))
+    (if reverse?
+      (begin
+        (set! (array-ref inputs 0) b)
+        (set! (array-ref inputs 1) a))
+      (begin
+        (set! (array-ref inputs 0) a)
+        (set! (array-ref inputs 1) b)))
+    (identity.CompilerIncrementalQuery
+      (Typecheck)
+      (Available (incremental-test-build 5))
+      inputs)))
 
 (define (incremental-test-logical-query
   [module : String]
   [declaration : String]) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
-    (identity.CompilerIncrementalQueryKind.Typecheck)
-    (identity.CompilerIncrementalBuildIdentity.Available
-      (incremental-test-build 5))
+    (Typecheck)
+    (Available (incremental-test-build 5))
     (__tl_make-array
       (identity.CompilerIncrementalInput.LogicalName module declaration))))
 
@@ -104,35 +96,32 @@
           "alpha"
           "alphb")
         "2")]
-    (begin
-      (if reverse?
-        (begin
-          (set! (array-ref fields 0) beta)
-          (set! (array-ref fields 1) alpha))
-        (begin
-          (set! (array-ref fields 0) alpha)
-          (set! (array-ref fields 1) beta)))
-      (identity.CompilerIncrementalQuery
-        (identity.CompilerIncrementalQueryKind.Object)
-        (identity.CompilerIncrementalBuildIdentity.Available
-          (incremental-test-build 5))
-        (__tl_make-array
-          (identity.CompilerIncrementalInput.Configuration
-            (identity.CompilerIncrementalConfiguration
-              "linux-x86_64"
-              "debug"
-              "native"
-              2
-              true
-              "workspace"
-              "tracked"
-              fields)))))))
+    (if reverse?
+      (begin
+        (set! (array-ref fields 0) beta)
+        (set! (array-ref fields 1) alpha))
+      (begin
+        (set! (array-ref fields 0) alpha)
+        (set! (array-ref fields 1) beta)))
+    (identity.CompilerIncrementalQuery
+      (Object)
+      (Available (incremental-test-build 5))
+      (__tl_make-array
+        (identity.CompilerIncrementalInput.Configuration
+          (identity.CompilerIncrementalConfiguration
+            "linux-x86_64"
+            "debug"
+            "native"
+            2
+            true
+            "workspace"
+            "tracked"
+            fields))))))
 
 (define (incremental-test-config-material-query [variant : i64]) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
-    (identity.CompilerIncrementalQueryKind.Object)
-    (identity.CompilerIncrementalBuildIdentity.Available
-      (incremental-test-build 5))
+    (Object)
+    (Available (incremental-test-build 5))
     (__tl_make-array
       (identity.CompilerIncrementalInput.Configuration
         (identity.CompilerIncrementalConfiguration
@@ -167,13 +156,12 @@
 (define (incremental-test-request-query [variant : i64]) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
     (cond
-      [(= variant 1) (identity.CompilerIncrementalQueryKind.Object)]
-      [(= variant 2) (identity.CompilerIncrementalQueryKind.IrSummary)]
-      [(= variant 3)
-        (identity.CompilerIncrementalQueryKind.IrDump "after-sccp")]
-      [(= variant 4) (identity.CompilerIncrementalQueryKind.IrDump "after-dce")]
-      [else (identity.CompilerIncrementalQueryKind.Assembly)])
-    (identity.CompilerIncrementalBuildIdentity.Available
+      [(= variant 1) (Object)]
+      [(= variant 2) (IrSummary)]
+      [(= variant 3) (IrDump "after-sccp")]
+      [(= variant 4) (IrDump "after-dce")]
+      [else (Assembly)])
+    (Available
       (incremental-test-build
         (if (= variant 5)
           6
@@ -187,9 +175,8 @@
 
 (define (incremental-test-single-source-query) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
-    (identity.CompilerIncrementalQueryKind.Assembly)
-    (identity.CompilerIncrementalBuildIdentity.Available
-      (incremental-test-build 5))
+    (Assembly)
+    (Available (incremental-test-build 5))
     (__tl_make-array
       (identity.CompilerIncrementalInput.SourceContent
         "src/main.tl"
@@ -197,9 +184,8 @@
 
 (define (incremental-test-ordered-query [duplicate-ordinal? : bool]) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
-    (identity.CompilerIncrementalQueryKind.Lower)
-    (identity.CompilerIncrementalBuildIdentity.Available
-      (incremental-test-build 5))
+    (Lower)
+    (Available (incremental-test-build 5))
     (__tl_make-array
       (identity.CompilerIncrementalInput.OrderedChild
         "declarations"
@@ -231,9 +217,8 @@
 ;; material field in the correspondingly tagged input family.
 (define (incremental-test-all-input-query [variant : i64]) : identity.CompilerIncrementalQuery
   (identity.CompilerIncrementalQuery
-    (identity.CompilerIncrementalQueryKind.IrDump "after-sccp")
-    (identity.CompilerIncrementalBuildIdentity.Available
-      (incremental-test-build 5))
+    (IrDump "after-sccp")
+    (Available (incremental-test-build 5))
     (__tl_make-array
       (identity.CompilerIncrementalInput.SourceContent
         (if (= variant 1)
@@ -319,25 +304,21 @@
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
     [index : i64 0]
-    (begin
-      (while (< index length)
-        (begin
-          (set! (array-ref out index) (array-ref bytes index))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index length)
+      (set! (array-ref out index) (array-ref bytes index))
+      (set! index (+ index 1)))
+    out))
 
 (define (incremental-test-append-zero [bytes : (& bytes (__tl_dyn-array u8))]) : (__tl_dyn-array
     u8)
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ (array-length bytes) 1))]
     [index : i64 0]
-    (begin
-      (while (< index (array-length bytes))
-        (begin
-          (set! (array-ref out index) (array-ref bytes index))
-          (set! index (+ index 1))))
-      (set! (array-ref out index) (cast 0 : u8))
-      out)))
+    (while (< index (array-length bytes))
+      (set! (array-ref out index) (array-ref bytes index))
+      (set! index (+ index 1)))
+    (set! (array-ref out index) (cast 0 : u8))
+    out))
 
 (define (incremental-test-encode [query : identity.CompilerIncrementalQuery]) : identity.ResultCompilerIncrementalIdentity
   (let
@@ -352,16 +333,15 @@
     [limits : identity.CompilerIncrementalIdentityLimits
       (identity.compiler-incremental-identity-default-limits)]
     (match (identity.compiler-incremental-identity-decode bytes (& limits))
-      [(identity.ResultCompilerIncrementalDecodedQuery.Err error)
-        (= error.code code)]
-      [(identity.ResultCompilerIncrementalDecodedQuery.Ok _) false])))
+      [(Err error) (= error.code code)]
+      [(Ok _) false])))
 
 (define (incremental-test-result-error-code?
   [result : identity.ResultCompilerIncrementalIdentity]
   [code : i64]) : bool
   (match result
-    [(identity.ResultCompilerIncrementalIdentity.Err error) (= error.code code)]
-    [(identity.ResultCompilerIncrementalIdentity.Ok _) false]))
+    [(Err error) (= error.code code)]
+    [(Ok _) false]))
 
 (define (incremental-test-identities-eq?
   [left : (& left identity.CompilerIncrementalIdentity)]
@@ -374,8 +354,8 @@
 
 (define (incremental-test-minimal-oracle?) : bool
   (match (incremental-test-encode (incremental-test-minimal-query))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok encoded)
+    [(Err _) false]
+    [(Ok encoded)
       (and
         (= (array-length encoded.transcript) 119)
         (= (array-ref encoded.transcript 0) (cast 35 : u8))
@@ -394,7 +374,7 @@
           (match (identity.compiler-incremental-identity-decode
             (& encoded.transcript)
             (& limits))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Ok decoded)
+            [(Ok decoded)
               (let
                 [expected-build : identity.CompilerIncrementalChildIdentity
                   (incremental-test-build 5)]
@@ -403,23 +383,23 @@
                   (identity.compiler-incremental-child-eq?
                     (& decoded.compiler-build)
                     (& expected-build))))]
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err _) false])))]))
+            [(Err _) false])))]))
 
 (define (incremental-test-order-and-framing?) : bool
   (match (incremental-test-encode (incremental-test-source-query false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok forward)
+    [(Err _) false]
+    [(Ok forward)
       (match (incremental-test-encode (incremental-test-source-query true))
-        [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-        [(identity.ResultCompilerIncrementalIdentity.Ok reverse)
+        [(Err _) false]
+        [(Ok reverse)
           (match (incremental-test-encode
             (incremental-test-logical-query "ab" "c"))
-            [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-            [(identity.ResultCompilerIncrementalIdentity.Ok split-left)
+            [(Err _) false]
+            [(Ok split-left)
               (match (incremental-test-encode
                 (incremental-test-logical-query "a" "bc"))
-                [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-                [(identity.ResultCompilerIncrementalIdentity.Ok split-right)
+                [(Err _) false]
+                [(Ok split-right)
                   (and
                     (incremental-test-identities-eq? (& forward) (& reverse))
                     (not
@@ -429,12 +409,12 @@
 
 (define (incremental-test-config-and-sequence-canonical?) : bool
   (match (incremental-test-encode (incremental-test-config-query false false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok forward)
+    [(Err _) false]
+    [(Ok forward)
       (match (incremental-test-encode
         (incremental-test-config-query true false))
-        [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-        [(identity.ResultCompilerIncrementalIdentity.Ok reverse)
+        [(Err _) false]
+        [(Ok reverse)
           (and
             (incremental-test-identities-eq? (& forward) (& reverse))
             (incremental-test-result-error-code?
@@ -446,88 +426,83 @@
               identity.compiler-incremental-error-order)
             (match (incremental-test-encode
               (incremental-test-ordered-query false))
-              [(identity.ResultCompilerIncrementalIdentity.Ok _) true]
-              [(identity.ResultCompilerIncrementalIdentity.Err _) false]))])]))
+              [(Ok _) true]
+              [(Err _) false]))])]))
 
 (define (incremental-test-config-duplicate-name-decode?) : bool
   (match (incremental-test-encode (incremental-test-config-query false false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok encoded)
+    [(Err _) false]
+    [(Ok encoded)
       (let
         [mutated : (__tl_dyn-array u8)
           (incremental-test-copy (& encoded.transcript))]
         [index : i64 0]
         [found : i64 -1]
-        (begin
-          (while (and (< index (- (array-length mutated) 4)) (< found 0))
-            (if (and
-              (= (array-ref mutated index) (cast 97 : u8))
-              (= (array-ref mutated (+ index 1)) (cast 108 : u8))
-              (= (array-ref mutated (+ index 2)) (cast 112 : u8))
-              (= (array-ref mutated (+ index 3)) (cast 104 : u8))
-              (= (array-ref mutated (+ index 4)) (cast 98 : u8)))
-              (set! found index)
-              (set! index (+ index 1))))
-          (if (< found 0)
-            false
-            (begin
-              (set! (array-ref mutated (+ found 4)) (cast 97 : u8))
-              (incremental-test-decode-rejects?
-                (& mutated)
-                identity.compiler-incremental-error-order)))))]))
+        (while (and (< index (- (array-length mutated) 4)) (< found 0))
+          (if (and
+            (= (array-ref mutated index) (cast 97 : u8))
+            (= (array-ref mutated (+ index 1)) (cast 108 : u8))
+            (= (array-ref mutated (+ index 2)) (cast 112 : u8))
+            (= (array-ref mutated (+ index 3)) (cast 104 : u8))
+            (= (array-ref mutated (+ index 4)) (cast 98 : u8)))
+            (set! found index)
+            (set! index (+ index 1))))
+        (if (< found 0)
+          false
+          (begin
+            (set! (array-ref mutated (+ found 4)) (cast 97 : u8))
+            (incremental-test-decode-rejects?
+              (& mutated)
+              identity.compiler-incremental-error-order))))]))
 
 (define (incremental-test-config-materiality?) : bool
   (match (incremental-test-encode (incremental-test-config-material-query 0))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok baseline)
+    [(Err _) false]
+    [(Ok baseline)
       (let
         [variant : i64 1]
         [all-differ? : bool true]
-        (begin
-          (while (and all-differ? (<= variant 9))
-            (match (incremental-test-encode
-              (incremental-test-config-material-query variant))
-              [(identity.ResultCompilerIncrementalIdentity.Err _)
-                (set! all-differ? false)]
-              [(identity.ResultCompilerIncrementalIdentity.Ok changed)
-                (if (sha256.digest-eq?
-                  (& baseline.fingerprint)
-                  (& changed.fingerprint))
-                  (set! all-differ? false)
-                  (set! variant (+ variant 1)))]))
-          all-differ?))]))
+        (while (and all-differ? (<= variant 9))
+          (match (incremental-test-encode
+            (incremental-test-config-material-query variant))
+            [(Err _) (set! all-differ? false)]
+            [(Ok changed)
+              (if (sha256.digest-eq?
+                (& baseline.fingerprint)
+                (& changed.fingerprint))
+                (set! all-differ? false)
+                (set! variant (+ variant 1)))]))
+        all-differ?)]))
 
 (define (incremental-test-request-materiality?) : bool
   (match (incremental-test-encode (incremental-test-request-query 0))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok baseline)
+    [(Err _) false]
+    [(Ok baseline)
       (let
         [variant : i64 1]
         [all-differ? : bool true]
-        (begin
-          (while (and all-differ? (<= variant 6))
-            (match (incremental-test-encode
-              (incremental-test-request-query variant))
-              [(identity.ResultCompilerIncrementalIdentity.Err _)
-                (set! all-differ? false)]
-              [(identity.ResultCompilerIncrementalIdentity.Ok changed)
-                (if (sha256.digest-eq?
-                  (& baseline.fingerprint)
-                  (& changed.fingerprint))
-                  (set! all-differ? false)
-                  (set! variant (+ variant 1)))]))
-          all-differ?))]))
+        (while (and all-differ? (<= variant 6))
+          (match (incremental-test-encode
+            (incremental-test-request-query variant))
+            [(Err _) (set! all-differ? false)]
+            [(Ok changed)
+              (if (sha256.digest-eq?
+                (& baseline.fingerprint)
+                (& changed.fingerprint))
+                (set! all-differ? false)
+                (set! variant (+ variant 1)))]))
+        all-differ?)]))
 
 (define (incremental-test-compare-category?
   [left-query : identity.CompilerIncrementalQuery]
   [right-query : identity.CompilerIncrementalQuery]
   [expected : i64]) : bool
   (match (incremental-test-encode left-query)
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok left)
+    [(Err _) false]
+    [(Ok left)
       (match (incremental-test-encode right-query)
-        [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-        [(identity.ResultCompilerIncrementalIdentity.Ok right)
+        [(Err _) false]
+        [(Ok right)
           (let
             [limits : identity.CompilerIncrementalIdentityLimits
               (identity.compiler-incremental-identity-default-limits)]
@@ -535,7 +510,7 @@
               (& left)
               (& right)
               (& limits))
-              [(identity.CompilerIncrementalCompareResult.Miss miss)
+              [(Miss miss)
                 (and
                   (= miss.category expected)
                   (<= (string.string-length (& miss.explanation)) 96))]
@@ -562,8 +537,8 @@
 
 (define (incremental-test-all-input-families?) : bool
   (match (incremental-test-encode (incremental-test-all-input-query 0))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok baseline)
+    [(Err _) false]
+    [(Ok baseline)
       (let
         [limits : identity.CompilerIncrementalIdentityLimits
           (identity.compiler-incremental-identity-default-limits)]
@@ -573,37 +548,34 @@
           (match (identity.compiler-incremental-identity-decode
             (& baseline.transcript)
             (& limits))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err _) false]
-            [(identity.ResultCompilerIncrementalDecodedQuery.Ok decoded)
+            [(Err _) false]
+            [(Ok decoded)
               (let
                 [index : i64 0]
                 [tags? : bool (= (array-length decoded.inputs) 10)]
-                (begin
-                  (while (and tags? (< index 10))
-                    (let
-                      [input : identity.CompilerIncrementalInput
-                        (owned_view.compiler-owned-array-element-shared-view
-                          decoded.inputs
-                          index)]
-                      (if (=
-                        (identity.compiler-incremental-input-tag (& input))
-                        (+ index 1))
-                        (set! index (+ index 1))
-                        (set! tags? false))))
-                  tags?))])]
-        (begin
-          (while (and mutations-differ? (<= variant 10))
-            (match (incremental-test-encode
-              (incremental-test-all-input-query variant))
-              [(identity.ResultCompilerIncrementalIdentity.Err _)
-                (set! mutations-differ? false)]
-              [(identity.ResultCompilerIncrementalIdentity.Ok changed)
-                (if (sha256.digest-eq?
-                  (& baseline.fingerprint)
-                  (& changed.fingerprint))
-                  (set! mutations-differ? false)
-                  (set! variant (+ variant 1)))]))
-          (and round-trip? mutations-differ?)))]))
+                (while (and tags? (< index 10))
+                  (let
+                    [input : identity.CompilerIncrementalInput
+                      (owned_view.compiler-owned-array-element-shared-view
+                        decoded.inputs
+                        index)]
+                    (if (=
+                      (identity.compiler-incremental-input-tag (& input))
+                      (+ index 1))
+                      (set! index (+ index 1))
+                      (set! tags? false))))
+                tags?)])]
+        (while (and mutations-differ? (<= variant 10))
+          (match (incremental-test-encode
+            (incremental-test-all-input-query variant))
+            [(Err _) (set! mutations-differ? false)]
+            [(Ok changed)
+              (if (sha256.digest-eq?
+                (& baseline.fingerprint)
+                (& changed.fingerprint))
+                (set! mutations-differ? false)
+                (set! variant (+ variant 1)))]))
+        (and round-trip? mutations-differ?))]))
 
 (define (incremental-test-content-domains?) : bool
   (let
@@ -614,14 +586,14 @@
       "typelisp.source-content"
       (& bytes)
       (& limits))
-      [(identity.ResultCompilerIncrementalContentIdentity.Err _) false]
-      [(identity.ResultCompilerIncrementalContentIdentity.Ok source)
+      [(Err _) false]
+      [(Ok source)
         (match (identity.compiler-incremental-content-identity
           "typelisp.package-content"
           (& bytes)
           (& limits))
-          [(identity.ResultCompilerIncrementalContentIdentity.Err _) false]
-          [(identity.ResultCompilerIncrementalContentIdentity.Ok package)
+          [(Err _) false]
+          [(Ok package)
             (and
               (= source.schema 1)
               (= source.exact-length 3)
@@ -636,8 +608,8 @@
 
 (define (incremental-test-mutations?) : bool
   (match (incremental-test-encode (incremental-test-source-query false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok encoded)
+    [(Err _) false]
+    [(Ok encoded)
       (let
         [truncated : (__tl_dyn-array u8)
           (incremental-test-prefix
@@ -663,61 +635,60 @@
           (incremental-test-copy (& encoded.transcript))]
         [overflow : (__tl_dyn-array u8)
           (incremental-test-copy (& encoded.transcript))]
-        (begin
-          (set! (array-ref schema 39) (cast 2 : u8))
-          (set! (array-ref query-tag 43) (cast 99 : u8))
-          (set! (array-ref input-tag 119) (cast 99 : u8))
-          (set! (array-ref utf8 4) (cast 0xff : u8))
-          (set! (array-ref path 128) (cast 47 : u8))
-          (set! (array-ref out-of-order 128) (cast 122 : u8))
-          ;; The second same-sized source record begins at byte 203.
-          (set! (array-ref duplicate 212) (cast 97 : u8))
-          (set! (array-ref duplicate 247) (cast 10 : u8))
-          (set! (array-ref overlength 120) (cast 0xff : u8))
-          (set! (array-ref overlength 121) (cast 0xff : u8))
-          (set! (array-ref overlength 122) (cast 0xff : u8))
-          (set! (array-ref overlength 123) (cast 0xff : u8))
-          ;; First source content exact-length high byte: checked u64->i64.
-          (set! (array-ref overflow 170) (cast 0xff : u8))
-          (and
-            (incremental-test-decode-rejects?
-              (& truncated)
-              identity.compiler-incremental-error-truncated)
-            (incremental-test-decode-rejects?
-              (& trailing)
-              identity.compiler-incremental-error-trailing)
-            (incremental-test-decode-rejects?
-              (& schema)
-              identity.compiler-incremental-error-schema)
-            (incremental-test-decode-rejects?
-              (& query-tag)
-              identity.compiler-incremental-error-unknown-tag)
-            (incremental-test-decode-rejects?
-              (& input-tag)
-              identity.compiler-incremental-error-unknown-tag)
-            (incremental-test-decode-rejects?
-              (& utf8)
-              identity.compiler-incremental-error-utf8)
-            (incremental-test-decode-rejects?
-              (& path)
-              identity.compiler-incremental-error-path)
-            (incremental-test-decode-rejects?
-              (& out-of-order)
-              identity.compiler-incremental-error-order)
-            (incremental-test-decode-rejects?
-              (& duplicate)
-              identity.compiler-incremental-error-order)
-            (incremental-test-decode-rejects?
-              (& overlength)
-              identity.compiler-incremental-error-input-limit)
-            (incremental-test-decode-rejects?
-              (& overflow)
-              identity.compiler-incremental-error-value))))]))
+        (set! (array-ref schema 39) (cast 2 : u8))
+        (set! (array-ref query-tag 43) (cast 99 : u8))
+        (set! (array-ref input-tag 119) (cast 99 : u8))
+        (set! (array-ref utf8 4) (cast 0xff : u8))
+        (set! (array-ref path 128) (cast 47 : u8))
+        (set! (array-ref out-of-order 128) (cast 122 : u8))
+        ;; The second same-sized source record begins at byte 203.
+        (set! (array-ref duplicate 212) (cast 97 : u8))
+        (set! (array-ref duplicate 247) (cast 10 : u8))
+        (set! (array-ref overlength 120) (cast 0xff : u8))
+        (set! (array-ref overlength 121) (cast 0xff : u8))
+        (set! (array-ref overlength 122) (cast 0xff : u8))
+        (set! (array-ref overlength 123) (cast 0xff : u8))
+        ;; First source content exact-length high byte: checked u64->i64.
+        (set! (array-ref overflow 170) (cast 0xff : u8))
+        (and
+          (incremental-test-decode-rejects?
+            (& truncated)
+            identity.compiler-incremental-error-truncated)
+          (incremental-test-decode-rejects?
+            (& trailing)
+            identity.compiler-incremental-error-trailing)
+          (incremental-test-decode-rejects?
+            (& schema)
+            identity.compiler-incremental-error-schema)
+          (incremental-test-decode-rejects?
+            (& query-tag)
+            identity.compiler-incremental-error-unknown-tag)
+          (incremental-test-decode-rejects?
+            (& input-tag)
+            identity.compiler-incremental-error-unknown-tag)
+          (incremental-test-decode-rejects?
+            (& utf8)
+            identity.compiler-incremental-error-utf8)
+          (incremental-test-decode-rejects?
+            (& path)
+            identity.compiler-incremental-error-path)
+          (incremental-test-decode-rejects?
+            (& out-of-order)
+            identity.compiler-incremental-error-order)
+          (incremental-test-decode-rejects?
+            (& duplicate)
+            identity.compiler-incremental-error-order)
+          (incremental-test-decode-rejects?
+            (& overlength)
+            identity.compiler-incremental-error-input-limit)
+          (incremental-test-decode-rejects?
+            (& overflow)
+            identity.compiler-incremental-error-value)))]))
 
 (define (incremental-test-source-length?) : bool
   (match (incremental-test-encode (incremental-test-source-query false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok encoded)
+    [(Err _) false]
+    [(Ok encoded)
       (let
         [limits : identity.CompilerIncrementalIdentityLimits
           (identity.compiler-incremental-identity-default-limits)]
@@ -726,14 +697,13 @@
           (match (identity.compiler-incremental-identity-decode
             (& encoded.transcript)
             (& limits))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Ok decoded)
-              (= (array-length decoded.inputs) 2)]
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err _) false])))]))
+            [(Ok decoded) (= (array-length decoded.inputs) 2)]
+            [(Err _) false])))]))
 
 (define (incremental-test-truncated-only?) : bool
   (match (incremental-test-encode (incremental-test-source-query false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok encoded)
+    [(Err _) false]
+    [(Ok encoded)
       (let
         [truncated : (__tl_dyn-array u8)
           (incremental-test-prefix
@@ -753,17 +723,16 @@
       (identity.CompilerIncrementalIdentityLimits -1 16 1024 128 8 4096 4096)]
     [bad-path : identity.CompilerIncrementalQuery
       (identity.CompilerIncrementalQuery
-        (identity.CompilerIncrementalQueryKind.Typecheck)
-        (identity.CompilerIncrementalBuildIdentity.Available
-          (incremental-test-build 5))
+        (Typecheck)
+        (Available (incremental-test-build 5))
         (__tl_make-array
           (identity.CompilerIncrementalInput.SourceContent
             "../escape.tl"
             (incremental-test-source-content 1))))]
     [no-build : identity.CompilerIncrementalQuery
       (identity.CompilerIncrementalQuery
-        (identity.CompilerIncrementalQueryKind.Parse)
-        (identity.CompilerIncrementalBuildIdentity.Unavailable "not generated")
+        (Parse)
+        (Unavailable "not generated")
         (incremental-test-empty-inputs))]
     (and
       (incremental-test-result-error-code?
@@ -785,8 +754,8 @@
 
 (define (incremental-test-decoder-ceilings?) : bool
   (match (incremental-test-encode (incremental-test-source-query false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok encoded)
+    [(Err _) false]
+    [(Ok encoded)
       (let
         [count-limit : identity.CompilerIncrementalIdentityLimits
           (identity.CompilerIncrementalIdentityLimits
@@ -837,25 +806,25 @@
           (match (identity.compiler-incremental-identity-decode
             (& encoded.transcript)
             (& count-limit))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err error)
+            [(Err error)
               (= error.code identity.compiler-incremental-error-record-limit)]
             [_ false])
           (match (identity.compiler-incremental-identity-decode
             (& encoded.transcript)
             (& string-limit))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err error)
+            [(Err error)
               (= error.code identity.compiler-incremental-error-string-limit)]
             [_ false])
           (match (identity.compiler-incremental-identity-decode
             (& encoded.transcript)
             (& owned-limit))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err error)
+            [(Err error)
               (= error.code identity.compiler-incremental-error-owned-limit)]
             [_ false])
           (match (identity.compiler-incremental-identity-decode
             (& encoded.transcript)
             (& work-limit))
-            [(identity.ResultCompilerIncrementalDecodedQuery.Err error)
+            [(Err error)
               (= error.code identity.compiler-incremental-error-work-limit)]
             [_ false])
           (incremental-test-result-error-code?
@@ -866,12 +835,12 @@
 
 (define (incremental-test-miss-and-corruption?) : bool
   (match (incremental-test-encode (incremental-test-source-query false))
-    [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-    [(identity.ResultCompilerIncrementalIdentity.Ok left)
+    [(Err _) false]
+    [(Ok left)
       (match (incremental-test-encode
         (incremental-test-logical-query "main" "entry"))
-        [(identity.ResultCompilerIncrementalIdentity.Err _) false]
-        [(identity.ResultCompilerIncrementalIdentity.Ok right)
+        [(Err _) false]
+        [(Ok right)
           (let
             [limits : identity.CompilerIncrementalIdentityLimits
               (identity.compiler-incremental-identity-default-limits)]
@@ -901,13 +870,13 @@
                 (& left)
                 (& left)
                 (& limits))
-                [(identity.CompilerIncrementalCompareResult.Hit) true]
+                [(Hit) true]
                 [_ false])
               (match (identity.compiler-incremental-identity-compare
                 (& left)
                 (& right)
                 (& limits))
-                [(identity.CompilerIncrementalCompareResult.Miss miss)
+                [(Miss miss)
                   (=
                     miss.category
                     identity.compiler-incremental-miss-record-count)]
@@ -916,7 +885,7 @@
                 (& left)
                 (& collision)
                 (& limits))
-                [(identity.CompilerIncrementalCompareResult.Miss miss)
+                [(Miss miss)
                   (and
                     (=
                       miss.category
@@ -927,14 +896,14 @@
                 (& left)
                 (& bad-metadata)
                 (& limits))
-                [(identity.CompilerIncrementalCompareResult.Corrupt error)
+                [(Corrupt error)
                   (= error.code identity.compiler-incremental-error-fingerprint)]
                 [_ false])
               (match (identity.compiler-incremental-identity-compare
                 (& left)
                 (& bad-fingerprint)
                 (& limits))
-                [(identity.CompilerIncrementalCompareResult.Corrupt error)
+                [(Corrupt error)
                   (= error.code identity.compiler-incremental-error-fingerprint)]
                 [_ false])
               (let
@@ -1048,53 +1017,52 @@
     [index : i64 start]
     [end : i64 (+ start length)]
     [ok? : bool (byte_reader.range-present? (array-length bytes) start length)]
-    (begin
-      (while (and ok? (< index end))
-        (let
-          [first : i64 (cast (array-ref bytes index) : i64)]
-          (cond
-            [(and (>= first 1) (<= first 0x7f)) (set! index (+ index 1))]
-            [(and (>= first 0xc2) (<= first 0xdf))
-              (if (and
-                (< (+ index 1) end)
-                (incremental-test-utf8-reference-continuation?
-                  (cast (array-ref bytes (+ index 1)) : i64)))
-                (set! index (+ index 2))
-                (set! ok? false))]
-            [(and (>= first 0xe0) (<= first 0xef))
-              (if (< (+ index 2) end)
-                (let
-                  [second : i64 (cast (array-ref bytes (+ index 1)) : i64)]
-                  [third : i64 (cast (array-ref bytes (+ index 2)) : i64)]
-                  (if (and
-                    (incremental-test-utf8-reference-continuation? third)
-                    (if (= first 0xe0)
-                      (and (>= second 0xa0) (<= second 0xbf))
-                      (if (= first 0xed)
-                        (and (>= second 0x80) (<= second 0x9f))
-                        (incremental-test-utf8-reference-continuation? second))))
-                    (set! index (+ index 3))
-                    (set! ok? false)))
-                (set! ok? false))]
-            [(and (>= first 0xf0) (<= first 0xf4))
-              (if (< (+ index 3) end)
-                (let
-                  [second : i64 (cast (array-ref bytes (+ index 1)) : i64)]
-                  [third : i64 (cast (array-ref bytes (+ index 2)) : i64)]
-                  [fourth : i64 (cast (array-ref bytes (+ index 3)) : i64)]
-                  (if (and
-                    (incremental-test-utf8-reference-continuation? third)
-                    (incremental-test-utf8-reference-continuation? fourth)
-                    (if (= first 0xf0)
-                      (and (>= second 0x90) (<= second 0xbf))
-                      (if (= first 0xf4)
-                        (and (>= second 0x80) (<= second 0x8f))
-                        (incremental-test-utf8-reference-continuation? second))))
-                    (set! index (+ index 4))
-                    (set! ok? false)))
-                (set! ok? false))]
-            [else (set! ok? false)])))
-      ok?)))
+    (while (and ok? (< index end))
+      (let
+        [first : i64 (cast (array-ref bytes index) : i64)]
+        (cond
+          [(and (>= first 1) (<= first 0x7f)) (set! index (+ index 1))]
+          [(and (>= first 0xc2) (<= first 0xdf))
+            (if (and
+              (< (+ index 1) end)
+              (incremental-test-utf8-reference-continuation?
+                (cast (array-ref bytes (+ index 1)) : i64)))
+              (set! index (+ index 2))
+              (set! ok? false))]
+          [(and (>= first 0xe0) (<= first 0xef))
+            (if (< (+ index 2) end)
+              (let
+                [second : i64 (cast (array-ref bytes (+ index 1)) : i64)]
+                [third : i64 (cast (array-ref bytes (+ index 2)) : i64)]
+                (if (and
+                  (incremental-test-utf8-reference-continuation? third)
+                  (if (= first 0xe0)
+                    (and (>= second 0xa0) (<= second 0xbf))
+                    (if (= first 0xed)
+                      (and (>= second 0x80) (<= second 0x9f))
+                      (incremental-test-utf8-reference-continuation? second))))
+                  (set! index (+ index 3))
+                  (set! ok? false)))
+              (set! ok? false))]
+          [(and (>= first 0xf0) (<= first 0xf4))
+            (if (< (+ index 3) end)
+              (let
+                [second : i64 (cast (array-ref bytes (+ index 1)) : i64)]
+                [third : i64 (cast (array-ref bytes (+ index 2)) : i64)]
+                [fourth : i64 (cast (array-ref bytes (+ index 3)) : i64)]
+                (if (and
+                  (incremental-test-utf8-reference-continuation? third)
+                  (incremental-test-utf8-reference-continuation? fourth)
+                  (if (= first 0xf0)
+                    (and (>= second 0x90) (<= second 0xbf))
+                    (if (= first 0xf4)
+                      (and (>= second 0x80) (<= second 0x8f))
+                      (incremental-test-utf8-reference-continuation? second))))
+                  (set! index (+ index 4))
+                  (set! ok? false)))
+              (set! ok? false))]
+          [else (set! ok? false)])))
+    ok?))
 
 ;; Every 1- and 2-byte input, every 3-byte input led by 0xc0..0xff, and every
 ;; 4-byte input led by 0xf0..0xf7 with each byte after the second drawn from the
@@ -1107,16 +1075,14 @@
   (let
     [cut : i64 0]
     [same : bool true]
-    (begin
-      (while (and same (<= cut length))
-        (begin
-          (set!
-            same
-            (=
-              (binary.compiler-incremental-binary-utf8-range-valid? bytes 1 cut)
-              (incremental-test-utf8-reference-valid? bytes 1 cut)))
-          (set! cut (+ cut 1))))
-      same)))
+    (while (and same (<= cut length))
+      (set!
+        same
+        (=
+          (binary.compiler-incremental-binary-utf8-range-valid? bytes 1 cut)
+          (incremental-test-utf8-reference-valid? bytes 1 cut)))
+      (set! cut (+ cut 1)))
+    same))
 
 (define (incremental-test-utf8-table-matches-reference?) : bool
   (let
@@ -1127,82 +1093,71 @@
     [b : i64 0]
     [c : i64 0]
     [d : i64 0]
-    (begin
-      (set! (array-ref edges 0) (cast 0x00 : u8))
-      (set! (array-ref edges 1) (cast 0x7f : u8))
-      (set! (array-ref edges 2) (cast 0x80 : u8))
-      (set! (array-ref edges 3) (cast 0x8f : u8))
-      (set! (array-ref edges 4) (cast 0x90 : u8))
-      (set! (array-ref edges 5) (cast 0x9f : u8))
-      (set! (array-ref edges 6) (cast 0xa0 : u8))
-      (set! (array-ref edges 7) (cast 0xbf : u8))
-      (set! (array-ref edges 8) (cast 0xc0 : u8))
-      (set! (array-ref edges 9) (cast 0xff : u8))
-      (set! (array-ref bytes 0) (cast 0xff : u8))
-      ;; 1- and 2-byte inputs.
-      (while (and same (< a 256))
-        (begin
-          (set! (array-ref bytes 1) (cast a : u8))
-          (set! b 0)
-          (while (and same (< b 256))
-            (begin
-              (set! (array-ref bytes 2) (cast b : u8))
-              (set! same (incremental-test-utf8-agree? (& bytes) 2))
-              (set! b (+ b 1))))
-          (set! a (+ a 1))))
-      ;; 3-byte inputs.
-      (set! a 0xc0)
-      (while (and same (< a 256))
-        (begin
-          (set! (array-ref bytes 1) (cast a : u8))
-          (set! b 0)
-          (while (and same (< b 256))
-            (begin
-              (set! (array-ref bytes 2) (cast b : u8))
-              (set! c 0)
-              (while (and same (< c 256))
-                (begin
-                  (set! (array-ref bytes 3) (cast c : u8))
-                  (set! same (incremental-test-utf8-agree? (& bytes) 3))
-                  (set! c (+ c 1))))
-              (set! b (+ b 1))))
-          (set! a (+ a 1))))
-      ;; 4-byte inputs, then a trailing ASCII byte so a valid sequence is
-      ;; followed by more input.
-      (set! a 0xf0)
-      (while (and same (< a 0xf8))
-        (begin
-          (set! (array-ref bytes 1) (cast a : u8))
-          (set! b 0)
-          (while (and same (< b 256))
-            (begin
-              (set! (array-ref bytes 2) (cast b : u8))
-              (set! c 0)
-              (while (and same (< c 10))
-                (begin
-                  (set! (array-ref bytes 3) (array-ref edges c))
-                  (set! d 0)
-                  (while (and same (< d 10))
-                    (begin
-                      (set! (array-ref bytes 4) (array-ref edges d))
-                      (set! (array-ref bytes 5) (cast 0x41 : u8))
-                      (set! same (incremental-test-utf8-agree? (& bytes) 5))
-                      (set! d (+ d 1))))
-                  (set! c (+ c 1))))
-              (set! b (+ b 1))))
-          (set! a (+ a 1))))
-      ;; Ranges the buffer does not hold.
-      (and
-        same
-        (not
-          (binary.compiler-incremental-binary-utf8-range-valid? (& bytes) 4 3))
-        (not
-          (binary.compiler-incremental-binary-utf8-range-valid? (& bytes) -1 1))
-        (not
-          (binary.compiler-incremental-binary-utf8-range-valid? (& bytes) 0 -1))
-        (=
-          (binary.compiler-incremental-binary-utf8-range-valid? (& bytes) 6 0)
-          (incremental-test-utf8-reference-valid? (& bytes) 6 0))))))
+    (set! (array-ref edges 0) (cast 0x00 : u8))
+    (set! (array-ref edges 1) (cast 0x7f : u8))
+    (set! (array-ref edges 2) (cast 0x80 : u8))
+    (set! (array-ref edges 3) (cast 0x8f : u8))
+    (set! (array-ref edges 4) (cast 0x90 : u8))
+    (set! (array-ref edges 5) (cast 0x9f : u8))
+    (set! (array-ref edges 6) (cast 0xa0 : u8))
+    (set! (array-ref edges 7) (cast 0xbf : u8))
+    (set! (array-ref edges 8) (cast 0xc0 : u8))
+    (set! (array-ref edges 9) (cast 0xff : u8))
+    (set! (array-ref bytes 0) (cast 0xff : u8))
+    ;; 1- and 2-byte inputs.
+    (while (and same (< a 256))
+      (set! (array-ref bytes 1) (cast a : u8))
+      (set! b 0)
+      (while (and same (< b 256))
+        (set! (array-ref bytes 2) (cast b : u8))
+        (set! same (incremental-test-utf8-agree? (& bytes) 2))
+        (set! b (+ b 1)))
+      (set! a (+ a 1)))
+    ;; 3-byte inputs.
+    (set! a 0xc0)
+    (while (and same (< a 256))
+      (set! (array-ref bytes 1) (cast a : u8))
+      (set! b 0)
+      (while (and same (< b 256))
+        (set! (array-ref bytes 2) (cast b : u8))
+        (set! c 0)
+        (while (and same (< c 256))
+          (set! (array-ref bytes 3) (cast c : u8))
+          (set! same (incremental-test-utf8-agree? (& bytes) 3))
+          (set! c (+ c 1)))
+        (set! b (+ b 1)))
+      (set! a (+ a 1)))
+    ;; 4-byte inputs, then a trailing ASCII byte so a valid sequence is
+    ;; followed by more input.
+    (set! a 0xf0)
+    (while (and same (< a 0xf8))
+      (set! (array-ref bytes 1) (cast a : u8))
+      (set! b 0)
+      (while (and same (< b 256))
+        (set! (array-ref bytes 2) (cast b : u8))
+        (set! c 0)
+        (while (and same (< c 10))
+          (set! (array-ref bytes 3) (array-ref edges c))
+          (set! d 0)
+          (while (and same (< d 10))
+            (set! (array-ref bytes 4) (array-ref edges d))
+            (set! (array-ref bytes 5) (cast 0x41 : u8))
+            (set! same (incremental-test-utf8-agree? (& bytes) 5))
+            (set! d (+ d 1)))
+          (set! c (+ c 1)))
+        (set! b (+ b 1)))
+      (set! a (+ a 1)))
+    ;; Ranges the buffer does not hold.
+    (and
+      same
+      (not (binary.compiler-incremental-binary-utf8-range-valid? (& bytes) 4 3))
+      (not
+        (binary.compiler-incremental-binary-utf8-range-valid? (& bytes) -1 1))
+      (not
+        (binary.compiler-incremental-binary-utf8-range-valid? (& bytes) 0 -1))
+      (=
+        (binary.compiler-incremental-binary-utf8-range-valid? (& bytes) 6 0)
+        (incremental-test-utf8-reference-valid? (& bytes) 6 0)))))
 
 (test
   compiler-incremental-binary-utf8-table-matches-reference

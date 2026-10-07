@@ -19,8 +19,8 @@
 
 (define (advance [cursor : Cursor]) : Step
   (if (= cursor.remaining 0)
-    (Step.Stop)
-    (Step.Next
+    (Stop)
+    (Next
       (WrappedCursor
         77
         (array (Cursor (+ cursor.position 1) (- cursor.remaining 1) 99))))))
@@ -32,56 +32,51 @@
     [latest : (MutPtr Cursor) (ptr-null : (MutPtr Cursor))]
     [index : i64 0]
     [digits : i64 0]
-    (begin
-      (while (< index count)
-        (match (advance (shared-view cursor))
-          [(Step.Stop) (set! index count)]
-          [(Step.Next rest)
-            (begin
-              ;; Raw pointer assignment copies the address, not the pointee.
+    (while (< index count)
+      (match (advance (shared-view cursor))
+        [(Stop) (set! index count)]
+        [(Next rest)
+          ;; Raw pointer assignment copies the address, not the pointee.
+          (set!
+            latest
+            (unsafe
+              (ptr-addr-of (array-ref rest.cursors 0))))
+          (unless
+            (=
+              (unsafe
+                (ptr->int latest))
+              (unsafe
+                (ptr->int (ptr-addr-of (array-ref rest.cursors 0)))))
+            (set! digits 9000))
+          (set! (array-ref snapshots index) (shared-view cursor))
+          (match route
+            [1
+              ;; The producer belongs to the outer loop while the
+              ;; assignment happens inside an inner loop.
+              (let
+                [once : bool true]
+                (while once
+                  (set! cursor (array-ref rest.cursors 0))
+                  (set! once false)))]
+            [2
               (set!
-                latest
-                (unsafe
-                  (ptr-addr-of (array-ref rest.cursors 0))))
-              (unless
-                (=
-                  (unsafe
-                    (ptr->int latest))
-                  (unsafe
-                    (ptr->int (ptr-addr-of (array-ref rest.cursors 0)))))
-                (set! digits 9000))
-              (set! (array-ref snapshots index) (shared-view cursor))
-              (match route
-                [1
-                  ;; The producer belongs to the outer loop while the
-                  ;; assignment happens inside an inner loop.
-                  (let
-                    [once : bool true]
-                    (while once
-                      (begin
-                        (set! cursor (array-ref rest.cursors 0))
-                        (set! once false))))]
-                [2
-                  (set!
-                    cursor
-                    (if (= index 0)
-                      (array-ref rest.cursors 0)
-                      (Cursor (+ cursor.position 1) (- cursor.remaining 1) 99)))]
-                [3
-                  (set!
-                    cursor
-                    (match index
-                      [0 (array-ref rest.cursors 0)]
-                      [_
-                        (Cursor (+ cursor.position 1) (- cursor.remaining 1) 99)]))]
-                [_ (set! cursor (array-ref rest.cursors 0))])
-              (set! index (+ index 1)))]))
-      (set! index 0)
-      (while (< index count)
-        (begin
-          (set! digits (+ (* digits 10) (array-ref snapshots index).position))
-          (set! index (+ index 1))))
-      digits)))
+                cursor
+                (if (= index 0)
+                  (array-ref rest.cursors 0)
+                  (Cursor (+ cursor.position 1) (- cursor.remaining 1) 99)))]
+            [3
+              (set!
+                cursor
+                (match index
+                  [0 (array-ref rest.cursors 0)]
+                  [_ (Cursor (+ cursor.position 1) (- cursor.remaining 1) 99)]))]
+            [_ (set! cursor (array-ref rest.cursors 0))])
+          (set! index (+ index 1))]))
+    (set! index 0)
+    (while (< index count)
+      (set! digits (+ (* digits 10) (array-ref snapshots index).position))
+      (set! index (+ index 1)))
+    digits))
 
 (define (main) : i64
   (if (and

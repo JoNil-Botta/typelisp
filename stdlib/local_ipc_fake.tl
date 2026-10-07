@@ -260,35 +260,34 @@
 
 ;: Record a requested slice and advance the virtual clock by it.
 (define (spend-slice! [context : i64] [slice-ms : i64]) : unit
-  (begin
-    (if (> slice-ms (get context slot-max-slice))
-      (put! context slot-max-slice slice-ms)
-      unit)
-    (if (< slice-ms (get context slot-min-slice))
-      (put! context slot-min-slice slice-ms)
-      unit)
-    (if (>= (get context slot-clock) 0)
-      (put! context slot-clock (+ (get context slot-clock) slice-ms))
-      unit)))
+  (if (> slice-ms (get context slot-max-slice))
+    (put! context slot-max-slice slice-ms)
+    unit)
+  (if (< slice-ms (get context slot-min-slice))
+    (put! context slot-min-slice slice-ms)
+    unit)
+  (if (>= (get context slot-clock) 0)
+    (put! context slot-clock (+ (get context slot-clock) slice-ms))
+    unit))
 
 ;: Error kind for a stable kind code; unknown codes map to `HostFailure`.
 (define (kind-from-code [code : i64]) : local_ipc.LocalIpcErrorKind
   (cond
-    [(= code 1) (local_ipc.LocalIpcErrorKind.InvalidEndpoint)]
-    [(= code 2) (local_ipc.LocalIpcErrorKind.Unavailable)]
-    [(= code 3) (local_ipc.LocalIpcErrorKind.PermissionDenied)]
-    [(= code 4) (local_ipc.LocalIpcErrorKind.Busy)]
-    [(= code 5) (local_ipc.LocalIpcErrorKind.TimedOut)]
-    [(= code 6) (local_ipc.LocalIpcErrorKind.Canceled)]
-    [(= code 7) (local_ipc.LocalIpcErrorKind.PeerClosed)]
-    [(= code 8) (local_ipc.LocalIpcErrorKind.ResourceExhausted)]
-    [(= code 9) (local_ipc.LocalIpcErrorKind.UnsupportedTarget)]
-    [(= code 10) (local_ipc.LocalIpcErrorKind.AdapterCorrupt)]
-    [(= code 11) (local_ipc.LocalIpcErrorKind.Closed)]
-    [(= code 12) (local_ipc.LocalIpcErrorKind.InvalidRange)]
-    [(= code 13) (local_ipc.LocalIpcErrorKind.WorkExhausted)]
-    [(= code 14) (local_ipc.LocalIpcErrorKind.PolicyRejected)]
-    [else (local_ipc.LocalIpcErrorKind.HostFailure)]))
+    [(= code 1) (InvalidEndpoint)]
+    [(= code 2) (Unavailable)]
+    [(= code 3) (PermissionDenied)]
+    [(= code 4) (Busy)]
+    [(= code 5) (TimedOut)]
+    [(= code 6) (Canceled)]
+    [(= code 7) (PeerClosed)]
+    [(= code 8) (ResourceExhausted)]
+    [(= code 9) (UnsupportedTarget)]
+    [(= code 10) (AdapterCorrupt)]
+    [(= code 11) (Closed)]
+    [(= code 12) (InvalidRange)]
+    [(= code 13) (WorkExhausted)]
+    [(= code 14) (PolicyRejected)]
+    [else (HostFailure)]))
 
 ;: An adapter-built error with kind code `kind`. Its host code is
 ;: `slot-host-code` when that is set and `default` otherwise, and it is built
@@ -307,47 +306,40 @@
   (let
     [index : i64 0]
     [total : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set! total (+ total (cast (byte_buf.ref buffer index) : i64)))
-          (set! index (+ index 1))))
-      total)))
+    (while (< index count)
+      (set! total (+ total (cast (byte_buf.ref buffer index) : i64)))
+      (set! index (+ index 1)))
+    total))
 
 ;: Fill the first `count` live bytes of `buffer` with 1, 2, 3, ...
 (define (fill-counted [buffer : byte_buf.ByteBuf] [count : i64]) : byte_buf.ByteBuf
   (let
     [index : i64 0]
     [ready : byte_buf.ByteBuf buffer]
-    (begin
-      (while (< index count)
-        (begin
-          (set! ready (byte_buf.set! ready index (cast (+ index 1) : u8)))
-          (set! index (+ index 1))))
-      ready)))
+    (while (< index count)
+      (set! ready (byte_buf.set! ready index (cast (+ index 1) : u8)))
+      (set! index (+ index 1)))
+    ready))
 
 ;: Zero the first `count` live bytes of `buffer`.
 (define (zero-fill [buffer : byte_buf.ByteBuf] [count : i64]) : byte_buf.ByteBuf
   (let
     [index : i64 0]
     [ready : byte_buf.ByteBuf buffer]
-    (begin
-      (while (< index count)
-        (begin
-          (set! ready (byte_buf.set! ready index (cast 0 : u8)))
-          (set! index (+ index 1))))
-      ready)))
+    (while (< index count)
+      (set! ready (byte_buf.set! ready index (cast 0 : u8)))
+      (set! index (+ index 1)))
+    ready))
 
 ;: Adapter `now-ms`: report the clock, then advance it by the clock step.
 (define (fake-now-ms [context : i64]) : i64
   (let
     [now : i64 (get context slot-clock)]
-    (begin
-      (bump! context slot-now-calls)
-      (if (>= now 0)
-        (put! context slot-clock (+ now (get context slot-clock-step)))
-        unit)
-      now)))
+    (bump! context slot-now-calls)
+    (if (>= now 0)
+      (put! context slot-clock (+ now (get context slot-clock-step)))
+      unit)
+    now))
 
 ;: Adapter `connect-attempt`: records the family and the exact name bytes.
 ;: Codes 97 and 98 hand back a damaged name buffer.
@@ -358,45 +350,38 @@
   (let
     [code : i64 (next! context queue-connect 0)]
     [length : i64 (byte_buf.len name)]
-    (begin
-      (note-call! context)
-      (bump! context slot-connect-calls)
-      (put! context slot-last-family family)
-      (put! context slot-last-name-len length)
-      (put! context slot-last-name-sum (byte-sum (& name) length))
-      (local_ipc.LocalIpcConnectReply
-        (cond
-          [(= code 0)
-            (let
-              [handle : i64 (get context slot-next-handle)]
-              (begin
-                (put! context slot-next-handle (+ handle 1))
-                (local_ipc.LocalIpcConnectStep.Connected handle)))]
-          [(or (= code 1) (= code 97) (= code 98))
-            (local_ipc.LocalIpcConnectStep.RetryConnect)]
-          [(= code 99) (local_ipc.LocalIpcConnectStep.Connected -5)]
-          [else
-            (local_ipc.LocalIpcConnectStep.ConnectFailed
-              (fake-error context (- code 100) 111))])
-        (cond
-          [(= code 97) (zero-fill name length)]
-          [(= code 98) (byte_buf.from-array (__tl_make-array u8 0))]
-          [else name])))))
+    (note-call! context)
+    (bump! context slot-connect-calls)
+    (put! context slot-last-family family)
+    (put! context slot-last-name-len length)
+    (put! context slot-last-name-sum (byte-sum (& name) length))
+    (local_ipc.LocalIpcConnectReply
+      (cond
+        [(= code 0)
+          (let
+            [handle : i64 (get context slot-next-handle)]
+            (put! context slot-next-handle (+ handle 1))
+            (Connected handle))]
+        [(or (= code 1) (= code 97) (= code 98)) (RetryConnect)]
+        [(= code 99) (Connected -5)]
+        [else (ConnectFailed (fake-error context (- code 100) 111))])
+      (cond
+        [(= code 97) (zero-fill name length)]
+        [(= code 98) (byte_buf.from-array (__tl_make-array u8 0))]
+        [else name]))))
 
 ;: Adapter `peer`.
 (define (fake-peer [context : i64] [_handle : i64]) : local_ipc.LocalIpcPeerStep
-  (begin
-    (note-call! context)
-    (bump! context slot-peer-calls)
-    (if (= (get context slot-peer-kind) 0)
-      (local_ipc.LocalIpcPeerStep.PeerKnown
-        (local_ipc.LocalIpcPeer
-          (get context slot-peer-process)
-          (get context slot-peer-user)
-          (get context slot-peer-group)
-          (get context slot-peer-session)))
-      (local_ipc.LocalIpcPeerStep.PeerFailed
-        (fake-error context (get context slot-peer-kind) 0)))))
+  (note-call! context)
+  (bump! context slot-peer-calls)
+  (if (= (get context slot-peer-kind) 0)
+    (PeerKnown
+      (local_ipc.LocalIpcPeer
+        (get context slot-peer-process)
+        (get context slot-peer-user)
+        (get context slot-peer-group)
+        (get context slot-peer-session)))
+    (PeerFailed (fake-error context (get context slot-peer-kind) 0))))
 
 ;: Turn a data step code into an adapter step for a request of `length` bytes.
 ;: Progress larger than the request is clamped, so only `-5` is corrupt.
@@ -408,22 +393,16 @@
           (if (< code length)
             code
             length)]
-        (begin
-          (put!
-            context
-            slot-bytes-moved
-            (+ (get context slot-bytes-moved) count))
-          (local_ipc.LocalIpcIoStep.Progress count)))]
-    [(= code -1) (local_ipc.LocalIpcIoStep.WouldBlock)]
-    [(= code -2) (local_ipc.LocalIpcIoStep.Interrupted)]
-    [(= code -3) (local_ipc.LocalIpcIoStep.PeerClosed)]
-    [(= code -4) (local_ipc.LocalIpcIoStep.Pending)]
-    [(= code -5) (local_ipc.LocalIpcIoStep.Progress (+ length 1))]
-    [(= code -6) (local_ipc.LocalIpcIoStep.Progress 0)]
-    [(= code -7) (local_ipc.LocalIpcIoStep.Progress 1)]
-    [else
-      (local_ipc.LocalIpcIoStep.IoFailed
-        (fake-error context (- (- 0 code) 100) 222))]))
+        (put! context slot-bytes-moved (+ (get context slot-bytes-moved) count))
+        (Progress count))]
+    [(= code -1) (WouldBlock)]
+    [(= code -2) (Interrupted)]
+    [(= code -3) (PeerClosed)]
+    [(= code -4) (Pending)]
+    [(= code -5) (Progress (+ length 1))]
+    [(= code -6) (Progress 0)]
+    [(= code -7) (Progress 1)]
+    [else (IoFailed (fake-error context (- (- 0 code) 100) 222))]))
 
 ;: Remember whether `step` leaves an operation pending.
 (define (track-pending! [context : i64] [step : local_ipc.LocalIpcIoStep]) : unit
@@ -431,7 +410,7 @@
     context
     slot-pending-active
     (match step
-      [(local_ipc.LocalIpcIoStep.Pending) 1]
+      [(Pending) 1]
       [_ 0])))
 
 ;: Build the reply for `step` and hand the buffer back. Progress within the
@@ -448,7 +427,7 @@
       step
       (byte_buf.from-array (__tl_make-array u8 0)))
     (match step
-      [(local_ipc.LocalIpcIoStep.Progress count)
+      [(Progress count)
         (if (and (>= count 1) (<= count (byte_buf.len buffer)))
           (if reading
             (local_ipc.LocalIpcIoReply step (fill-counted buffer count))
@@ -467,36 +446,33 @@
     [length : i64 (byte_buf.len buffer)]
     [code : i64 (next! context queue-data -1)]
     [step : local_ipc.LocalIpcIoStep (data-step context code length)]
-    (begin
-      (put! context slot-last-request length)
-      (put!
-        context
-        slot-pending-read
-        (if reading
-          1
-          0))
-      (track-pending! context step)
-      (reply context code step buffer reading))))
+    (put! context slot-last-request length)
+    (put!
+      context
+      slot-pending-read
+      (if reading
+        1
+        0))
+    (track-pending! context step)
+    (reply context code step buffer reading)))
 
 ;: Adapter `read-once`: progress fills the buffer with 1, 2, 3, ...
 (define (fake-read-once
   [context : i64]
   [_handle : i64]
   [buffer : byte_buf.ByteBuf]) : local_ipc.LocalIpcIoReply
-  (begin
-    (note-call! context)
-    (bump! context slot-read-calls)
-    (data-once context buffer true)))
+  (note-call! context)
+  (bump! context slot-read-calls)
+  (data-once context buffer true))
 
 ;: Adapter `write-once`: progress adds the accepted bytes to the written sum.
 (define (fake-write-once
   [context : i64]
   [_handle : i64]
   [buffer : byte_buf.ByteBuf]) : local_ipc.LocalIpcIoReply
-  (begin
-    (note-call! context)
-    (bump! context slot-write-calls)
-    (data-once context buffer false)))
+  (note-call! context)
+  (bump! context slot-write-calls)
+  (data-once context buffer false))
 
 ;: Adapter `poll-pending`: spends the slice, then answers from the pending
 ;: queue. Scripted progress is returned as written, so the contract checks it
@@ -515,11 +491,10 @@
     [code : i64 (next! context queue-pending -4)]
     [step : local_ipc.LocalIpcIoStep
       (if (>= code 1)
-        (local_ipc.LocalIpcIoStep.Progress code)
+        (Progress code)
         (data-step context code 0))]
-    (begin
-      (track-pending! context step)
-      (reply context code step buffer (= (get context slot-pending-read) 1)))))
+    (track-pending! context step)
+    (reply context code step buffer (= (get context slot-pending-read) 1))))
 
 ;: Adapter `cancel-pending`.
 (define (fake-cancel-pending [context : i64] [_handle : i64]) : unit
@@ -533,60 +508,52 @@
   [slice-ms : i64]) : local_ipc.LocalIpcWaitStep
   (let
     [code : i64 (next! context queue-wait 0)]
-    (begin
-      (note-call! context)
-      (bump! context slot-wait-calls)
-      (spend-slice! context slice-ms)
-      (cond
-        [(= code 0) (local_ipc.LocalIpcWaitStep.Ready)]
-        [(= code 1) (local_ipc.LocalIpcWaitStep.NotReady)]
-        [(= code 2) (local_ipc.LocalIpcWaitStep.WaitInterrupted)]
-        [else
-          (local_ipc.LocalIpcWaitStep.WaitFailed
-            (fake-error context (- code 100) 333))]))))
+    (note-call! context)
+    (bump! context slot-wait-calls)
+    (spend-slice! context slice-ms)
+    (cond
+      [(= code 0) (Ready)]
+      [(= code 1) (NotReady)]
+      [(= code 2) (WaitInterrupted)]
+      [else (WaitFailed (fake-error context (- code 100) 333))])))
 
 ;: Adapter `delay`.
 (define (fake-delay [context : i64] [ms : i64]) : local_ipc.LocalIpcStatus
-  (begin
-    (note-call! context)
-    (bump! context slot-delay-calls)
-    (spend-slice! context ms)
-    (if (= (get context slot-delay-kind) 0)
-      (local_ipc.LocalIpcStatus.Ok)
-      (local_ipc.LocalIpcStatus.Err
-        (fake-error context (get context slot-delay-kind) 555)))))
+  (note-call! context)
+  (bump! context slot-delay-calls)
+  (spend-slice! context ms)
+  (if (= (get context slot-delay-kind) 0)
+    (Ok)
+    (Err (fake-error context (get context slot-delay-kind) 555))))
 
 ;: Adapter `close`. Closing ends any pending operation.
 (define (fake-close [context : i64] [handle : i64]) : local_ipc.LocalIpcStatus
-  (begin
-    (bump! context slot-close-calls)
-    (put! context slot-last-closed-handle handle)
-    (put! context slot-pending-active 0)
-    (if (= (get context slot-close-kind) 0)
-      (local_ipc.LocalIpcStatus.Ok)
-      (local_ipc.LocalIpcStatus.Err
-        (fake-error context (get context slot-close-kind) 444)))))
+  (bump! context slot-close-calls)
+  (put! context slot-last-closed-handle handle)
+  (put! context slot-pending-active 0)
+  (if (= (get context slot-close-kind) 0)
+    (Ok)
+    (Err (fake-error context (get context slot-close-kind) 444))))
 
 ;: Create a fake and return its context: clock 1000, no clock step, never
 ;: canceled, first handle 7, peer facts 41/42/43/44, empty queues.
 (define (new) : i64
   (let
     [context : i64 fake-count]
-    (begin
-      (if (>= context fake-capacity)
-        (string.tl_oob_abort)
-        unit)
-      (set! fake-count (+ context 1))
-      (put! context slot-clock 1000)
-      (put! context slot-cancel-after-now-calls -1)
-      (put! context slot-min-slice 1000000)
-      (put! context slot-next-handle 7)
-      (put! context slot-last-closed-handle -1)
-      (put! context slot-peer-process 41)
-      (put! context slot-peer-user 42)
-      (put! context slot-peer-group 43)
-      (put! context slot-peer-session 44)
-      context)))
+    (if (>= context fake-capacity)
+      (string.tl_oob_abort)
+      unit)
+    (set! fake-count (+ context 1))
+    (put! context slot-clock 1000)
+    (put! context slot-cancel-after-now-calls -1)
+    (put! context slot-min-slice 1000000)
+    (put! context slot-next-handle 7)
+    (put! context slot-last-closed-handle -1)
+    (put! context slot-peer-process 41)
+    (put! context slot-peer-user 42)
+    (put! context slot-peer-group 43)
+    (put! context slot-peer-session 44)
+    context))
 
 ;: The adapter value for a fake.
 (define (adapter [context : i64]) : local_ipc.LocalIpcAdapter

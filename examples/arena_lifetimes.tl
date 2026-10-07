@@ -33,12 +33,11 @@
           [label : String (str-cat.str-cat "visible:" index-text)]
           (string.string-length (& label))))]
     [after : i64 (profile.alloc-live)]
-    (begin
-      (test.assert-i64-eq
-        after
-        before
-        "per-frame with-arena should restore live bytes")
-      score)))
+    (test.assert-i64-eq
+      after
+      before
+      "per-frame with-arena should restore live bytes")
+    score))
 
 (define (frame-summary
   [scratch : arena.Arena]
@@ -62,51 +61,44 @@
           [frame-scores : (Array i64 3) (array 0 0 0)]
           [frame-index : i64 0]
           [total : i64 0]
-          (begin
-            (while (< frame-index frame-count)
-              (let
-                [score : i64 (frame-temp-score frame-index)]
-                [summary : String (frame-summary scratch frame-index score)]
-                (begin
-                  (set! (array-ref frame-scores frame-index) score)
-                  (test.assert-i64-eq
-                    (string.string-length (& summary))
-                    15
-                    "frame summary length")
-                  (set! total (+ total score))
-                  (set! frame-index (+ frame-index 1)))))
+          (while (< frame-index frame-count)
             (let
-              [state : LevelState (LevelState frame-scores total)]
-              [global-title : String global.title]
-              [first : String
-                (frame-summary scratch 0 (array-ref state.frame-scores 0))]
-              [last : String
-                (frame-summary scratch 2 (array-ref state.frame-scores 2))]
-              [want-title : String "arena-cookbook"]
-              [want-first : String "frame:0/score:9"]
-              [want-last : String "frame:2/score:9"]
-              (begin
-                (test.assert-string-eq
-                  (& global-title)
-                  (& want-title)
-                  "global title")
-                (test.assert-string-eq
-                  (& first)
-                  (& want-first)
-                  "first frame summary")
-                (test.assert-string-eq
-                  (& last)
-                  (& want-last)
-                  "last frame summary")
-                (test.assert-i64-eq
-                  global.frame-count
-                  3
-                  "global state should remain available inside level")
-                (test.assert-i64-eq state.total-score 27 "level total score")
-                42)))))]
-    (begin
-      (arena.destroy-safe! scratch)
-      result)))
+              [score : i64 (frame-temp-score frame-index)]
+              [summary : String (frame-summary scratch frame-index score)]
+              (set! (array-ref frame-scores frame-index) score)
+              (test.assert-i64-eq
+                (string.string-length (& summary))
+                15
+                "frame summary length")
+              (set! total (+ total score))
+              (set! frame-index (+ frame-index 1))))
+          (let
+            [state : LevelState (LevelState frame-scores total)]
+            [global-title : String global.title]
+            [first : String
+              (frame-summary scratch 0 (array-ref state.frame-scores 0))]
+            [last : String
+              (frame-summary scratch 2 (array-ref state.frame-scores 2))]
+            [want-title : String "arena-cookbook"]
+            [want-first : String "frame:0/score:9"]
+            [want-last : String "frame:2/score:9"]
+            (test.assert-string-eq
+              (& global-title)
+              (& want-title)
+              "global title")
+            (test.assert-string-eq
+              (& first)
+              (& want-first)
+              "first frame summary")
+            (test.assert-string-eq (& last) (& want-last) "last frame summary")
+            (test.assert-i64-eq
+              global.frame-count
+              3
+              "global state should remain available inside level")
+            (test.assert-i64-eq state.total-score 27 "level total score")
+            42)))]
+    (arena.destroy-safe! scratch)
+    result))
 
 (define (run-double-buffered-frames) : i64
   (let
@@ -118,26 +110,22 @@
     [phase-b0 : arena.ArenaPhase (arena.phase frame-b)]
     [label-b1 : String (in-arena frame-b (str-cat.str-cat "frame:" "1"))]
     [score-b1 : i64 (string.string-length (& label-b1))]
-    (begin
-      (arena.rewind-safe! phase-a0)
+    (arena.rewind-safe! phase-a0)
+    (let
+      [phase-a1 : arena.ArenaPhase (arena.phase frame-a)]
+      [label-a2 : String (in-arena frame-a (str-cat.str-cat "frame:" "2"))]
+      [score-a2 : i64 (string.string-length (& label-a2))]
+      (arena.rewind-safe! phase-b0)
       (let
-        [phase-a1 : arena.ArenaPhase (arena.phase frame-a)]
-        [label-a2 : String (in-arena frame-a (str-cat.str-cat "frame:" "2"))]
-        [score-a2 : i64 (string.string-length (& label-a2))]
-        (begin
-          (arena.rewind-safe! phase-b0)
-          (let
-            [phase-b1 : arena.ArenaPhase (arena.phase frame-b)]
-            [label-b3 : String
-              (in-arena frame-b (str-cat.str-cat "frame:" "3"))]
-            [score-b3 : i64 (string.string-length (& label-b3))]
-            [total : i64 (+ (+ score-a0 score-b1) (+ score-a2 score-b3))]
-            (begin
-              (arena.rewind-safe! phase-a1)
-              (arena.rewind-safe! phase-b1)
-              (arena.destroy-safe! frame-a)
-              (arena.destroy-safe! frame-b)
-              total)))))))
+        [phase-b1 : arena.ArenaPhase (arena.phase frame-b)]
+        [label-b3 : String (in-arena frame-b (str-cat.str-cat "frame:" "3"))]
+        [score-b3 : i64 (string.string-length (& label-b3))]
+        [total : i64 (+ (+ score-a0 score-b1) (+ score-a2 score-b3))]
+        (arena.rewind-safe! phase-a1)
+        (arena.rewind-safe! phase-b1)
+        (arena.destroy-safe! frame-a)
+        (arena.destroy-safe! frame-b)
+        total))))
 
 (define (run-event-driven-unload) : i64
   (let
@@ -153,14 +141,13 @@
           [worker-score : i64
             (match (unsafe
               (thread.join worker))
-              [(thread.ThreadJoinOk value) value]
-              [(thread.ThreadJoinErr _) -1])]
+              [(ThreadJoinOk value) value]
+              [(ThreadJoinErr _) -1])]
           [name-score : i64 (string.string-length (& level-name))]
-          (begin
-            (arena.destroy-safe! level)
-            (if (and (= worker-score name-score) (= name-score 11))
-              42
-              2)))])))
+          (arena.destroy-safe! level)
+          (if (and (= worker-score name-score) (= name-score 11))
+            42
+            2))])))
 
 (define (run-game) : i64
   (let
@@ -171,16 +158,15 @@
 
 (test
   arena-lifetimes-cookbook
-  (begin
-    (test.assert-i64-eq (run-game) 42 "lexical arena lifetime cookbook")
-    (test.assert-i64-eq
-      (run-double-buffered-frames)
-      28
-      "double-buffered frame arenas")
-    (test.assert-i64-eq
-      (run-event-driven-unload)
-      42
-      "event-driven level unload after join")))
+  (test.assert-i64-eq (run-game) 42 "lexical arena lifetime cookbook")
+  (test.assert-i64-eq
+    (run-double-buffered-frames)
+    28
+    "double-buffered frame arenas")
+  (test.assert-i64-eq
+    (run-event-driven-unload)
+    42
+    "event-driven level unload after join"))
 
 (define (main) : i64
   (let
@@ -191,7 +177,6 @@
       (if (and (= lexical 42) (= double-buffered 28) (= unloaded 42))
         42
         1)]
-    (begin
-      (io.print-format "{}" "arena lifetime score: ")
-      (io.println "{}" result)
-      result)))
+    (io.print-format "{}" "arena lifetime score: ")
+    (io.println "{}" result)
+    result))

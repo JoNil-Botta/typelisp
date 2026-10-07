@@ -63,45 +63,41 @@
       [a14 : i64 (+ s 15)]
       [a15 : i64 (+ s 16)]
       [i : i64 0]
-      (begin
-        (while (< i 1000)
-          (begin
-            (set! a0 (+ a0 i))
-            (set! a1 (+ a1 i))
-            (set! a2 (+ a2 i))
-            (set! a3 (+ a3 i))
-            (set! a4 (+ a4 i))
-            (set! a5 (+ a5 i))
-            (set! a6 (+ a6 i))
-            (set! a7 (+ a7 i))
-            (set! a8 (+ a8 i))
-            (set! a9 (+ a9 i))
-            (set! a10 (+ a10 i))
-            (set! a11 (+ a11 i))
-            (set! a12 (+ a12 i))
-            (set! a13 (+ a13 i))
-            (set! a14 (+ a14 i))
-            (set! a15 (+ a15 i))
-            (set! i (+ i 1))))
+      (while (< i 1000)
+        (set! a0 (+ a0 i))
+        (set! a1 (+ a1 i))
+        (set! a2 (+ a2 i))
+        (set! a3 (+ a3 i))
+        (set! a4 (+ a4 i))
+        (set! a5 (+ a5 i))
+        (set! a6 (+ a6 i))
+        (set! a7 (+ a7 i))
+        (set! a8 (+ a8 i))
+        (set! a9 (+ a9 i))
+        (set! a10 (+ a10 i))
+        (set! a11 (+ a11 i))
+        (set! a12 (+ a12 i))
+        (set! a13 (+ a13 i))
+        (set! a14 (+ a14 i))
+        (set! a15 (+ a15 i))
+        (set! i (+ i 1)))
+      (+
+        a0
         (+
-          a0
+          a1
           (+
-            a1
+            a2
             (+
-              a2
+              a3
               (+
-                a3
+                a4
                 (+
-                  a4
+                  a5
                   (+
-                    a5
+                    a6
                     (+
-                      a6
-                      (+
-                        a7
-                        (+
-                          a8
-                          (+ a9 (+ a10 (+ a11 (+ a12 (+ a13 (+ a14 a15)))))))))))))))))))
+                      a7
+                      (+ a8 (+ a9 (+ a10 (+ a11 (+ a12 (+ a13 (+ a14 a15))))))))))))))))))
 
 (define (main) : i64
   (let

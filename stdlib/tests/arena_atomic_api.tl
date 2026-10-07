@@ -72,19 +72,16 @@
       [length : i64 (arena-atomic-allocation-length worker iteration)]
       [items : (__tl_dyn-array i64) (__tl_make-array i64 length)]
       [slot : i64 (arena-atomic-publication-slot worker iteration)]
-      (begin
-        (set!
-          (array-ref items 0)
-          (arena-atomic-first-sentinel worker iteration))
-        (set!
-          (array-ref items (- length 1))
-          (arena-atomic-last-sentinel worker iteration))
-        (arena-atomic-raw-write!
-          addresses
-          slot
-          (arena-atomic-array-i64-addr items))
-        (arena-atomic-raw-write! lengths slot length)
-        (arena-atomic-worker-loop worker (+ iteration 1) addresses lengths)))))
+      (set! (array-ref items 0) (arena-atomic-first-sentinel worker iteration))
+      (set!
+        (array-ref items (- length 1))
+        (arena-atomic-last-sentinel worker iteration))
+      (arena-atomic-raw-write!
+        addresses
+        slot
+        (arena-atomic-array-i64-addr items))
+      (arena-atomic-raw-write! lengths slot length)
+      (arena-atomic-worker-loop worker (+ iteration 1) addresses lengths))))
 
 (define (arena-atomic-worker [context : i64]) : i64
   (let
@@ -94,22 +91,20 @@
     [lengths : i64 (arena-atomic-raw-read context 3)]
     [start-gate : i64 (arena-atomic-raw-read context 4)]
     [home : i64 (arena.tl_arena_current)]
-    (begin
+    (unsafe
+      (arena.tl_arena_set owner))
+    (while (= (arena-atomic-raw-load start-gate) 0)
+      unit)
+    (arena-atomic-worker-loop worker 0 addresses lengths)
+    (let
+      ;; Every worker must observe the same stable owner after the aggregate
+      ;; allocation crosses multiple physical chunks.
+      [shared-current : i64 (arena.tl_arena_current)]
       (unsafe
-        (arena.tl_arena_set owner))
-      (while (= (arena-atomic-raw-load start-gate) 0)
-        unit)
-      (arena-atomic-worker-loop worker 0 addresses lengths)
-      (let
-        ;; Every worker must observe the same stable owner after the aggregate
-        ;; allocation crosses multiple physical chunks.
-        [shared-current : i64 (arena.tl_arena_current)]
-        (begin
-          (unsafe
-            (arena.tl_arena_set home))
-          (if (= shared-current owner)
-            42
-            15))))))
+        (arena.tl_arena_set home))
+      (if (= shared-current owner)
+        42
+        15))))
 
 (define (arena-atomic-context
   [owner : i64]
@@ -321,7 +316,6 @@
         (arena-atomic-array-i64-addr published-addresses)
         (arena-atomic-array-i64-addr published-lengths)
         start-gate-address)]
-    (begin
-      (unsafe
-        (arena.destroy owner))
-      result)))
+    (unsafe
+      (arena.destroy owner))
+    result))

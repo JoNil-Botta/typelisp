@@ -8,22 +8,20 @@
 (import stdlib.string)
 
 (define (child-stdout) : i64
-  (begin
-    (io.println)
-    (io.print "o")
-    (io.println)
-    (io.println "{}" (cast 1 : i64))
-    (io.println)
-    0))
+  (io.println)
+  (io.print "o")
+  (io.println)
+  (io.println "{}" (cast 1 : i64))
+  (io.println)
+  0)
 
 (define (child-stderr) : i64
-  (begin
-    (io.eprintln)
-    (io.eprint "e")
-    (io.eprintln)
-    (io.eprintln "{}" (cast 2 : i64))
-    (io.eprintln)
-    0))
+  (io.eprintln)
+  (io.eprint "e")
+  (io.eprintln)
+  (io.eprintln "{}" (cast 2 : i64))
+  (io.eprintln)
+  0)
 
 (define (has-carriage-return? [text : (& text str)]) : bool
   (>= (string.index-of-byte text 0 (cast 13 : u8)) 0))
@@ -34,7 +32,7 @@
   [want-stderr : String]) : bool
   (match (process.output
     (process.command (io.arg 0) (process.args-single mode)))
-    [(process.OkProcessOutput output)
+    [(OkProcessOutput output)
       (let
         [stdout : String (process.output-stdout output)]
         [stderr : String (process.output-stderr output)]
@@ -50,7 +48,7 @@
             (string.string-length (& want-stderr)))
           (string.eq (& stdout) (& want-stdout))
           (string.eq (& stderr) (& want-stderr))))]
-    [(process.ErrProcessOutput _) false]))
+    [(ErrProcessOutput _) false]))
 
 (define (main) : i64
   (if (> (io.arg-count) 1)

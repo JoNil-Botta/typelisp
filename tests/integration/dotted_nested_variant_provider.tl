@@ -10,5 +10,4 @@
   (Root DottedNestedEnvelope))
 
 (define (dotted-nested-variant-some [value : i64]) : DottedNestedRoot
-  (DottedNestedRoot.Root
-    (DottedNestedEnvelope.Wrap (DottedNestedVariant.Some value))))
+  (Root (Wrap (Some value))))

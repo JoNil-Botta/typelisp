@@ -48,17 +48,15 @@
   (let
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i iterations)
-        (let
-          [current : i64 read.x]
-          (begin
-            (borrowed-disjoint-store-touch write i)
-            (set! write.y read.x)
-            (set! write.x (+ current i))
-            (set! acc (+ acc read.x))
-            (set! i (+ i 1)))))
-      acc)))
+    (while (< i iterations)
+      (let
+        [current : i64 read.x]
+        (borrowed-disjoint-store-touch write i)
+        (set! write.y read.x)
+        (set! write.x (+ current i))
+        (set! acc (+ acc read.x))
+        (set! i (+ i 1))))
+    acc))
 
 (define (main) : i64
   (let

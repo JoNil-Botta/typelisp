@@ -4,6 +4,5 @@
   (value i64))
 
 (define (main) : i64
-  (begin
-    (format.format "{:o}" (RadixNominal 7))
-    42))
+  (format.format "{:o}" (RadixNominal 7))
+  42)

@@ -19,34 +19,32 @@
     [e : i64 5]
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i 100)
-        (begin
-          (set! acc (+ acc (probe8 i)))
-          (set! acc (+ acc (+ a i)))
-          (set! acc (+ acc (* 2 a)))
-          (set! a (+ a 1))
-          (set! acc (+ acc (+ b i)))
-          (set! acc (+ acc (* 2 b)))
-          (set! b (+ b 1))
-          (set! acc (+ acc (+ c i)))
-          (set! acc (+ acc (* 2 c)))
-          (set! c (+ c 1))
-          (set! acc (+ acc (+ d i)))
-          (set! acc (+ acc (* 2 d)))
-          (set! d (+ d 1))
-          (set! acc (+ acc (+ e i)))
-          (set! acc (+ acc (* 2 e)))
-          (set! e (+ e 1))
-          (set! acc (+ acc (* v i)))
-          (set! acc (+ acc (* v a)))
-          (set! acc (+ acc (* v e)))
-          (set! i (+ i 1))))
-      (let
-        [r : i64 (+ acc (+ a (+ b (+ c (+ d (+ e v))))))]
-        (if (> rounds 1)
-          (+ r (churn8 v (- rounds 1)))
-          r)))))
+    (while (< i 100)
+      (set! acc (+ acc (probe8 i)))
+      (set! acc (+ acc (+ a i)))
+      (set! acc (+ acc (* 2 a)))
+      (set! a (+ a 1))
+      (set! acc (+ acc (+ b i)))
+      (set! acc (+ acc (* 2 b)))
+      (set! b (+ b 1))
+      (set! acc (+ acc (+ c i)))
+      (set! acc (+ acc (* 2 c)))
+      (set! c (+ c 1))
+      (set! acc (+ acc (+ d i)))
+      (set! acc (+ acc (* 2 d)))
+      (set! d (+ d 1))
+      (set! acc (+ acc (+ e i)))
+      (set! acc (+ acc (* 2 e)))
+      (set! e (+ e 1))
+      (set! acc (+ acc (* v i)))
+      (set! acc (+ acc (* v a)))
+      (set! acc (+ acc (* v e)))
+      (set! i (+ i 1)))
+    (let
+      [r : i64 (+ acc (+ a (+ b (+ c (+ d (+ e v))))))]
+      (if (> rounds 1)
+        (+ r (churn8 v (- rounds 1)))
+        r))))
 
 (define (main) : i64
   (let

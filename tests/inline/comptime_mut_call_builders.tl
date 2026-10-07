@@ -45,34 +45,27 @@
   (let
     [item : counter.Counter (counter.Counter 7)]
     [evaluations : i64 0]
-    (begin
-      (counter.clear! item)
-      (test.assert-i64-eq
-        item.value
-        0
-        "zero-argument mutable call clears place")
-      (counter.add!
-        item
-        (begin
-          (set! evaluations (+ evaluations 1))
-          evaluations))
-      (test.assert-i64-eq
-        item.value
-        1
-        "one-argument mutable call updates place")
-      (counter.assign-plus!
-        item
-        (begin
-          (set! evaluations (+ evaluations 1))
-          (* evaluations 10))
-        (begin
-          (set! evaluations (+ evaluations 1))
-          evaluations))
-      (test.assert-i64-eq
-        evaluations
-        3
-        "ordinary arguments evaluate once in order")
-      (test.assert-i64-eq
-        item.value
-        23
-        "two-argument mutable call receives ordered values"))))
+    (counter.clear! item)
+    (test.assert-i64-eq item.value 0 "zero-argument mutable call clears place")
+    (counter.add!
+      item
+      (begin
+        (set! evaluations (+ evaluations 1))
+        evaluations))
+    (test.assert-i64-eq item.value 1 "one-argument mutable call updates place")
+    (counter.assign-plus!
+      item
+      (begin
+        (set! evaluations (+ evaluations 1))
+        (* evaluations 10))
+      (begin
+        (set! evaluations (+ evaluations 1))
+        evaluations))
+    (test.assert-i64-eq
+      evaluations
+      3
+      "ordinary arguments evaluate once in order")
+    (test.assert-i64-eq
+      item.value
+      23
+      "two-argument mutable call receives ordered values")))

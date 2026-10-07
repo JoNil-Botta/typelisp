@@ -60,6 +60,14 @@ reject_diag() {
             printf 'requires unsafe context' ;;
         stdlib/tests/crypto_sha256_unsafe_adapter_reject.tl)
             printf 'requires unsafe context' ;;
+        stdlib/tests/crypto_secret_unsafe_accessor_reject.tl)
+            printf 'crypto_secret/fixed-read-pointer requires unsafe context' ;;
+        stdlib/tests/crypto_secret_storage_read_reject.tl)
+            printf 'ptr-read requires unsafe context' ;;
+        stdlib/tests/crypto_secret_clone_reject.tl)
+            printf 'clone unsupported type stdlib.crypto_secret/SecretFixed' ;;
+        stdlib/tests/crypto_secret_use_after_close_reject.tl)
+            printf 'use of moved value `owner`' ;;
         stdlib/tests/env_nonmatching_count_unsafe_reject.tl)
             printf 'env/linux-nonmatching-count requires unsafe context' ;;
         stdlib/tests/env_rebuild_unsafe_reject.tl)

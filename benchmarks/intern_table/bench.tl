@@ -26,40 +26,35 @@
     [state (kernel.it-zero-i64-vec 3)]
     [round : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< round rounds)
-        (begin
-          (kernel.it-reset! (&mut map-ids) (&mut state))
-          (let
-            [pass : i64 0]
-            [k : i64 0]
-            (while (< pass 2)
-              (begin
-                (set! k 0)
-                (while (< k lines)
-                  (let
-                    [id : i64
-                      (kernel.it-intern-slice
-                        (& text)
-                        (it-owner-ref starts k)
-                        (it-owner-ref lengths k)
-                        (&mut map-ids)
-                        (&mut map-hashes)
-                        (&mut names)
-                        (&mut name-off)
-                        (&mut name-len)
-                        (&mut state))]
-                    (begin
-                      (set! acc (+ (* acc 1000003) (* id 2654435761)))
-                      (set! k (+ k 1)))))
-                (set! pass (+ pass 1)))))
-          (set! round (+ round 1))))
-      (+ (* acc 1000003) (it-owner-ref state 1)))))
+    (while (< round rounds)
+      (kernel.it-reset! (&mut map-ids) (&mut state))
+      (let
+        [pass : i64 0]
+        [k : i64 0]
+        (while (< pass 2)
+          (set! k 0)
+          (while (< k lines)
+            (let
+              [id : i64
+                (kernel.it-intern-slice
+                  (& text)
+                  (it-owner-ref starts k)
+                  (it-owner-ref lengths k)
+                  (&mut map-ids)
+                  (&mut map-hashes)
+                  (&mut names)
+                  (&mut name-off)
+                  (&mut name-len)
+                  (&mut state))]
+              (set! acc (+ (* acc 1000003) (* id 2654435761)))
+              (set! k (+ k 1))))
+          (set! pass (+ pass 1))))
+      (set! round (+ round 1)))
+    (+ (* acc 1000003) (it-owner-ref state 1))))
 
 (define (main) : i64
   (let
     [path : String (io.arg 1)]
     [rounds : i64 (string.>int (io.arg 2))]
-    (begin
-      (io.println "{}" (it-bench path rounds))
-      0)))
+    (io.println "{}" (it-bench path rounds))
+    0))

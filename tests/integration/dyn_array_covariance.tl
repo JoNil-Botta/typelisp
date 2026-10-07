@@ -22,41 +22,35 @@
   (let
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (while (< i (array-length words.items))
-        (begin
-          (set! sum (+ sum (string.string-length (array-ref words.items i))))
-          (set! i (+ i 1))))
-      sum)))
+    (while (< i (array-length words.items))
+      (set! sum (+ sum (string.string-length (array-ref words.items i))))
+      (set! i (+ i 1)))
+    sum))
 
 (define (main) : i64
   (let
     [first : String "echo"]
     [words : (Words first) (Words (init : (__tl_dyn-array (& first str))))]
-    (begin
-      (__tl_array-push! words.items (& first))
+    (__tl_array-push! words.items (& first))
+    (let
+      [second : String "hello"]
+      [longer : (Words second) (words-keep words (& second))]
+      (__tl_array-push! longer.items (& second))
       (let
-        [second : String "hello"]
-        [longer : (Words second) (words-keep words (& second))]
-        (begin
-          (__tl_array-push! longer.items (& second))
-          (let
-            [third : String "world!"]
-            [maybe : (MaybeWords third) (MaybeWords.SomeWords longer)]
-            (match maybe
-              [(MaybeWords.SomeWords held)
-                (begin
-                  (__tl_array-push! held.items (& third))
-                  (let
-                    [fourth : String "!"]
-                    [items : (__tl_dyn-array (& fourth str)) held.items]
-                    (begin
-                      (__tl_array-push! items (& fourth))
-                      (let
-                        [all : (Words fourth) (Words items)]
-                        (if (and
-                          (= (array-length all.items) 4)
-                          (= (total-length (& all)) 16))
-                          42
-                          1)))))]
-              [(MaybeWords.NoWords) 2])))))))
+        [third : String "world!"]
+        [maybe : (MaybeWords third) (SomeWords longer)]
+        (match maybe
+          [(SomeWords held)
+            (__tl_array-push! held.items (& third))
+            (let
+              [fourth : String "!"]
+              [items : (__tl_dyn-array (& fourth str)) held.items]
+              (__tl_array-push! items (& fourth))
+              (let
+                [all : (Words fourth) (Words items)]
+                (if (and
+                  (= (array-length all.items) 4)
+                  (= (total-length (& all)) 16))
+                  42
+                  1)))]
+          [(NoWords) 2])))))

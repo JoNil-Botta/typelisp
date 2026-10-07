@@ -110,40 +110,40 @@
 ;: Stable small integer for an error kind, for logs and conformance traces.
 (define (error-kind-code [kind : LocalIpcErrorKind]) : i64
   (match kind
-    [(LocalIpcErrorKind.InvalidEndpoint) 1]
-    [(LocalIpcErrorKind.Unavailable) 2]
-    [(LocalIpcErrorKind.PermissionDenied) 3]
-    [(LocalIpcErrorKind.Busy) 4]
-    [(LocalIpcErrorKind.TimedOut) 5]
-    [(LocalIpcErrorKind.Canceled) 6]
-    [(LocalIpcErrorKind.PeerClosed) 7]
-    [(LocalIpcErrorKind.ResourceExhausted) 8]
-    [(LocalIpcErrorKind.UnsupportedTarget) 9]
-    [(LocalIpcErrorKind.AdapterCorrupt) 10]
-    [(LocalIpcErrorKind.Closed) 11]
-    [(LocalIpcErrorKind.InvalidRange) 12]
-    [(LocalIpcErrorKind.WorkExhausted) 13]
-    [(LocalIpcErrorKind.PolicyRejected) 14]
-    [(LocalIpcErrorKind.HostFailure) 15]))
+    [(InvalidEndpoint) 1]
+    [(Unavailable) 2]
+    [(PermissionDenied) 3]
+    [(Busy) 4]
+    [(TimedOut) 5]
+    [(Canceled) 6]
+    [(PeerClosed) 7]
+    [(ResourceExhausted) 8]
+    [(UnsupportedTarget) 9]
+    [(AdapterCorrupt) 10]
+    [(Closed) 11]
+    [(InvalidRange) 12]
+    [(WorkExhausted) 13]
+    [(PolicyRejected) 14]
+    [(HostFailure) 15]))
 
 ;: Stable text for an error kind. It names the category only.
 (define (error-kind-name [kind : LocalIpcErrorKind]) : String
   (match kind
-    [(LocalIpcErrorKind.InvalidEndpoint) "invalid-endpoint"]
-    [(LocalIpcErrorKind.Unavailable) "unavailable"]
-    [(LocalIpcErrorKind.PermissionDenied) "permission-denied"]
-    [(LocalIpcErrorKind.Busy) "busy"]
-    [(LocalIpcErrorKind.TimedOut) "timed-out"]
-    [(LocalIpcErrorKind.Canceled) "canceled"]
-    [(LocalIpcErrorKind.PeerClosed) "peer-closed"]
-    [(LocalIpcErrorKind.ResourceExhausted) "resource-exhausted"]
-    [(LocalIpcErrorKind.UnsupportedTarget) "unsupported-target"]
-    [(LocalIpcErrorKind.AdapterCorrupt) "adapter-corrupt"]
-    [(LocalIpcErrorKind.Closed) "closed"]
-    [(LocalIpcErrorKind.InvalidRange) "invalid-range"]
-    [(LocalIpcErrorKind.WorkExhausted) "work-exhausted"]
-    [(LocalIpcErrorKind.PolicyRejected) "policy-rejected"]
-    [(LocalIpcErrorKind.HostFailure) "host-failure"]))
+    [(InvalidEndpoint) "invalid-endpoint"]
+    [(Unavailable) "unavailable"]
+    [(PermissionDenied) "permission-denied"]
+    [(Busy) "busy"]
+    [(TimedOut) "timed-out"]
+    [(Canceled) "canceled"]
+    [(PeerClosed) "peer-closed"]
+    [(ResourceExhausted) "resource-exhausted"]
+    [(UnsupportedTarget) "unsupported-target"]
+    [(AdapterCorrupt) "adapter-corrupt"]
+    [(Closed) "closed"]
+    [(InvalidRange) "invalid-range"]
+    [(WorkExhausted) "work-exhausted"]
+    [(PolicyRejected) "policy-rejected"]
+    [(HostFailure) "host-failure"]))
 
 ;: Success or one failure.
 (defenum LocalIpcStatus
@@ -153,14 +153,14 @@
 ;: Return true exactly for `LocalIpcStatus.Ok`.
 (define (status-ok? [status : LocalIpcStatus]) : bool
   (match status
-    [(LocalIpcStatus.Ok) true]
-    [(LocalIpcStatus.Err _) false]))
+    [(Ok) true]
+    [(Err _) false]))
 
 ;: Error kind code of a status, or 0 for success.
 (define (status-kind-code [status : LocalIpcStatus]) : i64
   (match status
-    [(LocalIpcStatus.Ok) 0]
-    [(LocalIpcStatus.Err failure) (error-kind-code failure.kind)]))
+    [(Ok) 0]
+    [(Err failure) (error-kind-code failure.kind)]))
 
 ;: Re-bound an error an adapter built. `LocalIpcError` is an ordinary struct,
 ;: so an adapter can put any host code in one; every adapter error passes
@@ -171,8 +171,8 @@
 ;: `adapter-error` for a status an adapter returned.
 (define (adapter-status [status : LocalIpcStatus]) : LocalIpcStatus
   (match status
-    [(LocalIpcStatus.Ok) (LocalIpcStatus.Ok)]
-    [(LocalIpcStatus.Err failure) (LocalIpcStatus.Err (adapter-error failure))]))
+    [(Ok) (Ok)]
+    [(Err failure) (Err (adapter-error failure))]))
 
 ;: The two explicit endpoint families. There is no default and no lookup.
 (defenum LocalIpcEndpoint
@@ -226,20 +226,17 @@
         [index : i64 1]
         [start : i64 1]
         [ok : bool true]
-        (begin
-          (while (and ok (< index length))
-            (let
-              [value : i64 (cast (byte_buf.bytes-ref path index) : i64)]
-              (begin
-                (cond
-                  [(= value 0) (set! ok false)]
-                  [(= value 47)
-                    (begin
-                      (set! ok (unix-component-valid? path start index))
-                      (set! start (+ index 1)))]
-                  [else unit])
-                (set! index (+ index 1)))))
-          (and ok (unix-component-valid? path start length)))))))
+        (while (and ok (< index length))
+          (let
+            [value : i64 (cast (byte_buf.bytes-ref path index) : i64)]
+            (cond
+              [(= value 0) (set! ok false)]
+              [(= value 47)
+                (set! ok (unix-component-valid? path start index))
+                (set! start (+ index 1))]
+              [else unit])
+            (set! index (+ index 1))))
+        (and ok (unix-component-valid? path start length))))))
 
 ;: `unix-path-bytes-valid?` for endpoint text.
 (define (unix-path-valid? [path : (& path str)]) : bool
@@ -279,23 +276,21 @@
             (= (cast (string.string-ref name 8) : i64) 92)
             (not (= last 46))
             (not (= last 32)))]
-        (begin
-          (while (and ok (< index length))
-            (let
-              [value : i64 (cast (string.string-ref name index) : i64)]
-              (begin
-                (set!
-                  ok
-                  (and (not (= value 92)) (not (= value 47)) (not (= value 0))))
-                (set! index (+ index 1)))))
-          ok)))))
+        (while (and ok (< index length))
+          (let
+            [value : i64 (cast (string.string-ref name index) : i64)]
+            (set!
+              ok
+              (and (not (= value 92)) (not (= value 47)) (not (= value 0))))
+            (set! index (+ index 1))))
+        ok))))
 
 ;: Validate an endpoint however it was constructed. `connect` always calls this
 ;: before the adapter is reached.
 (define (endpoint-valid? [endpoint : (& endpoint LocalIpcEndpoint)]) : bool
   (match endpoint
-    [(LocalIpcEndpoint.UnixPath path) (unix-path-valid? path)]
-    [(LocalIpcEndpoint.WindowsPipe name) (windows-pipe-valid? name)]))
+    [(UnixPath path) (unix-path-valid? path)]
+    [(WindowsPipe name) (windows-pipe-valid? name)]))
 
 ;: Peer facts reported by the platform. Each is -1 when unavailable. They are
 ;: untrusted policy inputs, never authentication claims.
@@ -489,19 +484,18 @@
       [state : (MutPtr LocalIpcConnectionState)
         (unsafe
           (ptr-cast (__tl_array-data words) : (MutPtr LocalIpcConnectionState)))]
-      (begin
-        (unsafe
-          (ptr-write!
-            state
-            (LocalIpcConnectionState
-              handle
-              adapter
-              peer
-              result
-              (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.Closed) 0)))))
-        (unsafe
-          (transfer-put! state transfer))
-        state))))
+      (unsafe
+        (ptr-write!
+          state
+          (LocalIpcConnectionState
+            handle
+            adapter
+            peer
+            result
+            (Err (make-error (Closed) 0)))))
+      (unsafe
+        (transfer-put! state transfer))
+      state)))
 
 ;: Close one state exactly once. The handle is poisoned before the adapter is
 ;: called, so a second close, and lexical cleanup after an explicit close, find
@@ -509,7 +503,7 @@
 (unsafe
   (define (state-close [state : (MutPtr LocalIpcConnectionState)]) : LocalIpcStatus
     (if (ptr-null? state)
-      (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.Closed) 0))
+      (Err (make-error (Closed) 0))
       (let
         [current : LocalIpcConnectionState
           (unsafe
@@ -521,7 +515,7 @@
         [context : i64 current.adapter.context]
         [close-handle : (-> i64 i64 LocalIpcStatus) current.adapter.close]
         (if (< handle 0)
-          (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.Closed) 0))
+          (Err (make-error (Closed) 0))
           (begin
             (unsafe
               (ptr-write!
@@ -535,17 +529,16 @@
             (let
               [outcome : LocalIpcStatus
                 (adapter-status (close-handle context handle))]
-              (begin
-                (unsafe
-                  (ptr-write!
-                    state
-                    (LocalIpcConnectionState
-                      -1
-                      current.adapter
-                      current.peer
-                      current.result
-                      outcome)))
-                outcome))))))))
+              (unsafe
+                (ptr-write!
+                  state
+                  (LocalIpcConnectionState
+                    -1
+                    current.adapter
+                    current.peer
+                    current.result
+                    outcome)))
+              outcome)))))))
 
 ;: The identity a connection value holds: the private cell and the generation
 ;: this value last claimed it at. TypeLisp has no private fields, so safe code
@@ -615,7 +608,7 @@
 ;: failed. It does not change when the connection is closed later.
 (define (connection-result [connection : (& connection LocalIpcConnection)]) : LocalIpcStatus
   (if (not (current? connection))
-    (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.Closed) 0))
+    (Err (make-error (Closed) 0))
     (let
       [current : LocalIpcConnectionState
         (unsafe
@@ -649,7 +642,7 @@
   (if (claim! connection)
     (unsafe
       (state-close connection.owner.state))
-    (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.Closed) 0))))
+    (Err (make-error (Closed) 0))))
 
 ;: A failed connection: no handle, an empty transfer array, `failure` as its
 ;: construction result.
@@ -663,7 +656,7 @@
           -1
           adapter
           (peer-unknown)
-          (LocalIpcStatus.Err failure)
+          (Err failure)
           (__tl_make-array u8 0)))
       0)))
 
@@ -676,18 +669,14 @@
   [cancel-check : (-> bool)]
   [work-left : i64]) : LocalIpcStatus
   (if (cancel-check)
-    (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.Canceled) 0))
+    (Err (make-error (Canceled) 0))
     (let
       [now : i64 (adapter.now-ms adapter.context)]
       (cond
-        [(< now 0)
-          (LocalIpcStatus.Err
-            (make-error (LocalIpcErrorKind.UnsupportedTarget) 0))]
-        [(>= now deadline-ms)
-          (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.TimedOut) 0))]
-        [(<= work-left 0)
-          (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.WorkExhausted) 0))]
-        [else (LocalIpcStatus.Ok)]))))
+        [(< now 0) (Err (make-error (UnsupportedTarget) 0))]
+        [(>= now deadline-ms) (Err (make-error (TimedOut) 0))]
+        [(<= work-left 0) (Err (make-error (WorkExhausted) 0))]
+        [else (Ok)]))))
 
 ;: The next wait slice: the time left to the deadline, at most `wait-slice-ms`
 ;: and at least 1. Recomputed from the clock after every wake.
@@ -716,8 +705,7 @@
         (begin
           (unsafe
             (transfer-put! state slots))
-          (LocalIpcConnectStep.ConnectFailed
-            (make-error (LocalIpcErrorKind.AdapterCorrupt) 0)))
+          (ConnectFailed (make-error (AdapterCorrupt) 0)))
         (begin
           (unsafe
             (string.string-runtime-copy-bytes!
@@ -731,10 +719,9 @@
                 family
                 (byte_buf.ByteBuf slots length))]
             [step : LocalIpcConnectStep reply.step]
-            (begin
-              (unsafe
-                (transfer-put! state reply.name.slots))
-              step)))))))
+            (unsafe
+              (transfer-put! state reply.name.slots))
+            step))))))
 
 ;: Write the final state of a cell `connect` allocated and hand out the only
 ;: connection value for it.
@@ -745,17 +732,16 @@
     [adapter : LocalIpcAdapter]
     [peer : LocalIpcPeer]
     [result : LocalIpcStatus]) : LocalIpcConnection
-    (begin
-      (unsafe
-        (ptr-write!
-          state
-          (LocalIpcConnectionState
-            handle
-            adapter
-            peer
-            result
-            (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.Closed) 0)))))
-      (LocalIpcConnection (LocalIpcOwner state 0)))))
+    (unsafe
+      (ptr-write!
+        state
+        (LocalIpcConnectionState
+          handle
+          adapter
+          peer
+          result
+          (Err (make-error (Closed) 0)))))
+    (LocalIpcConnection (LocalIpcOwner state 0))))
 
 ;: Connect to `endpoint`. The endpoint is validated first; an invalid one never
 ;: reaches the adapter. Each attempt consumes one unit of `work-budget`. After
@@ -774,18 +760,16 @@
   [cancel-check : (-> bool)]
   [work-budget : i64]) : LocalIpcConnection
   (if (not (endpoint-valid? endpoint))
-    (failed-connection
-      adapter
-      (make-error (LocalIpcErrorKind.InvalidEndpoint) 0))
+    (failed-connection adapter (make-error (InvalidEndpoint) 0))
     (let
       [family : i64
         (match endpoint
-          [(LocalIpcEndpoint.UnixPath _) family-unix-path]
-          [(LocalIpcEndpoint.WindowsPipe _) family-windows-pipe])]
+          [(UnixPath _) family-unix-path]
+          [(WindowsPipe _) family-windows-pipe])]
       [name : (& endpoint str)
         (match endpoint
-          [(LocalIpcEndpoint.UnixPath path) path]
-          [(LocalIpcEndpoint.WindowsPipe pipe) pipe])]
+          [(UnixPath path) path]
+          [(WindowsPipe pipe) pipe])]
       [name-bytes : (& endpoint bytes) (byte_buf.str-as-bytes name)]
       ;; The cell comes first: while attempts run, its transfer slot holds the
       ;; name buffer that goes to the adapter and back.
@@ -795,75 +779,74 @@
             -1
             adapter
             (peer-unknown)
-            (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.Closed) 0))
+            (Err (make-error (Closed) 0))
             (__tl_make-array u8 (byte_buf.bytes-length name-bytes))))]
       [work-left : i64 work-budget]
       [handle : i64 -1]
-      [outcome : LocalIpcStatus (LocalIpcStatus.Ok)]
+      [outcome : LocalIpcStatus (Ok)]
       [running : bool true]
-      (begin
-        (while running
-          (let
-            [stop : LocalIpcStatus
-              (stop-reason (& adapter) deadline-ms cancel-check work-left)]
-            (if (not (status-ok? stop))
-              (begin
-                (set! outcome stop)
-                (set! running false))
-              (begin
-                (set! work-left (- work-left 1))
-                (match (unsafe
-                  (connect-once state (& adapter) family name-bytes))
-                  [(LocalIpcConnectStep.Connected connected)
-                    (begin
-                      (if (< connected 0)
-                        (set!
-                          outcome
-                          (LocalIpcStatus.Err
-                            (make-error (LocalIpcErrorKind.AdapterCorrupt) 0)))
-                        (set! handle connected))
-                      (set! running false))]
-                  [(LocalIpcConnectStep.RetryConnect)
-                    (let
-                      [again : LocalIpcStatus
-                        (stop-reason
-                          (& adapter)
-                          deadline-ms
-                          cancel-check
-                          work-left)]
-                      [paused : LocalIpcStatus
-                        (if (status-ok? again)
-                          (adapter-status
-                            (adapter.delay
-                              adapter.context
-                              (next-slice-ms (& adapter) deadline-ms)))
-                          again)]
-                      (if (status-ok? paused)
-                        unit
-                        (begin
-                          (set! outcome paused)
-                          (set! running false))))]
-                  [(LocalIpcConnectStep.ConnectFailed failure)
-                    (begin
-                      (set!
-                        outcome
-                        (LocalIpcStatus.Err (adapter-error failure)))
-                      (set! running false))])))))
-        (if (< handle 0)
-          (unsafe
-            (state-publish
-              state
-              -1
-              adapter
-              (peer-unknown)
-              (match outcome
-                [(LocalIpcStatus.Err _) outcome]
-                [(LocalIpcStatus.Ok)
-                  (LocalIpcStatus.Err
-                    (make-error (LocalIpcErrorKind.AdapterCorrupt) 0))])))
-          (match (adapter.peer adapter.context handle)
-            [(LocalIpcPeerStep.PeerFailed failure)
-              (begin
+      (while running
+        (let
+          [stop : LocalIpcStatus
+            (stop-reason (& adapter) deadline-ms cancel-check work-left)]
+          (if (not (status-ok? stop))
+            (begin
+              (set! outcome stop)
+              (set! running false))
+            (begin
+              (set! work-left (- work-left 1))
+              (match (unsafe
+                (connect-once state (& adapter) family name-bytes))
+                [(Connected connected)
+                  (if (< connected 0)
+                    (set! outcome (Err (make-error (AdapterCorrupt) 0)))
+                    (set! handle connected))
+                  (set! running false)]
+                [(RetryConnect)
+                  (let
+                    [again : LocalIpcStatus
+                      (stop-reason
+                        (& adapter)
+                        deadline-ms
+                        cancel-check
+                        work-left)]
+                    [paused : LocalIpcStatus
+                      (if (status-ok? again)
+                        (adapter-status
+                          (adapter.delay
+                            adapter.context
+                            (next-slice-ms (& adapter) deadline-ms)))
+                        again)]
+                    (unless
+                      (status-ok? paused)
+                      (set! outcome paused)
+                      (set! running false)))]
+                [(ConnectFailed failure)
+                  (set! outcome (Err (adapter-error failure)))
+                  (set! running false)])))))
+      (if (< handle 0)
+        (unsafe
+          (state-publish
+            state
+            -1
+            adapter
+            (peer-unknown)
+            (match outcome
+              [(Err _) outcome]
+              [(Ok) (Err (make-error (AdapterCorrupt) 0))])))
+        (match (adapter.peer adapter.context handle)
+          [(PeerFailed failure)
+            (adapter.close adapter.context handle)
+            (unsafe
+              (state-publish
+                state
+                -1
+                adapter
+                (peer-unknown)
+                (Err (adapter-error failure))))]
+          [(PeerKnown peer)
+            (cond
+              [(not (peer-valid? peer))
                 (adapter.close adapter.context handle)
                 (unsafe
                   (state-publish
@@ -871,42 +854,21 @@
                     -1
                     adapter
                     (peer-unknown)
-                    (LocalIpcStatus.Err (adapter-error failure)))))]
-            [(LocalIpcPeerStep.PeerKnown peer)
-              (cond
-                [(not (peer-valid? peer))
-                  (begin
-                    (adapter.close adapter.context handle)
-                    (unsafe
-                      (state-publish
-                        state
-                        -1
-                        adapter
-                        (peer-unknown)
-                        (LocalIpcStatus.Err
-                          (make-error (LocalIpcErrorKind.AdapterCorrupt) 0)))))]
-                [(not (policy peer))
-                  (begin
-                    (adapter.close adapter.context handle)
-                    (unsafe
-                      (state-publish
-                        state
-                        -1
-                        adapter
-                        (peer-unknown)
-                        (LocalIpcStatus.Err
-                          (make-error (LocalIpcErrorKind.PolicyRejected) 0)))))]
-                [else
-                  (begin
-                    (unsafe
-                      (transfer-put! state (__tl_make-array u8 transfer-max)))
-                    (unsafe
-                      (state-publish
-                        state
-                        handle
-                        adapter
-                        peer
-                        (LocalIpcStatus.Ok))))])]))))))
+                    (Err (make-error (AdapterCorrupt) 0))))]
+              [(not (policy peer))
+                (adapter.close adapter.context handle)
+                (unsafe
+                  (state-publish
+                    state
+                    -1
+                    adapter
+                    (peer-unknown)
+                    (Err (make-error (PolicyRejected) 0))))]
+              [else
+                (unsafe
+                  (transfer-put! state (__tl_make-array u8 transfer-max)))
+                (unsafe
+                  (state-publish state handle adapter peer (Ok)))])])))))
 
 ;: Result of one primitive read or write. `Done n` has `n >= 1`, except that a
 ;: zero-length view yields `Done 0` without a host call.
@@ -921,18 +883,15 @@
 ;: is adapter corruption, never progress.
 (define (io-result-from-step [step : LocalIpcIoStep] [requested : i64]) : LocalIpcIoResult
   (match step
-    [(LocalIpcIoStep.Progress count)
+    [(Progress count)
       (if (and (>= count 1) (<= count requested))
-        (LocalIpcIoResult.Done count)
-        (LocalIpcIoResult.Failed
-          (make-error (LocalIpcErrorKind.AdapterCorrupt) 0)))]
-    [(LocalIpcIoStep.WouldBlock) (LocalIpcIoResult.WouldBlock)]
-    [(LocalIpcIoStep.Interrupted) (LocalIpcIoResult.Interrupted)]
-    [(LocalIpcIoStep.PeerClosed) (LocalIpcIoResult.Eof)]
-    [(LocalIpcIoStep.Pending)
-      (LocalIpcIoResult.Failed
-        (make-error (LocalIpcErrorKind.AdapterCorrupt) 0))]
-    [(LocalIpcIoStep.IoFailed failure) (LocalIpcIoResult.Failed failure)]))
+        (Done count)
+        (Failed (make-error (AdapterCorrupt) 0)))]
+    [(WouldBlock) (WouldBlock)]
+    [(Interrupted) (Interrupted)]
+    [(PeerClosed) (Eof)]
+    [(Pending) (Failed (make-error (AdapterCorrupt) 0))]
+    [(IoFailed failure) (Failed failure)]))
 
 ;: The step of one adapter data attempt and the byte count it was asked for.
 (defstruct LocalIpcAttempt
@@ -959,7 +918,7 @@
       [slots : (__tl_dyn-array u8) reply.buffer.slots]
       [step : LocalIpcIoStep
         (match reported
-          [(LocalIpcIoStep.Progress count)
+          [(Progress count)
             (if (and
               (>= count 1)
               (<= count requested)
@@ -972,19 +931,16 @@
                       (int->ptr (cast addr : u64) : (MutPtr u8))
                       (ptr-cast (__tl_array-data slots) : (Ptr u8))
                       count)))
-                (LocalIpcIoStep.Progress count))
-              (LocalIpcIoStep.IoFailed
-                (make-error (LocalIpcErrorKind.AdapterCorrupt) 0)))]
-          [(LocalIpcIoStep.IoFailed failure)
-            (LocalIpcIoStep.IoFailed (adapter-error failure))]
-          [(LocalIpcIoStep.WouldBlock) (LocalIpcIoStep.WouldBlock)]
-          [(LocalIpcIoStep.Interrupted) (LocalIpcIoStep.Interrupted)]
-          [(LocalIpcIoStep.PeerClosed) (LocalIpcIoStep.PeerClosed)]
-          [(LocalIpcIoStep.Pending) (LocalIpcIoStep.Pending)])]
-      (begin
-        (unsafe
-          (transfer-put! state slots))
-        step))))
+                (Progress count))
+              (IoFailed (make-error (AdapterCorrupt) 0)))]
+          [(IoFailed failure) (IoFailed (adapter-error failure))]
+          [(WouldBlock) (WouldBlock)]
+          [(Interrupted) (Interrupted)]
+          [(PeerClosed) (PeerClosed)]
+          [(Pending) (Pending)])]
+      (unsafe
+        (transfer-put! state slots))
+      step)))
 
 ;: One raw adapter attempt on an open connection and a non-empty range. It
 ;: moves at most the transfer array's length: a write copies its bytes into the
@@ -1014,10 +970,7 @@
         (begin
           (unsafe
             (transfer-put! state slots))
-          (LocalIpcAttempt
-            (LocalIpcIoStep.IoFailed
-              (make-error (LocalIpcErrorKind.AdapterCorrupt) 0))
-            0))
+          (LocalIpcAttempt (IoFailed (make-error (AdapterCorrupt) 0)) 0))
         (begin
           (if writing
             (unsafe
@@ -1095,37 +1048,34 @@
     (let
       [state : (MutPtr LocalIpcConnectionState) connection.owner.state]
       [slices : i64 0]
-      [step : LocalIpcIoStep (LocalIpcIoStep.Pending)]
+      [step : LocalIpcIoStep (Pending)]
       [pending : bool true]
-      (begin
-        (if cancel-first
-          (adapter.cancel-pending adapter.context handle)
-          unit)
-        (while (and pending (< slices pending-drain-slices))
-          (begin
-            (set!
-              step
-              (unsafe
-                (poll-once
-                  state
-                  adapter
-                  handle
-                  writing
-                  addr
-                  requested
-                  wait-slice-ms)))
-            (set! slices (+ slices 1))
-            (set!
-              pending
-              (match step
-                [(LocalIpcIoStep.Pending) true]
-                [_ false]))))
-        (if pending
-          (begin
-            (close! connection)
-            (LocalIpcIoResult.Failed
-              (make-error (LocalIpcErrorKind.AdapterCorrupt) 0)))
-          (io-result-from-step step requested))))))
+      (if cancel-first
+        (adapter.cancel-pending adapter.context handle)
+        unit)
+      (while (and pending (< slices pending-drain-slices))
+        (set!
+          step
+          (unsafe
+            (poll-once
+              state
+              adapter
+              handle
+              writing
+              addr
+              requested
+              wait-slice-ms)))
+        (set! slices (+ slices 1))
+        (set!
+          pending
+          (match step
+            [(Pending) true]
+            [_ false])))
+      (if pending
+        (begin
+          (close! connection)
+          (Failed (make-error (AdapterCorrupt) 0)))
+        (io-result-from-step step requested)))))
 
 ;: One primitive attempt on an address range that is already validated. The
 ;: value must still own the cell: a stale value fails with `Closed` here. A
@@ -1140,23 +1090,22 @@
     [addr : i64]
     [length : i64]) : LocalIpcIoResult
     (if (not (claim! connection))
-      (LocalIpcIoResult.Failed (make-error (LocalIpcErrorKind.Closed) 0))
+      (Failed (make-error (Closed) 0))
       (let
         [state : (MutPtr LocalIpcConnectionState) connection.owner.state]
         [current : LocalIpcConnectionState
           (unsafe
             (ptr-read state))]
         (cond
-          [(< current.handle 0)
-            (LocalIpcIoResult.Failed (make-error (LocalIpcErrorKind.Closed) 0))]
-          [(= length 0) (LocalIpcIoResult.Done 0)]
+          [(< current.handle 0) (Failed (make-error (Closed) 0))]
+          [(= length 0) (Done 0)]
           [else
             (let
               [attempt : LocalIpcAttempt
                 (unsafe
                   (io-attempt state (& current) writing addr length))]
               (match attempt.step
-                [(LocalIpcIoStep.Pending)
+                [(Pending)
                   (unsafe
                     (drain-pending
                       connection
@@ -1181,7 +1130,7 @@
   [start : i64]
   [count : i64]) : LocalIpcIoResult
   (if (not (range-valid? (byte_buf.bytes-mut-length view) start count))
-    (LocalIpcIoResult.Failed (make-error (LocalIpcErrorKind.InvalidRange) 0))
+    (Failed (make-error (InvalidRange) 0))
     (unsafe
       (io-once
         connection
@@ -1197,7 +1146,7 @@
   [start : i64]
   [count : i64]) : LocalIpcIoResult
   (if (not (range-valid? (byte_buf.bytes-length view) start count))
-    (LocalIpcIoResult.Failed (make-error (LocalIpcErrorKind.InvalidRange) 0))
+    (Failed (make-error (InvalidRange) 0))
     (unsafe
       (io-once
         connection
@@ -1238,55 +1187,51 @@
     (let
       [state : (MutPtr LocalIpcConnectionState) connection.owner.state]
       [work-left : i64 work-budget]
-      [result : LocalIpcIoResult (LocalIpcIoResult.WouldBlock)]
+      [result : LocalIpcIoResult (WouldBlock)]
       [running : bool true]
-      (begin
-        (while running
-          (match (stop-reason adapter deadline-ms cancel-check work-left)
-            [(LocalIpcStatus.Err failure)
-              (let
-                [drained : LocalIpcIoResult
-                  (unsafe
-                    (drain-pending
-                      connection
-                      adapter
-                      handle
-                      writing
-                      addr
-                      requested
-                      true))]
-                (begin
-                  (set!
-                    result
-                    (match drained
-                      [(LocalIpcIoResult.Done _) drained]
-                      [(LocalIpcIoResult.Failed drain-failure)
-                        (match drain-failure.kind
-                          [(LocalIpcErrorKind.AdapterCorrupt) drained]
-                          [_ (LocalIpcIoResult.Failed failure)])]
-                      [_ (LocalIpcIoResult.Failed failure)]))
-                  (set! running false)))]
-            [(LocalIpcStatus.Ok)
-              (begin
-                (set! work-left (- work-left 1))
-                (let
-                  [step : LocalIpcIoStep
-                    (unsafe
-                      (poll-once
-                        state
-                        adapter
-                        handle
-                        writing
-                        addr
-                        requested
-                        (next-slice-ms adapter deadline-ms)))]
-                  (match step
-                    [(LocalIpcIoStep.Pending) unit]
-                    [_
-                      (begin
-                        (set! result (io-result-from-step step requested))
-                        (set! running false))])))]))
-        (LocalIpcWaitOutcome result work-left)))))
+      (while running
+        (match (stop-reason adapter deadline-ms cancel-check work-left)
+          [(Err failure)
+            (let
+              [drained : LocalIpcIoResult
+                (unsafe
+                  (drain-pending
+                    connection
+                    adapter
+                    handle
+                    writing
+                    addr
+                    requested
+                    true))]
+              (set!
+                result
+                (match drained
+                  [(Done _) drained]
+                  [(Failed drain-failure)
+                    (match drain-failure.kind
+                      [(AdapterCorrupt) drained]
+                      [_ (Failed failure)])]
+                  [_ (Failed failure)]))
+              (set! running false))]
+          [(Ok)
+            (set! work-left (- work-left 1))
+            (let
+              [step : LocalIpcIoStep
+                (unsafe
+                  (poll-once
+                    state
+                    adapter
+                    handle
+                    writing
+                    addr
+                    requested
+                    (next-slice-ms adapter deadline-ms)))]
+              (match step
+                [(Pending) unit]
+                [_
+                  (set! result (io-result-from-step step requested))
+                  (set! running false)]))]))
+      (LocalIpcWaitOutcome result work-left))))
 
 ;: One wait-capable transfer of at least one byte of an address range. It
 ;: retries only `WouldBlock` (after one bounded readiness wait) and
@@ -1306,103 +1251,85 @@
     [cancel-check : (-> bool)]
     [work-budget : i64]) : LocalIpcWaitOutcome
     (if (not (claim! connection))
-      (LocalIpcWaitOutcome
-        (LocalIpcIoResult.Failed (make-error (LocalIpcErrorKind.Closed) 0))
-        work-budget)
+      (LocalIpcWaitOutcome (Failed (make-error (Closed) 0)) work-budget)
       (let
         [state : (MutPtr LocalIpcConnectionState) connection.owner.state]
         [current : LocalIpcConnectionState
           (unsafe
             (ptr-read state))]
         [work-left : i64 work-budget]
-        [result : LocalIpcIoResult (LocalIpcIoResult.WouldBlock)]
+        [result : LocalIpcIoResult (WouldBlock)]
         [running : bool true]
-        (begin
-          (cond
-            [(< current.handle 0)
-              (begin
-                (set!
-                  result
-                  (LocalIpcIoResult.Failed
-                    (make-error (LocalIpcErrorKind.Closed) 0)))
-                (set! running false))]
-            [(= length 0)
-              (begin
-                (set! result (LocalIpcIoResult.Done 0))
-                (set! running false))]
-            [else unit])
-          (while running
-            (match (stop-reason
-              (& current.adapter)
-              deadline-ms
-              cancel-check
-              work-left)
-              [(LocalIpcStatus.Err failure)
-                (begin
-                  (set! result (LocalIpcIoResult.Failed failure))
-                  (set! running false))]
-              [(LocalIpcStatus.Ok)
-                (begin
-                  (set! work-left (- work-left 1))
-                  (let
-                    [attempt : LocalIpcAttempt
-                      (unsafe
-                        (io-attempt state (& current) writing addr length))]
-                    [outcome : LocalIpcIoResult
-                      (match attempt.step
-                        [(LocalIpcIoStep.Pending)
-                          (let
-                            [waited : LocalIpcWaitOutcome
-                              (unsafe
-                                (wait-pending
-                                  connection
-                                  (& current.adapter)
-                                  current.handle
-                                  writing
-                                  addr
-                                  attempt.requested
-                                  deadline-ms
-                                  cancel-check
-                                  work-left))]
-                            (begin
-                              (set! work-left waited.work-left)
-                              waited.result))]
-                        [_ (io-result-from-step attempt.step attempt.requested)])]
-                    (match outcome
-                      [(LocalIpcIoResult.Interrupted) unit]
-                      [(LocalIpcIoResult.WouldBlock)
-                        (match (stop-reason
-                          (& current.adapter)
-                          deadline-ms
-                          cancel-check
-                          work-left)
-                          [(LocalIpcStatus.Err failure)
-                            (begin
-                              (set! result (LocalIpcIoResult.Failed failure))
-                              (set! running false))]
-                          [(LocalIpcStatus.Ok)
-                            (begin
-                              (set! work-left (- work-left 1))
-                              (match (current.adapter.wait-ready
-                                current.adapter.context
-                                current.handle
-                                (if writing
-                                  interest-write
-                                  interest-read)
-                                (next-slice-ms (& current.adapter) deadline-ms))
-                                [(LocalIpcWaitStep.WaitFailed failure)
-                                  (begin
-                                    (set!
-                                      result
-                                      (LocalIpcIoResult.Failed
-                                        (adapter-error failure)))
-                                    (set! running false))]
-                                [_ unit]))])]
-                      [_
-                        (begin
-                          (set! result outcome)
-                          (set! running false))])))]))
-          (LocalIpcWaitOutcome result work-left))))))
+        (cond
+          [(< current.handle 0)
+            (set! result (Failed (make-error (Closed) 0)))
+            (set! running false)]
+          [(= length 0)
+            (set! result (Done 0))
+            (set! running false)]
+          [else unit])
+        (while running
+          (match (stop-reason
+            (& current.adapter)
+            deadline-ms
+            cancel-check
+            work-left)
+            [(Err failure)
+              (set! result (Failed failure))
+              (set! running false)]
+            [(Ok)
+              (set! work-left (- work-left 1))
+              (let
+                [attempt : LocalIpcAttempt
+                  (unsafe
+                    (io-attempt state (& current) writing addr length))]
+                [outcome : LocalIpcIoResult
+                  (match attempt.step
+                    [(Pending)
+                      (let
+                        [waited : LocalIpcWaitOutcome
+                          (unsafe
+                            (wait-pending
+                              connection
+                              (& current.adapter)
+                              current.handle
+                              writing
+                              addr
+                              attempt.requested
+                              deadline-ms
+                              cancel-check
+                              work-left))]
+                        (set! work-left waited.work-left)
+                        waited.result)]
+                    [_ (io-result-from-step attempt.step attempt.requested)])]
+                (match outcome
+                  [(Interrupted) unit]
+                  [(WouldBlock)
+                    (match (stop-reason
+                      (& current.adapter)
+                      deadline-ms
+                      cancel-check
+                      work-left)
+                      [(Err failure)
+                        (set! result (Failed failure))
+                        (set! running false)]
+                      [(Ok)
+                        (set! work-left (- work-left 1))
+                        (match (current.adapter.wait-ready
+                          current.adapter.context
+                          current.handle
+                          (if writing
+                            interest-write
+                            interest-read)
+                          (next-slice-ms (& current.adapter) deadline-ms))
+                          [(WaitFailed failure)
+                            (set! result (Failed (adapter-error failure)))
+                            (set! running false)]
+                          [_ unit])])]
+                  [_
+                    (set! result outcome)
+                    (set! running false)]))]))
+        (LocalIpcWaitOutcome result work-left)))))
 
 ;: Wait-capable read of at least one byte into `view[start..start+count]`.
 (define (read-wait!
@@ -1414,7 +1341,7 @@
   [cancel-check : (-> bool)]
   [work-budget : i64]) : LocalIpcIoResult
   (if (not (range-valid? (byte_buf.bytes-mut-length view) start count))
-    (LocalIpcIoResult.Failed (make-error (LocalIpcErrorKind.InvalidRange) 0))
+    (Failed (make-error (InvalidRange) 0))
     (let
       [outcome : LocalIpcWaitOutcome
         (unsafe
@@ -1438,7 +1365,7 @@
   [cancel-check : (-> bool)]
   [work-budget : i64]) : LocalIpcIoResult
   (if (not (range-valid? (byte_buf.bytes-length view) start count))
-    (LocalIpcIoResult.Failed (make-error (LocalIpcErrorKind.InvalidRange) 0))
+    (Failed (make-error (InvalidRange) 0))
     (let
       [outcome : LocalIpcWaitOutcome
         (unsafe
@@ -1470,50 +1397,38 @@
     (let
       [done : i64 0]
       [work-left : i64 work-budget]
-      [status : LocalIpcStatus (LocalIpcStatus.Ok)]
+      [status : LocalIpcStatus (Ok)]
       ;; A zero-length transfer still asks `io-wait` once: it answers `Done 0`
       ;; without a host call, or `Closed` for a closed or stale connection, so
       ;; the whole-buffer helpers agree with the primitives.
       [running : bool true]
-      (begin
-        (while running
-          (let
-            [outcome : LocalIpcWaitOutcome
-              (unsafe
-                (io-wait
-                  connection
-                  writing
-                  (+ addr done)
-                  (- length done)
-                  deadline-ms
-                  cancel-check
-                  work-left))]
-            (begin
-              (set! work-left outcome.work-left)
-              (match outcome.result
-                [(LocalIpcIoResult.Done count)
-                  (begin
-                    (set! done (+ done count))
-                    (set! running (< done length)))]
-                [(LocalIpcIoResult.Eof)
-                  (begin
-                    (set!
-                      status
-                      (LocalIpcStatus.Err
-                        (make-error (LocalIpcErrorKind.PeerClosed) 0)))
-                    (set! running false))]
-                [(LocalIpcIoResult.Failed failure)
-                  (begin
-                    (set! status (LocalIpcStatus.Err failure))
-                    (set! running false))]
-                [_
-                  (begin
-                    (set!
-                      status
-                      (LocalIpcStatus.Err
-                        (make-error (LocalIpcErrorKind.AdapterCorrupt) 0)))
-                    (set! running false))]))))
-        (LocalIpcTransfer done status)))))
+      (while running
+        (let
+          [outcome : LocalIpcWaitOutcome
+            (unsafe
+              (io-wait
+                connection
+                writing
+                (+ addr done)
+                (- length done)
+                deadline-ms
+                cancel-check
+                work-left))]
+          (set! work-left outcome.work-left)
+          (match outcome.result
+            [(Done count)
+              (set! done (+ done count))
+              (set! running (< done length))]
+            [(Eof)
+              (set! status (Err (make-error (PeerClosed) 0)))
+              (set! running false)]
+            [(Failed failure)
+              (set! status (Err failure))
+              (set! running false)]
+            [_
+              (set! status (Err (make-error (AdapterCorrupt) 0)))
+              (set! running false)])))
+      (LocalIpcTransfer done status))))
 
 ;: Read exactly `count` bytes into `view[start..start+count]`.
 (define (read-exact!
@@ -1525,9 +1440,7 @@
   [cancel-check : (-> bool)]
   [work-budget : i64]) : LocalIpcTransfer
   (if (not (range-valid? (byte_buf.bytes-mut-length view) start count))
-    (LocalIpcTransfer
-      0
-      (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.InvalidRange) 0)))
+    (LocalIpcTransfer 0 (Err (make-error (InvalidRange) 0)))
     (unsafe
       (io-all
         connection
@@ -1548,9 +1461,7 @@
   [cancel-check : (-> bool)]
   [work-budget : i64]) : LocalIpcTransfer
   (if (not (range-valid? (byte_buf.bytes-length view) start count))
-    (LocalIpcTransfer
-      0
-      (LocalIpcStatus.Err (make-error (LocalIpcErrorKind.InvalidRange) 0)))
+    (LocalIpcTransfer 0 (Err (make-error (InvalidRange) 0)))
     (unsafe
       (io-all
         connection

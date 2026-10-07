@@ -46,52 +46,50 @@
       [unsupported-schema : String
         "source-set-binding-schema: unsupported (2)\n"]
       [malformed-schema : String "source-set-binding-schema: malformed\n"]
-      (begin
-        (set!
-          (array-ref sections 0)
-          (tlci_core.tlci-package-source-binding-section 12345))
-        (match (tlci_core.tlci-aux-pack-rodata
-          (tlci_core.tlci-empty-bytes)
-          sections)
-          [(tlci_core.ResultTlciAuxBytes.Ok packed)
-            (set! bound (inspect.tlci-inspect-source-binding packed))]
-          [_ unit])
-        (set!
-          (array-ref sections 0)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-package-source-binding
-            2
-            (tlci_core.tlci-string->bytes "future")))
-        (match (tlci_core.tlci-aux-pack-rodata
-          (tlci_core.tlci-empty-bytes)
-          sections)
-          [(tlci_core.ResultTlciAuxBytes.Ok packed)
-            (set! unsupported (inspect.tlci-inspect-source-binding packed))]
-          [_ unit])
-        (set!
-          (array-ref sections 0)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-package-source-binding
-            tlci_core.tlci-package-source-binding-schema-version
-            (__tl_make-array u8 7)))
-        (match (tlci_core.tlci-aux-pack-rodata
-          (tlci_core.tlci-empty-bytes)
-          sections)
-          [(tlci_core.ResultTlciAuxBytes.Ok packed)
-            (set! malformed (inspect.tlci-inspect-source-binding packed))]
-          [_ unit])
-        (let
-          [missing : String
-            (inspect.tlci-inspect-source-binding (tlci_core.tlci-empty-bytes))]
-          (if (and
-            (string.contains (& bound) (& bound-schema))
-            (string.contains (& bound) (& bound-digest))
-            (string.contains (& missing) (& missing-schema))
-            (string.contains (& missing) (& missing-digest))
-            (string.contains (& unsupported) (& unsupported-schema))
-            (string.contains (& malformed) (& malformed-schema)))
-            unit
-            (io.panic "inspect source binding rendering failed")))))))
+      (set!
+        (array-ref sections 0)
+        (tlci_core.tlci-package-source-binding-section 12345))
+      (match (tlci_core.tlci-aux-pack-rodata
+        (tlci_core.tlci-empty-bytes)
+        sections)
+        [(Ok packed) (set! bound (inspect.tlci-inspect-source-binding packed))]
+        [_ unit])
+      (set!
+        (array-ref sections 0)
+        (tlci_core.TlciAuxSection
+          tlci_core.tlci-aux-kind-package-source-binding
+          2
+          (tlci_core.tlci-string->bytes "future")))
+      (match (tlci_core.tlci-aux-pack-rodata
+        (tlci_core.tlci-empty-bytes)
+        sections)
+        [(Ok packed)
+          (set! unsupported (inspect.tlci-inspect-source-binding packed))]
+        [_ unit])
+      (set!
+        (array-ref sections 0)
+        (tlci_core.TlciAuxSection
+          tlci_core.tlci-aux-kind-package-source-binding
+          tlci_core.tlci-package-source-binding-schema-version
+          (__tl_make-array u8 7)))
+      (match (tlci_core.tlci-aux-pack-rodata
+        (tlci_core.tlci-empty-bytes)
+        sections)
+        [(Ok packed)
+          (set! malformed (inspect.tlci-inspect-source-binding packed))]
+        [_ unit])
+      (let
+        [missing : String
+          (inspect.tlci-inspect-source-binding (tlci_core.tlci-empty-bytes))]
+        (if (and
+          (string.contains (& bound) (& bound-schema))
+          (string.contains (& bound) (& bound-digest))
+          (string.contains (& missing) (& missing-schema))
+          (string.contains (& missing) (& missing-digest))
+          (string.contains (& unsupported) (& unsupported-schema))
+          (string.contains (& malformed) (& malformed-schema)))
+          unit
+          (io.panic "inspect source binding rendering failed"))))))
 
 (cfg
   test
@@ -100,51 +98,49 @@
     (let
       [sections : (__tl_dyn-array tlci_core.TlciAuxSection)
         (__tl_make-array tlci_core.TlciAuxSection 3)]
-      (begin
-        (set!
-          (array-ref sections 0)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-package-identity
-            1
-            (tlci_core.tlci-string->bytes "identity")))
-        (set!
-          (array-ref sections 1)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-frontend-ast
-            5
-            (tlci_core.tlci-empty-bytes)))
-        (set!
-          (array-ref sections 2)
-          (tlci_core.TlciAuxSection
-            tlci_core.tlci-aux-kind-frontend-facts
-            1
-            (tlci_core.tlci-string->bytes "facts")))
-        (match (tlci_core.tlci-aux-pack-rodata
-          (tlci_core.tlci-empty-bytes)
-          sections)
-          [(tlci_core.ResultTlciAuxBytes.Err _)
-            (io.panic "inspect surface fixture packing failed")]
-          [(tlci_core.ResultTlciAuxBytes.Ok rodata)
-            (let
-              [rendered : String
-                (inspect.tlci-inspect-surface
-                  rodata
-                  "0123456789abcdef0123456789abcdef01234567")]
-              [identity-line : String
-                "surface-package-identity: present schema-version=1 bytes=8\n"]
-              [ast-line : String
-                "surface-frontend-ast: present schema-version=5 bytes=0\n"]
-              [facts-line : String
-                "surface-frontend-facts: present schema-version=1 bytes=5\n"]
-              [trust-line : String
-                "surface-trust-policy: exact-producer-and-source-binding-required\n"]
-              (unless
-                (and
-                  (string.contains (& rendered) (& identity-line))
-                  (string.contains (& rendered) (& ast-line))
-                  (string.contains (& rendered) (& facts-line))
-                  (string.contains (& rendered) (& trust-line)))
-                (io.panic "inspect surface rendering failed")))])))))
+      (set!
+        (array-ref sections 0)
+        (tlci_core.TlciAuxSection
+          tlci_core.tlci-aux-kind-package-identity
+          1
+          (tlci_core.tlci-string->bytes "identity")))
+      (set!
+        (array-ref sections 1)
+        (tlci_core.TlciAuxSection
+          tlci_core.tlci-aux-kind-frontend-ast
+          5
+          (tlci_core.tlci-empty-bytes)))
+      (set!
+        (array-ref sections 2)
+        (tlci_core.TlciAuxSection
+          tlci_core.tlci-aux-kind-frontend-facts
+          1
+          (tlci_core.tlci-string->bytes "facts")))
+      (match (tlci_core.tlci-aux-pack-rodata
+        (tlci_core.tlci-empty-bytes)
+        sections)
+        [(Err _) (io.panic "inspect surface fixture packing failed")]
+        [(Ok rodata)
+          (let
+            [rendered : String
+              (inspect.tlci-inspect-surface
+                rodata
+                "0123456789abcdef0123456789abcdef01234567")]
+            [identity-line : String
+              "surface-package-identity: present schema-version=1 bytes=8\n"]
+            [ast-line : String
+              "surface-frontend-ast: present schema-version=5 bytes=0\n"]
+            [facts-line : String
+              "surface-frontend-facts: present schema-version=1 bytes=5\n"]
+            [trust-line : String
+              "surface-trust-policy: exact-producer-and-source-binding-required\n"]
+            (unless
+              (and
+                (string.contains (& rendered) (& identity-line))
+                (string.contains (& rendered) (& ast-line))
+                (string.contains (& rendered) (& facts-line))
+                (string.contains (& rendered) (& trust-line)))
+              (io.panic "inspect surface rendering failed")))]))))
 
 (cfg
   test
@@ -154,12 +150,12 @@
       [ok : bool
         (match (tlci_core.tlci-emit-image
           (tlci_core_tests.tlci-test-imports-image))
-          [(tlci_core.ResultTlciBytes.Err _) false]
-          [(tlci_core.ResultTlciBytes.Ok bytes)
+          [(Err _) false]
+          [(Ok bytes)
             (match (tlci_core.tlci-parse-image
               (owned_view.compiler-owned-shared-view bytes))
-              [(tlci_core.ResultTlciImage.Err _) false]
-              [(tlci_core.ResultTlciImage.Ok parsed)
+              [(Err _) false]
+              [(Ok parsed)
                 (let
                   [rendered : String (inspect.tlci-inspect-render bytes parsed)]
                   [expected-file-size : String "file-size: 314\n"]
@@ -202,12 +198,12 @@
           (tlci_core.tlci-empty-bytes))]
       [ok : bool
         (match (tlci_core.tlci-emit-image image)
-          [(tlci_core.ResultTlciBytes.Err _) false]
-          [(tlci_core.ResultTlciBytes.Ok bytes)
+          [(Err _) false]
+          [(Ok bytes)
             (match (tlci_core.tlci-parse-image
               (owned_view.compiler-owned-shared-view bytes))
-              [(tlci_core.ResultTlciImage.Err _) false]
-              [(tlci_core.ResultTlciImage.Ok parsed)
+              [(Err _) false]
+              [(Ok parsed)
                 (let
                   [rendered : String (inspect.tlci-inspect-render bytes parsed)]
                   [expected : String
@@ -254,14 +250,12 @@
       [index : i64 0]
       [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
       [ok : bool true]
-      (begin
-        (while (and ok (< index count))
-          (begin
-            (if (diagnostic-explain-registry-entry-ok? index)
-              unit
-              (set! ok false))
-            (set! index (+ index 1))))
-        ok))))
+      (while (and ok (< index count))
+        (if (diagnostic-explain-registry-entry-ok? index)
+          unit
+          (set! ok false))
+        (set! index (+ index 1)))
+      ok)))
 
 (cfg
   test
@@ -302,9 +296,8 @@
   (let
     [canonical-newline-call : String "(io.println"]
     (match (repl.repl-scratch-source "" expr-source ty)
-      [(repl.ResultReplString.Ok source)
-        (string.contains (& source) (& canonical-newline-call))]
-      [(repl.ResultReplString.Err _) false])))
+      [(Ok source) (string.contains (& source) (& canonical-newline-call))]
+      [(Err _) false])))
 
 (test
   repl-scratch-source-stdlib-imports
@@ -313,19 +306,17 @@
     [string-import : String "(import stdlib.string)\n"]
     [legacy-tl-import : String "stdlib/tl"]
     [legacy-io-import : String "stdlib/io.tl"]
-    (match (repl.repl-scratch-source "" "1" (ast.AstType.I64))
-      [(repl.ResultReplString.Ok source)
+    (match (repl.repl-scratch-source "" "1" (I64))
+      [(Ok source)
         (and
           (string.contains (& source) (& io-import))
           (string.contains (& source) (& string-import))
           (not (string.contains (& source) (& legacy-tl-import)))
           (not (string.contains (& source) (& legacy-io-import)))
-          (repl-scratch-source-canonical-output-ok? "3.5" (ast.AstType.F64))
-          (repl-scratch-source-canonical-output-ok? "'Z'" (ast.AstType.Char))
-          (repl-scratch-source-canonical-output-ok?
-            "\"hi\""
-            (ast.AstType.String)))]
-      [(repl.ResultReplString.Err _) false]))
+          (repl-scratch-source-canonical-output-ok? "3.5" (F64))
+          (repl-scratch-source-canonical-output-ok? "'Z'" (Char))
+          (repl-scratch-source-canonical-output-ok? "\"hi\"" (String)))]
+      [(Err _) false]))
     unit
     (io.panic "repl: scratch source stdlib imports mismatch")))
 
@@ -333,29 +324,23 @@
   (let
     [both : String
       (repl.repl-scratch-cleanup-report-text
-        (io.ResultIoUnit.ErrIoUnit
-          (io.IoError.IoSystemCode 123 "/secret/repl_expr.tl"))
-        (io.ResultIoUnit.ErrIoUnit
-          (io.IoError.IoPermissionDenied "/secret/repl-dir")))]
+        (ErrIoUnit (IoSystemCode 123 "/secret/repl_expr.tl"))
+        (ErrIoUnit (IoPermissionDenied "/secret/repl-dir")))]
     [secret : String "/secret"]
     [code : String "123"]
     (and
       (string.eq
-        (repl.repl-scratch-cleanup-report-text
-          (io.ResultIoUnit.OkIoUnit)
-          (io.ResultIoUnit.OkIoUnit))
+        (repl.repl-scratch-cleanup-report-text (OkIoUnit) (OkIoUnit))
         "")
       (string.eq
         (repl.repl-scratch-cleanup-report-text
-          (io.ResultIoUnit.ErrIoUnit
-            (io.IoError.IoSystemCode 123 "/secret/repl_expr.tl"))
-          (io.ResultIoUnit.OkIoUnit))
+          (ErrIoUnit (IoSystemCode 123 "/secret/repl_expr.tl"))
+          (OkIoUnit))
         "repl: scratch file cleanup failed (system-error)\n")
       (string.eq
         (repl.repl-scratch-cleanup-report-text
-          (io.ResultIoUnit.OkIoUnit)
-          (io.ResultIoUnit.ErrIoUnit
-            (io.IoError.IoPermissionDenied "/secret/repl-dir")))
+          (OkIoUnit)
+          (ErrIoUnit (IoPermissionDenied "/secret/repl-dir")))
         "repl: scratch directory cleanup failed (permission-denied)\n")
       (string.eq
         both
@@ -365,17 +350,14 @@
       (string.eq
         (repl.repl-run-and-scratch-cleanup-report-text
           0
-          (io.ResultIoUnit.OkIoUnit)
-          (io.ResultIoUnit.ErrIoUnit
-            (io.IoError.IoPermissionDenied "/secret/repl-dir")))
+          (OkIoUnit)
+          (ErrIoUnit (IoPermissionDenied "/secret/repl-dir")))
         "repl: scratch directory cleanup failed (permission-denied)\n")
       (string.eq
         (repl.repl-run-and-scratch-cleanup-report-text
           135
-          (io.ResultIoUnit.ErrIoUnit
-            (io.IoError.IoSystemCode 123 "/secret/repl_expr.tl"))
-          (io.ResultIoUnit.ErrIoUnit
-            (io.IoError.IoPermissionDenied "/secret/repl-dir")))
+          (ErrIoUnit (IoSystemCode 123 "/secret/repl_expr.tl"))
+          (ErrIoUnit (IoPermissionDenied "/secret/repl-dir")))
         (str_cat.str-cat
           "\nREPL evaluation exited with status 135\n"
           "repl: scratch file cleanup failed (system-error)\n"
@@ -385,27 +367,27 @@
       (string.eq
         (repl.repl-scratch-cleanup-message
           "file"
-          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoNotFound "hidden")))
+          (ErrIoUnit (IoNotFound "hidden")))
         "repl: scratch file cleanup failed (not-found)")
       (string.eq
         (repl.repl-scratch-cleanup-message
           "file"
-          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoInvalidPath "hidden")))
+          (ErrIoUnit (IoInvalidPath "hidden")))
         "repl: scratch file cleanup failed (invalid-path)")
       (string.eq
         (repl.repl-scratch-cleanup-message
           "file"
-          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoUnsupported "hidden")))
+          (ErrIoUnit (IoUnsupported "hidden")))
         "repl: scratch file cleanup failed (unsupported)")
       (string.eq
         (repl.repl-scratch-cleanup-message
           "file"
-          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoInterrupted "hidden")))
+          (ErrIoUnit (IoInterrupted "hidden")))
         "repl: scratch file cleanup failed (interrupted)")
       (string.eq
         (repl.repl-scratch-cleanup-message
           "file"
-          (io.ResultIoUnit.ErrIoUnit (io.IoError.IoUnknown "hidden")))
+          (ErrIoUnit (IoUnknown "hidden")))
         "repl: scratch file cleanup failed (unknown)"))))
 
 (test

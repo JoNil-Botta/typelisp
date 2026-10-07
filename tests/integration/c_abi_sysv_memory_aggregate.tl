@@ -36,11 +36,10 @@
     [via-ptr : i64 (score-copy ptr-arg (cast 8 : u64))]
     [made : WideMem (wide-mem-make (cast 9 : u64))]
     [nested-score : i64 (nested-mem-score nested)]
-    (begin
-      (unless (= direct 38) (return 1))
-      (unless (= via-ptr 84) (return 2))
-      (unless (= made.a (cast 19 : u64)) (return 3))
-      (unless (= made.b (cast 29 : u64)) (return 4))
-      (unless (= made.c (cast 39 : u64)) (return 5))
-      (unless (= nested-score 26) (return 6))
-      42)))
+    (unless (= direct 38) (return 1))
+    (unless (= via-ptr 84) (return 2))
+    (unless (= made.a (cast 19 : u64)) (return 3))
+    (unless (= made.b (cast 29 : u64)) (return 4))
+    (unless (= made.c (cast 39 : u64)) (return 5))
+    (unless (= nested-score 26) (return 6))
+    42))

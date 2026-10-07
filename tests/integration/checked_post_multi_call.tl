@@ -52,33 +52,32 @@
     [step : i64 0]
     [found : i64 -1]
     [free : i64 -1]
-    (begin
-      (while (< step cap)
-        (let
-          [k : i64 (array-ref keys slot)]
-          [m : i64 (array-ref marks slot)]
-          (if (= m 0)
+    (while (< step cap)
+      (let
+        [k : i64 (array-ref keys slot)]
+        [m : i64 (array-ref marks slot)]
+        (if (= m 0)
+          (begin
+            (if (< free 0)
+              (set! free slot)
+              unit)
+            (set! found (- 0 (+ slot 2)))
+            (set! step cap))
+          (if (and (= m 1) (= k key))
             (begin
-              (if (< free 0)
+              (set! found slot)
+              (set! step cap))
+            (begin
+              (if (and (= m 2) (< free 0))
                 (set! free slot)
                 unit)
-              (set! found (- 0 (+ slot 2)))
-              (set! step cap))
-            (if (and (= m 1) (= k key))
-              (begin
-                (set! found slot)
-                (set! step cap))
-              (begin
-                (if (and (= m 2) (< free 0))
-                  (set! free slot)
-                  unit)
-                (set! slot (bit-and (+ slot 1) mask))
-                (set! step (+ step 1)))))))
-      (if (>= found 0)
-        found
-        (if (>= free 0)
-          (- 0 (+ free 2))
-          pm-empty)))))
+              (set! slot (bit-and (+ slot 1) mask))
+              (set! step (+ step 1)))))))
+    (if (>= found 0)
+      found
+      (if (>= free 0)
+        (- 0 (+ free 2))
+        pm-empty))))
 
 ;; The two calls the caller carries that the site does not account for. Neither
 ;; is on the site's own path: `pm-crowded?` runs in the entry block and
@@ -89,14 +88,12 @@
     [len : i64 (array-length marks)]
     [used : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (if (= (array-ref marks i) 1)
-            (set! used (+ used 1))
-            unit)
-          (set! i (+ i 1))))
-      (> (* used 4) (* cap 3)))))
+    (while (< i len)
+      (if (= (array-ref marks i) 1)
+        (set! used (+ used 1))
+        unit)
+      (set! i (+ i 1)))
+    (> (* used 4) (* cap 3))))
 
 (define (pm-penalty [bias : i64]) : i64
   (- bias 3))
@@ -169,19 +166,14 @@
   (let
     [acc : i64 0]
     [r : i64 0]
-    (begin
-      (while (< r rows)
-        (let
-          [c : i64 0]
-          (begin
-            (while (< c cols)
-              (begin
-                (set!
-                  acc
-                  (+ acc (pm-lookup keys marks cap (+ (* r 7) c) fallback)))
-                (set! c (+ c 1))))
-            (set! r (+ r 1)))))
-      acc)))
+    (while (< r rows)
+      (let
+        [c : i64 0]
+        (while (< c cols)
+          (set! acc (+ acc (pm-lookup keys marks cap (+ (* r 7) c) fallback)))
+          (set! c (+ c 1)))
+        (set! r (+ r 1))))
+    acc))
 
 (define (main) : i64
   (let
@@ -192,25 +184,21 @@
     [i : i64 0]
     [total : i64 0]
     [cold : i64 0]
-    (begin
-      (while (< i cap)
-        (begin
-          (set! (array-ref keys i) i)
-          (set! (array-ref marks i) 1)
-          (set! (array-ref vals i) (* i 3))
-          (set! i (+ i 1))))
-      (set!
-        total
-        (pm-walk (& keys) (& marks) cap 16 16 (+ (array-ref vals 1) 2)))
-      ;; The cold second references: one apiece for the accessor and for the
-      ;; wrapper that takes it at its entry block, so no single-site band can
-      ;; claim either and both keep an out-of-line body for the asm-shape gate
-      ;; to read.
-      (set!
-        cold
-        (+
-          (pm-contains? (& keys) (& marks) cap 5)
-          (pm-get-or (& keys) (& marks) (& vals) cap 9 777)))
-      (unless (= total 5083) (return 1))
-      (unless (= cold 28) (return 2))
-      42)))
+    (while (< i cap)
+      (set! (array-ref keys i) i)
+      (set! (array-ref marks i) 1)
+      (set! (array-ref vals i) (* i 3))
+      (set! i (+ i 1)))
+    (set! total (pm-walk (& keys) (& marks) cap 16 16 (+ (array-ref vals 1) 2)))
+    ;; The cold second references: one apiece for the accessor and for the
+    ;; wrapper that takes it at its entry block, so no single-site band can
+    ;; claim either and both keep an out-of-line body for the asm-shape gate
+    ;; to read.
+    (set!
+      cold
+      (+
+        (pm-contains? (& keys) (& marks) cap 5)
+        (pm-get-or (& keys) (& marks) (& vals) cap 9 777)))
+    (unless (= total 5083) (return 1))
+    (unless (= cold 28) (return 2))
+    42))

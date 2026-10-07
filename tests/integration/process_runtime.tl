@@ -19,99 +19,90 @@
   [expected-stdout : String]
   [expected-stderr : String]) : unit
   (match result
-    [(process.OkProcessOutput output)
-      (begin
-        (test.assert-i64-eq
-          (process.output-status output)
-          expected-status
-          "process output status")
-        (assert-owned-string-eq
-          (process.output-stdout output)
-          expected-stdout
-          "process output stdout")
-        (assert-owned-string-eq
-          (process.output-stderr output)
-          expected-stderr
-          "process output stderr"))]
-    [(process.ErrProcessOutput error) (io.panic (process.error-message error))]))
+    [(OkProcessOutput output)
+      (test.assert-i64-eq
+        (process.output-status output)
+        expected-status
+        "process output status")
+      (assert-owned-string-eq
+        (process.output-stdout output)
+        expected-stdout
+        "process output stdout")
+      (assert-owned-string-eq
+        (process.output-stderr output)
+        expected-stderr
+        "process output stderr")]
+    [(ErrProcessOutput error) (io.panic (process.error-message error))]))
 
 (define (assert-process-spawn-failed [result : process.ResultProcessOutput]) : unit
   (match result
-    [(process.ErrProcessOutput error)
-      (begin
-        (test.assert-true
-          (process.error-spawn-failed? (clone error))
-          "process missing executable spawn failed")
-        (assert-owned-string-eq
-          (process.error-message error)
-          "process: spawn failed"
-          "process spawn failed message"))]
-    [(process.OkProcessOutput _)
-      (io.panic "process missing executable should fail")]))
+    [(ErrProcessOutput error)
+      (test.assert-true
+        (process.error-spawn-failed? (clone error))
+        "process missing executable spawn failed")
+      (assert-owned-string-eq
+        (process.error-message error)
+        "process: spawn failed"
+        "process spawn failed message")]
+    [(OkProcessOutput _) (io.panic "process missing executable should fail")]))
 
 (define (assert-process-child-result [result : process.ResultProcessChild]) : process.ProcessChild
   (match result
-    [(process.OkProcessChild child) child]
-    [(process.ErrProcessChild error) (io.panic (process.error-message error))]))
+    [(OkProcessChild child) child]
+    [(ErrProcessChild error) (io.panic (process.error-message error))]))
 
 (define (assert-process-child-spawn-failed
   [result : process.ResultProcessChild]) : unit
   (match result
-    [(process.ErrProcessChild error)
-      (begin
-        (test.assert-true
-          (process.error-spawn-failed? (clone error))
-          "process async missing executable spawn failed")
-        (assert-owned-string-eq
-          (process.error-message error)
-          "process: spawn failed"
-          "process async spawn failed message"))]
-    [(process.OkProcessChild _)
+    [(ErrProcessChild error)
+      (test.assert-true
+        (process.error-spawn-failed? (clone error))
+        "process async missing executable spawn failed")
+      (assert-owned-string-eq
+        (process.error-message error)
+        "process: spawn failed"
+        "process async spawn failed message")]
+    [(OkProcessChild _)
       (io.panic "process async missing executable should fail")]))
 
 (define (assert-process-child-unsupported [result : process.ResultProcessChild]) : unit
   (match result
-    [(process.ErrProcessChild error)
-      (begin
-        (test.assert-true
-          (process.error-unsupported? (clone error))
-          "process async unsupported")
-        (assert-owned-string-eq
-          (process.error-message error)
-          "process: async child handles are not supported by this runtime"
-          "process async unsupported message"))]
-    [(process.OkProcessChild _)
-      (io.panic "process async should be unsupported")]))
+    [(ErrProcessChild error)
+      (test.assert-true
+        (process.error-unsupported? (clone error))
+        "process async unsupported")
+      (assert-owned-string-eq
+        (process.error-message error)
+        "process: async child handles are not supported by this runtime"
+        "process async unsupported message")]
+    [(OkProcessChild _) (io.panic "process async should be unsupported")]))
 
 (define (assert-process-output-unsupported
   [result : process.ResultProcessOutput]) : unit
   (match result
-    [(process.ErrProcessOutput error)
-      (begin
-        (test.assert-true
-          (process.error-unsupported? (clone error))
-          "process async wait unsupported")
-        (assert-owned-string-eq
-          (process.error-message error)
-          "process: async child handles are not supported by this runtime"
-          "process async wait unsupported message"))]
-    [(process.OkProcessOutput _)
-      (io.panic "process async wait should be unsupported")]))
+    [(ErrProcessOutput error)
+      (test.assert-true
+        (process.error-unsupported? (clone error))
+        "process async wait unsupported")
+      (assert-owned-string-eq
+        (process.error-message error)
+        "process: async child handles are not supported by this runtime"
+        "process async wait unsupported message")]
+    [(OkProcessOutput _) (io.panic "process async wait should be unsupported")]))
 
 (define (assert-process-output-invalid-child
   [result : process.ResultProcessOutput]
   [message : String]) : unit
   (match result
-    [(process.ErrProcessOutput error)
-      (begin
-        (test.assert-true
-          (process.error-wait-failed? (clone error))
-          (clone message))
-        (assert-owned-string-eq
-          (process.error-message error)
-          "process: invalid or consumed child capability"
-          message))]
-    [(process.OkProcessOutput _)
+    [(ErrProcessOutput error)
+      (test.assert-true
+        (process.error-wait-failed? (clone error))
+        (clone message))
+      (assert-owned-string-eq
+        (process.error-message error)
+        "process: invalid or consumed child capability"
+        message)]
+    [(OkProcessOutput _)
       (io.panic "invalid child capability should not reach the OS")]))
 
 (define (windows-process-command) : process.ProcessCommand
@@ -138,28 +129,26 @@
 (define (windows-env-vec-command) : process.ProcessCommand
   (let
     [env : process.ProcessEnvVec (process.env-vec-new)]
-    (begin
-      (process.env-vec-append!
-        (&mut env)
-        "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
-        "process-env-vec-value")
-      (process.command-with-env-vec
-        (process.command
-          "C:\\Windows\\System32\\cmd.exe"
+    (process.env-vec-append!
+      (&mut env)
+      "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
+      "process-env-vec-value")
+    (process.command-with-env-vec
+      (process.command
+        "C:\\Windows\\System32\\cmd.exe"
+        (process.args-cons
+          "/C"
           (process.args-cons
-            "/C"
-            (process.args-cons
-              "echo %TYPELISP_PROCESS_RUNTIME_ENV_VEC%"
-              (process.args-empty))))
-        (& env)))))
+            "echo %TYPELISP_PROCESS_RUNTIME_ENV_VEC%"
+            (process.args-empty))))
+      (& env))))
 
 (define (windows-argv-vec-command) : process.ProcessCommand
   (let
     [argv : svec.Vec (svec.with-capacity 2)]
-    (begin
-      (svec.push-ref! (&mut argv) "/C")
-      (svec.push-ref! (&mut argv) "echo argv-vec=ok")
-      (process.command-from-argv-vec "C:\\Windows\\System32\\cmd.exe" (& argv)))))
+    (svec.push-ref! (&mut argv) "/C")
+    (svec.push-ref! (&mut argv) "echo argv-vec=ok")
+    (process.command-from-argv-vec "C:\\Windows\\System32\\cmd.exe" (& argv))))
 
 (define (windows-inherit-command) : process.ProcessCommand
   (process.command
@@ -209,25 +198,23 @@
 (define (linux-env-vec-command) : process.ProcessCommand
   (let
     [env : process.ProcessEnvVec (process.env-vec-new)]
-    (begin
-      (process.env-vec-append!
-        (&mut env)
-        "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
-        "process-env-vec-value")
-      (process.command-with-env-vec
-        (process.command
-          "/usr/bin/printenv"
-          (process.args-single "TYPELISP_PROCESS_RUNTIME_ENV_VEC"))
-        (& env)))))
+    (process.env-vec-append!
+      (&mut env)
+      "TYPELISP_PROCESS_RUNTIME_ENV_VEC"
+      "process-env-vec-value")
+    (process.command-with-env-vec
+      (process.command
+        "/usr/bin/printenv"
+        (process.args-single "TYPELISP_PROCESS_RUNTIME_ENV_VEC"))
+      (& env))))
 
 (define (linux-argv-vec-command) : process.ProcessCommand
   (let
     [argv : svec.Vec (svec.with-capacity 3)]
-    (begin
-      (svec.push-ref! (&mut argv) "%s:%s")
-      (svec.push-ref! (&mut argv) "argv")
-      (svec.push-ref! (&mut argv) "vec")
-      (process.command-from-argv-vec "/usr/bin/printf" (& argv)))))
+    (svec.push-ref! (&mut argv) "%s:%s")
+    (svec.push-ref! (&mut argv) "argv")
+    (svec.push-ref! (&mut argv) "vec")
+    (process.command-from-argv-vec "/usr/bin/printf" (& argv))))
 
 (define (linux-inherit-command) : process.ProcessCommand
   (process.command
@@ -374,37 +361,36 @@
             process.cleanup-process-child])
         (let
           [first-token : i64 (deref first.authority)]
-          (begin
-            (with
-              ([copied-live (clone first) process.cleanup-process-child])
-              (assert-process-output-invalid-child
-                (process.wait (&mut copied-live))
-                "copied live child capability"))
-            (assert-process-output-result
-              (process.wait (&mut third))
-              0
-              "borrowed-async"
-              "")
-            (assert-process-output-result
-              (process.wait (&mut second))
-              0
-              "async-two"
-              "")
-            (assert-process-output-result
-              (process.wait (&mut first))
-              0
-              "async-one"
-              "")
+          (with
+            ([copied-live (clone first) process.cleanup-process-child])
             (assert-process-output-invalid-child
-              (process.wait (&mut first))
-              "repeated child wait")
-            (with
-              ([fabricated-stale
-                  (process.ProcessChild (box first-token))
-                  process.cleanup-process-child])
-              (assert-process-output-invalid-child
-                (process.wait (&mut fabricated-stale))
-                "fabricated stale child token")))))
+              (process.wait (&mut copied-live))
+              "copied live child capability"))
+          (assert-process-output-result
+            (process.wait (&mut third))
+            0
+            "borrowed-async"
+            "")
+          (assert-process-output-result
+            (process.wait (&mut second))
+            0
+            "async-two"
+            "")
+          (assert-process-output-result
+            (process.wait (&mut first))
+            0
+            "async-one"
+            "")
+          (assert-process-output-invalid-child
+            (process.wait (&mut first))
+            "repeated child wait")
+          (with
+            ([fabricated-stale
+                (process.ProcessChild (box first-token))
+                process.cleanup-process-child])
+            (assert-process-output-invalid-child
+              (process.wait (&mut fabricated-stale))
+              "fabricated stale child token"))))
       (assert-process-child-spawn-failed
         (process.start
           (process.command

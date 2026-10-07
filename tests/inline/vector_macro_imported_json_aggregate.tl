@@ -10,16 +10,15 @@
   vector-macro-imported-json-aggregate
   (let
     [members : mvec.Vec (mvec.new)]
-    (begin
-      (mvec.push-ref! (&mut members) (json.JsonMember "k" (json.JsonBool true)))
-      (test.assert-i64-eq
-        (mvec.len (& members))
-        1
-        "generated json aggregate vector length")
-      (let
-        [member : json.JsonMember
-          (mvec.get (& members) 0 (json.JsonMember "" json.JsonNull))]
-        (match member.value
-          [(json.JsonBool value)
-            (test.assert-true value "generated json aggregate payload")]
-          [_ (test.assert-true false "generated json aggregate wrong payload")])))))
+    (mvec.push-ref! (&mut members) (json.JsonMember "k" (JsonBool true)))
+    (test.assert-i64-eq
+      (mvec.len (& members))
+      1
+      "generated json aggregate vector length")
+    (let
+      [member : json.JsonMember
+        (mvec.get (& members) 0 (json.JsonMember "" JsonNull))]
+      (match member.value
+        [(JsonBool value)
+          (test.assert-true value "generated json aggregate payload")]
+        [_ (test.assert-true false "generated json aggregate wrong payload")]))))

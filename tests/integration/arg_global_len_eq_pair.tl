@@ -29,31 +29,27 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i count)
-        (begin
-          (set! acc (+ acc (* scale (array-ref (i64vec.slots left-vec) i))))
-          (set! acc (+ acc (array-ref (i64vec.slots right-vec) i)))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i count)
+      (set! acc (+ acc (* scale (array-ref (i64vec.slots left-vec) i))))
+      (set! acc (+ acc (array-ref (i64vec.slots right-vec) i)))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (string.>int (io.arg 1))]
     [i : i64 0]
-    (begin
-      (set! pair-left (zero-vec n))
-      (set! pair-right (zero-vec n))
-      (while (< i n)
-        (begin
-          (set! (array-ref (i64vec.slots-mut (&mut pair-left)) i) (+ i 1))
-          (set! (array-ref (i64vec.slots-mut (&mut pair-right)) i) (- n i))
-          (set! i (+ i 1))))
-      (io.print-format
-        "{}\n"
+    (set! pair-left (zero-vec n))
+    (set! pair-right (zero-vec n))
+    (while (< i n)
+      (set! (array-ref (i64vec.slots-mut (&mut pair-left)) i) (+ i 1))
+      (set! (array-ref (i64vec.slots-mut (&mut pair-right)) i) (- n i))
+      (set! i (+ i 1)))
+    (io.print-format
+      "{}\n"
+      (+
+        (pair-fold (& pair-left) (& pair-right) n 5)
         (+
-          (pair-fold (& pair-left) (& pair-right) n 5)
-          (+
-            (pair-fold (& pair-left) (& pair-right) (- n 1) 7)
-            (pair-fold (& pair-left) (& pair-right) (- n 2) 11))))
-      42)))
+          (pair-fold (& pair-left) (& pair-right) (- n 1) 7)
+          (pair-fold (& pair-left) (& pair-right) (- n 2) 11))))
+    42))

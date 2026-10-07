@@ -271,7 +271,10 @@ contextual literals are compile-time errors; explicit
 truncation/wrapping behavior for supported numeric casts.
 For binary operators, an integer literal operand may adopt the other integer
 operand's type; two unconstrained integer literal operands use the `i32`
-default. Floating-point literals are always `f64` unless a contextual `f32`
+default. An `if` branch or `match` arm likewise adopts the type of another
+branch or arm when that type does not merge with its own (see §5.6), so an
+unconstrained literal branch takes the other branch's integer type when the
+literal fits it. Floating-point literals are always `f64` unless a contextual `f32`
 expected type is present. Exponent-only forms such as `1e10` are `Float`
 tokens, and exponent/fraction spellings retain their source bytes through
 formatting. An exponent marker must have an optional sign and at least one
@@ -603,8 +606,40 @@ Examples:
 - Variant constructors and patterns may be written as unqualified names
   (`Red`, `(Some x)`) or as enum-qualified names (`Color.Red`,
   `(Option.Some x)`). Duplicate variant base names are allowed across
-  different enums when uses are enum-qualified; duplicate variant names
-  within the same enum are rejected.
+  different enums; duplicate variant names within the same enum are rejected.
+- An unqualified variant name `V` resolves as follows:
+  1. A local binding named `V` (a `let`, parameter or lambda parameter,
+     hygiene-scoped) always means that binding.
+  2. A pattern resolves `V` against the scrutinee's enum (§5.13). A
+     constructor `V` or `(V args...)` in a position with an expected enum type
+     that declares `V` means that enum's variant, ahead of other enums'
+     variants, imports and module-level values. The expected-type positions
+     are the ones where contextual `(init)` works (§5.12.1); the expected enum
+     need not be imported by the current module. If a module-level function,
+     value or struct constructor named `V` is also visible unqualified there,
+     the reference is ambiguous and must be qualified.
+  3. Otherwise `V` is looked up among the enums the current module declares
+     or imports with `.*` (§4.4.3). Exactly one of them may declare it: two
+     make the name ambiguous (`qualify as A.V or B.V`), and the enums of
+     other loaded modules are never searched.
+- In a variant payload position of a pattern, a bare binder whose name spells
+  a variant of the payload's enum is rejected, because it would match every
+  payload. Write `(V)` to match that variant, or choose another binder name.
+
+```lisp test=run name=enum-expected-variant exit=42 stdout=""
+(defenum Reply (Ok i64) (Err i64))
+(defenum Probe (Err i64) (Ok i64))
+
+(define (reply [x : i64]) : Reply
+  (if (> x 0) (Ok x) (Err x)))      ; Reply.Ok and Reply.Err
+
+(define (probe) : Probe (Err 0))    ; Probe.Err
+
+(define (main) : i64
+  (match (reply 42)
+    [(Ok value) (+ value (match (probe) [(Err n) n] [(Ok n) n]))]
+    [(Err _) 0]))
+```
 - Pattern matching via `match` (§5.13) is exhaustive and type-checked.
 - Returning an enum value never allocates. It is an ordinary by-value result,
   transported in registers or written into caller-owned result storage
@@ -845,10 +880,13 @@ not render or reparse `type-key`.
 
 A fixed slot declared `ExprClause` accepts exactly one bracket-list operand
 `[first second]`, where `first` and `second` are ordinary expressions
-preserved as syntax. The bracket form is valid only in macro call operands;
-it is not a general expression, and ordinary calls or non-bracket macro slots
-reject it with a source-located diagnostic. Empty clauses, one-element
-clauses, and clauses with more than two elements are rejected.
+preserved as syntax. Like a `let` body, the clause body may be several
+expressions, `[first expr ...]`; they are captured as one implicit
+`(begin expr ...)` second element. The bracket form is valid only in macro
+call operands; it is not a general expression, and ordinary calls or
+non-bracket macro slots reject it with a source-located diagnostic. Empty
+clauses, one-element clauses, and binding-clause syntax with `:` after the
+first element are rejected.
 
 A fixed slot declared `ExprBindingClause` accepts exactly one binding-clause
 operand, either `[name init]` or `[name : Type init]`. The `name` must be a
@@ -856,7 +894,7 @@ source identifier and is preserved as the user-facing binding name. The
 optional type annotation and initializer are preserved as syntax; the type
 annotation is not resolved before macro expansion. These operands are
 distinct from `ExprClause`: `[x : i64 1]` is accepted only for
-`ExprBindingClause`, while `ExprClause` remains exactly `[expr expr]`.
+`ExprBindingClause`, while `ExprClause` remains `[expr expr ...]`.
 
 A fixed slot declared `type` accepts a concrete compile-time type operand. It
 may carry the validation-only kind constraint described in section 3.7.1.3,
@@ -874,7 +912,7 @@ be variadic.
 A final slot may be variadic, written `T ...`. For ordinary `T`, the macro
 body receives the remaining operands as an `ExprList`; for `Expr ...`, they
 are captured without per-operand produced-type checks. For `ExprClause ...`,
-every remaining operand must be a two-expression bracket clause and the macro
+every remaining operand must be an `ExprClause` bracket clause and the macro
 body receives an `ExprClauseList`. For `ExprBindingClause ...`, every
 remaining operand must be a binding clause and the macro body receives an
 `ExprBindingClauseList`.
@@ -927,8 +965,9 @@ generic macro sequence operations, not macro-name hooks; user-defined macros
 may use them to construct iterative syntax without recursively emitting macro
 calls. Each consumed input charges the shared deterministic CTFE fuel budget.
 The generated program typechecks the resulting borrow and call normally, so a
-mutable-borrow receiver must still be a caller place and every supplied
-argument is evaluated once in source order.
+mutable-borrow receiver is a caller place, or a temporary that the call
+borrows under the call-argument temporary rule of section 3.10, and every
+supplied argument is evaluated once in source order.
 `pattern-wildcard`, `pattern-binding`, `pattern-variant`,
 `pattern-list-empty`, `pattern-list-cons`, `pattern-list-bindings`, `match-arm`,
 `match-arm-list-empty`, `match-arm-list-cons`, and `expr-match` build
@@ -1060,7 +1099,7 @@ Typed expansion has three checks:
 1. The macro call site is checked from the macro signature before expansion.
    Ordinary operand type errors are reported at the operand source span;
    `Expr` operands are wildcard syntax captures and skip the produced-type
-   check; `ExprClause` operands must use `[expr expr]` syntax;
+   check; `ExprClause` operands must use `[expr expr ...]` syntax;
    `ExprBindingClause` operands must use `[name expr]` or
    `[name : Type expr]` syntax.
 2. The macro body is checked as compile-time TypeLisp over the macro-only
@@ -1725,6 +1764,12 @@ Reference types are lifetime-bearing:
   value)` writes through an owned fixed array or a mutable array reference. Private
   `__tl_array-push!` mutates private dynamic buffers. Borrowed `str` source
   semantics are specified in section 3.11.
+- A value read through a reference does not own the referent. `(deref r)`, or
+  a field, tuple-element or element projection through `r` or through
+  `(deref r)`, may be used by value only when its type is `Copy`. A by-value
+  use of a non-`Copy` value read this way is a move out of the reference and
+  is rejected as a move violation (`E0208`): pass, bind or return a borrow
+  `(& ...)` of it, or an owned clone.
 
 In function signatures, the ordinary spelling elides the lifetime name:
 
@@ -1835,8 +1880,54 @@ owner/provenance is statically known:
   the default program-lifetime arena infer the reserved lifetime name
   `program`.
 
-The checker rejects borrows of arbitrary rvalues and temporaries whose owner
-cannot be named. Bind the value first if it should have a lexical owner.
+Any other operand is a temporary, not a place. A borrow of a temporary is
+accepted only as a direct call argument, described next; everywhere else bind
+the value first if it should have a lexical owner.
+
+**Borrowed call-argument temporaries.** A borrow expression whose operand is a
+call, constructor, literal, or other value expression may be passed directly as
+an argument of a typed function, function-value, or lambda call:
+
+```lisp test=run name=borrow-call-argument-temporaries exit=12 stdout=""
+(defstruct Point (x i64) (y i64))
+
+(define (sum [p : (& Point)]) : i64
+  (+ p.x p.y))
+
+(define (bump! [p : (&mut Point)]) : i64
+  (begin
+    (set! p.x (+ p.x 1))
+    (sum p)))
+
+(define (origin) : Point
+  (Point 0 0))
+
+(define (main) : i64
+  (+ (sum (& (Point 3 4))) (bump! (&mut (origin))) (sum (& (Point 2 2)))))
+```
+
+The operand is evaluated by value at its argument position, left to right with
+the other arguments, into hidden storage that lives until the call returns, and
+the argument is a reference to that storage. The operand is a by-value position
+(section 4.7.2): a non-`Copy` place named at its tail moves into the storage.
+After the call returns, a cleanup-owning struct or enum is passed to its
+declared cleanup function (section 4.7.1); any other value is dropped with the
+storage. A temporary whose type holds a cleanup-owning value without itself
+declaring a cleanup function is rejected.
+
+The borrow's lifetime ends with the call; every other lifetime outlives it and
+no source spelling can name it, so `(& lifetime operand)` is rejected for a
+temporary. A call is rejected with `typecheck: temporary dropped while still
+borrowed` when the lifetime of the reference parameter that receives a
+temporary, elided or explicit, appears in the call's result type or in the
+referent of another `&mut` parameter, since the callee could then keep the
+borrow after the temporary is dropped. Bind the value to a local before the
+call in that case. A borrow of a temporary anywhere else, such as a `let`
+initializer, a `match` scrutinee, or the operand of another expression, is
+rejected with `typecheck: a borrowed temporary must be a direct function-call
+argument`. A projection such as `(& (make).field)` is not a temporary operand;
+it remains a borrow of a non-place. Call-site auto-borrowing never applies to a
+temporary: the borrow is always written.
 
 **Returned stored-reference reborrows.** A field or tuple element that stores a
 reference can be reborrowed through iterator-like state. If that reborrow is
@@ -2026,8 +2117,8 @@ reference, and a returned or stored shared result keeps the reborrow live until
 its last use. There is no inverse `&T` to `&mut T` strengthening. Macros are
 checked after expansion. Extern C ABI calls do
 not participate because safe reference types are not legal C ABI parameter
-values. Arbitrary rvalues and temporaries are rejected because they have no
-stable lexical owner:
+values. Arbitrary rvalues and temporaries are not auto-borrowed; borrow one
+explicitly as a call argument, `(takes-ref (& (+ n 1)))`, as described above:
 
 **Two-phase mutable call borrows.** For a typed TypeLisp call argument, an
 explicit top-level `(&mut place)` passed to a mutable-reference formal reserves
@@ -2276,6 +2367,17 @@ type is tied to such an input lifetime or to `program`.
   (RefBox value))
 ```
 
+A store through a mutable reference is checked against the destination's own
+lifetimes. A place reached through `(&mut m T)` may hold a reference whose
+lifetime appears in `T`, because every lifetime in `T` outlives the reference
+`m` itself. A local or parameter named like that lifetime shadows it, and a
+borrow of it is checked against `m` like any other:
+
+```lisp test=ignore name=lifetime-parameterized-mut-field-store-ok reason="illustrative store example; not a standalone program"
+(define (store [b : (&mut (RefBox a))] [v : (& a i64)]) : unit
+  (set! b.value v))
+```
+
 The checker rejects returned, stored, or assigned nominal aggregate values when
 any stored reference lifetime is local, scoped, unknown, untied to an input, or
 otherwise shorter than the destination lifetime:
@@ -2384,6 +2486,13 @@ callee does not return or store a reference tied to the argument lifetime ends
 after the call expression. If the reference result is bound, stored in a
 lifetime-parameterized aggregate, returned, or otherwise remains available as a
 reference value, the owner remains borrowed until that value's last proven use.
+Assignments inside the argument expression count: a reference assigned or
+stored in a sequence, branch, `let`, `match` arm, or loop of the argument keeps
+its owner borrowed when it can reach the argument's value, unless a later
+assignment that always runs overwrites it first. A store under bindings the
+checker does not follow (inside a `lambda`, `foreach`, `for` over a fixed
+array, or resource `with` within the argument) is rejected when its destination
+could hold one of the result's lifetimes.
 A mutable reference moved into a checker-known local closure carries the same
 lending fact: the referent remains exclusively borrowed through the closure's
 last direct call, then becomes available again.
@@ -3067,7 +3176,9 @@ expression. A safe direct call is rejected and names the callee. Any
 first-class reference is also rejected, even inside `unsafe`, because assigning
 the ordinary `(-> ...)` value would erase the checker-only unsafe-call effect.
 This fail-closed rule covers inferred and annotated locals and globals,
-branches, arguments and returns, assignment, aggregates, and captures.
+branches, arguments and returns, assignment, aggregates, and captures. A
+field or payload `(:cleanup ...)` hook, which the compiler calls implicitly,
+cannot name an unsafe declaration either.
 
 An unsafe function body is still checked as ordinary safe code unless the body
 itself uses `(unsafe ...)`. The same safe boundary applies to a lambda body:
@@ -3120,6 +3231,21 @@ same name are a namespace collision. The diagnostic names both module
 identities and suggests alias-qualified access instead. Prelude bare names and
 deliberately retained prelude exceptions come
 from the implicit prelude and are not affected by these import rules.
+
+An unqualified import that binds a name the importing module declares at
+module scope itself (a value, function, type, enum constructor or macro,
+including one a module-scope generator emits) is the same kind of namespace
+collision, whatever the declaration order and whether either binding is used.
+The diagnostic is reported at the import, names the importing module, and
+labels the local declaration; rename the import with `as`, rename the
+declaration, or import the module and use qualified access:
+
+```lisp test=check name=import-alias-beside-local-name
+(import stdlib.byte_le.byte-le-byte as low-byte) ; `byte-le-byte` would collide
+(define (byte-le-byte) : i64 40)
+(define (main) : i64
+  (+ (byte-le-byte) (cast (low-byte 258 0) : i64)))
+```
 
 Multi-item selected imports are deferred in v1. Spellings such as
 `(import stdlib.io :only (read write))` are reserved and rejected until a
@@ -3256,7 +3382,11 @@ Qualified source names use `.`: `alias.name` for one alias segment and
 `module.path.name` for a full canonical module path. Full canonical paths are
 accepted only when that module identity has been imported in the current module
 or when the use appears inside the same module. Unqualified lookup searches only
-local declarations and local bindings. It does not search imported modules.
+local declarations and local bindings. It does not search imported modules,
+except the items of `.*` and `.item` imports (§4.4). An unqualified enum variant
+name therefore sees the current module's enums and those imported with `.*`;
+it reaches any other enum only through an expected enum type (§3.5.1), never by
+searching the loaded modules.
 Slash-qualified source names such as `alias/name` are rejected; `/` is the
 ordinary division operator.
 
@@ -3310,7 +3440,7 @@ The compile driver loads `stdlib.core_macros` as an implicit macro prelude.
 Bare `when`, `unless`, `and`, `or`, scalar `for`, `any?`, `all?`, `+=`, `-=`,
 and bracket-arm `cond` resolve to the prelude macros of `stdlib.core_macros`
 unless a local or imported macro with the same name takes precedence. The core `cond` surface is
-`(cond [test expr] ... [else fallback])`; flat
+`(cond [test expr ...] ... [else fallback ...])`; flat
 `(cond test expr ... fallback)` calls are rejected. The module can also be
 imported explicitly, for example `(import stdlib.core_macros as core)`, and its
 macros called through the alias: `core.when`, `core.unless`, `core.and`,
@@ -3921,7 +4051,10 @@ type:
 
 - `(:cleanup field-cleanup-fn)` marks a direct resource field and names the
   cleanup function for that field. The function must have type `(-> F unit)`,
-  where `F` is the field type.
+  where `F` is the field type. It must not be an unsafe declaration (§4.3.1):
+  the compiler calls it implicitly where the owner's scope ends, in safe code
+  too, so a hook discharges its own unsafety in its body. The same rule applies
+  to an enum payload's `(:cleanup ...)` metadata.
 - `(:owned)` marks a field whose type is itself cleanup-owning. The field uses
   that type's declared cleanup function.
 
@@ -4089,6 +4222,10 @@ different live owners does not prove that both were discharged.
     1))
 ```
 
+A cleanup-owning struct or enum borrowed as a call-argument temporary (section
+3.10) is owned by that call's hidden storage, which passes it to the declared
+cleanup function right after the call returns.
+
 Cleanup runs when the owner scope exits normally and before recoverable
 `(try ...)` propagation leaves the scope. If initialization of a later `with`
 binding propagates recoverably, already-initialized earlier cleanup-owning
@@ -4199,7 +4336,9 @@ move-only values and as copies for copyable values:
   creates no moved state. Arguments are evaluated left-to-right, so earlier
   moves are visible while checking later arguments and the remaining
   expression. The rule depends only on the resolved parameter type, never on
-  the callee's name, module, qualification, or generated identity.
+  the callee's name, module, qualification, or generated identity. The operand
+  of a borrowed call-argument temporary `(& operand)` (section 3.10) is a
+  by-value position of the operand's own type at its argument position.
 - Function returns. Returning a move-only local or parameter moves it to the
   caller. Returning from a `with` owner scope is still rejected when it would
   bypass required cleanup.
@@ -4236,14 +4375,15 @@ move-only values and as copies for copyable values:
 - Tuple patterns. Matching an owned tuple with `(tuple p1 ... pn)` consumes a
   move-only tuple and transfers its slots to bindings from left to right. A
   copyable tuple is copied at the by-value match boundary. Matching
-  `(& place)` binds shared references to the selected tuple slots instead and
-  leaves the owner initialized subject to the live borrow.
+  `(& place)` binds the selected tuple slots by the borrowed-pattern binding
+  rule of section 5.13 instead and leaves the owner initialized subject to the
+  live borrow.
 - Fixed-array patterns. Matching an owned fixed array with
   `(array p1 ... pn)` requires exactly `N` subpatterns for `(Array T N)`.
   A move-only array is consumed and transfers its elements to bindings from
-  left to right; a copyable array is copied. Matching `(& place)` binds shared
-  references to the selected elements and leaves the owner initialized subject
-  to the live borrow.
+  left to right; a copyable array is copied. Matching `(& place)` binds the
+  selected elements by the borrowed-pattern binding rule of section 5.13 and
+  leaves the owner initialized subject to the live borrow.
 - Closure capture. Capturing a move-only local by value moves it into the
   closure environment at closure creation time; the local cannot be used after
   the lambda literal. Immutable reference captures are governed by section
@@ -4298,7 +4438,11 @@ loop-carried owner.
 
 The join keeps separate normal/backedge, continue, break, and
 return/divergence outcomes. Move facts on `break` paths join the state after
-the loop, so a moved place cannot be used there. Return/divergence facts have
+the loop, so a moved place cannot be used there. A `break` or `continue` nested
+in an operand (a call argument, an operator operand, a `set!` value, a
+constructor element, a `return` operand, or an inner loop's condition or
+bounds) takes the same edge with the moves made up to it, including those of
+operands evaluated before it. Return/divergence facts have
 no successor in the function. The pre-loop state also reaches the post-loop
 join because the body may execute zero times; ordinary body fallthrough state
 is not propagated as a zero-trip substitute. Owners created inside the body
@@ -4363,7 +4507,9 @@ moving it. These are limited to:
 - Borrowed enum matches over `(& place)` / `(& lifetime place)`. The match
   inspects the active enum variant without moving the enum owner.
 - Borrowed tuple matches over `(& place)` / `(& lifetime place)`. Tuple
-  subpattern bindings are shared references carrying the scrutinee lifetime.
+  subpattern bindings follow the borrowed-pattern binding rule of section
+  5.13: a `Copy` slot is copied, and any other slot binds a shared reference
+  carrying the scrutinee lifetime.
 - Calls and typed operations whose parameter or receiver is `(& lifetime T)`
   or `(&mut lifetime T)`. The ordinary call rules in section 3.10 insert an
   immutable auto-borrow or reborrow when the formal parameter is an immutable
@@ -4412,6 +4558,10 @@ Tuple-element assignment likewise reinitializes the selected literal-index
 path.
 Box-place assignment updates boxed storage but does not reinitialize a moved
 box handle; moving a non-Copy `(deref box)` result moves the whole Box handle.
+Projecting a field or tuple element through `(deref box)`, as in
+`(deref b).count`, reads the boxed storage in place: a `Copy` projection is
+copied without moving the box, so `b` stays usable, while moving a non-Copy
+projection out of the box is rejected.
 Dotted field projection and `tuple-ref` may copy out only copyable fields or
 slots, and may move out move-only fields/slots only where this tracked-path
 policy accepts the path. Fixed-array reads follow the matrix above: a non-`Copy`
@@ -4570,8 +4720,8 @@ use-after-move.
     [NoName 0]))
 ```
 
-The borrowed `match` inspects `m` without moving it. Payload bindings are
-references tied to the borrowed scrutinee lifetime; the `String` payload above
+The borrowed `match` inspects `m` without moving it. Payload bindings follow
+the borrowed-pattern binding rule of section 5.13; the `String` payload above
 binds `s` as `(& m str)`.
 
 #### 4.7.3 Recursive aggregate layout and boxed recursion
@@ -4738,6 +4888,12 @@ All operators are prefix functions (or special forms):
 
 - `cond` must be `bool`.
 - Both branches must have the same type.
+  - When no expected type applies and the two types do not merge, each branch
+    in turn is checked again with the other branch's type as its expected
+    type.
+  - So `(if c 0 n)` with `n : i64` has type `i64`, and a literal that does not
+    fit the other branch's type still fails.
+  - `match` arms join the same way.
 - Returns the value of the taken branch.
 
 `(cond [test expr] ... [else fallback])` is the conditional macro surface
@@ -4745,7 +4901,9 @@ provided by the implicit core macro prelude. It expands to nested `if`
 expressions, so each test must type-check as `bool` and all branch result
 types must merge using the normal `if` rules. At least one `[test expr]` arm
 and a final `[else fallback]` arm are required, and `else` may appear only in
-the final arm. Qualified calls such as `core.cond` use the same bracket-arm
+the final arm. An arm may hold several result expressions,
+`[test expr ...]`; like a `match` arm body they are evaluated as an implicit
+`begin`, and the last one provides the arm result. Qualified calls such as `core.cond` use the same bracket-arm
 shape. The flat `(cond test expr ... fallback)` shape is rejected.
 
 ```lisp test=ignore name=cond-expression reason=fragment
@@ -4786,7 +4944,11 @@ guards.
 - Evaluates expressions in order.
 - Returns the value of `last_expr`.
 - `begin` is the explicit grouping form for positions that do not already
-  accept expression sequences.
+  accept expression sequences. Body positions (`let`, `define`, `lambda`,
+  `while`, `when`, `unless`, `unsafe`, the arena and resource forms, `test`,
+  `defmacro`, scalar `for`, and `match` and `cond` arms) take several
+  expressions directly; the opt-in `redundant-begin` lint reports a `begin`
+  written as one of their body forms.
 
 ### 5.9 `(while cond body...)` — loop
 
@@ -4890,6 +5052,11 @@ There are two source forms:
   Ambiguous `(init)`
   is rejected with a diagnostic asking for `(init : T)` or an annotation.
 
+An expected type reaches through the tails of `if`, `match`, `let`, `begin`
+and `unsafe`, and a `set!` of a typed place supplies its place's type. The same
+expected-type positions resolve bare enum variant constructors such as `(Ok x)`
+and `None` against the expected enum (§3.5.1).
+
 `init` is compatible with ordinary functions named `init`: `(init)` and
 `(init : T)` are parser-owned special forms, while `(init arg...)` is parsed
 as an ordinary call unless the first argument is `:`.
@@ -4937,8 +5104,12 @@ explicit constructors.
     (+ zero (+ p.x (array-ref xs 0)))))
 ```
 
-### 5.13 `(match scrutinee [pattern expr] ...)` — pattern matching
+### 5.13 `(match scrutinee [pattern body...] ...)` — pattern matching
 
+- Each arm is a bracket form holding a pattern and one or more body
+  expressions. Multiple body expressions are evaluated in order as an
+  implicit `begin`; the last expression provides the arm result, exactly as
+  in a `let` body.
 - Enum scrutinees support variant patterns such as `Red`, `Color.Red`,
   `(Some value)`, and `(Option.Some value)`. Payload positions accept nested
   patterns recursively: bindings, literals, `_`, and further variant patterns.
@@ -4953,8 +5124,8 @@ explicit constructors.
   compose in the same recursive positions inside enum payload, struct field,
   and box patterns. Owned move-only tuples are consumed and their bound slots
   transfer left to right; copyable tuples are copied. Matching a shared
-  borrowed tuple binds slot references carrying the scrutinee lifetime and
-  does not move the owner. Tuple access outside a pattern remains
+  borrowed tuple binds its slots by the borrowed-pattern binding rule below
+  and does not move the owner. Tuple access outside a pattern remains
   `(tuple-ref place literal-index)`; numeric dotted syntax is not supported.
 - Fixed-array scrutinees support the constructor-shaped `(array p1 ... pn)`
   pattern. Its arity must exactly match `(Array T N)`. Element subpatterns are
@@ -4962,7 +5133,7 @@ explicit constructors.
   and compose recursively inside array, enum payload, struct field, tuple, and
   box patterns. Owned move-only arrays are consumed and their elements transfer
   from left to right; copyable arrays are copied. Matching a shared borrowed
-  array binds element references carrying the scrutinee lifetime without
+  array binds its elements by the borrowed-pattern binding rule below without
   moving the owner. The pattern introduces no run-time branch or allocation.
 - Borrowed views `(& (Slice T))` and `(&mut (Slice T))`, and borrowed fixed
   arrays `(& (Array T N))` and `(&mut (Array T N))`, support the variable-length
@@ -5008,11 +5179,22 @@ explicit constructors.
       [(slice x & rest) (+ x (sum rest))]))
   ```
 
-- Borrowed enum scrutinees written as `(& place)` or `(& lifetime place)` use
-  the same variant, wildcard, literal payload, and nested variant pattern
-  forms, but inspect the enum without moving the owner. Payload bindings are
-  immutable references tied to the borrowed scrutinee lifetime; `String`
-  payloads bind as borrowed `str` references.
+- Borrowed enum scrutinees written as `(& place)` or `(& lifetime place)`, or
+  any scrutinee of shared reference type, use the same variant, wildcard,
+  literal payload, and nested variant pattern forms, but inspect the enum
+  without moving the owner.
+- Borrowed-pattern binding rule. A name bound by a pattern matched through a
+  shared reference, at any nesting depth of enum payloads, struct fields,
+  tuple slots, and array elements, binds:
+  - a `Copy` part (section 4.7.2) by value, a copy of the part;
+  - a `(Box T)` part as `(& lifetime T)`, a shared reference to the boxed
+    value with the scrutinee lifetime;
+  - any other part as `(& lifetime T)`, a shared reference to the part with the
+    scrutinee lifetime, where a `String` part binds as `(& lifetime str)`.
+
+  A by-value binding holds no borrow of the scrutinee. There is no reference
+  binding mode for a `Copy` part; borrow the whole scrutinee to keep a
+  reference. The example after this list shows the rule.
 - Owned `(Box T)` scrutinees and owned enum payloads of type `(Box T)` support
   the explicit `(box inner-pattern)` pattern. The form takes exactly one inner
   pattern, reads the boxed `T`, and checks/binds the inner pattern against
@@ -5028,9 +5210,28 @@ explicit constructors.
 - A bare identifier at the top level of an enum `match` arm resolves as a
   nullary variant name. It is not a fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
-- All arms must return the same type.
+- All arms must return the same type: the type of each arm's last body
+  expression. An arm whose type does not merge with the others is checked again
+  with their type as its expected type, as `if` branches are (§5.6).
 - A `match` that produces an enum or other aggregate result does not allocate
   it; aggregate results follow the return rule in §3.5.1.
+
+In the borrowed match below, `value` binds as `i64`, and `left` and `right`
+as `(& tree Tree)`:
+
+```lisp test=run name=borrowed-pattern-binding-rule exit=10 stdout=""
+(defenum Tree
+  (Leaf i64)
+  (Node (Box Tree) (Box Tree)))
+
+(define (sum [tree : (& Tree)]) : i64
+  (match tree
+    [(Tree.Leaf value) value]
+    [(Tree.Node left right) (+ (sum left) (sum right))]))
+
+(define (main) : i64
+  (sum (& (Tree.Node (box (Tree.Leaf 3)) (box (Tree.Leaf 7))))))
+```
 
 ### 5.14 `(lambda ([param : type] ...) [: ret_type] body...)` — anonymous function
 
@@ -5132,6 +5333,60 @@ Semantics:
 - Private dynamic-buffer bounds checks apply inside `foreach`: indexing past a
   buffer's length traps through the same bounds-check abort path for both
   `array-ref` reads and array-element place writes.
+
+Rank-2 domains. `(foreach ([y : i64 y-begin y-end] [x : i64 x-begin x-end])
+body)` executes one logical program instance for each pair `(y, x)` in the
+product of the two half-open ranges. Exactly one or two bindings are
+accepted: an empty binding list and three or more bindings are diagnosed, not
+flattened, and the two coordinate names must differ.
+
+- Both coordinates have type `i64`. All four bounds are uniform `i64`
+  expressions evaluated exactly once, in binding order (`y-begin`, `y-end`,
+  `x-begin`, `x-end`), before any body effect. No bound sees either
+  coordinate.
+- All bounds are compared first. If either dimension is empty (`end <=
+  begin`), the domain executes zero iterations, even when the other
+  dimension's span would overflow.
+- Otherwise each span and the domain product `(y-end - y-begin) * (x-end -
+  x-begin)` are computed with checked `i64` arithmetic. Overflow traps through
+  the bounds-check abort path before the first body effect.
+- The scalar reference executes the domain lexicographically in binding
+  order: `(y-begin, x-begin)` first, `x` varying fastest, then the next `y`.
+- Both coordinates are varying and read-only: `set!` of either is rejected.
+  A coordinate passed to a helper is an ordinary varying value there.
+- A non-atomic array-element destination index inside a rank-2 body must be
+  the row-major form `base + (y - a) * span + (x - b)` for uniform `base`,
+  `a`, and `b`, where `span` is `(- x-end x-begin)` over the header's own inner
+  bounds, or the bare `x-end` when `x-begin` is the literal `0`. Additive
+  terms may appear in any order and grouping, each coordinate exactly once and
+  with positive sign. Uniform offsets must be constant across the whole
+  domain: literals, outer variables the body never assigns, or closed scalar
+  operations on those values. A memory read or call must be evaluated into an
+  outer scalar before the `foreach`; body-local values cannot prove a stable
+  offset. This also rejects mutation through `foreach-active`. The span's
+  bounds must be integer literals or variables bound outside the `foreach`
+  that the body never assigns. Because
+  the checked domain product keeps `(y - y-begin) * span + (x - x-begin)` in
+  `[0, product)`, such writes are disjoint over the whole domain. Any other
+  coordinate-dependent destination, including `out[x]` and `out[y]`, is
+  rejected; masked branches apply the same rule to their reads and writes.
+  Helper bodies and nested `foreach` bodies see no rank-2 coordinate, so a
+  row-major write there is rejected.
+- Every backend mode lowers a rank-2 domain to the scalar reference; native
+  row-local gangs are a separate extension (#7191). Rank-1 `foreach` is
+  unchanged.
+
+```lisp test=check name=spmd-foreach-rank2-row-major
+
+(define (fill-tile [out : (&mut (Slice i64))]
+                   [base : i64]
+                   [y0 : i64] [y1 : i64]
+                   [x0 : i64] [x1 : i64]) : unit
+  (foreach ([y : i64 y0 y1]
+            [x : i64 x0 x1])
+    (set! (array-ref out (+ base (+ (* (- y y0) (- x1 x0)) (- x x0))))
+          (+ (* y 100) x))))
+```
 
 Array access. The core patterns are contiguous map and zip-style kernels over
 runtime-sized buffers, reading through `array-ref` and writing through
@@ -7554,7 +7809,11 @@ first failure and skips every later plan piece and newline. `ByteBuf`, `TextBuf`
 and `FileHandle` provide canonical adapters; `ByteBuf` and `TextBuf` use cells,
 while `FileHandle` uses its validated table ID as a direct context. Internal
 retained-Arguments String sinks use the same checked cell capability protocol;
-the raw formatter-cell write/result/status helpers are unsafe. Stdout and stderr
+the raw formatter-cell write/result/status helpers are unsafe. So are the raw
+range helpers behind Debug quoting and padding (`format-debug-*`,
+`format-write-fill!`, `format-copy-rendered-range!`) and the retained-Arguments
+renderer call `arguments-renderer-call-at`: their safe callers establish the
+exact source and destination ranges first. Stdout and stderr
 use the same bounded callback contract without a writer cell. Direct sinks and
 retained Arguments construction do not allocate the final combined String,
 although Arguments aggregate storage, scalar conversion, option rendering,
@@ -8763,6 +9022,7 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 | `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |
 | `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
 | `spmd-compact` | Supported: ordered scalar reference | Supported: ordered scalar reference | Supported: ordered scalar reference | Cross-mode runtime, overflow-order, and destination-proof gates |
+| Rank-2 `foreach` domains | Supported: ordered scalar reference | Supported: ordered scalar reference; native row-local gangs are #7191 | Supported: ordered scalar reference; native row-local gangs are #7191 | `tests/integration/spmd_foreach_2d.tl`, the SPMD same-exit corpus and product-overflow trap case, and the `spmd_foreach2_*` safety rows; `foreach-active` inside the body follows its own row (#8307) |
 | `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `tests/spmd/gang-width.cases` (broadcast cases) |
 | `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
 | `foreach-active` / `lane-value` | Supported: one-lane reference | Rejected: not yet lowered (#8307) | Rejected: not yet lowered (#8307) | `tests/integration/spmd_foreach_active.tl`, `tests/spmd/foreach_active_simd_reject.tl` |
@@ -8949,20 +9209,29 @@ checker.
 Propagation uses the Lisp-shaped `(try expr)` form. It is analogous to Rust
 `?` or Zig `try`, but it operates on concrete option/result families rather
 than generic traits or implicit conversions. A convention-compatible concrete
-family is a concrete enum with exactly one `Ok*` payload variant and one
-`Err*` payload variant (result-like), or exactly one `Some*` payload variant
-and one `None*` absence variant (option-like).
+family is a concrete enum with exactly two variants: an `Ok*` variant and an
+`Err*` variant with exactly one payload (result-like), or a `Some*` variant
+with one payload and a `None*` variant with none (option-like). The `Ok*`
+variant of a `try` operand has at most one payload, since that payload is the
+value `try` yields.
 
 - For a recoverable-error result, `(try expr)` evaluates `expr` once. On the
-  success variant it unwraps and yields the success payload. On the error
-  variant it returns from the enclosing function with the compatible error
-  variant carrying the same error payload.
+  success variant it unwraps and yields the success payload, or `unit` when
+  the `Ok*` variant has no payload. On the error variant it returns from the
+  enclosing function with that function's `Err*` variant carrying the same
+  error payload. Like `return`, the early exit runs the active `with`
+  cleanups and `with-arena` resets first.
 - For an absence-only option, `(try expr)` unwraps `Some`/`Some*` and returns
   the enclosing compatible `None`/`None*` on absence.
-- Compatibility is exact-family compatibility. There is no trait-like `From`
-  conversion, no cross-family conversion, and no implicit option-to-result
-  conversion; conversions between families are written as explicit helper
-  functions.
+- Two result-like families are compatible when their `Err*` payload types are
+  equal; the families themselves may differ. A function returning a
+  `ResultBool` with an `ErrBool String` variant can `(try ...)` a
+  `ResultI64` with an `ErrI64 String` variant. The enclosing family is only
+  built through its `Err*` variant, so its `Ok*` variant may carry any
+  payloads or none. Any two option-like families are compatible. The error
+  payload is passed on unchanged: there is no trait-like `From` conversion of
+  the payload and no implicit option-to-result conversion; those are written
+  as explicit helper functions or matches.
 - `(try expr)` is valid only inside an enclosing function whose return type
   is a compatible generated family or convention-compatible concrete family.
 - `(try expr)` is rejected inside `foreach`/SPMD bodies because its
@@ -8987,6 +9256,51 @@ and one `None*` absence variant (option-like).
 (define (read-plus-one [text : String]) : ResultI64
   (let [value : i64 (try (read-small text))]
     (OkI64 (+ value 1))))
+```
+
+The three families below share the `String` error payload, so each `try`
+propagates into `RangeResult`. `CheckResult` has a payload-free `Ok*`
+variant, so its `try` yields `unit`.
+
+```lisp test=compile name=result-try-cross-family
+(import stdlib.string)
+
+(defenum ParseResult
+  (OkParse i64)
+  (ErrParse String))
+
+(defenum CheckResult
+  (OkCheck)
+  (ErrCheck String))
+
+(defenum RangeResult
+  (OkRange bool)
+  (ErrRange String))
+
+(define (parse [text : String]) : ParseResult
+  (if (string.eq text "7")
+    (OkParse 7)
+    (ErrParse "not a number")))
+
+(define (check-small [n : i64]) : CheckResult
+  (if (< n 10)
+    OkCheck
+    (ErrCheck "too large")))
+
+(define (positive-small [text : String]) : RangeResult
+  (let
+    [n : i64 (try (parse text))]
+    (begin
+      (try (check-small n))
+      (OkRange (> n 0)))))
+
+(define (main) : i64
+  (match (positive-small "7")
+    [(OkRange positive)
+      (if positive
+        1
+        0)]
+    [(ErrRange message) (string.string-length message)]))
 ```
 
 Propagation into an incompatible family is rejected: a function returning a
@@ -9055,7 +9369,7 @@ Selected Command Forms:
   typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
   typelisp run [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock] [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
-  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case]
+  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--redundant-begin] [--prefer-dotted-field] [--name-case]
   typelisp test [<file.tl>] [--check]
   typelisp inspect <file.tlci>
 ```
@@ -9176,7 +9490,13 @@ checked-in audited module allowlist. Identifier text in comments and string
 literals is not a call and does not trigger the rule. Prefer `in-arena`,
 `with-scratch`, `with-arena`, `rewind-safe!`, or `destroy-safe!` in new code.
 Opt-in rules: `--deprecated-string-concat` (deprecated concat primitives),
-`--redundant-function-name` (redundant module-prefix names), and
+`--redundant-function-name` (redundant module-prefix names),
+`--redundant-begin` (a `begin` of two or more forms, none of them a `cfg`
+form, written as a body form of a position that already takes a body
+sequence, with a machine-applicable fix
+that splices its forms into that body; under `when` and `unless`, whose body
+forms must each be `unit`, it reports only when the forms the splice exposes
+are syntactically `unit`), and
 `--prefer-dotted-field` is a deprecated no-op retained for CLI compatibility
 now that dotted field projection is the only public spelling.
 `--name-case` enables four independently suppressible rules:
@@ -9670,12 +9990,12 @@ expr          ::= literal
 macro-call    ::= "(" qualified-name call-operand* ")"
 
 call-operand  ::= expr
-                | "[" expr expr "]"            ; macro-only ExprClause operand
+                | "[" expr expr+ "]"           ; macro-only ExprClause operand
                 | "[" ident expr "]"           ; macro-only ExprBindingClause operand
                 | "[" ident ":" type expr "]"  ; macro-only ExprBindingClause operand
 
-cond-clause   ::= "[" expr expr "]"
-cond-else-clause ::= "[" "else" expr "]"
+cond-clause   ::= "[" expr expr+ "]"              ; implicit begin
+cond-else-clause ::= "[" "else" expr+ "]"
 
 borrow-expr   ::= "(" "&" borrow-place ")"
                 | "(" "&" ident borrow-place ")"
@@ -9710,7 +10030,7 @@ compact-clause ::= "(" "[" ident ":" type expr expr "]"
                          "[" ident ":" type expr "]" ")"
 reduce-op     ::= "sum" | "min" | "max" | "all" | "any"
 spmd-lane-form ::= "program-index" | "program-count"
-match-arm     ::= "[" pattern expr "]"
+match-arm     ::= "[" pattern expr+ "]"           ; implicit begin
 pattern       ::= "_"
                 | literal
                 | ident

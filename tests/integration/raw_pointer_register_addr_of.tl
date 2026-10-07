@@ -19,10 +19,9 @@
     [field : (MutPtr i32)
       (unsafe
         (ptr-addr-of item.b))]
-    (begin
-      (unsafe
-        (ptr-write! field (cast 33 : i32)))
-      (+ (cast item.a : i64) (cast item.b : i64)))))
+    (unsafe
+      (ptr-write! field (cast 33 : i32)))
+    (+ (cast item.a : i64) (cast item.b : i64))))
 
 (define (two-word-field-write-score) : i64
   (let
@@ -30,10 +29,9 @@
     [field : (MutPtr i64)
       (unsafe
         (ptr-addr-of item.y))]
-    (begin
-      (unsafe
-        (ptr-write! field 77))
-      (+ item.x item.y))))
+    (unsafe
+      (ptr-write! field 77))
+    (+ item.x item.y)))
 
 (define (whole-local-address-score) : i64
   (let
@@ -44,16 +42,15 @@
     [field : (MutPtr i64)
       (unsafe
         (ptr-addr-of item.x))]
-    (begin
+    (unsafe
+      (ptr-write! field 9))
+    (if (=
       (unsafe
-        (ptr-write! field 9))
-      (if (=
-        (unsafe
-          (ptr->int addr))
-        (unsafe
-          (ptr->int (ptr-addr-of item))))
-        (+ item.x item.y)
-        1000))))
+        (ptr->int addr))
+      (unsafe
+        (ptr->int (ptr-addr-of item))))
+      (+ item.x item.y)
+      1000)))
 
 (define (nested-field-write-score) : i64
   (let
@@ -61,10 +58,9 @@
     [field : (MutPtr i32)
       (unsafe
         (ptr-addr-of wrap.tiny.b))]
-    (begin
-      (unsafe
-        (ptr-write! field (cast 44 : i32)))
-      (+ (cast wrap.tiny.a : i64) (cast wrap.tiny.b : i64)))))
+    (unsafe
+      (ptr-write! field (cast 44 : i32)))
+    (+ (cast wrap.tiny.a : i64) (cast wrap.tiny.b : i64))))
 
 (define (main) : i64
   (let

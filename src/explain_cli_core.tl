@@ -205,6 +205,9 @@ See also:
 Description:
     An owning value or projection was consumed and then used again, or a move
     was attempted through a global/shared place that cannot transfer ownership.
+    A non-Copy value read through a `(& T)` or `(&mut T)` reference is not
+    owned by the reader: passing, binding, constructing with or returning it
+    by value would move it out of the reference.
 
 Minimal failing example:
     (import stdlib.string)
@@ -215,10 +218,12 @@ Minimal failing example:
 
 Fix:
     Use the value only before it is consumed, transfer it once, or explicitly
-    clone data whose type supports an independent owned copy.
+    clone data whose type supports an independent owned copy. For a value
+    read through a reference, borrow it with `(& ...)` instead.
 
 See also:
-    SPEC.md, \"Move semantics\"; tests/safety/box_take_use_after_move_reject.tl.
+    SPEC.md, \"Move semantics\"; tests/safety/box_take_use_after_move_reject.tl;
+    tests/safety/move_out_of_reference_call_arg_reject.tl.
 ")
 
 (define (diagnostic-explain-e0209) : String
@@ -503,16 +508,14 @@ See also:
     [right-n : i64 (string.string-length right)]
     [index : i64 0]
     [same : bool (= left-n right-n)]
-    (begin
-      (while (and same (< index left-n))
-        (begin
-          (if (=
-            (diagnostic-explain-ascii-fold-char (string.string-ref left index))
-            (diagnostic-explain-ascii-fold-char (string.string-ref right index)))
-            unit
-            (set! same false))
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index left-n))
+      (if (=
+        (diagnostic-explain-ascii-fold-char (string.string-ref left index))
+        (diagnostic-explain-ascii-fold-char (string.string-ref right index)))
+        unit
+        (set! same false))
+      (set! index (+ index 1)))
+    same))
 
 (define (diagnostic-explain-ascii-case-contains
   [haystack : (& haystack str)]
@@ -522,27 +525,24 @@ See also:
     [needle-n : i64 (string.string-length needle)]
     [start : i64 0]
     [found : bool (= needle-n 0)]
-    (begin
-      (while (and (not found) (<= (+ start needle-n) haystack-n))
-        (let
-          [offset : i64 0]
-          [same : bool true]
-          (begin
-            (while (and same (< offset needle-n))
-              (begin
-                (if (=
-                  (diagnostic-explain-ascii-fold-char
-                    (string.string-ref haystack (+ start offset)))
-                  (diagnostic-explain-ascii-fold-char
-                    (string.string-ref needle offset)))
-                  unit
-                  (set! same false))
-                (set! offset (+ offset 1))))
-            (if same
-              (set! found true)
-              unit)))
-        (set! start (+ start 1)))
-      found)))
+    (while (and (not found) (<= (+ start needle-n) haystack-n))
+      (let
+        [offset : i64 0]
+        [same : bool true]
+        (while (and same (< offset needle-n))
+          (if (=
+            (diagnostic-explain-ascii-fold-char
+              (string.string-ref haystack (+ start offset)))
+            (diagnostic-explain-ascii-fold-char
+              (string.string-ref needle offset)))
+            unit
+            (set! same false))
+          (set! offset (+ offset 1)))
+        (if same
+          (set! found true)
+          unit))
+      (set! start (+ start 1)))
+    found))
 
 (define (diagnostic-explain-lookup [code : String]) : DiagnosticExplainLookup
   (cond
@@ -646,53 +646,47 @@ See also:
   (let
     [index : i64 0]
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
-    (begin
-      (while (< index count)
-        (begin
-          (diagnostic-explain-print-registry-row index)
-          (set! index (+ index 1))))
-      0)))
+    (while (< index count)
+      (diagnostic-explain-print-registry-row index)
+      (set! index (+ index 1)))
+    0))
 
 (define (diagnostic-explain-search [term : String]) : i64
   (let
     [index : i64 0]
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
     [matches : i64 0]
-    (begin
-      (while (< index count)
-        (let
-          [code : String (cdiag.compiler-diagnostic-code-registry-code index)]
-          [title : String (cdiag.compiler-diagnostic-code-registry-title index)]
-          (match (diagnostic-explain-lookup (string.copy (& code)))
-            [(DiagnosticExplainDetailed text)
-              (if (or
+    (while (< index count)
+      (let
+        [code : String (cdiag.compiler-diagnostic-code-registry-code index)]
+        [title : String (cdiag.compiler-diagnostic-code-registry-title index)]
+        (match (diagnostic-explain-lookup (string.copy (& code)))
+          [(DiagnosticExplainDetailed text)
+            (when
+              (or
                 (diagnostic-explain-ascii-case-contains code term)
                 (diagnostic-explain-ascii-case-contains title term)
                 (diagnostic-explain-ascii-case-contains text term))
-                (begin
-                  (diagnostic-explain-print-registry-row index)
-                  (set! matches (+ matches 1)))
-                unit)]
-            [DiagnosticExplainUnknown unit]))
-        (set! index (+ index 1)))
-      (if (> matches 0)
-        0
-        (begin
-          (io.print-error
-            (str_cat.str-cat "explain: no diagnostic codes match `" term "`\n"))
-          1)))))
+              (diagnostic-explain-print-registry-row index)
+              (set! matches (+ matches 1)))]
+          [DiagnosticExplainUnknown unit]))
+      (set! index (+ index 1)))
+    (if (> matches 0)
+      0
+      (begin
+        (io.print-error
+          (str_cat.str-cat "explain: no diagnostic codes match `" term "`\n"))
+        1))))
 
 (define (diagnostic-explain-one [code : String]) : i64
   (match (diagnostic-explain-lookup (string.copy (& code)))
     [(DiagnosticExplainDetailed text)
-      (begin
-        (io.print-format "{}" text)
-        0)]
+      (io.print-format "{}" text)
+      0]
     [DiagnosticExplainUnknown
-      (begin
-        (io.print-error
-          (str_cat.str-cat "explain: unknown diagnostic code `" code "`\n"))
-        1)]))
+      (io.print-error
+        (str_cat.str-cat "explain: unknown diagnostic code `" code "`\n"))
+      1]))
 
 (define (diagnostic-explain-run-from [idx : i64] [count : i64]) : i64
   (cond
@@ -712,6 +706,5 @@ See also:
             (io.print-error (diagnostic-explain-help-text))
             1)))]
     [else
-      (begin
-        (io.print-error (diagnostic-explain-help-text))
-        1)]))
+      (io.print-error (diagnostic-explain-help-text))
+      1]))

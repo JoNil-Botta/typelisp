@@ -10,25 +10,23 @@
   (let
     [index : i64 0]
     [total : i64 0]
-    (begin
-      (while (< index 10)
-        (set! index (+ index 1))
-        (when (= index 3) (continue))
-        (unless (< index 5) (break))
-        (set! total (+ total index)))
-      ;; 1 + 2 + 4
-      total)))
+    (while (< index 10)
+      (set! index (+ index 1))
+      (when (= index 3) (continue))
+      (unless (< index 5) (break))
+      (set! total (+ total index)))
+    ;; 1 + 2 + 4
+    total))
 
 (define (for-total) : i64
   (let
     [total : i64 0]
-    (begin
-      (for [index (iterator.range 0 10)]
-        (when (= index 1) (continue))
-        (when (= index 4) (break))
-        (set! total (+ total index)))
-      ;; 0 + 2 + 3
-      total)))
+    (for [index (iterator.range 0 10)]
+      (when (= index 1) (continue))
+      (when (= index 4) (break))
+      (set! total (+ total index)))
+    ;; 0 + 2 + 3
+    total))
 
 (define (main) : i64
   (if (and (= (while-total) 7) (= (for-total) 5))

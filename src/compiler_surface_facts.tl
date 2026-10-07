@@ -85,9 +85,8 @@
     (let
       [index : i64 0]
       (while (< index count)
-        (begin
-          (set! (array-ref dst index) (array-ref src index))
-          (set! index (+ index 1)))))))
+        (set! (array-ref dst index) (array-ref src index))
+        (set! index (+ index 1))))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -101,27 +100,21 @@
           (if (< count 1)
             16
             (* count 2)))]
-      (begin
-        (surface-clone-observation-copy-range!
-          (&mut bigger)
-          (& seq.slots)
-          count)
-        (set! seq.slots bigger)))))
+      (surface-clone-observation-copy-range! (&mut bigger) (& seq.slots) count)
+      (set! seq.slots bigger))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-clone-observation-seq-push!
     [seq : (&mut seq SurfaceCloneObservationSeq)]
     [observation : SurfaceCloneObservation]) : unit
-    (begin
-      (if (< seq.len (array-length seq.slots))
-        unit
-        (surface-clone-observation-seq-grow! seq))
-      (let
-        [index : i64 seq.len]
-        (begin
-          (set! (array-ref seq.slots index) observation)
-          (set! seq.len (+ index 1)))))))
+    (if (< seq.len (array-length seq.slots))
+      unit
+      (surface-clone-observation-seq-grow! seq))
+    (let
+      [index : i64 seq.len]
+      (set! (array-ref seq.slots index) observation)
+      (set! seq.len (+ index 1)))))
 
 (define surface-typecheck-facts-magic : i64
   6073461667468337970)
@@ -163,12 +156,11 @@
         : (Ptr SurfaceTypecheckFacts)))))
 
 (define (surface-typecheck-facts-clear!) : unit
-  (begin
-    (set! surface-typecheck-facts-installed false)
-    (set! surface-typecheck-facts-installed-composite false)
-    (set!
-      (array-ref surface-typecheck-facts-installed-value 0)
-      (surface-typecheck-facts-empty))))
+  (set! surface-typecheck-facts-installed false)
+  (set! surface-typecheck-facts-installed-composite false)
+  (set!
+    (array-ref surface-typecheck-facts-installed-value 0)
+    (surface-typecheck-facts-empty)))
 
 (define (surface-typecheck-facts-active?) : bool
   surface-typecheck-facts-installed)
@@ -227,15 +219,14 @@
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-recording-start! [arena-handle : i64]) : unit
-    (begin
-      (set! surface-typecheck-facts-recording-arena arena-handle)
-      (set! surface-typecheck-facts-recording-decl-key -1)
-      (set!
-        surface-typecheck-facts-recording-observations
-        (surface-clone-observation-seq-empty))
-      (set! surface-typecheck-facts-recording-next-call 0)
-      (set! surface-typecheck-facts-recording-current-call -1)
-      (set! surface-typecheck-facts-recording-active true))))
+    (set! surface-typecheck-facts-recording-arena arena-handle)
+    (set! surface-typecheck-facts-recording-decl-key -1)
+    (set!
+      surface-typecheck-facts-recording-observations
+      (surface-clone-observation-seq-empty))
+    (set! surface-typecheck-facts-recording-next-call 0)
+    (set! surface-typecheck-facts-recording-current-call -1)
+    (set! surface-typecheck-facts-recording-active true)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -247,15 +238,14 @@
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
   (define (surface-typecheck-facts-recording-start-clone-call!) : unit
-    (if surface-typecheck-facts-recording-active
-      (begin
-        (set!
-          surface-typecheck-facts-recording-current-call
-          surface-typecheck-facts-recording-next-call)
-        (set!
-          surface-typecheck-facts-recording-next-call
-          (+ surface-typecheck-facts-recording-next-call 1)))
-      unit)))
+    (when
+      surface-typecheck-facts-recording-active
+      (set!
+        surface-typecheck-facts-recording-current-call
+        surface-typecheck-facts-recording-next-call)
+      (set!
+        surface-typecheck-facts-recording-next-call
+        (+ surface-typecheck-facts-recording-next-call 1)))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -292,37 +282,13 @@
       [call-indices : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [index : i64 0]
       [slots : (__tl_dyn-array SurfaceCloneObservation) observations.slots]
-      (begin
-        (while (< index count)
-          (let
-            [observation : SurfaceCloneObservation (array-ref slots index)]
-            (begin
-              (set! (array-ref decl-keys index) observation.decl-key)
-              (set! (array-ref root-keys index) observation.root-key)
-              (set! (array-ref call-indices index) observation.call-index)
-              (set! index (+ index 1)))))
-        (set! surface-typecheck-facts-recording-active false)
-        (set! surface-typecheck-facts-recording-arena 0)
-        (set! surface-typecheck-facts-recording-decl-key -1)
-        (set!
-          surface-typecheck-facts-recording-observations
-          (surface-clone-observation-seq-empty))
-        (set! surface-typecheck-facts-recording-next-call 0)
-        (set! surface-typecheck-facts-recording-current-call -1)
-        (SurfaceTypecheckFacts
-          macro-prefix-decl-count
-          prefix-decl-count
-          summary-values
-          summary-functions
-          summary-externs
-          decl-keys
-          root-keys
-          call-indices)))))
-
-(cfg
-  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
-  (define (surface-typecheck-facts-recording-abort!) : unit
-    (begin
+      (while (< index count)
+        (let
+          [observation : SurfaceCloneObservation (array-ref slots index)]
+          (set! (array-ref decl-keys index) observation.decl-key)
+          (set! (array-ref root-keys index) observation.root-key)
+          (set! (array-ref call-indices index) observation.call-index)
+          (set! index (+ index 1))))
       (set! surface-typecheck-facts-recording-active false)
       (set! surface-typecheck-facts-recording-arena 0)
       (set! surface-typecheck-facts-recording-decl-key -1)
@@ -330,7 +296,28 @@
         surface-typecheck-facts-recording-observations
         (surface-clone-observation-seq-empty))
       (set! surface-typecheck-facts-recording-next-call 0)
-      (set! surface-typecheck-facts-recording-current-call -1))))
+      (set! surface-typecheck-facts-recording-current-call -1)
+      (SurfaceTypecheckFacts
+        macro-prefix-decl-count
+        prefix-decl-count
+        summary-values
+        summary-functions
+        summary-externs
+        decl-keys
+        root-keys
+        call-indices))))
+
+(cfg
+  (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
+  (define (surface-typecheck-facts-recording-abort!) : unit
+    (set! surface-typecheck-facts-recording-active false)
+    (set! surface-typecheck-facts-recording-arena 0)
+    (set! surface-typecheck-facts-recording-decl-key -1)
+    (set!
+      surface-typecheck-facts-recording-observations
+      (surface-clone-observation-seq-empty))
+    (set! surface-typecheck-facts-recording-next-call 0)
+    (set! surface-typecheck-facts-recording-current-call -1)))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -361,27 +348,26 @@
         (= count (array-length root-keys))
         (= count (array-length call-indices))
         (<= count surface-typecheck-facts-max-clone-observations))]
-    (begin
-      (while (and ok (< index count))
-        (let
-          [decl-key : i64 (array-ref decl-keys index)]
-          [root-key : i64 (array-ref root-keys index)]
-          [call-index : i64 (array-ref call-indices index)]
-          (if (and
-            (>= decl-key 0)
-            (>= root-key 0)
-            (>= call-index 0)
-            (< call-index surface-typecheck-facts-max-count)
-            (or
-              (= index 0)
-              (and
-                (>= call-index (array-ref call-indices (- index 1)))
-                (or
-                  (not (= call-index (array-ref call-indices (- index 1))))
-                  (= decl-key (array-ref decl-keys (- index 1)))))))
-            (set! index (+ index 1))
-            (set! ok false))))
-      ok)))
+    (while (and ok (< index count))
+      (let
+        [decl-key : i64 (array-ref decl-keys index)]
+        [root-key : i64 (array-ref root-keys index)]
+        [call-index : i64 (array-ref call-indices index)]
+        (if (and
+          (>= decl-key 0)
+          (>= root-key 0)
+          (>= call-index 0)
+          (< call-index surface-typecheck-facts-max-count)
+          (or
+            (= index 0)
+            (and
+              (>= call-index (array-ref call-indices (- index 1)))
+              (or
+                (not (= call-index (array-ref call-indices (- index 1))))
+                (= decl-key (array-ref decl-keys (- index 1)))))))
+          (set! index (+ index 1))
+          (set! ok false))))
+    ok))
 
 (define (surface-typecheck-facts-valid?
   [facts : (& facts SurfaceTypecheckFacts)]) : bool
@@ -529,9 +515,8 @@
   (let
     [index : i64 0]
     (while (< index (array-length src))
-      (begin
-        (set! (array-ref dst (+ dst-offset index)) (array-ref src index))
-        (set! index (+ index 1))))))
+      (set! (array-ref dst (+ dst-offset index)) (array-ref src index))
+      (set! index (+ index 1)))))
 
 (define (surface-typecheck-facts-builder-append
   [builder : SurfaceTypecheckFactsBuilder]
@@ -540,11 +525,9 @@
     [(not
         (surface-typecheck-facts-builder-valid?
           (surface-facts-shared-view builder)))
-      (ResultSurfaceTypecheckFactsBuilder.Err
-        "surface facts: invalid composition builder")]
+      (Err "surface facts: invalid composition builder")]
     [(not (surface-typecheck-facts-valid? fragment))
-      (ResultSurfaceTypecheckFactsBuilder.Err
-        "surface facts: invalid composition fragment")]
+      (Err "surface facts: invalid composition fragment")]
     [else
       (let
         [builder-count : i64 (array-length builder.clone-decl-keys)]
@@ -584,8 +567,7 @@
           (>
             base-call-index
             (- surface-typecheck-facts-max-count call-range-size)))
-          (ResultSurfaceTypecheckFactsBuilder.Err
-            "surface facts: composition count limit exceeded")
+          (Err "surface facts: composition count limit exceeded")
           (let
             [combined-count : i64 (+ builder-count fragment-count)]
             [decl-keys : (__tl_dyn-array i64)
@@ -595,49 +577,47 @@
             [call-indices : (__tl_dyn-array i64)
               (__tl_make-array i64 combined-count)]
             [index : i64 0]
-            (begin
-              (surface-typecheck-facts-copy-i64-range!
-                (&mut decl-keys)
-                0
-                (& builder.clone-decl-keys))
-              (surface-typecheck-facts-copy-i64-range!
-                (&mut root-keys)
-                0
-                (& builder.clone-root-keys))
-              (surface-typecheck-facts-copy-i64-range!
-                (&mut call-indices)
-                0
-                (& builder.clone-call-indices))
-              (surface-typecheck-facts-copy-i64-range!
-                (&mut decl-keys)
-                builder-count
-                (& fragment.clone-decl-keys))
-              (surface-typecheck-facts-copy-i64-range!
-                (&mut root-keys)
-                builder-count
-                (& fragment.clone-root-keys))
-              (while (< index fragment-count)
-                (begin
-                  (set!
-                    (array-ref call-indices (+ builder-count index))
-                    (+
-                      base-call-index
-                      (array-ref fragment.clone-call-indices index)))
-                  (set! index (+ index 1))))
-              (ResultSurfaceTypecheckFactsBuilder.Ok
-                (SurfaceTypecheckFactsBuilder
-                  (+ builder.fragment-count 1)
-                  (+
-                    builder.macro-prefix-decl-count
-                    fragment.macro-prefix-decl-count)
-                  (+ builder.prefix-decl-count fragment.prefix-decl-count)
-                  (+ builder.summary-values fragment.summary-values)
-                  (+ builder.summary-functions fragment.summary-functions)
-                  (+ builder.summary-externs fragment.summary-externs)
-                  decl-keys
-                  root-keys
-                  call-indices
-                  (+ base-call-index call-range-size)))))))]))
+            (surface-typecheck-facts-copy-i64-range!
+              (&mut decl-keys)
+              0
+              (& builder.clone-decl-keys))
+            (surface-typecheck-facts-copy-i64-range!
+              (&mut root-keys)
+              0
+              (& builder.clone-root-keys))
+            (surface-typecheck-facts-copy-i64-range!
+              (&mut call-indices)
+              0
+              (& builder.clone-call-indices))
+            (surface-typecheck-facts-copy-i64-range!
+              (&mut decl-keys)
+              builder-count
+              (& fragment.clone-decl-keys))
+            (surface-typecheck-facts-copy-i64-range!
+              (&mut root-keys)
+              builder-count
+              (& fragment.clone-root-keys))
+            (while (< index fragment-count)
+              (set!
+                (array-ref call-indices (+ builder-count index))
+                (+
+                  base-call-index
+                  (array-ref fragment.clone-call-indices index)))
+              (set! index (+ index 1)))
+            (Ok
+              (SurfaceTypecheckFactsBuilder
+                (+ builder.fragment-count 1)
+                (+
+                  builder.macro-prefix-decl-count
+                  fragment.macro-prefix-decl-count)
+                (+ builder.prefix-decl-count fragment.prefix-decl-count)
+                (+ builder.summary-values fragment.summary-values)
+                (+ builder.summary-functions fragment.summary-functions)
+                (+ builder.summary-externs fragment.summary-externs)
+                decl-keys
+                root-keys
+                call-indices
+                (+ base-call-index call-range-size))))))]))
 
 (define (surface-typecheck-facts-builder-finish
   [builder : SurfaceTypecheckFactsBuilder]) : ResultSurfaceTypecheckFacts
@@ -646,9 +626,8 @@
     (not
       (surface-typecheck-facts-builder-valid?
         (surface-facts-shared-view builder))))
-    (ResultSurfaceTypecheckFacts.Err
-      "surface facts: empty or invalid composition")
-    (ResultSurfaceTypecheckFacts.Ok
+    (Err "surface facts: empty or invalid composition")
+    (Ok
       (SurfaceTypecheckFacts
         builder.macro-prefix-decl-count
         builder.prefix-decl-count
@@ -667,8 +646,7 @@
     [source-count : i64]
     [identity-count : i64]) : ResultSurfaceTypecheckFactBytes
     (if (not (surface-typecheck-facts-valid? facts))
-      (ResultSurfaceTypecheckFactBytes.Err
-        "surface facts: invalid checked-prefix facts")
+      (Err "surface facts: invalid checked-prefix facts")
       (let
         [decl-keys : (__tl_dyn-array i64) facts.clone-decl-keys]
         [root-keys : (__tl_dyn-array i64) facts.clone-root-keys]
@@ -677,41 +655,38 @@
           (byte_buf_core.byte-buf-builder-new)]
         [index : i64 0]
         [ok : bool true]
-        (begin
-          (byte_le.push-u64! (&mut out) surface-typecheck-facts-magic)
-          (byte_le.push-u64! (&mut out) surface-typecheck-facts-schema-version)
-          (byte_le.push-u64! (&mut out) facts.macro-prefix-decl-count)
-          (byte_le.push-u64! (&mut out) facts.prefix-decl-count)
-          (byte_le.push-u64! (&mut out) facts.summary-values)
-          (byte_le.push-u64! (&mut out) facts.summary-functions)
-          (byte_le.push-u64! (&mut out) facts.summary-externs)
-          (byte_le.push-u64! (&mut out) (array-length decl-keys))
-          (while (and ok (< index (array-length decl-keys)))
-            (let
-              [decl-key : i64
-                (surface_identity.surface-identity-portable-id
-                  structural-session
-                  (array-ref decl-keys index)
-                  source-count
-                  identity-count)]
-              [root-key : i64
-                (surface_identity.surface-identity-portable-id
-                  structural-session
-                  (array-ref root-keys index)
-                  source-count
-                  identity-count)]
-              (if (or (< decl-key 0) (< root-key 0))
-                (set! ok false)
-                (begin
-                  (byte_le.push-u64! (&mut out) decl-key)
-                  (byte_le.push-u64! (&mut out) root-key)
-                  (byte_le.push-u64! (&mut out) (array-ref call-indices index))
-                  (set! index (+ index 1))))))
-          (if ok
-            (ResultSurfaceTypecheckFactBytes.Ok
-              (byte_buf_core.byte-buf-builder-finish-array (& out)))
-            (ResultSurfaceTypecheckFactBytes.Err
-              "surface facts: identity is not relocatable")))))))
+        (byte_le.push-u64! (&mut out) surface-typecheck-facts-magic)
+        (byte_le.push-u64! (&mut out) surface-typecheck-facts-schema-version)
+        (byte_le.push-u64! (&mut out) facts.macro-prefix-decl-count)
+        (byte_le.push-u64! (&mut out) facts.prefix-decl-count)
+        (byte_le.push-u64! (&mut out) facts.summary-values)
+        (byte_le.push-u64! (&mut out) facts.summary-functions)
+        (byte_le.push-u64! (&mut out) facts.summary-externs)
+        (byte_le.push-u64! (&mut out) (array-length decl-keys))
+        (while (and ok (< index (array-length decl-keys)))
+          (let
+            [decl-key : i64
+              (surface_identity.surface-identity-portable-id
+                structural-session
+                (array-ref decl-keys index)
+                source-count
+                identity-count)]
+            [root-key : i64
+              (surface_identity.surface-identity-portable-id
+                structural-session
+                (array-ref root-keys index)
+                source-count
+                identity-count)]
+            (if (or (< decl-key 0) (< root-key 0))
+              (set! ok false)
+              (begin
+                (byte_le.push-u64! (&mut out) decl-key)
+                (byte_le.push-u64! (&mut out) root-key)
+                (byte_le.push-u64! (&mut out) (array-ref call-indices index))
+                (set! index (+ index 1))))))
+        (if ok
+          (Ok (byte_buf_core.byte-buf-builder-finish-array (& out)))
+          (Err "surface facts: identity is not relocatable"))))))
 
 (define (surface-typecheck-fact-reader-u64!
   [reader : (&mut reader byte_reader.ByteReader)]) : i64
@@ -719,13 +694,12 @@
     (byte_reader.read-u64! reader)
     (let
       [offset : i64 reader.offset]
-      (begin
-        (byte_reader.fail!
-          reader
-          byte_reader.error-truncated
-          offset
-          "surface facts: truncated u64")
-        -1))))
+      (byte_reader.fail!
+        reader
+        byte_reader.error-truncated
+        offset
+        "surface facts: truncated u64")
+      -1)))
 
 (define (surface-typecheck-facts-portable-id-valid?
   [id : i64]
@@ -766,73 +740,66 @@
       (< summary-externs 0)
       (< clone-count 0)
       (> clone-count surface-typecheck-facts-max-clone-observations))
-      (ResultSurfaceTypecheckFacts.Err
-        "surface facts: bad magic, schema, or count")
+      (Err "surface facts: bad magic, schema, or count")
       (let
         [decl-keys : (__tl_dyn-array i64) (__tl_make-array i64 clone-count)]
         [root-keys : (__tl_dyn-array i64) (__tl_make-array i64 clone-count)]
         [call-indices : (__tl_dyn-array i64) (__tl_make-array i64 clone-count)]
         [identity-count : i64 (array-length remap)]
         [index : i64 0]
-        (begin
-          (while (and reader.ok? (< index clone-count))
-            (let
-              [decl-key : i64
-                (surface-typecheck-fact-reader-u64! (&mut reader))]
-              [root-key : i64
-                (surface-typecheck-fact-reader-u64! (&mut reader))]
-              [call-index : i64
-                (surface-typecheck-fact-reader-u64! (&mut reader))]
-              (if (or
-                (not
-                  (surface-typecheck-facts-portable-id-valid?
-                    decl-key
-                    identity-count))
-                (not
-                  (surface-typecheck-facts-portable-id-valid?
-                    root-key
-                    identity-count))
-                (< call-index 0))
-                (let
-                  [offset : i64 reader.offset]
-                  (byte_reader.fail!
-                    (&mut reader)
-                    byte_reader.error-invalid
-                    offset
-                    "surface facts: invalid identity reference"))
-                (begin
-                  (set!
-                    (array-ref decl-keys index)
-                    (surface_identity.surface-identity-resolve-portable-id
-                      structural-session
-                      decl-key
-                      remap))
-                  (set!
-                    (array-ref root-keys index)
-                    (surface_identity.surface-identity-resolve-portable-id
-                      structural-session
-                      root-key
-                      remap))
-                  (set! (array-ref call-indices index) call-index)
-                  (set! index (+ index 1))))))
+        (while (and reader.ok? (< index clone-count))
           (let
-            [facts : SurfaceTypecheckFacts
-              (SurfaceTypecheckFacts
-                macro-prefix-decl-count
-                prefix-decl-count
-                summary-values
-                summary-functions
-                summary-externs
-                decl-keys
-                root-keys
-                call-indices)]
-            (cond
-              [(not reader.ok?)
-                (ResultSurfaceTypecheckFacts.Err reader.error-message)]
-              [(not (= reader.offset reader.end))
-                (ResultSurfaceTypecheckFacts.Err
-                  "surface facts: trailing payload bytes")]
-              [(not (surface-typecheck-facts-valid? facts))
-                (ResultSurfaceTypecheckFacts.Err
-                  "surface facts: invalid checked-prefix facts")]
-              [else (ResultSurfaceTypecheckFacts.Ok facts)])))))))
+            [decl-key : i64 (surface-typecheck-fact-reader-u64! (&mut reader))]
+            [root-key : i64 (surface-typecheck-fact-reader-u64! (&mut reader))]
+            [call-index : i64
+              (surface-typecheck-fact-reader-u64! (&mut reader))]
+            (if (or
+              (not
+                (surface-typecheck-facts-portable-id-valid?
+                  decl-key
+                  identity-count))
+              (not
+                (surface-typecheck-facts-portable-id-valid?
+                  root-key
+                  identity-count))
+              (< call-index 0))
+              (let
+                [offset : i64 reader.offset]
+                (byte_reader.fail!
+                  (&mut reader)
+                  byte_reader.error-invalid
+                  offset
+                  "surface facts: invalid identity reference"))
+              (begin
+                (set!
+                  (array-ref decl-keys index)
+                  (surface_identity.surface-identity-resolve-portable-id
+                    structural-session
+                    decl-key
+                    remap))
+                (set!
+                  (array-ref root-keys index)
+                  (surface_identity.surface-identity-resolve-portable-id
+                    structural-session
+                    root-key
+                    remap))
+                (set! (array-ref call-indices index) call-index)
+                (set! index (+ index 1))))))
+        (let
+          [facts : SurfaceTypecheckFacts
+            (SurfaceTypecheckFacts
+              macro-prefix-decl-count
+              prefix-decl-count
+              summary-values
+              summary-functions
+              summary-externs
+              decl-keys
+              root-keys
+              call-indices)]
+          (cond
+            [(not reader.ok?) (Err reader.error-message)]
+            [(not (= reader.offset reader.end))
+              (Err "surface facts: trailing payload bytes")]
+            [(not (surface-typecheck-facts-valid? facts))
+              (Err "surface facts: invalid checked-prefix facts")]
+            [else (Ok facts)]))))))

@@ -6,9 +6,8 @@
   (calls i64))
 
 (define (debug-counted [state : (&mut state DebugEvalState)] [value : i16]) : i16
-  (begin
-    (set! state.calls (+ state.calls 1))
-    value))
+  (set! state.calls (+ state.calls 1))
+  value)
 
 (define (debug-shared-i16 [value : (& value i16)]) : String
   (format.format "{:?}" value))
@@ -34,12 +33,11 @@
   (let
     [common : format.FormatOptions
       (format.FormatOptions ' ' 0 0 true false 0 false 0)]
-    [options : format.DebugOptions
-      (format.DebugOptions common (format.DebugUpperHex))]
+    [options : format.DebugOptions (format.DebugOptions common (DebugUpperHex))]
     (and
       options.format-options.alternate
       (match options.integer-mode
-        [(format.DebugUpperHex) true]
+        [(DebugUpperHex) true]
         [_ false]))))
 
 (define (debug-integer-ok?) : bool

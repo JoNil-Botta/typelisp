@@ -15,9 +15,8 @@
   (let
     [p : Pair (Pair 7 35)]
     [n : i64 41]
-    (begin
-      (set-pair-x! (&mut p) 40)
-      (touch-scalar! (&mut n))
-      (if (and (= p.x 40) (= p.y 35) (= n 41))
-        42
-        1))))
+    (set-pair-x! (&mut p) 40)
+    (touch-scalar! (&mut n))
+    (if (and (= p.x 40) (= p.y 35) (= n 41))
+      42
+      1)))

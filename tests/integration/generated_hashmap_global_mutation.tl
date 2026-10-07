@@ -9,15 +9,14 @@
   99)
 
 (define (generated-hashmap-fill-global!) : unit
-  (begin
-    (string_i64_map.insert! generated-hashmap-global "k0" 0)
-    (string_i64_map.insert! generated-hashmap-global "k1" 1)
-    (string_i64_map.insert! generated-hashmap-global "k2" 2)
-    (string_i64_map.insert! generated-hashmap-global "k3" 3)
-    (string_i64_map.insert! generated-hashmap-global "k4" 4)
-    (string_i64_map.insert! generated-hashmap-global "k5" 5)
-    (string_i64_map.insert! generated-hashmap-global "k6" 6)
-    (string_i64_map.insert! generated-hashmap-global "k7" 7)))
+  (string_i64_map.insert! generated-hashmap-global "k0" 0)
+  (string_i64_map.insert! generated-hashmap-global "k1" 1)
+  (string_i64_map.insert! generated-hashmap-global "k2" 2)
+  (string_i64_map.insert! generated-hashmap-global "k3" 3)
+  (string_i64_map.insert! generated-hashmap-global "k4" 4)
+  (string_i64_map.insert! generated-hashmap-global "k5" 5)
+  (string_i64_map.insert! generated-hashmap-global "k6" 6)
+  (string_i64_map.insert! generated-hashmap-global "k7" 7))
 
 (define (generated-hashmap-value [key : String]) : i64
   (string_i64_map.lookup-value-or
@@ -34,11 +33,10 @@
       (+ (generated-hashmap-value "k6") (generated-hashmap-value "k7")))))
 
 (define (main) : i64
-  (begin
-    (generated-hashmap-fill-global!)
-    (if (and
-      (= generated-hashmap-sentinel 99)
-      (= (string_i64_map.len (& generated-hashmap-global)) 8)
-      (= (generated-hashmap-score) 28))
-      42
-      1)))
+  (generated-hashmap-fill-global!)
+  (if (and
+    (= generated-hashmap-sentinel 99)
+    (= (string_i64_map.len (& generated-hashmap-global)) 8)
+    (= (generated-hashmap-score) 28))
+    42
+    1))

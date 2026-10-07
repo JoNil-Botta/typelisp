@@ -39,12 +39,11 @@
     [f32-slots (f32v.slots-mut f32s)]
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref u64-slots i) (cast (+ (* i 11) 7) : u64))
-        (set! (array-ref u32-slots i) (cast (+ (* i 13) 9) : u32))
-        (set! (array-ref f64-slots i) (math.f64-from-bits (f64-bits i)))
-        (set! (array-ref f32-slots i) (math.f32-from-bits (f32-bits i)))
-        (set! i (+ i 1))))))
+      (set! (array-ref u64-slots i) (cast (+ (* i 11) 7) : u64))
+      (set! (array-ref u32-slots i) (cast (+ (* i 13) 9) : u32))
+      (set! (array-ref f64-slots i) (math.f64-from-bits (f64-bits i)))
+      (set! (array-ref f32-slots i) (math.f32-from-bits (f32-bits i)))
+      (set! i (+ i 1)))))
 
 (define (same
   [u64s : (& u64s u64v.Vec)]
@@ -67,29 +66,27 @@
     [outf32-slots (f32v.slots outf32)]
     [i : i64 0]
     [ok : bool true]
-    (begin
-      (while (< i n)
-        (begin
-          (if (not (= (array-ref u64-slots i) (array-ref out64-slots i)))
-            (set! ok false)
-            unit)
-          (if (not (= (array-ref u32-slots i) (array-ref out32-slots i)))
-            (set! ok false)
-            unit)
-          (if (not
-            (=
-              (math.f64-to-bits (array-ref f64-slots i))
-              (math.f64-to-bits (array-ref outf64-slots i))))
-            (set! ok false)
-            unit)
-          (if (not
-            (=
-              (math.f32-to-bits (array-ref f32-slots i))
-              (math.f32-to-bits (array-ref outf32-slots i))))
-            (set! ok false)
-            unit)
-          (set! i (+ i 1))))
-      ok)))
+    (while (< i n)
+      (if (not (= (array-ref u64-slots i) (array-ref out64-slots i)))
+        (set! ok false)
+        unit)
+      (if (not (= (array-ref u32-slots i) (array-ref out32-slots i)))
+        (set! ok false)
+        unit)
+      (if (not
+        (=
+          (math.f64-to-bits (array-ref f64-slots i))
+          (math.f64-to-bits (array-ref outf64-slots i))))
+        (set! ok false)
+        unit)
+      (if (not
+        (=
+          (math.f32-to-bits (array-ref f32-slots i))
+          (math.f32-to-bits (array-ref outf32-slots i))))
+        (set! ok false)
+        unit)
+      (set! i (+ i 1)))
+    ok))
 
 (define (main) : i64
   (let
@@ -102,49 +99,48 @@
     [outf64 : f64v.Vec (f64z.make n)]
     [f32s : f32v.Vec (f32z.make n)]
     [outf32 : f32v.Vec (f32z.make n)]
-    (begin
-      (init (&mut u64s) (&mut u32s) (&mut f64s) (&mut f32s) n)
-      (let
-        [src (u64v.slots (& u64s))]
-        [dst (u64v.slots-mut (&mut out64))]
-        (foreach
-          ([i : i64 0 n])
-          (set!
-            (array-ref dst i)
-            (spmd-shuffle (array-ref src i) (program-index)))))
-      (let
-        [src (u32v.slots (& u32s))]
-        [dst (u32v.slots-mut (&mut out32))]
-        (foreach
-          ([i : i64 0 n])
-          (set!
-            (array-ref dst i)
-            (spmd-shuffle (array-ref src i) (program-index)))))
-      (let
-        [src (f64v.slots (& f64s))]
-        [dst (f64v.slots-mut (&mut outf64))]
-        (foreach
-          ([i : i64 0 n])
-          (set!
-            (array-ref dst i)
-            (spmd-shuffle (array-ref src i) (program-index)))))
-      (let
-        [src (f32v.slots (& f32s))]
-        [dst (f32v.slots-mut (&mut outf32))]
-        (foreach
-          ([i : i64 0 n])
-          (set!
-            (array-ref dst i)
-            (spmd-shuffle (array-ref src i) (program-index)))))
-      (if (same
-        (& u64s)
-        (& out64)
-        (& u32s)
-        (& out32)
-        (& f64s)
-        (& outf64)
-        (& f32s)
-        (& outf32)
-        n)
-        42
-        1))))
+    (init (&mut u64s) (&mut u32s) (&mut f64s) (&mut f32s) n)
+    (let
+      [src (u64v.slots (& u64s))]
+      [dst (u64v.slots-mut (&mut out64))]
+      (foreach
+        ([i : i64 0 n])
+        (set!
+          (array-ref dst i)
+          (spmd-shuffle (array-ref src i) (program-index)))))
+    (let
+      [src (u32v.slots (& u32s))]
+      [dst (u32v.slots-mut (&mut out32))]
+      (foreach
+        ([i : i64 0 n])
+        (set!
+          (array-ref dst i)
+          (spmd-shuffle (array-ref src i) (program-index)))))
+    (let
+      [src (f64v.slots (& f64s))]
+      [dst (f64v.slots-mut (&mut outf64))]
+      (foreach
+        ([i : i64 0 n])
+        (set!
+          (array-ref dst i)
+          (spmd-shuffle (array-ref src i) (program-index)))))
+    (let
+      [src (f32v.slots (& f32s))]
+      [dst (f32v.slots-mut (&mut outf32))]
+      (foreach
+        ([i : i64 0 n])
+        (set!
+          (array-ref dst i)
+          (spmd-shuffle (array-ref src i) (program-index)))))
+    (if (same
+      (& u64s)
+      (& out64)
+      (& u32s)
+      (& out32)
+      (& f64s)
+      (& outf64)
+      (& f32s)
+      (& outf32)
+      n)
+      42
+      1)))

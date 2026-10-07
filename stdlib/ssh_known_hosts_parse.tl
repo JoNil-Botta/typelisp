@@ -248,36 +248,32 @@
     [count : i64 (- end start)]
     [index : i64 0]
     [same : bool (= count (byte_buf.bytes-length expected))]
-    (begin
-      (while (and same (< index count))
-        (begin
-          (if (!=
-            (byte_buf.bytes-ref input (+ start index))
-            (byte_buf.bytes-ref expected index))
-            (set! same false)
-            unit)
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index count))
+      (if (!=
+        (byte_buf.bytes-ref input (+ start index))
+        (byte_buf.bytes-ref expected index))
+        (set! same false)
+        unit)
+      (set! index (+ index 1)))
+    same))
 
 ;: Skip ASCII field separators within one already-bounded line.
 (define (skip-space-tab [input : (& input bytes)] [cursor : i64] [end : i64]) : i64
   (let
     [index : i64 cursor]
-    (begin
-      (while (and (< index end) (space-tab? (byte_buf.bytes-ref input index)))
-        (set! index (+ index 1)))
-      index)))
+    (while (and (< index end) (space-tab? (byte_buf.bytes-ref input index)))
+      (set! index (+ index 1)))
+    index))
 
 ;: Return the end of one whitespace-delimited structural token.
 (define (token-end [input : (& input bytes)] [cursor : i64] [end : i64]) : i64
   (let
     [index : i64 cursor]
-    (begin
-      (while (and
-        (< index end)
-        (not (space-tab? (byte_buf.bytes-ref input index))))
-        (set! index (+ index 1)))
-      index)))
+    (while (and
+      (< index end)
+      (not (space-tab? (byte_buf.bytes-ref input index))))
+      (set! index (+ index 1)))
+    index))
 
 ;: Validate one caller-supplied redacted diagnostic source identity.
 (define (source-id-valid?
@@ -288,14 +284,12 @@
     [count : i64 (byte_buf.bytes-length view)]
     [index : i64 0]
     [valid : bool (and (> count 0) (<= count limits.max-source-id-bytes))]
-    (begin
-      (while (and valid (< index count))
-        (begin
-          (if (visible-ascii? (byte_buf.bytes-ref view index))
-            unit
-            (set! valid false))
-          (set! index (+ index 1))))
-      valid)))
+    (while (and valid (< index count))
+      (if (visible-ascii? (byte_buf.bytes-ref view index))
+        unit
+        (set! valid false))
+      (set! index (+ index 1)))
+    valid))
 
 ;: True for ASCII alphanumeric host-name bytes.
 (define (host-alnum? [code : i64]) : bool
@@ -312,26 +306,24 @@
     [index : i64 0]
     [previous : i64 -1]
     [valid : bool (> length 0)]
-    (begin
-      (while (and valid (< index length))
-        (let
-          [code : i64 (cast (byte_buf.bytes-ref view index) : i64)]
-          (begin
-            (cond
-              [(host-alnum? code) unit]
-              [(= code 95) unit]
-              [(= code 45)
-                (if (or (= index 0) (= previous 46))
-                  (set! valid false)
-                  unit)]
-              [(= code 46)
-                (if (or (= index 0) (= previous 46) (= previous 45))
-                  (set! valid false)
-                  unit)]
-              [else (set! valid false)])
-            (set! previous code)
-            (set! index (+ index 1)))))
-      (and valid (!= previous 46) (!= previous 45)))))
+    (while (and valid (< index length))
+      (let
+        [code : i64 (cast (byte_buf.bytes-ref view index) : i64)]
+        (cond
+          [(host-alnum? code) unit]
+          [(= code 95) unit]
+          [(= code 45)
+            (if (or (= index 0) (= previous 46))
+              (set! valid false)
+              unit)]
+          [(= code 46)
+            (if (or (= index 0) (= previous 46) (= previous 45))
+              (set! valid false)
+              unit)]
+          [else (set! valid false)])
+        (set! previous code)
+        (set! index (+ index 1))))
+    (and valid (!= previous 46) (!= previous 45))))
 
 ;: Return a hexadecimal digit value, or -1.
 (define (ascii-hex-value [code : i64]) : i64
@@ -350,54 +342,51 @@
     [groups : i64 0]
     [compressed : bool false]
     [valid : bool (> length 0)]
-    (begin
-      (if (and valid (= (cast (byte_buf.bytes-ref view 0) : i64) 58))
-        (if (and (> length 1) (= (cast (byte_buf.bytes-ref view 1) : i64) 58))
-          (begin
-            (set! compressed true)
-            (set! index 2))
-          (set! valid false))
-        unit)
-      (while (and valid (< index length))
-        (let
-          [group-start : i64 index]
-          [digits : i64 0]
-          (begin
-            (while (and
-              (< index length)
-              (!= (cast (byte_buf.bytes-ref view index) : i64) 58)
-              (< digits 5))
-              (begin
-                (if (<
-                  (ascii-hex-value (cast (byte_buf.bytes-ref view index) : i64))
-                  0)
-                  (set! valid false)
-                  unit)
-                (set! digits (+ digits 1))
-                (set! index (+ index 1))))
-            (if (or (not valid) (= digits 0) (> digits 4) (= group-start index))
+    (if (and valid (= (cast (byte_buf.bytes-ref view 0) : i64) 58))
+      (if (and (> length 1) (= (cast (byte_buf.bytes-ref view 1) : i64) 58))
+        (begin
+          (set! compressed true)
+          (set! index 2))
+        (set! valid false))
+      unit)
+    (while (and valid (< index length))
+      (let
+        [group-start : i64 index]
+        [digits : i64 0]
+        (while (and
+          (< index length)
+          (!= (cast (byte_buf.bytes-ref view index) : i64) 58)
+          (< digits 5))
+          (if (<
+            (ascii-hex-value (cast (byte_buf.bytes-ref view index) : i64))
+            0)
+            (set! valid false)
+            unit)
+          (set! digits (+ digits 1))
+          (set! index (+ index 1)))
+        (if (or (not valid) (= digits 0) (> digits 4) (= group-start index))
+          (set! valid false)
+          (set! groups (+ groups 1)))
+        (if (and valid (< index length))
+          (if (and
+            (< (+ index 1) length)
+            (= (cast (byte_buf.bytes-ref view (+ index 1)) : i64) 58))
+            (if compressed
               (set! valid false)
-              (set! groups (+ groups 1)))
-            (if (and valid (< index length))
-              (if (and
-                (< (+ index 1) length)
-                (= (cast (byte_buf.bytes-ref view (+ index 1)) : i64) 58))
-                (if compressed
-                  (set! valid false)
-                  (begin
-                    (set! compressed true)
-                    (set! index (+ index 2))))
-                (begin
-                  (set! index (+ index 1))
-                  (if (= index length)
-                    (set! valid false)
-                    unit)))
-              unit))))
-      (and
-        valid
-        (if compressed
-          (< groups 8)
-          (= groups 8))))))
+              (begin
+                (set! compressed true)
+                (set! index (+ index 2))))
+            (begin
+              (set! index (+ index 1))
+              (if (= index length)
+                (set! valid false)
+                unit)))
+          unit)))
+    (and
+      valid
+      (if compressed
+        (< groups 8)
+        (= groups 8)))))
 
 ;: Verify lowercase ASCII and the selected host syntax without normalization.
 (define (identity-valid?
@@ -409,23 +398,21 @@
     [length : i64 (byte_buf.bytes-length view)]
     [index : i64 0]
     [normalized : bool (and (> length 0) (<= length limits.max-host-bytes))]
-    (begin
-      (while (and normalized (< index length))
-        (let
-          [byte : u8 (byte_buf.bytes-ref view index)]
-          (begin
-            (if (= byte (ascii-lower byte))
-              unit
-              (set! normalized false))
-            (set! index (+ index 1)))))
-      (and
-        normalized
-        (>= identity.port 1)
-        (<= identity.port 65535)
-        (match identity.kind
-          [(KnownHostsHostName) (host-name-valid? host)]
-          [(KnownHostsHostIpv6) (host-ipv6-valid? host)]
-          [_ false])))))
+    (while (and normalized (< index length))
+      (let
+        [byte : u8 (byte_buf.bytes-ref view index)]
+        (if (= byte (ascii-lower byte))
+          unit
+          (set! normalized false))
+        (set! index (+ index 1))))
+    (and
+      normalized
+      (>= identity.port 1)
+      (<= identity.port 65535)
+      (match identity.kind
+        [(KnownHostsHostName) (host-name-valid? host)]
+        [(KnownHostsHostIpv6) (host-ipv6-valid? host)]
+        [_ false]))))
 
 ;: Construct one identity only after exact host/kind/port validation.
 (define (identity-new
@@ -531,65 +518,22 @@
         [failed : bool false]
         [failure : KnownHostsError
           (known-hosts-error (KnownHostsInternalMismatch) 0 0)]
-        (begin
-          (while (and (not failed) (< cursor length))
-            (let
-              [byte : i64 (cast (byte_buf.bytes-ref input cursor) : i64)]
-              (cond
-                [(= byte 13)
-                  (if (or
-                    (= (+ cursor 1) length)
-                    (!= (cast (byte_buf.bytes-ref input (+ cursor 1)) : i64) 10))
-                    (begin
-                      (set! failed true)
-                      (set!
-                        failure
-                        (known-hosts-error
-                          (KnownHostsBareCarriageReturn)
-                          line-number
-                          cursor)))
-                    (let
-                      [line-length : i64 (- cursor line-start)]
-                      (if (> line-length limits.max-line-bytes)
-                        (begin
-                          (set! failed true)
-                          (set!
-                            failure
-                            (known-hosts-error
-                              (KnownHostsLineTooLong)
-                              line-number
-                              line-start)))
-                        (begin
-                          (set! line-count (+ line-count 1))
-                          (if (line-is-record? input line-start cursor)
-                            (set! record-count (+ record-count 1))
-                            unit)
-                          (cond
-                            [(> line-count limits.max-lines)
-                              (begin
-                                (set! failed true)
-                                (set!
-                                  failure
-                                  (known-hosts-error
-                                    (KnownHostsTooManyLines)
-                                    line-number
-                                    line-start)))]
-                            [(> record-count limits.max-records)
-                              (begin
-                                (set! failed true)
-                                (set!
-                                  failure
-                                  (known-hosts-error
-                                    (KnownHostsTooManyRecords)
-                                    line-number
-                                    line-start)))]
-                            [else
-                              (begin
-                                (set! cursor (+ cursor 1))
-                                (set! line-start (+ cursor 1))
-                                (set! line-number (+ line-number 1)))])
-                          unit))))]
-                [(= byte 10)
+        (while (and (not failed) (< cursor length))
+          (let
+            [byte : i64 (cast (byte_buf.bytes-ref input cursor) : i64)]
+            (cond
+              [(= byte 13)
+                (if (or
+                  (= (+ cursor 1) length)
+                  (!= (cast (byte_buf.bytes-ref input (+ cursor 1)) : i64) 10))
+                  (begin
+                    (set! failed true)
+                    (set!
+                      failure
+                      (known-hosts-error
+                        (KnownHostsBareCarriageReturn)
+                        line-number
+                        cursor)))
                   (let
                     [line-length : i64 (- cursor line-start)]
                     (if (> line-length limits.max-line-bytes)
@@ -608,30 +552,30 @@
                           unit)
                         (cond
                           [(> line-count limits.max-lines)
-                            (begin
-                              (set! failed true)
-                              (set!
-                                failure
-                                (known-hosts-error
-                                  (KnownHostsTooManyLines)
-                                  line-number
-                                  line-start)))]
+                            (set! failed true)
+                            (set!
+                              failure
+                              (known-hosts-error
+                                (KnownHostsTooManyLines)
+                                line-number
+                                line-start))]
                           [(> record-count limits.max-records)
-                            (begin
-                              (set! failed true)
-                              (set!
-                                failure
-                                (known-hosts-error
-                                  (KnownHostsTooManyRecords)
-                                  line-number
-                                  line-start)))]
+                            (set! failed true)
+                            (set!
+                              failure
+                              (known-hosts-error
+                                (KnownHostsTooManyRecords)
+                                line-number
+                                line-start))]
                           [else
-                            (begin
-                              (set! line-start (+ cursor 1))
-                              (set! line-number (+ line-number 1)))])
-                        unit)))]
-                [else
-                  (if (> (- (+ cursor 1) line-start) limits.max-line-bytes)
+                            (set! cursor (+ cursor 1))
+                            (set! line-start (+ cursor 1))
+                            (set! line-number (+ line-number 1))])
+                        unit))))]
+              [(= byte 10)
+                (let
+                  [line-length : i64 (- cursor line-start)]
+                  (if (> line-length limits.max-line-bytes)
                     (begin
                       (set! failed true)
                       (set!
@@ -640,34 +584,68 @@
                           (KnownHostsLineTooLong)
                           line-number
                           line-start)))
-                    unit)]))
-            (set! cursor (+ cursor 1)))
-          (if failed
-            (KnownHostsPreflightErr failure)
-            (begin
-              (if (< line-start length)
-                (begin
-                  (set! line-count (+ line-count 1))
-                  (if (line-is-record? input line-start length)
-                    (set! record-count (+ record-count 1))
-                    unit))
-                unit)
-              (cond
-                [(> line-count limits.max-lines)
-                  (KnownHostsPreflightErr
+                    (begin
+                      (set! line-count (+ line-count 1))
+                      (if (line-is-record? input line-start cursor)
+                        (set! record-count (+ record-count 1))
+                        unit)
+                      (cond
+                        [(> line-count limits.max-lines)
+                          (set! failed true)
+                          (set!
+                            failure
+                            (known-hosts-error
+                              (KnownHostsTooManyLines)
+                              line-number
+                              line-start))]
+                        [(> record-count limits.max-records)
+                          (set! failed true)
+                          (set!
+                            failure
+                            (known-hosts-error
+                              (KnownHostsTooManyRecords)
+                              line-number
+                              line-start))]
+                        [else
+                          (set! line-start (+ cursor 1))
+                          (set! line-number (+ line-number 1))])
+                      unit)))]
+              [else
+                (when
+                  (> (- (+ cursor 1) line-start) limits.max-line-bytes)
+                  (set! failed true)
+                  (set!
+                    failure
                     (known-hosts-error
-                      (KnownHostsTooManyLines)
+                      (KnownHostsLineTooLong)
                       line-number
-                      line-start))]
-                [(> record-count limits.max-records)
-                  (KnownHostsPreflightErr
-                    (known-hosts-error
-                      (KnownHostsTooManyRecords)
-                      line-number
-                      line-start))]
-                [else
-                  (KnownHostsPreflightOk
-                    (KnownHostsPreflight line-count record-count))]))))))))
+                      line-start)))]))
+          (set! cursor (+ cursor 1)))
+        (if failed
+          (KnownHostsPreflightErr failure)
+          (begin
+            (when
+              (< line-start length)
+              (set! line-count (+ line-count 1))
+              (if (line-is-record? input line-start length)
+                (set! record-count (+ record-count 1))
+                unit))
+            (cond
+              [(> line-count limits.max-lines)
+                (KnownHostsPreflightErr
+                  (known-hosts-error
+                    (KnownHostsTooManyLines)
+                    line-number
+                    line-start))]
+              [(> record-count limits.max-records)
+                (KnownHostsPreflightErr
+                  (known-hosts-error
+                    (KnownHostsTooManyRecords)
+                    line-number
+                    line-start))]
+              [else
+                (KnownHostsPreflightOk
+                  (KnownHostsPreflight line-count record-count))])))))))
 
 ;: Match one pattern range with two reusable DP rows. Work is exactly
 ;: `pattern-length * (host-length + 1)` and never backtracks.
@@ -682,74 +660,68 @@
     [host-length : i64 (byte_buf.bytes-length host)]
     [cell : i64 0]
     [pattern-index : i64 0]
-    (begin
-      (while (<= cell host-length)
-        (begin
-          (set! (array-ref previous cell) false)
-          (set! (array-ref current cell) false)
-          (set! cell (+ cell 1))))
-      (set! (array-ref previous 0) true)
-      (while (< (+ start pattern-index) end)
-        (let
-          [pattern-byte : u8
-            (byte_buf.bytes-ref pattern (+ start pattern-index))]
-          [use-previous : bool (= (% pattern-index 2) 0)]
+    (while (<= cell host-length)
+      (set! (array-ref previous cell) false)
+      (set! (array-ref current cell) false)
+      (set! cell (+ cell 1)))
+    (set! (array-ref previous 0) true)
+    (while (< (+ start pattern-index) end)
+      (let
+        [pattern-byte : u8 (byte_buf.bytes-ref pattern (+ start pattern-index))]
+        [use-previous : bool (= (% pattern-index 2) 0)]
+        (if use-previous
           (begin
-            (if use-previous
-              (begin
-                (set!
-                  (array-ref current 0)
-                  (if (= (cast pattern-byte : i64) 42)
-                    (array-ref previous 0)
-                    false))
-                (set! cell 1)
-                (while (<= cell host-length)
-                  (begin
-                    (set!
-                      (array-ref current cell)
-                      (cond
-                        [(= (cast pattern-byte : i64) 42)
-                          (or
-                            (array-ref previous cell)
-                            (array-ref current (- cell 1)))]
-                        [(= (cast pattern-byte : i64) 63)
-                          (array-ref previous (- cell 1))]
-                        [else
-                          (and
-                            (array-ref previous (- cell 1))
-                            (=
-                              (ascii-lower pattern-byte)
-                              (ascii-lower (byte_buf.bytes-ref host (- cell 1)))))]))
-                    (set! cell (+ cell 1)))))
-              (begin
-                (set!
-                  (array-ref previous 0)
-                  (if (= (cast pattern-byte : i64) 42)
-                    (array-ref current 0)
-                    false))
-                (set! cell 1)
-                (while (<= cell host-length)
-                  (begin
-                    (set!
+            (set!
+              (array-ref current 0)
+              (if (= (cast pattern-byte : i64) 42)
+                (array-ref previous 0)
+                false))
+            (set! cell 1)
+            (while (<= cell host-length)
+              (set!
+                (array-ref current cell)
+                (cond
+                  [(= (cast pattern-byte : i64) 42)
+                    (or
                       (array-ref previous cell)
-                      (cond
-                        [(= (cast pattern-byte : i64) 42)
-                          (or
-                            (array-ref current cell)
-                            (array-ref previous (- cell 1)))]
-                        [(= (cast pattern-byte : i64) 63)
-                          (array-ref current (- cell 1))]
-                        [else
-                          (and
-                            (array-ref current (- cell 1))
-                            (=
-                              (ascii-lower pattern-byte)
-                              (ascii-lower (byte_buf.bytes-ref host (- cell 1)))))]))
-                    (set! cell (+ cell 1))))))
-            (set! pattern-index (+ pattern-index 1)))))
-      (if (= (% pattern-index 2) 0)
-        (array-ref previous host-length)
-        (array-ref current host-length)))))
+                      (array-ref current (- cell 1)))]
+                  [(= (cast pattern-byte : i64) 63)
+                    (array-ref previous (- cell 1))]
+                  [else
+                    (and
+                      (array-ref previous (- cell 1))
+                      (=
+                        (ascii-lower pattern-byte)
+                        (ascii-lower (byte_buf.bytes-ref host (- cell 1)))))]))
+              (set! cell (+ cell 1))))
+          (begin
+            (set!
+              (array-ref previous 0)
+              (if (= (cast pattern-byte : i64) 42)
+                (array-ref current 0)
+                false))
+            (set! cell 1)
+            (while (<= cell host-length)
+              (set!
+                (array-ref previous cell)
+                (cond
+                  [(= (cast pattern-byte : i64) 42)
+                    (or
+                      (array-ref current cell)
+                      (array-ref previous (- cell 1)))]
+                  [(= (cast pattern-byte : i64) 63)
+                    (array-ref current (- cell 1))]
+                  [else
+                    (and
+                      (array-ref current (- cell 1))
+                      (=
+                        (ascii-lower pattern-byte)
+                        (ascii-lower (byte_buf.bytes-ref host (- cell 1)))))]))
+              (set! cell (+ cell 1)))))
+        (set! pattern-index (+ pattern-index 1))))
+    (if (= (% pattern-index 2) 0)
+      (array-ref previous host-length)
+      (array-ref current host-length))))
 
 ;: Parse and exhaustively match a comma-separated plain selector list.
 (define (parse-plain-selector
@@ -772,118 +744,90 @@
         (= (cast (byte_buf.bytes-ref input (- end 1)) : i64) 44))]
     [failure : KnownHostsErrorKind (KnownHostsMalformedPlainSelector)]
     [host-width : i64 (+ (byte_buf.bytes-length host) 1)]
-    (begin
-      (while (and (not failed) (< cursor end))
-        (let
-          [component-start : i64 cursor]
-          [component-end : i64 cursor]
-          [negated : bool false]
-          (begin
-            (while (and
-              (< component-end end)
-              (!= (cast (byte_buf.bytes-ref input component-end) : i64) 44))
-              (set! component-end (+ component-end 1)))
-            (set! component-count (+ component-count 1))
+    (while (and (not failed) (< cursor end))
+      (let
+        [component-start : i64 cursor]
+        [component-end : i64 cursor]
+        [negated : bool false]
+        (while (and
+          (< component-end end)
+          (!= (cast (byte_buf.bytes-ref input component-end) : i64) 44))
+          (set! component-end (+ component-end 1)))
+        (set! component-count (+ component-count 1))
+        (cond
+          [(> component-count limits.max-pattern-components)
+            (set! failed true)
+            (set! failure (KnownHostsTooManyPatterns))]
+          [(= component-start component-end)
+            (set! failed true)
+            (set! failure (KnownHostsMalformedPlainSelector))]
+          [else
+            (when
+              (= (cast (byte_buf.bytes-ref input component-start) : i64) 33)
+              (set! negated true)
+              (set! component-start (+ component-start 1)))
             (cond
-              [(> component-count limits.max-pattern-components)
-                (begin
-                  (set! failed true)
-                  (set! failure (KnownHostsTooManyPatterns)))]
               [(= component-start component-end)
-                (begin
-                  (set! failed true)
-                  (set! failure (KnownHostsMalformedPlainSelector)))]
+                (set! failed true)
+                (set! failure (KnownHostsMalformedPlainSelector))]
+              [(= (cast (byte_buf.bytes-ref input component-start) : i64) 33)
+                (set! failed true)
+                (set! failure (KnownHostsMalformedPlainSelector))]
+              [(= (cast (byte_buf.bytes-ref input component-start) : i64) 124)
+                (set! failed true)
+                (set! failure (KnownHostsMalformedHashedSelector))]
               [else
-                (begin
-                  (if (=
-                    (cast (byte_buf.bytes-ref input component-start) : i64)
-                    33)
-                    (begin
-                      (set! negated true)
-                      (set! component-start (+ component-start 1)))
-                    unit)
+                (let
+                  [pattern-length : i64 (- component-end component-start)]
+                  [scan : i64 component-start]
+                  [component-valid : bool true]
+                  (while (and component-valid (< scan component-end))
+                    (if (visible-ascii? (byte_buf.bytes-ref input scan))
+                      unit
+                      (set! component-valid false))
+                    (set! scan (+ scan 1)))
                   (cond
-                    [(= component-start component-end)
-                      (begin
-                        (set! failed true)
-                        (set! failure (KnownHostsMalformedPlainSelector)))]
-                    [(=
-                        (cast (byte_buf.bytes-ref input component-start) : i64)
-                        33)
-                      (begin
-                        (set! failed true)
-                        (set! failure (KnownHostsMalformedPlainSelector)))]
-                    [(=
-                        (cast (byte_buf.bytes-ref input component-start) : i64)
-                        124)
-                      (begin
-                        (set! failed true)
-                        (set! failure (KnownHostsMalformedHashedSelector)))]
+                    [(not component-valid)
+                      (set! failed true)
+                      (set! failure (KnownHostsMalformedPlainSelector))]
+                    [(> pattern-length limits.max-pattern-bytes)
+                      (set! failed true)
+                      (set! failure (KnownHostsPatternTooLong))]
+                    [(or
+                      (> pattern-length (/ limits.max-pattern-work host-width))
+                      (>
+                        work
+                        (-
+                          limits.max-pattern-work
+                          (* pattern-length host-width))))
+                      (set! failed true)
+                      (set! failure (KnownHostsPatternWorkExceeded))]
                     [else
                       (let
-                        [pattern-length : i64 (- component-end component-start)]
-                        [scan : i64 component-start]
-                        [component-valid : bool true]
-                        (begin
-                          (while (and component-valid (< scan component-end))
-                            (begin
-                              (if (visible-ascii?
-                                (byte_buf.bytes-ref input scan))
-                                unit
-                                (set! component-valid false))
-                              (set! scan (+ scan 1))))
-                          (cond
-                            [(not component-valid)
-                              (begin
-                                (set! failed true)
-                                (set!
-                                  failure
-                                  (KnownHostsMalformedPlainSelector)))]
-                            [(> pattern-length limits.max-pattern-bytes)
-                              (begin
-                                (set! failed true)
-                                (set! failure (KnownHostsPatternTooLong)))]
-                            [(or
-                                (>
-                                  pattern-length
-                                  (/ limits.max-pattern-work host-width))
-                                (>
-                                  work
-                                  (-
-                                    limits.max-pattern-work
-                                    (* pattern-length host-width))))
-                              (begin
-                                (set! failed true)
-                                (set! failure (KnownHostsPatternWorkExceeded)))]
-                            [else
-                              (let
-                                [matches : bool
-                                  (pattern-range-matches?
-                                    input
-                                    component-start
-                                    component-end
-                                    host
-                                    previous
-                                    current)]
-                                (begin
-                                  (set!
-                                    work
-                                    (+ work (* pattern-length host-width)))
-                                  (if matches
-                                    (if negated
-                                      (set! negative-match true)
-                                      (set! positive-match true))
-                                    unit)))])
+                        [matches : bool
+                          (pattern-range-matches?
+                            input
+                            component-start
+                            component-end
+                            host
+                            previous
+                            current)]
+                        (set! work (+ work (* pattern-length host-width)))
+                        (if matches
+                          (if negated
+                            (set! negative-match true)
+                            (set! positive-match true))
                           unit))])
                   unit)])
-            (set! cursor (+ component-end 1)))))
-      (if failed
-        (KnownHostsSelectorIndeterminate failure)
-        (let
-          [selector : String (copy-byte-range input start end)]
-          (if (and positive-match (not negative-match))
-            (KnownHostsPlainMatching selector)
-            (KnownHostsPlainNonmatching selector)))))))
+            unit])
+        (set! cursor (+ component-end 1))))
+    (if failed
+      (KnownHostsSelectorIndeterminate failure)
+      (let
+        [selector : String (copy-byte-range input start end)]
+        (if (and positive-match (not negative-match))
+          (KnownHostsPlainMatching selector)
+          (KnownHostsPlainNonmatching selector))))))
 
 ;: Parse exact `|version|salt|digest` syntax without decoding any field.
 (define (parse-hashed-selector
@@ -897,48 +841,46 @@
     [second-delimiter : i64 -1]
     [extra-delimiter : bool false]
     [forbidden : bool false]
-    (begin
-      (while (< cursor end)
-        (let
-          [byte : u8 (byte_buf.bytes-ref input cursor)]
-          [code : i64 (cast byte : i64)]
-          (begin
-            (if (not (visible-ascii? byte))
-              (set! forbidden true)
-              unit)
+    (while (< cursor end)
+      (let
+        [byte : u8 (byte_buf.bytes-ref input cursor)]
+        [code : i64 (cast byte : i64)]
+        (if (not (visible-ascii? byte))
+          (set! forbidden true)
+          unit)
+        (cond
+          [(= code 124)
             (cond
-              [(= code 124)
-                (cond
-                  [(< first-delimiter 0) (set! first-delimiter cursor)]
-                  [(< second-delimiter 0) (set! second-delimiter cursor)]
-                  [else (set! extra-delimiter true)])]
-              [(or (= code 44) (= code 33) (= code 42) (= code 63))
-                (set! forbidden true)]
-              [else unit])
-            (set! cursor (+ cursor 1)))))
-      (if (or
-        forbidden
-        extra-delimiter
-        (< first-delimiter 0)
-        (< second-delimiter 0)
-        (= first-delimiter (+ start 1))
-        (= second-delimiter (+ first-delimiter 1))
-        (= second-delimiter (- end 1)))
-        (KnownHostsSelectorIndeterminate (KnownHostsMalformedHashedSelector))
-        (let
-          [version-length : i64 (- first-delimiter (+ start 1))]
-          [salt-length : i64 (- second-delimiter (+ first-delimiter 1))]
-          [digest-length : i64 (- end (+ second-delimiter 1))]
-          (if (or
-            (> version-length limits.max-hash-version-bytes)
-            (> salt-length limits.max-hash-salt-bytes)
-            (> digest-length limits.max-hash-digest-bytes))
-            (KnownHostsSelectorIndeterminate (KnownHostsHashFieldTooLong))
-            (KnownHostsHashedPending
-              (KnownHostsHashedSelector
-                (copy-byte-range input (+ start 1) first-delimiter)
-                (copy-byte-range input (+ first-delimiter 1) second-delimiter)
-                (copy-byte-range input (+ second-delimiter 1) end)))))))))
+              [(< first-delimiter 0) (set! first-delimiter cursor)]
+              [(< second-delimiter 0) (set! second-delimiter cursor)]
+              [else (set! extra-delimiter true)])]
+          [(or (= code 44) (= code 33) (= code 42) (= code 63))
+            (set! forbidden true)]
+          [else unit])
+        (set! cursor (+ cursor 1))))
+    (if (or
+      forbidden
+      extra-delimiter
+      (< first-delimiter 0)
+      (< second-delimiter 0)
+      (= first-delimiter (+ start 1))
+      (= second-delimiter (+ first-delimiter 1))
+      (= second-delimiter (- end 1)))
+      (KnownHostsSelectorIndeterminate (KnownHostsMalformedHashedSelector))
+      (let
+        [version-length : i64 (- first-delimiter (+ start 1))]
+        [salt-length : i64 (- second-delimiter (+ first-delimiter 1))]
+        [digest-length : i64 (- end (+ second-delimiter 1))]
+        (if (or
+          (> version-length limits.max-hash-version-bytes)
+          (> salt-length limits.max-hash-salt-bytes)
+          (> digest-length limits.max-hash-digest-bytes))
+          (KnownHostsSelectorIndeterminate (KnownHostsHashFieldTooLong))
+          (KnownHostsHashedPending
+            (KnownHostsHashedSelector
+              (copy-byte-range input (+ start 1) first-delimiter)
+              (copy-byte-range input (+ first-delimiter 1) second-delimiter)
+              (copy-byte-range input (+ second-delimiter 1) end))))))))
 
 ;: Parse the optional exact marker and leave the cursor at the selector.
 (define (parse-marker
@@ -1043,47 +985,40 @@
         [format-length : i64 (- format-end format-start)]
         [format-scan : i64 format-start]
         [format-valid : bool true]
-        (begin
-          (while (and format-valid (< format-scan format-end))
-            (begin
-              (if (visible-ascii? (byte_buf.bytes-ref input format-scan))
-                unit
-                (set! format-valid false))
-              (set! format-scan (+ format-scan 1))))
-          (cond
-            [(> format-length limits.max-key-format-bytes)
-              (KnownHostsKeyIndeterminate (KnownHostsKeyFormatTooLong))]
-            [(not format-valid)
-              (KnownHostsKeyIndeterminate (KnownHostsInvalidKeyFormat))]
-            [else
-              (let
-                [base64-start : i64 (skip-space-tab input format-end end)]
-                (if (= base64-start end)
-                  (KnownHostsKeyIndeterminate (KnownHostsMissingKeyBase64))
-                  (let
-                    [base64-end : i64 (token-end input base64-start end)]
-                    [base64-length : i64 (- base64-end base64-start)]
-                    [base64-scan : i64 base64-start]
-                    [base64-valid : bool true]
-                    (begin
-                      (while (and base64-valid (< base64-scan base64-end))
-                        (begin
-                          (if (base64-byte?
-                            (byte_buf.bytes-ref input base64-scan))
-                            unit
-                            (set! base64-valid false))
-                          (set! base64-scan (+ base64-scan 1))))
-                      (cond
-                        [(> base64-length limits.max-key-base64-bytes)
-                          (KnownHostsKeyIndeterminate
-                            (KnownHostsKeyBase64TooLong))]
-                        [(not base64-valid)
-                          (KnownHostsKeyIndeterminate
-                            (KnownHostsInvalidKeyBase64))]
-                        [else
-                          (KnownHostsKeyFields
-                            (copy-byte-range input format-start format-end)
-                            (copy-byte-range input base64-start base64-end))])))))]))))))
+        (while (and format-valid (< format-scan format-end))
+          (if (visible-ascii? (byte_buf.bytes-ref input format-scan))
+            unit
+            (set! format-valid false))
+          (set! format-scan (+ format-scan 1)))
+        (cond
+          [(> format-length limits.max-key-format-bytes)
+            (KnownHostsKeyIndeterminate (KnownHostsKeyFormatTooLong))]
+          [(not format-valid)
+            (KnownHostsKeyIndeterminate (KnownHostsInvalidKeyFormat))]
+          [else
+            (let
+              [base64-start : i64 (skip-space-tab input format-end end)]
+              (if (= base64-start end)
+                (KnownHostsKeyIndeterminate (KnownHostsMissingKeyBase64))
+                (let
+                  [base64-end : i64 (token-end input base64-start end)]
+                  [base64-length : i64 (- base64-end base64-start)]
+                  [base64-scan : i64 base64-start]
+                  [base64-valid : bool true]
+                  (while (and base64-valid (< base64-scan base64-end))
+                    (if (base64-byte? (byte_buf.bytes-ref input base64-scan))
+                      unit
+                      (set! base64-valid false))
+                    (set! base64-scan (+ base64-scan 1)))
+                  (cond
+                    [(> base64-length limits.max-key-base64-bytes)
+                      (KnownHostsKeyIndeterminate (KnownHostsKeyBase64TooLong))]
+                    [(not base64-valid)
+                      (KnownHostsKeyIndeterminate (KnownHostsInvalidKeyBase64))]
+                    [else
+                      (KnownHostsKeyFields
+                        (copy-byte-range input format-start format-end)
+                        (copy-byte-range input base64-start base64-end))]))))])))))
 
 ;: Parse one already-preflighted semantic line.
 (define (parse-record
@@ -1146,83 +1081,76 @@
                 [line-start : i64 0]
                 [line-number : i64 1]
                 [record-index : i64 0]
-                (begin
-                  (while (< cursor length)
-                    (let
-                      [byte : i64
-                        (cast (byte_buf.bytes-ref input cursor) : i64)]
-                      (cond
-                        [(= byte 13)
-                          (begin
-                            (if (line-is-record? input line-start cursor)
-                              (begin
-                                (set!
-                                  (array-ref slots record-index)
-                                  (parse-record
-                                    input
-                                    line-start
-                                    cursor
-                                    (& source-id)
-                                    line-number
-                                    (+ record-index 1)
-                                    host
-                                    (& limits)
-                                    (&mut previous)
-                                    (&mut current)))
-                                (set! record-index (+ record-index 1)))
-                              unit)
-                            (set! cursor (+ cursor 1))
-                            (set! line-start (+ cursor 1))
-                            (set! line-number (+ line-number 1)))]
-                        [(= byte 10)
-                          (begin
-                            (if (line-is-record? input line-start cursor)
-                              (begin
-                                (set!
-                                  (array-ref slots record-index)
-                                  (parse-record
-                                    input
-                                    line-start
-                                    cursor
-                                    (& source-id)
-                                    line-number
-                                    (+ record-index 1)
-                                    host
-                                    (& limits)
-                                    (&mut previous)
-                                    (&mut current)))
-                                (set! record-index (+ record-index 1)))
-                              unit)
-                            (set! line-start (+ cursor 1))
-                            (set! line-number (+ line-number 1)))]
-                        [else unit]))
-                    (set! cursor (+ cursor 1)))
-                  (if (< line-start length)
-                    (when
-                      (line-is-record? input line-start length)
-                      (begin
-                        (set!
-                          (array-ref slots record-index)
-                          (parse-record
-                            input
-                            line-start
-                            length
-                            (& source-id)
-                            line-number
-                            (+ record-index 1)
-                            host
-                            (& limits)
-                            (&mut previous)
-                            (&mut current)))
-                        (set! record-index (+ record-index 1))))
-                    unit)
-                  (if (= record-index preflight.records)
-                    (KnownHostsScanOk (KnownHostsRecords slots record-index))
-                    (KnownHostsScanErr
-                      (known-hosts-error
-                        (KnownHostsInternalMismatch)
+                (while (< cursor length)
+                  (let
+                    [byte : i64 (cast (byte_buf.bytes-ref input cursor) : i64)]
+                    (cond
+                      [(= byte 13)
+                        (when
+                          (line-is-record? input line-start cursor)
+                          (set!
+                            (array-ref slots record-index)
+                            (parse-record
+                              input
+                              line-start
+                              cursor
+                              (& source-id)
+                              line-number
+                              (+ record-index 1)
+                              host
+                              (& limits)
+                              (&mut previous)
+                              (&mut current)))
+                          (set! record-index (+ record-index 1)))
+                        (set! cursor (+ cursor 1))
+                        (set! line-start (+ cursor 1))
+                        (set! line-number (+ line-number 1))]
+                      [(= byte 10)
+                        (when
+                          (line-is-record? input line-start cursor)
+                          (set!
+                            (array-ref slots record-index)
+                            (parse-record
+                              input
+                              line-start
+                              cursor
+                              (& source-id)
+                              line-number
+                              (+ record-index 1)
+                              host
+                              (& limits)
+                              (&mut previous)
+                              (&mut current)))
+                          (set! record-index (+ record-index 1)))
+                        (set! line-start (+ cursor 1))
+                        (set! line-number (+ line-number 1))]
+                      [else unit]))
+                  (set! cursor (+ cursor 1)))
+                (if (< line-start length)
+                  (when
+                    (line-is-record? input line-start length)
+                    (set!
+                      (array-ref slots record-index)
+                      (parse-record
+                        input
+                        line-start
+                        length
+                        (& source-id)
                         line-number
-                        line-start)))))])])]))
+                        (+ record-index 1)
+                        host
+                        (& limits)
+                        (&mut previous)
+                        (&mut current)))
+                    (set! record-index (+ record-index 1)))
+                  unit)
+                (if (= record-index preflight.records)
+                  (KnownHostsScanOk (KnownHostsRecords slots record-index))
+                  (KnownHostsScanErr
+                    (known-hosts-error
+                      (KnownHostsInternalMismatch)
+                      line-number
+                      line-start))))])])]))
 
 (test
   known-hosts-plain-basic
@@ -1235,9 +1163,8 @@
     [bytes : (& policy bytes) (byte_buf.str-as-bytes (& policy))]
     (match (scan bytes "fixture" identity limits)
       [(KnownHostsScanErr _)
-        (begin
-          (/ 1 0)
-          unit)]
+        (/ 1 0)
+        unit]
       [(KnownHostsScanOk records)
         (if (and
           (= (records-len (& records)) 1)

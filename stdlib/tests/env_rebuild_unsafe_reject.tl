@@ -3,10 +3,9 @@
 (import stdlib.env)
 
 (define (main) : i64
-  (begin
-    (with-arena
-      transient
-      (env.linux-rebuild! "TYPELISP_PROOF_REWIND" "value" true))
-    (if (env.var-exists? "TYPELISP_PROOF_REWIND")
-      42
-      1)))
+  (with-arena
+    transient
+    (env.linux-rebuild! "TYPELISP_PROOF_REWIND" "value" true))
+  (if (env.var-exists? "TYPELISP_PROOF_REWIND")
+    42
+    1))

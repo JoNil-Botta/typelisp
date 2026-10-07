@@ -107,7 +107,11 @@ inputs; fields, globals, locals, and nominal lifetime arguments remain
 explicit. Borrow expressions stay `(& place)` and `(&mut place)`.
 At a typed call, an existing `&mut T` argument may be passed to an `&T`
 parameter as a tracked shared reborrow; the reverse conversion is never
-implicit.
+implicit. A call argument may also borrow a temporary, `(f (& (g x)))` or
+`(f (&mut (make-buf)))`: the value lives in hidden storage until the call
+returns (a cleanup-owning value is cleaned then), so a call whose result could
+keep that borrow is rejected. Matching through a shared reference binds `Copy`
+payloads by value and a `(Box T)` payload as `(& T)`.
 
 `Slice` is an unsized borrowed referent, so only `(& r (Slice t))` and
 `(&mut r (Slice t))` are runtime forms; a bare `(Slice t)` cannot be a value,
@@ -159,7 +163,8 @@ pure safe TypeLisp — no `unsafe`, `extern`, or host I/O — bounded by
 deterministic fuel. Write hand-authored monomorphic declarations (such as a
 domain-specific `Result*` enum) when a generated family has not been
 requested; `(try expr)` is the propagation form over compatible concrete
-Result-like enums.
+Result-like enums, which may be different families as long as their `Err*`
+payload types are equal (SPEC.md section 9).
 
 ### Top-level forms
 
@@ -220,6 +225,21 @@ the value namespace. An enum type may share a name with one of its own
 variants. Module identity then qualifies both namespaces, so two modules can
 define the same local name without colliding.
 
+Enum variants can be written bare (`None`, `(Ok x)`) or enum-qualified
+(`Option.None`, `(json.Result.Ok x)`). A pattern resolves a bare variant
+against the scrutinee's enum. A constructor resolves it against the expected
+enum type wherever one is known: a declared return type (through `if`,
+`match`, `let` and `begin` tails), a typed `let`, a typed argument, a struct
+field or variant payload, and a `set!` of a typed place. So
+`(define (parse) : json.Result (Ok 1))` builds `json.Result.Ok` even when a
+local enum also declares `Ok`, and the imported enum's variants never need
+importing by name. A local binding of the same name wins; a module function,
+value or struct constructor of that name makes the reference ambiguous.
+Without an expected type, exactly one enum that the module declares or
+imports with `.*` must declare the bare name; otherwise qualify it. In a
+payload pattern, a bare name that spells a variant of the payload enum is
+rejected: write `(I64)` to match that variant, or pick another binder name.
+
 ### Conditional compilation
 
 `compile`, `run`, and `build` accept repeated `--cfg <name>` flags. Source
@@ -249,7 +269,18 @@ struct patterns, `(slice ...)` length patterns over borrowed Slices, `_`),
 too: `(neg x)` negates a numeric operand (negation is not spelled with a unary
 `-`), `(not x)` negates a `bool`, and `(bit-not x)` complements an integer.
 Dotted syntax `place.field` reads a
-struct field, and `(set! place.field value)` writes in place. Tuple slots and
+struct field, and `(set! place.field value)` writes in place.
+Body positions take several expressions evaluated in order as an implicit
+`begin`: `let`, `define`, `lambda`, `while`, `when`, `unless`, `unsafe`, the
+arena and resource forms, and the arms of `match` and `cond`:
+
+```lisp
+(match op
+  [(Add n)
+    (set! total (+ total n))
+    total]
+  [(Reset) 0])
+``` Tuple slots and
 array elements use `tuple-ref` and `array-ref`; every direct write still uses
 `set!`.
 
@@ -291,11 +322,14 @@ use the end-state forms:
   module-prefixed names such as `string-append` are transitional.
 - Use the prelude spellings `when`, `unless`, `and`, `or`, scalar `for`,
   `any?`, `all?`, `+=`, `-=`, and bracket-arm `cond`:
-  `(cond [test expr] ... [else fallback])`.
+  `(cond [test expr ...] ... [else fallback ...])`.
 - Count with `(for [i (iterator.range start end)] ...)` and walk a
   collection with `(for [item (& items)] ...)` rather than a hand-written index
   `while`; a range and a borrowed array, Slice,
   `__tl_dyn-array` or slots/len struct expand to a plain counting loop.
+- Write a body sequence directly in a body position, including `match` and
+  `cond` arms, rather than wrapping it in `begin`; `typelisp lint
+  --redundant-begin` reports and fixes the wrappers.
 - Build strings with `str-cat` or `text_buf`; do not add
   `string-append`/`string-concat` chains.
 - Use `ByteBuf` and borrowed `bytes` views for mutable binary storage, not

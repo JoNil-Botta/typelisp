@@ -33,17 +33,15 @@
 
 (define (fmt-try-write-formatted-file [path : String] [formatted : String]) : ResultFmtWrite
   (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& formatted)))
-    [(io.OkIoUnit) ResultFmtWrite.Ok]
-    [(io.ErrIoUnit error)
-      (ResultFmtWrite.Err (fmt-write-error-message path error))]))
+    [(OkIoUnit) Ok]
+    [(ErrIoUnit error) (Err (fmt-write-error-message path error))]))
 
 (define (fmt-write-formatted-file [path : String] [formatted : String]) : i64
   (match (fmt-try-write-formatted-file path formatted)
-    [(ResultFmtWrite.Ok) 0]
-    [(ResultFmtWrite.Err message)
-      (begin
-        (io.print-error (str_cat.str-cat message "\n"))
-        1)]))
+    [(Ok) 0]
+    [(Err message)
+      (io.print-error (str_cat.str-cat message "\n"))
+      1]))
 
 (define (fmt-source-error-message
   [path : String]
@@ -74,56 +72,51 @@
     [manifest-path : String ""]
     [has-manifest : bool false]
     [has-target : bool false]
-    (begin
-      (while (cli_option.cli-args-next! (&mut args))
-        (cond
-          [(string.eq args.name "--target")
-            (if has-target
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "fmt: --target was provided more than once")
-              (match (target_cfg.compiler-target-cfg-parse
-                (cli_option.cli-args-value (& args)))
-                [(target_cfg.ResultCompilerTargetCfg.Ok _)
-                  (set! has-target true)]
-                [(target_cfg.ResultCompilerTargetCfg.Err message)
-                  (cli_option.cli-args-fail!
-                    (&mut args)
-                    (str_cat.str-cat "fmt: " message))]))]
-          ;; Formatting is CST-based and intentionally retains every cfg
-          ;; branch; these options are accepted for source-tool CLI parity.
-          [(or
-              (string.eq args.name "--stdlib-root")
-              (string.eq args.name "--cfg"))
-            unit]
-          [(string.eq args.name "--check") (set! check true)]
-          [(string.eq args.name "--manifest-path")
-            (if has-manifest
-              (cli_option.cli-args-fail!
-                (&mut args)
-                "fmt: duplicate --manifest-path")
-              (begin
-                (set! manifest-path (cli_option.cli-args-value (& args)))
-                (set! has-manifest true)))]
-          [(cli_option.cli-flag? args.arg)
-            (cli_option.cli-args-fail-arg! (&mut args) "fmt: unknown flag ")]
-          [else (fmt_svec.push-ref! (&mut paths) (string.copy (& args.arg)))]))
+    (while (cli_option.cli-args-next! (&mut args))
       (cond
-        [args.failed (ResultFmtConfig.Err args.error)]
-        [(fmt_svec.is-empty? (& paths))
-          (ResultFmtConfig.Ok
-            (FmtConfig.Package check manifest-path has-manifest))]
-        [has-manifest
-          (ResultFmtConfig.Err
-            "fmt: cannot combine input paths with --manifest-path")]
-        [else (ResultFmtConfig.Ok (FmtConfig.File check paths))]))))
+        [(string.eq args.name "--target")
+          (if has-target
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "fmt: --target was provided more than once")
+            (match (target_cfg.compiler-target-cfg-parse
+              (cli_option.cli-args-value (& args)))
+              [(Ok _) (set! has-target true)]
+              [(Err message)
+                (cli_option.cli-args-fail!
+                  (&mut args)
+                  (str_cat.str-cat "fmt: " message))]))]
+        ;; Formatting is CST-based and intentionally retains every cfg
+        ;; branch; these options are accepted for source-tool CLI parity.
+        [(or
+            (string.eq args.name "--stdlib-root")
+            (string.eq args.name "--cfg"))
+          unit]
+        [(string.eq args.name "--check") (set! check true)]
+        [(string.eq args.name "--manifest-path")
+          (if has-manifest
+            (cli_option.cli-args-fail!
+              (&mut args)
+              "fmt: duplicate --manifest-path")
+            (begin
+              (set! manifest-path (cli_option.cli-args-value (& args)))
+              (set! has-manifest true)))]
+        [(cli_option.cli-flag? args.arg)
+          (cli_option.cli-args-fail-arg! (&mut args) "fmt: unknown flag ")]
+        [else (fmt_svec.push-ref! (&mut paths) (string.copy (& args.arg)))]))
+    (cond
+      [args.failed (Err args.error)]
+      [(fmt_svec.is-empty? (& paths))
+        (Ok (Package check manifest-path has-manifest))]
+      [has-manifest
+        (Err "fmt: cannot combine input paths with --manifest-path")]
+      [else (Ok (File check paths))])))
 
 ;; `io.stderr-write` exits 134 when stderr fails, as `io.print-error` does, so
 ;; this unbounded rendering either completes or ends the process.
 (define (fmt-diff-stderr-sink [chunk : (& bytes)]) : i64
-  (begin
-    (io.stderr-write chunk)
-    0))
+  (io.stderr-write chunk)
+  0)
 
 (define (fmt-check-diff [path : String] [source : String] [formatted : String]) : i64
   (match (unified_diff.render
@@ -132,7 +125,7 @@
     (& formatted)
     (unified_diff.unbounded)
     fmt-diff-stderr-sink).outcome
-    [(unified_diff.Complete) 1]
+    [(Complete) 1]
     [_ (io.panic "fmt: unbounded stderr diff stopped early\n")]))
 
 (define (fmt-format-file [check : bool] [path : String]) : i64
@@ -143,7 +136,7 @@
     (match (format_rules.format-rules-render-source-width-result
       (owned_view.compiler-owned-shared-view source)
       80)
-      [(format_rules.ResultFormatString.Ok formatted)
+      [(Ok formatted)
         (if check
           (if (string.eq source formatted)
             0
@@ -157,11 +150,10 @@
           (if (string.eq source formatted)
             0
             (fmt-write-formatted-file path formatted)))]
-      [(format_rules.ResultFormatString.Err err)
-        (begin
-          (io.print-error
-            (str_cat.str-cat (fmt-source-error-message path err) "\n"))
-          1)])))
+      [(Err err)
+        (io.print-error
+          (str_cat.str-cat (fmt-source-error-message path err) "\n"))
+        1])))
 
 ;; Parsing and rendering retain a complete token stream and CST. Reclaim that
 ;; scratch state after each file so multi-file formatter invocations do not grow
@@ -219,23 +211,20 @@
     "fmt"
     manifest-path
     has-manifest)
-    [(package_source_core.ResultPackageSourceSet.Err message)
-      (begin
-        (io.print-error (str_cat.str-cat message "\n"))
-        1)]
-    [(package_source_core.ResultPackageSourceSet.Ok source-set)
-      (fmt-package-files check source-set.sources 0)]))
+    [(Err message)
+      (io.print-error (str_cat.str-cat message "\n"))
+      1]
+    [(Ok source-set) (fmt-package-files check source-set.sources 0)]))
 
 ;; Run the `fmt` command over arguments starting at `start` (the index of the
 ;; first argument after any subcommand name); `count` is `(arg-count)`.
 (define (fmt-run-from [start : i64] [count : i64]) : i64
   (match (fmt-config-from start count)
-    [(ResultFmtConfig.Ok config)
+    [(Ok config)
       (match config
-        [(FmtConfig.File check paths) (fmt-files check paths 0)]
-        [(FmtConfig.Package check manifest-path has-manifest)
+        [(File check paths) (fmt-files check paths 0)]
+        [(Package check manifest-path has-manifest)
           (fmt-package check manifest-path has-manifest)])]
-    [(ResultFmtConfig.Err message)
-      (begin
-        (io.print-error (str_cat.str-cat message "\n"))
-        1)]))
+    [(Err message)
+      (io.print-error (str_cat.str-cat message "\n"))
+      1]))

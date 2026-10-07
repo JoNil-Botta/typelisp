@@ -22,9 +22,8 @@
       [(thread_i64.I64SpawnOk worker)
         (let
           [joined : i64 (atomic-arena-join-code worker)]
-          (begin
-            (arena.rewind-safe! phase)
-            (arena.destroy-safe! owner)
-            (if (= joined 20)
-              42
-              2)))])))
+          (arena.rewind-safe! phase)
+          (arena.destroy-safe! owner)
+          (if (= joined 20)
+            42
+            2))])))

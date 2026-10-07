@@ -20,9 +20,8 @@
     (define (score [value : provider.T]) : i64
       (let
         [items : vec.Vec (vec.new)]
-        (begin
-          (vec.push-ref! (&mut items) value)
-          (__tl-project-field-name (vec.get (& items) 0 (provider.T 0)) "value"))))))
+        (vec.push-ref! (&mut items) value)
+        (__tl-project-field-name (vec.get (& items) 0 (provider.T 0)) "value")))))
 
 (import (vector-user) as user)
 

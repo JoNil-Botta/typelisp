@@ -69,15 +69,14 @@
 
 (test
   aggregate-enum-match-direct-return
-  (begin
-    (test.assert-i64-eq
-      (status-score (match-direct-status (Build 10)))
-      41
-      "direct aggregate enum return from match arm should be safe")
-    (test.assert-i64-eq
-      (status-score (match-direct-status Fallback))
-      99
-      "fallback aggregate enum match arm should be safe")))
+  (test.assert-i64-eq
+    (status-score (match-direct-status (Build 10)))
+    41
+    "direct aggregate enum return from match arm should be safe")
+  (test.assert-i64-eq
+    (status-score (match-direct-status Fallback))
+    99
+    "fallback aggregate enum match arm should be safe"))
 
 (test
   aggregate-local-adjacent-scalars

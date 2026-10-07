@@ -17,39 +17,33 @@
 ;; rewriting the cell's `slots`/`len` words -- and then writes through the NEW
 ;; buffer.
 (define (hh-push [v : (&mut v i64vec.Vec)] [value : i64]) : i64
-  (begin
-    (i64vec.push-ref! v value)
-    (set! (array-ref (i64vec.slots-mut v) 0) value)
-    (i64vec.len-mut v)))
+  (i64vec.push-ref! v value)
+  (set! (array-ref (i64vec.slots-mut v) 0) value)
+  (i64vec.len-mut v))
 
 (define (hh-walk [n : i64]) : i64
   (let
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          ;; read through the cell BEFORE the call
-          (set! acc (+ acc (array-ref (i64vec.slots (& hh-grow)) 0)))
-          (set! acc (+ acc (i64vec.len (& hh-grow))))
-          ;; the call replaces the buffer and rewrites the cell
-          (set! acc (+ acc (hh-push (&mut hh-grow) (+ i 1))))
-          ;; and again AFTER it, which must see the new words
-          (set! acc (+ acc (array-ref (i64vec.slots (& hh-grow)) 0)))
-          (set!
-            acc
-            (+
-              acc
-              (array-ref
-                (i64vec.slots (& hh-grow))
-                (- (i64vec.len (& hh-grow)) 1))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      ;; read through the cell BEFORE the call
+      (set! acc (+ acc (array-ref (i64vec.slots (& hh-grow)) 0)))
+      (set! acc (+ acc (i64vec.len (& hh-grow))))
+      ;; the call replaces the buffer and rewrites the cell
+      (set! acc (+ acc (hh-push (&mut hh-grow) (+ i 1))))
+      ;; and again AFTER it, which must see the new words
+      (set! acc (+ acc (array-ref (i64vec.slots (& hh-grow)) 0)))
+      (set!
+        acc
+        (+
+          acc
+          (array-ref (i64vec.slots (& hh-grow)) (- (i64vec.len (& hh-grow)) 1))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (string.>int (io.arg 1))]
-    (begin
-      (i64vec.push-ref! (&mut hh-grow) 7)
-      (io.print-format "{}\n" (hh-walk n))
-      42)))
+    (i64vec.push-ref! (&mut hh-grow) 7)
+    (io.print-format "{}\n" (hh-walk n))
+    42))

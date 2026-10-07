@@ -20,19 +20,19 @@
   (Err String))
 
 (define (compiler-target-cfg-default) : CompilerTargetCfg
-  CompilerTargetCfg.Linux)
+  Linux)
 
 (define (compiler-target-cfg-host) : CompilerTargetCfg
-  (cfg windows CompilerTargetCfg.Windows CompilerTargetCfg.Linux))
+  (cfg windows Windows Linux))
 
 (define (compiler-target-cfg-parse [value : String]) : ResultCompilerTargetCfg
   (cond
     [(or (string.eq value "linux-x86_64") (string.eq value "linux_x86_64"))
-      (ResultCompilerTargetCfg.Ok CompilerTargetCfg.Linux)]
+      (Ok Linux)]
     [(or (string.eq value "windows-x86_64") (string.eq value "windows_x86_64"))
-      (ResultCompilerTargetCfg.Ok CompilerTargetCfg.Windows)]
+      (Ok Windows)]
     [else
-      (ResultCompilerTargetCfg.Err
+      (Err
         (str_cat.str-cat
           "unknown target "
           value
@@ -57,11 +57,10 @@
 (define (compiler-target-cfgs
   [target : CompilerTargetCfg]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (match target
-      [(CompilerTargetCfg.Linux) (compiler-target-enable-linux-cfgs cfgs)]
-      [(CompilerTargetCfg.Windows) (compiler-target-enable-windows-cfgs cfgs)])))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (match target
+    [(Linux) (compiler-target-enable-linux-cfgs cfgs)]
+    [(Windows) (compiler-target-enable-windows-cfgs cfgs)]))
 
 (define (compiler-target-cfgs-with-names-from
   [target : CompilerTargetCfg]
@@ -79,13 +78,12 @@
 (define (compiler-target-cfgs-with-names
   [target : CompilerTargetCfg]
   [names : target_cfg_svec.Vec]) : sym_i64_env.SymI64Env
-  (begin
-    (cbi.compiler-builtin-initialize-for-parse!)
-    (compiler-target-cfgs-with-names-from
-      target
-      names
-      0
-      (cfg_core.compiler-cfg-empty))))
+  (cbi.compiler-builtin-initialize-for-parse!)
+  (compiler-target-cfgs-with-names-from
+    target
+    names
+    0
+    (cfg_core.compiler-cfg-empty)))
 
 (define (compiler-target-enable-linux-cfgs-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]

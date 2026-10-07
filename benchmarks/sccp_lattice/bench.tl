@@ -314,35 +314,30 @@
     [n : i64 (string.string-length text)]
     [i : i64 0]
     [count : i64 0]
-    (begin
-      (while (< i n)
-        (let
-          [byte : i64 (sccp-byte-at text n i)]
-          (cond
-            [(= byte 35)
-              (while (and (< i n) (not (= (sccp-byte-at text n i) 10)))
-                (set! i (+ i 1)))]
-            [(or (sccp-digit? byte) (= byte 45))
-              (let
-                [negative : bool (= byte 45)]
-                [value : i64 0]
-                (begin
-                  (when negative (set! i (+ i 1)))
-                  (while (sccp-digit? (sccp-byte-at text n i))
-                    (begin
-                      (set!
-                        value
-                        (+ (* value 10) (- (sccp-byte-at text n i) 48)))
-                      (set! i (+ i 1))))
-                  (i64vec.set-ref!
-                    out
-                    count
-                    (if negative
-                      (- 0 value)
-                      value))
-                  (set! count (+ count 1))))]
-            [else (set! i (+ i 1))])))
-      count)))
+    (while (< i n)
+      (let
+        [byte : i64 (sccp-byte-at text n i)]
+        (cond
+          [(= byte 35)
+            (while (and (< i n) (not (= (sccp-byte-at text n i) 10)))
+              (set! i (+ i 1)))]
+          [(or (sccp-digit? byte) (= byte 45))
+            (let
+              [negative : bool (= byte 45)]
+              [value : i64 0]
+              (when negative (set! i (+ i 1)))
+              (while (sccp-digit? (sccp-byte-at text n i))
+                (set! value (+ (* value 10) (- (sccp-byte-at text n i) 48)))
+                (set! i (+ i 1)))
+              (i64vec.set-ref!
+                out
+                count
+                (if negative
+                  (- 0 value)
+                  value))
+              (set! count (+ count 1)))]
+          [else (set! i (+ i 1))])))
+    count))
 
 ;; --- type predicates (opt-integer-type? and friends) -------------------------
 (define (sccp-class-of [ty : i64]) : i64
@@ -400,26 +395,25 @@
 ;; and writes Unknown into every slot; the array here is allocated once at the
 ;; corpus maximum and the same fill runs over [0, frame).
 (define (sccp-env-fill-unknown! [env : (&mut e SccpEnv)] [n : i64] [i : i64]) : unit
-  (if (>= i n)
-    unit
-    (begin
-      (set! (array-ref env.slots i) (SccpValue.Unknown))
-      (sccp-env-fill-unknown! env n (+ i 1)))))
+  (unless
+    (>= i n)
+    (set! (array-ref env.slots i) (Unknown))
+    (sccp-env-fill-unknown! env n (+ i 1))))
 
 ;; opt-sccp-env-lookup: an out-of-range var reads Unknown, the same default the
 ;; original assoc list gave for an unbound var.
 (define (sccp-env-lookup-in [env : (& e SccpEnv)] [var : i64]) : SccpValue
   (if (and (>= var 0) (< var env.cap))
     (clone (array-ref env.slots var))
-    (SccpValue.Unknown)))
+    (Unknown)))
 
 ;; The lattice tag alone, read in place: 0 Unknown, 1 Const, 2 Overdefined.
 (define (sccp-env-tag-in [env : (& e SccpEnv)] [var : i64]) : i64
   (if (and (>= var 0) (< var env.cap))
     (match (array-ref env.slots var)
-      [(SccpValue.Unknown) 0]
-      [(SccpValue.Const _ _ _) 1]
-      [(SccpValue.Overdefined) 2])
+      [(Unknown) 0]
+      [(Const _ _ _) 1]
+      [(Overdefined) 2])
     0))
 
 ;; The Const payload field `field` (0 kind, 1 value, 2 type), read in place.
@@ -428,7 +422,7 @@
   [var : i64]
   [field : i64]) : i64
   (match (array-ref env.slots var)
-    [(SccpValue.Const kind value ty)
+    [(Const kind value ty)
       (cond [(= field 0) kind] [(= field 1) value] [else ty])]
     [_ 0]))
 
@@ -478,9 +472,8 @@
   (let
     [i : i64 0]
     (while (< i n)
-      (begin
-        (set! (array-ref flags.slots i) false)
-        (set! i (+ i 1))))))
+      (set! (array-ref flags.slots i) false)
+      (set! i (+ i 1)))))
 
 (defmacro (sccp-exec-ref [id : Expr]) : Expr
   `(sccp-exec-ref-in (& sccp-exec) ,id))
@@ -488,44 +481,35 @@
 ;; --- opt-sccp-value-eq / opt-sccp-join ---------------------------------------
 (define (sccp-value-eq [a : (& a SccpValue)] [b : (& b SccpValue)]) : bool
   (match a
-    [(SccpValue.Unknown)
+    [(Unknown)
       (match b
-        [(SccpValue.Unknown) true]
+        [(Unknown) true]
         [_ false])]
-    [(SccpValue.Overdefined)
+    [(Overdefined)
       (match b
-        [(SccpValue.Overdefined) true]
+        [(Overdefined) true]
         [_ false])]
-    [(SccpValue.Const ak av aty)
+    [(Const ak av aty)
       (match b
-        [(SccpValue.Const bk bv bty)
-          (and
-            (= (deref ak) (deref bk))
-            (= (deref av) (deref bv))
-            (= (deref aty) (deref bty)))]
+        [(Const bk bv bty) (and (= ak bk) (= av bv) (= aty bty))]
         [_ false])]))
 
 (define (sccp-join [old : (& o SccpValue)] [new : (& n SccpValue)]) : SccpValue
   (match old
-    [(SccpValue.Unknown)
+    [(Unknown)
       (match new
-        [(SccpValue.Unknown) (SccpValue.Unknown)]
-        [(SccpValue.Overdefined) (SccpValue.Overdefined)]
-        [(SccpValue.Const nk nv nty)
-          (SccpValue.Const (deref nk) (deref nv) (deref nty))])]
-    [(SccpValue.Overdefined) (SccpValue.Overdefined)]
-    [(SccpValue.Const ok ov oty)
+        [(Unknown) (Unknown)]
+        [(Overdefined) (Overdefined)]
+        [(Const nk nv nty) (Const nk nv nty)])]
+    [(Overdefined) (Overdefined)]
+    [(Const ok ov oty)
       (match new
-        [(SccpValue.Unknown)
-          (SccpValue.Const (deref ok) (deref ov) (deref oty))]
-        [(SccpValue.Overdefined) (SccpValue.Overdefined)]
-        [(SccpValue.Const nk nv nty)
-          (if (and
-            (= (deref ok) (deref nk))
-            (= (deref ov) (deref nv))
-            (= (deref oty) (deref nty)))
-            (SccpValue.Const (deref ok) (deref ov) (deref oty))
-            (SccpValue.Overdefined))])]))
+        [(Unknown) (Const ok ov oty)]
+        [(Overdefined) (Overdefined)]
+        [(Const nk nv nty)
+          (if (and (= ok nk) (= ov nv) (= oty nty))
+            (Const ok ov oty)
+            (Overdefined))])]))
 
 ;; opt-sccp-state-bind: join the incoming value onto the slot; when the join
 ;; moves the slot, record it and raise the changed flag.
@@ -545,10 +529,9 @@
 (define (sccp-id-map-capacity [count : i64]) : i64
   (let
     [size : i64 2]
-    (begin
-      (while (< size (* count 2))
-        (set! size (* size 2)))
-      size)))
+    (while (< size (* count 2))
+      (set! size (* size 2)))
+    size))
 
 ;; opt-cfg-index-id-slot: fold the high bits down, then mask.
 (define (sccp-id-slot [label : i64] [mask : i64]) : i64
@@ -562,38 +545,34 @@
     [cap : i64 (sccp-id-map-capacity sccp-nblocks)]
     [mask : i64 (- cap 1)]
     [i : i64 0]
-    (begin
-      (set! sccp-idmask mask)
-      (while (< i cap)
-        (begin
-          (sccp-set! sccp-idmap i 0)
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i sccp-nblocks)
-        (begin
-          (sccp-set!
-            sccp-labels
-            i
-            (sccp-ref sccp-tokens (+ sccp-block-base (* i 5))))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i sccp-nblocks)
-        (let
-          [label : i64 (sccp-ref sccp-labels i)]
-          [slot : i64 (sccp-id-slot label mask)]
-          [placed : bool false]
-          (begin
-            (while (not placed)
-              (let
-                [entry : i64 (sccp-ref sccp-idmap slot)]
-                (if (= entry 0)
-                  (begin
-                    (sccp-set! sccp-idmap slot (+ i 1))
-                    (set! placed true))
-                  (if (= (sccp-ref sccp-labels (- entry 1)) label)
-                    (set! placed true)
-                    (set! slot (bit-and (+ slot 1) mask))))))
-            (set! i (+ i 1))))))))
+    (set! sccp-idmask mask)
+    (while (< i cap)
+      (sccp-set! sccp-idmap i 0)
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i sccp-nblocks)
+      (sccp-set!
+        sccp-labels
+        i
+        (sccp-ref sccp-tokens (+ sccp-block-base (* i 5))))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i sccp-nblocks)
+      (let
+        [label : i64 (sccp-ref sccp-labels i)]
+        [slot : i64 (sccp-id-slot label mask)]
+        [placed : bool false]
+        (while (not placed)
+          (let
+            [entry : i64 (sccp-ref sccp-idmap slot)]
+            (if (= entry 0)
+              (begin
+                (sccp-set! sccp-idmap slot (+ i 1))
+                (set! placed true))
+              (if (= (sccp-ref sccp-labels (- entry 1)) label)
+                (set! placed true)
+                (set! slot (bit-and (+ slot 1) mask))))))
+        (set! i (+ i 1))))))
 
 ;; opt-cfg-index-id: -1 stands for option_i64.None.
 (define (sccp-cfg-index-id [label : i64]) : i64
@@ -601,16 +580,15 @@
     [mask : i64 sccp-idmask]
     [slot : i64 (sccp-id-slot label mask)]
     [out : i64 -2]
-    (begin
-      (while (= out -2)
-        (let
-          [entry : i64 (sccp-ref sccp-idmap slot)]
-          (if (= entry 0)
-            (set! out -1)
-            (if (= (sccp-ref sccp-labels (- entry 1)) label)
-              (set! out (- entry 1))
-              (set! slot (bit-and (+ slot 1) mask))))))
-      out)))
+    (while (= out -2)
+      (let
+        [entry : i64 (sccp-ref sccp-idmap slot)]
+        (if (= entry 0)
+          (set! out -1)
+          (if (= (sccp-ref sccp-labels (- entry 1)) label)
+            (set! out (- entry 1))
+            (set! slot (bit-and (+ slot 1) mask))))))
+    out))
 
 ;; opt-sccp-state-mark-executable.
 (define (sccp-state-mark-executable [label : i64]) : unit
@@ -633,17 +611,17 @@
     (cond
       [(or (= klass sccp-class-sint) (= klass sccp-class-uint))
         (if (= kind sccp-vk-int)
-          (SccpValue.Const sccp-vk-int (sccp-normalize-int-to-i64 value ty) ty)
-          (SccpValue.Overdefined))]
+          (Const sccp-vk-int (sccp-normalize-int-to-i64 value ty) ty)
+          (Overdefined))]
       [(= klass sccp-class-char)
         (if (= kind sccp-vk-int)
-          (SccpValue.Const sccp-vk-int (bit-and value 255) sccp-ty-char)
-          (SccpValue.Overdefined))]
+          (Const sccp-vk-int (bit-and value 255) sccp-ty-char)
+          (Overdefined))]
       [(= klass sccp-class-bool)
         (if (= kind sccp-vk-bool)
-          (SccpValue.Const sccp-vk-bool value sccp-ty-bool)
-          (SccpValue.Overdefined))]
-      [else (SccpValue.Overdefined)])))
+          (Const sccp-vk-bool value sccp-ty-bool)
+          (Overdefined))]
+      [else (Overdefined)])))
 
 ;; opt-sccp-immediate over opt-default-immediate-type.
 (define (sccp-immediate [kind : i64] [value : i64] [ty : i64]) : SccpValue
@@ -662,7 +640,7 @@
 (define (sccp-value [kind : i64] [payload : i64] [ty : i64]) : SccpValue
   (cond
     [(= kind sccp-vk-var) (sccp-env-lookup payload)]
-    [(= kind sccp-vk-none) (SccpValue.Unknown)]
+    [(= kind sccp-vk-none) (Unknown)]
     [else (sccp-immediate kind payload ty)]))
 
 ;; opt-binop-operand-type.
@@ -762,13 +740,13 @@
   [operand-ty : i64]
   [ty : i64]) : SccpValue
   (if (not (and (sccp-int-or-char-type? rhs-ty) (= rhs-kind sccp-vk-int)))
-    (SccpValue.Overdefined)
+    (Overdefined)
     (let
       [count : i64 (sccp-normalize-int-to-i64 rhs-value rhs-ty)]
       (if (not
         (sccp-shift-count-valid? count rhs-ty (sccp-int-width operand-ty)))
-        (SccpValue.Overdefined)
-        (SccpValue.Const
+        (Overdefined)
+        (Const
           sccp-vk-int
           (sccp-normalize-int-to-i64
             (if (= op sccp-op-shl)
@@ -786,40 +764,40 @@
   [rhs-value : i64]
   [ty : i64]) : SccpValue
   (if (not (and (= lhs-kind sccp-vk-bool) (= rhs-kind sccp-vk-bool)))
-    (SccpValue.Overdefined)
+    (Overdefined)
     (let
       [a : bool (not (= lhs-value 0))]
       [b : bool (not (= rhs-value 0))]
       (cond
         [(= op sccp-op-and)
-          (SccpValue.Const
+          (Const
             sccp-vk-bool
             (if (and a b)
               1
               0)
             ty)]
         [(= op sccp-op-or)
-          (SccpValue.Const
+          (Const
             sccp-vk-bool
             (if (or a b)
               1
               0)
             ty)]
         [(= op sccp-op-eq)
-          (SccpValue.Const
+          (Const
             sccp-vk-bool
             (if (= lhs-value rhs-value)
               1
               0)
             ty)]
         [(= op sccp-op-ne)
-          (SccpValue.Const
+          (Const
             sccp-vk-bool
             (if (= lhs-value rhs-value)
               0
               1)
             ty)]
-        [else (SccpValue.Overdefined)]))))
+        [else (Overdefined)]))))
 
 ;; opt-fold-int-char-binop's arithmetic arms: every one of these is gated on
 ;; `opt-integer-type?`, so `char` operands fall through to Overdefined.
@@ -830,47 +808,38 @@
   [operand-ty : i64]
   [ty : i64]) : SccpValue
   (if (not (sccp-integer-type? operand-ty))
-    (SccpValue.Overdefined)
+    (Overdefined)
     (cond
       [(= op sccp-op-add)
-        (SccpValue.Const
-          sccp-vk-int
-          (sccp-normalize-int-to-i64 (+ a b) operand-ty)
-          ty)]
+        (Const sccp-vk-int (sccp-normalize-int-to-i64 (+ a b) operand-ty) ty)]
       [(= op sccp-op-sub)
-        (SccpValue.Const
-          sccp-vk-int
-          (sccp-normalize-int-to-i64 (- a b) operand-ty)
-          ty)]
+        (Const sccp-vk-int (sccp-normalize-int-to-i64 (- a b) operand-ty) ty)]
       [(= op sccp-op-mul)
-        (SccpValue.Const
-          sccp-vk-int
-          (sccp-normalize-int-to-i64 (* a b) operand-ty)
-          ty)]
+        (Const sccp-vk-int (sccp-normalize-int-to-i64 (* a b) operand-ty) ty)]
       [(= op sccp-op-bit-and)
-        (SccpValue.Const
+        (Const
           sccp-vk-int
           (sccp-normalize-int-to-i64 (bit-and a b) operand-ty)
           ty)]
       [(= op sccp-op-bit-or)
-        (SccpValue.Const
+        (Const
           sccp-vk-int
           (sccp-normalize-int-to-i64 (bit-or a b) operand-ty)
           ty)]
       [(= op sccp-op-bit-xor)
-        (SccpValue.Const
+        (Const
           sccp-vk-int
           (sccp-normalize-int-to-i64 (bit-xor a b) operand-ty)
           ty)]
       [(or (= op sccp-op-div) (= op sccp-op-safe-div))
         (if (sccp-divmod-valid? a b operand-ty)
-          (SccpValue.Const sccp-vk-int (sccp-fold-div-value a b operand-ty) ty)
-          (SccpValue.Overdefined))]
+          (Const sccp-vk-int (sccp-fold-div-value a b operand-ty) ty)
+          (Overdefined))]
       [(or (= op sccp-op-mod) (= op sccp-op-safe-mod))
         (if (sccp-divmod-valid? a b operand-ty)
-          (SccpValue.Const sccp-vk-int (sccp-fold-mod-value a b operand-ty) ty)
-          (SccpValue.Overdefined))]
-      [else (SccpValue.Overdefined)])))
+          (Const sccp-vk-int (sccp-fold-mod-value a b operand-ty) ty)
+          (Overdefined))]
+      [else (Overdefined)])))
 
 ;; opt-fold-int-char-binop.
 (define (sccp-fold-int-char-binop
@@ -883,13 +852,13 @@
   [rhs-ty : i64]
   [ty : i64]) : SccpValue
   (if (not (and (sccp-int-or-char-type? operand-ty) (= lhs-kind sccp-vk-int)))
-    (SccpValue.Overdefined)
+    (Overdefined)
     (let
       [a : i64 (sccp-normalize-int-to-i64 lhs-value operand-ty)]
       (if (or (= op sccp-op-shl) (= op sccp-op-shr))
         (sccp-fold-shift op a rhs-kind rhs-value rhs-ty operand-ty ty)
         (if (not (= rhs-kind sccp-vk-int))
-          (SccpValue.Overdefined)
+          (Overdefined)
           (let
             [b : i64 (sccp-normalize-int-to-i64 rhs-value operand-ty)]
             (cond
@@ -900,21 +869,21 @@
                   (= op sccp-op-le)
                   (= op sccp-op-gt)
                   (= op sccp-op-ge))
-                (SccpValue.Const
+                (Const
                   sccp-vk-bool
                   (if (sccp-fold-compare op a b operand-ty)
                     1
                     0)
                   ty)]
               [(= op sccp-op-bit-test-eq)
-                (SccpValue.Const
+                (Const
                   sccp-vk-bool
                   (if (= (bit-and a b) 0)
                     1
                     0)
                   ty)]
               [(= op sccp-op-bit-test-ne)
-                (SccpValue.Const
+                (Const
                   sccp-vk-bool
                   (if (= (bit-and a b) 0)
                     0
@@ -948,7 +917,7 @@
           operand-ty
           rhs-ty-field
           ty)]
-      [else (SccpValue.Overdefined)])))
+      [else (Overdefined)])))
 
 ;; opt-sccp-fold-binop-value.
 (define (sccp-fold-binop-value
@@ -958,63 +927,53 @@
   [ty : i64]
   [rhs-ty-field : i64]) : SccpValue
   (match lhs
-    [(SccpValue.Const lk lv lty)
+    [(Const lk lv lty)
       (match rhs
-        [(SccpValue.Const rk rv rty)
-          (sccp-fold-binop
-            op
-            (deref lk)
-            (deref lv)
-            (deref lty)
-            (deref rk)
-            (deref rv)
-            (deref rty)
-            ty
-            rhs-ty-field)]
-        [(SccpValue.Unknown) (SccpValue.Unknown)]
-        [(SccpValue.Overdefined) (SccpValue.Overdefined)])]
-    [(SccpValue.Unknown) (SccpValue.Unknown)]
-    [(SccpValue.Overdefined) (SccpValue.Overdefined)]))
+        [(Const rk rv rty)
+          (sccp-fold-binop op lk lv lty rk rv rty ty rhs-ty-field)]
+        [(Unknown) (Unknown)]
+        [(Overdefined) (Overdefined)])]
+    [(Unknown) (Unknown)]
+    [(Overdefined) (Overdefined)]))
 
 ;; opt-fold-unop.
 (define (sccp-fold-unop [op : i64] [kind : i64] [value : i64] [ty : i64]) : SccpValue
   (cond
     [(= op sccp-op-neg)
       (if (and (sccp-integer-type? ty) (= kind sccp-vk-int))
-        (SccpValue.Const
+        (Const
           sccp-vk-int
           (sccp-normalize-int-to-i64
             (- 0 (sccp-normalize-int-to-i64 value ty))
             ty)
           ty)
-        (SccpValue.Overdefined))]
+        (Overdefined))]
     [(= op sccp-op-not)
       (if (and (sccp-bool-type? ty) (= kind sccp-vk-bool))
-        (SccpValue.Const
+        (Const
           sccp-vk-bool
           (if (= value 0)
             1
             0)
           ty)
-        (SccpValue.Overdefined))]
+        (Overdefined))]
     [(= op sccp-op-bitnot)
       (if (and (sccp-integer-type? ty) (= kind sccp-vk-int))
-        (SccpValue.Const
+        (Const
           sccp-vk-int
           (sccp-normalize-int-to-i64
             (bit-not (sccp-normalize-int-to-i64 value ty))
             ty)
           ty)
-        (SccpValue.Overdefined))]
-    [else (SccpValue.Overdefined)]))
+        (Overdefined))]
+    [else (Overdefined)]))
 
 ;; opt-sccp-fold-unop-value.
 (define (sccp-fold-unop-value [op : i64] [src : (& s SccpValue)] [ty : i64]) : SccpValue
   (match src
-    [(SccpValue.Const kind value _)
-      (sccp-fold-unop op (deref kind) (deref value) ty)]
-    [(SccpValue.Unknown) (SccpValue.Unknown)]
-    [(SccpValue.Overdefined) (SccpValue.Overdefined)]))
+    [(Const kind value _) (sccp-fold-unop op kind value ty)]
+    [(Unknown) (Unknown)]
+    [(Overdefined) (Overdefined)]))
 
 ;; opt-fold-cast over compiler-finite-cast-fold's integer arms.
 (define (sccp-fold-cast
@@ -1023,10 +982,10 @@
   [from-ty : i64]
   [to-ty : i64]) : SccpValue
   (if (not (and (sccp-int-or-char-type? from-ty) (= kind sccp-vk-int)))
-    (SccpValue.Overdefined)
+    (Overdefined)
     (if (not (sccp-int-or-char-type? to-ty))
-      (SccpValue.Overdefined)
-      (SccpValue.Const
+      (Overdefined)
+      (Const
         sccp-vk-int
         (sccp-normalize-int-to-i64
           (sccp-normalize-int-to-i64 value from-ty)
@@ -1039,10 +998,9 @@
   [from-ty : i64]
   [to-ty : i64]) : SccpValue
   (match src
-    [(SccpValue.Const kind value _)
-      (sccp-fold-cast (deref kind) (deref value) from-ty to-ty)]
-    [(SccpValue.Unknown) (SccpValue.Unknown)]
-    [(SccpValue.Overdefined) (SccpValue.Overdefined)]))
+    [(Const kind value _) (sccp-fold-cast kind value from-ty to-ty)]
+    [(Unknown) (Unknown)]
+    [(Overdefined) (Overdefined)]))
 
 ;; --- phis --------------------------------------------------------------------
 ;; opt-sccp-phi-input-value: an input from a predecessor that is not executable
@@ -1056,12 +1014,12 @@
     [id : i64 (sccp-cfg-index-id pred)]
     (if (and (>= id 0) (< id sccp-nblocks) (sccp-exec-ref id))
       (sccp-value kind value ty)
-      (SccpValue.Unknown))))
+      (Unknown))))
 
 ;; opt-sccp-phi-value: join(first, phi-value(rest)), Unknown at the end.
 (define (sccp-phi-value [base : i64] [count : i64] [ty : i64]) : SccpValue
   (if (<= count 0)
-    (SccpValue.Unknown)
+    (Unknown)
     (let
       [at : i64 (+ sccp-phi-base (* base 3))]
       [head : SccpValue
@@ -1082,7 +1040,7 @@
   [true-label : i64]
   [false-label : i64]) : unit
   (match (sccp-value kind payload sccp-ty-bool)
-    [(SccpValue.Const value-kind value _)
+    [(Const value-kind value _)
       (if (= value-kind sccp-vk-bool)
         (if (= value 0)
           (sccp-state-mark-executable false-label)
@@ -1090,11 +1048,10 @@
         (begin
           (sccp-state-mark-executable true-label)
           (sccp-state-mark-executable false-label)))]
-    [(SccpValue.Overdefined)
-      (begin
-        (sccp-state-mark-executable true-label)
-        (sccp-state-mark-executable false-label))]
-    [(SccpValue.Unknown) unit]))
+    [(Overdefined)
+      (sccp-state-mark-executable true-label)
+      (sccp-state-mark-executable false-label)]
+    [(Unknown) unit]))
 
 ;; opt-sccp-mark-switch-targets, over the block's successor row (index 0 is the
 ;; default label, which opt-sccp-process-instr marks first).
@@ -1102,10 +1059,9 @@
   (let
     [index : i64 0]
     (while (< index count)
-      (begin
-        (sccp-state-mark-executable
-          (sccp-ref sccp-tokens (+ sccp-succ-base (+ base index))))
-        (set! index (+ index 1))))))
+      (sccp-state-mark-executable
+        (sccp-ref sccp-tokens (+ sccp-succ-base (+ base index))))
+      (set! index (+ index 1)))))
 
 ;; --- the per-instruction dispatch (opt-sccp-process-instr) -------------------
 (define (sccp-process-instr [succ-base : i64] [succ-count : i64] [row : i64]) : unit
@@ -1121,7 +1077,7 @@
     [bkind : i64 (sccp-ref sccp-tokens (+ at 7))]
     (cond
       [(= op sccp-op-mov) (sccp-state-bind dst (sccp-value akind a ty))]
-      [(= op sccp-op-overdef) (sccp-state-bind dst (SccpValue.Overdefined))]
+      [(= op sccp-op-overdef) (sccp-state-bind dst (Overdefined))]
       [(= op sccp-op-cast)
         (let
           [src : SccpValue (sccp-value akind a ty2)]
@@ -1260,13 +1216,12 @@
     (while (< index count)
       (let
         [at : i64 (+ sccp-phi-base (* (+ base index) 3))]
-        (begin
-          (when
-            (sccp-rewrite-substitutes?
-              (sccp-ref sccp-tokens (+ at 1))
-              (sccp-ref sccp-tokens (+ at 2)))
-            (set! sccp-subs (+ sccp-subs 1)))
-          (set! index (+ index 1)))))))
+        (when
+          (sccp-rewrite-substitutes?
+            (sccp-ref sccp-tokens (+ at 1))
+            (sccp-ref sccp-tokens (+ at 2)))
+          (set! sccp-subs (+ sccp-subs 1)))
+        (set! index (+ index 1))))))
 
 ;; opt-sccp-rewrite-blocks / -rewrite-instr-seq / -blocks-change-successors?,
 ;; counted rather than materialised: every block is walked, executable or not.
@@ -1280,27 +1235,26 @@
       [akind : i64 (sccp-ref sccp-tokens (+ at 5))]
       [b : i64 (sccp-ref sccp-tokens (+ at 6))]
       [bkind : i64 (sccp-ref sccp-tokens (+ at 7))]
-      (begin
-        (if (= op sccp-op-phi)
-          (sccp-rewrite-phi a b)
-          (begin
-            (when
-              (sccp-rewrite-substitutes? akind a)
-              (set! sccp-subs (+ sccp-subs 1)))
-            (when
-              (sccp-rewrite-substitutes? bkind b)
-              (set! sccp-subs (+ sccp-subs 1)))
-            (cond
-              [(= op sccp-op-branch)
-                (when
-                  (sccp-instr-changes-successors? akind a)
-                  (set! sccp-branches (+ sccp-branches 1)))]
-              [(= op sccp-op-bounds)
-                (when
-                  (sccp-bounds-check-in-range? akind a bkind b)
-                  (set! sccp-dropped (+ sccp-dropped 1)))]
-              [else unit])))
-        (sccp-rewrite-rows (+ row 1))))))
+      (if (= op sccp-op-phi)
+        (sccp-rewrite-phi a b)
+        (begin
+          (when
+            (sccp-rewrite-substitutes? akind a)
+            (set! sccp-subs (+ sccp-subs 1)))
+          (when
+            (sccp-rewrite-substitutes? bkind b)
+            (set! sccp-subs (+ sccp-subs 1)))
+          (cond
+            [(= op sccp-op-branch)
+              (when
+                (sccp-instr-changes-successors? akind a)
+                (set! sccp-branches (+ sccp-branches 1)))]
+            [(= op sccp-op-bounds)
+              (when
+                (sccp-bounds-check-in-range? akind a bkind b)
+                (set! sccp-dropped (+ sccp-dropped 1)))]
+            [else unit])))
+      (sccp-rewrite-rows (+ row 1)))))
 
 ;; --- one function ------------------------------------------------------------
 ;; opt-sccp-blocks-with-context-result-raw: build the label index, seed the
@@ -1312,47 +1266,43 @@
     [consts : i64 0]
     [dead : i64 0]
     [sweeps-before : i64 sccp-sweeps]
-    (begin
-      (sccp-cfg-index-build)
-      (sccp-env-set-cap! (&mut sccp-env) sccp-frame)
-      (sccp-env-fill-unknown! (&mut sccp-env) sccp-frame 0)
-      (sccp-exec-clear-in! (&mut sccp-exec) sccp-nblocks)
-      (sccp-env-from-params-at 0)
-      (when (> sccp-nblocks 0) (sccp-exec-set-in! (&mut sccp-exec) 0))
-      (set! sccp-changed true)
-      (sccp-analyze-fixed (+ (+ sccp-nblocks 8) (* 2 sccp-ninstr)))
-      (while (< i sccp-frame)
-        (begin
-          (when
-            (= (sccp-env-tag i) 1)
-            (begin
-              (set! consts (+ consts 1))
-              (set! hash (sccp-mix hash i))
-              (set! hash (sccp-mix hash (sccp-env-const-field i 0)))
-              (set! hash (sccp-mix hash (sccp-env-const-field i 1)))
-              (set! hash (sccp-mix hash (sccp-env-const-field i 2)))))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i sccp-nblocks)
-        (begin
-          (when (not (sccp-exec-ref i)) (set! dead (+ dead 1)))
-          (set!
-            hash
-            (sccp-mix
-              hash
-              (if (sccp-exec-ref i)
-                1
-                0)))
-          (set! i (+ i 1))))
-      (set! sccp-consts (+ sccp-consts consts))
-      (set! sccp-dead (+ sccp-dead dead))
-      (when (sccp-env-any-const-in? (& sccp-env) 0) (sccp-rewrite-rows 0))
-      (set! hash (sccp-mix hash consts))
-      (set! hash (sccp-mix hash dead))
-      (set! hash (sccp-mix hash (- sccp-sweeps sweeps-before)))
-      (set! hash (sccp-mix hash sccp-subs))
-      (set! hash (sccp-mix hash sccp-branches))
-      (sccp-mix hash sccp-dropped))))
+    (sccp-cfg-index-build)
+    (sccp-env-set-cap! (&mut sccp-env) sccp-frame)
+    (sccp-env-fill-unknown! (&mut sccp-env) sccp-frame 0)
+    (sccp-exec-clear-in! (&mut sccp-exec) sccp-nblocks)
+    (sccp-env-from-params-at 0)
+    (when (> sccp-nblocks 0) (sccp-exec-set-in! (&mut sccp-exec) 0))
+    (set! sccp-changed true)
+    (sccp-analyze-fixed (+ (+ sccp-nblocks 8) (* 2 sccp-ninstr)))
+    (while (< i sccp-frame)
+      (when
+        (= (sccp-env-tag i) 1)
+        (set! consts (+ consts 1))
+        (set! hash (sccp-mix hash i))
+        (set! hash (sccp-mix hash (sccp-env-const-field i 0)))
+        (set! hash (sccp-mix hash (sccp-env-const-field i 1)))
+        (set! hash (sccp-mix hash (sccp-env-const-field i 2))))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i sccp-nblocks)
+      (when (not (sccp-exec-ref i)) (set! dead (+ dead 1)))
+      (set!
+        hash
+        (sccp-mix
+          hash
+          (if (sccp-exec-ref i)
+            1
+            0)))
+      (set! i (+ i 1)))
+    (set! sccp-consts (+ sccp-consts consts))
+    (set! sccp-dead (+ sccp-dead dead))
+    (when (sccp-env-any-const-in? (& sccp-env) 0) (sccp-rewrite-rows 0))
+    (set! hash (sccp-mix hash consts))
+    (set! hash (sccp-mix hash dead))
+    (set! hash (sccp-mix hash (- sccp-sweeps sweeps-before)))
+    (set! hash (sccp-mix hash sccp-subs))
+    (set! hash (sccp-mix hash sccp-branches))
+    (sccp-mix hash sccp-dropped)))
 
 (define (sccp-bench [path : String] [rounds : i64]) : i64
   (let
@@ -1368,106 +1318,100 @@
     [round : i64 0]
     [start : i64 0]
     [acc : i64 sccp-hash-basis]
-    (begin
-      (set! sccp-tokens (sccp-zero-vec capacity))
-      (set! acc (sccp-mix acc (sccp-scan-ints text (&mut sccp-tokens))))
-      (set! ntypes (sccp-ref sccp-tokens 0))
-      (set! sccp-type-class (sccp-zero-vec (+ ntypes 1)))
-      (set! sccp-type-width (sccp-zero-vec (+ ntypes 1)))
-      (let
-        [t : i64 0]
-        (while (< t ntypes)
-          (begin
-            (sccp-set! sccp-type-class t (sccp-ref sccp-tokens (+ 1 (* t 2))))
-            (sccp-set! sccp-type-width t (sccp-ref sccp-tokens (+ 2 (* t 2))))
-            (set! t (+ t 1)))))
-      (set! expect-base (+ 1 (* ntypes 2)))
-      (set! cursor (+ expect-base 5))
-      (set! functions (sccp-ref sccp-tokens cursor))
-      (set! cursor (+ cursor 1))
-      (set! sccp-offsets (sccp-zero-vec (+ functions 1)))
-      (let
-        [f : i64 0]
-        (while (< f functions)
-          (let
-            [frame : i64 (sccp-ref sccp-tokens cursor)]
-            [nparams : i64 (sccp-ref sccp-tokens (+ cursor 1))]
-            [nblocks : i64 (sccp-ref sccp-tokens (+ cursor 2))]
-            [nsucc : i64 (sccp-ref sccp-tokens (+ cursor 3))]
-            [nphi : i64 (sccp-ref sccp-tokens (+ cursor 4))]
-            [ninstr : i64 (sccp-ref sccp-tokens (+ cursor 5))]
-            (begin
-              (sccp-set! sccp-offsets f cursor)
-              (when (> frame max-frame) (set! max-frame frame))
-              (when (> nblocks max-blocks) (set! max-blocks nblocks))
-              (set!
-                cursor
-                (+
-                  cursor
-                  (+
-                    6
-                    (+
-                      (+ (* nparams 2) nsucc)
-                      (+ (* nphi 3) (+ (* nblocks 5) (* ninstr 8)))))))
-              (set! f (+ f 1))))))
-      (set! max-idmap (sccp-id-map-capacity max-blocks))
-      (set! sccp-env (SccpEnv (__tl_make-array SccpValue max-frame) max-frame))
-      (set! sccp-exec (SccpFlags (__tl_make-array bool max-blocks) max-blocks))
-      (set! sccp-labels (sccp-zero-vec (+ max-blocks 1)))
-      (set! sccp-idmap (sccp-zero-vec (+ max-idmap 1)))
-      (while (< round rounds)
+    (set! sccp-tokens (sccp-zero-vec capacity))
+    (set! acc (sccp-mix acc (sccp-scan-ints text (&mut sccp-tokens))))
+    (set! ntypes (sccp-ref sccp-tokens 0))
+    (set! sccp-type-class (sccp-zero-vec (+ ntypes 1)))
+    (set! sccp-type-width (sccp-zero-vec (+ ntypes 1)))
+    (let
+      [t : i64 0]
+      (while (< t ntypes)
+        (sccp-set! sccp-type-class t (sccp-ref sccp-tokens (+ 1 (* t 2))))
+        (sccp-set! sccp-type-width t (sccp-ref sccp-tokens (+ 2 (* t 2))))
+        (set! t (+ t 1))))
+    (set! expect-base (+ 1 (* ntypes 2)))
+    (set! cursor (+ expect-base 5))
+    (set! functions (sccp-ref sccp-tokens cursor))
+    (set! cursor (+ cursor 1))
+    (set! sccp-offsets (sccp-zero-vec (+ functions 1)))
+    (let
+      [f : i64 0]
+      (while (< f functions)
         (let
-          [step : i64 0]
-          [index : i64 0]
-          [offset : i64 0]
-          (begin
-            (set! acc (sccp-mix acc round))
-            (while (< step functions)
-              (begin
-                (set! index (+ start step))
-                (when (>= index functions) (set! index (- index functions)))
-                (set! offset (sccp-ref sccp-offsets index))
-                (set! sccp-frame (sccp-ref sccp-tokens offset))
-                (set! sccp-nparams (sccp-ref sccp-tokens (+ offset 1)))
-                (set! sccp-nblocks (sccp-ref sccp-tokens (+ offset 2)))
-                (set! sccp-ninstr (sccp-ref sccp-tokens (+ offset 5)))
-                (set! sccp-param-base (+ offset 6))
-                (set! sccp-succ-base (+ sccp-param-base (* sccp-nparams 2)))
-                (set!
-                  sccp-phi-base
-                  (+ sccp-succ-base (sccp-ref sccp-tokens (+ offset 3))))
-                (set!
-                  sccp-block-base
-                  (+ sccp-phi-base (* (sccp-ref sccp-tokens (+ offset 4)) 3)))
-                (set! sccp-instr-base (+ sccp-block-base (* sccp-nblocks 5)))
-                (set! acc (sccp-mix acc (sccp-function)))
-                (set! step (+ step 1))))
-            (set! start (+ start 1))
-            (when (>= start functions) (set! start 0))
-            (set! round (+ round 1)))))
-      (set! acc (sccp-mix acc sccp-consts))
-      (set! acc (sccp-mix acc sccp-dead))
-      (set! acc (sccp-mix acc sccp-subs))
-      (set! acc (sccp-mix acc sccp-branches))
-      (set! acc (sccp-mix acc sccp-dropped))
-      (if (and
-        (= sccp-consts (* (sccp-ref sccp-tokens expect-base) rounds))
-        (= sccp-dead (* (sccp-ref sccp-tokens (+ expect-base 1)) rounds))
-        (= sccp-subs (* (sccp-ref sccp-tokens (+ expect-base 2)) rounds))
-        (= sccp-branches (* (sccp-ref sccp-tokens (+ expect-base 3)) rounds))
-        (= sccp-dropped (* (sccp-ref sccp-tokens (+ expect-base 4)) rounds)))
-        acc
-        (begin
-          (set! sccp-self-check-ok false)
-          acc)))))
+          [frame : i64 (sccp-ref sccp-tokens cursor)]
+          [nparams : i64 (sccp-ref sccp-tokens (+ cursor 1))]
+          [nblocks : i64 (sccp-ref sccp-tokens (+ cursor 2))]
+          [nsucc : i64 (sccp-ref sccp-tokens (+ cursor 3))]
+          [nphi : i64 (sccp-ref sccp-tokens (+ cursor 4))]
+          [ninstr : i64 (sccp-ref sccp-tokens (+ cursor 5))]
+          (sccp-set! sccp-offsets f cursor)
+          (when (> frame max-frame) (set! max-frame frame))
+          (when (> nblocks max-blocks) (set! max-blocks nblocks))
+          (set!
+            cursor
+            (+
+              cursor
+              (+
+                6
+                (+
+                  (+ (* nparams 2) nsucc)
+                  (+ (* nphi 3) (+ (* nblocks 5) (* ninstr 8)))))))
+          (set! f (+ f 1)))))
+    (set! max-idmap (sccp-id-map-capacity max-blocks))
+    (set! sccp-env (SccpEnv (__tl_make-array SccpValue max-frame) max-frame))
+    (set! sccp-exec (SccpFlags (__tl_make-array bool max-blocks) max-blocks))
+    (set! sccp-labels (sccp-zero-vec (+ max-blocks 1)))
+    (set! sccp-idmap (sccp-zero-vec (+ max-idmap 1)))
+    (while (< round rounds)
+      (let
+        [step : i64 0]
+        [index : i64 0]
+        [offset : i64 0]
+        (set! acc (sccp-mix acc round))
+        (while (< step functions)
+          (set! index (+ start step))
+          (when (>= index functions) (set! index (- index functions)))
+          (set! offset (sccp-ref sccp-offsets index))
+          (set! sccp-frame (sccp-ref sccp-tokens offset))
+          (set! sccp-nparams (sccp-ref sccp-tokens (+ offset 1)))
+          (set! sccp-nblocks (sccp-ref sccp-tokens (+ offset 2)))
+          (set! sccp-ninstr (sccp-ref sccp-tokens (+ offset 5)))
+          (set! sccp-param-base (+ offset 6))
+          (set! sccp-succ-base (+ sccp-param-base (* sccp-nparams 2)))
+          (set!
+            sccp-phi-base
+            (+ sccp-succ-base (sccp-ref sccp-tokens (+ offset 3))))
+          (set!
+            sccp-block-base
+            (+ sccp-phi-base (* (sccp-ref sccp-tokens (+ offset 4)) 3)))
+          (set! sccp-instr-base (+ sccp-block-base (* sccp-nblocks 5)))
+          (set! acc (sccp-mix acc (sccp-function)))
+          (set! step (+ step 1)))
+        (set! start (+ start 1))
+        (when (>= start functions) (set! start 0))
+        (set! round (+ round 1))))
+    (set! acc (sccp-mix acc sccp-consts))
+    (set! acc (sccp-mix acc sccp-dead))
+    (set! acc (sccp-mix acc sccp-subs))
+    (set! acc (sccp-mix acc sccp-branches))
+    (set! acc (sccp-mix acc sccp-dropped))
+    (if (and
+      (= sccp-consts (* (sccp-ref sccp-tokens expect-base) rounds))
+      (= sccp-dead (* (sccp-ref sccp-tokens (+ expect-base 1)) rounds))
+      (= sccp-subs (* (sccp-ref sccp-tokens (+ expect-base 2)) rounds))
+      (= sccp-branches (* (sccp-ref sccp-tokens (+ expect-base 3)) rounds))
+      (= sccp-dropped (* (sccp-ref sccp-tokens (+ expect-base 4)) rounds)))
+      acc
+      (begin
+        (set! sccp-self-check-ok false)
+        acc))))
 
 (define (main) : i64
   (let
     [path : String (io.arg 1)]
     [rounds : i64 (string.>int (io.arg 2))]
     [value : i64 (sccp-bench path rounds)]
-    (begin
-      (io.println "{}" value)
-      (if sccp-self-check-ok
-        0
-        1))))
+    (io.println "{}" value)
+    (if sccp-self-check-ok
+      0
+      1)))

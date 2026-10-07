@@ -84,17 +84,15 @@
       [current : i64 iter.current]
       [end : i64 iter.end]
       [inclusive : bool iter.inclusive]
-      (begin
-        (if inclusive
-          (if (= current end)
-            (set! iter.exhausted true)
-            (set! iter.current (+ current 1)))
-          (let
-            [next-current : i64 (+ current 1)]
-            (begin
-              (set! iter.current next-current)
-              (set! iter.exhausted (= next-current end)))))
-        (Item current)))))
+      (if inclusive
+        (if (= current end)
+          (set! iter.exhausted true)
+          (set! iter.current (+ current 1)))
+        (let
+          [next-current : i64 (+ current 1)]
+          (set! iter.current next-current)
+          (set! iter.exhausted (= next-current end))))
+      (Item current))))
 
 (cfg test (import stdlib.test))
 
@@ -105,12 +103,11 @@
       [iter : IntoIter (into-iterator items)]
       [sum : i64 0]
       [done : bool false]
-      (begin
-        (while (not done)
-          (match (into-next (&mut iter))
-            [(Item value) (set! sum (+ sum value))]
-            [(Done) (set! done true)]))
-        sum))))
+      (while (not done)
+        (match (into-next (&mut iter))
+          [(Item value) (set! sum (+ sum value))]
+          [(Done) (set! done true)]))
+      sum)))
 
 (cfg
   test
@@ -165,31 +162,26 @@
       "inclusive descending range sum")
     (let
       [iter : IntoIter (into-iterator (range 7 8))]
-      (begin
-        (iterator-test-expect-next (&mut iter) 7 "first next yields value")
-        (iterator-test-expect-done (&mut iter) "second next exhausted")
-        (iterator-test-expect-done (&mut iter) "repeated next stays exhausted")))
+      (iterator-test-expect-next (&mut iter) 7 "first next yields value")
+      (iterator-test-expect-done (&mut iter) "second next exhausted")
+      (iterator-test-expect-done (&mut iter) "repeated next stays exhausted"))
     (let
       [iter : IntoIter (into-iterator (range 8 10))]
-      (begin
-        (iterator-test-expect-next (&mut iter) 8 "canonical range first item")
-        (iterator-test-expect-next (&mut iter) 9 "canonical range second item")
-        (iterator-test-expect-done (&mut iter) "canonical range exhausts")
-        (iterator-test-expect-done
-          (&mut iter)
-          "canonical range repeated exhaustion")))
+      (iterator-test-expect-next (&mut iter) 8 "canonical range first item")
+      (iterator-test-expect-next (&mut iter) 9 "canonical range second item")
+      (iterator-test-expect-done (&mut iter) "canonical range exhausts")
+      (iterator-test-expect-done
+        (&mut iter)
+        "canonical range repeated exhaustion"))
     (let
       [iter : IntoIter
         (into-iterator
           (range-inclusive 9223372036854775807 9223372036854775807))]
-      (begin
-        (iterator-test-expect-next
-          (&mut iter)
-          9223372036854775807
-          "inclusive max endpoint yields")
-        (iterator-test-expect-done
-          (&mut iter)
-          "inclusive max endpoint exhausts")
-        (iterator-test-expect-done
-          (&mut iter)
-          "inclusive max endpoint repeated exhaustion")))))
+      (iterator-test-expect-next
+        (&mut iter)
+        9223372036854775807
+        "inclusive max endpoint yields")
+      (iterator-test-expect-done (&mut iter) "inclusive max endpoint exhausts")
+      (iterator-test-expect-done
+        (&mut iter)
+        "inclusive max endpoint repeated exhaustion"))))

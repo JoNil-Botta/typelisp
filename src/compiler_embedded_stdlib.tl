@@ -26,16 +26,14 @@
 
 (define (compiler-embedded-stdlib-lookup [suffix : String]) : CompilerEmbeddedStdlibSource
   (match (payload.compiler-embedded-stdlib-payload-lookup suffix)
-    [(payload.CompilerEmbeddedStdlibPayloadNone)
-      (CompilerEmbeddedStdlibNoSource)]
-    [(payload.CompilerEmbeddedStdlibPayloadSome compressed)
+    [(CompilerEmbeddedStdlibPayloadNone) (CompilerEmbeddedStdlibNoSource)]
+    [(CompilerEmbeddedStdlibPayloadSome compressed)
       (match (lzss.compiler-lzss-decode
         (& compressed)
         (compiler-embedded-stdlib-source-limit))
-        [(lzss.CompilerLzssBytes.Ok bytes)
+        [(Ok bytes)
           (CompilerEmbeddedStdlibSomeSource
             (compiler-embedded-stdlib-bytes->string bytes))]
-        [(lzss.CompilerLzssBytes.Err _)
-          (begin
-            (string.tl_oob_abort)
-            (CompilerEmbeddedStdlibNoSource))])]))
+        [(Err _)
+          (string.tl_oob_abort)
+          (CompilerEmbeddedStdlibNoSource)])]))

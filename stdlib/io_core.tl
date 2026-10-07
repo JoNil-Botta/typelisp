@@ -141,52 +141,48 @@
 (unsafe
   (define (io-file-handle-clear! [handle : i64]) : unit
     (unsafe
-      (begin
-        (io-file-i64-set! (io-file-fds-ptr) handle 0)
-        (io-file-i64-set! (io-file-modes-ptr) handle 0)
-        (io-file-i64-set! (io-file-states-ptr) handle 0)
-        (io-file-bool-set! (io-file-eofs-ptr) handle false)
-        (io-file-bool-set! (io-file-last-ready-ptr) handle false)
-        (io-file-byte-buf-set! (io-file-last-bytes-ptr) handle (byte_buf.new))
-        unit))))
+      (io-file-i64-set! (io-file-fds-ptr) handle 0)
+      (io-file-i64-set! (io-file-modes-ptr) handle 0)
+      (io-file-i64-set! (io-file-states-ptr) handle 0)
+      (io-file-bool-set! (io-file-eofs-ptr) handle false)
+      (io-file-bool-set! (io-file-last-ready-ptr) handle false)
+      (io-file-byte-buf-set! (io-file-last-bytes-ptr) handle (byte_buf.new))
+      unit)))
 
 ;: Return the first currently closed file-handle slot at or after `start`.
 (unsafe
   (define (io-file-find-free-handle-from [start : i64]) : i64
     (let
       [i : i64 start]
-      (begin
-        (while (< i io-file-handle-cap)
-          (begin
-            (when
-              (unsafe
-                (= (io-file-i64-ref (io-file-states-ptr) i) 0))
-              (return i))
-            (set! i (+ i 1))))
-        -1))))
+      (while (< i io-file-handle-cap)
+        (when
+          (unsafe
+            (= (io-file-i64-ref (io-file-states-ptr) i) 0))
+          (return i))
+        (set! i (+ i 1)))
+      -1)))
 
 ;: Reserve a stdlib file-handle slot, reusing closed slots before failing.
 (unsafe
   (define (io-file-alloc-handle!) : i64
-    (begin
-      (io-file-table-init!)
-      (let
-        [handle : i64
+    (io-file-table-init!)
+    (let
+      [handle : i64
+        (unsafe
+          (io-file-find-free-handle-from io-file-handle-next))]
+      [fallback : i64
+        (if (< handle 0)
           (unsafe
-            (io-file-find-free-handle-from io-file-handle-next))]
-        [fallback : i64
-          (if (< handle 0)
-            (unsafe
-              (io-file-find-free-handle-from 1))
-            handle)]
-        (if (< fallback 0)
-          -1
-          (begin
-            (set! io-file-handle-next (+ fallback 1))
-            (if (>= io-file-handle-next io-file-handle-cap)
-              (set! io-file-handle-next 1)
-              unit)
-            fallback))))))
+            (io-file-find-free-handle-from 1))
+          handle)]
+      (if (< fallback 0)
+        -1
+        (begin
+          (set! io-file-handle-next (+ fallback 1))
+          (if (>= io-file-handle-next io-file-handle-cap)
+            (set! io-file-handle-next 1)
+            unit)
+          fallback)))))
 
 ;; The table pointers are stored as raw integer addresses the region
 ;; checker cannot see, and this init can fire inside a (with-arena ...) region
@@ -220,77 +216,73 @@
           (ptr-cast (io-runtime-alloc 16384) : (MutPtr byte_buf.ByteBuf)))]
       [_restored : unit (io-arena-set prev-arena)]
       [i : i64 0]
-      (begin
-        (set!
-          io-file-fds-addr
-          (unsafe
-            (io-file-ptr-addr
-              (unsafe
-                (ptr-cast fds : (MutPtr u8))))))
-        (set!
-          io-file-modes-addr
-          (unsafe
-            (io-file-ptr-addr
-              (unsafe
-                (ptr-cast modes : (MutPtr u8))))))
-        (set!
-          io-file-states-addr
-          (unsafe
-            (io-file-ptr-addr
-              (unsafe
-                (ptr-cast states : (MutPtr u8))))))
-        (set!
-          io-file-eofs-addr
-          (unsafe
-            (io-file-ptr-addr
-              (unsafe
-                (ptr-cast eofs : (MutPtr u8))))))
-        (set!
-          io-file-last-ready-addr
-          (unsafe
-            (io-file-ptr-addr
-              (unsafe
-                (ptr-cast last-ready : (MutPtr u8))))))
-        (set!
-          io-file-last-bytes-addr
-          (unsafe
-            (io-file-ptr-addr
-              (unsafe
-                (ptr-cast last-bytes : (MutPtr u8))))))
-        (while (< i io-file-handle-cap)
-          (begin
+      (set!
+        io-file-fds-addr
+        (unsafe
+          (io-file-ptr-addr
             (unsafe
-              (io-file-i64-set! (io-file-fds-ptr) i 0))
+              (ptr-cast fds : (MutPtr u8))))))
+      (set!
+        io-file-modes-addr
+        (unsafe
+          (io-file-ptr-addr
             (unsafe
-              (io-file-i64-set! (io-file-modes-ptr) i 0))
+              (ptr-cast modes : (MutPtr u8))))))
+      (set!
+        io-file-states-addr
+        (unsafe
+          (io-file-ptr-addr
             (unsafe
-              (io-file-i64-set! (io-file-states-ptr) i 0))
+              (ptr-cast states : (MutPtr u8))))))
+      (set!
+        io-file-eofs-addr
+        (unsafe
+          (io-file-ptr-addr
             (unsafe
-              (io-file-bool-set! (io-file-eofs-ptr) i false))
+              (ptr-cast eofs : (MutPtr u8))))))
+      (set!
+        io-file-last-ready-addr
+        (unsafe
+          (io-file-ptr-addr
             (unsafe
-              (io-file-bool-set! (io-file-last-ready-ptr) i false))
-            (set! i (+ i 1))))
-        unit))
+              (ptr-cast last-ready : (MutPtr u8))))))
+      (set!
+        io-file-last-bytes-addr
+        (unsafe
+          (io-file-ptr-addr
+            (unsafe
+              (ptr-cast last-bytes : (MutPtr u8))))))
+      (while (< i io-file-handle-cap)
+        (unsafe
+          (io-file-i64-set! (io-file-fds-ptr) i 0))
+        (unsafe
+          (io-file-i64-set! (io-file-modes-ptr) i 0))
+        (unsafe
+          (io-file-i64-set! (io-file-states-ptr) i 0))
+        (unsafe
+          (io-file-bool-set! (io-file-eofs-ptr) i false))
+        (unsafe
+          (io-file-bool-set! (io-file-last-ready-ptr) i false))
+        (set! i (+ i 1)))
+      unit)
     unit))
 
 ;: Return true when `raw` names an open stdlib file handle.
 (define (io-file-valid-handle? [raw : i64]) : bool
-  (begin
-    (io-file-table-init!)
-    (if (> raw 0)
-      (if (< raw io-file-handle-cap)
-        (unsafe
-          (= (io-file-i64-ref (io-file-states-ptr) raw) 1))
-        false)
-      false)))
+  (io-file-table-init!)
+  (if (> raw 0)
+    (if (< raw io-file-handle-cap)
+      (unsafe
+        (= (io-file-i64-ref (io-file-states-ptr) raw) 1))
+      false)
+    false))
 
 ;: Clear and release a closed handle slot for reuse.
 (unsafe
   (define (io-file-release-handle! [handle : i64]) : unit
-    (begin
-      (unsafe
-        (io-file-handle-clear! handle))
-      (if (< handle io-file-handle-next)
-        (set! io-file-handle-next handle)
-        unit)
-      unit)))
+    (unsafe
+      (io-file-handle-clear! handle))
+    (if (< handle io-file-handle-next)
+      (set! io-file-handle-next handle)
+      unit)
+    unit))

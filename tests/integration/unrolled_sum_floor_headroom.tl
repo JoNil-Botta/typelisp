@@ -9,20 +9,16 @@
   (let
     [i : i64 (+ 9223372036854775787 n)]
     [s : i64 0]
-    (begin
-      (while (>= i 9223372036854775787)
-        (begin
-          (set! s (+ s (bit-and (bit-xor i k) 1)))
-          (set! i (- i 1))))
-      s)))
+    (while (>= i 9223372036854775787)
+      (set! s (+ s (bit-and (bit-xor i k) 1)))
+      (set! i (- i 1)))
+    s))
 
 (define (main) : i64
   (let
     [limit : i64 (string.>int (io.arg 1))]
     [m : i64 0]
-    (begin
-      (while (<= m limit)
-        (begin
-          (io.println "{}" (down-sum m 3))
-          (set! m (+ m 1))))
-      42)))
+    (while (<= m limit)
+      (io.println "{}" (down-sum m 3))
+      (set! m (+ m 1)))
+    42))

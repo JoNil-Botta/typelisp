@@ -27,41 +27,38 @@
     [first : i64 -1]
     [found : i64 -1]
     [done : bool false]
-    (begin
-      (while (and (< walked cap) (not done))
-        (let
-          [state : i64 (array-ref csr-slots (+ base (* cursor 3)))]
-          (cond
-            [(= state 2)
-              (if (= (array-ref csr-slots (+ base (+ (* cursor 3) 1))) key)
-                (begin
-                  (set! found cursor)
-                  (set! done true))
-                (begin
-                  (set! cursor (bit-and (+ cursor 1) mask))
-                  (set! walked (+ walked 1))))]
-            [(= state 0)
+    (while (and (< walked cap) (not done))
+      (let
+        [state : i64 (array-ref csr-slots (+ base (* cursor 3)))]
+        (cond
+          [(= state 2)
+            (if (= (array-ref csr-slots (+ base (+ (* cursor 3) 1))) key)
               (begin
-                (set!
-                  found
-                  (-
-                    0
-                    (+
-                      2
-                      (if (>= first 0)
-                        first
-                        cursor))))
-                (set! done true))]
-            [else
+                (set! found cursor)
+                (set! done true))
               (begin
-                (when (< first 0) (set! first cursor))
                 (set! cursor (bit-and (+ cursor 1) mask))
-                (set! walked (+ walked 1)))])))
-      (if done
-        found
-        (if (>= first 0)
-          (- 0 (+ 2 first))
-          -1)))))
+                (set! walked (+ walked 1))))]
+          [(= state 0)
+            (set!
+              found
+              (-
+                0
+                (+
+                  2
+                  (if (>= first 0)
+                    first
+                    cursor))))
+            (set! done true)]
+          [else
+            (when (< first 0) (set! first cursor))
+            (set! cursor (bit-and (+ cursor 1) mask))
+            (set! walked (+ walked 1))])))
+    (if done
+      found
+      (if (>= first 0)
+        (- 0 (+ 2 first))
+        -1))))
 
 (define (insert! [base : i64] [cap : i64] [key : i64] [value : i64]) : unit
   (let
@@ -70,10 +67,9 @@
       (set! (array-ref csr-slots (+ base (+ (* slot 3) 2))) value)
       (let
         [index : i64 (- (- 0 slot) 2)]
-        (begin
-          (set! (array-ref csr-slots (+ base (* index 3))) 2)
-          (set! (array-ref csr-slots (+ base (+ (* index 3) 1))) key)
-          (set! (array-ref csr-slots (+ base (+ (* index 3) 2))) value))))))
+        (set! (array-ref csr-slots (+ base (* index 3))) 2)
+        (set! (array-ref csr-slots (+ base (+ (* index 3) 1))) key)
+        (set! (array-ref csr-slots (+ base (+ (* index 3) 2))) value)))))
 
 (define (lookup [base : i64] [cap : i64] [key : i64] [fallback : i64]) : i64
   (let
@@ -92,23 +88,19 @@
     ;; leave the gate no prologue to read.
     [base : i64 (- rounds 40)]
     [cap : i64 (+ base 64)]
-    (begin
-      (while (< i rounds)
-        (begin
-          (insert! base cap (+ (* i 7) 1) (+ i 3))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i rounds)
-        (begin
-          (set! total (+ total (lookup base cap (+ (* i 7) 1) 0)))
-          (set! i (+ i 1))))
-      total)))
+    (while (< i rounds)
+      (insert! base cap (+ (* i 7) 1) (+ i 3))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i rounds)
+      (set! total (+ total (lookup base cap (+ (* i 7) 1) 0)))
+      (set! i (+ i 1)))
+    total))
 
 (define (main) : i64
   (let
     [total : i64 (fill! 40)]
-    (begin
-      (io.print-format "{}\n" total)
-      (if (= total 900)
-        42
-        1))))
+    (io.print-format "{}\n" total)
+    (if (= total 900)
+      42
+      1)))

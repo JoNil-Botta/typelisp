@@ -14,38 +14,32 @@
     [out : (__tl_dyn-array u8)
       (__tl_make-array u8 (+ prefix-len header-len (array-length tokens)))]
     [index : i64 0]
-    (begin
-      (while (< index prefix-len)
-        (begin
-          (set!
-            (array-ref out index)
-            (cast (string.string-ref prefix index) : u8))
-          (set! index (+ index 1))))
-      (let
-        [header-index : i64 0]
-        (while (< header-index header-len)
-          (begin
-            (set!
-              (array-ref out (+ prefix-len header-index))
-              (cast (string.string-ref header header-index) : u8))
-            (set! header-index (+ header-index 1)))))
-      (let
-        [token-index : i64 0]
-        (while (< token-index (array-length tokens))
-          (begin
-            (set!
-              (array-ref out (+ prefix-len header-len token-index))
-              (array-ref tokens token-index))
-            (set! token-index (+ token-index 1)))))
-      out)))
+    (while (< index prefix-len)
+      (set! (array-ref out index) (cast (string.string-ref prefix index) : u8))
+      (set! index (+ index 1)))
+    (let
+      [header-index : i64 0]
+      (while (< header-index header-len)
+        (set!
+          (array-ref out (+ prefix-len header-index))
+          (cast (string.string-ref header header-index) : u8))
+        (set! header-index (+ header-index 1))))
+    (let
+      [token-index : i64 0]
+      (while (< token-index (array-length tokens))
+        (set!
+          (array-ref out (+ prefix-len header-len token-index))
+          (array-ref tokens token-index))
+        (set! token-index (+ token-index 1))))
+    out))
 
 (define (compiler-lzss-test-rejects?
   [payload : (__tl_dyn-array u8)]
   [raw-limit : i64]
   [expected : String]) : bool
   (match (lzss.compiler-lzss-decode (& payload) raw-limit)
-    [(lzss.CompilerLzssBytes.Err message) (string.eq message expected)]
-    [(lzss.CompilerLzssBytes.Ok _) false]))
+    [(Err message) (string.eq message expected)]
+    [(Ok _) false]))
 
 (define (compiler-lzss-test-decode
   [payload : (__tl_dyn-array u8)]
@@ -58,20 +52,20 @@
         (match (compiler-lzss-test-decode
           (compiler-lzss-test-payload "6\n" (__tl_make-array 7 65 66 67 0 32))
           64)
-          [(lzss.CompilerLzssBytes.Ok bytes)
+          [(Ok bytes)
             (and
               (= (array-length bytes) 6)
               (= (array-ref bytes 0) (cast 65 : u8))
               (= (array-ref bytes 3) (cast 65 : u8))
               (= (array-ref bytes 5) (cast 67 : u8)))]
-          [(lzss.CompilerLzssBytes.Err _) false]))
+          [(Err _) false]))
       1]
     [(not
         (match (compiler-lzss-test-decode
           (compiler-lzss-test-payload "0\n" (__tl_make-array))
           0)
-          [(lzss.CompilerLzssBytes.Ok bytes) (= (array-length bytes) 0)]
-          [(lzss.CompilerLzssBytes.Err _) false]))
+          [(Ok bytes) (= (array-length bytes) 0)]
+          [(Err _) false]))
       2]
     [(not
         (compiler-lzss-test-rejects?

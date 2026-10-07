@@ -81,34 +81,34 @@
 
 (define (result-string-score [value : result_i64_string.Result]) : i64
   (match value
-    [(result_i64_string.Ok n) n]
-    [(result_i64_string.Err text) (string.string-length text)]))
+    [(Ok n) n]
+    [(Err text) (string.string-length text)]))
 
 (define (payload-score [value : result_payload_status.Result]) : i64
   (match value
-    [(result_payload_status.Ok payload) payload.value]
-    [(result_payload_status.Err status)
+    [(Ok payload) payload.value]
+    [(Err status)
       (match status
         [(StatusOk) 10]
         [(StatusBad code) code])]))
 
 (define (rich-payload-score [value : result_rich_payload_status.Result]) : i64
   (match value
-    [(result_rich_payload_status.Ok payload) payload.span.col]
-    [(result_rich_payload_status.Err status)
+    [(Ok payload) payload.span.col]
+    [(Err status)
       (match status
         [(StatusOk) 10]
         [(StatusBad code) code])]))
 
 (define (rich-error-score [value : result_i64_rich_error.Result]) : i64
   (match value
-    [(result_i64_rich_error.Ok n) n]
-    [(result_i64_rich_error.Err err) err.span.col]))
+    [(Ok n) n]
+    [(Err err) err.span.col]))
 
 (define (nested-score [value : result_nested.Result]) : i64
   (match value
-    [(result_nested.Ok inner) (result-string-score inner)]
-    [(result_nested.Err text) (string.string-length text)]))
+    [(Ok inner) (result-string-score inner)]
+    [(Err text) (string.string-length text)]))
 
 (define (main) : i64
   (let
@@ -141,19 +141,18 @@
         (result_i64_rich_error.err (RichError "bad" (Span 2 3))))]
     [nested : i64 (nested-score (result_nested.ok (result_i64_string.ok 7)))]
     [total : i64 option-some]
-    (begin
-      (set! total (+ total option-none))
-      (set! total (+ total option-string-fallback))
-      (set! total (+ total option-try-some))
-      (set! total (+ total option-try-none))
-      (set! total (+ total option-duplicate))
-      (set! total (+ total option-map))
-      (set! total (+ total result-try))
-      (set! total (+ total result-fallback))
-      (set! total (+ total result-duplicate))
-      (set! total (+ total result-map))
-      (set! total (+ total payload))
-      (set! total (+ total rich-payload))
-      (set! total (+ total rich-error))
-      (set! total (+ total nested))
-      total)))
+    (set! total (+ total option-none))
+    (set! total (+ total option-string-fallback))
+    (set! total (+ total option-try-some))
+    (set! total (+ total option-try-none))
+    (set! total (+ total option-duplicate))
+    (set! total (+ total option-map))
+    (set! total (+ total result-try))
+    (set! total (+ total result-fallback))
+    (set! total (+ total result-duplicate))
+    (set! total (+ total result-map))
+    (set! total (+ total payload))
+    (set! total (+ total rich-payload))
+    (set! total (+ total rich-error))
+    (set! total (+ total nested))
+    total))

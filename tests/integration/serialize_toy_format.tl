@@ -33,21 +33,19 @@
   [source : (& source (__tl_dyn-array Field))]
   [target : (&mut target (__tl_dyn-array Field))]
   [index : i64]) : unit
-  (if (= index (array-length source))
-    unit
-    (begin
-      (set! (array-ref target (+ index 1)) (clone (array-ref source index)))
-      (field-list-copy-from source target (+ index 1)))))
+  (unless
+    (= index (array-length source))
+    (set! (array-ref target (+ index 1)) (clone (array-ref source index)))
+    (field-list-copy-from source target (+ index 1))))
 
 (define (field-list-prepend [name : String] [value : Value] [rest : FieldList]) : FieldList
   (let
     [source : (__tl_dyn-array Field) rest.items]
     [target : (__tl_dyn-array Field)
       (__tl_make-array Field (+ (array-length source) 1))]
-    (begin
-      (set! (array-ref target 0) (Field name value))
-      (field-list-copy-from (& source) (&mut target) 0)
-      (FieldList target))))
+    (set! (array-ref target 0) (Field name value))
+    (field-list-copy-from (& source) (&mut target) 0)
+    (FieldList target)))
 
 (define (field-list-get-from
   [items : (& items (__tl_dyn-array Field))]
@@ -79,21 +77,19 @@
   [source : (& source (__tl_dyn-array Value))]
   [target : (&mut target (__tl_dyn-array Value))]
   [index : i64]) : unit
-  (if (= index (array-length source))
-    unit
-    (begin
-      (set! (array-ref target (+ index 1)) (clone (array-ref source index)))
-      (value-list-copy-from source target (+ index 1)))))
+  (unless
+    (= index (array-length source))
+    (set! (array-ref target (+ index 1)) (clone (array-ref source index)))
+    (value-list-copy-from source target (+ index 1))))
 
 (define (value-list-prepend [value : Value] [rest : ValueList]) : ValueList
   (let
     [source : (__tl_dyn-array Value) rest.items]
     [target : (__tl_dyn-array Value)
       (__tl_make-array Value (+ (array-length source) 1))]
-    (begin
-      (set! (array-ref target 0) value)
-      (value-list-copy-from (& source) (&mut target) 0)
-      (ValueList target))))
+    (set! (array-ref target 0) value)
+    (value-list-copy-from (& source) (&mut target) 0)
+    (ValueList target)))
 
 (defmacro (encode-bool [value : bool]) : Value
   `(serialize_toy_format.Bool ,value))

@@ -7,7 +7,6 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.vector)
-(import package_cache_core)
 (import (vector.vector package_lock_core.PackageLockEntry core) as package_lock_entry_vec)
 
 (define (main) : i64
@@ -32,8 +31,8 @@
 
 (define (package-lock-valid-parse-ok?) : bool
   (match (package_lock_core.package-lock-parse (package-lock-valid-source))
-    [(package_lock_core.ResultPackageLockFile.Err _) false]
-    [(package_lock_core.ResultPackageLockFile.Ok lock)
+    [(Err _) false]
+    [(Ok lock)
       (let
         [entries : package_lock_entry_vec.Vec lock.entries]
         (and
@@ -43,33 +42,33 @@
             entries
             "alpha"
             "https://github.com/owner/alpha.git"
-            (package_cache_core.PackageCachePinKind.Branch)
+            (Branch)
             "main"
             "1111111111111111111111111111111111111111")
           (package_lock_core.package-lock-list-has-entry?
             entries
             "zeta"
             "https://github.com/owner/zeta.git"
-            (package_cache_core.PackageCachePinKind.Rev)
+            (Rev)
             "abcdef0123456789abcdef0123456789abcdef01"
             "abcdef0123456789abcdef0123456789abcdef01")))]))
 
 (define (package-lock-emit-stable-ok?) : bool
   (match (package_lock_core.package-lock-parse (package-lock-valid-source))
-    [(package_lock_core.ResultPackageLockFile.Err _) false]
-    [(package_lock_core.ResultPackageLockFile.Ok lock)
+    [(Err _) false]
+    [(Ok lock)
       (string.eq
         (package_lock_core.package-lock-emit lock)
         (package-lock-expected-emitted))]))
 
 (define (package-lock-round-trip-ok?) : bool
   (match (package_lock_core.package-lock-parse (package-lock-valid-source))
-    [(package_lock_core.ResultPackageLockFile.Err _) false]
-    [(package_lock_core.ResultPackageLockFile.Ok lock)
+    [(Err _) false]
+    [(Ok lock)
       (match (package_lock_core.package-lock-parse
         (package_lock_core.package-lock-emit lock))
-        [(package_lock_core.ResultPackageLockFile.Err _) false]
-        [(package_lock_core.ResultPackageLockFile.Ok again)
+        [(Err _) false]
+        [(Ok again)
           (let
             [entries : package_lock_entry_vec.Vec again.entries]
             (and
@@ -78,14 +77,14 @@
                 entries
                 "alpha"
                 "https://github.com/owner/alpha.git"
-                (package_cache_core.PackageCachePinKind.Branch)
+                (Branch)
                 "main"
                 "1111111111111111111111111111111111111111")
               (package_lock_core.package-lock-list-has-entry?
                 entries
                 "zeta"
                 "https://github.com/owner/zeta.git"
-                (package_cache_core.PackageCachePinKind.Rev)
+                (Rev)
                 "abcdef0123456789abcdef0123456789abcdef01"
                 "abcdef0123456789abcdef0123456789abcdef01")))])]))
 
@@ -122,21 +121,19 @@
   test
   (define (package-lock-growth-order-ok?) : bool
     (match (package_lock_core.package-lock-parse (package-lock-growth-source))
-      [(package_lock_core.ResultPackageLockFile.Err _) false]
-      [(package_lock_core.ResultPackageLockFile.Ok lock)
+      [(Err _) false]
+      [(Ok lock)
         (if (package-lock-growth-entries-ok? (& lock.entries))
           (match (package_lock_core.package-lock-parse
             (package_lock_core.package-lock-emit lock))
-            [(package_lock_core.ResultPackageLockFile.Err _) false]
-            [(package_lock_core.ResultPackageLockFile.Ok again)
-              (package-lock-growth-entries-ok? (& again.entries))])
+            [(Err _) false]
+            [(Ok again) (package-lock-growth-entries-ok? (& again.entries))])
           false)])))
 
 (define (package-lock-parse-rejects? [source : String] [expected : String]) : bool
   (match (package_lock_core.package-lock-parse source)
-    [(package_lock_core.ResultPackageLockFile.Err message)
-      (string.eq message expected)]
-    [(package_lock_core.ResultPackageLockFile.Ok _) false]))
+    [(Err message) (string.eq message expected)]
+    [(Ok _) false]))
 
 (define (package-lock-rejections-ok?) : bool
   (and
@@ -165,17 +162,16 @@
   test
   (define (package-lock-transaction-test-snapshot [path : String]) : package_lock_core.PackageLockSnapshot
     (match (package_lock_core.package-lock-transaction-read path)
-      [(package_lock_core.ResultPackageLockSnapshot.Err message)
-        (package-lock-transaction-test-fail message)]
-      [(package_lock_core.ResultPackageLockSnapshot.Ok snapshot) snapshot])))
+      [(Err message) (package-lock-transaction-test-fail message)]
+      [(Ok snapshot) snapshot])))
 
 (cfg
   test
   (define (package-lock-transaction-test-read [path : String]) : String
     (match (io.try-read-file (& path))
-      [(io.ErrIoBytes error)
+      [(ErrIoBytes error)
         (package-lock-transaction-test-fail (io.error-message error))]
-      [(io.OkIoBytes contents) (byte_buf.to-string contents)])))
+      [(OkIoBytes contents) (byte_buf.to-string contents)])))
 
 (cfg
   test
@@ -184,15 +180,14 @@
     [source : String]
     [kind : i64]) : unit
     (match (package_lock_core.package-lock-transaction-commit snapshot source)
-      [(package_lock_core.ResultPackageLockCommit.Err message)
-        (package-lock-transaction-test-fail message)]
-      [(package_lock_core.ResultPackageLockCommit.Ok outcome)
+      [(Err message) (package-lock-transaction-test-fail message)]
+      [(Ok outcome)
         (let
           [actual : i64
             (match outcome
-              [(package_lock_core.PackageLockCommitOutcome.Unchanged _) 0]
-              [(package_lock_core.PackageLockCommitOutcome.Reused _) 1]
-              [(package_lock_core.PackageLockCommitOutcome.Replaced _) 2])]
+              [(Unchanged _) 0]
+              [(Reused _) 1]
+              [(Replaced _) 2])]
           (if (= actual kind)
             unit
             (package-lock-transaction-test-fail
@@ -205,10 +200,10 @@
     [source : String]
     [needle : String]) : unit
     (match (package_lock_core.package-lock-transaction-commit snapshot source)
-      [(package_lock_core.ResultPackageLockCommit.Ok _)
+      [(Ok _)
         (package-lock-transaction-test-fail
           "package-lock transaction unexpectedly succeeded")]
-      [(package_lock_core.ResultPackageLockCommit.Err message)
+      [(Err message)
         (if (string.contains (& message) (& needle))
           unit
           (package-lock-transaction-test-fail message))])))
@@ -248,23 +243,22 @@
       [typelisp : String (fs.path-join (& target) (& typelisp-name))]
       [locks : String (fs.path-join (& typelisp) (& locks-name))]
       [guard : String (fs.path-join (& locks) (& guard-name))]
-      (begin
-        (fs.try-remove-file-if-exists (& path))
-        (fs.try-remove-file-if-exists (& collision))
-        (fs.try-remove-file-if-exists (& guard))
-        (fs.try-remove-dir-if-exists (& locks))
-        (fs.try-remove-dir-if-exists (& typelisp))
-        (fs.try-remove-dir-if-exists (& target))
-        (fs.try-remove-dir-if-exists (& root))
-        unit))))
+      (fs.try-remove-file-if-exists (& path))
+      (fs.try-remove-file-if-exists (& collision))
+      (fs.try-remove-file-if-exists (& guard))
+      (fs.try-remove-dir-if-exists (& locks))
+      (fs.try-remove-dir-if-exists (& typelisp))
+      (fs.try-remove-dir-if-exists (& target))
+      (fs.try-remove-dir-if-exists (& root))
+      unit)))
 
 (cfg
   test
   (define (package-lock-transaction-test) : unit
     (match (fs.try-create-temp-dir "typelisp package lock transaction")
-      [(io.ErrIoString error)
+      [(ErrIoString error)
         (package-lock-transaction-test-fail (io.error-message error))]
-      [(io.OkIoString root)
+      [(OkIoString root)
         (let
           [lock-name : String "typelisp.lock"]
           [path : String (fs.path-join (& root) (& lock-name))]
@@ -280,86 +274,82 @@
             "(typelisp-lock\n  (version \"v1\")\n  (dependencies\n    (dependency\n      (alias \"dep\")\n      (url \"https://example.invalid/a.git\")\n      (pin (rev \"a\"))\n      (commit \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"))\n  ))\n"]
           [source-c : String
             "(typelisp-lock\n  (version \"v1\")\n  (dependencies\n    (dependency\n      (alias \"dep\")\n      (url \"https://example.invalid/a.git\")\n      (pin (rev \"b\"))\n      (commit \"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\"))\n  ))\n"]
-          (begin
+          (match (io.try-write-file
+            (& collision)
+            (byte_buf.str-as-bytes (& collision-source)))
+            [(ErrIoUnit error)
+              (package-lock-transaction-test-fail (io.error-message error))]
+            [(OkIoUnit) unit])
+          (package-lock-transaction-test-expect-commit
+            (package-lock-transaction-test-snapshot (string.copy path))
+            (string.copy source-a)
+            2)
+          (if (string.eq
+            (package-lock-transaction-test-read (string.copy path))
+            source-a)
+            unit
+            (package-lock-transaction-test-fail
+              "package-lock transaction: initial replacement mismatch"))
+          (package-lock-transaction-test-expect-commit
+            (package-lock-transaction-test-snapshot (string.copy path))
+            (string.copy source-a)
+            0)
+          (let
+            [snapshot-a : package_lock_core.PackageLockSnapshot
+              (package-lock-transaction-test-snapshot (string.copy path))]
             (match (io.try-write-file
-              (& collision)
-              (byte_buf.str-as-bytes (& collision-source)))
-              [(io.ErrIoUnit error)
+              (& path)
+              (byte_buf.str-as-bytes (& source-b)))
+              [(ErrIoUnit error)
                 (package-lock-transaction-test-fail (io.error-message error))]
-              [(io.OkIoUnit) unit])
-            (package-lock-transaction-test-expect-commit
-              (package-lock-transaction-test-snapshot (string.copy path))
-              (string.copy source-a)
-              2)
-            (if (string.eq
-              (package-lock-transaction-test-read (string.copy path))
-              source-a)
-              unit
-              (package-lock-transaction-test-fail
-                "package-lock transaction: initial replacement mismatch"))
-            (package-lock-transaction-test-expect-commit
-              (package-lock-transaction-test-snapshot (string.copy path))
-              (string.copy source-a)
-              0)
-            (let
-              [snapshot-a : package_lock_core.PackageLockSnapshot
-                (package-lock-transaction-test-snapshot (string.copy path))]
-              (begin
-                (match (io.try-write-file
-                  (& path)
-                  (byte_buf.str-as-bytes (& source-b)))
-                  [(io.ErrIoUnit error)
-                    (package-lock-transaction-test-fail
-                      (io.error-message error))]
-                  [(io.OkIoUnit) unit])
-                (package-lock-transaction-test-expect-error
-                  snapshot-a
-                  (string.copy source-c)
-                  "changed since resolution")))
-            (match (io.file-open (& path) (io.OpenWriteCreateNew))
-              [(io.OkIoFile handle)
-                (begin
-                  (io.file-close handle)
-                  (package-lock-transaction-test-fail
-                    "package-lock transaction: exclusive create reopened lock"))]
-              [(io.ErrIoFile _) unit])
-            (if (string.eq
-              (package-lock-transaction-test-read (string.copy path))
-              source-b)
-              unit
-              (package-lock-transaction-test-fail
-                "package-lock transaction: conflict overwrote winner"))
-            (package-lock-transaction-test-set-fault "before-stage")
+              [(OkIoUnit) unit])
             (package-lock-transaction-test-expect-error
-              (package-lock-transaction-test-snapshot (string.copy path))
+              snapshot-a
               (string.copy source-c)
-              "before-stage")
-            (package-lock-transaction-test-clear-fault)
-            (package-lock-transaction-test-set-fault "during-stage")
-            (package-lock-transaction-test-expect-error
-              (package-lock-transaction-test-snapshot (string.copy path))
-              (string.copy source-c)
-              "during-stage")
-            (package-lock-transaction-test-clear-fault)
-            (if (string.eq
-              (package-lock-transaction-test-read (string.copy collision))
-              collision-source)
-              unit
+              "changed since resolution"))
+          (match (io.file-open (& path) (OpenWriteCreateNew))
+            [(OkIoFile handle)
+              (io.file-close handle)
               (package-lock-transaction-test-fail
-                "package-lock transaction: removed another staging owner"))
-            (package-lock-transaction-test-set-fault "before-replace")
-            (package-lock-transaction-test-expect-error
-              (package-lock-transaction-test-snapshot (string.copy path))
-              source-c
-              "before-replace")
-            (package-lock-transaction-test-clear-fault)
-            (if (string.eq
-              (package-lock-transaction-test-read (string.copy path))
-              source-b)
-              unit
-              (package-lock-transaction-test-fail
-                "package-lock transaction: injected failure changed lock"))
-            (package-lock-transaction-test-cleanup root path collision)))])))
+                "package-lock transaction: exclusive create reopened lock")]
+            [(ErrIoFile _) unit])
+          (if (string.eq
+            (package-lock-transaction-test-read (string.copy path))
+            source-b)
+            unit
+            (package-lock-transaction-test-fail
+              "package-lock transaction: conflict overwrote winner"))
+          (package-lock-transaction-test-set-fault "before-stage")
+          (package-lock-transaction-test-expect-error
+            (package-lock-transaction-test-snapshot (string.copy path))
+            (string.copy source-c)
+            "before-stage")
+          (package-lock-transaction-test-clear-fault)
+          (package-lock-transaction-test-set-fault "during-stage")
+          (package-lock-transaction-test-expect-error
+            (package-lock-transaction-test-snapshot (string.copy path))
+            (string.copy source-c)
+            "during-stage")
+          (package-lock-transaction-test-clear-fault)
+          (if (string.eq
+            (package-lock-transaction-test-read (string.copy collision))
+            collision-source)
+            unit
+            (package-lock-transaction-test-fail
+              "package-lock transaction: removed another staging owner"))
+          (package-lock-transaction-test-set-fault "before-replace")
+          (package-lock-transaction-test-expect-error
+            (package-lock-transaction-test-snapshot (string.copy path))
+            source-c
+            "before-replace")
+          (package-lock-transaction-test-clear-fault)
+          (if (string.eq
+            (package-lock-transaction-test-read (string.copy path))
+            source-b)
+            unit
+            (package-lock-transaction-test-fail
+              "package-lock transaction: injected failure changed lock"))
+          (package-lock-transaction-test-cleanup root path collision))])))
 
 (define (package-lock-self-test-ok?) : bool
   (and

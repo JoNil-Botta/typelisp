@@ -25,12 +25,10 @@
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 (array-length bytes))]
     [index : i64 0]
-    (begin
-      (while (< index (array-length bytes))
-        (begin
-          (set! (array-ref out index) (array-ref bytes index))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index (array-length bytes))
+      (set! (array-ref out index) (array-ref bytes index))
+      (set! index (+ index 1)))
+    out))
 
 (define (compiler-incremental-binary-reader
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -43,17 +41,16 @@
       (let
         [cursor : byte_reader.ByteReader
           (byte_reader.new (__tl_make-array u8 0) max-work)]
-        (begin
-          (byte_reader.fail!
-            (&mut cursor)
-            8
-            0
-            "incremental identity owned-byte limit exceeded")
-          (CompilerIncrementalBinaryReader
-            cursor
-            0
-            max-owned-bytes
-            max-string-bytes)))
+        (byte_reader.fail!
+          (&mut cursor)
+          8
+          0
+          "incremental identity owned-byte limit exceeded")
+        (CompilerIncrementalBinaryReader
+          cursor
+          0
+          max-owned-bytes
+          max-string-bytes))
       (CompilerIncrementalBinaryReader
         (byte_reader.new (compiler-incremental-binary-copy bytes) max-work)
         length
@@ -78,14 +75,12 @@
   (let
     [length : i64 (string.string-length text)]
     [index : i64 0]
-    (begin
-      (byte_le.push-u32! out length)
-      (while (< index length)
-        (begin
-          (byte_buf_core.byte-buf-builder-push
-            out
-            (cast (string.string-ref text index) : u8))
-          (set! index (+ index 1)))))))
+    (byte_le.push-u32! out length)
+    (while (< index length)
+      (byte_buf_core.byte-buf-builder-push
+        out
+        (cast (string.string-ref text index) : u8))
+      (set! index (+ index 1)))))
 
 (define (compiler-incremental-binary-push-array!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -109,34 +104,31 @@
     [index : i64 start]
     [end : i64 (+ start length)]
     [ok? : bool (byte_reader.range-present? (array-length bytes) start length)]
-    (begin
-      (while (and ok? (< index end))
-        (let
-          [first : i64 (cast (array-ref bytes index) : i64)]
-          [count : i64
-            (cond
-              [(and (>= first 1) (<= first 0x7f)) 1]
-              [(and (>= first 0xc2) (<= first 0xdf)) 2]
-              [(and (>= first 0xe0) (<= first 0xef)) 3]
-              [(and (>= first 0xf0) (<= first 0xf4)) 4]
-              [else 0])]
-          [low : i64
-            (cond [(= first 0xe0) 0xa0] [(= first 0xf0) 0x90] [else 0x80])]
-          [high : i64
-            (cond [(= first 0xed) 0x9f] [(= first 0xf4) 0x8f] [else 0xbf])]
-          [k : i64 1]
-          (begin
-            (set! ok? (and (> count 0) (<= (+ index count) end)))
-            (while (and ok? (< k count))
-              (let
-                [byte : i64 (cast (array-ref bytes (+ index k)) : i64)]
-                (begin
-                  (set! ok? (and (>= byte low) (<= byte high)))
-                  (set! low 0x80)
-                  (set! high 0xbf)
-                  (set! k (+ k 1)))))
-            (set! index (+ index count)))))
-      ok?)))
+    (while (and ok? (< index end))
+      (let
+        [first : i64 (cast (array-ref bytes index) : i64)]
+        [count : i64
+          (cond
+            [(and (>= first 1) (<= first 0x7f)) 1]
+            [(and (>= first 0xc2) (<= first 0xdf)) 2]
+            [(and (>= first 0xe0) (<= first 0xef)) 3]
+            [(and (>= first 0xf0) (<= first 0xf4)) 4]
+            [else 0])]
+        [low : i64
+          (cond [(= first 0xe0) 0xa0] [(= first 0xf0) 0x90] [else 0x80])]
+        [high : i64
+          (cond [(= first 0xed) 0x9f] [(= first 0xf4) 0x8f] [else 0xbf])]
+        [k : i64 1]
+        (set! ok? (and (> count 0) (<= (+ index count) end)))
+        (while (and ok? (< k count))
+          (let
+            [byte : i64 (cast (array-ref bytes (+ index k)) : i64)]
+            (set! ok? (and (>= byte low) (<= byte high)))
+            (set! low 0x80)
+            (set! high 0xbf)
+            (set! k (+ k 1))))
+        (set! index (+ index count))))
+    ok?))
 
 (define (compiler-incremental-binary-path-range-valid?
   [bytes : (& bytes (__tl_dyn-array u8))]
@@ -150,50 +142,49 @@
       (and
         (> length 0)
         (compiler-incremental-binary-utf8-range-valid? bytes start length))]
-    (begin
-      (if ok?
-        (let
-          [first : i64 (cast (array-ref bytes start) : i64)]
-          (if (or (= first 47) (= first 92))
-            (set! ok? false)
-            unit))
-        unit)
-      (while (and ok? (< index end))
-        (let
-          [byte : i64 (cast (array-ref bytes index) : i64)]
-          (cond
-            [(or (= byte 0) (= byte 92) (= byte 58)) (set! ok? false)]
-            [(= byte 47)
-              (let
-                [segment-length : i64 (- index segment-start)]
-                (if (or
-                  (= segment-length 0)
-                  (and
-                    (= segment-length 1)
-                    (= (array-ref bytes segment-start) (cast 46 : u8)))
-                  (and
-                    (= segment-length 2)
-                    (= (array-ref bytes segment-start) (cast 46 : u8))
-                    (= (array-ref bytes (+ segment-start 1)) (cast 46 : u8))))
-                  (set! ok? false)
-                  (begin
-                    (set! segment-start (+ index 1))
-                    (set! index (+ index 1)))))]
-            [else (set! index (+ index 1))])))
-      (if ok?
-        (let
-          [segment-length : i64 (- end segment-start)]
-          (not
-            (or
-              (= segment-length 0)
-              (and
-                (= segment-length 1)
-                (= (array-ref bytes segment-start) (cast 46 : u8)))
-              (and
-                (= segment-length 2)
-                (= (array-ref bytes segment-start) (cast 46 : u8))
-                (= (array-ref bytes (+ segment-start 1)) (cast 46 : u8))))))
-        false))))
+    (if ok?
+      (let
+        [first : i64 (cast (array-ref bytes start) : i64)]
+        (if (or (= first 47) (= first 92))
+          (set! ok? false)
+          unit))
+      unit)
+    (while (and ok? (< index end))
+      (let
+        [byte : i64 (cast (array-ref bytes index) : i64)]
+        (cond
+          [(or (= byte 0) (= byte 92) (= byte 58)) (set! ok? false)]
+          [(= byte 47)
+            (let
+              [segment-length : i64 (- index segment-start)]
+              (if (or
+                (= segment-length 0)
+                (and
+                  (= segment-length 1)
+                  (= (array-ref bytes segment-start) (cast 46 : u8)))
+                (and
+                  (= segment-length 2)
+                  (= (array-ref bytes segment-start) (cast 46 : u8))
+                  (= (array-ref bytes (+ segment-start 1)) (cast 46 : u8))))
+                (set! ok? false)
+                (begin
+                  (set! segment-start (+ index 1))
+                  (set! index (+ index 1)))))]
+          [else (set! index (+ index 1))])))
+    (if ok?
+      (let
+        [segment-length : i64 (- end segment-start)]
+        (not
+          (or
+            (= segment-length 0)
+            (and
+              (= segment-length 1)
+              (= (array-ref bytes segment-start) (cast 46 : u8)))
+            (and
+              (= segment-length 2)
+              (= (array-ref bytes segment-start) (cast 46 : u8))
+              (= (array-ref bytes (+ segment-start 1)) (cast 46 : u8))))))
+      false)))
 
 (define (compiler-incremental-binary-read-string!
   [reader : (&mut reader CompilerIncrementalBinaryReader)]
@@ -205,68 +196,62 @@
     (cond
       [(not reader.cursor.ok?) ""]
       [(> length reader.max-string-bytes)
-        (begin
-          (compiler-incremental-binary-fail!
-            reader
-            7
-            length-offset
-            "incremental identity string limit exceeded")
-          "")]
+        (compiler-incremental-binary-fail!
+          reader
+          7
+          length-offset
+          "incremental identity string limit exceeded")
+        ""]
       [(not (byte_reader.consume! (&mut reader.cursor) length)) ""]
       [(not (byte_reader.consume! (&mut reader.cursor) length)) ""]
       [(not
-          (compiler-incremental-binary-utf8-range-valid?
-            (& reader.cursor.bytes)
-            start
-            length))
-        (begin
-          (compiler-incremental-binary-fail!
-            reader
-            11
-            start
-            "incremental identity text is not canonical UTF-8")
-          "")]
+        (compiler-incremental-binary-utf8-range-valid?
+          (& reader.cursor.bytes)
+          start
+          length))
+        (compiler-incremental-binary-fail!
+          reader
+          11
+          start
+          "incremental identity text is not canonical UTF-8")
+        ""]
       [(if path?
-          (if (byte_reader.consume! (&mut reader.cursor) length)
-            (not
-              (compiler-incremental-binary-path-range-valid?
-                (& reader.cursor.bytes)
-                start
-                length))
-            true)
-          false)
-        (begin
-          (compiler-incremental-binary-fail!
-            reader
-            12
-            start
-            "incremental identity path is not canonical relative UTF-8")
-          "")]
+        (if (byte_reader.consume! (&mut reader.cursor) length)
+          (not
+            (compiler-incremental-binary-path-range-valid?
+              (& reader.cursor.bytes)
+              start
+              length))
+          true)
+        false)
+        (compiler-incremental-binary-fail!
+          reader
+          12
+          start
+          "incremental identity path is not canonical relative UTF-8")
+        ""]
       [(> length (- reader.max-owned-bytes reader.owned-bytes))
-        (begin
-          (compiler-incremental-binary-fail!
-            reader
-            8
-            start
-            "incremental identity owned-byte limit exceeded")
-          "")]
+        (compiler-incremental-binary-fail!
+          reader
+          8
+          start
+          "incremental identity owned-byte limit exceeded")
+        ""]
       [else
         (let
           [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
           [index : i64 0]
-          (begin
-            (while (< index length)
-              (begin
-                (set!
-                  (array-ref out index)
-                  (array-ref reader.cursor.bytes (+ start index)))
-                (set! index (+ index 1))))
-            (set! reader.cursor.offset (+ start length))
-            (set! reader.owned-bytes (+ reader.owned-bytes length))
-            (unsafe
-              (string-from-bytes
-                (ptr-cast (__tl_array-data out) : (Ptr u8))
-                length))))])))
+          (while (< index length)
+            (set!
+              (array-ref out index)
+              (array-ref reader.cursor.bytes (+ start index)))
+            (set! index (+ index 1)))
+          (set! reader.cursor.offset (+ start length))
+          (set! reader.owned-bytes (+ reader.owned-bytes length))
+          (unsafe
+            (string-from-bytes
+              (ptr-cast (__tl_array-data out) : (Ptr u8))
+              length)))])))
 
 (define (compiler-incremental-binary-bytes-eq?
   [left : (& left (__tl_dyn-array u8))]
@@ -274,11 +259,9 @@
   (let
     [equal? : bool (= (array-length left) (array-length right))]
     [index : i64 0]
-    (begin
-      (while (and equal? (< index (array-length left)))
-        (begin
-          (if (= (array-ref left index) (array-ref right index))
-            unit
-            (set! equal? false))
-          (set! index (+ index 1))))
-      equal?)))
+    (while (and equal? (< index (array-length left)))
+      (if (= (array-ref left index) (array-ref right index))
+        unit
+        (set! equal? false))
+      (set! index (+ index 1)))
+    equal?))

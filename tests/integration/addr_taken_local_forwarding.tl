@@ -48,14 +48,13 @@
 (define (flag-after-call [depth : i64]) : i64
   (let
     [flag : bool false]
-    (begin
-      (write-true
-        (unsafe
-          (ptr-addr-of flag))
-        depth)
-      (if flag
-        42
-        3))))
+    (write-true
+      (unsafe
+        (ptr-addr-of flag))
+      depth)
+    (if flag
+      42
+      3)))
 
 ;; The loop header reads the local before the body takes its address. The
 ;; round cap keeps a regression a wrong exit code rather than a hang.
@@ -63,38 +62,36 @@
   (let
     [value : i64 0]
     [rounds : i64 0]
-    (begin
-      (while (and (= value 0) (< rounds 4))
-        (begin
-          (write-seven
-            (unsafe
-              (ptr-addr-of value))
-            depth)
-          (set! rounds (+ rounds 1))))
-      (+ (* value 5) (+ rounds 6)))))
+    (while (and (= value 0) (< rounds 4))
+      (begin
+        (write-seven
+          (unsafe
+            (ptr-addr-of value))
+          depth)
+        unit)
+      (set! rounds (+ rounds 1)))
+    (+ (* value 5) (+ rounds 6))))
 
 ;; A parameter-seeded local: the global copy forwarded the parameter.
 (define (seeded-after-call [depth : i64] [seed : i64]) : i64
   (let
     [value : i64 seed]
-    (begin
-      (write-seven
-        (unsafe
-          (ptr-addr-of value))
-        depth)
-      (+ 35 value))))
+    (write-seven
+      (unsafe
+        (ptr-addr-of value))
+      depth)
+    (+ 35 value)))
 
 ;; A copy taken before the write keeps the old value; the local does not.
 (define (snapshot-before-write [depth : i64] [seed : i64]) : i64
   (let
     [value : i64 seed]
     [before : i64 value]
-    (begin
-      (write-seven
-        (unsafe
-          (ptr-addr-of value))
-        depth)
-      (+ (* before 10) value))))
+    (write-seven
+      (unsafe
+        (ptr-addr-of value))
+      depth)
+    (+ (* before 10) value)))
 
 ;; The same expression before and after the write differs (affine folding
 ;; rewrote the second through the parameter).
@@ -102,14 +99,13 @@
   (let
     [value : i64 seed]
     [first : i64 (+ value 1)]
-    (begin
-      (write-seven
-        (unsafe
-          (ptr-addr-of value))
-        depth)
-      (let
-        [second : i64 (+ value 1)]
-        (+ (* first 10) second)))))
+    (write-seven
+      (unsafe
+        (ptr-addr-of value))
+      depth)
+    (let
+      [second : i64 (+ value 1)]
+      (+ (* first 10) second))))
 
 ;; A store through the address in the same block as two equal expressions
 ;; (global CSE reused the first).
@@ -120,34 +116,31 @@
       (unsafe
         (ptr-addr-of value))]
     [first : i64 (* value 3)]
-    (begin
-      (unsafe
-        (ptr-write! p 9))
-      (let
-        [second : i64 (* value 3)]
-        (+ first second)))))
+    (unsafe
+      (ptr-write! p 9))
+    (let
+      [second : i64 (* value 3)]
+      (+ first second))))
 
 ;; A counter only ever updated through its address.
 (define (count-through-address [rounds : i64]) : i64
   (let
     [count : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i rounds)
-        (let
-          [p : (MutPtr i64)
-            (unsafe
-              (ptr-addr-of count))]
-          (begin
-            (unsafe
-              (ptr-write!
-                p
-                (+
-                  (unsafe
-                    (ptr-read p))
-                  7)))
-            (set! i (+ i 1)))))
-      count)))
+    (while (< i rounds)
+      (let
+        [p : (MutPtr i64)
+          (unsafe
+            (ptr-addr-of count))]
+        (unsafe
+          (ptr-write!
+            p
+            (+
+              (unsafe
+                (ptr-read p))
+              7)))
+        (set! i (+ i 1))))
+    count))
 
 (define (main) : i64
   (cond

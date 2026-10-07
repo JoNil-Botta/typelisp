@@ -15,11 +15,9 @@
       [image : cobj.CompilerObjectImage
         (coff.compiler-object-coff-boundary-image 0xffff 0x10000)]
       (match (coff.compiler-object-coff-render image)
-        [(coff.ResultCompilerObjectCoff.Ok bytes)
-          (begin
-            (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& bytes)))
-            0)]
-        [(coff.ResultCompilerObjectCoff.Err message)
-          (begin
-            (io.print-error message)
-            1)]))))
+        [(Ok bytes)
+          (io.write-file (io.arg 1) (byte_buf.str-as-bytes (& bytes)))
+          0]
+        [(Err message)
+          (io.print-error message)
+          1]))))

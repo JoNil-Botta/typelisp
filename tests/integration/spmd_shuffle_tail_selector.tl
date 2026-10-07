@@ -11,25 +11,24 @@
     [xs : i64v.Vec (i64z.make n)]
     [selectors : i64v.Vec (i64z.make n)]
     [out : i64v.Vec (i64z.make n)]
-    (begin
-      (i64v.set-ref! (&mut xs) 0 11)
-      (i64v.set-ref! (&mut xs) 1 22)
-      (i64v.set-ref! (&mut xs) 2 33)
-      (i64v.set-ref! (&mut selectors) 0 0)
-      (i64v.set-ref! (&mut selectors) 1 1)
-      (i64v.set-ref! (&mut selectors) 2 2)
-      (let
-        [xs-slots (i64v.slots (& xs))]
-        [selector-slots (i64v.slots (& selectors))]
-        [out-slots (i64v.slots-mut (&mut out))]
-        (foreach
-          ([i : i64 0 n])
-          (set!
-            (array-ref out-slots i)
-            (spmd-shuffle (array-ref xs-slots i) (array-ref selector-slots i)))))
-      (if (and
-        (= (i64v.get (& out) 0 0) 11)
-        (= (i64v.get (& out) 1 0) 22)
-        (= (i64v.get (& out) 2 0) 33))
-        42
-        1))))
+    (i64v.set-ref! (&mut xs) 0 11)
+    (i64v.set-ref! (&mut xs) 1 22)
+    (i64v.set-ref! (&mut xs) 2 33)
+    (i64v.set-ref! (&mut selectors) 0 0)
+    (i64v.set-ref! (&mut selectors) 1 1)
+    (i64v.set-ref! (&mut selectors) 2 2)
+    (let
+      [xs-slots (i64v.slots (& xs))]
+      [selector-slots (i64v.slots (& selectors))]
+      [out-slots (i64v.slots-mut (&mut out))]
+      (foreach
+        ([i : i64 0 n])
+        (set!
+          (array-ref out-slots i)
+          (spmd-shuffle (array-ref xs-slots i) (array-ref selector-slots i)))))
+    (if (and
+      (= (i64v.get (& out) 0 0) 11)
+      (= (i64v.get (& out) 1 0) 22)
+      (= (i64v.get (& out) 2 0) 33))
+      42
+      1)))

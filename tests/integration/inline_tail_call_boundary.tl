@@ -67,27 +67,25 @@
     [i : i64 (- 0 3)]
     [bad : i64 0]
     [expected-log : i64 0]
-    (begin
-      (while (<= i 20)
-        (begin
-          (unless (= (tc-value i 5) (tc-open-coded i 5)) (set! bad (+ bad 1)))
-          (unless
-            (= (tc-value i (- 0 4)) (tc-open-coded i (- 0 4)))
-            (set! bad (+ bad 1)))
-          (tc-unit-value i)
-          (set!
-            expected-log
-            (+
-              expected-log
-              (if (> i 0)
-                i
-                1000)))
-          (set! i (+ i 1))))
-      (cond
-        [(not (= bad 0)) 1]
-        [(not (= tc-log expected-log)) 2]
-        ;; The converted arm really is the one under test: 4 -> 3*4+5 = 17.
-        [(not (= (tc-value 4 5) 17)) 3]
-        [(not (= (tc-value 40 5) 4005)) 4]
-        [(not (= (tc-value 0 5) (- 0 7))) 5]
-        [else 42]))))
+    (while (<= i 20)
+      (unless (= (tc-value i 5) (tc-open-coded i 5)) (set! bad (+ bad 1)))
+      (unless
+        (= (tc-value i (- 0 4)) (tc-open-coded i (- 0 4)))
+        (set! bad (+ bad 1)))
+      (tc-unit-value i)
+      (set!
+        expected-log
+        (+
+          expected-log
+          (if (> i 0)
+            i
+            1000)))
+      (set! i (+ i 1)))
+    (cond
+      [(not (= bad 0)) 1]
+      [(not (= tc-log expected-log)) 2]
+      ;; The converted arm really is the one under test: 4 -> 3*4+5 = 17.
+      [(not (= (tc-value 4 5) 17)) 3]
+      [(not (= (tc-value 40 5) 4005)) 4]
+      [(not (= (tc-value 0 5) (- 0 7))) 5]
+      [else 42])))

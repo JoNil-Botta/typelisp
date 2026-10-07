@@ -46,9 +46,8 @@
             0))))))
 
 (define (counted-f64 [value : f64]) : f64
-  (begin
-    (set! eval-count (+ eval-count 1))
-    value))
+  (set! eval-count (+ eval-count 1))
+  value)
 
 (define (mask-f64 [a : f64] [b : f64]) : i64
   (+
@@ -122,9 +121,8 @@
           ok)))))
 
 (define (counted-f32 [value : f32]) : f32
-  (begin
-    (set! eval-count (+ eval-count 1))
-    value))
+  (set! eval-count (+ eval-count 1))
+  value)
 
 (define (mask-f32 [a : f32] [b : f32]) : i64
   (+

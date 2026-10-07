@@ -63,23 +63,20 @@
     [xs : (__tl_dyn-array Quad) (__tl_make-array Quad 8)]
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i 8)
-        (begin
-          (put (&mut xs) i (Quad (+ i 1) (+ i 2) (+ i 3) (+ i 4)))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i 8)
-        (let
-          [q : Quad (take (& xs) i)]
-          (begin
-            (set! acc (+ acc (+ (+ q.a q.b) (+ q.c q.d))))
-            (set! i (+ i 1)))))
-      ;; xs[3] is (4, 5, 6, 7), so the constant-index read sums to 22.
+    (while (< i 8)
+      (put (&mut xs) i (Quad (+ i 1) (+ i 2) (+ i 3) (+ i 4)))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i 8)
       (let
-        [q3 : Quad (take-const (& xs) 0)]
-        [const-acc : i64 (+ (+ q3.a q3.b) (+ q3.c q3.d))]
-        ;; sum over i in 0..7 of (4i + 10) = 4*28 + 80 = 192
-        (if (and (= acc 192) (= const-acc 22))
-          42
-          1)))))
+        [q : Quad (take (& xs) i)]
+        (set! acc (+ acc (+ (+ q.a q.b) (+ q.c q.d))))
+        (set! i (+ i 1))))
+    ;; xs[3] is (4, 5, 6, 7), so the constant-index read sums to 22.
+    (let
+      [q3 : Quad (take-const (& xs) 0)]
+      [const-acc : i64 (+ (+ q3.a q3.b) (+ q3.c q3.d))]
+      ;; sum over i in 0..7 of (4i + 10) = 4*28 + 80 = 192
+      (if (and (= acc 192) (= const-acc 22))
+        42
+        1))))

@@ -50,14 +50,12 @@
     (string-length ,borrowed)))
 
 (define (next-owner [counter : (&mut counter (Array i64 1))]) : Owner
-  (begin
-    (set! (array-ref counter 0) (+ (array-ref counter 0) 1))
-    (Owner "kept" 24)))
+  (set! (array-ref counter 0) (+ (array-ref counter 0) 1))
+  (Owner "kept" 24))
 
 (define (next-text [counter : (&mut counter (Array i64 1))]) : String
-  (begin
-    (set! (array-ref counter 0) (+ (array-ref counter 0) 1))
-    "123456789"))
+  (set! (array-ref counter 0) (+ (array-ref counter 0) 1))
+  "123456789")
 
 (define (lvalue-case) : i64
   (let
@@ -94,8 +92,7 @@
     (+ (reader) (reader))))
 
 (define (main) : i64
-  (begin
-    (unless (= (lvalue-case) 33) (return 1))
-    (unless (= (rvalue-case) 2) (return 2))
-    (unless (= (direct-generated-capture-case) 18) (return 3))
-    42))
+  (unless (= (lvalue-case) 33) (return 1))
+  (unless (= (rvalue-case) 2) (return 2))
+  (unless (= (direct-generated-capture-case) 18) (return 3))
+  42)

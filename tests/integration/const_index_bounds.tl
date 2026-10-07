@@ -23,8 +23,7 @@
 (define (main) : i64
   (let
     [xs : (__tl_dyn-array i64) (__tl_make-array i64 5)]
-    (begin
-      (set! (array-ref xs 2) 42)
-      (if (= (get2 xs 0) 42)
-        42
-        1))))
+    (set! (array-ref xs 2) 42)
+    (if (= (get2 xs 0) 42)
+      42
+      1)))

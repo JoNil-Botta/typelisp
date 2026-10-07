@@ -15,12 +15,10 @@
     [input : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [output : (__tl_dyn-array i64) (__tl_make-array i64 8)]
     [i : i64 0]
-    (begin
-      (while (< i 8)
-        (begin
-          (set! (array-ref input i) 41)
-          (set! i (+ i 1))))
-      (fill (& input) (&mut output) -4 -4)
-      (fill (& input) (&mut output) 9223372036854775806 9223372036854775806)
-      (fill (& input) (&mut output) 0 8)
-      (array-ref output 7))))
+    (while (< i 8)
+      (set! (array-ref input i) 41)
+      (set! i (+ i 1)))
+    (fill (& input) (&mut output) -4 -4)
+    (fill (& input) (&mut output) 9223372036854775806 9223372036854775806)
+    (fill (& input) (&mut output) 0 8)
+    (array-ref output 7)))

@@ -49,3 +49,39 @@ for operation in invalid-null invalid-address invalid-atomic retire-unprotected 
     check_operation "$operation" 134 "tl: invalid never-reset arena protection"
 done
 echo "compiler arena debug native matrix passed (15 cases, $HOST_OS)"
+
+# Linux's private TLS word must also work with the debug renderer enabled in
+# this emitter. Ordinary compilers deliberately omit that renderer.
+if [ "$HOST_OS" = linux ]; then
+    for variant in debug combined; do
+        for opt in 0 1 2; do
+            asm="$WORKDIR/thread-word-$variant-opt$opt.s"
+            binary="$WORKDIR/thread-word-$variant-opt$opt"
+            set -- --cfg compiler-arena-debug
+            if [ "$variant" = combined ]; then
+                set -- "$@" --cfg compile-profile --backtrace
+            fi
+            "$SUPPORT" compile tests/integration/thread_local_word.tl \
+                --stdlib-root stdlib --stdlib-root src --opt-level "$opt" \
+                "$@" -o "$asm"
+            grep -F '.L_tl_arena_debug_roots:' "$asm" >/dev/null ||
+                fail "TLS $variant opt$opt omitted arena debug storage"
+            grep -F 'tl_arena_debug_assert_pool_install:' "$asm" >/dev/null ||
+                fail "TLS $variant opt$opt omitted the debug renderer"
+            if [ "$variant" = combined ]; then
+                grep -F 'tl_profile_alloc_total_bytes:' "$asm" >/dev/null ||
+                    fail "TLS combined opt$opt omitted profile storage"
+                grep -F 'tl_backtrace_stack_low:' "$asm" >/dev/null ||
+                    fail "TLS combined opt$opt omitted backtrace TLS"
+            fi
+            assemble_and_link "TLS $variant opt$opt" "$asm" \
+                "$WORKDIR/thread-word-$variant-opt$opt.$OBJ_EXT" "$binary"
+            status=0
+            "$binary" > "$binary.stdout" 2> "$binary.stderr" || status=$?
+            [ "$status" -eq 42 ] || fail "TLS $variant opt$opt: exit $status"
+            [ ! -s "$binary.stdout" ] && [ ! -s "$binary.stderr" ] ||
+                fail "TLS $variant opt$opt: unexpected output"
+        done
+    done
+    echo "Linux thread word debug/profile/backtrace matrix passed (6 cases)"
+fi

@@ -12,8 +12,7 @@
 (define (main) : i64
   (let
     [out : (Array i64 8) (make-array i64 8)]
-    (begin
-      (foreach
-        ([i : i64 0 8])
-        (set! (array-ref out i) (+ (array-ref table i) (first (& table)))))
-      (array-ref out 3))))
+    (foreach
+      ([i : i64 0 8])
+      (set! (array-ref out i) (+ (array-ref table i) (first (& table)))))
+    (array-ref out 3)))

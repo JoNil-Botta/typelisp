@@ -210,7 +210,7 @@ Options:
 
 (define (cli-lint-help-text) : String
   "Usage:
-    typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
+    typelisp lint [<file.tl>...] [--check] [--format <rich|flat>] [--deprecated-string-concat] [--redundant-function-name] [--redundant-begin] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
 
 Summary:
     Lint source files or every source in a package.
@@ -220,6 +220,7 @@ Options:
     --format <rich|flat>           Rich source diagnostics (default) or stable line output
     --deprecated-string-concat     Enable staged string concat deprecation lint
     --redundant-function-name      Enable staged redundant module-prefix lint
+    --redundant-begin              Enable staged redundant begin lint
     --prefer-dotted-field          Deprecated compatibility flag; dotted fields are required
     --name-case                    Enable staged declaration/binder casing lints
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
@@ -385,30 +386,27 @@ Options:
   (and (= count 3) (cli-help-flag? (cli-arg 2))))
 
 (define (cli-print-help-text [text : String] [code : i64]) : i64
-  (begin
-    (cli-err text)
-    code))
+  (cli-err text)
+  code)
 
 (define (cli-print-help [code : i64]) : i64
   (cli-print-help-text (cli-help-text) code))
 
 (define (cli-print-version) : i64
-  (begin
-    (io.print-format
-      "{}"
+  (io.print-format
+    "{}"
+    (cli-cat
+      "typelisp "
       (cli-cat
-        "typelisp "
-        (cli-cat
-          (build_identity.compiler-build-git-hash-shared-view)
-          (cli-cat " built " (cli-cat cli-build-date "\n")))))
-    0))
+        (build_identity.compiler-build-git-hash-shared-view)
+        (cli-cat " built " (cli-cat cli-build-date "\n")))))
+  0)
 
 (define (cli-print-producer-identity) : i64
-  (begin
-    (io.print-format
-      "{}"
-      (cli-cat (build_identity.compiler-build-git-hash-shared-view) "\n"))
-    0))
+  (io.print-format
+    "{}"
+    (cli-cat (build_identity.compiler-build-git-hash-shared-view) "\n"))
+  0)
 
 (define (cli-dispatch [command : String] [count : i64]) : i64
   (cond
@@ -486,10 +484,9 @@ Options:
         (cli-print-help-text (cli-init-help-text) 0)
         (scaffold_cli_core.scaffold-init-run-from 2 count))]
     [else
-      (begin
-        (cli-err (cli-cat "typelisp: unknown subcommand " command))
-        (cli-err "\n\n")
-        (cli-print-help 1))]))
+      (cli-err (cli-cat "typelisp: unknown subcommand " command))
+      (cli-err "\n\n")
+      (cli-print-help 1)]))
 
 (define (main) : i64
   (begin

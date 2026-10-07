@@ -50,28 +50,24 @@
     (let
       [acc : i64 0]
       [i : i64 0]
-      (begin
-        (while (< i n)
-          (let
-            [slot : i64 (array-ref glf-slots i)]
-            (begin
-              (set! acc (+ acc (array-ref glf-items slot)))
-              (glf-touch! slot 0)
-              (set! i (+ i 1)))))
-        acc))))
+      (while (< i n)
+        (let
+          [slot : i64 (array-ref glf-slots i)]
+          (set! acc (+ acc (array-ref glf-items slot)))
+          (glf-touch! slot 0)
+          (set! i (+ i 1))))
+      acc)))
 
 (define (main) : i64
   (let
     [i : i64 0]
-    (begin
-      (set! glf-items (__tl_make-array i64 (glf-opaque 0 0)))
-      (set! glf-slots (__tl_make-array i64 (glf-opaque 0 0)))
-      (while (< i 8)
-        (begin
-          (set! (array-ref glf-items i) (* i 3))
-          (set! (array-ref glf-slots i) (- 7 i))
-          (set! i (+ i 1))))
-      (cond
-        [(not (= (probe-sum 8 0) 84)) 1]
-        [(not (= (probe-sum 3 0) 57)) 2]
-        [else 42]))))
+    (set! glf-items (__tl_make-array i64 (glf-opaque 0 0)))
+    (set! glf-slots (__tl_make-array i64 (glf-opaque 0 0)))
+    (while (< i 8)
+      (set! (array-ref glf-items i) (* i 3))
+      (set! (array-ref glf-slots i) (- 7 i))
+      (set! i (+ i 1)))
+    (cond
+      [(not (= (probe-sum 8 0) 84)) 1]
+      [(not (= (probe-sum 3 0) 57)) 2]
+      [else 42])))

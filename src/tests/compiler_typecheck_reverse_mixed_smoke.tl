@@ -32,56 +32,47 @@
     [qualified-variants : ast.AstVariantDefList (ast.ast-variant-def-list-new)]
     [enum-handle : i64
       (csym.compiler-symbol-make-handle (csym.compiler-symbol-kind-defenum) 0)]
-    (begin
-      (ast.ast-variant-def-list-push
-        (&mut qualified-variants)
-        (ast.AstVariantDef.Def
-          qualified-variant-id
-          (ast.ast-type-list-new)
-          (ast.ast-variant-payload-cleanup-list-new)))
-      (and
-        (not (= variant-id generated-variant-id))
-        (match (compiler_typecheck_core.tc-variant-handle-in-list-at
-          session
-          enum-handle
-          variant-id
-          (& qualified-variants)
-          0)
-          [(option_i64.Some _) true]
-          [(option_i64.None) false])
-        (match (compiler_typecheck_core.tc-variant-handle-in-list-at
-          session
-          enum-handle
-          dotted-pattern-id
-          (& qualified-variants)
-          0)
-          [(option_i64.Some _) true]
-          [(option_i64.None) false])
-        (match (compiler_typecheck_core.tc-variant-handle-in-list-at
-          session
-          enum-handle
-          (ci.intern "Missing")
-          (& qualified-variants)
-          0)
-          [(option_i64.Some _) false]
-          [(option_i64.None) true])))))
+    (ast.ast-variant-def-list-push
+      (&mut qualified-variants)
+      (ast.AstVariantDef.Def
+        qualified-variant-id
+        (ast.ast-type-list-new)
+        (ast.ast-variant-payload-cleanup-list-new)))
+    (and
+      (not (= variant-id generated-variant-id))
+      (match (compiler_typecheck_core.tc-variant-handle-in-list-at
+        session
+        enum-handle
+        variant-id
+        (& qualified-variants)
+        0)
+        [(option_i64.Some _) true]
+        [(option_i64.None) false])
+      (match (compiler_typecheck_core.tc-variant-handle-in-list-at
+        session
+        enum-handle
+        dotted-pattern-id
+        (& qualified-variants)
+        0)
+        [(option_i64.Some _) true]
+        [(option_i64.None) false])
+      (match (compiler_typecheck_core.tc-variant-handle-in-list-at
+        session
+        enum-handle
+        (ci.intern "Missing")
+        (& qualified-variants)
+        0)
+        [(option_i64.Some _) false]
+        [(option_i64.None) true]))))
 
 (define (tc-reverse-mixed-parsed-module-id
   [program : (& program ast.AstProgram)]) : i64
   (match (csym.compiler-symbols-program-shared-view program)
-    [(ast.AstProgram.Program decls-box)
+    [(Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
         (match (ast.ast-decl-list-ref decls 1)
-          [(ast.AstDecl.Import
-              _
-              (ast.AstImportSpec.Spec
-                _
-                _
-                (ast.AstMaybeModuleName.Some target)
-                _
-                _))
-            target]
+          [(Import _ (Spec _ _ (Some target) _ _)) target]
           [_ -1]))]))
 
 (define (tc-reverse-mixed-source-nominal-match-smoke?) : bool
@@ -91,11 +82,11 @@
 (module reverse.mixed)
 (defenum ReverseMixedItem (Value i64))
 (defenum ReverseMixedOther (Value i64))")
-    [(parser.ResultAstProgram.Ok program)
+    [(Ok program)
       (match (csym.build-compiler-symbols program)
-        [(csym.ResultCompilerSymbols.Ok symbols)
+        [(Ok symbols)
           (match (csym.build-compiler-registries program)
-            [(csym.ResultCompilerRegistries.Ok registries)
+            [(Ok registries)
               (let
                 [flat-id : i64 (ci.intern "ReverseMixedItem")]
                 [parsed-module-id : i64
@@ -117,12 +108,11 @@
                   (csym.compiler-symbol-module-key-id-by-id
                     module-id
                     (ci.intern "ReverseMixedOther"))]
-                [actual : ast.AstType
-                  (ast.ast-ty-array (ast.AstType.Enum flat-id) 1)]
+                [actual : ast.AstType (ast.ast-ty-array (Enum flat-id) 1)]
                 [expected : ast.AstType
-                  (ast.ast-ty-array (ast.AstType.Enum qualified-id) 1)]
+                  (ast.ast-ty-array (Enum qualified-id) 1)]
                 [different : ast.AstType
-                  (ast.ast-ty-array (ast.AstType.Enum other-qualified-id) 1)]
+                  (ast.ast-ty-array (Enum other-qualified-id) 1)]
                 [lifetime-id : i64 (ci.intern "out")]
                 [type-module-ctx : compiler_typecheck_core.TcContext
                   (compiler_typecheck_core.tc-context-with-type-module-id
@@ -131,15 +121,11 @@
                 [type-env : compiler_typecheck_core.TcTypeEnv
                   (compiler_typecheck_core.tc-default-env)]
                 [actual-ref : ast.AstType
-                  (ast.ast-ty-mut-ref lifetime-id (ast.AstType.Enum flat-id))]
+                  (ast.ast-ty-mut-ref lifetime-id (Enum flat-id))]
                 [expected-ref : ast.AstType
-                  (ast.ast-ty-mut-ref
-                    lifetime-id
-                    (ast.AstType.Enum qualified-id))]
+                  (ast.ast-ty-mut-ref lifetime-id (Enum qualified-id))]
                 [different-ref : ast.AstType
-                  (ast.ast-ty-mut-ref
-                    lifetime-id
-                    (ast.AstType.Enum other-qualified-id))]
+                  (ast.ast-ty-mut-ref lifetime-id (Enum other-qualified-id))]
                 [other-constructor-id : i64
                   (ci.intern-generated-canonical-name "ReverseMixedOther.Value")]
                 [missing-constructor-id : i64
@@ -164,66 +150,55 @@
                     type-env
                     (compiler_typecheck_core.tc-global-shared-view actual)
                     (compiler_typecheck_core.tc-global-shared-view expected))
-                    [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
-                      true]
-                    [(compiler_typecheck_core.TcInferredTypeMatch.Mismatch _)
-                      false])
+                    [(Compatible _) true]
+                    [(Mismatch _) false])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     ctx
                     type-env
                     expected
                     (compiler_typecheck_core.tc-global-shared-view actual))
-                    [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
-                      true]
-                    [(compiler_typecheck_core.TcInferredTypeMatch.Mismatch _)
-                      false])
+                    [(Compatible _) true]
+                    [(Mismatch _) false])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     ctx
                     type-env
                     actual
                     different)
-                    [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
-                      false]
-                    [(compiler_typecheck_core.TcInferredTypeMatch.Mismatch _)
-                      true])
+                    [(Compatible _) false]
+                    [(Mismatch _) true])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     type-module-ctx
                     type-env
                     (compiler_typecheck_core.tc-global-shared-view actual-ref)
                     (compiler_typecheck_core.tc-global-shared-view expected-ref))
-                    [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
-                      true]
-                    [(compiler_typecheck_core.TcInferredTypeMatch.Mismatch _)
-                      false])
+                    [(Compatible _) true]
+                    [(Mismatch _) false])
                   (match (compiler_typecheck_core.tc-match-inferred-type-for-expected
                     type-module-ctx
                     type-env
                     (compiler_typecheck_core.tc-global-shared-view actual-ref)
                     (compiler_typecheck_core.tc-global-shared-view
                       different-ref))
-                    [(compiler_typecheck_core.TcInferredTypeMatch.Compatible _)
-                      false]
-                    [(compiler_typecheck_core.TcInferredTypeMatch.Mismatch _)
-                      true])
+                    [(Compatible _) false]
+                    [(Mismatch _) true])
                   (match (compiler_typecheck_core.tc-infer-lifetime-subst-from-mixed-source-type
                     type-module-ctx
                     type-env
                     (ast.ast-lifetime-list-new)
-                    compiler_typecheck_core.TcLifetimeSubst.Nil
+                    Nil
                     (compiler_typecheck_core.tc-global-shared-view actual-ref)
                     expected-ref)
-                    [(compiler_typecheck_core.ResultTcLifetimeSubst.Ok _) true]
-                    [(compiler_typecheck_core.ResultTcLifetimeSubst.Err _)
-                      false])
+                    [(Ok _) true]
+                    [(Err _) false])
                   (match (compiler_typecheck_core.tc-infer-lifetime-subst-from-mixed-source-type
                     type-module-ctx
                     type-env
                     (ast.ast-lifetime-list-new)
-                    compiler_typecheck_core.TcLifetimeSubst.Nil
+                    Nil
                     actual-ref
                     different-ref)
-                    [(compiler_typecheck_core.ResultTcLifetimeSubst.Ok _) false]
-                    [(compiler_typecheck_core.ResultTcLifetimeSubst.Err _) true])
+                    [(Ok _) false]
+                    [(Err _) true])
                   (match (compiler_typecheck_core.tc-enum-qualified-variant-lookup-key-id
                     ctx
                     other-constructor-id
@@ -244,8 +219,8 @@
                     ctx
                     other-constructor-id
                     "missing constructor")
-                    [(compiler_typecheck_core.ResultTcType.Ok _) true]
-                    [(compiler_typecheck_core.ResultTcType.Err _) false])
+                    [(Ok _) true]
+                    [(Err _) false])
                   (match (compiler_typecheck_core.tc-enum-qualified-variant-lookup-handle
                     ctx
                     missing-constructor-id)
@@ -260,15 +235,15 @@
                     ctx
                     missing-constructor-id
                     "missing constructor")
-                    [(compiler_typecheck_core.ResultTcType.Ok _) false]
-                    [(compiler_typecheck_core.ResultTcType.Err _) true])
+                    [(Ok _) false]
+                    [(Err _) true])
                   (tc-qualified-variant-member-lookup-smoke?
                     (compiler_typecheck_core.tc-context-structural-session ctx)
                     module-id
                     flat-id)))]
-            [(csym.ResultCompilerRegistries.Err _) false])]
-        [(csym.ResultCompilerSymbols.Err _) false])]
-    [(parser.ResultAstProgram.Err _) false]))
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
 
 (test
   compiler-typecheck-reverse-mixed-source-nominal-match

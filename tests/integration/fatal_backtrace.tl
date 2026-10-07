@@ -20,10 +20,10 @@
   (+ (backtrace-middle value) 1))
 
 (define (backtrace-cleanup [value : i64]) : unit
-  (begin
-    (backtrace-outer value)
-    unit))
+  (backtrace-outer value)
+  unit)
 
+;; backtrace-cleanup's two-form body must still get a frame location (#8651).
 (define (main) : i64
   (begin
     (with ([value 42 backtrace-cleanup]) unit)

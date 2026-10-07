@@ -134,14 +134,13 @@
   (let
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (if (ls-digit? (ls-byte buf j))
-            (set! j (+ j 1))
-            (set! keep false))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (if (ls-digit? (ls-byte buf j))
+          (set! j (+ j 1))
+          (set! keep false))
+        (set! keep false)))
+    j))
 
 (define (ls-scan-based-int-end
   [buf : (& buf u8vec.Vec)]
@@ -151,18 +150,17 @@
   (let
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (let
-            [c : i64 (ls-byte buf j)]
-            (if (if (= base 16)
-              (ls-hex-digit? c)
-              (ls-binary-digit? c))
-              (set! j (+ j 1))
-              (set! keep false)))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (let
+          [c : i64 (ls-byte buf j)]
+          (if (if (= base 16)
+            (ls-hex-digit? c)
+            (ls-binary-digit? c))
+            (set! j (+ j 1))
+            (set! keep false)))
+        (set! keep false)))
+    j))
 
 (define (ls-float-tail? [buf : (& buf u8vec.Vec)] [int-end : i64] [n : i64]) : bool
   (if (< (+ int-end 1) n)
@@ -254,27 +252,26 @@
     [slots (u8vec.slots buf)]
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (let
-            [c : i64 (cast (array-ref slots j) : i64)]
-            (if (and
-              (= c 58)
-              (> j start)
-              (not
-                (if (= (- j start) 3)
-                  (and
-                    (= (cast (array-ref slots start) : i64) 112)
-                    (= (cast (array-ref slots (+ start 1)) : i64) 107)
-                    (= (cast (array-ref slots (+ start 2)) : i64) 103))
-                  false)))
-              (set! keep false)
-              (if (ls-symbol-char? c)
-                (set! j (+ j 1))
-                (set! keep false))))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (let
+          [c : i64 (cast (array-ref slots j) : i64)]
+          (if (and
+            (= c 58)
+            (> j start)
+            (not
+              (if (= (- j start) 3)
+                (and
+                  (= (cast (array-ref slots start) : i64) 112)
+                  (= (cast (array-ref slots (+ start 1)) : i64) 107)
+                  (= (cast (array-ref slots (+ start 2)) : i64) 103))
+                false)))
+            (set! keep false)
+            (if (ls-symbol-char? c)
+              (set! j (+ j 1))
+              (set! keep false))))
+        (set! keep false)))
+    j))
 
 ;; `colon-symbol-head?`: a `:` opens a keyword symbol only when the first
 ;; non-space byte before it is `(`, so annotations stay standalone `:` tokens.
@@ -283,18 +280,17 @@
     [j : i64 (- start 1)]
     [keep : bool true]
     [result : bool true]
-    (begin
-      (while keep
-        (if (< j 0)
-          (set! keep false)
-          (let
-            [c : i64 (ls-byte buf j)]
-            (if (ls-space? c)
-              (set! j (- j 1))
-              (begin
-                (set! result (= c 40))
-                (set! keep false))))))
-      result)))
+    (while keep
+      (if (< j 0)
+        (set! keep false)
+        (let
+          [c : i64 (ls-byte buf j)]
+          (if (ls-space? c)
+            (set! j (- j 1))
+            (begin
+              (set! result (= c 40))
+              (set! keep false))))))
+    result))
 
 (define (ls-colon-token-end [buf : (& buf u8vec.Vec)] [start : i64] [n : i64]) : i64
   (let
@@ -311,33 +307,31 @@
   (let
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (let
-            [c : i64 (ls-byte buf j)]
-            (if (= c 34)
-              (set! keep false)
-              (if (= c 92)
-                (if (< (+ j 1) n)
-                  (set! j (+ j 2))
-                  (set! keep false))
-                (set! j (+ j 1)))))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (let
+          [c : i64 (ls-byte buf j)]
+          (if (= c 34)
+            (set! keep false)
+            (if (= c 92)
+              (if (< (+ j 1) n)
+                (set! j (+ j 2))
+                (set! keep false))
+              (set! j (+ j 1)))))
+        (set! keep false)))
+    j))
 
 (define (ls-scan-comment-end [buf : (& buf u8vec.Vec)] [start : i64] [n : i64]) : i64
   (let
     [j : i64 start]
     [keep : bool true]
-    (begin
-      (while keep
-        (if (< j n)
-          (if (= (ls-byte buf j) 10)
-            (set! keep false)
-            (set! j (+ j 1)))
-          (set! keep false)))
-      j)))
+    (while keep
+      (if (< j n)
+        (if (= (ls-byte buf j) 10)
+          (set! keep false)
+          (set! j (+ j 1)))
+        (set! keep false)))
+    j))
 
 ;; `apostrophe-escaped-char-result`: the escapes a character literal accepts.
 (define (ls-escaped-char? [c : i64]) : bool
@@ -386,133 +380,118 @@
     [col : i64 1]
     [count : i64 0]
     [acc : i64 seed-acc]
-    (begin
-      (while (< i n)
-        (let
-          [c : i64 (ls-byte buf i)]
-          (cond
-            [(ls-space? c)
+    (while (< i n)
+      (let
+        [c : i64 (ls-byte buf i)]
+        (cond
+          [(ls-space? c)
+            (if (= c 10)
               (begin
-                (if (= c 10)
+                (set! line (+ line 1))
+                (set! col 1))
+              (set! col (+ col 1)))
+            (set! i (+ i 1))]
+          [(= c 40)
+            (set! acc (ls-fold acc ls-tag-lparen 1 c))
+            (set! count (+ count 1))
+            (set! i (+ i 1))
+            (set! col (+ col 1))]
+          [(= c 91)
+            (set! acc (ls-fold acc ls-tag-lbracket 1 c))
+            (set! count (+ count 1))
+            (set! i (+ i 1))
+            (set! col (+ col 1))]
+          [(= c 41)
+            (set! acc (ls-fold acc ls-tag-rparen 1 c))
+            (set! count (+ count 1))
+            (set! i (+ i 1))
+            (set! col (+ col 1))]
+          [(= c 93)
+            (set! acc (ls-fold acc ls-tag-rbracket 1 c))
+            (set! count (+ count 1))
+            (set! i (+ i 1))
+            (set! col (+ col 1))]
+          [(= c 39)
+            (let
+              [end : i64 (ls-apostrophe-char-end buf i n)]
+              (if (< end 0)
+                (begin
+                  (set! acc (ls-fold acc ls-tag-quote 1 c))
+                  (set! count (+ count 1))
+                  (set! i (+ i 1))
+                  (set! col (+ col 1)))
+                (begin
+                  (set! acc (ls-fold acc ls-tag-char (- end i) c))
+                  (set! count (+ count 1))
+                  (set! col (+ col (- end i)))
+                  (set! i end))))]
+          [(= c 96)
+            (set! acc (ls-fold acc ls-tag-backtick 1 c))
+            (set! count (+ count 1))
+            (set! i (+ i 1))
+            (set! col (+ col 1))]
+          [(= c 44)
+            (if (and (< (+ i 1) n) (= (ls-byte buf (+ i 1)) 64))
+              (begin
+                (set! acc (ls-fold acc ls-tag-comma-at 2 c))
+                (set! i (+ i 2))
+                (set! col (+ col 2)))
+              (begin
+                (set! acc (ls-fold acc ls-tag-comma 1 c))
+                (set! i (+ i 1))
+                (set! col (+ col 1))))
+            (set! count (+ count 1))]
+          [(= c 34)
+            (let
+              [start : i64 (+ i 1)]
+              [end : i64 (ls-scan-str-end buf start n)]
+              [scan : i64 i]
+              (set! acc (ls-fold acc ls-tag-str (- (+ end 1) i) c))
+              (set! count (+ count 1))
+              (while (< scan (+ end 1))
+                (if (= (ls-byte buf scan) 10)
                   (begin
                     (set! line (+ line 1))
                     (set! col 1))
                   (set! col (+ col 1)))
-                (set! i (+ i 1)))]
-            [(= c 40)
-              (begin
-                (set! acc (ls-fold acc ls-tag-lparen 1 c))
-                (set! count (+ count 1))
-                (set! i (+ i 1))
-                (set! col (+ col 1)))]
-            [(= c 91)
-              (begin
-                (set! acc (ls-fold acc ls-tag-lbracket 1 c))
-                (set! count (+ count 1))
-                (set! i (+ i 1))
-                (set! col (+ col 1)))]
-            [(= c 41)
-              (begin
-                (set! acc (ls-fold acc ls-tag-rparen 1 c))
-                (set! count (+ count 1))
-                (set! i (+ i 1))
-                (set! col (+ col 1)))]
-            [(= c 93)
-              (begin
-                (set! acc (ls-fold acc ls-tag-rbracket 1 c))
-                (set! count (+ count 1))
-                (set! i (+ i 1))
-                (set! col (+ col 1)))]
-            [(= c 39)
-              (let
-                [end : i64 (ls-apostrophe-char-end buf i n)]
-                (if (< end 0)
-                  (begin
-                    (set! acc (ls-fold acc ls-tag-quote 1 c))
-                    (set! count (+ count 1))
-                    (set! i (+ i 1))
-                    (set! col (+ col 1)))
-                  (begin
-                    (set! acc (ls-fold acc ls-tag-char (- end i) c))
-                    (set! count (+ count 1))
-                    (set! col (+ col (- end i)))
-                    (set! i end))))]
-            [(= c 96)
-              (begin
-                (set! acc (ls-fold acc ls-tag-backtick 1 c))
-                (set! count (+ count 1))
-                (set! i (+ i 1))
-                (set! col (+ col 1)))]
-            [(= c 44)
-              (begin
-                (if (and (< (+ i 1) n) (= (ls-byte buf (+ i 1)) 64))
-                  (begin
-                    (set! acc (ls-fold acc ls-tag-comma-at 2 c))
-                    (set! i (+ i 2))
-                    (set! col (+ col 2)))
-                  (begin
-                    (set! acc (ls-fold acc ls-tag-comma 1 c))
-                    (set! i (+ i 1))
-                    (set! col (+ col 1))))
-                (set! count (+ count 1)))]
-            [(= c 34)
-              (let
-                [start : i64 (+ i 1)]
-                [end : i64 (ls-scan-str-end buf start n)]
-                [scan : i64 i]
-                (begin
-                  (set! acc (ls-fold acc ls-tag-str (- (+ end 1) i) c))
-                  (set! count (+ count 1))
-                  (while (< scan (+ end 1))
-                    (begin
-                      (if (= (ls-byte buf scan) 10)
-                        (begin
-                          (set! line (+ line 1))
-                          (set! col 1))
-                        (set! col (+ col 1)))
-                      (set! scan (+ scan 1))))
-                  (set! i (+ end 1))))]
-            [(= c 59)
-              (let
-                [end : i64 (ls-scan-comment-end buf (+ i 1) n)]
-                (begin
-                  (set! col (+ col (- end i)))
-                  (set! i end)))]
-            [(or (ls-digit? c) (ls-negative-number-start? buf i n))
-              (let
-                [end : i64 (ls-scan-number-end buf i n)]
-                [kind : i64
-                  (if (ls-number-float? buf i n)
-                    ls-tag-float
-                    ls-tag-int)]
-                (begin
-                  (set! acc (ls-fold acc kind (- end i) c))
-                  (set! count (+ count 1))
-                  (set! col (+ col (- end i)))
-                  (set! i end)))]
-            [(= c 58)
-              (let
-                [end : i64 (ls-colon-token-end buf i n)]
-                (begin
-                  (set! acc (ls-fold acc ls-tag-sym (- end i) c))
-                  (set! count (+ count 1))
-                  (set! col (+ col (- end i)))
-                  (set! i end)))]
-            [(ls-symbol-char? c)
-              (let
-                [end : i64 (ls-scan-symbol-end buf i n)]
-                (begin
-                  (set! acc (ls-fold acc ls-tag-sym (- end i) c))
-                  (set! count (+ count 1))
-                  (set! col (+ col (- end i)))
-                  (set! i end)))]
-            [else
-              (begin
-                (set! acc (ls-fold acc ls-tag-unexpected 1 c))
-                (set! count (+ count 1))
-                (set! i (+ i 1))
-                (set! col (+ col 1)))])))
-      (+ (* acc 1000003) (+ (* line 31) (+ (* col 131) count))))))
+                (set! scan (+ scan 1)))
+              (set! i (+ end 1)))]
+          [(= c 59)
+            (let
+              [end : i64 (ls-scan-comment-end buf (+ i 1) n)]
+              (set! col (+ col (- end i)))
+              (set! i end))]
+          [(or (ls-digit? c) (ls-negative-number-start? buf i n))
+            (let
+              [end : i64 (ls-scan-number-end buf i n)]
+              [kind : i64
+                (if (ls-number-float? buf i n)
+                  ls-tag-float
+                  ls-tag-int)]
+              (set! acc (ls-fold acc kind (- end i) c))
+              (set! count (+ count 1))
+              (set! col (+ col (- end i)))
+              (set! i end))]
+          [(= c 58)
+            (let
+              [end : i64 (ls-colon-token-end buf i n)]
+              (set! acc (ls-fold acc ls-tag-sym (- end i) c))
+              (set! count (+ count 1))
+              (set! col (+ col (- end i)))
+              (set! i end))]
+          [(ls-symbol-char? c)
+            (let
+              [end : i64 (ls-scan-symbol-end buf i n)]
+              (set! acc (ls-fold acc ls-tag-sym (- end i) c))
+              (set! count (+ count 1))
+              (set! col (+ col (- end i)))
+              (set! i end))]
+          [else
+            (set! acc (ls-fold acc ls-tag-unexpected 1 c))
+            (set! count (+ count 1))
+            (set! i (+ i 1))
+            (set! col (+ col 1))])))
+    (+ (* acc 1000003) (+ (* line 31) (+ (* col 131) count)))))
 
 ;; Load the corpus once, then tokenize it `rounds` times. The corpus text is
 ;; copied into a `u8vec.Vec` so both implementations walk the same bytes
@@ -526,15 +505,13 @@
       (unsafe
         (string-data (& text)))]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set!
-            (array-ref slots i)
-            (unsafe
-              (ptr-read (ptr-offset src i))))
-          (set! i (+ i 1))))
-      out)))
+    (while (< i n)
+      (set!
+        (array-ref slots i)
+        (unsafe
+          (ptr-read (ptr-offset src i))))
+      (set! i (+ i 1)))
+    out))
 
 (define (ls-bench [path : String] [rounds : i64]) : i64
   (let
@@ -543,17 +520,14 @@
     [n : i64 (u8vec.len (& buf))]
     [round : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< round rounds)
-        (begin
-          (set! acc (ls-tokenize (& buf) n acc))
-          (set! round (+ round 1))))
-      acc)))
+    (while (< round rounds)
+      (set! acc (ls-tokenize (& buf) n acc))
+      (set! round (+ round 1)))
+    acc))
 
 (define (main) : i64
   (let
     [path : String (io.arg 1)]
     [rounds : i64 (string.>int (io.arg 2))]
-    (begin
-      (io.println "{}" (ls-bench path rounds))
-      0)))
+    (io.println "{}" (ls-bench path rounds))
+    0))

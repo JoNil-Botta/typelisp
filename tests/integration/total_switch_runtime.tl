@@ -10,12 +10,12 @@
 
 (define (total-switch-score [value : TotalSwitchValue]) : i64
   (match value
-    [(TotalSwitchValue.Zero) 1]
-    [(TotalSwitchValue.One) 2]
-    [(TotalSwitchValue.Two) 4]
-    [(TotalSwitchValue.Three) 8]
-    [(TotalSwitchValue.Four) 10]
-    [(TotalSwitchValue.Five) 17]))
+    [(Zero) 1]
+    [(One) 2]
+    [(Two) 4]
+    [(Three) 8]
+    [(Four) 10]
+    [(Five) 17]))
 
 (define (main) : i64
   (let
@@ -23,17 +23,15 @@
       (__tl_make-array TotalSwitchValue 6)]
     [i : i64 0]
     [sum : i64 0]
-    (begin
-      (set! (array-ref values 0) (TotalSwitchValue.Zero))
-      (set! (array-ref values 1) (TotalSwitchValue.One))
-      (set! (array-ref values 2) (TotalSwitchValue.Two))
-      (set! (array-ref values 3) (TotalSwitchValue.Three))
-      (set! (array-ref values 4) (TotalSwitchValue.Four))
-      (set! (array-ref values 5) (TotalSwitchValue.Five))
-      (while (< i 6)
-        (begin
-          (set! sum (+ sum (total-switch-score (array-ref values i))))
-          (set! i (+ i 1))))
-      (if (= sum 42)
-        42
-        1))))
+    (set! (array-ref values 0) (Zero))
+    (set! (array-ref values 1) (One))
+    (set! (array-ref values 2) (Two))
+    (set! (array-ref values 3) (Three))
+    (set! (array-ref values 4) (Four))
+    (set! (array-ref values 5) (Five))
+    (while (< i 6)
+      (set! sum (+ sum (total-switch-score (array-ref values i))))
+      (set! i (+ i 1)))
+    (if (= sum 42)
+      42
+      1)))

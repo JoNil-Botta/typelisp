@@ -35,43 +35,38 @@
   (let
     [r : lex.ResultTokens (lex.result "(define x 42)")]
     (match r
-      [(lex.ResultTokens.Ok toks)
+      [(Ok toks)
         (let
           [ok : bool true]
-          (begin
-            (if (=
-              (token.tag (lex.array-shared-view toks 0))
-              (token.tag-lparen))
-              unit
-              (set! ok false))
-            (if (= (token.tag (lex.array-shared-view toks 1)) (token.tag-sym))
-              unit
-              (set! ok false))
-            (if (string.eq (token.sym (lex.array-shared-view toks 1)) "define")
-              unit
-              (set! ok false))
-            (if (= (token.tag (lex.array-shared-view toks 2)) (token.tag-sym))
-              unit
-              (set! ok false))
-            (if (string.eq (token.sym (lex.array-shared-view toks 2)) "x")
-              unit
-              (set! ok false))
-            (if (= (token.tag (lex.array-shared-view toks 3)) (token.tag-int))
-              unit
-              (set! ok false))
-            (if (= (token.int (& (array-ref toks 3))) 42)
-              unit
-              (set! ok false))
-            (if (=
-              (token.tag (lex.array-shared-view toks 4))
-              (token.tag-rparen))
-              unit
-              (set! ok false))
-            (lexer-assert-bool-eq
-              ok
-              true
-              "basic token sequence should match Rust test_basic_tokens")))]
-      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+          (if (= (token.tag (lex.array-shared-view toks 0)) (token.tag-lparen))
+            unit
+            (set! ok false))
+          (if (= (token.tag (lex.array-shared-view toks 1)) (token.tag-sym))
+            unit
+            (set! ok false))
+          (if (string.eq (token.sym (lex.array-shared-view toks 1)) "define")
+            unit
+            (set! ok false))
+          (if (= (token.tag (lex.array-shared-view toks 2)) (token.tag-sym))
+            unit
+            (set! ok false))
+          (if (string.eq (token.sym (lex.array-shared-view toks 2)) "x")
+            unit
+            (set! ok false))
+          (if (= (token.tag (lex.array-shared-view toks 3)) (token.tag-int))
+            unit
+            (set! ok false))
+          (if (= (token.int (& (array-ref toks 3))) 42)
+            unit
+            (set! ok false))
+          (if (= (token.tag (lex.array-shared-view toks 4)) (token.tag-rparen))
+            unit
+            (set! ok false))
+          (lexer-assert-bool-eq
+            ok
+            true
+            "basic token sequence should match Rust test_basic_tokens"))]
+      [(Err e) (lexer-assert-true false e)])))
 
 ;; ---- 2. src/lexer.rs test_types ----------------------------------------
 (test
@@ -79,50 +74,45 @@
   (let
     [r : lex.ResultTokens (lex.result "(-> i64 i64)")]
     (match r
-      [(lex.ResultTokens.Ok toks)
+      [(Ok toks)
         (let
           [ok : bool true]
-          (begin
-            (if (=
-              (token.tag (lex.array-shared-view toks 0))
-              (token.tag-lparen))
-              unit
-              (set! ok false))
-            (if (= (token.tag (lex.array-shared-view toks 1)) (token.tag-sym))
-              unit
-              (set! ok false))
-            (if (string.eq (token.sym (lex.array-shared-view toks 1)) "->")
-              unit
-              (set! ok false))
-            (if (= (token.tag (lex.array-shared-view toks 2)) (token.tag-sym))
-              unit
-              (set! ok false))
-            (if (string.eq (token.sym (lex.array-shared-view toks 2)) "i64")
-              unit
-              (set! ok false))
-            (if (= (token.tag (lex.array-shared-view toks 3)) (token.tag-sym))
-              unit
-              (set! ok false))
-            (if (string.eq (token.sym (lex.array-shared-view toks 3)) "i64")
-              unit
-              (set! ok false))
-            (if (=
-              (token.tag (lex.array-shared-view toks 4))
-              (token.tag-rparen))
-              unit
-              (set! ok false))
-            (lexer-assert-bool-eq
-              ok
-              true
-              "arrow-type tokens should lex as single tokens")))]
-      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+          (if (= (token.tag (lex.array-shared-view toks 0)) (token.tag-lparen))
+            unit
+            (set! ok false))
+          (if (= (token.tag (lex.array-shared-view toks 1)) (token.tag-sym))
+            unit
+            (set! ok false))
+          (if (string.eq (token.sym (lex.array-shared-view toks 1)) "->")
+            unit
+            (set! ok false))
+          (if (= (token.tag (lex.array-shared-view toks 2)) (token.tag-sym))
+            unit
+            (set! ok false))
+          (if (string.eq (token.sym (lex.array-shared-view toks 2)) "i64")
+            unit
+            (set! ok false))
+          (if (= (token.tag (lex.array-shared-view toks 3)) (token.tag-sym))
+            unit
+            (set! ok false))
+          (if (string.eq (token.sym (lex.array-shared-view toks 3)) "i64")
+            unit
+            (set! ok false))
+          (if (= (token.tag (lex.array-shared-view toks 4)) (token.tag-rparen))
+            unit
+            (set! ok false))
+          (lexer-assert-bool-eq
+            ok
+            true
+            "arrow-type tokens should lex as single tokens"))]
+      [(Err e) (lexer-assert-true false e)])))
 
 (test
   lexer-duplicate-symbols-share-intern-id
   (let
     [r : lex.ResultTokens (lex.result "(x x y)")]
     (match r
-      [(lex.ResultTokens.Ok toks)
+      [(Ok toks)
         (lexer-assert-true
           (and
             (compiler_intern.intern-id-eq?
@@ -135,69 +125,65 @@
             (string.eq (token.sym (lex.array-shared-view toks 1)) "x")
             (string.eq (token.sym (lex.array-shared-view toks 3)) "y"))
           "duplicate symbols should reuse the same intern id")]
-      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+      [(Err e) (lexer-assert-true false e)])))
 
 (test
   lexer-token-intern-ids-are-typed-and-compact
   (let
     [r : lex.ResultTokens (lex.result "(x \"x\")")]
     (match r
-      [(lex.ResultTokens.Ok toks)
-        (begin
-          (lexer-assert-true
-            (=
-              (comptime (size-of (type InternId)))
-              (comptime (size-of (type u32))))
-            "typed intern ids should retain compact u32 storage")
-          (lexer-assert-true
-            (=
-              (comptime (size-of (type InternSyntaxId)))
-              (comptime (size-of (type i64))))
-            "mixed syntax ids should retain one-word storage")
-          (match (lex.array-shared-view toks 1)
-            [(token.Token.Sym id)
-              (let
-                [syntax : InternSyntaxId
-                  (compiler_intern.intern-syntax-id-from-renderable id)]
-                (begin
-                  (lexer-assert-true
-                    (compiler_intern.intern-id-eq?
-                      id
-                      (token.sym-id (& (array-ref toks 1))))
-                    "typed symbol ids should preserve the lexer identity")
-                  (lexer-assert-true
-                    (=
-                      (compiler_intern.intern-syntax-id-value syntax)
-                      (compiler_intern.intern-id-value id))
-                    "syntax ids should preserve renderable identity")
-                  (lexer-assert-true
-                    (string.eq
-                      (compiler_intern.intern-syntax-id-text syntax)
-                      "x")
-                    "renderable syntax ids should retain source text")))]
-            [_ (lexer-assert-true false "symbol token should carry an id")])
-          (match (lex.array-shared-view toks 2)
-            [(token.Token.Str id)
+      [(Ok toks)
+        (lexer-assert-true
+          (=
+            (comptime (size-of (type InternId)))
+            (comptime (size-of (type u32))))
+          "typed intern ids should retain compact u32 storage")
+        (lexer-assert-true
+          (=
+            (comptime (size-of (type InternSyntaxId)))
+            (comptime (size-of (type i64))))
+          "mixed syntax ids should retain one-word storage")
+        (match (lex.array-shared-view toks 1)
+          [(Sym id)
+            (let
+              [syntax : InternSyntaxId
+                (compiler_intern.intern-syntax-id-from-renderable id)]
               (lexer-assert-true
                 (compiler_intern.intern-id-eq?
                   id
-                  (token.str-id (& (array-ref toks 2))))
-                "typed string ids should preserve the lexer identity")]
-            [_ (lexer-assert-true false "string token should carry an id")]))]
-      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+                  (token.sym-id (& (array-ref toks 1))))
+                "typed symbol ids should preserve the lexer identity")
+              (lexer-assert-true
+                (=
+                  (compiler_intern.intern-syntax-id-value syntax)
+                  (compiler_intern.intern-id-value id))
+                "syntax ids should preserve renderable identity")
+              (lexer-assert-true
+                (string.eq (compiler_intern.intern-syntax-id-text syntax) "x")
+                "renderable syntax ids should retain source text"))]
+          [_ (lexer-assert-true false "symbol token should carry an id")])
+        (match (lex.array-shared-view toks 2)
+          [(Str id)
+            (lexer-assert-true
+              (compiler_intern.intern-id-eq?
+                id
+                (token.str-id (& (array-ref toks 2))))
+              "typed string ids should preserve the lexer identity")]
+          [_ (lexer-assert-true false "string token should carry an id")])]
+      [(Err e) (lexer-assert-true false e)])))
 
 (test
   lexer-lone-colon-without-compiler-builtin-initialization
   (let
     [r : lex.ResultTokens (lex.result ":")]
     (match r
-      [(lex.ResultTokens.Ok toks)
+      [(Ok toks)
         (lexer-assert-true
           (and
             (= (token.tag (lex.array-shared-view toks 0)) (token.tag-sym))
             (string.eq (token.sym (lex.array-shared-view toks 0)) ":"))
           "standalone lexer should intern a lone colon from its source")]
-      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+      [(Err e) (lexer-assert-true false e)])))
 
 ;; ---- 3. src/lexer.rs test_single_char_literals -------------------------
 (test
@@ -260,9 +246,8 @@
   (let
     [r : lex.ResultTokens (lex.result "#\\a'")]
     (match r
-      [(lex.ResultTokens.Ok _)
-        (lexer-assert-true false "legacy escaped char should error")]
-      [(lex.ResultTokens.Err msg)
+      [(Ok _) (lexer-assert-true false "legacy escaped char should error")]
+      [(Err msg)
         (let
           [haystack : String msg]
           [needle : String "unexpected character"]
@@ -312,8 +297,8 @@
   (let
     [r : lex.ResultTokens (lex.result "'\\x'")]
     (match r
-      [(lex.ResultTokens.Ok _) (lexer-assert-true false "should error")]
-      [(lex.ResultTokens.Err msg)
+      [(Ok _) (lexer-assert-true false "should error")]
+      [(Err msg)
         (let
           [haystack : String msg]
           [needle : String "unknown character escape"]
@@ -325,7 +310,7 @@
 (test
   lexer-apostrophe-quote-vs-char
   (match (lex.result "'form")
-    [(lex.ResultTokens.Ok toks)
+    [(Ok toks)
       (lexer-assert-true
         (and
           (= (token.tag (lex.array-shared-view toks 0)) (token.tag-quote))
@@ -333,7 +318,7 @@
           (string.eq (token.sym (lex.array-shared-view toks 1)) "form")
           (= (token.tag (lex.array-shared-view toks 2)) (token.tag-end)))
         "apostrophe quote should still quote forms")]
-    [(lex.ResultTokens.Err msg) (lexer-assert-true false msg)]))
+    [(Err msg) (lexer-assert-true false msg)]))
 
 ;; ---- 5. src/lexer.rs test_char_literal_in_context ----------------------
 (test
@@ -341,43 +326,38 @@
   (let
     [r : lex.ResultTokens (lex.result "(= c ' ')")]
     (match r
-      [(lex.ResultTokens.Ok toks)
+      [(Ok toks)
         (let
           [ok : bool true]
-          (begin
-            (if (=
-              (token.tag (lex.array-shared-view toks 0))
-              (token.tag-lparen))
-              unit
-              (set! ok false))
-            (if (= (token.tag (lex.array-shared-view toks 1)) (token.tag-sym))
-              unit
-              (set! ok false))
-            (if (string.eq (token.sym (lex.array-shared-view toks 1)) "=")
-              unit
-              (set! ok false))
-            (if (= (token.tag (lex.array-shared-view toks 2)) (token.tag-sym))
-              unit
-              (set! ok false))
-            (if (string.eq (token.sym (lex.array-shared-view toks 2)) "c")
-              unit
-              (set! ok false))
-            (if (= (token.tag (lex.array-shared-view toks 3)) (token.tag-char))
-              unit
-              (set! ok false))
-            (if (= (token.char (& (array-ref toks 3))) ' ')
-              unit
-              (set! ok false))
-            (if (=
-              (token.tag (lex.array-shared-view toks 4))
-              (token.tag-rparen))
-              unit
-              (set! ok false))
-            (lexer-assert-bool-eq
-              ok
-              true
-              "char literal should lex in a surrounding token stream")))]
-      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
+          (if (= (token.tag (lex.array-shared-view toks 0)) (token.tag-lparen))
+            unit
+            (set! ok false))
+          (if (= (token.tag (lex.array-shared-view toks 1)) (token.tag-sym))
+            unit
+            (set! ok false))
+          (if (string.eq (token.sym (lex.array-shared-view toks 1)) "=")
+            unit
+            (set! ok false))
+          (if (= (token.tag (lex.array-shared-view toks 2)) (token.tag-sym))
+            unit
+            (set! ok false))
+          (if (string.eq (token.sym (lex.array-shared-view toks 2)) "c")
+            unit
+            (set! ok false))
+          (if (= (token.tag (lex.array-shared-view toks 3)) (token.tag-char))
+            unit
+            (set! ok false))
+          (if (= (token.char (& (array-ref toks 3))) ' ')
+            unit
+            (set! ok false))
+          (if (= (token.tag (lex.array-shared-view toks 4)) (token.tag-rparen))
+            unit
+            (set! ok false))
+          (lexer-assert-bool-eq
+            ok
+            true
+            "char literal should lex in a surrounding token stream"))]
+      [(Err e) (lexer-assert-true false e)])))
 
 ;; ---- 6. src/lexer.rs test_spans_single_line ----------------------------
 (test
@@ -385,63 +365,60 @@
   (let
     [r : lex.ResultSpannedTokens (lex.spanned-result "(define x 42)")]
     (match r
-      [(lex.ResultSpannedTokens.Ok s)
+      [(Ok s)
         (let
           [ok : bool true]
-          (begin
-            (if (= (token.spanned-token-line (array-ref s 0)) 1)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-col (array-ref s 0)) 1)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-line (array-ref s 1)) 1)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-col (array-ref s 1)) 2)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-line (array-ref s 2)) 1)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-col (array-ref s 2)) 9)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-line (array-ref s 3)) 1)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-col (array-ref s 3)) 11)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-line (array-ref s 4)) 1)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-col (array-ref s 4)) 13)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-line (array-ref s 5)) 1)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-col (array-ref s 5)) 14)
-              unit
-              (set! ok false))
-            (if (=
-              (token.tag-ref
-                (token.spanned-token-token-ref (& (array-ref s 5))))
-              (token.tag-end))
-              unit
-              (set! ok false))
-            (lexer-assert-bool-eq
-              ok
-              true
-              "single-line spans should match Rust test_spans_single_line")))]
-      [(lex.ResultSpannedTokens.Err e)
-        (lexer-assert-true false (token.source-error-message e))])))
+          (if (= (token.spanned-token-line (array-ref s 0)) 1)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-col (array-ref s 0)) 1)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-line (array-ref s 1)) 1)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-col (array-ref s 1)) 2)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-line (array-ref s 2)) 1)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-col (array-ref s 2)) 9)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-line (array-ref s 3)) 1)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-col (array-ref s 3)) 11)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-line (array-ref s 4)) 1)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-col (array-ref s 4)) 13)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-line (array-ref s 5)) 1)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-col (array-ref s 5)) 14)
+            unit
+            (set! ok false))
+          (if (=
+            (token.tag-ref (token.spanned-token-token-ref (& (array-ref s 5))))
+            (token.tag-end))
+            unit
+            (set! ok false))
+          (lexer-assert-bool-eq
+            ok
+            true
+            "single-line spans should match Rust test_spans_single_line"))]
+      [(Err e) (lexer-assert-true false (token.source-error-message e))])))
 
 (test
   lexer-borrowed-token-payloads
   (match (lex.spanned-result "42 0x2a 3.5 name \"text\" 'x'")
-    [(lex.ResultSpannedTokens.Ok toks)
+    [(Ok toks)
       (let
         [int-token : (& toks token.Token)
           (token.spanned-token-token-ref (& (array-ref toks 0)))]
@@ -458,38 +435,36 @@
         [int-text : String (token.int-text int-token)]
         [prefixed-int-text : String (token.int-text prefixed-int-token)]
         [float-text : String (token.float float-token)]
-        (begin
-          (lexer-assert-true (= (token.int int-token) 42) "borrowed int")
-          ;; Canonical decimal integers intentionally carry no source-spelling
-          ;; sidecar; prefixed/oversized/negative-zero forms do.
-          (lexer-assert-true (string.eq int-text "") "borrowed int text")
-          (lexer-assert-true
-            (and
-              (= (token.int prefixed-int-token) 42)
-              (string.eq prefixed-int-text "0x2a"))
-            "borrowed prefixed int text")
-          (lexer-assert-true (string.eq float-text "3.5") "borrowed float text")
-          (lexer-assert-true
-            (string.eq
-              (compiler_intern.intern-id-str (token.sym-id sym-token))
-              "name")
-            "borrowed symbol id")
-          (lexer-assert-true
-            (string.eq
-              (compiler_intern.intern-id-str (token.str-id str-token))
-              "text")
-            "borrowed string id")
-          (lexer-assert-true (= (token.char char-token) 'x') "borrowed char")
-          ;; Re-reading proves the lifetime-tied views did not consume or
-          ;; replace the stream-owned payloads.
-          (lexer-assert-true
-            (= (token.tag-ref int-token) (token.tag-int))
-            "borrowed int tag after payload")
-          (lexer-assert-true
-            (= (token.tag-ref char-token) (token.tag-char))
-            "borrowed char tag after payload")))]
-    [(lex.ResultSpannedTokens.Err e)
-      (lexer-assert-true false (token.source-error-message e))]))
+        (lexer-assert-true (= (token.int int-token) 42) "borrowed int")
+        ;; Canonical decimal integers intentionally carry no source-spelling
+        ;; sidecar; prefixed/oversized/negative-zero forms do.
+        (lexer-assert-true (string.eq int-text "") "borrowed int text")
+        (lexer-assert-true
+          (and
+            (= (token.int prefixed-int-token) 42)
+            (string.eq prefixed-int-text "0x2a"))
+          "borrowed prefixed int text")
+        (lexer-assert-true (string.eq float-text "3.5") "borrowed float text")
+        (lexer-assert-true
+          (string.eq
+            (compiler_intern.intern-id-str (token.sym-id sym-token))
+            "name")
+          "borrowed symbol id")
+        (lexer-assert-true
+          (string.eq
+            (compiler_intern.intern-id-str (token.str-id str-token))
+            "text")
+          "borrowed string id")
+        (lexer-assert-true (= (token.char char-token) 'x') "borrowed char")
+        ;; Re-reading proves the lifetime-tied views did not consume or
+        ;; replace the stream-owned payloads.
+        (lexer-assert-true
+          (= (token.tag-ref int-token) (token.tag-int))
+          "borrowed int tag after payload")
+        (lexer-assert-true
+          (= (token.tag-ref char-token) (token.tag-char))
+          "borrowed char tag after payload"))]
+    [(Err e) (lexer-assert-true false (token.source-error-message e))]))
 
 ;; ---- 7. src/lexer.rs test_spans_multi_line_and_blank_lines -------------
 (test
@@ -497,28 +472,26 @@
   (let
     [r : lex.ResultSpannedTokens (lex.spanned-result "(a\n\n  bb)")]
     (match r
-      [(lex.ResultSpannedTokens.Ok s)
+      [(Ok s)
         (let
           [ok : bool true]
-          (begin
-            (if (= (token.spanned-token-line (array-ref s 1)) 1)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-col (array-ref s 1)) 2)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-line (array-ref s 2)) 3)
-              unit
-              (set! ok false))
-            (if (= (token.spanned-token-col (array-ref s 2)) 3)
-              unit
-              (set! ok false))
-            (lexer-assert-bool-eq
-              ok
-              true
-              "multi-line blank spans should match Rust test")))]
-      [(lex.ResultSpannedTokens.Err e)
-        (lexer-assert-true false (token.source-error-message e))])))
+          (if (= (token.spanned-token-line (array-ref s 1)) 1)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-col (array-ref s 1)) 2)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-line (array-ref s 2)) 3)
+            unit
+            (set! ok false))
+          (if (= (token.spanned-token-col (array-ref s 2)) 3)
+            unit
+            (set! ok false))
+          (lexer-assert-bool-eq
+            ok
+            true
+            "multi-line blank spans should match Rust test"))]
+      [(Err e) (lexer-assert-true false (token.source-error-message e))])))
 
 ;; ---- 8. src/lexer.rs EOF handling --------------------------------------
 (test
@@ -536,8 +509,8 @@
   (let
     [r : lex.ResultTokens (lex.result "#\\spcae'")]
     (match r
-      [(lex.ResultTokens.Ok _) (lexer-assert-true false "should error")]
-      [(lex.ResultTokens.Err msg)
+      [(Ok _) (lexer-assert-true false "should error")]
+      [(Err msg)
         (let
           [haystack : String msg]
           [needle : String "unexpected character"]

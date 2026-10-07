@@ -17,28 +17,27 @@
       (let
         [wide-ptr : (MutPtr i64) (__tl_array-data wide)]
         [narrow-ptr : (MutPtr i32) (__tl_array-data narrow)]
-        (begin
-          (runtime.atomic-i64-store-ptr! wide-ptr 10)
-          (runtime.atomic-i64-add-ptr! wide-ptr 5)
-          (set! wide-fetch (runtime.atomic-i64-fetch-add-ptr! wide-ptr 2))
-          (set! wide-cas (runtime.atomic-i64-cas-ptr! wide-ptr 17 19))
-          (set!
-            wide-final
-            (runtime.atomic-i64-load-ptr (ptr-cast wide-ptr : (Ptr i64))))
-          (runtime.atomic-i32-store-ptr! narrow-ptr (cast 5 : i32))
-          (runtime.atomic-i32-add-ptr! narrow-ptr (cast 6 : i32))
-          (set!
-            narrow-fetch
-            (runtime.atomic-i32-fetch-add-ptr! narrow-ptr (cast 3 : i32)))
-          (set!
-            narrow-cas
-            (runtime.atomic-i32-cas-ptr!
-              narrow-ptr
-              (cast 14 : i32)
-              (cast 23 : i32)))
-          (set!
-            narrow-final
-            (runtime.atomic-i32-load-ptr (ptr-cast narrow-ptr : (Ptr i32)))))))
+        (runtime.atomic-i64-store-ptr! wide-ptr 10)
+        (runtime.atomic-i64-add-ptr! wide-ptr 5)
+        (set! wide-fetch (runtime.atomic-i64-fetch-add-ptr! wide-ptr 2))
+        (set! wide-cas (runtime.atomic-i64-cas-ptr! wide-ptr 17 19))
+        (set!
+          wide-final
+          (runtime.atomic-i64-load-ptr (ptr-cast wide-ptr : (Ptr i64))))
+        (runtime.atomic-i32-store-ptr! narrow-ptr (cast 5 : i32))
+        (runtime.atomic-i32-add-ptr! narrow-ptr (cast 6 : i32))
+        (set!
+          narrow-fetch
+          (runtime.atomic-i32-fetch-add-ptr! narrow-ptr (cast 3 : i32)))
+        (set!
+          narrow-cas
+          (runtime.atomic-i32-cas-ptr!
+            narrow-ptr
+            (cast 14 : i32)
+            (cast 23 : i32)))
+        (set!
+          narrow-final
+          (runtime.atomic-i32-load-ptr (ptr-cast narrow-ptr : (Ptr i32))))))
     (if (and
       (= wide-fetch 15)
       (= wide-cas 17)

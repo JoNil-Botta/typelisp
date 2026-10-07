@@ -40,20 +40,13 @@
       (replace! tuple-value (tuple 19 20 21 22 23 24))]
     [array-value : (Array i64 6) (array 25 26 27 28 29 30)]
     [old-array : (Array i64 6) (replace! array-value (array 31 32 33 34 35 36))]
-    (begin
-      (set! large.a 100)
-      (set! (tuple-ref tuple-value 0) 100)
-      (set! (array-ref array-value 0) 100)
-      (test.assert-i64-eq (large-score old-large) 21 "large struct snapshot")
-      (test.assert-i64-eq (tuple-score old-tuple) 93 "large tuple snapshot")
-      (test.assert-i64-eq (array-score old-array) 165 "large array snapshot")
-      (test.assert-i64-eq (large-score large) 150 "large struct replacement")
-      (test.assert-i64-eq
-        (tuple-score tuple-value)
-        210
-        "large tuple replacement")
-      (test.assert-i64-eq
-        (array-score array-value)
-        270
-        "large array replacement")
-      42)))
+    (set! large.a 100)
+    (set! (tuple-ref tuple-value 0) 100)
+    (set! (array-ref array-value 0) 100)
+    (test.assert-i64-eq (large-score old-large) 21 "large struct snapshot")
+    (test.assert-i64-eq (tuple-score old-tuple) 93 "large tuple snapshot")
+    (test.assert-i64-eq (array-score old-array) 165 "large array snapshot")
+    (test.assert-i64-eq (large-score large) 150 "large struct replacement")
+    (test.assert-i64-eq (tuple-score tuple-value) 210 "large tuple replacement")
+    (test.assert-i64-eq (array-score array-value) 270 "large array replacement")
+    42))

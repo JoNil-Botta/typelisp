@@ -12,14 +12,11 @@
 
 (define (package-cache-parse-pin-kind [value : String]) : cache.ResultPackageCachePinKind
   (cond
-    [(string.eq value "rev")
-      (cache.ResultPackageCachePinKind.Ok (cache.PackageCachePinKind.Rev))]
-    [(string.eq value "tag")
-      (cache.ResultPackageCachePinKind.Ok (cache.PackageCachePinKind.Tag))]
-    [(string.eq value "branch")
-      (cache.ResultPackageCachePinKind.Ok (cache.PackageCachePinKind.Branch))]
+    [(string.eq value "rev") (Ok (Rev))]
+    [(string.eq value "tag") (Ok (Tag))]
+    [(string.eq value "branch") (Ok (Branch))]
     [else
-      (cache.ResultPackageCachePinKind.Err
+      (Err
         (str_cat.str-cat
           "package-cache: unsupported remote pin kind '"
           value
@@ -33,71 +30,61 @@
     [n : i64 (string.string-length text)]
     [i : i64 start]
     [found : i64 -1]
-    (begin
-      (while (and (= found -1) (< i n))
-        (if (= (cast (string.string-ref text i) : i64) needle)
-          (set! found i)
-          (set! i (+ i 1))))
-      found)))
+    (while (and (= found -1) (< i n))
+      (if (= (cast (string.string-ref text i) : i64) needle)
+        (set! found i)
+        (set! i (+ i 1))))
+    found))
 
 (define (package-cache-parse-normalized-remote [dep : (& dep str)]) : cache.ResultPackageCacheRemoteSpec
   (let
     [n : i64 (string.string-length dep)]
     [hash : i64 (package-cache-find-code-from dep 35 0)]
     (if (or (<= hash 0) (>= hash (- n 1)))
-      (cache.ResultPackageCacheRemoteSpec.Err
-        "package-cache: remote dependency must be URL#rev|tag|branch=value")
+      (Err "package-cache: remote dependency must be URL#rev|tag|branch=value")
       (let
         [url : String (string.substring dep 0 hash)]
         [fragment : String (string.substring dep (+ hash 1) (- n (+ hash 1)))]
         [eq : i64 (package-cache-find-code-from fragment 61 0)]
         [fragment-len : i64 (string.string-length fragment)]
         (if (or (<= eq 0) (>= eq (- fragment-len 1)))
-          (cache.ResultPackageCacheRemoteSpec.Err
+          (Err
             "package-cache: remote dependency pin must be rev|tag|branch=value")
           (let
             [kind-text : String (string.substring fragment 0 eq)]
             [pin-value : String
               (string.substring fragment (+ eq 1) (- fragment-len (+ eq 1)))]
             (if (= (string.string-length pin-value) 0)
-              (cache.ResultPackageCacheRemoteSpec.Err
-                "package-cache: remote dependency pin must not be empty")
-              (match (package-cache-parse-pin-kind kind-text)
-                [(cache.ResultPackageCachePinKind.Err message)
-                  (cache.ResultPackageCacheRemoteSpec.Err message)]
-                [(cache.ResultPackageCachePinKind.Ok kind)
-                  (cache.ResultPackageCacheRemoteSpec.Ok
-                    (cache.PackageCacheRemoteSpec url kind pin-value))]))))))))
+              (Err "package-cache: remote dependency pin must not be empty")
+              (let
+                [kind (try (package-cache-parse-pin-kind kind-text))]
+                (Ok (cache.PackageCacheRemoteSpec url kind pin-value))))))))))
 
 (define (package-cache-key-from-spec [spec : cache.PackageCacheRemoteSpec]) : cache.ResultPackageCacheKey
   (let
     [kind : cache.PackageCachePinKind spec.pin-kind]
     (match kind
-      [(cache.PackageCachePinKind.Rev)
+      [(Rev)
         (let
           [commit : String spec.pin-value]
           (if (= (string.string-length commit) 0)
-            (cache.ResultPackageCacheKey.Err
-              "package-cache: exact commit must not be empty")
-            (cache.ResultPackageCacheKey.Ok
-              (cache.PackageCacheKey spec.url commit))))]
+            (Err "package-cache: exact commit must not be empty")
+            (Ok (cache.PackageCacheKey spec.url commit))))]
       [_
-        (cache.ResultPackageCacheKey.Err
+        (Err
           (str_cat.str-cat
             "package-cache: cache key requires exact rev pin, got "
             (cache.package-cache-pin-kind-name kind)
             ""))])))
 
 (define (package-cache-key-from-normalized-remote [dep : String]) : cache.ResultPackageCacheKey
-  (match (package-cache-parse-normalized-remote dep)
-    [(cache.ResultPackageCacheRemoteSpec.Err message)
-      (cache.ResultPackageCacheKey.Err message)]
-    [(cache.ResultPackageCacheRemoteSpec.Ok spec)
-      (package-cache-key-from-spec spec)]))
+  (let
+    [spec (try (package-cache-parse-normalized-remote dep))]
+    (package-cache-key-from-spec spec)))
 
 (define (package-cache-entry-reusable? [state : cache.PackageCacheEntryState]) : bool
   (match state
-    [(cache.PackageCacheEntryState.CompleteHit _) true]
+    [(CompleteHit _) true]
     [_ false]))
 
 (define (package-cache-prepare-entry-dir
@@ -115,8 +102,8 @@
   [expected-kind : cache.PackageCachePinKind]
   [expected-pin : String]) : bool
   (match (package-cache-parse-normalized-remote dep)
-    [(cache.ResultPackageCacheRemoteSpec.Err _) false]
-    [(cache.ResultPackageCacheRemoteSpec.Ok spec)
+    [(Err _) false]
+    [(Ok spec)
       (and
         (string.eq spec.url expected-url)
         (cache.package-cache-pin-kind-eq? spec.pin-kind expected-kind)
@@ -124,50 +111,49 @@
 
 (define (package-cache-parse-rejects? [dep : String]) : bool
   (match (package-cache-parse-normalized-remote dep)
-    [(cache.ResultPackageCacheRemoteSpec.Err _) true]
-    [(cache.ResultPackageCacheRemoteSpec.Ok _) false]))
+    [(Err _) true]
+    [(Ok _) false]))
 
 (define (package-cache-key-ok? [dep : String] [expected-commit : String]) : bool
   (match (package-cache-key-from-normalized-remote dep)
-    [(cache.ResultPackageCacheKey.Err _) false]
-    [(cache.ResultPackageCacheKey.Ok key)
-      (string.eq key.commit expected-commit)]))
+    [(Err _) false]
+    [(Ok key) (string.eq key.commit expected-commit)]))
 
 (define (package-cache-key-rejects? [dep : String]) : bool
   (match (package-cache-key-from-normalized-remote dep)
-    [(cache.ResultPackageCacheKey.Err _) true]
-    [(cache.ResultPackageCacheKey.Ok _) false]))
+    [(Err _) true]
+    [(Ok _) false]))
 
 (define (package-cache-state-complete? [state : cache.PackageCacheEntryState]) : bool
   (match state
-    [(cache.PackageCacheEntryState.CompleteHit _) true]
+    [(CompleteHit _) true]
     [_ false]))
 
 (define (package-cache-state-miss? [state : cache.PackageCacheEntryState]) : bool
   (match state
-    [(cache.PackageCacheEntryState.Miss _) true]
+    [(Miss _) true]
     [_ false]))
 
 (define (package-cache-state-partial? [state : cache.PackageCacheEntryState]) : bool
   (match state
-    [(cache.PackageCacheEntryState.PartialOrCorrupt _ _) true]
+    [(PartialOrCorrupt _ _) true]
     [_ false]))
 
 (define (package-cache-expect-key [dep : String]) : cache.PackageCacheKey
   (match (package-cache-key-from-normalized-remote dep)
-    [(cache.ResultPackageCacheKey.Ok key) key]
-    [(cache.ResultPackageCacheKey.Err message) (io.panic message)]))
+    [(Ok key) key]
+    [(Err message) (io.panic message)]))
 
 (define (package-cache-expect-ok [result : io.ResultIoUnit] [message : String]) : unit
   (match result
-    [(io.OkIoUnit) unit]
-    [(io.ErrIoUnit error)
+    [(OkIoUnit) unit]
+    [(ErrIoUnit error)
       (io.panic (str_cat.str-cat message (io.error-message error)))]))
 
 (define (package-cache-expect-temp [result : io.ResultIoString]) : String
   (match result
-    [(io.OkIoString value) value]
-    [(io.ErrIoString error)
+    [(OkIoString value) value]
+    [(ErrIoString error)
       (io.panic
         (str_cat.str-cat
           "package-cache: temp dir failed: "
@@ -197,17 +183,17 @@
       (package-cache-parse-ok?
         (owned_view.compiler-owned-shared-view dep-a)
         "https://github.com/owner/repo.git"
-        (cache.PackageCachePinKind.Rev)
+        (Rev)
         "abc123")
       (package-cache-parse-ok?
         "https://github.com/owner/repo.git#tag=v1.0.0"
         "https://github.com/owner/repo.git"
-        (cache.PackageCachePinKind.Tag)
+        (Tag)
         "v1.0.0")
       (package-cache-parse-ok?
         "https://github.com/owner/repo.git#branch=main"
         "https://github.com/owner/repo.git"
-        (cache.PackageCachePinKind.Branch)
+        (Branch)
         "main")
       (package-cache-parse-rejects? "https://github.com/owner/repo.git")
       (package-cache-parse-rejects?
@@ -250,48 +236,47 @@
     [wrong-metadata : String
       (cache.package-cache-metadata-content (& wrong-key))]
     [marker : String (cache.package-cache-complete-marker-content)]
-    (begin
-      (package-cache-expect-ok
-        (package-cache-prepare-entry-dir root (& complete-key))
-        "prepare complete entry: ")
-      (package-cache-expect-ok
-        (cache.package-cache-write-complete-marker complete (& complete-key))
-        "write complete marker: ")
-      (package-cache-expect-ok
-        (package-cache-prepare-entry-dir root (& partial-key))
-        "prepare partial entry: ")
-      (package-cache-expect-ok
-        (io.try-write-file
-          (& partial-metadata-path)
-          (byte_buf.str-as-bytes (& partial-metadata)))
-        "write partial metadata: ")
-      (package-cache-expect-ok
-        (package-cache-prepare-entry-dir root (& mismatch-key))
-        "prepare mismatch entry: ")
-      (package-cache-expect-ok
-        (io.try-write-file
-          (& mismatch-metadata-path)
-          (byte_buf.str-as-bytes (& wrong-metadata)))
-        "write mismatch metadata: ")
-      (package-cache-expect-ok
-        (io.try-write-file
-          (& mismatch-marker-path)
-          (byte_buf.str-as-bytes (& marker)))
-        "write mismatch marker: ")
-      (and
-        (package-cache-state-miss?
-          (cache.package-cache-entry-state missing (& key)))
-        (package-cache-state-complete?
-          (cache.package-cache-entry-state complete (& complete-key)))
+    (package-cache-expect-ok
+      (package-cache-prepare-entry-dir root (& complete-key))
+      "prepare complete entry: ")
+    (package-cache-expect-ok
+      (cache.package-cache-write-complete-marker complete (& complete-key))
+      "write complete marker: ")
+    (package-cache-expect-ok
+      (package-cache-prepare-entry-dir root (& partial-key))
+      "prepare partial entry: ")
+    (package-cache-expect-ok
+      (io.try-write-file
+        (& partial-metadata-path)
+        (byte_buf.str-as-bytes (& partial-metadata)))
+      "write partial metadata: ")
+    (package-cache-expect-ok
+      (package-cache-prepare-entry-dir root (& mismatch-key))
+      "prepare mismatch entry: ")
+    (package-cache-expect-ok
+      (io.try-write-file
+        (& mismatch-metadata-path)
+        (byte_buf.str-as-bytes (& wrong-metadata)))
+      "write mismatch metadata: ")
+    (package-cache-expect-ok
+      (io.try-write-file
+        (& mismatch-marker-path)
+        (byte_buf.str-as-bytes (& marker)))
+      "write mismatch marker: ")
+    (and
+      (package-cache-state-miss?
+        (cache.package-cache-entry-state missing (& key)))
+      (package-cache-state-complete?
+        (cache.package-cache-entry-state complete (& complete-key)))
+      (package-cache-entry-reusable?
+        (cache.package-cache-entry-state complete (& complete-key)))
+      (package-cache-state-partial?
+        (cache.package-cache-entry-state partial (& partial-key)))
+      (not
         (package-cache-entry-reusable?
-          (cache.package-cache-entry-state complete (& complete-key)))
-        (package-cache-state-partial?
-          (cache.package-cache-entry-state partial (& partial-key)))
-        (not
-          (package-cache-entry-reusable?
-            (cache.package-cache-entry-state partial (& partial-key))))
-        (package-cache-state-partial?
-          (cache.package-cache-entry-state mismatch (& mismatch-key)))))))
+          (cache.package-cache-entry-state partial (& partial-key))))
+      (package-cache-state-partial?
+        (cache.package-cache-entry-state mismatch (& mismatch-key))))))
 
 (define (package-cache-self-test) : i64
   (if (and

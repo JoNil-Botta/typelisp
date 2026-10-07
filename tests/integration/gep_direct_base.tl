@@ -30,26 +30,22 @@
   (let
     [i : i64 0]
     [acc : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! acc (bump (+ acc (array-ref xs i))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i n)
+      (set! acc (bump (+ acc (array-ref xs i))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [n : i64 (+ (io.arg-count) 5)]
     [xs : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (set! (array-ref xs i) (* i 2))
-          (set! i (+ i 1))))
-      (let
-        [r : i64 (probe xs n)]
-        ;; n = 6 (no args): r = sum(2*i, i<6) + 6 = 30 + 6 = 36.
-        (if (= r 36)
-          42
-          1)))))
+    (while (< i n)
+      (set! (array-ref xs i) (* i 2))
+      (set! i (+ i 1)))
+    (let
+      [r : i64 (probe xs n)]
+      ;; n = 6 (no args): r = sum(2*i, i<6) + 6 = 30 + 6 = 36.
+      (if (= r 36)
+        42
+        1))))

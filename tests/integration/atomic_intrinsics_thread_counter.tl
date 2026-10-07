@@ -32,13 +32,12 @@
       (atomic-counter-addr->mut-i64 (atomic-counter-read-slot ctx 0))]
     [limit : i64 (atomic-counter-read-slot ctx 1)]
     [i : i64 0]
-    (begin
-      (while (< i limit)
-        (begin
-          (unsafe
-            (atomic-fetch-add! counter 1))
-          (set! i (+ i 1))))
-      0)))
+    (while (< i limit)
+      (unsafe
+        (atomic-fetch-add! counter 1)
+        unit)
+      (set! i (+ i 1)))
+    0))
 
 (define (atomic-counter-join-code [result : ThreadJoinResult]) : i64
   (match result
@@ -75,21 +74,18 @@
     [ctx-a : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [ctx-b : (__tl_dyn-array i64) (__tl_make-array i64 2)]
     [counter-addr : i64 (atomic-counter-array-i64-addr counter)]
-    (begin
-      (set! (array-ref counter 0) 0)
-      (atomic-counter-write-slot! (&mut ctx-a) 0 counter-addr)
-      (atomic-counter-write-slot! (&mut ctx-a) 1 atomic-counter-iterations)
-      (atomic-counter-write-slot! (&mut ctx-b) 0 counter-addr)
-      (atomic-counter-write-slot! (&mut ctx-b) 1 atomic-counter-iterations)
-      (match (unsafe
-        (thread.spawn
-          atomic-counter-worker
-          (atomic-counter-array-i64-addr ctx-a)))
-        [(ThreadSpawnErr _) 4]
-        [(ThreadSpawnOk a)
-          (match (unsafe
-            (thread.spawn
-              atomic-counter-worker
-              (atomic-counter-array-i64-addr ctx-b)))
-            [(ThreadSpawnErr _) 5]
-            [(ThreadSpawnOk b) (atomic-counter-finish counter a b)])]))))
+    (set! (array-ref counter 0) 0)
+    (atomic-counter-write-slot! (&mut ctx-a) 0 counter-addr)
+    (atomic-counter-write-slot! (&mut ctx-a) 1 atomic-counter-iterations)
+    (atomic-counter-write-slot! (&mut ctx-b) 0 counter-addr)
+    (atomic-counter-write-slot! (&mut ctx-b) 1 atomic-counter-iterations)
+    (match (unsafe
+      (thread.spawn atomic-counter-worker (atomic-counter-array-i64-addr ctx-a)))
+      [(ThreadSpawnErr _) 4]
+      [(ThreadSpawnOk a)
+        (match (unsafe
+          (thread.spawn
+            atomic-counter-worker
+            (atomic-counter-array-i64-addr ctx-b)))
+          [(ThreadSpawnErr _) 5]
+          [(ThreadSpawnOk b) (atomic-counter-finish counter a b)])])))

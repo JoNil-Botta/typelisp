@@ -26,28 +26,26 @@
     42))
 
 (define (case-unit-returning) : bool
-  (begin
-    ((lambda () : unit
-        unit))
-    true))
+  ((lambda () : unit
+      unit))
+  true)
 
 (define (all-cases) : bool
   (let
     [ok : bool true]
-    (begin
-      (if (case-immediate)
-        unit
-        (set! ok false))
-      (if (case-let-bound)
-        unit
-        (set! ok false))
-      (if (case-lambda-arg)
-        unit
-        (set! ok false))
-      (if (case-unit-returning)
-        unit
-        (set! ok false))
-      ok)))
+    (if (case-immediate)
+      unit
+      (set! ok false))
+    (if (case-let-bound)
+      unit
+      (set! ok false))
+    (if (case-lambda-arg)
+      unit
+      (set! ok false))
+    (if (case-unit-returning)
+      unit
+      (set! ok false))
+    ok))
 
 (define (main) : i64
   (if (all-cases)

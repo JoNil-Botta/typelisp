@@ -35,14 +35,12 @@
   40)
 
 (define (mark-place [digit : i64]) : i64
-  (begin
-    (set! evaluation-trace (+ (* evaluation-trace 10) digit))
-    0))
+  (set! evaluation-trace (+ (* evaluation-trace 10) digit))
+  0)
 
 (define (mark-replacement [value : i64]) : i64
-  (begin
-    (set! evaluation-trace (+ (* evaluation-trace 10) 2))
-    value))
+  (set! evaluation-trace (+ (* evaluation-trace 10) 2))
+  value)
 
 (define (replace-through-mut [value : (&mut value i64)]) : i64
   (replace! (deref value) 17))
@@ -112,55 +110,51 @@
     [grid : Grid (Grid (array 50 51) (tuple 52 53))]
     [old-grid-item : i64 (replace! (array-ref grid.items 1) 54)]
     [old-grid-slot : i64 (replace! (tuple-ref grid.pair 0) 55)]
-    (begin
-      (test.assert-i64-eq compile-score 49 "comptime replace")
-      (test.assert-i64-eq old-scalar 4 "scalar old")
-      (test.assert-i64-eq scalar 5 "scalar replacement")
-      (test.assert-i64-eq old-generated 30 "macro-generated old")
-      (test.assert-i64-eq generated 31 "macro-generated replacement")
-      (test.assert-i64-eq (string.string-length old-text) 5 "String old")
-      (test.assert-i64-eq (string.string-length text) 3 "String replacement")
-      (test.assert-i64-eq old-inner 11 "Box inner old")
-      (test.assert-i64-eq (deref boxed) 12 "Box inner replacement")
-      (test.assert-i64-eq (deref old-owner) 20 "Box owner old")
-      (test.assert-i64-eq (deref owner) 21 "Box owner replacement")
-      (test.assert-i64-eq old-field 1 "field old")
-      (test.assert-i64-eq (pair-score pair) 10 "field replacement")
-      (test.assert-i64-eq old-tuple 3 "tuple old")
-      (test.assert-i64-eq (tuple-ref tuple-value 0) 9 "tuple replacement")
-      (test.assert-i64-eq (tuple-ref tuple-value 1) 4 "tuple sibling")
-      (test.assert-i64-eq old-item 20 "array old")
-      (test.assert-i64-eq (array-ref items 0) 10 "array sibling")
-      (test.assert-i64-eq (array-ref items 1) 30 "array replacement")
-      (test.assert-i64-eq (pair-score old-nested) 11 "aggregate old")
-      (test.assert-i64-eq (pair-score nested.pair) 15 "aggregate replacement")
-      (test.assert-i64-eq old-slice 14 "Slice old")
-      (test.assert-i64-eq (array-ref slice-items 1) 15 "Slice replacement")
-      (test.assert-i64-eq old-ref 16 "mutable ref old")
-      (test.assert-i64-eq ref-target 17 "mutable ref replacement")
-      (test.assert-i64-eq old-order 18 "ordered old")
-      (test.assert-i64-eq (array-ref order-items 0) 19 "ordered replacement")
-      (test.assert-i64-eq evaluation-trace 12 "evaluation order")
-      (test.assert-i64-eq (deref moved-left) 22 "partial moved sibling")
-      (test.assert-i64-eq (deref old-right) 23 "partial field old")
-      (test.assert-i64-eq (deref partial.right) 24 "partial field replacement")
-      (test.assert-i64-eq (deref old-disjoint-right) 26 "disjoint move old")
-      (test.assert-i64-eq (deref disjoint.right) 25 "disjoint move replacement")
-      (test.assert-i64-eq old-global 40 "Copy global old")
-      (test.assert-i64-eq global-counter 41 "Copy global replacement")
-      (test.assert-i64-eq old-grid-item 51 "field element old")
-      (test.assert-i64-eq
-        (array-ref grid.items 1)
-        54
-        "field element replacement")
-      (test.assert-i64-eq (array-ref grid.items 0) 50 "field element sibling")
-      (test.assert-i64-eq old-grid-slot 52 "field tuple slot old")
-      (test.assert-i64-eq
-        (tuple-ref grid.pair 0)
-        55
-        "field tuple slot replacement")
-      (test.assert-i64-eq
-        (replace-beside-owner)
-        109
-        "replace beside active owner")
-      42)))
+    (test.assert-i64-eq compile-score 49 "comptime replace")
+    (test.assert-i64-eq old-scalar 4 "scalar old")
+    (test.assert-i64-eq scalar 5 "scalar replacement")
+    (test.assert-i64-eq old-generated 30 "macro-generated old")
+    (test.assert-i64-eq generated 31 "macro-generated replacement")
+    (test.assert-i64-eq (string.string-length old-text) 5 "String old")
+    (test.assert-i64-eq (string.string-length text) 3 "String replacement")
+    (test.assert-i64-eq old-inner 11 "Box inner old")
+    (test.assert-i64-eq (deref boxed) 12 "Box inner replacement")
+    (test.assert-i64-eq (deref old-owner) 20 "Box owner old")
+    (test.assert-i64-eq (deref owner) 21 "Box owner replacement")
+    (test.assert-i64-eq old-field 1 "field old")
+    (test.assert-i64-eq (pair-score pair) 10 "field replacement")
+    (test.assert-i64-eq old-tuple 3 "tuple old")
+    (test.assert-i64-eq (tuple-ref tuple-value 0) 9 "tuple replacement")
+    (test.assert-i64-eq (tuple-ref tuple-value 1) 4 "tuple sibling")
+    (test.assert-i64-eq old-item 20 "array old")
+    (test.assert-i64-eq (array-ref items 0) 10 "array sibling")
+    (test.assert-i64-eq (array-ref items 1) 30 "array replacement")
+    (test.assert-i64-eq (pair-score old-nested) 11 "aggregate old")
+    (test.assert-i64-eq (pair-score nested.pair) 15 "aggregate replacement")
+    (test.assert-i64-eq old-slice 14 "Slice old")
+    (test.assert-i64-eq (array-ref slice-items 1) 15 "Slice replacement")
+    (test.assert-i64-eq old-ref 16 "mutable ref old")
+    (test.assert-i64-eq ref-target 17 "mutable ref replacement")
+    (test.assert-i64-eq old-order 18 "ordered old")
+    (test.assert-i64-eq (array-ref order-items 0) 19 "ordered replacement")
+    (test.assert-i64-eq evaluation-trace 12 "evaluation order")
+    (test.assert-i64-eq (deref moved-left) 22 "partial moved sibling")
+    (test.assert-i64-eq (deref old-right) 23 "partial field old")
+    (test.assert-i64-eq (deref partial.right) 24 "partial field replacement")
+    (test.assert-i64-eq (deref old-disjoint-right) 26 "disjoint move old")
+    (test.assert-i64-eq (deref disjoint.right) 25 "disjoint move replacement")
+    (test.assert-i64-eq old-global 40 "Copy global old")
+    (test.assert-i64-eq global-counter 41 "Copy global replacement")
+    (test.assert-i64-eq old-grid-item 51 "field element old")
+    (test.assert-i64-eq (array-ref grid.items 1) 54 "field element replacement")
+    (test.assert-i64-eq (array-ref grid.items 0) 50 "field element sibling")
+    (test.assert-i64-eq old-grid-slot 52 "field tuple slot old")
+    (test.assert-i64-eq
+      (tuple-ref grid.pair 0)
+      55
+      "field tuple slot replacement")
+    (test.assert-i64-eq
+      (replace-beside-owner)
+      109
+      "replace beside active owner")
+    42))

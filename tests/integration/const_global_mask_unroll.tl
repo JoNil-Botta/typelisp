@@ -32,15 +32,13 @@
   (let
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (let
-            [byte : i64 (cast (array-ref buf i) : i64)]
-            [index : i64 (bit-and (bit-xor acc byte) mask-global)]
-            (set! acc (bit-xor (shr acc 8) (array-ref table index))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i len)
+      (let
+        [byte : i64 (cast (array-ref buf i) : i64)]
+        [index : i64 (bit-and (bit-xor acc byte) mask-global)]
+        (set! acc (bit-xor (shr acc 8) (array-ref table index))))
+      (set! i (+ i 1)))
+    acc))
 
 ;; Literal-mask control: identical but for the mask spelling.
 (define (mask-sum-literal
@@ -50,35 +48,30 @@
   (let
     [acc : i64 0]
     [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (let
-            [byte : i64 (cast (array-ref buf i) : i64)]
-            [index : i64 (bit-and (bit-xor acc byte) 255)]
-            (set! acc (bit-xor (shr acc 8) (array-ref table index))))
-          (set! i (+ i 1))))
-      acc)))
+    (while (< i len)
+      (let
+        [byte : i64 (cast (array-ref buf i) : i64)]
+        [index : i64 (bit-and (bit-xor acc byte) 255)]
+        (set! acc (bit-xor (shr acc 8) (array-ref table index))))
+      (set! i (+ i 1)))
+    acc))
 
 (define (main) : i64
   (let
     [table : (__tl_dyn-array i64) (__tl_make-array i64 256)]
     [buf : (__tl_dyn-array u8) (__tl_make-array u8 64)]
     [n : i64 0]
-    (begin
-      (while (< n 256)
-        (begin
-          (set! (array-ref table n) (+ (* n 2654435761) 17))
-          (set! n (+ n 1))))
-      (set! n 0)
-      (while (< n 64)
-        (begin
-          (set! (array-ref buf n) (cast (bit-and (+ (* n 167) 13) 255) : u8))
-          (set! n (+ n 1))))
-      ;; Both spellings must agree; a mis-versioned fast clone that dropped or
-      ;; mis-ordered the mask would diverge here rather than only run slower.
-      (if (=
-        (mask-sum (& table) (& buf) 64)
-        (mask-sum-literal (& table) (& buf) 64))
-        0
-        1))))
+    (while (< n 256)
+      (set! (array-ref table n) (+ (* n 2654435761) 17))
+      (set! n (+ n 1)))
+    (set! n 0)
+    (while (< n 64)
+      (set! (array-ref buf n) (cast (bit-and (+ (* n 167) 13) 255) : u8))
+      (set! n (+ n 1)))
+    ;; Both spellings must agree; a mis-versioned fast clone that dropped or
+    ;; mis-ordered the mask would diverge here rather than only run slower.
+    (if (=
+      (mask-sum (& table) (& buf) 64)
+      (mask-sum-literal (& table) (& buf) 64))
+      0
+      1)))

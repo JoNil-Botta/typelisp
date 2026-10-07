@@ -11,11 +11,10 @@
   (let
     [index : i64 0]
     (while (< index 8)
-      (begin
-        (set!
-          (array-ref payload (+ start index))
-          (cast (bit-and (shr value (* index 8)) 255) : u8))
-        (set! index (+ index 1))))))
+      (set!
+        (array-ref payload (+ start index))
+        (cast (bit-and (shr value (* index 8)) 255) : u8))
+      (set! index (+ index 1)))))
 
 (define (tlci-codec-test-base-payload [raw-len : i64] [bit-len : i64]) : (__tl_dyn-array
     u8)
@@ -31,16 +30,14 @@
     [payload : (__tl_dyn-array u8)
       (__tl_make-array u8 (+ prefix-len (+ 16 (+ 4369 bit-bytes))))]
     [index : i64 0]
-    (begin
-      (while (< index prefix-len)
-        (begin
-          (set!
-            (array-ref payload index)
-            (cast (string.string-ref prefix index) : u8))
-          (set! index (+ index 1))))
-      (tlci-codec-test-write-i64-le! (&mut payload) prefix-len raw-len)
-      (tlci-codec-test-write-i64-le! (&mut payload) (+ prefix-len 8) bit-len)
-      payload)))
+    (while (< index prefix-len)
+      (set!
+        (array-ref payload index)
+        (cast (string.string-ref prefix index) : u8))
+      (set! index (+ index 1)))
+    (tlci-codec-test-write-i64-le! (&mut payload) prefix-len raw-len)
+    (tlci-codec-test-write-i64-le! (&mut payload) (+ prefix-len 8) bit-len)
+    payload))
 
 (define (tlci-codec-test-main-start) : i64
   (+
@@ -71,24 +68,23 @@
         (if (= (% bit-len 8) 0)
           0
           1))]
-    (begin
-      ;; A, B, C, match are the four two-bit canonical main symbols.
-      (set! (array-ref payload (+ main-start 65)) (cast 2 : u8))
-      (set! (array-ref payload (+ main-start 66)) (cast 2 : u8))
-      (set! (array-ref payload (+ main-start 67)) (cast 2 : u8))
-      (set! (array-ref payload (+ main-start 256)) (cast 2 : u8))
-      ;; Distance symbols 0/2 and length symbols 0/1 form complete one-bit trees.
-      (set! (array-ref payload distance-start) (cast 1 : u8))
-      (set! (array-ref payload (+ distance-start 2)) (cast 1 : u8))
-      (set! (array-ref payload length-start) (cast 1 : u8))
-      (set! (array-ref payload (+ length-start 1)) (cast 1 : u8))
-      (if (> bit-bytes 0)
-        (set! (array-ref payload bit-start) (cast first : u8))
-        unit)
-      (if (> bit-bytes 1)
-        (set! (array-ref payload (+ bit-start 1)) (cast second : u8))
-        unit)
-      payload)))
+    ;; A, B, C, match are the four two-bit canonical main symbols.
+    (set! (array-ref payload (+ main-start 65)) (cast 2 : u8))
+    (set! (array-ref payload (+ main-start 66)) (cast 2 : u8))
+    (set! (array-ref payload (+ main-start 67)) (cast 2 : u8))
+    (set! (array-ref payload (+ main-start 256)) (cast 2 : u8))
+    ;; Distance symbols 0/2 and length symbols 0/1 form complete one-bit trees.
+    (set! (array-ref payload distance-start) (cast 1 : u8))
+    (set! (array-ref payload (+ distance-start 2)) (cast 1 : u8))
+    (set! (array-ref payload length-start) (cast 1 : u8))
+    (set! (array-ref payload (+ length-start 1)) (cast 1 : u8))
+    (if (> bit-bytes 0)
+      (set! (array-ref payload bit-start) (cast first : u8))
+      unit)
+    (if (> bit-bytes 1)
+      (set! (array-ref payload (+ bit-start 1)) (cast second : u8))
+      unit)
+    payload))
 
 (define (tlci-codec-test-literal-payload
   [raw-len : i64]
@@ -99,13 +95,12 @@
       (tlci-codec-test-base-payload raw-len bit-len)]
     [main-start : i64 (tlci-codec-test-main-start)]
     [bit-start : i64 (+ (tlci-codec-test-length-start) 16)]
-    (begin
-      (set! (array-ref payload (+ main-start 65)) (cast 1 : u8))
-      (set! (array-ref payload (+ main-start 66)) (cast 1 : u8))
-      (if (> bit-len 0)
-        (set! (array-ref payload bit-start) (cast first : u8))
-        unit)
-      payload)))
+    (set! (array-ref payload (+ main-start 65)) (cast 1 : u8))
+    (set! (array-ref payload (+ main-start 66)) (cast 1 : u8))
+    (if (> bit-len 0)
+      (set! (array-ref payload bit-start) (cast first : u8))
+      unit)
+    payload))
 
 (define (tlci-codec-test-append-zero [payload : (__tl_dyn-array u8)]) : (__tl_dyn-array
     u8)
@@ -113,24 +108,20 @@
     [length : i64 (array-length payload)]
     [out : (__tl_dyn-array u8) (__tl_make-array u8 (+ length 1))]
     [index : i64 0]
-    (begin
-      (while (< index length)
-        (begin
-          (set! (array-ref out index) (array-ref payload index))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index length)
+      (set! (array-ref out index) (array-ref payload index))
+      (set! index (+ index 1)))
+    out))
 
 (define (tlci-codec-test-take [payload : (__tl_dyn-array u8)] [length : i64]) : (__tl_dyn-array
     u8)
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
     [index : i64 0]
-    (begin
-      (while (< index length)
-        (begin
-          (set! (array-ref out index) (array-ref payload index))
-          (set! index (+ index 1))))
-      out)))
+    (while (< index length)
+      (set! (array-ref out index) (array-ref payload index))
+      (set! index (+ index 1)))
+    out))
 
 (define (tlci-codec-test-rejects?
   [payload : (__tl_dyn-array u8)]
@@ -139,9 +130,8 @@
   (match (codec.compiler-embedded-stdlib-tlci-codec-decode
     (& payload)
     raw-limit)
-    [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err message)
-      (string.eq message expected)]
-    [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Ok _) false]))
+    [(Err message) (string.eq message expected)]
+    [(Ok _) false]))
 
 (define (tlci-codec-self-test-status) : i64
   (cond
@@ -152,13 +142,13 @@
           (match (codec.compiler-embedded-stdlib-tlci-codec-decode
             (& payload)
             64)
-            [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Ok bytes)
+            [(Ok bytes)
               (and
                 (= (array-length bytes) 6)
                 (= (array-ref bytes 0) (cast 65 : u8))
                 (= (array-ref bytes 3) (cast 65 : u8))
                 (= (array-ref bytes 5) (cast 67 : u8)))]
-            [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err _) false])))
+            [(Err _) false])))
       1]
     [(not
         (let
@@ -167,11 +157,11 @@
           (match (codec.compiler-embedded-stdlib-tlci-codec-decode
             (& payload)
             64)
-            [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Ok bytes)
+            [(Ok bytes)
               (and
                 (= (array-length bytes) 1)
                 (= (array-ref bytes 0) (cast 65 : u8)))]
-            [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err _) false])))
+            [(Err _) false])))
       2]
     [(not
         (tlci-codec-test-rejects?
@@ -183,30 +173,28 @@
         (let
           [payload : (__tl_dyn-array u8)
             (tlci-codec-test-match-payload 6 10 27 128)]
-          (begin
-            (set! (array-ref payload 0) (cast 0 : u8))
-            (tlci-codec-test-rejects?
-              payload
-              64
-              "embedded stdlib tlci envelope: bad prefix or version"))))
+          (set! (array-ref payload 0) (cast 0 : u8))
+          (tlci-codec-test-rejects?
+            payload
+            64
+            "embedded stdlib tlci envelope: bad prefix or version")))
       4]
     [(not
         (let
           [payload : (__tl_dyn-array u8)
             (tlci-codec-test-match-payload 6 10 27 128)]
-          (begin
-            (set!
-              (array-ref
-                payload
-                (+
-                  (string.string-length
-                    (codec.compiler-embedded-stdlib-tlci-codec-prefix))
-                  7))
-              (cast 128 : u8))
-            (tlci-codec-test-rejects?
+          (set!
+            (array-ref
               payload
-              64
-              "embedded stdlib tlci envelope: raw length overflows i64"))))
+              (+
+                (string.string-length
+                  (codec.compiler-embedded-stdlib-tlci-codec-prefix))
+                7))
+            (cast 128 : u8))
+          (tlci-codec-test-rejects?
+            payload
+            64
+            "embedded stdlib tlci envelope: raw length overflows i64")))
       5]
     [(not
         (tlci-codec-test-rejects?
@@ -231,59 +219,55 @@
         (let
           [payload : (__tl_dyn-array u8)
             (tlci-codec-test-literal-payload 1 1 0)]
-          (begin
-            (set!
-              (array-ref payload (+ (tlci-codec-test-main-start) 65))
-              (cast 32 : u8))
-            (tlci-codec-test-rejects?
-              payload
-              64
-              "embedded stdlib tlci envelope: invalid huffman code length"))))
+          (set!
+            (array-ref payload (+ (tlci-codec-test-main-start) 65))
+            (cast 32 : u8))
+          (tlci-codec-test-rejects?
+            payload
+            64
+            "embedded stdlib tlci envelope: invalid huffman code length")))
       9]
     [(not
         (let
           [payload : (__tl_dyn-array u8)
             (tlci-codec-test-literal-payload 1 1 0)]
-          (begin
-            (set!
-              (array-ref payload (+ (tlci-codec-test-main-start) 67))
-              (cast 1 : u8))
-            (tlci-codec-test-rejects?
-              payload
-              64
-              "embedded stdlib tlci envelope: oversubscribed huffman table"))))
+          (set!
+            (array-ref payload (+ (tlci-codec-test-main-start) 67))
+            (cast 1 : u8))
+          (tlci-codec-test-rejects?
+            payload
+            64
+            "embedded stdlib tlci envelope: oversubscribed huffman table")))
       10]
     [(not
         (let
           [payload : (__tl_dyn-array u8)
             (tlci-codec-test-literal-payload 1 1 0)]
-          (begin
-            (set!
-              (array-ref payload (+ (tlci-codec-test-main-start) 65))
-              (cast 2 : u8))
-            (set!
-              (array-ref payload (+ (tlci-codec-test-main-start) 66))
-              (cast 2 : u8))
-            (tlci-codec-test-rejects?
-              payload
-              64
-              "embedded stdlib tlci envelope: incomplete huffman table"))))
+          (set!
+            (array-ref payload (+ (tlci-codec-test-main-start) 65))
+            (cast 2 : u8))
+          (set!
+            (array-ref payload (+ (tlci-codec-test-main-start) 66))
+            (cast 2 : u8))
+          (tlci-codec-test-rejects?
+            payload
+            64
+            "embedded stdlib tlci envelope: incomplete huffman table")))
       11]
     [(not
         (let
           [payload : (__tl_dyn-array u8)
             (tlci-codec-test-match-payload 6 10 27 128)]
-          (begin
-            (set!
-              (array-ref payload (tlci-codec-test-distance-start))
-              (cast 0 : u8))
-            (set!
-              (array-ref payload (+ (tlci-codec-test-distance-start) 2))
-              (cast 0 : u8))
-            (tlci-codec-test-rejects?
-              payload
-              64
-              "embedded stdlib tlci envelope: missing match huffman table"))))
+          (set!
+            (array-ref payload (tlci-codec-test-distance-start))
+            (cast 0 : u8))
+          (set!
+            (array-ref payload (+ (tlci-codec-test-distance-start) 2))
+            (cast 0 : u8))
+          (tlci-codec-test-rejects?
+            payload
+            64
+            "embedded stdlib tlci envelope: missing match huffman table")))
       12]
     [(not
         (tlci-codec-test-rejects?
@@ -313,19 +297,18 @@
         (let
           [payload : (__tl_dyn-array u8)
             (tlci-codec-test-match-payload 6 10 27 128)]
-          (begin
-            (set!
-              (array-ref
-                payload
-                (+
-                  (string.string-length
-                    (codec.compiler-embedded-stdlib-tlci-codec-prefix))
-                  15))
-              (cast 128 : u8))
-            (tlci-codec-test-rejects?
+          (set!
+            (array-ref
               payload
-              64
-              "embedded stdlib tlci envelope: bit length overflows i64"))))
+              (+
+                (string.string-length
+                  (codec.compiler-embedded-stdlib-tlci-codec-prefix))
+                15))
+            (cast 128 : u8))
+          (tlci-codec-test-rejects?
+            payload
+            64
+            "embedded stdlib tlci envelope: bit length overflows i64")))
       17]
     [(not
         (let
@@ -355,23 +338,22 @@
         (let
           [payload : (__tl_dyn-array u8)
             (tlci-codec-test-literal-payload 1 1 0)]
-          (begin
-            (set!
-              (array-ref payload (tlci-codec-test-distance-start))
-              (cast 1 : u8))
-            (set!
-              (array-ref payload (+ (tlci-codec-test-distance-start) 1))
-              (cast 1 : u8))
-            (set!
-              (array-ref payload (tlci-codec-test-length-start))
-              (cast 1 : u8))
-            (set!
-              (array-ref payload (+ (tlci-codec-test-length-start) 1))
-              (cast 1 : u8))
-            (tlci-codec-test-rejects?
-              payload
-              64
-              "embedded stdlib tlci envelope: unexpected match huffman table"))))
+          (set!
+            (array-ref payload (tlci-codec-test-distance-start))
+            (cast 1 : u8))
+          (set!
+            (array-ref payload (+ (tlci-codec-test-distance-start) 1))
+            (cast 1 : u8))
+          (set!
+            (array-ref payload (tlci-codec-test-length-start))
+            (cast 1 : u8))
+          (set!
+            (array-ref payload (+ (tlci-codec-test-length-start) 1))
+            (cast 1 : u8))
+          (tlci-codec-test-rejects?
+            payload
+            64
+            "embedded stdlib tlci envelope: unexpected match huffman table")))
       20]
     [(not
         (tlci-codec-test-rejects?
@@ -402,41 +384,35 @@
     [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
     [i : i64 0]
     [state : i64 12345]
-    (begin
-      (while (< i 300)
-        (begin
-          (byte_buf_core.byte-buf-builder-push (&mut out) (cast 97 : u8))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i 700)
-        (begin
-          (byte_buf_core.byte-buf-builder-push
-            (&mut out)
-            (cast (+ 65 (% i 7)) : u8))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i 800)
-        (begin
-          (byte_buf_core.byte-buf-builder-push
-            (&mut out)
-            (cast (+ 48 (% i 8)) : u8))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i 2000)
-        (begin
-          (set! state (+ (* state 6364136223846793005) 1442695040888963407))
-          (byte_buf_core.byte-buf-builder-push
-            (&mut out)
-            (cast (bit-and (shr state 33) 255) : u8))
-          (set! i (+ i 1))))
-      (set! i 0)
-      (while (< i 3000)
-        (begin
-          (byte_buf_core.byte-buf-builder-push
-            (&mut out)
-            (cast (+ 32 (% (* i 37) 91)) : u8))
-          (set! i (+ i 1))))
-      (byte_buf_core.byte-buf-builder-finish-string (& out)))))
+    (while (< i 300)
+      (byte_buf_core.byte-buf-builder-push (&mut out) (cast 97 : u8))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i 700)
+      (byte_buf_core.byte-buf-builder-push
+        (&mut out)
+        (cast (+ 65 (% i 7)) : u8))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i 800)
+      (byte_buf_core.byte-buf-builder-push
+        (&mut out)
+        (cast (+ 48 (% i 8)) : u8))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i 2000)
+      (set! state (+ (* state 6364136223846793005) 1442695040888963407))
+      (byte_buf_core.byte-buf-builder-push
+        (&mut out)
+        (cast (bit-and (shr state 33) 255) : u8))
+      (set! i (+ i 1)))
+    (set! i 0)
+    (while (< i 3000)
+      (byte_buf_core.byte-buf-builder-push
+        (&mut out)
+        (cast (+ 32 (% (* i 37) 91)) : u8))
+      (set! i (+ i 1)))
+    (byte_buf_core.byte-buf-builder-finish-string (& out))))
 
 (test
   compiler-embedded-stdlib-tlci-round-trip
@@ -444,28 +420,24 @@
     [source : String (tlci-codec-test-round-trip-source)]
     (match (encoder.compiler-embedded-stdlib-tlci-encoder-encode
       (string.copy source))
-      [(encoder.ResultCompilerEmbeddedStdlibTlciEncoderBytes.Err _)
-        (string.tl_oob_abort)]
-      [(encoder.ResultCompilerEmbeddedStdlibTlciEncoderBytes.Ok encoded)
+      [(Err _) (string.tl_oob_abort)]
+      [(Ok encoded)
         (match (codec.compiler-embedded-stdlib-tlci-codec-decode
           (& encoded)
           1048576)
-          [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Err _)
-            (string.tl_oob_abort)]
-          [(codec.CompilerEmbeddedStdlibTlciCodecBytes.Ok decoded)
+          [(Err _) (string.tl_oob_abort)]
+          [(Ok decoded)
             (let
               [n : i64 (string.string-length source)]
               [i : i64 0]
               [same : bool (= (array-length decoded) n)]
-              (begin
-                (while (and same (< i n))
-                  (begin
-                    (when
-                      (!=
-                        (array-ref decoded i)
-                        (cast (string.string-ref source i) : u8))
-                      (set! same false))
-                    (set! i (+ i 1))))
-                (if same
-                  unit
-                  (string.tl_oob_abort))))])])))
+              (while (and same (< i n))
+                (when
+                  (!=
+                    (array-ref decoded i)
+                    (cast (string.string-ref source i) : u8))
+                  (set! same false))
+                (set! i (+ i 1)))
+              (if same
+                unit
+                (string.tl_oob_abort)))])])))

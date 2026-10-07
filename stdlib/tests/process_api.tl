@@ -1,5 +1,6 @@
 (import stdlib.process)
 (import stdlib.io)
+(import stdlib.str_cat)
 (import stdlib.string)
 (import stdlib.test)
 (import stdlib.vector)
@@ -295,6 +296,144 @@
       (__tl_make-array String (+ process.process-storage-max-count 1))]
     (process.command "echo" (process.ProcessStringList slots))))
 
+;; A string of `n` repeated "a" bytes, built by doubling.
+(define (process-api-repeat-a [n : i64]) : String
+  (let
+    [text : String "a"]
+    (while (< (string-length (& text)) n)
+      (set! text (str_cat.str-cat (string.copy (& text)) text)))
+    (string.substring text 0 n)))
+
+(define (process-api-exact-command [env : process.ProcessEnvList]) : process.ProcessCommand
+  (process.command-with-exact-env-list
+    (process.command "echo" (process.args-empty))
+    env))
+
+(define (process-api-env2
+  [first-name : String]
+  [first-value : String]
+  [second-name : String]
+  [second-value : String]) : process.ProcessEnvList
+  (process.env-cons
+    first-name
+    first-value
+    (process.env-cons second-name second-value (process.env-empty))))
+
+;; #7547: every constructor and `command-with-env*` builder selects the
+;; inherited policy, `command-with-exact-env*` selects exact, and the other
+;; builders keep the policy they were given.
+(define (assert-process-env-policy-api) : unit
+  (let
+    [exact : process.ProcessCommand
+      (process-api-exact-command (process.env-empty))]
+    (test.assert-false
+      (process.command-env-exact?
+        (& (process.command "echo" (process.args-empty))))
+      "command defaults to the inherited environment")
+    (test.assert-false
+      (process.command-env-exact?
+        (&
+          (process.command-full
+            "echo"
+            (process.args-empty)
+            (process.no-cwd)
+            (process.env-empty)
+            (process.no-stdin))))
+      "command-full inherits")
+    (test.assert-true (process.command-env-exact? (& exact)) "exact env list")
+    (test.assert-true
+      (process.command-env-exact?
+        (&
+          (process.command-with-stdin
+            (process.command-with-cwd
+              (process.command-with-args
+                (process.command-with-arg (clone exact) "a")
+                (process.args-single "b"))
+              "target")
+            "in")))
+      "argv, cwd and stdin builders keep the exact policy")
+    (test.assert-true
+      (process.command-env-exact?
+        (& (process.command-with-exact-env (clone exact) "A" "1")))
+      "exact env row builder")
+    (test.assert-true
+      (process.command-env-exact?
+        (&
+          (process.command-with-exact-env-vec
+            (process.command "echo" (process.args-empty))
+            (& (process-api-env-vec1 "A" "1")))))
+      "exact env vec builder")
+    (test.assert-false
+      (process.command-env-exact?
+        (& (process.command-with-env (clone exact) "A" "1")))
+      "command-with-env selects the inherited policy")
+    (test.assert-false
+      (process.command-env-exact?
+        (& (process.command-with-env-list (clone exact) (process.env-empty))))
+      "command-with-env-list selects the inherited policy")
+    (test.assert-true
+      (process.command-valid? (& exact))
+      "an empty exact environment is valid")
+    ;; Inherited overrides keep their duplicate semantics.
+    (test.assert-true
+      (process.command-valid?
+        (&
+          (process.command-with-env-list
+            (process.command "echo" (process.args-empty))
+            (process-api-env2 "DUP" "1" "DUP" "2"))))
+      "inherited overrides may repeat a name")
+    (assert-process-env-validation
+      (process.command-validation-error
+        (& (process-api-exact-command (process-api-env2 "DUP" "1" "DUP" "2"))))
+      "process: exact environment repeats a variable name"
+      "exact env rejects a repeated name")
+    (let
+      [case-collision : process.ProcessMaybeString
+        (process.command-validation-error
+          (&
+            (process-api-exact-command (process-api-env2 "Path" "1" "PATH" "2"))))]
+      (cfg
+        windows
+        (assert-process-env-validation
+          case-collision
+          "process: exact environment repeats a variable name"
+          "windows exact names compare case-insensitively")
+        (assert-process-no-string
+          case-collision
+          "linux exact names compare bytewise")))
+    ;; A row's own error comes before the exact-environment checks.
+    (assert-process-env-validation
+      (process.command-validation-error
+        (& (process-api-exact-command (process-api-env2 "" "1" "" "2"))))
+      "process: environment variable name is empty"
+      "exact env reports a row error first")
+    ;; Two rows at the per-field cap overflow the block cap by 6 bytes; one row
+    ;; fits.
+    (assert-process-env-validation
+      (process.command-validation-error
+        (&
+          (process-api-exact-command
+            (process-api-env2
+              "A"
+              (process-api-repeat-a process.process-storage-max-string-bytes)
+              "B"
+              (process-api-repeat-a process.process-storage-max-string-bytes)))))
+      "process: exact environment exceeds storage limit"
+      "exact env rejects rows past the block cap")
+    (assert-process-no-string
+      (process.command-validation-error
+        (&
+          (process-api-exact-command
+            (process.env-cons
+              "A"
+              (process-api-repeat-a process.process-storage-max-string-bytes)
+              (process.env-empty)))))
+      "exact env accepts one row at the field cap")
+    (assert-process-invalid-command
+      (process.output
+        (process-api-exact-command (process-api-env2 "DUP" "1" "DUP" "2")))
+      "process: exact environment repeats a variable name")))
+
 (define (main) : i64
   (let
     [args : process.ProcessStringList
@@ -327,6 +466,7 @@
       process.process-storage-max-count
       "process checked count accepts exact cap")
     (process.test-env-dense-api)
+    (assert-process-env-policy-api)
     (assert-owned-string-eq
       (process.command-executable command)
       "echo"

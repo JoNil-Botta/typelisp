@@ -32,7 +32,8 @@ the source and the embedded stdlib, without executing anything:
 - rejected safe calls (direct, through a local alias, a capture, a struct
   field, a global, a generated declaration);
 - rejected conversions to an ordinary `(-> i64 i64)` (binding, return,
-  parameter, struct field, global, `cast`, generated declaration).
+  parameter, struct field, global, generated declaration), and `cast`, which
+  rejects every function type and so is no route either.
 
 Native thread execution on both hosts is covered by the `thread_*` and
 `atomic_intrinsics_thread_counter` rows of `tests/integration/native.manifest`,

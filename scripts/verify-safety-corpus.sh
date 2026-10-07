@@ -75,6 +75,7 @@ case "$WORKDIR" in
     /*) WORKDIR_ABS=$WORKDIR ;;
     *) WORKDIR_ABS=$ROOT/$WORKDIR ;;
 esac
+CHECK_BIN_ABS="$WORKDIR_ABS/$(basename "$CHECK_BIN")"
 
 # Windows-target check-only rows run from either host and never execute. Each
 # fixture is checked against the source stdlib roots, and again from a
@@ -96,8 +97,20 @@ windows_target_check() {
         run_case "$_out" "$_err" - \
             sh -c 'cd "$1" && shift && exec "$@"' windows-embedded-check \
             "$WORKDIR_ABS/embedded-stdlib-cwd" \
-            "$WORKDIR_ABS/$(basename "$CHECK_BIN")" check "$ROOT/$_source" \
+            "$CHECK_BIN_ABS" check "$ROOT/$_source" \
             --target windows-x86_64
+    fi
+}
+
+# A failing check must report a specific diagnostic code and a decoded message.
+assert_check_failure_decoded() {
+    _decoded_case=$1
+    _decoded_err=$2
+    if grep -Fq 'error[E0200]' "$_decoded_err"; then
+        fail "$_decoded_case regressed to generic E0200; assign a specific code or update the taxonomy"
+    fi
+    if grep -Fq '__tl_tc_' "$_decoded_err"; then
+        fail "$_decoded_case rendered an internal typecheck error transport instead of decoding it"
     fi
 }
 
@@ -339,12 +352,7 @@ run_manifest_case() {
             [ "$code" -ne 0 ] || fail "$case_id expected check failure"
             [ "$stderr_contains" != "-" ] || fail "$case_id check-fail missing stderr expectation"
             assert_contains "$err" "$stderr_contains" || fail "$case_id stderr did not match expectation"
-            if grep -Fq 'error[E0200]' "$err"; then
-                fail "$case_id regressed to generic E0200; assign a specific code or update the taxonomy"
-            fi
-            if grep -Fq '__tl_tc_' "$err"; then
-                fail "$case_id rendered an internal typecheck error transport instead of decoding it"
-            fi
+            assert_check_failure_decoded "$case_id" "$err"
             ;;
         check-ok-windows)
             for route in source embedded; do
@@ -361,9 +369,7 @@ run_manifest_case() {
                 windows_target_check "$out" "$err" "$source" "$route"
                 [ "$code" -ne 0 ] || fail "$case_id expected Windows-target check failure ($route stdlib)"
                 assert_contains "$err" "$stderr_contains" || fail "$case_id Windows-target stderr did not match expectation ($route stdlib)"
-                if grep -Fq 'error[E0200]' "$err"; then
-                    fail "$case_id regressed to generic E0200; assign a specific code or update the taxonomy"
-                fi
+                assert_check_failure_decoded "$case_id ($route stdlib)" "$err"
             done
             ;;
         run-exit)

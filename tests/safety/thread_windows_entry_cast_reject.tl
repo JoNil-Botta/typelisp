@@ -1,5 +1,5 @@
-;; `cast` cannot convert the entry to an ordinary function value (#7742).
-;; Check-only; never executed.
+;; `cast` is no route to an ordinary function value: it rejects every
+;; function type, the entry included (#7742). Check-only; never executed.
 (import stdlib.thread)
 
 (define (main) : i64

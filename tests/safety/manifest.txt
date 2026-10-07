@@ -1164,8 +1164,9 @@ thread_raw_callable_launder_reject|check-fail|tests/safety/thread_raw_callable_l
 # The Windows backend thread entry `thread-windows-entry` is a
 # `(CFunc unsafe-non-null (-> i64 i64))`: it reaches the unsafe `CreateThread`
 # adapter, but no safe call, alias, capture, return, storage, conversion or
-# generated declaration turns it into a plain callable (#7742). Windows-target
-# check only; no invalid thread context is ever executed.
+# generated declaration turns it into a plain callable (#7742). The `cast` row
+# pins that `cast`, which rejects every function type, is no route either.
+# Windows-target check only; no invalid thread context is ever executed.
 thread_windows_entry_create_thread_ok|check-ok-windows|tests/safety/thread_windows_entry_create_thread_ok.tl|-|-
 thread_windows_entry_call_reject|check-fail-windows|tests/safety/thread_windows_entry_call_reject.tl|-|C function pointer requires unsafe context
 thread_windows_entry_alias_call_reject|check-fail-windows|tests/safety/thread_windows_entry_alias_call_reject.tl|-|C function pointer requires unsafe context

@@ -4571,7 +4571,7 @@
       (compiler-typecheck-error-ok?
         "(define (main [n : i64]) : (& program i64)
   (& n))"
-        "does not outlive required lifetime `program`")]
+        "typecheck: return type mismatch: expected (& program i64), found (& n i64); source lifetime `n` does not outlive required lifetime `program`")]
     [struct-field-ok : bool
       (compiler-typecheck-ok?
         "(defstruct RefBox (value (& n i64)))

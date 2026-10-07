@@ -2315,6 +2315,17 @@ type is tied to such an input lifetime or to `program`.
   (RefBox value))
 ```
 
+A store through a mutable reference is checked against the destination's own
+lifetimes. A place reached through `(&mut m T)` may hold a reference whose
+lifetime appears in `T`, because every lifetime in `T` outlives the reference
+`m` itself. A local or parameter named like that lifetime shadows it, and a
+borrow of it is checked against `m` like any other:
+
+```lisp test=ignore name=lifetime-parameterized-mut-field-store-ok reason="illustrative store example; not a standalone program"
+(define (store [b : (&mut (RefBox a))] [v : (& a i64)]) : unit
+  (set! b.value v))
+```
+
 The checker rejects returned, stored, or assigned nominal aggregate values when
 any stored reference lifetime is local, scoped, unknown, untied to an input, or
 otherwise shorter than the destination lifetime:
@@ -3113,7 +3124,9 @@ expression. A safe direct call is rejected and names the callee. Any
 first-class reference is also rejected, even inside `unsafe`, because assigning
 the ordinary `(-> ...)` value would erase the checker-only unsafe-call effect.
 This fail-closed rule covers inferred and annotated locals and globals,
-branches, arguments and returns, assignment, aggregates, and captures.
+branches, arguments and returns, assignment, aggregates, and captures. A
+field or payload `(:cleanup ...)` hook, which the compiler calls implicitly,
+cannot name an unsafe declaration either.
 
 An unsafe function body is still checked as ordinary safe code unless the body
 itself uses `(unsafe ...)`. The same safe boundary applies to a lambda body:
@@ -3985,7 +3998,10 @@ type:
 
 - `(:cleanup field-cleanup-fn)` marks a direct resource field and names the
   cleanup function for that field. The function must have type `(-> F unit)`,
-  where `F` is the field type.
+  where `F` is the field type. It must not be an unsafe declaration (§4.3.1):
+  the compiler calls it implicitly where the owner's scope ends, in safe code
+  too, so a hook discharges its own unsafety in its body. The same rule applies
+  to an enum payload's `(:cleanup ...)` metadata.
 - `(:owned)` marks a field whose type is itself cleanup-owning. The field uses
   that type's declared cleanup function.
 

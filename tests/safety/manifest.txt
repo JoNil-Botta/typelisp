@@ -214,6 +214,13 @@ global_shared_mutable_borrow_reject|check-fail|tests/safety/global_shared_mutabl
 global_shared_borrow_mutation_reject|check-fail|tests/safety/global_shared_borrow_mutation_reject.tl|-|cannot assign to borrowed place `global-cell.value`
 mutable_reference_by_value_binding_reject|check-fail|tests/safety/mutable_reference_by_value_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
 mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_reference_scalar_binding_reject.tl|-|mutable borrow of by-value place is only supported as an immediate call argument
+mutable_reference_lifetime_field_store_ok|run-exit|tests/safety/mutable_reference_lifetime_field_store_ok.tl|42|-
+mutable_reference_lifetime_field_store_shorter_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shorter_reject.tl|-|struct field assignment type mismatch: expected (& a i64), found (& m i64)
+mutable_reference_lifetime_field_store_local_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_local_reject.tl|-|struct field assignment type mismatch: expected (& a i64), found (& x i64)
+mutable_reference_lifetime_field_store_shadow_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_reject.tl|-|cannot store reference into longer-lived struct field
+mutable_reference_lifetime_field_store_shadow_deref_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_deref_reject.tl|-|cannot store reference into longer-lived struct field
+mutable_reference_lifetime_field_store_shadow_whole_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_shadow_whole_reject.tl|-|cannot store reference into longer-lived &mut referent
+mutable_reference_lifetime_field_store_param_reject|check-fail|tests/safety/mutable_reference_lifetime_field_store_param_reject.tl|-|cannot store reference into longer-lived struct field
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|typecheck: borrow requires a local, parameter, or aggregate place
 # Borrowed call-argument temporaries: an explicit `(& value)` or `(&mut value)`
 # call argument borrows hidden storage that lives until the call returns and is
@@ -1108,6 +1115,11 @@ replace_cleanup_owner_element_reject|check-fail|tests/safety/replace_cleanup_own
 replace_cleanup_owner_slot_reject|check-fail|tests/safety/replace_cleanup_owner_slot_reject.tl|-|replace! cannot replace an active cleanup owner
 replace_cleanup_owner_nested_reject|check-fail|tests/safety/replace_cleanup_owner_nested_reject.tl|-|replace! cannot replace an active cleanup owner
 replace_fixed_array_cleanup_reject|check-fail|tests/safety/replace_fixed_array_cleanup_reject.tl|-|replace! does not support cleanup-owning places
+cleanup_hook_unsafe_field_reject|check-fail|tests/safety/cleanup_hook_unsafe_field_reject.tl|-|struct Handle field fd cleanup function raw-close is an unsafe declaration
+cleanup_hook_unsafe_payload_reject|check-fail|tests/safety/cleanup_hook_unsafe_payload_reject.tl|-|enum Res variant Open cleanup function raw-close is an unsafe declaration
+cleanup_hook_unsafe_imported_reject|check-fail|tests/safety/cleanup_hook_unsafe_imported_reject.tl|-|cleanup function dep/raw-close is an unsafe declaration
+cleanup_hook_imported_safe_ok|check-ok|tests/safety/cleanup_hook_imported_safe_ok.tl|-|-
+cleanup_hook_safe_validating_ok|run-exit|tests/safety/cleanup_hook_safe_validating_ok.tl|42|-
 replace_spmd_reject|check-fail|tests/safety/replace_spmd_reject.tl|-|replace! is not supported in SPMD
 replace_type_mismatch_reject|check-fail|tests/safety/replace_type_mismatch_reject.tl|-|replace! replacement type mismatch
 replace_lifetime_store_reject|check-fail|tests/safety/replace_lifetime_store_reject.tl|-|source lifetime `short-life` does not outlive required lifetime `long-life`
@@ -1295,3 +1307,9 @@ variant_alias_import_bare_reject|check-fail|tests/safety/variant_alias_import_ba
 variant_expected_function_conflict_reject|check-fail|tests/safety/variant_expected_function_conflict_reject.tl|-|typecheck: ambiguous `Fail`: both the variant Outcome.Fail and a module-level declaration of that name are visible; qualify the variant
 variant_expected_struct_conflict_reject|check-fail|tests/safety/variant_expected_struct_conflict_reject.tl|-|typecheck: ambiguous `Pass`: both the variant Outcome.Pass and a module-level declaration of that name are visible; qualify the variant
 variant_payload_binder_reject|check-fail|tests/safety/variant_payload_binder_reject.tl|-|typecheck: pattern binder `Byte` spells a variant of the payload enum Width; write `(Byte)` to match that variant or rename the binder
+
+# Packed compiler state is addressed only through its schema's typed accessors (#7021).
+compiler_state_schema_ok|run-exit|tests/safety/compiler_state_schema_ok.tl|42|-
+compiler_state_schema_field_type_reject|check-fail|tests/safety/compiler_state_schema_field_type_reject.tl|-|let binding `text` type mismatch: expected String, found i64
+compiler_state_schema_init_type_reject|check-fail|tests/safety/compiler_state_schema_init_type_reject.tl|-|array assignment value type mismatch: expected i64, found String
+compiler_state_schema_untyped_field_reject|check-fail|tests/safety/compiler_state_schema_untyped_field_reject.tl|-|compiler-state-directory-schema: every field needs a type

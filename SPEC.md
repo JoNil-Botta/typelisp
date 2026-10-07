@@ -2315,6 +2315,16 @@ type is tied to such an input lifetime or to `program`.
   (RefBox value))
 ```
 
+A store through a mutable reference is checked against the destination's own
+lifetimes. A place reached through `(&mut m T)` may hold a reference whose
+lifetime appears in `T`, because every lifetime in `T` outlives the reference
+`m` itself:
+
+```lisp test=ignore name=lifetime-parameterized-mut-field-store-ok reason="illustrative store example; not a standalone program"
+(define (store [b : (&mut (RefBox a))] [v : (& a i64)]) : unit
+  (set! b.value v))
+```
+
 The checker rejects returned, stored, or assigned nominal aggregate values when
 any stored reference lifetime is local, scoped, unknown, untied to an input, or
 otherwise shorter than the destination lifetime:

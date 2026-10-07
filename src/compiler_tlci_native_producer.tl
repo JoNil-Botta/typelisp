@@ -1112,6 +1112,24 @@
             "0")
           1]
         [_ -1])]
+    [(Break)
+      (embedded-native-template-push!
+        ops
+        ops-count
+        (tlci_core.tlci-host-callback-name expr-break)
+        "0"
+        "0"
+        "0")
+      1]
+    [(Continue)
+      (embedded-native-template-push!
+        ops
+        ops-count
+        (tlci_core.tlci-host-callback-name expr-continue)
+        "0"
+        "0"
+        "0")
+      1]
     [(Var name-id)
       (let
         [name : String (ci.intern-str name-id)]

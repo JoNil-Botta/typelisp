@@ -34,7 +34,8 @@
           [total : i64 0]
           [counts : (Array i64 2) (array 1 2)]
           (begin
-            (for [item counts] (set! total (+ total item)))
+            (for [item counts]
+              (set! total (+ total item)))
             view)))]
     (begin
       (byte_buf.bytes-set!

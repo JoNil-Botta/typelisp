@@ -12,6 +12,7 @@
 ;; path where the target supports process execution. Each failure records the
 ;; source path, the fence's source line, the example index, and the rendered
 ;; diagnostic when one is available.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.byte_buf)
@@ -72,8 +73,7 @@
       (let
         [out-examples : doc_example_vec.Vec (doc_example_vec.new)]
         [out-errors : doc_error_vec.Vec (doc_error_vec.new)]
-        [index : i64 0]
-        (while (< index (doc_example_vec.len (& examples)))
+        (for [index (iterator.range 0 (doc_example_vec.len (& examples)))]
           (match (doc-test-example-list-ref examples index)
             [(Example ordinal line expectation code)
               (doc_example_vec.push-ref!
@@ -86,16 +86,13 @@
                     [(Error) (Error)]
                     [(Run status stdout stderr)
                       (Run status (string.copy stdout) (string.copy stderr))])
-                  (string.copy code)))])
-          (set! index (+ index 1)))
-        (set! index 0)
-        (while (< index (doc_error_vec.len (& errors)))
+                  (string.copy code)))]))
+        (for [index (iterator.range 0 (doc_error_vec.len (& errors)))]
           (match (doc-test-error-list-ref errors index)
             [(Error line message)
               (doc_error_vec.push-ref!
                 (&mut out-errors)
-                (DocTestError.Error line (string.copy message)))])
-          (set! index (+ index 1)))
+                (DocTestError.Error line (string.copy message)))]))
         (Extraction out-examples out-errors))]))
 
 ;; Package discovery tolerates a path disappearing before checking.
@@ -271,7 +268,7 @@
         (if (doc-test-inline-space? (string.string-ref text i))
           (begin
             (set! start (+ i 1))
-            (set! i (+ i 1)))
+            (+= i 1))
           (set! done true))))
     (string.substring text start (- n start))))
 
@@ -282,7 +279,7 @@
     (while keep
       (if (> end 0)
         (if (doc-test-inline-space? (string.string-ref text (- end 1)))
-          (set! end (- end 1))
+          (-= end 1)
           (set! keep false))
         (set! keep false)))
     (string.substring text 0 end)))
@@ -323,7 +320,7 @@
               (set! ok false)
               (begin
                 (set! value (+ (* value 10) digit))
-                (set! i (+ i 1))))))
+                (+= i 1)))))
         (if ok
           (Some (* sign value))
           None)))))
@@ -345,16 +342,16 @@
               (cond
                 [(= esc 'n')
                   (set! out (str_cat.str-cat out "\n" ""))
-                  (set! i (+ i 2))]
+                  (+= i 2)]
                 [(= esc 't')
                   (set! out (str_cat.str-cat out "\t" ""))
-                  (set! i (+ i 2))]
+                  (+= i 2)]
                 [(= esc 'r')
                   (set! out (str_cat.str-cat out "\r" ""))
-                  (set! i (+ i 2))]
+                  (+= i 2)]
                 [(= esc '\\')
                   (set! out (str_cat.str-cat out "\\" ""))
-                  (set! i (+ i 2))]
+                  (+= i 2)]
                 [else
                   (set!
                     message
@@ -364,7 +361,7 @@
                       "`"))])))
           (begin
             (set! out (str_cat.str-cat out (string.substring text i 1) ""))
-            (set! i (+ i 1))))))
+            (+= i 1)))))
     (if (= (string.string-length message) 0)
       (Some out)
       (No message))))
@@ -387,7 +384,7 @@
     (while (< i n)
       (if blank
         (if (doc-test-space? (string.string-ref text i))
-          (set! i (+ i 1))
+          (+= i 1)
           (begin
             (set! blank false)
             (set! i n)))
@@ -403,7 +400,7 @@
       (if (< i n)
         (if (doc-test-space? (string.string-ref text i))
           (set! keep false)
-          (set! i (+ i 1)))
+          (+= i 1))
         (set! keep false)))
     i))
 
@@ -915,7 +912,7 @@
                       (set! pending-lines (doc_line_vec.new)))
                     (set! pending-lines (doc_line_vec.new)))]))])
         (set! pos (source_text.next-line-start src line-end))
-        (set! line-number (+ line-number 1))))
+        (+= line-number 1)))
     (set! state (doc-test-scan-doc-block module-lines state))
     (match state
       [(State examples errors _) (Extraction examples errors)])))
@@ -1084,10 +1081,10 @@
         (= (string.string-ref text (+ i 1)) '\n'))
         (begin
           (set! out (str_cat.str-cat out "\n" ""))
-          (set! i (+ i 2)))
+          (+= i 2))
         (begin
           (set! out (str_cat.str-cat out (string.substring text i 1) ""))
-          (set! i (+ i 1)))))
+          (+= i 1))))
     out))
 
 (define (doc-test-normalize-output-for-target
@@ -1736,10 +1733,9 @@
 (define (doc-test-dep-list-path?
   [path : (& path str)]
   [manifest-dir : String]
-  [deps : compiler_load.CompilerPkgDepList]
-  [index : i64]) : bool
-  (if (>= index (compiler_load.compiler-pkg-dep-list-count deps))
-    false
+  [deps : compiler_load.CompilerPkgDepList]) : bool
+  (for [index
+    (iterator.range 0 (compiler_load.compiler-pkg-dep-list-count deps))]
     (let
       [dep : compiler_load.CompilerPkgDep
         (compiler_load.compiler-pkg-dep-list-at deps index)]
@@ -1751,11 +1747,12 @@
             (compiler_load.compiler-load-join-root-path
               (owned_view.compiler-owned-shared-view manifest-dir)
               (owned_view.compiler-owned-shared-view dep-path))))]
-      (if (and
-        (not (compiler_load.compiler-load-github-dependency-path? dep-path))
-        (doc-test-path-under-root? path dep-root))
-        true
-        (doc-test-dep-list-path? path manifest-dir deps (+ index 1))))))
+      (when
+        (and
+          (not (compiler_load.compiler-load-github-dependency-path? dep-path))
+          (doc-test-path-under-root? path dep-root))
+        (return true))))
+  false)
 
 (define (doc-test-typecheck-package-path-list-with-roots-from
   [paths : ast.AstDeclPathList]
@@ -1809,8 +1806,7 @@
                 rooted
                 (owned_view.compiler-owned-shared-view manifest-dir)
                 (compiler_load.compiler-pkg-deps-list
-                  (owned_view.compiler-owned-shared-view deps))
-                0))
+                  (owned_view.compiler-owned-shared-view deps))))
             manifest-local)]
         (if (and package-local (not (string.eq rooted last-path)))
           (let

@@ -5,6 +5,7 @@
 ;; holds the CompilerLiveI64Set/scratch -ok? checks, the IR function fixtures,
 ;; the analyzer -ok? assertions, and the compiler-live-self-test entry. The
 ;; production module keeps only the analyzer itself.
+(import stdlib.iterator)
 (import compiler_liveness as live)
 (import compiler_ir_types as ir)
 (import compiler_ir_text as irt)
@@ -209,13 +210,11 @@
     [def-var : i64 (ir.compiler-ir-instr-dst instr)]
     [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
     [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
-    [index : i64 0]
     [ok : bool (= id-count (live.compiler-live-set-count uses))]
-    (while (< index id-count)
+    (for [index (iterator.range 0 id-count)]
       (if (live.compiler-live-set-contains? uses (array-ref ids index))
         unit
-        (set! ok false))
-      (set! index (+ index 1)))
+        (set! ok false)))
     (and
       ok
       (=
@@ -226,18 +225,18 @@
       (or (< def-var 0) (live.compiler-live-set-contains? defs def-var)))))
 
 (define (compiler-live-instr-ids-seq-match-set-from?
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : bool
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    true
-    (and
+  [instrs : ir.CompilerIrInstrSeq]) : bool
+  (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+    (unless
       (compiler-live-instr-ids-match-set?
         (ir.compiler-ir-instr-seq-ref instrs index))
-      (compiler-live-instr-ids-seq-match-set-from? instrs (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (compiler-live-instr-ids-seq-match-set?
   [instrs : ir.CompilerIrInstrSeq]) : bool
-  (compiler-live-instr-ids-seq-match-set-from? instrs 0))
+  (compiler-live-instr-ids-seq-match-set-from? instrs))
 
 ;; Instruction shapes that exercise the parts of the decode a straight
 ;; one-operand arm does not: a repeated operand (the set de-duplicates, so the
@@ -760,7 +759,7 @@
           (* index (live.compiler-live-set-word-bits))
           (- (live.compiler-live-set-word-bits) 1)
           score))
-      (set! index (- index 1)))
+      (-= index 1))
     score))
 
 (define (compiler-live-set2 [a : i64] [b : i64]) : live.CompilerLiveI64Set
@@ -800,7 +799,6 @@
   [uses : live.CompilerLiveI64Set]
   [defs : live.CompilerLiveI64Set]) : live.CompilerLiveUseDef
   (let
-    [cursor : i64 index]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     ;; Leading phis read in parallel (see compiler-live-leading-phi-count).
     [phi-end : i64
@@ -810,7 +808,7 @@
         0)]
     [out-uses : live.CompilerLiveI64Set uses]
     [out-defs : live.CompilerLiveI64Set defs]
-    (while (< cursor count)
+    (for [cursor (iterator.range index count)]
       (let
         [instr : ir.CompilerIrInstr
           (ir.compiler-ir-instr-seq-ref instrs cursor)]
@@ -830,17 +828,13 @@
         (set! out-defs (live.compiler-live-set-union out-defs instr-defs))
         (when
           (= (+ cursor 1) phi-end)
-          (let
-            [j : i64 0]
-            (while (< j phi-end)
-              (set!
+          (for [j (iterator.range 0 phi-end)]
+            (set!
+              out-defs
+              (live.compiler-live-set-union
                 out-defs
-                (live.compiler-live-set-union
-                  out-defs
-                  (live.compiler-live-instr-defs
-                    (ir.compiler-ir-instr-seq-ref instrs j))))
-              (set! j (+ j 1)))))
-        (set! cursor (+ cursor 1))))
+                (live.compiler-live-instr-defs
+                  (ir.compiler-ir-instr-seq-ref instrs j))))))))
     (live.CompilerLiveUseDef out-uses out-defs)))
 
 (define (compiler-live-block-use-def [instrs : ir.CompilerIrInstrSeq]) : live.CompilerLiveUseDef

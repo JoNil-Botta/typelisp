@@ -177,12 +177,7 @@
             _semantic-observer)
           (let
             [_pipeline-probe : unit
-              (cfg
-                test
-                (set!
-                  compiler-typecheck-pipeline-runs
-                  (+ compiler-typecheck-pipeline-runs 1))
-                unit)]
+              (cfg test (+= compiler-typecheck-pipeline-runs 1) unit)]
             [intern-state : ci.InternCompatState request-intern-state]
             (tc_core.tc-spmd-inline-helper-stack-reset-for-job! job-state)
             (tc_core.tc-macro-call-site-state-reset!

@@ -1,6 +1,7 @@
 ;; lsp_frame_core_tests.tl - White-box tests for the LSP frame: documents, the
 ;; semantic snapshot cache, diagnostics, completion and call contexts,
 ;; signatures, rename, text patches and the structural form editors.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.json)
@@ -286,7 +287,7 @@
                     (sem.compiler-semantic-source-index-len (& index)))
                   (= (array-ref highlights.slots 0).kind 2))
                 (set! query-ok false)))
-            (set! iteration (+ iteration 1)))
+            (+= iteration 1))
           (and
             (if complete
               (lsp-semantic-smoke-current? (& doc) version)
@@ -1528,7 +1529,6 @@
   (let
     [ordered : lsp.LspCompletionResults (lsp.lsp-completion-results-new)]
     [capped : lsp.LspCompletionResults (lsp.lsp-completion-results-new)]
-    [index : i64 0]
     (lsp.lsp-completion-results-insert!
       (&mut ordered)
       (lsp-completion-test-candidate "beta" 1 1 0 "beta"))
@@ -1542,7 +1542,7 @@
     (lsp.lsp-completion-results-insert!
       (&mut ordered)
       (lsp-completion-test-candidate "duplicate-label" 0 0 0 "alpha-local"))
-    (while (< index (+ lsp.lsp-completion-result-limit 1))
+    (for [index (iterator.range 0 (+ lsp.lsp-completion-result-limit 1))]
       (lsp.lsp-completion-results-insert!
         (&mut capped)
         (lsp-completion-test-candidate
@@ -1550,8 +1550,7 @@
           1
           4
           0
-          (lsp.lsp-str3 "cap-" (string.int->string index) "")))
-      (set! index (+ index 1)))
+          (lsp.lsp-str3 "cap-" (string.int->string index) ""))))
     (and
       (= ordered.len 3)
       (string.eq
@@ -1680,14 +1679,13 @@
 (define (lsp-workspace-index-declaration-count
   [index : (& index lvf.LspWorkspaceIndex)]) : i64
   (let
-    [source-index : i64 0]
     [count : i64 0]
-    (while (< source-index (lsp.lsp-workspace-sources-len (& index.sources)))
+    (for [source-index
+      (iterator.range 0 (lsp.lsp-workspace-sources-len (& index.sources)))]
       (let
         [source : lvf.LspWorkspaceSource
           (lsp.lsp-workspace-sources-get (& index.sources) source-index)]
-        (set! count (+ count (lsp_decl_vec.len (& source.decls))))
-        (set! source-index (+ source-index 1))))
+        (+= count (lsp_decl_vec.len (& source.decls)))))
     count))
 
 (define (lsp-workspace-index-declaration-at
@@ -1727,8 +1725,8 @@
                       (lsp.lsp-decl-entry-fallback)))))
               (set! done true))
             (begin
-              (set! offset (- offset count))
-              (set! source-index (+ source-index 1))))))
+              (-= offset count)
+              (+= source-index 1)))))
       result)))
 
 (define (lsp-server-state-declaration-count
@@ -1922,18 +1920,18 @@
                 (if (= depth 0)
                   (set! current-start i)
                   unit)
-                (set! depth (+ depth 1)))
+                (+= depth 1))
               (if (= c (string.string-ref ")" 0))
                 (when
                   (> depth 0)
-                  (set! depth (- depth 1))
+                  (-= depth 1)
                   (if (= depth 0)
                     (if (and (>= offset current-start) (<= offset i))
                       (set! result current-start)
                       unit)
                     unit))
                 unit))
-            (set! i (+ i 1))))
+            (+= i 1)))
         result))))
 
 (define (lsp-replace-form-at-position
@@ -2188,12 +2186,10 @@
   (unless
     (let
       [decls : lsp_decl_vec.Vec (lsp_decl_vec.with-capacity 301)]
-      [index : i64 0]
-      (while (< index 300)
+      (for [index (iterator.range 0 300)]
         (lsp_decl_vec.push-ref!
           (&mut decls)
-          (lsp-workspace-symbol-test-decl "same" (+ index 1)))
-        (set! index (+ index 1)))
+          (lsp-workspace-symbol-test-decl "same" (+ index 1))))
       ;; Exact duplicate source identities collapse to one result.
       (lsp_decl_vec.push-ref!
         (&mut decls)

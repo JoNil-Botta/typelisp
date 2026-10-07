@@ -1,5 +1,6 @@
 ;; Resource and semantic guards for scratch growth. These budgets describe
 ;; fixed source workloads, not allocator addresses or a particular grow call.
+(import stdlib.iterator)
 (import lex)
 (import read as reader)
 (import token)
@@ -24,17 +25,14 @@
   (reader.sp-node-pool-reset!)
   (reader.sp-node-pool-compact-retained!)
   (let
-    [index : i64 0]
     [caller : i64 (arena.tl_arena_current)]
-    (while (< index 32768)
-      (begin
-        (reader.sp-node-push
-          (Int
-            index
-            (reader.sp-text-id "retained")
-            (token.SourceSpan (+ index 1) 2 3 4)))
-        unit)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 32768)]
+      (reader.sp-node-push
+        (Int
+          index
+          (reader.sp-text-id "retained")
+          (token.SourceSpan (+ index 1) 2 3 4)))
+      unit)
     (reader.sp-node-pool-compact-retained!)
     (let
       [builder : reader.SpannedSexprBuilder (reader.spanned-sexpr-builder-new)]
@@ -82,10 +80,8 @@
         (unsafe
           ;; lint-allow: raw-arena-op
           (arena.tl_arena_set caller)))
-      (set! index 0)
-      (while (< index 32769)
-        (set! valid (and valid (retained-reader-row? index)))
-        (set! index (+ index 1)))
+      (for [index (iterator.range 0 32769)]
+        (set! valid (and valid (retained-reader-row? index))))
       (match (reader.spanned-sexpr-list-from-builder builder span)
         [(List start length _)
           (set!
@@ -128,13 +124,10 @@
     [owner : i64 (reader.sp-node-pool-base-arena-handle-value)]
     [shared : String
       (in-arena (arena.Arena owner) (string.copy "shared reader storage"))]
-    [index : i64 0]
-    (while (< index 2049)
-      (begin
-        (reader.sp-node-push
-          (Int index (reader.sp-text-id "") (token.SourceSpan 1 1 1 1)))
-        unit)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 2049)]
+      (reader.sp-node-push
+        (Int index (reader.sp-text-id "") (token.SourceSpan 1 1 1 1)))
+      unit)
     (unless
       (and
         (= owner (reader.sp-node-pool-base-arena-handle-value))
@@ -191,10 +184,8 @@
 (define (scan-doubled-source [text : String] [times : i64]) : String
   (let
     [out : String text]
-    [index : i64 0]
-    (while (< index times)
-      (set! out (str_cat.str-cat (string.copy out) out))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 times)]
+      (set! out (str_cat.str-cat (string.copy out) out)))
     out))
 
 (define (scan-token-valid?
@@ -259,7 +250,7 @@
                       (token.spanned-token-line (array-ref tokens index))
                       (token.spanned-token-col (array-ref tokens index)))
                     (set! ok false)))
-                (set! index (+ index 1)))
+                (+= index 1))
               (and
                 ok
                 (=
@@ -314,7 +305,7 @@
                   (reader.sp-node-get (+ start index))
                   (% (- index 1) 3))
                 (set! ok false))
-              (set! index (+ index 1)))
+              (+= index 1))
             (and
               ok
               (= length 1538)

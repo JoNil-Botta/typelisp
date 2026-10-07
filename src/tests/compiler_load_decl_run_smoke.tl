@@ -4,6 +4,7 @@
 ;; placeholder so both the iterative run path and the special-head arms run, and
 ;; pins the exact declaration/path/module lists and the threaded `seen` env the
 ;; per-declaration recursion produced.
+(import stdlib.iterator)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.string)
@@ -84,24 +85,21 @@
 (define (compiler-load-decl-run-render-decls [decls : ast.AstDeclList]) : String
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [out : String ""]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (str_cat.str-cat
           out
           (compiler-load-decl-run-decl-text (ast.ast-decl-list-ref decls index))
-          ";"))
-      (set! index (+ index 1)))
+          ";")))
     out))
 
 (define (compiler-load-decl-run-render-paths [paths : ast.AstDeclPathList]) : String
   (let
     [count : i64 (ast.ast-decl-path-list-len (& paths))]
-    [index : i64 0]
     [out : String ""]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (str_cat.str-cat
@@ -112,24 +110,21 @@
           "/"
           (ci.intern-str
             (ast.ast-decl-path-list-provenance-id (& paths) index -1))
-          ";"))
-      (set! index (+ index 1)))
+          ";")))
     out))
 
 (define (compiler-load-decl-run-render-modules
   [modules : ast.AstDeclModuleList]) : String
   (let
     [count : i64 (ast.ast-decl-module-list-len (& modules))]
-    [index : i64 0]
     [out : String ""]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (str_cat.str-cat
           out
           (ci.intern-str (ast.ast-decl-module-list-get-id (& modules) index -1))
-          ";"))
-      (set! index (+ index 1)))
+          ";")))
     out))
 
 (define (compiler-load-decl-run-render-seen [seen : sym_i64_env.SymI64Env]) : String
@@ -272,9 +267,8 @@
       [(Ok decls _ _ _)
         (let
           [count : i64 (ast.ast-decl-list-len (& decls))]
-          [index : i64 0]
           [text : String ""]
-          (while (< index count)
+          (for [index (iterator.range 0 count)]
             (set!
               text
               (str_cat.str-cat
@@ -283,8 +277,7 @@
                   (ast.ast-decl-list-ref decls index))
                 "/"
                 (compiler-load-decl-run-origin-text (& decls) index)
-                ";"))
-            (set! index (+ index 1)))
+                ";")))
           (set! out text))]
       [(Err _) unit])
     (reader.sp-node-pool-truncate! mark)

@@ -1,5 +1,6 @@
 ;; compiler_typecheck_core_tests.tl - White-box tests for the typechecker core:
 ;; state isolation between jobs, environment and cache smokes, and inline tests.
+(import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.hashmap)
@@ -116,18 +117,15 @@
       [scratch : i64 (arena.tl_arena_make)]
       (in-arena
         (arena.Arena scratch)
-        (let
-          [index : i64 0]
-          (while (< index 257)
-            (tc_core.tc-checked-let-binding-fact-record!
-              c
-              (+ 100 index)
-              index
-              (+ 200 index)
-              (+ 300 index)
-              (I64)
-              ordinary)
-            (set! index (+ index 1)))))
+        (for [index (iterator.range 0 257)]
+          (tc_core.tc-checked-let-binding-fact-record!
+            c
+            (+ 100 index)
+            index
+            (+ 200 index)
+            (+ 300 index)
+            (I64)
+            ordinary)))
       (unsafe
         (arena.tl_arena_destroy scratch)))
     (let
@@ -257,7 +255,7 @@
     [data : tc_core.TcBodyStateData (tc_core.tc-body-state-data-value state)]
     (when
       data.early-exit-facts-collecting
-      (set! data.early-exit-suppress-depth (+ data.early-exit-suppress-depth 1))
+      (+= data.early-exit-suppress-depth 1)
       (tc_core.tc-body-state-data-set! state data))))
 
 (define (tc-body-early-exit-suppress-pop! [state : tc_core.TcBodyState]) : unit
@@ -265,7 +263,7 @@
     [data : tc_core.TcBodyStateData (tc_core.tc-body-state-data-value state)]
     (when
       data.early-exit-facts-collecting
-      (set! data.early-exit-suppress-depth (- data.early-exit-suppress-depth 1))
+      (-= data.early-exit-suppress-depth 1)
       (tc_core.tc-body-state-data-set! state data))))
 
 (define (tc-body-state-type-fact-i64-hit?
@@ -1377,12 +1375,10 @@
   [session : cis.InternStructuralSessionHandle]) : String
   (let
     [failed : String ""]
-    [i : i64 0]
-    (while (< i 25)
+    (for [i (iterator.range 0 25)]
       (if (macro-output-form-round-trips? session i)
         unit
-        (set! failed (str_cat.str-cat failed " " (macro-output-form i))))
-      (set! i (+ i 1)))
+        (set! failed (str_cat.str-cat failed " " (macro-output-form i)))))
     failed))
 
 ;; A move-aware resource scope has no declaration spelling; converting one must
@@ -1407,10 +1403,10 @@
                 (let
                   [moved : ast.AstResourceBindingList
                     (ast.ast-resource-binding-list-new)]
-                  [index : i64 0]
-                  (while (<
-                    index
-                    (ast.ast-resource-binding-list-len (& bindings)))
+                  (for [index
+                    (iterator.range
+                      0
+                      (ast.ast-resource-binding-list-len (& bindings)))]
                     (match (ast.ast-resource-binding-list-get
                       (& bindings)
                       index
@@ -1422,8 +1418,7 @@
                             name
                             init
                             cleanup
-                            true))])
-                    (set! index (+ index 1)))
+                            true))]))
                   (let
                     [move-aware : ast.AstExpr
                       (WithResource
@@ -1545,17 +1540,15 @@
       [alias-id : i64 (ci.intern "membership-ab-alias")]
       [structural-base : i64 (* (ci.intern-capacity) (ci.intern-capacity))]
       [stress-count : i64 65537]
-      [index : i64 0]
       (tc_core.tc-topenv-membership-begin! state-a env-a 101 201)
       (tc_core.tc-topenv-membership-begin! state-b env-b 102 202)
       (tc_core.tc-topenv-membership-mark-bound! state-a renderable)
       ;; One more entry than the removed fixed overflow table proves structural
       ;; membership has no hidden 65,536-key ceiling.
-      (while (< index stress-count)
+      (for [index (iterator.range 0 stress-count)]
         (tc_core.tc-topenv-membership-mark-bound!
           state-a
-          (+ structural-base index))
-        (set! index (+ index 1)))
+          (+ structural-base index)))
       (let
         [isolated? : bool
           (and
@@ -1664,7 +1657,7 @@
     (tc-type-env-scoped-stack-reserve-marks! stack (+ index 1))
     (set! (array-ref stack.marks index) mark)
     (set! stack.mark-count (+ index 1))
-    (set! stack.scope-depth (+ stack.scope-depth 1))
+    (+= stack.scope-depth 1)
     mark))
 
 (define (tc-type-env-scoped-stack-marker-lookup-from
@@ -2058,12 +2051,10 @@
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-active-live)]
     [params : ast.AstParamList (ast.ast-param-list-with-capacity 0)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (ast.ast-param-list-push
         (&mut params)
-        (ast.ast-param-id (ci.intern "elided") (I64) false))
-      (set! index (+ index 1)))
+        (ast.ast-param-id (ci.intern "elided") (I64) false)))
     (match (tc_core.tc-elide-function-signature
       (ast.ast-node-pool-context-type-segment-bases pools)
       params
@@ -2132,22 +2123,18 @@
 (define (tc-type-list-needs-resolution-with-bases?
   [type-bases : i64]
   [types : ast.AstTypeList]) : bool
-  (tc-type-list-needs-resolution-at-with-bases? type-bases (& types) 0))
+  (tc-type-list-needs-resolution-at-with-bases? type-bases (& types)))
 
 (define (tc-type-list-needs-resolution-at-with-bases?
   [type-bases : i64]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
-    (if (tc-type-needs-resolution-id-with-bases?
-      type-bases
-      (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
-      true
-      (tc-type-list-needs-resolution-at-with-bases?
+  [types : (& types ast.AstTypeList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
+    (when
+      (tc-type-needs-resolution-id-with-bases?
         type-bases
-        types
-        (+ index 1)))))
+        (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
+      (return true)))
+  false)
 
 (define (tc-type-needs-resolution-id-with-bases?
   [type-bases : i64]
@@ -2762,8 +2749,6 @@
       (tc_core.TcTypeEnv base.store base.head base.abi-pad)]
     [latest-cache : tc_core.TcTypeEnv
       (tc_core.TcTypeEnv first-cache.store first-cache.head first-cache.abi-pad)]
-    [index : i64 0]
-    [cache-index : i64 0]
     [binding-restored? : bool false]
     [latest-cache-valid? : bool false]
     (unsafe
@@ -2771,16 +2756,16 @@
     ;; Extend a store created in `owner` while an unrelated scratch arena is
     ;; current. Segment allocation must use the store owner and restore the
     ;; scratch arena before returning.
-    (while (< index (+ (tc_core.tc-type-env-binding-segment-capacity) 8))
-      (set! grown (tc_core.tc-bind-id grown filler-id (I64)))
-      (set! index (+ index 1)))
+    (for [index
+      (iterator.range 0 (+ (tc_core.tc-type-env-binding-segment-capacity) 8))]
+      (set! grown (tc_core.tc-bind-id grown filler-id (I64))))
     (set! binding-restored? (= (arena.tl_arena_current) scratch))
     ;; Exercise cache-segment rollover through the same owner switch. The
     ;; newer cache payloads intentionally live only until scratch is
     ;; destroyed; `first-cache` was built in owner and must remain valid.
-    (while (< cache-index (+ (tc_core.tc-type-env-cache-segment-capacity) 2))
-      (set! latest-cache (tc_core.tc-env-with-cache grown))
-      (set! cache-index (+ cache-index 1)))
+    (for [cache-index
+      (iterator.range 0 (+ (tc_core.tc-type-env-cache-segment-capacity) 2))]
+      (set! latest-cache (tc_core.tc-env-with-cache grown)))
     (set!
       latest-cache-valid?
       (match (tc_core.tc-lookup-id latest-cache base-id)
@@ -2867,17 +2852,15 @@
       [plain-fork : tc_core.TcTypeEnv
         (tc_core.tc-env-with-cache
           (tc_core.tc-type-env-fork-function-store plain))]
-      [index : i64 0]
       ;; Shadow a parent name, then cross two binding segments and several
       ;; cache segments.
       (set! fork (tc_core.tc-bind-id fork base-id (Bool)))
-      (while (< index (+ (tc_core.tc-type-env-binding-segment-capacity) 8))
-        (set! fork (tc_core.tc-bind-id fork local-id (I64)))
-        (set! index (+ index 1)))
-      (set! index 0)
-      (while (< index (+ (tc_core.tc-type-env-cache-segment-capacity) 2))
-        (set! fork (tc_core.tc-env-with-cache fork))
-        (set! index (+ index 1)))
+      (for [index
+        (iterator.range 0 (+ (tc_core.tc-type-env-binding-segment-capacity) 8))]
+        (set! fork (tc_core.tc-bind-id fork local-id (I64))))
+      (for [index
+        (iterator.range 0 (+ (tc_core.tc-type-env-cache-segment-capacity) 2))]
+        (set! fork (tc_core.tc-env-with-cache fork)))
       (set!
         fork-ok
         (and
@@ -2957,7 +2940,6 @@
         segment-base.store
         segment-base.head
         segment-base.abi-pad)]
-    [segment-index : i64 0]
     [cache-segment-id : i64 (ci.intern "cache-segment-base")]
     [cache-segment-base : tc_core.TcTypeEnv
       (tc_core.tc-bind-id (tc_core.tc-empty-env) cache-segment-id (String))]
@@ -2968,7 +2950,6 @@
         cache-segment-first.store
         cache-segment-first.head
         cache-segment-first.abi-pad)]
-    [cache-segment-index : i64 0]
     [env : tc_core.TcTypeEnv
       (tc_core.tc-bind-return-type
         (tc_core.tc-bind-id
@@ -2984,20 +2965,17 @@
     [cached : tc_core.TcTypeEnv (tc_core.tc-env-with-cache env)]
     ;; Force more than one binding segment, then branch from the retained
     ;; first-segment snapshot after the store has advanced.
-    (while (<
-      segment-index
-      (+ (tc_core.tc-type-env-binding-segment-capacity) 8))
+    (for [segment-index
+      (iterator.range 0 (+ (tc_core.tc-type-env-binding-segment-capacity) 8))]
       (set!
         segment-grown
         (tc_core.tc-bind-id
           segment-grown
           (ci.intern
             (str_cat.str-cat "segment-" (string.int->string segment-index)))
-          (I64)))
-      (set! segment-index (+ segment-index 1)))
-    (while (<
-      cache-segment-index
-      (+ (tc_core.tc-type-env-cache-segment-capacity) 2))
+          (I64))))
+    (for [cache-segment-index
+      (iterator.range 0 (+ (tc_core.tc-type-env-cache-segment-capacity) 2))]
       (set!
         cache-segment-latest
         (tc_core.tc-env-with-cache
@@ -3007,8 +2985,7 @@
               (str_cat.str-cat
                 "cache-segment-"
                 (string.int->string cache-segment-index)))
-            (I64))))
-      (set! cache-segment-index (+ cache-segment-index 1)))
+            (I64)))))
     (let
       [segment-sibling : tc_core.TcTypeEnv
         (tc_core.tc-bind-id segment-base segment-id (Bool))]
@@ -3075,16 +3052,14 @@
 
 (define (tc-type-env-bind-many [env : tc_core.TcTypeEnv] [count : i64]) : tc_core.TcTypeEnv
   (let
-    [i : i64 0]
     [out : tc_core.TcTypeEnv env]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (set!
         out
         (tc_core.tc-bind-id
           out
           (ci.intern (str_cat.str-cat "local" (string.int->string i)))
-          (I64)))
-      (set! i (+ i 1)))
+          (I64))))
     out))
 
 (defstruct TcTypeEnvBindManyEndpoints
@@ -3096,11 +3071,10 @@
   [env : tc_core.TcTypeEnv]
   [count : i64]) : TcTypeEnvBindManyEndpoints
   (let
-    [i : i64 0]
     [out : tc_core.TcTypeEnv env]
     [first-id : i64 -1]
     [last-id : i64 -1]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (let
         [name-id : i64
           (ci.intern (str_cat.str-cat "local" (string.int->string i)))]
@@ -3108,8 +3082,7 @@
           (set! first-id name-id)
           unit)
         (set! last-id name-id)
-        (set! out (tc_core.tc-bind-id out name-id (I64)))
-        (set! i (+ i 1))))
+        (set! out (tc_core.tc-bind-id out name-id (I64)))))
     (TcTypeEnvBindManyEndpoints out first-id last-id)))
 
 (define (tc-type-env-local-cache-behavior-smoke?) : bool
@@ -4079,9 +4052,8 @@
   [carrier : tc_core.TcTypeEnvScopedCarrier]
   [count : i64]) : tc_core.TcTypeEnvScopedCarrier
   (let
-    [i : i64 0]
     [out : tc_core.TcTypeEnvScopedCarrier carrier]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (let
         [name : String (str_cat.str-cat "carrier-local" (string.int->string i))]
         (set!
@@ -4089,8 +4061,7 @@
           (tc_core.tc-type-env-scoped-carrier-bind-id
             out
             (tc_core.tc-generated-name-id name)
-            (I64)))
-        (set! i (+ i 1))))
+            (I64)))))
     out))
 
 (define (tc-type-env-scoped-carrier-region-matches-env?
@@ -6273,7 +6244,7 @@
             (string.eq (tc_core.tc-env-key-name-text field-name) name)
             (set! found offset)
             (set! index (tc_core.tc-inline-field-layout-list-count (& fields))))])
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (tc-inline-variant-layout-size
@@ -6284,50 +6255,44 @@
 (define (tc-inline-variant-layout-list-size-exact-id
   [variants : tc_core.TcInlineVariantLayoutList]
   [name-id : i64]) : i64
-  (tc-inline-variant-layout-list-size-exact-id-at variants name-id 0))
+  (tc-inline-variant-layout-list-size-exact-id-at variants name-id))
 
 (define (tc-inline-variant-layout-list-size-exact-id-at
   [variants : tc_core.TcInlineVariantLayoutList]
-  [name-id : i64]
-  [index : i64]) : i64
-  (if (>= index (tc_core.tc-inline-variant-layout-list-count variants))
-    -1
+  [name-id : i64]) : i64
+  (for [index
+    (iterator.range 0 (tc_core.tc-inline-variant-layout-list-count variants))]
     (let
       [variant : tc_core.TcInlineVariantLayout
         (tc_core.tc-inline-variant-layout-list-ref variants index)]
-      (if (=
-        (tc_core.tc-inline-variant-layout-name-id
-          (tc_core.tc-global-shared-view variant))
-        name-id)
-        (tc-inline-variant-layout-size variant)
-        (tc-inline-variant-layout-list-size-exact-id-at
-          variants
-          name-id
-          (+ index 1))))))
+      (when
+        (=
+          (tc_core.tc-inline-variant-layout-name-id
+            (tc_core.tc-global-shared-view variant))
+          name-id)
+        (return (tc-inline-variant-layout-size variant)))))
+  -1)
 
 (define (tc-inline-variant-layout-list-size-fallback-id
   [variants : tc_core.TcInlineVariantLayoutList]
   [name-id : i64]) : i64
-  (tc-inline-variant-layout-list-size-fallback-id-at variants name-id 0))
+  (tc-inline-variant-layout-list-size-fallback-id-at variants name-id))
 
 (define (tc-inline-variant-layout-list-size-fallback-id-at
   [variants : tc_core.TcInlineVariantLayoutList]
-  [name-id : i64]
-  [index : i64]) : i64
-  (if (>= index (tc_core.tc-inline-variant-layout-list-count variants))
-    -1
+  [name-id : i64]) : i64
+  (for [index
+    (iterator.range 0 (tc_core.tc-inline-variant-layout-list-count variants))]
     (let
       [variant : tc_core.TcInlineVariantLayout
         (tc_core.tc-inline-variant-layout-list-ref variants index)]
-      (if (tc_core.tc-inline-variant-layout-name-matches-id?
-        (tc_core.tc-inline-variant-layout-name-id
-          (tc_core.tc-global-shared-view variant))
-        name-id)
-        (tc-inline-variant-layout-size variant)
-        (tc-inline-variant-layout-list-size-fallback-id-at
-          variants
-          name-id
-          (+ index 1))))))
+      (when
+        (tc_core.tc-inline-variant-layout-name-matches-id?
+          (tc_core.tc-inline-variant-layout-name-id
+            (tc_core.tc-global-shared-view variant))
+          name-id)
+        (return (tc-inline-variant-layout-size variant)))))
+  -1)
 
 (define (tc-inline-aggregate-layout-variant-size-id
   [layout : (& layout tc_core.TcInlineAggregateLayout)]
@@ -6658,7 +6623,7 @@
             (tc-move-path-hash-combine seed node.value)
             out))
         (set! cursor node.parent)
-        (set! remaining (- remaining 1))))
+        (-= remaining 1)))
     out))
 
 (define (tc-moved-path-fact-path [fact : tc_core.TcMovedPathFact]) : tc_core.TcMovePath
@@ -6730,8 +6695,7 @@
               17))))]
     [deep : tc_core.TcMovePathSegments (tc_core.tc-move-path-segments-empty)]
     [deep-render : String ""]
-    [index : i64 0]
-    (while (< index 128)
+    (for [index (iterator.range 0 128)]
       (cond
         [(= (% index 3) 0)
           (set! deep (tc_core.tc-move-path-segments-append-field deep alpha-id))
@@ -6745,8 +6709,7 @@
           (set! deep (tc_core.tc-move-path-segments-append-array deep index))
           (set!
             deep-render
-            (str_cat.str-cat deep-render "[" (string.int->string index) "]"))])
-      (set! index (+ index 1)))
+            (str_cat.str-cat deep-render "[" (string.int->string index) "]"))]))
     (and
       (tc_core.tc-move-path-eq? mixed-path same-path)
       (not (tc_core.tc-move-path-eq? mixed-path sibling-path))
@@ -7176,7 +7139,7 @@
             [(Nil) (set! done true)]
             [(Cons decl rest)
               (set! (array-ref suffix.slots write-index) decl)
-              (set! write-index (- write-index 1))
+              (-= write-index 1)
               (set! cursor rest)]))
         (ast.AstDeclList
           suffix.slots
@@ -7220,7 +7183,7 @@
                   write-index
                   owner-id
                   provenance-id)
-                (set! write-index (- write-index 1))
+                (-= write-index 1)
                 (set! cursor rest)])))
         (ast.AstDeclPathList
           suffix.slots
@@ -7267,7 +7230,7 @@
                     (ast.ast-decl-list-ref decls (+ node-index remaining)))
                   (set! found true))
                 (begin
-                  (set! remaining (- remaining available))
+                  (-= remaining available)
                   (set! node-address node.next)
                   (set! node-index 0)))))
           out)))))
@@ -7313,7 +7276,7 @@
                       (tc_core.tc-global-shared-view fallback)))
                   (set! found true))
                 (begin
-                  (set! remaining (- remaining available))
+                  (-= remaining available)
                   (set! node-address node.next)
                   (set! node-index 0)))))
           (if found
@@ -7361,7 +7324,7 @@
                       fallback))
                   (set! found true))
                 (begin
-                  (set! remaining (- remaining available))
+                  (-= remaining available)
                   (set! node-address node.next)
                   (set! node-index 0)))))
           out)))))
@@ -7590,7 +7553,7 @@
                   unit
                   (set! iter-ok false))))
             (tc_core.macro-segmented-program-iter-advance! (&mut iter))
-            (set! iter-index (+ iter-index 1)))
+            (+= iter-index 1))
           (tc_core.macro-segmented-program-end! state)
           (tc_core.macro-expand-scratch-release!
             (tc_core.tc-job-state-macro-state state))
@@ -7640,7 +7603,7 @@
         (macro-segmented-event-row
           (array-ref specs index)
           (array-ref specs (+ index 1))))
-      (set! index (+ index 2)))
+      (+= index 2))
     out))
 
 ;; The event index lists exactly the module/import rows of the program, in
@@ -7667,41 +7630,39 @@
       (when
         (tc_core.macro-decl-list-event-at? (& flat-decls) index)
         (set! (array-ref expected expected-count) index)
-        (set! expected-count (+ expected-count 1)))
-      (set! index (+ index 1)))
+        (+= expected-count 1))
+      (+= index 1))
     (set! index 0)
     (while (< index data.prefix-event-count)
       (set!
         (array-ref actual actual-count)
         (array-ref data.prefix-events index))
-      (set! actual-count (+ actual-count 1))
-      (set! index (+ index 1)))
+      (+= actual-count 1)
+      (+= index 1))
     (while (and ok (> node-address 0))
       (let
         [node : tc_core.MacroProgramSegmentNodeData
           (tc_core.macro-program-segment-node-data node-address)]
         [first : i64 (+ node.decls.offset start)]
         [end : i64 (+ node.decls.offset (ast.ast-decl-list-len (& node.decls)))]
-        [event : i64 0]
-        (while (< event (array-length node.events))
+        (for [event (iterator.range 0 (array-length node.events))]
           (let
             [slot : i64 (array-ref node.events event)]
             (if (and (>= slot first) (< slot end))
               (if (< actual-count count)
                 (begin
                   (set! (array-ref actual actual-count) (+ base (- slot first)))
-                  (set! actual-count (+ actual-count 1)))
+                  (+= actual-count 1))
                 (set! ok false))
-              unit)
-            (set! event (+ event 1))))
-        (set! base (+ base (- end first)))
+              unit)))
+        (+= base (- end first))
         (set! node-address node.next)
         (set! start 0)))
     (set! ok (and ok (= actual-count expected-count) (= base count)))
     (set! index 0)
     (while (and ok (< index expected-count))
       (set! ok (= (array-ref actual index) (array-ref expected index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 ;; The alias index built from the events answers every (module, alias) pair of
@@ -7729,7 +7690,7 @@
           macro-state
           (array-ref pairs index)
           (array-ref pairs (+ index 1))))
-      (set! index (+ index 2)))
+      (+= index 2))
     (tc_core.tc-macro-import-index-control-set! macro-state 3 0)
     (tc_core.macro-alias-cache-ensure! macro-state)
     (tc_core.macro-alias-cache-build! macro-state (& flat-decls))
@@ -7743,7 +7704,7 @@
           (array-ref pairs (+ index 1))))
         unit
         (set! ok false))
-      (set! index (+ index 2)))
+      (+= index 2))
     ok))
 
 ;; Moves `count` rows from the cursor into the emitted prefix, as the walk does.
@@ -7756,8 +7717,7 @@
         (tc_core.tc-job-state-macro-program-view-address state))]
     [out-rev : ast.AstDeclList data.prefix-rev]
     [out-paths-rev : ast.AstDeclPathList data.prefix-paths-rev]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out-rev
         (ast.ast-decl-list-prepend-builder
@@ -7769,8 +7729,7 @@
           (tc_core.macro-segmented-program-current-path state)
           (tc_core.macro-segmented-program-current-owner-id state)
           out-paths-rev))
-      (tc_core.macro-segmented-program-advance! state)
-      (set! index (+ index 1)))
+      (tc_core.macro-segmented-program-advance! state))
     (tc_core.macro-segmented-program-prefix-set! state out-rev out-paths-rev)))
 
 (define (macro-segmented-events-smoke?) : bool
@@ -7787,16 +7746,13 @@
     ;; Twenty prefix events outgrow the index's first allocation.
     [prefix-specs : (__tl_dyn-array i64) (__tl_make-array i64 44)]
     [_prefix-specs : unit
-      (let
-        [index : i64 0]
-        (while (< index 22)
-          (set!
-            (array-ref prefix-specs (* index 2))
-            (if (= (% index 7) 3)
-              3
-              1))
-          (set! (array-ref prefix-specs (+ (* index 2) 1)) (+ t1 index))
-          (set! index (+ index 1))))]
+      (for [index (iterator.range 0 22)]
+        (set!
+          (array-ref prefix-specs (* index 2))
+          (if (= (% index 7) 3)
+            3
+            1))
+        (set! (array-ref prefix-specs (+ (* index 2) 1)) (+ t1 index)))]
     [prefix : ast.AstDeclList (macro-segmented-event-rows (& prefix-specs))]
     [source-specs : (__tl_dyn-array i64) (__tl_make-array i64 18)]
     [_source-specs : unit
@@ -8069,10 +8025,8 @@
     "selected imports do not bind module aliases"))
 
 (define (tc-unused-unsafe-storage-lifetime-fill!
-  [state : tc_core.TcUnusedUnsafeState]
-  [index : i64]) : unit
-  (if (>= index 129)
-    unit
+  [state : tc_core.TcUnusedUnsafeState]) : unit
+  (for [index (iterator.range 0 129)]
     (let
       [line : i64 (+ 100 index)]
       [col : i64 (+ 200 index)]
@@ -8082,7 +8036,7 @@
         (tc_core.tc-unused-unsafe-mark-current-used! state)
         unit)
       (tc_core.tc-unused-unsafe-restore-block! state previous)
-      (tc-unused-unsafe-storage-lifetime-fill! state (+ index 1)))))
+      unit)))
 
 (define (tc-unused-unsafe-storage-lifetime-ok?) : bool
   (let
@@ -8106,7 +8060,7 @@
     (tc_core.tc-unused-unsafe-set-current-path!
       state
       (tc_core.tc-global-shared-view path))
-    (tc-unused-unsafe-storage-lifetime-fill! state 0)
+    (tc-unused-unsafe-storage-lifetime-fill! state)
     (let
       [first-span : ast.AstSourceSpan
         (tc_core.tc-unused-unsafe-block-span state 0)]
@@ -8157,7 +8111,7 @@
       state-a
       (tc_core.tc-global-shared-view path-a))
     (tc_core.tc-unused-unsafe-set-current-path! state-a path-a)
-    (tc-unused-unsafe-storage-lifetime-fill! state-a 0)
+    (tc-unused-unsafe-storage-lifetime-fill! state-a)
     (tc_core.tc-unused-unsafe-tracking-reset!
       state-b
       (tc_core.tc-global-shared-view path-b))
@@ -9988,8 +9942,7 @@
   (define (memo-test-decls [count : i64]) : ast.AstDeclList
     (let
       [out : ast.AstDeclList (ast.ast-decl-list-new)]
-      [index : i64 0]
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (set!
           out
           (ast.ast-decl-cons
@@ -9998,8 +9951,7 @@
               (ast.ast-param-list-new)
               (Unit)
               (ast.ast-node-push (Literal (Unit))))
-            out))
-        (set! index (+ index 1)))
+            out)))
       out)))
 
 (cfg
@@ -10032,7 +9984,7 @@
           state
           (tc_core.macro-generated-identity-id state (memo-test-identity index)))
         home)
-        (set! index (+ index 1)))
+        (+= index 1))
       index)))
 
 (cfg

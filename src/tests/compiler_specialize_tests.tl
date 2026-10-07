@@ -1,5 +1,6 @@
 ;; compiler_specialize_tests.tl - Self-tests for comptime specialization and the
 ;; generated-declaration registry.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
@@ -540,18 +541,16 @@
     [unrelated : spec.SpecTemplateEnv
       (spec.spec-template-env-shadow-name base cbi.compiler-builtin-id-fix-flag)]
     [wide : spec.SpecTemplateEnv (spec.spec-template-env-from-list items)]
-    [index : i64 0]
     [ok : bool true]
     ;; Cross multiple dense-record growth boundaries with repeated names.
-    (while (< index 64)
+    (for [index (iterator.range 0 64)]
       (set!
         wide
         (spec.spec-template-env-shadow-name
           wide
           (if (= (bit-and index 1) 0)
             cbi.compiler-builtin-id-fix-x
-            cbi.compiler-builtin-id-fix-second)))
-      (set! index (+ index 1)))
+            cbi.compiler-builtin-id-fix-second))))
     ;; Alternate retained parents, siblings, duplicates, and nested snapshots
     ;; so the activated dense counts must roll backward and forward exactly.
     (set!
@@ -1587,7 +1586,7 @@
         (if (string.eq (spec_ci.intern-compat-state-str intern-state handle) "")
           unit
           (set! ok false))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (spec.spec-materialize-owner-generated-symbols! owner)
     (set! index 0)
     (while (and ok (< index count))
@@ -1601,7 +1600,7 @@
           (spec.spec-specialized-name-with-owner owner "wide" values))
           unit
           (set! ok false))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (and
       ok
       (=

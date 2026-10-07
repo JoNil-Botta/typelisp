@@ -3,6 +3,7 @@
 ;; compiler-ctfe-self-test runs every check; src/tests/compiler_ctfe_smoke.tl
 ;; and the frontend smoke suite call it, and its inline test runs in the
 ;; inline-test gate.
+(import stdlib.iterator)
 (import compiler_ctfe as ctfe)
 (import stdlib.arena)
 (import compiler_ast_types as ast)
@@ -3388,11 +3389,9 @@
     [left : ctfe.CtfeEnv (ctfe.ctfe-env-extend-id shared left-id (I64 2))]
     [right : ctfe.CtfeEnv (ctfe.ctfe-env-extend-id shared right-id (I64 3))]
     [grown : ctfe.CtfeEnv right]
-    [index : i64 0]
     ;; Exceed the initial capacity after both branches exist.
-    (while (< index 16)
-      (set! grown (ctfe.ctfe-env-extend-id grown (+ 100000 index) (I64 index)))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 16)]
+      (set! grown (ctfe.ctfe-env-extend-id grown (+ 100000 index) (I64 index))))
     (and
       (compiler-ctfe-env-value-missing? base shared-id)
       (compiler-ctfe-env-i64-value-ok? shared shared-id 1)
@@ -3794,12 +3793,10 @@
         (string.string-length (string.int->string source-len))
         1)]
     [payload : (__tl_dyn-array u8) (__tl_make-array u8 envelope-len)]
-    [index : i64 0]
-    (while (< index envelope-len)
+    (for [index (iterator.range 0 envelope-len)]
       (set!
         (array-ref payload index)
-        (cast (string.string-ref envelope index) : u8))
-      (set! index (+ index 1)))
+        (cast (string.string-ref envelope index) : u8)))
     (match (lzss.compiler-lzss-decode (& payload) source-len)
       [(Ok bytes)
         (let
@@ -3811,7 +3808,7 @@
                 (array-ref bytes cursor)
                 (cast (string.string-ref source cursor) : u8))
               (set! same false))
-            (set! cursor (+ cursor 1)))
+            (+= cursor 1))
           (if same
             (- envelope-len header-len)
             -1))]
@@ -3825,13 +3822,11 @@
   [seed : i64]) : unit
   (let
     [state : i64 seed]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
       (byte_buf_core.byte-buf-builder-push
         (&mut out)
-        (cast (% (shr state 16) alphabet) : u8))
-      (set! index (+ index 1)))))
+        (cast (% (shr state 16) alphabet) : u8)))))
 
 ;; `marker`, `gap` noise bytes, `marker` again, then the same with `gap` + 1:
 ;; the first pair of copies is exactly 4096 bytes apart, the widest offset a

@@ -30,7 +30,7 @@
         (cast (string.string-ref prefix index) : u8))
         (set! matches false)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     matches))
 
 ;: Validate the envelope and return the claimed raw length and token offset.
@@ -63,8 +63,8 @@
               (if (> raw-len (/ (- max-i64 digit) 10))
                 (set! overflow true)
                 (set! raw-len (+ (* raw-len 10) digit)))
-              (set! digits (+ digits 1))
-              (set! index (+ index 1))))
+              (+= digits 1)
+              (+= index 1)))
           (cond
             [overflow (Err "compiler lzss: raw length overflows i64")]
             [(= digits 0) (Err "compiler lzss: missing raw length")]
@@ -148,7 +148,7 @@
               (array-ref payload (+ compressed-start compressed-index))
               : i64)]
           [bit : i64 0]
-          (set! compressed-index (+ compressed-index 1))
+          (+= compressed-index 1)
           (while (and valid (< bit 8) (< out-index raw-len))
             (if (!= (bit-and flags (shl 1 bit)) 0)
               (if (>= compressed-index compressed-len)
@@ -159,8 +159,8 @@
                   (set!
                     (array-ref out out-index)
                     (array-ref payload (+ compressed-start compressed-index)))
-                  (set! compressed-index (+ compressed-index 1))
-                  (set! out-index (+ out-index 1))))
+                  (+= compressed-index 1)
+                  (+= out-index 1)))
               (if (< (- compressed-len compressed-index) 2)
                 (begin
                   (set! valid false)
@@ -182,7 +182,7 @@
                         : i64))]
                   [offset : i64 (+ (shr packed 4) 1)]
                   [length : i64 (+ (bit-and packed 15) 3)]
-                  (set! compressed-index (+ compressed-index 2))
+                  (+= compressed-index 2)
                   (cond
                     [(> offset out-index)
                       (set! valid false)
@@ -197,8 +197,8 @@
                         out-index
                         offset
                         length)
-                      (set! out-index (+ out-index length))]))))
-            (set! bit (+ bit 1))))))
+                      (+= out-index length)]))))
+            (+= bit 1)))))
     (cond
       [(not valid) (Err error)]
       [(!= out-index raw-len) (Err "compiler lzss: expanded length mismatch")]

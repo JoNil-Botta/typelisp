@@ -1,5 +1,6 @@
 ;; compiler_parse_core_tests.tl - White-box tests for the parser: declarations,
 ;; expressions, patterns, metadata, spans, error paths and compiler-parse-smoke.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import compiler_intern as ci)
@@ -3479,15 +3480,15 @@
     [else 0]))
 
 (define (compiler-parse-macro-type-kind-all-order-ok?
-  [kinds : (& kinds ast.AstMacroTypeKindList)]
-  [index : i64]) : bool
-  (if (>= index 30)
-    (= (ast.ast-macro-type-kind-list-len kinds) 30)
-    (and
+  [kinds : (& kinds ast.AstMacroTypeKindList)]) : bool
+  (for [index (iterator.range 0 30)]
+    (unless
       (=
         (ast.ast-macro-type-kind-list-get kinds index 0)
         (compiler-parse-macro-type-kind-expected-all-id index))
-      (compiler-parse-macro-type-kind-all-order-ok? kinds (+ index 1)))))
+      (return false))
+    unit)
+  (= (ast.ast-macro-type-kind-list-len kinds) 30))
 
 (define (compiler-parse-defmacro-type-kind-storage-case-ok?
   [source : String]
@@ -3533,8 +3534,7 @@
                           expected-last)))
                     (if verify-all
                       (compiler-parse-macro-type-kind-all-order-ok?
-                        (& type-kinds)
-                        0)
+                        (& type-kinds))
                       true)))]
               [_ false]))]
         [_ false])]

@@ -1,6 +1,7 @@
 ;; compiler_frontend_smoke_suite.tl - Compile-once suite for source-owned
 ;; semantic and documentation self-tests. Drivers with substantial test bodies
 ;; remain standalone.
+(import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.string)
@@ -143,41 +144,26 @@
 
 (define (compiler-ctfe-source-parity-find
   [decls : ast.AstDeclList]
-  [index : i64]
   [name-id : i64]
   [builtin-index : i64]
   [first : compiler_ctfe.CompilerCtfeValue]
   [second : compiler_ctfe.CompilerCtfeValue]
   [arity : i64]) : bool
-  (if (>= index (ast.ast-decl-list-len (& decls)))
-    false
+  (for [index (iterator.range 0 (ast.ast-decl-list-len (& decls)))]
     (match (ast.ast-decl-list-ref decls index)
       [(DefFn _ found-name params _ body _)
-        (if (= found-name name-id)
-          (compiler-ctfe-source-parity-eval-decl
-            params
-            body
-            builtin-index
-            first
-            second
-            arity)
-          (compiler-ctfe-source-parity-find
-            decls
-            (+ index 1)
-            name-id
-            builtin-index
-            first
-            second
-            arity))]
-      [_
-        (compiler-ctfe-source-parity-find
-          decls
-          (+ index 1)
-          name-id
-          builtin-index
-          first
-          second
-          arity)])))
+        (when
+          (= found-name name-id)
+          (return
+            (compiler-ctfe-source-parity-eval-decl
+              params
+              body
+              builtin-index
+              first
+              second
+              arity)))]
+      [_ unit]))
+  false)
 
 (define (compiler-ctfe-source-parity-check-owned
   [decls : ast.AstDeclList]
@@ -188,7 +174,6 @@
   [arity : i64]) : bool
   (compiler-ctfe-source-parity-find
     decls
-    0
     (ci.intern name)
     builtin-index
     first
@@ -245,33 +230,22 @@
 
 (define (compiler-ctfe-source-placeholder-find?
   [decls : ast.AstDeclList]
-  [index : i64]
   [name-id : i64]
   [message : String]) : bool
-  (if (>= index (ast.ast-decl-list-len (& decls)))
-    false
+  (for [index (iterator.range 0 (ast.ast-decl-list-len (& decls)))]
     (match (ast.ast-decl-list-ref decls index)
       [(DefFn _ found-name params _ body _)
-        (if (= found-name name-id)
-          (compiler-ctfe-source-placeholder-eval? params body message)
-          (compiler-ctfe-source-placeholder-find?
-            decls
-            (+ index 1)
-            name-id
-            message))]
-      [_
-        (compiler-ctfe-source-placeholder-find?
-          decls
-          (+ index 1)
-          name-id
-          message)])))
+        (when
+          (= found-name name-id)
+          (return (compiler-ctfe-source-placeholder-eval? params body message)))]
+      [_ unit]))
+  false)
 
 (define (compiler-ctfe-source-placeholder-check-owned?
   [decls : ast.AstDeclList]
   [name : String]) : bool
   (compiler-ctfe-source-placeholder-find?
     decls
-    0
     (ci.intern (owned_view.compiler-owned-shared-view name))
     (str_cat.str-cat
       name

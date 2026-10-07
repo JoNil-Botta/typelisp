@@ -1,4 +1,5 @@
 ;; compiler_load.tl - Shared selfhost compiler source/import loader.
+(import stdlib.iterator)
 (import stdlib.arena)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -1056,18 +1057,12 @@
 (define (compiler-load-dependency-catalog-find-root-slot
   [items : CompilerLoadDependencyCatalogList]
   [canonical-root : (& canonical-root str)]) : i64
-  (let
-    [index : i64 0]
-    (while (< index items.len)
-      (let
-        [entry : CompilerLoadDependencyCatalogEntry
-          (owned_view.compiler-owned-array-element-shared-view
-            items.slots
-            index)]
-        (if (string.eq entry.key.canonical-root canonical-root)
-          (return index)
-          (set! index (+ index 1)))))
-    -1))
+  (for [index (iterator.range 0 items.len)]
+    (let
+      [entry : CompilerLoadDependencyCatalogEntry
+        (owned_view.compiler-owned-array-element-shared-view items.slots index)]
+      (when (string.eq entry.key.canonical-root canonical-root) (return index))))
+  -1)
 
 (define (compiler-load-dependency-catalog-find-key-slot
   [state : CompilerLoadSessionState]
@@ -1103,12 +1098,10 @@
       (in-arena
         (arena.Arena owner)
         (__tl_make-array CompilerLoadDependencyCatalogEntry capacity))]
-    [index : i64 0]
-    (while (< index items.len)
+    (for [index (iterator.range 0 items.len)]
       (set!
         (array-ref slots index)
-        (owned_view.compiler-owned-array-element-shared-view items.slots index))
-      (set! index (+ index 1)))
+        (owned_view.compiler-owned-array-element-shared-view items.slots index)))
     (CompilerLoadDependencyCatalogList slots items.len)))
 
 ;; `entry` and everything reachable from it must be allocated in the owner
@@ -1151,7 +1144,7 @@
             (compiler-load-dependency-catalog-grow owner items))]
         [next-slot : i64 ready.len]
         (set! (array-ref ready.slots next-slot) entry)
-        (set! ready.len (+ ready.len 1))
+        (+= ready.len 1)
         (set! (array-ref registry.entries 0) ready)
         (set!
           (array-ref registry.generation 0)
@@ -1256,10 +1249,9 @@
     [path : String (compiler-load-canonical-path provenance-path)]
     [items : CompilerLoadDependencyCatalogList
       (compiler-load-dependency-catalog-handle-items handle)]
-    [index : i64 0]
     [best : i64 -1]
     [best-len : i64 -1]
-    (while (< index items.len)
+    (for [index (iterator.range 0 items.len)]
       (let
         [entry : CompilerLoadDependencyCatalogEntry
           (owned_view.compiler-owned-array-element-shared-view
@@ -1274,8 +1266,7 @@
               (string.eq path root)
               (compiler-load-path-under-root? path root)))
           (set! best index)
-          (set! best-len root-len))
-        (set! index (+ index 1))))
+          (set! best-len root-len))))
     best))
 
 (define (compiler-load-dependency-catalog-handle-slot-for-provenance-id
@@ -1512,21 +1503,18 @@
 
 (define (compiler-load-dependency-surface-list-destroy-storage!
   [surfaces : CompilerLoadDependencySurfaceList]) : unit
-  (let
-    [index : i64 0]
-    (while (< index surfaces.len)
-      (match (owned_view.compiler-owned-array-element-shared-view
-        surfaces.slots
-        index)
-        [(Ready hydration _)
-          (let
-            [pools : ast.AstNodePoolContext hydration.ast.pools]
-            [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
-            (ast.ast-node-pool-context-destroy-storage! pools)
-            (unsafe
-              (arena.tl_arena_destroy base-arena)))]
-        [(Unavailable) unit])
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 surfaces.len)]
+    (match (owned_view.compiler-owned-array-element-shared-view
+      surfaces.slots
+      index)
+      [(Ready hydration _)
+        (let
+          [pools : ast.AstNodePoolContext hydration.ast.pools]
+          [base-arena : i64 (ast.ast-node-pool-context-base-arena pools)]
+          (ast.ast-node-pool-context-destroy-storage! pools)
+          (unsafe
+            (arena.tl_arena_destroy base-arena)))]
+      [(Unavailable) unit])))
 
 (define (compiler-load-dependency-surface-reset-use!
   [state : CompilerLoadSessionState]) : unit
@@ -1555,7 +1543,7 @@
     [index : i64 0]
     (while (< index fragments.len)
       (set! (array-ref fragments.imported index) false)
-      (set! index (+ index 1)))
+      (+= index 1))
     (set! (array-ref surface-state.base-facts 0) base-facts)
     (set! (array-ref surface-state.facts-builder 0) base-builder)
     (set! (array-ref surface-state.surface-decl-count 0) 0)
@@ -1590,8 +1578,7 @@
     [count : i64 (tlci.tlci-spmd-specializations-len source)]
     [out : tlci.TlciSpmdSpecializations
       (tlci.tlci-spmd-specializations-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [item : tlci.TlciSpmdSpecialization
           (tlci.tlci-spmd-specializations-ref source index)]
@@ -1604,8 +1591,7 @@
             (string.copy (& item.args))
             (string.copy (& item.result))
             item.index-param
-            (string.copy (& item.symbol))))
-        (set! index (+ index 1))))
+            (string.copy (& item.symbol))))))
     out))
 
 (define (compiler-load-dependency-surface-copy-spmd-callables
@@ -1614,8 +1600,7 @@
     [count : i64 (tlci.tlci-spmd-callables-len source)]
     [out : tlci.TlciSpmdCallables
       (tlci.tlci-spmd-callables-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [item : tlci.TlciSpmdCallable
           (tlci.tlci-spmd-callables-ref source index)]
@@ -1625,8 +1610,7 @@
             (string.copy (& item.name))
             (string.copy (& item.signature))
             (compiler-load-dependency-surface-copy-specializations
-              item.specializations)))
-        (set! index (+ index 1))))
+              item.specializations)))))
     out))
 
 (define (compiler-load-dependency-surface-hydrate-entry
@@ -1727,11 +1711,10 @@
         [slots : (__tl_dyn-array CompilerLoadDependencySurfaceFragment)
           (__tl_make-array CompilerLoadDependencySurfaceFragment catalog.len)]
         [imported : (__tl_dyn-array bool) (__tl_make-array bool catalog.len)]
-        [index : i64 0]
         [ok : bool (> catalog.len 0)]
         [preflight-facts : surface_facts.SurfaceTypecheckFactsBuilder
           (surface_facts.surface-typecheck-facts-builder-empty)]
-        (while (< index catalog.len)
+        (for [index (iterator.range 0 catalog.len)]
           (let
             [fragment : CompilerLoadDependencySurfaceFragment
               (if (and
@@ -1754,8 +1737,7 @@
                   (owned_view.compiler-owned-shared-view preflight-facts)
                   hydration.facts)
                   [(Err _) (set! ok false)]
-                  [(Ok next) (set! preflight-facts next)])])
-            (set! index (+ index 1))))
+                  [(Ok next) (set! preflight-facts next)])])))
         (set!
           (array-ref surface-state.fragments 0)
           (CompilerLoadDependencySurfaceList slots imported catalog.len))
@@ -1812,7 +1794,6 @@
         (owned_view.compiler-owned-shared-view state))]
     [items : CompilerLoadDependencyCatalogList
       (owned_view.compiler-owned-array-element-shared-view registry.entries 0)]
-    [index : i64 0]
     [unavailable : i64 0]
     [metadata-only : i64 0]
     [trusted-code : i64 0]
@@ -1820,23 +1801,22 @@
     [fixup-bytes : i64 0]
     [entry-bytes : i64 0]
     [import-bytes : i64 0]
-    (while (< index items.len)
+    (for [index (iterator.range 0 items.len)]
       (match (compiler-load-dependency-catalog-admitted-image state index)
         [(NoCatalog) unit]
-        [(Unavailable _) (set! unavailable (+ unavailable 1))]
+        [(Unavailable _) (+= unavailable 1)]
         [(TrustedMetadataOnly image)
-          (set! metadata-only (+ metadata-only 1))
-          (set! code-bytes (+ code-bytes (array-length image.code)))
-          (set! fixup-bytes (+ fixup-bytes (array-length image.fixups)))
-          (set! entry-bytes (+ entry-bytes (array-length image.entries)))
-          (set! import-bytes (+ import-bytes (array-length image.imports)))]
+          (+= metadata-only 1)
+          (+= code-bytes (array-length image.code))
+          (+= fixup-bytes (array-length image.fixups))
+          (+= entry-bytes (array-length image.entries))
+          (+= import-bytes (array-length image.imports))]
         [(TrustedCode image _)
-          (set! trusted-code (+ trusted-code 1))
-          (set! code-bytes (+ code-bytes (array-length image.code)))
-          (set! fixup-bytes (+ fixup-bytes (array-length image.fixups)))
-          (set! entry-bytes (+ entry-bytes (array-length image.entries)))
-          (set! import-bytes (+ import-bytes (array-length image.imports)))])
-      (set! index (+ index 1)))
+          (+= trusted-code 1)
+          (+= code-bytes (array-length image.code))
+          (+= fixup-bytes (array-length image.fixups))
+          (+= entry-bytes (array-length image.entries))
+          (+= import-bytes (array-length image.imports))]))
     (CompilerLoadDependencyCatalogObservation
       items.len
       (array-ref registry.generation 0)
@@ -2235,26 +2215,22 @@
 
 (define (compiler-load-session-state-program-cache-lookup-from
   [state : CompilerLoadSessionState]
-  [key : (& key CompilerLoadProgramCacheKey)]
-  [index : i64]) : CompilerLoadProgramCacheLookup
-  (if (>= index compiler-load-program-cache-capacity)
-    (CompilerLoadProgramCacheMiss)
+  [key : (& key CompilerLoadProgramCacheKey)]) : CompilerLoadProgramCacheLookup
+  (for [index (iterator.range 0 compiler-load-program-cache-capacity)]
     (match (clone (array-ref state.program-cache index))
-      [(CompilerLoadProgramCacheEmpty) (CompilerLoadProgramCacheMiss)]
+      [(CompilerLoadProgramCacheEmpty) (break)]
       [(CompilerLoadProgramCacheFull slot-key program)
-        (if (compiler-load-program-cache-key-equal? slot-key key)
-          (CompilerLoadProgramCacheHit program)
-          (compiler-load-session-state-program-cache-lookup-from
-            state
-            key
-            (+ index 1)))])))
+        (when
+          (compiler-load-program-cache-key-equal? slot-key key)
+          (return (CompilerLoadProgramCacheHit program)))]))
+  (CompilerLoadProgramCacheMiss))
 
 (define (compiler-load-session-state-program-cache-lookup
   [state : CompilerLoadSessionState]
   [key : (& key CompilerLoadProgramCacheKey)]) : CompilerLoadProgramCacheLookup
   (compiler-load-session-state-program-cache-ensure!
     (owned_view.compiler-owned-shared-view state))
-  (compiler-load-session-state-program-cache-lookup-from state key 0))
+  (compiler-load-session-state-program-cache-lookup-from state key))
 
 (define (compiler-load-program-cache-lookup
   [key : (& key CompilerLoadProgramCacheKey)]) : CompilerLoadProgramCacheLookup
@@ -2265,30 +2241,26 @@
 (define (compiler-load-session-state-program-cache-store-at
   [state : CompilerLoadSessionState]
   [key : CompilerLoadProgramCacheKey]
-  [program : ast.AstProgram]
-  [index : i64]) : bool
-  (if (>= index compiler-load-program-cache-capacity)
-    false
+  [program : ast.AstProgram]) : bool
+  (for [index (iterator.range 0 compiler-load-program-cache-capacity)]
     (match (clone (array-ref state.program-cache index))
       [(CompilerLoadProgramCacheEmpty)
         (set!
           (array-ref state.program-cache index)
           (CompilerLoadProgramCacheFull key program))
         (compiler-load-session-state-program-cache-note-store! state)
-        true]
+        (return true)]
       [(CompilerLoadProgramCacheFull slot-key _)
-        (if (compiler-load-program-cache-key-equal? slot-key key)
-          (begin
-            (set!
-              (array-ref state.program-cache index)
-              (CompilerLoadProgramCacheFull key program))
-            (compiler-load-session-state-program-cache-note-store! state)
-            true)
-          (compiler-load-session-state-program-cache-store-at
-            state
-            key
-            program
-            (+ index 1)))])))
+        (when
+          (compiler-load-program-cache-key-equal? slot-key key)
+          (return
+            (begin
+              (set!
+                (array-ref state.program-cache index)
+                (CompilerLoadProgramCacheFull key program))
+              (compiler-load-session-state-program-cache-note-store! state)
+              true)))]))
+  false)
 
 (define (compiler-load-session-state-program-cache-store
   [state : CompilerLoadSessionState]
@@ -2296,7 +2268,7 @@
   [program : ast.AstProgram]) : bool
   (compiler-load-session-state-program-cache-ensure!
     (owned_view.compiler-owned-shared-view state))
-  (compiler-load-session-state-program-cache-store-at state key program 0))
+  (compiler-load-session-state-program-cache-store-at state key program))
 
 (define (compiler-load-program-cache-store
   [key : CompilerLoadProgramCacheKey]
@@ -2308,26 +2280,22 @@
 
 (define (compiler-load-session-state-program-cache-can-store-at
   [state : CompilerLoadSessionState]
-  [key : (& key CompilerLoadProgramCacheKey)]
-  [index : i64]) : bool
-  (if (>= index compiler-load-program-cache-capacity)
-    false
+  [key : (& key CompilerLoadProgramCacheKey)]) : bool
+  (for [index (iterator.range 0 compiler-load-program-cache-capacity)]
     (match (clone (array-ref state.program-cache index))
-      [(CompilerLoadProgramCacheEmpty) true]
+      [(CompilerLoadProgramCacheEmpty) (return true)]
       [(CompilerLoadProgramCacheFull slot-key _)
-        (if (compiler-load-program-cache-key-equal? slot-key key)
-          true
-          (compiler-load-session-state-program-cache-can-store-at
-            state
-            key
-            (+ index 1)))])))
+        (when
+          (compiler-load-program-cache-key-equal? slot-key key)
+          (return true))]))
+  false)
 
 (define (compiler-load-session-state-program-cache-can-store
   [state : CompilerLoadSessionState]
   [key : (& key CompilerLoadProgramCacheKey)]) : bool
   (compiler-load-session-state-program-cache-ensure!
     (owned_view.compiler-owned-shared-view state))
-  (compiler-load-session-state-program-cache-can-store-at state key 0))
+  (compiler-load-session-state-program-cache-can-store-at state key))
 
 (define (compiler-load-program-cache-can-store
   [key : (& key CompilerLoadProgramCacheKey)]) : bool
@@ -2358,25 +2326,21 @@
 
 (define (compiler-load-session-state-program-admission-contains-from?
   [state : CompilerLoadSessionState]
-  [key : (& key CompilerLoadProgramCacheKey)]
-  [index : i64]) : bool
-  (if (>= index compiler-load-program-cache-capacity)
-    false
+  [key : (& key CompilerLoadProgramCacheKey)]) : bool
+  (for [index (iterator.range 0 compiler-load-program-cache-capacity)]
     (match (clone (array-ref state.program-admission index))
-      [(CompilerLoadProgramAdmissionEmpty) false]
+      [(CompilerLoadProgramAdmissionEmpty) (break)]
       [(CompilerLoadProgramAdmissionFull slot-key)
-        (if (compiler-load-program-cache-key-equal? slot-key key)
-          true
-          (compiler-load-session-state-program-admission-contains-from?
-            state
-            key
-            (+ index 1)))])))
+        (when
+          (compiler-load-program-cache-key-equal? slot-key key)
+          (return true))]))
+  false)
 
 (define (compiler-load-session-state-program-admission-contains?
   [state : CompilerLoadSessionState]
   [key : (& key CompilerLoadProgramCacheKey)]) : bool
   (compiler-load-session-state-program-admission-ensure! state)
-  (compiler-load-session-state-program-admission-contains-from? state key 0))
+  (compiler-load-session-state-program-admission-contains-from? state key))
 
 (define (compiler-load-program-admission-contains?
   [key : CompilerLoadProgramCacheKey]) : bool
@@ -2386,29 +2350,25 @@
 
 (define (compiler-load-session-state-program-admission-record-at
   [state : (& state CompilerLoadSessionState)]
-  [key : CompilerLoadProgramCacheKey]
-  [index : i64]) : bool
-  (if (>= index compiler-load-program-cache-capacity)
-    false
+  [key : CompilerLoadProgramCacheKey]) : bool
+  (for [index (iterator.range 0 compiler-load-program-cache-capacity)]
     (match (clone (array-ref state.program-admission index))
       [(CompilerLoadProgramAdmissionEmpty)
         (set!
           (array-ref state.program-admission index)
           (CompilerLoadProgramAdmissionFull key))
-        true]
+        (return true)]
       [(CompilerLoadProgramAdmissionFull slot-key)
-        (if (compiler-load-program-cache-key-equal? slot-key key)
-          true
-          (compiler-load-session-state-program-admission-record-at
-            state
-            key
-            (+ index 1)))])))
+        (when
+          (compiler-load-program-cache-key-equal? slot-key key)
+          (return true))]))
+  false)
 
 (define (compiler-load-session-state-program-admission-record
   [state : (& state CompilerLoadSessionState)]
   [key : CompilerLoadProgramCacheKey]) : bool
   (compiler-load-session-state-program-admission-ensure! state)
-  (compiler-load-session-state-program-admission-record-at state key 0))
+  (compiler-load-session-state-program-admission-record-at state key))
 
 (define (compiler-load-session-state-program-admission-record-persistent
   [state : CompilerLoadSessionState]
@@ -3068,7 +3028,7 @@
     [index : i64 0]
     (while (and same (< index count))
       (set! same (= (array-ref left.slots index) (array-ref right.slots index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     same))
 
 ;; The copy runs under whichever arena the caller made current, so the cached
@@ -3077,10 +3037,8 @@
   (let
     [count : i64 ids.len]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref slots index) (array-ref ids.slots index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref slots index) (array-ref ids.slots index)))
     (CompilerLoadInternIdSeq slots count)))
 
 (define (compiler-load-prelude-cache-key-equal?
@@ -3098,26 +3056,22 @@
 
 (define (compiler-load-session-state-runtime-prelude-cache-lookup-from
   [state : CompilerLoadSessionState]
-  [key : (& key CompilerLoadPreludeCacheKey)]
-  [index : i64]) : CompilerLoadPreludeCacheLookup
-  (if (>= index compiler-load-runtime-prelude-cache-capacity)
-    (CompilerLoadPreludeCacheMiss)
+  [key : (& key CompilerLoadPreludeCacheKey)]) : CompilerLoadPreludeCacheLookup
+  (for [index (iterator.range 0 compiler-load-runtime-prelude-cache-capacity)]
     (match (clone (array-ref state.runtime-prelude-cache index))
-      [(CompilerLoadPreludeCacheEmpty) (CompilerLoadPreludeCacheMiss)]
+      [(CompilerLoadPreludeCacheEmpty) (break)]
       [(CompilerLoadPreludeCacheFull slot-key decls paths modules seen)
-        (if (compiler-load-prelude-cache-key-equal? slot-key key)
-          (CompilerLoadPreludeCacheHit decls paths modules seen)
-          (compiler-load-session-state-runtime-prelude-cache-lookup-from
-            state
-            key
-            (+ index 1)))])))
+        (when
+          (compiler-load-prelude-cache-key-equal? slot-key key)
+          (return (CompilerLoadPreludeCacheHit decls paths modules seen)))]))
+  (CompilerLoadPreludeCacheMiss))
 
 (define (compiler-load-session-state-runtime-prelude-cache-lookup
   [state : CompilerLoadSessionState]
   [key : (& key CompilerLoadPreludeCacheKey)]) : CompilerLoadPreludeCacheLookup
   (compiler-load-session-state-runtime-prelude-cache-ensure!
     (owned_view.compiler-owned-shared-view state))
-  (compiler-load-session-state-runtime-prelude-cache-lookup-from state key 0))
+  (compiler-load-session-state-runtime-prelude-cache-lookup-from state key))
 
 (define (compiler-load-session-state-runtime-prelude-cache-store-at
   [state : (& state CompilerLoadSessionState)]
@@ -3125,28 +3079,21 @@
   [decls : ast.AstDeclList]
   [paths : ast.AstDeclPathList]
   [modules : ast.AstDeclModuleList]
-  [seen : sym_i64_env.SymI64Env]
-  [index : i64]) : unit
-  (if (>= index compiler-load-runtime-prelude-cache-capacity)
-    unit
+  [seen : sym_i64_env.SymI64Env]) : unit
+  (for [index (iterator.range 0 compiler-load-runtime-prelude-cache-capacity)]
     (match (clone (array-ref state.runtime-prelude-cache index))
       [(CompilerLoadPreludeCacheEmpty)
-        (set!
-          (array-ref state.runtime-prelude-cache index)
-          (CompilerLoadPreludeCacheFull key decls paths modules seen))]
-      [(CompilerLoadPreludeCacheFull slot-key _ _ _ _)
-        (if (compiler-load-prelude-cache-key-equal? slot-key key)
+        (return
           (set!
             (array-ref state.runtime-prelude-cache index)
-            (CompilerLoadPreludeCacheFull key decls paths modules seen))
-          (compiler-load-session-state-runtime-prelude-cache-store-at
-            state
-            key
-            decls
-            paths
-            modules
-            seen
-            (+ index 1)))])))
+            (CompilerLoadPreludeCacheFull key decls paths modules seen)))]
+      [(CompilerLoadPreludeCacheFull slot-key _ _ _ _)
+        (when
+          (compiler-load-prelude-cache-key-equal? slot-key key)
+          (return
+            (set!
+              (array-ref state.runtime-prelude-cache index)
+              (CompilerLoadPreludeCacheFull key decls paths modules seen))))])))
 
 (define (compiler-load-session-state-runtime-prelude-cache-store
   [state : CompilerLoadSessionState]
@@ -3163,8 +3110,7 @@
     decls
     paths
     modules
-    seen
-    0)
+    seen)
   (compiler-load-session-state-note-persistent! state))
 
 (define (compiler-load-session-state-runtime-prelude-cache-store-with-pools
@@ -3183,8 +3129,7 @@
     decls
     paths
     modules
-    seen
-    0)
+    seen)
   (compiler-load-session-state-note-persistent-with-pools! state pools))
 
 (define (compiler-load-root-cache-ids-from
@@ -3197,13 +3142,11 @@
         (- count index)
         0)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 len)]
-    [cursor : i64 0]
-    (while (< cursor len)
+    (for [cursor (iterator.range 0 len)]
       (let
         [root : String
           (compiler-load-normalize-path (svec.get roots (+ index cursor) ""))]
-        (set! (array-ref slots cursor) (compiler-load-source-path-id root))
-        (set! cursor (+ cursor 1))))
+        (set! (array-ref slots cursor) (compiler-load-source-path-id root))))
     (CompilerLoadInternIdSeq slots len)))
 
 (define (compiler-load-session-state-runtime-prelude-cache-key
@@ -3317,13 +3260,11 @@
 (define (compiler-load-dirname [path : (& path str)]) : String
   (let
     [n : i64 (string.string-length path)]
-    [i : i64 0]
     [last : i64 -1]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (if (compiler-load-path-separator? (string.string-ref path i))
         (set! last i)
-        (set! last last))
-      (set! i (+ i 1)))
+        (set! last last)))
     (if (< last 0)
       ""
       (string.substring path 0 (+ last 1)))))
@@ -3360,7 +3301,7 @@
               (if (=
                 (compiler-load-char-code-at text (+ start i))
                 (compiler-load-char-code-at prefix i))
-                (set! i (+ i 1))
+                (+= i 1)
                 (set! ok false))
               (set! ok false)))
           (= i prefix-len))))))
@@ -3377,7 +3318,7 @@
     (while (and (not found) (<= (+ i needle-len) text-len))
       (if (compiler-load-string-prefix-at? text needle i)
         (set! found true)
-        (set! i (+ i 1))))
+        (+= i 1)))
     found))
 
 (define (compiler-load-string-contains?
@@ -3485,19 +3426,14 @@
 (define (compiler-load-path-under-roots-from?
   [normalized-path : (& normalized-path str)]
   [roots : svec.Vec]
-  [index : i64]
   [count : i64]) : bool
-  (if (>= index count)
-    false
-    (if (compiler-load-cache-path-under-root?
-      normalized-path
-      (svec.get (& roots) index ""))
-      true
-      (compiler-load-path-under-roots-from?
+  (for [index (iterator.range 0 count)]
+    (when
+      (compiler-load-cache-path-under-root?
         normalized-path
-        roots
-        (+ index 1)
-        count))))
+        (svec.get (& roots) index ""))
+      (return true)))
+  false)
 
 (define (compiler-load-session-file-cacheable?
   [_path : String]
@@ -3520,7 +3456,6 @@
         (compiler-load-path-under-roots-from?
           normalized
           (ast.ast-place-shared-view effective-roots)
-          0
           (svec.len (& effective-roots)))))))
 
 (define (compiler-load-resolve-stdlib-root-raw
@@ -3541,7 +3476,7 @@
             (begin
               (set! found true)
               (set! found-path candidate))
-            (set! i (+ i 1)))))
+            (+= i 1))))
       (if found
         (CompilerLoadSomePath found-path)
         (CompilerLoadNoPath)))
@@ -3682,13 +3617,11 @@
 (define (compiler-load-dotted-module-path-uncached [module-name : String]) : String
   (let
     [n : i64 (string.string-length module-name)]
-    [i : i64 0]
     [out : String ""]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (if (string.char-eq (string.string-ref module-name i) '.')
         (set! out (str_cat.str-cat out "/" ""))
-        (set! out (str_cat.str-cat out (string.substring module-name i 1) "")))
-      (set! i (+ i 1)))
+        (set! out (str_cat.str-cat out (string.substring module-name i 1) ""))))
     (str_cat.str-cat out ".tl" "")))
 
 (define (compiler-load-session-state-dotted-module-path-id
@@ -3745,7 +3678,7 @@
     (while (and (not done) (< i n))
       (if (string.char-eq (string.string-ref module-name i) '.')
         (set! done true)
-        (set! i (+ i 1))))
+        (+= i 1)))
     i))
 
 (define (compiler-load-dotted-module-first [module-name : String]) : String
@@ -3772,7 +3705,7 @@
     (while (and (< found 0) (>= index 0))
       (if (string.char-eq (string.string-ref module-name index) '.')
         (set! found index)
-        (set! index (- index 1))))
+        (-= index 1)))
     found))
 
 (define (compiler-load-resolved-source-exists? [path : String]) : bool
@@ -5194,15 +5127,13 @@
     [normalized : String
       (compiler-load-strip-tl-extension (compiler-load-normalize-path path))]
     [n : i64 (string.string-length normalized)]
-    [i : i64 0]
     [out : String ""]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (let
         [c : char (string.string-ref normalized i)]
         (if (compiler-load-path-separator? c)
           (set! out (str_cat.str-cat out "." ""))
-          (set! out (str_cat.str-cat out (string.substring normalized i 1) "")))
-        (set! i (+ i 1))))
+          (set! out (str_cat.str-cat out (string.substring normalized i 1) "")))))
     out))
 
 (define (compiler-load-canonical-module-id-from-path [path : (& path str)]) : String
@@ -5320,7 +5251,7 @@
       (match (ast.ast-decl-list-ref-borrowed (& decls) index)
         [(Module _) (set! found true)]
         [_ unit])
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (compiler-load-decl-list-has-module-id?
@@ -5328,8 +5259,7 @@
   [want : i64]) : bool
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
@@ -5341,8 +5271,7 @@
                 (= name want)
                 (compiler-load-decl-list-has-module-id? (deref body-box) want))
               (return true))]
-          [_ unit])
-        (set! index (+ index 1))))
+          [_ unit])))
     false))
 
 (define (compiler-load-contextual-moduleless-decls
@@ -5474,8 +5403,7 @@
     [current-module : i64
       (compiler-load-decls-source-module-id (ast.ast-place-shared-view decls))]
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
@@ -5512,8 +5440,7 @@
                           source-module)))]
                   [(LookupMissing)
                     (load_i64_i64_map.insert-ref! (&mut seen) key source-module)])))]
-          [_ unit])
-        (set! index (+ index 1))))
+          [_ unit])))
     (Ok)))
 
 (define (compiler-load-check-dotted-import-aliases
@@ -5575,12 +5502,10 @@
   [importer-module : i64]
   [source-module : i64]
   [variants : (& variants ast.AstVariantDefList)]
-  [index : i64]
   [local-index : i64]
   [path : String]
   [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
-  (if (>= index (ast.ast-variant-def-list-len variants))
-    (Ok)
+  (for [index (iterator.range 0 (ast.ast-variant-def-list-len variants))]
     (match (ast.ast-variant-def-list-get
       variants
       index
@@ -5595,17 +5520,9 @@
           local-index
           (owned_view.compiler-owned-shared-view path)
           span)
-          [(Ok)
-            (compiler-load-unqualified-import-note-variants
-              state
-              importer-module
-              source-module
-              variants
-              (+ index 1)
-              local-index
-              path
-              span)]
-          [(Collision collision) (Collision collision)])])))
+          [(Ok) unit]
+          [(Collision collision) (return (Collision collision))])]))
+  (Ok))
 
 (define (compiler-load-unqualified-import-note-decl
   [state : (&mut state CompilerLoadUnqualifiedImportState)]
@@ -5702,7 +5619,6 @@
             importer-module
             source-module
             (& variants)
-            0
             local-index
             path
             span)]
@@ -5723,7 +5639,6 @@
             importer-module
             source-module
             (& variants)
-            0
             local-index
             path
             span)]
@@ -5740,8 +5655,7 @@
   (let
     [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
@@ -5759,8 +5673,7 @@
                 (owned_view.compiler-owned-shared-view path)
                 span)
                 [(Ok) unit]
-                [(Collision collision) (return (Collision collision))]))])
-        (set! index (+ index 1))))
+                [(Collision collision) (return (Collision collision))]))])))
     (Ok)))
 
 ;; Note the declarations of every module that imports unqualified names, so an
@@ -5778,8 +5691,7 @@
     [in-importer : bool false]
     [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
     [count : i64 (ast.ast-decl-list-len decls)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (ast.ast-decl-list-ref-borrowed decls index)
         [(Module _)
           (set!
@@ -5794,8 +5706,7 @@
         [(Import _ (Spec (ModuleItem _) _ (Some _) (Some _) _))
           (load_i64_i64_map.insert-ref! (&mut importers) cur-module 1)
           (set! any-importer true)]
-        [_ unit])
-      (set! index (+ index 1)))
+        [_ unit]))
     (when
       any-importer
       (set! cur-module cbi.compiler-builtin-id-fix-empty)
@@ -5804,8 +5715,7 @@
         (match (load_i64_i64_map.get (& importers) cur-module)
           [(LookupFound _) true]
           [(LookupMissing) false]))
-      (set! index 0)
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (match (ast.ast-decl-list-ref-borrowed decls index)
           [(Module _)
             (set!
@@ -5831,8 +5741,7 @@
                 ""
                 (ast.ast-decl-span-fallback))
                 [(Ok) unit]
-                [(Collision _) unit]))])
-        (set! index (+ index 1))))))
+                [(Collision _) unit]))])))))
 
 (define (compiler-load-unqualified-import-collision-message
   [collision : CompilerLoadUnqualifiedImportCollision]) : String
@@ -5933,9 +5842,8 @@
         (load_i64_i64_map.with-capacity 64))]
     [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     (compiler-load-unqualified-import-note-locals (&mut state) (& decls))
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
@@ -6002,8 +5910,7 @@
                     collision
                     (& decls)
                     paths))])]
-          [_ unit])
-        (set! index (+ index 1))))
+          [_ unit])))
     (Ok)))
 
 ;; Loading checks namespace collisions while declarations may still contain
@@ -6116,17 +6023,16 @@
 (define (compiler-load-surface-summary-source-active?
   [summaries : CompilerLoadSurfaceSummaryList]
   [source-path-id : i64]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (compiler-load-surface-summary-list-count summaries))
-      (if (=
+  (for [index
+    (iterator.range 0 (compiler-load-surface-summary-list-count summaries))]
+    (when
+      (=
         (__tl-project-field
           (compiler-load-surface-summary-list-at summaries index)
           source-path-id)
         source-path-id)
-        (return true)
-        (set! index (+ index 1))))
-    false))
+      (return true)))
+  false)
 
 (define (compiler-load-surface-summary-list-record
   [summaries : CompilerLoadSurfaceSummaryList]
@@ -6143,10 +6049,8 @@
             (* (array-length slots) 2))]
         [bigger : (__tl_dyn-array CompilerLoadSurfaceSummary)
           (__tl_make-array CompilerLoadSurfaceSummary capacity)]
-        [index : i64 0]
-        (while (< index len)
-          (set! (array-ref bigger index) (array-ref slots index))
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 len)]
+          (set! (array-ref bigger index) (array-ref slots index)))
         (set! slots bigger)))
     (set! (array-ref slots len) summary)
     (CompilerLoadSurfaceSummaryList slots (+ len 1))))
@@ -6189,16 +6093,15 @@
 (define (compiler-load-surface-summary-find-source-in
   [summaries : CompilerLoadSurfaceSummaryList]
   [source-path-id : i64]) : CompilerLoadMaybeSurfaceSummary
-  (let
-    [index : i64 0]
-    (while (< index (compiler-load-surface-summary-list-count summaries))
-      (let
-        [summary : CompilerLoadSurfaceSummary
-          (compiler-load-surface-summary-list-at summaries index)]
-        (if (= summary.source-path-id source-path-id)
-          (return (CompilerLoadSomeSurfaceSummary summary))
-          (set! index (+ index 1)))))
-    (CompilerLoadNoSurfaceSummary)))
+  (for [index
+    (iterator.range 0 (compiler-load-surface-summary-list-count summaries))]
+    (let
+      [summary : CompilerLoadSurfaceSummary
+        (compiler-load-surface-summary-list-at summaries index)]
+      (when
+        (= summary.source-path-id source-path-id)
+        (return (CompilerLoadSomeSurfaceSummary summary)))))
+  (CompilerLoadNoSurfaceSummary))
 
 (define (compiler-load-session-state-surface-summary-find-source
   [state : (& state CompilerLoadSessionState)]
@@ -6210,16 +6113,15 @@
 (define (compiler-load-surface-summary-find-module-in
   [summaries : CompilerLoadSurfaceSummaryList]
   [module-id : i64]) : CompilerLoadMaybeSurfaceSummary
-  (let
-    [index : i64 0]
-    (while (< index (compiler-load-surface-summary-list-count summaries))
-      (let
-        [summary : CompilerLoadSurfaceSummary
-          (compiler-load-surface-summary-list-at summaries index)]
-        (if (= summary.module-id module-id)
-          (return (CompilerLoadSomeSurfaceSummary summary))
-          (set! index (+ index 1)))))
-    (CompilerLoadNoSurfaceSummary)))
+  (for [index
+    (iterator.range 0 (compiler-load-surface-summary-list-count summaries))]
+    (let
+      [summary : CompilerLoadSurfaceSummary
+        (compiler-load-surface-summary-list-at summaries index)]
+      (when
+        (= summary.module-id module-id)
+        (return (CompilerLoadSomeSurfaceSummary summary)))))
+  (CompilerLoadNoSurfaceSummary))
 
 (define (compiler-load-session-state-surface-summary-find-module
   [state : (& state CompilerLoadSessionState)]
@@ -6350,33 +6252,29 @@
   (let
     [len : i64 (compiler-load-surface-summary-list-count summaries)]
     [kept : i64 0]
-    [physical-index : i64 0]
-    (while (< physical-index len)
+    (for [physical-index (iterator.range 0 len)]
       (if (not
         (=
           (__tl-project-field
             (array-ref summaries.slots physical-index)
             source-path-id)
           source-path-id))
-        (set! kept (+ kept 1))
-        unit)
-      (set! physical-index (+ physical-index 1)))
+        (+= kept 1)
+        unit))
     (if (= kept len)
       summaries
       (let
         [slots : (__tl_dyn-array CompilerLoadSurfaceSummary)
           (__tl_make-array CompilerLoadSurfaceSummary kept)]
-        [read-index : i64 0]
         [write-index : i64 0]
-        (while (< read-index len)
+        (for [read-index (iterator.range 0 len)]
           (let
             [summary : CompilerLoadSurfaceSummary
               (clone (array-ref summaries.slots read-index))]
             (when
               (not (= summary.source-path-id source-path-id))
               (set! (array-ref slots write-index) summary)
-              (set! write-index (+ write-index 1)))
-            (set! read-index (+ read-index 1))))
+              (+= write-index 1))))
         (CompilerLoadSurfaceSummaryList slots kept)))))
 
 (define (compiler-load-session-state-surface-summary-remove-source!
@@ -6544,14 +6442,12 @@
 
 (define (compiler-load-surface-summary-decls-require-eager?
   [decls : (& decls CompilerLoadSurfaceDeclList)]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (compiler-load-surface-decl-list-count decls))
-      (if (compiler-load-surface-summary-decl-requires-eager?
+  (for [index (iterator.range 0 (compiler-load-surface-decl-list-count decls))]
+    (when
+      (compiler-load-surface-summary-decl-requires-eager?
         (compiler-load-surface-decl-list-at decls index))
-        (return true)
-        (set! index (+ index 1))))
-    false))
+      (return true)))
+  false)
 
 (define (compiler-load-lazy-alias-demand-none) : CompilerLoadLazyAliasDemand
   (CompilerLoadLazyAliasDemand false false false (sym_i64_env.sym-i64-empty)))
@@ -6843,25 +6739,20 @@
 (define (compiler-load-lazy-surface-variant-direct-name?
   [variants : ast.AstVariantDefList]
   [name : i64]) : bool
-  (compiler-load-lazy-surface-variant-direct-name-at? (& variants) name 0))
+  (compiler-load-lazy-surface-variant-direct-name-at? (& variants) name))
 
 (define (compiler-load-lazy-surface-variant-direct-name-at?
   [variants : (& variants ast.AstVariantDefList)]
-  [name : i64]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-variant-def-list-len variants))
-    false
+  [name : i64]) : bool
+  (for [index (iterator.range 0 (ast.ast-variant-def-list-len variants))]
     (match (ast.ast-variant-def-list-get
       variants
       index
       (ast.ast-variant-def-fallback))
       [(Def variant-name _ _)
-        (or
-          (= variant-name name)
-          (compiler-load-lazy-surface-variant-direct-name-at?
-            variants
-            name
-            (+ index 1)))])))
+        (when (= variant-name name) (return true))
+        unit]))
+  false)
 
 (define (compiler-load-lazy-surface-decl-direct-name?
   [decl : CompilerLoadSurfaceDecl]
@@ -6876,15 +6767,13 @@
 (define (compiler-load-lazy-surface-decls-direct-name?
   [decls : (& decls CompilerLoadSurfaceDeclList)]
   [name : i64]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (compiler-load-surface-decl-list-count decls))
-      (if (compiler-load-lazy-surface-decl-direct-name?
+  (for [index (iterator.range 0 (compiler-load-surface-decl-list-count decls))]
+    (when
+      (compiler-load-lazy-surface-decl-direct-name?
         (compiler-load-surface-decl-list-at decls index)
         name)
-        (return true)
-        (set! index (+ index 1))))
-    false))
+      (return true)))
+  false)
 
 (define (compiler-load-session-state-lazy-name-demand
   [state : CompilerLoadSessionState]
@@ -6942,14 +6831,13 @@
   [decls : CompilerLoadSurfaceDeclList]) : bool
   (let
     [len : i64 (compiler-load-surface-decl-list-count decls)]
-    [index : i64 0]
     (when (= len 0) (return false))
-    (while (< index len)
-      (if (not
-        (compiler-load-surface-decl-decl-emitting?
-          (compiler-load-surface-decl-list-at decls index)))
-        (return false)
-        (set! index (+ index 1))))
+    (for [index (iterator.range 0 len)]
+      (when
+        (not
+          (compiler-load-surface-decl-decl-emitting?
+            (compiler-load-surface-decl-list-at decls index)))
+        (return false)))
     true))
 
 (define (compiler-load-surface-lazy-policy
@@ -8646,7 +8534,6 @@
         ;; Reuse it instead of rebuilding the same owner for every lazy check.
         summary.source-path
         (ast.ast-place-shared-view stdlib-roots)
-        0
         (svec.len (& stdlib-roots))))))
 
 (define (compiler-load-lazy-import-skip-with-state?
@@ -8818,56 +8705,55 @@
 
 (define (compiler-load-surface-field-list-cleanup?
   [fields : (& fields ast.AstFieldDefList)]) : bool
-  (compiler-load-surface-field-list-cleanup-at? (& fields) 0))
+  (compiler-load-surface-field-list-cleanup-at? (& fields)))
 
 (define (compiler-load-surface-field-list-cleanup-at?
-  [fields : (& fields ast.AstFieldDefList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-field-def-list-len fields))
-    false
+  [fields : (& fields ast.AstFieldDefList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-field-def-list-len fields))]
     (match (ast.ast-field-def-list-get
       fields
       index
       (ast.ast-field-def-fallback))
       [(Def _ _ cleanup)
-        (or
-          (ast.ast-field-cleanup? cleanup)
-          (compiler-load-surface-field-list-cleanup-at? fields (+ index 1)))])))
+        (when (ast.ast-field-cleanup? cleanup) (return true))
+        unit]))
+  false)
 
 (define (compiler-load-surface-variant-payload-cleanup?
   [cleanups : ast.AstVariantPayloadCleanupList]) : bool
-  (compiler-load-surface-variant-payload-cleanup-at? (& cleanups) 0))
+  (compiler-load-surface-variant-payload-cleanup-at? (& cleanups)))
 
 (define (compiler-load-surface-variant-payload-cleanup-at?
-  [cleanups : (& cleanups ast.AstVariantPayloadCleanupList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-variant-payload-cleanup-list-len cleanups))
-    false
-    (or
+  [cleanups : (& cleanups ast.AstVariantPayloadCleanupList)]) : bool
+  (for [index
+    (iterator.range 0 (ast.ast-variant-payload-cleanup-list-len cleanups))]
+    (when
       (ast.ast-variant-payload-cleanup?
         (ast.ast-variant-payload-cleanup-list-get
           cleanups
           index
           (ast.ast-variant-payload-cleanup-fallback)))
-      (compiler-load-surface-variant-payload-cleanup-at? cleanups (+ index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (compiler-load-surface-variant-list-cleanup?
   [variants : (& variants ast.AstVariantDefList)]) : bool
-  (compiler-load-surface-variant-list-cleanup-at? (& variants) 0))
+  (compiler-load-surface-variant-list-cleanup-at? (& variants)))
 
 (define (compiler-load-surface-variant-list-cleanup-at?
-  [variants : (& variants ast.AstVariantDefList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-variant-def-list-len variants))
-    false
+  [variants : (& variants ast.AstVariantDefList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-variant-def-list-len variants))]
     (match (ast.ast-variant-def-list-get
       variants
       index
       (ast.ast-variant-def-fallback))
       [(Def _ _ cleanups)
-        (or
+        (when
           (compiler-load-surface-variant-payload-cleanup? cleanups)
-          (compiler-load-surface-variant-list-cleanup-at? variants (+ index 1)))])))
+          (return true))
+        unit]))
+  false)
 
 (define (compiler-load-surface-counts-add
   [left : CompilerLoadSurfaceCounts]
@@ -9452,8 +9338,7 @@
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
@@ -9464,8 +9349,7 @@
               (and
                 (= cur-module target-module)
                 (compiler-load-decl-defines-selected-item? decl item))
-              (return true))])
-        (set! index (+ index 1))))
+              (return true))])))
     false))
 
 (define (compiler-load-selected-item-present?
@@ -9498,8 +9382,7 @@
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (ast.ast-array-shared-view decls.slots (+ decls.offset index))]
@@ -9510,8 +9393,7 @@
               (and
                 (= cur-module target-module)
                 (compiler-load-decl-pending-generator? decl))
-              (return true))])
-        (set! index (+ index 1))))
+              (return true))])))
     false))
 
 ;; Load-time policy for both the source and the package walker. A selected item
@@ -9703,7 +9585,7 @@
           (owned_view.compiler-owned-array-element-shared-view
             slots
             (+ offset count)))
-          (set! count (+ count 1))
+          (+= count 1)
           (set! scanning false))))
     count))
 
@@ -10349,7 +10231,7 @@
                   (ast.ast-decl-module-list-prepend-builder-id
                     importer-source-module-id
                     out-modules))
-                (set! fold (- fold 1)))
+                (-= fold 1))
               (Ok out-decls out-paths out-modules rest-seen))]
           [(Err diag) (Err diag)])))))
 
@@ -10713,8 +10595,7 @@
     [source-offset : i64 source.offset]
     [dest-slots : (__tl_dyn-array ast.AstDecl) dest.slots]
     [dest-offset : i64 dest.offset]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (array-ref source-slots (+ source-offset index))
         [(ModuleBody _ source-body-box)
           (match (array-ref dest-slots (+ dest-offset index))
@@ -10725,8 +10606,7 @@
                 records-start
                 records-end)]
             [_ unit])]
-        [_ unit])
-      (set! index (+ index 1)))))
+        [_ unit]))))
 
 (define (compiler-load-propagate-compacted-program-origins!
   [source : ast.AstProgram]
@@ -11875,7 +11755,7 @@
     [pending-separator : bool false]
     (while (< i n)
       (if (compiler-load-package-tl-extension-at? name i)
-        (set! i (+ i 3))
+        (+= i 3)
         (let
           [c : char (string.string-ref name i)]
           (if (compiler-load-package-symbol-separator? c)
@@ -11883,7 +11763,7 @@
               (if emitted
                 (set! pending-separator true)
                 unit)
-              (set! i (+ i 1)))
+              (+= i 1))
             (begin
               (when
                 pending-separator
@@ -11896,7 +11776,7 @@
                   (compiler-load-package-symbol-char name i c)
                   ""))
               (set! emitted true)
-              (set! i (+ i 1)))))))
+              (+= i 1))))))
     out))
 
 (define (compiler-load-package-symbol-separator? [c : char]) : bool
@@ -12018,7 +11898,7 @@
               (str_cat.str-cat
                 "stdlib/"
                 (string.substring path prefix-len (- path-len prefix-len)))))
-          (set! i (+ i 1)))))
+          (+= i 1))))
     (if found
       out
       path)))
@@ -12166,8 +12046,7 @@
     [out : ast.AstImportedSpmdSpecializationList
       (ast.ast-imported-spmd-specialization-list-new)]
     [count : i64 (tlci.tlci-spmd-specializations-len items)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [item : tlci.TlciSpmdSpecialization
           (tlci.tlci-spmd-specializations-ref items index)]
@@ -12185,8 +12064,7 @@
               (ci.intern-generated-canonical-name item.result))
             item.index-param
             (ci.intern-id-from-renderable
-              (ci.intern-generated-canonical-name item.symbol))))
-        (set! index (+ index 1))))
+              (ci.intern-generated-canonical-name item.symbol))))))
     out))
 
 (define (compiler-load-imported-spmd-callables-for
@@ -12196,8 +12074,7 @@
     [out : ast.AstImportedSpmdCallableList
       (ast.ast-imported-spmd-callable-list-new)]
     [count : i64 (tlci.tlci-spmd-callables-len items)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [item : tlci.TlciSpmdCallable
           (tlci.tlci-spmd-callables-ref items index)]
@@ -12208,8 +12085,7 @@
               (ci.intern-id-from-renderable
                 (ci.intern-generated-canonical-name item.signature))
               (compiler-load-imported-spmd-specializations item.specializations)))
-          unit)
-        (set! index (+ index 1))))
+          unit)))
     out))
 
 (define (compiler-load-imported-spmd-metadata
@@ -12618,8 +12494,7 @@
     [paths : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
     [modules : ast.AstDeclModuleList
       (ast.ast-decl-module-list-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (unless
         (compiler-load-dependency-surface-decl-seen?
           seen
@@ -12650,8 +12525,7 @@
           (ast.ast-decl-module-list-get-id
             (& surface.modules)
             index
-            cbi.compiler-builtin-id-fix-empty)))
-      (set! index (+ index 1)))
+            cbi.compiler-builtin-id-fix-empty))))
     (CompilerLoadDependencySurfaceSelection decls paths modules)))
 
 (define (compiler-load-dependency-surface-merge-seen
@@ -12709,18 +12583,16 @@
   [paths : (& paths ast.AstDeclPathList)]) : i64
   (let
     [count : i64 (ast.ast-decl-path-list-len (& paths))]
-    [index : i64 0]
     [matched : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (if (compiler-load-session-state-dependency-surface-provenance?
         (owned_view.compiler-owned-shared-view state)
         (ast.ast-decl-path-list-provenance-id
           (& paths)
           index
           cbi.compiler-builtin-id-fix-empty))
-        (set! matched (+ matched 1))
-        unit)
-      (set! index (+ index 1)))
+        (+= matched 1)
+        unit))
     matched))
 
 (define (compiler-load-session-state-dependency-surface-provenance-count
@@ -14120,12 +13992,10 @@
   [dst-offset : i64]) : unit
   (let
     [n : i64 src.len]
-    [index : i64 0]
-    (while (< index n)
+    (for [index (iterator.range 0 n)]
       (set!
         (array-ref dst (+ dst-offset index))
-        (clone (array-ref src.slots index)))
-      (set! index (+ index 1)))))
+        (clone (array-ref src.slots index))))))
 
 ;: Append `dep`. Every push right-sizes a fresh array, so callers that keep
 ;: extending the same list from several branches never share a buffer.
@@ -14194,13 +14064,10 @@
   [target-alias : String]) : bool
   (let
     [ordered : CompilerPkgDepList (compiler-pkg-deps-list deps)]
-    [index : i64 0]
-    (while (< index (compiler-pkg-dep-list-count ordered))
+    (for [index (iterator.range 0 (compiler-pkg-dep-list-count ordered))]
       (let
         [dep : CompilerPkgDep (compiler-pkg-dep-list-at ordered index)]
-        (if (string.eq dep.alias target-alias)
-          (return true)
-          (set! index (+ index 1)))))
+        (when (string.eq dep.alias target-alias) (return true))))
     false))
 
 (define (compiler-pkg-deps-cons
@@ -14233,7 +14100,7 @@
     (while ok
       (if (< i n)
         (if (compiler-load-package-name-char? (string.string-ref value i))
-          (set! i (+ i 1))
+          (+= i 1)
           (set! ok false))
         (set! ok false)))
     (= i n)))
@@ -14249,7 +14116,7 @@
     (while ok
       (if (< i n)
         (if (compiler-load-github-component-char? (string.string-ref value i))
-          (set! i (+ i 1))
+          (+= i 1)
           (set! ok false))
         (set! ok false)))
     (= i n)))
@@ -14280,7 +14147,7 @@
   (let
     [body : String (compiler-load-github-address-body address)]
     [body-len : i64 (string.string-length body)]
-    [slash : i64 (compiler-load-slash-index-from body 0 body-len)]
+    [slash : i64 (compiler-load-slash-index-from body body-len)]
     (if (or (< slash 1) (>= slash (- body-len 1)))
       (compiler-load-github-address-error alias)
       (let
@@ -14289,10 +14156,7 @@
           (string.substring body (+ slash 1) (- body-len (+ slash 1)))]
         (cond
           [(>=
-              (compiler-load-slash-index-from
-                repo
-                0
-                (string.string-length repo))
+              (compiler-load-slash-index-from repo (string.string-length repo))
               0)
             (compiler-load-github-address-error alias)]
           [(not (compiler-load-github-component-valid? (string.copy owner)))
@@ -15180,12 +15044,10 @@
   (compiler-load-string-prefix-at? path "pkg:" 0))
 
 ;: Index of the first '/' in `s` at or after `i`, or -1 if none.
-(define (compiler-load-slash-index-from [s : (& s str)] [i : i64] [n : i64]) : i64
-  (if (>= i n)
-    -1
-    (if (= (string.string-ref s i) '/')
-      i
-      (compiler-load-slash-index-from s (+ i 1) n))))
+(define (compiler-load-slash-index-from [s : (& s str)] [n : i64]) : i64
+  (for [i (iterator.range 0 n)]
+    (when (= (string.string-ref s i) '/') (return i)))
+  -1)
 
 ;: True when a path is not a safe relative suffix below its package root.
 (define (compiler-load-path-escapes? [path : String]) : bool
@@ -15197,13 +15059,12 @@
   [target-alias : String]) : CompilerLoadMaybePath
   (let
     [ordered : CompilerPkgDepList (compiler-pkg-deps-list deps)]
-    [index : i64 0]
-    (while (< index (compiler-pkg-dep-list-count ordered))
+    (for [index (iterator.range 0 (compiler-pkg-dep-list-count ordered))]
       (let
         [dep : CompilerPkgDep (compiler-pkg-dep-list-at ordered index)]
-        (if (string.eq dep.alias target-alias)
-          (return (CompilerLoadSomePath dep.path))
-          (set! index (+ index 1)))))
+        (when
+          (string.eq dep.alias target-alias)
+          (return (CompilerLoadSomePath dep.path)))))
     (CompilerLoadNoPath)))
 
 ;: Resolve `pkg:<alias>/<rest>` against `deps`, relative to `manifest-dir`.
@@ -15215,7 +15076,7 @@
     [body : String
       (string.substring import-path 4 (- (string.string-length import-path) 4))]
     [slash : i64
-      (compiler-load-slash-index-from body 0 (string.string-length body))]
+      (compiler-load-slash-index-from body (string.string-length body))]
     (if (< slash 0)
       (Err
         (str_cat.str-cat

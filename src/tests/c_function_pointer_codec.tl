@@ -1,3 +1,4 @@
+(import stdlib.iterator)
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
@@ -21,9 +22,8 @@
         (if complete
           24
           16))]
-    [index : i64 0]
     (set! (array-ref bytes 0) 38)
-    (while (< index 8)
+    (for [index (iterator.range 0 8)]
       (set!
         (array-ref bytes (+ 8 index))
         (cast (bit-and (shr signature (* index 8)) 255) : u8))
@@ -31,8 +31,7 @@
         (set!
           (array-ref bytes (+ 16 index))
           (cast (bit-and (shr mode (* index 8)) 255) : u8))
-        unit)
-      (set! index (+ index 1)))
+        unit))
     bytes))
 
 (define (c-function-codec-decode [mode : ast.AstCFunctionMode]) : bool

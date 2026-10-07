@@ -29,9 +29,9 @@
                 (set! ok false)
                 (begin
                   (set! last-was-dot true)
-                  (set! i (+ i 1))))
+                  (+= i 1)))
               (begin
                 (set! last-was-dot false)
-                (set! i (+ i 1))))))
+                (+= i 1)))))
         (set! ok false)))
     (and (= i n) (not last-was-dot))))

@@ -2,6 +2,7 @@
 ;; source with its inline tests blanked (#8713).
 (cfg test (import compiler_embedded_stdlib_payload_seed as payload))
 (cfg (not test) (import compiler_embedded_stdlib_payload as payload))
+(import stdlib.iterator)
 (import compiler_lzss as lzss)
 (import lex as lexer)
 (import stdlib.string)
@@ -62,7 +63,7 @@
           (= c '"')
           (= c ';'))
           (set! keep false)
-          (set! j (+ j 1)))))
+          (+= j 1))))
     j))
 
 ;; Whether the atom at `start..end` of `src` is exactly `text`.
@@ -83,7 +84,7 @@
   (let
     [j : i64 start]
     (while (and (< j n) (lexer.is-space (__tl_string_ref src j)))
-      (set! j (+ j 1)))
+      (+= j 1))
     j))
 
 ;; What the top-level form whose `(` precedes `start` is: 1 an inline
@@ -133,19 +134,19 @@
         (cond
           [(= c ';') (set! i (lexer.scan-comment-end (& src) (+ i 1) n))]
           [(= c '"')
-            (when (= depth 1) (set! elements (+ elements 1)))
+            (when (= depth 1) (+= elements 1))
             (match (lexer.scan-str-end-result (& src) (+ i 1) n)
               [(Ok end) (set! i (+ end 1))]
               [(Err _) (set! valid false)])]
           [(= c '\'')
             (match (lexer.apostrophe-char-literal-result (& src) i n)
               [(Ok _ end)
-                (when (= depth 1) (set! elements (+ elements 1)))
+                (when (= depth 1) (+= elements 1))
                 (set! i end)]
-              [(No) (set! i (+ i 1))]
+              [(No) (+= i 1)]
               [(Err _) (set! valid false)])]
           [(or (= c '(') (= c '['))
-            (when (= depth 1) (set! elements (+ elements 1)))
+            (when (= depth 1) (+= elements 1))
             (when
               (and (= depth 0) (= c '('))
               (set! start i)
@@ -153,10 +154,10 @@
                 kind
                 (compiler-embedded-stdlib-inline-test-head (& src) (+ i 1) n))
               (set! elements 0))
-            (set! depth (+ depth 1))
-            (set! i (+ i 1))]
+            (+= depth 1)
+            (+= i 1)]
           [(or (= c ')') (= c ']'))
-            (set! depth (- depth 1))
+            (-= depth 1)
             (cond
               [(< depth 0) (set! valid false)]
               [(and (= depth 0) (>= start 0))
@@ -165,22 +166,19 @@
                   (text_buf.append!
                     out
                     (string.substring (& src) copied (- start copied)))
-                  (let
-                    [j : i64 start]
-                    (while (<= j i)
-                      (let
-                        [b : char (__tl_string_ref (& src) j)]
-                        (when
-                          (or (= b '\n') (= b '\r'))
-                          (text_buf.append! out (string.substring (& src) j 1))))
-                      (set! j (+ j 1))))
+                  (for [j (iterator.range start (+ i 1))]
+                    (let
+                      [b : char (__tl_string_ref (& src) j)]
+                      (when
+                        (or (= b '\n') (= b '\r'))
+                        (text_buf.append! out (string.substring (& src) j 1)))))
                   (set! copied (+ i 1)))
                 (set! start -1)]
               [else unit])
-            (set! i (+ i 1))]
-          [(lexer.is-space c) (set! i (+ i 1))]
+            (+= i 1)]
+          [(lexer.is-space c) (+= i 1)]
           [else
-            (when (= depth 1) (set! elements (+ elements 1)))
+            (when (= depth 1) (+= elements 1))
             (set! i (compiler-embedded-stdlib-atom-end (& src) (+ i 1) n))])))
     (if (and valid (= depth 0))
       (begin

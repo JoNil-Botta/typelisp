@@ -4,6 +4,7 @@
 ;; provide complete base objects, complete delta instruction streams, and the
 ;; lookup tables used to resolve abstract OFS_DELTA/REF_DELTA dependencies.
 ;; Hashing, zlib, files, processes, and network I/O are outside this boundary.
+(import stdlib.iterator)
 (import stdlib.byte_buf_core as byte_buf)
 (import stdlib.string)
 
@@ -81,7 +82,7 @@
     (> amount (- limits.max-total-work budget.total-work)))
     false
     (begin
-      (set! budget.total-work (+ budget.total-work amount))
+      (+= budget.total-work amount)
       true)))
 
 (define (git-delta-budget-charge-instruction!
@@ -92,7 +93,7 @@
     (not (git-delta-budget-charge-work! budget limits 1)))
     false
     (begin
-      (set! budget.instructions (+ budget.instructions 1))
+      (+= budget.instructions 1)
       true)))
 
 (define (git-delta-budget-charge-copy!
@@ -106,7 +107,7 @@
     (not (git-delta-budget-charge-work! budget limits amount)))
     false
     (begin
-      (set! budget.copied-bytes (+ budget.copied-bytes amount))
+      (+= budget.copied-bytes amount)
       true)))
 
 (define (git-delta-budget-charge-lookup!
@@ -117,7 +118,7 @@
     (not (git-delta-budget-charge-work! budget limits 1)))
     false
     (begin
-      (set! budget.lookups (+ budget.lookups 1))
+      (+= budget.lookups 1)
       true)))
 
 (define (git-delta-byte [bytes : (& bytes str)] [index : i64]) : i64
@@ -146,13 +147,13 @@
           (or (> shift 63) (> chunk (shr 9223372036854775807 shift)))
           (return (Err "git delta: size varint overflows i64")))
         (set! value (bit-or value (shl chunk shift)))
-        (set! index (+ index 1))
-        (set! count (+ count 1))
+        (+= index 1)
+        (+= count 1)
         (when
           (= (bit-and octet 128) 0)
           (return (Ok (GitDeltaVarint value index))))
         (when (>= count 9) (return (Err "git delta: excessive size varint")))
-        (set! shift (+ shift 7))))
+        (+= shift 7)))
     (Err "git delta: unreachable size varint state")))
 
 ;: Decode Git's biased, big-endian OFS_DELTA distance and check that it points
@@ -178,7 +179,7 @@
     (let
       [first : i64 (git-delta-byte bytes index)]
       (set! value (bit-and first 127))
-      (set! index (+ index 1))
+      (+= index 1)
       (set! count 1)
       (while (!= (bit-and (git-delta-byte bytes (- index 1)) 128) 0)
         (when
@@ -197,8 +198,8 @@
               (> (+ value 1) (shr 9223372036854775807 7)))
             (return (Err "git delta: OFS_DELTA offset overflows i64")))
           (set! value (bit-or (shl (+ value 1) 7) chunk))
-          (set! index (+ index 1))
-          (set! count (+ count 1))))
+          (+= index 1)
+          (+= count 1)))
       (cond
         [(<= value 0) (Err "git delta: zero OFS_DELTA distance")]
         [(> value object-offset) (Err "git delta: OFS_DELTA offset underflow")]
@@ -236,13 +237,10 @@
   [bytes : (& bytes str)]
   [start : i64]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (byte_buf.byte-buf-builder-push
-        out
-        (cast (git-delta-byte bytes (+ start index)) : u8))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (byte_buf.byte-buf-builder-push
+      out
+      (cast (git-delta-byte bytes (+ start index)) : u8))))
 
 ;: Apply one complete, already-inflated Git delta instruction stream.
 ;: `budget` is shared by a whole resolver run when aggregate limits matter.
@@ -303,7 +301,7 @@
         (let
           [opcode : i64 (git-delta-byte delta index)]
           [produced : i64 (byte_buf.byte-buf-builder-len (& out))]
-          (set! index (+ index 1))
+          (+= index 1)
           (if (not (git-delta-budget-charge-instruction! budget limits))
             (begin
               (set! valid false)
@@ -434,7 +432,7 @@
                     (set! error "git delta: total work limit exceeded")]
                   [else
                     (git-delta-append-range! (&mut out) delta index insert-size)
-                    (set! index (+ index insert-size))]))))))
+                    (+= index insert-size)]))))))
       (cond
         [(not valid) (Err error)]
         [(!= (byte_buf.byte-buf-builder-len (& out)) result-length)
@@ -566,7 +564,6 @@
   [limits : (& limits GitDeltaLimits)]
   [budget : (&mut budget GitDeltaBudget)]) : ResultGitDeltaDependency
   (let
-    [index : i64 0]
     [matches : i64 0]
     [target : i64 -1]
     (when
@@ -575,7 +572,7 @@
     (unless
       (git-delta-budget-charge-lookup! budget limits)
       (return (Err "git delta: lookup limit exceeded")))
-    (while (< index (array-length lookups))
+    (for [index (iterator.range 0 (array-length lookups))]
       (unless
         (git-delta-budget-charge-work! budget limits 1)
         (return (Err "git delta: total work limit exceeded")))
@@ -584,9 +581,8 @@
           (& (array-ref lookups index))]
         (when
           (= candidate.offset base-offset)
-          (set! matches (+ matches 1))
-          (set! target candidate.entry-index))
-        (set! index (+ index 1))))
+          (+= matches 1)
+          (set! target candidate.entry-index))))
     (cond
       [(= matches 0) (Err "git delta: missing OFS base")]
       [(> matches 1) (Err "git delta: ambiguous OFS base")]
@@ -604,7 +600,6 @@
   [limits : (& limits GitDeltaLimits)]
   [budget : (&mut budget GitDeltaBudget)]) : ResultGitDeltaDependency
   (let
-    [index : i64 0]
     [matches : i64 0]
     [target-kind : i64 -1]
     [target-index : i64 -1]
@@ -614,7 +609,7 @@
     (unless
       (git-delta-budget-charge-lookup! budget limits)
       (return (Err "git delta: lookup limit exceeded")))
-    (while (< index (array-length lookups))
+    (for [index (iterator.range 0 (array-length lookups))]
       (unless
         (git-delta-budget-charge-work! budget limits 1)
         (return (Err "git delta: total work limit exceeded")))
@@ -622,15 +617,14 @@
         [candidate : (& lookups GitDeltaIdLookup) (& (array-ref lookups index))]
         (when
           (string.eq candidate.object-id object-id)
-          (set! matches (+ matches 1))
+          (+= matches 1)
           (match (& candidate.target)
             [(Entry entry-index)
               (set! target-kind 0)
               (set! target-index entry-index)]
             [(Thin thin-index)
               (set! target-kind 1)
-              (set! target-index thin-index)]))
-        (set! index (+ index 1))))
+              (set! target-index thin-index)]))))
     (cond
       [(= matches 0) (Err "git delta: missing REF base")]
       [(> matches 1) (Err "git delta: ambiguous REF base")]
@@ -672,11 +666,10 @@
     [stack : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [budget : GitDeltaBudget (git-delta-budget-new)]
     [reconstructed : i64 0]
-    [root : i64 0]
     (unless
       (git-delta-limits-valid? limits)
       (return (Err "git delta: invalid limits")))
-    (while (< root count)
+    (for [root (iterator.range 0 count)]
       (if (!= (array-ref states root) 2)
         (let
           [stack-count : i64 1]
@@ -714,7 +707,7 @@
                           (array-ref kinds slot)
                           (git-delta-kind-owned-copy kind))
                         (set! (array-ref states slot) 2)
-                        (set! stack-count (- stack-count 1)))]
+                        (-= stack-count 1))]
                     [(Ofs base-offset _ _)
                       (when
                         (> stack-count limits.max-depth)
@@ -739,7 +732,7 @@
                               (return
                                 (Err "git delta: dependency stack overflow")))
                             (set! (array-ref stack stack-count) dependency)
-                            (set! stack-count (+ stack-count 1))]
+                            (+= stack-count 1)]
                           [else unit]))]
                     [(Ref object-id _ _)
                       (when
@@ -766,7 +759,7 @@
                                 (return
                                   (Err "git delta: dependency stack overflow")))
                               (set! (array-ref stack stack-count) dependency)
-                              (set! stack-count (+ stack-count 1))]
+                              (+= stack-count 1)]
                             [else unit])
                           unit))])]
                 [(= state 1)
@@ -853,10 +846,9 @@
                     (set! (array-ref kinds slot) base-kind)
                     (set! (array-ref depths slot) (+ base-depth 1))
                     (set! (array-ref states slot) 2)
-                    (set! reconstructed (+ reconstructed 1))
-                    (set! stack-count (- stack-count 1)))]
-                [else (set! stack-count (- stack-count 1))])))
+                    (+= reconstructed 1)
+                    (-= stack-count 1))]
+                [else (-= stack-count 1)])))
           unit)
-        unit)
-      (set! root (+ root 1)))
+        unit))
     (Ok (GitDeltaResolvedSet objects kinds budget reconstructed))))

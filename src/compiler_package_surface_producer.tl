@@ -6,6 +6,7 @@
 ;; after the real whole-program typecheck while all AST pools and intern
 ;; identities are still live. Only relocatable encoded bytes escape that
 ;; boundary.
+(import stdlib.iterator)
 (import compiler_ast_types as ast)
 (import compiler_intern_state as cis)
 (import compiler_builtin_ids as cbi)
@@ -76,17 +77,15 @@
     [all-modules : (__tl_dyn-array String)
       (prelude_surface.prelude-surface-module-set paths)]
     [count : i64 0]
-    [index : i64 0]
-    (while (< index (array-length all-modules))
+    (for [index (iterator.range 0 (array-length all-modules))]
       (if (>
         (string.string-length
           (owned_view.compiler-owned-array-element-shared-view
             all-modules
             index))
         0)
-        (set! count (+ count 1))
-        unit)
-      (set! index (+ index 1)))
+        (+= count 1)
+        unit))
     (let
       [modules : (__tl_dyn-array String)
         (__tl_make-array
@@ -94,9 +93,8 @@
           (if (= count 0)
             1
             count))]
-      [source-index : i64 0]
       [dest-index : i64 0]
-      (while (< source-index (array-length all-modules))
+      (for [source-index (iterator.range 0 (array-length all-modules))]
         (let
           [module-name : String
             (string.copy
@@ -106,8 +104,7 @@
           (when
             (> (string.string-length module-name) 0)
             (set! (array-ref modules dest-index) module-name)
-            (set! dest-index (+ dest-index 1)))
-          (set! source-index (+ source-index 1))))
+            (+= dest-index 1))))
       (if (= count 0)
         (set! (array-ref modules 0) (string.copy (& package-name)))
         unit)
@@ -139,13 +136,11 @@
         [count : i64 (ast.ast-decl-list-len (& decls))]
         [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [module-id : i64 cbi.compiler-builtin-id-fix-empty]
-        [index : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (set! (array-ref slots index) module-id)
           (set!
             module-id
-            (ast.ast-decl-list-module-id-at (& decls) index module-id))
-          (set! index (+ index 1)))
+            (ast.ast-decl-list-module-id-at (& decls) index module-id)))
         (ast.AstDeclModuleList slots 0 count true))]))
 
 (define (package-surface-capture-expanded!
@@ -325,36 +320,33 @@
     (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci))
   (test
     package-surface-abort-survives-scratch-retirement
-    (let
-      [round : i64 0]
-      (while (< round 8)
+    (for [round (iterator.range 0 8)]
+      (with-scratch
+        (package-surface-capture-start!
+          (surface_identity.SurfaceIdentityKey
+            "capture"
+            (__tl_make-array "capture")
+            "source"
+            "compiler"
+            "linux-x86_64")
+          (sym_i64_env.sym-i64-empty))
         (with-scratch
-          (package-surface-capture-start!
-            (surface_identity.SurfaceIdentityKey
-              "capture"
-              (__tl_make-array "capture")
-              "source"
-              "compiler"
-              "linux-x86_64")
-            (sym_i64_env.sym-i64-empty))
-          (with-scratch
-            (package-surface-capture-abort! (string.copy "retained diagnostic")))
-          (unless
-            (match (package-surface-capture-take)
-              [(Err message) (string.eq message "retained diagnostic")]
-              [_ false])
-            (io.panic "package capture lost its retired error")))
-        ;; The inactive carrier must also survive its former result arena.
-        (package-surface-capture-abort! "inactive abort")
+          (package-surface-capture-abort! (string.copy "retained diagnostic")))
         (unless
           (match (package-surface-capture-take)
-            [(Err message)
-              (string.eq
-                message
-                "package surface: no checked frontend capture was requested")]
+            [(Err message) (string.eq message "retained diagnostic")]
             [_ false])
-          (io.panic "package capture retained a retired active state"))
-        (set! round (+ round 1))))))
+          (io.panic "package capture lost its retired error")))
+      ;; The inactive carrier must also survive its former result arena.
+      (package-surface-capture-abort! "inactive abort")
+      (unless
+        (match (package-surface-capture-take)
+          [(Err message)
+            (string.eq
+              message
+              "package surface: no checked frontend capture was requested")]
+          [_ false])
+        (io.panic "package capture retained a retired active state")))))
 
 (cfg
   test

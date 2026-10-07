@@ -956,7 +956,7 @@
     (host-smoke-open! pools operands 1 128)
     (while (and ok (< index 65))
       (set! ok (host-smoke-push? 0))
-      (set! index (+ index 1)))
+      (+= index 1))
     (host-smoke-close
       (and
         ok

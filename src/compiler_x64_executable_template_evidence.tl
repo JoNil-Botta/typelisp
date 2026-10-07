@@ -110,11 +110,11 @@
                   (set! (array-ref out write-at) (cast '\\' : u8))]
                 [else
                   (io.panic "x64 executable template: unknown catalog escape")])
-              (set! read-at (+ read-at 2))))
+              (+= read-at 2)))
           (begin
             (set! (array-ref out write-at) (cast current : u8))
-            (set! read-at (+ read-at 1))))
-        (set! write-at (+ write-at 1))))
+            (+= read-at 1)))
+        (+= write-at 1)))
     (unsafe
       (string-from-bytes (ptr-cast (__tl_array-data out) : (Ptr u8)) write-at))))
 

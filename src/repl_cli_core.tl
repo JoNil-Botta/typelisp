@@ -23,6 +23,7 @@
 ;; abandons it. Parse and type errors report diagnostics, discard only the
 ;; failing input, and return to the prompt with previously accepted declarations
 ;; intact.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
@@ -113,7 +114,7 @@
     (while (and
       (< i len)
       (source_text.source-text-space? (string.string-ref text i)))
-      (set! i (+ i 1)))
+      (+= i 1))
     (if (< i len)
       (string.substring text i (- len i))
       "")))
@@ -145,7 +146,7 @@
         (if (repl-line-ending? (string.string-ref text (- len 1)))
           (begin
             (set! end (- len 1))
-            (set! len (- len 1)))
+            (-= len 1))
           (set! done true))))
     (string.substring text 0 end)))
 
@@ -344,8 +345,7 @@
         false)]
     [session-lines : i64 (- session-end.line 1)]
     [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [diag : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-split-at-line
@@ -361,8 +361,7 @@
             diag
             (if in-source
               (owned_view.compiler-owned-shared-view source)
-              (owned_view.compiler-owned-shared-view session-source))))
-        (set! index (+ index 1))))))
+              (owned_view.compiler-owned-shared-view session-source))))))))
 
 (define (repl-char-display-helpers-source) : String
   "(define __tl_repl_ascii_printable_table : String

@@ -10,6 +10,7 @@
 ;; Package keys are intentionally independent of the embedded stdlib. A key is
 ;; package name + canonical module set + source hash + compiler build + config
 ;; variant. Later per-package images use the same schema and hydration path.
+(import stdlib.iterator)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import compiler_surface_binary as binary)
@@ -90,7 +91,7 @@
       (if (=
         (binary.surface-binary-string-ref left index)
         (binary.surface-binary-string-ref right index))
-        (set! index (+ index 1))
+        (+= index 1)
         (set! equal false)))
     equal))
 
@@ -116,7 +117,7 @@
             (set! less true)
             (set! decided true)]
           [(> left-char right-char) (set! decided true)]
-          [else (set! index (+ index 1))])))
+          [else (+= index 1)])))
     (if decided
       less
       (< left-len right-len))))
@@ -134,7 +135,7 @@
           (surface-identity-string-less?
             (array-ref modules (- index 1))
             (array-ref modules index))))
-        (set! index (+ index 1))
+        (+= index 1)
         (set! ok false)))
     ok))
 
@@ -155,7 +156,7 @@
       (if (surface-identity-string-eq?
         (array-ref left index)
         (array-ref right index))
-        (set! index (+ index 1))
+        (+= index 1)
         (set! equal false)))
     equal))
 
@@ -547,7 +548,7 @@
       (if (surface-identity-generated-record-valid?
         (& (array-ref payload.generated index))
         (+ source-count index))
-        (set! index (+ index 1))
+        (+= index 1)
         (set! ok false)))
     ok))
 
@@ -619,13 +620,13 @@
           (set!
             (array-ref modules index)
             (surface-identity-reader-string! (&mut reader)))
-          (set! index (+ index 1)))
+          (+= index 1))
         (set! index 0)
         (while (and reader.ok? (< index source-count))
           (set!
             (array-ref source-names index)
             (surface-identity-reader-string! (&mut reader)))
-          (set! index (+ index 1)))
+          (+= index 1))
         (set! index 0)
         (while (and reader.ok? (< index generated-count))
           (let
@@ -653,7 +654,7 @@
                 ref0
                 ref1
                 ref2))
-            (set! index (+ index 1))))
+            (+= index 1)))
         (let
           [key : SurfaceIdentityKey
             (SurfaceIdentityKey
@@ -718,23 +719,19 @@
       [source-count : i64 (array-length payload.source-names)]
       [remap : (__tl_dyn-array i64)
         (__tl_make-array i64 (+ source-count (array-length payload.generated)))]
-      [index : i64 0]
-      (while (< index source-count)
+      (for [index (iterator.range 0 source-count)]
         (set!
           (array-ref remap index)
           (ci.intern
             (surface-identity-string-array-shared-view
               payload.source-names
-              index)))
-        (set! index (+ index 1)))
-      (set! index 0)
-      (while (< index (array-length payload.generated))
+              index))))
+      (for [index (iterator.range 0 (array-length payload.generated))]
         (set!
           (array-ref remap (+ source-count index))
           (surface-identity-hydrate-generated!
             (surface-identity-string-array-shared-view payload.generated index)
-            remap))
-        (set! index (+ index 1)))
+            remap)))
       (Ok (SurfaceIdentityHydration payload.key remap)))))
 
 (define (surface-identity-hydrate
@@ -815,18 +812,14 @@
         (__tl_make-array String source-count)]
       [generated : (__tl_dyn-array SurfaceGeneratedIdentity)
         (__tl_make-array SurfaceGeneratedIdentity generated-count)]
-      [index : i64 0]
-      (while (< index source-count)
-        (set! (array-ref source-names index) (ci.intern-str index))
-        (set! index (+ index 1)))
-      (set! index 0)
-      (while (< index generated-count)
+      (for [index (iterator.range 0 source-count)]
+        (set! (array-ref source-names index) (ci.intern-str index)))
+      (for [index (iterator.range 0 generated-count)]
         (set!
           (array-ref generated index)
           (surface-identity-generated-record
             (ci.intern-generated-id-at-allocation-index index)
-            source-count))
-        (set! index (+ index 1)))
+            source-count)))
       (SurfaceIdentityPayload key source-names generated))))
 
 (cfg
@@ -841,7 +834,6 @@
           payload.generated]
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-new)]
-        [index : i64 0]
         (byte_le.push-u64! (&mut out) surface-identity-magic)
         (byte_le.push-u64! (&mut out) surface-identity-schema-version)
         (byte_le.push-u64! (&mut out) (array-length key.modules))
@@ -851,19 +843,15 @@
         (surface-identity-push-string! (&mut out) key.source-hash)
         (surface-identity-push-string! (&mut out) key.compiler-build)
         (surface-identity-push-string! (&mut out) key.configuration)
-        (while (< index (array-length key.modules))
+        (for [index (iterator.range 0 (array-length key.modules))]
           (surface-identity-push-string!
             (&mut out)
-            (surface-identity-string-array-shared-view key.modules index))
-          (set! index (+ index 1)))
-        (set! index 0)
-        (while (< index (array-length source-names))
+            (surface-identity-string-array-shared-view key.modules index)))
+        (for [index (iterator.range 0 (array-length source-names))]
           (surface-identity-push-string!
             (&mut out)
-            (surface-identity-string-array-shared-view source-names index))
-          (set! index (+ index 1)))
-        (set! index 0)
-        (while (< index (array-length generated))
+            (surface-identity-string-array-shared-view source-names index)))
+        (for [index (iterator.range 0 (array-length generated))]
           (let
             [record : SurfaceGeneratedIdentity
               (surface-identity-string-array-shared-view generated index)]
@@ -883,6 +871,5 @@
             (byte_le.push-u64! (&mut out) record.ref0)
             (byte_le.push-u64! (&mut out) record.ref1)
             (byte_le.push-u64! (&mut out) record.ref2)
-            (surface-identity-push-string! (&mut out) record.name)
-            (set! index (+ index 1))))
+            (surface-identity-push-string! (&mut out) record.name)))
         (Ok (byte_buf_core.byte-buf-builder-finish-array (& out)))))))

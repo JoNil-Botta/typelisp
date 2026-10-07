@@ -1,4 +1,5 @@
 ;; compiler_ir_types_smoke.tl - Runnable IR type/effect smoke.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.arena)
 (import stdlib.string)
@@ -1392,8 +1393,6 @@
     [second : i64 (compiler_ir_types.compiler-ir-symbol "ir-smoke/two")]
     [first-again : i64 (compiler_ir_types.compiler-ir-symbol "ir-smoke/one")]
     [last-grown : i64 0]
-    [index : i64 0]
-    [logical-source-handle : i64 0]
     [ok : bool true]
     ;; An existing canonical generated name remains a pooled identity and
     ;; does not consume an IR-owned slot.
@@ -1445,14 +1444,13 @@
     ;; 4*capacity collision point -- all fail ownership and slot decoding.
     ;; This deliberately uses raw u32-domain handles because today's fixed
     ;; pool cannot allocate the future values the namespace must reserve.
-    (while (<= logical-source-handle capacity)
+    (for [logical-source-handle (iterator.range 0 (+ capacity 1))]
       (if (compiler_ir_types.compiler-ir-symbol-owned? logical-source-handle)
         (set! ok false)
         unit)
       (unless
         (= (compiler-ir-symbol-slot logical-source-handle) -1)
-        (set! ok false))
-      (set! logical-source-handle (+ logical-source-handle 1)))
+        (set! ok false)))
     (unless (< old-collision-base compact-limit) (set! ok false))
     (unless
       (not (compiler_ir_types.compiler-ir-symbol-owned? old-collision-base))
@@ -1466,8 +1464,8 @@
     ;; Tagged IR payloads around that old boundary stay in the IR domain but
     ;; are not table-owned until actually minted, so they cannot alias or
     ;; index either the source pool or the side table.
-    (set! index (- old-collision-base 1))
-    (while (<= index (+ old-collision-base 1))
+    (for [index
+      (iterator.range (- old-collision-base 1) (+ (+ old-collision-base 1) 1))]
       (let
         [unallocated : i64
           (compiler_ir_types.compiler-ir-symbol-domain-id-for-index index)]
@@ -1480,8 +1478,7 @@
         (unless (= (compiler-ir-symbol-slot unallocated) -1) (set! ok false))
         (unless
           (string.eq (compiler_ir_types.compiler-ir-symbol-text unallocated) "")
-          (set! ok false))
-        (set! index (+ index 1))))
+          (set! ok false))))
     ;; Adjacent identity domains, the compact-u32 limit, and sentinels also
     ;; fail closed rather than indexing or reaching intern-str.
     (unless
@@ -1516,13 +1513,11 @@
       (set! ok false))
     ;; Growth: mint past the initial 1024-slot slab, then re-read the first
     ;; spelling, which the doubling copy has to have carried over.
-    (set! index 0)
-    (while (< index 2048)
+    (for [index (iterator.range 0 2048)]
       (set!
         last-grown
         (compiler_ir_types.compiler-ir-symbol
-          (str_cat.str-cat "ir-smoke/grow-" (string.int->string index))))
-      (set! index (+ index 1)))
+          (str_cat.str-cat "ir-smoke/grow-" (string.int->string index)))))
     (unless
       (=
         (compiler_ir_types.compiler-ir-symbol-count-value)
@@ -1579,21 +1574,18 @@
     [first-text : String (compiler_ir_types.compiler-ir-label-text first)]
     [base : i64 (- (compiler_ir_types.compiler-ir-label-count-value) 1)]
     [total : i64 5000]
-    [index : i64 1]
     [ok : bool true]
     [past-end : String ""]
     (tl_arena_poison_enable)
-    (while (< index total)
+    (for [index (iterator.range 1 total)]
       (unless
         (=
           (compiler_ir_types.compiler-ir-label
             (compiler-ir-smoke-label-spelling index))
           (+ base index))
-        (set! ok false))
-      (set! index (+ index 1)))
+        (set! ok false)))
     (unless (string.eq (& first-text) "ir-smoke-label-0") (set! ok false))
-    (set! index 0)
-    (while (< index total)
+    (for [index (iterator.range 0 total)]
       (let
         [spelling : String (compiler-ir-smoke-label-spelling index)]
         [text : String
@@ -1603,8 +1595,7 @@
           (=
             (compiler_ir_types.compiler-ir-label-existing spelling)
             (+ base index))
-          (set! ok false))
-        (set! index (+ index 1))))
+          (set! ok false))))
     (and
       ok
       (= (compiler_ir_types.compiler-ir-label-count-value) (+ base total))
@@ -1960,12 +1951,10 @@
         4)]
     [params : compiler_ir_types.CompilerIrSpmdPrivateParamSeq
       (compiler_ir_types.compiler-ir-spmd-private-param-seq-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler_ir_types.compiler-ir-spmd-private-param-seq-push!
         (&mut params)
-        (pabi-param-at variant index))
-      (set! index (+ index 1)))
+        (pabi-param-at variant index)))
     params))
 
 (define (pabi-result-varying-i64) : compiler_ir_types.CompilerIrSpmdPrivateResult
@@ -2738,7 +2727,7 @@
 (define (compiler-ir-smoke-count-use
   [_role : compiler_ir_types.CompilerIrOperandRole]
   [_value : compiler_ir_types.CompilerIrValue]) : unit
-  (set! compiler-ir-smoke-operand-visits (+ compiler-ir-smoke-operand-visits 1)))
+  (+= compiler-ir-smoke-operand-visits 1))
 
 (define (compiler-ir-smoke-count-fold
   [_role : compiler_ir_types.CompilerIrOperandRole]
@@ -2934,7 +2923,7 @@
         (compiler-ir-smoke-operand-failure
           (compiler-ir-smoke-operand-sample index)
           (compiler-ir-smoke-operand-expect index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     (if (= failure 0)
       0
       (+ (* (- index 1) 100) failure))))
@@ -3220,23 +3209,20 @@
   [rewrite
     : (-> compiler_ir_types.CompilerIrInstr compiler_ir_types.CompilerIrInstr)]) : unit
   (let
-    [index : i64 0]
     [count : i64 instrs.len]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler_ir_types.compiler-ir-instr-seq-set!
         (&mut instrs)
         index
-        (rewrite (compiler_ir_types.compiler-ir-instr-seq-ref instrs index)))
-      (set! index (+ index 1)))))
+        (rewrite (compiler_ir_types.compiler-ir-instr-seq-ref instrs index))))))
 
 (define (compiler-ir-instr-seq-compact!
   [instrs : (&mut instrs compiler_ir_types.CompilerIrInstrSeq)]
   [keep? : (-> compiler_ir_types.CompilerIrInstr bool)]) : unit
   (let
-    [read : i64 0]
     [write : i64 0]
     [count : i64 instrs.len]
-    (while (< read count)
+    (for [read (iterator.range 0 count)]
       (when
         (keep? (clone (array-ref instrs.slots read)))
         (if (not (= write read))
@@ -3244,8 +3230,7 @@
             (array-ref instrs.slots write)
             (clone (array-ref instrs.slots read)))
           unit)
-        (set! write (+ write 1)))
-      (set! read (+ read 1)))
+        (+= write 1)))
     (set! instrs.len write)))
 
 (define (compiler-ir-value-var-eq?
@@ -3400,17 +3385,15 @@
 
 (define (compiler-ir-smoke-instr-fault-rows) : String
   (let
-    [index : i64 1]
     [out : String ""]
-    (while (<= index 54)
+    (for [index (iterator.range 1 (+ 54 1))]
       (set!
         out
         (str_cat.str-cat
           out
           (compiler-ir-smoke-fault-letter
             (compiler_ir_types.compiler-ir-instr-fault
-              (compiler-ir-smoke-operand-sample index)))))
-      (set! index (+ index 1)))
+              (compiler-ir-smoke-operand-sample index))))))
     out))
 
 (define (compiler-ir-smoke-binop-fault-rows) : String
@@ -3440,17 +3423,15 @@
         (compiler_ir_types.CompilerIrBinOp.BitXor)
         (compiler_ir_types.CompilerIrBinOp.Shl (clone i64-ty))
         (compiler_ir_types.CompilerIrBinOp.Shr (clone i64-ty)))]
-    [index : i64 0]
     [out : String ""]
-    (while (< index 22)
+    (for [index (iterator.range 0 22)]
       (set!
         out
         (str_cat.str-cat
           out
           (compiler-ir-smoke-fault-letter
             (compiler_ir_types.compiler-ir-binop-fault
-              (clone (array-ref ops index))))))
-      (set! index (+ index 1)))
+              (clone (array-ref ops index)))))))
     out))
 
 (define (compiler-ir-fault-rows-ok?) : bool
@@ -3808,8 +3789,7 @@
       (compiler_ir_types.compiler-source-spans-entry-list-empty)]
     [grown-instr-spans : compiler_ir_types.CompilerSourceSpans
       (compiler_ir_types.compiler-source-spans-empty)]
-    [i : i64 0]
-    (while (< i 6)
+    (for [i (iterator.range 0 6)]
       (set!
         grown-entries
         (compiler_ir_types.compiler-source-spans-entry-list-append
@@ -3828,8 +3808,7 @@
           (compiler_ir_types.compiler-ir-global-shared-view instr)
           (if (= i 5)
             span3
-            span1)))
-      (set! i (+ i 1)))
+            span1))))
     (and
       (= (compiler_ir_types.compiler-source-spans-entry-list-count entries) 2)
       (= (compiler_ir_types.compiler-source-spans-count spans) 2)

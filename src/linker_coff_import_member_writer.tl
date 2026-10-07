@@ -3,6 +3,7 @@
 ;; The caller chooses exports and passes the public symbol plus the intended
 ;; DLL import name (or an ordinal). Named modes encode the public symbol in the
 ;; short record; the import name is checked against the selected transformation.
+(import stdlib.iterator)
 (import stdlib.byte_buf_core as bytes)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as cat)
@@ -71,7 +72,7 @@
           (and (not allow-dot) (= c 46)))
           (set! ok false)
           unit)
-        (set! i (+ i 1))))
+        (+= i 1)))
     ok))
 
 (define (coff-import-valid-dll-part? [s : (& s str)]) : bool
@@ -97,11 +98,8 @@
   (coff-import-push16! b (shr v 16)))
 
 (define (coff-import-zero! [b : (&mut b bytes.ByteBufBuilder)] [n : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i n)
-      (coff-import-push8! b 0)
-      (set! i (+ i 1)))))
+  (for [i (iterator.range 0 n)]
+    (coff-import-push8! b 0)))
 
 (define (coff-import-text! [b : (&mut b bytes.ByteBufBuilder)] [s : String]) : unit
   (bytes.byte-buf-builder-append-string b s))
@@ -371,7 +369,7 @@
         (> (+ 6 (coff-import-len (array-ref plans i).public-name)) max-string))
         (set! fit false)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     fit))
 
 (define (coff-import-members-validated
@@ -434,14 +432,13 @@
                   prior.public-name)))
               (set! error "duplicate archive-index symbol")
               unit)
-            (set! j (+ j 1))))
-        (set! i (+ i 1))))
+            (+= j 1)))
+        (+= i 1)))
     (if (not (string.eq error ""))
       (Err error)
       (let
         [members : (__tl_dyn-array CoffImportMember)
           (__tl_make-array CoffImportMember (+ count 3))]
-        [index : i64 0]
         (set!
           (array-ref members 0)
           (coff-import-member
@@ -466,7 +463,7 @@
             (coff-import-null-thunk (clone null-thunk))
             (clone null-thunk)
             ""))
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (let
             [p : CoffImportPlan (clone (array-ref plans index))]
             (set!
@@ -479,8 +476,7 @@
                   (coff-import-symbol (clone p) 1))
                 (if (= p.kind 0)
                   (coff-import-symbol (clone p) 1)
-                  "")))
-            (set! index (+ index 1))))
+                  "")))))
         (Ok members)))))
 
 (define (coff-import-members-with-limits
@@ -569,7 +565,7 @@
         (=
           (cast (coff-import-char payload i) : i64)
           (cast (coff-import-char expected i) : i64)))
-        (set! i (+ i 1)))
+        (+= i 1))
       (cat.str-cat
         (cat.str-cat " offset " (string.int->string i))
         (cat.str-cat
@@ -619,24 +615,19 @@
           (test.assert-true
             (= (array-length members) 7)
             "three support members first")
-          (let
-            [i : i64 0]
-            (while (< i 7)
-              (test.assert-true
-                (coff-import-fixture-eq?
-                  (clone (array-ref members i).payload)
-                  i)
+          (for [i (iterator.range 0 7)]
+            (test.assert-true
+              (coff-import-fixture-eq? (clone (array-ref members i).payload) i)
+              (cat.str-cat
                 (cat.str-cat
-                  (cat.str-cat
-                    "LLVM member payload bytes at "
-                    (string.int->string i))
-                  (coff-import-fixture-difference
-                    (clone (array-ref members i).payload)
-                    i)))
-              (test.assert-true
-                (string.eq (array-ref members i).archive-name "example.dll")
-                "duplicate logical member names remain ordered")
-              (set! i (+ i 1))))
+                  "LLVM member payload bytes at "
+                  (string.int->string i))
+                (coff-import-fixture-difference
+                  (clone (array-ref members i).payload)
+                  i)))
+            (test.assert-true
+              (string.eq (array-ref members i).archive-name "example.dll")
+              "duplicate logical member names remain ordered"))
           (test.assert-true
             (string.eq
               (array-ref (array-ref members 0).index-symbols 0)
@@ -977,12 +968,9 @@
       (match (coff-import-members "example.dll" "example" (& plans))
         [(Err _) (test.assert-true false "alias and forwarder plans accept")]
         [(Ok members)
-          (let
-            [i : i64 0]
-            (while (< i 3)
-              (test.assert-true
-                (coff-import-alias-fixture-eq?
-                  (clone (array-ref members (+ i 3)).payload)
-                  (+ i 3))
-                "LLVM alias/forwarder member payload")
-              (set! i (+ i 1))))]))))
+          (for [i (iterator.range 0 3)]
+            (test.assert-true
+              (coff-import-alias-fixture-eq?
+                (clone (array-ref members (+ i 3)).payload)
+                (+ i 3))
+              "LLVM alias/forwarder member payload"))]))))

@@ -1,4 +1,5 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.fs)
 (import stdlib.byte_buf)
@@ -90,17 +91,15 @@
   [state : (& state lvf.LspServerState)]
   [name : String]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
     [total : i64 (lsp_tests.lsp-server-state-declaration-count state)]
-    (while (< index total)
+    (for [index (iterator.range 0 total)]
       (match (lsp_tests.lsp-server-state-declaration-at state index)
         [(Missing) unit]
         [(Found row)
           (if (string.eq row.decl.name name)
-            (set! count (+ count 1))
-            unit)])
-      (set! index (+ index 1)))
+            (+= count 1)
+            unit)]))
     count))
 
 (define (lsp-smoke-state-name-at
@@ -133,7 +132,7 @@
             (= row.overlay overlay))
             (set! found true)
             unit)])
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (lsp-smoke-state-with-overlay
@@ -240,7 +239,7 @@
         (begin
           (set! found true)
           (set! idx (lsp_svec.len items)))
-        (set! idx (+ idx 1))))
+        (+= idx 1)))
     found))
 
 (define (lsp-completion-smoke-ok?) : bool
@@ -278,7 +277,7 @@
     (while (and (< i n) (< found 0))
       (if (and (<= (+ i m) n) (string.is-string-prefix-at haystack needle i))
         (set! found i)
-        (set! i (+ i 1))))
+        (+= i 1)))
     found))
 
 (define (lsp-transcript-frame [body : String]) : String
@@ -308,9 +307,9 @@
     (while (<= (+ index needle-len) text-len)
       (if (string.is-string-prefix-at text needle index)
         (begin
-          (set! count (+ count 1))
-          (set! index (+ index needle-len)))
-        (set! index (+ index 1))))
+          (+= count 1)
+          (+= index needle-len))
+        (+= index 1)))
     count))
 
 (define (lsp-transcript-framing-smoke-ok?) : bool
@@ -873,7 +872,7 @@
                     (tc_core.tc-inlay-hint-type-at-for-state inlay-state i)
                     "i32"))
                 unit)
-              (set! i (+ i 1))))
+              (+= i 1)))
           (let
             [near-idx : i64
               (lsp.lsp-nearest-inlay-hint-index
@@ -1310,7 +1309,7 @@
                     (> modifiers 15))
                     (set! ok false)
                     unit)
-                  (set! line (+ line delta-line))
+                  (+= line delta-line)
                   (set!
                     start
                     (if (= delta-line 0)
@@ -1337,8 +1336,8 @@
                   (set! modifier-mask (bit-or modifier-mask modifiers))
                   (set! previous-line line)
                   (set! previous-end (+ start token-length))
-                  (set! count (+ count 1))
-                  (set! index (+ index 5))))
+                  (+= count 1)
+                  (+= index 5)))
               (LspSemanticTokenDecode ok count type-mask modifier-mask))]
           [_ (LspSemanticTokenDecode false 0 0 0)])])))
 
@@ -1538,24 +1537,18 @@
 (define (lsp-fold-nested-source [depth : i64]) : String
   (let
     [buf : text_buf.TextBuf (text_buf.empty)]
-    [i : i64 0]
-    (while (< i depth)
-      (text_buf.append! buf "(a\n")
-      (set! i (+ i 1)))
-    (set! i 0)
-    (while (< i depth)
-      (text_buf.append! buf ")\n")
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 depth)]
+      (text_buf.append! buf "(a\n"))
+    (for [i (iterator.range 0 depth)]
+      (text_buf.append! buf ")\n"))
     (text_buf.render buf)))
 
 ;; `count` sibling two-line forms.
 (define (lsp-fold-wide-source [count : i64]) : String
   (let
     [buf : text_buf.TextBuf (text_buf.empty)]
-    [i : i64 0]
-    (while (< i count)
-      (text_buf.append! buf "(a\n)\n")
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 count)]
+      (text_buf.append! buf "(a\n)\n"))
     (text_buf.render buf)))
 
 (define (lsp-fold-first-json [ranges : json.JsonSeq]) : String
@@ -1586,19 +1579,15 @@
 (define (lsp-call-context-deep-source [depth : i64]) : String
   (let
     [buf : text_buf.TextBuf (text_buf.empty)]
-    [i : i64 0]
-    (while (< i depth)
-      (text_buf.append! buf "(f ")
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 depth)]
+      (text_buf.append! buf "(f "))
     (text_buf.render buf)))
 
 (define (lsp-call-context-wide-source [count : i64]) : String
   (let
     [buf : text_buf.TextBuf (text_buf.empty)]
-    [i : i64 0]
-    (while (< i count)
-      (text_buf.append! buf "(f)")
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 count)]
+      (text_buf.append! buf "(f)"))
     (text_buf.append! buf "(target x ")
     (text_buf.render buf)))
 
@@ -2429,23 +2418,20 @@
         1)]
     [_single-check : unit
       (begin
-        (let
-          [open-index : i64 1]
-          (while (< open-index 17)
-            (let
-              [suffix : String (string.int->string open-index)]
-              [path : String
-                (lsp.lsp-str4
-                  "target/lsp_workspace_index/single-"
-                  (owned_view.compiler-owned-shared-view suffix)
-                  ""
-                  ".tl")]
-              [text : String
-                (lsp.lsp-str4 "(define single-value-" suffix " : i64 " "7)")]
-              (set!
-                single-state
-                (lsp-smoke-state-with-overlay single-state path text open-index))
-              (set! open-index (+ open-index 1)))))
+        (for [open-index (iterator.range 1 17)]
+          (let
+            [suffix : String (string.int->string open-index)]
+            [path : String
+              (lsp.lsp-str4
+                "target/lsp_workspace_index/single-"
+                (owned_view.compiler-owned-shared-view suffix)
+                ""
+                ".tl")]
+            [text : String
+              (lsp.lsp-str4 "(define single-value-" suffix " : i64 " "7)")]
+            (set!
+              single-state
+              (lsp-smoke-state-with-overlay single-state path text open-index))))
         (if (and
           (= (lsp-smoke-state-root-count (& single-state)) 0)
           (= (lsp_document_vec.len (& single-state.documents)) 17)
@@ -2620,40 +2606,37 @@
         state
         (owned_view.compiler-owned-shared-view refresh-path)
         1))
-    (let
-      [iteration : i64 1]
-      (while (< iteration 21)
-        (let
-          [owner : i64 state.owner-arena]
-          [name : String
-            (lsp.lsp-str3 "refresh-value-" (string.int->string iteration) "")]
-          [source : String
-            (lsp.lsp-str3
-              "(define "
-              (owned_view.compiler-owned-shared-view name)
-              " : i64 13")]
-          (lsp-smoke-write-text refresh-path source)
-          (set!
+    (for [iteration (iterator.range 1 21)]
+      (let
+        [owner : i64 state.owner-arena]
+        [name : String
+          (lsp.lsp-str3 "refresh-value-" (string.int->string iteration) "")]
+        [source : String
+          (lsp.lsp-str3
+            "(define "
+            (owned_view.compiler-owned-shared-view name)
+            " : i64 13")]
+        (lsp-smoke-write-text refresh-path source)
+        (set!
+          state
+          (lsp-smoke-state-watch
             state
-            (lsp-smoke-state-watch
-              state
-              (owned_view.compiler-owned-shared-view refresh-path)
-              2))
-          (if (and
-            (not (= owner state.owner-arena))
-            (= (lsp-smoke-state-source-count (& state)) 3)
-            (= (lsp_tests.lsp-server-state-declaration-count (& state)) 3)
-            (=
-              (lsp-smoke-state-name-count
-                (& state)
-                (owned_view.compiler-owned-shared-view name))
-              1)
-            (string.eq (lsp-smoke-state-name-at (& state) 2) name))
-            unit
-            (begin
-              (io.print-error "workspace index smoke: repeated refresh\n")
-              (set! ok false)))
-          (set! iteration (+ iteration 1)))))
+            (owned_view.compiler-owned-shared-view refresh-path)
+            2))
+        (if (and
+          (not (= owner state.owner-arena))
+          (= (lsp-smoke-state-source-count (& state)) 3)
+          (= (lsp_tests.lsp-server-state-declaration-count (& state)) 3)
+          (=
+            (lsp-smoke-state-name-count
+              (& state)
+              (owned_view.compiler-owned-shared-view name))
+            1)
+          (string.eq (lsp-smoke-state-name-at (& state) 2) name))
+          unit
+          (begin
+            (io.print-error "workspace index smoke: repeated refresh\n")
+            (set! ok false)))))
     (let
       [added : lsp_svec.Vec (lsp_svec.new)]
       [removed : lsp_svec.Vec (lsp_svec.new)]

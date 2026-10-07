@@ -523,7 +523,7 @@ tl_startup_profile_process_entry_tick:
             profile)
           ""
           ""))
-      (set! size (+ size 8)))
+      (+= size 8))
     out))
 
 (define (compiler-backend-runtime-region-mark-functions

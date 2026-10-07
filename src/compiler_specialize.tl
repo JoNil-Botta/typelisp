@@ -1,4 +1,5 @@
 ;; compiler_specialize.tl - Selfhost comptime function specialization.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
@@ -474,11 +475,9 @@
     [count : i64 rest.len]
     [slots : (__tl_dyn-array ctfe.CompilerCtfeValue)
       (__tl_make-array ctfe.CompilerCtfeValue (+ count 1))]
-    [at : i64 0]
     (set! (array-ref slots 0) head)
-    (while (< at count)
-      (set! (array-ref slots (+ at 1)) (array-ref rest.slots at))
-      (set! at (+ at 1)))
+    (for [at (iterator.range 0 count)]
+      (set! (array-ref slots (+ at 1)) (array-ref rest.slots at)))
     (SpecValueList slots (+ count 1))))
 
 (define (spec-value-subst-new) : SpecValueSubst
@@ -492,11 +491,9 @@
     [count : i64 rest.len]
     [slots : (__tl_dyn-array SpecValueBinding)
       (__tl_make-array SpecValueBinding (+ count 1))]
-    [at : i64 0]
     (set! (array-ref slots 0) (SpecValueBinding.Bind key-id value))
-    (while (< at count)
-      (set! (array-ref slots (+ at 1)) (spec-value-subst-at (& rest) at))
-      (set! at (+ at 1)))
+    (for [at (iterator.range 0 count)]
+      (set! (array-ref slots (+ at 1)) (spec-value-subst-at (& rest) at)))
     (spec-value-subst-from-slots slots (+ count 1))))
 
 (define (spec-type-subst-new) : SpecTypeSubst
@@ -516,11 +513,9 @@
     [count : i64 rest.len]
     [slots : (__tl_dyn-array SpecTypeBinding)
       (__tl_make-array SpecTypeBinding (+ count 1))]
-    [at : i64 0]
     (set! (array-ref slots 0) (SpecTypeBinding.Bind key-id ty))
-    (while (< at count)
-      (set! (array-ref slots (+ at 1)) (spec-type-subst-at (& rest) at))
-      (set! at (+ at 1)))
+    (for [at (iterator.range 0 count)]
+      (set! (array-ref slots (+ at 1)) (spec-type-subst-at (& rest) at)))
     (spec-type-subst-from-slots slots (+ count 1))))
 
 (defenum SpecMaybeString
@@ -677,20 +672,19 @@
 
 (define (spec-expr-list-maybe-span-at-with-owner
   [owner : (& owner SpecOwnerContext)]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : SpecMaybeSourceSpan
-  (if (>= index (ast.ast-expr-list-len exprs))
-    (None)
+  [exprs : (& exprs ast.AstExprList)]) : SpecMaybeSourceSpan
+  (for [index (iterator.range 0 (ast.ast-expr-list-len exprs))]
     (match (spec-expr-maybe-span-with-owner
       owner
       (spec-owner-expr-get owner (ast.ast-expr-list-get exprs index 0)))
-      [(Some span) (Some span)]
-      [(None) (spec-expr-list-maybe-span-at-with-owner owner exprs (+ index 1))])))
+      [(Some span) (return (Some span))]
+      [(None) unit]))
+  (None))
 
 (define (spec-expr-list-maybe-span-with-owner
   [owner : (& owner SpecOwnerContext)]
   [exprs : ast.AstExprList]) : SpecMaybeSourceSpan
-  (spec-expr-list-maybe-span-at-with-owner owner (& exprs) 0))
+  (spec-expr-list-maybe-span-at-with-owner owner (& exprs)))
 
 (define (spec-decl-maybe-span-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -780,17 +774,16 @@
     [_ false]))
 
 (define (spec-param-list-has-comptime? [params : (& params ast.AstParamList)]) : bool
-  (spec-param-list-has-comptime-at? params 0))
+  (spec-param-list-has-comptime-at? params))
 
 (define (spec-param-list-has-comptime-at?
-  [params : (& params ast.AstParamList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-param-list-len params))
-    false
-    (if (spec-param-comptime?
-      (ast.ast-param-list-get params index (ast.ast-param-fallback)))
-      true
-      (spec-param-list-has-comptime-at? params (+ index 1)))))
+  [params : (& params ast.AstParamList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
+    (when
+      (spec-param-comptime?
+        (ast.ast-param-list-get params index (ast.ast-param-fallback)))
+      (return true)))
+  false)
 
 (define (spec-template-shadow-copy-range
   [dst : (&mut dst (__tl_dyn-array i64))]
@@ -954,7 +947,7 @@
               data
               (spec-template-shadow-state-grow-scratch data scratch-len)))
           (set! (array-ref data.scratch scratch-len) wanted)
-          (set! scratch-len (+ scratch-len 1))
+          (+= scratch-len 1)
           (set! wanted (array-ref data.parents wanted)))))
     (while (> scratch-len 0)
       (let
@@ -1255,15 +1248,13 @@
   [n : i64]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [index : i64 idx]
     [out : text_buf.TextBuf buf]
-    (while (< index n)
+    (for [index (iterator.range idx n)]
       (set!
         out
         (text_buf.append-int
           (text_buf.append out "_")
-          (cast (string.string-ref text index) : i64)))
-      (set! index (+ index 1)))
+          (cast (string.string-ref text index) : i64))))
     out))
 
 (define (spec-string-key [text : String]) : String
@@ -2100,8 +2091,7 @@
   [records : (& records SpecGeneratedSymbolRecords)]) : unit
   (let
     [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
-    [index : i64 0]
-    (while (< index records.len)
+    (for [index (iterator.range 0 records.len)]
       (let
         [record : SpecGeneratedSymbolRecord
           (spec-array-shared-view records.slots index)]
@@ -2112,8 +2102,7 @@
             owner
             (SpecStructuralKey record.structural-key)
             record.template-name
-            record.values))
-        (set! index (+ index 1))))))
+            record.values))))))
 
 (define (spec-materialize-owner-generated-symbols!
   [owner : (& owner SpecOwnerContext)]) : unit
@@ -2280,20 +2269,20 @@
     [len : i64 (ast.ast-param-list-len (& a))]
     (and
       (= len (ast.ast-param-list-len (& b)))
-      (gen-param-list-eq-at? (& a) (& b) len 0))))
+      (gen-param-list-eq-at? (& a) (& b) len))))
 
 (define (gen-param-list-eq-at?
   [a : (& a ast.AstParamList)]
   [b : (& b ast.AstParamList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  [len : i64]) : bool
+  (for [index (iterator.range 0 len)]
+    (unless
       (gen-param-eq?
         (ast.ast-param-list-get a index (ast.ast-param-fallback))
         (ast.ast-param-list-get b index (ast.ast-param-fallback)))
-      (gen-param-list-eq-at? a b len (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-macro-param-eq? [a : ast.AstMacroParam] [b : ast.AstMacroParam]) : bool
   (match a
@@ -2313,20 +2302,20 @@
     [len : i64 (ast.ast-macro-param-list-len (& a))]
     (and
       (= len (ast.ast-macro-param-list-len (& b)))
-      (gen-macro-param-list-eq-at? (& a) (& b) len 0))))
+      (gen-macro-param-list-eq-at? (& a) (& b) len))))
 
 (define (gen-macro-param-list-eq-at?
   [a : (& a ast.AstMacroParamList)]
   [b : (& b ast.AstMacroParamList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  [len : i64]) : bool
+  (for [index (iterator.range 0 len)]
+    (unless
       (gen-macro-param-eq?
         (ast.ast-macro-param-list-get a index (ast.ast-macro-param-fallback))
         (ast.ast-macro-param-list-get b index (ast.ast-macro-param-fallback)))
-      (gen-macro-param-list-eq-at? a b len (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-field-cleanup-eq?
   [a : ast.AstFieldCleanup]
@@ -2357,20 +2346,20 @@
 
 (define (gen-field-list-eq? [a : ast.AstFieldDefList] [b : ast.AstFieldDefList]) : bool
   (if (= a.len b.len)
-    (gen-field-list-eq-at (& a) (& b) 0)
+    (gen-field-list-eq-at (& a) (& b))
     false))
 
 (define (gen-field-list-eq-at
   [a : (& a ast.AstFieldDefList)]
-  [b : (& b ast.AstFieldDefList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstFieldDefList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (gen-field-def-eq?
         (ast.ast-field-def-list-get a index (ast.ast-field-def-fallback))
         (ast.ast-field-def-list-get b index (ast.ast-field-def-fallback)))
-      (gen-field-list-eq-at a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-struct-repr-eq? [a : ast.AstStructRepr] [b : ast.AstStructRepr]) : bool
   (match a
@@ -2444,16 +2433,14 @@
   [a : ast.AstVariantPayloadCleanupList]
   [b : ast.AstVariantPayloadCleanupList]) : bool
   (if (= a.len b.len)
-    (gen-variant-payload-cleanup-list-eq-at? (& a) (& b) 0)
+    (gen-variant-payload-cleanup-list-eq-at? (& a) (& b))
     false))
 
 (define (gen-variant-payload-cleanup-list-eq-at?
   [a : (& a ast.AstVariantPayloadCleanupList)]
-  [b : (& b ast.AstVariantPayloadCleanupList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstVariantPayloadCleanupList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (gen-variant-payload-cleanup-eq?
         (ast.ast-variant-payload-cleanup-list-get
           a
@@ -2463,7 +2450,9 @@
           b
           index
           (ast.ast-variant-payload-cleanup-fallback)))
-      (gen-variant-payload-cleanup-list-eq-at? a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-variant-def-eq? [a : ast.AstVariantDef] [b : ast.AstVariantDef]) : bool
   (match a
@@ -2479,20 +2468,20 @@
   [a : ast.AstVariantDefList]
   [b : ast.AstVariantDefList]) : bool
   (if (= a.len b.len)
-    (gen-variant-list-eq-at? (& a) (& b) 0)
+    (gen-variant-list-eq-at? (& a) (& b))
     false))
 
 (define (gen-variant-list-eq-at?
   [a : (& a ast.AstVariantDefList)]
-  [b : (& b ast.AstVariantDefList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstVariantDefList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (gen-variant-def-eq?
         (ast.ast-variant-def-list-get a index (ast.ast-variant-def-fallback))
         (ast.ast-variant-def-list-get b index (ast.ast-variant-def-fallback)))
-      (gen-variant-list-eq-at? a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-spmd-param-class-eq?
   [a : ast.AstSpmdParamClass]
@@ -2526,18 +2515,19 @@
 
 (define (gen-spmd-param-class-list-eq-at?
   [a : (& a ast.AstSpmdParamClassList)]
-  [b : (& b ast.AstSpmdParamClassList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-spmd-param-class-list-len a))
-    (=
-      (ast.ast-spmd-param-class-list-len a)
-      (ast.ast-spmd-param-class-list-len b))
-    (and
-      (< index (ast.ast-spmd-param-class-list-len b))
-      (gen-spmd-param-class-eq?
-        (ast.ast-spmd-param-class-list-get a index Uniform)
-        (ast.ast-spmd-param-class-list-get b index Uniform))
-      (gen-spmd-param-class-list-eq-at? a b (+ index 1)))))
+  [b : (& b ast.AstSpmdParamClassList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-spmd-param-class-list-len a))]
+    (unless
+      (and
+        (< index (ast.ast-spmd-param-class-list-len b))
+        (gen-spmd-param-class-eq?
+          (ast.ast-spmd-param-class-list-get a index Uniform)
+          (ast.ast-spmd-param-class-list-get b index Uniform)))
+      (return false))
+    unit)
+  (=
+    (ast.ast-spmd-param-class-list-len a)
+    (ast.ast-spmd-param-class-list-len b)))
 
 (define (gen-spmd-specialization-fallback) : ast.AstSpmdSpecialization
   (ast.AstSpmdSpecialization
@@ -2553,31 +2543,31 @@
     (= a.lanes b.lanes)
     (gen-spmd-param-class-list-eq-at?
       (& (__tl-box-place a.args))
-      (& (__tl-box-place b.args))
-      0)
+      (& (__tl-box-place b.args)))
     (gen-spmd-result-class-eq? a.result b.result)
     (= a.index-param b.index-param)))
 
 (define (gen-spmd-specialization-list-eq-at?
   [a : (& a ast.AstSpmdSpecializationList)]
-  [b : (& b ast.AstSpmdSpecializationList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-spmd-specialization-list-len a))
-    (=
-      (ast.ast-spmd-specialization-list-len a)
-      (ast.ast-spmd-specialization-list-len b))
-    (and
-      (< index (ast.ast-spmd-specialization-list-len b))
-      (gen-spmd-specialization-eq?
-        (ast.ast-spmd-specialization-list-get
-          a
-          index
-          (gen-spmd-specialization-fallback))
-        (ast.ast-spmd-specialization-list-get
-          b
-          index
-          (gen-spmd-specialization-fallback)))
-      (gen-spmd-specialization-list-eq-at? a b (+ index 1)))))
+  [b : (& b ast.AstSpmdSpecializationList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-spmd-specialization-list-len a))]
+    (unless
+      (and
+        (< index (ast.ast-spmd-specialization-list-len b))
+        (gen-spmd-specialization-eq?
+          (ast.ast-spmd-specialization-list-get
+            a
+            index
+            (gen-spmd-specialization-fallback))
+          (ast.ast-spmd-specialization-list-get
+            b
+            index
+            (gen-spmd-specialization-fallback))))
+      (return false))
+    unit)
+  (=
+    (ast.ast-spmd-specialization-list-len a)
+    (ast.ast-spmd-specialization-list-len b)))
 
 (define (gen-fn-metadata-eq? [a : ast.AstFnMetadata] [b : ast.AstFnMetadata]) : bool
   (match a
@@ -2594,8 +2584,7 @@
         [(SpmdCallable b-items)
           (gen-spmd-specialization-list-eq-at?
             (& (__tl-box-place a-items))
-            (& (__tl-box-place b-items))
-            0)]
+            (& (__tl-box-place b-items)))]
         [_ false])]))
 
 (define (gen-import-kind-eq? [a : ast.AstImportKind] [b : ast.AstImportKind]) : bool
@@ -2886,17 +2875,17 @@
   [env : (& env ctfe.CtfeEnv)]
   [a : (& a ast.AstParamList)]
   [b : (& b ast.AstParamList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  [len : i64]) : bool
+  (for [index (iterator.range 0 len)]
+    (unless
       (gen-param-eq-with-owner
         owner
         env
         (ast.ast-param-list-get a index (ast.ast-param-fallback))
         (ast.ast-param-list-get b index (ast.ast-param-fallback)))
-      (gen-param-list-eq-at-with-owner owner env a b len (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-param-list-eq-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -2907,7 +2896,7 @@
     [len : i64 (ast.ast-param-list-len (& a))]
     (and
       (= len (ast.ast-param-list-len (& b)))
-      (gen-param-list-eq-at-with-owner owner env (& a) (& b) len 0))))
+      (gen-param-list-eq-at-with-owner owner env (& a) (& b) len))))
 
 (define (gen-macro-param-eq-with-owner
   [_owner : (& _owner SpecOwnerContext)]
@@ -2929,17 +2918,17 @@
   [env : (& env ctfe.CtfeEnv)]
   [a : (& a ast.AstMacroParamList)]
   [b : (& b ast.AstMacroParamList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  [len : i64]) : bool
+  (for [index (iterator.range 0 len)]
+    (unless
       (gen-macro-param-eq-with-owner
         owner
         env
         (ast.ast-macro-param-list-get a index (ast.ast-macro-param-fallback))
         (ast.ast-macro-param-list-get b index (ast.ast-macro-param-fallback)))
-      (gen-macro-param-list-eq-at-with-owner owner env a b len (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-macro-param-list-eq-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -2950,7 +2939,7 @@
     [len : i64 (ast.ast-macro-param-list-len (& a))]
     (and
       (= len (ast.ast-macro-param-list-len (& b)))
-      (gen-macro-param-list-eq-at-with-owner owner env (& a) (& b) len 0))))
+      (gen-macro-param-list-eq-at-with-owner owner env (& a) (& b) len))))
 
 (define (gen-field-def-eq-with-owner
   [_owner : (& _owner SpecOwnerContext)]
@@ -2970,26 +2959,24 @@
   [owner : (& owner SpecOwnerContext)]
   [env : (& env ctfe.CtfeEnv)]
   [a : (& a ast.AstFieldDefList)]
-  [b : (& b ast.AstFieldDefList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstFieldDefList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (gen-field-def-eq-with-owner
         owner
         env
         (ast.ast-field-def-list-get a index (ast.ast-field-def-fallback))
         (ast.ast-field-def-list-get b index (ast.ast-field-def-fallback)))
-      (gen-field-list-eq-at-with-owner owner env a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-field-list-eq-with-owner
   [owner : (& owner SpecOwnerContext)]
   [env : (& env ctfe.CtfeEnv)]
   [a : ast.AstFieldDefList]
   [b : ast.AstFieldDefList]) : bool
-  (and
-    (= a.len b.len)
-    (gen-field-list-eq-at-with-owner owner env (& a) (& b) 0)))
+  (and (= a.len b.len) (gen-field-list-eq-at-with-owner owner env (& a) (& b))))
 
 (define (gen-variant-def-eq-with-owner
   [_owner : (& _owner SpecOwnerContext)]
@@ -3009,17 +2996,17 @@
   [owner : (& owner SpecOwnerContext)]
   [env : (& env ctfe.CtfeEnv)]
   [a : (& a ast.AstVariantDefList)]
-  [b : (& b ast.AstVariantDefList)]
-  [index : i64]) : bool
-  (if (>= index a.len)
-    true
-    (and
+  [b : (& b ast.AstVariantDefList)]) : bool
+  (for [index (iterator.range 0 a.len)]
+    (unless
       (gen-variant-def-eq-with-owner
         owner
         env
         (ast.ast-variant-def-list-get a index (ast.ast-variant-def-fallback))
         (ast.ast-variant-def-list-get b index (ast.ast-variant-def-fallback)))
-      (gen-variant-list-eq-at-with-owner owner env a b (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (gen-variant-list-eq-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -3028,7 +3015,7 @@
   [b : ast.AstVariantDefList]) : bool
   (and
     (= a.len b.len)
-    (gen-variant-list-eq-at-with-owner owner env (& a) (& b) 0)))
+    (gen-variant-list-eq-at-with-owner owner env (& a) (& b))))
 
 (define (gen-fn-metadata-eq-with-owner
   [_owner : (& _owner SpecOwnerContext)]
@@ -3049,8 +3036,7 @@
         [(SpmdCallable b-items)
           (gen-spmd-specialization-list-eq-at?
             (& (__tl-box-place a-items))
-            (& (__tl-box-place b-items))
-            0)]
+            (& (__tl-box-place b-items)))]
         [_ false])]))
 
 (define (gen-decl-list-eq-with-owner
@@ -3556,15 +3542,13 @@
         (+
           (ast.ast-decl-list-len (& decls))
           (ast.ast-decl-path-list-len (& rest-paths))))]
-    [index : i64 0]
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (ast.ast-decl-path-list-push-with-owner-and-provenance-id
         (&mut out)
         (spec-place-shared-view path)
         owner-id
-        provenance-id)
-      (set! index (+ index 1)))
+        provenance-id))
     (ast.ast-decl-path-list-append-from (&mut out) (& rest-paths) 0)
     out))
 
@@ -3983,47 +3967,35 @@
 
 ;; Head-first scan: slot 0 is the newest binding, so the first hit is the one
 ;; that shadows. Returns -1 when the name is unbound.
-(define (spec-type-subst-find
-  [subs : (& subs SpecTypeSubst)]
-  [name-id : i64]
-  [at : i64]) : i64
-  (if (>= at subs.len)
-    (- 0 1)
+(define (spec-type-subst-find [subs : (& subs SpecTypeSubst)] [name-id : i64]) : i64
+  (for [at (iterator.range 0 subs.len)]
     (match (spec-type-subst-at subs at)
-      [(Bind key-id _)
-        (if (= key-id name-id)
-          at
-          (spec-type-subst-find subs name-id (+ at 1)))])))
+      [(Bind key-id _) (when (= key-id name-id) (return at))]))
+  (- 0 1))
 
 (define (spec-type-subst-lookup [subs : (& subs SpecTypeSubst)] [name-id : i64]) : SpecMaybeId
-  (if (< (spec-type-subst-find subs name-id 0) 0)
+  (if (< (spec-type-subst-find subs name-id) 0)
     (None)
     (Some name-id)))
 
 (define (spec-type-subst-type [subs : (& subs SpecTypeSubst)] [name-id : i64]) : ast.AstType
   (let
-    [at : i64 (spec-type-subst-find subs name-id 0)]
+    [at : i64 (spec-type-subst-find subs name-id)]
     (if (< at 0)
       (Var name-id)
       (match (spec-type-subst-at subs at)
         [(Bind _ ty) ty]))))
 
-(define (spec-value-subst-find
-  [subs : (& subs SpecValueSubst)]
-  [name-id : i64]
-  [at : i64]) : i64
-  (if (>= at subs.len)
-    (- 0 1)
+(define (spec-value-subst-find [subs : (& subs SpecValueSubst)] [name-id : i64]) : i64
+  (for [at (iterator.range 0 subs.len)]
     (match (spec-value-subst-at subs at)
-      [(Bind key-id _)
-        (if (= key-id name-id)
-          at
-          (spec-value-subst-find subs name-id (+ at 1)))])))
+      [(Bind key-id _) (when (= key-id name-id) (return at))]))
+  (- 0 1))
 
 (define (spec-value-subst-lookup
   [subs : (& subs SpecValueSubst)]
   [name-id : i64]) : SpecMaybeId
-  (if (< (spec-value-subst-find subs name-id 0) 0)
+  (if (< (spec-value-subst-find subs name-id) 0)
     (None)
     (Some name-id)))
 
@@ -4031,7 +4003,7 @@
   [subs : (& subs SpecValueSubst)]
   [name-id : i64]) : ctfe.CompilerCtfeValue
   (let
-    [at : i64 (spec-value-subst-find subs name-id 0)]
+    [at : i64 (spec-value-subst-find subs name-id)]
     (if (< at 0)
       (Unit)
       (match (spec-value-subst-at subs at)
@@ -4042,41 +4014,37 @@
 (define (spec-value-subst-remove-name
   [subs : (& subs SpecValueSubst)]
   [name-id : i64]) : SpecValueSubst
-  (if (< (spec-value-subst-find subs name-id 0) 0)
+  (if (< (spec-value-subst-find subs name-id) 0)
     (spec-value-subst-shared-view subs)
     (let
       [slots : (__tl_dyn-array SpecValueBinding)
         (__tl_make-array SpecValueBinding subs.len)]
-      [at : i64 0]
       [kept : i64 0]
-      (while (< at subs.len)
+      (for [at (iterator.range 0 subs.len)]
         (match (spec-value-subst-at subs at)
           [(Bind key-id _)
             (unless
               (= key-id name-id)
               (set! (array-ref slots kept) (spec-value-subst-at subs at))
-              (set! kept (+ kept 1)))])
-        (set! at (+ at 1)))
+              (+= kept 1))]))
       (spec-value-subst-from-slots slots kept))))
 
 (define (spec-type-subst-remove-name
   [subs : (& subs SpecTypeSubst)]
   [name-id : i64]) : SpecTypeSubst
-  (if (< (spec-type-subst-find subs name-id 0) 0)
+  (if (< (spec-type-subst-find subs name-id) 0)
     (spec-type-subst-shared-view subs)
     (let
       [slots : (__tl_dyn-array SpecTypeBinding)
         (__tl_make-array SpecTypeBinding subs.len)]
-      [at : i64 0]
       [kept : i64 0]
-      (while (< at subs.len)
+      (for [at (iterator.range 0 subs.len)]
         (match (spec-type-subst-at subs at)
           [(Bind key-id _)
             (unless
               (= key-id name-id)
               (set! (array-ref slots kept) (spec-type-subst-at subs at))
-              (set! kept (+ kept 1)))])
-        (set! at (+ at 1)))
+              (+= kept 1))]))
       (spec-type-subst-from-slots slots kept))))
 
 (define (spec-subst-shared-view [subs : (& subs SpecSubst)]) : SpecSubst
@@ -5522,8 +5490,7 @@
     [out : ast.AstResourceBindingList
       (ast.ast-resource-binding-list-with-capacity bindings.len)]
     [scope : SpecTemplateEnv (spec-template-env-shared-view templates)]
-    [index : i64 0]
-    (while (< index bindings.len)
+    (for [index (iterator.range 0 bindings.len)]
       (match (ast.ast-resource-binding-list-get
         (& bindings)
         index
@@ -5550,7 +5517,7 @@
                       move-aware?))
                   (set! state cleanup-state)
                   (set! scope (spec-template-env-shadow-name scope name))
-                  (set! index (+ index 1))])])]))
+                  unit])])]))
     (match (spec-rewrite-expr-list body (& scope) state)
       [(Err diag) (Err diag)]
       [(Ok next-body body-state)
@@ -5599,8 +5566,7 @@
     [out : ast.AstResourceBindingList
       (ast.ast-resource-binding-list-with-capacity bindings.len)]
     [scope : SpecSubst (spec-subst-shared-view subs)]
-    [index : i64 0]
-    (while (< index bindings.len)
+    (for [index (iterator.range 0 bindings.len)]
       (match (ast.ast-resource-binding-list-get
         (& bindings)
         index
@@ -5628,8 +5594,7 @@
                 next-init
                 next-cleanup
                 move-aware?))
-            (set! scope (spec-subst-remove-name (& scope) name))
-            (set! index (+ index 1)))]))
+            (set! scope (spec-subst-remove-name (& scope) name)))]))
     (let
       [next-body : ast.AstExprList
         (try (spec-substitute-walk-list-with-owner owner body (& scope) held))]
@@ -6187,7 +6152,6 @@
         (spec-substitute-walk-list-at-with-owner
           owner
           (& exprs)
-          0
           subs
           held
           (&mut out)))]
@@ -6196,25 +6160,18 @@
 (define (spec-substitute-walk-list-at-with-owner
   [owner : (& owner SpecOwnerContext)]
   [exprs : (& exprs ast.AstExprList)]
-  [index : i64]
   [subs : (& subs SpecSubst)]
   [held : (&mut held SpecHeldFailure)]
   [out : (&mut out ast.AstExprList)]) : ResultSpecSubExprListBuild
-  (if (>= index exprs.len)
-    (Ok)
+  (for [index (iterator.range 0 exprs.len)]
     (let
       [head : ast.AstExpr
         (spec-owner-expr-get owner (ast.ast-expr-list-get exprs index 0))]
       [rewritten-head
         (try (spec-substitute-walk-with-owner owner head subs held))]
       (ast.ast-expr-list-push out rewritten-head)
-      (spec-substitute-walk-list-at-with-owner
-        owner
-        exprs
-        (+ index 1)
-        subs
-        held
-        out))))
+      unit))
+  (Ok))
 
 (define (spec-substitute-walk-let-bindings-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -6281,7 +6238,6 @@
         (spec-substitute-walk-match-arms-at-with-owner
           owner
           (& arms)
-          0
           subs
           held
           (&mut out)))]
@@ -6290,12 +6246,10 @@
 (define (spec-substitute-walk-match-arms-at-with-owner
   [owner : (& owner SpecOwnerContext)]
   [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]
   [subs : (& subs SpecSubst)]
   [held : (&mut held SpecHeldFailure)]
   [out : (&mut out ast.AstMatchArmList)]) : ResultSpecSubMatchArmListBuild
-  (if (>= index arms.len)
-    (Ok)
+  (for [index (iterator.range 0 arms.len)]
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(Arm pattern body-box)
         (let
@@ -6307,13 +6261,8 @@
           (ast.ast-match-arm-list-push
             out
             (ast.ast-match-arm pattern rewritten-body))
-          (spec-substitute-walk-match-arms-at-with-owner
-            owner
-            arms
-            (+ index 1)
-            subs
-            held
-            out))])))
+          unit)]))
+  (Ok))
 
 (define (spec-rewrite-decl-with-owner
   [owner : (& owner SpecOwnerContext)]

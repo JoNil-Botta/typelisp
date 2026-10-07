@@ -7,6 +7,7 @@
 ;; self-tail-recursion lowering, sparse conditional constant propagation,
 ;; aggregate stack promotion, global value numbering, loop-invariant code
 ;; motion, induction variables, scratch regions and the call graph).
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_optimize_tests as ot)
 (import compiler_optimize as opt)
@@ -76,22 +77,20 @@
 
 (define (opt-count-switch-instr-seq-from
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
   [acc : i64]) : i64
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    acc
-    (opt-count-switch-instr-seq-from
-      instrs
-      (+ index 1)
+  (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
+    (set!
+      acc
       (+
         acc
         (match (ir.compiler-ir-instr-seq-ref instrs index)
           [(Switch _ _ _ _) 1]
           [(TotalEnumSwitch _ _ _ _ _) 1]
-          [_ 0])))))
+          [_ 0]))))
+  acc)
 
 (define (opt-count-switch-instr-seq [instrs : ir.CompilerIrInstrSeq]) : i64
-  (opt-count-switch-instr-seq-from instrs 0 0))
+  (opt-count-switch-instr-seq-from instrs 0))
 
 (define (opt-count-switch-blocks
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]) : i64
@@ -269,13 +268,10 @@
   [cases : ir.CompilerIrSwitchCaseSeq]
   [want-tag : i64]
   [want-label : i64]) : bool
-  (let
-    [index : i64 0]
-    (while (< index cases.len)
-      (match (ir.compiler-ir-switch-case-seq-ref cases index)
-        [(Case tag label) (when (= tag want-tag) (return (= label want-label)))])
-      (set! index (+ index 1)))
-    false))
+  (for [index (iterator.range 0 cases.len)]
+    (match (ir.compiler-ir-switch-case-seq-ref cases index)
+      [(Case tag label) (when (= tag want-tag) (return (= label want-label)))]))
+  false)
 
 (define (opt-switch-test-block-tail-has-case?
   [block : (& block ir.CompilerIrBlock)]
@@ -326,14 +322,12 @@
   ;; whatever `last` makes it, so a case can name a span directly.
   (let
     [tags : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [i : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (set!
         (array-ref tags i)
         (if (= i (- count 1))
           last
-          (+ first i)))
-      (set! i (+ i 1)))
+          (+ first i))))
     tags))
 
 ;; `tags[0..count)` as a compare chain over var 0, appended to `tail`. Chain
@@ -1539,68 +1533,55 @@
 
 (define (smoke-mov-dst-var-type-from?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
-  [index : i64]
   [dst : i64]
   [src : i64]
   [ty : ast.AstType]) : bool
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    false
+  (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (match (ir.compiler-ir-instr-seq-ref instrs index)
       [(Mov d (Var s) mov-ty)
-        (if (= d dst)
-          (and
-            (= s src)
-            (opt.opt-type-eq
-              (ast.ast-node-pool-reader-type-segment-bases)
-              mov-ty
-              ty))
-          (smoke-mov-dst-var-type-from? instrs (+ index 1) dst src ty))]
-      [_ (smoke-mov-dst-var-type-from? instrs (+ index 1) dst src ty)])))
+        (when
+          (= d dst)
+          (return
+            (and
+              (= s src)
+              (opt.opt-type-eq
+                (ast.ast-node-pool-reader-type-segment-bases)
+                mov-ty
+                ty))))]
+      [_ unit]))
+  false)
 
 (define (smoke-mov-dst-var-type?
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [dst : i64]
   [src : i64]
   [ty : ast.AstType]) : bool
-  (smoke-mov-dst-var-type-from? instrs 0 dst src ty))
+  (smoke-mov-dst-var-type-from? instrs dst src ty))
 
 (define (smoke-cast-dst-var-types-from?
   [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]
   [dst : i64]
   [src : i64]
   [from-ty : ast.AstType]
   [to-ty : ast.AstType]) : bool
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    false
+  (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (match (ir.compiler-ir-instr-seq-ref instrs index)
       [(Cast d (Var s) cast-from cast-to)
-        (if (= d dst)
-          (and
-            (= s src)
-            (opt.opt-type-eq
-              (ast.ast-node-pool-reader-type-segment-bases)
-              cast-from
-              from-ty)
-            (opt.opt-type-eq
-              (ast.ast-node-pool-reader-type-segment-bases)
-              cast-to
-              to-ty))
-          (smoke-cast-dst-var-types-from?
-            instrs
-            (+ index 1)
-            dst
-            src
-            from-ty
-            to-ty))]
-      [_
-        (smoke-cast-dst-var-types-from?
-          instrs
-          (+ index 1)
-          dst
-          src
-          from-ty
-          to-ty)])))
+        (when
+          (= d dst)
+          (return
+            (and
+              (= s src)
+              (opt.opt-type-eq
+                (ast.ast-node-pool-reader-type-segment-bases)
+                cast-from
+                from-ty)
+              (opt.opt-type-eq
+                (ast.ast-node-pool-reader-type-segment-bases)
+                cast-to
+                to-ty))))]
+      [_ unit]))
+  false)
 
 (define (smoke-cast-dst-var-types?
   [instrs : ir.CompilerIrInstrSeq]
@@ -1608,7 +1589,7 @@
   [src : i64]
   [from-ty : ast.AstType]
   [to-ty : ast.AstType]) : bool
-  (smoke-cast-dst-var-types-from? instrs 0 dst src from-ty to-ty))
+  (smoke-cast-dst-var-types-from? instrs dst src from-ty to-ty))
 
 (define (smoke-noop-int-cast-mov-instrs) : ir.CompilerIrInstrSeq
   (irt.instrs

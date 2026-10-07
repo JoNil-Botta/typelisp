@@ -1,3 +1,4 @@
+(import stdlib.iterator)
 (import stdlib.arena)
 (import stdlib.vector)
 (import (vector.vector String) as roots_vec)
@@ -165,17 +166,15 @@
     [warm : String
       (runtime-owner-smoke "(define (main) : i64 missing_owner_name)")]
     [before : i64 (profile.alloc-live)]
-    [index : i64 0]
     (unless
       (string.contains warm "unbound name missing_owner_name")
       (io.panic "expected checked error before lifetime measurement"))
-    (while (< index 8)
+    (for [index (iterator.range 0 8)]
       (unless
         (string.contains
           (runtime-owner-smoke "(define (main) : i64 missing_owner_name)")
           "unbound name missing_owner_name")
-        (io.panic "repeated checked error changed diagnostic"))
-      (set! index (+ index 1)))
+        (io.panic "repeated checked error changed diagnostic")))
     ;; Includes copied diagnostics and restored parent selectors. Leaking one
     ;; source/checked pool per error retains far more than this bound.
     (unless
@@ -184,19 +183,16 @@
 
 (test
   package-runtime-target-and-optimization-retirement
-  (let
-    [level : i64 0]
-    (while (< level 3)
-      (unless
-        (and
-          (string.contains
-            (runtime-owner-smoke-for "(define (main) : i64 42)" (Linux) level)
-            "main:")
-          (string.contains
-            (runtime-owner-smoke-for "(define (main) : i64 42)" (Windows) level)
-            "main:"))
-        (io.panic "target or optimization route lost owned runtime output"))
-      (set! level (+ level 1)))))
+  (for [level (iterator.range 0 3)]
+    (unless
+      (and
+        (string.contains
+          (runtime-owner-smoke-for "(define (main) : i64 42)" (Linux) level)
+          "main:")
+        (string.contains
+          (runtime-owner-smoke-for "(define (main) : i64 42)" (Windows) level)
+          "main:"))
+      (io.panic "target or optimization route lost owned runtime output"))))
 
 (test
   package-runtime-macro-error-survives-next-job
@@ -273,17 +269,15 @@
     [warm : String
       (runtime-owner-smoke-for-route (string.copy source) Linux 0 true)]
     [before : i64 (profile.alloc-live)]
-    [index : i64 0]
     (unless
       (string.contains warm "main:")
       (io.panic "direct object side assembly must survive runtime cleanup"))
-    (while (< index 8)
+    (for [index (iterator.range 0 8)]
       (unless
         (string.contains
           (runtime-owner-smoke-for-route (string.copy source) Linux 0 true)
           "main:")
-        (io.panic "repeated direct object emission lost side assembly"))
-      (set! index (+ index 1)))
+        (io.panic "repeated direct object emission lost side assembly")))
     ;; Includes retained object images, assembly and restored parent state.
     ;; Unretired side-backend arenas push this fixture above the bound.
     (unless
@@ -295,8 +289,7 @@
   (let
     [source : String
       "(define (helper [x : i64] [scale : i64]) (:spmd-callable (specialization (lanes 8) (args varying uniform) (result varying) (index-param 0))) : i64 (+ x scale))"]
-    [level : i64 0]
-    (while (< level 3)
+    (for [level (iterator.range 0 3)]
       (let
         [linux : String
           (runtime-owner-smoke-for-route-and-entry
@@ -318,8 +311,7 @@
             (string.contains linux "spmd_pkg_")
             (string.contains windows "spmd_pkg_")
             (string.contains next "main:"))
-          (io.panic "package SPMD function lost its retained IR storage"))
-        (set! level (+ level 1))))))
+          (io.panic "package SPMD function lost its retained IR storage"))))))
 
 ;; One package job whose child interner grows its structural table across
 ;; several record and map generations before the scope is released.
@@ -331,11 +323,10 @@
         [scope : driver.CompilerDriverPackageRuntimeScope
           (driver.compiler-driver-package-runtime-scope-new home)]
         [first : i64 (ci.intern-composite-pair-id 11 12)]
-        [index : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (let
             [_raw : i64 (ci.intern-composite-pair-id 13 (+ 14 index))]
-            (set! index (+ index 1))))
+            unit))
         (let
           [same? : bool (= (ci.intern-composite-pair-id 11 12) first)]
           (driver.compiler-driver-package-runtime-scope-release! scope)
@@ -353,10 +344,8 @@
     [live : i64 (ci.intern-structural-generations-live)]
     [made : i64 (ci.intern-structural-generations-made-count)]
     [same? : bool warm]
-    [index : i64 0]
-    (while (< index 4)
-      (set! same? (and same? (runtime-owner-structural-growth-job 20000)))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 4)]
+      (set! same? (and same? (runtime-owner-structural-growth-job 20000))))
     ;; An unreleased job keeps a 32768-record column generation and a map of
     ;; at least 32768 slots, each larger than this bound.
     (unless
@@ -376,19 +365,15 @@
     [left : i64 (ci.intern "runtime-structural-interleave-left")]
     [first : i64 (ci.intern-composite-pair-id left 1)]
     [ok? : bool true]
-    [round : i64 0]
     ;; The parent grows across its own generations between child jobs that
     ;; grow and release theirs over the same record indices.
-    (while (< round 3)
-      (let
-        [index : i64 0]
-        (while (< index 5000)
-          (let
-            [_raw : i64
-              (ci.intern-composite-pair-id left (+ (* round 5000) index 2))]
-            (set! index (+ index 1))))
-        (set! ok? (and ok? (runtime-owner-structural-growth-job 5000)))
-        (set! round (+ round 1))))
+    (for [round (iterator.range 0 3)]
+      (for [index (iterator.range 0 5000)]
+        (let
+          [_raw : i64
+            (ci.intern-composite-pair-id left (+ (* round 5000) index 2))]
+          unit))
+      (set! ok? (and ok? (runtime-owner-structural-growth-job 5000))))
     (unless
       (and
         ok?

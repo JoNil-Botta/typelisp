@@ -142,7 +142,7 @@
         (if (and (>= digit 48) (<= digit 57))
           (begin
             (set! value (+ (* value 10) (- digit 48)))
-            (set! i (+ i 1)))
+            (+= i 1))
           (set! valid false))))
     (if (and valid (<= value max))
       value
@@ -340,7 +340,7 @@
       (set!
         found
         (= (compiler-abi-caller-saved-gp-register-id abi index) reg-id))
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (compiler-abi-stack-call-arg-for-banks?

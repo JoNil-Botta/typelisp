@@ -3,6 +3,7 @@
 ;; of them. The host side of the batch format is covered by
 ;; src/tests/comptime_host_smoke.tl, and the gates that compile every stdlib
 ;; macro through both routes cover the end-to-end expansions. Refs #8274.
+(import stdlib.iterator)
 (import compiler_tlci_native_producer as producer)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
@@ -105,12 +106,12 @@
       (let
         [c : char (string.string-ref text index)]
         (cond
-          [(and in-string (= c '\\')) (set! index (+ index 1))]
+          [(and in-string (= c '\\')) (+= index 1)]
           [(= c '"') (set! in-string (not in-string))]
-          [(and (not in-string) (= c '(')) (set! depth (+ depth 1))]
-          [(and (not in-string) (= c ')')) (set! depth (- depth 1))]
+          [(and (not in-string) (= c '(')) (+= depth 1)]
+          [(and (not in-string) (= c ')')) (-= depth 1)]
           [else unit])
-        (set! index (+ index 1))))
+        (+= index 1)))
     depth))
 
 ;; Occurrences of `needle` in `text`.
@@ -122,9 +123,9 @@
     (while (<= (+ index length) (string.string-length text))
       (if (string.eq (string.substring text index length) (& needle))
         (begin
-          (set! count (+ count 1))
-          (set! index (+ index length)))
-        (set! index (+ index 1))))
+          (+= count 1)
+          (+= index length))
+        (+= index 1)))
     count))
 
 ;; A batch name entry: this build's row hint, the length and the name.
@@ -228,12 +229,10 @@
   (let
     [count : i64 (+ tlci_core.tlci-run-ops-names-cap 1)]
     [ops : (__tl_dyn-array String) (__tl_make-array String count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref ops index)
-        (op-line (str_cat.str-cat "op-" (string.int->string index)) "0 0 0"))
-      (set! index (+ index 1)))
+        (op-line (str_cat.str-cat "op-" (string.int->string index)) "0 0 0")))
     (let
       [text : String (producer.embedded-native-ops-open-text ops count)]
       (test.assert-i64-eq

@@ -65,7 +65,7 @@
         (set! state next-state)
         (set! (array-ref items index) (array-ref items other))
         (set! (array-ref items other) saved)
-        (set! index (- index 1))))
+        (-= index 1)))
     (and
       (= (array-ref items 0) 3)
       (= (array-ref items 1) 0)
@@ -408,7 +408,7 @@
             (&mut owner)
             (string.int->string index))
           unit)
-        (set! index (+ index 1)))]
+        (+= index 1))]
     [field-id : i64 (ci.intern-compat-state-intern (&mut owner) "owner.field")]
     [session : cis.InternStructuralSessionHandle
       (cis.intern-structural-session-handle-from-source-names
@@ -1138,7 +1138,7 @@
             (if (string.contains (& name-text) (& base))
               (set! found true)
               unit))])
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (tltest-nested-module-macro-vector-lower-roots-ok?

@@ -1,5 +1,6 @@
 ;; doc_test_tests.tl - White-box tests for documentation tests: example
 ;; extraction, malformed and runnable examples, run reports and the session cache.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -45,12 +46,10 @@
 (define (doc-test-error-vector-growth-smoke-ok?) : bool
   (let
     [errors : doc_error_vec.Vec (doc_test.doc-test-error-list-empty)]
-    [index : i64 1]
-    (while (<= index 5)
+    (for [index (iterator.range 1 (+ 5 1))]
       (doc_error_vec.push-ref!
         (&mut errors)
-        (doc_test.DocTestError.Error index (string.int->string index)))
-      (set! index (+ index 1)))
+        (doc_test.DocTestError.Error index (string.int->string index))))
     (and
       (= (doc_test.doc-test-error-list-count errors) 5)
       (= (doc_error_vec.capacity (& errors)) 8)
@@ -64,12 +63,10 @@
 (define (doc-test-line-vector-growth-smoke-ok?) : bool
   (let
     [lines : doc_line_vec.Vec (doc_line_vec.new)]
-    [index : i64 1]
-    (while (<= index 5)
+    (for [index (iterator.range 1 (+ 5 1))]
       (doc_line_vec.push-ref!
         (&mut lines)
-        (doc_test.DocTestLine.Line index (string.int->string index)))
-      (set! index (+ index 1)))
+        (doc_test.DocTestLine.Line index (string.int->string index))))
     (and
       (= (doc_line_vec.len (& lines)) 5)
       (= (doc_line_vec.capacity (& lines)) 8)
@@ -88,16 +85,14 @@
 (define (doc-test-example-vector-growth-smoke-ok?) : bool
   (let
     [examples : doc_example_vec.Vec (doc_test.doc-test-example-list-empty)]
-    [index : i64 1]
-    (while (<= index 5)
+    (for [index (iterator.range 1 (+ 5 1))]
       (doc_example_vec.push-ref!
         (&mut examples)
         (doc_test.DocTestExample.Example
           index
           (+ index 10)
           (Pass)
-          (string.int->string index)))
-      (set! index (+ index 1)))
+          (string.int->string index))))
     (and
       (= (doc_test.doc-test-example-list-count examples) 5)
       (= (doc_example_vec.capacity (& examples)) 8)
@@ -114,16 +109,14 @@
   (let
     [failures : doc_run_failure_vec.Vec
       (doc_test.doc-test-run-failure-list-empty)]
-    [index : i64 1]
-    (while (<= index 5)
+    (for [index (iterator.range 1 (+ 5 1))]
       (doc_run_failure_vec.push-ref!
         (&mut failures)
         (doc_test.DocTestRunFailure.Failure
           (string.int->string index)
           (+ index 10)
           index
-          (string.int->string index)))
-      (set! index (+ index 1)))
+          (string.int->string index))))
     (and
       (= (doc_test.doc-test-run-failure-list-count failures) 5)
       (= (doc_run_failure_vec.capacity (& failures)) 8)
@@ -290,11 +283,9 @@
 
 (define (doc-test-error-list-has-from?
   [errors : (& errors doc_error_vec.Vec)]
-  [index : i64]
   [line : i64]
   [message-fragment : String]) : bool
-  (if (>= index (doc_test.doc-test-error-list-count errors))
-    false
+  (for [index (iterator.range 0 (doc_test.doc-test-error-list-count errors))]
     (let
       [err : doc_test.DocTestError
         (doc_test.doc-test-error-list-ref errors index)]
@@ -302,22 +293,19 @@
         (doc_test.doc-test-error-line
           (owned_view.compiler-owned-shared-view err))
         line)
-        (if (string.contains
-          (doc_test.doc-test-error-message err)
-          message-fragment)
-          true
-          (doc-test-error-list-has-from?
-            errors
-            (+ index 1)
-            line
-            message-fragment))
-        (doc-test-error-list-has-from? errors (+ index 1) line message-fragment)))))
+        (when
+          (string.contains
+            (doc_test.doc-test-error-message err)
+            message-fragment)
+          (return true))
+        unit)))
+  false)
 
 (define (doc-test-error-list-has?
   [errors : (& errors doc_error_vec.Vec)]
   [line : i64]
   [message-fragment : String]) : bool
-  (doc-test-error-list-has-from? errors 0 line message-fragment))
+  (doc-test-error-list-has-from? errors line message-fragment))
 
 (define (doc-test-smoke-examples-ok?
   [examples : (& examples doc_example_vec.Vec)]) : bool
@@ -973,9 +961,8 @@ typecheck: return type mismatch"))]
   [count : i64]
   [paths : ast.AstDeclPathList]) : ast.AstDeclPathList
   (let
-    [i : i64 0]
     [out : ast.AstDeclPathList paths]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (let
         [path : String
           (doc-test-package-walk-numbered-path
@@ -991,8 +978,7 @@ typecheck: return type mismatch"))]
           (ast.ast-decl-path-list-prepend-builder-with-owner-id
             path
             cbi.compiler-builtin-id-fix-empty
-            out))
-        (set! i (+ i 1))))
+            out))))
     out))
 
 (define (doc-test-package-walk-long-list-smoke-ok?) : bool

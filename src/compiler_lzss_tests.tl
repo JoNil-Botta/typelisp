@@ -1,6 +1,7 @@
 ;; Malformed-frame coverage for the compiler-owned LZSS envelope. Keeping the
 ;; fixtures outside `compiler_lzss` avoids shipping test constructors in the
 ;; compiler that decodes the production payloads.
+(import stdlib.iterator)
 (import compiler_lzss as lzss)
 (import stdlib.string)
 
@@ -13,24 +14,16 @@
     [header-len : i64 (string.string-length header)]
     [out : (__tl_dyn-array u8)
       (__tl_make-array u8 (+ prefix-len header-len (array-length tokens)))]
-    [index : i64 0]
-    (while (< index prefix-len)
-      (set! (array-ref out index) (cast (string.string-ref prefix index) : u8))
-      (set! index (+ index 1)))
-    (let
-      [header-index : i64 0]
-      (while (< header-index header-len)
-        (set!
-          (array-ref out (+ prefix-len header-index))
-          (cast (string.string-ref header header-index) : u8))
-        (set! header-index (+ header-index 1))))
-    (let
-      [token-index : i64 0]
-      (while (< token-index (array-length tokens))
-        (set!
-          (array-ref out (+ prefix-len header-len token-index))
-          (array-ref tokens token-index))
-        (set! token-index (+ token-index 1))))
+    (for [index (iterator.range 0 prefix-len)]
+      (set! (array-ref out index) (cast (string.string-ref prefix index) : u8)))
+    (for [header-index (iterator.range 0 header-len)]
+      (set!
+        (array-ref out (+ prefix-len header-index))
+        (cast (string.string-ref header header-index) : u8)))
+    (for [token-index (iterator.range 0 (array-length tokens))]
+      (set!
+        (array-ref out (+ prefix-len header-len token-index))
+        (array-ref tokens token-index)))
     out))
 
 (define (compiler-lzss-test-rejects?

@@ -2,6 +2,7 @@
 ;; ELF and COFF object writers: little-endian byte pushers, section sizes and
 ;; label offsets, text instruction encodings and their rel32 fixups, and the
 ;; relocation-list checks both formats apply.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
 (import stdlib.string)
@@ -41,24 +42,19 @@
 (define (compiler-object-layout-push-zeroes!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [count : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i count)
-      (compiler-object-layout-push-u8! out 0)
-      (set! i (+ i 1)))
-    unit))
+  (for [i (iterator.range 0 count)]
+    (compiler-object-layout-push-u8! out 0))
+  unit)
 
 (define (compiler-object-layout-push-string-bytes!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [text : (& text str)]) : unit
   (let
-    [i : i64 0]
     [n : i64 (compiler-object-layout-string-length text)]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (byte_buf_core.byte-buf-builder-push
         out
-        (cast (compiler-object-layout-string-ref text i) : u8))
-      (set! i (+ i 1)))
+        (cast (compiler-object-layout-string-ref text i) : u8)))
     unit))
 
 (define (compiler-object-layout-align-offset [offset : i64] [align : i64]) : i64
@@ -109,15 +105,13 @@
   [offset : i64]) : i64
   (let
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
-    [index : i64 0]
     [cur-offset : i64 offset]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         cur-offset
         (cobj.compiler-object-data-record-end-offset
           (cobj.compiler-object-data-record-list-ref records index)
-          cur-offset))
-      (set! index (+ index 1)))
+          cur-offset)))
     cur-offset))
 
 (define (compiler-object-layout-data-records-size
@@ -158,7 +152,7 @@
           [(Jcc cc _) (cobj.compiler-object-condition-code-valid? cc)]
           [(Raw _) raw]
           [_ true]))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 ;; The rel32 fields of one text instruction and the symbols they target.
@@ -202,16 +196,12 @@
   [instrs : cobj.CompilerObjectX64InstrList]) : i64
   (let
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
-    [index : i64 0]
     [total : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         total
-        (+
-          total
-          (compiler-object-layout-instr-relocation-count
-            (cobj.compiler-object-instr-list-ref instrs index))))
-      (set! index (+ index 1)))
+        (compiler-object-layout-instr-relocation-count
+          (cobj.compiler-object-instr-list-ref instrs index))))
     total))
 
 (define (compiler-object-layout-instrs-size-from
@@ -219,16 +209,12 @@
   [offset : i64]) : i64
   (let
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
-    [index : i64 0]
     [cur-offset : i64 offset]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         cur-offset
-        (+
-          cur-offset
-          (compiler-object-layout-instr-size
-            (cobj.compiler-object-instr-list-ref instrs index))))
-      (set! index (+ index 1)))
+        (compiler-object-layout-instr-size
+          (cobj.compiler-object-instr-list-ref instrs index))))
     cur-offset))
 
 (define (compiler-object-layout-instrs-size
@@ -285,7 +271,7 @@
       (if (compiler-object-layout-relocation-supported?
         (cobj.compiler-object-relocation-list-ref relocs index)
         addr32nb)
-        (set! index (+ index 1))
+        (+= index 1)
         (set! ok false)))
     ok))
 
@@ -309,12 +295,12 @@
               (begin
                 (set! result cur-offset)
                 (set! done true))
-              (set! index (+ index 1)))]
+              (+= index 1))]
           [_
             (set!
               cur-offset
               (cobj.compiler-object-data-record-end-offset record cur-offset))
-            (set! index (+ index 1))])))
+            (+= index 1)])))
     result))
 
 (define (compiler-object-layout-instr-label-offset-from
@@ -337,12 +323,10 @@
               (begin
                 (set! result cur-offset)
                 (set! done true))
-              (set! index (+ index 1)))]
+              (+= index 1))]
           [_
-            (set!
-              cur-offset
-              (+ cur-offset (compiler-object-layout-instr-size instr)))
-            (set! index (+ index 1))])))
+            (+= cur-offset (compiler-object-layout-instr-size instr))
+            (+= index 1)])))
     result))
 
 (define (compiler-object-layout-section-label-offset
@@ -381,7 +365,7 @@
         [(Symbol symbol-name _ _ _)
           (if (string.eq symbol-name name)
             (set! found true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     found))
 
 (define (compiler-object-layout-text-targets-known?
@@ -408,7 +392,7 @@
                   (compiler-object-layout-symbol-known?
                     image.symbols
                     false-target))]))
-          (set! index (+ index 1)))
+          (+= index 1))
         ok)]))
 
 (define (compiler-object-layout-text-instr-relocation-count
@@ -422,15 +406,13 @@
   [kind : cobj.CompilerObjectSectionKind]) : i64
   (let
     [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
-    [index : i64 0]
     [total : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (cobj.compiler-object-relocation-list-ref relocs index)
         [(Relocation section _ _ _)
           (if (cobj.compiler-object-section-kind-eq? section kind)
-            (set! total (+ total 1))
-            unit)])
-      (set! index (+ index 1)))
+            (+= total 1)
+            unit)]))
     total))
 
 (define (compiler-object-layout-section-relocation-count
@@ -489,16 +471,14 @@
   [offset : i64]) : i64
   (let
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
-    [index : i64 0]
     [cur-offset : i64 offset]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         cur-offset
         (compiler-object-layout-render-data-record!
           out
           (cobj.compiler-object-data-record-list-ref records index)
-          cur-offset))
-      (set! index (+ index 1)))
+          cur-offset)))
     cur-offset))
 
 ;; Push the bytes HEX spells, two hex digits per byte.
@@ -514,7 +494,7 @@
         (+
           (* 16 (compiler-object-layout-hex-digit hex i))
           (compiler-object-layout-hex-digit hex (+ i 1))))
-      (set! i (+ i 2)))
+      (+= i 2))
     unit))
 
 (define (compiler-object-layout-hex-digit [hex : (& hex str)] [index : i64]) : i64
@@ -575,12 +555,10 @@
   [instrs : cobj.CompilerObjectX64InstrList]) : unit
   (let
     [count : i64 (cobj.compiler-object-instr-list-count instrs)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-object-layout-render-instr!
         out
-        (cobj.compiler-object-instr-list-ref instrs index))
-      (set! index (+ index 1)))
+        (cobj.compiler-object-instr-list-ref instrs index)))
     unit))
 
 (define (compiler-object-layout-render-section!
@@ -625,7 +603,7 @@
             (if (=
               (compiler-object-layout-string-ref text (+ start i))
               (compiler-object-layout-string-ref needle i))
-              (set! i (+ i 1))
+              (+= i 1)
               (set! ok false))
             (set! ok false)))
         (= i needle-len)))))
@@ -641,5 +619,5 @@
       (if (compiler-object-layout-prefix-at? text needle i)
         (set! found true)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     found))

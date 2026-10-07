@@ -4,6 +4,7 @@
 ;; homes for scalar IR values. The selfhost pools keep
 ;; %rsp/%rbp reserved and admit caller-saved integer/XMM registers only for
 ;; values that cannot be clobbered by call emission.
+(import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.comptime)
@@ -326,29 +327,23 @@
       (+ compiler-reg-liveness-census-edge-precise-metric 1))
     unit))
 
-(define (compiler-reg-instr-seq-has-phi?
-  [instrs : ir.CompilerIrInstrSeq]
-  [index : i64]) : bool
-  (if (>= index (ir.compiler-ir-instr-seq-count instrs))
-    false
+(define (compiler-reg-instr-seq-has-phi? [instrs : ir.CompilerIrInstrSeq]) : bool
+  (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
     (match (ir.compiler-ir-instr-seq-ref instrs index)
-      [(Phi _ _ _) true]
-      [_ (compiler-reg-instr-seq-has-phi? instrs (+ index 1))])))
+      [(Phi _ _ _) (return true)]
+      [_ unit]))
+  false)
 
-(define (compiler-reg-block-seq-has-phi?
-  [blocks : ir.CompilerIrBlockSeq]
-  [index : i64]) : bool
-  (if (>= index (ir.compiler-ir-block-seq-count blocks))
-    false
+(define (compiler-reg-block-seq-has-phi? [blocks : ir.CompilerIrBlockSeq]) : bool
+  (for [index (iterator.range 0 (ir.compiler-ir-block-seq-count blocks))]
     (match (ir.compiler-ir-block-seq-ref blocks index)
       [(Block _ instrs)
-        (if (compiler-reg-instr-seq-has-phi? instrs 0)
-          true
-          (compiler-reg-block-seq-has-phi? blocks (+ index 1)))])))
+        (when (compiler-reg-instr-seq-has-phi? instrs) (return true))]))
+  false)
 
 (define (compiler-reg-blocks-have-phi? [blocks : ir.CompilerIrBlockList]) : bool
   (match blocks
-    [(Array seq) (compiler-reg-block-seq-has-phi? seq 0)]))
+    [(Array seq) (compiler-reg-block-seq-has-phi? seq)]))
 
 (define (compiler-reg-liveness-handle-make
   [func : ir.CompilerIrFunction]
@@ -625,13 +620,11 @@
   (let
     [len : i64 (compiler-reg-id-seq-count rest)]
     [out : CompilerRegIdSeq (compiler-reg-id-seq-with-capacity (+ len 1))]
-    [index : i64 0]
     (set! out (compiler-reg-id-seq-push out head))
-    (while (< index len)
+    (for [index (iterator.range 0 len)]
       (set!
         out
-        (compiler-reg-id-seq-push out (compiler-reg-id-seq-ref rest index)))
-      (set! index (+ index 1)))
+        (compiler-reg-id-seq-push out (compiler-reg-id-seq-ref rest index))))
     out))
 
 (define (compiler-reg-string-prefix?
@@ -690,10 +683,8 @@
         (* (array-length slots) 2))]
     [bigger : (__tl_dyn-array CompilerRegInterval)
       (__tl_make-array CompilerRegInterval capacity)]
-    [index : i64 0]
-    (while (< index len)
-      (set! (array-ref bigger index) (array-ref slots index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 len)]
+      (set! (array-ref bigger index) (array-ref slots index)))
     (CompilerRegIntervalSeq bigger len)))
 
 (define (compiler-reg-interval-seq-prepend
@@ -710,14 +701,12 @@
           (* (array-length old-slots) 2)))]
     [slots : (__tl_dyn-array CompilerRegInterval)
       (__tl_make-array CompilerRegInterval capacity)]
-    [index : i64 0]
     ;; Prepend is intentionally persistent: some cold fixture/worklist
     ;; builders retain `rest`, so shifting its shared backing array would
     ;; mutate that still-live view.
     (set! (array-ref slots 0) head)
-    (while (< index len)
-      (set! (array-ref slots (+ index 1)) (array-ref old-slots index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 len)]
+      (set! (array-ref slots (+ index 1)) (array-ref old-slots index)))
     (CompilerRegIntervalSeq slots (+ len 1))))
 
 (define (compiler-reg-interval-seq-append
@@ -738,14 +727,12 @@
   [suffix : CompilerRegIntervalSeq]) : CompilerRegIntervalSeq
   (let
     [out : CompilerRegIntervalSeq items]
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count suffix))
+    (for [index (iterator.range 0 (compiler-reg-interval-seq-count suffix))]
       (set!
         out
         (compiler-reg-interval-seq-append
           out
-          (compiler-reg-interval-seq-ref suffix index)))
-      (set! index (+ index 1)))
+          (compiler-reg-interval-seq-ref suffix index))))
     out))
 
 (define (compiler-reg-active-seq-empty) : CompilerRegActiveSeq
@@ -971,19 +958,17 @@
   [idx : i64]) : CompilerRegIdSeq
   (let
     [count : i64 (cabi.compiler-abi-callee-saved-gp-register-count target-abi)]
-    [index : i64 idx]
     [out : CompilerRegIdSeq
       (compiler-reg-id-seq-with-capacity
         (if (< idx count)
           (- count idx)
           0))]
-    (while (< index count)
+    (for [index (iterator.range idx count)]
       (set!
         out
         (compiler-reg-id-seq-push
           out
-          (cabi.compiler-abi-callee-saved-gp-register-id target-abi index)))
-      (set! index (+ index 1)))
+          (cabi.compiler-abi-callee-saved-gp-register-id target-abi index))))
     out))
 
 (define (compiler-reg-win64-callee-saved-integer-registers) : CompilerRegIdSeq
@@ -997,18 +982,14 @@
     [right-len : i64 (compiler-reg-id-seq-count right)]
     [out : CompilerRegIdSeq
       (compiler-reg-id-seq-with-capacity (+ left-len right-len))]
-    [index : i64 0]
-    (while (< index left-len)
+    (for [index (iterator.range 0 left-len)]
       (set!
         out
-        (compiler-reg-id-seq-push out (compiler-reg-id-seq-ref left index)))
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index right-len)
+        (compiler-reg-id-seq-push out (compiler-reg-id-seq-ref left index))))
+    (for [index (iterator.range 0 right-len)]
       (set!
         out
-        (compiler-reg-id-seq-push out (compiler-reg-id-seq-ref right index)))
-      (set! index (+ index 1)))
+        (compiler-reg-id-seq-push out (compiler-reg-id-seq-ref right index))))
     out))
 
 (define (compiler-reg-callee-saved-integer-registers-for-abi
@@ -1040,13 +1021,12 @@
       (if (< end (cabi.compiler-abi-caller-saved-xmm-register-count target-abi))
         end
         (cabi.compiler-abi-caller-saved-xmm-register-count target-abi))]
-    [index : i64 idx]
     [out : CompilerRegIdSeq
       (compiler-reg-id-seq-with-capacity
         (if (< idx limit)
           (- limit idx)
           0))]
-    (while (< index limit)
+    (for [index (iterator.range idx limit)]
       (let
         [reg : i64
           (cabi.compiler-abi-caller-saved-xmm-register-id target-abi index)]
@@ -1056,8 +1036,7 @@
             out
             (compiler-reg-id-seq-push
               out
-              (compiler-reg-xmm-class-register reg vector))))
-        (set! index (+ index 1))))
+              (compiler-reg-xmm-class-register reg vector))))))
     out))
 
 (define (compiler-reg-xmm-caller-registers-for-abi-from
@@ -1076,13 +1055,12 @@
   [vector : bool]) : CompilerRegIdSeq
   (let
     [count : i64 (cabi.compiler-abi-callee-saved-xmm-register-count target-abi)]
-    [index : i64 idx]
     [out : CompilerRegIdSeq
       (compiler-reg-id-seq-with-capacity
         (if (< idx count)
           (- count idx)
           0))]
-    (while (< index count)
+    (for [index (iterator.range idx count)]
       (let
         [reg : i64
           (cabi.compiler-abi-callee-saved-xmm-register-id target-abi index)]
@@ -1092,8 +1070,7 @@
             out
             (compiler-reg-id-seq-push
               out
-              (compiler-reg-xmm-class-register reg vector))))
-        (set! index (+ index 1))))
+              (compiler-reg-xmm-class-register reg vector))))))
     out))
 
 (define (compiler-reg-xmm-registers-for-abi-build
@@ -1197,15 +1174,13 @@
 
 (define (compiler-reg-mask-registers) : CompilerRegIdSeq
   (let
-    [index : i64 1]
     [out : CompilerRegIdSeq (compiler-reg-id-seq-with-capacity 6)]
-    (while (<= index 6)
+    (for [index (iterator.range 1 (+ 6 1))]
       (set!
         out
         (compiler-reg-id-seq-push
           out
-          (cabi.compiler-abi-mask-register-id index)))
-      (set! index (+ index 1)))
+          (cabi.compiler-abi-mask-register-id index))))
     out))
 
 (define (compiler-reg-id-seq-contains? [regs : CompilerRegIdSeq] [want : i64]) : bool
@@ -1216,7 +1191,7 @@
       (if (= (compiler-reg-id-seq-ref regs index) want)
         (set! found true)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (compiler-reg-float-type? [ty : (& ty ast.AstType)]) : bool
@@ -1336,11 +1311,9 @@
           [present : (__tl_dyn-array i64) (__tl_make-array i64 new-len)]
           [items : (__tl_dyn-array ast.AstType)
             (__tl_make-array ast.AstType new-len)]
-          [index : i64 0]
-          (while (< index old-len)
+          (for [index (iterator.range 0 old-len)]
             (set! (array-ref present index) (array-ref old-present index))
-            (set! (array-ref items index) (array-ref old-items index))
-            (set! index (+ index 1)))
+            (set! (array-ref items index) (array-ref old-items index)))
           (set! (array-ref present var) 1)
           (set! (array-ref items var) ty)
           (compiler-reg-var-types-new
@@ -1366,12 +1339,9 @@
   [params : ir.CompilerIrParamSeq]
   [present : (&mut present (__tl_dyn-array i64))]
   [types : (&mut types (__tl_dyn-array ast.AstType))]) : unit
-  (let
-    [position : i64 0]
-    (while (< position params.len)
-      (match (ir.compiler-ir-param-seq-ref params position)
-        [(Param _ ty id) (compiler-reg-var-type-array-set! present types id ty)])
-      (set! position (+ position 1)))))
+  (for [position (iterator.range 0 params.len)]
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(Param _ ty id) (compiler-reg-var-type-array-set! present types id ty)])))
 
 (define (compiler-reg-instr-def-type-array!
   [instr : ir.CompilerIrInstr]
@@ -1443,13 +1413,11 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-instr-def-type-array!
         (compiler-reg-global-array-element-shared-view slots index)
         present
-        types)
-      (set! index (+ index 1)))
+        types))
     unit))
 
 (define (compiler-reg-block-list-types-array!
@@ -1459,13 +1427,11 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (compiler-reg-instr-seq-types-array! instrs present types)])
-          (set! i (+ i 1))))]))
+              (compiler-reg-instr-seq-types-array! instrs present types)])))]))
 
 (define (compiler-reg-function-var-types-with-representations-and-metrics
   [func : ir.CompilerIrFunction]
@@ -1525,7 +1491,7 @@
         (if (and (= found-src src) (= found-dst dst))
           (set! found true)
           unit))
-      (set! index (- index 1)))
+      (-= index 1))
     found))
 
 (define (compiler-reg-move-list-contains-undirected?
@@ -1546,7 +1512,7 @@
           (and (= found-src dst) (= found-dst src)))
           (set! found true)
           unit))
-      (set! index (- index 1)))
+      (-= index 1))
     found))
 
 (define (compiler-reg-move-list-empty? [moves : (& moves CompilerRegMoveSeq)]) : bool
@@ -1573,7 +1539,7 @@
               (array-ref slots index)
               (CompilerRegMove found-src found-dst true))
             (set! index (- 0 1)))
-          (set! index (- index 1)))))
+          (-= index 1))))
     moves))
 
 (define (compiler-reg-move-list-add
@@ -1646,7 +1612,7 @@
           (compiler-reg-global-array-element-shared-view slots index)
           out
           strict-pairs))
-      (set! index (- index 1)))
+      (-= index 1))
     out))
 
 (define (compiler-reg-block-list-moves
@@ -1656,14 +1622,12 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : CompilerRegMoveSeq moves]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (set! out (compiler-reg-instr-seq-moves instrs out strict-pairs))])
-          (set! i (+ i 1)))
+              (set! out (compiler-reg-instr-seq-moves instrs out strict-pairs))]))
         out)]))
 
 (define (compiler-reg-function-moves
@@ -1842,9 +1806,8 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
     [out : i64 found]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (array-ref slots index)
         [(BinOp dst op lhs rhs ty)
           ;; Counted BEFORE the store, so a zero-length `flags` still yields
@@ -1863,9 +1826,8 @@
             (if (and (>= dst 0) (< dst (array-length flags)))
               (set! (array-ref flags dst) 1)
               unit)
-            (set! out (+ out 1)))]
-        [_ unit])
-      (set! index (+ index 1)))
+            (+= out 1))]
+        [_ unit]))
     out))
 
 (define (compiler-reg-alu-prefer-rhs-blocks
@@ -1876,16 +1838,14 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : i64 found]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (set!
                 out
-                (compiler-reg-alu-prefer-rhs-seq instrs flags use-counts out))])
-          (set! i (+ i 1)))
+                (compiler-reg-alu-prefer-rhs-seq instrs flags use-counts out))]))
         out)]))
 
 ;; Use-only counts (the ref-count walks above deliberately score defs too).
@@ -1914,12 +1874,10 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-alu-use-counts-add-instr!
         counts
-        (compiler-reg-global-array-element-shared-view slots index))
-      (set! index (+ index 1)))))
+        (compiler-reg-global-array-element-shared-view slots index)))))
 
 (define (compiler-reg-alu-use-counts-blocks!
   [blocks : ir.CompilerIrBlockList]
@@ -1927,12 +1885,10 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
-            [(Block _ instrs) (compiler-reg-alu-use-counts-seq! counts instrs)])
-          (set! i (+ i 1))))]))
+            [(Block _ instrs) (compiler-reg-alu-use-counts-seq! counts instrs)])))]))
 
 ;; Per-var flags: 1 where a two-address BinOp destination should tie to its RHS
 ;; instead of its LHS. Indexed by the BinOp's destination var, so the two tie
@@ -2001,7 +1957,7 @@
         (compiler-reg-cast-move-instr
           (compiler-reg-global-array-element-shared-view slots index)
           out))
-      (set! index (- index 1)))
+      (-= index 1))
     out))
 
 (define (compiler-reg-cast-moves-blocks
@@ -2010,14 +1966,12 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : CompilerRegMoveSeq moves]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (set! out (compiler-reg-cast-moves-seq instrs out))])
-          (set! i (+ i 1)))
+              (set! out (compiler-reg-cast-moves-seq instrs out))]))
         out)]))
 
 ;; Destructive ties are useful for chains, but feeding every scalar binop into
@@ -2033,8 +1987,7 @@
   (let
     [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
     [count : i64 moves.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [item : CompilerRegMove (array-ref slots index)]
         [src : i64 item.src]
@@ -2044,8 +1997,7 @@
           unit)
         (if (and (>= dst 0) (< dst (array-length anchors)))
           (set! (array-ref anchors dst) 1)
-          unit))
-      (set! index (+ index 1)))))
+          unit)))))
 
 (define (compiler-reg-destructive-shape-instr!
   [instr : ir.CompilerIrInstr]
@@ -2082,13 +2034,11 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-destructive-shape-instr!
         (compiler-reg-global-array-element-shared-view slots index)
         defs
-        uses)
-      (set! index (+ index 1)))))
+        uses))))
 
 (define (compiler-reg-destructive-shape-blocks!
   [blocks : ir.CompilerIrBlockList]
@@ -2097,13 +2047,11 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (compiler-reg-destructive-shape-seq! instrs defs uses)])
-          (set! i (+ i 1))))]))
+              (compiler-reg-destructive-shape-seq! instrs defs uses)])))]))
 
 (define (compiler-reg-destructive-candidate?
   [src : i64]
@@ -2290,7 +2238,7 @@
           uses
           eligible
           prefer-rhs))
-      (set! index (- index 1)))
+      (-= index 1))
     out))
 
 (define (compiler-reg-destructive-tie-moves-blocks
@@ -2304,10 +2252,9 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : CompilerRegMoveSeq moves]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (set!
@@ -2319,8 +2266,7 @@
                   defs
                   uses
                   eligible
-                  prefer-rhs))])
-          (set! i (+ i 1)))
+                  prefer-rhs))]))
         out)]))
 
 (define (compiler-reg-function-destructive-tie-moves
@@ -2376,9 +2322,8 @@
   (let
     [slots : (__tl_dyn-array CompilerRegMove) moves.slots]
     [count : i64 moves.len]
-    [index : i64 0]
     [out : CompilerRegMoveSeq (compiler-reg-move-seq-empty)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [item : CompilerRegMove (array-ref slots index)]
         [src : i64 item.src]
@@ -2387,8 +2332,7 @@
           (live.compiler-live-set-contains? storage-vars src)
           (live.compiler-live-set-contains? storage-vars dst))
           unit
-          (set! out (compiler-reg-move-seq-push out item))))
-      (set! index (+ index 1)))
+          (set! out (compiler-reg-move-seq-push out item)))))
     out))
 
 ;; For a NON-zero `value`, or for an array being *re*-initialised. `make-array`
@@ -2398,11 +2342,9 @@
   [items : (&mut items (__tl_dyn-array i64))]
   [value : i64]) : unit
   (let
-    [index : i64 0]
     [count : i64 (array-length items)]
-    (while (< index count)
-      (set! (array-ref items index) value)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref items index) value))
     unit))
 
 (define (compiler-reg-select-false-preference-instr!
@@ -2427,12 +2369,10 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-select-false-preference-instr!
         (compiler-reg-global-array-element-shared-view slots index)
-        preferences)
-      (set! index (+ index 1)))
+        preferences))
     unit))
 
 (define (compiler-reg-select-false-preference-blocks!
@@ -2441,13 +2381,11 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (compiler-reg-select-false-preference-seq! instrs preferences)])
-          (set! i (+ i 1))))]))
+              (compiler-reg-select-false-preference-seq! instrs preferences)])))]))
 
 (define (compiler-reg-function-select-false-preferences
   [func : ir.CompilerIrFunction]
@@ -2464,11 +2402,9 @@
   [items : (&mut items (__tl_dyn-array CompilerRegLocation))]
   [value : CompilerRegLocation]) : unit
   (let
-    [index : i64 0]
     [count : i64 (array-length items)]
-    (while (< index count)
-      (set! (array-ref items index) value)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref items index) value))
     unit))
 
 (define (compiler-reg-assignment-table-make [vars : i64]) : CompilerRegAssignmentTable
@@ -2502,13 +2438,11 @@
     [present : (__tl_dyn-array i64) (compiler-reg-assignment-table-present out)]
     [items : (__tl_dyn-array CompilerRegLocation)
       (compiler-reg-assignment-table-items out)]
-    [index : i64 0]
-    (while (< index (array-length old-present))
+    (for [index (iterator.range 0 (array-length old-present))]
       (set! (array-ref present index) (array-ref old-present index))
       (if (= (array-ref old-present index) 0)
         unit
-        (set! (array-ref items index) (clone (array-ref old-items index))))
-      (set! index (+ index 1)))
+        (set! (array-ref items index) (clone (array-ref old-items index)))))
     out))
 
 (define (compiler-reg-assignment-table-with-min-capacity
@@ -2542,8 +2476,7 @@
     [present : (__tl_dyn-array i64) (compiler-reg-assignment-table-present src)]
     [items : (__tl_dyn-array CompilerRegLocation)
       (compiler-reg-assignment-table-items src)]
-    [index : i64 0]
-    (while (< index (array-length present))
+    (for [index (iterator.range 0 (array-length present))]
       (if (= (array-ref present index) 0)
         unit
         (begin
@@ -2551,8 +2484,7 @@
             dst
             index
             (clone (array-ref items index)))
-          unit))
-      (set! index (+ index 1)))
+          unit)))
     unit))
 
 ;; RAGreedy Component 1: drop a var's current assignment (present[var]=0) without
@@ -2613,21 +2545,18 @@
   [intervals : CompilerRegIntervalSeq]
   [starts : (&mut starts (__tl_dyn-array i64))]
   [ends : (&mut ends (__tl_dyn-array i64))]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count intervals))
-      (let
-        [interval : CompilerRegInterval
-          (compiler-reg-interval-seq-ref intervals index)]
-        [var : i64 interval.var]
-        (unless
-          (or
-            (< var 0)
-            (>= var (array-length starts))
-            (>= (array-ref starts var) 0))
-          (set! (array-ref starts var) interval.start)
-          (set! (array-ref ends var) interval.end)))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 (compiler-reg-interval-seq-count intervals))]
+    (let
+      [interval : CompilerRegInterval
+        (compiler-reg-interval-seq-ref intervals index)]
+      [var : i64 interval.var]
+      (unless
+        (or
+          (< var 0)
+          (>= var (array-length starts))
+          (>= (array-ref starts var) 0))
+        (set! (array-ref starts var) interval.start)
+        (set! (array-ref ends var) interval.end)))))
 
 (define (compiler-reg-interval-index-build
   [intervals : CompilerRegIntervalSeq]
@@ -2687,23 +2616,14 @@
     (when
       (= (bit-and value 0xffffffff) 0)
       (set! value (shr value 32))
-      (set! offset (+ offset 32)))
+      (+= offset 32))
     (when
       (= (bit-and value 0xffff) 0)
       (set! value (shr value 16))
-      (set! offset (+ offset 16)))
-    (when
-      (= (bit-and value 0xff) 0)
-      (set! value (shr value 8))
-      (set! offset (+ offset 8)))
-    (when
-      (= (bit-and value 0xf) 0)
-      (set! value (shr value 4))
-      (set! offset (+ offset 4)))
-    (when
-      (= (bit-and value 0x3) 0)
-      (set! value (shr value 2))
-      (set! offset (+ offset 2)))
+      (+= offset 16))
+    (when (= (bit-and value 0xff) 0) (set! value (shr value 8)) (+= offset 8))
+    (when (= (bit-and value 0xf) 0) (set! value (shr value 4)) (+= offset 4))
+    (when (= (bit-and value 0x3) 0) (set! value (shr value 2)) (+= offset 2))
     (if (= (bit-and value 0x1) 0)
       (+ offset 1)
       offset)))
@@ -2888,18 +2808,15 @@
   [ids : (__tl_dyn-array i64)]
   [id-count : i64]
   [point : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index id-count)
-      (compiler-reg-extend-segment-touch!
-        starts
-        ends
-        (compiler-reg-global-shared-view segments)
-        segment-starts
-        segment-ends
-        (array-ref ids index)
-        point)
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 id-count)]
+    (compiler-reg-extend-segment-touch!
+      starts
+      ends
+      (compiler-reg-global-shared-view segments)
+      segment-starts
+      segment-ends
+      (array-ref ids index)
+      point)))
 
 ;; The live-after half: bridge every value live out of this instruction across
 ;; the `point`/`next` pair. This one stays a word walk and does not become an id
@@ -3004,8 +2921,7 @@
       (unsafe
         (__tl_array-data segment-ends))]
     [next : i64 (+ point 1)]
-    [index : i64 0]
-    (while (< index after-words)
+    (for [index (iterator.range 0 after-words)]
       (let
         [after-bits : i64
           (live.compiler-live-set-word-at-data after-data index)]
@@ -3070,8 +2986,7 @@
                           (ptr-write! (ptr-offset ends-data item-var) next))
                         unit)))
                   unit)))
-            (set! after-bits (bit-and after-bits (- after-bits 1)))))
-        (set! index (+ index 1))))))
+            (set! after-bits (bit-and after-bits (- after-bits 1)))))))))
 
 ;; Id-driven build: the def is one var id and the uses are a short id list, so
 ;; neither needs a bitset. Only the per-variable ORDER of the two passes is
@@ -3136,8 +3051,7 @@
       (if (>= defs-words uses-words)
         defs-words
         uses-words)]
-    [index : i64 0]
-    (while (< index word-count)
+    (for [index (iterator.range 0 word-count)]
       (let
         [base : i64 (* index (live.compiler-live-set-word-bits))]
         ;; `compiler-live-set-word-at-bounded` is an unchecked read, so each
@@ -3164,8 +3078,7 @@
               (&mut segment-ends)
               item-var
               point)
-            (set! touched (bit-and touched (- touched 1)))))
-        (set! index (+ index 1))))
+            (set! touched (bit-and touched (- touched 1)))))))
     (compiler-reg-extend-segment-after-words!
       starts
       ends
@@ -3219,9 +3132,8 @@
   [word-index : i64]
   [point : i64]) : unit
   (let
-    [index : i64 word-index]
     [word-count : i64 (live.compiler-live-set-word-count set)]
-    (while (< index word-count)
+    (for [index (iterator.range word-index word-count)]
       ;; `compiler-reg-extend-set-word-bits` returns immediately for an empty
       ;; word, so testing here skips the call setup for the common case.
       (let
@@ -3233,8 +3145,7 @@
             (&mut ends)
             bits
             (* index (live.compiler-live-set-word-bits))
-            point)))
-      (set! index (+ index 1)))))
+            point))))))
 
 (define (compiler-reg-extend-set-word-bits
   [starts : (&mut starts (__tl_dyn-array i64))]
@@ -3260,11 +3171,8 @@
   [ids : (__tl_dyn-array i64)]
   [id-count : i64]
   [point : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index id-count)
-      (compiler-reg-extend-interval starts ends (array-ref ids index) point)
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 id-count)]
+    (compiler-reg-extend-interval starts ends (array-ref ids index) point)))
 
 ;; Extend one instruction's coarse intervals. The def/use halves take the ids
 ;; directly (compiler-reg-extend-set-words exists only to recover those same ids
@@ -3319,9 +3227,8 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [after-items : (__tl_dyn-array live.CompilerLiveI64Set) live-afters.items]
-    [index : i64 0]
     [out-point : i64 point]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [live-after : live.CompilerLiveI64Set
           (if (< index (array-length after-items))
@@ -3333,8 +3240,7 @@
           live-after
           out-point
           (compiler-reg-global-array-element-shared-view slots index))
-        (set! out-point (+ out-point 2))
-        (set! index (+ index 1))))
+        (+= out-point 2)))
     out-point))
 
 (define (compiler-reg-live-intervals-find-afters
@@ -3422,8 +3328,7 @@
   [point : i64]) : unit
   (let
     [count : i64 (live.compiler-live-set-word-count set)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-segment-live-in-word!
         starts
         ends
@@ -3432,8 +3337,7 @@
         segment-ends
         (live.compiler-live-set-word-at-bounded set index)
         (* index (live.compiler-live-set-word-bits))
-        point)
-      (set! index (+ index 1)))))
+        point))))
 
 (define (compiler-reg-live-intervals-blocks-with-live
   [blocks : ir.CompilerIrBlockList]
@@ -3444,10 +3348,9 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out-point : i64 point]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block label instrs)
               (let
@@ -3462,8 +3365,7 @@
                     live-afters
                     out-point
                     starts
-                    ends)))])
-          (set! i (+ i 1)))
+                    ends)))]))
         out-point)]))
 
 (define (compiler-reg-interval-arrays-to-seq
@@ -3481,19 +3383,15 @@
     [slots : (__tl_dyn-array CompilerRegInterval)
       (__tl_make-array CompilerRegInterval (+ old-len additional-capacity))]
     [out-len : i64 old-len]
-    [copy-index : i64 0]
-    [var : i64 0]
-    (while (< copy-index old-len)
-      (set! (array-ref slots copy-index) (array-ref old-slots copy-index))
-      (set! copy-index (+ copy-index 1)))
-    (while (<= var index)
+    (for [copy-index (iterator.range 0 old-len)]
+      (set! (array-ref slots copy-index) (array-ref old-slots copy-index)))
+    (for [var (iterator.range 0 (+ index 1))]
       (unless
         (< (array-ref starts var) 0)
         (set!
           (array-ref slots out-len)
           (CompilerRegInterval var (array-ref starts var) (array-ref ends var)))
-        (set! out-len (+ out-len 1)))
-      (set! var (+ var 1)))
+        (+= out-len 1)))
     (CompilerRegIntervalSeq slots out-len)))
 
 (define (compiler-reg-live-intervals
@@ -3531,9 +3429,8 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [after-items : (__tl_dyn-array live.CompilerLiveI64Set) live-afters.items]
-    [index : i64 0]
     [out-point : i64 point]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [live-after : live.CompilerLiveI64Set
           (if (< index (array-length after-items))
@@ -3550,8 +3447,7 @@
           live-after
           out-point
           instr)
-        (set! out-point (+ out-point 2))
-        (set! index (+ index 1))))
+        (+= out-point 2)))
     out-point))
 
 (define (compiler-reg-live-interval-selection-blocks
@@ -3567,10 +3463,9 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out-point : i64 point]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block label instrs)
               (let
@@ -3602,8 +3497,7 @@
                     (compiler-reg-global-shared-view ends)
                     (compiler-reg-global-shared-view segments)
                     (compiler-reg-global-shared-view segment-starts)
-                    (compiler-reg-global-shared-view segment-ends))))])
-          (set! i (+ i 1)))
+                    (compiler-reg-global-shared-view segment-ends))))]))
         out-point)]))
 
 (define (compiler-reg-live-interval-selection
@@ -3656,15 +3550,12 @@
           (compiler-reg-global-shared-view segment-starts)
           (compiler-reg-global-shared-view segment-ends)
           seed-live-in?)
-        (let
-          [index : i64 0]
-          (while (< index vars)
-            (compiler-reg-segment-flush-var!
-              (compiler-reg-global-shared-view segments)
-              (&mut segment-starts)
-              (&mut segment-ends)
-              index)
-            (set! index (+ index 1))))
+        (for [index (iterator.range 0 vars)]
+          (compiler-reg-segment-flush-var!
+            (compiler-reg-global-shared-view segments)
+            (&mut segment-starts)
+            (&mut segment-ends)
+            index))
         (Selection
           (compiler-reg-interval-arrays-to-seq
             starts
@@ -3712,20 +3603,18 @@
         1
         (+ (live.compiler-live-set-word-index (- vars 1)) 1))]
     [words : (__tl_dyn-array i64) (__tl_make-array i64 word-count)]
-    [v : i64 0]
     [limit : i64
       (if (< vars (array-length mask))
         vars
         (array-length mask))]
-    (while (< v limit)
+    (for [v (iterator.range 0 limit)]
       (if (= (array-ref mask v) 1)
         (let
           [w : i64 (live.compiler-live-set-word-index v)]
           (set!
             (array-ref words w)
             (bit-or (array-ref words w) (live.compiler-live-set-bit-mask v))))
-        unit)
-      (set! v (+ v 1)))
+        unit))
     words))
 
 (define (compiler-reg-ep-mask-word-limit
@@ -3733,7 +3622,7 @@
   (let
     [i : i64 (array-length words)]
     (while (and (> i 0) (= (array-ref words (- i 1)) 0))
-      (set! i (- i 1)))
+      (-= i 1))
     i))
 
 (define (compiler-reg-ep-selected?
@@ -3765,17 +3654,14 @@
   [ids : (__tl_dyn-array i64)]
   [id-count : i64]
   [point : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index id-count)
-      (compiler-reg-ep-touch!
-        (compiler-reg-global-shared-view segments)
-        segment-starts
-        segment-ends
-        mask
-        (array-ref ids index)
-        point)
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 id-count)]
+    (compiler-reg-ep-touch!
+      (compiler-reg-global-shared-view segments)
+      segment-starts
+      segment-ends
+      mask
+      (array-ref ids index)
+      point)))
 
 ;; ---------------------------------------------------------------------------
 ;; LP-1: the allocation-side EP mode.
@@ -3853,8 +3739,7 @@
       (if (< word-limit mask-len)
         word-limit
         mask-len)]
-    [index : i64 0]
-    (while (< index limit)
+    (for [index (iterator.range 0 limit)]
       (compiler-reg-ep-segment-live-in-word!
         (compiler-reg-global-shared-view segments)
         segment-starts
@@ -3863,8 +3748,7 @@
           (live.compiler-live-set-word-at-bounded set index)
           (array-ref mask-words index))
         (* index (live.compiler-live-set-word-bits))
-        point)
-      (set! index (+ index 1)))))
+        point))))
 
 ;; The segment-bridge body is spelled out here rather than called, exactly as
 ;; the conservative walk (`compiler-reg-extend-segment-after-words!`) spells out
@@ -3942,8 +3826,7 @@
       (unsafe
         (__tl_array-data segment-ends))]
     [next : i64 (+ point 1)]
-    [index : i64 0]
-    (while (< index limit)
+    (for [index (iterator.range 0 limit)]
       (let
         [after-bits : i64
           (bit-and
@@ -3990,8 +3873,7 @@
                           (ptr-write!
                             (ptr-offset segment-ends-data item-var)
                             next))))))))
-            (set! after-bits (bit-and after-bits (- after-bits 1)))))
-        (set! index (+ index 1))))))
+            (set! after-bits (bit-and after-bits (- after-bits 1)))))))))
 
 (define (compiler-reg-ep-sets!
   [segments : (__tl_dyn-array CompilerRegIntervalSeq)]
@@ -4014,8 +3896,7 @@
       (if (< widest mask-limit)
         widest
         mask-limit)]
-    [index : i64 0]
-    (while (< index word-count)
+    (for [index (iterator.range 0 word-count)]
       (let
         [base : i64 (* index (live.compiler-live-set-word-bits))]
         [touched : i64
@@ -4038,8 +3919,7 @@
               (&mut segment-ends)
               item-var
               point)
-            (set! touched (bit-and touched (- touched 1)))))
-        (set! index (+ index 1))))
+            (set! touched (bit-and touched (- touched 1)))))))
     (compiler-reg-ep-after-words!
       segments
       segment-starts
@@ -4114,9 +3994,8 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [after-items : (__tl_dyn-array live.CompilerLiveI64Set) live-afters.items]
-    [index : i64 0]
     [out-point : i64 point]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [live-after : live.CompilerLiveI64Set
           (if (< index (array-length after-items))
@@ -4134,8 +4013,7 @@
           live-after
           out-point
           instr)
-        (set! out-point (+ out-point 2))
-        (set! index (+ index 1))))
+        (+= out-point 2)))
     out-point))
 
 (define (compiler-reg-live-interval-selection-ep-blocks
@@ -4152,10 +4030,9 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out-point : i64 point]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block label instrs)
               (let
@@ -4188,8 +4065,7 @@
                     (compiler-reg-global-shared-view segment-ends)
                     mask
                     (compiler-reg-global-shared-view mask-words)
-                    mask-limit)))])
-          (set! i (+ i 1)))
+                    mask-limit)))]))
         out-point)]))
 
 ;; Returns just the per-var EP segment rows for the masked vars; every other
@@ -4227,17 +4103,14 @@
                 seed-live-in?)]
             unit)
           unit)
-        (let
-          [index : i64 0]
-          (while (< index vars)
-            (if (compiler-reg-ep-selected? mask index)
-              (compiler-reg-segment-flush-var!
-                (compiler-reg-global-shared-view segments)
-                (&mut segment-starts)
-                (&mut segment-ends)
-                index)
-              unit)
-            (set! index (+ index 1))))
+        (for [index (iterator.range 0 vars)]
+          (if (compiler-reg-ep-selected? mask index)
+            (compiler-reg-segment-flush-var!
+              (compiler-reg-global-shared-view segments)
+              (&mut segment-starts)
+              (&mut segment-ends)
+              index)
+            unit))
         segments)]))
 
 ;; ---------------------------------------------------------------------------
@@ -4368,7 +4241,7 @@
           var))
         (set! found true)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (compiler-reg-instr-seq-non-phi-uses-var?
@@ -4391,7 +4264,7 @@
               (live.compiler-live-set-contains? instr-uses var))
               (set! found true)
               unit)])
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 ;; Index of the instruction that defines `var`, or -1 when the block does not
@@ -4414,7 +4287,7 @@
           var))
         (set! found index)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 ;; True when no instruction STRICTLY AFTER `from` mentions `var` as a use. Phi
@@ -4439,7 +4312,7 @@
         (live.compiler-live-set-contains? instr-uses var))
         (set! clean false)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     clean))
 
 ;; Exception (b) of the live-out-input exclusion: the phi RESULT `dst` is dead
@@ -4516,8 +4389,7 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (array-ref slots index)
         [(Phi dst inputs _)
           (unless
@@ -4538,8 +4410,7 @@
             (compiler-reg-phi-touched-add-inputs!
               inputs
               (compiler-reg-global-shared-view mask)))]
-        [_ unit])
-      (set! index (+ index 1)))
+        [_ unit]))
     unit))
 
 (define (compiler-reg-phi-touched-safe-blocks!
@@ -4550,9 +4421,8 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block label instrs)
               (compiler-reg-phi-touched-safe-seq!
@@ -4567,8 +4437,7 @@
                       (ir.compiler-ir-block-seq-ref seq i))
                     label))
                 label
-                (compiler-reg-global-shared-view mask))])
-          (set! i (+ i 1))))]))
+                (compiler-reg-global-shared-view mask))])))]))
 
 (define (compiler-reg-function-phi-touched-safe-mode
   [func : ir.CompilerIrFunction]
@@ -4597,8 +4466,7 @@
     [n : i64 (array-length cons-starts)]
     [hybrid-segs : (__tl_dyn-array CompilerRegIntervalSeq)
       (__tl_make-array CompilerRegIntervalSeq n)]
-    [v : i64 0]
-    (while (< v n)
+    (for [v (iterator.range 0 n)]
       (set!
         (array-ref hybrid-segs v)
         (if (if (< v (array-length mask))
@@ -4609,8 +4477,7 @@
             (compiler-reg-interval-seq-empty))
           (if (< v (array-length cons-segs))
             (array-ref cons-segs v)
-            (compiler-reg-interval-seq-empty))))
-      (set! v (+ v 1)))
+            (compiler-reg-interval-seq-empty)))))
     (CompilerRegIntervalIndex cons-starts cons-ends hybrid-segs)))
 
 ;; ---------------------------------------------------------------------------
@@ -4690,8 +4557,7 @@
       (if tighten-hull?
         (__tl_make-array i64 n)
         (owned_view.compiler-owned-shared-view cons-ends))]
-    [v : i64 0]
-    (while (< v n)
+    (for [v (iterator.range 0 n)]
       (let
         [cons-row : CompilerRegIntervalSeq
           (if (< v (array-length cons-segs))
@@ -4748,8 +4614,7 @@
             (array-ref out-ends v)
             (if keep-hull?
               old-end
-              new-end))))
-      (set! v (+ v 1)))
+              new-end)))))
     (CompilerRegIntervalIndex out-starts out-ends out-segs)))
 
 ;; ---------------------------------------------------------------------------
@@ -4805,7 +4670,7 @@
           (set!
             (array-ref starts id)
             (+ (compiler-reg-global-array-element-shared-view starts id) 1)))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (set! index 1)
     (while (<= index rows)
       (set!
@@ -4813,7 +4678,7 @@
         (+
           (compiler-reg-global-array-element-shared-view starts index)
           (compiler-reg-global-array-element-shared-view starts (- index 1))))
-      (set! index (+ index 1)))
+      (+= index 1))
     (let
       [items : (__tl_dyn-array i64)
         (__tl_make-array
@@ -4821,7 +4686,7 @@
           (compiler-reg-global-array-element-shared-view starts rows))]
       (set! index count)
       (while (> block 0)
-        (set! block (- block 1))
+        (-= block 1)
         (while (and
           (> index 0)
           (or (= block 0) (> index (array-ref ends (- block 1)))))
@@ -4837,7 +4702,7 @@
                   items
                   (compiler-reg-global-array-element-shared-view starts id))
                 block))
-            (set! index (- index 1)))))
+            (-= index 1))))
       (CompilerRegCsr starts items))))
 
 ;; Extends every var's hull over the block boundaries where it is live:
@@ -4866,22 +4731,24 @@
     ;; Live-in blocks whose predecessors are still to visit; each block is
     ;; pushed at most once per var.
     [stack : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [var : i64 0]
     (compiler-reg-fill-i64-array (&mut def-mark) -1)
     (compiler-reg-fill-i64-array (&mut in-mark) -1)
-    (while (< var vars)
+    (for [var (iterator.range 0 vars)]
       (let
-        [index : i64 (array-ref def-blocks.starts var)]
         [top : i64 0]
         [in-lo : i64 count]
         [in-hi : i64 -1]
         [out-lo : i64 count]
         [out-hi : i64 -1]
-        (while (< index (array-ref def-blocks.starts (+ var 1)))
-          (set! (array-ref def-mark (array-ref def-blocks.items index)) var)
-          (set! index (+ index 1)))
-        (set! index (array-ref use-blocks.starts var))
-        (while (< index (array-ref use-blocks.starts (+ var 1)))
+        (for [index
+          (iterator.range
+            (array-ref def-blocks.starts var)
+            (array-ref def-blocks.starts (+ var 1)))]
+          (set! (array-ref def-mark (array-ref def-blocks.items index)) var))
+        (for [index
+          (iterator.range
+            (array-ref use-blocks.starts var)
+            (array-ref use-blocks.starts (+ var 1)))]
           (let
             [block : i64 (array-ref use-blocks.items index)]
             (when
@@ -4890,17 +4757,16 @@
                 var)
               (set! (array-ref in-mark block) var)
               (set! (array-ref stack top) block)
-              (set! top (+ top 1)))
-            (set! index (+ index 1))))
+              (+= top 1))))
         (while (> top 0)
           (let
             [block : i64
               (compiler-reg-global-array-element-shared-view stack (- top 1))]
-            (set! top (- top 1))
+            (-= top 1)
             (set! in-lo (live.compiler-live-set-min in-lo block))
             (set! in-hi (live.compiler-live-set-max in-hi block))
-            (set! index 0)
-            (while (< index (array-length (array-ref preds block).items))
+            (for [index
+              (iterator.range 0 (array-length (array-ref preds block).items))]
               (let
                 [pred : i64 (array-ref (array-ref preds block).items index)]
                 (set! out-lo (live.compiler-live-set-min out-lo pred))
@@ -4919,8 +4785,7 @@
                       var))
                   (set! (array-ref in-mark pred) var)
                   (set! (array-ref stack top) pred)
-                  (set! top (+ top 1)))
-                (set! index (+ index 1))))))
+                  (+= top 1))))))
         (when
           (>= in-hi 0)
           (compiler-reg-extend-interval
@@ -4944,8 +4809,7 @@
             starts
             ends
             var
-            (array-ref bounds (+ out-hi 1))))
-        (set! var (+ var 1))))
+            (array-ref bounds (+ out-hi 1))))))
     unit))
 
 (define (compiler-reg-bits-mentions-instr-seq
@@ -4956,17 +4820,15 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
     [out-point : i64 point]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-extend-instr
         starts
         ends
         (live.compiler-live-set-empty)
         out-point
         (compiler-reg-global-array-element-shared-view slots index))
-      (set! out-point (+ out-point 2))
-      (set! index (+ index 1)))
+      (+= out-point 2))
     out-point))
 
 (define (compiler-reg-bits-map-capacity [count : i64]) : i64
@@ -5015,18 +4877,15 @@
     [bounds : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
     [starts : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-    [block : i64 0]
     (compiler-reg-fill-i64-array (&mut starts) -1)
     (compiler-reg-fill-i64-array (&mut ends) -1)
     (compiler-reg-fill-i64-array (&mut use-at) -1)
     (compiler-reg-fill-i64-array (&mut def-at) -1)
-    (while (< block count)
+    (for [block (iterator.range 0 count)]
       (match (ir.compiler-ir-block-seq-ref seq block)
         [(Block label _)
-          (reg_label_i64_map.insert-ref! (&mut idmap) label block)])
-      (set! block (+ block 1)))
-    (set! block 0)
-    (while (< block count)
+          (reg_label_i64_map.insert-ref! (&mut idmap) label block)]))
+    (for [block (iterator.range 0 count)]
       (let
         [ir-block : ir.CompilerIrBlock (ir.compiler-ir-block-seq-ref seq block)]
         (match (compiler-reg-global-shared-view ir-block)
@@ -5052,8 +4911,7 @@
               (live.compiler-live-label-set-to-index-vec
                 (live.compiler-live-block-successors
                   (compiler-reg-global-shared-view ir-block))
-                (& idmap)))])
-        (set! block (+ block 1))))
+                (& idmap)))])))
     (let
       [use-blocks : CompilerRegCsr
         (compiler-reg-csr-invert vars use-ids use-ends)]
@@ -5113,9 +4971,8 @@
   (let
     [present : (__tl_dyn-array i64) (compiler-reg-var-types-present types)]
     [items : (__tl_dyn-array ast.AstType) (compiler-reg-var-types-items types)]
-    [index : i64 0]
     [out : live.CompilerLiveI64Set set]
-    (while (< index (array-length present))
+    (for [index (iterator.range 0 (array-length present))]
       (if (or
         (= (array-ref present index) 0)
         (if handles-ok?
@@ -5126,8 +4983,7 @@
             [ty (compiler-reg-global-array-element-shared-view items index)]
             (compiler-reg-scalar-type? ty))))
         unit
-        (set! out (live.compiler-live-set-insert out index)))
-      (set! index (+ index 1)))
+        (set! out (live.compiler-live-set-insert out index))))
     out))
 
 (define (compiler-reg-ineligible-params-from
@@ -5264,27 +5120,24 @@
 (define (compiler-reg-param-entry-simple-shape?
   [type-segment-bases : i64]
   [representations : ir.CompilerIrRepresentationIndex]
-  [params : ir.CompilerIrParamSeq]
-  [position : i64]) : bool
-  (if (>= position params.len)
-    true
+  [params : ir.CompilerIrParamSeq]) : bool
+  (for [position (iterator.range 0 params.len)]
     (match (ir.compiler-ir-param-seq-ref params position)
       [(Param _ ty _)
-        (and
-          (compiler-reg-integer-param-type?
-            type-segment-bases
-            (compiler-reg-global-shared-view representations)
-            (compiler-reg-global-shared-view ty))
-          (not
-            (compiler-reg-param-abi-opaque?
+        (unless
+          (and
+            (compiler-reg-integer-param-type?
               type-segment-bases
               (compiler-reg-global-shared-view representations)
-              ty))
-          (compiler-reg-param-entry-simple-shape?
-            type-segment-bases
-            representations
-            params
-            (+ position 1)))])))
+              (compiler-reg-global-shared-view ty))
+            (not
+              (compiler-reg-param-abi-opaque?
+                type-segment-bases
+                (compiler-reg-global-shared-view representations)
+                ty)))
+          (return false))
+        unit]))
+  true)
 
 ;; The incoming argument registers of the parameters AFTER `position` -- the
 ;; sources of every entry copy the backend emits later than this one. Positions
@@ -5387,16 +5240,13 @@
       (compiler-reg-param-entry-simple-shape?
         type-segment-bases
         representations
-        (compiler-reg-global-shared-view params)
-        0)))
+        (compiler-reg-global-shared-view params))))
     (__tl_make-array CompilerRegIdSeq 0)
     (let
       [out : (__tl_dyn-array CompilerRegIdSeq)
         (__tl_make-array CompilerRegIdSeq vars)]
-      [index : i64 0]
-      (while (< index vars)
-        (set! (array-ref out index) (compiler-reg-id-seq-empty))
-        (set! index (+ index 1)))
+      (for [index (iterator.range 0 vars)]
+        (set! (array-ref out index) (compiler-reg-id-seq-empty)))
       (compiler-reg-param-entry-forbidden-fill!
         target-abi
         params
@@ -5476,21 +5326,16 @@
 (define (compiler-reg-param-pin-set-in-range-words?
   [set : (& set live.CompilerLiveI64Set)]
   [start : i64]
-  [end : i64]
-  [word-index : i64]) : bool
-  (if (>= word-index (live.compiler-live-set-word-count set))
-    false
-    (if (compiler-reg-param-pin-word-in-range?
-      (live.compiler-live-set-word-at-bounded set word-index)
-      (* word-index (live.compiler-live-set-word-bits))
-      start
-      end)
-      true
-      (compiler-reg-param-pin-set-in-range-words?
-        set
+  [end : i64]) : bool
+  (for [word-index (iterator.range 0 (live.compiler-live-set-word-count set))]
+    (when
+      (compiler-reg-param-pin-word-in-range?
+        (live.compiler-live-set-word-at-bounded set word-index)
+        (* word-index (live.compiler-live-set-word-bits))
         start
-        end
-        (+ word-index 1)))))
+        end)
+      (return true)))
+  false)
 
 (define (compiler-reg-param-pin-spans-clobber?
   [interval-index : CompilerRegIntervalIndex]
@@ -5514,8 +5359,7 @@
           (compiler-reg-param-pin-set-in-range-words?
             clobber-points
             (array-ref starts var)
-            (array-ref ends var)
-            0)
+            (array-ref ends var))
           (if (compiler-reg-interval-index-var-has-segments? interval-index var)
             (compiler-reg-segments-span-clobber?
               (compiler-reg-global-array-element-shared-view
@@ -5844,15 +5688,13 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
     [out : live.CompilerLiveI64Set set]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (compiler-reg-ineligible-instr
           (compiler-reg-global-array-element-shared-view slots index)
-          out))
-      (set! index (+ index 1)))
+          out)))
     out))
 
 (define (compiler-reg-ineligible-memory
@@ -5861,14 +5703,12 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : live.CompilerLiveI64Set set]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (set! out (compiler-reg-ineligible-instr-seq instrs out))])
-          (set! i (+ i 1)))
+              (set! out (compiler-reg-ineligible-instr-seq instrs out))]))
         out)]))
 
 (define (compiler-reg-call-arg-vars-instr-seq
@@ -5877,9 +5717,8 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
     [out : live.CompilerLiveI64Set set]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (match (array-ref slots index)
@@ -5928,8 +5767,7 @@
               (live.compiler-live-value-vars-into
                 (live.compiler-live-call-args-vars args)
                 func))]
-          [_ out]))
-      (set! index (+ index 1)))
+          [_ out])))
     out))
 
 (define (compiler-reg-call-arg-vars-blocks
@@ -5938,14 +5776,12 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : live.CompilerLiveI64Set set]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (set! out (compiler-reg-call-arg-vars-instr-seq instrs out))])
-          (set! i (+ i 1)))
+              (set! out (compiler-reg-call-arg-vars-instr-seq instrs out))]))
         out)]))
 
 ;; --- Register-eligible GP call args ---------------------------------------
@@ -5996,21 +5832,16 @@
   [type-segment-bases : i64]
   [values : (__tl_dyn-array ir.CompilerIrValue)]
   [types : CompilerRegVarTypes]
-  [index : i64]
   [count : i64]) : bool
-  (if (>= index count)
-    true
-    (and
+  (for [index (iterator.range 0 count)]
+    (unless
       (compiler-reg-call-arg-gp-class?
         type-segment-bases
         (compiler-reg-global-array-element-shared-view values index)
         types)
-      (compiler-reg-call-args-array-gp-class?
-        type-segment-bases
-        values
-        types
-        (+ index 1)
-        count))))
+      (return false))
+    unit)
+  true)
 
 (define (compiler-reg-call-args-gp-class?
   [type-segment-bases : i64]
@@ -6028,14 +5859,12 @@
         type-segment-bases
         (compiler-reg-global-shared-view values)
         types
-        0
         (array-length values))]
     [(Sret values _)
       (compiler-reg-call-args-array-gp-class?
         type-segment-bases
         (compiler-reg-global-shared-view values)
         types
-        0
         (array-length values))]))
 
 ;; A call whose args are ALL single-GP-register passed (and within the per-ABI
@@ -6123,20 +5952,16 @@
 (define (compiler-reg-call-args-array-has-group?
   [type-segment-bases : i64]
   [values : (__tl_dyn-array ir.CompilerIrValue)]
-  [types : CompilerRegVarTypes]
-  [i : i64]) : bool
-  (if (>= i (array-length values))
-    false
-    (or
+  [types : CompilerRegVarTypes]) : bool
+  (for [i (iterator.range 0 (array-length values))]
+    (when
       (compiler-reg-call-arg-group?
         type-segment-bases
         (compiler-reg-global-array-element-shared-view values i)
         types)
-      (compiler-reg-call-args-array-has-group?
-        type-segment-bases
-        values
-        types
-        (+ i 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (compiler-reg-call-args-have-group?
   [type-segment-bases : i64]
@@ -6150,17 +5975,9 @@
         (compiler-reg-call-arg-group? type-segment-bases a types)
         (compiler-reg-call-arg-group? type-segment-bases b types))]
     [(Array values)
-      (compiler-reg-call-args-array-has-group?
-        type-segment-bases
-        values
-        types
-        0)]
+      (compiler-reg-call-args-array-has-group? type-segment-bases values types)]
     [(Sret values _)
-      (compiler-reg-call-args-array-has-group?
-        type-segment-bases
-        values
-        types
-        0)]))
+      (compiler-reg-call-args-array-has-group? type-segment-bases values types)]))
 
 ;; The backend's current float marshaller is ordered rather than a parallel-move
 ;; solver. A register-passed float may nevertheless enter the greedy: after
@@ -6339,9 +6156,8 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
     [out : live.CompilerLiveI64Set set]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (match (array-ref slots index)
@@ -6454,8 +6270,7 @@
               0
               target-abi
               false)]
-          [_ out]))
-      (set! index (+ index 1)))
+          [_ out])))
     out))
 
 (define (compiler-reg-call-arg-vars-blocks-scalar
@@ -6467,10 +6282,9 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : live.CompilerLiveI64Set set]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (set!
@@ -6480,8 +6294,7 @@
                   instrs
                   out
                   types
-                  target-abi))])
-          (set! i (+ i 1)))
+                  target-abi))]))
         out)]))
 
 ;; Ineligible variables are computed structurally (non-scalar/non-handle types,
@@ -6618,12 +6431,10 @@
     [count : i64 (compiler-reg-interval-seq-count candidates)]
     [items : (__tl_dyn-array CompilerRegInterval)
       (__tl_make-array CompilerRegInterval count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref items index)
-        (compiler-reg-interval-seq-ref candidates index))
-      (set! index (+ index 1)))
+        (compiler-reg-interval-seq-ref candidates index)))
     (compiler-reg-candidate-heapsort!
       (compiler-reg-global-shared-view items)
       count)
@@ -6638,24 +6449,21 @@
     [out : CompilerRegIntervalSeq
       (compiler-reg-interval-seq-with-capacity
         (compiler-reg-interval-seq-count intervals))]
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count intervals))
+    (for [index (iterator.range 0 (compiler-reg-interval-seq-count intervals))]
       (let
         [interval : CompilerRegInterval
           (compiler-reg-interval-seq-ref intervals index)]
-        (let
-          [var : i64 interval.var]
-          (if (live.compiler-live-set-contains? ineligible var)
-            unit
-            (match (compiler-reg-var-types-lookup types var)
-              [(Some ty)
-                (if (if want-float
-                  (compiler-reg-float-type? ty)
-                  (not (compiler-reg-float-type? ty)))
-                  (set! out (compiler-reg-interval-seq-append out interval))
-                  unit)]
-              [(No) unit])))
-        (set! index (+ index 1))))
+        [var : i64 interval.var]
+        (if (live.compiler-live-set-contains? ineligible var)
+          unit
+          (match (compiler-reg-var-types-lookup types var)
+            [(Some ty)
+              (if (if want-float
+                (compiler-reg-float-type? ty)
+                (not (compiler-reg-float-type? ty)))
+                (set! out (compiler-reg-interval-seq-append out interval))
+                unit)]
+            [(No) unit]))))
     (compiler-reg-candidate-sort out)))
 
 (define (compiler-reg-vector-defs-instr
@@ -6799,10 +6607,9 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
     [out-vector : live.CompilerLiveI64Set vector-set]
     [out-mask : live.CompilerLiveI64Set mask-set]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out-vector
         (compiler-reg-vector-defs-instr
@@ -6812,8 +6619,7 @@
         out-mask
         (compiler-reg-mask-defs-instr
           (compiler-reg-global-array-element-shared-view slots index)
-          out-mask))
-      (set! index (+ index 1)))
+          out-mask)))
     (live.CompilerLiveUseDef out-vector out-mask)))
 
 (define (compiler-reg-vector-mask-defs-blocks
@@ -6823,11 +6629,10 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out-vector : live.CompilerLiveI64Set vector-set]
         [out-mask : live.CompilerLiveI64Set mask-set]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (let
@@ -6837,8 +6642,7 @@
                     (compiler-reg-global-shared-view out-vector)
                     (compiler-reg-global-shared-view out-mask))]
                 (set! out-vector defs.uses)
-                (set! out-mask defs.defs))])
-          (set! i (+ i 1)))
+                (set! out-mask defs.defs))]))
         (live.CompilerLiveUseDef out-vector out-mask))]))
 
 ;; SIMD class is an identity property across copies. CSE/GVN can replace a
@@ -6880,10 +6684,9 @@
   [vector-set : live.CompilerLiveI64Set]
   [mask-set : live.CompilerLiveI64Set]) : live.CompilerLiveUseDef
   (let
-    [index : i64 0]
     [out-vector : live.CompilerLiveI64Set vector-set]
     [out-mask : live.CompilerLiveI64Set mask-set]
-    (while (< index (ir.compiler-ir-instr-seq-count instrs))
+    (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
       (let
         [next : live.CompilerLiveUseDef
           (compiler-reg-vector-mask-defs-propagate-instr
@@ -6891,8 +6694,7 @@
             (compiler-reg-global-shared-view out-vector)
             (compiler-reg-global-shared-view out-mask))]
         (set! out-vector next.uses)
-        (set! out-mask next.defs)
-        (set! index (+ index 1))))
+        (set! out-mask next.defs)))
     (live.CompilerLiveUseDef out-vector out-mask)))
 
 (define (compiler-reg-vector-mask-defs-propagate-blocks
@@ -6959,19 +6761,16 @@
     [out : CompilerRegIntervalSeq
       (compiler-reg-interval-seq-with-capacity
         (compiler-reg-interval-seq-count intervals))]
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count intervals))
+    (for [index (iterator.range 0 (compiler-reg-interval-seq-count intervals))]
       (let
         [interval : CompilerRegInterval
           (compiler-reg-interval-seq-ref intervals index)]
-        (let
-          [var : i64 interval.var]
-          (if (and
-            (live.compiler-live-set-contains? vars var)
-            (not (live.compiler-live-set-contains? blocked var)))
-            (set! out (compiler-reg-interval-seq-append out interval))
-            unit))
-        (set! index (+ index 1))))
+        [var : i64 interval.var]
+        (if (and
+          (live.compiler-live-set-contains? vars var)
+          (not (live.compiler-live-set-contains? blocked var)))
+          (set! out (compiler-reg-interval-seq-append out interval))
+          unit)))
     (compiler-reg-candidate-sort out)))
 
 ;; Vector/mask IR values carry their scalar lane type in type-info, so the
@@ -6981,17 +6780,11 @@
 (define (compiler-reg-unassign-special-candidates!
   [assignments : CompilerRegAssignmentTable]
   [candidates : CompilerRegIntervalSeq]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count candidates))
-      (begin
-        (compiler-reg-assignment-table-unassign
-          assignments
-          (__tl-project-field
-            (compiler-reg-interval-seq-ref candidates index)
-            var))
-        unit)
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 (compiler-reg-interval-seq-count candidates))]
+    (compiler-reg-assignment-table-unassign
+      assignments
+      (__tl-project-field (compiler-reg-interval-seq-ref candidates index) var))
+    unit))
 
 (define (compiler-reg-active-before?
   [left : CompilerRegActive]
@@ -7017,7 +6810,7 @@
     (while (and
       (< at len)
       (not (compiler-reg-active-before? item (array-ref slots at))))
-      (set! at (+ at 1)))
+      (+= at 1))
     (if (< len (array-length slots))
       unit
       (let
@@ -7025,16 +6818,14 @@
           (__tl_make-array
             CompilerRegActive
             (dense_seq.compiler-reg-seq-grown-capacity (array-length slots)))]
-        [i : i64 0]
-        (while (< i len)
-          (set! (array-ref bigger i) (array-ref slots i))
-          (set! i (+ i 1)))
+        (for [i (iterator.range 0 len)]
+          (set! (array-ref bigger i) (array-ref slots i)))
         (set! slots bigger)))
     (let
       [j : i64 len]
       (while (> j at)
         (set! (array-ref slots j) (array-ref slots (- j 1)))
-        (set! j (- j 1))))
+        (-= j 1)))
     (set! (array-ref slots at) item)
     (CompilerRegActiveSeq slots (+ len 1))))
 
@@ -7053,7 +6844,7 @@
         (if (<= item.end start)
           unit
           (set! out (compiler-reg-active-insert out item))))
-      (set! index (- index 1)))
+      (-= index 1))
     out))
 
 ;; General hole-filling: is `reg` held by an active value that
@@ -7085,7 +6876,7 @@
           (compiler-reg-vars-interfere-segmented-index? index var item.var))
           (set! conflict true)
           unit))
-      (set! at (+ at 1)))
+      (+= at 1))
     conflict))
 
 (define (compiler-reg-assignment-table-override-copy
@@ -7224,7 +7015,7 @@
           reg))
         (set! found true)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (compiler-reg-var-live-at-point?
@@ -7295,7 +7086,7 @@
         [interval-end : i64 interval.end]
         (cond
           [(and (<= head-end interval-start) (not (= interval-start 0)))
-            (set! index (+ index 1))]
+            (+= index 1)]
           [(and (<= interval-end head-start) (not (= head-start 0)))
             (set! done true)]
           [else
@@ -7330,9 +7121,9 @@
         [right-end : i64 right-interval.end]
         (cond
           [(and (<= left-end right-start) (not (= right-start 0)))
-            (set! left-index (+ left-index 1))]
+            (+= left-index 1)]
           [(and (<= right-end left-start) (not (= left-start 0)))
-            (set! right-index (+ right-index 1))]
+            (+= right-index 1)]
           [else (set! overlap true)])))
     overlap))
 
@@ -7510,14 +7301,12 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-count-def!
         counts
         (let
           [instr (compiler-reg-global-array-element-shared-view slots index)]
-          (ir.compiler-ir-instr-dst instr)))
-      (set! index (+ index 1)))
+          (ir.compiler-ir-instr-dst instr))))
     unit))
 
 (define (compiler-reg-count-block-defs!
@@ -7526,12 +7315,10 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
-            [(Block _ instrs) (compiler-reg-count-seq-defs! instrs counts)])
-          (set! i (+ i 1))))]))
+            [(Block _ instrs) (compiler-reg-count-seq-defs! instrs counts)])))]))
 
 (define (compiler-reg-mark-phi-def!
   [phi-defs : (&mut phi-defs (__tl_dyn-array i64))]
@@ -7546,12 +7333,10 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (array-ref slots index)
         [(Phi dst _ _) (compiler-reg-mark-phi-def! phi-defs dst)]
-        [_ unit])
-      (set! index (+ index 1)))
+        [_ unit]))
     unit))
 
 (define (compiler-reg-mark-phi-defs-blocks!
@@ -7560,22 +7345,17 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
-            [(Block _ instrs) (compiler-reg-mark-phi-defs-seq! instrs phi-defs)])
-          (set! i (+ i 1))))]))
+            [(Block _ instrs) (compiler-reg-mark-phi-defs-seq! instrs phi-defs)])))]))
 
 (define (compiler-reg-param-count-defs!
   [params : ir.CompilerIrParamSeq]
   [counts : (&mut counts (__tl_dyn-array i64))]) : unit
-  (let
-    [position : i64 0]
-    (while (< position params.len)
-      (match (ir.compiler-ir-param-seq-ref params position)
-        [(Param _ _ id) (compiler-reg-count-def! counts id)])
-      (set! position (+ position 1)))))
+  (for [position (iterator.range 0 params.len)]
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(Param _ _ id) (compiler-reg-count-def! counts id)])))
 
 ;; Parameters are incoming values, never recomputation recipes. Mark them
 ;; before visiting the body so an instruction whose destination reuses a
@@ -7583,15 +7363,12 @@
 (define (compiler-reg-param-poison-remat!
   [params : ir.CompilerIrParamSeq]
   [candidates : (__tl_dyn-array i64)]) : unit
-  (let
-    [position : i64 0]
-    (while (< position params.len)
-      (match (ir.compiler-ir-param-seq-ref params position)
-        [(Param _ _ id)
-          (if (and (>= id 0) (< id (array-length candidates)))
-            (set! (array-ref candidates id) 2)
-            unit)])
-      (set! position (+ position 1)))))
+  (for [position (iterator.range 0 params.len)]
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(Param _ _ id)
+        (if (and (>= id 0) (< id (array-length candidates)))
+          (set! (array-ref candidates id) 2)
+          unit)])))
 
 (define (compiler-reg-function-def-counts [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
@@ -7683,15 +7460,13 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-sv-add-instr!
         (compiler-reg-global-array-element-shared-view slots index)
         counts
         phi-defs
         eligible
-        parents)
-      (set! index (+ index 1)))
+        parents))
     unit))
 
 (define (compiler-reg-sv-blocks!
@@ -7703,13 +7478,11 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (compiler-reg-sv-seq! instrs counts phi-defs eligible parents)])
-          (set! i (+ i 1))))]))
+              (compiler-reg-sv-seq! instrs counts phi-defs eligible parents)])))]))
 
 (define (compiler-reg-function-same-value-parents-filtered
   [func : ir.CompilerIrFunction]
@@ -7720,13 +7493,11 @@
         [counts : (__tl_dyn-array i64) (compiler-reg-function-def-counts func)]
         [phi-defs : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [parents : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-        [index : i64 0]
         (compiler-reg-mark-phi-defs-blocks!
           (compiler-reg-global-shared-view blocks)
           (&mut phi-defs))
-        (while (< index vars)
-          (set! (array-ref parents index) index)
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 vars)]
+          (set! (array-ref parents index) index))
         (compiler-reg-sv-blocks! blocks counts phi-defs eligible (&mut parents))
         parents)]))
 
@@ -7739,8 +7510,7 @@
     [ends : (__tl_dyn-array i64) interval-index.ends]
     [eligible : (__tl_dyn-array i64)
       (__tl_make-array i64 (array-length starts))]
-    [var : i64 0]
-    (while (< var (array-length starts))
+    (for [var (iterator.range 0 (array-length starts))]
       (if (and
         (>= (array-ref starts var) 0)
         (not
@@ -7749,8 +7519,7 @@
             (array-ref starts var)
             (array-ref ends var))))
         (set! (array-ref eligible var) 1)
-        unit)
-      (set! var (+ var 1)))
+        unit))
     eligible))
 
 (define (compiler-reg-same-value-eligible-vars-excluding
@@ -7766,7 +7535,7 @@
       (if (live.compiler-live-set-contains? storage-vars var)
         (set! (array-ref eligible var) 0)
         unit)
-      (set! var (+ var 1)))
+      (+= var 1))
     eligible))
 
 ;; ---------------------------------------------------------------------------
@@ -7837,9 +7606,8 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
     [p : i64 point]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [v : i64
           (let
@@ -7853,8 +7621,7 @@
               unit)
             (set! (array-ref cursor v) (+ slot 1)))
           unit))
-      (set! p (+ p 2))
-      (set! index (+ index 1)))
+      (+= p 2))
     p))
 
 (define (compiler-reg-sv-def-points-fill-blocks
@@ -7865,10 +7632,9 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out-point : i64 point]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (set!
@@ -7877,8 +7643,7 @@
                   instrs
                   out-point
                   (&mut cursor)
-                  pts))])
-          (set! i (+ i 1)))
+                  pts))]))
         out-point)]))
 
 (define (compiler-reg-sv-point-in-segments?
@@ -7893,7 +7658,7 @@
           (compiler-reg-interval-seq-ref segs index)]
         (if (and (<= interval.start p) (<= p interval.end))
           (set! found true)
-          (set! index (+ index 1))))
+          (+= index 1)))
       unit)
     found))
 
@@ -7933,10 +7698,9 @@
     (if (or (< m 0) (>= (+ m 1) (array-length def-off)))
       true
       (let
-        [i : i64 (array-ref def-off m)]
         [stop : i64 (array-ref def-off (+ m 1))]
         [hit : bool false]
-        (while (< i stop)
+        (for [i (iterator.range (array-ref def-off m) stop)]
           (if (and
             (not hit)
             (compiler-reg-sv-point-in-var-live?
@@ -7946,8 +7710,7 @@
                 (array-ref def-pts i)
                 (- 0 1))))
             (set! hit true)
-            unit)
-          (set! i (+ i 1)))
+            unit))
         hit))))
 
 ;; Does any def point of m fall inside the liveness of ANY single-def member of
@@ -7961,17 +7724,15 @@
     [counts : (__tl_dyn-array i64) ctx.counts]
     [phi-defs : (__tl_dyn-array i64) ctx.phi-defs]
     [n : i64 (array-length parents)]
-    [v : i64 0]
     [hit : bool false]
-    (while (< v n)
+    (for [v (iterator.range 0 n)]
       (if (and
         (not hit)
         (compiler-reg-sv-single-def-non-phi? counts phi-defs v)
         (= (compiler-reg-sv-find (&mut parents) v) root)
         (compiler-reg-sv-multi-def-in-var? ctx m v))
         (set! hit true)
-        unit)
-      (set! v (+ v 1)))
+        unit))
     hit))
 
 ;; Metadata-maintaining union: refuses a second mutable member, refuses when the
@@ -8141,12 +7902,10 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-sv-multi-add-instr!
         (compiler-reg-global-array-element-shared-view slots index)
-        ctx)
-      (set! index (+ index 1)))
+        ctx))
     unit))
 
 (define (compiler-reg-sv-multi-blocks!
@@ -8155,12 +7914,10 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
-            [(Block _ instrs) (compiler-reg-sv-multi-seq! instrs ctx)])
-          (set! i (+ i 1))))]))
+            [(Block _ instrs) (compiler-reg-sv-multi-seq! instrs ctx)])))]))
 
 ;; Build the extended same-value relation (scalar-opt2 plan path only).
 (define (compiler-reg-function-same-value-parents-multi
@@ -8191,7 +7948,7 @@
           (set!
             (array-ref def-off (+ index 1))
             (+ (array-ref def-off index) (array-ref bucket index)))
-          (set! index (+ index 1)))
+          (+= index 1))
         (set! index 0)
         (let
           [total : i64 (array-ref def-off vars)]
@@ -8220,7 +7977,7 @@
                     1
                     0)]
                 [(No) 0]))
-            (set! index (+ index 1)))
+            (+= index 1))
           (let
             [_fill : i64
               (compiler-reg-sv-def-points-fill-blocks
@@ -8304,8 +8061,7 @@
     [lows : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [highs : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [segments : (__tl_dyn-array CompilerRegIntervalSeq) intervals.segments]
-    [var : i64 0]
-    (while (< var count)
+    (for [var (iterator.range 0 count)]
       (let
         [segs : CompilerRegIntervalSeq
           (if (< var (array-length segments))
@@ -8313,13 +8069,12 @@
             (compiler-reg-interval-seq-empty))]
         [low : i64 (- 0 1)]
         [high : i64 (- 0 1)]
-        [index : i64 0]
         (set!
           (array-ref kinds var)
           (if (live.compiler-live-set-contains? group-vars var)
             (- 0 1)
             (compiler-reg-register-class types var)))
-        (while (< index segs.len)
+        (for [index (iterator.range 0 segs.len)]
           (let
             [segment : CompilerRegInterval (array-ref segs.slots index)]
             (if (or (= index 0) (< segment.start low))
@@ -8327,11 +8082,9 @@
               unit)
             (if (or (= index 0) (> segment.end high))
               (set! high segment.end)
-              unit)
-            (set! index (+ index 1))))
+              unit)))
         (set! (array-ref lows var) low)
-        (set! (array-ref highs var) high)
-        (set! var (+ var 1))))
+        (set! (array-ref highs var) high)))
     (CompilerRegCoalesceFacts kinds lows highs)))
 
 ;; Both vars have segments, none starting before 0, and their spans are apart;
@@ -8397,7 +8150,7 @@
     (while (< index (array-length next))
       (set! (array-ref next index) (- 0 1))
       (set! (array-ref tail index) index)
-      (set! index (+ index 1)))))
+      (+= index 1))))
 
 (define (compiler-reg-coalesce-map-var-compatible-with-root?
   [next : (& next (__tl_dyn-array i64))]
@@ -8635,7 +8388,7 @@
             item.strict
             (&mut sv-parents))]
         (set! out (or out did-merge)))
-      (set! index (- index 1)))
+      (-= index 1))
     out))
 
 (define (compiler-reg-coalesce-map-fixpoint!
@@ -8711,13 +8464,11 @@
   (let
     [present : (__tl_dyn-array i64)
       (compiler-reg-assignment-table-present assignments)]
-    [index : i64 0]
     [count : i64 0]
-    (while (< index (array-length present))
+    (for [index (iterator.range 0 (array-length present))]
       (if (= (array-ref present index) 0)
         unit
-        (set! count (+ count 1)))
-      (set! index (+ index 1)))
+        (+= count 1)))
     count))
 
 (define (compiler-reg-copy-hints-add-move!
@@ -8765,7 +8516,7 @@
       (let
         [item : CompilerRegMove (array-ref slots index)]
         (compiler-reg-copy-hints-add-move! hints parents item.src item.dst))
-      (set! index (- index 1)))))
+      (-= index 1))))
 
 ;; Two-address binop dst<->operand coalesce hints (LLVM TwoAddressInstructionPass).
 ;; The backend lowers a two-address binop as `movq lhs,staging; op rhs,staging`,
@@ -8839,14 +8590,12 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-copy-hints-from-binops-instr!
         (compiler-reg-global-array-element-shared-view slots index)
         hints
         parents
-        prefer-rhs)
-      (set! index (+ index 1)))
+        prefer-rhs))
     unit))
 
 (define (compiler-reg-copy-hints-from-binops-blocks!
@@ -8857,17 +8606,15 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (compiler-reg-copy-hints-from-binops-seq!
                 instrs
                 hints
                 parents
-                prefer-rhs)])
-          (set! i (+ i 1))))]))
+                prefer-rhs)])))]))
 
 (define (compiler-reg-copy-hints-from-binops!
   [func : ir.CompilerIrFunction]
@@ -8948,7 +8695,7 @@
         reg)
         (set! found true)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (compiler-reg-assignment-table-physical-active-from
@@ -9016,7 +8763,7 @@
             interval-index
             var
             hole-aware-vars))
-          (set! index (+ index 1))
+          (+= index 1)
           (begin
             (set! result (Some reg))
             (set! done true)))))
@@ -9128,10 +8875,9 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
     [p : i64 point]
     [out : live.CompilerLiveI64Set set]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (match (array-ref slots index)
@@ -9146,8 +8892,7 @@
           [(TailCall _ _ _) (live.compiler-live-set-insert out p)]
           [(TailCallIndirect _ _ _) (live.compiler-live-set-insert out p)]
           [_ out]))
-      (set! p (+ p 2))
-      (set! index (+ index 1)))
+      (+= p 2))
     (Scan p out)))
 
 (define (compiler-reg-call-points-blocks
@@ -9157,11 +8902,10 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out-point : i64 point]
         [out-set : live.CompilerLiveI64Set set]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (match (compiler-reg-call-points-seq
@@ -9170,8 +8914,7 @@
                 (compiler-reg-global-shared-view out-set))
                 [(Scan p2 s2)
                   (set! out-point p2)
-                  (set! out-set s2)])])
-          (set! i (+ i 1)))
+                  (set! out-set s2)])]))
         (Scan out-point out-set))]))
 
 (define (compiler-reg-call-points [func : ir.CompilerIrFunction]) : live.CompilerLiveI64Set
@@ -9450,18 +9193,16 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
     [p : i64 point]
     [out : live.CompilerLiveI64Set set]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (if (compiler-reg-clobber-instr-kind?
         type-segment-bases
         (compiler-reg-global-array-element-shared-view slots index)
         kind)
         (set! out (live.compiler-live-set-insert out p))
         unit)
-      (set! p (+ p 2))
-      (set! index (+ index 1)))
+      (+= p 2))
     (Scan p out)))
 
 (define (compiler-reg-clobber-kind-points-blocks
@@ -9473,11 +9214,10 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out-point : i64 point]
         [out-set : live.CompilerLiveI64Set set]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (match (compiler-reg-clobber-kind-points-seq
@@ -9488,8 +9228,7 @@
                 kind)
                 [(Scan p2 s2)
                   (set! out-point p2)
-                  (set! out-set s2)])])
-          (set! i (+ i 1)))
+                  (set! out-set s2)])]))
         (Scan out-point out-set))]))
 
 (define (compiler-reg-clobber-kind-points
@@ -9679,7 +9418,7 @@
         (if (compiler-reg-call-set-in-range? clobber-points low segment.end)
           (set! hit true)
           unit))
-      (set! index (+ index 1)))
+      (+= index 1))
     hit))
 
 (define (compiler-reg-loop-depth-max) : i64
@@ -9731,12 +9470,10 @@
   [index : i64]) : reg_label_i64_map.Map
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [i : i64 index]
     [out : reg_label_i64_map.Map ids]
-    (while (< i count)
+    (for [i (iterator.range index count)]
       (match (ir.compiler-ir-block-seq-ref seq i)
-        [(Block label _) (reg_label_i64_map.insert-ref! (&mut out) label i)])
-      (set! i (+ i 1)))
+        [(Block label _) (reg_label_i64_map.insert-ref! (&mut out) label i)]))
     out))
 
 ;; --- Loop depth: the CFG loop nest ------------------------------------------
@@ -9811,22 +9548,18 @@
   [seq : (& seq ir.CompilerIrBlockSeq)]) : i64
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [index : i64 0]
     [total : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (ir.compiler-ir-block-seq-ref seq index)
         [(Block _ instrs)
           (let
             [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
-            (set!
+            (+=
               total
-              (+
-                total
-                (if (<= len 0)
-                  1
-                  (compiler-reg-loop-nest-succ-bound-instr
-                    (ir.compiler-ir-instr-seq-ref instrs (- len 1)))))))])
-      (set! index (+ index 1)))
+              (if (<= len 0)
+                1
+                (compiler-reg-loop-nest-succ-bound-instr
+                  (ir.compiler-ir-instr-seq-ref instrs (- len 1))))))]))
     total))
 
 ;; A label with no block of its own is written as -1 and skipped by every walk;
@@ -9870,10 +9603,9 @@
   [targets : (&mut targets (__tl_dyn-array i64))]) : bool
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [index : i64 0]
     [write : i64 0]
     [closes? : bool false]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set! (array-ref offsets index) write)
       (let
         [block : ir.CompilerIrBlock (ir.compiler-ir-block-seq-ref seq index)]
@@ -9890,17 +9622,13 @@
             (compiler-reg-loop-nest-falls-through? block)
             (< (+ index 1) count))
           (set! (array-ref targets write) (+ index 1))
-          (set! write (+ write 1))))
-      (let
-        [edge : i64 (array-ref offsets index)]
-        (while (< edge write)
-          (if (and
-            (>= (array-ref targets edge) 0)
-            (<= (array-ref targets edge) index))
-            (set! closes? true)
-            unit)
-          (set! edge (+ edge 1))))
-      (set! index (+ index 1)))
+          (+= write 1)))
+      (for [edge (iterator.range (array-ref offsets index) write)]
+        (if (and
+          (>= (array-ref targets edge) 0)
+          (<= (array-ref targets edge) index))
+          (set! closes? true)
+          unit)))
     (set! (array-ref offsets count) write)
     closes?))
 
@@ -9914,34 +9642,29 @@
   [pred-sources : (&mut pred-sources (__tl_dyn-array i64))]
   [cursor : (__tl_dyn-array i64)]) : unit
   (let
-    [block : i64 0]
-    [edge : i64 0]
     [total : i64 0]
-    (while (< edge (array-ref succ-offsets count))
+    (for [edge (iterator.range 0 (array-ref succ-offsets count))]
       (let
         [target : i64 (array-ref succ-targets edge)]
         (if (>= target 0)
           (set! (array-ref cursor target) (+ (array-ref cursor target) 1))
-          unit))
-      (set! edge (+ edge 1)))
-    (while (< block count)
+          unit)))
+    (for [block (iterator.range 0 count)]
       (set! (array-ref pred-offsets block) total)
-      (set! total (+ total (array-ref cursor block)))
-      (set! (array-ref cursor block) (array-ref pred-offsets block))
-      (set! block (+ block 1)))
+      (+= total (array-ref cursor block))
+      (set! (array-ref cursor block) (array-ref pred-offsets block)))
     (set! (array-ref pred-offsets count) total)
-    (set! block 0)
-    (while (< block count)
-      (set! edge (array-ref succ-offsets block))
-      (while (< edge (array-ref succ-offsets (+ block 1)))
+    (for [block (iterator.range 0 count)]
+      (for [edge
+        (iterator.range
+          (array-ref succ-offsets block)
+          (array-ref succ-offsets (+ block 1)))]
         (let
           [target : i64 (array-ref succ-targets edge)]
           (when
             (>= target 0)
             (set! (array-ref pred-sources (array-ref cursor target)) block)
-            (set! (array-ref cursor target) (+ (array-ref cursor target) 1))))
-        (set! edge (+ edge 1)))
-      (set! block (+ block 1)))))
+            (set! (array-ref cursor target) (+ (array-ref cursor target) 1))))))))
 
 ;; Iterative DFS forest. `state` is 0 unvisited / 1 on the stack / 2 finished,
 ;; and an edge to a block in state 1 is a back edge.
@@ -9956,8 +9679,7 @@
   [back-target : (&mut back-target (__tl_dyn-array i64))]) : i64
   (let
     [found : i64 0]
-    [root : i64 0]
-    (while (< root count)
+    (for [root (iterator.range 0 count)]
       (if (= (array-ref state root) 0)
         (let
           [depth : i64 1]
@@ -9982,18 +9704,17 @@
                           (set!
                             (array-ref stack-edge depth)
                             (array-ref succ-offsets target))
-                          (set! depth (+ depth 1))]
+                          (+= depth 1)]
                         [(= (array-ref state target) 1)
                           (set! (array-ref back-source found) block)
                           (set! (array-ref back-target found) target)
-                          (set! found (+ found 1))]
+                          (+= found 1)]
                         [else unit])
                       unit)))
                 (begin
                   (set! (array-ref state block) 2)
-                  (set! depth (- depth 1)))))))
-        unit)
-      (set! root (+ root 1)))
+                  (-= depth 1))))))
+        unit))
     found))
 
 ;; Backward closure of the seeded work stack, stopping at the header (already
@@ -10013,21 +9734,22 @@
     [head : i64 top]
     [total : i64 count]
     (while (> head 0)
-      (set! head (- head 1))
+      (-= head 1)
       (let
         [block : i64 (array-ref work head)]
-        [edge : i64 (array-ref pred-offsets block)]
-        (while (< edge (array-ref pred-offsets (+ block 1)))
+        (for [edge
+          (iterator.range
+            (array-ref pred-offsets block)
+            (array-ref pred-offsets (+ block 1)))]
           (let
             [source : i64 (array-ref pred-sources edge)]
             (unless
               (= (array-ref stamp source) generation)
               (set! (array-ref stamp source) generation)
               (set! (array-ref work head) source)
-              (set! head (+ head 1))
+              (+= head 1)
               (set! (array-ref members total) source)
-              (set! total (+ total 1))))
-          (set! edge (+ edge 1)))))
+              (+= total 1))))))
     total))
 
 ;; A function's CFG loop nest, produced once and read one header at a time.
@@ -10073,23 +9795,19 @@
   [mark : (&mut mark (__tl_dyn-array i64))]
   [headers : (&mut headers (__tl_dyn-array i64))]) : i64
   (let
-    [index : i64 0]
     [total : i64 0]
-    (while (< index found)
+    (for [index (iterator.range 0 found)]
       (let
         [target : i64 (array-ref back-target index)]
         (if (and (>= target 0) (< target count))
           (set! (array-ref mark target) (- 0 1))
-          unit))
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index count)
+          unit)))
+    (for [index (iterator.range 0 count)]
       (when
         (= (array-ref mark index) (- 0 1))
         (set! (array-ref mark index) 0)
         (set! (array-ref headers total) index)
-        (set! total (+ total 1)))
-      (set! index (+ index 1)))
+        (+= total 1)))
     total))
 
 (define (compiler-reg-loop-nest-build-seq [seq : (& seq ir.CompilerIrBlockSeq)]) : CompilerRegLoopNest
@@ -10259,9 +9977,8 @@
     [found : i64 nest.back-count]
     [top : i64 0]
     [total : i64 0]
-    [scan : i64 0]
     (set! (array-ref stamp header) generation)
-    (while (< scan found)
+    (for [scan (iterator.range 0 found)]
       (if (= (array-ref back-target scan) header)
         (let
           [latch : i64 (array-ref back-source scan)]
@@ -10269,11 +9986,10 @@
             (= (array-ref stamp latch) generation)
             (set! (array-ref stamp latch) generation)
             (set! (array-ref work top) latch)
-            (set! top (+ top 1))
+            (+= top 1)
             (set! (array-ref members total) latch)
-            (set! total (+ total 1))))
-        unit)
-      (set! scan (+ scan 1)))
+            (+= total 1)))
+        unit))
     (compiler-reg-loop-nest-walk-preds!
       nest.pred-offsets
       nest.pred-sources
@@ -10308,18 +10024,16 @@
   (let
     [pred-offsets : (__tl_dyn-array i64) nest.pred-offsets]
     [pred-sources : (__tl_dyn-array i64) nest.pred-sources]
-    [edge : i64 (array-ref pred-offsets header)]
     [stop : i64 (array-ref pred-offsets (+ header 1))]
     [found : i64 (- 0 1)]
-    (while (< edge stop)
+    (for [edge (iterator.range (array-ref pred-offsets header) stop)]
       (let
         [source : i64 (array-ref pred-sources edge)]
         (if (compiler-reg-loop-nest-member? nest source generation)
           unit
           (if (= found (- 0 1))
             (set! found source)
-            (set! found (- 0 2)))))
-      (set! edge (+ edge 1)))
+            (set! found (- 0 2))))))
     found))
 
 ;; The LAYOUT SPAN of the set just stamped: the lowest and the highest block
@@ -10332,13 +10046,11 @@
   [total : i64]) : i64
   (let
     [members : (__tl_dyn-array i64) nest.members]
-    [index : i64 0]
     [lo : i64 header]
-    (while (< index total)
+    (for [index (iterator.range 0 total)]
       (if (< (array-ref members index) lo)
         (set! lo (array-ref members index))
-        unit)
-      (set! index (+ index 1)))
+        unit))
     lo))
 
 (define (compiler-reg-loop-nest-member-hi
@@ -10347,13 +10059,11 @@
   [total : i64]) : i64
   (let
     [members : (__tl_dyn-array i64) nest.members]
-    [index : i64 0]
     [hi : i64 header]
-    (while (< index total)
+    (for [index (iterator.range 0 total)]
       (if (> (array-ref members index) hi)
         (set! hi (array-ref members index))
-        unit)
-      (set! index (+ index 1)))
+        unit))
     hi))
 
 ;; The LAYOUT SPAN of every loop, two entries per block: spans[2h] is the
@@ -10386,13 +10096,12 @@
   (let
     [count : i64 (/ (array-length spans) 2)]
     [headers : i64 nest.header-count]
-    [index : i64 0]
     [generation : i64 0]
-    (while (< index headers)
+    (for [index (iterator.range 0 headers)]
       (let
         [header : i64 (array-ref nest.headers index)]
         [total : i64 0]
-        (set! generation (+ generation 1))
+        (+= generation 1)
         (set!
           total
           (compiler-reg-loop-nest-header-members! nest header generation))
@@ -10403,8 +10112,7 @@
             (compiler-reg-loop-nest-member-lo nest header total))
           (set!
             (array-ref spans (+ (* 2 header) 1))
-            (compiler-reg-loop-nest-member-hi nest header total))))
-      (set! index (+ index 1)))))
+            (compiler-reg-loop-nest-member-hi nest header total)))))))
 
 (define (compiler-reg-loop-nest-spans-seq
   [seq : (& seq ir.CompilerIrBlockSeq)]
@@ -10442,16 +10150,13 @@
   [count : i64]
   [lo : i64]
   [hi : i64]) : i64
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (when
-        (and
-          (= (compiler-reg-loop-span-lo spans index) lo)
-          (= (compiler-reg-loop-span-hi spans index) hi))
-        (return index))
-      (set! index (+ index 1)))
-    (- 0 1)))
+  (for [index (iterator.range 0 count)]
+    (when
+      (and
+        (= (compiler-reg-loop-span-lo spans index) lo)
+        (= (compiler-reg-loop-span-hi spans index) hi))
+      (return index)))
+  (- 0 1))
 
 ;; The first consumer of the producer above: one level for every loop a block
 ;; is in. The level saturates, so the order the headers arrive in cannot move
@@ -10464,28 +10169,24 @@
     [cap : i64 (compiler-reg-loop-depth-max)]
     [members : (__tl_dyn-array i64) nest.members]
     [headers : i64 nest.header-count]
-    [index : i64 0]
     [generation : i64 0]
-    (while (< index headers)
+    (for [index (iterator.range 0 headers)]
       (let
         [header : i64 (array-ref nest.headers index)]
         [total : i64 0]
-        [member : i64 0]
-        (set! generation (+ generation 1))
+        (+= generation 1)
         (set!
           total
           (compiler-reg-loop-nest-header-members! nest header generation))
         (if (< (array-ref depths header) cap)
           (set! (array-ref depths header) (+ (array-ref depths header) 1))
           unit)
-        (while (< member total)
+        (for [member (iterator.range 0 total)]
           (let
             [block : i64 (array-ref members member)]
             (if (< (array-ref depths block) cap)
               (set! (array-ref depths block) (+ (array-ref depths block) 1))
-              unit))
-          (set! member (+ member 1))))
-      (set! index (+ index 1)))))
+              unit)))))))
 
 (define (compiler-reg-function-loop-depths [blocks : ir.CompilerIrBlockList]) : (__tl_dyn-array
     i64)
@@ -10583,7 +10284,7 @@
                       (set!
                         (array-ref stack-edge depth)
                         (array-ref succ-offsets target))
-                      (set! depth (+ depth 1))]
+                      (+= depth 1)]
                     [(= (array-ref state target) 1)
                       (set! (array-ref edge-back edge) 1)]
                     [else unit])
@@ -10591,8 +10292,8 @@
             (begin
               (set! (array-ref state block) 2)
               (set! (array-ref post visited) block)
-              (set! visited (+ visited 1))
-              (set! depth (- depth 1)))))))
+              (+= visited 1)
+              (-= depth 1))))))
     visited))
 
 ;; The forward successors of `block` that stay at its loop depth or enter a
@@ -10604,19 +10305,17 @@
   [edge-back : (& edge-back (__tl_dyn-array i64))]
   [depths : (& depths (__tl_dyn-array i64))]) : i64
   (let
-    [edge : i64 (array-ref succ-offsets block)]
     [end : i64 (array-ref succ-offsets (+ block 1))]
     [fanout : i64 0]
-    (while (< edge end)
+    (for [edge (iterator.range (array-ref succ-offsets block) end)]
       (let
         [target : i64 (array-ref succ-targets edge)]
         (if (and
           (>= target 0)
           (= (array-ref edge-back edge) 0)
           (>= (array-ref depths target) (array-ref depths block)))
-          (set! fanout (+ fanout 1))
-          unit))
-      (set! edge (+ edge 1)))
+          (+= fanout 1)
+          unit)))
     fanout))
 
 (define (compiler-reg-block-frequencies!
@@ -10637,7 +10336,7 @@
       (set! (array-ref max-in 0) (compiler-reg-block-frequency-scale))
       unit)
     (while (> index 0)
-      (set! index (- index 1))
+      (-= index 1)
       (let
         [block : i64 (array-ref post index)]
         [reached : i64
@@ -10677,9 +10376,8 @@
                 (if (< fanout 1)
                   1
                   fanout))]
-            [edge : i64 (array-ref succ-offsets block)]
             [end : i64 (array-ref succ-offsets (+ block 1))]
-            (while (< edge end)
+            (for [edge (iterator.range (array-ref succ-offsets block) end)]
               (let
                 [target : i64 (array-ref succ-targets edge)]
                 (if (and (>= target 0) (= (array-ref edge-back edge) 0))
@@ -10703,8 +10401,7 @@
                       (if (> carry (array-ref max-in target))
                         (set! (array-ref max-in target) carry)
                         unit)))
-                  unit))
-              (set! edge (+ edge 1)))))))))
+                  unit)))))))))
 
 ;; FREQ-3: the innermost loop header of every block, -1 outside every loop.
 ;; Read off the nest's member lists: a block inside several loops takes the
@@ -10717,23 +10414,19 @@
     [count : i64 (array-length inner-header)]
     [members : (__tl_dyn-array i64) nest.members]
     [headers : i64 nest.header-count]
-    [index : i64 0]
     [generation : i64 0]
-    (while (< index count)
-      (set! (array-ref inner-header index) (- 0 1))
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index headers)
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref inner-header index) (- 0 1)))
+    (for [index (iterator.range 0 headers)]
       (let
         [header : i64 (array-ref nest.headers index)]
         [total : i64 0]
-        [member : i64 0]
-        (set! generation (+ generation 1))
+        (+= generation 1)
         (set!
           total
           (compiler-reg-loop-nest-header-members! nest header generation))
         (set! (array-ref inner-header header) header)
-        (while (< member total)
+        (for [member (iterator.range 0 total)]
           (let
             [block : i64 (array-ref members member)]
             [current : i64 (array-ref inner-header block)]
@@ -10741,9 +10434,7 @@
               (< current 0)
               (> (array-ref depths header) (array-ref depths current)))
               (set! (array-ref inner-header block) header)
-              unit))
-          (set! member (+ member 1))))
-      (set! index (+ index 1)))))
+              unit)))))))
 
 ;; FREQ-2: which blocks SPLIT their share. A Switch (and a total enum switch)
 ;; dispatches to one of N arms, so each arm takes 1/N and the arms add back up
@@ -10766,7 +10457,7 @@
       (if (= (array-ref splits index) 1)
         (set! found? true)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found?))
 
 (define (compiler-reg-block-frequency-splits!
@@ -10774,8 +10465,7 @@
   [splits : (&mut splits (__tl_dyn-array i64))]) : unit
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (ir.compiler-ir-block-seq-ref seq index)
         [(Block _ instrs)
           (let
@@ -10785,8 +10475,7 @@
               (match (ir.compiler-ir-instr-seq-ref instrs (- len 1))
                 [(Switch _ _ _ _) (set! (array-ref splits index) 1)]
                 [(TotalEnumSwitch _ _ _ _ _) (set! (array-ref splits index) 1)]
-                [_ unit])))])
-      (set! index (+ index 1)))))
+                [_ unit])))]))))
 
 ;; One weight per block: the depth ladder times the block's share, floored at
 ;; the ladder's own value so no reference weighs less than it did.
@@ -10864,8 +10553,7 @@
             sum-in
             max-in
             (&mut share))]
-        [block : i64 0]
-        (while (< block count)
+        (for [block (iterator.range 0 count)]
           (set!
             (array-ref weights block)
             (if ladder-only?
@@ -10874,8 +10562,7 @@
                 (compiler-reg-loop-depth-weight (array-ref depths block))
                 (if (< (array-ref share block) 1)
                   1
-                  (array-ref share block)))))
-          (set! block (+ block 1)))
+                  (array-ref share block))))))
         weights))))
 
 (define (compiler-reg-ref-counts-add-var-weighted!
@@ -10891,14 +10578,11 @@
   [ids : (__tl_dyn-array i64)]
   [id-count : i64]
   [weight : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index id-count)
-      (compiler-reg-ref-counts-add-var-weighted!
-        counts
-        (array-ref ids index)
-        weight)
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 id-count)]
+    (compiler-reg-ref-counts-add-var-weighted!
+      counts
+      (array-ref ids index)
+      weight)))
 
 (define (compiler-reg-ref-counts-add-word-weighted!
   [counts : (&mut counts (__tl_dyn-array i64))]
@@ -10981,13 +10665,11 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-ref-counts-add-instr-weighted!
         counts
         (compiler-reg-global-array-element-shared-view slots index)
-        weight)
-      (set! index (+ index 1)))))
+        weight))))
 
 ;; Boolean "does this variable appear in the IR at all?" walk.
 ;;
@@ -11057,17 +10739,15 @@
           marks
           (live.compiler-live-instr-defs instr)
           0))
-      (let
-        [index : i64 0]
+      (begin
         ;; Uses first, then the def -- the same order and the same variable
         ;; set the weighted walk visited; only the stored value differs.
-        (while (< index id-count)
+        (for [index (iterator.range 0 id-count)]
           (let
             [var : i64 (array-ref ids index)]
             (if (and (>= var 0) (< var (array-length marks)))
               (set! (array-ref marks var) true)
-              unit)
-            (set! index (+ index 1))))
+              unit)))
         (let
           [def-var : i64 (ir.compiler-ir-instr-dst instr)]
           (if (and (>= def-var 0) (< def-var (array-length marks)))
@@ -11080,12 +10760,10 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-ref-mark-instr!
         marks
-        (compiler-reg-global-array-element-shared-view slots index))
-      (set! index (+ index 1)))))
+        (compiler-reg-global-array-element-shared-view slots index)))))
 
 (define (compiler-reg-ref-marks-blocks!
   [marks : (&mut marks (__tl_dyn-array bool))]
@@ -11093,12 +10771,10 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
-            [(Block _ instrs) (compiler-reg-ref-mark-seq! marks instrs)])
-          (set! i (+ i 1))))]))
+            [(Block _ instrs) (compiler-reg-ref-mark-seq! marks instrs)])))]))
 
 (define (compiler-reg-ref-counts-blocks-weighted!
   [counts : (&mut counts (__tl_dyn-array i64))]
@@ -11108,18 +10784,16 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [index : i64 block-index]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (compiler-reg-ref-counts-seq-weighted!
                 counts
                 instrs
                 (array-ref weights index))])
-          (set! index (+ index 1))
-          (set! i (+ i 1))))]))
+          (+= index 1)))]))
 
 ;; W3. The spill-weight discount's candidate set, and the backend rewrite
 ;; pipeline's. It must cover every value the allocator can RECOMPUTE
@@ -11286,11 +10960,8 @@
 (define (compiler-reg-remat-init-vals!
   [vals : (&mut vals (__tl_dyn-array ir.CompilerIrValue))]
   [vars : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i vars)
-      (set! (array-ref vals i) (ir.CompilerIrValue.Unit))
-      (set! i (+ i 1)))))
+  (for [i (iterator.range 0 vars)]
+    (set! (array-ref vals i) (ir.CompilerIrValue.Unit))))
 
 ;; Record var -> rematerialisable value for every var whose SOLE definition is a
 ;; Mov of a recomputable value.
@@ -11303,8 +10974,7 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (array-ref slots index)
         [(Mov dst value ty)
           ;; flags[dst]: 0 = not remat, 1 = remat, 2 = poisoned (address-taken,
@@ -11358,8 +11028,7 @@
               false)
             (set! (array-ref flags src) 2)
             unit)]
-        [_ unit])
-      (set! index (+ index 1)))))
+        [_ unit]))))
 
 (define (compiler-reg-collect-remat-seq-from!
   [blocks : ir.CompilerIrBlockSeq]
@@ -11407,7 +11076,6 @@
     [flags : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [vals : (__tl_dyn-array ir.CompilerIrValue)
       (__tl_make-array ir.CompilerIrValue vars)]
-    [v : i64 0]
     (compiler-reg-remat-init-vals! (&mut vals) vars)
     (match func
       [(Function _ _ _ _ blocks _)
@@ -11420,7 +11088,7 @@
               (&mut flags)
               (&mut vals)
               cells-clean)])])
-    (while (< v vars)
+    (for [v (iterator.range 0 vars)]
       ;; Skip vars the call-spanning saver shadows: those keep a real slot to
       ;; restore from around calls, so they must not lose it to remat.
       (if (if (< v (array-length flags))
@@ -11446,8 +11114,7 @@
           ;; slot: converting those to Remat as well gains nothing (the
           ;; shape is rare) and perturbs register homes.
           [(No) unit])
-        unit)
-      (set! v (+ v 1)))
+        unit))
     assignments))
 
 (define (compiler-reg-coalesce-var-nonsingleton?
@@ -11488,7 +11155,7 @@
             (array-ref weights var)
             (compiler-reg-remat-discount-weight (array-ref weights var)))
           unit))
-      (set! var (+ var 1)))))
+      (+= var 1))))
 
 (define (compiler-reg-remat-instr-mutates-memory? [instr : ir.CompilerIrInstr]) : bool
   (match (ir.compiler-ir-instr-effect instr)
@@ -11508,7 +11175,7 @@
         found
         (compiler-reg-remat-instr-mutates-memory?
           (compiler-reg-global-array-element-shared-view slots index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (compiler-reg-remat-blocks-mutates-memory?
@@ -11523,7 +11190,7 @@
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (set! found (compiler-reg-remat-instrs-mutates-memory? instrs))])
-          (set! i (+ i 1)))
+          (+= i 1))
         found)]))
 
 (define (compiler-reg-remat-invariant-loads-ok? [func : ir.CompilerIrFunction]) : bool
@@ -11818,7 +11485,6 @@
         [seq : ir.CompilerIrBlockSeq
           (live.compiler-live-ir-block-list-to-seq blocks)]
         [block-count : i64 (ir.compiler-ir-block-seq-count seq)]
-        [b : i64 0]
         (compiler-reg-fill-i64-array
           (&mut addr-kinds)
           (compiler-reg-invariant-addr-none))
@@ -11826,14 +11492,13 @@
         (compiler-reg-fill-i64-array (&mut phi-defs) 0)
         (compiler-reg-fill-i64-array (&mut stable) 0)
         (compiler-reg-fill-i64-array (&mut writes) 0)
-        (while (< b block-count)
+        (for [b (iterator.range 0 block-count)]
           (match (ir.compiler-ir-block-seq-ref seq b)
             [(Block _ instrs)
               (let
                 [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
                 [count : i64 instrs.len]
-                [i : i64 0]
-                (while (< i count)
+                (for [i (iterator.range 0 count)]
                   (compiler-reg-invariant-scan-addresses!
                     types
                     (compiler-reg-global-array-element-shared-view slots i)
@@ -11841,20 +11506,15 @@
                     (&mut addr-kinds)
                     (&mut addr-headers)
                     (&mut phi-defs)
-                    (&mut writes))
-                  (set! i (+ i 1))))])
-          (set! b (+ b 1)))
-        (let
-          [v : i64 0]
-          (while (< v n)
-            (set!
-              (array-ref stable v)
-              (if (and
-                (= (compiler-reg-invariant-array-at def-counts v) 1)
-                (= (array-ref phi-defs v) 0))
-                1
-                0))
-            (set! v (+ v 1))))
+                    (&mut writes))))]))
+        (for [v (iterator.range 0 n)]
+          (set!
+            (array-ref stable v)
+            (if (and
+              (= (compiler-reg-invariant-array-at def-counts v) 1)
+              (= (array-ref phi-defs v) 0))
+              1
+              0)))
         (CompilerRegInvariantFacts stable (= (array-ref writes 0) 0)))]))
 
 (define (compiler-reg-remat-status-candidate-add-instr!
@@ -11930,16 +11590,14 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-ref-counts-add-instr-weighted-remat!
         counts
         def-status
         rebates
         (compiler-reg-global-array-element-shared-view slots index)
         weight
-        allow-invariant-loads)
-      (set! index (+ index 1)))
+        allow-invariant-loads))
     unit))
 
 (define (compiler-reg-ref-counts-blocks-weighted-remat!
@@ -11953,10 +11611,9 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [index : i64 block-index]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (compiler-reg-ref-counts-seq-weighted-remat!
@@ -11966,8 +11623,7 @@
                 instrs
                 (array-ref weights index)
                 allow-invariant-loads)])
-          (set! index (+ index 1))
-          (set! i (+ i 1))))]))
+          (+= index 1)))]))
 
 ;; ============================================================================
 ;; LOCAL-FIRST PRIORITY BAND (RegAllocGreedy::enqueue).
@@ -12052,17 +11708,13 @@
       (live.compiler-live-ir-block-list-to-seq blocks)]
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
     [points : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-    [i : i64 0]
     [acc : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (set! (array-ref points i) acc)
-      (set!
+      (+=
         acc
-        (+
-          acc
-          (match (ir.compiler-ir-block-seq-ref seq i)
-            [(Block _ instrs) (* 2 (ir.compiler-ir-instr-seq-count instrs))])))
-      (set! i (+ i 1)))
+        (match (ir.compiler-ir-block-seq-ref seq i)
+          [(Block _ instrs) (* 2 (ir.compiler-ir-instr-seq-count instrs))])))
     (set! (array-ref points count) acc)
     points))
 
@@ -12135,7 +11787,7 @@
         (+
           (* (array-ref keys v) span)
           (compiler-reg-priority-band-value points block-count index v)))
-      (set! v (+ v 1)))))
+      (+= v 1))))
 
 ;; ============================================================================
 ;; MEMORY-OPERAND FOLDABILITY REBATE.
@@ -12229,15 +11881,13 @@
       (if (< (array-length rebates) (array-length weights))
         (array-length rebates)
         (array-length weights))]
-    [var : i64 0]
-    (while (< var count)
+    (for [var (iterator.range 0 count)]
       (if (and (> (array-ref rebates var) 0) (> (array-ref weights var) 0))
         (set!
           (array-ref weights var)
           (compiler-reg-foldable-rebate-floor
             (- (array-ref weights var) (array-ref rebates var))))
-        unit)
-      (set! var (+ var 1)))))
+        unit))))
 
 (define (compiler-reg-function-spill-weights [func : ir.CompilerIrFunction]) : (__tl_dyn-array
     i64)
@@ -12354,7 +12004,7 @@
           region-intervals))
         (set! conflict true)
         unit)
-      (set! assigned-var (+ assigned-var 1)))
+      (+= assigned-var 1))
     conflict))
 
 (define (compiler-reg-loop-split-first-register
@@ -12376,7 +12026,7 @@
           region-intervals
           ignore-var
           (Register reg))
-          (set! index (+ index 1))
+          (+= index 1)
           (begin
             (set! result (Some reg))
             (set! done true)))))
@@ -12417,7 +12067,7 @@
         found
         (compiler-reg-call-instr?
           (compiler-reg-global-array-element-shared-view slots index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 ;; The same scan restricted to calls that RETURN to this function. A
@@ -12441,7 +12091,7 @@
         found
         (compiler-reg-returning-call-instr?
           (compiler-reg-global-array-element-shared-view slots index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 ;; ===========================================================================
@@ -12462,17 +12112,13 @@
   (let
     [n : i64 (array-length block-array)]
     [points : (__tl_dyn-array i64) (__tl_make-array i64 (+ n 1))]
-    [i : i64 0]
     [acc : i64 0]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (set! (array-ref points i) acc)
-      (set!
+      (+=
         acc
-        (+
-          acc
-          (match (array-ref block-array i)
-            [(Block _ instrs) (* 2 (ir.compiler-ir-instr-seq-count instrs))])))
-      (set! i (+ i 1)))
+        (match (array-ref block-array i)
+          [(Block _ instrs) (* 2 (ir.compiler-ir-instr-seq-count instrs))])))
     (set! (array-ref points n) acc)
     points))
 
@@ -12487,19 +12133,16 @@
   [lo : i64]
   [end : i64]
   [h : i64]) : bool
-  (let
-    [b : i64 lo]
-    (while (<= b end)
-      (unless
-        (or
-          (= b h)
-          (and
-            (< (+ (* 2 b) 1) (array-length ranges))
-            (>= (array-ref ranges (* 2 b)) lo)
-            (<= (array-ref ranges (+ (* 2 b) 1)) end)))
-        (return false))
-      (set! b (+ b 1)))
-    true))
+  (for [b (iterator.range lo (+ end 1))]
+    (unless
+      (or
+        (= b h)
+        (and
+          (< (+ (* 2 b) 1) (array-length ranges))
+          (>= (array-ref ranges (* 2 b)) lo)
+          (<= (array-ref ranges (+ (* 2 b) 1)) end)))
+      (return false)))
+  true)
 
 ;; ---------------------------------------------------------------------------
 ;; M-G2b -- per-call-region split via the WIDENED caller-saved rescue.
@@ -12653,17 +12296,14 @@
   [items : (& items (__tl_dyn-array CompilerRegLocation))]
   [n : i64]
   [reg : i64]) : bool
-  (let
-    [v : i64 0]
-    (while (< v n)
-      (when
-        (= (array-ref present v) 1)
-        (match (array-ref items v)
-          [(Register r) (when (= r reg) (return true))]
-          [(RegisterPair r0 r1) (when (or (= r0 reg) (= r1 reg)) (return true))]
-          [_ unit]))
-      (set! v (+ v 1)))
-    false))
+  (for [v (iterator.range 0 n)]
+    (when
+      (= (array-ref present v) 1)
+      (match (array-ref items v)
+        [(Register r) (when (= r reg) (return true))]
+        [(RegisterPair r0 r1) (when (or (= r0 reg) (= r1 reg)) (return true))]
+        [_ unit])))
+  false)
 
 ;; The base pool followed by the loop-scoped tail. Loop rows search the whole
 ;; array; block rows stop at the base count, so a block-only root picks only
@@ -12687,8 +12327,7 @@
           csr-count))]
     [keep-n : i64 0]
     [base-count : i64 (array-length base)]
-    [i : i64 0]
-    (while (< i csr-count)
+    (for [i (iterator.range 0 csr-count)]
       (let
         [r : i64 (cabi.compiler-abi-callee-saved-gp-register-id target-abi i)]
         (when
@@ -12698,18 +12337,13 @@
             (< (compiler-reg-call-region-pool-index-of base r) 0)
             (compiler-reg-call-region-reg-in-plan? present items n r))
           (set! (array-ref keep keep-n) r)
-          (set! keep-n (+ keep-n 1)))
-        (set! i (+ i 1))))
+          (+= keep-n 1))))
     (let
       [out : (__tl_dyn-array i64) (__tl_make-array i64 (+ base-count keep-n))]
-      [j : i64 0]
-      (while (< j base-count)
-        (set! (array-ref out j) (array-ref base j))
-        (set! j (+ j 1)))
-      (set! j 0)
-      (while (< j keep-n)
-        (set! (array-ref out (+ base-count j)) (array-ref keep j))
-        (set! j (+ j 1)))
+      (for [j (iterator.range 0 base-count)]
+        (set! (array-ref out j) (array-ref base j)))
+      (for [j (iterator.range 0 keep-n)]
+        (set! (array-ref out (+ base-count j)) (array-ref keep j)))
       out)))
 
 ;; Size guards: at most 4 realized regions per root and 64 per function
@@ -12789,13 +12423,11 @@
   [states : (& states (__tl_dyn-array i64))]
   [index : i64]) : i64
   (let
-    [i : i64 0]
     [ordinal : i64 0]
-    (while (< i index)
+    (for [i (iterator.range 0 index)]
       (if (= (array-ref states i) 2)
-        (set! ordinal (+ ordinal 1))
-        unit)
-      (set! i (+ i 1)))
+        (+= ordinal 1)
+        unit))
     (ir.compiler-ir-label (str_cat.str-cat prefix (string.int->string ordinal)))))
 
 ;; mode 0 is the initial prefix, 1 is the ordinary body, and 2 is a framed
@@ -12893,14 +12525,12 @@
                 [_ last])]
             [out : (__tl_dyn-array ir.CompilerIrInstr)
               (__tl_make-array ir.CompilerIrInstr count)]
-            [i : i64 0]
-            (while (< i count)
+            (for [i (iterator.range 0 count)]
               (set!
                 (array-ref out i)
                 (if (= i (- count 1))
                   replacement
-                  (ir.compiler-ir-instr-seq-ref instrs i)))
-              (set! i (+ i 1)))
+                  (ir.compiler-ir-instr-seq-ref instrs i))))
             (Block label (ir.CompilerIrInstrSeq out count)))))]))
 
 (define (compiler-reg-early-exit-frontier-phi?
@@ -12967,7 +12597,7 @@
                   [_ unit])
                 unit))])
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     found))
 
 (define (compiler-reg-early-exit-label-collision?
@@ -13011,7 +12641,7 @@
               0))
             (set! collision true)
             unit)])
-      (set! i (+ i 1)))
+      (+= i 1))
     collision))
 
 (define (compiler-reg-early-exit-shrinkwrap-function
@@ -13042,7 +12672,6 @@
             [queue : (__tl_dyn-array i64) (__tl_make-array i64 count)]
             [head : i64 0]
             [tail : i64 0]
-            [scan : i64 0]
             [changed : bool true]
             [valid : bool true]
             [return-count : i64 0]
@@ -13053,17 +12682,15 @@
             ;; greedily absorbing a compare whose two successors are distinct
             ;; framed frontiers (the common loop-entry guard after an early
             ;; return) while retaining real multi-block guard chains.
-            (while (< scan count)
+            (for [scan (iterator.range 0 count)]
               (if (compiler-reg-early-exit-return-block?
                 param-vars
                 (ir.compiler-ir-block-seq-ref seq scan))
                 (set! (array-ref fruitful scan) 1)
-                unit)
-              (set! scan (+ scan 1)))
+                unit))
             (while changed
               (set! changed false)
-              (set! scan 0)
-              (while (< scan count)
+              (for [scan (iterator.range 0 count)]
                 (if (and
                   (= (array-ref fruitful scan) 0)
                   (compiler-reg-early-exit-guard-block?
@@ -13090,8 +12717,7 @@
                               (set! (array-ref fruitful scan) 1)
                               (set! changed true)))]
                         [_ unit])])
-                  unit)
-                (set! scan (+ scan 1))))
+                  unit)))
             (if (and valid (= (array-ref fruitful 0) 1))
               (begin
                 (set! (array-ref states 0) 1)
@@ -13103,7 +12729,7 @@
             (while (and valid (< head tail))
               (let
                 [index : i64 (array-ref queue head)]
-                (set! head (+ head 1))
+                (+= head 1)
                 (match (ir.compiler-ir-block-seq-ref seq index)
                   [(Block _ instrs)
                     (match (ir.compiler-ir-instr-scalar-fact
@@ -13132,7 +12758,7 @@
                                     (= (array-ref states target-index) 0)
                                     (set! (array-ref states target-index) 1)
                                     (set! (array-ref queue tail) target-index)
-                                    (set! tail (+ tail 1)))]
+                                    (+= tail 1))]
                                 [(compiler-reg-early-exit-return-block?
                                     param-vars
                                     (ir.compiler-ir-block-seq-ref
@@ -13141,14 +12767,14 @@
                                   (when
                                     (= (array-ref states target-index) 0)
                                     (set! (array-ref states target-index) 2)
-                                    (set! return-count (+ return-count 1)))]
+                                    (+= return-count 1))]
                                 [(< frontier-index 0)
                                   (set! frontier-index target-index)
                                   (set! (array-ref states target-index) 3)]
                                 [(not (= frontier-index target-index))
                                   (set! valid false)]
                                 [else unit])
-                              (set! side (+ side 1)))))]
+                              (+= side 1))))]
                       [_ (set! valid false)])])))
             (set! guard-count tail)
             (if (or
@@ -13180,7 +12806,6 @@
                     [out : (__tl_dyn-array ir.CompilerIrBlock)
                       (__tl_make-array ir.CompilerIrBlock out-count)]
                     [out-index : i64 0]
-                    [i : i64 0]
                     [save-instrs : (__tl_dyn-array ir.CompilerIrInstr)
                       (__tl_make-array ir.CompilerIrInstr 1)]
                     (if (compiler-reg-early-exit-label-collision?
@@ -13191,7 +12816,7 @@
                       func
                       (begin
                         ;; Initial guard prefix.
-                        (while (< i count)
+                        (for [i (iterator.range 0 count)]
                           (when
                             (= (array-ref states i) 1)
                             (set!
@@ -13203,11 +12828,9 @@
                                 0
                                 saving-label
                                 (compiler-reg-global-shared-view bare-prefix)))
-                            (set! out-index (+ out-index 1)))
-                          (set! i (+ i 1)))
+                            (+= out-index 1)))
                         ;; Bare-return clones remain contiguous with the prefix.
-                        (set! i 0)
-                        (while (< i count)
+                        (for [i (iterator.range 0 count)]
                           (if (= (array-ref states i) 2)
                             (match (ir.compiler-ir-block-seq-ref seq i)
                               [(Block _ instrs)
@@ -13220,9 +12843,8 @@
                                       states
                                       i)
                                     instrs))
-                                (set! out-index (+ out-index 1))])
-                            unit)
-                          (set! i (+ i 1)))
+                                (+= out-index 1)])
+                            unit))
                         (set!
                           (array-ref save-instrs 0)
                           (ir.CompilerIrInstr.Jump
@@ -13233,15 +12855,14 @@
                           (ir.CompilerIrBlock.Block
                             saving-label
                             (ir.CompilerIrInstrSeq save-instrs 1)))
-                        (set! out-index (+ out-index 1))
+                        (+= out-index 1)
                         ;; Original framed body blocks, with backedges redirected.
                         ;; Keep the return blocks until after the framed guard
                         ;; clones.  This preserves the useful body -> guard ->
                         ;; return fallthrough chain instead of adding a jump on
                         ;; every loop iteration (the C21 layout property, now
                         ;; applied to every admitted CFG).
-                        (set! i 0)
-                        (while (< i count)
+                        (for [i (iterator.range 0 count)]
                           (when
                             (and
                               (not (= (array-ref states i) 1))
@@ -13255,11 +12876,9 @@
                                 1
                                 saving-label
                                 (compiler-reg-global-shared-view bare-prefix)))
-                            (set! out-index (+ out-index 1)))
-                          (set! i (+ i 1)))
+                            (+= out-index 1)))
                         ;; Framed clones preserve ordinary return/epilogue edges.
-                        (set! i 0)
-                        (while (< i count)
+                        (for [i (iterator.range 0 count)]
                           (if (and
                             (> framed-count 0)
                             (= (array-ref states i) 1))
@@ -13276,14 +12895,12 @@
                                   (ir.CompilerIrBlock.Block
                                     (compiler-reg-early-exit-framed-label label)
                                     instrs))
-                                (set! out-index (+ out-index 1))])
-                            unit)
-                          (set! i (+ i 1)))
+                                (+= out-index 1)])
+                            unit))
                         ;; The framed copies of bare-path returns retain their
                         ;; original labels and therefore still use the ordinary
                         ;; shared epilogue after the saving edge.
-                        (set! i 0)
-                        (while (< i count)
+                        (for [i (iterator.range 0 count)]
                           (when
                             (= (array-ref states i) 2)
                             (set!
@@ -13295,8 +12912,7 @@
                                 1
                                 saving-label
                                 (compiler-reg-global-shared-view bare-prefix)))
-                            (set! out-index (+ out-index 1)))
-                          (set! i (+ i 1)))
+                            (+= out-index 1)))
                         (set! compiler-reg-early-exit-saving-label saving-label)
                         (set! compiler-reg-early-exit-bare-label bare-prefix)
                         (set!
@@ -13334,35 +12950,30 @@
   [type-segment-bases : i64]
   [instrs : ir.CompilerIrInstrSeq]) : i64
   (let
-    [i : i64 0]
     [count : i64 0]
-    (while (< i (ir.compiler-ir-instr-seq-count instrs))
+    (for [i (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
       (if (compiler-reg-call-region-boundary-instr?
         type-segment-bases
         (ir.compiler-ir-instr-seq-ref instrs i))
-        (set! count (+ count 1))
-        unit)
-      (set! i (+ i 1)))
+        (+= count 1)
+        unit))
     count))
 
 (define (compiler-reg-cold-call-find-candidate
   [type-segment-bases : i64]
   [seq : (& seq ir.CompilerIrBlockSeq)]) : CompilerRegColdCallCandidate
   (let
-    [b : i64 0]
     [clobbers : i64 0]
     [candidate : i64 (- 0 1)]
     [join : i64 (ir.compiler-ir-label-none)]
-    (while (< b (ir.compiler-ir-block-seq-count seq))
+    (for [b (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
       (match (ir.compiler-ir-block-seq-ref seq b)
         [(Block _ instrs)
-          (set!
+          (+=
             clobbers
-            (+
-              clobbers
-              (compiler-reg-cold-call-clobber-count-seq
-                type-segment-bases
-                (compiler-reg-global-shared-view instrs))))
+            (compiler-reg-cold-call-clobber-count-seq
+              type-segment-bases
+              (compiler-reg-global-shared-view instrs)))
           (if (= (ir.compiler-ir-instr-seq-count instrs) 2)
             (match (ir.compiler-ir-instr-seq-ref instrs 0)
               [(Call _ _ _ _)
@@ -13375,8 +12986,7 @@
                       (set! candidate (- 0 2)))]
                   [_ unit])]
               [_ unit])
-            unit)])
-      (set! b (+ b 1)))
+            unit)]))
     (if (and (= clobbers 1) (>= candidate 0))
       (Candidate candidate join)
       NoCandidate)))
@@ -13398,7 +13008,7 @@
         label)
         (set! found i)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     found))
 
 (define (compiler-reg-cold-call-predecessor-count
@@ -13406,18 +13016,16 @@
   [label : i64]
   [excluded : i64]) : i64
   (let
-    [i : i64 0]
     [count : i64 0]
-    (while (< i (ir.compiler-ir-block-seq-count seq))
+    (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
       (if (and
         (not (= i excluded))
         (live.compiler-live-label-set-contains?
           (live.compiler-live-block-successors
             (ir.compiler-ir-block-seq-ref seq i))
           label))
-        (set! count (+ count 1))
-        unit)
-      (set! i (+ i 1)))
+        (+= count 1)
+        unit))
     count))
 
 (define (compiler-reg-cold-call-reaches-loop-labels?
@@ -13516,10 +13124,9 @@
   [vars : i64]
   [selected : (&mut selected (__tl_dyn-array i64))]) : i64
   (let
-    [v : i64 0]
     [count : i64 0]
     [unsafe : bool false]
-    (while (< v vars)
+    (for [v (iterator.range 0 vars)]
       (if (and
         (live.compiler-live-set-contains? live-after v)
         (not (live.compiler-live-set-contains? defs v))
@@ -13534,7 +13141,7 @@
                 (if (< count (array-length selected))
                   (set! (array-ref selected count) v)
                   unit)
-                (set! count (+ count 1)))
+                (+= count 1))
               ;; XMM-family values retain their real call masks; values
               ;; that are not register-eligible already have stack homes.
               ;; A GP register group would be exposed by the ignored mask,
@@ -13545,8 +13152,7 @@
                 (set! unsafe true)
                 unit))]
           [(No) unit])
-        unit)
-      (set! v (+ v 1)))
+        unit))
     (if unsafe
       (+ (array-length selected) 1)
       count)))
@@ -13579,9 +13185,8 @@
     [out : (__tl_dyn-array ir.CompilerIrInstr)
       (__tl_make-array ir.CompilerIrInstr out-count)]
     [w : i64 0]
-    [i : i64 0]
     ;; Candidate admission fixes the call at instruction zero.
-    (while (< i selected-count)
+    (for [i (iterator.range 0 selected-count)]
       (let
         [v : i64 (array-ref selected i)]
         (match (compiler-reg-var-types-lookup type-info v)
@@ -13590,12 +13195,10 @@
               (array-ref out w)
               (compiler-reg-carrier-store-mov (+ temp-start i) v ty))]
           [(No) unit])
-        (set! w (+ w 1))
-        (set! i (+ i 1))))
+        (+= w 1)))
     (set! (array-ref out w) (ir.compiler-ir-instr-seq-ref instrs 0))
-    (set! w (+ w 1))
-    (set! i 0)
-    (while (< i selected-count)
+    (+= w 1)
+    (for [i (iterator.range 0 selected-count)]
       (let
         [v : i64 (array-ref selected i)]
         (match (compiler-reg-var-types-lookup type-info v)
@@ -13604,13 +13207,10 @@
               (array-ref out w)
               (compiler-reg-carrier-reload-mov v (+ temp-start i) ty))]
           [(No) unit])
-        (set! w (+ w 1))
-        (set! i (+ i 1))))
-    (set! i 1)
-    (while (< i old-count)
+        (+= w 1)))
+    (for [i (iterator.range 1 old-count)]
       (set! (array-ref out w) (ir.compiler-ir-instr-seq-ref instrs i))
-      (set! w (+ w 1))
-      (set! i (+ i 1)))
+      (+= w 1))
     (ir.CompilerIrInstrSeq out out-count)))
 
 (define (compiler-reg-cold-call-rewrite-function-with-representations
@@ -13672,8 +13272,7 @@
                     [count : i64 (ir.compiler-ir-block-seq-count seq)]
                     [out : (__tl_dyn-array ir.CompilerIrBlock)
                       (__tl_make-array ir.CompilerIrBlock count)]
-                    [b : i64 0]
-                    (while (< b count)
+                    (for [b (iterator.range 0 count)]
                       (set!
                         (array-ref out b)
                         (if (= b call-block)
@@ -13687,8 +13286,7 @@
                                   selected-count
                                   vars
                                   type-info))])
-                          (ir.compiler-ir-block-seq-ref seq b)))
-                      (set! b (+ b 1)))
+                          (ir.compiler-ir-block-seq-ref seq b))))
                     (Rewrite
                       (Function
                         name
@@ -13921,12 +13519,10 @@
   (let
     [count : i64 (array-length depths)]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref out index)
-        (compiler-reg-call-hole-block-weight (array-ref depths index)))
-      (set! index (+ index 1)))
+        (compiler-reg-call-hole-block-weight (array-ref depths index))))
     out))
 
 ;; The forward CSR the cold-arm test walks. The loop nest builds one internally
@@ -13975,7 +13571,7 @@
       (if (>= (array-ref cfg.succ-targets edge) 0)
         (set! found true)
         unit)
-      (set! edge (+ edge 1)))
+      (+= edge 1))
     (not found)))
 
 ;; Every block reachable from `block`, stamped into `seen` with `generation`.
@@ -13992,22 +13588,20 @@
     [top : i64 0]
     (set! (array-ref seen block) generation)
     (set! (array-ref stack top) block)
-    (set! top (+ top 1))
+    (+= top 1)
     (while (> top 0)
-      (set! top (- top 1))
+      (-= top 1)
       (let
         [node : i64 (array-ref stack top)]
-        [edge : i64 (array-ref cfg.succ-offsets node)]
         [stop : i64 (array-ref cfg.succ-offsets (+ node 1))]
-        (while (< edge stop)
+        (for [edge (iterator.range (array-ref cfg.succ-offsets node) stop)]
           (let
             [target : i64 (array-ref cfg.succ-targets edge)]
             (unless
               (or (< target 0) (= (array-ref seen target) generation))
               (set! (array-ref seen target) generation)
               (set! (array-ref stack top) target)
-              (set! top (+ top 1))))
-          (set! edge (+ edge 1)))))))
+              (+= top 1))))))))
 
 ;; Is there a loop the bypass runs and the arm skips? `visited` holds the
 ;; bypass set and `seen` the from-`block` set, both under `generation`; a block
@@ -14032,7 +13626,7 @@
         (not (= (array-ref seen index) generation)))
         (set! found true)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 ;; Can control reach a function exit WITHOUT passing through `block`? That is
@@ -14060,9 +13654,9 @@
       (set! (array-ref visited block) generation)
       (set! (array-ref visited 0) generation)
       (set! (array-ref stack top) 0)
-      (set! top (+ top 1))
+      (+= top 1)
       (while (and (> top 0) (not escapes?))
-        (set! top (- top 1))
+        (-= top 1)
         (let
           [node : i64 (array-ref stack top)]
           (if (compiler-reg-call-hole-cfg-exit-block? cfg node)
@@ -14080,8 +13674,8 @@
                       (= (array-ref visited target) generation))
                     (set! (array-ref visited target) generation)
                     (set! (array-ref stack top) target)
-                    (set! top (+ top 1))))
-                (set! edge (+ edge 1)))))))
+                    (+= top 1)))
+                (+= edge 1))))))
       escapes?)))
 
 ;; Does this block call the function being allocated? `Call` and `TailCall` are
@@ -14117,7 +13711,7 @@
             (compiler-reg-global-array-element-shared-view slots index))
             (set! found true)
             unit)
-          (set! index (+ index 1)))
+          (+= index 1))
         found)]))
 
 (define (compiler-reg-call-hole-block-has-clobber?
@@ -14137,7 +13731,7 @@
             0)
             (set! found true)
             unit)
-          (set! index (+ index 1)))
+          (+= index 1))
         found)]))
 
 ;; The IN-LOOP arm discount, and why it is a different trade from the one
@@ -14202,34 +13796,28 @@
   (let
     [count : i64 (array-length best)]
     [headers : i64 nest.header-count]
-    [index : i64 0]
     [gen : i64 generation]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set! (array-ref best index) (- 0 1))
-      (set! (array-ref best-depth index) (- 0 1))
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index headers)
+      (set! (array-ref best-depth index) (- 0 1)))
+    (for [index (iterator.range 0 headers)]
       (let
         [header : i64 (array-ref nest.headers index)]
         [depth : i64 (array-ref depths header)]
         [total : i64 0]
-        [member : i64 0]
-        (set! gen (+ gen 1))
+        (+= gen 1)
         (set! total (compiler-reg-loop-nest-header-members! nest header gen))
         (when
           (> depth (array-ref best-depth header))
           (set! (array-ref best-depth header) depth)
           (set! (array-ref best header) header))
-        (while (< member total)
+        (for [member (iterator.range 0 total)]
           (let
             [block : i64 (array-ref nest.members member)]
             (when
               (> depth (array-ref best-depth block))
               (set! (array-ref best-depth block) depth)
-              (set! (array-ref best block) header)))
-          (set! member (+ member 1))))
-      (set! index (+ index 1)))
+              (set! (array-ref best block) header))))))
     gen))
 
 ;; Can one iteration of the loop stamped under `stamp-generation` get from its
@@ -14252,14 +13840,13 @@
     [found : bool false]
     (set! (array-ref visited header) visit-generation)
     (set! (array-ref stack top) header)
-    (set! top (+ top 1))
+    (+= top 1)
     (while (> top 0)
-      (set! top (- top 1))
+      (-= top 1)
       (let
         [node : i64 (array-ref stack top)]
-        [edge : i64 (array-ref cfg.succ-offsets node)]
         [stop : i64 (array-ref cfg.succ-offsets (+ node 1))]
-        (while (< edge stop)
+        (for [edge (iterator.range (array-ref cfg.succ-offsets node) stop)]
           (let
             [target : i64 (array-ref cfg.succ-targets edge)]
             (cond
@@ -14273,8 +13860,7 @@
               [else
                 (set! (array-ref visited target) visit-generation)
                 (set! (array-ref stack top) target)
-                (set! top (+ top 1))]))
-          (set! edge (+ edge 1)))))
+                (+= top 1)])))))
     found))
 
 ;; Every block one iteration can still run AFTER `arm`, inside the loop stamped
@@ -14297,14 +13883,13 @@
     [top : i64 0]
     (set! (array-ref seen arm) seen-generation)
     (set! (array-ref stack top) arm)
-    (set! top (+ top 1))
+    (+= top 1)
     (while (> top 0)
-      (set! top (- top 1))
+      (-= top 1)
       (let
         [node : i64 (array-ref stack top)]
-        [edge : i64 (array-ref cfg.succ-offsets node)]
         [stop : i64 (array-ref cfg.succ-offsets (+ node 1))]
-        (while (< edge stop)
+        (for [edge (iterator.range (array-ref cfg.succ-offsets node) stop)]
           (let
             [target : i64 (array-ref cfg.succ-targets edge)]
             (unless
@@ -14316,8 +13901,7 @@
               (unless
                 (= target header)
                 (set! (array-ref stack top) target)
-                (set! top (+ top 1)))))
-          (set! edge (+ edge 1)))))))
+                (+= top 1)))))))))
 
 ;; Halve the weight of every in-loop conditional arm that holds a crossing.
 ;; `visited`, `seen` and `stack` are the depth-0 pass's own scratch, reused with
@@ -14348,8 +13932,7 @@
         best-depth
         nest.header-count)]
     [gen : i64 generation]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [header : i64 (array-ref best index)]
         (if (and
@@ -14363,12 +13946,12 @@
               self-name
               (ir.compiler-ir-block-seq-ref seq index))))
           (begin
-            (set! stamp-generation (+ stamp-generation 1))
+            (+= stamp-generation 1)
             (compiler-reg-loop-nest-header-members!
               nest
               header
               stamp-generation)
-            (set! gen (+ gen 1))
+            (+= gen 1)
             (when
               (compiler-reg-call-hole-loop-arm-bypass!
                 cfg
@@ -14399,8 +13982,7 @@
                   (array-ref weights index)
                   (compiler-reg-call-hole-loop-arm-weight
                     (array-ref weights index))))))
-          unit))
-      (set! index (+ index 1)))))
+          unit)))))
 
 ;; This decision's block weights, plus the flag that says which of them were
 ;; discounted. The csr class's qualification rule asks the question per CROSSING
@@ -14430,9 +14012,8 @@
         [visited : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [seen : (__tl_dyn-array i64) (__tl_make-array i64 count)]
         [stack : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-        [index : i64 0]
         [generation : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (when
             (and
               (<= (array-ref depths index) 0)
@@ -14443,7 +14024,7 @@
                 (compiler-reg-call-hole-block-self-call?
                   self-name
                   (ir.compiler-ir-block-seq-ref seq index))))
-            (set! generation (+ generation 1))
+            (+= generation 1)
             (when
               (compiler-reg-call-hole-entry-escapes?
                 cfg
@@ -14468,8 +14049,7 @@
                 (set!
                   (array-ref weights index)
                   (compiler-reg-call-hole-cold-arm-weight
-                    (array-ref weights index))))))
-          (set! index (+ index 1)))
+                    (array-ref weights index)))))))
         (if (> nest.header-count 0)
           (compiler-reg-call-hole-loop-arm-weights!
             type-segment-bases
@@ -14539,9 +14119,8 @@
   [limit : i64]
   [flags : (&mut flags (__tl_dyn-array bool))]) : i64
   (let
-    [var : i64 0]
     [count : i64 0]
-    (while (< var limit)
+    (for [var (iterator.range 0 limit)]
       (when
         (compiler-reg-call-hole-eligible-var?
           type-segment-bases
@@ -14550,8 +14129,7 @@
           ineligible
           var)
         (set! (array-ref flags var) true)
-        (set! count (+ count 1)))
-      (set! var (+ var 1)))
+        (+= count 1)))
     count))
 
 ;; Is `reg` one the callee must preserve, so that homing anything there costs
@@ -14573,7 +14151,7 @@
         reg)
         (set! found true)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (compiler-reg-call-hole-csr-home?
@@ -14638,9 +14216,8 @@
   [flags : (&mut flags (__tl_dyn-array bool))]
   [csr : (&mut csr (__tl_dyn-array bool))]) : i64
   (let
-    [var : i64 0]
     [count : i64 0]
-    (while (< var limit)
+    (for [var (iterator.range 0 limit)]
       (if (compiler-reg-call-hole-eligible-var?
         type-segment-bases
         type-info
@@ -14649,7 +14226,7 @@
         var)
         (begin
           (set! (array-ref flags var) true)
-          (set! count (+ count 1)))
+          (+= count 1))
         (when
           (compiler-reg-call-hole-csr-candidate-var?
             type-segment-bases
@@ -14660,8 +14237,7 @@
             var)
           (set! (array-ref flags var) true)
           (set! (array-ref csr var) true)
-          (set! count (+ count 1))))
-      (set! var (+ var 1)))
+          (+= count 1))))
     count))
 
 ;; What a MEMORY home actually costs at one reference. A reference the backend
@@ -14749,13 +14325,11 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-call-hole-fold-rebate-instr!
         rebates
         (compiler-reg-global-array-element-shared-view slots index)
-        weight)
-      (set! index (+ index 1)))))
+        weight))))
 
 ;; benefit(V) = sum over V's refs (uses AND defs) of W(block(ref)), rebated as
 ;; above, for every var at once. This is the existing ladder walk with the
@@ -14770,8 +14344,7 @@
   (let
     [rebates : (__tl_dyn-array i64) (__tl_make-array i64 (array-length refs))]
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (ir.compiler-ir-block-seq-ref seq index)
         [(Block _ instrs)
           (let
@@ -14780,8 +14353,7 @@
             (compiler-reg-call-hole-fold-rebate-seq!
               (&mut rebates)
               instrs
-              weight))])
-      (set! index (+ index 1)))
+              weight))]))
     (compiler-reg-call-hole-apply-rebates! refs rebates)))
 
 ;; Subtract the rebates, flooring at ZERO rather than at the greedy ladder's
@@ -14798,16 +14370,14 @@
       (if (< (array-length rebates) (array-length refs))
         (array-length rebates)
         (array-length refs))]
-    [var : i64 0]
-    (while (< var count)
+    (for [var (iterator.range 0 count)]
       (if (> (array-ref rebates var) 0)
         (set!
           (array-ref refs var)
           (if (> (array-ref refs var) (array-ref rebates var))
             (- (array-ref refs var) (array-ref rebates var))
             0))
-        unit)
-      (set! var (+ var 1)))))
+        unit))))
 
 ;; The HOTTEST block that references V, per var. The split relocates V's memory
 ;; traffic from wherever V is referenced to wherever V crosses a call, so this
@@ -14828,11 +14398,8 @@
   [ids : (__tl_dyn-array i64)]
   [id-count : i64]
   [weight : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index id-count)
-      (compiler-reg-call-hole-max-weight-var! maxw (array-ref ids index) weight)
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 id-count)]
+    (compiler-reg-call-hole-max-weight-var! maxw (array-ref ids index) weight)))
 
 (define (compiler-reg-call-hole-max-weight-set!
   [maxw : (&mut maxw (__tl_dyn-array i64))]
@@ -14840,8 +14407,7 @@
   [weight : i64]) : unit
   (let
     [words : i64 (live.compiler-live-set-word-count set)]
-    [word : i64 0]
-    (while (< word words)
+    (for [word (iterator.range 0 words)]
       (let
         [bits : i64 (live.compiler-live-set-word-at-bounded set word)]
         [base : i64 (* word (live.compiler-live-set-word-bits))]
@@ -14850,8 +14416,7 @@
             maxw
             (+ base (compiler-reg-low-bit-index32 bits))
             weight)
-          (set! bits (bit-and bits (- bits 1)))))
-      (set! word (+ word 1)))))
+          (set! bits (bit-and bits (- bits 1))))))))
 
 (define (compiler-reg-call-hole-max-ref-weights!
   [maxw : (&mut maxw (__tl_dyn-array i64))]
@@ -14859,16 +14424,14 @@
   [weights : (& weights (__tl_dyn-array i64))]) : unit
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (ir.compiler-ir-block-seq-ref seq index)
         [(Block _ instrs)
           (let
             [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
             [weight : i64 (array-ref weights index)]
             [instr-count : i64 instrs.len]
-            [i : i64 0]
-            (while (< i instr-count)
+            (for [i (iterator.range 0 instr-count)]
               (let
                 [instr : ir.CompilerIrInstr
                   (compiler-reg-global-array-element-shared-view slots i)]
@@ -14889,9 +14452,7 @@
                 (compiler-reg-call-hole-max-weight-var!
                   maxw
                   (ir.compiler-ir-instr-dst instr)
-                  weight))
-              (set! i (+ i 1))))])
-      (set! index (+ index 1)))))
+                  weight))))]))))
 
 ;; Kind-0 clobbers that are not their block's terminator. A tail call IS a
 ;; terminator -- nothing is live after it and control never returns -- so this
@@ -14902,24 +14463,20 @@
   [seq : (& seq ir.CompilerIrBlockSeq)]) : i64
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [index : i64 0]
     [total : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (ir.compiler-ir-block-seq-ref seq index)
         [(Block _ instrs)
           (let
             [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
             [last : i64 (- instrs.len 1)]
-            [i : i64 0]
-            (while (< i last)
+            (for [i (iterator.range 0 last)]
               (if (compiler-reg-clobber-instr-kind?
                 type-segment-bases
                 (compiler-reg-global-array-element-shared-view slots i)
                 0)
-                (set! total (+ total 1))
-                unit)
-              (set! i (+ i 1))))])
-      (set! index (+ index 1)))
+                (+= total 1)
+                unit)))]))
     total))
 
 ;; Charge `charge` to every eligible value live THROUGH this clobber and report
@@ -14956,9 +14513,8 @@
   [valid : (&mut valid (__tl_dyn-array bool))]) : i64
   (let
     [words : i64 (live.compiler-live-set-word-count live-after)]
-    [word : i64 0]
     [found : i64 0]
-    (while (< word words)
+    (for [word (iterator.range 0 words)]
       (let
         [bits : i64 (live.compiler-live-set-word-at-bounded live-after word)]
         [base : i64 (* word (live.compiler-live-set-word-bits))]
@@ -14999,9 +14555,8 @@
                   max-clobber-hot
                   var
                   weight))
-              (set! found (+ found 1))))
-          (set! bits (bit-and bits (- bits 1)))))
-      (set! word (+ word 1)))
+              (+= found 1)))
+          (set! bits (bit-and bits (- bits 1))))))
     found))
 
 ;; Does `instr` READ `var`? The id fast path when the instruction has one, the
@@ -15025,7 +14580,7 @@
           (if (= (array-ref ids index) var)
             (set! found true)
             unit)
-          (set! index (+ index 1)))
+          (+= index 1))
         found))))
 
 ;; The ESTIMATE's reload question, kept at the shape the memory class was tuned
@@ -15085,7 +14640,7 @@
             (if (compiler-reg-clobber-instr-kind? type-segment-bases instr 0)
               (set! stopped true)
               unit)))
-        (set! index (+ index 1)))
+        (+= index 1))
       (or needed (not stopped)))))
 
 (define (compiler-reg-call-hole-clear-valid!
@@ -15094,7 +14649,7 @@
     [index : i64 0]
     (while (< index (array-length valid))
       (set! (array-ref valid index) false)
-      (set! index (+ index 1)))))
+      (+= index 1))))
 
 ;; cost(V) = sum over kind-0 clobber points c that V spans of 2 * W(block(c)) --
 ;; one store and one reload per crossing. Returns the total number of
@@ -15114,9 +14669,8 @@
   (let
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
     [vars : i64 (array-length flags)]
-    [index : i64 0]
     [spans : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (ir.compiler-ir-block-seq-ref seq index)
         [(Block label instrs)
           (match (live.compiler-live-function-find-block
@@ -15144,34 +14698,31 @@
                       type-segment-bases
                       instr
                       0)
-                      (set!
+                      (+=
                         spans
-                        (+
-                          spans
-                          (compiler-reg-call-hole-charge-live-through!
-                            type-segment-bases
-                            csr
-                            (compiler-reg-global-shared-view slots)
-                            last
-                            i
-                            (live.compiler-live-instr-set-vec-nth after i)
-                            def-var
-                            vars
-                            weight
-                            cold?
-                            flags
-                            cost
-                            max-clobber
-                            max-clobber-hot
-                            (&mut valid))))
+                        (compiler-reg-call-hole-charge-live-through!
+                          type-segment-bases
+                          csr
+                          (compiler-reg-global-shared-view slots)
+                          last
+                          i
+                          (live.compiler-live-instr-set-vec-nth after i)
+                          def-var
+                          vars
+                          weight
+                          cold?
+                          flags
+                          cost
+                          max-clobber
+                          max-clobber-hot
+                          (&mut valid)))
                       unit)
                     ;; A def of the value invalidates the carrier, so
                     ;; the next crossing pays for a store again.
                     (if (and (>= def-var 0) (< def-var vars))
                       (set! (array-ref valid def-var) false)
                       unit))
-                  (set! i (+ i 1))))])])
-      (set! index (+ index 1)))
+                  (+= i 1)))])]))
     spans))
 
 ;; Two conditions, and the second is what makes the round a relocation rather
@@ -15248,38 +14799,28 @@
   [selected : (&mut selected (__tl_dyn-array i64))]) : i64
   (let
     [cap : i64 (compiler-reg-call-hole-max-selected)]
-    [var : i64 0]
     [total : i64 0]
     [out : i64 0]
-    (while (< var vars)
+    (for [var (iterator.range 0 vars)]
       (set! (array-ref picked var) false)
       (if (compiler-reg-call-hole-qualifies? scores var)
-        (set! total (+ total 1))
-        unit)
-      (set! var (+ var 1)))
+        (+= total 1)
+        unit))
     (if (= total 0)
       0
       (begin
         (if (<= total cap)
-          (let
-            [v : i64 0]
-            (while (< v vars)
-              (if (compiler-reg-call-hole-qualifies? scores v)
-                (set! (array-ref picked v) true)
-                unit)
-              (set! v (+ v 1))))
-          (let
-            [round : i64 0]
-            (while (< round cap)
-              (compiler-reg-call-hole-pick-richest! vars scores picked)
-              (set! round (+ round 1)))))
-        (set! var 0)
-        (while (< var vars)
+          (for [v (iterator.range 0 vars)]
+            (if (compiler-reg-call-hole-qualifies? scores v)
+              (set! (array-ref picked v) true)
+              unit))
+          (for [round (iterator.range 0 cap)]
+            (compiler-reg-call-hole-pick-richest! vars scores picked)))
+        (for [var (iterator.range 0 vars)]
           (when
             (array-ref picked var)
             (set! (array-ref selected out) var)
-            (set! out (+ out 1)))
-          (set! var (+ var 1)))
+            (+= out 1)))
         out))))
 
 (define (compiler-reg-call-hole-pick-richest!
@@ -15289,8 +14830,7 @@
   (let
     [best : i64 (- 0 1)]
     [best-margin : i64 0]
-    [var : i64 0]
-    (while (< var vars)
+    (for [var (iterator.range 0 vars)]
       (if (and
         (not (array-ref picked var))
         (compiler-reg-call-hole-qualifies? scores var))
@@ -15301,8 +14841,7 @@
             (or (< best 0) (> margin best-margin))
             (set! best var)
             (set! best-margin margin)))
-        unit)
-      (set! var (+ var 1)))
+        unit))
     (if (>= best 0)
       (set! (array-ref picked best) true)
       unit)))
@@ -15389,7 +14928,7 @@
         (if (= (array-ref selected index) var)
           (set! bit (shl 1 index))
           unit)
-        (set! index (+ index 1)))
+        (+= index 1))
       bit)))
 
 ;; The selected values this crossing carries: live AFTER it and not defined BY
@@ -15402,15 +14941,13 @@
   [full : i64]
   [def-bit : i64]) : i64
   (let
-    [index : i64 0]
     [mask : i64 0]
-    (while (< index selected-count)
+    (for [index (iterator.range 0 selected-count)]
       (if (live.compiler-live-set-contains?
         live-after
         (array-ref selected index))
         (set! mask (bit-or mask (shl 1 index)))
-        unit)
-      (set! index (+ index 1)))
+        unit))
     (bit-and mask (bit-xor full def-bit))))
 
 ;; `store-in` all zero and `reload-out` all one: no carrier is available on
@@ -15462,8 +14999,7 @@
   (let
     [last : i64 (- count 1)]
     [valid : i64 entry]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [instr : ir.CompilerIrInstr
           (compiler-reg-global-array-element-shared-view slots index)]
@@ -15474,16 +15010,14 @@
           (let
             [live-after : live.CompilerLiveI64Set
               (live.compiler-live-instr-set-vec-nth after index)]
-            [j : i64 0]
-            (while (< j selected-count)
+            (for [j (iterator.range 0 selected-count)]
               (let
                 [var : i64 (array-ref selected j)]
                 (if (and
                   (not (= var def-var))
                   (live.compiler-live-set-contains? live-after var))
                   (set! valid (bit-or valid (shl 1 j)))
-                  unit))
-              (set! j (+ j 1))))
+                  unit))))
           unit)
         (set!
           valid
@@ -15494,8 +15028,7 @@
               (compiler-reg-call-hole-selected-bit
                 selected
                 selected-count
-                def-var)))))
-      (set! index (+ index 1)))
+                def-var))))))
     valid))
 
 ;; The rewrite leaves a block whose liveness handle is missing exactly as it
@@ -15537,19 +15070,17 @@
   (if (= block 0)
     0
     (let
-      [edge : i64 (array-ref pred-offsets block)]
       [stop : i64 (array-ref pred-offsets (+ block 1))]
       [seen : bool false]
       [acc : i64 0]
-      (while (< edge stop)
+      (for [edge (iterator.range (array-ref pred-offsets block) stop)]
         (let
           [source : i64 (array-ref pred-sources edge)]
           (if seen
             (set! acc (bit-and acc (array-ref store-out source)))
             (begin
               (set! acc (array-ref store-out source))
-              (set! seen true))))
-        (set! edge (+ edge 1)))
+              (set! seen true)))))
       (if seen
         acc
         0))))
@@ -15569,9 +15100,8 @@
   [store-in : (&mut store-in (__tl_dyn-array i64))]
   [store-out : (&mut store-out (__tl_dyn-array i64))]) : bool
   (let
-    [block : i64 0]
     [changed : bool false]
-    (while (< block count)
+    (for [block (iterator.range 0 count)]
       (let
         [entry : i64
           (compiler-reg-call-hole-flow-meet-preds
@@ -15593,8 +15123,7 @@
         (unless
           (= out (array-ref store-out block))
           (set! (array-ref store-out block) out)
-          (set! changed true)))
-      (set! block (+ block 1)))
+          (set! changed true))))
     changed))
 
 ;; What must be in `selected[j]`'s REGISTER at the start of this block, on some
@@ -15634,8 +15163,7 @@
     [pending : i64 full]
     [read : i64 0]
     [held : i64 avail]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [instr : ir.CompilerIrInstr
           (compiler-reg-global-array-element-shared-view slots index)]
@@ -15677,8 +15205,7 @@
             (set! held (bit-or held carried)))
           unit)
         (set! pending (bit-and pending (bit-xor full def-bit)))
-        (set! held (bit-and held (bit-xor full def-bit))))
-      (set! index (+ index 1)))
+        (set! held (bit-and held (bit-xor full def-bit)))))
     (bit-or read (bit-and pending exit))))
 
 ;; `out[b]`: the union of every successor's `in`. A successor this function
@@ -15693,16 +15220,14 @@
   [need-in : (& need-in (__tl_dyn-array i64))]
   [full : i64]) : i64
   (let
-    [edge : i64 (array-ref cfg.succ-offsets block)]
     [stop : i64 (array-ref cfg.succ-offsets (+ block 1))]
     [acc : i64 0]
-    (while (< edge stop)
+    (for [edge (iterator.range (array-ref cfg.succ-offsets block) stop)]
       (let
         [target : i64 (array-ref cfg.succ-targets edge)]
         (if (< target 0)
           (set! acc full)
-          (set! acc (bit-or acc (array-ref need-in target)))))
-      (set! edge (+ edge 1)))
+          (set! acc (bit-or acc (array-ref need-in target))))))
     acc))
 
 (define (compiler-reg-call-hole-flow-reload-block
@@ -15765,7 +15290,7 @@
           (= value (array-ref need-in block))
           (set! (array-ref need-in block) value)
           (set! changed true)))
-      (set! block (- block 1)))
+      (-= block 1))
     changed))
 
 ;; The reload after the crossing at `from`, asked over the whole CFG. The walk
@@ -15805,7 +15330,7 @@
           ;; A redefinition makes the reloaded value dead too.
           [(= (ir.compiler-ir-instr-dst instr) var) (set! stopped true)]
           [else unit]))
-      (set! index (+ index 1)))
+      (+= index 1))
     (cond [needed true] [stopped false] [else exit?])))
 
 (define (compiler-reg-call-hole-flow-build
@@ -15829,7 +15354,6 @@
         [store-out : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
         [need-in : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
         [reload-out : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
-        [index : i64 0]
         [pass : i64 0]
         [changed : bool true]
         (compiler-reg-loop-nest-fill-pred!
@@ -15842,9 +15366,8 @@
         ;; A forward MUST analysis starts at the lattice top and only ever
         ;; retracts, so every intermediate state is an OVER-estimate and only
         ;; the fixpoint may be used.
-        (while (< index count)
-          (set! (array-ref store-out index) full)
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 count)]
+          (set! (array-ref store-out index) full))
         (while (and changed (< pass (compiler-reg-call-hole-flow-max-passes)))
           (set!
             changed
@@ -15860,7 +15383,7 @@
               pred-sources
               (&mut store-in)
               (&mut store-out)))
-          (set! pass (+ pass 1)))
+          (+= pass 1))
         (if changed
           (compiler-reg-fill-i64-array (&mut store-in) 0)
           unit)
@@ -15884,15 +15407,13 @@
               full
               store-in
               (&mut need-in)))
-          (set! pass (+ pass 1)))
-        (set! index 0)
-        (while (< index count)
+          (+= pass 1))
+        (for [index (iterator.range 0 count)]
           (set!
             (array-ref reload-out index)
             (if changed
               (- 0 1)
-              (compiler-reg-call-hole-flow-join-succs index cfg need-in full)))
-          (set! index (+ index 1)))
+              (compiler-reg-call-hole-flow-join-succs index cfg need-in full))))
         (CompilerRegCallHoleFlow count store-in reload-out)))))
 
 ;; Seed the rewrite's per-var validity flags from the block's dataflow answer.
@@ -15901,13 +15422,10 @@
   [selected-count : i64]
   [entry : i64]
   [valid : (&mut valid (__tl_dyn-array bool))]) : unit
-  (let
-    [index : i64 0]
-    (while (< index selected-count)
-      (set!
-        (array-ref valid (array-ref selected index))
-        (not (= 0 (bit-and entry (shl 1 index)))))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 selected-count)]
+    (set!
+      (array-ref valid (array-ref selected index))
+      (not (= 0 (bit-and entry (shl 1 index)))))))
 
 ;; A def of V invalidates the claim that S_V still holds V. The reload
 ;; `Mov V <- S_V` this pass emits is a def of V too, but it writes exactly what
@@ -15948,7 +15466,6 @@
             [last : i64 (- count 1)]
             [builder : ir.CompilerIrInstrBuilder
               (ir.compiler-ir-instr-builder-with-capacity count)]
-            [index : i64 0]
             ;; "S_V valid" on entry is the forward MUST dataflow's answer for
             ;; this block: every path into it already stored the carrier. The
             ;; degenerate flow makes this all-false, which is the per-block
@@ -15958,7 +15475,7 @@
               selected-count
               entry-valid
               valid)
-            (while (< index count)
+            (for [index (iterator.range 0 count)]
               (let
                 [instr : ir.CompilerIrInstr
                   (compiler-reg-global-array-element-shared-view slots index)]
@@ -15972,8 +15489,7 @@
                   (let
                     [live-after : live.CompilerLiveI64Set
                       (live.compiler-live-instr-set-vec-nth after index)]
-                    [j : i64 0]
-                    (while (< j selected-count)
+                    (for [j (iterator.range 0 selected-count)]
                       (let
                         [var : i64 (array-ref selected j)]
                         (if (and
@@ -15990,12 +15506,10 @@
                                   var
                                   ty))
                               (set! (array-ref valid var) true)])
-                          unit))
-                      (set! j (+ j 1)))
+                          unit)))
                     (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
                     (compiler-reg-call-hole-invalidate! def-var carrier valid)
-                    (set! j 0)
-                    (while (< j selected-count)
+                    (for [j (iterator.range 0 selected-count)]
                       (let
                         [var : i64 (array-ref selected j)]
                         (if (and
@@ -16017,12 +15531,10 @@
                                   var
                                   (array-ref carrier var)
                                   ty))])
-                          unit))
-                      (set! j (+ j 1))))
+                          unit))))
                   (begin
                     (ir.compiler-ir-instr-builder-push! (&mut builder) instr)
-                    (compiler-reg-call-hole-invalidate! def-var carrier valid))))
-              (set! index (+ index 1)))
+                    (compiler-reg-call-hole-invalidate! def-var carrier valid)))))
             (Block label (ir.compiler-ir-instr-builder-to-seq builder)))])]))
 
 (define (compiler-reg-call-hole-rewrite-blocks
@@ -16040,8 +15552,7 @@
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
     [out : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref out index)
         (compiler-reg-call-hole-rewrite-block
@@ -16054,8 +15565,7 @@
           selected-count
           (compiler-reg-call-hole-flow-store-in flow index)
           (compiler-reg-call-hole-flow-reload-out flow index full)
-          valid))
-      (set! index (+ index 1)))
+          valid)))
     (Array (ir.CompilerIrBlockSeq out count))))
 
 (define (compiler-reg-call-hole-register-homed?
@@ -16086,9 +15596,8 @@
   (let
     [assignments : CompilerRegAssignmentTable
       (compiler-reg-plan-assignments plan)]
-    [index : i64 0]
     [count : i64 0]
-    (while (< index selected-count)
+    (for [index (iterator.range 0 selected-count)]
       (let
         [var : i64 (array-ref selected index)]
         (unless
@@ -16099,8 +15608,7 @@
                 (array-ref csr var)
                 (compiler-reg-call-hole-csr-home? target-abi assignments var))))
           (set! (array-ref dropped var) true)
-          (set! count (+ count 1))))
-      (set! index (+ index 1)))
+          (+= count 1))))
     count))
 
 ;; How many DISTINCT callee-saved registers the plan uses. The prologue saves
@@ -16116,9 +15624,8 @@
     [assignments : CompilerRegAssignmentTable
       (compiler-reg-plan-assignments plan)]
     [seen : i64 0]
-    [var : i64 0]
     [total : i64 0]
-    (while (< var vars)
+    (for [var (iterator.range 0 vars)]
       (match (compiler-reg-assignment-lookup assignments var)
         [(No) unit]
         [(Some location)
@@ -16132,10 +15639,9 @@
                   target-abi
                   (compiler-reg-call-hole-csr-seen target-abi seen low)
                   high))]
-            [_ unit])])
-      (set! var (+ var 1)))
+            [_ unit])]))
     (while (not (= seen 0))
-      (set! total (+ total 1))
+      (+= total 1)
       (set! seen (bit-and seen (- seen 1))))
     total))
 
@@ -16177,11 +15683,9 @@
   [assignments : CompilerRegAssignmentTable]
   [int-idx : i64]
   [float-idx : i64]
-  [position : i64]
   [pins-ok? : bool]
   [total : i64]) : i64
-  (if (>= position params.len)
-    total
+  (for [position (iterator.range 0 params.len)]
     (match (ir.compiler-ir-param-seq-ref params position)
       [(Param _ ty var-id)
         (let
@@ -16202,20 +15706,19 @@
                   (compiler-reg-param-int-reg target-abi int-idx position)
                   No))
               No)]
-          (compiler-reg-call-hole-param-copy-walk
-            type-segment-bases
-            representations
-            target-abi
-            params
-            assignments
+          (set!
+            int-idx
             (if is-float
               int-idx
-              (+ int-idx 1))
+              (+ int-idx 1)))
+          (set!
+            float-idx
             (if is-float
               (+ float-idx 1)
-              float-idx)
-            (+ position 1)
-            (and pins-ok? (not is-group))
+              float-idx))
+          (set! pins-ok? (and pins-ok? (not is-group)))
+          (set!
+            total
             (match reg
               [(No) total]
               [(Some home)
@@ -16223,7 +15726,8 @@
                   (compiler-reg-assignment-lookup assignments var-id)
                   home)
                   total
-                  (+ total 1))])))])))
+                  (+ total 1))])))]))
+  total)
 
 ;; Estimated cost of a plan on its own function, in instructions:
 ;;
@@ -16270,17 +15774,14 @@
             assignments
             0
             0
-            0
             true
             0)
           entry))]
-    [var : i64 0]
     (compiler-reg-call-hole-ref-weights! (&mut refs) seq weights)
-    (while (< var vars)
+    (for [var (iterator.range 0 vars)]
       (if (compiler-reg-call-hole-register-homed? assignments var)
         unit
-        (set! total (+ total (array-ref refs var))))
-      (set! var (+ var 1)))
+        (+= total (array-ref refs var))))
     total))
 
 (define (compiler-reg-function-params [func : ir.CompilerIrFunction]) : ir.CompilerIrParamSeq
@@ -16327,7 +15828,7 @@
       (if (array-ref csr (array-ref selected index))
         (set! found true)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 ;; The claim a csr candidate is selected on is that its callee-saved home was
@@ -16369,12 +15870,9 @@
   [selected : (& selected (__tl_dyn-array i64))]
   [selected-count : i64]
   [vars : i64]) : unit
-  (let
-    [index : i64 0]
-    (compiler-reg-fill-i64-array carrier (- 0 1))
-    (while (< index selected-count)
-      (set! (array-ref carrier (array-ref selected index)) (+ vars index))
-      (set! index (+ index 1)))))
+  (compiler-reg-fill-i64-array carrier (- 0 1))
+  (for [index (iterator.range 0 selected-count)]
+    (set! (array-ref carrier (array-ref selected index)) (+ vars index))))
 
 (define (compiler-reg-call-hole-split-round
   [ctx : CompilerRegCallHoleContext]
@@ -16810,12 +16308,10 @@
   (let
     [count : i64 (array-length depths)]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref out index)
-        (compiler-reg-loop-park-block-weight (array-ref depths index)))
-      (set! index (+ index 1)))
+        (compiler-reg-loop-park-block-weight (array-ref depths index))))
     out))
 
 ;; Reload site kinds.
@@ -16934,23 +16430,19 @@
     [members : (__tl_dyn-array i64) nest.members]
     [pred-offsets : (__tl_dyn-array i64) nest.pred-offsets]
     [pred-sources : (__tl_dyn-array i64) nest.pred-sources]
-    [index : i64 0]
-    (while (< index total)
+    (for [index (iterator.range 0 total)]
       (let
         [m : i64 (array-ref members index)]
-        [edge : i64 (array-ref pred-offsets m)]
         [stop : i64 (array-ref pred-offsets (+ m 1))]
         (unless
           (= m header)
-          (while (< edge stop)
+          (for [edge (iterator.range (array-ref pred-offsets m) stop)]
             (unless
               (compiler-reg-loop-nest-member?
                 nest
                 (array-ref pred-sources edge)
                 generation)
-              (return false))
-            (set! edge (+ edge 1))))
-        (set! index (+ index 1))))
+              (return false))))))
     true))
 
 ;; Mention one var of L: stamp it a resident and charge this block weight to its
@@ -16989,19 +16481,16 @@
   [residents : (&mut residents (__tl_dyn-array i64))]
   [cursor : (&mut cursor (__tl_dyn-array i64))]
   [generation : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index id-count)
-      (compiler-reg-loop-park-note-resident!
-        (array-ref ids index)
-        vars
-        weight
-        stamp
-        refs
-        residents
-        cursor
-        generation)
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 id-count)]
+    (compiler-reg-loop-park-note-resident!
+      (array-ref ids index)
+      vars
+      weight
+      stamp
+      refs
+      residents
+      cursor
+      generation)))
 
 (define (compiler-reg-loop-park-note-resident-set!
   [set : live.CompilerLiveI64Set]
@@ -17014,8 +16503,7 @@
   [generation : i64]) : unit
   (let
     [words : i64 (live.compiler-live-set-word-count set)]
-    [word : i64 0]
-    (while (< word words)
+    (for [word (iterator.range 0 words)]
       (let
         [bits : i64 (live.compiler-live-set-word-at-bounded set word)]
         [base : i64 (* word (live.compiler-live-set-word-bits))]
@@ -17029,8 +16517,7 @@
             residents
             cursor
             generation)
-          (set! bits (bit-and bits (- bits 1)))))
-      (set! word (+ word 1)))))
+          (set! bits (bit-and bits (- bits 1))))))))
 
 ;; residents(L) and their in-L weighted reference totals, in one walk over the
 ;; loop blocks. Phi inputs count (`compiler-live-instr-use-ids!` reports them),
@@ -17050,8 +16537,7 @@
   [cursor : (&mut cursor (__tl_dyn-array i64))]) : unit
   (let
     [members : (__tl_dyn-array i64) nest.members]
-    [index : i64 (- 0 1)]
-    (while (< index total)
+    (for [index (iterator.range (- 0 1) total)]
       (let
         [b : i64
           (if (< index 0)
@@ -17062,8 +16548,7 @@
         [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
         [weight : i64 (array-ref weights b)]
         [count : i64 instrs.len]
-        [i : i64 0]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (let
             [instr : ir.CompilerIrInstr
               (compiler-reg-global-array-element-shared-view slots i)]
@@ -17099,9 +16584,7 @@
               refs
               residents
               cursor
-              generation))
-          (set! i (+ i 1))))
-      (set! index (+ index 1)))))
+              generation)))))))
 
 ;; Does `t` open with a phi? Nothing may be inserted above a phi, so such a
 ;; block cannot host a reload at its head and its exit edges are spliced. An
@@ -17134,7 +16617,7 @@
           (array-ref pred-sources edge)
           generation)
         (return false))
-      (set! edge (+ edge 1)))
+      (+= edge 1))
     true))
 
 ;; Is `var` an input of some phi of block `t` keyed on `from-label`? That is an
@@ -17147,8 +16630,7 @@
   [var : i64]) : bool
   (let
     [count : i64 inputs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [input : ir.CompilerIrPhiInput
           (ir.compiler-ir-phi-input-seq-ref inputs index)]
@@ -17156,8 +16638,7 @@
           (= input.label from-label)
           (match input.value
             [(Var v) (when (= v var) (return true))]
-            [_ unit])))
-      (set! index (+ index 1)))
+            [_ unit]))))
     false))
 
 ;; The phi prefix of `t` runs from instruction zero to the first non-phi, so the
@@ -17171,15 +16652,13 @@
     [instrs : ir.CompilerIrInstrSeq (compiler-reg-loop-park-block-instrs seq t)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (array-ref slots index)
         [(Phi _ inputs _)
           (when
             (compiler-reg-loop-park-phi-input-on-edge? inputs from-label var)
             (return true))]
-        [_ (return false)])
-      (set! index (+ index 1)))
+        [_ (return false)]))
     false))
 
 ;; Is `var` live-in at the block labelled `label`? A label the analysis does not
@@ -17277,29 +16756,26 @@
   [to : i64]
   [weight : i64]
   [out-count : (&mut out-count (__tl_dyn-array i64))]) : i64
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (when
-        (and
-          (= (array-ref lsite-kind index) kind)
-          (= (array-ref lsite-to index) to)
-          (or
-            (= kind (compiler-reg-loop-park-site-direct))
-            (= (array-ref lsite-from index) from)))
-        (set! (array-ref out-count 0) count)
-        (return index))
-      (set! index (+ index 1)))
+  (for [index (iterator.range 0 count)]
     (when
-      (>= count (compiler-reg-loop-park-max-loop-sites))
+      (and
+        (= (array-ref lsite-kind index) kind)
+        (= (array-ref lsite-to index) to)
+        (or
+          (= kind (compiler-reg-loop-park-site-direct))
+          (= (array-ref lsite-from index) from)))
       (set! (array-ref out-count 0) count)
-      (return (- 0 1)))
-    (set! (array-ref lsite-from count) from)
-    (set! (array-ref lsite-to count) to)
-    (set! (array-ref lsite-kind count) kind)
-    (set! (array-ref lsite-weight count) weight)
-    (set! (array-ref out-count 0) (+ count 1))
-    count))
+      (return index)))
+  (when
+    (>= count (compiler-reg-loop-park-max-loop-sites))
+    (set! (array-ref out-count 0) count)
+    (return (- 0 1)))
+  (set! (array-ref lsite-from count) from)
+  (set! (array-ref lsite-to count) to)
+  (set! (array-ref lsite-kind count) kind)
+  (set! (array-ref lsite-weight count) weight)
+  (set! (array-ref out-count 0) (+ count 1))
+  count)
 
 ;; Every exit EDGE of L, reduced to reload sites. Returns the number of sites,
 ;; or -1 to refuse the loop (an unresolvable successor label, or more sites than
@@ -17319,9 +16795,8 @@
   [scratch : (&mut scratch (__tl_dyn-array i64))]) : i64
   (let
     [members : (__tl_dyn-array i64) nest.members]
-    [index : i64 (- 0 1)]
     [count : i64 0]
-    (while (< index total)
+    (for [index (iterator.range (- 0 1) total)]
       (let
         [b : i64
           (if (< index 0)
@@ -17391,8 +16866,7 @@
                         scratch)]
                     (set! count (array-ref scratch 0))
                     (when (< row 0) (return (- 0 1))))))
-              (set! succs (live.compiler-live-label-set-tail succs))])))
-      (set! index (+ index 1)))
+              (set! succs (live.compiler-live-label-set-tail succs))]))))
     count))
 
 ;; The reload mask and the total price of parking `var` around this loop.
@@ -17409,10 +16883,9 @@
   [var : i64]
   [out : (&mut out (__tl_dyn-array i64))]) : i64
   (let
-    [index : i64 0]
     [mask : i64 0]
     [cost : i64 pre-weight]
-    (while (< index site-count)
+    (for [index (iterator.range 0 site-count)]
       (when
         (compiler-reg-loop-park-needs-reload?
           seq
@@ -17422,8 +16895,7 @@
           (array-ref lsite-to index)
           var)
         (set! mask (bit-or mask (shl 1 index)))
-        (set! cost (+ cost (array-ref lsite-weight index))))
-      (set! index (+ index 1)))
+        (+= cost (array-ref lsite-weight index))))
     (set! (array-ref out 0) mask)
     cost))
 
@@ -17444,10 +16916,9 @@
   [threshold : i64]) : i64
   (let
     [words : i64 (live.compiler-live-set-word-count live-in)]
-    [word : i64 0]
     [best : i64 (- 0 1)]
     [best-weight : i64 0]
-    (while (< word words)
+    (for [word (iterator.range 0 words)]
       (let
         [bits : i64 (live.compiler-live-set-word-at-bounded live-in word)]
         [base : i64 (* word (live.compiler-live-set-word-bits))]
@@ -17471,8 +16942,7 @@
                 (or (< best 0) (< (array-ref benefit var) best-weight))
                 (set! best var)
                 (set! best-weight (array-ref benefit var)))))
-          (set! bits (bit-and bits (- bits 1)))))
-      (set! word (+ word 1)))
+          (set! bits (bit-and bits (- bits 1))))))
     best))
 
 ;; Find (or append) the FUNCTION-wide row for one of this loop reload sites.
@@ -17489,8 +16959,7 @@
   [weight : i64]) : i64
   (let
     [count : i64 (array-ref pk.counts 1)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (when
         (and
           (= (array-ref pk.site-kind index) kind)
@@ -17498,8 +16967,7 @@
           (or
             (= kind (compiler-reg-loop-park-site-direct))
             (= (array-ref pk.site-from index) from)))
-        (return index))
-      (set! index (+ index 1)))
+        (return index)))
     (when (>= count (compiler-reg-loop-park-max-sites)) (return (- 0 1)))
     (let
       [label : i64
@@ -17536,26 +17004,23 @@
   [lsite-global : (&mut lsite-global (__tl_dyn-array i64))]
   [site-count : i64]
   [used : i64]) : bool
-  (let
-    [index : i64 0]
-    (while (< index site-count)
-      (set! (array-ref lsite-global index) (- 0 1))
-      (when
-        (not (= (bit-and (shr used index) 1) 0))
-        (let
-          [row : i64
-            (compiler-reg-loop-park-global-site!
-              (compiler-reg-global-shared-view pk)
-              seq
-              (compiler-reg-global-shared-view liveness)
-              (array-ref lsite-kind index)
-              (array-ref lsite-from index)
-              (array-ref lsite-to index)
-              (array-ref lsite-weight index))]
-          (when (< row 0) (return false))
-          (set! (array-ref lsite-global index) row)))
-      (set! index (+ index 1)))
-    true))
+  (for [index (iterator.range 0 site-count)]
+    (set! (array-ref lsite-global index) (- 0 1))
+    (when
+      (not (= (bit-and (shr used index) 1) 0))
+      (let
+        [row : i64
+          (compiler-reg-loop-park-global-site!
+            (compiler-reg-global-shared-view pk)
+            seq
+            (compiler-reg-global-shared-view liveness)
+            (array-ref lsite-kind index)
+            (array-ref lsite-from index)
+            (array-ref lsite-to index)
+            (array-ref lsite-weight index))]
+        (when (< row 0) (return false))
+        (set! (array-ref lsite-global index) row))))
+  true)
 
 ;; Everything the per-loop decision reads, gathered once per function.
 (defstruct CompilerRegLoopParkContext
@@ -17636,12 +17101,9 @@
 (define (compiler-reg-loop-park-clear-marks!
   [sc : CompilerRegLoopParkScratch]
   [picks : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index picks)
-      (set! (array-ref sc.picked (array-ref sc.pick-var index)) false)
-      (set! (array-ref sc.chosen (array-ref sc.pick-resident index)) false)
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 picks)]
+    (set! (array-ref sc.picked (array-ref sc.pick-var index)) false)
+    (set! (array-ref sc.chosen (array-ref sc.pick-resident index)) false)))
 
 ;; The hottest spilled resident of L not already chosen.
 ;;
@@ -17656,10 +17118,9 @@
   [sc : (& sc CompilerRegLoopParkScratch)]
   [resident-count : i64]) : i64
   (let
-    [index : i64 0]
     [best : i64 (- 0 1)]
     [best-weight : i64 0]
-    (while (< index resident-count)
+    (for [index (iterator.range 0 resident-count)]
       (let
         [var : i64 (array-ref sc.residents index)]
         (when
@@ -17670,8 +17131,7 @@
           (when
             (or (< best 0) (> (array-ref sc.resident-refs var) best-weight))
             (set! best var)
-            (set! best-weight (array-ref sc.resident-refs var)))))
-      (set! index (+ index 1)))
+            (set! best-weight (array-ref sc.resident-refs var))))))
     best))
 
 ;; Pair the loop's hottest spilled residents against its coldest through values,
@@ -17737,7 +17197,7 @@
                   (set! (array-ref sc.pick-resident picks) resident)
                   (set! (array-ref sc.picked through) true)
                   (set! (array-ref sc.chosen resident) true)
-                  (set! picks (+ picks 1)))))))))
+                  (+= picks 1))))))))
     picks))
 
 ;; Where in the preheader V's store goes: BEFORE this instruction index.
@@ -17760,10 +17220,9 @@
       (compiler-reg-loop-park-block-instrs seq pre)]
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
     [floor : i64 0]
     [phis : bool true]
-    (while (< index (- count 1))
+    (for [index (iterator.range 0 (- count 1))]
       (let
         [instr : ir.CompilerIrInstr
           (compiler-reg-global-array-element-shared-view slots index)]
@@ -17772,8 +17231,7 @@
           (match (compiler-reg-global-shared-view instr)
             [(Phi _ _ _) (set! floor (+ index 1))]
             [_ (set! phis false)]))
-        (when (= (ir.compiler-ir-instr-dst instr) var) (set! floor (+ index 1))))
-      (set! index (+ index 1)))
+        (when (= (ir.compiler-ir-instr-dst instr) var) (set! floor (+ index 1)))))
     floor))
 
 ;; Write one loop's accepted pairs into the function-wide plan: a carrier per
@@ -17790,28 +17248,24 @@
   [resident-count : i64]) : unit
   (let
     [loop-slot : i64 (array-ref pk.counts 2)]
-    [index : i64 0]
     (set! (array-ref pk.loop-header loop-slot) header)
     ;; The verify mask is EVERY spilled resident of L, not just the ones the
     ;; pairing priced against: the replan is free to hand the freed registers
     ;; to whichever of them it ranks highest, and any of them coming out of
     ;; memory is the rescue this loop was parked for.
-    (while (< index resident-count)
+    (for [index (iterator.range 0 resident-count)]
       (let
         [var : i64 (array-ref sc.residents index)]
         (when
           (and (< var ctx.threshold) (array-ref ctx.spilled var))
           (set!
             (array-ref pk.resident-mask var)
-            (bit-or (array-ref pk.resident-mask var) (shl 1 loop-slot)))))
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index picks)
+            (bit-or (array-ref pk.resident-mask var) (shl 1 loop-slot))))))
+    (for [index (iterator.range 0 picks)]
       (let
         [slot : i64 (array-ref pk.counts 0)]
         [var : i64 (array-ref sc.pick-var index)]
         [mask : i64 (array-ref sc.pick-mask index)]
-        [site : i64 0]
         (set! (array-ref pk.park-var slot) var)
         (set! (array-ref pk.park-carrier slot) (+ ctx.vars slot))
         (set! (array-ref pk.park-loop slot) loop-slot)
@@ -17822,7 +17276,7 @@
         (set!
           (array-ref pk.pre-mask pre)
           (bit-or (array-ref pk.pre-mask pre) (shl 1 slot)))
-        (while (< site site-count)
+        (for [site (iterator.range 0 site-count)]
           (when
             (not (= (bit-and (shr mask site) 1) 0))
             (let
@@ -17838,11 +17292,9 @@
                   [target : i64 (array-ref pk.site-to row)]
                   (set!
                     (array-ref pk.direct-mask target)
-                    (bit-or (array-ref pk.direct-mask target) (shl 1 slot)))))))
-          (set! site (+ site 1)))
+                    (bit-or (array-ref pk.direct-mask target) (shl 1 slot))))))))
         (set! (array-ref sc.taken var) true)
-        (set! (array-ref pk.counts 0) (+ slot 1))
-        (set! index (+ index 1))))
+        (set! (array-ref pk.counts 0) (+ slot 1))))
     (set! (array-ref pk.counts 2) (+ loop-slot 1))))
 
 ;; One loop's whole decision. Returns how many values it parked.
@@ -17920,15 +17372,13 @@
             (array-ref ctx.weights pre)
             generation)]
         [used : i64 0]
-        [index : i64 0]
         [site-base : i64 (compiler-reg-loop-park-site-count pk)]
         (when
           (= picks 0)
           (compiler-reg-loop-park-clear-marks! sc picks)
           (return 0))
-        (while (< index picks)
-          (set! used (bit-or used (array-ref sc.pick-mask index)))
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 picks)]
+          (set! used (bit-or used (array-ref sc.pick-mask index))))
         ;; Reserve every reload site BEFORE any value is committed: a park
         ;; whose reloads cannot all be placed must not be placed at all.
         (unless
@@ -17975,10 +17425,9 @@
     [out : i64 0]
     (while (< out cap)
       (let
-        [index : i64 0]
         [best : i64 (- 0 1)]
         [best-depth : i64 0]
-        (while (< index headers)
+        (for [index (iterator.range 0 headers)]
           (unless
             (array-ref used index)
             (let
@@ -17986,12 +17435,11 @@
               (when
                 (or (< best 0) (> (array-ref depths h) best-depth))
                 (set! best index)
-                (set! best-depth (array-ref depths h)))))
-          (set! index (+ index 1)))
+                (set! best-depth (array-ref depths h))))))
         (when (< best 0) (return out))
         (set! (array-ref used best) true)
         (set! (array-ref order out) (array-ref nest.headers best))
-        (set! out (+ out 1))))
+        (+= out 1)))
     out))
 
 ;; Every loop decision for one round, innermost-first. Returns how many values
@@ -18005,11 +17453,10 @@
   [dropped : (& dropped (__tl_dyn-array bool))]
   [gen-base : i64]) : i64
   (let
-    [index : i64 0]
     [generation : i64 gen-base]
     (compiler-reg-loop-park-plan-reset! pk)
     (compiler-reg-loop-park-scratch-reset! sc)
-    (while (< index order-count)
+    (for [index (iterator.range 0 order-count)]
       (let
         [h : i64 (array-ref order index)]
         (unless
@@ -18017,26 +17464,23 @@
           (let
             [_parked : i64
               (begin
-                (set! generation (+ generation 1))
+                (+= generation 1)
                 (compiler-reg-loop-park-try-loop!
                   (compiler-reg-global-shared-view ctx)
                   (compiler-reg-global-shared-view sc)
                   (compiler-reg-global-shared-view pk)
                   h
                   generation))]
-            unit)))
-      (set! index (+ index 1)))
+            unit))))
     (compiler-reg-loop-park-parked-count pk)))
 
 (define (compiler-reg-loop-park-fill-bool-array
   [items : (&mut items (__tl_dyn-array bool))]
   [value : bool]) : unit
   (let
-    [index : i64 0]
     [count : i64 (array-length items)]
-    (while (< index count)
-      (set! (array-ref items index) value)
-      (set! index (+ index 1)))))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref items index) value))))
 
 ;; ---------------------------------------------------------------------------
 ;; The rewrite.
@@ -18065,11 +17509,9 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrSwitchCase) cases.slots]
     [count : i64 cases.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (array-ref slots index)
-        [(Case _ label) (when (= label target-label) (return true))])
-      (set! index (+ index 1)))
+        [(Case _ label) (when (= label target-label) (return true))]))
     false))
 
 (define (compiler-reg-loop-park-redirectable?
@@ -18105,8 +17547,7 @@
   [label : i64]) : i64
   (let
     [count : i64 (compiler-reg-loop-park-site-count pk)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (when
         (and
           (=
@@ -18118,8 +17559,7 @@
               seq
               (array-ref pk.site-to index))
             label))
-        (return (array-ref pk.site-label index)))
-      (set! index (+ index 1)))
+        (return (array-ref pk.site-label index))))
     label))
 
 (define (compiler-reg-loop-park-redirect-cases
@@ -18132,16 +17572,14 @@
     [count : i64 cases.len]
     [out : (__tl_dyn-array ir.CompilerIrSwitchCase)
       (__tl_make-array ir.CompilerIrSwitchCase count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (array-ref slots index)
         [(Case tag label)
           (set!
             (array-ref out index)
             (ir.CompilerIrSwitchCase.Case
               tag
-              (compiler-reg-loop-park-subst-label pk seq b label)))])
-      (set! index (+ index 1)))
+              (compiler-reg-loop-park-subst-label pk seq b label)))]))
     (ir.CompilerIrSwitchCaseSeq out count)))
 
 (define (compiler-reg-loop-park-redirect-instr
@@ -18186,8 +17624,7 @@
   [label : i64]) : i64
   (let
     [count : i64 (compiler-reg-loop-park-site-count pk)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (when
         (and
           (=
@@ -18199,8 +17636,7 @@
               seq
               (array-ref pk.site-from index))
             label))
-        (return (array-ref pk.site-label index)))
-      (set! index (+ index 1)))
+        (return (array-ref pk.site-label index))))
     label))
 
 (define (compiler-reg-loop-park-rekey-instr
@@ -18214,8 +17650,7 @@
         [count : i64 inputs.len]
         [out : (__tl_dyn-array ir.CompilerIrPhiInput)
           (__tl_make-array ir.CompilerIrPhiInput count)]
-        [index : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (let
             [input : ir.CompilerIrPhiInput
               (ir.compiler-ir-phi-input-seq-ref inputs index)]
@@ -18223,8 +17658,7 @@
               (array-ref out index)
               (ir.CompilerIrPhiInput
                 input.value
-                (compiler-reg-loop-park-rekey-label pk seq t input.label))))
-          (set! index (+ index 1)))
+                (compiler-reg-loop-park-rekey-label pk seq t input.label)))))
         (Phi dst (ir.CompilerIrPhiInputSeq out 0 count) ty))]
     [_ instr]))
 
@@ -18235,8 +17669,7 @@
   [mask : i64]) : unit
   (let
     [count : i64 (compiler-reg-loop-park-parked-count pk)]
-    [slot : i64 0]
-    (while (< slot count)
+    (for [slot (iterator.range 0 count)]
       (when
         (not (= (bit-and (shr mask slot) 1) 0))
         (let
@@ -18249,8 +17682,7 @@
                 (compiler-reg-carrier-reload-mov
                   var
                   (array-ref pk.park-carrier slot)
-                  ty))])))
-      (set! slot (+ slot 1)))))
+                  ty))]))))))
 
 (define (compiler-reg-loop-park-push-stores!
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
@@ -18260,8 +17692,7 @@
   [at : i64]) : unit
   (let
     [count : i64 (compiler-reg-loop-park-parked-count pk)]
-    [slot : i64 0]
-    (while (< slot count)
+    (for [slot (iterator.range 0 count)]
       (when
         (and
           (not (= (bit-and (shr mask slot) 1) 0))
@@ -18276,26 +17707,23 @@
                 (compiler-reg-carrier-store-mov
                   (array-ref pk.park-carrier slot)
                   var
-                  ty))])))
-      (set! slot (+ slot 1)))))
+                  ty))]))))))
 
 (define (compiler-reg-loop-park-block-touched?
   [pk : (& pk CompilerRegLoopParkPlan)]
   [index : i64]) : bool
   (let
     [count : i64 (compiler-reg-loop-park-site-count pk)]
-    [site : i64 0]
     (unless (= (array-ref pk.pre-mask index) 0) (return true))
     (unless (= (array-ref pk.direct-mask index) 0) (return true))
-    (while (< site count)
+    (for [site (iterator.range 0 count)]
       (when
         (and
           (= (array-ref pk.site-kind site) (compiler-reg-loop-park-site-splice))
           (or
             (= (array-ref pk.site-from site) index)
             (= (array-ref pk.site-to site) index)))
-        (return true))
-      (set! site (+ site 1)))
+        (return true)))
     false))
 
 (define (compiler-reg-loop-park-rewrite-block
@@ -18316,7 +17744,6 @@
           [builder : ir.CompilerIrInstrBuilder
             (ir.compiler-ir-instr-builder-with-capacity
               (+ count (compiler-reg-loop-park-max-parked)))]
-          [i : i64 0]
           ;; Reloads go at the very head; admission proved this block does not
           ;; open with a phi whenever `direct` is nonzero.
           (compiler-reg-loop-park-push-reloads!
@@ -18324,7 +17751,7 @@
             pk
             type-info
             direct)
-          (while (< i count)
+          (for [i (iterator.range 0 count)]
             ;; Each store sits as early in the preheader as its own value
             ;; allows (see `compiler-reg-loop-park-store-position`), so the
             ;; emission is per instruction index rather than one block at
@@ -18349,8 +17776,7 @@
                   pk
                   seq
                   index
-                  (compiler-reg-global-array-element-shared-view slots i))))
-            (set! i (+ i 1)))
+                  (compiler-reg-global-array-element-shared-view slots i)))))
           (Block label (ir.compiler-ir-instr-builder-to-seq builder)))])))
 
 (define (compiler-reg-loop-park-splice-block
@@ -18382,13 +17808,11 @@
   [pk : (& pk CompilerRegLoopParkPlan)]) : i64
   (let
     [count : i64 (compiler-reg-loop-park-site-count pk)]
-    [index : i64 0]
     [total : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (when
         (= (array-ref pk.site-kind index) (compiler-reg-loop-park-site-splice))
-        (set! total (+ total 1)))
-      (set! index (+ index 1)))
+        (+= total 1)))
     total))
 
 (define (compiler-reg-loop-park-rewrite-blocks
@@ -18401,22 +17825,18 @@
     [sites : i64 (compiler-reg-loop-park-site-count pk)]
     [out : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock (+ count splices))]
-    [index : i64 0]
     [write : i64 count]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref out index)
-        (compiler-reg-loop-park-rewrite-block pk seq type-info index))
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index sites)
+        (compiler-reg-loop-park-rewrite-block pk seq type-info index)))
+    (for [index (iterator.range 0 sites)]
       (when
         (= (array-ref pk.site-kind index) (compiler-reg-loop-park-site-splice))
         (set!
           (array-ref out write)
           (compiler-reg-loop-park-splice-block pk seq type-info index))
-        (set! write (+ write 1)))
-      (set! index (+ index 1)))
+        (+= write 1)))
     (Array (ir.CompilerIrBlockSeq out (+ count splices)))))
 
 ;; ---------------------------------------------------------------------------
@@ -18435,25 +17855,20 @@
       (compiler-reg-plan-assignments plan)]
     [loops : i64 (compiler-reg-loop-park-loop-count pk)]
     [rescued : i64 0]
-    [var : i64 0]
     [failed : i64 0]
-    (while (< var vars)
+    (for [var (iterator.range 0 vars)]
       (let
         [mask : i64 (array-ref pk.resident-mask var)]
         (when
           (and
             (not (= mask 0))
             (compiler-reg-call-hole-register-homed? assignments var))
-          (set! rescued (bit-or rescued mask))))
-      (set! var (+ var 1)))
-    (let
-      [k : i64 0]
-      (while (< k loops)
-        (when
-          (= (bit-and (shr rescued k) 1) 0)
-          (set! (array-ref dropped (array-ref pk.loop-header k)) true)
-          (set! failed (+ failed 1)))
-        (set! k (+ k 1))))
+          (set! rescued (bit-or rescued mask)))))
+    (for [k (iterator.range 0 loops)]
+      (when
+        (= (bit-and (shr rescued k) 1) 0)
+        (set! (array-ref dropped (array-ref pk.loop-header k)) true)
+        (+= failed 1)))
     failed))
 
 ;; The parts of the round that do not change between retries.
@@ -18786,9 +18201,8 @@
   [cur-firstdef : (__tl_dyn-array i64)]
   [cur-depth : (__tl_dyn-array i64)]) : unit
   (let
-    [wi : i64 0]
     [wc : i64 (live.compiler-live-set-word-count set)]
-    (while (< wi wc)
+    (for [wi (iterator.range 0 wc)]
       (let
         [bits : i64 (live.compiler-live-set-word-at-bounded set wi)]
         (while (not (= bits 0))
@@ -18811,8 +18225,7 @@
               (compiler-reg-global-shared-view cur-defs)
               (compiler-reg-global-shared-view cur-firstdef)
               (compiler-reg-global-shared-view cur-depth))
-            (set! bits (bit-and bits (- bits 1)))))
-        (set! wi (+ wi 1))))))
+            (set! bits (bit-and bits (- bits 1)))))))))
 
 ;; Per-var body of compiler-reg-call-region-note-set!, shared by the id form
 ;; below. Each var's row is independent, so the order the vars arrive in does
@@ -18893,26 +18306,23 @@
   [cur-defs : (__tl_dyn-array i64)]
   [cur-firstdef : (__tl_dyn-array i64)]
   [cur-depth : (__tl_dyn-array i64)]) : unit
-  (let
-    [index : i64 0]
-    (while (< index id-count)
-      (compiler-reg-call-region-note-var!
-        (array-ref ids index)
-        false
-        cand
-        n
-        rid
-        p
-        depth
-        (compiler-reg-global-shared-view buckets)
-        cur-region
-        (compiler-reg-global-shared-view cur-lo)
-        (compiler-reg-global-shared-view cur-hi)
-        (compiler-reg-global-shared-view cur-uses)
-        (compiler-reg-global-shared-view cur-defs)
-        (compiler-reg-global-shared-view cur-firstdef)
-        (compiler-reg-global-shared-view cur-depth))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 id-count)]
+    (compiler-reg-call-region-note-var!
+      (array-ref ids index)
+      false
+      cand
+      n
+      rid
+      p
+      depth
+      (compiler-reg-global-shared-view buckets)
+      cur-region
+      (compiler-reg-global-shared-view cur-lo)
+      (compiler-reg-global-shared-view cur-hi)
+      (compiler-reg-global-shared-view cur-uses)
+      (compiler-reg-global-shared-view cur-defs)
+      (compiler-reg-global-shared-view cur-firstdef)
+      (compiler-reg-global-shared-view cur-depth))))
 
 ;; Enumeration walk: single pass over all instrs in layout order with the
 ;; greedy's point numbering (+2 per instr across blocks). Phi instructions
@@ -18975,11 +18385,10 @@
           n))]
     [p : i64 0]
     [rid : i64 0]
-    [b : i64 0]
     (compiler-reg-fill-i64-array (&mut cur-region) (- 0 1))
     (compiler-reg-fill-i64-array (&mut cur-lo) (- 0 1))
-    (while (< b nblocks)
-      (set! rid (+ rid 1))
+    (for [b (iterator.range 0 nblocks)]
+      (+= rid 1)
       (match (array-ref bslots b)
         [(Block _ instrs)
           (let
@@ -18989,15 +18398,14 @@
               (if (< b (array-length depths))
                 (array-ref depths b)
                 0)]
-            [i : i64 0]
-            (while (< i ilen)
+            (for [i (iterator.range 0 ilen)]
               (let
                 [instr : ir.CompilerIrInstr
                   (compiler-reg-global-array-element-shared-view islots i)]
                 (if (compiler-reg-call-region-boundary-instr?
                   type-segment-bases
                   (compiler-reg-global-shared-view instr))
-                  (set! rid (+ rid 1))
+                  (+= rid 1)
                   (match (compiler-reg-global-shared-view instr)
                     [(Phi _ _ _) unit]
                     [_
@@ -19056,24 +18464,19 @@
                           (compiler-reg-global-shared-view cur-defs)
                           (compiler-reg-global-shared-view cur-firstdef)
                           (compiler-reg-global-shared-view cur-depth)))]))
-                (set! p (+ p 2))
-                (set! i (+ i 1)))))])
-      (set! b (+ b 1)))
-    (let
-      [r : i64 0]
-      (while (< r n)
-        (if (= (array-ref cand r) 1)
-          (compiler-reg-call-region-flush-root!
-            r
-            (compiler-reg-global-shared-view buckets)
-            (compiler-reg-global-shared-view cur-lo)
-            (compiler-reg-global-shared-view cur-hi)
-            (compiler-reg-global-shared-view cur-uses)
-            (compiler-reg-global-shared-view cur-defs)
-            (compiler-reg-global-shared-view cur-firstdef)
-            (compiler-reg-global-shared-view cur-depth))
-          unit)
-        (set! r (+ r 1))))))
+                (+= p 2))))]))
+    (for [r (iterator.range 0 n)]
+      (if (= (array-ref cand r) 1)
+        (compiler-reg-call-region-flush-root!
+          r
+          (compiler-reg-global-shared-view buckets)
+          (compiler-reg-global-shared-view cur-lo)
+          (compiler-reg-global-shared-view cur-hi)
+          (compiler-reg-global-shared-view cur-uses)
+          (compiler-reg-global-shared-view cur-defs)
+          (compiler-reg-global-shared-view cur-firstdef)
+          (compiler-reg-global-shared-view cur-depth))
+        unit))))
 
 ;; ===========================================================================
 ;; P11b: loop-scoped rescue rows.
@@ -19171,20 +18574,16 @@
           (if (< nblocks 1)
             1
             nblocks)))]
-    [b : i64 0]
-    (while (< b nblocks)
+    (for [b (iterator.range 0 nblocks)]
       (set! (array-ref ranges (* 2 b)) nblocks)
-      (set! (array-ref ranges (+ (* 2 b) 1)) (- 0 1))
-      (set! b (+ b 1)))
-    (set! b 0)
-    (while (< b nblocks)
+      (set! (array-ref ranges (+ (* 2 b) 1)) (- 0 1)))
+    (for [b (iterator.range 0 nblocks)]
       (compiler-reg-call-region-record-pred-range!
         ids
         (&mut ranges)
         b
         (live.compiler-live-block-successors
-          (compiler-reg-global-array-element-shared-view bslots b)))
-      (set! b (+ b 1)))
+          (compiler-reg-global-array-element-shared-view bslots b))))
     ranges))
 
 ;; Region admission for header `h` over the span [s..e] its loop occupies (both
@@ -19251,9 +18650,8 @@
   [uses : (&mut uses (__tl_dyn-array i64))]
   [defs : (&mut defs (__tl_dyn-array i64))]) : unit
   (let
-    [wi : i64 0]
     [wc : i64 (live.compiler-live-set-word-count set)]
-    (while (< wi wc)
+    (for [wi (iterator.range 0 wc)]
       (let
         [bits : i64 (live.compiler-live-set-word-at-bounded set wi)]
         (while (not (= bits 0))
@@ -19268,8 +18666,7 @@
               stamp
               uses
               defs)
-            (set! bits (bit-and bits (- bits 1)))))
-        (set! wi (+ wi 1))))))
+            (set! bits (bit-and bits (- bits 1)))))))))
 
 (define (compiler-reg-call-region-loop-note-ids!
   [ids : (__tl_dyn-array i64)]
@@ -19280,19 +18677,16 @@
   [stamp : (&mut stamp (__tl_dyn-array i64))]
   [uses : (&mut uses (__tl_dyn-array i64))]
   [defs : (&mut defs (__tl_dyn-array i64))]) : unit
-  (let
-    [index : i64 0]
-    (while (< index id-count)
-      (compiler-reg-call-region-loop-note-var!
-        (array-ref ids index)
-        false
-        cand
-        n
-        sid
-        stamp
-        uses
-        defs)
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 id-count)]
+    (compiler-reg-call-region-loop-note-var!
+      (array-ref ids index)
+      false
+      cand
+      n
+      sid
+      stamp
+      uses
+      defs)))
 
 ;; Accumulate one instruction's refs. Phis contribute their DEF only: their
 ;; operands are read on predecessor edges and the rewrite never remaps a phi,
@@ -19364,35 +18758,30 @@
   [stamp : (&mut stamp (__tl_dyn-array i64))]
   [uses : (&mut uses (__tl_dyn-array i64))]
   [defs : (&mut defs (__tl_dyn-array i64))]) : bool
-  (let
-    [b : i64 s]
-    (while (<= b e)
-      (match (compiler-reg-global-array-element-shared-view bslots b)
-        [(Block _ instrs)
-          (let
-            [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-            [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
-            [i : i64 0]
-            (while (< i ilen)
-              (let
-                [instr : ir.CompilerIrInstr
-                  (compiler-reg-global-array-element-shared-view islots i)]
-                (when
-                  (compiler-reg-call-region-boundary-instr?
-                    type-segment-bases
-                    (compiler-reg-global-shared-view instr))
-                  (return false))
-                (compiler-reg-call-region-loop-note-instr!
-                  instr
-                  cand
-                  n
-                  sid
-                  stamp
-                  uses
-                  defs)
-                (set! i (+ i 1))))
-            (set! b (+ b 1)))]))
-    true))
+  (for [b (iterator.range s (+ e 1))]
+    (match (compiler-reg-global-array-element-shared-view bslots b)
+      [(Block _ instrs)
+        (let
+          [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+          [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
+          (for [i (iterator.range 0 ilen)]
+            (let
+              [instr : ir.CompilerIrInstr
+                (compiler-reg-global-array-element-shared-view islots i)]
+              (when
+                (compiler-reg-call-region-boundary-instr?
+                  type-segment-bases
+                  (compiler-reg-global-shared-view instr))
+                (return false))
+              (compiler-reg-call-region-loop-note-instr!
+                instr
+                cand
+                n
+                sid
+                stamp
+                uses
+                defs))))]))
+  true)
 
 ;; The anchor instruction (the preheader's last, at point `lo`) is inside the
 ;; span, so it has to clear the same boundary bar as the loop body.
@@ -19425,32 +18814,29 @@
   [hi : i64]
   [depth : i64]
   [buckets : (__tl_dyn-array CompilerRegCallRegionStatSeq)]) : unit
-  (let
-    [ci : i64 0]
-    (while (< ci cand-count)
-      (let
-        [v : i64 (array-ref order ci)]
-        (if (and
-          (>= v 0)
-          (< v n)
-          (= (array-ref stamp v) sid)
-          (>= (array-ref uses v) 1)
-          (= (array-ref defs v) 0))
-          (set!
-            (array-ref buckets v)
-            (compiler-reg-call-region-stat-seq-push
-              (compiler-reg-global-array-element-shared-view buckets v)
-              (CompilerRegCallRegionStat
-                v
-                lo
-                hi
-                (array-ref uses v)
-                0
-                0
-                depth
-                (compiler-reg-call-region-kind-loop))))
-          unit)
-        (set! ci (+ ci 1))))))
+  (for [ci (iterator.range 0 cand-count)]
+    (let
+      [v : i64 (array-ref order ci)]
+      (if (and
+        (>= v 0)
+        (< v n)
+        (= (array-ref stamp v) sid)
+        (>= (array-ref uses v) 1)
+        (= (array-ref defs v) 0))
+        (set!
+          (array-ref buckets v)
+          (compiler-reg-call-region-stat-seq-push
+            (compiler-reg-global-array-element-shared-view buckets v)
+            (CompilerRegCallRegionStat
+              v
+              lo
+              hi
+              (array-ref uses v)
+              0
+              0
+              depth
+              (compiler-reg-call-region-kind-loop))))
+        unit))))
 
 (define (compiler-reg-call-region-loop-rows!
   [type-segment-bases : i64]
@@ -19490,9 +18876,8 @@
         [stamp : (__tl_dyn-array i64) (__tl_make-array i64 an)]
         [uses : (__tl_dyn-array i64) (__tl_make-array i64 an)]
         [defs : (__tl_dyn-array i64) (__tl_make-array i64 an)]
-        [h : i64 1]
         (compiler-reg-fill-i64-array (&mut stamp) (- 0 1))
-        (while (< h nblocks)
+        (for [h (iterator.range 1 nblocks)]
           (let
             ;; `s` is the loop's first block in the LAYOUT and `h` is where
             ;; control enters it; they differ exactly when the loop is
@@ -19538,8 +18923,7 @@
                     lo
                     hi
                     (array-ref depths h)
-                    (compiler-reg-global-shared-view buckets)))))
-            (set! h (+ h 1))))))))
+                    (compiler-reg-global-shared-view buckets)))))))))))
 
 (define (compiler-reg-call-region-stat-entry [stat : CompilerRegCallRegionStat]) : i64
   (match stat
@@ -19666,13 +19050,11 @@
   [lo : i64]
   [hi : i64]) : bool
   (let
-    [j : i64 0]
     [found : bool false]
-    (while (< j k)
+    (for [j (iterator.range 0 k)]
       (if (and (<= (array-ref picked-lo j) hi) (>= (array-ref picked-hi j) lo))
         (set! found true)
-        unit)
-      (set! j (+ j 1)))
+        unit))
     found))
 
 ;; Best eligible LOOP row by score that does not overlap an already-tried
@@ -19705,7 +19087,7 @@
                 (> score top-score))
               (set! top-score score)
               (set! top (CompilerRegCallRegionSomeStat stat)))])
-        (set! index (- index 1))))
+        (-= index 1)))
     top))
 
 ;; Best eligible row by score that does not overlap an already-picked range.
@@ -19736,7 +19118,7 @@
                 (> score top-score))
               (set! top-score score)
               (set! top (CompilerRegCallRegionSomeStat stat)))])
-        (set! index (- index 1))))
+        (-= index 1)))
     top))
 
 ;; Segment-precise occupancy: does var overlap point range [lo,hi]?
@@ -19757,7 +19139,7 @@
           (compiler-reg-interval-seq-ref segs index)]
         (if (and (<= interval.start (+ hi 1)) (>= interval.end lo))
           (set! found true)
-          (set! index (+ index 1)))))
+          (+= index 1))))
     found))
 
 (define (compiler-reg-call-region-var-overlaps?
@@ -19787,13 +19169,11 @@
   [pool : (& pool (__tl_dyn-array i64))]
   [reg : i64]) : i64
   (let
-    [j : i64 0]
     [found : i64 (- 0 1)]
-    (while (< j (array-length pool))
+    (for [j (iterator.range 0 (array-length pool))]
       (if (and (< found 0) (= (array-ref pool j) reg))
         (set! found j)
-        unit)
-      (set! j (+ j 1)))
+        unit))
     found))
 
 ;; Is pool register `pix` occupied over [lo,hi] by any recorded occupant?
@@ -19825,7 +19205,7 @@
           hi))
         (set! conflict true)
         unit)
-      (set! j (+ j 1)))
+      (+= j 1))
     conflict))
 
 ;; ===========================================================================
@@ -19961,9 +19341,8 @@
   [stamp : (&mut stamp (__tl_dyn-array i64))]
   [busy : (&mut busy (__tl_dyn-array i64))]) : unit
   (let
-    [wi : i64 0]
     [wc : i64 (live.compiler-live-set-word-count set)]
-    (while (< wi wc)
+    (for [wi (iterator.range 0 wc)]
       (let
         [bits : i64 (live.compiler-live-set-word-at-bounded set wi)]
         (while (not (= bits 0))
@@ -19977,8 +19356,7 @@
               pool
               stamp
               busy)
-            (set! bits (bit-and bits (- bits 1)))))
-        (set! wi (+ wi 1))))))
+            (set! bits (bit-and bits (- bits 1)))))))))
 
 ;; Every var one instruction touches -- uses AND def. Unlike the candidate
 ;; walker this counts a phi's INPUTS too: they are read on the edges into the
@@ -20005,18 +19383,15 @@
         pool
         stamp
         busy)
-      (let
-        [index : i64 0]
-        (while (< index id-count)
-          (compiler-reg-call-region-evict-mark-var!
-            (array-ref ids index)
-            n
-            parents
-            assignments
-            pool
-            stamp
-            busy)
-          (set! index (+ index 1)))))
+      (for [index (iterator.range 0 id-count)]
+        (compiler-reg-call-region-evict-mark-var!
+          (array-ref ids index)
+          n
+          parents
+          assignments
+          pool
+          stamp
+          busy)))
     (compiler-reg-call-region-evict-mark-var!
       (ir.compiler-ir-instr-dst instr)
       n
@@ -20041,30 +19416,25 @@
   [pool : (& pool (__tl_dyn-array i64))]
   [stamp : (&mut stamp (__tl_dyn-array i64))]
   [busy : (&mut busy (__tl_dyn-array i64))]) : unit
-  (let
-    [b : i64 s]
-    (while (<= b e)
-      (match (compiler-reg-global-array-element-shared-view bslots b)
-        [(Block _ instrs)
-          (let
-            [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-            [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
-            [i : i64 0]
-            [point : i64 (array-ref points b)]
-            (while (< i ilen)
-              (when
-                (>= point lo)
-                (compiler-reg-call-region-evict-mark-instr!
-                  (compiler-reg-global-array-element-shared-view islots i)
-                  n
-                  parents
-                  assignments
-                  pool
-                  stamp
-                  busy))
-              (set! point (+ point 2))
-              (set! i (+ i 1)))
-            (set! b (+ b 1)))]))))
+  (for [b (iterator.range s (+ e 1))]
+    (match (compiler-reg-global-array-element-shared-view bslots b)
+      [(Block _ instrs)
+        (let
+          [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
+          [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
+          [point : i64 (array-ref points b)]
+          (for [i (iterator.range 0 ilen)]
+            (when
+              (>= point lo)
+              (compiler-reg-call-region-evict-mark-instr!
+                (compiler-reg-global-array-element-shared-view islots i)
+                n
+                parents
+                assignments
+                pool
+                stamp
+                busy))
+            (+= point 2)))])))
 
 ;; Does any var of the coalesce CLASS rooted at `vr` appear in this set?
 (define (compiler-reg-call-region-evict-set-hits-class?
@@ -20073,9 +19443,8 @@
   [n : i64]
   [vr : i64]) : bool
   (let
-    [wi : i64 0]
     [wc : i64 (live.compiler-live-set-word-count set)]
-    (while (< wi wc)
+    (for [wi (iterator.range 0 wc)]
       (let
         [bits : i64 (live.compiler-live-set-word-at-bounded set wi)]
         (while (not (= bits 0))
@@ -20087,8 +19456,7 @@
             (when
               (= (compiler-reg-call-region-root parents n u) vr)
               (return true))
-            (set! bits (bit-and bits (- bits 1)))))
-        (set! wi (+ wi 1))))
+            (set! bits (bit-and bits (- bits 1)))))))
     false))
 
 ;; VERIFIER. The search decides on the stamp array above; this asks the same
@@ -20106,17 +19474,15 @@
   [n : i64]
   [v : i64]) : bool
   (let
-    [b : i64 s]
     [vr : i64 (compiler-reg-call-region-root parents n v)]
-    (while (<= b e)
+    (for [b (iterator.range s (+ e 1))]
       (match (compiler-reg-global-array-element-shared-view bslots b)
         [(Block _ instrs)
           (let
             [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
             [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
-            [i : i64 0]
             [point : i64 (array-ref points b)]
-            (while (< i ilen)
+            (for [i (iterator.range 0 ilen)]
               (let
                 [instr : ir.CompilerIrInstr
                   (compiler-reg-global-array-element-shared-view islots i)]
@@ -20136,9 +19502,7 @@
                         n
                         vr)))
                   (return true))
-                (set! point (+ point 2))
-                (set! i (+ i 1))))
-            (set! b (+ b 1)))]))
+                (+= point 2))))]))
     false))
 
 ;; A reload target only has to be a block whose head accepts an instruction.
@@ -20182,15 +19546,12 @@
   [parents : (& parents (__tl_dyn-array i64))]
   [n : i64]
   [v : i64]) : bool
-  (let
-    [u : i64 0]
-    (unless (= (compiler-reg-call-region-root parents n v) v) (return false))
-    (while (< u n)
-      (when
-        (and (not (= u v)) (= (compiler-reg-call-region-root parents n u) v))
-        (return false))
-      (set! u (+ u 1)))
-    true))
+  (unless (= (compiler-reg-call-region-root parents n v) v) (return false))
+  (for [u (iterator.range 0 n)]
+    (when
+      (and (not (= u v)) (= (compiler-reg-call-region-root parents n u) v))
+      (return false)))
+  true)
 
 ;; Save points for the victim: the point just AFTER each of its defining
 ;; instructions, which is where the slot mirror is written. Every def has to be
@@ -20217,16 +19578,14 @@
   [cap : i64]
   [out : (&mut out (__tl_dyn-array i64))]) : i64
   (let
-    [b : i64 0]
     [count : i64 0]
-    (while (< b nblocks)
+    (for [b (iterator.range 0 nblocks)]
       (match (compiler-reg-global-array-element-shared-view bslots b)
         [(Block _ instrs)
           (let
             [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
             [ilen : i64 (ir.compiler-ir-instr-seq-count instrs)]
-            [i : i64 0]
-            (while (< i ilen)
+            (for [i (iterator.range 0 ilen)]
               (let
                 [instr : ir.CompilerIrInstr
                   (compiler-reg-global-array-element-shared-view islots i)]
@@ -20241,9 +19600,7 @@
                     (when (>= p lo) (return (- 0 4)))
                     (when (>= count cap) (return (- 0 5)))
                     (set! (array-ref out count) (+ p 2))
-                    (set! count (+ count 1))))
-                (set! i (+ i 1))))
-            (set! b (+ b 1)))]))
+                    (+= count 1))))))]))
     (if (= count 0)
       (begin
         (set! (array-ref out 0) 0)
@@ -20261,23 +19618,18 @@
   [nblocks : i64]
   [p : i64]) : i64
   (let
-    [b : i64 0]
     [found : i64 0]
-    (while (< b nblocks)
-      (when (<= (array-ref points b) p) (set! found b))
-      (set! b (+ b 1)))
+    (for [b (iterator.range 0 nblocks)]
+      (when (<= (array-ref points b) p) (set! found b)))
     found))
 
 (define (compiler-reg-call-region-evict-point-recorded?
   [out : (& out (__tl_dyn-array i64))]
   [count : i64]
   [p : i64]) : bool
-  (let
-    [i : i64 0]
-    (while (< i count)
-      (when (= (array-ref out i) p) (return true))
-      (set! i (+ i 1)))
-    false))
+  (for [i (iterator.range 0 count)]
+    (when (= (array-ref out i) p) (return true)))
+  false)
 
 ;; Distinct reload points for the natural loop [h..e], one per exit TARGET.
 ;; -1 refuses the candidate: an exit edge whose target cannot host a reload
@@ -20291,9 +19643,8 @@
   [e : i64]
   [out : (&mut out (__tl_dyn-array i64))]) : i64
   (let
-    [b : i64 h]
     [count : i64 0]
-    (while (<= b e)
+    (for [b (iterator.range h (+ e 1))]
       (let
         [succs : live.CompilerLiveLabelSet
           (live.compiler-live-block-successors
@@ -20327,10 +19678,9 @@
                           (>= count (compiler-reg-call-region-evict-exit-cap))
                           (return (- 0 1)))
                         (set! (array-ref out count) (array-ref points t))
-                        (set! count (+ count 1)))))]
+                        (+= count 1))))]
                 [(LookupMissing) (return (- 0 1))])
-              (set! succs (live.compiler-live-label-set-tail succs))]))
-        (set! b (+ b 1))))
+              (set! succs (live.compiler-live-label-set-tail succs))]))))
     count))
 
 ;; Occupant kinds recorded alongside the pool-register occupancy index.
@@ -20361,10 +19711,9 @@
   [lo : i64]
   [hi : i64]) : i64
   (let
-    [j : i64 0]
     [found : i64 (- 0 1)]
     [found-root : i64 (- 0 1)]
-    (while (< j occ-n)
+    (for [j (iterator.range 0 occ-n)]
       (when
         (and
           (= (array-ref occ-reg j) pix)
@@ -20385,8 +19734,7 @@
           (when
             (< found 0)
             (set! found (array-ref occ-var j))
-            (set! found-root rr))))
-      (set! j (+ j 1)))
+            (set! found-root rr)))))
     found))
 
 ;; May the victim still be live at `p`? Intervals cover every live point, so a
@@ -20472,21 +19820,17 @@
   [saves : (& saves (__tl_dyn-array i64))]
   [count : i64]) : i64
   (let
-    [i : i64 0]
     [total : i64 0]
-    (while (< i count)
-      (set!
+    (for [i (iterator.range 0 count)]
+      (+=
         total
-        (+
-          total
-          (compiler-reg-loop-depth-weight
-            (array-ref
-              depths
-              (compiler-reg-call-region-evict-block-of-point
-                points
-                nblocks
-                (- (array-ref saves i) 2))))))
-      (set! i (+ i 1)))
+        (compiler-reg-loop-depth-weight
+          (array-ref
+            depths
+            (compiler-reg-call-region-evict-block-of-point
+              points
+              nblocks
+              (- (array-ref saves i) 2))))))
     total))
 
 ;; Locate the region's header/end block pair from its point range: a loop row's
@@ -20496,24 +19840,18 @@
   [points : (& points (__tl_dyn-array i64))]
   [nblocks : i64]
   [lo : i64]) : i64
-  (let
-    [b : i64 1]
-    (while (< b nblocks)
-      (when (= (array-ref points b) (+ lo 2)) (return b))
-      (set! b (+ b 1)))
-    (- 0 1)))
+  (for [b (iterator.range 1 nblocks)]
+    (when (= (array-ref points b) (+ lo 2)) (return b)))
+  (- 0 1))
 
 (define (compiler-reg-call-region-evict-end-of
   [points : (& points (__tl_dyn-array i64))]
   [nblocks : i64]
   [h : i64]
   [hi : i64]) : i64
-  (let
-    [b : i64 h]
-    (while (< b nblocks)
-      (when (= (array-ref points (+ b 1)) (+ hi 2)) (return b))
-      (set! b (+ b 1)))
-    (- 0 1)))
+  (for [b (iterator.range h nblocks)]
+    (when (= (array-ref points (+ b 1)) (+ hi 2)) (return b)))
+  (- 0 1))
 
 ;; One eviction attempt for loop region [lo,hi] of `root`. Returns the pool
 ;; index to lend, the victim, and the number of reload points left in
@@ -20600,7 +19938,6 @@
                     [victim : i64 (- 0 1)]
                     [victim-pix : i64 (- 0 1)]
                     [victim-weight : i64 0]
-                    [pix : i64 0]
                     (compiler-reg-call-region-evict-mark-blocks!
                       (compiler-reg-global-shared-view bslots)
                       (compiler-reg-global-shared-view points)
@@ -20613,7 +19950,7 @@
                       pool
                       (&mut stamp)
                       (&mut busy))
-                    (while (< pix pool-count)
+                    (for [pix (iterator.range 0 pool-count)]
                       (let
                         [o : i64
                           (if (and
@@ -20661,8 +19998,7 @@
                                 (or (< victim 0) (< w victim-weight))
                                 (set! victim o)
                                 (set! victim-pix pix)
-                                (set! victim-weight w)))))
-                        (set! pix (+ pix 1))))
+                                (set! victim-weight w)))))))
                     (if (< victim 0)
                       (CompilerRegCallEvictNoPick)
                       (if (compiler-reg-call-region-evict-var-mentioned?
@@ -20677,7 +20013,6 @@
                         (CompilerRegCallEvictNoPick)
                         (let
                           [live-exits : i64 0]
-                          [i : i64 0]
                           [def-count : i64
                             (compiler-reg-call-region-evict-def-points!
                               (compiler-reg-global-shared-view bslots)
@@ -20707,7 +20042,7 @@
                           (when
                             (< raw-exits 0)
                             (return (CompilerRegCallEvictNoPick)))
-                          (while (< i raw-exits)
+                          (for [i (iterator.range 0 raw-exits)]
                             (when
                               (compiler-reg-call-region-evict-live-at?
                                 interval-index
@@ -20718,8 +20053,7 @@
                               (set!
                                 (array-ref out-points live-exits)
                                 (array-ref out-points i))
-                              (set! live-exits (+ live-exits 1)))
-                            (set! i (+ i 1)))
+                              (+= live-exits 1)))
                           (if (compiler-reg-call-region-evict-price-ok?
                             uses
                             (array-ref depths s)
@@ -20757,7 +20091,6 @@
 ;;   compiler-reg-call-region-note-var!).
 (define (compiler-reg-call-region-mark-candidates
   [candidates : CompilerRegIntervalSeq]
-  [index : i64]
   [assignments : CompilerRegAssignmentTable]
   [type-info : CompilerRegVarTypes]
   [group-vars : (& group-vars live.CompilerLiveI64Set)]
@@ -20767,8 +20100,7 @@
   [cand : (&mut cand (__tl_dyn-array i64))]
   [order : (&mut order (__tl_dyn-array i64))]
   [count : i64]) : i64
-  (if (>= index (compiler-reg-interval-seq-count candidates))
-    count
+  (for [index (iterator.range 0 (compiler-reg-interval-seq-count candidates))]
     (let
       [interval : CompilerRegInterval
         (compiler-reg-interval-seq-ref candidates index)]
@@ -20797,30 +20129,9 @@
                 (compiler-reg-call-region-cand-full)
                 (compiler-reg-call-region-cand-loop)))
             (set! (array-ref order count) var)
-            (compiler-reg-call-region-mark-candidates
-              candidates
-              (+ index 1)
-              assignments
-              type-info
-              group-vars
-              kind0
-              root-has-remat
-              n
-              cand
-              order
-              (+ count 1)))
-          (compiler-reg-call-region-mark-candidates
-            candidates
-            (+ index 1)
-            assignments
-            type-info
-            group-vars
-            kind0
-            root-has-remat
-            n
-            cand
-            order
-            count))))))
+            (set! count (+ count 1)))
+          unit))))
+  count)
 
 ;; The widened rescue entry point (M-G2b): enumerate every candidate root's
 ;; call-free regions, select the profitable ones, and home each accepted
@@ -20867,12 +20178,11 @@
             (set! (array-ref root-has-remat rr) 1)
             unit))
         unit)
-      (set! v (+ v 1)))
+      (+= v 1))
     (let
       [root-count : i64
         (compiler-reg-call-region-mark-candidates
           candidates
-          0
           assignments
           type-info
           group-vars
@@ -20891,41 +20201,35 @@
       ;; extend candidacy to coalesce-class MEMBERS of accepted roots:
       ;; their refs are attributed per-var (see note-set!), so each member
       ;; needs its own candidacy bit, type gate included.
-      (let
-        [v : i64 0]
-        (while (< v n)
-          (when
-            (and
-              (> root-count 0)
-              (= (array-ref cand v) 0)
-              (let
-                [rr : i64 (compiler-reg-call-region-root parents n v)]
-                (and (not (= rr v)) (> (array-ref cand rr) 0)))
-              (match (compiler-reg-loop-split-type-ok? type-info group-vars v)
-                [(Some _) true]
-                [(No) false]))
-            ;; a member inherits its root's GRADE, so a loop-only class
-            ;; stays out of the block walk exactly as its root does
-            (set!
-              (array-ref cand v)
-              (array-ref cand (compiler-reg-call-region-root parents n v)))
-            (set! (array-ref order cand-count) v)
-            (set! cand-count (+ cand-count 1)))
-          (set! v (+ v 1))))
-      (let
-        [v : i64 0]
-        (while (< v n)
-          (let
-            [rr : i64 (compiler-reg-call-region-root parents n v)]
-            (set!
-              (array-ref vend v)
-              (if (and
-                (>= rr 0)
-                (< rr (array-length ends))
-                (>= (array-ref ends rr) 0))
-                (array-ref ends rr)
-                1073741824)))
-          (set! v (+ v 1))))
+      (for [v (iterator.range 0 n)]
+        (when
+          (and
+            (> root-count 0)
+            (= (array-ref cand v) 0)
+            (let
+              [rr : i64 (compiler-reg-call-region-root parents n v)]
+              (and (not (= rr v)) (> (array-ref cand rr) 0)))
+            (match (compiler-reg-loop-split-type-ok? type-info group-vars v)
+              [(Some _) true]
+              [(No) false]))
+          ;; a member inherits its root's GRADE, so a loop-only class
+          ;; stays out of the block walk exactly as its root does
+          (set!
+            (array-ref cand v)
+            (array-ref cand (compiler-reg-call-region-root parents n v)))
+          (set! (array-ref order cand-count) v)
+          (+= cand-count 1)))
+      (for [v (iterator.range 0 n)]
+        (let
+          [rr : i64 (compiler-reg-call-region-root parents n v)]
+          (set!
+            (array-ref vend v)
+            (if (and
+              (>= rr 0)
+              (< rr (array-length ends))
+              (>= (array-ref ends rr) 0))
+              (array-ref ends rr)
+              1073741824))))
       (if (= cand-count 0)
         (State assignments (compiler-reg-call-split-empty))
         (match func
@@ -20991,18 +20295,14 @@
               [picked-hi : (__tl_dyn-array i64) (__tl_make-array i64 4)]
               [picked-entry : (__tl_dyn-array i64) (__tl_make-array i64 4)]
               [picked-exit : (__tl_dyn-array i64) (__tl_make-array i64 4)]
-              [idx : i64 0]
               [ci : i64 0]
               (compiler-reg-fill-i64-array
                 (&mut shadow-regs)
                 cabi.compiler-reg-id-invalid)
-              (let
-                [bi : i64 0]
-                (while (< bi an)
-                  (set!
-                    (array-ref buckets bi)
-                    (compiler-reg-call-region-stat-seq-empty))
-                  (set! bi (+ bi 1))))
+              (for [bi (iterator.range 0 an)]
+                (set!
+                  (array-ref buckets bi)
+                  (compiler-reg-call-region-stat-seq-empty)))
               (compiler-reg-call-region-collect!
                 type-segment-bases
                 (compiler-reg-global-shared-view blocks)
@@ -21023,7 +20323,7 @@
                 n
                 (compiler-reg-global-shared-view buckets))
               ;; index the pool-register occupants once
-              (while (< idx n)
+              (for [idx (iterator.range 0 n)]
                 (if (= (array-ref present idx) 1)
                   (match (compiler-reg-global-array-element-shared-view
                     items
@@ -21039,7 +20339,7 @@
                           (set!
                             (array-ref occ-kind occ-n)
                             (compiler-reg-call-region-occ-kind-scalar))
-                          (set! occ-n (+ occ-n 1))))]
+                          (+= occ-n 1)))]
                     [(RegisterPair r0 r1)
                       (let
                         [pi : i64
@@ -21051,7 +20351,7 @@
                           (set!
                             (array-ref occ-kind occ-n)
                             (compiler-reg-call-region-occ-kind-pair))
-                          (set! occ-n (+ occ-n 1))))
+                          (+= occ-n 1)))
                       (let
                         [pi : i64
                           (compiler-reg-call-region-pool-index-of pool r1)]
@@ -21062,10 +20362,9 @@
                           (set!
                             (array-ref occ-kind occ-n)
                             (compiler-reg-call-region-occ-kind-pair))
-                          (set! occ-n (+ occ-n 1))))]
+                          (+= occ-n 1)))]
                     [_ unit])
-                  unit)
-                (set! idx (+ idx 1)))
+                  unit))
               ;; place candidates in walk order until the budget runs out
               (while (and (< ci cand-count) (> budget 0))
                 (let
@@ -21109,7 +20408,7 @@
                             (set!
                               (array-ref picked-exit k)
                               (compiler-reg-call-region-stat-exit stat vend))
-                            (set! k (+ k 1))])]))
+                            (+= k 1)])]))
                   (if (> k 0)
                     ;; first pool register free over ALL picked regions
                     (let
@@ -21134,11 +20433,11 @@
                               (array-ref picked-hi j))
                               (set! free false)
                               unit)
-                            (set! j (+ j 1)))
+                            (+= j 1))
                           (if free
                             (set! chosen pix)
                             unit)
-                          (set! pix (+ pix 1))))
+                          (+= pix 1)))
                       ;; FALLBACK. The joint search demands one
                       ;; register free over every picked range at
                       ;; once, which a wide outer-loop row makes
@@ -21185,14 +20484,14 @@
                                             lo
                                             hi)
                                           (set! chosen pix))
-                                        (set! pix (+ pix 1)))
+                                        (+= pix 1))
                                       (when
                                         (>= chosen 0)
                                         (set! acc-lo lo)
                                         (set! acc-hi hi))
                                       (set! (array-ref picked-lo tries) lo)
                                       (set! (array-ref picked-hi tries) hi)
-                                      (set! tries (+ tries 1)))])]))
+                                      (+= tries 1))])]))
                           (when
                             (>= chosen 0)
                             (set! (array-ref picked-lo 0) acc-lo)
@@ -21247,7 +20546,7 @@
                                     _
                                     _
                                     _)
-                                    (set! evict-attempts (- evict-attempts 1))
+                                    (-= evict-attempts 1)
                                     (match (compiler-reg-call-region-evict-try
                                       (compiler-reg-global-shared-view blocks)
                                       depths
@@ -21283,7 +20582,7 @@
                                         (set! acc-saves save)])
                                     (set! (array-ref picked-lo tries) lo)
                                     (set! (array-ref picked-hi tries) hi)
-                                    (set! tries (+ tries 1))])]))
+                                    (+= tries 1)])]))
                           (when
                             (>= chosen 0)
                             (set! (array-ref picked-lo 0) acc-lo)
@@ -21292,7 +20591,7 @@
                             (set! (array-ref picked-exit 0) 0)
                             (set! k 1)
                             (set! (array-ref evicted acc-victim) 1)
-                            (set! evict-budget (- evict-budget 1))
+                            (-= evict-budget 1)
                             ;; No live exit means the victim does
                             ;; not outlive the region at all: the
                             ;; register was free in fact and only
@@ -21301,41 +20600,34 @@
                             ;; and no save is emitted either.
                             (when
                               (> acc-exits 0)
-                              (let
-                                [i : i64 0]
-                                (while (< i acc-saves)
-                                  (set!
-                                    evictions
-                                    (compiler-reg-call-evict-seq-push
-                                      evictions
-                                      (CompilerRegCallEvict
-                                        acc-victim
-                                        (array-ref evict-saves i)
-                                        (compiler-reg-call-evict-kind-save))))
-                                  (set! i (+ i 1)))))
-                            (let
-                              [i : i64 0]
-                              (while (< i acc-exits)
+                              (for [i (iterator.range 0 acc-saves)]
                                 (set!
                                   evictions
                                   (compiler-reg-call-evict-seq-push
                                     evictions
                                     (CompilerRegCallEvict
                                       acc-victim
-                                      (array-ref evict-points i)
-                                      (compiler-reg-call-evict-kind-restore))))
-                                (set! i (+ i 1))))
+                                      (array-ref evict-saves i)
+                                      (compiler-reg-call-evict-kind-save))))))
+                            (for [i (iterator.range 0 acc-exits)]
+                              (set!
+                                evictions
+                                (compiler-reg-call-evict-seq-push
+                                  evictions
+                                  (CompilerRegCallEvict
+                                    acc-victim
+                                    (array-ref evict-points i)
+                                    (compiler-reg-call-evict-kind-restore)))))
                             unit)))
                       (if (>= chosen 0)
-                        (let
-                          [j : i64 0]
+                        (begin
                           (set!
                             shadows
                             (live.compiler-live-set-insert shadows root))
                           (set!
                             (array-ref shadow-regs root)
                             (array-ref pool chosen))
-                          (while (< j k)
+                          (for [j (iterator.range 0 k)]
                             (set!
                               regions
                               (compiler-reg-call-region-seq-push
@@ -21345,8 +20637,7 @@
                                   (array-ref picked-lo j)
                                   (array-ref picked-hi j)
                                   (array-ref picked-entry j)
-                                  (array-ref picked-exit j))))
-                            (set! j (+ j 1)))
+                                  (array-ref picked-exit j)))))
                           ;; occupancy is recorded on the coalesce
                           ;; ROOT: members carry no eff-index
                           ;; segments of their own, and the root's
@@ -21359,11 +20650,11 @@
                           (set!
                             (array-ref occ-kind occ-n)
                             (compiler-reg-call-region-occ-kind-shadow))
-                          (set! occ-n (+ occ-n 1))
-                          (set! budget (- budget k)))
+                          (+= occ-n 1)
+                          (-= budget k))
                         unit))
                     unit)
-                  (set! ci (+ ci 1))))
+                  (+= ci 1)))
               (State
                 assignments
                 (CompilerRegCallSplit shadows shadow-regs regions evictions)))])))))
@@ -21380,8 +20671,7 @@
   [ineligible : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (let
     [out : live.CompilerLiveI64Set ineligible]
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count intervals))
+    (for [index (iterator.range 0 (compiler-reg-interval-seq-count intervals))]
       (let
         [interval : CompilerRegInterval
           (compiler-reg-interval-seq-ref intervals index)]
@@ -21393,8 +20683,7 @@
             interval.end)
           false)
           (set! out (live.compiler-live-set-insert out var))
-          unit))
-      (set! index (+ index 1)))
+          unit)))
     out))
 
 ;; The set of 2-word register-group vars in a function -- those defined by
@@ -21415,16 +20704,14 @@
   [set : live.CompilerLiveI64Set]
   [instrs : ir.CompilerIrInstrSeq]) : live.CompilerLiveI64Set
   (let
-    [i : i64 0]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [out : live.CompilerLiveI64Set set]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (set!
         out
         (compiler-reg-group-vars-instr
           out
-          (ir.compiler-ir-instr-seq-ref instrs i)))
-      (set! i (+ i 1)))
+          (ir.compiler-ir-instr-seq-ref instrs i))))
     out))
 
 (define (compiler-reg-group-vars-blocks
@@ -21433,14 +20720,12 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : live.CompilerLiveI64Set set]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (set! out (compiler-reg-group-vars-instr-seq out instrs))])
-          (set! i (+ i 1)))
+              (set! out (compiler-reg-group-vars-instr-seq out instrs))]))
         out)]))
 
 ;; A Phi merging group values, or a Mov copying one, must mark its dst (and
@@ -21544,14 +20829,12 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : live.CompilerLiveI64Set set]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (set! out (compiler-reg-group-vars-propagate-seq out instrs 0))])
-          (set! i (+ i 1)))
+              (set! out (compiler-reg-group-vars-propagate-seq out instrs 0))]))
         out)]))
 
 (define (compiler-reg-group-vars-fixpoint
@@ -21710,9 +20993,8 @@
     [present : (__tl_dyn-array i64) (compiler-reg-var-types-present types)]
     [items : (__tl_dyn-array ast.AstType) (compiler-reg-var-types-items types)]
     [count : i64 (array-length present)]
-    [index : i64 0]
     [out : live.CompilerLiveI64Set set]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (if (= (compiler-reg-global-array-element-shared-view present index) 0)
         unit
         (if (compiler-reg-type-register-group?
@@ -21720,8 +21002,7 @@
           (compiler-reg-var-types-representations types)
           (compiler-reg-global-array-element-shared-view items index))
           (set! out (live.compiler-live-set-insert out index))
-          unit))
-      (set! index (+ index 1)))
+          unit)))
     out))
 
 ;; Seed every var whose TYPE is a 2-word register-group (the type-based group
@@ -21770,35 +21051,32 @@
     [merged-start : i64 start]
     [merged-end : i64 end]
     [inserted : bool false]
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count segments))
+    (for [index (iterator.range 0 (compiler-reg-interval-seq-count segments))]
       (let
         [head : CompilerRegInterval
           (compiler-reg-interval-seq-ref segments index)]
-        (let
-          [head-start : i64 head.start]
-          [head-end : i64 head.end]
-          (cond
-            [(< head-end merged-start)
-              (set! out (compiler-reg-interval-seq-append out head))]
-            [(< merged-end head-start)
-              (unless
-                inserted
-                (set!
+        [head-start : i64 head.start]
+        [head-end : i64 head.end]
+        (cond
+          [(< head-end merged-start)
+            (set! out (compiler-reg-interval-seq-append out head))]
+          [(< merged-end head-start)
+            (unless
+              inserted
+              (set!
+                out
+                (compiler-reg-interval-seq-append
                   out
-                  (compiler-reg-interval-seq-append
-                    out
-                    (CompilerRegInterval var merged-start merged-end)))
-                (set! inserted true))
-              (set! out (compiler-reg-interval-seq-append out head))]
-            [else
-              (if (< head-start merged-start)
-                (set! merged-start head-start)
-                unit)
-              (if (> head-end merged-end)
-                (set! merged-end head-end)
-                unit)]))
-        (set! index (+ index 1))))
+                  (CompilerRegInterval var merged-start merged-end)))
+              (set! inserted true))
+            (set! out (compiler-reg-interval-seq-append out head))]
+          [else
+            (if (< head-start merged-start)
+              (set! merged-start head-start)
+              unit)
+            (if (> head-end merged-end)
+              (set! merged-end head-end)
+              unit)])))
     (if inserted
       out
       (compiler-reg-interval-seq-append
@@ -21811,8 +21089,7 @@
   [dst : CompilerRegIntervalSeq]) : CompilerRegIntervalSeq
   (let
     [out : CompilerRegIntervalSeq dst]
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count src))
+    (for [index (iterator.range 0 (compiler-reg-interval-seq-count src))]
       (let
         [interval : CompilerRegInterval
           (compiler-reg-interval-seq-ref src index)]
@@ -21822,8 +21099,7 @@
             out
             root
             interval.start
-            interval.end)))
-      (set! index (+ index 1)))
+            interval.end))))
     out))
 
 (define (compiler-reg-merged-root-index
@@ -21840,16 +21116,13 @@
     [root-ends : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [root-segs : (__tl_dyn-array CompilerRegIntervalSeq)
       (__tl_make-array CompilerRegIntervalSeq n)]
-    [v : i64 0]
     (compiler-reg-fill-i64-array (&mut root-starts) -1)
     (compiler-reg-fill-i64-array (&mut root-ends) -1)
     ;; Object-array entries are not valid empty sequences by default. Initialise
     ;; every root explicitly before accumulating its sorted segment union.
-    (while (< v n)
-      (set! (array-ref root-segs v) (compiler-reg-interval-seq-empty))
-      (set! v (+ v 1)))
-    (set! v 0)
-    (while (< v n)
+    (for [v (iterator.range 0 n)]
+      (set! (array-ref root-segs v) (compiler-reg-interval-seq-empty)))
+    (for [v (iterator.range 0 n)]
       (if (>= (array-ref orig-starts v) 0)
         (let
           [r : i64
@@ -21885,8 +21158,7 @@
                 (compiler-reg-interval-seq-empty))
               rr
               (compiler-reg-global-array-element-shared-view root-segs rr))))
-        unit)
-      (set! v (+ v 1)))
+        unit))
     (CompilerRegIntervalIndex root-starts root-ends root-segs)))
 
 ;; Non-singleton coalesce roots are the only values whose segment holes are
@@ -21965,8 +21237,7 @@
   (let
     [parents : (__tl_dyn-array i64) coalesce.parents]
     [out : CompilerRegAssignmentTable (compiler-reg-assignment-table-make vars)]
-    [v : i64 0]
-    (while (< v vars)
+    (for [v (iterator.range 0 vars)]
       (if (and
         (< v (array-length orig-starts))
         (>= (array-ref orig-starts v) 0)
@@ -21990,8 +21261,7 @@
               (compiler-reg-assignment-table-insert out v loc)
               unit]
             [(No) unit]))
-        unit)
-      (set! v (+ v 1)))
+        unit))
     out))
 
 ;; The spill-weight eviction scores a candidate by its use count,
@@ -22008,8 +21278,7 @@
   (let
     [parents : (__tl_dyn-array i64) coalesce.parents]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-    [v : i64 0]
-    (while (< v vars)
+    (for [v (iterator.range 0 vars)]
       (if (< v (array-length ref-counts))
         (let
           [r : i64
@@ -22024,8 +21293,7 @@
           (if (> w (array-ref out rr))
             (set! (array-ref out rr) w)
             unit))
-        unit)
-      (set! v (+ v 1)))
+        unit))
     out))
 
 ;; ============================================================================
@@ -22057,9 +21325,8 @@
   (let
     [out : (__tl_dyn-array i64)
       (__tl_make-array i64 (compiler-reg-greedy-pool-index-capacity))]
-    [i : i64 0]
     (compiler-reg-fill-i64-array (&mut out) -1)
-    (while (< i rcount)
+    (for [i (iterator.range 0 rcount)]
       (let
         [key : i64
           (cabi.compiler-abi-register-ownership-id (array-ref reg-arr i))]
@@ -22068,8 +21335,7 @@
           (< key (array-length out))
           (< (array-ref out key) 0))
           (set! (array-ref out key) i)
-          unit)
-        (set! i (+ i 1))))
+          unit)))
     out))
 
 (define (compiler-reg-greedy-pool-index
@@ -22193,7 +21459,7 @@
           seg.end)
           (set! hit true)
           unit)
-        (set! index (+ index 1))))
+        (+= index 1)))
     hit))
 
 (define (compiler-reg-live-union-var-segments
@@ -22228,10 +21494,8 @@
             doubled)]
         [bigger : (__tl_dyn-array i64) (__tl_make-array i64 (* grown words))]
         [copy : i64 (* union.count words)]
-        [index : i64 0]
-        (while (< index copy)
-          (set! (array-ref bigger index) (array-ref entries index))
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 copy)]
+          (set! (array-ref bigger index) (array-ref entries index)))
         bigger))))
 
 ;; Rewrite the prefix maxima of `end` over [from, count).
@@ -22257,7 +21521,7 @@
           (set! running end)
           unit)
         (set! (array-ref entries (+ base 2)) running)
-        (set! index (+ index 1))))))
+        (+= index 1)))))
 
 ;; Insert one segment into `reg-index`'s union, keeping it sorted by effective
 ;; start. Ties keep insertion order; the query is order-insensitive among equal
@@ -22280,7 +21544,7 @@
     [floor : i64 (* at words)]
     (while (>= cursor floor)
       (set! (array-ref entries (+ cursor words)) (array-ref entries cursor))
-      (set! cursor (- cursor 1)))
+      (-= cursor 1))
     (set! (array-ref entries floor) es-start)
     (set! (array-ref entries (+ floor 1)) end)
     (set!
@@ -22301,20 +21565,18 @@
       (compiler-reg-live-union-var-segments occupancy var)]
     [slots : (__tl_dyn-array CompilerRegInterval) segs.slots]
     [len : i64 segs.len]
-    [index : i64 0]
     (if (= len 0)
       (let
         [coarse : (__tl_dyn-array i64) occupancy.live-union-coarse]
         (set! (array-ref coarse reg-index) (+ (array-ref coarse reg-index) 1)))
-      (while (< index len)
+      (for [index (iterator.range 0 len)]
         (let
           [seg : CompilerRegInterval (array-ref slots index)]
           (compiler-reg-live-union-insert-segment!
             occupancy
             reg-index
             (compiler-reg-live-union-effective-start seg.start)
-            seg.end)
-          (set! index (+ index 1)))))))
+            seg.end))))))
 
 ;; Drop `var` from `reg-index`'s union. Both the union and `var`'s segments are
 ;; ascending in effective start, so one merge pass compacts out exactly one
@@ -22342,11 +21604,10 @@
         [count : i64 union.count]
         [entries : (__tl_dyn-array i64) union.slots]
         [words : i64 (compiler-reg-live-union-entry-words)]
-        [read : i64 0]
         [write : i64 0]
         [seg-index : i64 0]
         [first-drop : i64 count]
-        (while (< read count)
+        (for [read (iterator.range 0 count)]
           (let
             [from : i64 (* read words)]
             [to : i64 (* write words)]
@@ -22365,7 +21626,7 @@
                 (if (< write first-drop)
                   (set! first-drop write)
                   unit)
-                (set! seg-index (+ seg-index 1)))
+                (+= seg-index 1))
               (begin
                 (unless
                   (= from to)
@@ -22373,8 +21634,7 @@
                   (set!
                     (array-ref entries (+ to 1))
                     (array-ref entries (+ from 1))))
-                (set! write (+ write 1))))
-            (set! read (+ read 1))))
+                (+= write 1)))))
         (set!
           (array-ref store reg-index)
           (CompilerRegLiveUnion (compiler-reg-global-shared-view entries) write))
@@ -22535,22 +21795,18 @@
         (compiler-reg-global-shared-view live-union)
         live-union-coarse
         interval-index.segments)]
-    [var : i64 0]
     (compiler-reg-fill-i64-array (&mut words) 0)
     (compiler-reg-fill-i64-array (&mut primary) -1)
     (compiler-reg-fill-i64-array (&mut secondary) -1)
-    (while (< var storage-reg-count)
-      (set! (array-ref live-union var) (compiler-reg-live-union-empty))
-      (set! var (+ var 1)))
-    (set! var 0)
-    (while (< var n)
+    (for [var (iterator.range 0 storage-reg-count)]
+      (set! (array-ref live-union var) (compiler-reg-live-union-empty)))
+    (for [var (iterator.range 0 n)]
       (if (= (array-ref present var) 1)
         (compiler-reg-greedy-occupancy-record-location!
           occupancy
           var
           (compiler-reg-global-array-element-shared-view items var))
-        unit)
-      (set! var (+ var 1)))
+        unit))
     occupancy))
 
 (define (compiler-reg-greedy-assignment-register!
@@ -22592,7 +21848,7 @@
       (< index (compiler-reg-id-seq-count regs))
       (< (+ i index) (array-length out)))
       (set! (array-ref out (+ i index)) (compiler-reg-id-seq-ref regs index))
-      (set! index (+ index 1)))))
+      (+= index 1))))
 
 ;; Max ref-count among vars holding `reg` that interfere with `var`; -1 if none.
 (define (compiler-reg-greedy-interferer-max
@@ -22601,10 +21857,8 @@
   [ref-counts : (& ref-counts (__tl_dyn-array i64))]
   [var : i64]
   [reg-index : i64]
-  [word-index : i64]
   [acc : i64]) : i64
-  (if (>= word-index occupancy.word-count)
-    acc
+  (for [word-index (iterator.range 0 occupancy.word-count)]
     (let
       [words : (__tl_dyn-array i64) occupancy.words]
       [bits : i64
@@ -22636,14 +21890,8 @@
                 unit))
             unit)
           (set! bits (bit-and bits (- bits 1)))))
-      (compiler-reg-greedy-interferer-max
-        occupancy
-        interval-index
-        ref-counts
-        var
-        reg-index
-        (+ word-index 1)
-        best))))
+      (set! acc best)))
+  acc)
 
 ;; Can `var` take pool register `reg-index` without interfering with a resident?
 ;;
@@ -22696,7 +21944,6 @@
           ref-counts
           var
           reg-index
-          0
           (- 0 1))
         (- 0 1)))))
 
@@ -22832,10 +22079,8 @@
   [evict-count : (& evict-count (__tl_dyn-array i64))]
   [var : i64]
   [reg-index : i64]
-  [word-index : i64]
   [acc : i64]) : i64
-  (if (>= word-index occupancy.word-count)
-    acc
+  (for [word-index (iterator.range 0 occupancy.word-count)]
     (let
       [words : (__tl_dyn-array i64) occupancy.words]
       [bits : i64
@@ -22875,16 +22120,9 @@
             unit)
           (set! bits (bit-and bits (- bits 1)))))
       (if (>= best (compiler-reg-greedy-evict-inf))
-        best
-        (compiler-reg-greedy-interferer-max-capped
-          occupancy
-          interval-index
-          ref-counts
-          evict-count
-          var
-          reg-index
-          (+ word-index 1)
-          best)))))
+        (return best)
+        (set! acc best))))
+  acc)
 
 ;; ---------------------------------------------------------------------------
 ;; TRIED AND REJECTED (RG-1): a SECOND chance at the callee-saved pool.
@@ -22948,7 +22186,6 @@
           evict-count
           var
           ridx
-          0
           (- 0 1))]
       (if (and
         (not
@@ -22987,10 +22224,8 @@
   [heap : (&mut heap CompilerRegGreedyHeap)]
   [ref-counts : (& ref-counts (__tl_dyn-array i64))]
   [var : i64]
-  [reg-index : i64]
-  [word-index : i64]) : unit
-  (if (>= word-index occupancy.word-count)
-    unit
+  [reg-index : i64]) : unit
+  (for [word-index (iterator.range 0 occupancy.word-count)]
     (let
       [words : (__tl_dyn-array i64) occupancy.words]
       [bits : i64
@@ -23027,17 +22262,7 @@
                 unit))
             unit)
           (set! bits (bit-and bits (- bits 1)))))
-      (compiler-reg-greedy-evict-requeue!
-        assignments
-        occupancy
-        interval-index
-        pending
-        evict-count
-        heap
-        ref-counts
-        var
-        reg-index
-        (+ word-index 1)))))
+      unit)))
 
 (define (compiler-reg-greedy-already-assigned?
   [assignments : CompilerRegAssignmentTable]
@@ -23341,8 +22566,7 @@
                     heap
                     ref-counts
                     var
-                    ev
-                    0)
+                    ev)
                   (compiler-reg-greedy-assignment-register!
                     assignments
                     occupancy
@@ -23378,9 +22602,8 @@
   [out : (&mut out (__tl_dyn-array i64))]
   [i : i64]) : i64
   (let
-    [index : i64 0]
     [at : i64 i]
-    (while (< index (compiler-reg-interval-seq-count candidates))
+    (for [index (iterator.range 0 (compiler-reg-interval-seq-count candidates))]
       (let
         [var : i64
           (__tl-project-field
@@ -23389,8 +22612,7 @@
         (if (< at (array-length out))
           (set! (array-ref out at) var)
           unit)
-        (set! at (+ at 1)))
-      (set! index (+ index 1)))
+        (+= at 1)))
     at))
 
 (define (compiler-reg-greedy-weight-before?
@@ -23426,8 +22648,7 @@
   (let
     [i : i64 lo]
     [j : i64 mid]
-    [k : i64 lo]
-    (while (< k hi)
+    (for [k (iterator.range lo hi)]
       (let
         ;; Take the right run when the left is exhausted, and otherwise only
         ;; when its head is STRICTLY before the left head -- the tie goes left,
@@ -23445,11 +22666,10 @@
         (if from-right
           (begin
             (set! (array-ref dst k) (array-ref src j))
-            (set! j (+ j 1)))
+            (+= j 1))
           (begin
             (set! (array-ref dst k) (array-ref src i))
-            (set! i (+ i 1))))
-        (set! k (+ k 1))))))
+            (+= i 1)))))))
 
 (define (compiler-reg-greedy-merge-pass!
   [src : (& src (__tl_dyn-array i64))]
@@ -23476,11 +22696,8 @@
   [src : (__tl_dyn-array i64)]
   [dst : (&mut dst (__tl_dyn-array i64))]
   [count : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i count)
-      (set! (array-ref dst i) (array-ref src i))
-      (set! i (+ i 1)))))
+  (for [i (iterator.range 0 count)]
+    (set! (array-ref dst i) (array-ref src i))))
 
 ;; Order the first `count` entries of `arr` by
 ;; `compiler-reg-greedy-weight-before?` with a bottom-up merge sort: an
@@ -23504,7 +22721,7 @@
           (compiler-reg-greedy-merge-pass! buf arr ref-counts count width)
           (compiler-reg-greedy-merge-pass! arr buf ref-counts count width))
         (set! flipped (not flipped))
-        (set! width (+ width width)))
+        (+= width width))
       (if flipped
         (compiler-reg-greedy-copy-range! buf arr count)
         unit))))
@@ -23539,8 +22756,7 @@
     [out : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [tie-span : i64 (compiler-reg-greedy-combine-tie-span)]
     [max-raw : i64 0]
-    [v : i64 0]
-    (while (< v n)
+    (for [v (iterator.range 0 n)]
       (let
         [r : i64
           (if (< v (array-length raw))
@@ -23548,10 +22764,8 @@
             0)]
         (if (> r max-raw)
           (set! max-raw r)
-          unit))
-      (set! v (+ v 1)))
-    (set! v 0)
-    (while (< v n)
+          unit)))
+    (for [v (iterator.range 0 n)]
       (let
         [d : i64 (compiler-reg-spill-weight-clamp (array-ref discounted v))]
         [r : i64
@@ -23566,8 +22780,7 @@
               (if (>= scaled tie-span)
                 (- tie-span 1)
                 scaled)))]
-        (set! (array-ref out v) (+ (* d tie-span) tie)))
-      (set! v (+ v 1)))
+        (set! (array-ref out v) (+ (* d tie-span) tie))))
     out))
 
 ;; Binary max-heap over (spill weight desc, var-id asc) -- the exact
@@ -23899,14 +23112,9 @@
     ;; their occupancy is represented by the existing div clobber set so the
     ;; atomic instruction's operands/results may meet at the boundary.
     (if (>= unspillable-from 0)
-      (let
-        [v : i64 unspillable-from]
-        (while (< v cap)
-          (compiler-reg-greedy-occupancy-clear! occupancy v)
-          (set!
-            (array-ref evict-count v)
-            (compiler-reg-greedy-evict-cascade-cap))
-          (set! v (+ v 1))))
+      (for [v (iterator.range unspillable-from cap)]
+        (compiler-reg-greedy-occupancy-clear! occupancy v)
+        (set! (array-ref evict-count v) (compiler-reg-greedy-evict-cascade-cap)))
       unit)
     ;; Establish the unchanged real-value coloring first. Scratch then joins
     ;; the same occupancy/worklist and may evict/requeue a cheaper real root;
@@ -24158,7 +23366,7 @@
         (begin
           (set! result (+ i index))
           (set! done true))
-        (set! index (+ index 1))))
+        (+= index 1)))
     result))
 
 ;; Greedy-integer-pool INDEX of the ABI register for integer arg position `pos`,
@@ -24384,14 +23592,12 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-result-pref-instr!
         (compiler-reg-global-array-element-shared-view slots index)
         rax-idx
         prefs
-        parents)
-      (set! index (+ index 1)))
+        parents))
     unit))
 
 (define (compiler-reg-result-pref-blocks!
@@ -24402,13 +23608,11 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (compiler-reg-result-pref-seq! instrs rax-idx prefs parents)])
-          (set! i (+ i 1))))]))
+              (compiler-reg-result-pref-seq! instrs rax-idx prefs parents)])))]))
 
 (define (compiler-reg-arg-pref-seq!
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -24419,15 +23623,13 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-arg-pref-instr!
         target-abi
         (compiler-reg-global-shared-view pool)
         (compiler-reg-global-array-element-shared-view slots index)
         prefs
-        parents)
-      (set! index (+ index 1)))
+        parents))
     unit))
 
 (define (compiler-reg-arg-pref-blocks!
@@ -24439,9 +23641,8 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (compiler-reg-arg-pref-seq!
@@ -24449,8 +23650,7 @@
                 (compiler-reg-global-shared-view pool)
                 instrs
                 prefs
-                parents)])
-          (set! i (+ i 1))))]))
+                parents)])))]))
 
 ;; Build the per-root physical-register preference array: each outgoing call-arg
 ;; var biased toward the ABI register it is marshalled into. Indexed by coalesce
@@ -24533,13 +23733,11 @@
   [pool : CompilerRegIdSeq]
   [values : (__tl_dyn-array ir.CompilerIrValue)]
   [types : CompilerRegVarTypes]
-  [i : i64]
   [float-idx : i64]
   [position : i64]
   [prefs : (&mut prefs (__tl_dyn-array i64))]
   [parents : (& parents (__tl_dyn-array i64))]) : unit
-  (if (>= i (array-length values))
-    unit
+  (for [i (iterator.range 0 (array-length values))]
     (let
       [value : ir.CompilerIrValue
         (compiler-reg-global-array-element-shared-view values i)]
@@ -24556,18 +23754,12 @@
         position
         prefs
         parents)
-      (compiler-reg-float-arg-pref-array!
-        target-abi
-        pool
-        values
-        types
-        (+ i 1)
+      (set!
+        float-idx
         (if is-float
           (+ float-idx 1)
-          float-idx)
-        (+ position 1)
-        prefs
-        parents))))
+          float-idx))
+      (set! position (+ position 1)))))
 
 (define (compiler-reg-float-arg-pref-args-at!
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -24622,7 +23814,6 @@
         values
         types
         0
-        0
         position
         prefs
         parents)]
@@ -24632,7 +23823,6 @@
         pool
         values
         types
-        0
         0
         position
         prefs
@@ -24725,16 +23915,14 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [i : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (compiler-reg-float-arg-pref-instr!
         target-abi
         (compiler-reg-global-shared-view pool)
         (compiler-reg-global-array-element-shared-view slots i)
         types
         prefs
-        parents)
-      (set! i (+ i 1)))))
+        parents))))
 
 (define (compiler-reg-float-arg-pref-blocks!
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -24746,9 +23934,8 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (compiler-reg-float-arg-pref-seq!
@@ -24757,8 +23944,7 @@
                 instrs
                 types
                 prefs
-                parents)])
-          (set! i (+ i 1))))]))
+                parents)])))]))
 
 (define (compiler-reg-function-float-arg-prefs
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -24825,13 +24011,11 @@
   [target-abi : cabi.CompilerRegTargetAbi]
   [values : (__tl_dyn-array ir.CompilerIrValue)]
   [types : CompilerRegVarTypes]
-  [i : i64]
   [float-idx : i64]
   [position : i64]
   [parents : (& parents (__tl_dyn-array i64))]
   [assignments : CompilerRegAssignmentTable]) : unit
-  (if (>= i (array-length values))
-    unit
+  (for [i (iterator.range 0 (array-length values))]
     (let
       [value : ir.CompilerIrValue
         (compiler-reg-global-array-element-shared-view values i)]
@@ -24847,17 +24031,12 @@
         position
         parents
         assignments)
-      (compiler-reg-float-arg-demote-array!
-        target-abi
-        values
-        types
-        (+ i 1)
+      (set!
+        float-idx
         (if is-float
           (+ float-idx 1)
-          float-idx)
-        (+ position 1)
-        parents
-        assignments))))
+          float-idx))
+      (set! position (+ position 1)))))
 
 (define (compiler-reg-float-arg-demote-args!
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -24907,7 +24086,6 @@
         values
         types
         0
-        0
         position
         parents
         assignments)]
@@ -24916,7 +24094,6 @@
         target-abi
         values
         types
-        0
         0
         position
         parents
@@ -25000,15 +24177,13 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [i : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (compiler-reg-float-arg-demote-instr!
         target-abi
         (compiler-reg-global-array-element-shared-view slots i)
         types
         parents
-        assignments)
-      (set! i (+ i 1)))))
+        assignments))))
 
 (define (compiler-reg-float-arg-demote-blocks!
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -25019,9 +24194,8 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (compiler-reg-float-arg-demote-seq!
@@ -25029,8 +24203,7 @@
                 instrs
                 types
                 parents
-                assignments)])
-          (set! i (+ i 1))))]))
+                assignments)])))]))
 
 (define (compiler-reg-float-call-args-demote!
   [target-abi : cabi.CompilerRegTargetAbi]
@@ -25215,28 +24388,24 @@
     [(Array arr)
       (let
         [n : i64 (array-length arr)]
-        [i : i64 0]
         [acc : live.CompilerLiveI64Set set]
-        (while (< i n)
+        (for [i (iterator.range 0 n)]
           (set!
             acc
             (compiler-reg-group-pair-add-value-var
               acc
-              (compiler-reg-global-array-element-shared-view arr i)))
-          (set! i (+ i 1)))
+              (compiler-reg-global-array-element-shared-view arr i))))
         acc)]
     [(Sret arr _)
       (let
         [n : i64 (array-length arr)]
-        [i : i64 0]
         [acc : live.CompilerLiveI64Set set]
-        (while (< i n)
+        (for [i (iterator.range 0 n)]
           (set!
             acc
             (compiler-reg-group-pair-add-value-var
               acc
-              (compiler-reg-global-array-element-shared-view arr i)))
-          (set! i (+ i 1)))
+              (compiler-reg-global-array-element-shared-view arr i))))
         acc)]))
 
 ;; The ordinary call marshaller emits its group-word moves independently. A
@@ -25260,16 +24429,14 @@
   [set : live.CompilerLiveI64Set]
   [instrs : ir.CompilerIrInstrSeq]) : live.CompilerLiveI64Set
   (let
-    [index : i64 0]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [out : live.CompilerLiveI64Set set]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (compiler-reg-group-pair-caller-unsafe-instr
           out
-          (ir.compiler-ir-instr-seq-ref instrs index)))
-      (set! index (+ index 1)))
+          (ir.compiler-ir-instr-seq-ref instrs index))))
     out))
 
 (define (compiler-reg-group-pair-caller-unsafe-blocks
@@ -25278,16 +24445,14 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : live.CompilerLiveI64Set set]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (set!
                 out
-                (compiler-reg-group-pair-caller-unsafe-instr-seq out instrs))])
-          (set! i (+ i 1)))
+                (compiler-reg-group-pair-caller-unsafe-instr-seq out instrs))]))
         out)]))
 
 (define (compiler-reg-group-pair-excluded-instr
@@ -25317,17 +24482,15 @@
   [instrs : ir.CompilerIrInstrSeq]
   [group-vars : (& group-vars live.CompilerLiveI64Set)]) : live.CompilerLiveI64Set
   (let
-    [i : i64 0]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [out : live.CompilerLiveI64Set set]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (set!
         out
         (compiler-reg-group-pair-excluded-instr
           out
           (ir.compiler-ir-instr-seq-ref instrs i)
-          group-vars))
-      (set! i (+ i 1)))
+          group-vars)))
     out))
 
 (define (compiler-reg-group-pair-excluded-blocks
@@ -25337,10 +24500,9 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out : live.CompilerLiveI64Set set]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (set!
@@ -25348,8 +24510,7 @@
                 (compiler-reg-group-pair-excluded-instr-seq
                   out
                   instrs
-                  group-vars))])
-          (set! i (+ i 1)))
+                  group-vars))]))
         out)]))
 
 (define (compiler-reg-group-pair-csr [idx : i64]) : i64
@@ -25406,7 +24567,7 @@
         hi)
         (set! hit true)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     hit))
 
 (define (compiler-reg-group-pair-shadow-reg-conflicts?
@@ -25451,7 +24612,7 @@
               hi))
             (set! conflict true)
             unit)])
-      (set! index (- index 1)))
+      (-= index 1))
     conflict))
 
 (define (compiler-reg-group-pair-weight
@@ -25476,7 +24637,7 @@
         (array-ref members i))
         (set! ok false)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     ok))
 
 (define (compiler-reg-group-pair-component-contains?
@@ -25490,7 +24651,7 @@
       (if (live.compiler-live-set-contains? set (array-ref members i))
         (set! hit true)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     hit))
 
 ;; A pair component may evict only scalar register occupants that are strictly
@@ -25521,7 +24682,7 @@
                   (let
                     [weight : i64 (compiler-reg-group-pair-weight weights idx)]
                     (if (< weight component-weight)
-                      (set! cost (+ cost (+ weight 1)))
+                      (+= cost (+ weight 1))
                       (set! blocked true)))
                   unit)]
               [(RegisterPair first second)
@@ -25531,7 +24692,7 @@
               [(Spill _) unit]
               [(Remat _) unit])]
           [(No) unit])
-        (set! i (+ i 1))))
+        (+= i 1)))
     (if blocked
       (- 0 1)
       cost)))
@@ -25551,7 +24712,7 @@
         var)
         (set! hit true)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     hit))
 
 ;; The ascending list of vars that interfere with ANY component member. Both
@@ -25569,9 +24730,8 @@
   [vars : i64]
   [out : (&mut out (__tl_dyn-array i64))]) : i64
   (let
-    [idx : i64 0]
     [at : i64 0]
-    (while (< idx vars)
+    (for [idx (iterator.range 0 vars)]
       (when
         (compiler-reg-group-pair-component-conflicts-var?
           interval-index
@@ -25579,8 +24739,7 @@
           count
           idx)
         (set! (array-ref out at) idx)
-        (set! at (+ at 1)))
-      (set! idx (+ idx 1)))
+        (+= at 1)))
     at))
 
 (define (compiler-reg-group-pair-component-register-cost
@@ -25633,27 +24792,24 @@
   [conflicts : (& conflicts (__tl_dyn-array i64))]
   [conflict-count : i64]
   [reg : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i conflict-count)
-      (let
-        [idx : i64 (array-ref conflicts i)]
-        (match (compiler-reg-assignment-table-lookup assignments idx)
-          [(Some location)
-            (match location
-              [(Register held)
-                (if (= held reg)
-                  (let
-                    [_spill : CompilerRegAssignmentTable
-                      (compiler-reg-assignment-table-insert
-                        assignments
-                        idx
-                        (Spill (compiler-reg-stack-slot-offset idx)))]
-                    unit)
-                  unit)]
-              [_ unit])]
-          [(No) unit])
-        (set! i (+ i 1))))))
+  (for [i (iterator.range 0 conflict-count)]
+    (let
+      [idx : i64 (array-ref conflicts i)]
+      (match (compiler-reg-assignment-table-lookup assignments idx)
+        [(Some location)
+          (match location
+            [(Register held)
+              (if (= held reg)
+                (let
+                  [_spill : CompilerRegAssignmentTable
+                    (compiler-reg-assignment-table-insert
+                      assignments
+                      idx
+                      (Spill (compiler-reg-stack-slot-offset idx)))]
+                  unit)
+                unit)]
+            [_ unit])]
+        [(No) unit]))))
 
 ;; Union-find root with full-path compression (iterative).
 (define (compiler-reg-group-pair-find
@@ -25740,9 +24896,8 @@
   [parents : (&mut parents (__tl_dyn-array i64))]
   [poisoned : (&mut poisoned (__tl_dyn-array bool))]) : unit
   (let
-    [index : i64 0]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-group-pair-mov-edges-instr
         (ir.compiler-ir-instr-seq-ref instrs index)
         group-vars
@@ -25750,8 +24905,7 @@
         starts
         def-counts
         parents
-        poisoned)
-      (set! index (+ index 1)))))
+        poisoned))))
 
 (define (compiler-reg-group-pair-mov-edges-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -25764,9 +24918,8 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (compiler-reg-group-pair-mov-edges-instr-seq
@@ -25776,8 +24929,7 @@
                 starts
                 def-counts
                 parents
-                poisoned)])
-          (set! i (+ i 1))))]))
+                poisoned)])))]))
 
 ;; TRUE when var v is a sound pair-component member on its own account.
 ;; SSE-word groups (e.g. an i64+f64 enum) are excluded: the pair pool contains
@@ -25848,11 +25000,9 @@
           [parents : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
           [poisoned : (__tl_dyn-array bool) (__tl_make-array bool vars)]
           [members : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-          [v : i64 0]
-          (while (< v vars)
+          (for [v (iterator.range 0 vars)]
             (set! (array-ref parents v) v)
-            (set! (array-ref poisoned v) false)
-            (set! v (+ v 1)))
+            (set! (array-ref poisoned v) false))
           (compiler-reg-group-pair-mov-edges-blocks
             blocks
             group-vars
@@ -25861,8 +25011,7 @@
             def-counts
             (&mut parents)
             (&mut poisoned))
-          (set! v 0)
-          (while (< v vars)
+          (for [v (iterator.range 0 vars)]
             (if (and
               (= (compiler-reg-group-pair-find (&mut parents) v) v)
               (compiler-reg-group-pair-member-ok?
@@ -25892,8 +25041,7 @@
                 weights
                 call-points
                 (compiler-reg-global-shared-view split))
-              unit)
-            (set! v (+ v 1)))
+              unit))
           assignments)])))
 
 ;; Place ONE component (root r): collect members, prove every member sound
@@ -25925,8 +25073,7 @@
     [count : i64 0]
     [ok : bool true]
     [component-weight : i64 0]
-    [w : i64 0]
-    (while (< w vars)
+    (for [w (iterator.range 0 vars)]
       (when
         (= (compiler-reg-group-pair-find parents w) r)
         (if (compiler-reg-group-pair-member-ok?
@@ -25940,14 +25087,13 @@
           assignments)
           (begin
             (set! (array-ref members count) w)
-            (set! count (+ count 1)))
+            (+= count 1))
           (set! ok false))
         (let
           [weight : i64 (compiler-reg-group-pair-weight weights w)]
           (if (> weight component-weight)
             (set! component-weight weight)
-            unit)))
-      (set! w (+ w 1)))
+            unit))))
     (if (and ok (> component-weight 0) (> count 0))
       (let
         [caller-saved-ok? : bool
@@ -25977,10 +25123,9 @@
         [best0 : i64 (- 0 1)]
         [best1 : i64 (- 0 1)]
         [best-cost : i64 (- 0 1)]
-        [i0 : i64 0]
         ;; Search all pairs so an already-free pair always beats eviction,
         ;; and otherwise the coldest displaced scalar set wins.
-        (while (< i0 candidate-count)
+        (for [i0 (iterator.range 0 candidate-count)]
           (let
             [reg0 : i64 (compiler-reg-group-pair-candidate caller-saved-ok? i0)]
             [cost0 : i64
@@ -25997,35 +25142,31 @@
                 (compiler-reg-global-shared-view split)
                 reg0)]
             (if (>= cost0 0)
-              (let
-                [i1 : i64 (+ i0 1)]
-                (while (< i1 candidate-count)
-                  (let
-                    [reg1 : i64
-                      (compiler-reg-group-pair-candidate caller-saved-ok? i1)]
-                    [cost1 : i64
-                      (compiler-reg-group-pair-component-register-cost
-                        assignments
-                        interval-index
-                        members
-                        count
-                        conflicts
-                        conflict-count
-                        weights
-                        component-weight
-                        (and caller-saved-ok? (< i1 2))
-                        (compiler-reg-global-shared-view split)
-                        reg1)]
-                    (when
-                      (and
-                        (>= cost1 0)
-                        (or (< best-cost 0) (< (+ cost0 cost1) best-cost)))
-                      (set! best0 i0)
-                      (set! best1 i1)
-                      (set! best-cost (+ cost0 cost1)))
-                    (set! i1 (+ i1 1)))))
-              unit)
-            (set! i0 (+ i0 1))))
+              (for [i1 (iterator.range (+ i0 1) candidate-count)]
+                (let
+                  [reg1 : i64
+                    (compiler-reg-group-pair-candidate caller-saved-ok? i1)]
+                  [cost1 : i64
+                    (compiler-reg-group-pair-component-register-cost
+                      assignments
+                      interval-index
+                      members
+                      count
+                      conflicts
+                      conflict-count
+                      weights
+                      component-weight
+                      (and caller-saved-ok? (< i1 2))
+                      (compiler-reg-global-shared-view split)
+                      reg1)]
+                  (when
+                    (and
+                      (>= cost1 0)
+                      (or (< best-cost 0) (< (+ cost0 cost1) best-cost)))
+                    (set! best0 i0)
+                    (set! best1 i1)
+                    (set! best-cost (+ cost0 cost1)))))
+              unit)))
         (if (>= best0 0)
           (let
             [reg0 : i64
@@ -26033,7 +25174,6 @@
             [reg1 : i64
               (compiler-reg-group-pair-candidate caller-saved-ok? best1)]
             [pair : CompilerRegLocation (RegisterPair reg0 reg1)]
-            [m : i64 0]
             (compiler-reg-group-pair-evict-reg-conflicts!
               assignments
               conflicts
@@ -26044,7 +25184,7 @@
               conflicts
               conflict-count
               reg1)
-            (while (< m count)
+            (for [m (iterator.range 0 count)]
               (let
                 [_ins : CompilerRegAssignmentTable
                   (begin
@@ -26055,7 +25195,7 @@
                       assignments
                       (array-ref members m)
                       (compiler-reg-global-shared-view pair)))]
-                (set! m (+ m 1)))))
+                unit)))
           unit))
       unit)))
 
@@ -26081,38 +25221,35 @@
   [call-points : (& call-points live.CompilerLiveI64Set)]
   [div-points : (& div-points live.CompilerLiveI64Set)]
   [shift-points : (& shift-points live.CompilerLiveI64Set)]) : unit
-  (let
-    [position : i64 0]
-    (while (< position params.len)
-      (match (ir.compiler-ir-param-seq-ref params position)
-        [(Param _ _ var-id)
-          (match (compiler-reg-assignment-table-lookup assignments var-id)
-            [(Some location)
-              (match location
-                [(Register home)
-                  (let
-                    [root : i64
-                      (if (and (>= var-id 0) (< var-id (array-length parents)))
-                        (array-ref parents var-id)
-                        var-id)]
-                    (if (and
-                      (= root var-id)
-                      (compiler-reg-param-pin-clobber-free?
-                        (compiler-reg-global-shared-view eff-index)
-                        call-points
-                        div-points
-                        shift-points
-                        var-id
-                        home))
-                      unit
-                      (begin
-                        (compiler-reg-assignment-table-unassign
-                          assignments
-                          var-id)
-                        unit)))]
-                [_ unit])]
-            [(No) unit])])
-      (set! position (+ position 1)))))
+  (for [position (iterator.range 0 params.len)]
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(Param _ _ var-id)
+        (match (compiler-reg-assignment-table-lookup assignments var-id)
+          [(Some location)
+            (match location
+              [(Register home)
+                (let
+                  [root : i64
+                    (if (and (>= var-id 0) (< var-id (array-length parents)))
+                      (array-ref parents var-id)
+                      var-id)]
+                  (if (and
+                    (= root var-id)
+                    (compiler-reg-param-pin-clobber-free?
+                      (compiler-reg-global-shared-view eff-index)
+                      call-points
+                      div-points
+                      shift-points
+                      var-id
+                      home))
+                    unit
+                    (begin
+                      (compiler-reg-assignment-table-unassign
+                        assignments
+                        var-id)
+                      unit)))]
+              [_ unit])]
+          [(No) unit])])))
 
 (define (compiler-reg-param-pins-demote!
   [func : ir.CompilerIrFunction]
@@ -26148,8 +25285,7 @@
   [depth : i64]) : unit
   (let
     [words : i64 (live.compiler-live-set-word-count set)]
-    [word-index : i64 0]
-    (while (< word-index words)
+    (for [word-index (iterator.range 0 words)]
       (let
         [bits : i64 (live.compiler-live-set-word-at-bounded set word-index)]
         [base : i64 (* word-index (live.compiler-live-set-word-bits))]
@@ -26162,8 +25298,7 @@
               (> depth (array-ref out var)))
               (set! (array-ref out var) depth)
               unit)
-            (set! bits (bit-and bits (- bits 1))))))
-      (set! word-index (+ word-index 1)))))
+            (set! bits (bit-and bits (- bits 1)))))))))
 
 ;; The mention enumeration is the liveness walker's own (uses + def), so
 ;; "reference" here means exactly what the spill weight counts.
@@ -26186,9 +25321,8 @@
           out
           (live.compiler-live-instr-defs instr)
           depth))
-      (let
-        [index : i64 0]
-        (while (< index id-count)
+      (begin
+        (for [index (iterator.range 0 id-count)]
           (let
             [var : i64 (array-ref ids index)]
             (if (and
@@ -26196,8 +25330,7 @@
               (< var (array-length out))
               (> depth (array-ref out var)))
               (set! (array-ref out var) depth)
-              unit))
-          (set! index (+ index 1)))
+              unit)))
         (let
           [def-var : i64 (ir.compiler-ir-instr-dst instr)]
           (if (and
@@ -26216,25 +25349,21 @@
     [seq : ir.CompilerIrBlockSeq
       (live.compiler-live-ir-block-list-to-seq blocks)]
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [b : i64 0]
-    (while (< b count)
+    (for [b (iterator.range 0 count)]
       (match (ir.compiler-ir-block-seq-ref seq b)
         [(Block _ instrs)
           (let
             [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
             [n : i64 instrs.len]
-            [i : i64 0]
             [depth : i64
               (if (< b (array-length depths))
                 (array-ref depths b)
                 0)]
-            (while (< i n)
+            (for [i (iterator.range 0 n)]
               (compiler-reg-trace-depth-instr!
                 (&mut out)
                 (compiler-reg-global-array-element-shared-view slots i)
-                depth)
-              (set! i (+ i 1))))])
-      (set! b (+ b 1)))
+                depth)))]))
     out))
 
 ;; prefix[p] = the summed block weight of every clobber point strictly below
@@ -26254,39 +25383,33 @@
       (live.compiler-live-ir-block-list-to-seq blocks)]
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
     [total : i64 0]
-    [b : i64 0]
-    (while (< b count)
+    (for [b (iterator.range 0 count)]
       (match (ir.compiler-ir-block-seq-ref seq b)
-        [(Block _ instrs) (set! total (+ total (* 2 instrs.len)))])
-      (set! b (+ b 1)))
+        [(Block _ instrs) (+= total (* 2 instrs.len))]))
     (let
       [prefix : (__tl_dyn-array i64) (__tl_make-array i64 (+ total 2))]
       [point : i64 0]
       [acc : i64 0]
-      [bi : i64 0]
-      (while (< bi count)
+      (for [bi (iterator.range 0 count)]
         (match (ir.compiler-ir-block-seq-ref seq bi)
           [(Block _ instrs)
             (let
               [n : i64 instrs.len]
-              [i : i64 0]
               [weight : i64
                 (compiler-reg-call-hole-block-weight
                   (if (< bi (array-length depths))
                     (array-ref depths bi)
                     0))]
-              (while (< i n)
+              (for [i (iterator.range 0 n)]
                 (set! (array-ref prefix point) acc)
                 (set! (array-ref prefix (+ point 1)) acc)
                 (if (live.compiler-live-set-contains? call-points point)
-                  (set! acc (+ acc weight))
+                  (+= acc weight)
                   unit)
-                (set! point (+ point 2))
-                (set! i (+ i 1))))])
-        (set! bi (+ bi 1)))
+                (+= point 2)))]))
       (while (< point (array-length prefix))
         (set! (array-ref prefix point) acc)
-        (set! point (+ point 1)))
+        (+= point 1))
       prefix)))
 
 (define (compiler-reg-trace-prefix-at
@@ -26320,20 +25443,16 @@
               interval-index.segments
               var)]
           [n : i64 (compiler-reg-interval-seq-count segments)]
-          [i : i64 0]
           [acc : i64 0]
-          (while (< i n)
+          (for [i (iterator.range 0 n)]
             (let
               [segment : CompilerRegInterval
                 (compiler-reg-interval-seq-ref segments i)]
-              (set!
+              (+=
                 acc
-                (+
-                  acc
-                  (-
-                    (compiler-reg-trace-prefix-at prefix segment.end)
-                    (compiler-reg-trace-prefix-at prefix (+ segment.start 1))))))
-            (set! i (+ i 1)))
+                (-
+                  (compiler-reg-trace-prefix-at prefix segment.end)
+                  (compiler-reg-trace-prefix-at prefix (+ segment.start 1))))))
           acc)
         (-
           (compiler-reg-trace-prefix-at prefix (array-ref ends var))
@@ -26447,8 +25566,7 @@
         [prefix : (__tl_dyn-array i64)
           (compiler-reg-trace-crossing-prefix blocks call-points depths)]
         [starts : (__tl_dyn-array i64) interval-index.starts]
-        [var : i64 0]
-        (while (< var vars)
+        (for [var (iterator.range 0 vars)]
           (let
             [has-interval? : bool
               (and (< var (array-length starts)) (>= (array-ref starts var) 0))]
@@ -26518,8 +25636,7 @@
                         (array-ref ref-depths var)
                         0))
                     "\n")))
-              unit))
-          (set! var (+ var 1))))]))
+              unit))))]))
 
 (define (compiler-reg-plan-from
   [type-segment-bases : i64]
@@ -27535,8 +26652,7 @@
     [out : CompilerRegIntervalSeq
       (compiler-reg-interval-seq-with-capacity
         (compiler-reg-interval-seq-count segs))]
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count segs))
+    (for [index (iterator.range 0 (compiler-reg-interval-seq-count segs))]
       (let
         [interval : CompilerRegInterval
           (compiler-reg-interval-seq-ref segs index)]
@@ -27550,8 +26666,7 @@
               (if (= start min-start)
                 0
                 start)
-              interval.end))))
-      (set! index (+ index 1)))
+              interval.end)))))
     out))
 
 (define (compiler-reg-param-segments-min-start
@@ -27559,52 +26674,47 @@
   [best : i64]) : i64
   (let
     [out : i64 best]
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count segs))
+    (for [index (iterator.range 0 (compiler-reg-interval-seq-count segs))]
       (let
         [start : i64
           (__tl-project-field (compiler-reg-interval-seq-ref segs index) start)]
         (if (or (< out 0) (< start out))
           (set! out start)
-          unit))
-      (set! index (+ index 1)))
+          unit)))
     out))
 
 (define (compiler-reg-param-intervals-extend-entry!
   [params : ir.CompilerIrParamSeq]
   [interval-index : (& interval-index CompilerRegIntervalIndex)]) : unit
-  (let
-    [position : i64 0]
-    (while (< position params.len)
-      (match (ir.compiler-ir-param-seq-ref params position)
-        [(Param _ _ var)
-          (let
-            [starts : (__tl_dyn-array i64) interval-index.starts]
-            [segments : (__tl_dyn-array CompilerRegIntervalSeq)
-              interval-index.segments]
-            (when
-              (and
-                (>= var 0)
-                (< var (array-length starts))
-                (> (array-ref starts var) 0))
-              (set! (array-ref starts var) 0)
-              (if (< var (array-length segments))
-                (let
-                  [segs : CompilerRegIntervalSeq
-                    (compiler-reg-global-array-element-shared-view segments var)]
-                  [min-start : i64
-                    (compiler-reg-param-segments-min-start
-                      (compiler-reg-global-shared-view segs)
-                      (- 0 1))]
-                  (when
-                    (> min-start 0)
-                    (set!
-                      (array-ref segments var)
-                      (compiler-reg-param-segments-extend-entry segs min-start))
-                    unit))
-                unit))
-            unit)])
-      (set! position (+ position 1)))))
+  (for [position (iterator.range 0 params.len)]
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(Param _ _ var)
+        (let
+          [starts : (__tl_dyn-array i64) interval-index.starts]
+          [segments : (__tl_dyn-array CompilerRegIntervalSeq)
+            interval-index.segments]
+          (when
+            (and
+              (>= var 0)
+              (< var (array-length starts))
+              (> (array-ref starts var) 0))
+            (set! (array-ref starts var) 0)
+            (if (< var (array-length segments))
+              (let
+                [segs : CompilerRegIntervalSeq
+                  (compiler-reg-global-array-element-shared-view segments var)]
+                [min-start : i64
+                  (compiler-reg-param-segments-min-start
+                    (compiler-reg-global-shared-view segs)
+                    (- 0 1))]
+                (when
+                  (> min-start 0)
+                  (set!
+                    (array-ref segments var)
+                    (compiler-reg-param-segments-extend-entry segs min-start))
+                  unit))
+              unit))
+          unit)])))
 
 (define (compiler-reg-live-set-insert-range
   [set : live.CompilerLiveI64Set]
@@ -27753,8 +26863,7 @@
           (compiler-reg-assignment-table-present copied)]
         [items : (__tl_dyn-array CompilerRegLocation)
           (compiler-reg-assignment-table-items copied)]
-        [i : i64 0]
-        (while (< i (array-length present))
+        (for [i (iterator.range 0 (array-length present))]
           (when
             (not (= (array-ref present i) 0))
             (match (array-ref items i)
@@ -27762,8 +26871,7 @@
                 (set!
                   (array-ref items i)
                   (Remat (ir.compiler-ir-clone-value value)))]
-              [_ unit]))
-          (set! i (+ i 1)))
+              [_ unit])))
         (Plan
           copied
           (compiler-reg-owned-copy-set ineligible)
@@ -28063,12 +27171,11 @@
   (let
     [present : (__tl_dyn-array i64) (compiler-reg-var-types-present types)]
     [items : (__tl_dyn-array ast.AstType) (compiler-reg-var-types-items types)]
-    [index : i64 0]
     [limit : i64
       (if (< (array-length present) (array-length flags))
         (array-length present)
         (array-length flags))]
-    (while (< index limit)
+    (for [index (iterator.range 0 limit)]
       (if (= (compiler-reg-global-array-element-shared-view present index) 0)
         unit
         (set!
@@ -28079,8 +27186,7 @@
               (compiler-reg-scalar-type? ty))
             (let
               [ty (compiler-reg-global-array-element-shared-view items index)]
-              (compiler-reg-handle-type? ty)))))
-      (set! index (+ index 1)))))
+              (compiler-reg-handle-type? ty))))))))
 
 ;; Mark every variable with a final liveness interval. Combined with direct IR
 ;; uses/defs below, this distinguishes real values (including dead emitted defs)
@@ -28088,18 +27194,13 @@
 (define (compiler-reg-color-reference-intervals!
   [intervals : CompilerRegIntervalSeq]
   [references : (&mut references (__tl_dyn-array bool))]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count intervals))
-      (let
-        [var : i64
-          (__tl-project-field
-            (compiler-reg-interval-seq-ref intervals index)
-            var)]
-        (if (and (>= var 0) (< var (array-length references)))
-          (set! (array-ref references var) true)
-          unit))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 (compiler-reg-interval-seq-count intervals))]
+    (let
+      [var : i64
+        (__tl-project-field (compiler-reg-interval-seq-ref intervals index) var)]
+      (if (and (>= var 0) (< var (array-length references)))
+        (set! (array-ref references var) true)
+        unit))))
 
 ;; Per-var AstType array for the coloring walk's same-type sharing guard.
 ;; Every colorable var has a types-list entry (compiler-reg-color-flags only
@@ -28110,16 +27211,14 @@
   (let
     [present : (__tl_dyn-array i64) (compiler-reg-var-types-present types)]
     [items : (__tl_dyn-array ast.AstType) (compiler-reg-var-types-items types)]
-    [index : i64 0]
     [limit : i64
       (if (< (array-length present) (array-length tys))
         (array-length present)
         (array-length tys))]
-    (while (< index limit)
+    (for [index (iterator.range 0 limit)]
       (if (= (array-ref present index) 0)
         unit
-        (set! (array-ref tys index) (array-ref items index)))
-      (set! index (+ index 1)))))
+        (set! (array-ref tys index) (array-ref items index))))))
 
 (define (compiler-reg-vector-elem-size [ty : ast.AstType]) : i64
   (match ty
@@ -28182,15 +27281,12 @@
 (define (compiler-reg-vector-stack-words-params!
   [params : ir.CompilerIrParamSeq]
   [words : (& words (__tl_dyn-array i64))]) : unit
-  (let
-    [position : i64 0]
-    (while (< position params.len)
-      (match (ir.compiler-ir-param-seq-ref params position)
-        [(Param name _ var)
-          (if (compiler-reg-spmd-avx2-special-param? name)
-            (compiler-reg-vector-stack-words-set-mask! (&mut words) var)
-            unit)])
-      (set! position (+ position 1)))))
+  (for [position (iterator.range 0 params.len)]
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(Param name _ var)
+        (if (compiler-reg-spmd-avx2-special-param? name)
+          (compiler-reg-vector-stack-words-set-mask! (&mut words) var)
+          unit)])))
 
 (define (compiler-reg-spmd-avx2-special-param-references!
   [params : ir.CompilerIrParamSeq]
@@ -28198,18 +27294,15 @@
   ;; The backend materializes every private ABI parameter before instruction
   ;; emission, including an active mask unused by the helper body. Keep those
   ;; prologue-only writes in the private-range allocation census.
-  (let
-    [position : i64 0]
-    (while (< position params.len)
-      (match (ir.compiler-ir-param-seq-ref params position)
-        [(Param name _ var)
-          (if (and
-            (compiler-reg-spmd-avx2-special-param? name)
-            (>= var 0)
-            (< var (array-length references)))
-            (set! (array-ref references var) true)
-            unit)])
-      (set! position (+ position 1)))))
+  (for [position (iterator.range 0 params.len)]
+    (match (ir.compiler-ir-param-seq-ref params position)
+      [(Param name _ var)
+        (if (and
+          (compiler-reg-spmd-avx2-special-param? name)
+          (>= var 0)
+          (< var (array-length references)))
+          (set! (array-ref references var) true)
+          unit)])))
 
 (define (compiler-reg-vector-stack-words-instr!
   [instr : ir.CompilerIrInstr]
@@ -28311,25 +27404,19 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-vector-stack-words-instr!
         (compiler-reg-global-array-element-shared-view slots index)
-        words)
-      (set! index (+ index 1)))))
+        words))))
 
 (define (compiler-reg-vector-stack-words-blocks!
   [blocks : ir.CompilerIrBlockList]
   [words : (&mut words (__tl_dyn-array i64))]) : unit
   (match blocks
     [(Array seq)
-      (let
-        [index : i64 0]
-        (while (< index (ir.compiler-ir-block-seq-count seq))
-          (match (ir.compiler-ir-block-seq-ref seq index)
-            [(Block _ instrs)
-              (compiler-reg-vector-stack-words-seq! instrs words)])
-          (set! index (+ index 1))))]))
+      (for [index (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-ref seq index)
+          [(Block _ instrs) (compiler-reg-vector-stack-words-seq! instrs words)]))]))
 
 ;; Stack shape follows SIMD identity through Mov just like register class does.
 ;; Propagate the maximum word width in both directions to a fixpoint so a copy
@@ -28366,15 +27453,13 @@
   [instrs : ir.CompilerIrInstrSeq]
   [words : (&mut words (__tl_dyn-array i64))]) : bool
   (let
-    [index : i64 0]
     [changed : bool false]
-    (while (< index (ir.compiler-ir-instr-seq-count instrs))
+    (for [index (iterator.range 0 (ir.compiler-ir-instr-seq-count instrs))]
       (if (compiler-reg-vector-stack-words-propagate-instr!
         (ir.compiler-ir-instr-seq-ref instrs index)
         words)
         (set! changed true)
-        unit)
-      (set! index (+ index 1)))
+        unit))
     changed))
 
 (define (compiler-reg-vector-stack-words-propagate-blocks!
@@ -28403,18 +27488,16 @@
 
 (define (compiler-reg-vector-stack-extra-slots
   [words : (& words (__tl_dyn-array i64))]
-  [index : i64]
   [acc : i64]) : i64
-  (if (>= index (array-length words))
-    acc
+  (for [index (iterator.range 0 (array-length words))]
     (let
       [w : i64 (array-ref words index)]
-      (compiler-reg-vector-stack-extra-slots
-        words
-        (+ index 1)
+      (set!
+        acc
         (if (> w 1)
           (+ acc (- w 1))
-          acc)))))
+          acc))))
+  acc)
 
 (define (compiler-reg-vector-stack-words-for-var
   [words : (& words (__tl_dyn-array i64))]
@@ -28467,7 +27550,7 @@
         (array-ref items (- scan 1)))
         (set! ordered? false)
         unit)
-      (set! scan (+ scan 1)))
+      (+= scan 1))
     (if ordered?
       unit
       (compiler-reg-color-heapsort-unordered! items count))))
@@ -28483,20 +27566,16 @@
   [vars : i64]) : (__tl_dyn-array i64)
   (let
     [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
-    [i : i64 0]
-    (while (< i vars)
-      (set! (array-ref ends i) (- 0 1))
-      (set! i (+ i 1)))
-    (set! i 0)
-    (while (< i count)
+    (for [i (iterator.range 0 vars)]
+      (set! (array-ref ends i) (- 0 1)))
+    (for [i (iterator.range 0 count)]
       (let
         [interval : CompilerRegInterval (array-ref items i)]
         [var : i64 interval.var]
         [end : i64 interval.end]
         (if (and (>= var 0) (< var vars) (> end (array-ref ends var)))
           (set! (array-ref ends var) end)
-          unit)
-        (set! i (+ i 1))))
+          unit)))
     ends))
 
 ;; First slot id at or after `from` that is not identity-pinned to a
@@ -28529,31 +27608,22 @@
   [slot-tys : (__tl_dyn-array ast.AstType)]
   [ty : ast.AstType]
   [used : i64]
-  [start : i64]
-  [index : i64]) : i64
-  (if (>= index used)
-    used
-    (if (and
-      (< (array-ref slot-ends index) start)
-      (ast.ast-type-eq-with-seg-bases?
-        type-segment-bases
-        (compiler-reg-global-array-element-shared-view slot-tys index)
-        (compiler-reg-global-shared-view ty)))
-      index
-      (compiler-reg-color-find-slot
-        type-segment-bases
-        slot-ends
-        slot-tys
-        ty
-        used
-        start
-        (+ index 1)))))
+  [start : i64]) : i64
+  (for [index (iterator.range 0 used)]
+    (when
+      (and
+        (< (array-ref slot-ends index) start)
+        (ast.ast-type-eq-with-seg-bases?
+          type-segment-bases
+          (compiler-reg-global-array-element-shared-view slot-tys index)
+          (compiler-reg-global-shared-view ty)))
+      (return index)))
+  used)
 
 (define (compiler-reg-color-walk
   [type-segment-bases : i64]
   [items : (__tl_dyn-array CompilerRegInterval)]
   [count : i64]
-  [index : i64]
   [assignment-index : CompilerRegAssignmentTable]
   [pinned : (& pinned live.CompilerLiveI64Set)]
   [ineligible : (& ineligible live.CompilerLiveI64Set)]
@@ -28564,8 +27634,7 @@
   [extent-ends : (__tl_dyn-array i64)]
   [used : i64]
   [remap : (__tl_dyn-array i64)]) : i64
-  (if (>= index count)
-    used
+  (for [index (iterator.range 0 count)]
     (let
       [interval : CompilerRegInterval (array-ref items index)]
       [var : i64 interval.var]
@@ -28589,21 +27658,7 @@
               [(Spill _) false]
               [_ true])]
           [(No) false]))
-        (compiler-reg-color-walk
-          type-segment-bases
-          items
-          count
-          (+ index 1)
-          assignment-index
-          pinned
-          ineligible
-          colorable
-          var-tys
-          slot-ends
-          slot-tys
-          extent-ends
-          used
-          remap)
+        unit
         (let
           ;; Prefer the lowest SAME-TYPE scalar slot whose prior owner ended
           ;; before this variable starts. Otherwise take a fresh slot,
@@ -28617,8 +27672,7 @@
               (compiler-reg-global-shared-view slot-tys)
               (compiler-reg-global-shared-view ty)
               used
-              start
-              0)]
+              start)]
           [slot : i64
             (if (>= found used)
               (compiler-reg-color-next-free-slot slot-ends used)
@@ -28633,51 +27687,32 @@
             (set! (array-ref slot-tys slot) ty)
             unit)
           (set! (array-ref remap var) slot)
-          (compiler-reg-color-walk
-            type-segment-bases
-            items
-            count
-            (+ index 1)
-            assignment-index
-            pinned
-            ineligible
-            colorable
-            var-tys
-            slot-ends
-            slot-tys
-            extent-ends
-            next-used
-            remap))))))
+          (set! used next-used)))))
+  used)
 
 (define (compiler-reg-color-fill-interval-bounds
   [intervals : CompilerRegIntervalSeq]
   [starts : (&mut starts (__tl_dyn-array i64))]
   [ends : (&mut ends (__tl_dyn-array i64))]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count intervals))
-      (let
-        [interval : CompilerRegInterval
-          (compiler-reg-interval-seq-ref intervals index)]
-        [var : i64 interval.var]
-        (when
-          (and (>= var 0) (< var (array-length starts)))
-          (set! (array-ref starts var) interval.start)
-          (set! (array-ref ends var) interval.end)))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 (compiler-reg-interval-seq-count intervals))]
+    (let
+      [interval : CompilerRegInterval
+        (compiler-reg-interval-seq-ref intervals index)]
+      [var : i64 interval.var]
+      (when
+        (and (>= var 0) (< var (array-length starts)))
+        (set! (array-ref starts var) interval.start)
+        (set! (array-ref ends var) interval.end)))))
 
 (define (compiler-reg-color-mark-storage-vars
   [range-of-var : (&mut range-of-var (__tl_dyn-array i64))]
   [first : i64]
   [count : i64]
   [range-id : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i count)
-      (if (and (>= (+ first i) 0) (< (+ first i) (array-length range-of-var)))
-        (set! (array-ref range-of-var (+ first i)) range-id)
-        unit)
-      (set! i (+ i 1)))))
+  (for [i (iterator.range 0 count)]
+    (if (and (>= (+ first i) 0) (< (+ first i) (array-length range-of-var)))
+      (set! (array-ref range-of-var (+ first i)) range-id)
+      unit)))
 
 (define (compiler-reg-color-detect-storage-seq
   [instrs : ir.CompilerIrInstrSeq]
@@ -28688,12 +27723,11 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [i : i64 0]
     [run-first : i64 (- 0 1)]
     [run-last : i64 (- 0 1)]
     [run-count : i64 0]
     [ranges : i64 range-count]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (match (array-ref slots i)
         [(Alloc dst _)
           (if (or (= run-count 0) (= dst (+ run-last 1)))
@@ -28702,7 +27736,7 @@
                 (set! run-first dst)
                 unit)
               (set! run-last dst)
-              (set! run-count (+ run-count 1)))
+              (+= run-count 1))
             (begin
               (set! run-first dst)
               (set! run-last dst)
@@ -28721,15 +27755,14 @@
               run-first
               run-count
               ranges)
-            (set! ranges (+ ranges 1)))
+            (+= ranges 1))
           (set! run-first (- 0 1))
           (set! run-last (- 0 1))
           (set! run-count 0)]
         [_
           (set! run-first (- 0 1))
           (set! run-last (- 0 1))
-          (set! run-count 0)])
-      (set! i (+ i 1)))
+          (set! run-count 0)]))
     ranges))
 
 (define (compiler-reg-color-detect-storage-blocks
@@ -28741,9 +27774,8 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 range-count]
-        (while (< i (ir.compiler-ir-block-seq-count seq))
+        (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (set!
@@ -28753,8 +27785,7 @@
                   (compiler-reg-global-shared-view range-of-var)
                   (compiler-reg-global-shared-view range-base)
                   (compiler-reg-global-shared-view range-size)
-                  count))])
-          (set! i (+ i 1)))
+                  count))]))
         count)]))
 
 (define (compiler-reg-color-value-root
@@ -28979,8 +28010,7 @@
     [base : i64 (array-ref cursor 0)]
     [at : i64 (array-ref cursor 1)]
     [changed : bool false]
-    [i : i64 0]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (let
         [code : i64
           (compiler-reg-color-propagate-root-instr
@@ -28994,8 +28024,7 @@
         (unless
           (= (bit-and code 1) 0)
           (set! (array-ref candidates at) (+ base i))
-          (set! at (+ at 1)))
-        (set! i (+ i 1))))
+          (+= at 1))))
     (set! (array-ref cursor 1) at)
     (set! (array-ref cursor 0) (+ base len))
     changed))
@@ -29010,9 +28039,8 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [changed : bool false]
-        (while (< i (ir.compiler-ir-block-seq-count seq))
+        (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (if (compiler-reg-color-propagate-root-seq
@@ -29023,8 +28051,7 @@
                 candidates
                 (compiler-reg-global-shared-view cursor))
                 (set! changed true)
-                unit)])
-          (set! i (+ i 1)))
+                unit)]))
         changed)]))
 
 ;; Rounds two and up.
@@ -29075,9 +28102,8 @@
       (match cur
         [(Array seq)
           (let
-            [i : i64 0]
             [n : i64 (ir.compiler-ir-block-seq-count seq)]
-            (while (< i n)
+            (for [i (iterator.range 0 n)]
               (match (ir.compiler-ir-block-seq-ref seq i)
                 [(Block _ instrs)
                   (let
@@ -29096,14 +28122,13 @@
                             range-of-var
                             roots
                             invalid)))
-                      (set! at (+ at 1))
+                      (+= at 1)
                       (set!
                         ord
                         (if (< at count)
                           (array-ref candidates at)
                           max-ordinal)))
-                    (set! base limit))])
-              (set! i (+ i 1)))
+                    (set! base limit))]))
             (set! done true))]))
     (not (= (bit-and changed-bits 2) 0))))
 
@@ -29115,13 +28140,11 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 total]
-        (while (< i (ir.compiler-ir-block-seq-count seq))
+        (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (set! count (+ count (ir.compiler-ir-instr-seq-count instrs)))])
-          (set! i (+ i 1)))
+              (+= count (ir.compiler-ir-instr-seq-count instrs))]))
         count)]))
 
 (define (compiler-reg-color-propagate-roots
@@ -29163,7 +28186,7 @@
               invalid
               (compiler-reg-global-shared-view candidates)
               count))
-          (set! rounds (+ rounds 1)))))))
+          (+= rounds 1))))))
 
 (define (compiler-reg-color-invalidate-root!
   [invalid : (&mut invalid (__tl_dyn-array bool))]
@@ -29190,16 +28213,14 @@
   (match (compiler-reg-global-shared-view args)
     [(Sret items sret-index)
       (let
-        [i : i64 0]
         [len : i64 (array-length items)]
-        (while (< i len)
+        (for [i (iterator.range 0 len)]
           (if (not (= i sret-index))
             (compiler-reg-color-invalidate-value!
               (compiler-reg-global-shared-view roots)
               (compiler-reg-global-shared-view invalid)
               (compiler-reg-global-array-element-shared-view items i))
-            unit)
-          (set! i (+ i 1))))]
+            unit)))]
     [_
       (ir.compiler-ir-call-args-visit
         args
@@ -29373,13 +28394,11 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [i : i64 0]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (compiler-reg-color-invalidate-instr!
         (compiler-reg-global-array-element-shared-view slots i)
         (compiler-reg-global-shared-view roots)
-        (compiler-reg-global-shared-view invalid))
-      (set! i (+ i 1)))))
+        (compiler-reg-global-shared-view invalid)))))
 
 (define (compiler-reg-color-invalidate-blocks!
   [blocks : ir.CompilerIrBlockList]
@@ -29387,16 +28406,13 @@
   [invalid : (__tl_dyn-array bool)]) : unit
   (match blocks
     [(Array seq)
-      (let
-        [i : i64 0]
-        (while (< i (ir.compiler-ir-block-seq-count seq))
-          (match (ir.compiler-ir-block-seq-ref seq i)
-            [(Block _ instrs)
-              (compiler-reg-color-invalidate-seq!
-                instrs
-                (compiler-reg-global-shared-view roots)
-                (compiler-reg-global-shared-view invalid))])
-          (set! i (+ i 1))))]))
+      (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-ref seq i)
+          [(Block _ instrs)
+            (compiler-reg-color-invalidate-seq!
+              instrs
+              (compiler-reg-global-shared-view roots)
+              (compiler-reg-global-shared-view invalid))]))]))
 
 (define (compiler-reg-color-range-liveness!
   [roots : (__tl_dyn-array i64)]
@@ -29405,9 +28421,8 @@
   [range-starts : (&mut range-starts (__tl_dyn-array i64))]
   [range-ends : (&mut range-ends (__tl_dyn-array i64))]) : unit
   (let
-    [i : i64 0]
     [_max-start : i64 9223372036854775807]
-    (while (< i (array-length roots))
+    (for [i (iterator.range 0 (array-length roots))]
       (let
         [root : i64 (array-ref roots i)]
         (if (and (>= root 0) (< root (array-length range-starts)))
@@ -29422,8 +28437,7 @@
               (if (> end (array-ref range-ends root))
                 (set! (array-ref range-ends root) end)
                 unit)))
-          unit)
-        (set! i (+ i 1))))))
+          unit)))))
 
 (define (compiler-reg-color-range-free?
   [slot-ends : (& slot-ends (__tl_dyn-array i64))]
@@ -29440,7 +28454,7 @@
       (if (< (array-ref slot-ends (+ slot i)) start)
         unit
         (set! ok false))
-      (set! i (+ i 1)))
+      (+= i 1))
     ok))
 
 (define (compiler-reg-color-next-free-range
@@ -29454,7 +28468,7 @@
     (while (not done)
       (if (compiler-reg-color-range-free? slot-ends slot size start)
         (set! done true)
-        (set! slot (+ slot 1))))
+        (+= slot 1)))
     slot))
 
 (define (compiler-reg-color-set-range-ends!
@@ -29462,13 +28476,10 @@
   [slot : i64]
   [size : i64]
   [end : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i size)
-      (if (< (+ slot i) (array-length slot-ends))
-        (set! (array-ref slot-ends (+ slot i)) end)
-        unit)
-      (set! i (+ i 1)))))
+  (for [i (iterator.range 0 size)]
+    (if (< (+ slot i) (array-length slot-ends))
+      (set! (array-ref slot-ends (+ slot i)) end)
+      unit)))
 
 (define (compiler-reg-color-remap-storage-range!
   [remap : (&mut remap (__tl_dyn-array i64))]
@@ -29477,12 +28488,10 @@
   [slot : i64]) : unit
   (let
     [first : i64 (+ (- base size) 1)]
-    [i : i64 0]
-    (while (< i size)
+    (for [i (iterator.range 0 size)]
       (if (and (>= (+ first i) 0) (< (+ first i) (array-length remap)))
         (set! (array-ref remap (+ first i)) (+ slot i))
-        unit)
-      (set! i (+ i 1)))))
+        unit))))
 
 (define (compiler-reg-color-range-clear?
   [remap : (& remap (__tl_dyn-array i64))]
@@ -29499,7 +28508,7 @@
         (< (array-ref remap (+ first i)) 0))
         unit
         (set! ok false))
-      (set! i (+ i 1)))
+      (+= i 1))
     ok))
 
 (define (compiler-reg-color-storage-ranges
@@ -29513,10 +28522,9 @@
   [range-count : i64]
   [from : i64]) : i64
   (let
-    [range : i64 0]
     [used : i64 from]
     [max-start : i64 9223372036854775807]
-    (while (< range range-count)
+    (for [range (iterator.range 0 range-count)]
       (let
         [start : i64 (array-ref range-starts range)]
         [end : i64 (array-ref range-ends range)]
@@ -29536,8 +28544,7 @@
             (if (> (+ slot size) used)
               (set! used (+ slot size))
               unit))
-          unit)
-        (set! range (+ range 1))))
+          unit)))
     used))
 
 ;; Color only contiguous inline-storage ranges. These slots are addressed only
@@ -29564,12 +28571,9 @@
     [range-base : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [range-size : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [_cleared : unit
-      (let
-        [i : i64 0]
-        (while (< i vars)
-          (set! (array-ref range-of-var i) (- 0 1))
-          (set! (array-ref range-base i) (- 0 1))
-          (set! i (+ i 1))))]
+      (for [i (iterator.range 0 vars)]
+        (set! (array-ref range-of-var i) (- 0 1))
+        (set! (array-ref range-base i) (- 0 1)))]
     [range-count : i64
       (compiler-reg-color-detect-storage-blocks
         (compiler-reg-global-shared-view blocks)
@@ -29588,15 +28592,12 @@
         [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
         [max-start : i64 9223372036854775807]
         [_seeded : unit
-          (let
-            [i : i64 0]
-            (while (< i vars)
-              (set! (array-ref range-starts i) max-start)
-              (set! (array-ref range-ends i) (- 0 1))
-              (set! (array-ref roots i) (- 0 1))
-              (set! (array-ref starts i) (- 0 1))
-              (set! (array-ref ends i) (- 0 1))
-              (set! i (+ i 1))))]
+          (for [i (iterator.range 0 vars)]
+            (set! (array-ref range-starts i) max-start)
+            (set! (array-ref range-ends i) (- 0 1))
+            (set! (array-ref roots i) (- 0 1))
+            (set! (array-ref starts i) (- 0 1))
+            (set! (array-ref ends i) (- 0 1)))]
         (compiler-reg-color-fill-interval-bounds
           intervals
           (&mut starts)
@@ -29641,8 +28642,7 @@
       (compiler-reg-var-types-present types)]
     [source-items : (__tl_dyn-array ast.AstType)
       (compiler-reg-var-types-items types)]
-    [index : i64 0]
-    (while (< index (array-length source-present))
+    (for [index (iterator.range 0 (array-length source-present))]
       (if (=
         (compiler-reg-global-array-element-shared-view source-present index)
         0)
@@ -29651,8 +28651,7 @@
           present
           items
           (compiler-reg-remap-id (compiler-reg-global-shared-view remap) index)
-          (compiler-reg-global-array-element-shared-view source-items index)))
-      (set! index (+ index 1)))))
+          (compiler-reg-global-array-element-shared-view source-items index))))))
 
 (define (compiler-reg-color-rebuild-types
   [remap : (__tl_dyn-array i64)]
@@ -29681,8 +28680,7 @@
       (compiler-reg-assignment-table-present assignments)]
     [source-items : (__tl_dyn-array CompilerRegLocation)
       (compiler-reg-assignment-table-items assignments)]
-    [var : i64 0]
-    (while (< var (array-length source-present))
+    (for [var (iterator.range 0 (array-length source-present))]
       (if (=
         (compiler-reg-global-array-element-shared-view source-present var)
         0)
@@ -29701,8 +28699,7 @@
                 (when
                   (and (>= new-id 0) (< new-id (array-length present)))
                   (set! (array-ref present new-id) 1)
-                  (set! (array-ref items new-id) location)))])))
-      (set! var (+ var 1)))
+                  (set! (array-ref items new-id) location)))]))))
     unit))
 
 (define (compiler-reg-color-rebuild-assignments
@@ -29736,9 +28733,8 @@
   [slot-ends : (&mut slot-ends (__tl_dyn-array i64))]
   [highest : i64]) : i64
   (let
-    [position : i64 0]
     [out : i64 highest]
-    (while (< position params.len)
+    (for [position (iterator.range 0 params.len)]
       (match (ir.compiler-ir-param-seq-ref params position)
         [(Param name _ var-id)
           (when
@@ -29749,8 +28745,7 @@
             (set! (array-ref slot-ends var-id) 9223372036854775807))
           (if (compiler-reg-spmd-avx2-special-param? name)
             unit
-            (set! out (compiler-reg-max out (+ var-id 1))))])
-      (set! position (+ position 1)))
+            (set! out (compiler-reg-max out (+ var-id 1))))]))
     out))
 
 ;; --- M-B: stack-homed register-group Mov coalescing -------------------------
@@ -29788,24 +28783,21 @@
   [intervals : CompilerRegIntervalSeq]
   [starts : (&mut starts (__tl_dyn-array i64))]
   [ends : (&mut ends (__tl_dyn-array i64))]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count intervals))
-      (let
-        [interval : CompilerRegInterval
-          (compiler-reg-interval-seq-ref intervals index)]
-        [var : i64 interval.var]
-        [start : i64 interval.start]
-        [end : i64 interval.end]
-        (when
-          (and (>= var 0) (< var (array-length starts)))
-          (if (or (< (array-ref starts var) 0) (< start (array-ref starts var)))
-            (set! (array-ref starts var) start)
-            unit)
-          (if (> end (array-ref ends var))
-            (set! (array-ref ends var) end)
-            unit)))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 (compiler-reg-interval-seq-count intervals))]
+    (let
+      [interval : CompilerRegInterval
+        (compiler-reg-interval-seq-ref intervals index)]
+      [var : i64 interval.var]
+      [start : i64 interval.start]
+      [end : i64 interval.end]
+      (when
+        (and (>= var 0) (< var (array-length starts)))
+        (if (or (< (array-ref starts var) 0) (< start (array-ref starts var)))
+          (set! (array-ref starts var) start)
+          unit)
+        (if (> end (array-ref ends var))
+          (set! (array-ref ends var) end)
+          unit)))))
 
 (define (compiler-reg-color-group-mov-alias-instr!
   [type-segment-bases : i64]
@@ -29868,8 +28860,7 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [i : i64 0]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (compiler-reg-color-group-mov-alias-instr!
         type-segment-bases
         (compiler-reg-global-array-element-shared-view slots i)
@@ -29880,8 +28871,7 @@
         (compiler-reg-global-shared-view var-tys)
         (compiler-reg-global-shared-view remap)
         (compiler-reg-global-shared-view hull-starts)
-        (compiler-reg-global-shared-view hull-ends))
-      (set! i (+ i 1)))))
+        (compiler-reg-global-shared-view hull-ends)))))
 
 (define (compiler-reg-color-group-mov-alias-blocks!
   [type-segment-bases : i64]
@@ -29896,23 +28886,20 @@
   [hull-ends : (__tl_dyn-array i64)]) : unit
   (match blocks
     [(Array seq)
-      (let
-        [i : i64 0]
-        (while (< i (ir.compiler-ir-block-seq-count seq))
-          (match (ir.compiler-ir-block-seq-ref seq i)
-            [(Block _ instrs)
-              (compiler-reg-color-group-mov-alias-seq!
-                type-segment-bases
-                instrs
-                alias
-                group-vars
-                ineligible
-                assignment-index
-                (compiler-reg-global-shared-view var-tys)
-                (compiler-reg-global-shared-view remap)
-                (compiler-reg-global-shared-view hull-starts)
-                (compiler-reg-global-shared-view hull-ends))])
-          (set! i (+ i 1))))]))
+      (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-ref seq i)
+          [(Block _ instrs)
+            (compiler-reg-color-group-mov-alias-seq!
+              type-segment-bases
+              instrs
+              alias
+              group-vars
+              ineligible
+              assignment-index
+              (compiler-reg-global-shared-view var-tys)
+              (compiler-reg-global-shared-view remap)
+              (compiler-reg-global-shared-view hull-starts)
+              (compiler-reg-global-shared-view hull-ends))]))]))
 
 ;; Follow an alias chain (C=B after B=A) to its root. Chains are acyclic by
 ;; construction -- each link strictly advances the hull touch point -- but a
@@ -29929,7 +28916,7 @@
       (< root (array-length alias))
       (>= (array-ref alias root) 0))
       (set! root (array-ref alias root))
-      (set! steps (+ steps 1)))
+      (+= steps 1))
     root))
 
 ;; --- M-B2: stack-homed SCALAR phi/mov web slot sharing ----------------------
@@ -30019,9 +29006,8 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
     [after-items : (__tl_dyn-array live.CompilerLiveI64Set) live-afters.items]
-    [index : i64 0]
     [out-point : i64 point]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [instr : ir.CompilerIrInstr
           (compiler-reg-global-array-element-shared-view slots index)]
@@ -30061,8 +29047,7 @@
               id-count
               out-point)))
         (compiler-reg-extend-set-words starts ends live-after 0 (+ out-point 1))
-        (set! out-point (+ out-point 2))
-        (set! index (+ index 1))))
+        (+= out-point 2)))
     out-point))
 
 (define (compiler-reg-color-ep-hull-blocks!
@@ -30074,10 +29059,9 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [out-point : i64 point]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block label instrs)
               (set!
@@ -30089,8 +29073,7 @@
                     label)
                   out-point
                   starts
-                  ends))])
-          (set! i (+ i 1)))
+                  ends))]))
         out-point)]))
 
 ;; Per-variable core of the scalar walk's admission test: colorable, not
@@ -30108,23 +29091,20 @@
   [assignment-index : CompilerRegAssignmentTable]
   [colorable : (& colorable (__tl_dyn-array bool))]
   [remap : (& remap (__tl_dyn-array i64))]) : unit
-  (let
-    [i : i64 0]
-    (while (< i vars)
-      (set!
-        (array-ref slot-eligible i)
-        (and
-          (array-ref colorable i)
-          (not (live.compiler-live-set-contains? group-vars i))
-          (not (live.compiler-live-set-contains? ineligible i))
-          (< (array-ref remap i) 0)
-          (match (compiler-reg-assignment-table-lookup assignment-index i)
-            [(Some location)
-              (match location
-                [(Spill _) true]
-                [_ false])]
-            [(No) true])))
-      (set! i (+ i 1)))))
+  (for [i (iterator.range 0 vars)]
+    (set!
+      (array-ref slot-eligible i)
+      (and
+        (array-ref colorable i)
+        (not (live.compiler-live-set-contains? group-vars i))
+        (not (live.compiler-live-set-contains? ineligible i))
+        (< (array-ref remap i) 0)
+        (match (compiler-reg-assignment-table-lookup assignment-index i)
+          [(Some location)
+            (match location
+              [(Spill _) true]
+              [_ false])]
+          [(No) true])))))
 
 ;; One membership decision per variable, taken once so the per-pair test below
 ;; is three array reads. The scalar walk's own admission test plus the two
@@ -30135,16 +29115,13 @@
   [slot-eligible : (& slot-eligible (__tl_dyn-array bool))]
   [hull-starts : (& hull-starts (__tl_dyn-array i64))]
   [vector-stack-words : (& vector-stack-words (__tl_dyn-array i64))]) : unit
-  (let
-    [i : i64 0]
-    (while (< i vars)
-      (set!
-        (array-ref eligible i)
-        (and
-          (array-ref slot-eligible i)
-          (>= (array-ref hull-starts i) 0)
-          (= (compiler-reg-vector-stack-words-for-var vector-stack-words i) 1)))
-      (set! i (+ i 1)))))
+  (for [i (iterator.range 0 vars)]
+    (set!
+      (array-ref eligible i)
+      (and
+        (array-ref slot-eligible i)
+        (>= (array-ref hull-starts i) 0)
+        (= (compiler-reg-vector-stack-words-for-var vector-stack-words i) 1)))))
 
 ;; Largest web the all-pairs admission test will build. Bounds every member walk
 ;; below and keeps a link attempt's worst case at a few hundred array reads; real
@@ -30250,7 +29227,7 @@
             y)
           (return false)))
       (set! y (array-ref web-next y))
-      (set! steps (+ steps 1))
+      (+= steps 1)
       (when (= y root-b) (return true)))
     false))
 
@@ -30278,7 +29255,7 @@
           root-b)
         (return false))
       (set! x (array-ref web-next x))
-      (set! steps (+ steps 1))
+      (+= steps 1)
       (when (= x root-a) (return true)))
     false))
 
@@ -30321,8 +29298,7 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [i : i64 0]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (match (array-ref slots i)
         [(Mov dst src _)
           (compiler-reg-color-scalar-witness-operand! wit-a wit-b dst src)]
@@ -30331,8 +29307,7 @@
             (compiler-reg-color-scalar-step-op? op)
             (compiler-reg-color-scalar-witness-operand! wit-a wit-b dst lhs)
             (compiler-reg-color-scalar-witness-operand! wit-a wit-b dst rhs))]
-        [_ unit])
-      (set! i (+ i 1)))))
+        [_ unit]))))
 
 (define (compiler-reg-color-scalar-witness-blocks!
   [blocks : ir.CompilerIrBlockList]
@@ -30340,13 +29315,10 @@
   [wit-b : (&mut wit-b (__tl_dyn-array i64))]) : unit
   (match blocks
     [(Array seq)
-      (let
-        [i : i64 0]
-        (while (< i (ir.compiler-ir-block-seq-count seq))
-          (match (ir.compiler-ir-block-seq-ref seq i)
-            [(Block _ instrs)
-              (compiler-reg-color-scalar-witness-seq! instrs wit-a wit-b)])
-          (set! i (+ i 1))))]))
+      (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-ref seq i)
+          [(Block _ instrs)
+            (compiler-reg-color-scalar-witness-seq! instrs wit-a wit-b)]))]))
 
 ;; Absorb the web rooted at `root-b` into the one rooted at `root-a`: re-point
 ;; every absorbed member's alias directly at `root-a` (keeping the forest depth
@@ -30365,16 +29337,14 @@
     [count : i64 (array-ref web-size root-b)]
     [member : i64 root-b]
     [last : i64 root-b]
-    [i : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (set! (array-ref alias member) root-a)
       (set! (array-ref web-root member) false)
       (set!
         (array-ref web-end root-a)
         (compiler-reg-max (array-ref web-end root-a) (array-ref ep-ends member)))
       (set! last member)
-      (set! member (array-ref web-next member))
-      (set! i (+ i 1)))
+      (set! member (array-ref web-next member)))
     (set! (array-ref web-next root-a) root-b)
     (set! (array-ref web-next last) a-next)
     (set! (array-ref alias root-a) (- 0 1))
@@ -30789,8 +29759,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (compiler-reg-global-shared-view instrs.slots)]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [i : i64 0]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       ;; Loop-carry priority: offer this instruction's phi-defined inputs (and
       ;; the Mov witness) first, then its remaining inputs.
       (compiler-reg-color-scalar-alias-instr!
@@ -30829,8 +29798,7 @@
             wit-b
             phi-def
             false)]
-        [_ unit])
-      (set! i (+ i 1)))))
+        [_ unit]))))
 
 (define (compiler-reg-color-scalar-alias-blocks!
   [type-segment-bases : i64]
@@ -30849,27 +29817,24 @@
   [phi-def : (__tl_dyn-array bool)]) : unit
   (match blocks
     [(Array seq)
-      (let
-        [i : i64 0]
-        (while (< i (ir.compiler-ir-block-seq-count seq))
-          (match (ir.compiler-ir-block-seq-ref seq i)
-            [(Block _ instrs)
-              (compiler-reg-color-scalar-alias-seq!
-                type-segment-bases
-                instrs
-                (compiler-reg-global-shared-view alias)
-                (compiler-reg-global-shared-view web-root)
-                (compiler-reg-global-shared-view web-end)
-                (&mut web-next)
-                (compiler-reg-global-shared-view web-size)
-                (compiler-reg-global-shared-view eligible)
-                (compiler-reg-global-shared-view var-tys)
-                (compiler-reg-global-shared-view ep-starts)
-                (compiler-reg-global-shared-view ep-ends)
-                wit-a
-                wit-b
-                phi-def)])
-          (set! i (+ i 1))))]))
+      (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-ref seq i)
+          [(Block _ instrs)
+            (compiler-reg-color-scalar-alias-seq!
+              type-segment-bases
+              instrs
+              (compiler-reg-global-shared-view alias)
+              (compiler-reg-global-shared-view web-root)
+              (compiler-reg-global-shared-view web-end)
+              (&mut web-next)
+              (compiler-reg-global-shared-view web-size)
+              (compiler-reg-global-shared-view eligible)
+              (compiler-reg-global-shared-view var-tys)
+              (compiler-reg-global-shared-view ep-starts)
+              (compiler-reg-global-shared-view ep-ends)
+              wit-a
+              wit-b
+              phi-def)]))]))
 
 ;; Mark every variable defined by a Phi, for the loop-carry priority pass.
 (define (compiler-reg-color-scalar-phi-def-seq!
@@ -30879,8 +29844,7 @@
     [slots : (__tl_dyn-array ir.CompilerIrInstr)
       (compiler-reg-global-shared-view instrs.slots)]
     [len : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [i : i64 0]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (match (& (array-ref slots i))
         [(Phi _ _ _)
           (match (ir.compiler-ir-instr-seq-ref instrs i)
@@ -30889,21 +29853,17 @@
                 (and (>= dst 0) (< dst (array-length phi-def)))
                 (set! (array-ref phi-def dst) true))]
             [_ unit])]
-        [_ unit])
-      (set! i (+ i 1)))))
+        [_ unit]))))
 
 (define (compiler-reg-color-scalar-phi-def-blocks!
   [blocks : ir.CompilerIrBlockList]
   [phi-def : (&mut phi-def (__tl_dyn-array bool))]) : unit
   (match blocks
     [(Array seq)
-      (let
-        [i : i64 0]
-        (while (< i (ir.compiler-ir-block-seq-count seq))
-          (match (ir.compiler-ir-block-seq-ref seq i)
-            [(Block _ instrs)
-              (compiler-reg-color-scalar-phi-def-seq! instrs phi-def)])
-          (set! i (+ i 1))))]))
+      (for [i (iterator.range 0 (ir.compiler-ir-block-seq-count seq))]
+        (match (ir.compiler-ir-block-seq-ref seq i)
+          [(Block _ instrs)
+            (compiler-reg-color-scalar-phi-def-seq! instrs phi-def)]))]))
 
 ;; Cheap gate: does any Mov or Phi in the function relate two members-in-waiting?
 ;; A function with no candidate pair never pays for the edge-precise liveness
@@ -30975,7 +29935,7 @@
         eligible)
         (set! found true)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     found))
 
 (define (compiler-reg-color-scalar-alias-candidate-blocks?
@@ -30993,7 +29953,7 @@
               (compiler-reg-color-scalar-alias-candidate-seq? instrs eligible)])
             (set! found true)
             unit)
-          (set! i (+ i 1)))
+          (+= i 1))
         found)]))
 
 (define (compiler-reg-color-scalar-alias
@@ -31055,14 +30015,11 @@
         (compiler-reg-color-scalar-phi-def-blocks!
           (compiler-reg-global-shared-view blocks)
           (&mut phi-def))
-        (let
-          [i : i64 0]
-          (while (< i vars)
-            (set! (array-ref web-end i) (array-ref ep-ends i))
-            (set! (array-ref web-root i) false)
-            (set! (array-ref web-next i) i)
-            (set! (array-ref web-size i) 1)
-            (set! i (+ i 1))))
+        (for [i (iterator.range 0 vars)]
+          (set! (array-ref web-end i) (array-ref ep-ends i))
+          (set! (array-ref web-root i) false)
+          (set! (array-ref web-next i) i)
+          (set! (array-ref web-size i) 1))
         (compiler-reg-color-scalar-alias-blocks!
           type-segment-bases
           blocks
@@ -31104,9 +30061,8 @@
   [slot-eligible : (__tl_dyn-array bool)]) : i64
   (let
     [count : i64 (compiler-reg-interval-seq-count intervals)]
-    [index : i64 0]
     [out-index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [interval : CompilerRegInterval
           (compiler-reg-interval-seq-ref intervals index)]
@@ -31115,8 +30071,7 @@
             slot-eligible
             (compiler-reg-color-group-alias-root alias interval.var))
           (set! (array-ref items out-index) interval)
-          (set! out-index (+ out-index 1))))
-      (set! index (+ index 1)))
+          (+= out-index 1))))
     out-index))
 
 ;; Retarget every kept interval of an aliased member onto its web root, so the
@@ -31128,20 +30083,17 @@
   [items : (&mut items (__tl_dyn-array CompilerRegInterval))]
   [count : i64]
   [alias : (& alias (__tl_dyn-array i64))]) : unit
-  (let
-    [i : i64 0]
-    (while (< i count)
-      (let
-        [interval : CompilerRegInterval (array-ref items i)]
-        [var : i64 interval.var]
-        [root : i64 (compiler-reg-color-group-alias-root alias var)]
-        (unless
-          (= root var)
-          (set!
-            (array-ref items i)
-            (CompilerRegInterval root interval.start interval.end))
-          unit))
-      (set! i (+ i 1)))))
+  (for [i (iterator.range 0 count)]
+    (let
+      [interval : CompilerRegInterval (array-ref items i)]
+      [var : i64 interval.var]
+      [root : i64 (compiler-reg-color-group-alias-root alias var)]
+      (unless
+        (= root var)
+        (set!
+          (array-ref items i)
+          (CompilerRegInterval root interval.start interval.end))
+        unit))))
 
 ;; Members took no slot of their own during the walk; hand each one its web
 ;; root's slot. A member the storage pass already claimed keeps that home, so no
@@ -31150,17 +30102,14 @@
   [remap : (&mut remap (__tl_dyn-array i64))]
   [alias : (__tl_dyn-array i64)]
   [vars : i64]) : unit
-  (let
-    [i : i64 0]
-    (while (< i vars)
-      (if (< (array-ref remap i) 0)
-        (let
-          [root : i64 (compiler-reg-color-group-alias-root alias i)]
-          (if (and (not (= root i)) (>= (array-ref remap root) 0))
-            (set! (array-ref remap i) (array-ref remap root))
-            unit))
-        unit)
-      (set! i (+ i 1)))))
+  (for [i (iterator.range 0 vars)]
+    (if (< (array-ref remap i) 0)
+      (let
+        [root : i64 (compiler-reg-color-group-alias-root alias i)]
+        (if (and (not (= root i)) (>= (array-ref remap root) 0))
+          (set! (array-ref remap i) (array-ref remap root))
+          unit))
+      unit)))
 
 ;; Total frame renumbering: colorable stack scalars share slots when their
 ;; intervals are disjoint, colorable inline-storage ranges are shared above
@@ -31234,7 +30183,7 @@
           (+
             (+
               vars
-              (compiler-reg-vector-stack-extra-slots vector-stack-words 0 0))
+              (compiler-reg-vector-stack-extra-slots vector-stack-words 0))
             8)]
         [slot-ends : (__tl_dyn-array i64) (__tl_make-array i64 slots)]
         [assignments : CompilerRegAssignmentTable
@@ -31260,15 +30209,11 @@
         ;; overwrites the entries it decides. `references` above relies on the
         ;; same zero-fill for its "no IR reference" default.
         [_cleared : unit
-          (let
-            [i : i64 0]
-            (while (< i slots)
-              (set! (array-ref slot-ends i) (- 0 1))
-              (set! i (+ i 1)))
-            (set! i 0)
-            (while (< i vars)
-              (set! (array-ref remap i) (- 0 1))
-              (set! i (+ i 1))))]
+          (begin
+            (for [i (iterator.range 0 slots)]
+              (set! (array-ref slot-ends i) (- 0 1)))
+            (for [i (iterator.range 0 vars)]
+              (set! (array-ref remap i) (- 0 1))))]
         [_flagged : unit
           (begin
             (compiler-reg-color-flags
@@ -31276,24 +30221,18 @@
               (&mut colorable))
             ;; Scratch pseudo-vars are consumed through planned registers or
             ;; the scavenger, never through formula stack slots.
-            (let
-              [i : i64 slot-candidate-vars]
-              (while (< i vars)
-                (set! (array-ref colorable i) false)
-                (set! i (+ i 1))))
+            (for [i (iterator.range slot-candidate-vars vars)]
+              (set! (array-ref colorable i) false))
             ;; Clearing the colorable flag is exactly the "no shared slot"
             ;; decision: it withdraws the variable from the scalar walk AND
             ;; from the phi/mov web builder (the only two mechanisms that hand
             ;; one slot to several variables), leaving the private-slot loop
             ;; below to give it a fresh id of its own.
             (if (> (live.compiler-live-set-word-count identity-pinned) 0)
-              (let
-                [i : i64 0]
-                (while (< i vars)
-                  (if (live.compiler-live-set-contains? identity-pinned i)
-                    (set! (array-ref colorable i) false)
-                    unit)
-                  (set! i (+ i 1))))
+              (for [i (iterator.range 0 vars)]
+                (if (live.compiler-live-set-contains? identity-pinned i)
+                  (set! (array-ref colorable i) false)
+                  unit))
               unit))]
         ;; Count direct IR uses and defs, not type-table membership: dead defs
         ;; still emit a write, while raw-id holes and register-only scratch
@@ -31401,7 +30340,6 @@
             type-segment-bases
             sorted
             sorted-count
-            0
             assignment-index
             group-vars
             ineligible
@@ -31513,7 +30451,7 @@
                               words)]
                           (set! (array-ref remap i) (+ slot (- words 1)))
                           (set! next (+ slot words)))]))))
-              (set! i (+ i 1)))
+              (+= i 1))
             ;; Scratch pseudo-vars live above the real-IR watermark and are
             ;; register-only. Preserve those already-disjoint ids instead
             ;; of letting the generic free-id pass alias them onto a frame
@@ -31522,7 +30460,7 @@
               (if (< (array-ref remap i) 0)
                 (set! (array-ref remap i) i)
                 unit)
-              (set! i (+ i 1)))
+              (+= i 1))
             next)]
         [_renumbered
           : unit
@@ -31536,24 +30474,20 @@
           ;; `references` and `colorable` above do.
           (let
             [taken : (__tl_dyn-array bool) (__tl_make-array bool vars)]
-            [i : i64 0]
             [free : i64 0]
-            (while (< i vars)
+            (for [i (iterator.range 0 vars)]
               (if (and (>= (array-ref remap i) 0) (< (array-ref remap i) vars))
                 (set! (array-ref taken (array-ref remap i)) true)
-                unit)
-              (set! i (+ i 1)))
-            (set! i 0)
-            (while (< i vars)
+                unit))
+            (for [i (iterator.range 0 vars)]
               (when
                 (< (array-ref remap i) 0)
                 (while (if (< free vars)
                   (array-ref taken free)
                   false)
-                  (set! free (+ free 1)))
+                  (+= free 1))
                 (set! (array-ref remap i) free)
-                (set! free (+ free 1)))
-              (set! i (+ i 1))))]
+                (+= free 1))))]
         (Remap remap (compiler-reg-max slot-count param-floor))))))
 
 ;; --- var-id remap application ----------------------------------------------
@@ -31580,8 +30514,7 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrParam)
       (__tl_make-array ir.CompilerIrParam params.len)]
-    [position : i64 0]
-    (while (< position params.len)
+    (for [position (iterator.range 0 params.len)]
       (match (ir.compiler-ir-param-seq-ref params position)
         [(Param name ty var)
           (set!
@@ -31591,8 +30524,7 @@
               ty
               (compiler-reg-remap-id
                 (compiler-reg-global-shared-view remap)
-                var)))])
-      (set! position (+ position 1)))
+                var)))]))
     (ir.CompilerIrParamSeq slots params.len)))
 
 (define (compiler-reg-remap-use
@@ -31638,14 +30570,12 @@
     [count : i64 instrs.len]
     [out : (__tl_dyn-array ir.CompilerIrInstr)
       (__tl_make-array ir.CompilerIrInstr count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref out index)
         (compiler-reg-remap-instr
           (compiler-reg-global-shared-view remap)
-          (compiler-reg-global-array-element-shared-view slots index)))
-      (set! index (+ index 1)))
+          (compiler-reg-global-array-element-shared-view slots index))))
     (ir.CompilerIrInstrSeq out count)))
 
 (define (compiler-reg-remap-blocks
@@ -31657,8 +30587,7 @@
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
         [slots : (__tl_dyn-array ir.CompilerIrBlock)
           (__tl_make-array ir.CompilerIrBlock count)]
-        [i : i64 0]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block label instrs)
               (set!
@@ -31667,8 +30596,7 @@
                   label
                   (compiler-reg-remap-instr-seq
                     (compiler-reg-global-shared-view remap)
-                    instrs)))])
-          (set! i (+ i 1)))
+                    instrs)))]))
         (Array (ir.CompilerIrBlockSeq slots count)))]))
 
 (define (compiler-reg-plan-assignments [plan : CompilerRegPlan]) : CompilerRegAssignmentTable
@@ -31732,18 +30660,14 @@
         [present : (__tl_dyn-array i64) (__tl_make-array i64 size)]
         [items : (__tl_dyn-array ast.AstType)
           (__tl_make-array ast.AstType size)]
-        [index : i64 0]
-        (while (< index (array-length base-present))
+        (for [index (iterator.range 0 (array-length base-present))]
           (set! (array-ref present index) (array-ref base-present index))
-          (set! (array-ref items index) (array-ref base-items index))
-          (set! index (+ index 1)))
-        (set! index 0)
-        (while (< index (array-length extra-present))
+          (set! (array-ref items index) (array-ref base-items index)))
+        (for [index (iterator.range 0 (array-length extra-present))]
           (unless
             (= (array-ref extra-present index) 0)
             (set! (array-ref present index) 1)
-            (set! (array-ref items index) (array-ref extra-items index)))
-          (set! index (+ index 1)))
+            (set! (array-ref items index) (array-ref extra-items index))))
         (compiler-reg-var-types-new
           present
           items
@@ -31769,8 +30693,7 @@
   [best : i64]) : i64
   (let
     [out : i64 best]
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count intervals))
+    (for [index (iterator.range 0 (compiler-reg-interval-seq-count intervals))]
       (let
         [var : i64
           (__tl-project-field
@@ -31778,8 +30701,7 @@
             var)]
         (if (>= var out)
           (set! out (+ var 1))
-          unit))
-      (set! index (+ index 1)))
+          unit)))
     out))
 
 (define (compiler-reg-plan-var-count-assignments
@@ -31792,7 +30714,7 @@
     (while (if (< var 0)
       false
       (= (array-ref present var) 0))
-      (set! var (- var 1)))
+      (-= var 1))
     (if (>= var best)
       (+ var 1)
       best)))
@@ -31806,7 +30728,7 @@
     (while (if (< index 0)
       false
       (= (array-ref present index) 0))
-      (set! index (- index 1)))
+      (-= index 1))
     (if (>= index best)
       (+ index 1)
       best)))
@@ -32056,16 +30978,14 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 instrs.len]
-    [i : i64 0]
     [count : i64 0]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (if (compiler-reg-early-scratch-target?
         (compiler-reg-global-array-element-shared-view slots i))
         ;; Reuse the generic divmod model's fixed width: rax, rdx, and
         ;; three simultaneous GP temporaries.
-        (set! count (+ count 5))
-        unit)
-      (set! i (+ i 1)))
+        (+= count 5)
+        unit))
     count))
 
 (define (compiler-reg-early-scratch-count-blocks
@@ -32073,16 +30993,12 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [len : i64 (ir.compiler-ir-block-seq-count seq)]
         [count : i64 0]
-        (while (< i len)
+        (for [i (iterator.range 0 len)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
-              (set!
-                count
-                (+ count (compiler-reg-early-scratch-count-seq instrs)))])
-          (set! i (+ i 1)))
+              (+= count (compiler-reg-early-scratch-count-seq instrs))]))
         count)]))
 
 (define (compiler-reg-early-scratch-divmod-requirement
@@ -32175,10 +31091,9 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [len : i64 instrs.len]
-    [i : i64 0]
     [instruction : i64 instruction-start]
     [scratch : i64 scratch-start]
-    (while (< i len)
+    (for [i (iterator.range 0 len)]
       (let
         [instr : ir.CompilerIrInstr
           (compiler-reg-global-array-element-shared-view slots i)]
@@ -32187,9 +31102,8 @@
             (compiler-reg-global-shared-view instr))]
         (if (compiler-reg-early-scratch-target?
           (compiler-reg-global-shared-view instr))
-          (let
-            [ordinal : i64 0]
-            (while (< ordinal slot-count)
+          (begin
+            (for [ordinal (iterator.range 0 slot-count)]
               (compiler-reg-early-scratch-mark-one!
                 assignment-view
                 assignment-table
@@ -32209,12 +31123,10 @@
                 (array-ref scratch-weights (+ scratch ordinal))
                 (if (>= ordinal 2)
                   block-weight
-                  0))
-              (set! ordinal (+ ordinal 1)))
-            (set! scratch (+ scratch slot-count)))
+                  0)))
+            (+= scratch slot-count))
           unit)
-        (set! instruction (+ instruction 1))
-        (set! i (+ i 1))))
+        (+= instruction 1)))
     (State instruction scratch)))
 
 (define (compiler-reg-early-scratch-fill-blocks!
@@ -32236,11 +31148,10 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [len : i64 (ir.compiler-ir-block-seq-count seq)]
         [instruction : i64 instruction-start]
         [scratch : i64 scratch-start]
-        (while (< i len)
+        (for [i (iterator.range 0 len)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (match (compiler-reg-early-scratch-fill-seq!
@@ -32261,8 +31172,7 @@
                 scratch-excluded)
                 [(State next-instruction next-scratch)
                   (set! instruction next-instruction)
-                  (set! scratch next-scratch)])])
-          (set! i (+ i 1)))
+                  (set! scratch next-scratch)])]))
         (State instruction scratch))]))
 
 (define (compiler-reg-early-scratch-model
@@ -32366,14 +31276,11 @@
     (let
       [out : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
       [max-raw : i64 0]
-      [r : i64 0]
-      [v : i64 scratch-base]
       (compiler-reg-copy-i64-array! (&mut out) weights 0)
-      (while (< r (array-length raw-weights))
+      (for [r (iterator.range 0 (array-length raw-weights))]
         (if (> (array-ref raw-weights r) max-raw)
           (set! max-raw (array-ref raw-weights r))
-          unit)
-        (set! r (+ r 1)))
+          unit))
       ;; Use the same (discounted * radix + raw) scale as real values. Scratch
       ;; is not rematerialisable, so its discounted and raw costs are equal.
       ;; A non-zero demand wins an exact real-value tie by one unit: failing to
@@ -32383,7 +31290,7 @@
       ;; preservation-cost tie-break. A zero-weight slot is inert. A demand
       ;; that remains unassigned is completed by the bounded preservation
       ;; planner below instead of perturbing a hotter ordinary allocation.
-      (while (< v vars)
+      (for [v (iterator.range scratch-base vars)]
         (let
           [scratch-index : i64 (- v scratch-base)]
           [weight : i64
@@ -32416,8 +31323,7 @@
               (+
                 (* priced (compiler-reg-priority-band-span))
                 (- (compiler-reg-priority-band-span) 1)))]
-          (set! (array-ref out v) key)
-          (set! v (+ v 1))))
+          (set! (array-ref out v) key)))
       out)))
 
 (define (compiler-reg-early-scratch-intervals
@@ -32427,15 +31333,13 @@
     [out : CompilerRegIntervalSeq
       (compiler-reg-interval-seq-with-capacity
         (compiler-reg-interval-seq-count intervals))]
-    [index : i64 0]
-    (while (< index (compiler-reg-interval-seq-count intervals))
+    (for [index (iterator.range 0 (compiler-reg-interval-seq-count intervals))]
       (let
         [interval : CompilerRegInterval
           (compiler-reg-interval-seq-ref intervals index)]
         (if (>= interval.var scratch-base)
           (set! out (compiler-reg-interval-seq-append out interval))
-          unit)
-        (set! index (+ index 1))))
+          unit)))
     out))
 
 (define (compiler-reg-assignment-table-copy-range!
@@ -32443,15 +31347,12 @@
   [src : CompilerRegAssignmentTable]
   [start : i64]
   [end : i64]) : unit
-  (let
-    [v : i64 start]
-    (while (< v end)
-      (match (compiler-reg-assignment-table-lookup src v)
-        [(Some location)
-          (compiler-reg-assignment-table-insert dst v location)
-          unit]
-        [(No) unit])
-      (set! v (+ v 1)))))
+  (for [v (iterator.range start end)]
+    (match (compiler-reg-assignment-table-lookup src v)
+      [(Some location)
+        (compiler-reg-assignment-table-insert dst v location)
+        unit]
+      [(No) unit])))
 
 (define (compiler-reg-assignment-table-prefix
   [assignments : CompilerRegAssignmentTable]
@@ -32701,9 +31602,8 @@
       (if (< (array-length present) vars)
         (array-length present)
         vars)]
-    [var : i64 0]
     [mask : i64 0]
-    (while (< var limit)
+    (for [var (iterator.range 0 limit)]
       (if (and
         (not (= (array-ref present var) 0))
         (< var (array-length starts))
@@ -32716,8 +31616,7 @@
             mask
             (compiler-reg-scratch-location-mask
               (compiler-reg-global-array-element-shared-view items var))))
-        unit)
-      (set! var (+ var 1)))
+        unit))
     mask))
 
 ;; Every register the plan homes anything in: the callee-saved members of this
@@ -32734,9 +31633,8 @@
       (if (< (array-length present) vars)
         (array-length present)
         vars)]
-    [var : i64 0]
     [mask : i64 0]
-    (while (< var limit)
+    (for [var (iterator.range 0 limit)]
       (if (= (array-ref present var) 0)
         unit
         (set!
@@ -32744,8 +31642,7 @@
           (bit-or
             mask
             (compiler-reg-scratch-location-mask
-              (compiler-reg-global-array-element-shared-view items var)))))
-      (set! var (+ var 1)))
+              (compiler-reg-global-array-element-shared-view items var))))))
     mask))
 
 (define (compiler-reg-scratch-borrow-cost
@@ -32769,10 +31666,9 @@
           (compiler-reg-scratch-plan-home-mask assignments vars)))]
     [window : i64 (/ (compiler-reg-scratch-borrow-window) 2)]
     [count : i64 (ir.compiler-ir-block-seq-count seq)]
-    [block : i64 0]
     [instruction : i64 0]
     [total : i64 0]
-    (while (< block count)
+    (for [block (iterator.range 0 count)]
       (match (ir.compiler-ir-block-seq-ref seq block)
         [(Block _ instrs)
           (let
@@ -32782,8 +31678,7 @@
               (if (< block (array-length weights))
                 (array-ref weights block)
                 1)]
-            [i : i64 0]
-            (while (< i len)
+            (for [i (iterator.range 0 len)]
               (let
                 [demand : i64
                   (compiler-reg-scratch-borrow-demand
@@ -32802,13 +31697,11 @@
                           (+ instruction window))
                         -1))
                     0)
-                    (set! total (+ total (* 2 (* demand weight))))
+                    (+= total (* 2 (* demand weight)))
                     unit)
                   unit)
-                (set! instruction (+ instruction 1))
-                (set! i (+ i 1))))
-            unit)])
-      (set! block (+ block 1)))
+                (+= instruction 1)))
+            unit)]))
     total))
 
 (define (compiler-reg-caller-save-remap-fill!
@@ -32892,8 +31785,8 @@
           (set! (array-ref r-hi at) hi)
           (set! (array-ref r-entry at) entry-flag)
           (set! (array-ref r-exit at) exit-flag)])
-      (set! at (+ at 1))
-      (set! index (- index 1)))))
+      (+= at 1)
+      (-= index 1))))
 
 (define (compiler-reg-call-region-sort-swap!
   [arr : (&mut arr (__tl_dyn-array i64))]
@@ -32911,19 +31804,16 @@
   [r-entry : (&mut r-entry (__tl_dyn-array i64))]
   [r-exit : (&mut r-exit (__tl_dyn-array i64))]
   [count : i64]) : unit
-  (let
-    [i : i64 1]
-    (while (< i count)
-      (let
-        [j : i64 i]
-        (while (and (> j 0) (> (array-ref r-lo (- j 1)) (array-ref r-lo j)))
-          (compiler-reg-call-region-sort-swap! r-var (- j 1) j)
-          (compiler-reg-call-region-sort-swap! r-lo (- j 1) j)
-          (compiler-reg-call-region-sort-swap! r-hi (- j 1) j)
-          (compiler-reg-call-region-sort-swap! r-entry (- j 1) j)
-          (compiler-reg-call-region-sort-swap! r-exit (- j 1) j)
-          (set! j (- j 1)))
-        (set! i (+ i 1))))))
+  (for [i (iterator.range 1 count)]
+    (let
+      [j : i64 i]
+      (while (and (> j 0) (> (array-ref r-lo (- j 1)) (array-ref r-lo j)))
+        (compiler-reg-call-region-sort-swap! r-var (- j 1) j)
+        (compiler-reg-call-region-sort-swap! r-lo (- j 1) j)
+        (compiler-reg-call-region-sort-swap! r-hi (- j 1) j)
+        (compiler-reg-call-region-sort-swap! r-entry (- j 1) j)
+        (compiler-reg-call-region-sort-swap! r-exit (- j 1) j)
+        (-= j 1)))))
 
 (define (compiler-reg-call-region-control-flow-instr?
   [instr : ir.CompilerIrInstr]) : bool
@@ -32950,23 +31840,20 @@
   [point : i64]
   [type-info : CompilerRegVarTypes]
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]) : unit
-  (let
-    [j : i64 0]
-    (while (< j active-n)
-      (let
-        [root : i64 (array-ref active j)]
-        (if (and
-          (= (array-ref act-hi root) point)
-          (= (array-ref act-exit root) 1)
-          (>= (array-ref act-w root) 0))
-          (ir.compiler-ir-instr-builder-push!
-            (&mut builder)
-            (ir.CompilerIrInstr.Mov
-              root
-              (Var (array-ref act-w root))
-              (compiler-reg-caller-save-var-type type-info root)))
-          unit)
-        (set! j (+ j 1))))))
+  (for [j (iterator.range 0 active-n)]
+    (let
+      [root : i64 (array-ref active j)]
+      (if (and
+        (= (array-ref act-hi root) point)
+        (= (array-ref act-exit root) 1)
+        (>= (array-ref act-w root) 0))
+        (ir.compiler-ir-instr-builder-push!
+          (&mut builder)
+          (ir.CompilerIrInstr.Mov
+            root
+            (Var (array-ref act-w root))
+            (compiler-reg-caller-save-var-type type-info root)))
+        unit))))
 
 ;; Eviction steps sorted by point, saves before restores when a point carries
 ;; both (it never does, but the order is the semantically safe one).
@@ -32978,16 +31865,13 @@
   (let
     [slots : (__tl_dyn-array CompilerRegCallEvict) evictions.slots]
     [count : i64 evictions.len]
-    [i : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (match (array-ref slots i)
         [(CompilerRegCallEvict var point kind)
           (set! (array-ref e-var i) var)
           (set! (array-ref e-point i) point)
-          (set! (array-ref e-kind i) kind)])
-      (set! i (+ i 1)))
-    (set! i 1)
-    (while (< i count)
+          (set! (array-ref e-kind i) kind)]))
+    (for [i (iterator.range 1 count)]
       (let
         [j : i64 i]
         (while (and
@@ -33000,8 +31884,7 @@
           (compiler-reg-call-region-sort-swap! e-var (- j 1) j)
           (compiler-reg-call-region-sort-swap! e-point (- j 1) j)
           (compiler-reg-call-region-sort-swap! e-kind (- j 1) j)
-          (set! j (- j 1)))
-        (set! i (+ i 1))))))
+          (-= j 1))))))
 
 (define (compiler-reg-caller-save-rewrite-blocks
   [blocks : ir.CompilerIrBlockList]
@@ -33078,7 +31961,6 @@
         [nblocks : i64 seq.len]
         [out : ir.CompilerIrBlockBuilder
           (ir.compiler-ir-block-builder-with-capacity nblocks)]
-        [b : i64 0]
         (compiler-reg-call-region-fill-arrays!
           regions
           (&mut r-var)
@@ -33105,36 +31987,33 @@
         ;; earlier in layout than its save (the save follows the victim's
         ;; definition, and a loop may exit backwards into an enclosing body),
         ;; so the var has to exist before the walk, not at the save's turn.
-        (let
-          [ei : i64 0]
-          (while (< ei e-count)
-            (let
-              [victim : i64 (array-ref e-var ei)]
-              (when
-                (and
-                  (= (array-ref e-kind ei) (compiler-reg-call-evict-kind-save))
-                  (>= victim 0)
-                  (< victim (array-length evict-w))
-                  (< (array-ref evict-w victim) 0))
-                (let
-                  [w : i64 next-var]
-                  (set! next-var (+ next-var 1))
-                  (set! (array-ref evict-w victim) w)
-                  (set!
-                    extra-assignments
-                    (compiler-reg-assignments-prepend
-                      (CompilerRegAssignment
-                        w
-                        (Spill (compiler-reg-stack-slot-offset w)))
-                      extra-assignments))
-                  (set!
-                    extra-types
-                    (compiler-reg-var-types-insert
-                      extra-types
+        (for [ei (iterator.range 0 e-count)]
+          (let
+            [victim : i64 (array-ref e-var ei)]
+            (when
+              (and
+                (= (array-ref e-kind ei) (compiler-reg-call-evict-kind-save))
+                (>= victim 0)
+                (< victim (array-length evict-w))
+                (< (array-ref evict-w victim) 0))
+              (let
+                [w : i64 next-var]
+                (+= next-var 1)
+                (set! (array-ref evict-w victim) w)
+                (set!
+                  extra-assignments
+                  (compiler-reg-assignments-prepend
+                    (CompilerRegAssignment
                       w
-                      (compiler-reg-caller-save-var-type type-info victim)))))
-              (set! ei (+ ei 1)))))
-        (while (< b nblocks)
+                      (Spill (compiler-reg-stack-slot-offset w)))
+                    extra-assignments))
+                (set!
+                  extra-types
+                  (compiler-reg-var-types-insert
+                    extra-types
+                    w
+                    (compiler-reg-caller-save-var-type type-info victim)))))))
+        (for [b (iterator.range 0 nblocks)]
           (match (compiler-reg-global-array-element-shared-view bslots b)
             [(Block label instrs)
               (let
@@ -33157,10 +32036,9 @@
                     (ir.compiler-ir-block-builder-push!
                       (&mut out)
                       (ir.CompilerIrBlock.Block label instrs))
-                    (set! point (+ point span)))
+                    (+= point span))
                   (let
                     [islots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
-                    [i : i64 0]
                     ;; Forward scan into a builder, interleaving
                     ;; region-entry movs and control-flow exit stores in
                     ;; program order, with no list at all. Seeded at the
@@ -33168,7 +32046,7 @@
                     ;; those movs/stores.
                     [builder : ir.CompilerIrInstrBuilder
                       (ir.compiler-ir-instr-builder-with-capacity ilen)]
-                    (while (< i ilen)
+                    (for [i (iterator.range 0 ilen)]
                       (let
                         [instr : ir.CompilerIrInstr
                           (compiler-reg-global-array-element-shared-view
@@ -33179,11 +32057,11 @@
                         (while (and
                           (< cursor count)
                           (< (array-ref r-lo cursor) point))
-                          (set! cursor (+ cursor 1)))
+                          (+= cursor 1))
                         (while (and
                           (< e-cursor e-count)
                           (< (array-ref e-point e-cursor) point))
-                          (set! e-cursor (+ e-cursor 1)))
+                          (+= e-cursor 1))
                         ;; Parked-occupant save/reload steps, emitted
                         ;; BEFORE the activations below: at the anchor
                         ;; the victim's store has to read its register
@@ -33218,7 +32096,7 @@
                                     (compiler-reg-caller-save-var-type
                                       type-info
                                       victim)))))
-                            (set! e-cursor (+ e-cursor 1))))
+                            (+= e-cursor 1)))
                         ;; activations at this point
                         (while (and
                           (< cursor count)
@@ -33240,7 +32118,7 @@
                                 (>= (array-ref act-w root) 0))
                               ;; defensive decline: no register or
                               ;; already active
-                              (set! next-var (+ next-var 1))
+                              (+= next-var 1)
                               (set!
                                 extra-assignments
                                 (compiler-reg-assignments-prepend
@@ -33266,8 +32144,8 @@
                                 (array-ref r-exit cursor))
                               (set! (array-ref remap root) w)
                               (set! (array-ref active active-n) root)
-                              (set! active-n (+ active-n 1)))
-                            (set! cursor (+ cursor 1))))
+                              (+= active-n 1))
+                            (+= cursor 1)))
                         (let
                           [out-instr : ir.CompilerIrInstr
                             (if (> active-n 0)
@@ -33318,13 +32196,12 @@
                                   (begin
                                     (set! (array-ref remap root) root)
                                     (set! (array-ref act-w root) (- 0 1))
-                                    (set! active-n (- active-n 1))
+                                    (-= active-n 1)
                                     (set!
                                       (array-ref active j)
                                       (array-ref active active-n)))
-                                  (set! j (+ j 1)))))))
-                        (set! point (+ point 2))
-                        (set! i (+ i 1))))
+                                  (+= j 1))))))
+                        (+= point 2)))
                     ;; Defensive drain. A loop row deliberately outlives
                     ;; its first block -- the back edge is INSIDE the
                     ;; span, which is where its win comes from -- so the
@@ -33342,17 +32219,16 @@
                             (begin
                               (set! (array-ref remap root) root)
                               (set! (array-ref act-w root) (- 0 1))
-                              (set! active-n (- active-n 1))
+                              (-= active-n 1)
                               (set!
                                 (array-ref active j)
                                 (array-ref active active-n)))
-                            (set! j (+ j 1))))))
+                            (+= j 1)))))
                     (ir.compiler-ir-block-builder-push!
                       (&mut out)
                       (ir.CompilerIrBlock.Block
                         label
-                        (ir.compiler-ir-instr-builder-to-seq builder))))))])
-          (set! b (+ b 1)))
+                        (ir.compiler-ir-instr-builder-to-seq builder))))))]))
         (Rewrite
           (ir.compiler-ir-block-builder-to-list out)
           vars
@@ -33419,14 +32295,12 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-reg-remat-table-record-def!
         table
         (compiler-reg-global-array-element-shared-view slots index)
         (compiler-reg-global-shared-view facts)
-        narrow-allow)
-      (set! index (+ index 1)))))
+        narrow-allow))))
 
 (define (compiler-reg-remat-table-record-blocks!
   [table : (& table CompilerRegRematTable)]
@@ -33436,17 +32310,15 @@
   (match blocks
     [(Array seq)
       (let
-        [i : i64 0]
         [count : i64 (ir.compiler-ir-block-seq-count seq)]
-        (while (< i count)
+        (for [i (iterator.range 0 count)]
           (match (ir.compiler-ir-block-seq-ref seq i)
             [(Block _ instrs)
               (compiler-reg-remat-table-record-instrs!
                 table
                 instrs
                 (compiler-reg-global-shared-view facts)
-                narrow-allow)])
-          (set! i (+ i 1))))]))
+                narrow-allow)])))]))
 
 (define (compiler-reg-remat-table-build
   [func : ir.CompilerIrFunction]

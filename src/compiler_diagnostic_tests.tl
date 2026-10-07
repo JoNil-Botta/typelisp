@@ -8,6 +8,7 @@
 ;; compiler-diagnostic-self-test entry that drives them.
 ;; All production rendering and classification machinery stays in
 ;; compiler_diagnostic.tl.
+(import stdlib.iterator)
 (import compiler_diagnostic as cdiag)
 (import token)
 (import stdlib.string)
@@ -26,7 +27,7 @@
           (if (= (string.string-ref left idx) (string.string-ref right idx))
             unit
             (set! ok false))
-          (set! idx (+ idx 1)))
+          (+= idx 1))
         ok)
       false)))
 
@@ -618,8 +619,8 @@
             (cdiag.compiler-diagnostic-code-registry-code other))
             (set! ok false)
             unit)
-          (set! other (+ other 1))))
-      (set! index (+ index 1)))
+          (+= other 1)))
+      (+= index 1))
     (and
       ok
       (string.eq (cdiag.compiler-diagnostic-code-registry-code count) "")
@@ -646,13 +647,11 @@
         (* old-capacity 2))]
     [next : (__tl_dyn-array cdiag.CompilerAdvisory)
       (__tl_make-array cdiag.CompilerAdvisory new-capacity)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref next index)
         (cdiag.compiler-advisory-copy-ref
-          (& (array-ref advisories.slots index))))
-      (set! index (+ index 1)))
+          (& (array-ref advisories.slots index)))))
     (set! advisories.slots next)))
 
 (define (compiler-advisory-list-push!

@@ -1,5 +1,6 @@
 ;; compiler_semantic_index_tests.tl - White-box tests for the semantic source index:
 ;; record, visibility, macro, partial-check and canonical-symbol checks.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
@@ -136,16 +137,12 @@
 (define (compiler-semantic-source-index-canonical-key-byte-count
   [index : (& index sem.CompilerSemanticSourceIndex)]) : i64
   (let
-    [canonical-index : i64 0]
     [bytes : i64 0]
-    (while (< canonical-index index.canonical-symbol-len)
-      (set!
+    (for [canonical-index (iterator.range 0 index.canonical-symbol-len)]
+      (+=
         bytes
-        (+
-          bytes
-          (string.string-length
-            (array-ref index.canonical-symbols canonical-index))))
-      (set! canonical-index (+ canonical-index 1)))
+        (string.string-length
+          (array-ref index.canonical-symbols canonical-index))))
     bytes))
 
 (define (compiler-semantic-source-index-scope-region-count
@@ -169,79 +166,63 @@
         (+
           (* index.canonical-symbol-len (comptime (size-of (type String))))
           (compiler-semantic-source-index-canonical-key-byte-count index)))]
-    [path-index : i64 0]
-    [binding-index : i64 0]
-    [candidate-index : i64 0]
-    (set!
+    (+=
       bytes
       (+
-        bytes
+        (*
+          index.path-len
+          (comptime (size-of (type CompilerSemanticSourcePathInfo))))
         (+
           (*
-            index.path-len
-            (comptime (size-of (type CompilerSemanticSourcePathInfo))))
+            index.module-len
+            (comptime (size-of (type CompilerSemanticModuleInfo))))
           (+
             (*
-              index.module-len
-              (comptime (size-of (type CompilerSemanticModuleInfo))))
+              index.module-event-len
+              (comptime (size-of (type CompilerSemanticModuleEvent))))
             (+
               (*
-                index.module-event-len
-                (comptime (size-of (type CompilerSemanticModuleEvent))))
-              (+
-                (*
-                  index.scope-event-len
-                  (comptime (size-of (type CompilerSemanticScopeEvent))))
-                (*
-                  index.binding-len
-                  (comptime (size-of (type CompilerSemanticBinding))))))))))
-    (set!
+                index.scope-event-len
+                (comptime (size-of (type CompilerSemanticScopeEvent))))
+              (*
+                index.binding-len
+                (comptime (size-of (type CompilerSemanticBinding)))))))))
+    (+=
       bytes
       (+
-        bytes
+        (*
+          index.top-candidate-len
+          (comptime (size-of (type CompilerSemanticTopCandidateRef))))
         (+
+          (* index.top-candidate-len (comptime (size-of (type String))))
           (*
             index.top-candidate-len
-            (comptime (size-of (type CompilerSemanticTopCandidateRef))))
-          (+
-            (* index.top-candidate-len (comptime (size-of (type String))))
-            (*
-              index.top-candidate-len
-              (comptime (size-of (type CompilerSemanticVisibleBinding))))))))
-    (while (< path-index index.path-len)
-      (set!
+            (comptime (size-of (type CompilerSemanticVisibleBinding)))))))
+    (for [path-index (iterator.range 0 index.path-len)]
+      (+=
         bytes
-        (+
-          bytes
-          (string.string-length
-            (owned_view.compiler-owned-array-element-shared-view
-              index.paths
-              path-index).path)))
-      (set! path-index (+ path-index 1)))
-    (while (< binding-index index.binding-len)
+        (string.string-length
+          (owned_view.compiler-owned-array-element-shared-view
+            index.paths
+            path-index).path)))
+    (for [binding-index (iterator.range 0 index.binding-len)]
       (let
         [binding : sem.CompilerSemanticBinding
           (owned_view.compiler-owned-array-element-shared-view
             index.bindings
             binding-index)]
-        (set!
+        (+=
           bytes
           (+
-            bytes
-            (+
-              (string.string-length binding.display-name)
-              (string.string-length binding.resolved-type))))
-        (set! binding-index (+ binding-index 1))))
-    (while (< candidate-index index.top-candidate-len)
-      (set!
+            (string.string-length binding.display-name)
+            (string.string-length binding.resolved-type)))))
+    (for [candidate-index (iterator.range 0 index.top-candidate-len)]
+      (+=
         bytes
-        (+
-          bytes
-          (string.string-length
-            (owned_view.compiler-owned-array-element-shared-view
-              index.top-labels
-              candidate-index))))
-      (set! candidate-index (+ candidate-index 1)))
+        (string.string-length
+          (owned_view.compiler-owned-array-element-shared-view
+            index.top-labels
+            candidate-index))))
     bytes))
 
 (define (compiler-semantic-source-index-visible-binding-count
@@ -257,7 +238,7 @@
       (match (sem.compiler-semantic-visible-binding-cursor-step index cursor)
         [(Some _ next)
           (set! cursor next)
-          (set! count (+ count 1))]
+          (+= count 1)]
         [(Done) (set! done true)]))
     count))
 
@@ -295,7 +276,7 @@
           (string.eq record.span.path path))
           (set! found record-index)
           unit)
-        (set! record-index (+ record-index 1))))
+        (+= record-index 1)))
     found))
 
 (define (compiler-check-semantic-index-record-ok?
@@ -378,7 +359,7 @@
           (or (string.eq path "") (string.eq record.span.path path)))
           (set! found record-index)
           unit)
-        (set! record-index (+ record-index 1))))
+        (+= record-index 1)))
     found))
 
 (define (compiler-semantic-source-index-find-name-occurrence
@@ -411,9 +392,9 @@
           (or (string.eq path "") (string.eq record.span.path path)))
           (if (= seen occurrence)
             (set! found record-index)
-            (set! seen (+ seen 1)))
+            (+= seen 1))
           unit)
-        (set! record-index (+ record-index 1))))
+        (+= record-index 1)))
     found))
 
 (define (compiler-semantic-source-index-name-symbol-match?
@@ -487,9 +468,9 @@
           (string.eq record.display-name name))
           (if (= seen occurrence)
             (set! found record-index)
-            (set! seen (+ seen 1)))
+            (+= seen 1))
           unit)
-        (set! record-index (+ record-index 1))))
+        (+= record-index 1)))
     found))
 
 (define (compiler-semantic-source-index-count-macro-uses
@@ -497,9 +478,8 @@
   [name : String]
   [editable : bool]) : i64
   (let
-    [record-index : i64 0]
     [count : i64 0]
-    (while (< record-index index.len)
+    (for [record-index (iterator.range 0 index.len)]
       (let
         [record : sem.CompilerSemanticRecord
           (owned_view.compiler-owned-array-element-shared-view
@@ -514,9 +494,8 @@
             [_ false])
           (= record.editable editable)
           (string.eq record.display-name name))
-          (set! count (+ count 1))
-          unit)
-        (set! record-index (+ record-index 1))))
+          (+= count 1)
+          unit)))
     count))
 
 (define (compiler-semantic-record-vec-growth-ok?) : bool
@@ -544,16 +523,15 @@
   [needle : String]
   [start : i64]) : i64
   (let
-    [index : i64
-      (if (< start 0)
-        0
-        start)]
     [limit : i64
       (- (string.string-length source) (string.string-length needle))]
-    (while (<= index limit)
-      (if (string.is-string-prefix-at source (& needle) index)
-        (return index)
-        (set! index (+ index 1))))
+    (for [index
+      (iterator.range
+        (if (< start 0)
+          0
+          start)
+        (+ limit 1))]
+      (when (string.is-string-prefix-at source (& needle) index) (return index)))
     -1))
 
 (define (compiler-semantic-test-visible-label-count
@@ -570,7 +548,7 @@
       (match (sem.compiler-semantic-visible-binding-cursor-step index cursor)
         [(Some binding next)
           (if (string.eq binding.display-name label)
-            (set! count (+ count 1))
+            (+= count 1)
             unit)
           (set! cursor next)]
         [(Done) (set! done true)]))
@@ -721,9 +699,8 @@
             index
             bound-query
             (compiler-semantic-binding-namespace-all-mask))]
-        [repeat : i64 0]
         [repeated-ok : bool true]
-        (while (< repeat 100)
+        (for [repeat (iterator.range 0 100)]
           (if (=
             (compiler-semantic-source-index-visible-binding-count
               index
@@ -731,8 +708,7 @@
               (compiler-semantic-binding-namespace-all-mask))
             repeated-count)
             unit
-            (set! repeated-ok false))
-          (set! repeat (+ repeat 1)))
+            (set! repeated-ok false)))
         (and
           (>= init-query.path-index 0)
           (>= bound-query.path-index 0)
@@ -2603,8 +2579,7 @@
       [(Ok _ index)
         (let
           [shadow-chain-ok : bool true]
-          [shadow-occurrence : i64 0]
-          (while (<= shadow-occurrence 10)
+          (for [shadow-occurrence (iterator.range 0 (+ 10 1))]
             (if (compiler-semantic-source-index-name-symbol-match?
               (& index)
               path
@@ -2612,8 +2587,7 @@
               shadow-occurrence
               shadow-occurrence)
               unit
-              (set! shadow-chain-ok false))
-            (set! shadow-occurrence (+ shadow-occurrence 1)))
+              (set! shadow-chain-ok false)))
           (let
             [ok : bool
               (and
@@ -3117,17 +3091,15 @@
         "(import semantic.index.definitely_missing as missing)\n(define local : i64 1)"
         "local"
         false)]
-    [iteration : i64 0]
     [bounded : bool true]
-    (while (< iteration 8)
+    (for [iteration (iterator.range 0 8)]
       (if (compiler-check-semantic-index-partial-edge-result-ok?
         (owned_view.compiler-owned-shared-view path)
         "(define current : i64 true)"
         "current"
         true)
         unit
-        (set! bounded false))
-      (set! iteration (+ iteration 1)))
+        (set! bounded false)))
     (and
       before-first
       bad-import
@@ -4324,15 +4296,13 @@
     (match (compiler-check-source-index-with-roots path source (svec.new))
       [(Ok _ index)
         (let
-          [candidate-index : i64 0]
           [sparse-macro-count : i64 0]
-          (while (< candidate-index index.top-candidate-len)
+          (for [candidate-index (iterator.range 0 index.top-candidate-len)]
             (if (string.eq
               (array-ref index.top-labels candidate-index)
               "sparse-candidate")
-              (set! sparse-macro-count (+ sparse-macro-count 1))
-              unit)
-            (set! candidate-index (+ candidate-index 1)))
+              (+= sparse-macro-count 1)
+              unit))
           (let
             [ok : bool
               (and

@@ -129,7 +129,7 @@
       [index : i64 0]
       (while (< index (array-length slots))
         (set! (array-ref slots index) 7797)
-        (set! index (+ index 1))))))
+        (+= index 1)))))
 
 (define (export-test-emit-ok?
   [metadata : String]

@@ -10,6 +10,7 @@
 ;; 8-byte slots) plus the named imports the loader must bind before the W^X
 ;; seal. Extern Call/TailCall sites are rejected: host access goes through
 ;; extern *values* (GOT loads), never direct extern calls.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_object as cobj)
@@ -60,13 +61,11 @@
   [records : cobj.CompilerObjectDataRecordList]) : i64
   (let
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
-    [index : i64 0]
     [fixups : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (cobj.compiler-object-data-record-list-ref records index)
-        [(SymbolAddress _) (set! fixups (+ fixups 1))]
-        [_ unit])
-      (set! index (+ index 1)))
+        [(SymbolAddress _) (+= fixups 1)]
+        [_ unit]))
     fixups))
 
 ;; Section base offsets for one layout run, passed by value.
@@ -99,9 +98,8 @@
   [base : i64]) : unit
   (let
     [count : i64 (cobj.compiler-object-data-record-list-count records)]
-    [index : i64 0]
     [offset : i64 base]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [record : cobj.CompilerObjectDataRecord
           (cobj.compiler-object-data-record-list-ref records index)]
@@ -115,8 +113,7 @@
           [_ unit])
         (set!
           offset
-          (cobj.compiler-object-data-record-end-offset record offset))
-        (set! index (+ index 1))))))
+          (cobj.compiler-object-data-record-end-offset record offset))))))
 
 (define (compiler-tlci-native-build-symbol-index
   [image : cobj.CompilerObjectImage]
@@ -129,15 +126,13 @@
     [instr-count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [offsets : tlci_native_string_i64_map.Map
       (tlci_native_string_i64_map.with-capacity (+ instr-count 16))]
-    [instr-index : i64 0]
     [offset : i64 bases.text]
     [symbols : cobj.CompilerObjectSymbolList
       (owned_view.compiler-owned-shared-view image.symbols)]
     [symbol-count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [externs : tlci_native_string_i64_map.Map
       (tlci_native_string_i64_map.with-capacity (+ symbol-count 1))]
-    [symbol-index : i64 0]
-    (while (< instr-index instr-count)
+    (for [instr-index (iterator.range 0 instr-count)]
       (let
         [instr : cobj.CompilerObjectX64Instr
           (cobj.compiler-object-instr-list-ref instrs instr-index)]
@@ -149,10 +144,7 @@
               offset)
             unit]
           [_ unit])
-        (set!
-          offset
-          (+ offset (layout.compiler-object-layout-instr-size instr)))
-        (set! instr-index (+ instr-index 1))))
+        (+= offset (layout.compiler-object-layout-instr-size instr))))
     (compiler-tlci-native-index-data-labels!
       (&mut offsets)
       (compiler-tlci-native-section-data
@@ -169,14 +161,13 @@
       (&mut offsets)
       (compiler-tlci-native-section-data image (Bss))
       bases.bss)
-    (while (< symbol-index symbol-count)
+    (for [symbol-index (iterator.range 0 symbol-count)]
       (match (cobj.compiler-object-symbol-list-ref symbols symbol-index)
         [(Symbol name binding _ _)
           (match binding
             [(Extern)
               (tlci_native_string_i64_map.insert-ref! (&mut externs) name 1)]
-            [_ unit])])
-      (set! symbol-index (+ symbol-index 1)))
+            [_ unit])]))
     (CompilerTlciNativeSymbolIndex offsets externs)))
 
 ;; GOT slot offset for extern `name`, allocating on first use. This also keeps
@@ -196,7 +187,7 @@
     (while (and (< found 0) (< index count))
       (if (string.eq (array-ref import-names index) name)
         (set! found index)
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if (>= found 0)
       (array-ref import-offsets found)
       (if (>= count compiler-tlci-native-import-cap)
@@ -605,10 +596,8 @@
                 (+ offset 4)
                 target))]
           [_ unit])
-        (set!
-          offset
-          (+ offset (layout.compiler-object-layout-instr-size instr)))
-        (set! index (+ index 1))))
+        (+= offset (layout.compiler-object-layout-instr-size instr))
+        (+= index 1)))
     ok))
 
 ;; Patch SymbolAddress slots in a rendered data region and record each slot
@@ -674,7 +663,7 @@
         (set!
           offset
           (cobj.compiler-object-data-record-end-offset record offset))
-        (set! index (+ index 1))))
+        (+= index 1)))
     ok))
 
 ;; Lay out the object image as one mappable region: text | rodata | data |
@@ -883,13 +872,11 @@
     [count : i64 layout.fixup-count]
     [out : (__tl_dyn-array u8)
       (__tl_make-array u8 (* count tlci_core.tlci-section-fixup-record-size))]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (tlci_core.tlci-set-u64!
         (&mut out)
         (* index tlci_core.tlci-section-fixup-record-size)
-        (array-ref layout.fixup-offsets index))
-      (set! index (+ index 1)))
+        (array-ref layout.fixup-offsets index)))
     out))
 
 ;; Reverse the compiler's assembly-safe spelling for the callback-name
@@ -906,18 +893,18 @@
           (<= (+ index 9) len)
           (string.eq (string.substring encoded index 9) "_question"))
           (set! out (str_cat.str-cat out "?"))
-          (set! index (+ index 9))]
+          (+= index 9)]
         [(and
           (<= (+ index 3) len)
           (string.eq (string.substring encoded index 3) "_gt"))
           (set! out (str_cat.str-cat out ">"))
-          (set! index (+ index 3))]
+          (+= index 3)]
         [(= (string.string-ref encoded index) '_')
           (set! out (str_cat.str-cat out "-"))
-          (set! index (+ index 1))]
+          (+= index 1)]
         [else
           (set! out (str_cat.str-cat out (string.substring encoded index 1)))
-          (set! index (+ index 1))]))
+          (+= index 1)]))
     out))
 
 ;; Map a canonical extern symbol to the source-level name resolved by the
@@ -966,8 +953,8 @@
               import-name))
           (begin
             (set! (array-ref names index) name)
-            (set! names-len (+ names-len (string.string-length name)))
-            (set! index (+ index 1))))))
+            (+= names-len (string.string-length name))
+            (+= index 1)))))
     (if (= (string.string-length error) 0)
       (if (= count 0)
         (Ok (__tl_make-array u8 0))
@@ -999,7 +986,7 @@
               (tlci_core.tlci-set-u64! (&mut out) (+ record 8) name-offset)
               (tlci_core.tlci-set-u64! (&mut out) (+ record 16) name-len)
               (tlci_core.tlci-put-string! (&mut out) name-offset name)
-              (set! name-offset (+ name-offset name-len))
-              (set! index (+ index 1))))
+              (+= name-offset name-len)
+              (+= index 1)))
           (Ok out)))
       (Err error))))

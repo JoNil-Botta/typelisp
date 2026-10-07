@@ -17,6 +17,7 @@
 ;; the plain (not total-enum) forms, an integer is an `i64`, a bare nominal type
 ;; is a struct, and call arguments take the canonical `CompilerIrCallArgs`
 ;; shape. Malformed text aborts with the offending line.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import stdlib.string)
@@ -45,18 +46,15 @@
   (let
     [n : i64 (string.string-length text)]
     [count : i64 1]
-    [i : i64 0]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (if (= (string.char-at text i) '\n')
-        (set! count (+ count 1))
-        unit)
-      (set! i (+ i 1)))
+        (+= count 1)
+        unit))
     (let
       [lines : (__tl_dyn-array String) (__tl_make-array String count)]
       [kept : i64 0]
       [start : i64 0]
-      (set! i 0)
-      (while (<= i n)
+      (for [i (iterator.range 0 (+ n 1))]
         (if (or (= i n) (= (string.char-at text i) '\n'))
           (let
             [line : String
@@ -64,10 +62,9 @@
             (when
               (> (string.string-length line) 0)
               (set! (array-ref lines kept) line)
-              (set! kept (+ kept 1)))
+              (+= kept 1))
             (set! start (+ i 1)))
-          unit)
-        (set! i (+ i 1)))
+          unit))
       (IrTextLines lines kept 0))))
 
 (define (ir-text-lines-more? [doc : (& doc IrTextLines)]) : bool
@@ -81,7 +78,7 @@
 (define (ir-text-lines-take! [doc : (&mut doc IrTextLines)]) : String
   (let
     [line : String (ir-text-lines-peek doc)]
-    (set! doc.next (+ doc.next 1))
+    (+= doc.next 1)
     line))
 
 (define (ir-text-lines-done! [doc : (& doc IrTextLines)]) : unit
@@ -94,12 +91,10 @@
   [prefix : (& prefix str)]) : i64
   (let
     [count : i64 0]
-    [i : i64 0]
-    (while (< i doc.count)
+    (for [i (iterator.range 0 doc.count)]
       (if (string.is-string-prefix-at (& (array-ref doc.lines i)) prefix 0)
-        (set! count (+ count 1))
-        unit)
-      (set! i (+ i 1)))
+        (+= count 1)
+        unit))
     count))
 
 (define (ir-text-label-line? [line : (& line str)]) : bool
@@ -120,7 +115,7 @@
   (while (and
     (< cur.pos (string.string-length cur.line))
     (= (string.char-at cur.line cur.pos) ' '))
-    (set! cur.pos (+ cur.pos 1))))
+    (+= cur.pos 1)))
 
 (define (ir-text-at-end? [cur : (&mut cur IrTextCursor)]) : bool
   (ir-text-skip-blanks! cur)
@@ -130,7 +125,7 @@
   (ir-text-skip-blanks! cur)
   (if (string.is-string-prefix-at cur.line lit cur.pos)
     (begin
-      (set! cur.pos (+ cur.pos (string.string-length lit)))
+      (+= cur.pos (string.string-length lit))
       true)
     false))
 
@@ -148,7 +143,7 @@
       (< cur.pos (string.string-length cur.line))
       (not (= (string.char-at cur.line cur.pos) ' '))
       (not (string.contains-char stops (string.char-at cur.line cur.pos))))
-      (set! cur.pos (+ cur.pos 1)))
+      (+= cur.pos 1))
     (if (= cur.pos start)
       (ir-text-error cur "expected a word")
       (string.substring cur.line start (- cur.pos start)))))
@@ -162,7 +157,7 @@
       (let
         [code : i64 (cast (string.char-at text i) : i64)]
         (set! ok (and (>= code (cast '0' : i64)) (<= code (cast '9' : i64))))
-        (set! i (+ i 1))))
+        (+= i 1)))
     ok))
 
 (define (ir-text-int? [text : (& text str)]) : bool
@@ -261,15 +256,13 @@
         [types : ast.AstTypeList (ir-text-type-list! cur)]
         [count : i64 (ast.ast-type-list-len (& types))]
         [args : ast.AstTypeList (ast.ast-type-list-new)]
-        [i : i64 0]
         (if (= count 0)
           (ir-text-error cur "a function type needs a return type")
           unit)
-        (while (< i (- count 1))
+        (for [i (iterator.range 0 (- count 1))]
           (ast.ast-type-list-push
             (&mut args)
-            (ast.ast-type-list-get (& types) i (ast.ast-type-id-fallback)))
-          (set! i (+ i 1)))
+            (ast.ast-type-list-get (& types) i (ast.ast-type-id-fallback))))
         (Func
           (box args)
           (ast.ast-type-list-get
@@ -442,7 +435,7 @@
         (ir.compiler-ir-bin-op-render (clone (array-ref ops i))))
         (set! found i)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     found))
 
 (define (ir-text-binop [index : i64] [shift-ty : ast.AstType]) : ir.CompilerIrBinOp
@@ -557,16 +550,14 @@
         (set!
           (array-ref slots count)
           (ir.CompilerIrCAbiReturnSlot.Slot ty (ir-text-int! cur)))
-        (set! count (+ count 1))
+        (+= count 1)
         (ir-text-accept! cur ",")
         unit))
     (let
       [exact : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
         (__tl_make-array ir.CompilerIrCAbiReturnSlot count)]
-      [i : i64 0]
-      (while (< i count)
-        (set! (array-ref exact i) (clone (array-ref slots i)))
-        (set! i (+ i 1)))
+      (for [i (iterator.range 0 count)]
+        (set! (array-ref exact i) (clone (array-ref slots i))))
       (ir.compiler-ir-c-abi-return-slot-seq-of exact count))))
 
 ;; `name(args)` of a direct call.
@@ -1035,16 +1026,14 @@
       (< (+ doc.next count) doc.count)
       (not (ir-text-label-line? (& (array-ref doc.lines (+ doc.next count)))))
       (not (string.eq (& (array-ref doc.lines (+ doc.next count))) "}")))
-      (set! count (+ count 1)))
+      (+= count 1))
     (let
       [builder : ir.CompilerIrInstrBuilder
         (ir.compiler-ir-instr-builder-with-capacity count)]
-      [i : i64 0]
-      (while (< i count)
+      (for [i (iterator.range 0 count)]
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir-text-instr-line (ir-text-lines-take! doc)))
-        (set! i (+ i 1)))
+          (ir-text-instr-line (ir-text-lines-take! doc))))
       (ir.compiler-ir-instr-builder-to-seq builder))))
 
 (define (ir-text-block! [doc : (&mut doc IrTextLines)]) : ir.CompilerIrBlock
@@ -1074,12 +1063,10 @@
   [start : i64]) : i64
   (let
     [count : i64 0]
-    [i : i64 start]
-    (while (< i (string.string-length text))
+    (for [i (iterator.range start (string.string-length text))]
       (if (string.is-string-prefix-at text needle i)
-        (set! count (+ count 1))
-        unit)
-      (set! i (+ i 1)))
+        (+= count 1)
+        unit))
     count))
 
 ;; `name=%var:type`, comma separated, up to the closing `close` or, when

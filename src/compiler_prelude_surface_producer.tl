@@ -1,5 +1,6 @@
 ;; Shared deterministic module-set helpers for package and standalone producers.
 ;; The cold-load/typecheck/encode entry belongs to tools/embedded-stdlib-tlci.
+(import stdlib.iterator)
 (import compiler_ast_types as ast)
 (import compiler_surface_identity as surface_identity)
 (import stdlib.string)
@@ -15,32 +16,28 @@
     (while (and (not present) (< index (surface_svec.len items)))
       (if (string.eq (surface_svec.get items index "") path)
         (set! present true)
-        (set! index (+ index 1))))
+        (+= index 1)))
     present))
 
 (define (prelude-surface-module-set [paths : ast.AstDeclPathList]) : (__tl_dyn-array
     String)
   (let
     [items : surface_svec.Vec (surface_svec.new)]
-    [index : i64 0]
     [count : i64 (ast.ast-decl-path-list-len (& paths))]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [path : String
           (ast.ast-array-shared-view paths.slots (+ paths.offset index))]
         (if (prelude-surface-path-present? (& items) (& path))
           unit
-          (surface_svec.push-ref! (&mut items) path))
-        (set! index (+ index 1))))
+          (surface_svec.push-ref! (&mut items) path))))
     (let
       [out (__tl_make-array String (surface_svec.len (& items)))]
-      [copy-index : i64 0]
       [sort-index : i64 1]
-      (while (< copy-index (surface_svec.len (& items)))
+      (for [copy-index (iterator.range 0 (surface_svec.len (& items)))]
         (set!
           (array-ref out copy-index)
-          (surface_svec.get (& items) copy-index ""))
-        (set! copy-index (+ copy-index 1)))
+          (surface_svec.get (& items) copy-index "")))
       (while (< sort-index (array-length out))
         (let
           [value : String (ast.ast-array-shared-view out sort-index)]
@@ -53,7 +50,7 @@
             (set!
               (array-ref out scan)
               (ast.ast-array-shared-view out (- scan 1)))
-            (set! scan (- scan 1)))
+            (-= scan 1))
           (set! (array-ref out scan) value)
-          (set! sort-index (+ sort-index 1))))
+          (+= sort-index 1)))
       out)))

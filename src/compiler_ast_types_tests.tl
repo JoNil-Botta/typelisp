@@ -1,6 +1,7 @@
 ;; compiler_ast_types_tests.tl - White-box tests for the AST node pools, list
 ;; helpers and span oracles.
 (cfg test (import stdlib.str_cat_runtime as str_cat))
+(import stdlib.iterator)
 (import compiler_intern as ci)
 (cfg test (import compiler_intern_tests as intern_tests))
 (import compiler_builtin_ids as cbi)
@@ -105,15 +106,13 @@
   (let
     [out : ast.AstExprClauseList
       (ast.ast-expr-clause-list-with-capacity (- items.len 1))]
-    [index : i64 1]
-    (while (< index items.len)
+    (for [index (iterator.range 1 items.len)]
       (ast.ast-expr-clause-list-push
         (&mut out)
         (ast.ast-expr-clause-list-get
           (& items)
           index
-          (ast.ast-expr-clause-fallback)))
-      (set! index (+ index 1)))
+          (ast.ast-expr-clause-fallback))))
     out))
 
 (define (ast-expr-binding-clause-list-tail
@@ -121,15 +120,13 @@
   (let
     [out : ast.AstExprBindingClauseList
       (ast.ast-expr-binding-clause-list-with-capacity (- items.len 1))]
-    [index : i64 1]
-    (while (< index items.len)
+    (for [index (iterator.range 1 items.len)]
       (ast.ast-expr-binding-clause-list-push
         (&mut out)
         (ast.ast-expr-binding-clause-list-get
           (& items)
           index
-          (ast.ast-expr-binding-clause-fallback)))
-      (set! index (+ index 1)))
+          (ast.ast-expr-binding-clause-fallback))))
     out))
 
 ;; The AstType-taking constructors intern the type themselves, so call sites

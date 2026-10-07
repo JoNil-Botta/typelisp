@@ -1,4 +1,5 @@
 ;; compiler_diagnostic.tl - Shared selfhost compiler diagnostic payloads.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.arena)
 (import token)
@@ -243,11 +244,8 @@
   [dst : (&mut dst (__tl_dyn-array CompilerDiagnostic))]
   [src : (& src (__tl_dyn-array CompilerDiagnostic))]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (set! (array-ref dst index) (array-ref src index))))
 
 (define (compiler-diagnostic-list-grow!
   [diagnostics : (&mut diagnostics CompilerDiagnosticList)]) : unit
@@ -292,7 +290,7 @@
         (set!
           (array-ref diagnostics.slots cursor)
           (array-ref diagnostics.slots (- cursor 1)))
-        (set! cursor (- cursor 1)))
+        (-= cursor 1))
       (set! (array-ref diagnostics.slots index) diag)
       (set! diagnostics.len (+ count 1)))))
 
@@ -796,11 +794,9 @@
     [src : (__tl_dyn-array CompilerDiagnosticLabel) labels.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticLabel)
       (__tl_make-array CompilerDiagnosticLabel (+ count 1))]
-    [index : i64 0]
     (set! (array-ref dst 0) label)
-    (while (< index count)
-      (set! (array-ref dst (+ index 1)) (array-ref src index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref dst (+ index 1)) (array-ref src index)))
     (CompilerDiagnosticLabelList dst (+ count 1))))
 
 (define (compiler-diagnostic-copy-label-list
@@ -810,8 +806,7 @@
     [src : (__tl_dyn-array CompilerDiagnosticLabel) labels.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticLabel)
       (__tl_make-array CompilerDiagnosticLabel count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [label : CompilerDiagnosticLabel
           (unsafe
@@ -820,8 +815,7 @@
           (array-ref dst index)
           (CompilerDiagnosticLabel
             (compiler-diagnostic-copy-span label.span)
-            (compiler-diagnostic-copy-maybe-string label.label)))
-        (set! index (+ index 1))))
+            (compiler-diagnostic-copy-maybe-string label.label)))))
     (CompilerDiagnosticLabelList dst count)))
 
 (define (compiler-diagnostic-copy-label-list-ref
@@ -830,8 +824,7 @@
     [count : i64 labels.len]
     [dst : (__tl_dyn-array CompilerDiagnosticLabel)
       (__tl_make-array CompilerDiagnosticLabel count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [label : CompilerDiagnosticLabel
           (compiler-diagnostic-label-list-get labels index)]
@@ -839,8 +832,7 @@
           (array-ref dst index)
           (CompilerDiagnosticLabel
             (compiler-diagnostic-copy-span-ref (& label.span))
-            (compiler-diagnostic-copy-maybe-string-ref (& label.label))))
-        (set! index (+ index 1))))
+            (compiler-diagnostic-copy-maybe-string-ref (& label.label))))))
     (CompilerDiagnosticLabelList dst count)))
 
 (define (compiler-diagnostic-note-list-empty) : CompilerDiagnosticNoteList
@@ -864,11 +856,9 @@
     [count : i64 notes.len]
     [src : (__tl_dyn-array String) notes.slots]
     [dst : (__tl_dyn-array String) (__tl_make-array String (+ count 1))]
-    [index : i64 0]
     (set! (array-ref dst 0) note)
-    (while (< index count)
-      (set! (array-ref dst (+ index 1)) (array-ref src index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref dst (+ index 1)) (array-ref src index)))
     (CompilerDiagnosticNoteList dst (+ count 1))))
 
 (define (compiler-diagnostic-copy-note-list
@@ -877,10 +867,8 @@
     [count : i64 notes.len]
     [src : (__tl_dyn-array String) notes.slots]
     [dst : (__tl_dyn-array String) (__tl_make-array String count)]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref dst index) (string.copy (& (array-ref src index))))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref dst index) (string.copy (& (array-ref src index)))))
     (CompilerDiagnosticNoteList dst count)))
 
 (define (compiler-diagnostic-copy-note-list-ref
@@ -888,12 +876,10 @@
   (let
     [count : i64 notes.len]
     [dst : (__tl_dyn-array String) (__tl_make-array String count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [note : String (compiler-diagnostic-note-list-get notes index)]
-        (set! (array-ref dst index) (string.copy (& note)))
-        (set! index (+ index 1))))
+        (set! (array-ref dst index) (string.copy (& note)))))
     (CompilerDiagnosticNoteList dst count)))
 
 (define (compiler-diagnostic-copy-text-edit [edit : CompilerDiagnosticTextEdit]) : CompilerDiagnosticTextEdit
@@ -914,14 +900,12 @@
     [src : (__tl_dyn-array CompilerDiagnosticTextEdit) edits.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticTextEdit)
       (__tl_make-array CompilerDiagnosticTextEdit count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref dst index)
         (compiler-diagnostic-copy-text-edit
           (unsafe
-            (ptr-read (ptr-offset (__tl_array-data src) index)))))
-      (set! index (+ index 1)))
+            (ptr-read (ptr-offset (__tl_array-data src) index))))))
     (CompilerDiagnosticTextEditSeq dst count)))
 
 (define (compiler-diagnostic-copy-fix [fix : CompilerDiagnosticFix]) : CompilerDiagnosticFix
@@ -936,14 +920,12 @@
     [src : (__tl_dyn-array CompilerDiagnosticFix) fixes.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticFix)
       (__tl_make-array CompilerDiagnosticFix count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref dst index)
         (compiler-diagnostic-copy-fix
           (unsafe
-            (ptr-read (ptr-offset (__tl_array-data src) index)))))
-      (set! index (+ index 1)))
+            (ptr-read (ptr-offset (__tl_array-data src) index))))))
     (CompilerDiagnosticFixSeq dst count)))
 
 (define (compiler-diagnostic-copy-fix-list-ref
@@ -952,14 +934,12 @@
     [count : i64 fixes.len]
     [dst : (__tl_dyn-array CompilerDiagnosticFix)
       (__tl_make-array CompilerDiagnosticFix count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [fix : CompilerDiagnosticFix
           (unsafe
             (ptr-read (ptr-offset (__tl_array-data fixes.slots) index)))]
-        (set! (array-ref dst index) (compiler-diagnostic-copy-fix fix))
-        (set! index (+ index 1))))
+        (set! (array-ref dst index) (compiler-diagnostic-copy-fix fix))))
     (CompilerDiagnosticFixSeq dst count)))
 
 (define (compiler-diagnostic-copy [diag : CompilerDiagnostic]) : CompilerDiagnostic
@@ -1086,7 +1066,7 @@
         (compiler-diagnostic-copy-text-edit-ref (& (array-ref slots cursor))))
         (set! found true)
         unit)
-      (set! cursor (+ cursor 1)))
+      (+= cursor 1))
     found))
 
 (define (compiler-diagnostic-edit-list-valid?
@@ -1114,7 +1094,7 @@
               (+ index 1))))
           unit
           (set! ok false))
-        (set! index (+ index 1))))
+        (+= index 1)))
     ok))
 
 (define (compiler-diagnostic-fix-valid?
@@ -1184,8 +1164,7 @@
     [src : (__tl_dyn-array CompilerDiagnosticTextEdit) edits.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticTextEdit)
       (__tl_make-array CompilerDiagnosticTextEdit count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref dst index)
         (compiler-diagnostic-split-text-edit
@@ -1194,8 +1173,7 @@
           text-path
           head-lines
           head-path
-          tail-path))
-      (set! index (+ index 1)))
+          tail-path)))
     (CompilerDiagnosticTextEditSeq dst count)))
 
 (define (compiler-diagnostic-split-fix-list
@@ -1209,8 +1187,7 @@
     [src : (__tl_dyn-array CompilerDiagnosticFix) fixes.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticFix)
       (__tl_make-array CompilerDiagnosticFix count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [fix : CompilerDiagnosticFix
           (unsafe
@@ -1225,8 +1202,7 @@
               text-path
               head-lines
               head-path
-              tail-path)))
-        (set! index (+ index 1))))
+              tail-path)))))
     (CompilerDiagnosticFixSeq dst count)))
 
 (define (compiler-diagnostic-simple
@@ -1327,8 +1303,7 @@
     [count : i64 labels.len]
     [dst : (__tl_dyn-array CompilerDiagnosticLabel)
       (__tl_make-array CompilerDiagnosticLabel count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [entry : CompilerDiagnosticLabel
           (compiler-diagnostic-label-list-get (& labels) index)]
@@ -1341,8 +1316,7 @@
               head-lines
               head-path
               tail-path)
-            entry.label))
-        (set! index (+ index 1))))
+            entry.label))))
     (CompilerDiagnosticLabelList dst count)))
 
 ;; A diagnostic located in a text made of a head of HEAD-LINES lines followed
@@ -1509,7 +1483,7 @@
             (compiler-diagnostic-place-shared-view label)))
           (set! found true)
           unit)
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (compiler-diagnostic-with-secondary-if-new
@@ -1599,11 +1573,9 @@
     [src : (__tl_dyn-array CompilerDiagnosticFix) fixes.slots]
     [dst : (__tl_dyn-array CompilerDiagnosticFix)
       (__tl_make-array CompilerDiagnosticFix (+ count 1))]
-    [index : i64 0]
     (set! (array-ref dst 0) fix)
-    (while (< index count)
-      (set! (array-ref dst (+ index 1)) (array-ref src index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref dst (+ index 1)) (array-ref src index)))
     (CompilerDiagnosticFixSeq dst (+ count 1))))
 
 ;; Fix attachment is the validation boundary: generated/unknown 0:0 spans,
@@ -1630,12 +1602,10 @@
 (define (compiler-diagnostic-render-notes [notes : CompilerDiagnosticNoteList]) : String
   (let
     [count : i64 (compiler-diagnostic-note-list-count notes)]
-    [index : i64 0]
     [out : text_buf.TextBuf (text_buf.empty)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (text_buf.append! out "\nnote: ")
-      (text_buf.append! out (compiler-diagnostic-note-list-get notes index))
-      (set! index (+ index 1)))
+      (text_buf.append! out (compiler-diagnostic-note-list-get notes index)))
     (text_buf.render out)))
 
 (define (compiler-diagnostic-render-flat-secondary
@@ -1665,15 +1635,13 @@
   [labels : CompilerDiagnosticLabelList]) : String
   (let
     [count : i64 (compiler-diagnostic-label-list-count labels)]
-    [index : i64 0]
     [out : text_buf.TextBuf (text_buf.empty)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (text_buf.append!
         out
         (compiler-diagnostic-render-flat-secondary
           (compiler-diagnostic-place-shared-view primary-path)
-          (compiler-diagnostic-label-list-get labels index)))
-      (set! index (+ index 1)))
+          (compiler-diagnostic-label-list-get labels index))))
     (text_buf.render out)))
 
 (define (compiler-diagnostic-render [diag : (& diag CompilerDiagnostic)]) : String
@@ -1698,11 +1666,9 @@
 
 (define (compiler-diagnostic-repeat [chunk : String] [count : i64]) : String
   (let
-    [idx : i64 0]
     [out : text_buf.TextBuf (text_buf.empty)]
-    (while (< idx count)
-      (text_buf.append! out (string.copy chunk))
-      (set! idx (+ idx 1)))
+    (for [idx (iterator.range 0 count)]
+      (text_buf.append! out (string.copy chunk)))
     (text_buf.render out)))
 
 (define (compiler-diagnostic-line-gutter [line : i64]) : String
@@ -1755,23 +1721,19 @@
   (let
     [n : i64 (string.string-length text)]
     [newlines : i64 0]
-    [idx : i64 0]
     [_count : unit
-      (while (< idx n)
+      (for [idx (iterator.range 0 n)]
         (if (= (string.string-ref text idx) '\n')
-          (set! newlines (+ newlines 1))
-          unit)
-        (set! idx (+ idx 1)))]
+          (+= newlines 1)
+          unit))]
     [starts : (__tl_dyn-array i64) (__tl_make-array i64 (+ newlines 1))]
     [line : i64 1]
     (set! (array-ref starts 0) 0)
-    (set! idx 0)
-    (while (< idx n)
+    (for [idx (iterator.range 0 n)]
       (when
         (= (string.string-ref text idx) '\n')
         (set! (array-ref starts line) (+ idx 1))
-        (set! line (+ line 1)))
-      (set! idx (+ idx 1)))
+        (+= line 1)))
     (CompilerDiagnosticSource text starts (+ newlines 1))))
 
 (define (compiler-diagnostic-source-line
@@ -1918,16 +1880,14 @@
   [labels : CompilerDiagnosticLabelList]) : String
   (let
     [count : i64 (compiler-diagnostic-label-list-count labels)]
-    [index : i64 0]
     [out : text_buf.TextBuf (text_buf.empty)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (text_buf.append!
         out
         (compiler-diagnostic-render-secondary-span
           primary-path
           source
-          (compiler-diagnostic-label-list-get labels index)))
-      (set! index (+ index 1)))
+          (compiler-diagnostic-label-list-get labels index))))
     (text_buf.render out)))
 
 (define (compiler-diagnostic-render-help [help : CompilerDiagnosticMaybeString]) : String
@@ -1940,13 +1900,11 @@
   [notes : CompilerDiagnosticNoteList]) : String
   (let
     [count : i64 (compiler-diagnostic-note-list-count notes)]
-    [index : i64 0]
     [out : text_buf.TextBuf (text_buf.empty)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (text_buf.append! out "   = note: ")
       (text_buf.append! out (compiler-diagnostic-note-list-get notes index))
-      (text_buf.append! out "\n")
-      (set! index (+ index 1)))
+      (text_buf.append! out "\n"))
     (text_buf.render out)))
 
 (define (compiler-diagnostic-render-source-with-metadata

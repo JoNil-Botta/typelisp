@@ -1,6 +1,7 @@
 ;; build_cli_core_tests.tl - White-box tests for package builds: paths and
 ;; artifact status, direct objects, preflight routes, the package graph and
 ;; scheduler, TLCI callables, rollback and commit, and worker arguments.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (cfg test (import stdlib.fs))
 (cfg test (import stdlib.byte_buf))
@@ -386,9 +387,8 @@
 
 (cfg
   test
-  (define (build-package-typed-route-table-from [index : i64]) : bool
-    (if (>= index 192)
-      true
+  (define (build-package-typed-route-table-from) : bool
+    (for [index (iterator.range 0 192)]
       (let
         [target-index : i64 (% index 2)]
         [kind-index : i64 (% (/ index 2) 2)]
@@ -438,7 +438,7 @@
             [(and (= size-index 1) (or (= target-index 1) (= override-index 0)))
               "resource-budget"]
             [else ""])]
-        (and
+        (unless
           (build-package-preflight-category-is?
             (build.build-package-direct-object-preflight
               kind
@@ -450,14 +450,16 @@
               decls
               (& paths))
             expected)
-          (build-package-typed-route-table-from (+ index 1)))))))
+          (return false))
+        unit))
+    true))
 
 (cfg
   test
   (test
     build-package-direct-object-route-table
     (unless
-      (build-package-typed-route-table-from 0)
+      (build-package-typed-route-table-from)
       (io.panic "typed package direct-object route table failed"))))
 
 (define (build-package-graph-node-tlci-path
@@ -473,10 +475,9 @@
   [nodes : build.BuildPackageGraphNodeVec]
   [profile : build.BuildProfile]) : process.ProcessStringList
   (let
-    [index : i64 0]
     [count : i64 (build.build-package-graph-node-vec-len nodes)]
     [paths : process.ProcessStringList (process.args-empty)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         paths
         (process.args-append
@@ -484,8 +485,7 @@
           (process.args-single
             (build-package-graph-node-tlci-path
               (build.build-package-graph-node-vec-at nodes index)
-              profile))))
-      (set! index (+ index 1)))
+              profile)))))
     paths))
 
 (define (build-package-graph-test-manifest [name : String]) : load.CompilerPkgManifest

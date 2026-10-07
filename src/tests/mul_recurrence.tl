@@ -1,5 +1,6 @@
 ;; The search has a fixed work budget and reusable storage; malformed or long
 ;; dependency paths may only make this optional cost transformation decline.
+(import stdlib.iterator)
 (import compiler_optimize as opt)
 (import stdlib.test)
 (import stdlib.arena)
@@ -10,15 +11,13 @@
     [right : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [seen : (__tl_dyn-array i64) (__tl_make-array i64 n)]
     [queue : (__tl_dyn-array i64) (__tl_make-array i64 257)]
-    [i : i64 0]
-    (while (< i (- n 1))
+    (for [i (iterator.range 0 (- n 1))]
       (set!
         (array-ref left i)
         (if (and cut (= i (- n 2)))
           0
           (+ i 2)))
-      (when duplicate (set! (array-ref right i) (array-ref left i)))
-      (set! i (+ i 1)))
+      (when duplicate (set! (array-ref right i) (array-ref left i))))
     (set! (array-ref left (- n 1)) 1)
     (test.assert-true
       (=
@@ -28,19 +27,16 @@
 
 (test
   multiply_recurrence_search_budget
-  (let
-    [n : i64 1]
-    (while (<= n 260)
-      (let
-        [scope (arena.make)]
-        (in-arena
-          scope
-          (check-chain n false false)
-          (check-chain n true false)
-          (check-chain n false true)
-          (check-chain n true true))
-        (arena.destroy-safe! scope)
-        (set! n (+ n 1))))))
+  (for [n (iterator.range 1 (+ 260 1))]
+    (let
+      [scope (arena.make)]
+      (in-arena
+        scope
+        (check-chain n false false)
+        (check-chain n true false)
+        (check-chain n false true)
+        (check-chain n true true))
+      (arena.destroy-safe! scope))))
 
 (import compiler_ir_types as ir)
 (import compiler_ast_types as ast)
@@ -206,11 +202,8 @@
 (test
   multiply_recurrence_selection
   (cbi.compiler-builtin-initialize-for-parse!)
-  (let
-    [mode : i64 0]
-    (while (< mode 6)
-      (let
-        [scope (arena.make)]
-        (in-arena scope (check-rewrite mode))
-        (arena.destroy-safe! scope)
-        (set! mode (+ mode 1))))))
+  (for [mode (iterator.range 0 6)]
+    (let
+      [scope (arena.make)]
+      (in-arena scope (check-rewrite mode))
+      (arena.destroy-safe! scope))))

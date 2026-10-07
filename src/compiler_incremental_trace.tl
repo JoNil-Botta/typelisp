@@ -1,6 +1,7 @@
 ;; Pure, transactional frontend-query dependency traces (#7267). Producers
 ;; observe typed facts; only finalize publishes a sorted, complete transcript.
 ;; Child edges name full portable query transcripts, never cache-store keys.
+(import stdlib.iterator)
 (import compiler_incremental_binary as binary)
 (import compiler_incremental_identity)
 (import compiler_owned_view as owned_view)
@@ -847,7 +848,7 @@
                   compiler-trace-error-limit
                   "trace byte or work limit exceeded"))))
           (trace_record_vec.push-ref! (&mut records) record)
-          (set! index (+ index 1))))
+          (+= index 1)))
       (set! sort-bytes work)
       (while (> sort-level 1)
         (set!
@@ -895,10 +896,10 @@
                     (compiler-trace-error
                       compiler-trace-error-conflict
                       "inconsistent observations for a trace key"))))
-              (set! count (+ count 1)))
+              (+= count 1))
             (set! last record.key)
             (set! last-value record.observation)
-            (set! index (+ index 1))))
+            (+= index 1)))
         (binary.compiler-incremental-binary-push-string!
           (&mut out)
           (& compiler-incremental-trace-domain))
@@ -930,7 +931,7 @@
                   (&mut out)
                   (& record.observation))))
             (set! last record.key)
-            (set! index (+ index 1))))
+            (+= index 1)))
         (let
           [bytes : (__tl_dyn-array u8)
             (byte_buf_core.byte-buf-builder-finish-array (& out))]
@@ -976,23 +977,19 @@
       (let
         [out : byte_buf_core.ByteBufBuilder
           (byte_buf_core.byte-buf-builder-with-capacity length)]
-        [index : i64 0]
-        (while (< index length)
+        (for [index (iterator.range 0 length)]
           (byte_buf_core.byte-buf-builder-push
             (&mut out)
-            (cast (byte_reader.read-u8! (&mut reader.cursor)) : u8))
-          (set! index (+ index 1)))
-        (set! reader.owned-bytes (+ reader.owned-bytes length))
+            (cast (byte_reader.read-u8! (&mut reader.cursor)) : u8)))
+        (+= reader.owned-bytes length)
         (byte_buf_core.byte-buf-builder-finish-string (& out))))))
 
 (define (compiler-trace-raw-bytes [raw : (& raw str)]) : (__tl_dyn-array u8)
   (let
     [length : i64 (string.string-length raw)]
     [bytes : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-    [index : i64 0]
-    (while (< index length)
-      (set! (array-ref bytes index) (cast (string.string-ref raw index) : u8))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 length)]
+      (set! (array-ref bytes index) (cast (string.string-ref raw index) : u8)))
     bytes))
 
 (define (compiler-trace-record-parse-valid?
@@ -1228,7 +1225,6 @@
           (compiler-trace-raw-bytes (& parent-raw))]
         [count : i64 (byte_reader.read-u32! (&mut reader.cursor))]
         [records : trace_record_vec.Vec (trace_record_vec.with-capacity 0)]
-        [index : i64 0]
         [last-key : String ""]
         (when
           (or
@@ -1264,7 +1260,7 @@
               (compiler-trace-error
                 compiler-trace-error-limit
                 "trace edge count exceeds limit"))))
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (let
             [key : String
               (compiler-trace-read-raw! (&mut reader) limits.max-edge-bytes)]
@@ -1300,8 +1296,7 @@
                     compiler-trace-error-corrupt
                     "invalid trace record"))))
             (set! last-key (string.copy (& record.key)))
-            (trace_record_vec.push-ref! (&mut records) record)
-            (set! index (+ index 1))))
+            (trace_record_vec.push-ref! (&mut records) record)))
         (if (or
           (not reader.cursor.ok?)
           (!= reader.cursor.offset reader.cursor.end))
@@ -1378,7 +1373,7 @@
                             b.kind
                             a.kind))
                         index)))
-                  (set! index (+ index 1))))
+                  (+= index 1)))
               (if (!= left-count right-count)
                 (let
                   [record : CompilerIncrementalTraceRecord

@@ -4,6 +4,7 @@
 ;; resolved. It parses and emits `typelisp.lock` S-expressions and owns the
 ;; shared atomic, conflict-aware filesystem commit boundary. Build-time
 ;; fetch/replay behavior remains owned by the package build pipeline.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
 (import stdlib.env)
@@ -113,7 +114,7 @@
         [lc : i64 (package-lock-char-code-at left idx)]
         [rc : i64 (package-lock-char-code-at right idx)]
         (if (= lc rc)
-          (set! idx (+ idx 1))
+          (+= idx 1)
           (begin
             (set! less (< lc rc))
             (set! done true)))))
@@ -139,7 +140,7 @@
     (while ok
       (if (< i n)
         (if (package-lock-alias-char? (string.string-ref value i))
-          (set! i (+ i 1))
+          (+= i 1)
           (set! ok false))
         (set! ok false)))
     (= i n)))
@@ -149,24 +150,21 @@
 
 (define (package-lock-entry-list-lookup-from
   [entries : (& entries package_lock_entry_vec.Vec)]
-  [alias : (& alias str)]
-  [index : i64]) : PackageLockMaybeEntry
-  (if (>= index (package_lock_entry_vec.len entries))
-    (No)
+  [alias : (& alias str)]) : PackageLockMaybeEntry
+  (for [index (iterator.range 0 (package_lock_entry_vec.len entries))]
     (let
       [entry : PackageLockEntry
         (package_lock_entry_vec.get
           entries
           index
           (package-lock-entry-list-fallback))]
-      (if (string.eq entry.alias alias)
-        (Some entry)
-        (package-lock-entry-list-lookup-from entries alias (+ index 1))))))
+      (when (string.eq entry.alias alias) (return (Some entry)))))
+  (No))
 
 (define (package-lock-entry-list-lookup
   [entries : (& entries package_lock_entry_vec.Vec)]
   [alias : (& alias str)]) : PackageLockMaybeEntry
-  (package-lock-entry-list-lookup-from entries alias 0))
+  (package-lock-entry-list-lookup-from entries alias))
 
 (define (package-lock-entry-list-insert-position
   [entries : (& entries package_lock_entry_vec.Vec)]
@@ -201,7 +199,7 @@
             (- write 1)
             (package-lock-entry-list-fallback))]
         (package_lock_entry_vec.set-ref! entries write previous)
-        (set! write (- write 1))))
+        (-= write 1)))
     (package_lock_entry_vec.set-ref! entries index entry)))
 
 (define (package-lock-entry-list-insert
@@ -545,11 +543,10 @@
 (define (package-lock-escape-string [text : (& text str)]) : String
   (let
     [n : i64 (string.string-length text)]
-    [i : i64 0]
     [out : String ""]
     [slash : String (package-lock-backslash-text)]
     [quote : String (package-lock-quote-text)]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (let
         [code : i64 (package-lock-char-code-at text i)]
         (cond
@@ -593,8 +590,7 @@
                 (owned_view.compiler-owned-shared-view slash)
                 "r"
                 ""))]
-          [else (set! out (str_cat.str-cat out (string.substring text i 1) ""))]))
-      (set! i (+ i 1)))
+          [else (set! out (str_cat.str-cat out (string.substring text i 1) ""))])))
     out))
 
 (define (package-lock-quote-string [text : String]) : String
@@ -736,7 +732,7 @@
               [(ErrTimeUnit error)
                 (set! error-message (time.error-message error))
                 (set! done true)]
-              [(OkTimeUnit) (set! attempt (+ attempt 1))])
+              [(OkTimeUnit) (+= attempt 1)])
             (set! done true))]))
     (if (> (string.string-length error-message) 0)
       (Err error-message)
@@ -757,7 +753,7 @@
     (Ok "")))
 
 (define (package-lock-stage-next-sequence) : i64
-  (set! package-lock-stage-sequence (+ package-lock-stage-sequence 1))
+  (+= package-lock-stage-sequence 1)
   package-lock-stage-sequence)
 
 ;; The lock file a package root publishes. Replacement goes through a
@@ -790,13 +786,13 @@
         (while (and
           (< index len)
           (package-lock-decimal-digit? (string.string-ref name index)))
-          (set! index (+ index 1)))
-        (set! runs (+ runs 1))
+          (+= index 1))
+        (+= runs 1)
         (cond
           [(= index start) (set! ok false)]
           [(= runs 3) unit]
           [(and (< index len) (= (string.string-ref name index) '.'))
-            (set! index (+ index 1))]
+            (+= index 1)]
           [else (set! ok false)])))
     (and ok (= index len))))
 
@@ -866,38 +862,34 @@
 (define (package-lock-stage-write-attempt
   [destination : String]
   [source : String]
-  [sequence : i64]
-  [attempt : i64]) : ResultPackageLockString
-  (if (>= attempt 100)
-    (Err
-      (package-lock-transaction-error
-        "stage-create"
-        destination
-        "could not allocate a unique sibling staging path"))
+  [sequence : i64]) : ResultPackageLockString
+  (for [attempt (iterator.range 0 100)]
     (let
       [path : String
         (package-lock-stage-path (string.copy destination) sequence attempt)]
       (match (io.file-open (& path) (OpenWriteCreateNew))
-        [(OkIoFile handle) (package-lock-stage-write-opened path source handle)]
+        [(OkIoFile handle)
+          (return (package-lock-stage-write-opened path source handle))]
         [(ErrIoFile error)
-          (if (package-lock-io-already-exists? (clone error))
-            (package-lock-stage-write-attempt
-              destination
-              source
-              sequence
-              (+ attempt 1))
-            (Err
-              (package-lock-transaction-error
-                "stage-create"
-                path
-                (io.error-message error))))]))))
+          (unless
+            (package-lock-io-already-exists? (clone error))
+            (return
+              (Err
+                (package-lock-transaction-error
+                  "stage-create"
+                  path
+                  (io.error-message error)))))])))
+  (Err
+    (package-lock-transaction-error
+      "stage-create"
+      destination
+      "could not allocate a unique sibling staging path")))
 
 (define (package-lock-stage-write [destination : String] [source : String]) : ResultPackageLockString
   (package-lock-stage-write-attempt
     destination
     source
-    (package-lock-stage-next-sequence)
-    0))
+    (package-lock-stage-next-sequence)))
 
 (define (package-lock-stage-validate [path : String] [expected : String]) : ResultPackageLockString
   (match (io.try-read-file (& path))

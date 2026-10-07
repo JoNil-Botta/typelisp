@@ -1,4 +1,5 @@
 ;; compiler_check_core.tl - Shared selfhost check/typecheck helpers.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (cfg compile-profile (import stdlib.str_cat_runtime as str_cat))
 (cfg compile-profile (import stdlib.io))
@@ -106,16 +107,14 @@
   [path : String]) : cdiag.CompilerDiagnosticList
   (let
     [count : i64 (cdiag.compiler-diagnostic-list-count diagnostics)]
-    [index : i64 0]
     [out : cdiag.CompilerDiagnosticList
       (cdiag.compiler-diagnostic-list-with-capacity count)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (cdiag.compiler-diagnostic-list-push!
         (&mut out)
         (compiler-check-diagnostic-with-fallback-path
           (cdiag.compiler-diagnostic-list-get diagnostics index)
-          (owned_view.compiler-owned-shared-view path)))
-      (set! index (+ index 1)))
+          (owned_view.compiler-owned-shared-view path))))
     out))
 
 (define (compiler-check-diagnostic-before?
@@ -147,7 +146,7 @@
         (& diag)
         (cdiag.compiler-diagnostic-list-ref sorted index))
         (set! found true)
-        (set! index (+ index 1))))
+        (+= index 1)))
     (cdiag.compiler-diagnostic-list-insert! sorted index diag)))
 
 (define (compiler-check-diagnostic-list-insert-all-source-order
@@ -155,12 +154,10 @@
   [sorted : (&mut sorted cdiag.CompilerDiagnosticList)]) : unit
   (let
     [count : i64 (cdiag.compiler-diagnostic-list-count incoming)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (compiler-check-diagnostic-list-insert-source-order
         (cdiag.compiler-diagnostic-list-get incoming index)
-        sorted)
-      (set! index (+ index 1)))))
+        sorted))))
 
 (define (compiler-check-result-with-parse-diagnostics
   [parse-diagnostics : cdiag.CompilerDiagnosticList]
@@ -169,14 +166,12 @@
     result
     (let
       [count : i64 (cdiag.compiler-diagnostic-list-count parse-diagnostics)]
-      [index : i64 0]
       [owned-parse : cdiag.CompilerDiagnosticList
         (cdiag.compiler-diagnostic-list-with-capacity count)]
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (cdiag.compiler-diagnostic-list-push!
           (&mut owned-parse)
-          (cdiag.compiler-diagnostic-list-get parse-diagnostics index))
-        (set! index (+ index 1)))
+          (cdiag.compiler-diagnostic-list-get parse-diagnostics index)))
       (match result
         [(Ok _ advisories) (Err (box owned-parse) advisories)]
         [(Err semantic-diagnostics advisories)
@@ -585,7 +580,7 @@
             (set! status (Err failure))
             (set! rejected true)]
           [(Ok) unit])
-        (set! index (+ index 1))))
+        (+= index 1)))
     status))
 
 ;; The ledger's verdict on a finished overlay check: a recording failure, or,

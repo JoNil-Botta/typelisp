@@ -1,5 +1,6 @@
 ;; compiler_symbols_tests.tl - White-box tests for the symbol tables and
 ;; compiler-symbols-self-test.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.io)
 (import compiler_builtin_ids as cbi)
@@ -69,8 +70,7 @@
     unit
     (let
       [capacity : i64 (array-length map.keys)]
-      [index : i64 0]
-      (while (< index capacity)
+      (for [index (iterator.range 0 capacity)]
         (if (> (array-ref map.keys index) 0)
           (let
             [handle : i64 (array-ref map.values index)]
@@ -80,8 +80,7 @@
                 handle
                 insertion-index
                 delta)))
-          unit)
-        (set! index (+ index 1))))))
+          unit)))))
 
 (define (compiler-registries-shift-owner-indices
   [registries : csym.CompilerRegistries]
@@ -783,20 +782,17 @@
   (let
     [map : csym.CompilerSymbolMap (csym.compiler-symbol-map-empty)]
     [entry-count : i64 192]
-    [index : i64 0]
     [ok : bool true]
-    (while (< index entry-count)
+    (for [index (iterator.range 0 entry-count)]
       (csym.compiler-symbol-map-put!
         (&mut map)
         index
         (csym.compiler-registry-make-handle
           (csym.compiler-symbol-kind-enum-variant)
           index
-          0))
-      (set! index (+ index 1)))
+          0)))
     (compiler-registry-shift-map-owner-indices! (&mut map) 0 1)
-    (set! index 0)
-    (while (< index entry-count)
+    (for [index (iterator.range 0 entry-count)]
       (if (=
         (compiler-registry-lookup-score
           (csym.compiler-symbol-map-lookup-id (& map) index)
@@ -805,8 +801,7 @@
           0)
         1)
         unit
-        (set! ok false))
-      (set! index (+ index 1)))
+        (set! ok false)))
     ok))
 
 (define (compiler-registries-incremental-base-source) : String
@@ -1203,7 +1198,7 @@
           (string.eq (ci.intern-str name-id) name))
           (set! found index)
           unit)
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 ;; The in-place owner-name comparison: 1 equal, 0 different, -1 unresolved, or
@@ -1657,13 +1652,12 @@
     [(Program decls-box)
       (let
         [decls : ast.AstDeclList (deref decls-box)]
-        [index : i64 0]
         [count : i64 (ast.ast-decl-list-len (& decls))]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (match (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))
             [(Import decl-meta (Spec _ _ _ (Some alias-id) _))
               (return alias-id)]
-            [_ (set! index (+ index 1))]))
+            [_ unit]))
         -1)]))
 
 (define (compiler-symbols-import-alias-ok?) : bool

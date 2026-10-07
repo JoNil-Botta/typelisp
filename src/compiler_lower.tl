@@ -63493,6 +63493,12 @@
         state
         (sym_i64_env.sym-i64-bind-id env name scrut-var)
         (tc_core.tc-bind-id type-env name scrut-ty))]
+    ;; A typed binding; the typechecker already matched its annotation (#8581).
+    [(Var name _)
+      (Ok
+        state
+        (sym_i64_env.sym-i64-bind-id env name scrut-var)
+        (tc_core.tc-bind-id type-env name scrut-ty))]
     [(Tuple patterns-box)
       (match (tc_core.tc-type-strip-region
         (tc_core.tc-resolve-type ctx (lower-global-shared-view scrut-ty)))

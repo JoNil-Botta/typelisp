@@ -1370,7 +1370,7 @@
     (set!
       (array-ref operands 0)
       (ctfe.CompilerCtfeValue.ExprList
-        (ast.ast-expr-cons condition-node (ast.ast-expr-list-new))))
+        (ast.ast-expr-cons condition-node (& (ast.ast-expr-list-new)))))
     (ctfe.ctfe-result-hygiene-free-reset!)
     (host-smoke-open! pools operands 1 8)
     (host-smoke-close

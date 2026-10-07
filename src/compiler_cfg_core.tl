@@ -185,7 +185,7 @@
   [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable-id
     cfgs
-    (ci.intern-compat-state-intern intern-state name)))
+    (ci.intern-compat-state-intern intern-state (& name))))
 
 (define (compiler-cfg-merge
   [base : sym_i64_env.SymI64Env]

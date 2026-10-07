@@ -2220,7 +2220,7 @@
     (match (ir.compiler-ir-instr-seq-ref instrs index)
       [(Mov d _ ty)
         (if (= d dst)
-          (ast.ast-type-tag ty)
+          (ast.ast-type-tag (& ty))
           (opt-mov-dst-type-tag-from instrs (+ index 1) dst))]
       [_ (opt-mov-dst-type-tag-from instrs (+ index 1) dst)])))
 
@@ -4014,11 +4014,11 @@
       1
       cbi.compiler-builtin-id-tl-alloc
       (One (I64 16))
-      (ast.ast-ty-array (I64) 2))
+      (ast.ast-ty-array (& (I64)) 2))
     (ir.CompilerIrInstr.Gep 2 (Var 1) (I64 0) (U8))
-    (ir.CompilerIrInstr.StorePtr (Var 2) (Var 9) (ast.ast-ty-array (I64) 2))
+    (ir.CompilerIrInstr.StorePtr (Var 2) (Var 9) (ast.ast-ty-array (& (I64)) 2))
     (ir.CompilerIrInstr.Gep 3 (Var 1) (I64 0) (U8))
-    (ir.CompilerIrInstr.Load 4 (Var 3) (ast.ast-ty-array (I64) 2))
+    (ir.CompilerIrInstr.Load 4 (Var 3) (ast.ast-ty-array (& (I64)) 2))
     (ir.CompilerIrInstr.Return (Some (I64 0)))))
 
 (define (opt-count-tl-alloc-calls-from
@@ -5144,7 +5144,9 @@
       [(not (= (ir.compiler-ir-instr-seq-count dce) 8)) 2]
       [(not (= (ir.compiler-ir-instr-seq-count bounds) 8)) 3]
       [(not (= (opt-count-vector-binop-instrs vector-cse) 1)) 4]
-      [(not (= (opt-mov-dst-type-tag vector-cse 3) (ast.ast-type-tag (I64)))) 5]
+      [(not
+          (= (opt-mov-dst-type-tag vector-cse 3) (ast.ast-type-tag (& (I64)))))
+        5]
       [(not (= (opt-count-vector-reduce-instrs vector-reduce-cse) 2)) 6]
       [(not (= (opt-mov-dst-type-tag vector-reduce-cse 2) 0)) 7]
       [(not (= (opt-count-arith-instr-seq vector-stale) 1)) 8]
@@ -5937,7 +5939,7 @@
       [(not (= (opt-count-mov-i64-value-instr-seq pos 0) 2)) 3]
       [(not (= (opt-count-mov-bool-value pos false) 2)) 4]
       [(not (= (opt-count-mov-bool-value pos true) 2)) 5]
-      [(not (= (opt-mov-dst-type-tag pos 10) (ast.ast-type-tag (U8)))) 6]
+      [(not (= (opt-mov-dst-type-tag pos 10) (ast.ast-type-tag (& (U8))))) 6]
       [(not (= (opt-count-arith-instr-seq neg) 5)) 7]
       [else 42])))
 
@@ -9915,9 +9917,9 @@
 ;; taking the original parameter's storage address disables the specialization.
 (define (opt-bounds-dom-slice-params) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
-    (Param "left" (ast.ast-ty-ref 0 (ast.ast-ty-slice (I64))) 0)
+    (Param "left" (ast.ast-ty-ref 0 (& (ast.ast-ty-slice (& (I64))))) 0)
     (ir.compiler-ir-param-seq-prepend
-      (Param "right" (ast.ast-ty-mut-ref 0 (ast.ast-ty-slice (I64))) 1)
+      (Param "right" (ast.ast-ty-mut-ref 0 (& (ast.ast-ty-slice (& (I64))))) 1)
       (ir.compiler-ir-param-seq-prepend
         (Param "index" (I64) 2)
         (ir.compiler-ir-param-seq-empty)))))
@@ -12018,9 +12020,11 @@
                             (= asource bsource)
                             (string.eq aname bname)
                             (opt.opt-type-eq type-segment-bases aty bty)
-                            (ast.ast-extern-abi-eq? aabi babi)
+                            (ast.ast-extern-abi-eq? (& aabi) (& babi))
                             (= asymbol bsymbol)
-                            (ast.ast-extern-link-input-list-eq? alinks blinks)
+                            (ast.ast-extern-link-input-list-eq?
+                              (& alinks)
+                              (& blinks))
                             (= aprovided bprovided)))])])
                 (set! index (+ index 1)))
               same?))])]))
@@ -23803,7 +23807,7 @@
       (ir.compiler-ir-param-seq-prepend
         (Param
           (ir.compiler-ir-hidden-sret-param-name)
-          (ast.ast-ty-mut-ptr (opt.compiler-opt-global-shared-view enum-ty))
+          (ast.ast-ty-mut-ptr (& enum-ty))
           0)
         (opt.compiler-opt-global-shared-view direct-params))]
     (and
@@ -25626,9 +25630,9 @@
   (ir.compiler-ir-param-seq-prepend
     (Param "cond" (Bool) 0)
     (ir.compiler-ir-param-seq-prepend
-      (Param "read" (ast.ast-ty-ref 0 (I64)) 1)
+      (Param "read" (ast.ast-ty-ref 0 (& (I64))) 1)
       (ir.compiler-ir-param-seq-prepend
-        (Param "write" (ast.ast-ty-mut-ref 0 (I64)) 2)
+        (Param "write" (ast.ast-ty-mut-ref 0 (& (I64))) 2)
         (ir.compiler-ir-param-seq-empty)))))
 
 (define (opt-gvn-function
@@ -29737,16 +29741,16 @@
       [ty (ast.AstType.Str)]
       (opt.opt-ssa-register-value-type? ty))
     (let
-      [ty (ast.ast-ty-func (ast.ast-type-list-new) (I64))]
+      [ty (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))]
       (opt.opt-ssa-register-value-type? ty))
     (let
-      [ty (ast.ast-ty-array (I64) 2)]
+      [ty (ast.ast-ty-array (& (I64)) 2)]
       (opt.opt-ssa-register-value-type? ty))
     (let
-      [ty (ast.ast-ty-dyn-array (I64))]
+      [ty (ast.ast-ty-dyn-array (& (I64)))]
       (opt.opt-ssa-register-value-type? ty))
     (let
-      [ty (ast.ast-ty-box (I64))]
+      [ty (ast.ast-ty-box (& (I64)))]
       (opt.opt-ssa-register-value-type? ty))
     (not
       (let
@@ -29774,11 +29778,11 @@
         (opt.opt-ssa-register-value-type? ty)))
     (not
       (let
-        [ty (ast.ast-ty-region 0 (I64))]
+        [ty (ast.ast-ty-region 0 (& (I64)))]
         (opt.opt-ssa-register-value-type? ty)))
     (not
       (let
-        [ty (ast.ast-ty-slice (I64))]
+        [ty (ast.ast-ty-slice (& (I64)))]
         (opt.opt-ssa-register-value-type? ty)))
     (not
       (let
@@ -30278,10 +30282,10 @@
 
 (define (compiler-optimize-ssa-fixed-handle-self-test) : i64
   (let
-    [func-ty : ast.AstType (ast.ast-ty-func (ast.ast-type-list-new) (I64))]
-    [array-ty : ast.AstType (ast.ast-ty-array (I64) 2)]
-    [dyn-array-ty : ast.AstType (ast.ast-ty-dyn-array (I64))]
-    [box-ty : ast.AstType (ast.ast-ty-box (I64))]
+    [func-ty : ast.AstType (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))]
+    [array-ty : ast.AstType (ast.ast-ty-array (& (I64)) 2)]
+    [dyn-array-ty : ast.AstType (ast.ast-ty-dyn-array (& (I64)))]
+    [box-ty : ast.AstType (ast.ast-ty-box (& (I64)))]
     [nominal-ty : ast.AstType
       (Enum (opt-test-symbol "SsaRepresentationOneWord"))]
     [group-ty : ast.AstType (Struct (opt-test-symbol "SsaRepresentationGroup"))]
@@ -31716,7 +31720,7 @@
   test
   (define (opt-licm-checked-root-join-blocks [mixed? : bool]) : ir.CompilerIrBlockList
     (let
-      [ref-ty : ast.AstType (ast.ast-ty-ref 0 (I64))]
+      [ref-ty : ast.AstType (ast.ast-ty-ref 0 (& (I64)))]
       (ir.compiler-ir-blocks-with-tail
         (irt.blocks
           "loop:
@@ -32001,8 +32005,8 @@
   test
   (define (compiler-optimize-licm-checked-root-self-test) : i64
     (let
-      [ref-ty : ast.AstType (ast.ast-ty-ref 0 (I64))]
-      [mut-ref-ty : ast.AstType (ast.ast-ty-mut-ref 0 (I64))]
+      [ref-ty : ast.AstType (ast.ast-ty-ref 0 (& (I64)))]
+      [mut-ref-ty : ast.AstType (ast.ast-ty-mut-ref 0 (& (I64)))]
       [ref-distinct-func : ir.CompilerIrFunction
         (opt.opt-licm-function
           (ast.ast-node-pool-reader-type-segment-bases)
@@ -32326,7 +32330,7 @@
 
 (define (opt-licm-word-params) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
-    (Param "slice" (ast.ast-ty-ref 0 (ast.ast-ty-slice (I64))) 0)
+    (Param "slice" (ast.ast-ty-ref 0 (& (ast.ast-ty-slice (& (I64))))) 0)
     (ir.compiler-ir-param-seq-prepend
       (Param "again" (Bool) 1)
       (ir.compiler-ir-param-seq-empty))))
@@ -46498,7 +46502,7 @@
       [(begin
           (opt-licm-declare-global
             (opt-test-symbol "deref_table")
-            (ast.ast-ty-dyn-array (I64)))
+            (ast.ast-ty-dyn-array (& (I64))))
           (not
             (=
               (opt-licm-deref-case
@@ -52811,44 +52815,44 @@
 
 (define (opt-load-cse-mixed-ref-params) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
-    (Param "read" (ast.ast-ty-ref 0 (I64)) 0)
+    (Param "read" (ast.ast-ty-ref 0 (& (I64))) 0)
     (ir.compiler-ir-param-seq-prepend
-      (Param "write" (ast.ast-ty-mut-ref 0 (I64)) 1)
+      (Param "write" (ast.ast-ty-mut-ref 0 (& (I64))) 1)
       (ir.compiler-ir-param-seq-empty))))
 
 (define (opt-load-cse-shared-ref-params) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
-    (Param "left" (ast.ast-ty-ref 0 (I64)) 0)
+    (Param "left" (ast.ast-ty-ref 0 (& (I64))) 0)
     (ir.compiler-ir-param-seq-prepend
-      (Param "right" (ast.ast-ty-ref 0 (I64)) 1)
+      (Param "right" (ast.ast-ty-ref 0 (& (I64))) 1)
       (ir.compiler-ir-param-seq-empty))))
 
 (define (opt-load-cse-exclusive-ref-params) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
-    (Param "left" (ast.ast-ty-mut-ref 0 (I64)) 0)
+    (Param "left" (ast.ast-ty-mut-ref 0 (& (I64))) 0)
     (ir.compiler-ir-param-seq-prepend
-      (Param "right" (ast.ast-ty-mut-ref 0 (I64)) 1)
+      (Param "right" (ast.ast-ty-mut-ref 0 (& (I64))) 1)
       (ir.compiler-ir-param-seq-empty))))
 
 (define (opt-load-cse-descriptor-ref-params) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
-    (Param "xs" (ast.ast-ty-mut-ref 0 (ast.ast-ty-dyn-array (I64))) 0)
+    (Param "xs" (ast.ast-ty-mut-ref 0 (& (ast.ast-ty-dyn-array (& (I64))))) 0)
     (ir.compiler-ir-param-seq-prepend
-      (Param "write" (ast.ast-ty-mut-ref 0 (I64)) 1)
+      (Param "write" (ast.ast-ty-mut-ref 0 (& (I64))) 1)
       (ir.compiler-ir-param-seq-empty))))
 
 (define (opt-load-cse-slice-distinct-params) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
-    (Param "read" (ast.ast-ty-ref 0 (ast.ast-ty-slice (I64))) 0)
+    (Param "read" (ast.ast-ty-ref 0 (& (ast.ast-ty-slice (& (I64))))) 0)
     (ir.compiler-ir-param-seq-prepend
-      (Param "write" (ast.ast-ty-mut-ref 0 (ast.ast-ty-slice (I64))) 1)
+      (Param "write" (ast.ast-ty-mut-ref 0 (& (ast.ast-ty-slice (& (I64))))) 1)
       (ir.compiler-ir-param-seq-prepend
         (Param "index" (I64) 20)
         (ir.compiler-ir-param-seq-empty)))))
 
 (define (opt-load-cse-slice-exclusive-param) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
-    (Param "values" (ast.ast-ty-mut-ref 0 (ast.ast-ty-slice (I64))) 0)
+    (Param "values" (ast.ast-ty-mut-ref 0 (& (ast.ast-ty-slice (& (I64))))) 0)
     (ir.compiler-ir-param-seq-prepend
       (Param "index" (I64) 20)
       (ir.compiler-ir-param-seq-empty))))
@@ -53304,7 +53308,7 @@
 
 (define (opt-load-cse-cast-derived-store-root-instrs) : ir.CompilerIrInstrSeq
   (let
-    [ref-ty : ast.AstType (ast.ast-ty-mut-ref 0 (I64))]
+    [ref-ty : ast.AstType (ast.ast-ty-mut-ref 0 (& (I64)))]
     (opt-test-instrs
       (irt.instr "%2 = gep %0, 0 : i64")
       (ir.CompilerIrInstr.Load 3 (Var 2) (I64))
@@ -53813,7 +53817,7 @@
 
 (define (opt-call-block-scan-params) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
-    (Param "p" (ast.ast-ty-mut-ref 0 (I64)) 0)
+    (Param "p" (ast.ast-ty-mut-ref 0 (& (I64))) 0)
     (ir.compiler-ir-param-seq-empty)))
 
 (define (opt-call-block-scan-fixture-block
@@ -62355,12 +62359,12 @@
   (ir.compiler-ir-param-seq-prepend
     (Param
       "vec"
-      (ast.ast-ty-mut-ref 0 (Struct (opt-test-symbol "cm_elem_vec")))
+      (ast.ast-ty-mut-ref 0 (& (Struct (opt-test-symbol "cm_elem_vec"))))
       0)
     (ir.compiler-ir-param-seq-empty)))
 
 (define (opt-cm-elem-descriptor-ty) : ast.AstType
-  (ast.ast-ty-mut-ref 0 (DynArray 0)))
+  (ast.ast-ty-mut-ref 0 (& (DynArray 0))))
 
 (define (opt-cm-elem-accessor-instrs [rest : ir.CompilerIrInstrSeq]) : ir.CompilerIrInstrSeq
   (opt-test-instrs-with-tail
@@ -66499,14 +66503,16 @@
       ;; (a) an i64 ELEMENT store cannot write the slots handle word.
       [(not (opt-load-cse-typed-element-kept? (I64))) 1]
       ;; (b) an element store of the SAME class (a buffer of handles) can.
-      [(not (opt-load-cse-typed-element-dropped? (ast.ast-ty-dyn-array (I64))))
+      [(not
+          (opt-load-cse-typed-element-dropped? (ast.ast-ty-dyn-array (& (I64)))))
         2]
       ;; (c) a byte store re-types any word it touches: no exemption.
       [(not (opt-load-cse-typed-element-dropped? (U8))) 3]
       ;; (d) a FIELD store of i64 through a DIFFERENT base leaves a handle
       ;; entry alone; the same store typed as the handle does not.
       [(not (opt-load-cse-typed-field-kept? 0 (I64))) 4]
-      [(not (opt-load-cse-typed-field-dropped? 0 (ast.ast-ty-dyn-array (I64))))
+      [(not
+          (opt-load-cse-typed-field-dropped? 0 (ast.ast-ty-dyn-array (& (I64)))))
         5]
       ;; (e) SAME object, overlapping range, different class: still dropped --
       ;; one object's own storage can be punned through a Bitcast.
@@ -69292,7 +69298,7 @@
 ;; and survives; with it both key alike and only one element load remains.
 (define (opt-t22-header-params) : ir.CompilerIrParamSeq
   (ir.compiler-ir-param-seq-prepend
-    (Param "vec" (ast.ast-ty-mut-ref 0 (ast.ast-ty-dyn-array (I64))) 0)
+    (Param "vec" (ast.ast-ty-mut-ref 0 (& (ast.ast-ty-dyn-array (& (I64))))) 0)
     (ir.compiler-ir-param-seq-prepend
       (Param "index" (I64) 1)
       (ir.compiler-ir-param-seq-empty))))

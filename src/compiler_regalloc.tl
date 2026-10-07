@@ -1350,7 +1350,7 @@
             (compiler-reg-var-types-metrics types)))))))
 
 (define (compiler-reg-addr-of-result-type) : ast.AstType
-  (ast.ast-ty-mut-ptr (U8)))
+  (ast.ast-ty-mut-ptr (& (U8))))
 
 (define (compiler-reg-var-type-array-set!
   [present : (&mut present (__tl_dyn-array i64))]

@@ -7833,10 +7833,10 @@
           (owned_view.compiler-owned-shared-view group2))
         2)
       (reg_tests.compiler-reg-private-memory-type? bases memory24)
-      (match (ast.ast-aggregate-type-key bases group0)
+      (match (ast.ast-aggregate-type-key bases (& group0))
         [(Some key) (= key group0-id)]
         [(None) false])
-      (match (ast.ast-aggregate-type-key bases group2)
+      (match (ast.ast-aggregate-type-key bases (& group2))
         [(Some key) (= key group2-id)]
         [(None) false])
       (string.eq
@@ -7847,7 +7847,7 @@
           bases
           (owned_view.compiler-owned-shared-view composite))
         "Issue6219CompositeLeft/Issue6219CompositeRight")
-      (match (ast.ast-aggregate-type-key bases composite)
+      (match (ast.ast-aggregate-type-key bases (& composite))
         [(Some key) (= key composite-id)]
         [(None) false]))))
 
@@ -7923,13 +7923,11 @@
     [memory11 : ast.AstType
       (Struct (ir.compiler-ir-symbol "__tl_internal_abi_mem_s11__transport"))]
     [types : ast.AstTypeList
-      (ast.ast-type-cons
-        (owned_view.compiler-owned-shared-view memory24)
-        (ast.ast-type-list-new))]
+      (ast.ast-type-cons (& memory24) (& (ast.ast-type-list-new)))]
     [types9 : ast.AstTypeList
-      (ast.ast-type-cons memory9 (ast.ast-type-list-new))]
+      (ast.ast-type-cons (& memory9) (& (ast.ast-type-list-new)))]
     [types11 : ast.AstTypeList
-      (ast.ast-type-cons memory11 (ast.ast-type-list-new))]
+      (ast.ast-type-cons (& memory11) (& (ast.ast-type-list-new)))]
     [assignments : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r12")]
     [diag : cdiag.CompilerDiagnostic (cdiag.compiler-diagnostic-at-start "" "")]
     [index : backend.CompilerBackendProgramIndex
@@ -7939,11 +7937,11 @@
         (ir.compiler-ir-extern-seq-empty))]
     [memory40 : ast.AstType
       (Struct (ir.compiler-ir-symbol "__tl_internal_abi_mem_s40__indirect"))]
-    [source-array40 : ast.AstType (ast.ast-ty-array (U8) 40)]
+    [source-array40 : ast.AstType (ast.ast-ty-array (& (U8)) 40)]
     [closure-type : ast.AstType
       (ast.ast-ty-func
-        (ast.ast-type-cons source-array40 (ast.ast-type-list-new))
-        (I64))]
+        (ast.ast-type-cons (& source-array40) (& (ast.ast-type-list-new)))
+        (& (I64)))]
     [dynamic-types : regalloc.CompilerRegVarTypes
       (regalloc.compiler-reg-var-types-insert
         (regalloc.compiler-reg-var-types-insert
@@ -8473,7 +8471,7 @@
       [target (backend.CompilerBackendTarget.Linux)]
       [assignments (regalloc.compiler-reg-assignment-table-empty)]
       [args (ir.CompilerIrCallArgs.One (I64 7))]
-      [types (ast.ast-type-cons ty (ast.ast-type-list-new))]
+      [types (ast.ast-type-cons (& ty) (& (ast.ast-type-list-new)))]
       [func-diag (cdiag.compiler-diagnostic-at-start "" "")]
       (backend.compiler-backend-emit-call-args
         type-segment-bases
@@ -9355,8 +9353,7 @@
     [enum-args-qualified : ast.AstType (EnumArgs qualified-id (box lifetimes))]
     [opaque-struct : ast.AstType (Struct opaque-id)]
     [qualified-type-id : i64
-      (ast.ast-node-pool-reader-type-push
-        (owned_view.compiler-owned-shared-view enum-qualified))]
+      (ast.ast-node-pool-reader-type-push (& enum-qualified))]
     [region-qualified : ast.AstType
       (Region (ci.intern "issue5838-region") qualified-type-id)]
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
@@ -9427,32 +9424,22 @@
         (backend.compiler-backend-aggregate-type-name
           bases
           (owned_view.compiler-owned-shared-view opaque-struct)))
-      (match (ast.ast-aggregate-type-key
-        bases
-        (owned_view.compiler-owned-shared-view struct-plain))
+      (match (ast.ast-aggregate-type-key bases (& struct-plain))
         [(Some key) (= key plain-key)]
         [(None) false])
-      (match (ast.ast-aggregate-type-key
-        bases
-        (owned_view.compiler-owned-shared-view struct-args-root))
+      (match (ast.ast-aggregate-type-key bases (& struct-args-root))
         [(Some key) (= key plain-key)]
         [(None) false])
-      (match (ast.ast-aggregate-type-key
-        bases
-        (owned_view.compiler-owned-shared-view enum-qualified))
+      (match (ast.ast-aggregate-type-key bases (& enum-qualified))
         [(Some key) (= key qualified-key)]
         [(None) false])
-      (match (ast.ast-aggregate-type-key
-        bases
-        (owned_view.compiler-owned-shared-view enum-args-qualified))
+      (match (ast.ast-aggregate-type-key bases (& enum-args-qualified))
         [(Some key) (= key qualified-key)]
         [(None) false])
-      (match (ast.ast-aggregate-type-key
-        bases
-        (owned_view.compiler-owned-shared-view region-qualified))
+      (match (ast.ast-aggregate-type-key bases (& region-qualified))
         [(Some key) (= key qualified-key)]
         [(None) false])
-      (match (ast.ast-aggregate-type-key bases (I64))
+      (match (ast.ast-aggregate-type-key bases (& (I64)))
         [(Some _) false]
         [(None) true])
       (match (ir.compiler-ir-representation-index-kind-for-key
@@ -22079,7 +22066,7 @@ f:
           local-id
           local-id
           "compiler-startup-profile-process-entry-probe"
-          (ast.ast-ty-func (ast.ast-type-list-new) (I64))
+          (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))
           (C)
           link-id
           (ast.ast-extern-link-input-list-new)
@@ -22133,8 +22120,8 @@ f:
           local-debug-id
           "compiler-arena-debug-plan-local-operation"
           (ast.ast-ty-func
-            (ast.ast-type-cons (I64) (ast.ast-type-list-new))
-            (Unit))
+            (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
+            (& (Unit)))
           (C)
           debug-id
           (ast.ast-extern-link-input-list-new)
@@ -29513,7 +29500,7 @@ f:
     (while (< i 8)
       (ast.ast-type-list-push
         (&mut out)
-        (ast.ast-node-pool-reader-type-push (I64)))
+        (ast.ast-node-pool-reader-type-push (& (I64))))
       (set! i (+ i 1)))
     out))
 
@@ -29729,13 +29716,14 @@ f:
   (let
     [types : ast.AstTypeList
       (ast.ast-type-cons
-        group
-        (if tail?
-          (ast.ast-type-cons (I64) (ast.ast-type-list-new))
-          (ast.ast-type-list-new)))]
+        (& group)
+        (&
+          (if tail?
+            (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
+            (ast.ast-type-list-new))))]
     [i : i64 5]
     (while (> i 0)
-      (set! types (ast.ast-type-cons (I64) types))
+      (set! types (ast.ast-type-cons (& (I64)) (& types)))
       (set! i (- i 1)))
     types))
 
@@ -29862,9 +29850,7 @@ f:
     [_memory-group-disable : unit
       (backend.compiler-backend-group-vars-disable! index.backend-state)]
     [mixed-types : ast.AstTypeList
-      (ast.ast-type-cons
-        (owned_view.compiler-owned-shared-view mixed-group)
-        (ast.ast-type-list-new))]
+      (ast.ast-type-cons (& mixed-group) (& (ast.ast-type-list-new)))]
     [mixed-args : ir.CompilerIrCallArgs (One (Var 0))]
     [mixed-assignments : regalloc.CompilerRegAssignmentTable
       (reg-homes "%0=%r12/%xmm3")]
@@ -29910,8 +29896,8 @@ f:
         [(Err _) ""])]
     [exhausted-types : ast.AstTypeList
       (ast.ast-type-cons
-        (owned_view.compiler-owned-shared-view mixed-group)
-        (ast.ast-type-cons (F64) (ast.ast-type-list-new)))]
+        (& mixed-group)
+        (& (ast.ast-type-cons (& (F64)) (& (ast.ast-type-list-new)))))]
     [exhausted-args : ir.CompilerIrCallArgs
       (ir.compiler-ir-call-args-from-seq
         (ir.compiler-ir-value-seq-prepend
@@ -30513,7 +30499,8 @@ f:
         backend-state
         (backend.compiler-backend-target-abi target))]
     [saved : EmitterScratch (emitter-scratch-save backend-state)]
-    [callee-ty : ast.AstType (ast.ast-ty-func (ast.ast-type-list-new) (I64))]
+    [callee-ty : ast.AstType
+      (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))]
     [assignments : regalloc.CompilerRegAssignmentTable (reg-homes "%0=%r11")]
     [types : regalloc.CompilerRegVarTypes
       (regalloc.compiler-reg-var-types-insert
@@ -30586,7 +30573,7 @@ f:
     name-id
     name-id
     name
-    (ast.ast-ty-func params ret)
+    (ast.ast-ty-func params (& ret))
     abi
     symbol-id
     (ast.ast-extern-link-input-list-new)
@@ -30648,7 +30635,7 @@ f:
     target
     "tail_target"
     "tl_tail_target"
-    (ast.ast-type-cons (I64) (ast.ast-type-list-new))
+    (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
     (I64)
     (C)
     (One (I64 42))))
@@ -30659,7 +30646,7 @@ f:
     target
     "tail_unit_target"
     "tl_tail_unit_target"
-    (ast.ast-type-cons (I64) (ast.ast-type-list-new))
+    (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
     (Unit)
     (C)
     (One (I64 42))))
@@ -30677,10 +30664,14 @@ f:
 
 (define (compiler-backend-non-direct-tail-call-varargs-params) : ast.AstTypeList
   (ast.ast-type-cons
-    (ast.ast-ty-mut-ptr (U8))
-    (ast.ast-type-cons
-      (I64)
-      (ast.ast-type-cons (ast.ast-ty-ptr (U8)) (ast.ast-type-list-new)))))
+    (& (ast.ast-ty-mut-ptr (& (U8))))
+    (&
+      (ast.ast-type-cons
+        (& (I64))
+        (&
+          (ast.ast-type-cons
+            (& (ast.ast-ty-ptr (& (U8))))
+            (& (ast.ast-type-list-new))))))))
 
 (define (compiler-backend-non-direct-tail-call-varargs-args) : ir.CompilerIrCallArgs
   (ir.compiler-ir-call-args-from-seq
@@ -32013,7 +32004,7 @@ f:
       provided-id
       provided-id
       "provided_decl"
-      (ast.ast-ty-func (ast.ast-type-list-new) (I64))
+      (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))
       (C)
       provided-link-id
       (ast.ast-extern-link-input-list-new)
@@ -32022,7 +32013,9 @@ f:
       referenced-id
       referenced-id
       "referenced_decl"
-      (ast.ast-ty-func (ast.ast-type-cons (I64) (ast.ast-type-list-new)) (I64))
+      (ast.ast-ty-func
+        (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
+        (& (I64)))
       (C)
       referenced-link-id
       (ast.ast-extern-link-input-list-new)
@@ -32639,16 +32632,12 @@ f:
     [fn-name : String "late_backend_index_fn"]
     [fn-id : i64 (ci.intern fn-name)]
     [extern-name : String "late_backend_index_ext"]
-    [extern-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view extern-name))]
-    [same-name-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view extern-name))]
+    [extern-id : i64 (ci.intern-generated-name (& extern-name))]
+    [same-name-id : i64 (ci.intern-generated-name (& extern-name))]
     [extern-link : String "late_backend_index_link"]
-    [extern-link-id : i64 (ci.intern-generated-name extern-link)]
+    [extern-link-id : i64 (ci.intern-generated-name (& extern-link))]
     [same-name-link : String "late_backend_index_link_2"]
-    [same-name-link-id : i64 (ci.intern-generated-name same-name-link)]
+    [same-name-link-id : i64 (ci.intern-generated-name (& same-name-link))]
     [source-count-before : i64 (ci.intern-pool-len)]
     [index : backend.CompilerBackendProgramIndex
       (compiler-backend-program-index-build
@@ -32667,7 +32656,7 @@ f:
             extern-id
             extern-id
             (owned_view.compiler-owned-shared-view extern-name)
-            (ast.ast-ty-func (ast.ast-type-list-new) (I64))
+            (ast.ast-ty-func (ast.ast-type-list-new) (& (I64)))
             (C)
             extern-link-id
             (ast.ast-extern-link-input-list-new)
@@ -32677,8 +32666,8 @@ f:
             same-name-id
             (owned_view.compiler-owned-shared-view extern-name)
             (ast.ast-ty-func
-              (ast.ast-type-cons (I64) (ast.ast-type-list-new))
-              (I64))
+              (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
+              (& (I64)))
             (C)
             same-name-link-id
             (ast.ast-extern-link-input-list-new)

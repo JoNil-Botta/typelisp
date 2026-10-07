@@ -3844,7 +3844,7 @@
         (match (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache
           (owned_view.compiler-owned-shared-view input-path)
           (compiler_ast_types.ast-program decls)
-          (compiler_ast_types.ast-decl-path-list-with-modules paths modules)
+          (compiler_ast_types.ast-decl-path-list-with-modules paths (& modules))
           (compiler-driver-lower-mode-for-target target mode)
           (owned_view.compiler-owned-shared-view stdlib-roots)
           cfgs
@@ -3916,7 +3916,7 @@
         (match (compiler_lower.lower-compiler-program-with-decl-paths-mode-cache
           (owned_view.compiler-owned-shared-view input-path)
           (compiler_ast_types.ast-program decls)
-          (compiler_ast_types.ast-decl-path-list-with-modules paths modules)
+          (compiler_ast_types.ast-decl-path-list-with-modules paths (& modules))
           (compiler-driver-lower-mode-for-target target mode)
           (owned_view.compiler-owned-shared-view stdlib-roots)
           cfgs
@@ -4244,7 +4244,7 @@
                 (compiler_ast_types.ast-program decls)
                 (compiler_ast_types.ast-decl-path-list-with-modules
                   paths
-                  modules)
+                  (& modules))
                 (compiler-driver-lower-mode-for-target target mode)
                 (owned_view.compiler-owned-shared-view stdlib-roots)
                 cfgs
@@ -4469,7 +4469,7 @@
                 (compiler_ast_types.ast-program decls)
                 (compiler_ast_types.ast-decl-path-list-with-modules
                   paths
-                  modules)
+                  (& modules))
                 (compiler-driver-lower-mode-for-target target mode)
                 (owned_view.compiler-owned-shared-view stdlib-roots)
                 cfgs

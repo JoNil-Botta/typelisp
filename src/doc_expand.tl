@@ -407,7 +407,7 @@
 (define (doc-ast-expr-source [ctx : DocExpandContext] [expr-id : i64]) : String
   (match (ast.ast-expr-unspan-with-segment-bases
     ctx.expr-segment-bases
-    (ast.ast-expr-segment-bases-get ctx.expr-segment-bases expr-id))
+    (& (ast.ast-expr-segment-bases-get ctx.expr-segment-bases expr-id)))
     [(Literal lit) (doc-ast-literal-source ctx lit)]
     [(Var name) (doc-expand-source-name ctx name)]
     [(Call callee args)

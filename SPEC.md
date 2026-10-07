@@ -1700,7 +1700,9 @@ layout. The tag exists solely to enable static escape checking.
 
 `(with-arena r ...)` creates the scoped arena, produces `(in r T)` region tags
 for allocations inside the body, shadows the calling thread's default arena, and
-lowers to `tl_region_mark` / `tl_region_reset` around the body.
+lowers to `tl_region_mark` / `tl_region_reset` around the body. The region name
+cannot be `program`: that is the reserved lifetime that outlives every region
+(section 3.10).
 
 **Region-taggable types** are the heap-allocated aggregate kinds whose storage
 can be created inside a region scope:
@@ -2319,6 +2321,21 @@ type is tied to such an input lifetime or to `program`.
 ```lisp test=ignore name=lifetime-parameterized-return-ok reason="illustrative return example; not a standalone program"
 (define (keep-ref [value : (& a i64)]) : (RefBox a)
   (RefBox value))
+```
+
+`program` outlives every lifetime, so neither form needs a tied input when the
+reference is a `program` one. A borrow of a parameter or a local still cannot
+stand in for it:
+
+```lisp test=check name=program-lifetime-return-ok
+(defstruct Named
+  (name (& program str)))
+
+(define (name-of [named : Named]) : (& program str)
+  named.name)
+
+(define (make-named) : Named
+  (Named "world"))
 ```
 
 A store through a mutable reference is checked against the destination's own

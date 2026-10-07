@@ -482,7 +482,7 @@
     [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
-        (match (ast.ast-decl-unwrapped decl)
+        (match (ast.ast-decl-unwrapped (& decl))
           [(Extern decl-meta _ _ metadata _)
             (let
               [metadata-items : ast.AstExternLinkInputList

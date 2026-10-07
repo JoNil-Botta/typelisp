@@ -323,7 +323,7 @@
 
 ;; AstDecl names carry generated ids allocated outside the source-name table.
 (define (spec-materialize-generated-name-id [name : String]) : i64
-  (spec_ci.intern-generated-name name))
+  (spec_ci.intern-generated-name (& name)))
 
 ;; Self-test shim for the removed ambient value worker: the combined
 ;; substitution walk with no type bindings.
@@ -676,15 +676,15 @@
         (I64)
         (spec.spec-type-subst-new))]
     (and
-      (string.eq (spec-type-key (ast.ast-ty-ptr (I64))) "ptr_i64")
+      (string.eq (spec-type-key (ast.ast-ty-ptr (& (I64)))) "ptr_i64")
       (string.eq
-        (spec-type-key (ast.ast-ty-mut-ptr (ast.ast-ty-ptr (U8))))
+        (spec-type-key (ast.ast-ty-mut-ptr (& (ast.ast-ty-ptr (& (U8))))))
         "mutptr_ptr_u8")
       (ctfe.ctfe-type-eq
         (spec-substitute-type
-          (ast.ast-ty-mut-ptr (Var cbi.compiler-builtin-id-fix-T))
+          (ast.ast-ty-mut-ptr (& (Var cbi.compiler-builtin-id-fix-T)))
           subs)
-        (ast.ast-ty-mut-ptr (I64))))))
+        (ast.ast-ty-mut-ptr (& (I64)))))))
 
 (define (compiler-specialize-owner-slice-type-ok?) : bool
   (let
@@ -693,9 +693,11 @@
     [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [owner : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools intern-state)]
-    [slice-i64 : ast.AstType (ast.ast-ty-slice-with-pools pools I64)]
+    [slice-i64 : ast.AstType (ast.ast-ty-slice-with-pools pools (& (I64)))]
     [slice-t : ast.AstType
-      (ast.ast-ty-slice-with-pools pools (Var cbi.compiler-builtin-id-fix-T))]
+      (ast.ast-ty-slice-with-pools
+        pools
+        (& (Var cbi.compiler-builtin-id-fix-T)))]
     [subs : spec.SpecTypeSubst
       (spec.spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
@@ -766,10 +768,10 @@
       (spec.spec-owner-context-new pools-a intern-a)]
     [owner-b : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools-b intern-b)]
-    [array-a : ast.AstType (ast.ast-ty-array-with-pools pools-a (I64) 7)]
-    [array-b : ast.AstType (ast.ast-ty-array-with-pools pools-b (I64) 7)]
-    [nested-a : ast.AstType (ast.ast-ty-ptr-with-pools pools-a array-a)]
-    [nested-b : ast.AstType (ast.ast-ty-ptr-with-pools pools-b array-b)]
+    [array-a : ast.AstType (ast.ast-ty-array-with-pools pools-a (& (I64)) 7)]
+    [array-b : ast.AstType (ast.ast-ty-array-with-pools pools-b (& (I64)) 7)]
+    [nested-a : ast.AstType (ast.ast-ty-ptr-with-pools pools-a (& array-a))]
+    [nested-b : ast.AstType (ast.ast-ty-ptr-with-pools pools-b (& array-b))]
     [values-a : spec.SpecValueList
       (spec.spec-value-cons
         (Type (ast.ast-place-shared-view nested-a))
@@ -890,7 +892,7 @@
     [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
-        (match (ast.ast-decl-unwrapped decl)
+        (match (ast.ast-decl-unwrapped (& decl))
           [(DefFn decl-meta fn-name _ _ _ _)
             (if (string.eq (spec_ci.intern-str fn-name) name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
@@ -969,13 +971,13 @@
       (string.eq
         (spec-type-key
           (spec-substitute-type
-            (ast.ast-ty-ptr (Var cbi.compiler-builtin-id-fix-T))
+            (ast.ast-ty-ptr (& (Var cbi.compiler-builtin-id-fix-T)))
             subs))
         "ptr_i64")
       (string.eq
         (spec-type-key
           (spec-substitute-type
-            (ast.ast-ty-dyn-array (Var cbi.compiler-builtin-id-fix-T))
+            (ast.ast-ty-dyn-array (& (Var cbi.compiler-builtin-id-fix-T)))
             subs))
         "dynarray_i64")
       (string.eq
@@ -983,9 +985,9 @@
           (spec-substitute-type
             (ast.ast-ty-func
               (ast.ast-type-cons
-                (Var cbi.compiler-builtin-id-fix-T)
-                (ast.ast-type-list-new))
-              (Var cbi.compiler-builtin-id-fix-T))
+                (& (Var cbi.compiler-builtin-id-fix-T))
+                (& (ast.ast-type-list-new)))
+              (& (Var cbi.compiler-builtin-id-fix-T)))
             subs))
         "fn_i64_nil_to_i64")
       (string.eq
@@ -1512,13 +1514,13 @@
           (ast.ast-param-list-new)
           (I64)
           body
-          (ast.ast-fn-metadata-full No (Callable a-items)))
+          (& (ast.ast-fn-metadata-full No (Callable a-items))))
         (ast.ast-decl-def-fn-metadata-id
           generated-id
           (ast.ast-param-list-new)
           (I64)
           body
-          (ast.ast-fn-metadata-full No (Callable b-items)))))))
+          (& (ast.ast-fn-metadata-full No (Callable b-items))))))))
 
 (define (compiler-generated-test-metadata-distinct-ok?) : bool
   (let

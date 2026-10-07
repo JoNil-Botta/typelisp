@@ -140,7 +140,7 @@
           [(Extern _ _ _ metadata _)
             (when
               (string.eq
-                (ast.ast-extern-metadata-symbol (deref metadata))
+                (ast.ast-extern-metadata-symbol (& (deref metadata)))
                 (string.copy want))
               (return true))]
           [_ unit])
@@ -3773,10 +3773,11 @@
         (ast.ast-node-push (Literal (ast.ast-lit-int 0))))]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        runtime-decl
-        (ast.ast-decl-cons
-          helper-decl
-          (ast.ast-decl-cons main-decl (ast.ast-decl-list-new))))]
+        (& runtime-decl)
+        (&
+          (ast.ast-decl-cons
+            (& helper-decl)
+            (& (ast.ast-decl-cons (& main-decl) (& (ast.ast-decl-list-new)))))))]
     [runtime-path-id : i64
       (load.compiler-load-source-path-id "C:/repo/stdlib/runtime.tl")]
     [main-path-id : i64
@@ -3853,7 +3854,7 @@
     (match decl
       [(Extern decl-meta _ _ metadata _)
         (string.eq
-          (ast.ast-extern-metadata-symbol (deref metadata))
+          (ast.ast-extern-metadata-symbol (& (deref metadata)))
           "_tl_dep_src_lib_helper")]
       [_ false])))
 
@@ -4124,9 +4125,9 @@
     [module-a : String "stdlib.state_a"]
     [module-b : String "stdlib.state_b"]
     [id-a : i64
-      (ci.intern-compat-state-intern (&mut intern-a) (string.copy module-a))]
+      (ci.intern-compat-state-intern (&mut intern-a) (& (string.copy module-a)))]
     [id-b : i64
-      (ci.intern-compat-state-intern (&mut intern-b) (string.copy module-b))]
+      (ci.intern-compat-state-intern (&mut intern-b) (& (string.copy module-b)))]
     [id-decoy : i64
       (ci.intern-compat-state-intern (&mut intern-decoy) "stdlib.decoy")]
     [_bind-a : unit
@@ -4594,7 +4595,7 @@
       (begin
         (ci.intern-compat-state-intern
           (&mut decoy)
-          (str_cat.str-cat "plain" (string.int->string decoy-index)))
+          (& (str_cat.str-cat "plain" (string.int->string decoy-index))))
         unit)
       (set! decoy-index (+ decoy-index 1)))
     (let

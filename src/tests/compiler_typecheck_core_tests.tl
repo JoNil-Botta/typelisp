@@ -1307,11 +1307,11 @@
                           (ctfe_support.ctfe-describe-expr
                             (ast.ast-expr-unspan-with-segment-bases
                               bases
-                              first-expr))
+                              (& first-expr)))
                           (ctfe_support.ctfe-describe-expr
                             (ast.ast-expr-unspan-with-segment-bases
                               second-bases
-                              second-expr))))]))])])))))
+                              (& second-expr)))))]))])])))))
 
 ;; The probed forms, in order; the last wraps a converted form in a `let`.
 (define (macro-output-form [i : i64]) : String
@@ -1400,7 +1400,7 @@
         [parsed : ast.AstExpr (ast.ast-expr-segment-bases-get bases body-id)]
         [owner : tc_core.MacroSexprOwner
           (tc_core.macro-sexpr-owner bases session)]
-        (match (ast.ast-expr-unspan-with-segment-bases bases parsed)
+        (match (ast.ast-expr-unspan-with-segment-bases bases (& parsed))
           [(WithResource resource-box)
             (match (__tl-box-place resource-box)
               [(WithResource bindings body)
@@ -2041,13 +2041,13 @@
     [named : i64 (ci.intern "named")]
     (if (and
       (string.eq
-        (tc_core.tc-type-render (ast.ast-ty-ref hidden (I64)))
+        (tc_core.tc-type-render (ast.ast-ty-ref hidden (& (I64))))
         "(& i64)")
       (string.eq
-        (tc_core.tc-type-render (ast.ast-ty-mut-ref hidden (I64)))
+        (tc_core.tc-type-render (ast.ast-ty-mut-ref hidden (& (I64))))
         "(&mut i64)")
       (string.eq
-        (tc_core.tc-type-render (ast.ast-ty-ref named (I64)))
+        (tc_core.tc-type-render (ast.ast-ty-ref named (& (I64))))
         "(& named i64)"))
       unit
       (io.panic "typecheck: elaborated lifetime leaked through type rendering"))))
@@ -2110,13 +2110,14 @@
     (ast.ast-type-list-new)
     (ast.ast-type-cons-with-pools
       pools
-      (tc-resolve-type-with-pools
-        ctx
-        pools
-        (ast.ast-node-pool-context-type-get
+      (&
+        (tc-resolve-type-with-pools
+          ctx
           pools
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (tc-resolve-type-list-at-with-pools ctx pools types (+ index 1)))))
+          (ast.ast-node-pool-context-type-get
+            pools
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
+      (& (tc-resolve-type-list-at-with-pools ctx pools types (+ index 1))))))
 
 ;; Standalone helpers retain their serial compatibility surface. Production
 ;; typecheck paths use the explicit job/pool or context variants below.
@@ -2578,10 +2579,11 @@
               ctx
               pools
               (ast.ast-type-list-box-shared-view args))
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools ret)))]
+            (&
+              (tc-resolve-type-with-pools
+                ctx
+                pools
+                (ast.ast-node-pool-context-type-get pools ret))))]
         [(Tuple elems)
           (Tuple
             (box
@@ -2592,70 +2594,79 @@
         [(Array elem len)
           (ast.ast-ty-array-with-pools
             pools
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools elem))
+            (&
+              (tc-resolve-type-with-pools
+                ctx
+                pools
+                (ast.ast-node-pool-context-type-get pools elem)))
             len)]
         [(DynArray elem)
           (ast.ast-ty-dyn-array-with-pools
             pools
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools elem)))]
+            (&
+              (tc-resolve-type-with-pools
+                ctx
+                pools
+                (ast.ast-node-pool-context-type-get pools elem))))]
         [(Slice elem)
           (ast.ast-ty-slice-with-pools
             pools
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools elem)))]
+            (&
+              (tc-resolve-type-with-pools
+                ctx
+                pools
+                (ast.ast-node-pool-context-type-get pools elem))))]
         [(Box elem)
           (ast.ast-ty-box-with-pools
             pools
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools elem)))]
+            (&
+              (tc-resolve-type-with-pools
+                ctx
+                pools
+                (ast.ast-node-pool-context-type-get pools elem))))]
         [(Ptr elem)
           (ast.ast-ty-ptr-with-pools
             pools
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools elem)))]
+            (&
+              (tc-resolve-type-with-pools
+                ctx
+                pools
+                (ast.ast-node-pool-context-type-get pools elem))))]
         [(MutPtr elem)
           (ast.ast-ty-mut-ptr-with-pools
             pools
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools elem)))]
+            (&
+              (tc-resolve-type-with-pools
+                ctx
+                pools
+                (ast.ast-node-pool-context-type-get pools elem))))]
         [(Ref region inner)
           (ast.ast-ty-ref-with-pools
             pools
             region
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools inner)))]
+            (&
+              (tc-resolve-type-with-pools
+                ctx
+                pools
+                (ast.ast-node-pool-context-type-get pools inner))))]
         [(MutRef region inner)
           (ast.ast-ty-mut-ref-with-pools
             pools
             region
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools inner)))]
+            (&
+              (tc-resolve-type-with-pools
+                ctx
+                pools
+                (ast.ast-node-pool-context-type-get pools inner))))]
         [(Region region inner)
           (ast.ast-ty-region-with-pools
             pools
             region
-            (tc-resolve-type-with-pools
-              ctx
-              pools
-              (ast.ast-node-pool-context-type-get pools inner)))]
+            (&
+              (tc-resolve-type-with-pools
+                ctx
+                pools
+                (ast.ast-node-pool-context-type-get pools inner))))]
         [(VarArgs name lifetimes)
           (tc_core.tc-resolve-type-name-with-args
             ctx
@@ -3853,7 +3864,7 @@
       (tc_core.tc-bind-id
         (tc_core.tc-push-region-id base (ci.intern "outer"))
         (ci.intern "captured")
-        (ast.ast-ty-ref (ci.intern "outer") (I64)))]
+        (ast.ast-ty-ref (ci.intern "outer") (& (I64))))]
     [deep : tc_core.TcTypeEnv
       (tc-type-env-bind-many env (+ (* (tc_core.tc-local-cache-threshold) 2) 8))]
     [scoped : tc_core.TcTypeEnvScopedCarrier
@@ -5513,7 +5524,7 @@
     tc-lifetime-substitution-rewrites-region-wrapper
     (match (tc_core.tc-lifetime-subst-type
       (One 101 202)
-      (ast.ast-ty-region 101 (String)))
+      (ast.ast-ty-region 101 (& (String))))
       [(Region region inner)
         (if (and
           (= region 202)
@@ -7442,8 +7453,8 @@
     [z : i64 (ci.intern "seg-z")]
     [prefix-rev : ast.AstDeclList
       (ast.ast-decl-cons
-        (Module p1)
-        (ast.ast-decl-cons (Module p0) (ast.ast-decl-list-new)))]
+        (& (Module p1))
+        (& (ast.ast-decl-cons (& (Module p0)) (& (ast.ast-decl-list-new)))))]
     [prefix-paths-rev : ast.AstDeclPathList
       (ast.ast-decl-path-cons-with-owner-id
         "p1"
@@ -7454,10 +7465,11 @@
           (ast.ast-decl-path-list-new)))]
     [source : ast.AstDeclList
       (ast.ast-decl-cons
-        (Module a)
-        (ast.ast-decl-cons
-          (Module b)
-          (ast.ast-decl-cons (Module c) (ast.ast-decl-list-new))))]
+        (& (Module a))
+        (&
+          (ast.ast-decl-cons
+            (& (Module b))
+            (& (ast.ast-decl-cons (& (Module c)) (& (ast.ast-decl-list-new)))))))]
     [source-paths : ast.AstDeclPathList
       (ast.ast-decl-path-cons-with-owner-id
         "a"
@@ -7471,8 +7483,8 @@
             (ast.ast-decl-path-list-new))))]
     [xy : ast.AstDeclList
       (ast.ast-decl-cons
-        (Module x)
-        (ast.ast-decl-cons (Module y) (ast.ast-decl-list-new)))]
+        (& (Module x))
+        (& (ast.ast-decl-cons (& (Module y)) (& (ast.ast-decl-list-new)))))]
     [xy-paths : ast.AstDeclPathList
       (ast.ast-decl-path-cons-with-owner-id
         "x"
@@ -7482,7 +7494,7 @@
           31
           (ast.ast-decl-path-list-new)))]
     [zs : ast.AstDeclList
-      (ast.ast-decl-cons (Module z) (ast.ast-decl-list-new))]
+      (ast.ast-decl-cons (& (Module z)) (& (ast.ast-decl-list-new)))]
     [z-paths : ast.AstDeclPathList
       (ast.ast-decl-path-cons-with-owner-id "z" 40 (ast.ast-decl-path-list-new))]
     [state : tc_core.TcJobState (tc_core.tc-job-state-new)]
@@ -7926,9 +7938,9 @@
     [left-id : i64 (ci.intern "seg-job-left")]
     [right-id : i64 (ci.intern "seg-job-right")]
     [left-decls : ast.AstDeclList
-      (ast.ast-decl-cons (Module left-id) (ast.ast-decl-list-new))]
+      (ast.ast-decl-cons (& (Module left-id)) (& (ast.ast-decl-list-new)))]
     [right-decls : ast.AstDeclList
-      (ast.ast-decl-cons (Module right-id) (ast.ast-decl-list-new))]
+      (ast.ast-decl-cons (& (Module right-id)) (& (ast.ast-decl-list-new)))]
     [left-paths : ast.AstDeclPathList
       (ast.ast-decl-path-cons-with-owner-id
         "left"
@@ -9993,12 +10005,13 @@
         (set!
           out
           (ast.ast-decl-cons
-            (ast.ast-decl-def-fn-id
-              (ci.intern-generated-name "memo-test-decl")
-              (ast.ast-param-list-new)
-              (Unit)
-              (ast.ast-node-push (Literal (Unit))))
-            out))
+            (&
+              (ast.ast-decl-def-fn-id
+                (ci.intern-generated-name "memo-test-decl")
+                (ast.ast-param-list-new)
+                (Unit)
+                (ast.ast-node-push (Literal (Unit)))))
+            (& out)))
         (set! index (+ index 1)))
       out)))
 

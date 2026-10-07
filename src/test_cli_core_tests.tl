@@ -188,19 +188,24 @@
           (box span)))]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        (ast.ast-decl-module-id stdlib-string-id)
-        (ast.ast-decl-cons
-          dep-fn
+        (& (ast.ast-decl-module-id stdlib-string-id))
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-module-id stdlib-args-id)
-            (ast.ast-decl-cons
-              source-import
+            (& dep-fn)
+            (&
               (ast.ast-decl-cons
-                (ast.ast-decl-test-id
-                  owned-id
-                  (tltest.tltest-call-expr-id string-eq-id)
-                  span)
-                (ast.ast-decl-list-new))))))]
+                (& (ast.ast-decl-module-id stdlib-args-id))
+                (&
+                  (ast.ast-decl-cons
+                    (& source-import)
+                    (&
+                      (ast.ast-decl-cons
+                        (&
+                          (ast.ast-decl-test-id
+                            owned-id
+                            (tltest.tltest-call-expr-id string-eq-id)
+                            span))
+                        (& (ast.ast-decl-list-new)))))))))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         (owned_view.compiler-owned-shared-view dep-path)
@@ -227,9 +232,7 @@
   test-cli-vector-builders-preserve-order
   (if (let
     [helper-name : String "__tl_fixture_helper"]
-    [helper-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view helper-name))]
+    [helper-id : i64 (ci.intern-generated-name (& helper-name))]
     [first-id : i64 (ci.intern-generated-name "first")]
     [second-id : i64 (ci.intern-generated-name "second")]
     [helper-decl : ast.AstDecl
@@ -242,18 +245,22 @@
     [second-span : ast.AstSourceSpan (ast.ast-source-span 22 1 22 1)]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        helper-decl
-        (ast.ast-decl-cons
-          (ast.ast-decl-test-id
-            first-id
-            (tltest.tltest-call-expr-id helper-id)
-            first-span)
+        (& helper-decl)
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-test-id
-              second-id
-              (tltest.tltest-call-expr-id helper-id)
-              second-span)
-            (ast.ast-decl-list-new))))]
+            (&
+              (ast.ast-decl-test-id
+                first-id
+                (tltest.tltest-call-expr-id helper-id)
+                first-span))
+            (&
+              (ast.ast-decl-cons
+                (&
+                  (ast.ast-decl-test-id
+                    second-id
+                    (tltest.tltest-call-expr-id helper-id)
+                    second-span))
+                (& (ast.ast-decl-list-new)))))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         "runtime.tl"
@@ -303,17 +310,21 @@
     [unit-expr : i64 (ast.ast-node-push (Literal (Unit)))]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        (ast.ast-decl-def-id seed (No) unit-expr)
-        (ast.ast-decl-cons
-          (ast.ast-decl-def-id owner (No) (ast.ast-node-push (Var seed)))
+        (& (ast.ast-decl-def-id seed (No) unit-expr))
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-def-id dead (No) unit-expr)
-            (ast.ast-decl-cons
-              (ast.ast-decl-test-id
-                (ci.intern "uses-global-field-root")
-                (ast.ast-node-push (Var field))
-                (ast.ast-source-span 1 1 1 1))
-              (ast.ast-decl-list-new)))))]
+            (& (ast.ast-decl-def-id owner (No) (ast.ast-node-push (Var seed))))
+            (&
+              (ast.ast-decl-cons
+                (& (ast.ast-decl-def-id dead (No) unit-expr))
+                (&
+                  (ast.ast-decl-cons
+                    (&
+                      (ast.ast-decl-test-id
+                        (ci.intern "uses-global-field-root")
+                        (ast.ast-node-push (Var field))
+                        (ast.ast-source-span 1 1 1 1)))
+                    (& (ast.ast-decl-list-new)))))))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         "field-root.tl"
@@ -406,7 +417,7 @@
         (begin
           (ci.intern-compat-state-intern
             (&mut owner)
-            (string.int->string index))
+            (& (string.int->string index)))
           unit)
         (set! index (+ index 1)))]
     [field-id : i64 (ci.intern-compat-state-intern (&mut owner) "owner.field")]
@@ -455,10 +466,11 @@
         (Begin
           (ast.ast-expr-cons
             (ast.ast-expr-with-scratch
-              (ast.ast-expr-cons unit-expr (ast.ast-expr-list-new)))
-            (ast.ast-expr-cons
-              (tltest.tltest-call-expr-id bytes-view-id)
-              (ast.ast-expr-cons unit-expr (ast.ast-expr-list-new))))))]
+              (ast.ast-expr-cons unit-expr (& (ast.ast-expr-list-new))))
+            (&
+              (ast.ast-expr-cons
+                (tltest.tltest-call-expr-id bytes-view-id)
+                (& (ast.ast-expr-cons unit-expr (& (ast.ast-expr-list-new)))))))))]
     [helper-decl : ast.AstDecl
       (ast.ast-decl-def-fn-id
         helper-id
@@ -468,17 +480,21 @@
     [span : ast.AstSourceSpan (ast.ast-source-span 17 1 17 1)]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        substring-decl
-        (ast.ast-decl-cons
-          str-view-decl
+        (& substring-decl)
+        (&
           (ast.ast-decl-cons
-            helper-decl
-            (ast.ast-decl-cons
-              (ast.ast-decl-test-id
-                test-id
-                (tltest.tltest-call-expr-id helper-id)
-                span)
-              (ast.ast-decl-list-new)))))]
+            (& str-view-decl)
+            (&
+              (ast.ast-decl-cons
+                (& helper-decl)
+                (&
+                  (ast.ast-decl-cons
+                    (&
+                      (ast.ast-decl-test-id
+                        test-id
+                        (tltest.tltest-call-expr-id helper-id)
+                        span))
+                    (& (ast.ast-decl-list-new)))))))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         "stdlib/runtime.tl"
@@ -526,7 +542,7 @@
         (Begin
           (ast.ast-expr-cons
             lambda-expr
-            (ast.ast-expr-cons unit-expr (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons unit-expr (& (ast.ast-expr-list-new)))))))]
     [helper-decl : ast.AstDecl
       (ast.ast-decl-def-fn-id
         helper-id
@@ -536,15 +552,18 @@
     [span : ast.AstSourceSpan (ast.ast-source-span 18 1 18 1)]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        substring-decl
-        (ast.ast-decl-cons
-          helper-decl
+        (& substring-decl)
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-test-id
-              test-id
-              (tltest.tltest-call-expr-id helper-id)
-              span)
-            (ast.ast-decl-list-new))))]
+            (& helper-decl)
+            (&
+              (ast.ast-decl-cons
+                (&
+                  (ast.ast-decl-test-id
+                    test-id
+                    (tltest.tltest-call-expr-id helper-id)
+                    span))
+                (& (ast.ast-decl-list-new)))))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         "stdlib/runtime.tl"
@@ -587,7 +606,7 @@
         (Begin
           (ast.ast-expr-cons
             (tltest.tltest-call-expr-id substring-id)
-            (ast.ast-expr-cons unit-expr (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons unit-expr (& (ast.ast-expr-list-new)))))))]
     [helper-decl : ast.AstDecl
       (ast.ast-decl-def-fn-id
         helper-id
@@ -597,15 +616,18 @@
     [span : ast.AstSourceSpan (ast.ast-source-span 19 1 19 1)]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        substring-decl
-        (ast.ast-decl-cons
-          helper-decl
+        (& substring-decl)
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-test-id
-              test-id
-              (tltest.tltest-call-expr-id helper-id)
-              span)
-            (ast.ast-decl-list-new))))]
+            (& helper-decl)
+            (&
+              (ast.ast-decl-cons
+                (&
+                  (ast.ast-decl-test-id
+                    test-id
+                    (tltest.tltest-call-expr-id helper-id)
+                    span))
+                (& (ast.ast-decl-list-new)))))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         "stdlib/runtime.tl"
@@ -632,9 +654,7 @@
   test-cli-inline-harness-skips-imported-tests
   (if (let
     [helper-name : String "__tl_imported_skip_helper"]
-    [helper-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view helper-name))]
+    [helper-id : i64 (ci.intern-generated-name (& helper-name))]
     [owned-id : i64 (ci.intern-generated-name "owned")]
     [imported-id : i64 (ci.intern-generated-name "imported")]
     [helper-decl : ast.AstDecl
@@ -647,18 +667,22 @@
     [imported-span : ast.AstSourceSpan (ast.ast-source-span 9 1 9 1)]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        helper-decl
-        (ast.ast-decl-cons
-          (ast.ast-decl-test-id
-            owned-id
-            (tltest.tltest-call-expr-id helper-id)
-            owned-span)
+        (& helper-decl)
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-test-id
-              imported-id
-              (tltest.tltest-call-expr-id helper-id)
-              imported-span)
-            (ast.ast-decl-list-new))))]
+            (&
+              (ast.ast-decl-test-id
+                owned-id
+                (tltest.tltest-call-expr-id helper-id)
+                owned-span))
+            (&
+              (ast.ast-decl-cons
+                (&
+                  (ast.ast-decl-test-id
+                    imported-id
+                    (tltest.tltest-call-expr-id helper-id)
+                    imported-span))
+                (& (ast.ast-decl-list-new)))))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         "driver.tl"
@@ -719,13 +743,15 @@
     [span : ast.AstSourceSpan (ast.ast-source-span 9 1 9 1)]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        import-decl
-        (ast.ast-decl-cons
-          (ast.ast-decl-test-id
-            test-id
-            (ast.ast-node-push (Literal (Unit)))
-            span)
-          (ast.ast-decl-list-new)))]
+        (& import-decl)
+        (&
+          (ast.ast-decl-cons
+            (&
+              (ast.ast-decl-test-id
+                test-id
+                (ast.ast-node-push (Literal (Unit)))
+                span))
+            (& (ast.ast-decl-list-new)))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         "alias.tl"
@@ -748,13 +774,9 @@
     [helper-name : String "substring"]
     [eq-dep-name : String "__tl_runtime_eq_dep"]
     [eq-name : String "eq"]
-    [dep-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view dep-name))]
+    [dep-id : i64 (ci.intern-generated-name (& dep-name))]
     [helper-id : i64 cbi.compiler-builtin-id-runtime-substring]
-    [eq-dep-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view eq-dep-name))]
+    [eq-dep-id : i64 (ci.intern-generated-name (& eq-dep-name))]
     [eq-id : i64 (tltest-eq-id)]
     [test-id : i64
       (ci.intern-generated-name "runtime-helper-not-called-by-test")]
@@ -785,19 +807,24 @@
     [span : ast.AstSourceSpan (ast.ast-source-span 13 1 13 1)]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        dep-decl
-        (ast.ast-decl-cons
-          helper-decl
+        (& dep-decl)
+        (&
           (ast.ast-decl-cons
-            eq-dep-decl
-            (ast.ast-decl-cons
-              eq-decl
+            (& helper-decl)
+            (&
               (ast.ast-decl-cons
-                (ast.ast-decl-test-id
-                  test-id
-                  (ast.ast-node-push (Literal (Unit)))
-                  span)
-                (ast.ast-decl-list-new))))))]
+                (& eq-dep-decl)
+                (&
+                  (ast.ast-decl-cons
+                    (& eq-decl)
+                    (&
+                      (ast.ast-decl-cons
+                        (&
+                          (ast.ast-decl-test-id
+                            test-id
+                            (ast.ast-node-push (Literal (Unit)))
+                            span))
+                        (& (ast.ast-decl-list-new)))))))))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         "stdlib/runtime.tl"
@@ -836,9 +863,7 @@
     [wrapper-name : String "__tl_atomic_runtime_caller"]
     [fetch-id : i64 cbi.compiler-builtin-id-runtime-atomic-i64-fetch-add-ptr]
     [load-id : i64 cbi.compiler-builtin-id-runtime-atomic-i64-load-ptr]
-    [wrapper-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view wrapper-name))]
+    [wrapper-id : i64 (ci.intern-generated-name (& wrapper-name))]
     [fetch-source-id : i64 cbi.compiler-builtin-id-atomic-i64-fetch-add]
     [test-id : i64 (ci.intern-generated-name "keeps-atomic-runtime-helper")]
     [fetch-decl : ast.AstDecl
@@ -858,17 +883,21 @@
     [span : ast.AstSourceSpan (ast.ast-source-span 20 1 20 1)]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        fetch-decl
-        (ast.ast-decl-cons
-          load-decl
+        (& fetch-decl)
+        (&
           (ast.ast-decl-cons
-            wrapper-decl
-            (ast.ast-decl-cons
-              (ast.ast-decl-test-id
-                test-id
-                (tltest.tltest-call-expr-id wrapper-id)
-                span)
-              (ast.ast-decl-list-new)))))]
+            (& load-decl)
+            (&
+              (ast.ast-decl-cons
+                (& wrapper-decl)
+                (&
+                  (ast.ast-decl-cons
+                    (&
+                      (ast.ast-decl-test-id
+                        test-id
+                        (tltest.tltest-call-expr-id wrapper-id)
+                        span))
+                    (& (ast.ast-decl-list-new)))))))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         "stdlib/runtime.tl"
@@ -905,15 +934,9 @@
     [dep-name : String "__tl_generated_reachable_dep"]
     [live-name : String "__tl_generated_reachable_live"]
     [dead-name : String "__tl_generated_reachable_dead"]
-    [dep-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view dep-name))]
-    [live-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view live-name))]
-    [dead-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view dead-name))]
+    [dep-id : i64 (ci.intern-generated-name (& dep-name))]
+    [live-id : i64 (ci.intern-generated-name (& live-name))]
+    [dead-id : i64 (ci.intern-generated-name (& dead-name))]
     [test-id : i64 (ci.intern-generated-name "uses-generated-live")]
     [dep-decl : ast.AstDecl
       (tltest-generated-wrapper
@@ -942,17 +965,21 @@
     [span : ast.AstSourceSpan (ast.ast-source-span 23 1 23 1)]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        dep-decl
-        (ast.ast-decl-cons
-          live-decl
+        (& dep-decl)
+        (&
           (ast.ast-decl-cons
-            dead-decl
-            (ast.ast-decl-cons
-              (ast.ast-decl-test-id
-                test-id
-                (tltest.tltest-call-expr-id live-id)
-                span)
-              (ast.ast-decl-list-new)))))]
+            (& live-decl)
+            (&
+              (ast.ast-decl-cons
+                (& dead-decl)
+                (&
+                  (ast.ast-decl-cons
+                    (&
+                      (ast.ast-decl-test-id
+                        test-id
+                        (tltest.tltest-call-expr-id live-id)
+                        span))
+                    (& (ast.ast-decl-list-new)))))))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         "driver.tl"
@@ -983,12 +1010,8 @@
   (if (let
     [dead-name : String "__tl_imported_generated_dead"]
     [ordinary-name : String "__tl_imported_ordinary_dead"]
-    [dead-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view dead-name))]
-    [ordinary-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view ordinary-name))]
+    [dead-id : i64 (ci.intern-generated-name (& dead-name))]
+    [ordinary-id : i64 (ci.intern-generated-name (& ordinary-name))]
     [test-id : i64 (ci.intern-generated-name "keeps-imported-generated")]
     [dead-decl : ast.AstDecl
       (tltest-generated-wrapper
@@ -1007,15 +1030,18 @@
     [span : ast.AstSourceSpan (ast.ast-source-span 29 1 29 1)]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        dead-decl
-        (ast.ast-decl-cons
-          ordinary-decl
+        (& dead-decl)
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-test-id
-              test-id
-              (ast.ast-node-push (Literal (Unit)))
-              span)
-            (ast.ast-decl-list-new))))]
+            (& ordinary-decl)
+            (&
+              (ast.ast-decl-cons
+                (&
+                  (ast.ast-decl-test-id
+                    test-id
+                    (ast.ast-node-push (Literal (Unit)))
+                    span))
+                (& (ast.ast-decl-list-new)))))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         "generated.tl"
@@ -1041,12 +1067,8 @@
   (if (let
     [helper-name : String "__tl_macro_generated_helper"]
     [macro-name : String "__tl_macro_generated_call"]
-    [helper-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view helper-name))]
-    [macro-id : i64
-      (ci.intern-generated-name
-        (owned_view.compiler-owned-shared-view macro-name))]
+    [helper-id : i64 (ci.intern-generated-name (& helper-name))]
+    [macro-id : i64 (ci.intern-generated-name (& macro-name))]
     [test-id : i64 (ci.intern-generated-name "uses-macro-generated-helper")]
     [helper-decl : ast.AstDecl
       (ast.ast-decl-def-fn-id
@@ -1063,15 +1085,18 @@
     [span : ast.AstSourceSpan (ast.ast-source-span 31 1 31 1)]
     [decls : ast.AstDeclList
       (ast.ast-decl-cons
-        helper-decl
-        (ast.ast-decl-cons
-          macro-decl
+        (& helper-decl)
+        (&
           (ast.ast-decl-cons
-            (ast.ast-decl-test-id
-              test-id
-              (tltest.tltest-call-expr-id macro-id)
-              span)
-            (ast.ast-decl-list-new))))]
+            (& macro-decl)
+            (&
+              (ast.ast-decl-cons
+                (&
+                  (ast.ast-decl-test-id
+                    test-id
+                    (tltest.tltest-call-expr-id macro-id)
+                    span))
+                (& (ast.ast-decl-list-new)))))))]
     [paths : ast.AstDeclPathList
       (ast.ast-decl-root-path-cons
         "macro-deps.tl"

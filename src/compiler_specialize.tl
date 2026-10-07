@@ -21,7 +21,7 @@
     [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
-        (match (ast.ast-decl-unwrapped decl)
+        (match (ast.ast-decl-unwrapped (& decl))
           [(DefFn decl-meta fn-name _ _ _ _)
             (if (string.eq (spec_ci.intern-str fn-name) name)
               true
@@ -1239,7 +1239,7 @@
     out))
 
 (define (gen-single-decl-list [decl : ast.AstDecl]) : ast.AstDeclList
-  (ast.ast-decl-cons decl (ast.ast-decl-list-new)))
+  (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new))))
 
 (define (spec-int-key [n : i64]) : String
   (if (< n 0)
@@ -1569,7 +1569,7 @@
   ;; old rendered-key equivalence without using a mangled String as identity.
   (let
     [intern-state : spec_ci.InternCompatState (spec-owner-intern-state owner)]
-    (spec_ci.intern-compat-state-intern (&mut intern-state) text)))
+    (spec_ci.intern-compat-state-intern (&mut intern-state) (& text))))
 
 (define (spec-structural-generated-text-atom-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -1584,7 +1584,7 @@
           (spec-profile-note-generated-text-materialized
             (spec-owner-profile-metrics owner))
           unit)])
-    (spec_ci.intern-compat-state-intern (&mut intern-state) text)))
+    (spec_ci.intern-compat-state-intern (&mut intern-state) (& text))))
 
 (define (spec-type-list-structural-key-at-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -2075,7 +2075,7 @@
           (spec_ci.intern-compat-state-composite-rendered-name-record!
             (&mut intern-state)
             raw
-            rendered))))))
+            (& rendered)))))))
 
 (define (spec-reserve-specialized-symbol-with-owner
   [owner : (& owner SpecOwnerContext)]
@@ -2108,11 +2108,12 @@
         (spec_ci.intern-compat-state-generated-symbol-materialize!
           (&mut intern-state)
           record.handle
-          (spec-render-specialized-name-with-owner
-            owner
-            (SpecStructuralKey record.structural-key)
-            record.template-name
-            record.values))
+          (&
+            (spec-render-specialized-name-with-owner
+              owner
+              (SpecStructuralKey record.structural-key)
+              record.template-name
+              record.values)))
         (set! index (+ index 1))))))
 
 (define (spec-materialize-owner-generated-symbols!
@@ -2263,7 +2264,7 @@
         [_ false])]))
 
 (define (gen-expr-eq? [a : ast.AstExpr] [b : ast.AstExpr]) : bool
-  (ctfe.ctfe-expr-eq (ast.ast-expr-unspan a) (ast.ast-expr-unspan b)))
+  (ctfe.ctfe-expr-eq (ast.ast-expr-unspan (& a)) (ast.ast-expr-unspan (& b))))
 
 (define (gen-param-eq? [a : ast.AstParam] [b : ast.AstParam]) : bool
   (match a
@@ -2689,8 +2690,8 @@
 ;; Marker flags affect nominal semantics even though they do not affect ABI.
 (define (gen-aggregate-markers-eq? [a : ast.AstDeclMeta] [b : ast.AstDeclMeta]) : bool
   (=
-    (ast.ast-decl-meta-aggregate-markers a)
-    (ast.ast-decl-meta-aggregate-markers b)))
+    (ast.ast-decl-meta-aggregate-markers (& a))
+    (ast.ast-decl-meta-aggregate-markers (& b))))
 
 (define (gen-decl-eq? [a : ast.AstDecl] [b : ast.AstDecl]) : bool
   (match a
@@ -2864,8 +2865,8 @@
     [pools : ast.AstNodePoolContext (spec-owner-pools owner)]
     (ctfe.ctfe-expr-eq-in-env
       (ctfe.ctfe-env-shared-view env)
-      (ast.ast-expr-unspan-with-pools pools a)
-      (ast.ast-expr-unspan-with-pools pools b))))
+      (ast.ast-expr-unspan-with-pools pools (& a))
+      (ast.ast-expr-unspan-with-pools pools (& b)))))
 
 (define (gen-param-eq-with-owner
   [_owner : (& _owner SpecOwnerContext)]
@@ -4195,10 +4196,11 @@
           owner
           (ast.ast-type-list-box-shared-view args)
           subs)
-        (spec-substitute-type-with-owner
-          owner
-          (spec-owner-type-get owner ret)
-          subs))]
+        (&
+          (spec-substitute-type-with-owner
+            owner
+            (spec-owner-type-get owner ret)
+            subs)))]
     [(Tuple elems)
       (Tuple
         (box
@@ -4209,32 +4211,36 @@
     [(Array elem count)
       (ast.ast-ty-array-with-pools
         (spec-owner-pools owner)
-        (spec-substitute-type-with-owner
-          owner
-          (spec-owner-type-get owner elem)
-          subs)
+        (&
+          (spec-substitute-type-with-owner
+            owner
+            (spec-owner-type-get owner elem)
+            subs))
         count)]
     [(DynArray elem)
       (ast.ast-ty-dyn-array-with-pools
         (spec-owner-pools owner)
-        (spec-substitute-type-with-owner
-          owner
-          (spec-owner-type-get owner elem)
-          subs))]
+        (&
+          (spec-substitute-type-with-owner
+            owner
+            (spec-owner-type-get owner elem)
+            subs)))]
     [(Slice elem)
       (ast.ast-ty-slice-with-pools
         (spec-owner-pools owner)
-        (spec-substitute-type-with-owner
-          owner
-          (spec-owner-type-get owner elem)
-          subs))]
+        (&
+          (spec-substitute-type-with-owner
+            owner
+            (spec-owner-type-get owner elem)
+            subs)))]
     [(Box elem)
       (ast.ast-ty-box-with-pools
         (spec-owner-pools owner)
-        (spec-substitute-type-with-owner
-          owner
-          (spec-owner-type-get owner elem)
-          subs))]
+        (&
+          (spec-substitute-type-with-owner
+            owner
+            (spec-owner-type-get owner elem)
+            subs)))]
     [(CFunc signature mode)
       (CFunc
         (ast.ast-node-pool-context-type-push
@@ -4247,49 +4253,55 @@
     [(Ptr elem)
       (ast.ast-ty-ptr-with-pools
         (spec-owner-pools owner)
-        (spec-substitute-type-with-owner
-          owner
-          (spec-owner-type-get owner elem)
-          subs))]
+        (&
+          (spec-substitute-type-with-owner
+            owner
+            (spec-owner-type-get owner elem)
+            subs)))]
     [(MutPtr elem)
       (ast.ast-ty-mut-ptr-with-pools
         (spec-owner-pools owner)
-        (spec-substitute-type-with-owner
-          owner
-          (spec-owner-type-get owner elem)
-          subs))]
+        (&
+          (spec-substitute-type-with-owner
+            owner
+            (spec-owner-type-get owner elem)
+            subs)))]
     [(Ref region inner)
       (ast.ast-ty-ref-with-pools
         (spec-owner-pools owner)
         region
-        (spec-substitute-type-with-owner
-          owner
-          (spec-owner-type-get owner inner)
-          subs))]
+        (&
+          (spec-substitute-type-with-owner
+            owner
+            (spec-owner-type-get owner inner)
+            subs)))]
     [(MutRef region inner)
       (ast.ast-ty-mut-ref-with-pools
         (spec-owner-pools owner)
         region
-        (spec-substitute-type-with-owner
-          owner
-          (spec-owner-type-get owner inner)
-          subs))]
+        (&
+          (spec-substitute-type-with-owner
+            owner
+            (spec-owner-type-get owner inner)
+            subs)))]
     [(Region region inner)
       (ast.ast-ty-region-with-pools
         (spec-owner-pools owner)
         region
-        (spec-substitute-type-with-owner
-          owner
-          (spec-owner-type-get owner inner)
-          subs))]
+        (&
+          (spec-substitute-type-with-owner
+            owner
+            (spec-owner-type-get owner inner)
+            subs)))]
     [(Invalidate lifetime inner)
       (ast.ast-ty-invalidate-with-pools
         (spec-owner-pools owner)
         lifetime
-        (spec-substitute-type-with-owner
-          owner
-          (spec-owner-type-get owner inner)
-          subs))]
+        (&
+          (spec-substitute-type-with-owner
+            owner
+            (spec-owner-type-get owner inner)
+            subs)))]
     [(EnumArgs name lifetimes) (EnumArgs name lifetimes)]
     [(StructArgs name lifetimes) (StructArgs name lifetimes)]
     [(VarArgs name lifetimes)
@@ -4404,7 +4416,7 @@
               (Float
                 (cfloat.compiler-float-format-f64
                   (cfloat.compiler-float-round-f32-as-f64 n)))))
-          (F32)))]
+          (& (F32))))]
     [(Bool b) (Ok (spec-owner-expr-push owner (Literal (Bool b))))]
     [(Char c) (Ok (spec-owner-expr-push owner (Literal (Char c))))]
     [(String _ _)
@@ -4585,7 +4597,7 @@
   [expr : ast.AstExpr]) : SpecMaybeId
   (let
     [pools : ast.AstNodePoolContext (spec-owner-pools owner)]
-    (match (ast.ast-expr-unspan-with-pools pools expr)
+    (match (ast.ast-expr-unspan-with-pools pools (& expr))
       [(Var name) (Some name)]
       [_ (None)])))
 
@@ -4854,7 +4866,7 @@
                     [(Ok values rest-runtime rest-state)
                       (Ok
                         values
-                        (ast.ast-expr-cons rewritten-arg rest-runtime)
+                        (ast.ast-expr-cons rewritten-arg (& rest-runtime))
                         rest-state)]
                     [(Err diag) (Err diag)])]
                 [(Err diag) (Err diag)]))]))]))
@@ -4914,7 +4926,7 @@
           (match (spec-build-specialization-at params (+ index 1) values at)
             [(Ok runtime value-subs type-subs)
               (Ok
-                (ast.ast-param-cons (Param name ty false) runtime)
+                (ast.ast-param-cons (& (Param name ty false)) (& runtime))
                 value-subs
                 type-subs)]
             [(Err diag) (Err diag)]))])))
@@ -5497,7 +5509,7 @@
   [subs : (& subs SpecValueSubst)]) : SpecMaybeId
   (let
     [pools : ast.AstNodePoolContext (spec-owner-pools owner)]
-    (match (ast.ast-expr-unspan-with-pools pools place)
+    (match (ast.ast-expr-unspan-with-pools pools (& place))
       [(Var name) (spec-value-subst-lookup subs name)]
       [(StructGet receiver-box _)
         (spec-ptr-addr-of-place-value-conflict-with-owner
@@ -5673,20 +5685,22 @@
       (Ok
         (ast.ast-expr-type-literal-with-pools
           (spec-owner-pools owner)
-          (spec-substitute-type-with-owner
-            owner
-            (spec-owner-type-get owner ty-id)
-            (& subs.types))))]
+          (&
+            (spec-substitute-type-with-owner
+              owner
+              (spec-owner-type-get owner ty-id)
+              (& subs.types)))))]
     [(Init maybe-ty-id)
       (Ok
         (ast.ast-expr-init-maybe-with-pools
           (spec-owner-pools owner)
-          (spec-substitute-maybe-type-with-owner
-            owner
-            (ast.ast-maybe-type-from-id-with-pools
-              (spec-owner-pools owner)
-              maybe-ty-id)
-            (& subs.types))))]
+          (&
+            (spec-substitute-maybe-type-with-owner
+              owner
+              (ast.ast-maybe-type-from-id-with-pools
+                (spec-owner-pools owner)
+                maybe-ty-id)
+              (& subs.types)))))]
     [(FixedMakeArray elem-ty-id len-box)
       (let
         [len : ast.AstExpr (spec-owner-expr-get owner len-box)]
@@ -5695,10 +5709,11 @@
         (Ok
           (ast.ast-expr-fixed-make-array-with-pools
             (spec-owner-pools owner)
-            (spec-substitute-type-with-owner
-              owner
-              (spec-owner-type-get owner elem-ty-id)
-              (& subs.types))
+            (&
+              (spec-substitute-type-with-owner
+                owner
+                (spec-owner-type-get owner elem-ty-id)
+                (& subs.types)))
             rewritten-len)))]
     [(MakeArray elem-ty-id len-box)
       (let
@@ -5708,10 +5723,11 @@
         (Ok
           (ast.ast-expr-make-array-with-pools
             (spec-owner-pools owner)
-            (spec-substitute-type-with-owner
-              owner
-              (spec-owner-type-get owner elem-ty-id)
-              (& subs.types))
+            (&
+              (spec-substitute-type-with-owner
+                owner
+                (spec-owner-type-get owner elem-ty-id)
+                (& subs.types)))
             rewritten-len)))]
     [(Ann inner-box ty-id)
       (let
@@ -5722,10 +5738,11 @@
           (ast.ast-expr-ann-with-pools
             (spec-owner-pools owner)
             rewritten
-            (spec-substitute-type-with-owner
-              owner
-              (spec-owner-type-get owner ty-id)
-              (& subs.types)))))]
+            (&
+              (spec-substitute-type-with-owner
+                owner
+                (spec-owner-type-get owner ty-id)
+                (& subs.types))))))]
     [(Cast inner-box ty-id)
       (let
         [inner : ast.AstExpr (spec-owner-expr-get owner inner-box)]
@@ -5735,10 +5752,11 @@
           (ast.ast-expr-cast-with-pools
             (spec-owner-pools owner)
             rewritten
-            (spec-substitute-type-with-owner
-              owner
-              (spec-owner-type-get owner ty-id)
-              (& subs.types)))))]
+            (&
+              (spec-substitute-type-with-owner
+                owner
+                (spec-owner-type-get owner ty-id)
+                (& subs.types))))))]
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params ret body-box)
@@ -6116,10 +6134,11 @@
           (ast.ast-expr-ptr-cast-with-pools
             (spec-owner-pools owner)
             rewritten
-            (spec-substitute-type-with-owner
-              owner
-              (spec-owner-type-get owner ty-id)
-              (& subs.types)))))]
+            (&
+              (spec-substitute-type-with-owner
+                owner
+                (spec-owner-type-get owner ty-id)
+                (& subs.types))))))]
     [(IntToPtr value-box ty-id)
       (let
         [value : ast.AstExpr (spec-owner-expr-get owner value-box)]
@@ -6129,10 +6148,11 @@
           (ast.ast-expr-int-to-ptr-with-pools
             (spec-owner-pools owner)
             rewritten
-            (spec-substitute-type-with-owner
-              owner
-              (spec-owner-type-get owner ty-id)
-              (& subs.types)))))]
+            (&
+              (spec-substitute-type-with-owner
+                owner
+                (spec-owner-type-get owner ty-id)
+                (& subs.types))))))]
     [(PtrAddrOf place-box)
       (let
         [place : ast.AstExpr (spec-owner-expr-get owner place-box)]
@@ -6344,7 +6364,7 @@
                     params
                     ret
                     rewritten
-                    metadata))
+                    (& metadata)))
                 state2)]
             [(Err diag) (Err diag)])))]
     [(Unsafe inner-box)

@@ -45,31 +45,43 @@
 ;; maximal ordinary runs the walk now folds without recursing.
 (define (compiler-load-decl-run-fixture) : ast.AstDeclList
   (ast.ast-decl-cons
-    (compiler-load-decl-run-def "alpha")
-    (ast.ast-decl-cons
-      (compiler-load-decl-run-def "beta")
+    (& (compiler-load-decl-run-def "alpha"))
+    (&
       (ast.ast-decl-cons
-        (ast.ast-decl-module-body-id
-          (compiler-load-decl-run-name-id "fixture.inner")
+        (& (compiler-load-decl-run-def "beta"))
+        (&
           (ast.ast-decl-cons
-            (compiler-load-decl-run-def "inner-one")
-            (ast.ast-decl-cons
-              (compiler-load-decl-run-def "inner-two")
-              (ast.ast-decl-list-new))))
-        (ast.ast-decl-cons
-          (compiler-load-decl-run-def "gamma")
-          (ast.ast-decl-cons
-            (compiler-load-decl-run-macro-import
-              "fixture.macros"
-              "fixture.macros")
-            (ast.ast-decl-cons
-              (compiler-load-decl-run-def "delta")
-              (ast.ast-decl-cons
-                (ast.ast-decl-module-id
-                  (compiler-load-decl-run-name-id "fixture.epsilon"))
+            (&
+              (ast.ast-decl-module-body-id
+                (compiler-load-decl-run-name-id "fixture.inner")
                 (ast.ast-decl-cons
-                  (compiler-load-decl-run-def "zeta")
-                  (ast.ast-decl-list-new))))))))))
+                  (& (compiler-load-decl-run-def "inner-one"))
+                  (&
+                    (ast.ast-decl-cons
+                      (& (compiler-load-decl-run-def "inner-two"))
+                      (& (ast.ast-decl-list-new)))))))
+            (&
+              (ast.ast-decl-cons
+                (& (compiler-load-decl-run-def "gamma"))
+                (&
+                  (ast.ast-decl-cons
+                    (&
+                      (compiler-load-decl-run-macro-import
+                        "fixture.macros"
+                        "fixture.macros"))
+                    (&
+                      (ast.ast-decl-cons
+                        (& (compiler-load-decl-run-def "delta"))
+                        (&
+                          (ast.ast-decl-cons
+                            (&
+                              (ast.ast-decl-module-id
+                                (compiler-load-decl-run-name-id
+                                  "fixture.epsilon")))
+                            (&
+                              (ast.ast-decl-cons
+                                (& (compiler-load-decl-run-def "zeta"))
+                                (& (ast.ast-decl-list-new))))))))))))))))))
 
 (define (compiler-load-decl-run-decl-text [decl : ast.AstDecl]) : String
   (match decl

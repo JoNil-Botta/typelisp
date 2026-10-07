@@ -228,7 +228,7 @@
     [else (Struct (ci.intern (string.copy name)))]))
 
 (define (ir-text-type-id! [cur : (&mut cur IrTextCursor)]) : i64
-  (ast.ast-node-pool-reader-type-push (ir-text-type! cur)))
+  (ast.ast-node-pool-reader-type-push (& (ir-text-type! cur))))
 
 ;; Types up to the closing `)` of the current list, which is consumed.
 (define (ir-text-type-list! [cur : (&mut cur IrTextCursor)]) : ast.AstTypeList
@@ -289,7 +289,7 @@
         [elem : ast.AstType (ir-text-type! cur)]
         [count : i64 (ir-text-int! cur)]
         (ir-text-expect! cur ")")
-        (ast.ast-ty-array elem count))]
+        (ast.ast-ty-array (& elem) count))]
     [(or
         (string.eq head "Region")
         (string.eq head "Invalidate")
@@ -300,10 +300,11 @@
         [inner : ast.AstType (ir-text-type! cur)]
         (ir-text-expect! cur ")")
         (cond
-          [(string.eq head "Region") (ast.ast-ty-region region inner)]
-          [(string.eq head "Invalidate") (ast.ast-ty-invalidate region inner)]
-          [(string.eq head "&") (ast.ast-ty-ref region inner)]
-          [else (ast.ast-ty-mut-ref region inner)]))]
+          [(string.eq head "Region") (ast.ast-ty-region region (& inner))]
+          [(string.eq head "Invalidate")
+            (ast.ast-ty-invalidate region (& inner))]
+          [(string.eq head "&") (ast.ast-ty-ref region (& inner))]
+          [else (ast.ast-ty-mut-ref region (& inner))]))]
     [(or
         (string.eq head "__tl_dyn-array")
         (string.eq head "Slice")
@@ -314,11 +315,11 @@
         [elem : ast.AstType (ir-text-type! cur)]
         (ir-text-expect! cur ")")
         (cond
-          [(string.eq head "__tl_dyn-array") (ast.ast-ty-dyn-array elem)]
-          [(string.eq head "Slice") (ast.ast-ty-slice elem)]
-          [(string.eq head "Box") (ast.ast-ty-box elem)]
-          [(string.eq head "Ptr") (ast.ast-ty-ptr elem)]
-          [else (ast.ast-ty-mut-ptr elem)]))]
+          [(string.eq head "__tl_dyn-array") (ast.ast-ty-dyn-array (& elem))]
+          [(string.eq head "Slice") (ast.ast-ty-slice (& elem))]
+          [(string.eq head "Box") (ast.ast-ty-box (& elem))]
+          [(string.eq head "Ptr") (ast.ast-ty-ptr (& elem))]
+          [else (ast.ast-ty-mut-ptr (& elem))]))]
     [else
       (let
         [lifetimes : ast.AstLifetimeList (ast.ast-lifetime-list-new)]

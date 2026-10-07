@@ -3947,7 +3947,7 @@
             (lint-unsafe-scan-children
               (ast.ast-node-get node-id)
               (owned_view.compiler-owned-shared-view scope))]
-          (match (ast.ast-expr-unspan (ast.ast-node-get func))
+          (match (ast.ast-expr-unspan (& (ast.ast-node-get func)))
             [(Var name)
               (let
                 [with-string-use : LintUnsafeScan
@@ -5364,7 +5364,7 @@
           (string.string-length
             (ast.ast-lit-int-text (owned_view.compiler-owned-shared-view lit)))
           0)
-        (= (ast.ast-lit-int-value lit) value))]
+        (= (ast.ast-lit-int-value (& lit)) value))]
     [_ false]))
 
 (define (lint-single-element-array-expr-list-count
@@ -5648,7 +5648,7 @@
         (string.string-length
           (ast.ast-lit-int-text (owned_view.compiler-owned-shared-view lit)))
         0)
-        (ast.ast-lit-int-value lit)
+        (ast.ast-lit-int-value (& lit))
         -1)]
     [_ -1]))
 
@@ -7355,7 +7355,7 @@
       state)))
 
 (define (lint-redundant-function-name-callee [expr : ast.AstExpr]) : String
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan (& expr))
     [(Var name) (ci.intern-str name)]
     [_ ""]))
 
@@ -7364,7 +7364,7 @@
   (if (= args.len 0)
     ""
     (match (ast.ast-expr-unspan
-      (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0)))
+      (& (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))))
       [(Call fn-head _)
         (lint-redundant-function-name-callee (ast.ast-node-get fn-head))]
       [_ ""])))
@@ -7374,7 +7374,7 @@
   (if (= args.len 0)
     ""
     (match (ast.ast-expr-unspan
-      (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0)))
+      (& (ast.ast-node-get (ast.ast-expr-list-get (& args) 0 0))))
       [(Var name) (lint-module-default-alias (ci.intern-str name))]
       [_ ""])))
 
@@ -8752,7 +8752,7 @@
                 (lint-unused-variable-expr source state span)
                 span))
             span)]
-        (match (ast.ast-expr-unspan (ast.ast-node-get binding))
+        (match (ast.ast-expr-unspan (& (ast.ast-node-get binding)))
           [(Var name)
             (lint-unused-variable-index-scope name body read-state span)]
           [_ (lint-unused-variable-expr body read-state span)]))]

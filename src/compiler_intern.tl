@@ -2048,9 +2048,9 @@
 
 (define (intern-compat-state-intern
   [state : (&mut state InternCompatState)]
-  [name : String]) : i64
+  [name : (& str)]) : i64
   (intern-compat-state-ensure-ready! state)
-  (intern-compat-state-intern-ready-ref (& state) (& name)))
+  (intern-compat-state-intern-ready-ref (& state) name))
 
 ;; State-owned source-slice interning. This is the explicit lexer boundary:
 ;; hits compare against the caller's source bytes without allocating, while
@@ -2938,13 +2938,13 @@
       (- (bit-and id (intern-structural-key-index-mask)) 1))
     ""))
 
-(define (intern-composite-rendered-name-record! [id : i64] [name : String]) : String
+(define (intern-composite-rendered-name-record! [id : i64] [name : (& str)]) : String
   (let
     [cached : String (intern-composite-rendered-name id)]
     (if (> (__tl_string_length cached) 0)
       cached
       (let
-        [persistent : String (intern-persistent-copy (& name))]
+        [persistent : String (intern-persistent-copy name)]
         [index : i64 (- (bit-and id (intern-structural-key-index-mask)) 1)]
         (set!
           (array-ref
@@ -2999,7 +2999,7 @@
 ;; counter live in the supplied state; no active-table installation is needed.
 (define (intern-compat-state-generated-name-store
   [state : (&mut state InternCompatState)]
-  [name : String]
+  [name : (& str)]
   [qualified : bool]
   [module-id : i64]
   [base-id : i64]) : i64
@@ -3016,7 +3016,7 @@
         (intern-pool-capacity-abort)
         (let
           [persistent-name : String
-            (intern-compat-state-persistent-copy state (& name))]
+            (intern-compat-state-persistent-copy state name)]
           (begin
             (set! (array-ref state.pool-slots next-id) persistent-name)
             (set! (array-ref state.pool-qualified-slots next-id) qualified)
@@ -3061,7 +3061,7 @@
 
 (define (intern-compat-state-generated-name
   [state : (&mut state InternCompatState)]
-  [name : String]) : i64
+  [name : (& str)]) : i64
   (intern-compat-state-generated-name-store state name false -1 -1))
 
 (define (intern-compat-state-generated-canonical-name-at
@@ -3085,7 +3085,7 @@
             [id : i64
               (intern-compat-state-generated-name-store
                 state
-                name
+                (& name)
                 qualified
                 module-id
                 base-id)]
@@ -3243,15 +3243,14 @@
 (define (intern-compat-state-generated-symbol-materialize!
   [state : (&mut state InternCompatState)]
   [id : i64]
-  [name : String]) : String
+  [name : (& str)]) : String
   (if (intern-compat-state-generated-id-active? state id)
     (let
       [cached : String (intern-array-shared-view state.pool-slots id)]
       (if (> (intern-private-string-length cached) 0)
         cached
         (let
-          [persistent : String
-            (intern-compat-state-persistent-copy state (& name))]
+          [persistent : String (intern-compat-state-persistent-copy state name)]
           (set! (array-ref state.pool-slots id) persistent)
           persistent)))
     (tl_oob_abort)))
@@ -3386,14 +3385,13 @@
 (define (intern-compat-state-composite-rendered-name-record!
   [state : (&mut state InternCompatState)]
   [id : i64]
-  [name : String]) : String
+  [name : (& str)]) : String
   (let
     [cached : String (intern-compat-state-composite-rendered-name state id)]
     (if (> (__tl_string_length cached) 0)
       cached
       (let
-        [persistent : String
-          (intern-compat-state-persistent-copy state (& name))]
+        [persistent : String (intern-compat-state-persistent-copy state name)]
         [index : i64 (- (bit-and id (intern-structural-key-index-mask)) 1)]
         (set!
           (array-ref
@@ -3646,7 +3644,7 @@
   [state : (&mut state InternCompatState)]
   [role : i64]
   [id : i64]
-  [name : String]) : String
+  [name : (& str)]) : String
   (if (< (intern-generated-symbol-role-index role) 0)
     (tl_oob_abort)
     (let
@@ -3741,7 +3739,7 @@
 (define (intern-generated-role-symbol-materialize!
   [role : i64]
   [id : i64]
-  [name : String]) : String
+  [name : (& str)]) : String
   (if (or
     (< (intern-generated-symbol-role-index role) 0)
     (not (intern-generated-id-active? id)))
@@ -3840,7 +3838,7 @@
     dot))
 
 (define (intern-generated-name-store
-  [name : String]
+  [name : (& str)]
   [qualified : bool]
   [module-id : i64]
   [base-id : i64]) : i64
@@ -3852,7 +3850,7 @@
       compile-profile
       (intern-profile-note-generated intern-active-profile-metrics-address))
     (let
-      [persistent-name : String (intern-persistent-copy (& name))]
+      [persistent-name : String (intern-persistent-copy name)]
       [id : i64 (intern-generated-id-allocate!)]
       (set! (array-ref intern-pool-slots id) persistent-name)
       (set! (array-ref intern-pool-qualified-slots id) qualified)
@@ -3884,13 +3882,13 @@
 
 ;: Allocate an opaque generated symbol. Display punctuation is intentionally
 ;: not interpreted: hygiene locals may contain `/` without being qualified.
-(define (intern-generated-name [name : String]) : i64
+(define (intern-generated-name [name : (& str)]) : i64
   (intern-generated-name-store name false -1 -1))
 
 ;: Allocate a generated qualified symbol without hashing its display spelling.
 ;: The caller supplies the already-known structural module and base identities.
 (define (intern-generated-qualified-name
-  [name : String]
+  [name : (& str)]
   [module-id : i64]
   [base-id : i64]) : i64
   (intern-generated-name-store name true module-id base-id))
@@ -3899,7 +3897,7 @@
 ;: supplies the first segment, full prefix, and first-dot tail identities, so
 ;: downstream resolution never has to recover them from the display spelling.
 (define (intern-generated-dotted-name
-  [name : String]
+  [name : (& str)]
   [leading-dot-id : i64]
   [dotted-prefix-id : i64]
   [dotted-tail-id : i64]) : i64
@@ -3945,7 +3943,7 @@
       (if (intern-id-slot-empty? stored-id)
         (let
           [id : i64
-            (intern-generated-name-store name qualified module-id base-id)]
+            (intern-generated-name-store (& name) qualified module-id base-id)]
           (begin
             (when
               dotted
@@ -4895,7 +4893,7 @@
 (define (intern-source-name-session-resolve
   [session : (& session InternSourceNameSession)]
   [identity : InternSyntaxTextIdentity]
-  [text : String]) : InternSourceNameResolution
+  [text : (& str)]) : InternSourceNameResolution
   (cond
     [(not (= identity.table-id session.table-id)) (WrongOwner)]
     [(not (= (array-ref session.table-id-cell 0) session.table-id))

@@ -22,5 +22,30 @@
     (unsafe
       (format.formatter-status-at 1))))
 
+(define (raw-ranges [text : (& text str)]) : i64
+  (let
+    [source : (Ptr u8) (ptr-null : (Ptr u8))]
+    [dst : (MutPtr u8) (ptr-null : (MutPtr u8))]
+    [byte : u8
+      (unsafe
+        (format.format-debug-source-byte source 0 (cast 0 : u8) false))]
+    [_length : i64
+      (unsafe
+        (format.format-debug-rendered-length source 1 byte false (cast 34 : u8)))]
+    [_rendered : String
+      (unsafe
+        (format.format-debug-bytes-core source 1 byte false (cast 34 : u8)))]
+    (unsafe
+      (format.format-debug-write-code! dst 0 byte))
+    (unsafe
+      (format.format-write-fill! dst 0 1 'x'))
+    (unsafe
+      (format.format-copy-rendered-range! text 0 dst 0 1))
+    (+
+      (unsafe
+        (format.format-debug-write-byte! dst 0 byte 0))
+      (unsafe
+        (format.arguments-renderer-call-at 0 0 0)))))
+
 (define (main) : i64
   0)

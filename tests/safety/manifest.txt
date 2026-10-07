@@ -418,6 +418,16 @@ format_formatter_result_at_safe_reject|check-fail|tests/safety/format_formatter_
 format_formatter_status_at_safe_reject|check-fail|tests/safety/format_formatter_status_at_safe_reject.tl|-|format/formatter-status-at requires unsafe context
 format_raw_helper_callable_launder_reject|check-fail|tests/safety/format_raw_helper_callable_launder_reject.tl|-|byte_buf/format-write-raw is an unsafe callable and cannot be used as a plain function value
 format_raw_helper_unsafe_call_ok|check-ok|tests/safety/format_raw_helper_unsafe_call_ok.tl|-|-
+format_debug_source_byte_safe_reject|check-fail|tests/safety/format_debug_source_byte_safe_reject.tl|-|format/format-debug-source-byte requires unsafe context
+format_debug_rendered_length_safe_reject|check-fail|tests/safety/format_debug_rendered_length_safe_reject.tl|-|format/format-debug-rendered-length requires unsafe context
+format_debug_write_code_safe_reject|check-fail|tests/safety/format_debug_write_code_safe_reject.tl|-|format/format-debug-write-code! requires unsafe context
+format_debug_write_byte_safe_reject|check-fail|tests/safety/format_debug_write_byte_safe_reject.tl|-|format/format-debug-write-byte! requires unsafe context
+format_debug_bytes_core_safe_reject|check-fail|tests/safety/format_debug_bytes_core_safe_reject.tl|-|format/format-debug-bytes-core requires unsafe context
+format_write_fill_safe_reject|check-fail|tests/safety/format_write_fill_safe_reject.tl|-|format/format-write-fill! requires unsafe context
+format_copy_rendered_range_safe_reject|check-fail|tests/safety/format_copy_rendered_range_safe_reject.tl|-|format/format-copy-rendered-range! requires unsafe context
+format_renderer_call_at_safe_reject|check-fail|tests/safety/format_renderer_call_at_safe_reject.tl|-|format/arguments-renderer-call-at requires unsafe context
+format_raw_range_alias_safe_reject|check-fail|tests/safety/format_raw_range_alias_safe_reject.tl|-|fmt/format-write-fill! requires unsafe context
+format_raw_range_callable_launder_reject|check-fail|tests/safety/format_raw_range_callable_launder_reject.tl|-|format/format-write-fill! is an unsafe callable and cannot be used as a plain function value
 format_capability_callback_value_ok|check-ok|tests/safety/format_capability_callback_value_ok.tl|-|-
 format_writer_missing_capability_reject|check-fail|tests/safety/format_writer_missing_capability_reject.tl|-|format: writer capability adapter is missing from canonical module
 format_registry_state_safe_reject|check-fail|tests/safety/format_registry_state_safe_reject.tl|-|ptr-write! requires unsafe context

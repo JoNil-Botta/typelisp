@@ -7725,7 +7725,11 @@ first failure and skips every later plan piece and newline. `ByteBuf`, `TextBuf`
 and `FileHandle` provide canonical adapters; `ByteBuf` and `TextBuf` use cells,
 while `FileHandle` uses its validated table ID as a direct context. Internal
 retained-Arguments String sinks use the same checked cell capability protocol;
-the raw formatter-cell write/result/status helpers are unsafe. Stdout and stderr
+the raw formatter-cell write/result/status helpers are unsafe. So are the raw
+range helpers behind Debug quoting and padding (`format-debug-*`,
+`format-write-fill!`, `format-copy-rendered-range!`) and the retained-Arguments
+renderer call `arguments-renderer-call-at`: their safe callers establish the
+exact source and destination ranges first. Stdout and stderr
 use the same bounded callback contract without a writer cell. Direct sinks and
 retained Arguments construction do not allocate the final combined String,
 although Arguments aggregate storage, scalar conversion, option rendering,

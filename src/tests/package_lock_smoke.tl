@@ -1,4 +1,4 @@
-;; package_lock_smoke.tl - Runnable package lockfile helper smoke.
+;; package_lock_smoke.tl - Inline package lockfile helper tests.
 (import package_lock_core)
 (cfg test (import stdlib.byte_buf))
 (cfg test (import stdlib.env))
@@ -8,9 +8,6 @@
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector package_lock_core.PackageLockEntry core) as package_lock_entry_vec)
-
-(define (main) : i64
-  (package-lock-self-test))
 
 (define (package-lock-valid-source) : String
   "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"zeta\") (url \"https://github.com/owner/zeta.git\") (pin (rev \"abcdef0123456789abcdef0123456789abcdef01\")) (commit \"abcdef0123456789abcdef0123456789abcdef01\")) (dependency (alias \"alpha\") (url \"https://github.com/owner/alpha.git\") (pin (branch \"main\")) (commit \"1111111111111111111111111111111111111111\"))))")
@@ -357,11 +354,6 @@
     (package-lock-emit-stable-ok?)
     (package-lock-round-trip-ok?)
     (package-lock-rejections-ok?)))
-
-(define (package-lock-self-test) : i64
-  (if (package-lock-self-test-ok?)
-    42
-    (io.panic "package-lock: self-test mismatch")))
 
 (test
   package-lock-parse-emit-round-trip

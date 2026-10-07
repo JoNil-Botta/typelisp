@@ -381,7 +381,7 @@
     (ci.intern-compat-state-install! home-intern)
     ok))
 
-(define (main) : i64
+(define (driver-state-smoke-status) : i64
   (if (not
     (=
       (compiler_driver_smoke_tests.compiler-driver-reader-context-smoke-main)
@@ -407,3 +407,9 @@
         (begin
           (io.print-format "{}" "driver state isolation smoke failed\n")
           1)))))
+
+(test
+  driver-state-session-isolation
+  (if (= (driver-state-smoke-status) 0)
+    unit
+    (io.panic "driver state isolation smoke failed")))

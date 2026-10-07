@@ -818,6 +818,109 @@
     [(Float text _) (Float (sp-text text))]
     [(BracketList start length span) (sexpr-list-view start length span)]))
 
+;; --- slice views ---
+;; A list's children as one borrowed slice of pool rows. Rows never move while
+;; the pool is live: only a handoff (`sp-node-pool-compact-retained!`) copies
+;; them, and the driver runs it between phases, never during a traversal. A
+;; slice view therefore outlives the traversal that holds it, but it must not
+;; be kept across a handoff. It is typed `program` because no shorter owner can
+;; be named for the global pool, and a function cannot yet return a
+;; `(& program ...)` reference directly (#8630), so the views build it from a
+;; slice header.
+(defenum SpannedSexprSliceView
+  (Int i64 String token.SourceSpan)
+  (Sym ci.InternSyntaxId token.SourceSpan)
+  (List (& program (Slice SpannedSexpr)) token.SourceSpan)
+  (Str ci.InternId token.SourceSpan)
+  (Char char token.SourceSpan)
+  (Float String token.SourceSpan)
+  (BracketList (& program (Slice SpannedSexpr)) token.SourceSpan))
+
+;; The span-free slice view walks a bracket list like a parenthesized one.
+(defenum SexprSliceView
+  (Int i64 String)
+  (Sym ci.InternSyntaxId)
+  (List (& program (Slice SpannedSexpr)))
+  (Str ci.InternId)
+  (Char char)
+  (Float String))
+
+;; The (data address, length) header that `sp-node-items` reads as a slice. An
+;; empty list points at a static empty array.
+(define sp-node-items-header : (__tl_dyn-array i64)
+  (__tl_make-array i64 2))
+(define sp-node-items-empty : (__tl_dyn-array SpannedSexpr)
+  (__tl_make-array SpannedSexpr 0))
+
+(define (sp-node-items-header! [start : i64] [length : i64]) : unit
+  (if (> length 0)
+    (begin
+      (set!
+        (array-ref sp-node-items-header 0)
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-offset
+                (int->ptr
+                  (array-ref
+                    sp-node-pool-segment-bases
+                    (shr start sp-node-segment-bits))
+                  : (Ptr SpannedSexpr))
+                start)))
+          : i64))
+      (set! (array-ref sp-node-items-header 1) length))
+    (begin
+      (set!
+        (array-ref sp-node-items-header 0)
+        (cast
+          (unsafe
+            (ptr->int
+              (ptr-cast (__tl_array-data sp-node-items-empty) : (Ptr u8))))
+          : i64))
+      (set! (array-ref sp-node-items-header 1) 0))))
+
+(defmacro (sp-node-items [start : Expr] [length : Expr]) : Expr
+  `(begin
+    (sp-node-items-header! ,start ,length)
+    (unsafe
+      (ptr-read
+        (ptr-cast
+          (__tl_array-data sp-node-items-header)
+          : (Ptr (& program (Slice SpannedSexpr))))))))
+
+;; Like `spanned-sexpr-view`, but a list is one `List` of its children.
+(define (spanned-sexpr-slice-view [s : SpannedSexpr]) : SpannedSexprSliceView
+  (match s
+    [(Int n text span) (Int n (sp-text text) span)]
+    [(Sym name span) (Sym name span)]
+    [(List start length span) (List (sp-node-items start length) span)]
+    [(Str text span) (Str text span)]
+    [(Char c span) (Char c span)]
+    [(Float text span) (Float (sp-text text) span)]
+    [(BracketList start length span)
+      (BracketList (sp-node-items start length) span)]))
+
+;; Like `sexpr-view`, but a list is one `List` of its children.
+(define (sexpr-slice-view [s : SpannedSexpr]) : SexprSliceView
+  (match s
+    [(Int n text _) (Int n (sp-text text))]
+    [(Sym name _) (Sym name)]
+    [(List start length _) (List (sp-node-items start length))]
+    [(Str text _) (Str text)]
+    [(Char c _) (Char c)]
+    [(Float text _) (Float (sp-text text))]
+    [(BracketList start length _) (List (sp-node-items start length))]))
+
+;; The list after its first `count` children, with the list's span: the tail a
+;; cons step hands out. A slice pattern binds its rest as `& _` and takes the
+;; tail here when a helper needs it as a node.
+(define (spanned-sexpr-drop [s : SpannedSexpr] [count : i64]) : SpannedSexpr
+  (match s
+    [(List start length span) (List (+ start count) (- length count) span)]
+    [(BracketList start length span)
+      (List (+ start count) (- length count) span)]
+    [_ (io.panic "reader: spanned-sexpr-drop expects a list")]))
+
 (define (spanned-sexpr-span [s : SpannedSexpr]) : token.SourceSpan
   (match s
     [(Int _ _ span) span]

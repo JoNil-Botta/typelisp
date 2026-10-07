@@ -446,6 +446,7 @@ global_initializer|all|-|tests/integration/global_initializer.tl|120|-|-|-|-
 hello|all|-|tests/integration/hello.tl|42|-|-|-|-
 parameter_set_rebind|all|-|tests/integration/parameter_set_rebind.tl|42|-|-|-|-
 by_value_memory_aggregate_explicit_mut|all|-|tests/integration/by_value_memory_aggregate_explicit_mut.tl|42|-|-|-|-
+by_value_param_private_storage|all|-,0,1,2|tests/integration/by_value_param_private_storage.tl|42|-|-|-|-
 by_value_aggregate_abi|all|-|tests/integration/by_value_aggregate_abi.tl|42|-|-|stdlib/string.tl|-
 i16_min_div_neg1_trap|all|-|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
 i16_min_rem_neg1_trap|all|-|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
@@ -804,6 +805,7 @@ range_loop_shapes_protocol_abort|all|-,2|tests/integration/range_loop_shapes.tl|
 range_loop_shapes_fields_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 2|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:55:46: array index out of bounds: index=16 length=16\n
 range_loop_shapes_advance_first_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 3|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:116:48: array index out of bounds: index=16 length=16\n
 specialize_resource_scope|all|-|tests/integration/specialize_resource_scope.tl|42|-|-|-|-
+specialize_substitution_forms|all|-|tests/integration/specialize_substitution_forms.tl|42|-|-|stdlib/vector.tl|-
 float_comparisons_embedded|all|-|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|-
 float_comparisons_source|all|0,1,2|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|stage-stdlib
 decls_generated_imports|all|-|tests/integration/decls_generated_imports.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl decls_generated_import_macro_dep.tl|-

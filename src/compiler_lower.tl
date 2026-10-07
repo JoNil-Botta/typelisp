@@ -1063,7 +1063,10 @@
   (deferred-copies lower_i64_i64_map.Map)
   ;; The body of the borrowed enum match arm whose payloads are being bound,
   ;; or -1; set only while `lower-bind-match-variant-payloads` runs.
-  (deferred-arm-body i64))
+  (deferred-arm-body i64)
+  ;; The roots the lowered body borrows `&mut` (tc-body-mut-borrow-scope), -1
+  ;; (every root) until lower-bind-source-params sets it.
+  (mut-borrow-scope i64))
 
 ;; The carrier is the cell's address, so it is Copy (the sym_i64_env idiom):
 ;; every holder already shared the one cell through the box, and the explicit
@@ -1122,6 +1125,7 @@
         (No)
         (No)
         (lower_i64_i64_map.with-capacity 1)
+        -1
         -1))))
 
 ;; Most lowering transitions consume their state linearly. A few control-flow
@@ -1809,12 +1813,18 @@
     [_ (lower-name-env-materialize-two names Nil)]))
 
 (define (lower-name-env-copy-into-pools
+  [_state : CompilerLowerState]
   [names : LowerNameEnv]
   [pools : ast.AstNodePoolContext]) : LowerNameEnv
   (let
     [base-arena : arena.Arena
       (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
-    (in-arena base-arena (lower-name-env-copy-active names))))
+    (in-arena
+      base-arena
+      (cfg
+        (any compile-profile test)
+        (lower-name-env-copy-active-profile _state names)
+        (lower-name-env-copy-active names)))))
 
 (define (lower-checked-dest-pools-commit!
   [lower-state : CompilerLowerState]
@@ -3000,26 +3010,6 @@
       [(Inline source-id logical-id symbol-id)
         (Inline source-id logical-id symbol-id)]
       [_ (lower-name-env-materialize-two-profile state names Nil)])))
-
-(cfg
-  (any compile-profile test)
-  (define (lower-name-env-copy-into-pools-profile
-    [state : CompilerLowerState]
-    [names : LowerNameEnv]
-    [pools : ast.AstNodePoolContext]) : LowerNameEnv
-    (let
-      [base-arena : arena.Arena
-        (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
-      (in-arena base-arena (lower-name-env-copy-active-profile state names)))))
-
-(defmacro (lower-name-env-copy-into-pools-owned
-  [_state : Expr]
-  [names : Expr]
-  [pools : Expr]) : Expr
-  (cfg
-    (any compile-profile test)
-    `(lower-name-env-copy-into-pools-profile ,_state ,names ,pools)
-    `(lower-name-env-copy-into-pools ,names ,pools)))
 
 ;; The generated hashmap grows at three-quarter occupancy. One-and-a-half
 ;; slots per potential entry leaves space below that limit after power-of-two
@@ -4987,68 +4977,19 @@
         source-name
         source-id
         metadata)]
-    (lower-name-env-bind-ids
+    [bound-id : i64
       (if (csym.compiler-symbol-root-module-id? module-id)
         source-id
-        logical-id)
-      logical-id
-      symbol-id
-      names)))
-
-(cfg
-  (any compile-profile test)
-  (define (lower-name-env-add-module-extern-binding-id-profile
-    [state : CompilerLowerState]
-    [names : LowerNameEnv]
-    [_module : String]
-    [module-id : i64]
-    [source-name : String]
-    [source-id : i64]
-    [metadata : ast.AstExternMetadata]) : LowerNameEnv
-    (let
-      [logical-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
-      [symbol-id : i64
-        (lower-extern-logical-symbol-id
-          state
-          logical-id
-          source-name
-          source-id
-          metadata)]
+        logical-id)]
+    (cfg
+      (any compile-profile test)
       (lower-name-env-bind-ids-profile
         state
-        (if (csym.compiler-symbol-root-module-id? module-id)
-          source-id
-          logical-id)
+        bound-id
         logical-id
         symbol-id
-        names))))
-
-(defmacro (lower-name-env-add-module-extern-binding-id-owned
-  [_state : Expr]
-  [names : Expr]
-  [module : Expr]
-  [module-id : Expr]
-  [source-name : Expr]
-  [source-id : Expr]
-  [metadata : Expr]) : Expr
-  (cfg
-    (any compile-profile test)
-    `(lower-name-env-add-module-extern-binding-id-profile
-      ,_state
-      ,names
-      ,module
-      ,module-id
-      ,source-name
-      ,source-id
-      ,metadata)
-    `(lower-name-env-add-module-extern-binding-id
-      ,_state
-      ,names
-      ,module
-      ,module-id
-      ,source-name
-      ,source-id
-      ,metadata)))
+        names)
+      (lower-name-env-bind-ids bound-id logical-id symbol-id names))))
 
 (define (lower-name-env-add-struct-cleanup-in-module
   [lower-state : CompilerLowerState]
@@ -5191,10 +5132,6 @@
 (define (lower-tl-substring-symbol) : i64
   (cbi.compiler-builtin-refresh!)
   cbi.compiler-builtin-id-tl-substring)
-
-(define (lower-tl-str-view-symbol) : i64
-  (cbi.compiler-builtin-refresh!)
-  cbi.compiler-builtin-id-tl-str-view)
 
 (define (lower-tl-array-fill8-symbol) : i64
   (cbi.compiler-builtin-refresh!)
@@ -6007,7 +5944,7 @@
       ;; the exact external linker symbol.
       (let
         [name-str : String (lower-name-id-text lower-state name)]
-        (lower-name-env-add-module-extern-binding-id-owned
+        (lower-name-env-add-module-extern-binding-id
           lower-state
           names
           module
@@ -6094,6 +6031,7 @@
 ;; parser ID resolves unqualified source references, while the owner pair is the
 ;; stable backend/reachability identity.
 (define (lower-name-env-add-root-alias-from-latest
+  [_state : CompilerLowerState]
   [names : LowerNameEnv]
   [decl : ast.AstDecl]) : LowerNameEnv
   (match (lower-decl-lexical-binding-id decl)
@@ -6101,36 +6039,16 @@
     [(Some source-id)
       (match (lower-name-env-view (lower-global-shared-view names))
         [(Bind _ logical-id symbol-id _)
-          (lower-name-env-bind-ids source-id logical-id symbol-id names)]
-        [(Nil) names])]))
-
-(cfg
-  (any compile-profile test)
-  (define (lower-name-env-add-root-alias-from-latest-profile
-    [state : CompilerLowerState]
-    [names : LowerNameEnv]
-    [decl : ast.AstDecl]) : LowerNameEnv
-    (match (lower-decl-lexical-binding-id decl)
-      [(No) names]
-      [(Some source-id)
-        (match (lower-name-env-view (lower-global-shared-view names))
-          [(Bind _ logical-id symbol-id _)
+          (cfg
+            (any compile-profile test)
             (lower-name-env-bind-ids-profile
-              state
+              _state
               source-id
               logical-id
               symbol-id
-              names)]
-          [(Nil) names])])))
-
-(defmacro (lower-name-env-add-root-alias-from-latest-owned
-  [_state : Expr]
-  [names : Expr]
-  [decl : Expr]) : Expr
-  (cfg
-    (any compile-profile test)
-    `(lower-name-env-add-root-alias-from-latest-profile ,_state ,names ,decl)
-    `(lower-name-env-add-root-alias-from-latest ,names ,decl)))
+              names)
+            (lower-name-env-bind-ids source-id logical-id symbol-id names))]
+        [(Nil) names])]))
 
 (define (lower-name-env-from-decls-with-state
   [lower-state : CompilerLowerState]
@@ -6212,7 +6130,7 @@
                 (if (and
                   (csym.compiler-symbol-root-module-id? cur-module-id)
                   (not (csym.compiler-symbol-root-module-id? logical-module-id)))
-                  (lower-name-env-add-root-alias-from-latest-owned
+                  (lower-name-env-add-root-alias-from-latest
                     lower-state
                     owner-names
                     decl)
@@ -14968,6 +14886,16 @@
     [data : (Box LowerStateData) (lower-state-box state)]
     (__tl-project-set-field (__tl-box-place data) deferred-arm-body body-id)))
 
+(define (lower-state-mut-borrow-scope [state : LowerState]) : i64
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-field (__tl-box-place data) mut-borrow-scope)))
+
+(define (lower-state-set-mut-borrow-scope! [state : LowerState] [scope : i64]) : unit
+  (let
+    [data : (Box LowerStateData) (lower-state-box state)]
+    (__tl-project-set-field (__tl-box-place data) mut-borrow-scope scope)))
+
 (define (lower-state-tail-param-start [state : LowerState]) : i64
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
@@ -22912,6 +22840,7 @@
   [params : ast.AstParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
+  [written : tc_core.TcBodyParamWriteFact]
   [captures : LowerCaptureList]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
@@ -23023,20 +22952,17 @@
                     captured-env)]
                 [type-env : tc_core.TcTypeEnv
                   (tc_core.tc-bind-params ctx captured-type-env params)]
-                (match (if structural-params?
-                  (lower-bind-internal-params
-                    ctx
-                    mode
-                    params
-                    source-start
-                    captured-state
-                    initial-env
-                    type-env
-                    (lower-global-shared-view body))
-                  (ResultLowerEnv.Ok
-                    captured-state
-                    (lower-bind-params params source-start initial-env)
-                    type-env))
+                (match (lower-bind-source-params
+                  ctx
+                  mode
+                  params
+                  source-start
+                  captured-state
+                  initial-env
+                  type-env
+                  (lower-global-shared-view body)
+                  structural-params?
+                  written)
                   [(Ok bound-state bound-env bound-type-env)
                     (let
                       [final-state
@@ -23097,6 +23023,7 @@
   [params : ast.AstParamList]
   [maybe-ret : ast.AstMaybeType]
   [body : ast.AstExpr]
+  [written : tc_core.TcBodyParamWriteFact]
   [origin : ast.AstExpr]
   [expr-ty : ast.AstType]) : ResultLowerExpr
   (match (lower-lambda-ret-type
@@ -23117,6 +23044,7 @@
             params
             ret-ty
             body
+            written
             (lower-state-spans named-state)
             (lower-state-names named-state)
             (lower-state-mode named-state))
@@ -23139,6 +23067,7 @@
   [params : ast.AstParamList]
   [maybe-ret : ast.AstMaybeType]
   [body : ast.AstExpr]
+  [written : tc_core.TcBodyParamWriteFact]
   [origin : ast.AstExpr]
   [expr-ty : ast.AstType]) : ResultLowerExpr
   (match (lower-lambda-ret-type
@@ -23172,6 +23101,7 @@
                   params
                   ret-ty
                   body
+                  written
                   (lower-global-shared-view captures)
                   (lower-state-spans named-state)
                   (lower-state-names named-state)
@@ -23205,32 +23135,40 @@
   [params : ast.AstParamList]
   [maybe-ret : ast.AstMaybeType]
   [body : ast.AstExpr]
+  [body-box : i64]
   [origin : ast.AstExpr]
   [expr-ty : ast.AstType]) : ResultLowerExpr
-  (if (lower-lambda-captures-env?
-    (tc_core.tc-context-expr-bases ctx)
-    env
-    (lower-global-shared-view body)
-    (tc_core.tc-param-bound-names (lower-global-shared-view params)))
-    (lower-lambda-capturing
-      ctx
-      state
+  (let
+    [written : tc_core.TcBodyParamWriteFact
+      (tc_core.tc-body-param-write-fact
+        (tc_core.tc-context-body-state ctx)
+        body-box)]
+    (if (lower-lambda-captures-env?
+      (tc_core.tc-context-expr-bases ctx)
       env
-      type-env
-      params
-      maybe-ret
-      body
-      origin
-      expr-ty)
-    (lower-lambda-noncapturing
-      ctx
-      state
-      type-env
-      params
-      maybe-ret
-      body
-      origin
-      expr-ty)))
+      (lower-global-shared-view body)
+      (tc_core.tc-param-bound-names (lower-global-shared-view params)))
+      (lower-lambda-capturing
+        ctx
+        state
+        env
+        type-env
+        params
+        maybe-ret
+        body
+        written
+        origin
+        expr-ty)
+      (lower-lambda-noncapturing
+        ctx
+        state
+        type-env
+        params
+        maybe-ret
+        body
+        written
+        origin
+        expr-ty))))
 
 (define (lower-return-maybe [value : ir.CompilerIrValue] [ty : ast.AstType]) : ir.CompilerIrMaybeValue
   (match ty
@@ -25708,7 +25646,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]
-  [types : ast.AstTypeList]) : ResultLowerCallArgs
+  [types : ast.AstTypeList]
+  [snapshots : i64]) : ResultLowerCallArgs
   (lower-call-args-as-at
     ctx
     state
@@ -25716,8 +25655,242 @@
     type-env
     (& args)
     (& types)
+    snapshots
     0
     (lower_arg_writeback_vec.new)))
+
+;; The name a by-value argument's place is rooted at, through projections and
+;; annotations as the move checker roots them, with a dotted local field name
+;; resolved to its local; -1 for an argument that is not a place (a call result
+;; or a constructor, already private).
+(define (lower-call-arg-place-root
+  [ctx : tc_core.TcContext]
+  [type-env : tc_core.TcTypeEnv]
+  [arg : ast.AstExpr]) : i64
+  (match (tc_core.tc-move-root-projection-var-id
+    (tc_core.tc-context-expr-bases ctx)
+    arg)
+    [(Some name)
+      (if (tc_core.tc-dotted-local-field-name-id? type-env name)
+        (match (tc_core.tc-dotted-local-field-expr-id type-env name)
+          [(Ok virtual-id)
+            (lower-call-arg-place-root
+              ctx
+              type-env
+              (lower-context-expr-get ctx virtual-id))]
+          [(Err _) name])
+        name)]
+    [(No) -1]))
+
+;; Bit i of a call's snapshot mask is argument i's; positions past 62 share
+;; bit 62, which only makes those arguments copy more often.
+(define (lower-call-arg-bit [index : i64]) : i64
+  (shl
+    1
+    (if (> index 62)
+      62
+      index)))
+
+;; Whether evaluating `expr` writes storage in place. With `root` at least 0,
+;; only a write that can reach local `root` before the call reads it counts: a
+;; `&mut` borrow of a place rooted at `root`, or `root` itself passed when it is
+;; a mutable reference (lower-call-args-snapshot-mask). With `root` -1 any
+;; in-place write counts (a field, element, box or `replace!` write, a dotted
+;; `set!`, a `&mut` borrow or a raw-pointer write), and every `&mut` borrow's
+;; root is recorded under `body-id`, for a body no move check recorded
+;; (lower-bind-source-params). An address taken with `ptr-addr-of` is the
+;; compiler's shared-view read idiom; writes through raw pointers are the unsafe
+;; code's own obligation. Lambda bodies are their own functions.
+(define (lower-expr-writes?
+  [ctx : tc_core.TcContext]
+  [type-env : tc_core.TcTypeEnv]
+  [expr : ast.AstExpr]
+  [root : i64]
+  [body-id : i64]) : bool
+  (match (lower-global-shared-view expr)
+    [(Lambda _) false]
+    [_
+      (let
+        [any? : bool (< root 0)]
+        [found : bool
+          (match (lower-global-shared-view expr)
+            [(StructSet _ _ _) any?]
+            [(ArraySet _ _ _) any?]
+            [(BoxSet _ _) any?]
+            [(Replace _ _) any?]
+            [(PtrWrite _ _) any?]
+            [(Set name _)
+              (and any? (tc_core.tc-dotted-local-field-name-id? type-env name))]
+            [(Borrow mutable _ place-box)
+              (let
+                [place-root : i64
+                  (if mutable
+                    (lower-call-arg-place-root
+                      ctx
+                      type-env
+                      (lower-context-expr-get ctx place-box))
+                    -1)]
+                (when
+                  (and any? (>= place-root 0))
+                  (tc_core.tc-body-mut-borrow-record!
+                    (tc_core.tc-context-body-state ctx)
+                    body-id
+                    place-root))
+                (and mutable (or any? (= place-root root))))]
+            [(Var name)
+              (and
+                (= name root)
+                (match (tc_core.tc-lookup-id type-env name)
+                  [(Ok ty)
+                    (match (tc_core.tc-type-strip-region
+                      (tc_core.tc-resolve-type ctx ty))
+                      [(MutRef _ _) true]
+                      [_ false])]
+                  [(Err _) false]))]
+            [_ false])]
+        [children : ast.AstExprList
+          (ast.ast-expr-child-ids (lower-global-shared-view expr))]
+        [index : i64 0]
+        ;; Recording visits the whole body; a root query stops at a write.
+        (while (and
+          (or any? (not found))
+          (< index (ast.ast-expr-list-len (& children))))
+          (when
+            (lower-expr-writes?
+              ctx
+              type-env
+              (lower-context-expr-get
+                ctx
+                (ast.ast-expr-list-get (& children) index 0))
+              root
+              body-id)
+            (set! found true))
+          (set! index (+ index 1)))
+        found)]))
+
+;; A by-value memory-class struct or enum argument is passed as the address of
+;; its place, and the callee reads that storage for the whole call (#7901). The
+;; caller copies it first when something can write that storage meanwhile:
+;; the place is a global value's storage, which any call may write
+;; (lower-call-arg-copy?, as each argument is lowered), or another
+;; argument of the same call writes its local root
+;; (lower-expr-writes?), the case this mask finds. Such an argument
+;; takes a `&mut` borrow of the root in the lowered body, so only a root that
+;; body borrows (lower-state-mut-borrow-scope) is a candidate, and the other
+;; arguments are scanned only for a candidate. The mask holds one bit per
+;; argument another argument can write; lower-call-arg-copy? copies such an
+;; argument only when it is a memory-class struct or enum.
+(define (lower-call-args-snapshot-mask
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [args : (& args ast.AstExprList)]
+  [types : (& types ast.AstTypeList)]) : i64
+  (let
+    [count : i64
+      (if (< args.len (ast.ast-type-list-len types))
+        args.len
+        (ast.ast-type-list-len types))]
+    [scope : i64 (lower-state-mut-borrow-scope state)]
+    (if (or (= scope -2) (< count 2))
+      0
+      (let
+        [body-state : tc_core.TcBodyState (tc_core.tc-context-body-state ctx)]
+        [mask : i64 0]
+        [index : i64 0]
+        (while (< index count)
+          (let
+            [root : i64
+              (lower-call-arg-place-root
+                ctx
+                type-env
+                (lower-context-expr-get
+                  ctx
+                  (ast.ast-expr-list-get args index 0)))]
+            [other : i64 0]
+            ;; A candidate is a local the body borrows `&mut`; the copy itself
+            ;; checks the argument's type (lower-call-arg-copy?).
+            (when
+              (and
+                (>= root 0)
+                (tc_core.tc-body-mut-borrowed-root? body-state scope root)
+                (sym_i64_env.sym-i64-contains-id env root))
+              (while (< other count)
+                (when
+                  (and
+                    (!= other index)
+                    (lower-expr-writes?
+                      ctx
+                      type-env
+                      (lower-context-expr-get
+                        ctx
+                        (ast.ast-expr-list-get args other 0))
+                      root
+                      -1))
+                  (set! mask (bit-or mask (lower-call-arg-bit index)))
+                  (set! other count))
+                (set! other (+ other 1)))))
+          (set! index (+ index 1)))
+        mask))))
+
+;; Whether a resolved, region-free argument type is an inline struct or enum,
+;; the only kind lower-call-arg-copy? copies. A tag test, it gates every
+;; call argument before anything is looked up.
+(define (lower-call-arg-aggregate-type? [arg-ty : ast.AstType]) : bool
+  (match arg-ty
+    [(Struct _) true]
+    [(StructArgs _ _) true]
+    [(Enum _) true]
+    [(EnumArgs _ _) true]
+    [(Invalidate _ inner)
+      (lower-call-arg-aggregate-type? (ast.ty-node-get inner))]
+    [_ false]))
+
+;; Whether a by-value argument, whose type passed
+;; lower-call-arg-aggregate-type?, is copied before later arguments run, since
+;; its storage could change while the callee reads it. Its type must need
+;; private storage (tc-param-storage-resolved?: memory-class and Copy, since a
+;; moved argument's source is not read again), and either another argument of
+;; the call can write it (`snapshot?`, from lower-call-args-snapshot-mask) or
+;; its place is a global value's storage, which any call may write: a plain
+;; global, which lowers to the global's own address, or a projection rooted in
+;; one (bound in the type environment but not locally; a nullary variant is
+;; bound in neither, and constructs a fresh value). A var below `vars-before`
+;; (lower-state-next-var before argument `arg-id` was lowered) is a local's or
+;; parameter's own binding, so its argument is no projection.
+(define (lower-call-arg-copy?
+  [ctx : tc_core.TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [arg-id : i64]
+  [vars-before : i64]
+  [snapshot? : bool]
+  [value : ir.CompilerIrValue]
+  [arg-ty : ast.AstType]) : bool
+  (and
+    (or
+      snapshot?
+      (match (lower-global-shared-view value)
+        [(Global _) true]
+        [_
+          (and
+            (match value
+              [(Var var) (>= var vars-before)]
+              [_ true])
+            (let
+              [root : i64
+                (lower-call-arg-place-root
+                  ctx
+                  type-env
+                  (lower-context-expr-get ctx arg-id))]
+              (and
+                (>= root 0)
+                (not (sym_i64_env.sym-i64-contains-id env root))
+                (match (tc_core.tc-lookup-id type-env root)
+                  [(Ok _) true]
+                  [(Err _) false]))))]))
+    (tc_core.tc-param-storage-resolved? ctx arg-ty)))
 
 (define (lower-call-args-as-at
   [ctx : tc_core.TcContext]
@@ -25726,6 +25899,7 @@
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
+  [snapshots : i64]
   [index : i64]
   [writebacks : lower_arg_writeback_vec.Vec]) : ResultLowerCallArgs
   (if (>= index args.len)
@@ -25747,30 +25921,63 @@
           (tc_core.tc-type-without-regions
             (tc_core.tc-type-strip-invalidate
               (tc_core.tc-resolve-type ctx (lower-global-shared-view expected))))]
+        [snapshot? : bool (!= (bit-and snapshots (lower-call-arg-bit index)) 0)]
+        [vars-before : i64 (lower-state-next-var state)]
         [lowered-arg
-          (try (lower-call-arg-as ctx state env type-env arg expected arg-ty))]
+          (try
+            (lower-call-arg-as
+              ctx
+              state
+              env
+              type-env
+              arg
+              expected
+              (lower-global-shared-view arg-ty)))]
         (match lowered-arg
-          [(Arg arg-state value maybe-writeback)
+          [(Arg lowered-state lowered-value maybe-writeback)
             (let
+              [copied : LowerExpr
+                (if (and
+                  (lower-call-arg-aggregate-type?
+                    (lower-global-shared-view arg-ty))
+                  (lower-call-arg-copy?
+                    ctx
+                    env
+                    type-env
+                    (ast.ast-expr-list-get args index 0)
+                    vars-before
+                    snapshot?
+                    (lower-global-shared-view lowered-value)
+                    (lower-global-shared-view arg-ty)))
+                  (try
+                    (lower-copy-inline-aggregate-to-inline
+                      ctx
+                      lowered-state
+                      lowered-value
+                      (lower-global-shared-view arg-ty)))
+                  (Expr lowered-state lowered-value arg-ty))]
               [next-writebacks : lower_arg_writeback_vec.Vec writebacks]
               (lower-call-arg-writebacks-push-maybe
                 (&mut next-writebacks)
                 maybe-writeback)
-              (match (lower-call-args-as-at
-                ctx
-                arg-state
-                env
-                type-env
-                args
-                types
-                (+ index 1)
-                next-writebacks)
-                [(Ok rest-state rest-values rest-writebacks)
-                  (Ok
-                    rest-state
-                    (ir.compiler-ir-value-seq-prepend value rest-values)
-                    rest-writebacks)]
-                [(Err message) (Err message)]))])))))
+              (match copied
+                [(Expr arg-state value _)
+                  (match (lower-call-args-as-at
+                    ctx
+                    arg-state
+                    env
+                    type-env
+                    args
+                    types
+                    snapshots
+                    (+ index 1)
+                    next-writebacks)
+                    [(Ok rest-state rest-values rest-writebacks)
+                      (Ok
+                        rest-state
+                        (ir.compiler-ir-value-seq-prepend value rest-values)
+                        rest-writebacks)]
+                    [(Err message) (Err message)])]))])))))
 
 (define (lower-apply-arg-writeback
   [ctx : tc_core.TcContext]
@@ -25846,8 +26053,9 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]
-  [types : ast.AstTypeList]) : ResultLowerArgs
-  (lower-args-as-at ctx state env type-env (& args) (& types) 0))
+  [types : ast.AstTypeList]
+  [call-args? : bool]) : ResultLowerArgs
+  (lower-args-as-at ctx state env type-env (& args) (& types) call-args? 0))
 
 (define (lower-args-as-at
   [ctx : tc_core.TcContext]
@@ -25856,6 +26064,7 @@
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
+  [call-args? : bool]
   [index : i64]) : ResultLowerArgs
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len types))
@@ -25879,6 +26088,14 @@
           expected)
           [(Ok effective-arg)
             (let
+              ;; A call argument rooted in a global's storage is copied first
+              ;; (lower-call-arg-copy?).
+              [global-copy? : bool
+                (and
+                  call-args?
+                  (lower-call-arg-aggregate-type?
+                    (lower-global-shared-view arg-ty)))]
+              [vars-before : i64 (lower-state-next-var state)]
               [lowered
                 (try
                   (lower-expr-expected
@@ -25892,7 +26109,30 @@
                     effective-arg
                     arg-ty
                     arg))]
-              (match lowered
+              [copied : LowerExpr
+                (if (and
+                  global-copy?
+                  (match (lower-global-shared-view lowered)
+                    [(Expr _ lowered-value lowered-ty)
+                      (lower-call-arg-copy?
+                        ctx
+                        env
+                        type-env
+                        (ast.ast-expr-list-get args index 0)
+                        vars-before
+                        false
+                        lowered-value
+                        lowered-ty)]))
+                  (match lowered
+                    [(Expr lowered-state lowered-value lowered-ty)
+                      (try
+                        (lower-copy-inline-aggregate-to-inline
+                          ctx
+                          lowered-state
+                          lowered-value
+                          lowered-ty))])
+                  lowered)]
+              (match copied
                 [(Expr arg-state value _)
                   (match (lower-args-as-at
                     ctx
@@ -25901,6 +26141,7 @@
                     type-env
                     args
                     types
+                    call-args?
                     (+ index 1))
                     [(Ok rest-state rest-values)
                       (Ok
@@ -25952,34 +26193,6 @@
                 types
                 (+ index 1))])]))))
 
-;; Mutable-reference formals need call-aware lowering for writebacks, while
-;; borrowed Slice formals need it for the closed call-local unsize path.
-(define (lower-call-type-list-needs-call-aware-args?
-  [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]) : bool
-  (lower-call-type-list-needs-call-aware-args-at? ctx (& types) 0))
-
-(define (lower-call-type-list-needs-call-aware-args-at?
-  [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
-    (let
-      [head : ast.AstType
-        (tc_core.tc-context-type-get
-          ctx
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (match (tc_core.tc-type-strip-region (lower-global-shared-view head))
-        [(MutRef _ _) true]
-        [_
-          (if (tc_core.tc-call-slice-ref-formal? ctx head)
-            true
-            (lower-call-type-list-needs-call-aware-args-at?
-              ctx
-              types
-              (+ index 1)))]))))
-
 (define (lower-call-args-as-needed
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -25987,12 +26200,17 @@
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]
   [types : ast.AstTypeList]) : ResultLowerCallArgs
-  (if (lower-call-args-need-call-aware-lowering? ctx args (& types) 0)
-    (lower-call-args-as ctx state env type-env args types)
-    (match (lower-args-as ctx state env type-env args types)
-      [(ResultLowerArgs.Ok args-state values)
-        (ResultLowerCallArgs.Ok args-state values (LowerArgWritebacks.None))]
-      [(ResultLowerArgs.Err message) (ResultLowerCallArgs.Err message)])))
+  (let
+    [snapshots : i64
+      (lower-call-args-snapshot-mask ctx state env type-env args (& types))]
+    (if (or
+      (!= snapshots 0)
+      (lower-call-args-need-call-aware-lowering? ctx args (& types) 0))
+      (lower-call-args-as ctx state env type-env args types snapshots)
+      (match (lower-args-as ctx state env type-env args types true)
+        [(ResultLowerArgs.Ok args-state values)
+          (ResultLowerCallArgs.Ok args-state values (LowerArgWritebacks.None))]
+        [(ResultLowerArgs.Err message) (ResultLowerCallArgs.Err message)]))))
 
 (define (lower-construct-struct-inline-from-values
   [ctx : tc_core.TcContext]
@@ -26078,17 +26296,20 @@
 ;;      are copied and non-Copy values move exactly once, left to right. Moving
 ;;      a source invalidates its ownership; it does NOT prove that an IR value
 ;;      already materialized from that source cannot name `dst` storage;
-;;   2. every runtime by-value parameter is owned callee storage. Memory-class
-;;      arguments may travel across the ABI by pointer, but call lowering
-;;      snapshots them into a private callee representation before body code
-;;      can write its hidden sret slot. That disjointness starts only AFTER
-;;      argument materialization; it cannot justify writes while lowering the
-;;      argument expressions themselves;
+;;   2. every runtime by-value parameter is owned callee storage (SPEC 4.7.2).
+;;      A memory-class argument travels across the ABI as the address of the
+;;      caller's storage. The callee copies it on entry only when its body
+;;      writes it in place, and the caller copies it only when the call itself
+;;      could change that storage (`lower-bind-source-params`,
+;;      `lower-call-args-snapshot-mask`, #7901). A read-only callee reads the
+;;      caller's place directly, and no copy is taken while the argument
+;;      expressions themselves are lowered;
 ;;   3. a hidden sret is caller-owned and may be forwarded unchanged through a
 ;;      tail-call chain. `set!` may reinitialize the place its RHS just moved
 ;;      from, so an earlier result slot may become the next consumed accumulator
 ;;      argument. If one backing place supplies an argument and receives the
-;;      new result, rule (2)'s snapshot must complete before any result write.
+;;      new result, every read of that argument must complete before the first
+;;      result write; rule (2) takes no copy that would order them.
 ;;
 ;; Consequently `dst` carries NO general `noalias` guarantee against operand
 ;; places at this point in lowering. Accumulator threading such as
@@ -26320,7 +26541,8 @@
             env
             type-env
             args
-            (lower-global-shared-view resolved-fields))
+            (lower-global-shared-view resolved-fields)
+            false)
             [(Ok args-state values)
               (lower-construct-enum-inline-from-values
                 ctx
@@ -26410,7 +26632,8 @@
             env
             type-env
             args
-            (lower-global-shared-view resolved-fields))
+            (lower-global-shared-view resolved-fields)
+            false)
             [(Ok args-state values)
               (lower-construct-enum-inline-into-from-values
                 ctx
@@ -26575,7 +26798,7 @@
                 field-ctx
                 (lower-global-shared-view struct-ty)
                 (lower-global-shared-view fields)))]
-          (match (lower-args-as ctx state env type-env args field-types)
+          (match (lower-args-as ctx state env type-env args field-types false)
             [(Ok args-state values)
               (lower-construct-struct-inline-from-values
                 field-ctx
@@ -26630,7 +26853,7 @@
                 field-ctx
                 struct-ty
                 (lower-global-shared-view fields)))]
-          (match (lower-args-as ctx state env type-env args field-types)
+          (match (lower-args-as ctx state env type-env args field-types false)
             [(Ok args-state values)
               (lower-construct-struct-inline-into-from-values
                 field-ctx
@@ -29140,6 +29363,7 @@
               params
               maybe-ret
               body
+              body-box
               origin
               expr-ty))])]
     [(Let let-box)
@@ -35033,7 +35257,8 @@
         env
         type-env
         args
-        (tc_core.tc-resolve-type-list ctx (deref param-types)))]
+        (tc_core.tc-resolve-type-list ctx (deref param-types))
+        false)]
     [_ (lower-args ctx state env type-env args)]))
 
 (define (lower-indirect-call-args-with-writebacks
@@ -37061,6 +37286,7 @@
                         params
                         maybe-ret
                         body
+                        body-box
                         func
                         (lower-global-shared-view fn-ty)))]
                   (match lowered-func
@@ -42125,6 +42351,7 @@
                         params
                         lambda-ret
                         body
+                        body-box
                         init
                         (lower-global-shared-view expected-ty)))]
                   (match lowered
@@ -42178,6 +42405,7 @@
                         params
                         lambda-ret
                         body
+                        body-box
                         init
                         lambda-ty)]
                     [(Err message)
@@ -64449,7 +64677,8 @@
             env
             type-env
             args
-            (tc_core.tc-resolve-type-list ctx (deref param-types)))]
+            (tc_core.tc-resolve-type-list ctx (deref param-types))
+            false)]
         [_ (lower-args ctx state env type-env args)])]
     [(Err _) (lower-args ctx state env type-env args)]))
 
@@ -65938,6 +66167,103 @@
     type-env
     origin))
 
+;; Bind a function's source parameters, then give the written ones private
+;; storage. A by-value memory-class struct or enum parameter arrives as the
+;; address of its caller's storage. When the typechecker saw the body write it
+;; in place (or recorded nothing for the body), it is copied into frame storage
+;; first, so the write cannot reach the caller; a read-only body keeps reading
+;; the caller's storage with no copy (#7901). The copy has a fresh var outside
+;; the source parameter range, so tail calls stop forwarding that parameter.
+(define (lower-bind-source-params
+  [ctx : tc_core.TcContext]
+  [mode : CompilerLowerMode]
+  [params : (& params ast.AstParamList)]
+  [source-start : i64]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [origin : ast.AstExpr]
+  [structural-params? : bool]
+  [written : tc_core.TcBodyParamWriteFact]) : ResultLowerEnv
+  (match (if structural-params?
+    (lower-bind-internal-params
+      ctx
+      mode
+      params
+      source-start
+      state
+      env
+      type-env
+      (lower-global-shared-view origin))
+    (ResultLowerEnv.Ok
+      state
+      (lower-bind-params params source-start env)
+      type-env))
+    [(Ok bound-state bound-env bound-type-env)
+      (let
+        [body-id : i64
+          (match (lower-global-shared-view written)
+            [(Known body _) body]
+            [(Unknown body) body])]
+        ;; Bit i for parameter i, every bit (-1) for a body with an unrecorded
+        ;; write.
+        [mask : i64
+          (match written
+            [(Known _ known) known]
+            [(Unknown _)
+              (if (lower-expr-writes?
+                ctx
+                bound-type-env
+                (lower-global-shared-view origin)
+                -1
+                body-id)
+                -1
+                0)])]
+        [index : i64
+          (if (= mask 0)
+            (ast.ast-param-list-len params)
+            0)]
+        [out-state : LowerState bound-state]
+        [out-env : sym_i64_env.SymI64Env bound-env]
+        (lower-state-set-mut-borrow-scope!
+          bound-state
+          (tc_core.tc-body-mut-borrow-scope
+            (tc_core.tc-context-body-state ctx)
+            body-id))
+        (while (< index (ast.ast-param-list-len params))
+          (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+            [(Param name ty _)
+              (when
+                (and
+                  (or
+                    (= mask -1)
+                    (and (< index 63) (!= (bit-and mask (shl 1 index)) 0)))
+                  (tc_core.tc-param-storage-type?
+                    ctx
+                    (lower-global-shared-view ty)))
+                (match (try
+                  (lower-copy-inline-aggregate-to-inline
+                    ctx
+                    out-state
+                    (Var
+                      (sym_i64_env.sym-i64-lookup-id-or
+                        out-env
+                        name
+                        (csym.compiler-symbols-missing-handle)))
+                    (tc_core.tc-type-without-regions
+                      (tc_core.tc-resolve-type ctx ty))))
+                  [(Expr copy-state copy-value _)
+                    (set! out-state copy-state)
+                    (match copy-value
+                      [(Var copy-var)
+                        (set!
+                          out-env
+                          (sym_i64_env.sym-i64-bind-id out-env name copy-var))]
+                      [_ unit])]))])
+          (set! index (+ index 1)))
+        (Ok out-state out-env bound-type-env))]
+    [(Err message) (Err message)]))
+
 (define (lower-pointer-proof-type [ctx : tc_core.TcContext] [ty : ast.AstType]) : pointer_proof.PointerProofType
   (let
     [resolved : ast.AstType
@@ -66442,6 +66768,7 @@
   [params : ast.AstParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
+  [written : tc_core.TcBodyParamWriteFact]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
@@ -66564,20 +66891,17 @@
                       (lower-sret-param-marker-id state))
                     sret-var)
                   (sym_i64_env.sym-i64-empty))]
-              (match (if structural-params?
-                (lower-bind-internal-params
-                  ctx
-                  mode
-                  params
-                  source-start
-                  state
-                  initial-env
-                  type-env
-                  (lower-global-shared-view body))
-                (ResultLowerEnv.Ok
-                  state
-                  (lower-bind-params params source-start initial-env)
-                  type-env))
+              (match (lower-bind-source-params
+                ctx
+                mode
+                params
+                source-start
+                state
+                initial-env
+                type-env
+                (lower-global-shared-view body)
+                structural-params?
+                written)
                 [(Ok bound-state bound-env bound-type-env)
                   (let
                     [final-state
@@ -67027,6 +67351,7 @@
   [params : ast.AstParamList]
   [ret : ast.AstType]
   [body : ast.AstExpr]
+  [written : tc_core.TcBodyParamWriteFact]
   [spans : ir.CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
@@ -67054,6 +67379,7 @@
         params
         ret
         body
+        written
         (lower-global-shared-view spans)
         names
         mode)
@@ -67369,6 +67695,8 @@
             params
             (Unit)
             body
+            ;; The cleanup body only reads the value and moves its fields out.
+            (tc_core.TcBodyParamWriteFact.Known -1 0)
             spans
             names
             mode))]
@@ -67645,6 +67973,8 @@
                 (ast.ast-node-pool-context-expr-push pools (Var value-name-id))
                 arms)]
             (ast.ast-node-pool-context-expr-get pools match-id))
+          ;; The cleanup arms only read the value and move payloads out.
+          (tc_core.TcBodyParamWriteFact.Known -1 0)
           spans
           names
           mode)]
@@ -68616,6 +68946,9 @@
           params
           ret
           body
+          (tc_core.tc-body-param-write-fact
+            (tc_core.tc-context-body-state ctx)
+            body-box)
           spans
           names
           (lower-dispatch-lower-mode isa mode)))]
@@ -69230,6 +69563,7 @@
                                 (ast.ast-param-list-new)
                                 (lower-global-shared-view global-ty)
                                 expr
+                                (tc_core.TcBodyParamWriteFact.Known -1 0)
                                 (lower-global-shared-view cur-spans)
                                 decl-name-cache
                                 mode)
@@ -69357,6 +69691,9 @@
                         (lower-global-shared-view params)
                         (lower-global-shared-view ret)
                         (lower-global-shared-view body)
+                        (tc_core.tc-body-param-write-fact
+                          (tc_core.tc-context-body-state decl-ctx)
+                          body-box)
                         (lower-global-shared-view cur-spans)
                         decl-name-cache
                         mode)
@@ -71175,7 +71512,7 @@
                           reach-keep-plan)]
                       [escaped-names : LowerNameEnv
                         (if (and detach-source? needs-specialization)
-                          (lower-name-env-copy-into-pools-owned
+                          (lower-name-env-copy-into-pools
                             lower-state
                             names
                             source-pools)

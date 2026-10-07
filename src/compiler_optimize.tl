@@ -20550,7 +20550,15 @@
                 shape)])
           (No)))]))
 
+;; Under `homed?` the rotation is made in the work arena of REGIONS, and its
+;; blocks are copied into the free home before the context is built from them:
+;; a rotation shares its untouched blocks with the function it came from, so
+;; only the copy survives the reset of that function's home. Verification
+;; scratch stays in the work arena, and a verified candidate is committed as the
+;; carried function.
 (define (opt-rotate-ssa-loop-verified
+  [regions : (&mut regions OptRoundRegions)]
+  [homed? : bool]
   [func : (& func ir.CompilerIrFunction)]
   [context : OptCfgContext]
   [loop : OptNaturalLoop]) : OptFunctionCtxMaybe
@@ -20560,17 +20568,26 @@
         [(No) (No)]
         [(Some next-blocks next-frame)
           (let
+            [kept-blocks : ir.CompilerIrBlockList
+              (if homed?
+                (begin
+                  (opt-round-regions-enter-next-home! regions)
+                  (opt-round-copy-blocks next-blocks))
+                next-blocks)]
             [next : ir.CompilerIrFunction
               (Function
                 name
                 params
                 ret-ty
                 next-frame
-                (compiler-opt-global-shared-view next-blocks)
+                (compiler-opt-global-shared-view kept-blocks)
                 function-abi)]
-            [next-context : OptCfgContext (opt-cfg-context-build next-blocks)]
+            [next-context : OptCfgContext (opt-cfg-context-build kept-blocks)]
+            (when homed? (opt-round-regions-resume-work! regions))
             (match (opt-verify-function-with-context next next-context)
-              [(Ok) (Some next next-context)]
+              [(Ok)
+                (when homed? (opt-round-regions-commit! regions))
+                (Some next next-context)]
               [(Err _) (No)]))])]))
 
 ;; A candidate whose rewrite fails the post-rotation verify is a REFUSAL of
@@ -20586,6 +20603,8 @@
 ;; verified rewrite is banked -- and costs one extra verify per rejected
 ;; candidate per round.
 (define (opt-rotate-ssa-loops
+  [regions : (&mut regions OptRoundRegions)]
+  [homed? : bool]
   [func : (& func ir.CompilerIrFunction)]
   [context : OptCfgContext]
   [loops : (& loops (Slice OptNaturalLoop))]) : OptFunctionCtxMaybe
@@ -20593,11 +20612,29 @@
     [(slice) (No)]
     [(slice loop & rest)
       (match (opt-rotate-ssa-loop-verified
+        regions
+        homed?
         func
         (compiler-opt-global-shared-view context)
         (owned_view.compiler-owned-reference-shared-view loop))
         [(Some next next-context) (Some next next-context)]
-        [(No) (opt-rotate-ssa-loops func context rest)])]))
+        [(No) (opt-rotate-ssa-loops regions homed? func context rest)])]))
+
+;; One round: the first verified rotation among FUNC's natural loops.
+(define (opt-rotate-ssa-round
+  [regions : (&mut regions OptRoundRegions)]
+  [homed? : bool]
+  [func : (& func ir.CompilerIrFunction)]
+  [context : OptCfgContext]) : OptFunctionCtxMaybe
+  (let
+    [natural-loops
+      (opt-cfg-natural-loops-with-context (opt-function-blocks func) context)]
+    (opt-rotate-ssa-loops
+      regions
+      homed?
+      func
+      (compiler-opt-global-shared-view context)
+      (opt_natural_loop_vec.view natural-loops))))
 
 ;; One rotation per round, each candidate verified on its own (in
 ;; `opt-rotate-ssa-loop-verified`, so a rejected one only costs its own round
@@ -20613,22 +20650,74 @@
 ;; the losers into their top-tested form. Fuel-bounded by the block count; an
 ;; accepted rotation retires its header's top test, so no loop is rotated
 ;; twice.
+;;
+;; The first round runs in the caller's arena, so a function that rotates once
+;; costs what it always did. Later rounds run in `OptRoundRegions`, which keeps
+;; two generations of the carried function and context instead of every round's
+;; until the function escapes.
 (define (opt-rotate-ssa-rounds
   [func : ir.CompilerIrFunction]
   [context : OptCfgContext]
   [remaining : i64]) : OptFunctionCtxResult
   (if (<= remaining 0)
     (Result func context)
-    (match (let
-      [natural-loops
-        (opt-cfg-natural-loops-with-context (opt-function-blocks func) context)]
-      (opt-rotate-ssa-loops
+    (let
+      [regions : OptRoundRegions (opt-round-regions-new)]
+      (match (opt-rotate-ssa-round
+        (&mut regions)
+        false
         func
-        (compiler-opt-global-shared-view context)
-        (opt_natural_loop_vec.view natural-loops)))
-      [(No) (Result func context)]
-      [(Some next next-context)
-        (opt-rotate-ssa-rounds next next-context (- remaining 1))])))
+        (compiler-opt-global-shared-view context))
+        [(No) (Result func context)]
+        [(Some next next-context)
+          (opt-rotate-ssa-later-rounds
+            (&mut regions)
+            next
+            next-context
+            (- remaining 1))]))))
+
+;; Rounds after the first, each in the reset work arena; a verified rotation is
+;; banked in the home that does not hold the carried function. The function that
+;; ends the fixpoint is copied back into the caller's arena with a context built
+;; there. Round order, candidate order, verification and fuel are those of a
+;; plain recursion over the same functions.
+(define (opt-rotate-ssa-later-rounds
+  [regions : (&mut regions OptRoundRegions)]
+  [func : ir.CompilerIrFunction]
+  [context : OptCfgContext]
+  [remaining : i64]) : OptFunctionCtxResult
+  (let
+    [current : ir.CompilerIrFunction func]
+    [current-context : OptCfgContext context]
+    [left : i64 remaining]
+    (while (> left 0)
+      (opt-round-regions-enter-work! regions)
+      (match (opt-rotate-ssa-round
+        regions
+        true
+        current
+        (compiler-opt-global-shared-view current-context))
+        [(No) (set! left 0)]
+        [(Some next next-context)
+          (set! current next)
+          (set! current-context next-context)
+          (set! left (- left 1))]))
+    (opt-round-regions-enter-outer! regions)
+    (if (opt-round-regions-held? regions)
+      (let
+        [blocks : ir.CompilerIrBlockList
+          (opt-round-copy-blocks (opt-function-blocks current))]
+        [result : ir.CompilerIrFunction
+          (opt-function-with-frame-blocks
+            current
+            (opt-function-frame current)
+            (compiler-opt-global-shared-view blocks))]
+        [result-context : OptCfgContext (opt-cfg-context-build blocks)]
+        (opt-round-regions-leave! regions)
+        (Result result result-context))
+      (begin
+        (opt-round-regions-leave! regions)
+        (Result current current-context)))))
 
 (define (opt-rotate-ssa-function-with-context-result
   [context : OptCfgContext]
@@ -45682,6 +45771,12 @@
     (when (> previous 0) (opt-round-regions-enter! regions previous))
     (unsafe
       (arena.tl_arena_set (array-ref regions.arenas 0)))))
+
+;; Return to the work arena without emptying it, after a copy into a home that
+;; the round may still discard.
+(define (opt-round-regions-resume-work! [regions : (& regions OptRoundRegions)]) : unit
+  (unsafe
+    (arena.tl_arena_set (array-ref regions.arenas 0))))
 
 (define (opt-round-regions-held? [regions : (& regions OptRoundRegions)]) : bool
   (> regions.holder 0))

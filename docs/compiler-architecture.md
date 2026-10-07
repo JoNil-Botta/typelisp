@@ -689,6 +689,36 @@ copy only their address. The native `loop_carried_enum_payload_snapshot` and
 at every optimization level. Address generation uses `lower-emit-gep`, also
 shared by byte-offset projections through `lower-gep-byte`.
 
+A by-value memory-class `Struct` or `Enum` parameter arrives as the address of
+the caller's storage, yet SPEC 4.7.2 makes it private callee storage (#7901).
+Only a Copy aggregate's caller can still read its argument after the call: a
+move-only argument's source is moved, so writes to that storage during or
+after the call are unobservable to safe code. `tc-param-storage-resolved?`
+(memory-class and Copy, memoized per nominal name) therefore gates everything
+below. Two copies keep the rule true without copying every parameter:
+- **Callee side.** The move checker seeds each such parameter as the origin of
+  its own storage. `tc-param-storage-note-write` notes the parameter when a
+  field, element or `replace!` write, or a `&mut` borrow, reaches its storage,
+  including through a local that aliases part of it. Each checked body (named
+  function or lambda) records the mask of written parameter positions
+  (`tc-body-param-write-fact`). `lower-bind-source-params` copies exactly those
+  parameters into frame storage on entry; a body with no recorded fact (a
+  synthesized clone helper) copies every one if it writes anything in place
+  (`lower-expr-writes?`). The copy's fresh var lies outside the source
+  parameter range, so tail calls stop forwarding that parameter; read-only
+  callees keep reading, and forwarding, the caller's storage.
+- **Caller side.** An argument is copied before the call when its storage
+  could change while the callee reads it (`lower-call-arg-copy?`, as each
+  argument is lowered): its place is a global value's storage, or
+  `lower-call-args-snapshot-mask` finds that another argument of the same
+  call borrows its local root `&mut` or passes it as a mutable reference. The
+  move check records the local roots each body borrows `&mut`
+  (`tc-body-mut-borrow-scope`), so only those are candidates, and a body that
+  borrows none skips the scan.
+`ptr-addr-of` is not a write here: the compiler's shared-view idiom reads
+through it. Raw-pointer writes into an argument stay the unsafe code's
+obligation.
+
 Address-exposed register groups own contiguous stack pairs indexed by final
 variable ID. In a function that exposes any group address, all group second
 words use that canonical pair region; mixing a one-word-stride map with

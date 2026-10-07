@@ -118,12 +118,25 @@
   (value String)
   (present bool))
 
+;: Runtime environment policy code: start from the parent environment, drop
+;: the names `env` overrides, then append the overrides.
+(define process-runtime-env-inherit : i64
+  0)
+
+;: Runtime environment policy code: the child environment is exactly the `env`
+;: rows. The parent environment is never read.
+(define process-runtime-env-exact : i64
+  1)
+
 ;: Runtime command data consumed only across the validated unsafe OS boundary.
+;: `env-policy` is `process-runtime-env-inherit` or `process-runtime-env-exact`;
+;: the entry points reject any other value before preparing a spawn.
 (defstruct ProcessRuntimeCommand
   (executable String)
   (argv ProcessRuntimeStringList)
   (cwd ProcessRuntimeMaybeString)
   (env ProcessRuntimeEnvList)
+  (env-policy i64)
   (stdin ProcessRuntimeMaybeString))
 
 ;: Private captured output data.
@@ -633,14 +646,32 @@
 (define (some-string [value : String]) : ProcessRuntimeMaybeString
   (ProcessRuntimeMaybeString true value))
 
-;: Construct a private runtime command.
+;: Construct a private runtime command whose `env` rows override the
+;: inherited environment.
 (define (command-full
   [executable : String]
   [argv : ProcessRuntimeStringList]
   [cwd : ProcessRuntimeMaybeString]
   [env : ProcessRuntimeEnvList]
   [stdin : ProcessRuntimeMaybeString]) : ProcessRuntimeCommand
-  (ProcessRuntimeCommand executable argv cwd env stdin))
+  (ProcessRuntimeCommand
+    executable
+    argv
+    cwd
+    env
+    process-runtime-env-inherit
+    stdin))
+
+;: Construct a private runtime command with an explicit environment policy
+;: code (`process-runtime-env-inherit` or `process-runtime-env-exact`).
+(define (command-full-with-env-policy
+  [executable : String]
+  [argv : ProcessRuntimeStringList]
+  [cwd : ProcessRuntimeMaybeString]
+  [env : ProcessRuntimeEnvList]
+  [env-policy : i64]
+  [stdin : ProcessRuntimeMaybeString]) : ProcessRuntimeCommand
+  (ProcessRuntimeCommand executable argv cwd env env-policy stdin))
 
 ;: Return the number of runtime argv entries.
 (define (args-count [args : (& args ProcessRuntimeStringList)]) : i64
@@ -679,6 +710,23 @@
 ;: Return the environment override list from a runtime command.
 (define (command-env [command : (& command ProcessRuntimeCommand)]) : ProcessRuntimeEnvList
   (process-runtime-env-list-shared-view (& command.env)))
+
+;: Return the environment policy code from a runtime command.
+(define (command-env-policy [command : (& command ProcessRuntimeCommand)]) : i64
+  command.env-policy)
+
+;: Return true when a runtime command's environment policy code is one of the
+;: two defined policies.
+(define (command-env-policy-known?
+  [command : (& command ProcessRuntimeCommand)]) : bool
+  (or
+    (= command.env-policy process-runtime-env-inherit)
+    (= command.env-policy process-runtime-env-exact)))
+
+;: The error every entry point returns for an unknown environment policy code,
+;: before any OS action and without falling back to inheritance.
+(define (env-policy-error) : ProcessRuntimeError
+  (ProcessRuntimeInvalidCommand "process: unsupported environment policy"))
 
 ;: Return the stdin setting from a runtime command.
 (define (command-stdin [command : (& command ProcessRuntimeCommand)]) : ProcessRuntimeMaybeString
@@ -1159,6 +1207,71 @@
                 : u64)))
           (set! index (+ index 1))))
       ov)))
+
+;: A name byte folded for Windows environment-name comparison: ASCII
+;: lowercase letters become uppercase, every other byte is itself. No locale or
+;: code page is consulted.
+(define (env-name-fold-byte [byte : i64]) : i64
+  (if (and (>= byte 97) (<= byte 122))
+    (- byte 32)
+    byte))
+
+;: Compare two environment variable names the way a Windows environment block
+;: orders them: bytewise after `env-name-fold-byte`, a proper prefix first.
+;: Returns a negative, zero or positive i64. Zero means Windows treats the two
+;: names as the same variable.
+(define (env-name-fold-compare [left : (& left str)] [right : (& right str)]) : i64
+  (let
+    [left-len : i64 (string-length left)]
+    [right-len : i64 (string-length right)]
+    [n : i64
+      (if (< left-len right-len)
+        left-len
+        right-len)]
+    [index : i64 0]
+    [result : i64 0]
+    (while (and (= result 0) (< index n))
+      (set!
+        result
+        (-
+          (env-name-fold-byte (cast (string-ref left index) : i64))
+          (env-name-fold-byte (cast (string-ref right index) : i64))))
+      (set! index (+ index 1)))
+    (if (= result 0)
+      (- left-len right-len)
+      result)))
+
+;: The row indices of `env` in Windows environment-block order: ascending by
+;: `env-name-fold-compare`, equal names in row order. A stable insertion sort;
+;: validated rows are capped at `process-runtime-storage-max-count`.
+(define (env-windows-order [env : (& env ProcessRuntimeEnvList)]) : (__tl_dyn-array
+    i64)
+  (let
+    [count : i64 (array-length env.slots)]
+    [order : (__tl_dyn-array i64) (__tl_make-array i64 count)]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [entry : ProcessRuntimeEnvEntry
+          (process-runtime-env-array-shared-view (& env.slots) index)]
+        [slot : i64 index]
+        [moving : bool true]
+        (while moving
+          (if (= slot 0)
+            (set! moving false)
+            (let
+              [previous : ProcessRuntimeEnvEntry
+                (process-runtime-env-array-shared-view
+                  (& env.slots)
+                  (array-ref order (- slot 1)))]
+              (if (> (env-name-fold-compare (& previous.name) (& entry.name)) 0)
+                (begin
+                  (set! (array-ref order slot) (array-ref order (- slot 1)))
+                  (set! slot (- slot 1)))
+                (set! moving false)))))
+        (set! (array-ref order slot) index))
+      (set! index (+ index 1)))
+    order))
 
 ;: Return the integer address of an optional command path C string, or 0.
 (unsafe
@@ -1812,6 +1925,35 @@
               (set! i (+ i 1))))))
       count)))
 
+;: Build the `char**` envp holding exactly the `env` rows, in row order, and
+;: return its integer address. The parent environment is not read; zero rows
+;: give an allocated array whose only slot is the terminating null.
+(unsafe
+  (define (linux-build-exact-envp [env : ProcessRuntimeEnvList]) : i64
+    (let
+      [ov : (__tl_dyn-array u64)
+        (unsafe
+          (stdlib.process_runtime.build-override-cstrings env))]
+      [ovc : i64 (array-length ov)]
+      [arr : (__tl_dyn-array u64)
+        (__tl_make-array u64 (process-runtime-checked-layout-add ovc 1))]
+      [k : i64 0]
+      (while (< k ovc)
+        (set! (array-ref arr k) (array-ref ov k))
+        (set! k (+ k 1)))
+      (set! (array-ref arr ovc) (cast 0 : u64))
+      (stdlib.process_runtime.array-u64-addr arr))))
+
+;: Build the `char**` envp for `env` under environment policy code `policy`
+;: and return its integer address. The entry points have already rejected an
+;: unknown code.
+(unsafe
+  (define (linux-build-policy-envp [policy : i64] [env : ProcessRuntimeEnvList]) : i64
+    (unsafe
+      (if (= policy process-runtime-env-exact)
+        (stdlib.process_runtime.linux-build-exact-envp env)
+        (stdlib.process_runtime.linux-build-envp env)))))
+
 ;: Build the `char**` envp for `env` (inherited minus overrides, plus overrides)
 ;: and return its integer address; an empty override list reuses the inherited
 ;: environment array directly.
@@ -2010,7 +2152,8 @@
               exec-addr
               (stdlib.process_runtime.command-argv command))]
           [envp-addr : i64
-            (stdlib.process_runtime.linux-build-envp
+            (stdlib.process_runtime.linux-build-policy-envp
+              (stdlib.process_runtime.command-env-policy command)
               (stdlib.process_runtime.command-env command))]
           [cwd-addr : i64
             (unsafe
@@ -2132,7 +2275,8 @@
               exec-addr
               (stdlib.process_runtime.command-argv command))]
           [envp-addr : i64
-            (stdlib.process_runtime.linux-build-envp
+            (stdlib.process_runtime.linux-build-policy-envp
+              (stdlib.process_runtime.command-env-policy command)
               (stdlib.process_runtime.command-env command))]
           [cwd-addr : i64
             (unsafe
@@ -3370,6 +3514,54 @@
                 (set! i (+ i 1)))))
           unit)))))
 
+;: Build the CreateProcessA environment block holding exactly the `env` rows
+;: and return its address, never 0. Rows are emitted in the order
+;: CreateProcess requires (`env-windows-order`), each `NAME=VALUE` NUL
+;: terminated, then one more NUL; zero rows give the two-NUL empty block. The
+;: parent environment is not read.
+(cfg
+  windows
+  (unsafe
+    (define (windows-build-exact-env [env : ProcessRuntimeEnvList]) : i64
+      (unsafe
+        (let
+          [order : (__tl_dyn-array i64)
+            (stdlib.process_runtime.env-windows-order (& env))]
+          [count : i64 (array-length order)]
+          [block : byte_buf_core.ByteBufBuilder
+            (byte_buf_core.ByteBufBuilder (__tl_make-array u8 0) 0)]
+          [k : i64 0]
+          (while (< k count)
+            (let
+              [entry : ProcessRuntimeEnvEntry
+                (process-runtime-env-array-shared-view
+                  (& env.slots)
+                  (array-ref order k))]
+              (stdlib.process_runtime.windows-push-cstr
+                (&mut block)
+                (stdlib.process_runtime.array-u8-addr
+                  (stdlib.process_runtime.env-cstring entry.name entry.value))))
+            (set! k (+ k 1)))
+          (when
+            (= count 0)
+            (byte_buf_core.byte-buf-builder-push (&mut block) (cast 0 : u8)))
+          (byte_buf_core.byte-buf-builder-push (&mut block) (cast 0 : u8))
+          (stdlib.process_runtime.byte-builder-addr block))))))
+
+;: Build the CreateProcessA environment block for `env` under environment
+;: policy code `policy`; 0 asks CreateProcess to inherit unchanged. The entry
+;: points have already rejected an unknown code.
+(cfg
+  windows
+  (unsafe
+    (define (windows-build-policy-env
+      [policy : i64]
+      [env : ProcessRuntimeEnvList]) : i64
+      (unsafe
+        (if (= policy process-runtime-env-exact)
+          (stdlib.process_runtime.windows-build-exact-env env)
+          (stdlib.process_runtime.windows-build-env env))))))
+
 ;: Build the double-NUL-terminated CreateProcessA environment block from the
 ;: inherited environment minus overrides plus the override entries; an empty
 ;: override list returns 0 so the child inherits the environment.
@@ -3744,7 +3936,8 @@
           [err-handle : i64 -1]
           (set!
             env-addr
-            (stdlib.process_runtime.windows-build-env
+            (stdlib.process_runtime.windows-build-policy-env
+              (stdlib.process_runtime.command-env-policy command)
               (stdlib.process_runtime.command-env command)))
           (set! out-handle (stdlib.process_runtime.windows-make-temp-file))
           (set! err-handle (stdlib.process_runtime.windows-make-temp-file))
@@ -3801,7 +3994,8 @@
                   (stdlib.process_runtime.process-runtime-place-shared-view
                     command))))]
           [env-addr : i64
-            (stdlib.process_runtime.windows-build-env
+            (stdlib.process_runtime.windows-build-policy-env
+              (stdlib.process_runtime.command-env-policy command)
               (stdlib.process_runtime.command-env command))]
           [cwd-addr : i64
             (unsafe
@@ -3829,10 +4023,13 @@
   ;; lint-allow: function-name-case -- stable runtime ABI symbol
   (define (tl_process_output [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
     (unsafe
-      (cfg
-        windows
-        (stdlib.process_runtime.windows-output command)
-        (stdlib.process_runtime.linux-output command)))))
+      (if (stdlib.process_runtime.command-env-policy-known? command)
+        (cfg
+          windows
+          (stdlib.process_runtime.windows-output command)
+          (stdlib.process_runtime.linux-output command))
+        (stdlib.process_runtime.output-error
+          (stdlib.process_runtime.env-policy-error))))))
 
 ;: Run a command with child stdout/stderr inherited from the caller and return
 ;: its status with no captured output payload.
@@ -3841,10 +4038,13 @@
   ;; lint-allow: function-name-case -- stable runtime ABI symbol
   (define (tl_process_inherit [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
     (unsafe
-      (cfg
-        windows
-        (stdlib.process_runtime.windows-inherit command)
-        (stdlib.process_runtime.linux-inherit command)))))
+      (if (stdlib.process_runtime.command-env-policy-known? command)
+        (cfg
+          windows
+          (stdlib.process_runtime.windows-inherit command)
+          (stdlib.process_runtime.linux-inherit command))
+        (stdlib.process_runtime.output-error
+          (stdlib.process_runtime.env-policy-error))))))
 
 ;: Start a command without waiting; Windows reports async as unsupported.
 ;: The same validated-command preconditions as `tl_process_output` apply.
@@ -3852,10 +4052,13 @@
   ;; lint-allow: function-name-case -- stable runtime ABI symbol
   (define (tl_process_start [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
     (unsafe
-      (cfg
-        windows
-        (stdlib.process_runtime.async-unsupported-child)
-        (stdlib.process_runtime.linux-start command)))))
+      (if (stdlib.process_runtime.command-env-policy-known? command)
+        (cfg
+          windows
+          (stdlib.process_runtime.async-unsupported-child)
+          (stdlib.process_runtime.linux-start command))
+        (stdlib.process_runtime.child-error
+          (stdlib.process_runtime.env-policy-error))))))
 
 ;: Wait for an issued child authority; Windows reports async as unsupported.
 (unsafe

@@ -5877,12 +5877,18 @@
         (set! tail-done true)))
     length))
 
+;; The longest match at `index` that is longer than `min-len`; a returned
+;; length of at most `min-len` means the capped walk found none. The walk
+;; visits the same candidates for any `min-len` and examines only those that
+;; can beat the best so far, so whenever the longest match is longer than
+;; `min-len` the first candidate on the chain with that length wins.
 (define (ctfe-embedded-stdlib-lzss-find-match
   [data : (Ptr u8)]
   [source-len : i64]
   [head : (Ptr i64)]
   [previous : (Ptr i64)]
-  [index : i64]) : CtfeEmbeddedStdlibLzssMatch
+  [index : i64]
+  [min-len : i64]) : CtfeEmbeddedStdlibLzssMatch
   (if (> (+ index 2) (- source-len 1))
     (CtfeEmbeddedStdlibLzssMatch 0 0)
     (let
@@ -5891,7 +5897,7 @@
           (ptr-read
             (ptr-offset head (ctfe-embedded-stdlib-lzss-hash data index))))]
       [best-offset : i64 0]
-      [best-len : i64 0]
+      [best-len : i64 min-len]
       [cap : i64
         (let
           [avail : i64 (- source-len index)]
@@ -5916,9 +5922,9 @@
       ;; walk stops when the 64th link is followed, without examining the
       ;; candidate it reaches, so at most 64 candidates (the head and 63
       ;; more) are examined per position. Uncapped, indentation runs put
-      ;; most positions of the 4096-byte window on the same "   " chain;
-      ;; the cap costs about 2% of payload size. Format and decoder are
-      ;; unaffected: any (offset, length) the walk picks is a valid token.
+      ;; most positions of the 4096-byte window on the same "   " chain.
+      ;; Format and decoder are unaffected: any (offset, length) the walk
+      ;; picks is a valid token.
       [links : i64 64]
       ;; best-len < cap exits once no candidate can improve the match; the
       ;; replaced best-len < 18 condition kept walking candidates that could
@@ -5964,6 +5970,16 @@
               (set! links (- links 1))))))
       (CtfeEmbeddedStdlibLzssMatch best-offset best-len))))
 
+;; Emit one (offset, length) token: 12 bits of offset - 1, 4 of length - 3.
+(define (ctfe-embedded-stdlib-lzss-push-match!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [offset : i64]
+  [length : i64]) : unit
+  (let
+    [packed : i64 (+ (shl (- offset 1) 4) (- length 3))]
+    (byte_buf_core.byte-buf-builder-push out (cast (shr packed 8) : u8))
+    (byte_buf_core.byte-buf-builder-push out (cast (bit-and packed 255) : u8))))
+
 (define (ctfe-embedded-stdlib-lzss-compress [source : String]) : String
   (let
     [source-len : i64 (string.string-length source)]
@@ -5994,6 +6010,10 @@
       (byte_buf_core.byte-buf-builder-with-capacity
         (+ source-len (+ (/ source-len 8) 1)))]
     [index : i64 0]
+    ;; A longer match found by the lazy lookahead, taken at the next token.
+    [pending-valid : bool false]
+    [pending-offset : i64 0]
+    [pending-length : i64 0]
     (ctfe-embedded-stdlib-array-fill! (&mut head) -1)
     (while (< index source-len)
       (let
@@ -6002,31 +6022,20 @@
         [bit : i64 0]
         (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0 : u8))
         (while (and (< bit 8) (< index source-len))
-          (match (ctfe-embedded-stdlib-lzss-find-match
-            data
-            source-len
-            head-view
-            previous-view
-            index)
+          (match (if pending-valid
+            (CtfeEmbeddedStdlibLzssMatch pending-offset pending-length)
+            ;; Shorter matches are emitted as literals anyway.
+            (ctfe-embedded-stdlib-lzss-find-match
+              data
+              source-len
+              head-view
+              previous-view
+              index
+              2))
             [(CtfeEmbeddedStdlibLzssMatch offset length)
-              (if (>= length 3)
-                (let
-                  [packed : i64 (+ (shl (- offset 1) 4) (- length 3))]
-                  (byte_buf_core.byte-buf-builder-push
-                    (&mut out)
-                    (cast (shr packed 8) : u8))
-                  (byte_buf_core.byte-buf-builder-push
-                    (&mut out)
-                    (cast (bit-and packed 255) : u8))
-                  (ctfe-embedded-stdlib-lzss-insert-range!
-                    data
-                    source-len
-                    head-slots
-                    previous-slots
-                    index
-                    length)
-                  (set! index (+ index length)))
-                (begin
+              (set! pending-valid false)
+              (cond
+                [(< length 3)
                   (set! flags (bit-or flags (shl 1 bit)))
                   (byte_buf_core.byte-buf-builder-push
                     (&mut out)
@@ -6037,7 +6046,67 @@
                     head-slots
                     previous-slots
                     index)
-                  (set! index (+ index 1))))])
+                  (set! index (+ index 1))]
+                [(< length 6)
+                  ;; One-step lazy matching: when the match at the next
+                  ;; position is longer, emit this byte as a literal and take
+                  ;; that match instead. `index` is inserted first so the
+                  ;; lookahead may refer to it; length >= 3 keeps index + 1
+                  ;; inside the source. Only short matches look ahead: a
+                  ;; longer one rarely loses to its successor, and every
+                  ;; lookahead is a second chain walk.
+                  (ctfe-embedded-stdlib-lzss-insert!
+                    data
+                    source-len
+                    head-slots
+                    previous-slots
+                    index)
+                  (match (ctfe-embedded-stdlib-lzss-find-match
+                    data
+                    source-len
+                    head-view
+                    previous-view
+                    (+ index 1)
+                    length)
+                    [(CtfeEmbeddedStdlibLzssMatch next-offset next-length)
+                      (if (> next-length length)
+                        (begin
+                          (set! flags (bit-or flags (shl 1 bit)))
+                          (byte_buf_core.byte-buf-builder-push
+                            (&mut out)
+                            (cast
+                              (ctfe-embedded-stdlib-lzss-byte data index)
+                              : u8))
+                          (set! pending-valid true)
+                          (set! pending-offset next-offset)
+                          (set! pending-length next-length)
+                          (set! index (+ index 1)))
+                        (begin
+                          (ctfe-embedded-stdlib-lzss-push-match!
+                            (&mut out)
+                            offset
+                            length)
+                          (ctfe-embedded-stdlib-lzss-insert-range!
+                            data
+                            source-len
+                            head-slots
+                            previous-slots
+                            (+ index 1)
+                            (- length 1))
+                          (set! index (+ index length))))])]
+                [else
+                  (ctfe-embedded-stdlib-lzss-push-match!
+                    (&mut out)
+                    offset
+                    length)
+                  (ctfe-embedded-stdlib-lzss-insert-range!
+                    data
+                    source-len
+                    head-slots
+                    previous-slots
+                    index
+                    length)
+                  (set! index (+ index length))])])
           (set! bit (+ bit 1)))
         (set! (array-ref out.slots flag-index) (cast flags : u8))))
     (byte_buf_core.byte-buf-builder-to-string (& out))))

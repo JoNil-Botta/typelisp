@@ -9295,6 +9295,7 @@ Commands:
   typelisp clean          Remove build artifacts
   typelisp compile        Generate assembly or IR
   typelisp doc            Generate documentation or run doc tests
+  typelisp expand         Show the checked expansion of a macro invocation
   typelisp explain        Explain a diagnostic code
   typelisp fmt            Format source files or a package
   typelisp init           Scaffold a package in the current directory

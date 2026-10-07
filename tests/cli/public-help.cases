@@ -36,7 +36,7 @@ exit nonzero
 stderr not-contains not yet available
 
 case help
-each build run check fmt lint test doc compile inspect explain repl new init clean lsp
+each build run check fmt lint test doc compile inspect expand explain repl new init clean lsp
 step {{each}}-help
 run {{each}} --help
 stdout empty

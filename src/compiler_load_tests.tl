@@ -17,6 +17,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import compiler_ctfe as ctfe)
+(import compiler_embedded_stdlib as ces)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import tlci_core as tlci)
@@ -2735,6 +2736,76 @@
         (= (compiler-load-decl-list-count decls) 2)
         (compiler-load-first-lzss-def? decls "payload" "compress me"))]
     [(Err _) false]))
+
+;; `include-str-lzss` of a `.tl` source blanks its top-level inline tests to
+;; their line breaks; any other path is compressed exactly (#8713).
+(define (compiler-load-include-str-lzss-source-ok?) : bool
+  (compiler-load-write-file-text
+    "target/cl_include_lzss_source.tl"
+    "(define a : i64 1)\n(test t\n  (keep a))\n(cfg test (define helper : i64 2))\n(define b : i64 3)\n")
+  (compiler-load-write-file-text
+    "target/cl_include_lzss_text.txt"
+    "(test t (keep a))\n")
+  (compiler-load-write-file-text
+    "target/cl_include_lzss_source_entry.tl"
+    "(include-str-lzss source \"cl_include_lzss_source.tl\")
+(define (main) : i64 0)")
+  (compiler-load-write-file-text
+    "target/cl_include_lzss_text_entry.tl"
+    "(include-str-lzss text \"cl_include_lzss_text.txt\")
+(define (main) : i64 0)")
+  (and
+    (match (compiler-load-file-with-paths
+      "target/cl_include_lzss_source_entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(Ok decls _ _ _)
+        (compiler-load-first-lzss-def?
+          decls
+          "source"
+          "(define a : i64 1)\n\n\n\n(define b : i64 3)\n")]
+      [(Err _) false])
+    (match (compiler-load-file-with-paths
+      "target/cl_include_lzss_text_entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(Ok decls _ _ _)
+        (compiler-load-first-lzss-def? decls "text" "(test t (keep a))\n")]
+      [(Err _) false])))
+
+(define (compiler-load-strip-tests-case-ok? [source : String] [want : String]) : bool
+  (string.eq
+    (ces.compiler-embedded-stdlib-source-without-inline-tests source)
+    want))
+
+;; The inline-test blanking rule: top-level `(test ...)` and one-body
+;; `(cfg test ...)` forms only, line breaks kept, lexer-exact strings,
+;; character literals and comments, and malformed input left unchanged.
+(define (compiler-load-strip-inline-tests-ok?) : bool
+  (and
+    (compiler-load-strip-tests-case-ok?
+      "(define a 1)\n(test t\n  (check a))\n(define b 2)\n"
+      "(define a 1)\n\n\n(define b 2)\n")
+    (compiler-load-strip-tests-case-ok?
+      "(cfg\r\n  test\r\n  (define h 1))\r\n(define b 2)"
+      "\r\n\r\n\r\n(define b 2)")
+    ;; A second body is the non-test branch, so the form is kept.
+    (compiler-load-strip-tests-case-ok?
+      "(cfg test (define a 1) (define a 2))"
+      "(cfg test (define a 1) (define a 2))")
+    (compiler-load-strip-tests-case-ok?
+      "(cfg (not test) (define a 1))"
+      "(cfg (not test) (define a 1))")
+    ;; Look-alike heads and nested forms stay.
+    (compiler-load-strip-tests-case-ok?
+      "(testing 1)(test-foo 2)(define (f) (test 3))"
+      "(testing 1)(test-foo 2)(define (f) (test 3))")
+    ;; Parens inside strings, character literals and comments do not count.
+    (compiler-load-strip-tests-case-ok?
+      "(define s \"(test x) \\\" )\")\n(define c '(')\n; (test y\n(test z)\n"
+      "(define s \"(test x) \\\" )\")\n(define c '(')\n; (test y\n\n")
+    ;; Unbalanced or unlexable sources are returned unchanged.
+    (compiler-load-strip-tests-case-ok? "(test x" "(test x")
+    (compiler-load-strip-tests-case-ok? "(test x))" "(test x))")
+    (compiler-load-strip-tests-case-ok? "(test \"x)" "(test \"x)")))
 
 (define (compiler-load-missing-include-str-ok?) : bool
   (match (load.compiler-load-source
@@ -5753,6 +5824,14 @@
     (compiler-load-include-str-lzss-relative-ok?)
     (return
       (io.panic "compiler-load: include-str-lzss relative smoke mismatch")))
+  (unless
+    (compiler-load-include-str-lzss-source-ok?)
+    (return
+      (io.panic
+        "compiler-load: include-str-lzss source blanking smoke mismatch")))
+  (unless
+    (compiler-load-strip-inline-tests-ok?)
+    (return (io.panic "compiler-load: inline-test blanking smoke mismatch")))
   (unless
     (compiler-load-missing-include-str-ok?)
     (return (io.panic "compiler-load: missing include-str smoke mismatch")))

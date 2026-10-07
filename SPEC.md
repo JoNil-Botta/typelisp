@@ -3506,17 +3506,29 @@ definition before typechecking, lowering, and codegen.
 The compiler-owned `(include-str-lzss name "path")` form is the compressed
 runtime-static sibling of `include-str` and `include-bin`. It uses the same
 explicit input and path-resolution rules, deterministically LZSS-compresses
-the file's exact bytes at the loader boundary, and defines an opaque static
+the file's bytes at the loader boundary, and defines an opaque static
 `name : (__tl_dyn-array u8)`. The bounded binary-data payload starts with the
 compiler-owned `__typelisp_embedded_stdlib_lzss_v1__` marker, the decimal
-uncompressed byte length and a newline, followed by the token stream. Like
-`include-bin`, and unlike `include-str`, the input is never decoded or
-validated as text, so binary payloads round-trip exactly. This form exists for
-compiler-owned payload tables: the compiler embeds its stdlib source table
-through it. The stdlib comptime image is embedded with `include-bin` instead,
-as a compiler-owned TLCH envelope that carries the image's LZSS token stream
-in canonical Huffman form and is expanded back to the exact `.tlci` bytes on
-demand.
+uncompressed byte length and a newline, followed by the token stream.
+
+- A `path` that does not end in `.tl` is compressed exactly. Like
+  `include-bin`, and unlike `include-str`, the input is never decoded or
+  validated as text, so binary payloads round-trip exactly.
+- A `path` ending in `.tl` is a TypeLisp source. Before compression, each
+  top-level inline test is replaced by the line breaks it contained: every
+  `(test ...)` form, and every `(cfg test BODY)` form with exactly one body.
+  Every other byte is kept, so each remaining form keeps its line and column.
+  Strings, character literals and comments follow the lexer's rules, and a
+  source the lexer would reject, or whose brackets do not balance, is
+  compressed unchanged.
+
+This form exists for compiler-owned payload tables: the compiler embeds its
+stdlib source table through it. The embedded stdlib therefore carries no
+inline tests; those compile only under `--cfg test` from the repository
+sources (#8713). The stdlib comptime image is embedded with `include-bin`
+instead, as a compiler-owned TLCH envelope that carries the image's LZSS token
+stream in canonical Huffman form and is expanded back to the exact `.tlci`
+bytes on demand.
 
 #### 4.4.8 `(include-str-comptime name "path")` - compile-time text input
 

@@ -16025,6 +16025,234 @@
       [(Var _) 8]
       [(VarArgs _ _) 8])))
 
+;; Snapshot the completed, resolved layouts before the driver retires their
+;; typecheck owner as per-nominal type-stable word masks for the optimizer
+;; (#8124): bit w is set when word w holds a value of one type whatever value
+;; the aggregate holds. Only integer facts escape; the caller's representation
+;; arena owns the maps. An enum's payload words are unstable unless it has one
+;; variant. Padding, unresolved types, structural containers and oversized
+;; aggregates prove nothing. Lifetime arguments do not change layout.
+(define (lower-representation-nominal-name [ty : ast.AstType]) : i64
+  (match ty
+    [(Struct name) name]
+    [(StructArgs name _) name]
+    [(Enum name) name]
+    [(EnumArgs name _) name]
+    ;; An enum payload names its type unresolved. A cached layout under the
+    ;; name makes it nominal; a type parameter has none and stays unstable.
+    [(Var name) name]
+    [(VarArgs name _) name]
+    [_ -1]))
+
+(define (lower-representation-stable-type-mask
+  [type-segment-bases : i64]
+  [state : tc_core.TcAggLayoutCacheState]
+  [index : (&mut index ir.CompilerIrRepresentationIndex)]
+  [ty : ast.AstType]
+  [fuel : i64]) : i64
+  (let
+    [name : i64
+      (lower-representation-nominal-name (lower-global-shared-view ty))]
+    (cond
+      [(<= fuel 0) 0]
+      [(>= name 0)
+        (lower-representation-stable-nominal-mask
+          type-segment-bases
+          state
+          index
+          name
+          fuel)]
+      [else
+        (match (lower-global-shared-view ty)
+          [(Region _ inner)
+            (lower-representation-stable-type-mask
+              type-segment-bases
+              state
+              index
+              (ast.ast-type-segment-bases-get type-segment-bases inner)
+              (- fuel 1))]
+          [(Invalidate _ inner)
+            (lower-representation-stable-type-mask
+              type-segment-bases
+              state
+              index
+              (ast.ast-type-segment-bases-get type-segment-bases inner)
+              (- fuel 1))]
+          [(Ref _ inner)
+            (if (ast.ast-type-segment-bases-fat-referent?
+              type-segment-bases
+              inner)
+              3
+              1)]
+          [(MutRef _ inner)
+            (if (ast.ast-type-segment-bases-fat-referent?
+              type-segment-bases
+              inner)
+              3
+              1)]
+          [(Unit) 0]
+          [(Never) 0]
+          [(DynArray _) 1]
+          [(String) 1]
+          [(Str) 1]
+          [(Box _) 1]
+          [(Ptr _) 1]
+          [(MutPtr _) 1]
+          [(Func _ _) 1]
+          [(CFunc _ _) 1]
+          [_
+            (if (lower-clone-scalar-type? ty)
+              1
+              0)])])))
+
+(define (lower-representation-stable-field-mask
+  [type-segment-bases : i64]
+  [state : tc_core.TcAggLayoutCacheState]
+  [index : (&mut index ir.CompilerIrRepresentationIndex)]
+  [ty : ast.AstType]
+  [offset : i64]
+  [fuel : i64]) : i64
+  (if (or (< offset 0) (>= offset 512) (not (= (% offset 8) 0)))
+    0
+    (shl
+      (lower-representation-stable-type-mask
+        type-segment-bases
+        state
+        index
+        ty
+        fuel)
+      (/ offset 8))))
+
+(define (lower-representation-stable-layout-mask
+  [type-segment-bases : i64]
+  [state : tc_core.TcAggLayoutCacheState]
+  [index : (&mut index ir.CompilerIrRepresentationIndex)]
+  [layout : tc_core.TcInlineAggregateLayout]
+  [fuel : i64]) : i64
+  (if (or
+    (<= fuel 0)
+    (>
+      (tc_core.tc-inline-aggregate-layout-size
+        (lower-global-shared-view layout))
+      512))
+    0
+    (match layout
+      [(Struct _ _ fields)
+        (let
+          [mask : i64 0]
+          [at : i64 0]
+          (while (< at (tc_core.tc-inline-field-layout-list-count (& fields)))
+            (match (tc_core.tc-inline-field-layout-list-ref (& fields) at)
+              [(Field _ ty offset)
+                (set!
+                  mask
+                  (bit-or
+                    mask
+                    (lower-representation-stable-field-mask
+                      type-segment-bases
+                      state
+                      index
+                      ty
+                      offset
+                      (- fuel 1))))])
+            (set! at (+ at 1)))
+          mask)]
+      [(Enum _ _ variants)
+        (let
+          [mask : i64 1]
+          (when
+            (= (tc_core.tc-inline-variant-layout-list-count (& variants)) 1)
+            (match (tc_core.tc-inline-variant-layout-list-ref (& variants) 0)
+              [(Variant _ _ _ payloads)
+                (let
+                  [at : i64 0]
+                  (while (<
+                    at
+                    (tc_core.tc-inline-payload-layout-list-count (& payloads)))
+                    (match (tc_core.tc-inline-payload-layout-list-ref
+                      (& payloads)
+                      at)
+                      [(Payload _ ty offset)
+                        (set!
+                          mask
+                          (bit-or
+                            mask
+                            (lower-representation-stable-field-mask
+                              type-segment-bases
+                              state
+                              index
+                              ty
+                              offset
+                              (- fuel 1))))])
+                    (set! at (+ at 1))))]))
+          mask)])))
+
+(define (lower-representation-stable-nominal-mask
+  [type-segment-bases : i64]
+  [state : tc_core.TcAggLayoutCacheState]
+  [index : (&mut index ir.CompilerIrRepresentationIndex)]
+  [name : i64]
+  [fuel : i64]) : i64
+  (let
+    [key : i64 (ast.ast-nominal-name-id-key name)]
+    (if (ir.compiler-ir-representation-index-stable-mask-known? index key)
+      (ir.compiler-ir-representation-index-stable-mask index key)
+      (let
+        [slots : (__tl_dyn-array tc_core.TcAggLayoutCacheSlot)
+          (tc_core.tc-agg-layout-cache-slots state)]
+        [slot : i64
+          (if (= (array-length slots) tc_core.tc-agg-layout-cache-capacity)
+            (tc_core.tc-agg-layout-cache-probe-slot-for-state state name)
+            -1)]
+        [mask : i64 0]
+        ;; Publish no proof while recursively visiting this nominal identity.
+        (ir.compiler-ir-representation-index-set-stable-mask! index key 0)
+        (when
+          (and (> fuel 0) (>= slot 0))
+          (match (owned_view.compiler-owned-array-element-shared-view
+            slots
+            slot)
+            [(Full _ layout)
+              (set!
+                mask
+                (lower-representation-stable-layout-mask
+                  type-segment-bases
+                  state
+                  index
+                  layout
+                  fuel))]
+            [(Empty) unit]))
+        (ir.compiler-ir-representation-index-set-stable-mask! index key mask)
+        mask))))
+
+(define (lower-representation-index-stable-words
+  [type-segment-bases : i64]
+  [job : tc_core.TcJobState]
+  [index : ir.CompilerIrRepresentationIndex]) : ir.CompilerIrRepresentationIndex
+  (let
+    [address : i64 (tc_core.tc-job-state-agg-layout-cache-address job)]
+    (when
+      (> address 0)
+      (let
+        [state : tc_core.TcAggLayoutCacheState
+          (tc_core.TcAggLayoutCacheState address)]
+        [slots : (__tl_dyn-array tc_core.TcAggLayoutCacheSlot)
+          (tc_core.tc-agg-layout-cache-slots state)]
+        [at : i64 0]
+        (while (< at (array-length slots))
+          (match (owned_view.compiler-owned-array-element-shared-view slots at)
+            [(Full name _)
+              (lower-representation-stable-nominal-mask
+                type-segment-bases
+                state
+                (&mut index)
+                name
+                64)
+              unit]
+            [(Empty) unit])
+          (set! at (+ at 1)))))
+    index))
+
 (define (lower-type-align [ctx : tc_core.TcContext] [ty : (& ty ast.AstType)]) : i64
   (let
     [ty : ast.AstType (owned_view.compiler-owned-reference-shared-view ty)]

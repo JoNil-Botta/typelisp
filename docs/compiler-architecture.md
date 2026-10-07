@@ -711,9 +711,21 @@ joins with a literal arm are never evidence. An enum pointer spans only its tag
 word, because a nullary variant is an 8-byte tag global. Global extents and
 value representations are captured at program entry, before inlining, so the
 priced and final pipelines see the same roots. A block holding an
-always-failing literal bounds check hoists nothing. The `licm-deref` optimizer
-test and `tests/integration/licm_raw_deref.tl` guard these rules; #8124 tracks
-a checked pointer loaded speculatively from an enum payload.
+always-failing literal bounds check hoists nothing.
+
+A checked pointer loaded from a root is a root in turn, because safe code writes
+every word outside an enum's payload only with its declared type. A payload
+word holds a pointer only under the tag the source tested, so a speculated
+checked-pointer load also needs every word it reads to be type-stable in the
+root's object (#8124). Lowering records one stable-word mask per nominal type
+on the representation index, from the typecheck layouts, before the driver
+releases them. An enum has only its tag word stable unless it has one variant,
+and a type with no recorded mask is all unstable. Parameters and globals take
+the mask of what they point at, homes and elements that of the value they hold,
+and a frame object that of its typed base copy. Global masks are captured with
+the global extents. The `licm-deref` and `licm-payload` optimizer tests,
+`tests/integration/licm_raw_deref.tl` and
+`tests/integration/licm_payload_speculation.tl` guard these rules.
 
 An element read refused only for want of that bound can still leave a counting
 loop whose one exit is the latch's, behind the bound its own check tests. When

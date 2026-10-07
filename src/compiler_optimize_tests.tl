@@ -57712,6 +57712,11 @@
 ;; C16 negative : an i64 store fed by a u8 load. The store fixes the width, and
 ;;                a load that disagrees means the body does not move eight bytes
 ;;                per iteration -- the wide-element twin of C8.
+;; C17 positive : the counter is bumped BEFORE the body, so both geps are
+;;                indexed by its `next` (`%8 = add %4, 1`). The rewrite redefines
+;;                `%8` as `bound`, so the geps must read a fresh copy of the
+;;                increment instead, the index the FIRST iteration used; left on
+;;                `%8` the call would start `bound` elements past it.
 ;;
 ;; These negatives were checked load-bearing by mutating the implementation and
 ;; confirming THIS test is what fails, with the code it reports:
@@ -57727,6 +57732,8 @@
 ;;     and 130 (C13): with no width there is nothing for the scan's own tests to
 ;;     disagree with, so every one of them compares 0 against 0 and passes.
 ;;   * `opt-copy-call-scan-body`'s Load-width arm dropped -> code 160 (C16).
+;;   * `opt-copy-call-kept-instr` made to return its instruction unchanged ->
+;;     code 172 (C17's source gep still reads `%8`).
 ;;   * `opt-copy-call-escape-ok?`'s Load arm dropped (i.e. reverting to
 ;;     `opt-fill-call-escape-ok?`, which never sees a Load) -> code 120 (C12).
 ;; C12 is why this pass has its own escape check at all. Its fixture carries the
@@ -58160,6 +58167,50 @@
 (define (opt-cc-test-loaded) : ir.CompilerIrValue
   (Var 6))
 
+;; C17: the bump-first copy loop, `i = i + 1` then `dst[i] = src[i]`.
+(define (opt-cc-test-next-index) : ir.CompilerIrFunction
+  (opt-copy-call-function
+    (irt.func
+      "function @cc_fn(src=%0:u64, bound=%1:i64, dst=%2:u64) -> i64 vars 13 {
+       cc.entry:
+         jump while_body.33__bce_guard
+       while_body.33__bce_guard:
+         %3 = lt 0, %1 : bool
+         branch %3, while_body.33__bce_fast, cc.exit
+       while_body.33__bce_fast:
+         %4 = phi [0, while_body.33__bce_guard], [%8, while_body.33__bce_fast] : i64
+         %8 = add %4, 1 : i64
+         %5 = gep %0, %8 : i64
+         %6 = load %5 : i64
+         %7 = gep %2, %8 : i64
+         store_ptr %7, %6 : i64
+         %9 = lt %8, %1 : bool
+         branch %9, while_body.33__bce_fast, cc.exit
+       cc.exit:
+         return 0
+       }")))
+
+;; The offset var of the loop block's gep at `index`, or -1.
+(define (opt-cc-test-gep-offset
+  [out : (& out ir.CompilerIrFunction)]
+  [index : i64]) : i64
+  (match (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-instr-at blocks 2 index))
+    [(Gep _ _ (Var offset) _) offset]
+    [_ -1]))
+
+;; Whether the loop block's instruction at `index` is `%dst = add %4, 1`.
+(define (opt-cc-test-seed-add?
+  [out : (& out ir.CompilerIrFunction)]
+  [index : i64]
+  [dst : i64]) : bool
+  (match (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-instr-at blocks 2 index))
+    [(BinOp d (Add) (Var 4) (I64 1) _) (= d dst)]
+    [_ false]))
+
 (define (compiler-optimize-copy-call-self-test) : i64
   (let
     [c1 : ir.CompilerIrFunction
@@ -58333,6 +58384,7 @@
         false
         false
         false)]
+    [c17 : ir.CompilerIrFunction (opt-cc-test-next-index)]
     [c11 : ir.CompilerIrFunction
       (opt-copy-call-function (ir.compiler-ir-global-shared-view c1))]
     (cond
@@ -58373,6 +58425,14 @@
       [(not (opt-cc-test-loop-has-call8-const? c15 4 4)) 151]
       [(not (= (opt-cc-test-loop-store-count c15 0 8) 0)) 152]
       [(not (opt-cc-test-unchanged? c16)) 160]
+      ;; C17: phi, add(seed copy), mov(inext), gep(src), load, gep(dst), call,
+      ;; lt, jump. The seed copy is %13 and the call %14.
+      [(not (= (opt-cc-test-loop-instr-count c17) 9)) 170]
+      [(not (opt-cc-test-seed-add? c17 1 13)) 171]
+      [(not (= (opt-cc-test-gep-offset c17 3) 13)) 172]
+      [(not (= (opt-cc-test-gep-offset c17 5) 13)) 173]
+      [(not (opt-cc-test-loop-has-call8? c17 6)) 174]
+      [(not (= (opt.opt-function-frame c17) 15)) 175]
       [else 42])))
 
 ;; --- global-cell condition (a): per-store observability ----------------------
@@ -63057,7 +63117,7 @@
   (test.assert-i64-eq
     (compiler-optimize-copy-call-self-test)
     42
-    "an element copy in a __bce_fast clone becomes one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd (i64 slots) call, with an invariant+counter destination index admitted and idempotently; checked, unsupported-width, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width, below-floor and constant-value loops do not"))
+    "an element copy in a __bce_fast clone becomes one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd (i64 slots) call, with an invariant+counter destination index admitted and idempotently, and a bump-first loop's geps on the counter's next reading the first iteration's index; checked, unsupported-width, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width, below-floor and constant-value loops do not"))
 
 (test
   global-cell-call-mod-ref

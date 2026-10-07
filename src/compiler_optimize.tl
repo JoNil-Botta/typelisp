@@ -66648,6 +66648,44 @@
     cbi.compiler-builtin-id-tl-mem-copy8-fwd
     cbi.compiler-builtin-id-tl-mem-copy-fwd))
 
+;; Whether a gep in the body is indexed by the counter's `next` itself. That is
+;; the shape of a loop that bumps its counter BEFORE the body -- `i = i + 1`,
+;; then `a[i]` -- and of the prelude `for` range expansion once GVN merges the
+;; body's `i + 1` with the advance. `opt-copy-call-offset-add?` admits it
+;; (`next` IS `counter + 1`), but the rewrite redefines `next` as `bound` in
+;; place, so a gep left reading it would start the copy `bound` elements past
+;; the first one the loop touched.
+(define (opt-copy-call-gep-reads-inext?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [last : i64]
+  [inext : i64]) : bool
+  (if (>= index last)
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(Gep _ _ (Var offset-var) _)
+        (or
+          (= offset-var inext)
+          (opt-copy-call-gep-reads-inext? instrs (+ index 1) last inext))]
+      [_ (opt-copy-call-gep-reads-inext? instrs (+ index 1) last inext)])))
+
+;; The body instruction as the rewritten block keeps it. With a `seed-next`
+;; (>= 0), a gep indexed by the counter's `next` reads it instead: the copy of
+;; the original increment, which at the seed iteration is the index the loop's
+;; FIRST access used.
+(define (opt-copy-call-kept-instr
+  [instr : ir.CompilerIrInstr]
+  [inext : i64]
+  [seed-next : i64]) : ir.CompilerIrInstr
+  (if (< seed-next 0)
+    instr
+    (match (compiler-opt-global-shared-view instr)
+      [(Gep dst base (Var offset-var) elem-ty)
+        (if (= offset-var inext)
+          (Gep dst base (Var seed-next) elem-ty)
+          instr)]
+      [_ instr])))
+
 (define (opt-copy-call-emit-body!
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [instrs : ir.CompilerIrInstrSeq]
@@ -66656,6 +66694,7 @@
   [last : i64]
   [shape : OptLoopCallShape]
   [site : OptCopyCallSite]
+  [seed-next : i64]
   [state : (&mut state OptLoopCallRewriteState)]) : unit
   (unless
     (>= index last)
@@ -66675,14 +66714,27 @@
             (ir.compiler-ir-call-args-array
               (ir.compiler-ir-value-seq3 site.dst-ptr site.src-ptr shape.bound))
             (Unit))))
-      ;; the counter's `next` is redefined as its exit value, `bound`
+      ;; the counter's `next` is redefined as its exit value, `bound`; a gep
+      ;; that read it reads `seed-next`, the original increment, instead
       (if (opt-loop-call-defines-inext? instrs index shape.inext)
+        (begin
+          (when
+            (>= seed-next 0)
+            (match (ir.compiler-ir-instr-seq-ref instrs index)
+              [(BinOp _ op lhs rhs ty)
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (BinOp seed-next op lhs rhs ty))]
+              [_ unit]))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Mov shape.inext shape.bound shape.ity)))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.Mov shape.inext shape.bound shape.ity))
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (ir.compiler-ir-instr-seq-ref instrs index))))
+          (opt-copy-call-kept-instr
+            (ir.compiler-ir-instr-seq-ref instrs index)
+            shape.inext
+            seed-next))))
     (opt-copy-call-emit-body!
       (&mut builder)
       instrs
@@ -66691,6 +66743,7 @@
       last
       (compiler-opt-global-shared-view shape)
       (compiler-opt-global-shared-view site)
+      seed-next
       state)))
 
 (define (opt-copy-call-rewrite-block
@@ -66704,7 +66757,15 @@
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         [phi-count : i64 shape.phi-count]
         [builder : ir.CompilerIrInstrBuilder
-          (ir.compiler-ir-instr-builder-with-capacity (+ count 2))]
+          (ir.compiler-ir-instr-builder-with-capacity (+ count 3))]
+        [seed-next : i64
+          (if (opt-copy-call-gep-reads-inext?
+            instrs
+            phi-count
+            (- count 1)
+            shape.inext)
+            (opt-loop-call-alloc-var state)
+            -1)]
         (opt-loop-call-emit-phis! (&mut builder) instrs 0 phi-count label)
         (opt-copy-call-emit-body!
           (&mut builder)
@@ -66714,6 +66775,7 @@
           (- count 1)
           (compiler-opt-global-shared-view shape)
           site
+          seed-next
           state)
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)

@@ -174,6 +174,33 @@
           ;; seq is now 11, 22
           (+ total (+ (array-ref seq.slots 0) (array-ref seq.slots 1))))))))
 
+;; A borrowed element of an array of `__tl_dyn-array`s is the inner array: the
+;; loop walks its items once, through `&mut` and `&` alike, and an empty inner
+;; array is not visited (#8119; before it, the borrow named the outer slot and
+;; the loop read descriptor words without terminating).
+(define (nested-dyn-array-total) : i64
+  (let
+    [grid : (__tl_dyn-array (__tl_dyn-array i64))
+      (__tl_make-array (__tl_dyn-array i64) 2)]
+    [row : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+    [visits : i64 0]
+    [total : i64 0]
+    (set! (array-ref row 0) 11)
+    (set! (array-ref row 1) 12)
+    (set! (array-ref row 2) 13)
+    (set! (array-ref row 3) 14)
+    (set! (array-ref grid 0) row)
+    (set! (array-ref grid 1) (__tl_make-array i64 0))
+    (for [value (&mut (array-ref grid 0))]
+      (set! (deref value) (+ (deref value) 1)))
+    (for [value (& (array-ref grid 0))]
+      (set! visits (+ visits 1))
+      (set! total (+ total (deref value))))
+    (for [value (& (array-ref grid 1))]
+      (set! visits (+ visits 100)))
+    ;; 4 visits; 12 + 13 + 14 + 15
+    (+ (* visits 1000) total)))
+
 (define (main) : i64
   (let
     [values : (__tl_dyn-array i64) (__tl_make-array i64 2)]
@@ -188,4 +215,5 @@
         [(not (= (protocol-first) 231)) 5]
         [(not (= (zip-total) 367)) 6]
         [(not (= (range-value-total) 24)) 7]
+        [(not (= (nested-dyn-array-total) 4054)) 8]
         [else 42]))))

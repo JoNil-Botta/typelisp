@@ -207,6 +207,12 @@
         (spec_ci.intern-str region)
         "_"
         (spec-type-key (ast.ty-node-get inner)))]
+    [(Invalidate lifetime inner)
+      (str_cat.str-cat
+        "invalidate_"
+        (spec_ci.intern-str lifetime)
+        "_"
+        (spec-type-key (ast.ty-node-get inner)))]
     [(Enum name)
       (str_cat.str-cat "enum_" (ast.ast-nominal-name-id-display name))]
     [(EnumArgs name lifetimes)
@@ -626,12 +632,15 @@
           (spec-template-env-has-template?
             wide
             cbi.compiler-builtin-id-fix-second))
-        ;; A missing-template name creates no record; all real shadows are
-        ;; dense slots, and the state grew beyond its initial capacity.
+        ;; Every shadow of a templated name appends one dense slot, even when
+        ;; the name is already shadowed, and a missing-template name appends
+        ;; none: x, x again, second, second over x, the pattern's two, and
+        ;; three each for the params, the bindings and params-then-bindings
+        ;; (15). The wide state grew beyond its initial capacity.
         (=
           (spec.spec-template-shadow-state-data
             (spec-template-env-shadow-state base)).len
-          18)
+          15)
         (=
           (spec.spec-template-shadow-state-data
             (spec-template-env-shadow-state wide)).len
@@ -1731,6 +1740,15 @@
   (unless (compiler-generated-test-metadata-distinct-ok?) (return 0))
   (unless (compiler-specialize-generated-symbol-records-growth-ok?) (return 0))
   1)
+
+(cfg
+  test
+  (test
+    specialize-self-test
+    (test.assert-i64-eq
+      (compiler-specialize-self-test)
+      1
+      "every specialization self-test check passes")))
 
 (cfg
   test

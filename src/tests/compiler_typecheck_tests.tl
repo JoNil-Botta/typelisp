@@ -5021,6 +5021,19 @@
     (compiler-typecheck-while-body-error-at? "    (s)" 4)
     (compiler-typecheck-while-body-error-at? "    (break)\n    (s)\n    unit" 5)
     (compiler-typecheck-while-body-error-at? "    (begin unit (s))" 4)
+    ;; The stdlib/thread.tl shape (#8667): an i64 call under `unsafe` needs
+    ;; its `(begin ... unit)`; spliced into the while body it is rejected.
+    (compiler-typecheck-while-body-error-at?
+      "    (unsafe\n      (s))\n    unit"
+      4)
+    (compiler-typecheck-ok?
+      "(define (s) : i64 1)
+(define (main) : unit
+  (while false
+    (begin
+      (unsafe
+        (s))
+      unit)))")
     (compiler-typecheck-ok?
       "(define (main) : unit
   (while false (begin 1 unit) (begin (begin 2 unit) unit)))")
@@ -7347,14 +7360,20 @@
 (define (compiler-typecheck-macro-prelude-for-core-source) : String
   (match (load.compiler-load-embedded-stdlib-source "core_macros.tl")
     [(CompilerEmbeddedStdlibSomeSource source)
+      ;; The `for` macro runs to the next top-level form, which starts a line,
+      ;; or to the end of the source. The embedded copy carries no inline tests
+      ;; (#8713), so nothing need follow it.
       (let
         [start-marker : String
           "(defmacro (for [bindings : ExprBindingClause ...]"]
-        [end-marker : String "(cfg\n  test\n  (defmacro (core-macros-user-fold"]
         [start : i64
           (compiler-typecheck-string-find-from source start-marker 0)]
+        [next-form : i64
+          (compiler-typecheck-string-find-from source "\n(" (+ start 1))]
         [end : i64
-          (compiler-typecheck-string-find-from source end-marker start)]
+          (if (< next-form 0)
+            (string.string-length source)
+            next-form)]
         (if (and (>= start 0) (> end start))
           (str_cat.str-cat
             "(module fixture.core_for)\n(import stdlib.comptime)\n"

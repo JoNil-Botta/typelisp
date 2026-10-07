@@ -849,7 +849,9 @@ E0221, even inside `unsafe`:
 - projects, sets or borrows one of its fields;
 - matches one of its variants or struct patterns, owned or borrowed;
 - writes the type by value: a parameter, result, `let` annotation, struct field,
-  enum payload, global, tuple or array element, or `Box` contents;
+  enum payload, global, tuple or array element, `Box` contents, or a `(type T)`
+  operand, so `(size-of (type T))` is rejected;
+- binds a value that holds it by value with `let`, even without an annotation;
 - names a value or function whose type holds it by value, such as a function of
   the defining module that returns it.
 
@@ -870,11 +872,15 @@ Another module may write `(& a db.Connection)` or `(Ptr db.Connection)` and call
 `db.connection-fd`, but not `(db.Connection 3)`, `c.fd`, or a parameter of type
 `db.Connection`.
 
-Not yet enforced (#6999): a module of another package that declares a name
-inside the family's dotted namespace is still treated as a family member;
-layout queries and reflection (`size-of`, `align-of`, `offset-of`, type
-information) still see the representation; and a value that `ptr-read` or
-`deref` yields is rejected only where it is bound with `let` or named.
+Not yet enforced:
+- a module of another package that declares itself inside the family's dotted
+  namespace is still treated as a family member (#8733);
+- layout queries and reflection still reach the representation through a type
+  derived from an allowed one, such as the `reference-element-type` of
+  `(& a T)` (#8735);
+- a value that `ptr-read` or `deref` yields is rejected only where it is bound
+  with `let` or named, and `ptr-offset` and `ptr-write!` are not checked
+  (#8734).
 
 ### 3.6 Type aliases
 

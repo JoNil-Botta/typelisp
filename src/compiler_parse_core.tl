@@ -5185,6 +5185,16 @@
         (Err "parse: :align value must be a power of two from 1 through 4096"))]
     [_ (Err malformed)]))
 
+;; The aggregate marker word bit of a zero-argument marker KEY: 1 for
+;; :must-use, 2 for :opaque (#6999), else 0.
+(define (compiler-parse-aggregate-marker-bit [key : ci.InternSyntaxId]) : i64
+  (let
+    [value : i64 (ci.intern-syntax-id-value key)]
+    (cond
+      [(= value (cbi.compiler-builtin-ctfe ":must-use")) 1]
+      [(= value (cbi.compiler-builtin-ctfe ":opaque")) 2]
+      [else 0])))
+
 (define (compiler-parse-metadata-key?
   [dispatch : sym_i64_env.SymI64Env]
   [name-id : ci.InternSyntaxId]) : bool
@@ -5490,54 +5500,41 @@
                           false)]
                       [(Err message)
                         (parse-ast-defstruct-align-error dispatch head message)])])]
-              [(=
-                  (ci.intern-syntax-id-value key)
-                  (cbi.compiler-builtin-ctfe ":must-use"))
-                (if seen-field
-                  (Err "parse: defstruct metadata must appear before fields")
-                  (if (not (= (bit-and markers 1) 0))
-                    (Err "parse: duplicate defstruct :must-use metadata")
-                    (match (reader.sexpr-view after-key)
-                      [(Nil)
-                        (parse-ast-defstruct-items
-                          dispatch
-                          pools
-                          tail
-                          lifetimes
-                          repr
-                          cleanup
-                          (+ markers 1)
-                          align
-                          fields
-                          seen-lifetimes
-                          seen-repr
-                          seen-cleanup
-                          false)]
-                      [_ (Err "parse: :must-use metadata takes no arguments")])))]
-              [(=
-                  (ci.intern-syntax-id-value key)
-                  (cbi.compiler-builtin-ctfe ":opaque"))
-                (if seen-field
-                  (Err "parse: defstruct metadata must appear before fields")
-                  (if (not (= (bit-and markers 2) 0))
-                    (Err "parse: duplicate defstruct :opaque metadata")
-                    (match (reader.sexpr-view after-key)
-                      [(Nil)
-                        (parse-ast-defstruct-items
-                          dispatch
-                          pools
-                          tail
-                          lifetimes
-                          repr
-                          cleanup
-                          (+ markers 2)
-                          align
-                          fields
-                          seen-lifetimes
-                          seen-repr
-                          seen-cleanup
-                          false)]
-                      [_ (Err "parse: :opaque metadata takes no arguments")])))]
+              [(> (compiler-parse-aggregate-marker-bit key) 0)
+                (let
+                  [bit : i64 (compiler-parse-aggregate-marker-bit key)]
+                  (if seen-field
+                    (Err "parse: defstruct metadata must appear before fields")
+                    (if (not (= (bit-and markers bit) 0))
+                      (Err
+                        (str_cat.str-cat
+                          "parse: duplicate defstruct "
+                          (compiler-parse-dispatch-syntax-id-text dispatch key)
+                          " metadata"))
+                      (match (reader.sexpr-view after-key)
+                        [(Nil)
+                          (parse-ast-defstruct-items
+                            dispatch
+                            pools
+                            tail
+                            lifetimes
+                            repr
+                            cleanup
+                            (+ markers bit)
+                            align
+                            fields
+                            seen-lifetimes
+                            seen-repr
+                            seen-cleanup
+                            false)]
+                        [_
+                          (Err
+                            (str_cat.str-cat
+                              "parse: "
+                              (compiler-parse-dispatch-syntax-id-text
+                                dispatch
+                                key)
+                              " metadata takes no arguments"))]))))]
               [(compiler-parse-metadata-key? dispatch key)
                 (if seen-field
                   (Err "parse: defstruct metadata must appear before fields")
@@ -5885,42 +5882,35 @@
                       seen-lifetimes
                       true
                       false)))]
-              [(=
-                  (ci.intern-syntax-id-value key)
-                  (cbi.compiler-builtin-ctfe ":must-use"))
-                (if (not (= (bit-and markers 1) 0))
-                  (Err "parse: duplicate defenum :must-use metadata")
-                  (match (reader.sexpr-view after-key)
-                    [(Nil)
-                      (parse-ast-defenum-items
-                        dispatch
-                        pools
-                        tail
-                        lifetimes
-                        cleanup
-                        (+ markers 1)
-                        seen-lifetimes
-                        seen-cleanup
-                        false)]
-                    [_ (Err "parse: :must-use metadata takes no arguments")]))]
-              [(=
-                  (ci.intern-syntax-id-value key)
-                  (cbi.compiler-builtin-ctfe ":opaque"))
-                (if (not (= (bit-and markers 2) 0))
-                  (Err "parse: duplicate defenum :opaque metadata")
-                  (match (reader.sexpr-view after-key)
-                    [(Nil)
-                      (parse-ast-defenum-items
-                        dispatch
-                        pools
-                        tail
-                        lifetimes
-                        cleanup
-                        (+ markers 2)
-                        seen-lifetimes
-                        seen-cleanup
-                        false)]
-                    [_ (Err "parse: :opaque metadata takes no arguments")]))]
+              [(> (compiler-parse-aggregate-marker-bit key) 0)
+                (let
+                  [bit : i64 (compiler-parse-aggregate-marker-bit key)]
+                  (if (not (= (bit-and markers bit) 0))
+                    (Err
+                      (str_cat.str-cat
+                        "parse: duplicate defenum "
+                        (compiler-parse-dispatch-syntax-id-text dispatch key)
+                        " metadata"))
+                    (match (reader.sexpr-view after-key)
+                      [(Nil)
+                        (parse-ast-defenum-items
+                          dispatch
+                          pools
+                          tail
+                          lifetimes
+                          cleanup
+                          (+ markers bit)
+                          seen-lifetimes
+                          seen-cleanup
+                          false)]
+                      [_
+                        (Err
+                          (str_cat.str-cat
+                            "parse: "
+                            (compiler-parse-dispatch-syntax-id-text
+                              dispatch
+                              key)
+                            " metadata takes no arguments"))])))]
               [else
                 (Err
                   (str_cat.str-cat

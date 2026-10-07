@@ -994,6 +994,7 @@ typechecker enforces it with E0221 at a few choke points in
 - name references, which covers constructors, nullary variants and functions
   whose signatures hold the type by value;
 - `init`, field access and field borrows;
+- inferred `let` bindings;
 - the owned and borrowed struct and variant pattern binders.
 
 `tc-opaque-foreign-index?` decides membership from the symbol's owner module

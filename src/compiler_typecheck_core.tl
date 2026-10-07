@@ -39004,14 +39004,17 @@
           (tc-env-key-has-name-id? name)
           (macro-hygiene-global-id? (tc-context-structural-session ctx) name))
         (not (tc-dotted-place-name-id? ctx env name)))
-        (tc-var-expr-after-local-field-check-mode
+        (tc-opaque-value-reference-ok
           ctx
-          env
           name
-          (tc-hygiene-name-text-id-for-session
-            (tc-context-structural-session ctx)
-            name)
-          true)
+          (tc-var-expr-after-local-field-check-mode
+            ctx
+            env
+            name
+            (tc-hygiene-name-text-id-for-session
+              (tc-context-structural-session ctx)
+              name)
+            true))
         (Err fallback-message))]
     [_ (Err fallback-message)]))
 
@@ -52767,13 +52770,15 @@
   [ctx : TcContext]
   [receiver-ty : ast.AstType]
   [field-id : i64]) : ResultTcType
-  (match (tc-opaque-representation-ok
-    ctx
-    (tc-type-strip-region
-      (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
-    "cannot access a field of the")
-    [(Ok) (tc-struct-get-result-type-checked-id ctx receiver-ty field-id)]
-    [(Err message) (Err message)]))
+  (if (not (tc-job-state-opaque-program? (tc-context-job-state ctx)))
+    (tc-struct-get-result-type-checked-id ctx receiver-ty field-id)
+    (match (tc-opaque-representation-ok
+      ctx
+      (tc-type-strip-region
+        (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
+      "cannot access a field of the")
+      [(Ok) (tc-struct-get-result-type-checked-id ctx receiver-ty field-id)]
+      [(Err message) (Err message)])))
 
 (define (tc-struct-get-result-type-checked-id
   [ctx : TcContext]
@@ -52947,12 +52952,14 @@
     [(TcBorrowPlace lifetime receiver-ty)
       (let
         [_
-          (try
-            (tc-opaque-representation-ok
-              ctx
-              (tc-type-strip-region
-                (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
-              "cannot borrow a field of the"))]
+          (if (tc-job-state-opaque-program? (tc-context-job-state ctx))
+            (try
+              (tc-opaque-representation-ok
+                ctx
+                (tc-type-strip-region
+                  (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
+                "cannot borrow a field of the"))
+            unit)]
         (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
           [(Struct struct-name)
             (let
@@ -60702,40 +60709,32 @@
                       context)]))]
             (Ok (Unit))))))))
 
-(define (tc-var-expr-after-local-field-check-mode
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : i64]
-  [name-text : String]
-  [direct-call-target : bool]) : ResultTcType
-  (match (tc-var-expr-resolved-mode ctx env name name-text direct-call-target)
-    [(Ok ty) (tc-opaque-value-reference-ok ctx name ty)]
-    [(Err message) (Err message)]))
-
 ;; A name whose type holds an opaque aggregate by value, or a function whose
 ;; parameters or result do, is unusable outside its module family (#6999).
-;; This covers the aggregate's constructors and nullary variants.
+;; This covers the aggregate's constructors and nullary variants. RESULT is the
+;; name's type.
 (define (tc-opaque-value-reference-ok
   [ctx : TcContext]
   [name : i64]
-  [ty : ast.AstType]) : ResultTcType
-  (if (not (tc-job-state-opaque-program? (tc-context-job-state ctx)))
-    (Ok ty)
-    (let
-      [opaque : i64 (tc-opaque-by-value-name ctx (tc-global-shared-view ty))]
-      (if (< opaque 0)
-        (Ok ty)
-        (Err
-          (tc-opaque-representation-message
-            opaque
-            (if (tc-constructor-name-id? ctx name)
-              "cannot construct the"
-              (str_cat.str-cat
-                "cannot use "
-                (tc-nominal-name-id-display name)
-                ", which holds by value the"))))))))
+  [result : ResultTcType]) : ResultTcType
+  (match result
+    [(Ok ty)
+      (let
+        [opaque : i64 (tc-opaque-by-value-name ctx (tc-global-shared-view ty))]
+        (if (< opaque 0)
+          (Ok ty)
+          (Err
+            (tc-opaque-representation-message
+              opaque
+              (if (tc-constructor-name-id? ctx name)
+                "cannot construct the"
+                (str_cat.str-cat
+                  "cannot use "
+                  (tc-nominal-name-id-display name)
+                  ", which holds by value the"))))))]
+    [(Err message) (Err message)]))
 
-(define (tc-var-expr-resolved-mode
+(define (tc-var-expr-after-local-field-check-mode
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : i64]
@@ -60881,7 +60880,12 @@
   [env : TcTypeEnv]
   [name : i64]
   [name-text : String]) : ResultTcType
-  (tc-var-expr-after-local-field-check-mode ctx env name name-text false))
+  (if (tc-job-state-opaque-program? (tc-context-job-state ctx))
+    (tc-opaque-value-reference-ok
+      ctx
+      name
+      (tc-var-expr-after-local-field-check-mode ctx env name name-text false))
+    (tc-var-expr-after-local-field-check-mode ctx env name name-text false)))
 
 (define (tc-source-lookup-error-or-variant-constructor
   [ctx : TcContext]

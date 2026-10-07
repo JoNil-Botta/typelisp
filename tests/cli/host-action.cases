@@ -59,6 +59,34 @@ step missing-main-check
 run check "{{dir}}/missing-main.tl"
 stderr empty
 stdout contains Type checking passed!
+# An unqualified import that binds a name its module also declares is a load
+# error for every action, reported at the import: build and run stop before the
+# backend would emit both bindings as one duplicate global symbol.
+step import-local-collision-build
+file collide_lib.tl
+(module collide_lib)
+(define answer : i64 42)
+end-file
+file collide-main.tl
+(import collide_lib.answer as value)
+(define value : i64 1)
+(define (main) : i64 value)
+end-file
+run build "{{dir}}/collide-main.tl" -o "{{dir}}/collide-main{{exe}}"
+exit nonzero
+stderr contains {{native-dir}}/collide-main.tl:1:1
+stderr contains collides with the declaration of 'value' in the entry module
+stderr not-contains duplicate emitted global symbol
+test ! -e "{{dir}}/collide-main{{exe}}"
+step import-local-collision-run
+run run "{{dir}}/collide-main.tl"
+exit nonzero
+stderr contains collides with the declaration of 'value'
+stderr not-contains duplicate emitted global symbol
+step import-local-collision-check
+run check "{{dir}}/collide-main.tl"
+exit nonzero
+stderr contains collides with the declaration of 'value'
 step missing-main-test
 file missing-main-tests.tl
 (import stdlib.test)

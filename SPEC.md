@@ -3167,6 +3167,21 @@ identities and suggests alias-qualified access instead. Prelude bare names and
 deliberately retained prelude exceptions come
 from the implicit prelude and are not affected by these import rules.
 
+An unqualified import that binds a name the importing module declares at
+module scope itself (a value, function, type, enum constructor or macro,
+including one a module-scope generator emits) is the same kind of namespace
+collision, whatever the declaration order and whether either binding is used.
+The diagnostic is reported at the import, names the importing module, and
+labels the local declaration; rename the import with `as`, rename the
+declaration, or import the module and use qualified access:
+
+```lisp test=check name=import-alias-beside-local-name
+(import stdlib.byte_le.byte-le-byte as low-byte) ; `byte-le-byte` would collide
+(define (byte-le-byte) : i64 40)
+(define (main) : i64
+  (+ (byte-le-byte) (cast (low-byte 258 0) : i64)))
+```
+
 Multi-item selected imports are deferred in v1. Spellings such as
 `(import stdlib.io :only (read write))` are reserved and rejected until a
 follow-up specifies their shadowing and re-export rules.

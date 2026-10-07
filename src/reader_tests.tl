@@ -1287,3 +1287,50 @@
     (unless
       (and owner-ok reuse-ok reset-ok truncate-ok)
       (io.panic "reader: empty spelling cache crossed an owner or reset"))))
+
+;; Slice views hand a list's children to slice patterns. A rest bound as `& _`
+;; comes back as a node through spanned-sexpr-drop, with the list's span.
+(define (reader-test-slice-views?) : bool
+  (reader.sp-node-pool-reset!)
+  (match (reader.data-result "(alpha (beta gamma) [delta] 7)")
+    [(Err _) false]
+    [(Ok form)
+      (match (reader.spanned-sexpr-slice-view form)
+        [(List (slice head inner bracket (Int seven _ _)) span)
+          (and
+            (reader-test-symbol? head "alpha")
+            (= seven 7)
+            (match (reader.spanned-sexpr-slice-view inner)
+              [(List (slice beta gamma) _)
+                (and
+                  (reader-test-symbol? beta "beta")
+                  (reader-test-symbol? gamma "gamma"))]
+              [_ false])
+            (match (reader.spanned-sexpr-slice-view bracket)
+              [(BracketList (slice delta) _)
+                (reader-test-symbol? delta "delta")]
+              [_ false])
+            (match (reader.sexpr-slice-view bracket)
+              [(List (slice _)) true]
+              [_ false])
+            (match (reader.spanned-sexpr-slice-view
+              (reader.spanned-sexpr-drop form 2))
+              [(List (slice (BracketList _ _ _) (Int _ _ _)) tail-span)
+                (and
+                  (=
+                    (token.span-start-line tail-span)
+                    (token.span-start-line span))
+                  (=
+                    (token.span-start-col tail-span)
+                    (token.span-start-col span)))]
+              [_ false])
+            (match (reader.sexpr-slice-view (reader.spanned-sexpr-drop form 4))
+              [(List (slice)) true]
+              [_ false]))]
+        [_ false])]))
+
+(test
+  reader-slice-views
+  (if (reader-test-slice-views?)
+    unit
+    (io.panic "reader: slice view self-test failed")))

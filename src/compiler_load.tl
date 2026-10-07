@@ -14304,24 +14304,15 @@
 (define (compiler-load-manifest-string-value
   [ftail : reader.SpannedSexpr]
   [fname : String]) : ResultPkgString
-  (match (reader.sexpr-view ftail)
-    [(Cons vhead vrest)
-      (match (reader.sexpr-view vhead)
-        [(Str val-id)
-          (match (reader.sexpr-view vrest)
-            [(Nil) (Ok (compiler-load-manifest-owned-intern-text val-id))]
-            [_
-              (Err
-                (str_cat.str-cat
-                  "manifest field `"
-                  fname
-                  "` takes a single string value"))])]
-        [_
-          (Err
-            (str_cat.str-cat
-              "manifest field `"
-              fname
-              "` must have a string value"))])]
+  (match (reader.sexpr-slice-view ftail)
+    [(List (slice (Str val-id _)))
+      (Ok (compiler-load-manifest-owned-intern-text val-id))]
+    [(List (slice (Str _ _) & _))
+      (Err
+        (str_cat.str-cat
+          "manifest field `"
+          fname
+          "` takes a single string value"))]
     [_
       (Err
         (str_cat.str-cat "manifest field `" fname "` must have a string value"))]))
@@ -14330,60 +14321,38 @@
   [alias : String]
   [address : String]
   [pin-form : reader.SpannedSexpr]) : ResultPkgString
-  (match (reader.sexpr-view pin-form)
-    [(Cons pin-kind-node pin-tail)
-      (match (reader.sexpr-view pin-kind-node)
-        [(Sym pin-kind)
-          (if (compiler-load-github-pin-kind-valid?
-            (compiler-load-symbol-text pin-kind))
-            (match (reader.sexpr-view pin-tail)
-              [(Cons pin-value-node end)
-                (match (reader.sexpr-view end)
-                  [(Nil)
-                    (match (reader.sexpr-view pin-value-node)
-                      [(Str pin-value-id)
-                        (let
-                          [pin-value : String (ci.intern-id-str pin-value-id)]
-                          (if (string.eq pin-value "")
-                            (Err
-                              (str_cat.str-cat
-                                "manifest dependency `"
-                                alias
-                                "` github pin must not be empty"))
-                            (compiler-load-normalize-github-address
-                              alias
-                              address
-                              (compiler-load-symbol-text pin-kind)
-                              pin-value)))]
-                      [_
-                        (Err
-                          (str_cat.str-cat
-                            "manifest dependency `"
-                            alias
-                            "` github pin must be a single string value"))])]
-                  [_
-                    (Err
-                      (str_cat.str-cat
-                        "manifest dependency `"
-                        alias
-                        "` github pin must be a single string value"))])]
-              [_
-                (Err
-                  (str_cat.str-cat
-                    "manifest dependency `"
+  (match (reader.sexpr-slice-view pin-form)
+    [(List (slice (Sym pin-kind _) & _))
+      (let
+        [pin-tail (reader.spanned-sexpr-drop pin-form 1)]
+        (if (compiler-load-github-pin-kind-valid?
+          (compiler-load-symbol-text pin-kind))
+          (match (reader.sexpr-slice-view pin-tail)
+            [(List (slice (Str pin-value-id _)))
+              (let
+                [pin-value : String (ci.intern-id-str pin-value-id)]
+                (if (string.eq pin-value "")
+                  (Err
+                    (str_cat.str-cat
+                      "manifest dependency `"
+                      alias
+                      "` github pin must not be empty"))
+                  (compiler-load-normalize-github-address
                     alias
-                    "` github pin must be a single string value"))])
-            (Err
-              (str_cat.str-cat
-                "manifest dependency `"
-                alias
-                "` github pin must be rev, tag, or branch")))]
-        [_
+                    address
+                    (compiler-load-symbol-text pin-kind)
+                    pin-value)))]
+            [_
+              (Err
+                (str_cat.str-cat
+                  "manifest dependency `"
+                  alias
+                  "` github pin must be a single string value"))])
           (Err
             (str_cat.str-cat
               "manifest dependency `"
               alias
-              "` github source requires exactly one rev, tag, or branch pin"))])]
+              "` github pin must be rev, tag, or branch"))))]
     [_
       (Err
         (str_cat.str-cat
@@ -14394,35 +14363,20 @@
 (define (compiler-load-manifest-github-value
   [alias : String]
   [source-tail : reader.SpannedSexpr]) : ResultPkgString
-  (match (reader.sexpr-view source-tail)
-    [(Cons address-node after-address)
-      (match (reader.sexpr-view address-node)
-        [(Str address-id)
-          (let
-            [address : String (ci.intern-id-str address-id)]
-            (match (reader.sexpr-view after-address)
-              [(Cons pin-form end)
-                (match (reader.sexpr-view end)
-                  [(Nil)
-                    (compiler-load-manifest-github-pin alias address pin-form)]
-                  [_
-                    (Err
-                      (str_cat.str-cat
-                        "manifest dependency `"
-                        alias
-                        "` github source requires exactly one rev, tag, or branch pin"))])]
-              [_
-                (Err
-                  (str_cat.str-cat
-                    "manifest dependency `"
-                    alias
-                    "` github source requires exactly one rev, tag, or branch pin"))]))]
-        [_
-          (Err
-            (str_cat.str-cat
-              "manifest dependency `"
-              alias
-              "` github source must be `(github \"owner/repo\" (rev|tag|branch \"pin\"))`"))])]
+  (match (reader.sexpr-slice-view source-tail)
+    [(List (slice (Str address-id _) & _))
+      (let
+        [after-address (reader.spanned-sexpr-drop source-tail 1)]
+        [address : String (ci.intern-id-str address-id)]
+        (match (reader.sexpr-slice-view after-address)
+          [(List (slice pin-form))
+            (compiler-load-manifest-github-pin alias address pin-form)]
+          [_
+            (Err
+              (str_cat.str-cat
+                "manifest dependency `"
+                alias
+                "` github source requires exactly one rev, tag, or branch pin"))]))]
     [_
       (Err
         (str_cat.str-cat
@@ -14433,43 +14387,39 @@
 (define (compiler-load-manifest-dependency-value
   [etail : reader.SpannedSexpr]
   [alias : String]) : ResultPkgString
-  (match (reader.sexpr-view etail)
-    [(Cons vhead vrest)
-      (match (reader.sexpr-view vrest)
-        [(Nil)
-          (match (reader.sexpr-view vhead)
-            [(Str path-id)
-              (Ok (compiler-load-manifest-owned-intern-text path-id))]
-            [(Cons source-kind-node source-tail)
-              (match (reader.sexpr-view source-kind-node)
-                [(Sym source-kind)
-                  (if (string.eq
-                    (compiler-load-symbol-text source-kind)
-                    "github")
-                    (compiler-load-manifest-github-value alias source-tail)
-                    (Err
-                      (str_cat.str-cat
-                        "manifest dependency `"
-                        alias
-                        "` must be a path string or github source")))]
-                [_
-                  (Err
-                    (str_cat.str-cat
-                      "manifest dependency `"
-                      alias
-                      "` must be a path string or github source"))])]
-            [_
+  (match (reader.sexpr-slice-view etail)
+    [(List (slice (Str path-id _)))
+      (Ok (compiler-load-manifest-owned-intern-text path-id))]
+    [(List (slice vhead))
+      (match (reader.sexpr-slice-view vhead)
+        [(List (slice (Sym source-kind _) & _))
+          (let
+            [source-tail (reader.spanned-sexpr-drop vhead 1)]
+            (if (string.eq (compiler-load-symbol-text source-kind) "github")
+              (compiler-load-manifest-github-value alias source-tail)
               (Err
                 (str_cat.str-cat
                   "manifest dependency `"
                   alias
-                  "` must be a path string or github source"))])]
+                  "` must be a path string or github source"))))]
+        [(List (slice _ & _))
+          (Err
+            (str_cat.str-cat
+              "manifest dependency `"
+              alias
+              "` must be a path string or github source"))]
         [_
           (Err
             (str_cat.str-cat
               "manifest dependency `"
               alias
-              "` takes a single path string or github source"))])]
+              "` must be a path string or github source"))])]
+    [(List (slice _ & _))
+      (Err
+        (str_cat.str-cat
+          "manifest dependency `"
+          alias
+          "` takes a single path string or github source"))]
     [_
       (Err
         (str_cat.str-cat
@@ -14485,18 +14435,14 @@
       (Err "manifest field `kind` must be `bin`, `staticlib`, or `lib`"))))
 
 (define (compiler-load-manifest-kind-value [ftail : reader.SpannedSexpr]) : ResultCompilerPkgKind
-  (match (reader.sexpr-view ftail)
-    [(Cons vhead vrest)
-      (match (reader.sexpr-view vrest)
-        [(Nil)
-          (match (reader.sexpr-view vhead)
-            [(Str val-id)
-              (compiler-load-manifest-kind-token (ci.intern-id-str val-id))]
-            [(Sym val)
-              (compiler-load-manifest-kind-token
-                (compiler-load-symbol-text val))]
-            [_ (Err "manifest field `kind` must have a string or symbol value")])]
-        [_ (Err "manifest field `kind` takes a single value")])]
+  (match (reader.sexpr-slice-view ftail)
+    [(List (slice (Str val-id _)))
+      (compiler-load-manifest-kind-token (ci.intern-id-str val-id))]
+    [(List (slice (Sym val _)))
+      (compiler-load-manifest-kind-token (compiler-load-symbol-text val))]
+    [(List (slice _))
+      (Err "manifest field `kind` must have a string or symbol value")]
+    [(List (slice _ & _)) (Err "manifest field `kind` takes a single value")]
     [_ (Err "manifest field `kind` must have a string or symbol value")]))
 
 (define (compiler-load-manifest-cons-dep
@@ -14525,23 +14471,24 @@
 
 ;: Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
 (define (compiler-load-manifest-parse-deps [entries : reader.SpannedSexpr]) : ResultCompilerPkgDeps
-  (match (reader.sexpr-view entries)
-    [(Nil) (Ok (compiler-pkg-deps-empty))]
-    [(Cons entry rest)
-      (match (reader.sexpr-view entry)
-        [(Cons ehead etail)
-          (match (reader.sexpr-view ehead)
-            [(Sym alias)
-              (let
-                [alias-text : String
-                  (compiler-load-manifest-owned-syntax-text alias)]
-                [path
-                  (try
-                    (compiler-load-manifest-dependency-value
-                      etail
-                      (string.copy alias-text)))]
-                (compiler-load-manifest-cons-dep alias-text path rest))]
-            [_ (Err "dependency entries must start with an alias name")])]
+  (match (reader.sexpr-slice-view entries)
+    [(List (slice)) (Ok (compiler-pkg-deps-empty))]
+    [(List (slice entry & _))
+      (match (reader.sexpr-slice-view entry)
+        [(List (slice (Sym alias _) & _))
+          (let
+            [rest (reader.spanned-sexpr-drop entries 1)]
+            [etail (reader.spanned-sexpr-drop entry 1)]
+            [alias-text : String
+              (compiler-load-manifest-owned-syntax-text alias)]
+            [path
+              (try
+                (compiler-load-manifest-dependency-value
+                  etail
+                  (string.copy alias-text)))]
+            (compiler-load-manifest-cons-dep alias-text path rest))]
+        [(List (slice _ & _))
+          (Err "dependency entries must start with an alias name")]
         [_ (Err "dependency entries must be lists like `(alias \"path\")`")])]
     [_
       (Err
@@ -14657,8 +14604,8 @@
   [values : reader.SpannedSexpr]
   [fname : String]
   [acc : fs.FsStringVector]) : ResultPkgStrVec
-  (match (reader.sexpr-view values)
-    [(Nil)
+  (match (reader.sexpr-slice-view values)
+    [(List (slice))
       (if (= (fs.string-vector-len (& acc)) 0)
         (Err
           (str_cat.str-cat
@@ -14666,26 +14613,24 @@
             fname
             "` requires at least one value"))
         (Ok acc))]
-    [(Cons vhead vrest)
-      (match (reader.sexpr-view vhead)
-        [(Str val-id)
-          (let
-            [val : String (ci.intern-id-str val-id)]
-            (if (string.eq val "")
-              (Err
-                (str_cat.str-cat
-                  "`link` field `"
-                  fname
-                  "` values must not be empty"))
-              (let
-                [out : fs.FsStringVector acc]
-                (fs.string-vector-push!
-                  (&mut out)
-                  (compiler-load-manifest-owned-intern-text val-id))
-                (compiler-load-manifest-link-values vrest fname out))))]
-        [_
+    [(List (slice (Str val-id _) & _))
+      (let
+        [vrest (reader.spanned-sexpr-drop values 1)]
+        [val : String (ci.intern-id-str val-id)]
+        (if (string.eq val "")
           (Err
-            (str_cat.str-cat "`link` field `" fname "` values must be strings"))])]
+            (str_cat.str-cat
+              "`link` field `"
+              fname
+              "` values must not be empty"))
+          (let
+            [out : fs.FsStringVector acc]
+            (fs.string-vector-push!
+              (&mut out)
+              (compiler-load-manifest-owned-intern-text val-id))
+            (compiler-load-manifest-link-values vrest fname out))))]
+    [(List (slice _ & _))
+      (Err (str_cat.str-cat "`link` field `" fname "` values must be strings"))]
     [_
       (Err
         (str_cat.str-cat
@@ -14715,28 +14660,29 @@
 (define (compiler-load-manifest-parse-link-into
   [entries : reader.SpannedSexpr]
   [acc : CompilerPkgLink]) : ResultCompilerPkgLink
-  (match (reader.sexpr-view entries)
-    [(Nil) (Ok acc)]
-    [(Cons entry rest)
-      (match (reader.sexpr-view entry)
-        [(Cons ehead etail)
-          (match (reader.sexpr-view ehead)
-            [(Sym fname)
-              (let
-                [values
-                  (try
-                    (compiler-load-manifest-link-values
-                      etail
-                      (compiler-load-symbol-text fname)
-                      (fs.string-vector-new)))]
-                [acc2
-                  (try
-                    (compiler-load-manifest-link-store
-                      acc
-                      (compiler-load-symbol-text fname)
-                      values))]
-                (compiler-load-manifest-parse-link-into rest acc2))]
-            [_ (Err "`link` entries must start with a field name")])]
+  (match (reader.sexpr-slice-view entries)
+    [(List (slice)) (Ok acc)]
+    [(List (slice entry & _))
+      (match (reader.sexpr-slice-view entry)
+        [(List (slice (Sym fname _) & _))
+          (let
+            [rest (reader.spanned-sexpr-drop entries 1)]
+            [etail (reader.spanned-sexpr-drop entry 1)]
+            [values
+              (try
+                (compiler-load-manifest-link-values
+                  etail
+                  (compiler-load-symbol-text fname)
+                  (fs.string-vector-new)))]
+            [acc2
+              (try
+                (compiler-load-manifest-link-store
+                  acc
+                  (compiler-load-symbol-text fname)
+                  values))]
+            (compiler-load-manifest-parse-link-into rest acc2))]
+        [(List (slice _ & _))
+          (Err "`link` entries must start with a field name")]
         [_ (Err "`link` entries must be lists like `(libraries \"...\")`")])]
     [_ (Err "`link` must be a list of `(field \"...\")` entries")]))
 
@@ -14777,8 +14723,8 @@
   [deps : CompilerPkgDeps]
   [has-link : bool]
   [link : CompilerPkgLink]) : ResultCompilerPkgManifest
-  (match (reader.sexpr-view fields)
-    [(Nil)
+  (match (reader.sexpr-slice-view fields)
+    [(List (slice))
       (let
         [final-entry : String
           (if has-entry
@@ -14801,177 +14747,179 @@
               "manifest field `entry` must be a normal relative path below the manifest directory")]
           [else
             (Ok (CompilerPkgManifest name version kind final-entry deps link))]))]
-    [(Cons field rest)
-      (match (reader.sexpr-view field)
-        [(Cons fhead ftail)
-          (match (reader.sexpr-view fhead)
-            [(Sym fname)
-              (cond
-                [(string.eq (compiler-load-symbol-text fname) "dependencies")
-                  (if has-deps
-                    (Err "duplicate manifest field `dependencies`")
-                    (let
-                      [parsed-deps
-                        (try (compiler-load-manifest-parse-deps ftail))]
-                      (compiler-load-manifest-fields
-                        rest
-                        name
-                        has-name
-                        version
-                        has-version
-                        kind
-                        has-kind
-                        entry
-                        has-entry
-                        true
-                        parsed-deps
-                        has-link
-                        link)))]
-                [(string.eq (compiler-load-symbol-text fname) "link")
-                  (if has-link
-                    (Err "duplicate manifest field `link`")
-                    (let
-                      [parsed-link
-                        (try (compiler-load-manifest-parse-link ftail))]
-                      (compiler-load-manifest-fields
-                        rest
-                        name
-                        has-name
-                        version
-                        has-version
-                        kind
-                        has-kind
-                        entry
-                        has-entry
-                        has-deps
-                        deps
-                        true
-                        parsed-link)))]
-                [(string.eq (compiler-load-symbol-text fname) "name")
-                  (if has-name
-                    (Err "duplicate manifest field `name`")
-                    (let
-                      [val
-                        (try
-                          (compiler-load-manifest-string-value
-                            ftail
-                            (compiler-load-symbol-text fname)))]
-                      (compiler-load-manifest-fields
-                        rest
-                        val
-                        true
-                        version
-                        has-version
-                        kind
-                        has-kind
-                        entry
-                        has-entry
-                        has-deps
-                        deps
-                        has-link
-                        link)))]
-                [(string.eq (compiler-load-symbol-text fname) "version")
-                  (if has-version
-                    (Err "duplicate manifest field `version`")
-                    (let
-                      [val
-                        (try
-                          (compiler-load-manifest-string-value
-                            ftail
-                            (compiler-load-symbol-text fname)))]
-                      (compiler-load-manifest-fields
-                        rest
-                        name
-                        has-name
-                        val
-                        true
-                        kind
-                        has-kind
-                        entry
-                        has-entry
-                        has-deps
-                        deps
-                        has-link
-                        link)))]
-                [(string.eq (compiler-load-symbol-text fname) "kind")
-                  (if has-kind
-                    (Err "duplicate manifest field `kind`")
-                    (let
-                      [val (try (compiler-load-manifest-kind-value ftail))]
-                      (compiler-load-manifest-fields
-                        rest
-                        name
-                        has-name
-                        version
-                        has-version
-                        val
-                        true
-                        entry
-                        has-entry
-                        has-deps
-                        deps
-                        has-link
-                        link)))]
-                [(string.eq (compiler-load-symbol-text fname) "entry")
-                  (if has-entry
-                    (Err "duplicate manifest field `entry`")
-                    (let
-                      [val
-                        (try
-                          (compiler-load-manifest-string-value
-                            ftail
-                            (compiler-load-symbol-text fname)))]
-                      (compiler-load-manifest-fields
-                        rest
-                        name
-                        has-name
-                        version
-                        has-version
-                        kind
-                        has-kind
-                        val
-                        true
-                        has-deps
-                        deps
-                        has-link
-                        link)))]
-                [else
-                  (Err
-                    (str_cat.str-cat
-                      "unknown manifest field `"
-                      (compiler-load-symbol-text fname)
-                      "`"))])]
-            [_ (Err "package fields must start with a field name")])]
+    [(List (slice field & _))
+      (match (reader.sexpr-slice-view field)
+        [(List (slice (Sym fname _) & _))
+          (let
+            [rest (reader.spanned-sexpr-drop fields 1)]
+            [ftail (reader.spanned-sexpr-drop field 1)]
+            (cond
+              [(string.eq (compiler-load-symbol-text fname) "dependencies")
+                (if has-deps
+                  (Err "duplicate manifest field `dependencies`")
+                  (let
+                    [parsed-deps
+                      (try (compiler-load-manifest-parse-deps ftail))]
+                    (compiler-load-manifest-fields
+                      rest
+                      name
+                      has-name
+                      version
+                      has-version
+                      kind
+                      has-kind
+                      entry
+                      has-entry
+                      true
+                      parsed-deps
+                      has-link
+                      link)))]
+              [(string.eq (compiler-load-symbol-text fname) "link")
+                (if has-link
+                  (Err "duplicate manifest field `link`")
+                  (let
+                    [parsed-link
+                      (try (compiler-load-manifest-parse-link ftail))]
+                    (compiler-load-manifest-fields
+                      rest
+                      name
+                      has-name
+                      version
+                      has-version
+                      kind
+                      has-kind
+                      entry
+                      has-entry
+                      has-deps
+                      deps
+                      true
+                      parsed-link)))]
+              [(string.eq (compiler-load-symbol-text fname) "name")
+                (if has-name
+                  (Err "duplicate manifest field `name`")
+                  (let
+                    [val
+                      (try
+                        (compiler-load-manifest-string-value
+                          ftail
+                          (compiler-load-symbol-text fname)))]
+                    (compiler-load-manifest-fields
+                      rest
+                      val
+                      true
+                      version
+                      has-version
+                      kind
+                      has-kind
+                      entry
+                      has-entry
+                      has-deps
+                      deps
+                      has-link
+                      link)))]
+              [(string.eq (compiler-load-symbol-text fname) "version")
+                (if has-version
+                  (Err "duplicate manifest field `version`")
+                  (let
+                    [val
+                      (try
+                        (compiler-load-manifest-string-value
+                          ftail
+                          (compiler-load-symbol-text fname)))]
+                    (compiler-load-manifest-fields
+                      rest
+                      name
+                      has-name
+                      val
+                      true
+                      kind
+                      has-kind
+                      entry
+                      has-entry
+                      has-deps
+                      deps
+                      has-link
+                      link)))]
+              [(string.eq (compiler-load-symbol-text fname) "kind")
+                (if has-kind
+                  (Err "duplicate manifest field `kind`")
+                  (let
+                    [val (try (compiler-load-manifest-kind-value ftail))]
+                    (compiler-load-manifest-fields
+                      rest
+                      name
+                      has-name
+                      version
+                      has-version
+                      val
+                      true
+                      entry
+                      has-entry
+                      has-deps
+                      deps
+                      has-link
+                      link)))]
+              [(string.eq (compiler-load-symbol-text fname) "entry")
+                (if has-entry
+                  (Err "duplicate manifest field `entry`")
+                  (let
+                    [val
+                      (try
+                        (compiler-load-manifest-string-value
+                          ftail
+                          (compiler-load-symbol-text fname)))]
+                    (compiler-load-manifest-fields
+                      rest
+                      name
+                      has-name
+                      version
+                      has-version
+                      kind
+                      has-kind
+                      val
+                      true
+                      has-deps
+                      deps
+                      has-link
+                      link)))]
+              [else
+                (Err
+                  (str_cat.str-cat
+                    "unknown manifest field `"
+                    (compiler-load-symbol-text fname)
+                    "`"))]))]
+        [(List (slice _ & _))
+          (Err "package fields must start with a field name")]
         [_ (Err "package fields must be lists like `(name \"...\")`")])]
     [_ (Err "package fields must be lists like `(name \"...\")`")]))
 
 ;: Parse the top-level `(package ...)` form.
 (define (compiler-load-manifest-from-form [form : reader.SpannedSexpr]) : ResultCompilerPkgManifest
-  (match (reader.sexpr-view form)
-    [(Cons head rest)
-      (match (reader.sexpr-view head)
-        [(Sym s)
-          (if (string.eq (compiler-load-symbol-text s) "package")
-            (compiler-load-manifest-fields
-              rest
-              ""
-              false
-              ""
-              false
-              (CompilerPkgKindBin)
-              false
-              ""
-              false
-              false
-              (compiler-pkg-deps-empty)
-              false
-              (compiler-pkg-link-empty))
-            (Err
-              (str_cat.str-cat
-                "expected `package` form, got `"
-                (compiler-load-symbol-text s)
-                "`")))]
-        [_ (Err "manifest must start with `package`")])]
+  (match (reader.sexpr-slice-view form)
+    [(List (slice (Sym s _) & _))
+      (let
+        [rest (reader.spanned-sexpr-drop form 1)]
+        (if (string.eq (compiler-load-symbol-text s) "package")
+          (compiler-load-manifest-fields
+            rest
+            ""
+            false
+            ""
+            false
+            (CompilerPkgKindBin)
+            false
+            ""
+            false
+            false
+            (compiler-pkg-deps-empty)
+            false
+            (compiler-pkg-link-empty))
+          (Err
+            (str_cat.str-cat
+              "expected `package` form, got `"
+              (compiler-load-symbol-text s)
+              "`"))))]
+    [(List (slice _ & _)) (Err "manifest must start with `package`")]
     [_ (Err "manifest must be a `(package ...)` form")]))
 
 (define (compiler-load-manifest-fields-have?
@@ -14982,28 +14930,22 @@
     [(Cons field rest)
       (let
         [tail-has : bool (compiler-load-manifest-fields-have? rest target)]
-        (match (reader.sexpr-view field)
-          [(Cons fhead _)
-            (match (reader.sexpr-view fhead)
-              [(Sym name)
-                (or
-                  (string.eq (compiler-load-symbol-text name) target)
-                  tail-has)]
-              [_ tail-has])]
+        (match (reader.sexpr-slice-view field)
+          [(List (slice (Sym name _) & _))
+            (or (string.eq (compiler-load-symbol-text name) target) tail-has)]
           [_ tail-has]))]
     [_ false]))
 
 (define (compiler-load-manifest-form-has-field?
   [form : reader.SpannedSexpr]
   [target : (& target str)]) : bool
-  (match (reader.sexpr-view form)
-    [(Cons head rest)
-      (match (reader.sexpr-view head)
-        [(Sym s)
-          (if (string.eq (compiler-load-symbol-text s) "package")
-            (compiler-load-manifest-fields-have? rest target)
-            false)]
-        [_ false])]
+  (match (reader.sexpr-slice-view form)
+    [(List (slice (Sym s _) & _))
+      (let
+        [rest (reader.spanned-sexpr-drop form 1)]
+        (if (string.eq (compiler-load-symbol-text s) "package")
+          (compiler-load-manifest-fields-have? rest target)
+          false))]
     [_ false]))
 
 (define (compiler-load-manifest-needs-kind-inference?
@@ -15060,32 +15002,36 @@
 (define (compiler-load-manifest-first-dependency-entry-span
   [entries : reader.SpannedSexpr]
   [fallback : token.SourceSpan]) : token.SourceSpan
-  (match (reader.spanned-sexpr-view entries)
-    [(Cons entry _ _)
-      (match (reader.spanned-sexpr-view entry)
-        [(Cons alias _ _) (reader.spanned-sexpr-span alias)]
+  (match (reader.spanned-sexpr-slice-view entries)
+    [(List (slice entry & _) _)
+      (match (reader.spanned-sexpr-slice-view entry)
+        [(List (slice alias & _) _) (reader.spanned-sexpr-span alias)]
         [_ fallback])]
     [_ fallback]))
 
 (define (compiler-load-manifest-first-dependency-field-span
   [fields : reader.SpannedSexpr]
   [fallback : token.SourceSpan]) : token.SourceSpan
-  (match (reader.spanned-sexpr-view fields)
-    [(Cons field rest _)
-      (match (reader.spanned-sexpr-view field)
-        [(Cons field-name entries _)
-          (match (reader.spanned-sexpr-view field-name)
-            [(Sym name _)
-              (if (string.eq (compiler-load-symbol-text name) "dependencies")
-                (compiler-load-manifest-first-dependency-entry-span
-                  entries
-                  fallback)
-                (compiler-load-manifest-first-dependency-field-span
-                  rest
-                  fallback))]
-            [_
-              (compiler-load-manifest-first-dependency-field-span rest fallback)])]
-        [_ (compiler-load-manifest-first-dependency-field-span rest fallback)])]
+  (match (reader.spanned-sexpr-slice-view fields)
+    [(List (slice field & _) _)
+      (match (reader.spanned-sexpr-slice-view field)
+        [(List (slice (Sym name _) & _) _)
+          (let
+            [rest (reader.spanned-sexpr-drop fields 1)]
+            [entries (reader.spanned-sexpr-drop field 1)]
+            (if (string.eq (compiler-load-symbol-text name) "dependencies")
+              (compiler-load-manifest-first-dependency-entry-span
+                entries
+                fallback)
+              (compiler-load-manifest-first-dependency-field-span rest fallback)))]
+        [(List (slice _ & _) _)
+          (let
+            [rest (reader.spanned-sexpr-drop fields 1)]
+            (compiler-load-manifest-first-dependency-field-span rest fallback))]
+        [_
+          (let
+            [rest (reader.spanned-sexpr-drop fields 1)]
+            (compiler-load-manifest-first-dependency-field-span rest fallback))])]
     [_ fallback]))
 
 (define (compiler-load-manifest-first-dependency-span

@@ -63,6 +63,9 @@ end-file
 # A --backtrace program under each TYPELISP_BACKTRACE mode, optimized,
 # stripped, with a corrupted map, on a worker thread, and through the CRT
 # `main` entry of a native link (no backend-installed TLS stack bounds).
+# backtrace-cleanup and stdlib/runtime.tl's abort-exit have multi-form bodies
+# (no `begin`): the first must still show its location and the second must
+# still be filtered as a runtime frame (#8651).
 case fatal-backtrace-debug
 run compile tests/integration/fatal_backtrace.tl --backtrace --stdlib-root "{{root}}/src" --opt-level 0 -o "{{dir}}/bt.s"
 in file {{dir}}/bt.s

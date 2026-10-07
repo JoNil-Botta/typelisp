@@ -563,12 +563,11 @@
 
 ;: The canonical scalar in [1, n-1], as ECDSA's r and s must be.
 (define (scalar-from-bytes-nonzero [bytes : (& bytes bytes)]) : ResultP256Scalar
-  (match (scalar-from-bytes bytes)
-    [(OkP256Scalar scalar)
-      (if (limbs-zero? scalar.limbs)
-        (ErrP256Scalar (p256-error (P256Zero) 0))
-        (OkP256Scalar scalar))]
-    [(ErrP256Scalar error) (ErrP256Scalar error)]))
+  (let
+    [scalar (try (scalar-from-bytes bytes))]
+    (if (limbs-zero? scalar.limbs)
+      (ErrP256Scalar (p256-error (P256Zero) 0))
+      (OkP256Scalar scalar))))
 
 ;: Any 32 big-endian bytes reduced modulo n, as FIPS 186-5 turns a 256-bit
 ;: digest into `e`. 2^256 < 2n, so one subtraction reduces.
@@ -785,15 +784,12 @@
     [(not (= (byte_buf.bytes-ref bytes 0) (cast 4 : u8)))
       (ErrP256PublicPoint (p256-error (P256InvalidPrefix) 0))]
     [else
-      (match (field-from-bytes-at bytes 1)
-        [(ErrP256Field error) (ErrP256PublicPoint error)]
-        [(OkP256Field x)
-          (match (field-from-bytes-at bytes 33)
-            [(ErrP256Field error) (ErrP256PublicPoint error)]
-            [(OkP256Field y)
-              (if (on-curve? x y)
-                (OkP256PublicPoint (P256PublicPoint x y))
-                (ErrP256PublicPoint (p256-error (P256NotOnCurve) 0)))])])]))
+      (let
+        [x (try (field-from-bytes-at bytes 1))]
+        [y (try (field-from-bytes-at bytes 33))]
+        (if (on-curve? x y)
+          (OkP256PublicPoint (P256PublicPoint x y))
+          (ErrP256PublicPoint (p256-error (P256NotOnCurve) 0))))]))
 
 ;: The 65-byte SEC1 uncompressed encoding `0x04 || X || Y`.
 (define (public-point-to-bytes [a : P256PublicPoint]) : byte_buf.ByteBuf

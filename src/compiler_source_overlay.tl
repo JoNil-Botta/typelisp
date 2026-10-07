@@ -264,9 +264,9 @@
           (= (string.string-ref path-folded root-length) '/'))])))
 
 (define (compiler-source-read-text [path : (& path str)]) : io.ResultIoString
-  (match (io.try-read-file path)
-    [(OkIoBytes bytes) (OkIoString (byte_buf.to-string bytes))]
-    [(ErrIoBytes failure) (ErrIoString failure)]))
+  (let
+    [bytes (try (io.try-read-file path))]
+    (OkIoString (byte_buf.to-string bytes))))
 
 ;; An empty admission request and a way to add one replacement to it.
 (define (compiler-source-overlay-inputs) : overlay_input_vec.Vec
@@ -434,16 +434,15 @@
   (match base
     [(Any) (Ok)]
     [(Expect expected)
-      (match (compiler-source-content-identity path disk-text)
-        [(Err failure) (Err failure)]
-        [(Ok current)
-          (if (compiler-source-content-eq? (& current) expected)
-            (Ok)
-            (Err
-              (compiler-source-overlay-error
-                compiler-source-overlay-error-stale-base
-                path
-                "overlay source changed on disk since its candidate was planned")))])]))
+      (let
+        [current (try (compiler-source-content-identity path disk-text))]
+        (if (compiler-source-content-eq? (& current) expected)
+          (Ok)
+          (Err
+            (compiler-source-overlay-error
+              compiler-source-overlay-error-stale-base
+              path
+              "overlay source changed on disk since its candidate was planned"))))]))
 
 ;; Reject an overlay that replaces a source below `root` (canonicalized against
 ;; the overlay's working directory): stdlib and other shared roots are not

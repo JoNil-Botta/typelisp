@@ -64300,10 +64300,12 @@
                 dump-owner)]
             [i : i64 0]
             (while (< i 16)
-              (opt.compiler-opt-debug-observe-function
-                0
-                "linear-dump"
-                (ir.compiler-ir-global-shared-view func))
+              (begin
+                (opt.compiler-opt-debug-observe-function
+                  0
+                  "linear-dump"
+                  (ir.compiler-ir-global-shared-view func))
+                unit)
               (set! i (+ i 1)))
             (let
               [mid-bytes : i64
@@ -64311,10 +64313,12 @@
                   dump-owner)]
               [mid-length : i64 (opt.compiler-opt-debug-dump-length)]
               (while (< i 32)
-                (opt.compiler-opt-debug-observe-function
-                  0
-                  "linear-dump"
-                  (ir.compiler-ir-global-shared-view func))
+                (begin
+                  (opt.compiler-opt-debug-observe-function
+                    0
+                    "linear-dump"
+                    (ir.compiler-ir-global-shared-view func))
+                  unit)
                 (set! i (+ i 1)))
               (let
                 [end-bytes : i64

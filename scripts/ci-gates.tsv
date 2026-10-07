@@ -95,6 +95,7 @@ stage2-regalloc-backend-asm-shape-gates	linux	stage2 regalloc/backend asm shape 
 stage2-git-sha-1-fixed-round-wipe-asm-shape-gate	linux	stage2 Git SHA-1 fixed-round/wipe asm shape gate	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'sha1-*' tests/codegen/crypto-sha.cases
 stage2-sha-256-fixed-round-wipe-asm-shape-gate	linux	stage2 SHA-256 fixed-round/wipe asm shape gate	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'sha256-*' tests/codegen/crypto-sha.cases
 stage2-sha-512-wipe-asm-shape-gate	linux	stage2 SHA-512 wipe asm shape gate	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh --only 'sha512-*' tests/codegen/crypto-sha.cases
+stage2-crypto-secret-wipe-fixed-work-asm-shape-gate	linux	stage2 crypto secret wipe/fixed-work asm shape gate	bootstrap-fixpoint	stage2	512	-	scripts/verify-codegen-cases.sh --only 'secret-*' tests/codegen/crypto-secret.cases
 stage2-by-value-aggregate-abi-shape-gate	linux	stage2 by-value aggregate ABI shape gate	bootstrap-fixpoint	stage2	256	-	scripts/verify-codegen-cases.sh tests/codegen/by-value-aggregate-abi.cases
 stage2-examples	all	stage2 examples	bootstrap-fixpoint	stage2	512	-	scripts/verify-examples.sh
 benchmark-wall-clock-harness-self-tests	all	benchmark wall-clock harness self-tests	bootstrap-fixpoint	stage2	256	-	scripts/bench.sh --self-test

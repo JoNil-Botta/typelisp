@@ -1194,22 +1194,21 @@
   [first-arg : String]
   [second-index : i64]
   [second-arg : String]) : parser.ResultAstProgram
-  (match (parser.parse-ast-source source)
-    [(Ok program)
-      (compiler-generated-decl-mark!
-        (ast.ast-place-shared-view program)
-        first-index
-        (spec.spec-place-shared-view generator)
-        (spec.spec-place-shared-view item)
-        first-arg)
-      (compiler-generated-decl-mark!
-        (ast.ast-place-shared-view program)
-        second-index
-        generator
-        item
-        second-arg)
-      (Ok program)]
-    [(Err message) (Err message)]))
+  (let
+    [program (try (parser.parse-ast-source source))]
+    (compiler-generated-decl-mark!
+      (ast.ast-place-shared-view program)
+      first-index
+      (spec.spec-place-shared-view generator)
+      (spec.spec-place-shared-view item)
+      first-arg)
+    (compiler-generated-decl-mark!
+      (ast.ast-place-shared-view program)
+      second-index
+      generator
+      item
+      second-arg)
+    (Ok program)))
 
 (define (compiler-generated-decl-reuse-program) : parser.ResultAstProgram
   (compiler-generated-decl-pair

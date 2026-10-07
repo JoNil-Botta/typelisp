@@ -208,22 +208,39 @@
     (ast.ast-source-span-end-line span)
     (ast.ast-source-span-end-col span)))
 
+;; Origin rows carry their marker as a reset-aware builtin intern id. Writers
+;; and scanners use the id, so no origin row renders or compares its marker.
+(defmacro (compiler-parse-marker [spelling : Expr]) : Expr
+  `(ci.intern-id-from-renderable (cbi.compiler-builtin-ctfe ,spelling)))
+
+(defmacro (compiler-parse-marker? [marker : Expr] [spelling : Expr]) : Expr
+  `(ci.intern-id-eq? ,marker (compiler-parse-marker ,spelling)))
+
 (define (compiler-parse-semantic-origin-kind-marker
-  [kind : CompilerParseSemanticOriginKind]) : String
+  [kind : CompilerParseSemanticOriginKind]) : ci.InternId
   (match kind
-    [(TypeName) "__tl_semantic_origin_type_name"]
-    [(TypeDefinition) "__tl_semantic_origin_type_definition"]
-    [(StructFieldDefinition) "__tl_semantic_origin_struct_field_definition"]
-    [(EnumVariantDefinition) "__tl_semantic_origin_enum_variant_definition"]
-    [(StructFieldUse) "__tl_semantic_origin_struct_field_use"]
-    [(EnumVariantPattern) "__tl_semantic_origin_enum_variant_pattern"]
-    [(DispatchFunction) "__tl_semantic_origin_dispatch_function"]
-    [(ModuleDefinition) "__tl_semantic_origin_module_definition"]
-    [(ModulePath) "__tl_semantic_origin_module_path"]
-    [(ImportAlias) "__tl_semantic_origin_import_alias"]
-    [(ValueQualifier) "__tl_semantic_origin_value_qualifier"]
-    [(ValueName) "__tl_semantic_origin_value_name"]
-    [(BindingDefinition) "__tl_semantic_origin_binding_definition"]))
+    [(TypeName) (compiler-parse-marker "__tl_semantic_origin_type_name")]
+    [(TypeDefinition)
+      (compiler-parse-marker "__tl_semantic_origin_type_definition")]
+    [(StructFieldDefinition)
+      (compiler-parse-marker "__tl_semantic_origin_struct_field_definition")]
+    [(EnumVariantDefinition)
+      (compiler-parse-marker "__tl_semantic_origin_enum_variant_definition")]
+    [(StructFieldUse)
+      (compiler-parse-marker "__tl_semantic_origin_struct_field_use")]
+    [(EnumVariantPattern)
+      (compiler-parse-marker "__tl_semantic_origin_enum_variant_pattern")]
+    [(DispatchFunction)
+      (compiler-parse-marker "__tl_semantic_origin_dispatch_function")]
+    [(ModuleDefinition)
+      (compiler-parse-marker "__tl_semantic_origin_module_definition")]
+    [(ModulePath) (compiler-parse-marker "__tl_semantic_origin_module_path")]
+    [(ImportAlias) (compiler-parse-marker "__tl_semantic_origin_import_alias")]
+    [(ValueQualifier)
+      (compiler-parse-marker "__tl_semantic_origin_value_qualifier")]
+    [(ValueName) (compiler-parse-marker "__tl_semantic_origin_value_name")]
+    [(BindingDefinition)
+      (compiler-parse-marker "__tl_semantic_origin_binding_definition")]))
 
 (define (compiler-parse-semantic-origin-kind-tag
   [kind : CompilerParseSemanticOriginKind]) : i64
@@ -242,21 +259,30 @@
     [(ValueName) 11]
     [(BindingDefinition) 12]))
 
-(define (compiler-parse-semantic-origin-kind-tag-from-marker [marker : String]) : i64
+(define (compiler-parse-semantic-origin-kind-tag-from-marker
+  [marker : ci.InternId]) : i64
   (cond
-    [(string.eq marker "__tl_semantic_origin_type_name") 1]
-    [(string.eq marker "__tl_semantic_origin_type_definition") 0]
-    [(string.eq marker "__tl_semantic_origin_struct_field_definition") 2]
-    [(string.eq marker "__tl_semantic_origin_enum_variant_definition") 3]
-    [(string.eq marker "__tl_semantic_origin_struct_field_use") 4]
-    [(string.eq marker "__tl_semantic_origin_enum_variant_pattern") 5]
-    [(string.eq marker "__tl_semantic_origin_dispatch_function") 6]
-    [(string.eq marker "__tl_semantic_origin_module_definition") 7]
-    [(string.eq marker "__tl_semantic_origin_module_path") 8]
-    [(string.eq marker "__tl_semantic_origin_import_alias") 9]
-    [(string.eq marker "__tl_semantic_origin_value_qualifier") 10]
-    [(string.eq marker "__tl_semantic_origin_value_name") 11]
-    [(string.eq marker "__tl_semantic_origin_binding_definition") 12]
+    [(compiler-parse-marker? marker "__tl_semantic_origin_type_name") 1]
+    [(compiler-parse-marker? marker "__tl_semantic_origin_type_definition") 0]
+    [(compiler-parse-marker?
+        marker
+        "__tl_semantic_origin_struct_field_definition")
+      2]
+    [(compiler-parse-marker?
+        marker
+        "__tl_semantic_origin_enum_variant_definition")
+      3]
+    [(compiler-parse-marker? marker "__tl_semantic_origin_struct_field_use") 4]
+    [(compiler-parse-marker? marker "__tl_semantic_origin_enum_variant_pattern")
+      5]
+    [(compiler-parse-marker? marker "__tl_semantic_origin_dispatch_function") 6]
+    [(compiler-parse-marker? marker "__tl_semantic_origin_module_definition") 7]
+    [(compiler-parse-marker? marker "__tl_semantic_origin_module_path") 8]
+    [(compiler-parse-marker? marker "__tl_semantic_origin_import_alias") 9]
+    [(compiler-parse-marker? marker "__tl_semantic_origin_value_qualifier") 10]
+    [(compiler-parse-marker? marker "__tl_semantic_origin_value_name") 11]
+    [(compiler-parse-marker? marker "__tl_semantic_origin_binding_definition")
+      12]
     [else -1]))
 
 (define (compiler-parse-semantic-origin-kind-from-tag [tag : i64]) : CompilerParseSemanticOriginKind
@@ -519,16 +545,18 @@
   [cursor : i64]
   [limit : i64]) : i64
   (if (< (+ cursor 1) limit)
-    (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
+    (match (reader.sp-node-get cursor)
       [(Int _ marker _)
-        (if (string.eq marker "__tl_semantic_origin")
-          (match (reader.spanned-sexpr-view (reader.sp-node-get (+ cursor 1)))
+        (if (compiler-parse-marker? marker "__tl_semantic_origin")
+          (match (reader.sp-node-get (+ cursor 1))
             [(Int _ run-marker run-span)
               (let
                 [count : i64 (token.span-start-line run-span)]
                 [next : i64 (+ (+ cursor 2) count)]
                 (if (and
-                  (string.eq run-marker "__tl_semantic_origin_start")
+                  (compiler-parse-marker?
+                    run-marker
+                    "__tl_semantic_origin_start")
                   (>= count 0)
                   (<= next limit))
                   next
@@ -702,19 +730,20 @@
     [cursor : i64 compiler-parse-semantic-origin-lookup-indexed-len]
     [limit : i64 (reader.sp-node-pool-len)]
     (while (< cursor limit)
-      (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
+      (match (reader.sp-node-get cursor)
         [(Int record-key marker marker-span)
           (cond
             [(and
-                (string.eq marker "__tl_semantic_origin")
+                (compiler-parse-marker? marker "__tl_semantic_origin")
                 (< (+ cursor 1) limit))
-              (match (reader.spanned-sexpr-view
-                (reader.sp-node-get (+ cursor 1)))
+              (match (reader.sp-node-get (+ cursor 1))
                 [(Int run-slot run-marker run-span)
                   (let
                     [count : i64 (token.span-start-line run-span)]
                     (if (and
-                      (string.eq run-marker "__tl_semantic_origin_start")
+                      (compiler-parse-marker?
+                        run-marker
+                        "__tl_semantic_origin_start")
                       (>= count 0)
                       (<= (+ (+ cursor 2) count) limit))
                       (compiler-parse-semantic-origin-lookup-insert!
@@ -728,14 +757,16 @@
                         0)
                       unit))]
                 [_ unit])]
-            [(and (string.eq marker "__tl_decl_origin") (< (+ cursor 2) limit))
-              (match (reader.spanned-sexpr-view
-                (reader.sp-node-get (+ cursor 1)))
+            [(and
+                (compiler-parse-marker? marker "__tl_decl_origin")
+                (< (+ cursor 2) limit))
+              (match (reader.sp-node-get (+ cursor 1))
                 [(Int run-slot run-marker _)
-                  (if (string.eq run-marker "__tl_decl_origin_start")
-                    (match (reader.spanned-sexpr-view
-                      (reader.sp-node-get (+ cursor 2)))
-                      [(Nil span)
+                  (if (compiler-parse-marker?
+                    run-marker
+                    "__tl_decl_origin_start")
+                    (match (reader.sp-node-get (+ cursor 2))
+                      [(List _ 0 span)
                         (compiler-parse-semantic-origin-lookup-insert!
                           2
                           record-key
@@ -749,15 +780,17 @@
                     unit)]
                 [_ unit])]
             [(or
-                (string.eq marker "__tl_decl_origin_alias")
-                (string.eq marker "__tl_decl_origin_alias_repeat"))
+                (compiler-parse-marker? marker "__tl_decl_origin_alias")
+                (compiler-parse-marker? marker "__tl_decl_origin_alias_repeat"))
               (let
                 [target-start : i64 (token.span-start-line marker-span)]
                 [count : i64 (token.span-start-col marker-span)]
                 [source-key : i64 (token.span-end-line marker-span)]
                 [source-start : i64 (token.span-end-col marker-span)]
                 [repeat : bool
-                  (string.eq marker "__tl_decl_origin_alias_repeat")]
+                  (compiler-parse-marker?
+                    marker
+                    "__tl_decl_origin_alias_repeat")]
                 [offset : i64 0]
                 (while (< offset count)
                   (if repeat
@@ -870,8 +903,13 @@
       (let
         [marker-span : token.SourceSpan
           (compiler-parse-token-span-from-ast-span span)]
-        (reader.sp-node-push (Int key "__tl_decl_origin" marker-span))
-        (reader.sp-node-push (Int slot "__tl_decl_origin_start" marker-span))
+        (reader.sp-node-push
+          (Int key (compiler-parse-marker "__tl_decl_origin") marker-span))
+        (reader.sp-node-push
+          (Int
+            slot
+            (compiler-parse-marker "__tl_decl_origin_start")
+            marker-span))
         (reader.sp-node-push (reader.spanned-sexpr-empty marker-span))
         unit)]
     [(None) unit]))
@@ -899,8 +937,8 @@
         (Int
           (compiler-parse-decl-list-storage-key decls)
           (if repeat
-            "__tl_decl_origin_alias_repeat"
-            "__tl_decl_origin_alias")
+            (compiler-parse-marker "__tl_decl_origin_alias_repeat")
+            (compiler-parse-marker "__tl_decl_origin_alias"))
           (token.SourceSpan
             (+ decls.offset decl-slot)
             count
@@ -923,42 +961,47 @@
     [cursor : i64 scan-start]
     [limit : i64 scan-end]
     (while (< cursor limit)
-      (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
+      (match (reader.sp-node-get cursor)
         [(Int record-key marker _)
           (if (= record-key source-key)
             (cond
               [(and
-                  (string.eq marker "__tl_decl_origin")
+                  (compiler-parse-marker? marker "__tl_decl_origin")
                   (< (+ cursor 2) limit))
-                (match (reader.spanned-sexpr-view
-                  (reader.sp-node-get (+ cursor 1)))
+                (match (reader.sp-node-get (+ cursor 1))
                   [(Int record-slot run-marker marker-span)
                     (if (and
-                      (string.eq run-marker "__tl_decl_origin_start")
+                      (compiler-parse-marker?
+                        run-marker
+                        "__tl_decl_origin_start")
                       (>= record-slot source-start)
                       (< record-slot source-end))
                       (begin
                         (reader.sp-node-push
-                          (Int dest-key "__tl_decl_origin" marker-span))
+                          (Int
+                            dest-key
+                            (compiler-parse-marker "__tl_decl_origin")
+                            marker-span))
                         (reader.sp-node-push
                           (Int
                             (+ dest-start (- record-slot source-start))
-                            "__tl_decl_origin_start"
+                            (compiler-parse-marker "__tl_decl_origin_start")
                             marker-span))
                         (reader.sp-node-push (reader.sp-node-get (+ cursor 2)))
                         unit)
                       unit)]
                   [_ unit])]
               [(and
-                  (string.eq marker "__tl_semantic_origin")
+                  (compiler-parse-marker? marker "__tl_semantic_origin")
                   (< (+ cursor 1) limit))
-                (match (reader.spanned-sexpr-view
-                  (reader.sp-node-get (+ cursor 1)))
+                (match (reader.sp-node-get (+ cursor 1))
                   [(Int record-slot run-marker run-span)
                     (let
                       [count : i64 (token.span-start-line run-span)]
                       (if (and
-                        (string.eq run-marker "__tl_semantic_origin_start")
+                        (compiler-parse-marker?
+                          run-marker
+                          "__tl_semantic_origin_start")
                         (>= record-slot source-start)
                         (< record-slot source-end)
                         (>= count 0)
@@ -966,15 +1009,22 @@
                         (let
                           [record-index : i64 0]
                           (reader.sp-node-push
-                            (Int dest-key "__tl_semantic_origin" run-span))
+                            (Int
+                              dest-key
+                              (compiler-parse-marker "__tl_semantic_origin")
+                              run-span))
                           (reader.sp-node-push
                             (Int
                               (+ dest-start (- record-slot source-start))
-                              "__tl_semantic_origin_start"
+                              (compiler-parse-marker
+                                "__tl_semantic_origin_start")
                               run-span))
                           (while (< record-index count)
-                            (reader.sp-node-push
-                              (reader.sp-node-get (+ (+ cursor 2) record-index)))
+                            (begin
+                              (reader.sp-node-push
+                                (reader.sp-node-get
+                                  (+ (+ cursor 2) record-index)))
+                              unit)
                             (set! record-index (+ record-index 1))))
                         unit))]
                   [_ unit])]
@@ -1179,7 +1229,7 @@
   [index : i64]
   [fallback : CompilerParseSemanticOrigin]) : CompilerParseSemanticOrigin
   (if (and (>= index 0) (< index run.count))
-    (match (reader.spanned-sexpr-view (reader.sp-node-get (+ run.start index)))
+    (match (reader.sp-node-get (+ run.start index))
       [(Int written-name marker span)
         (let
           [kind-tag : i64
@@ -1206,9 +1256,11 @@
     [limit : i64 (reader.sp-node-pool-len)]
     [result : ast.AstSourceSpan fallback]
     (while (< cursor limit)
-      (match (reader.spanned-sexpr-view (reader.sp-node-get cursor))
+      (match (reader.sp-node-get cursor)
         [(Int record-key marker marker-span)
-          (if (and (= record-key key) (string.eq marker "__tl_member_origin"))
+          (if (and
+            (= record-key key)
+            (compiler-parse-marker? marker "__tl_member_origin"))
             (let
               [record-index : i64 (+ cursor 1)]
               [record-offset : i64 0]
@@ -1217,9 +1269,8 @@
               ;; useful fallback if a later transform appends a member.
               (set! result (ast-source-span-from-source-span marker-span))
               (while (and (not done) (< record-index limit))
-                (match (reader.spanned-sexpr-view
-                  (reader.sp-node-get record-index))
-                  [(Nil span)
+                (match (reader.sp-node-get record-index)
+                  [(List _ 0 span)
                     (if (= record-offset member-index)
                       (begin
                         (set! result (ast-source-span-from-source-span span))
@@ -6146,8 +6197,8 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]) : ResultAstPattern
   (match (reader.sexpr-view (compiler-parse-place-shared-view s))
-    [(Int n text) (Ok (Literal (Int n text)))]
-    [(Float text) (Ok (Literal (Float text)))]
+    [(Int n text) (Ok (Literal (Int n (reader.sp-text-copy text))))]
+    [(Float text) (Ok (Literal (Float (reader.sp-text-copy text))))]
     [(Str string-id) (Ok (Literal (String (ci.intern-id-value string-id))))]
     [(Char c) (Ok (Literal (Char c)))]
     [(Sym name)
@@ -6581,14 +6632,13 @@
     [(Cons cond body-tail _)
       (let
         [parsed-cond (try (parse-ast-expr-with-pools dispatch pools cond))]
-        [parsed-body
-          (try
-            (parse-ast-body-tail
-              dispatch
+        [parsed-body (try (parse-ast-expr-list dispatch pools body-tail))]
+        (if (= parsed-body.len 0)
+          (Err "parse: malformed while")
+          (Ok
+            (ast.ast-node-pool-context-expr-push
               pools
-              body-tail
-              "parse: malformed while"))]
-        (Ok (ast.ast-expr-while-with-pools pools parsed-cond parsed-body)))]
+              (While parsed-cond parsed-body)))))]
     [_ (Err "parse: malformed while")]))
 
 (define (parse-ast-set
@@ -8613,17 +8663,17 @@
             [(Nil _)
               (match (parse-ast-foreach-dim dispatch pools binding)
                 [(Ok name index-ty start end)
-                  (match (parse-ast-foreach-body dispatch pools body-tail)
-                    [(Ok body)
-                      (Ok
-                        (ast.ast-expr-foreach-id-with-pools
-                          pools
-                          name
-                          index-ty
-                          start
-                          end
-                          body))]
-                    [(Err message) (Err message)])]
+                  (let
+                    [body
+                      (try (parse-ast-foreach-body dispatch pools body-tail))]
+                    (Ok
+                      (ast.ast-expr-foreach-id-with-pools
+                        pools
+                        name
+                        index-ty
+                        start
+                        end
+                        body)))]
                 [(Err message) (Err message)])]
             [(Cons inner-binding rank-end _)
               (match (reader.spanned-sexpr-view rank-end)
@@ -8638,24 +8688,25 @@
                           (if (= outer inner)
                             (Err
                               "parse: foreach domain bindings must use distinct names")
-                            (match (parse-ast-foreach-body
-                              dispatch
-                              pools
-                              body-tail)
-                              [(Ok body)
-                                (Ok
-                                  (ast.ast-expr-foreach2-id-with-pools
+                            (let
+                              [body
+                                (try
+                                  (parse-ast-foreach-body
+                                    dispatch
                                     pools
-                                    outer
-                                    outer-ty
-                                    outer-start
-                                    outer-end
-                                    inner
-                                    inner-ty
-                                    inner-start
-                                    inner-end
-                                    body))]
-                              [(Err message) (Err message)]))]
+                                    body-tail))]
+                              (Ok
+                                (ast.ast-expr-foreach2-id-with-pools
+                                  pools
+                                  outer
+                                  outer-ty
+                                  outer-start
+                                  outer-end
+                                  inner
+                                  inner-ty
+                                  inner-start
+                                  inner-end
+                                  body))))]
                         [(Err message) (Err message)])]
                     [(Err message) (Err message)])]
                 [_
@@ -9033,13 +9084,17 @@
           (Ok
             (ast-expr-wrap-span
               pools
-              (ast.ast-node-pool-context-expr-push pools (Literal (Int n text)))
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (Literal (Int n (reader.sp-text-copy text))))
               (compiler-parse-place-shared-view s)))]
         [(Float text _)
           (Ok
             (ast-expr-wrap-span
               pools
-              (ast.ast-node-pool-context-expr-push pools (Literal (Float text)))
+              (ast.ast-node-pool-context-expr-push
+                pools
+                (Literal (Float (reader.sp-text-copy text))))
               (compiler-parse-place-shared-view s)))]
         [(Str string-id _)
           (Ok
@@ -10597,7 +10652,8 @@
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [member-marker : i64
-              (reader.sp-node-push (Int 0 "__tl_member_origin" name-span))]
+              (reader.sp-node-push
+                (Int 0 (compiler-parse-marker "__tl_member_origin") name-span))]
             (compiler-parse-semantic-origin-push-components!
               name
               name-span
@@ -10624,7 +10680,7 @@
                             (__tl_array-data parsed-variants.slots)
                             : (Ptr u8)))
                         : i64))
-                    "__tl_member_origin"
+                    (compiler-parse-marker "__tl_member_origin")
                     name-span))
                 (if (ast.ast-variant-def-list-empty? (& parsed-variants))
                   (Err "parse: defenum needs at least one variant")
@@ -10659,7 +10715,8 @@
           (let
             [name-id : i64 (ci.intern-syntax-id-value name)]
             [member-marker : i64
-              (reader.sp-node-push (Int 0 "__tl_member_origin" name-span))]
+              (reader.sp-node-push
+                (Int 0 (compiler-parse-marker "__tl_member_origin") name-span))]
             (compiler-parse-semantic-origin-push-components!
               name
               name-span
@@ -10690,7 +10747,7 @@
                             (__tl_array-data parsed-fields.slots)
                             : (Ptr u8)))
                         : i64))
-                    "__tl_member_origin"
+                    (compiler-parse-marker "__tl_member_origin")
                     name-span))
                 (if (ast.ast-field-def-list-empty? (& parsed-fields))
                   (Err "parse: defstruct needs at least one field")
@@ -11739,13 +11796,13 @@
         run-start
         (Int
           (compiler-parse-decl-list-storage-key decls)
-          "__tl_semantic_origin"
+          (compiler-parse-marker "__tl_semantic_origin")
           marker-span))
       (reader.sp-node-pool-fill!
         (+ run-start 1)
         (Int
           (+ decls.offset slot)
-          "__tl_semantic_origin_start"
+          (compiler-parse-marker "__tl_semantic_origin_start")
           (token.SourceSpan count 0 0 0)))
       (while (< index count)
         (let

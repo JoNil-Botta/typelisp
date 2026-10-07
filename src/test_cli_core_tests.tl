@@ -403,7 +403,11 @@
     [index : i64 0]
     [_fill : unit
       (while (< (ci.intern-compat-state-pool-len (& owner)) decoy-id)
-        (ci.intern-compat-state-intern (&mut owner) (string.int->string index))
+        (begin
+          (ci.intern-compat-state-intern
+            (&mut owner)
+            (string.int->string index))
+          unit)
         (set! index (+ index 1)))]
     [field-id : i64 (ci.intern-compat-state-intern (&mut owner) "owner.field")]
     [session : cis.InternStructuralSessionHandle

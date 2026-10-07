@@ -1853,15 +1853,15 @@
 
 (define (lsp-file-uri-to-path [uri : (& uri str)]) : LspUriPath
   (if (source_text.starts-with? uri "file://")
-    (match (lsp-percent-decode
-      (string.substring uri 7 (- (string.string-length uri) 7)))
-      [(Ok decoded)
-        (let
-          [path : String (lsp-uri-path-strip-windows-leading-slash decoded)]
-          (if (> (string.string-length path) 0)
-            (Ok path)
-            (Err "unsupported TypeLisp LSP URI: empty file path")))]
-      [(Err message) (Err message)])
+    (let
+      [decoded
+        (try
+          (lsp-percent-decode
+            (string.substring uri 7 (- (string.string-length uri) 7))))]
+      [path : String (lsp-uri-path-strip-windows-leading-slash decoded)]
+      (if (> (string.string-length path) 0)
+        (Ok path)
+        (Err "unsupported TypeLisp LSP URI: empty file path")))
     (Err "unsupported TypeLisp LSP URI: expected file:// URI")))
 
 (define (lsp-uri-safe-code? [code : i64]) : bool
@@ -11257,26 +11257,26 @@
   [path : String]
   [diagnostic-uris : lsp_vector_families.LspDiagnosticUris]
   [formatted : String]) : LspSaveResult
-  (match (lsp-validate-edited-document
-    (owned_view.compiler-owned-shared-view formatted))
-    [(Ok _)
-      (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& formatted)))
-        [(OkIoUnit)
-          (let
-            [cached-uri : String (lsp-cache-string-copy uri)]
-            [cached-path : String (lsp-cache-string-copy path)]
-            [cached-text : String (lsp-cache-string-copy formatted)]
-            (Ok
-              (lsp-documents-set
-                docs
-                cached-uri
-                cached-path
-                cached-text
-                diagnostic-uris)))]
-        [(ErrIoUnit message)
-          (Err
-            (lsp-str2 "Failed to write document: " (io.error-message message)))])]
-    [(Err message) (Err message)]))
+  (let
+    [_
+      (try
+        (lsp-validate-edited-document
+          (owned_view.compiler-owned-shared-view formatted)))]
+    (match (io.try-write-file (& path) (byte_buf.str-as-bytes (& formatted)))
+      [(OkIoUnit)
+        (let
+          [cached-uri : String (lsp-cache-string-copy uri)]
+          [cached-path : String (lsp-cache-string-copy path)]
+          [cached-text : String (lsp-cache-string-copy formatted)]
+          (Ok
+            (lsp-documents-set
+              docs
+              cached-uri
+              cached-path
+              cached-text
+              diagnostic-uris)))]
+      [(ErrIoUnit message)
+        (Err (lsp-str2 "Failed to write document: " (io.error-message message)))])))
 
 (define (lsp-tl-save-known-and-continue
   [id : json.Json]
@@ -15314,14 +15314,13 @@
             (if (lsp-json-has-field?
               (owned_view.compiler-owned-shared-view params)
               "path")
-              (match (lsp-json-path-field params)
-                [(Ok path-items)
-                  (lsp-replace-form-by-path-with-decls
-                    text
-                    path-items
-                    new-text
-                    decls)]
-                [(Err message) (Err message)])
+              (let
+                [path-items (try (lsp-json-path-field params))]
+                (lsp-replace-form-by-path-with-decls
+                  text
+                  path-items
+                  new-text
+                  decls))
               (match (lsp-json-string-field params "name")
                 [(Ok name)
                   (if (= (string.string-length name) 0)
@@ -15369,14 +15368,13 @@
             (if (lsp-json-has-field?
               (owned_view.compiler-owned-shared-view params)
               "path")
-              (match (lsp-json-path-field params)
-                [(Ok path-items)
-                  (lsp-replace-body-by-path-with-decls
-                    text
-                    path-items
-                    new-body
-                    decls)]
-                [(Err message) (Err message)])
+              (let
+                [path-items (try (lsp-json-path-field params))]
+                (lsp-replace-body-by-path-with-decls
+                  text
+                  path-items
+                  new-body
+                  decls))
               (let
                 [name : String
                   (lsp-structural-move-name-with-decls

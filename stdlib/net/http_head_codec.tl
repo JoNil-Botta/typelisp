@@ -137,22 +137,20 @@
   (let
     [cursor : i64 index]
     [n : i64 (byte_buf.bytes-length value)]
-    (begin
-      (while (and (< cursor n) (ows-byte? (byte_buf.bytes-ref value cursor)))
-        (set! cursor (+ cursor 1)))
-      cursor)))
+    (while (and (< cursor n) (ows-byte? (byte_buf.bytes-ref value cursor)))
+      (set! cursor (+ cursor 1)))
+    cursor))
 
 ;: Return the offset of the first byte after a token starting at `index`.
 (define (skip-token [value : (& value bytes)] [index : i64]) : i64
   (let
     [cursor : i64 index]
     [n : i64 (byte_buf.bytes-length value)]
-    (begin
-      (while (and
-        (< cursor n)
-        (http_types.token-byte? (byte_buf.bytes-ref value cursor)))
-        (set! cursor (+ cursor 1)))
-      cursor)))
+    (while (and
+      (< cursor n)
+      (http_types.token-byte? (byte_buf.bytes-ref value cursor)))
+      (set! cursor (+ cursor 1)))
+    cursor))
 
 ;: Compare byte range `[start, end)` with an ASCII spelling ignoring case.
 (define (byte-range-eq-ascii-string
@@ -165,16 +163,14 @@
     [count : i64 (- end start)]
     [index : i64 0]
     [same : bool (= count (byte_buf.bytes-length expected))]
-    (begin
-      (while (and same (< index count))
-        (begin
-          (if (!=
-            (http_types.ascii-lower (byte_buf.bytes-ref value (+ start index)))
-            (http_types.ascii-lower (byte_buf.bytes-ref expected index)))
-            (set! same false)
-            unit)
-          (set! index (+ index 1))))
-      same)))
+    (while (and same (< index count))
+      (if (!=
+        (http_types.ascii-lower (byte_buf.bytes-ref value (+ start index)))
+        (http_types.ascii-lower (byte_buf.bytes-ref expected index)))
+        (set! same false)
+        unit)
+      (set! index (+ index 1)))
+    same))
 
 ;: Add `amount` while enforcing `limit`, without overflowing signed i64.
 (define (checked-length-add
@@ -195,88 +191,83 @@
     [prefix-bytes : (& prefix bytes) (byte_buf.str-as-bytes (& prefix))]
     [index : i64 0]
     [bad-prefix : i64 -1]
-    (begin
-      (while (and (< index 9) (< index n) (< bad-prefix 0))
-        (begin
-          (if (!=
-            (byte_buf.bytes-ref line index)
-            (byte_buf.bytes-ref prefix-bytes index))
-            (set! bad-prefix index)
-            unit)
-          (set! index (+ index 1))))
-      (cond
-        [(< n 9)
-          (HttpStatusLineErr
-            (http_types.peer-error (HttpInvalidVersion) (+ base-offset n)))]
-        [(>= bad-prefix 0)
-          (HttpStatusLineErr
-            (http_types.peer-error
-              (HttpInvalidVersion)
-              (+ base-offset bad-prefix)))]
-        [(< n 13)
-          (HttpStatusLineErr
-            (http_types.peer-error (HttpInvalidStatus) (+ base-offset n)))]
-        [else
-          (let
-            [d0 : i64 (cast (byte_buf.bytes-ref line 9) : i64)]
-            [d1 : i64 (cast (byte_buf.bytes-ref line 10) : i64)]
-            [d2 : i64 (cast (byte_buf.bytes-ref line 11) : i64)]
-            (cond
-              [(or (< d0 48) (> d0 57) (< d1 48) (> d1 57) (< d2 48) (> d2 57))
-                (let
-                  [bad : i64
-                    (if (or (< d0 48) (> d0 57))
-                      9
-                      (if (or (< d1 48) (> d1 57))
-                        10
-                        11))]
-                  (HttpStatusLineErr
-                    (http_types.peer-error
-                      (HttpInvalidStatus)
-                      (+ base-offset bad))))]
-              [(!= (cast (byte_buf.bytes-ref line 12) : i64) 32)
+    (while (and (< index 9) (< index n) (< bad-prefix 0))
+      (if (!=
+        (byte_buf.bytes-ref line index)
+        (byte_buf.bytes-ref prefix-bytes index))
+        (set! bad-prefix index)
+        unit)
+      (set! index (+ index 1)))
+    (cond
+      [(< n 9)
+        (HttpStatusLineErr
+          (http_types.peer-error (HttpInvalidVersion) (+ base-offset n)))]
+      [(>= bad-prefix 0)
+        (HttpStatusLineErr
+          (http_types.peer-error
+            (HttpInvalidVersion)
+            (+ base-offset bad-prefix)))]
+      [(< n 13)
+        (HttpStatusLineErr
+          (http_types.peer-error (HttpInvalidStatus) (+ base-offset n)))]
+      [else
+        (let
+          [d0 : i64 (cast (byte_buf.bytes-ref line 9) : i64)]
+          [d1 : i64 (cast (byte_buf.bytes-ref line 10) : i64)]
+          [d2 : i64 (cast (byte_buf.bytes-ref line 11) : i64)]
+          (cond
+            [(or (< d0 48) (> d0 57) (< d1 48) (> d1 57) (< d2 48) (> d2 57))
+              (let
+                [bad : i64
+                  (if (or (< d0 48) (> d0 57))
+                    9
+                    (if (or (< d1 48) (> d1 57))
+                      10
+                      11))]
                 (HttpStatusLineErr
-                  (http_types.peer-error (HttpInvalidStatus) (+ base-offset 12)))]
-              [else
-                (let
-                  [status : i64
-                    (+ (* (- d0 48) 100) (* (- d1 48) 10) (- d2 48))]
-                  [scan : i64 13]
-                  [bad-reason : i64 -1]
-                  (begin
-                    (while (and (< scan n) (< bad-reason 0))
-                      (let
-                        [code : i64 (cast (byte_buf.bytes-ref line scan) : i64)]
-                        (begin
-                          (if (or
-                            (= code 0)
-                            (= code 10)
-                            (= code 13)
-                            (and (< code 32) (!= code 9))
-                            (= code 127))
-                            (set! bad-reason scan)
-                            unit)
-                          (set! scan (+ scan 1)))))
-                    (cond
-                      [(or (< status 100) (> status 599))
-                        (HttpStatusLineErr
-                          (http_types.peer-error
-                            (HttpInvalidStatus)
-                            (+ base-offset 9)))]
-                      [(>= bad-reason 0)
-                        (HttpStatusLineErr
-                          (http_types.peer-error
-                            (if (=
-                              (cast (byte_buf.bytes-ref line bad-reason) : i64)
-                              0)
-                              (HttpNulByte)
-                              (HttpInvalidReason))
-                            (+ base-offset bad-reason)))]
-                      [else
-                        (HttpStatusLineOk
-                          (http_types.HttpStatus status)
-                          (http_types.HttpReason
-                            (http_types.copy-byte-range line 13 (- n 13))))])))]))]))))
+                  (http_types.peer-error
+                    (HttpInvalidStatus)
+                    (+ base-offset bad))))]
+            [(!= (cast (byte_buf.bytes-ref line 12) : i64) 32)
+              (HttpStatusLineErr
+                (http_types.peer-error (HttpInvalidStatus) (+ base-offset 12)))]
+            [else
+              (let
+                [status : i64 (+ (* (- d0 48) 100) (* (- d1 48) 10) (- d2 48))]
+                [scan : i64 13]
+                [bad-reason : i64 -1]
+                (while (and (< scan n) (< bad-reason 0))
+                  (let
+                    [code : i64 (cast (byte_buf.bytes-ref line scan) : i64)]
+                    (if (or
+                      (= code 0)
+                      (= code 10)
+                      (= code 13)
+                      (and (< code 32) (!= code 9))
+                      (= code 127))
+                      (set! bad-reason scan)
+                      unit)
+                    (set! scan (+ scan 1))))
+                (cond
+                  [(or (< status 100) (> status 599))
+                    (HttpStatusLineErr
+                      (http_types.peer-error
+                        (HttpInvalidStatus)
+                        (+ base-offset 9)))]
+                  [(>= bad-reason 0)
+                    (HttpStatusLineErr
+                      (http_types.peer-error
+                        (if (=
+                          (cast (byte_buf.bytes-ref line bad-reason) : i64)
+                          0)
+                          (HttpNulByte)
+                          (HttpInvalidReason))
+                        (+ base-offset bad-reason)))]
+                  [else
+                    (HttpStatusLineOk
+                      (http_types.HttpStatus status)
+                      (http_types.HttpReason
+                        (http_types.copy-byte-range line 13 (- n 13))))]))]))])))
 
 ;: Parse one comma-list Content-Length field with checked decimal arithmetic.
 (define (apply-content-length
@@ -292,77 +283,67 @@
     [parsed-any : bool false]
     [canonical-set : bool state.saw-content-length]
     [canonical : i64 state.content-length]
-    (begin
-      (while (and (< cursor n) (not failed))
-        (begin
-          (set! cursor (skip-ows value cursor))
+    (while (and (< cursor n) (not failed))
+      (set! cursor (skip-ows value cursor))
+      (let
+        [digit-start : i64 cursor]
+        [number : i64 0]
+        (while (and
+          (< cursor n)
           (let
-            [digit-start : i64 cursor]
-            [number : i64 0]
+            [code : i64 (cast (byte_buf.bytes-ref value cursor) : i64)]
+            (and (>= code 48) (<= code 57)))
+          (not failed))
+          (let
+            [digit : i64 (- (cast (byte_buf.bytes-ref value cursor) : i64) 48)]
+            (if (> number (/ (- 9223372036854775807 digit) 10))
+              (begin
+                (set! failed true)
+                (set! error-kind (HttpContentLengthOverflow))
+                (set! error-offset (+ base-offset cursor)))
+              (set! number (+ (* number 10) digit)))
+            (set! cursor (+ cursor 1))))
+        (when
+          (and (not failed) (= digit-start cursor))
+          (set! failed true)
+          (set! error-offset (+ base-offset cursor)))
+        (when
+          (not failed)
+          (set! parsed-any true)
+          (if canonical-set
+            (when
+              (!= canonical number)
+              (set! failed true)
+              (set! error-kind (HttpConflictingContentLength))
+              (set! error-offset (+ base-offset digit-start)))
             (begin
-              (while (and
-                (< cursor n)
-                (let
-                  [code : i64 (cast (byte_buf.bytes-ref value cursor) : i64)]
-                  (and (>= code 48) (<= code 57)))
-                (not failed))
-                (let
-                  [digit : i64
-                    (- (cast (byte_buf.bytes-ref value cursor) : i64) 48)]
-                  (begin
-                    (if (> number (/ (- 9223372036854775807 digit) 10))
-                      (begin
-                        (set! failed true)
-                        (set! error-kind (HttpContentLengthOverflow))
-                        (set! error-offset (+ base-offset cursor)))
-                      (set! number (+ (* number 10) digit)))
-                    (set! cursor (+ cursor 1)))))
-              (if (and (not failed) (= digit-start cursor))
-                (begin
+              (set! canonical number)
+              (set! canonical-set true))))
+        (when
+          (not failed)
+          (set! cursor (skip-ows value cursor))
+          (if (< cursor n)
+            (if (= (cast (byte_buf.bytes-ref value cursor) : i64) 44)
+              (begin
+                (set! cursor (+ cursor 1))
+                (when
+                  (= (skip-ows value cursor) n)
                   (set! failed true)
-                  (set! error-offset (+ base-offset cursor)))
-                unit)
-              (if (not failed)
-                (begin
-                  (set! parsed-any true)
-                  (if canonical-set
-                    (if (!= canonical number)
-                      (begin
-                        (set! failed true)
-                        (set! error-kind (HttpConflictingContentLength))
-                        (set! error-offset (+ base-offset digit-start)))
-                      unit)
-                    (begin
-                      (set! canonical number)
-                      (set! canonical-set true))))
-                unit)
-              (if (not failed)
-                (begin
-                  (set! cursor (skip-ows value cursor))
-                  (if (< cursor n)
-                    (if (= (cast (byte_buf.bytes-ref value cursor) : i64) 44)
-                      (begin
-                        (set! cursor (+ cursor 1))
-                        (if (= (skip-ows value cursor) n)
-                          (begin
-                            (set! failed true)
-                            (set! error-offset (+ base-offset cursor)))
-                          unit))
-                      (begin
-                        (set! failed true)
-                        (set! error-offset (+ base-offset cursor))))
-                    unit))
-                unit)))))
-      (if (or failed (not parsed-any))
-        (HttpContentLengthErr (http_types.peer-error error-kind error-offset))
-        (HttpContentLengthOk
-          (HttpFramingState
-            true
-            canonical
-            state.saw-transfer-encoding
-            state.transfer-coding-count
-            state.chunked-seen
-            state.unsupported-coding-seen))))))
+                  (set! error-offset (+ base-offset cursor))))
+              (begin
+                (set! failed true)
+                (set! error-offset (+ base-offset cursor))))
+            unit))))
+    (if (or failed (not parsed-any))
+      (HttpContentLengthErr (http_types.peer-error error-kind error-offset))
+      (HttpContentLengthOk
+        (HttpFramingState
+          true
+          canonical
+          state.saw-transfer-encoding
+          state.transfer-coding-count
+          state.chunked-seen
+          state.unsupported-coding-seen)))))
 
 ;: Skip one quoted transfer-parameter value, returning `-1` on malformed input.
 (define (skip-transfer-quoted-value [value : (& value bytes)] [index : i64]) : i64
@@ -371,39 +352,37 @@
     [cursor : i64 (+ index 1)]
     [closed : bool false]
     [failed : bool false]
-    (begin
-      (while (and (< cursor n) (not closed) (not failed))
-        (let
-          [code : i64 (cast (byte_buf.bytes-ref value cursor) : i64)]
-          (cond
-            [(= code 34)
-              (begin
-                (set! closed true)
-                (set! cursor (+ cursor 1)))]
-            [(= code 92)
-              (if (>= (+ cursor 1) n)
-                (set! failed true)
-                (let
-                  [escaped : i64
-                    (cast (byte_buf.bytes-ref value (+ cursor 1)) : i64)]
-                  (if (or
-                    (= escaped 9)
-                    (and (>= escaped 32) (<= escaped 126))
-                    (>= escaped 128))
-                    (set! cursor (+ cursor 2))
-                    (set! failed true))))]
-            [(or
-                (= code 9)
-                (= code 32)
-                (= code 33)
-                (and (>= code 35) (<= code 91))
-                (and (>= code 93) (<= code 126))
-                (>= code 128))
-              (set! cursor (+ cursor 1))]
-            [else (set! failed true)])))
-      (if (and closed (not failed))
-        cursor
-        -1))))
+    (while (and (< cursor n) (not closed) (not failed))
+      (let
+        [code : i64 (cast (byte_buf.bytes-ref value cursor) : i64)]
+        (cond
+          [(= code 34)
+            (set! closed true)
+            (set! cursor (+ cursor 1))]
+          [(= code 92)
+            (if (>= (+ cursor 1) n)
+              (set! failed true)
+              (let
+                [escaped : i64
+                  (cast (byte_buf.bytes-ref value (+ cursor 1)) : i64)]
+                (if (or
+                  (= escaped 9)
+                  (and (>= escaped 32) (<= escaped 126))
+                  (>= escaped 128))
+                  (set! cursor (+ cursor 2))
+                  (set! failed true))))]
+          [(or
+              (= code 9)
+              (= code 32)
+              (= code 33)
+              (and (>= code 35) (<= code 91))
+              (and (>= code 93) (<= code 126))
+              (>= code 128))
+            (set! cursor (+ cursor 1))]
+          [else (set! failed true)])))
+    (if (and closed (not failed))
+      cursor
+      -1)))
 
 ;: Parse transfer codings in exact order and update the authoritative framing
 ;: state. Unknown codings remain valid syntax but mark decoding unsupported.
@@ -421,146 +400,124 @@
     [chunked : bool state.chunked-seen]
     [unsupported : bool state.unsupported-coding-seen]
     [parsed-any : bool false]
-    (begin
-      (while (and (< cursor n) (not failed))
+    (while (and (< cursor n) (not failed))
+      (set! cursor (skip-ows value cursor))
+      (let
+        [coding-start : i64 cursor]
+        [coding-end : i64 (skip-token value cursor)]
+        [is-chunked : bool false]
+        [has-parameters : bool false]
+        ;; The single wrapper keeps the complete transfer-coding step one
+        ;; unit-valued loop body while its branches update shared state.
+        ;; lint-allow: single-begin
         (begin
-          (set! cursor (skip-ows value cursor))
-          (let
-            [coding-start : i64 cursor]
-            [coding-end : i64 (skip-token value cursor)]
-            [is-chunked : bool false]
-            [has-parameters : bool false]
-            ;; The single wrapper keeps the complete transfer-coding step one
-            ;; unit-valued loop body while its branches update shared state.
-            ;; lint-allow: single-begin
+          (if (= coding-start coding-end)
             (begin
-              (if (= coding-start coding-end)
-                (begin
-                  (set! failed true)
-                  (set! error-offset (+ base-offset cursor)))
-                (begin
-                  (set!
-                    is-chunked
-                    (byte-range-eq-ascii-string
-                      value
-                      coding-start
-                      coding-end
-                      "chunked"))
-                  (set! cursor coding-end)
-                  (set! cursor (skip-ows value cursor))
-                  (while (and
-                    (not failed)
-                    (< cursor n)
-                    (= (cast (byte_buf.bytes-ref value cursor) : i64) 59))
+              (set! failed true)
+              (set! error-offset (+ base-offset cursor)))
+            (begin
+              (set!
+                is-chunked
+                (byte-range-eq-ascii-string
+                  value
+                  coding-start
+                  coding-end
+                  "chunked"))
+              (set! cursor coding-end)
+              (set! cursor (skip-ows value cursor))
+              (while (and
+                (not failed)
+                (< cursor n)
+                (= (cast (byte_buf.bytes-ref value cursor) : i64) 59))
+                (set! has-parameters true)
+                (set! cursor (skip-ows value (+ cursor 1)))
+                (let
+                  [parameter-name-start : i64 cursor]
+                  [parameter-name-end : i64 (skip-token value cursor)]
+                  (if (= parameter-name-start parameter-name-end)
                     (begin
-                      (set! has-parameters true)
-                      (set! cursor (skip-ows value (+ cursor 1)))
-                      (let
-                        [parameter-name-start : i64 cursor]
-                        [parameter-name-end : i64 (skip-token value cursor)]
-                        (if (= parameter-name-start parameter-name-end)
-                          (begin
-                            (set! failed true)
-                            (set! error-offset (+ base-offset cursor)))
-                          (begin
-                            (set! cursor (skip-ows value parameter-name-end))
-                            (if (or
-                              (>= cursor n)
-                              (!=
-                                (cast (byte_buf.bytes-ref value cursor) : i64)
-                                61))
-                              (begin
-                                (set! failed true)
-                                (set! error-offset (+ base-offset cursor)))
-                              (begin
-                                (set! cursor (skip-ows value (+ cursor 1)))
-                                (if (>= cursor n)
+                      (set! failed true)
+                      (set! error-offset (+ base-offset cursor)))
+                    (begin
+                      (set! cursor (skip-ows value parameter-name-end))
+                      (if (or
+                        (>= cursor n)
+                        (!= (cast (byte_buf.bytes-ref value cursor) : i64) 61))
+                        (begin
+                          (set! failed true)
+                          (set! error-offset (+ base-offset cursor)))
+                        (begin
+                          (set! cursor (skip-ows value (+ cursor 1)))
+                          (if (>= cursor n)
+                            (begin
+                              (set! failed true)
+                              (set! error-offset (+ base-offset cursor)))
+                            (if (=
+                              (cast (byte_buf.bytes-ref value cursor) : i64)
+                              34)
+                              (let
+                                [next : i64
+                                  (skip-transfer-quoted-value value cursor)]
+                                (if (< next 0)
                                   (begin
                                     (set! failed true)
                                     (set! error-offset (+ base-offset cursor)))
-                                  (if (=
-                                    (cast
-                                      (byte_buf.bytes-ref value cursor)
-                                      : i64)
-                                    34)
-                                    (let
-                                      [next : i64
-                                        (skip-transfer-quoted-value
-                                          value
-                                          cursor)]
-                                      (if (< next 0)
-                                        (begin
-                                          (set! failed true)
-                                          (set!
-                                            error-offset
-                                            (+ base-offset cursor)))
-                                        (set! cursor next)))
-                                    (let
-                                      [parameter-value-end : i64
-                                        (skip-token value cursor)]
-                                      (if (= parameter-value-end cursor)
-                                        (begin
-                                          (set! failed true)
-                                          (set!
-                                            error-offset
-                                            (+ base-offset cursor)))
-                                        (set! cursor parameter-value-end))))))))))
-                      (set! cursor (skip-ows value cursor))))
-                  (if (and (not failed) is-chunked has-parameters)
+                                  (set! cursor next)))
+                              (let
+                                [parameter-value-end : i64
+                                  (skip-token value cursor)]
+                                (if (= parameter-value-end cursor)
+                                  (begin
+                                    (set! failed true)
+                                    (set! error-offset (+ base-offset cursor)))
+                                  (set! cursor parameter-value-end))))))))))
+                (set! cursor (skip-ows value cursor)))
+              (when
+                (and (not failed) is-chunked has-parameters)
+                (set! failed true)
+                (set! error-offset (+ base-offset coding-start)))
+              (if (not failed)
+                (cond
+                  [(and is-chunked chunked)
+                    (set! failed true)
+                    (set! error-kind (HttpDuplicateChunkedCoding))
+                    (set! error-offset (+ base-offset coding-start))]
+                  [chunked
+                    (set! failed true)
+                    (set! error-kind (HttpChunkedCodingNotFinal))
+                    (set! error-offset (+ base-offset coding-start))]
+                  [else
+                    (set! parsed-any true)
+                    (set! count (+ count 1))
+                    (if is-chunked
+                      (set! chunked true)
+                      (set! unsupported true))])
+                unit)
+              (when
+                (not failed)
+                (set! cursor (skip-ows value cursor))
+                (if (< cursor n)
+                  (if (= (cast (byte_buf.bytes-ref value cursor) : i64) 44)
+                    (begin
+                      (set! cursor (+ cursor 1))
+                      (when
+                        (= (skip-ows value cursor) n)
+                        (set! failed true)
+                        (set! error-offset (+ base-offset cursor))))
                     (begin
                       (set! failed true)
-                      (set! error-offset (+ base-offset coding-start)))
-                    unit)
-                  (if (not failed)
-                    (cond
-                      [(and is-chunked chunked)
-                        (begin
-                          (set! failed true)
-                          (set! error-kind (HttpDuplicateChunkedCoding))
-                          (set! error-offset (+ base-offset coding-start)))]
-                      [chunked
-                        (begin
-                          (set! failed true)
-                          (set! error-kind (HttpChunkedCodingNotFinal))
-                          (set! error-offset (+ base-offset coding-start)))]
-                      [else
-                        (begin
-                          (set! parsed-any true)
-                          (set! count (+ count 1))
-                          (if is-chunked
-                            (set! chunked true)
-                            (set! unsupported true)))])
-                    unit)
-                  (if (not failed)
-                    (begin
-                      (set! cursor (skip-ows value cursor))
-                      (if (< cursor n)
-                        (if (=
-                          (cast (byte_buf.bytes-ref value cursor) : i64)
-                          44)
-                          (begin
-                            (set! cursor (+ cursor 1))
-                            (if (= (skip-ows value cursor) n)
-                              (begin
-                                (set! failed true)
-                                (set! error-offset (+ base-offset cursor)))
-                              unit))
-                          (begin
-                            (set! failed true)
-                            (set! error-offset (+ base-offset cursor))))
-                        unit))
-                    unit)))))))
-      (if (or failed (not parsed-any))
-        (HttpTransferEncodingErr
-          (http_types.peer-error error-kind error-offset))
-        (HttpTransferEncodingOk
-          (HttpFramingState
-            state.saw-content-length
-            state.content-length
-            true
-            count
-            chunked
-            unsupported))))))
+                      (set! error-offset (+ base-offset cursor))))
+                  unit)))))))
+    (if (or failed (not parsed-any))
+      (HttpTransferEncodingErr (http_types.peer-error error-kind error-offset))
+      (HttpTransferEncodingOk
+        (HttpFramingState
+          state.saw-content-length
+          state.content-length
+          true
+          count
+          chunked
+          unsupported)))))
 
 ;: True when a Connection option would obscure routing or message framing.
 (define (connection-option-forbidden?
@@ -585,42 +542,39 @@
     [failed : bool false]
     [error-offset : i64 base-offset]
     [parsed-any : bool false]
-    (begin
-      (while (and (< cursor n) (not failed))
-        (begin
-          (set! cursor (skip-ows value cursor))
-          (let
-            [start : i64 cursor]
-            [end : i64 (skip-token value cursor)]
-            (if (= start end)
+    (while (and (< cursor n) (not failed))
+      (set! cursor (skip-ows value cursor))
+      (let
+        [start : i64 cursor]
+        [end : i64 (skip-token value cursor)]
+        (if (= start end)
+          (begin
+            (set! failed true)
+            (set! error-offset (+ base-offset cursor)))
+          (begin
+            (set! parsed-any true)
+            (if (connection-option-forbidden? value start end)
               (begin
                 (set! failed true)
-                (set! error-offset (+ base-offset cursor)))
+                (set! error-offset (+ base-offset start)))
               (begin
-                (set! parsed-any true)
-                (if (connection-option-forbidden? value start end)
-                  (begin
-                    (set! failed true)
-                    (set! error-offset (+ base-offset start)))
-                  (begin
-                    (set! cursor (skip-ows value end))
-                    (if (< cursor n)
-                      (if (= (cast (byte_buf.bytes-ref value cursor) : i64) 44)
-                        (begin
-                          (set! cursor (+ cursor 1))
-                          (if (= (skip-ows value cursor) n)
-                            (begin
-                              (set! failed true)
-                              (set! error-offset (+ base-offset cursor)))
-                            unit))
-                        (begin
-                          (set! failed true)
-                          (set! error-offset (+ base-offset cursor))))
-                      unit))))))))
-      (if (or failed (not parsed-any))
-        (HttpConnectionFieldErr
-          (http_types.peer-error (HttpForbiddenConnectionHeader) error-offset))
-        (HttpConnectionFieldOk)))))
+                (set! cursor (skip-ows value end))
+                (if (< cursor n)
+                  (if (= (cast (byte_buf.bytes-ref value cursor) : i64) 44)
+                    (begin
+                      (set! cursor (+ cursor 1))
+                      (when
+                        (= (skip-ows value cursor) n)
+                        (set! failed true)
+                        (set! error-offset (+ base-offset cursor))))
+                    (begin
+                      (set! failed true)
+                      (set! error-offset (+ base-offset cursor))))
+                  unit)))))))
+    (if (or failed (not parsed-any))
+      (HttpConnectionFieldErr
+        (http_types.peer-error (HttpForbiddenConnectionHeader) error-offset))
+      (HttpConnectionFieldOk))))
 
 ;: Return the value's wire offset from a parsed field line and line base.
 (define (field-value-offset [line : (& line bytes)] [base-offset : i64]) : i64
@@ -629,17 +583,16 @@
     [cursor : i64 0]
     [colon : i64 0]
     [found : bool false]
-    (begin
-      (while (and (< cursor n) (not found))
-        (if (= (cast (byte_buf.bytes-ref line cursor) : i64) 58)
-          (begin
-            (set! colon cursor)
-            (set! found true))
-          (set! cursor (+ cursor 1))))
-      (set! cursor (+ colon 1))
-      (while (and (< cursor n) (ows-byte? (byte_buf.bytes-ref line cursor)))
-        (set! cursor (+ cursor 1)))
-      (+ base-offset cursor))))
+    (while (and (< cursor n) (not found))
+      (if (= (cast (byte_buf.bytes-ref line cursor) : i64) 58)
+        (begin
+          (set! colon cursor)
+          (set! found true))
+        (set! cursor (+ cursor 1))))
+    (set! cursor (+ colon 1))
+    (while (and (< cursor n) (ows-byte? (byte_buf.bytes-ref line cursor)))
+      (set! cursor (+ cursor 1)))
+    (+ base-offset cursor)))
 
 ;: Apply a checked response field to framing state and enforce fail-closed
 ;: Transfer-Encoding plus Content-Length handling.
@@ -693,64 +646,59 @@
     [name-too-long : bool false]
     [error-offset : i64 base-offset]
     [parsed-any : bool false]
-    (begin
-      (while (and (< cursor n) (not failed))
-        (begin
-          (set! cursor (skip-ows value cursor))
-          (let
-            [start : i64 cursor]
-            [end : i64 (skip-token value cursor)]
-            [name : (& value bytes)
-              (byte_buf.bytes-slice-view value start (- end start))]
-            (if (= start end)
+    (while (and (< cursor n) (not failed))
+      (set! cursor (skip-ows value cursor))
+      (let
+        [start : i64 cursor]
+        [end : i64 (skip-token value cursor)]
+        [name : (& value bytes)
+          (byte_buf.bytes-slice-view value start (- end start))]
+        (if (= start end)
+          (begin
+            (set! failed true)
+            (set! error-offset (+ base-offset cursor)))
+          (begin
+            (set! parsed-any true)
+            (when
+              (> (- end start) max-name-bytes)
+              (set! failed true)
+              (set! name-too-long true)
+              (set! error-offset (+ base-offset (+ start max-name-bytes))))
+            (if (and
+              (not failed)
+              (http_trailer_policy.trailer-name-forbidden-bytes? name))
               (begin
                 (set! failed true)
-                (set! error-offset (+ base-offset cursor)))
-              (begin
-                (set! parsed-any true)
-                (if (> (- end start) max-name-bytes)
+                (set! forbidden true)
+                (set! error-offset (+ base-offset start)))
+              (if (not failed)
+                (set! set (http_types.header-name-set-add set name))
+                unit))
+            (when
+              (not failed)
+              (set! cursor (skip-ows value end))
+              (if (< cursor n)
+                (if (= (cast (byte_buf.bytes-ref value cursor) : i64) 44)
+                  (begin
+                    (set! cursor (+ cursor 1))
+                    (when
+                      (= (skip-ows value cursor) n)
+                      (set! failed true)
+                      (set! error-offset (+ base-offset cursor))))
                   (begin
                     (set! failed true)
-                    (set! name-too-long true)
-                    (set! error-offset (+ base-offset (+ start max-name-bytes))))
-                  unit)
-                (if (and
-                  (not failed)
-                  (http_trailer_policy.trailer-name-forbidden-bytes? name))
-                  (begin
-                    (set! failed true)
-                    (set! forbidden true)
-                    (set! error-offset (+ base-offset start)))
-                  (if (not failed)
-                    (set! set (http_types.header-name-set-add set name))
-                    unit))
-                (if (not failed)
-                  (begin
-                    (set! cursor (skip-ows value end))
-                    (if (< cursor n)
-                      (if (= (cast (byte_buf.bytes-ref value cursor) : i64) 44)
-                        (begin
-                          (set! cursor (+ cursor 1))
-                          (if (= (skip-ows value cursor) n)
-                            (begin
-                              (set! failed true)
-                              (set! error-offset (+ base-offset cursor)))
-                            unit))
-                        (begin
-                          (set! failed true)
-                          (set! error-offset (+ base-offset cursor))))
-                      unit))
-                  unit))))))
-      (if (or failed (not parsed-any))
-        (HttpTrailerNamesErr
-          (http_types.peer-error
-            (if name-too-long
-              (HttpNameTooLong)
-              (if forbidden
-                (HttpForbiddenTrailerName)
-                (HttpMalformedTrailerDeclaration)))
-            error-offset))
-        (HttpTrailerNamesOk set)))))
+                    (set! error-offset (+ base-offset cursor))))
+                unit))))))
+    (if (or failed (not parsed-any))
+      (HttpTrailerNamesErr
+        (http_types.peer-error
+          (if name-too-long
+            (HttpNameTooLong)
+            (if forbidden
+              (HttpForbiddenTrailerName)
+              (HttpMalformedTrailerDeclaration)))
+          error-offset))
+      (HttpTrailerNamesOk set))))
 
 ;: Select body semantics after a complete response head.
 (define (select-response-plan
@@ -826,37 +774,34 @@
       [out : http_types.HttpHeaders (http_types.headers-empty)]
       [index : i64 0]
       [emitted : bool false]
-      (begin
-        (while (< index headers.len)
-          (let
-            [is-length : bool
-              (name-eq-string
-                (& (array-ref headers.slots index).name)
-                "content-length")]
-            (begin
-              (if is-length
-                (if emitted
-                  unit
-                  (begin
-                    (set! emitted true)
-                    (set!
-                      out
-                      (http_types.headers-append
-                        out
-                        (http_types.HttpHeaderField
-                          (http_types.HttpHeaderName
-                            (byte_buf.from-string "Content-Length"))
-                          (http_types.HttpHeaderValue
-                            (byte_buf.from-string
-                              (string.int->string state.content-length)))
-                          (HttpHeaderPublic))))))
-                (set!
+      (while (< index headers.len)
+        (let
+          [is-length : bool
+            (name-eq-string
+              (& (array-ref headers.slots index).name)
+              "content-length")]
+          (if is-length
+            (unless
+              emitted
+              (set! emitted true)
+              (set!
+                out
+                (http_types.headers-append
                   out
-                  (http_types.headers-append
-                    out
-                    (clone (array-ref headers.slots index)))))
-              (set! index (+ index 1)))))
-        out))))
+                  (http_types.HttpHeaderField
+                    (http_types.HttpHeaderName
+                      (byte_buf.from-string "Content-Length"))
+                    (http_types.HttpHeaderValue
+                      (byte_buf.from-string
+                        (string.int->string state.content-length)))
+                    (HttpHeaderPublic)))))
+            (set!
+              out
+              (http_types.headers-append
+                out
+                (clone (array-ref headers.slots index)))))
+          (set! index (+ index 1))))
+      out)))
 
 ;: Construct a bounded incremental response parser.
 (define (response-parser-new
@@ -924,12 +869,11 @@
       (match (parse-status-line line parser.line-start)
         [(HttpStatusLineErr error) (HttpParserLineErr error)]
         [(HttpStatusLineOk status reason)
-          (begin
-            (set! parser.status-parsed true)
-            (set! parser.status-code status.code)
-            (set! parser.reason reason)
-            (set! parser.line-start head-len)
-            (HttpParserLineContinue))])
+          (set! parser.status-parsed true)
+          (set! parser.status-code status.code)
+          (set! parser.reason reason)
+          (set! parser.line-start head-len)
+          (HttpParserLineContinue)])
       (if (= line-len 0)
         (let
           [framing : HttpFramingState parser.framing]
@@ -953,41 +897,39 @@
               (HttpHeaderPublic))
               [(HttpFieldLineErr error) (HttpParserLineErr error)]
               [(HttpFieldLineOk field)
-                (begin
-                  (if (http_types.header-name-known-sensitive? (& field.name))
-                    (set! field.sensitivity (http_types.HttpHeaderSensitive))
-                    unit)
-                  (match (apply-response-field
-                    (clone parser.framing)
-                    (& field)
-                    value-offset)
-                    [(HttpResponseFieldErr error) (HttpParserLineErr error)]
-                    [(HttpResponseFieldOk next-framing)
-                      (if (name-eq-string (& field.name) "trailer")
-                        (let
-                          [value : (& field bytes)
-                            (http_types.header-value-bytes (& field.value))]
-                          (match (apply-trailer-names
-                            (clone parser.trailer-names)
-                            value
-                            value-offset
-                            parser.limits.max-name-bytes)
-                            [(HttpTrailerNamesErr error)
-                              (HttpParserLineErr error)]
-                            [(HttpTrailerNamesOk next-names)
-                              (begin
-                                (set! parser.framing next-framing)
-                                (set! parser.trailer-names next-names)
-                                (http_types.headers-push!
-                                  (&mut parser.headers)
-                                  field)
-                                (set! parser.line-start head-len)
-                                (HttpParserLineContinue))]))
-                        (begin
-                          (set! parser.framing next-framing)
-                          (http_types.headers-push! (&mut parser.headers) field)
-                          (set! parser.line-start head-len)
-                          (HttpParserLineContinue)))]))])))))))
+                (if (http_types.header-name-known-sensitive? (& field.name))
+                  (set! field.sensitivity (http_types.HttpHeaderSensitive))
+                  unit)
+                (match (apply-response-field
+                  (clone parser.framing)
+                  (& field)
+                  value-offset)
+                  [(HttpResponseFieldErr error) (HttpParserLineErr error)]
+                  [(HttpResponseFieldOk next-framing)
+                    (if (name-eq-string (& field.name) "trailer")
+                      (let
+                        [value : (& field bytes)
+                          (http_types.header-value-bytes (& field.value))]
+                        (match (apply-trailer-names
+                          (clone parser.trailer-names)
+                          value
+                          value-offset
+                          parser.limits.max-name-bytes)
+                          [(HttpTrailerNamesErr error)
+                            (HttpParserLineErr error)]
+                          [(HttpTrailerNamesOk next-names)
+                            (set! parser.framing next-framing)
+                            (set! parser.trailer-names next-names)
+                            (http_types.headers-push!
+                              (&mut parser.headers)
+                              field)
+                            (set! parser.line-start head-len)
+                            (HttpParserLineContinue)]))
+                      (begin
+                        (set! parser.framing next-framing)
+                        (http_types.headers-push! (&mut parser.headers) field)
+                        (set! parser.line-start head-len)
+                        (HttpParserLineContinue)))])])))))))
 
 ;: Feed one borrowed byte slice. The parser stops at the exact final CRLF and
 ;: reports only bytes consumed from this call, leaving any suffix untouched.
@@ -1012,118 +954,104 @@
           0)]
       [failure : http_types.HttpHeadError
         (http_types.peer-error (HttpParserFinished) 0)]
-      (begin
-        (while (and (< consumed input-len) (not done))
-          (let
-            [byte : u8 (byte_buf.bytes-ref input consumed)]
-            [code : i64 (cast byte : i64)]
-            [absolute : i64 (byte_buf.len parser.buffer)]
-            (if parser.saw-cr
-              (if (= code 10)
-                (if (>= absolute parser.limits.max-total-bytes)
-                  (begin
-                    (set!
-                      failure
-                      (http_types.peer-error (HttpHeadTooLarge) absolute))
-                    (set! consumed (+ consumed 1))
-                    (set! result-kind 2)
-                    (set! done true))
-                  (begin
-                    (set! parser.buffer (byte_buf.push parser.buffer byte))
-                    (set! parser.saw-cr false)
-                    (set! consumed (+ consumed 1))
-                    (match (process-completed-response-line (&mut parser))
-                      [(HttpParserLineErr error)
-                        (begin
-                          (set! failure error)
-                          (set! result-kind 2)
-                          (set! done true))]
-                      [(HttpParserLineComplete plan)
-                        (let
-                          [framing : HttpFramingState parser.framing]
-                          [headers : http_types.HttpHeaders
-                            (canonicalize-content-length
-                              (clone parser.headers)
-                              (& framing))]
-                          (begin
-                            (set!
-                              completed-head
-                              (http_types.HttpResponseHead
-                                (Http11)
-                                (http_types.HttpStatus parser.status-code)
-                                (clone parser.reason)
-                                headers
-                                (clone parser.trailer-names)
-                                plan
-                                (byte_buf.len parser.buffer)))
-                            (set! result-kind 1)
-                            (set! done true)))]
-                      [(HttpParserLineContinue) unit])))
+      (while (and (< consumed input-len) (not done))
+        (let
+          [byte : u8 (byte_buf.bytes-ref input consumed)]
+          [code : i64 (cast byte : i64)]
+          [absolute : i64 (byte_buf.len parser.buffer)]
+          (if parser.saw-cr
+            (if (= code 10)
+              (if (>= absolute parser.limits.max-total-bytes)
                 (begin
                   (set!
                     failure
-                    (http_types.peer-error
-                      (HttpBareCarriageReturn)
-                      (- absolute 1)))
+                    (http_types.peer-error (HttpHeadTooLarge) absolute))
                   (set! consumed (+ consumed 1))
                   (set! result-kind 2)
-                  (set! done true)))
-              (cond
-                [(= code 10)
-                  (begin
-                    (set!
-                      failure
-                      (http_types.peer-error (HttpBareLineFeed) absolute))
-                    (set! consumed (+ consumed 1))
-                    (set! result-kind 2)
-                    (set! done true))]
-                [(= code 0)
-                  (begin
-                    (set!
-                      failure
-                      (http_types.peer-error (HttpNulByte) absolute))
-                    (set! consumed (+ consumed 1))
-                    (set! result-kind 2)
-                    (set! done true))]
-                [(or (and (< code 32) (!= code 13) (!= code 9)) (= code 127))
-                  (begin
-                    (set!
-                      failure
-                      (http_types.peer-error (HttpInvalidControlByte) absolute))
-                    (set! consumed (+ consumed 1))
-                    (set! result-kind 2)
-                    (set! done true))]
-                [(>= absolute parser.limits.max-total-bytes)
-                  (begin
-                    (set!
-                      failure
-                      (http_types.peer-error (HttpHeadTooLarge) absolute))
-                    (set! consumed (+ consumed 1))
-                    (set! result-kind 2)
-                    (set! done true))]
-                [(= code 13)
-                  (begin
-                    (set! parser.buffer (byte_buf.push parser.buffer byte))
-                    (set! parser.saw-cr true)
-                    (set! consumed (+ consumed 1)))]
-                [(>=
-                    (- absolute parser.line-start)
-                    parser.limits.max-line-bytes)
-                  (begin
-                    (set!
-                      failure
-                      (http_types.peer-error (HttpLineTooLong) absolute))
-                    (set! consumed (+ consumed 1))
-                    (set! result-kind 2)
-                    (set! done true))]
-                [else
-                  (begin
-                    (set! parser.buffer (byte_buf.push parser.buffer byte))
-                    (set! consumed (+ consumed 1)))]))))
-        (cond
-          [(= result-kind 1) (HttpResponseFeedComplete completed-head consumed)]
-          [(= result-kind 2) (HttpResponseFeedErr failure consumed)]
-          [else (HttpResponseFeedNeedInput parser consumed)])))))
+                  (set! done true))
+                (begin
+                  (set! parser.buffer (byte_buf.push parser.buffer byte))
+                  (set! parser.saw-cr false)
+                  (set! consumed (+ consumed 1))
+                  (match (process-completed-response-line (&mut parser))
+                    [(HttpParserLineErr error)
+                      (set! failure error)
+                      (set! result-kind 2)
+                      (set! done true)]
+                    [(HttpParserLineComplete plan)
+                      (let
+                        [framing : HttpFramingState parser.framing]
+                        [headers : http_types.HttpHeaders
+                          (canonicalize-content-length
+                            (clone parser.headers)
+                            (& framing))]
+                        (set!
+                          completed-head
+                          (http_types.HttpResponseHead
+                            (Http11)
+                            (http_types.HttpStatus parser.status-code)
+                            (clone parser.reason)
+                            headers
+                            (clone parser.trailer-names)
+                            plan
+                            (byte_buf.len parser.buffer)))
+                        (set! result-kind 1)
+                        (set! done true))]
+                    [(HttpParserLineContinue) unit])))
+              (begin
+                (set!
+                  failure
+                  (http_types.peer-error
+                    (HttpBareCarriageReturn)
+                    (- absolute 1)))
+                (set! consumed (+ consumed 1))
+                (set! result-kind 2)
+                (set! done true)))
+            (cond
+              [(= code 10)
+                (set!
+                  failure
+                  (http_types.peer-error (HttpBareLineFeed) absolute))
+                (set! consumed (+ consumed 1))
+                (set! result-kind 2)
+                (set! done true)]
+              [(= code 0)
+                (set! failure (http_types.peer-error (HttpNulByte) absolute))
+                (set! consumed (+ consumed 1))
+                (set! result-kind 2)
+                (set! done true)]
+              [(or (and (< code 32) (!= code 13) (!= code 9)) (= code 127))
+                (set!
+                  failure
+                  (http_types.peer-error (HttpInvalidControlByte) absolute))
+                (set! consumed (+ consumed 1))
+                (set! result-kind 2)
+                (set! done true)]
+              [(>= absolute parser.limits.max-total-bytes)
+                (set!
+                  failure
+                  (http_types.peer-error (HttpHeadTooLarge) absolute))
+                (set! consumed (+ consumed 1))
+                (set! result-kind 2)
+                (set! done true)]
+              [(= code 13)
+                (set! parser.buffer (byte_buf.push parser.buffer byte))
+                (set! parser.saw-cr true)
+                (set! consumed (+ consumed 1))]
+              [(>= (- absolute parser.line-start) parser.limits.max-line-bytes)
+                (set!
+                  failure
+                  (http_types.peer-error (HttpLineTooLong) absolute))
+                (set! consumed (+ consumed 1))
+                (set! result-kind 2)
+                (set! done true)]
+              [else
+                (set! parser.buffer (byte_buf.push parser.buffer byte))
+                (set! consumed (+ consumed 1))]))))
+      (cond
+        [(= result-kind 1) (HttpResponseFeedComplete completed-head consumed)]
+        [(= result-kind 2) (HttpResponseFeedErr failure consumed)]
+        [else (HttpResponseFeedNeedInput parser consumed)]))))
 
 ;: Finish an incomplete parser at end of input, producing a deterministic
 ;: poisoning error at the first missing or dangling position.
@@ -1195,53 +1123,47 @@
     [index : i64 0]
     [bad-method : i64 -1]
     [bad-target : i64 -1]
-    (begin
-      (while (and (< index method-len) (< bad-method 0))
-        (begin
-          (if (not
-            (http_types.token-byte? (byte_buf.bytes-ref method-bytes index)))
-            (set! bad-method index)
-            unit)
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (and (< index target-len) (< bad-target 0))
-        (let
-          [code : i64 (cast (byte_buf.bytes-ref target-bytes index) : i64)]
-          (begin
-            (if (or (< code 33) (> code 126) (= code 35))
-              (set! bad-target index)
-              unit)
-            (set! index (+ index 1)))))
+    (while (and (< index method-len) (< bad-method 0))
+      (if (not (http_types.token-byte? (byte_buf.bytes-ref method-bytes index)))
+        (set! bad-method index)
+        unit)
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (and (< index target-len) (< bad-target 0))
       (let
-        [line-size-0 : i64
-          (bounded-length-add method-len 1 limits.max-line-bytes)]
-        [line-size-1 : i64
-          (bounded-length-add line-size-0 target-len limits.max-line-bytes)]
-        [line-size-2 : i64
-          (bounded-length-add line-size-1 9 limits.max-line-bytes)]
-        (cond
-          [(= method-len 0)
-            (HttpRequestValidationErr
-              (http_types.local-error (HttpInvalidMethod) 0))]
-          [(>= bad-method 0)
-            (HttpRequestValidationErr
-              (http_types.local-error (HttpInvalidMethod) bad-method))]
-          [(or
-              (= target-len 0)
-              (!= (cast (byte_buf.bytes-ref target-bytes 0) : i64) 47))
-            (HttpRequestValidationErr
-              (http_types.local-error
-                (HttpInvalidRequestTarget)
-                (+ method-len 1)))]
-          [(>= bad-target 0)
-            (HttpRequestValidationErr
-              (http_types.local-error
-                (HttpInvalidRequestTarget)
-                (+ (+ method-len 1) bad-target)))]
-          [(< line-size-2 0)
-            (HttpRequestValidationErr
-              (http_types.local-error (HttpLineTooLong) limits.max-line-bytes))]
-          [else (HttpRequestValidationOk)])))))
+        [code : i64 (cast (byte_buf.bytes-ref target-bytes index) : i64)]
+        (if (or (< code 33) (> code 126) (= code 35))
+          (set! bad-target index)
+          unit)
+        (set! index (+ index 1))))
+    (let
+      [line-size-0 : i64
+        (bounded-length-add method-len 1 limits.max-line-bytes)]
+      [line-size-1 : i64
+        (bounded-length-add line-size-0 target-len limits.max-line-bytes)]
+      [line-size-2 : i64
+        (bounded-length-add line-size-1 9 limits.max-line-bytes)]
+      (cond
+        [(= method-len 0)
+          (HttpRequestValidationErr
+            (http_types.local-error (HttpInvalidMethod) 0))]
+        [(>= bad-method 0)
+          (HttpRequestValidationErr
+            (http_types.local-error (HttpInvalidMethod) bad-method))]
+        [(or
+            (= target-len 0)
+            (!= (cast (byte_buf.bytes-ref target-bytes 0) : i64) 47))
+          (HttpRequestValidationErr
+            (http_types.local-error (HttpInvalidRequestTarget) (+ method-len 1)))]
+        [(>= bad-target 0)
+          (HttpRequestValidationErr
+            (http_types.local-error
+              (HttpInvalidRequestTarget)
+              (+ (+ method-len 1) bad-target)))]
+        [(< line-size-2 0)
+          (HttpRequestValidationErr
+            (http_types.local-error (HttpLineTooLong) limits.max-line-bytes))]
+        [else (HttpRequestValidationOk)]))))
 
 ;: Validate one already-typed request field's token/value shape and canonical
 ;: surrounding whitespace without allocating output.
@@ -1274,133 +1196,118 @@
       [saw-trailer : bool false]
       [trailer-names : http_types.HttpHeaderNameSet
         (http_types.header-name-set-empty)]
-      (begin
-        (while (and (< index headers.len) (not failed))
-          (let
-            [field : (& headers http_types.HttpHeaderField)
-              (& (array-ref headers.slots index))]
-            [name : (& headers bytes)
-              (http_types.header-name-bytes (& field.name))]
-            [value : (& headers bytes)
-              (http_types.header-value-bytes (& field.value))]
-            [name-len : i64 (byte_buf.bytes-length name)]
-            [value-len : i64 (byte_buf.bytes-length value)]
-            [value-offset : i64 (+ (+ line-offset name-len) 2)]
-            (begin
-              (match (validate-request-field-shape field line-offset limits)
-                [(HttpRequestValidationErr error)
-                  (begin
-                    (set! failure error)
-                    (set! failed true))]
-                [(HttpRequestValidationOk)
-                  (cond
-                    [(name-eq-string (& field.name) "host")
-                      (begin
-                        (set! host-count (+ host-count 1))
-                        (if (= value-len 0)
-                          (set! host-empty true)
-                          unit))]
-                    [(name-eq-string (& field.name) "proxy-authorization")
-                      (begin
-                        (set!
-                          failure
-                          (http_types.local-error
-                            (HttpForbiddenProxyAuthorization)
-                            line-offset))
-                        (set! failed true))]
-                    [(name-eq-string (& field.name) "proxy-connection")
-                      (begin
-                        (set!
-                          failure
-                          (http_types.local-error
-                            (HttpForbiddenConnectionHeader)
-                            line-offset))
-                        (set! failed true))]
-                    [(name-eq-string (& field.name) "connection")
-                      (match (validate-connection-field value value-offset)
-                        [(HttpConnectionFieldErr error)
-                          (begin
-                            (set! failure (request-localize-error error))
-                            (set! failed true))]
-                        [(HttpConnectionFieldOk) unit])]
-                    [(name-eq-string (& field.name) "content-length")
-                      (match (apply-content-length
-                        (clone framing)
-                        value
-                        value-offset)
-                        [(HttpContentLengthErr error)
-                          (begin
-                            (set! failure (request-localize-error error))
-                            (set! failed true))]
-                        [(HttpContentLengthOk next) (set! framing next)])]
-                    [(name-eq-string (& field.name) "transfer-encoding")
-                      (match (apply-transfer-encoding
-                        (clone framing)
-                        value
-                        value-offset)
-                        [(HttpTransferEncodingErr error)
-                          (begin
-                            (set! failure (request-localize-error error))
-                            (set! failed true))]
-                        [(HttpTransferEncodingOk next) (set! framing next)])]
-                    [(name-eq-string (& field.name) "trailer")
-                      (begin
-                        (set! saw-trailer true)
-                        (match (apply-trailer-names
-                          (clone trailer-names)
-                          value
-                          value-offset
-                          limits.max-name-bytes)
-                          [(HttpTrailerNamesErr error)
-                            (begin
-                              (set! failure (request-localize-error error))
-                              (set! failed true))]
-                          [(HttpTrailerNamesOk next) (set! trailer-names next)]))]
-                    [else unit])])
-              (if (not failed)
-                (let
-                  [next-0 : i64
-                    (bounded-length-add
-                      line-offset
-                      name-len
-                      9223372036854775807)]
-                  [next-1 : i64
-                    (bounded-length-add next-0 value-len 9223372036854775807)]
-                  [next-2 : i64
-                    (bounded-length-add next-1 4 9223372036854775807)]
-                  (if (< next-2 0)
-                    (begin
-                      (set!
-                        failure
-                        (http_types.local-error (HttpHeadTooLarge) line-offset))
-                      (set! failed true))
-                    (set! line-offset next-2)))
-                unit)
-              (set! index (+ index 1)))))
-        (cond
-          [failed (HttpRequestHeaderFactsErr failure)]
-          [(and framing.saw-content-length framing.saw-transfer-encoding)
-            (HttpRequestHeaderFactsErr
-              (http_types.local-error
-                (HttpTransferEncodingWithContentLength)
-                first-field-offset))]
-          [(= host-count 0)
-            (HttpRequestHeaderFactsErr
-              (http_types.local-error (HttpMissingHost) first-field-offset))]
-          [(> host-count 1)
-            (HttpRequestHeaderFactsErr
-              (http_types.local-error (HttpDuplicateHost) first-field-offset))]
-          [host-empty
-            (HttpRequestHeaderFactsErr
-              (http_types.local-error (HttpEmptyHost) first-field-offset))]
-          [else
-            (HttpRequestHeaderFactsOk
-              (HttpRequestHeaderFacts
-                framing
-                host-count
-                host-empty
-                saw-trailer
-                trailer-names))])))))
+      (while (and (< index headers.len) (not failed))
+        (let
+          [field : (& headers http_types.HttpHeaderField)
+            (& (array-ref headers.slots index))]
+          [name : (& headers bytes)
+            (http_types.header-name-bytes (& field.name))]
+          [value : (& headers bytes)
+            (http_types.header-value-bytes (& field.value))]
+          [name-len : i64 (byte_buf.bytes-length name)]
+          [value-len : i64 (byte_buf.bytes-length value)]
+          [value-offset : i64 (+ (+ line-offset name-len) 2)]
+          (match (validate-request-field-shape field line-offset limits)
+            [(HttpRequestValidationErr error)
+              (set! failure error)
+              (set! failed true)]
+            [(HttpRequestValidationOk)
+              (cond
+                [(name-eq-string (& field.name) "host")
+                  (set! host-count (+ host-count 1))
+                  (if (= value-len 0)
+                    (set! host-empty true)
+                    unit)]
+                [(name-eq-string (& field.name) "proxy-authorization")
+                  (set!
+                    failure
+                    (http_types.local-error
+                      (HttpForbiddenProxyAuthorization)
+                      line-offset))
+                  (set! failed true)]
+                [(name-eq-string (& field.name) "proxy-connection")
+                  (set!
+                    failure
+                    (http_types.local-error
+                      (HttpForbiddenConnectionHeader)
+                      line-offset))
+                  (set! failed true)]
+                [(name-eq-string (& field.name) "connection")
+                  (match (validate-connection-field value value-offset)
+                    [(HttpConnectionFieldErr error)
+                      (set! failure (request-localize-error error))
+                      (set! failed true)]
+                    [(HttpConnectionFieldOk) unit])]
+                [(name-eq-string (& field.name) "content-length")
+                  (match (apply-content-length
+                    (clone framing)
+                    value
+                    value-offset)
+                    [(HttpContentLengthErr error)
+                      (set! failure (request-localize-error error))
+                      (set! failed true)]
+                    [(HttpContentLengthOk next) (set! framing next)])]
+                [(name-eq-string (& field.name) "transfer-encoding")
+                  (match (apply-transfer-encoding
+                    (clone framing)
+                    value
+                    value-offset)
+                    [(HttpTransferEncodingErr error)
+                      (set! failure (request-localize-error error))
+                      (set! failed true)]
+                    [(HttpTransferEncodingOk next) (set! framing next)])]
+                [(name-eq-string (& field.name) "trailer")
+                  (set! saw-trailer true)
+                  (match (apply-trailer-names
+                    (clone trailer-names)
+                    value
+                    value-offset
+                    limits.max-name-bytes)
+                    [(HttpTrailerNamesErr error)
+                      (set! failure (request-localize-error error))
+                      (set! failed true)]
+                    [(HttpTrailerNamesOk next) (set! trailer-names next)])]
+                [else unit])])
+          (if (not failed)
+            (let
+              [next-0 : i64
+                (bounded-length-add line-offset name-len 9223372036854775807)]
+              [next-1 : i64
+                (bounded-length-add next-0 value-len 9223372036854775807)]
+              [next-2 : i64 (bounded-length-add next-1 4 9223372036854775807)]
+              (if (< next-2 0)
+                (begin
+                  (set!
+                    failure
+                    (http_types.local-error (HttpHeadTooLarge) line-offset))
+                  (set! failed true))
+                (set! line-offset next-2)))
+            unit)
+          (set! index (+ index 1))))
+      (cond
+        [failed (HttpRequestHeaderFactsErr failure)]
+        [(and framing.saw-content-length framing.saw-transfer-encoding)
+          (HttpRequestHeaderFactsErr
+            (http_types.local-error
+              (HttpTransferEncodingWithContentLength)
+              first-field-offset))]
+        [(= host-count 0)
+          (HttpRequestHeaderFactsErr
+            (http_types.local-error (HttpMissingHost) first-field-offset))]
+        [(> host-count 1)
+          (HttpRequestHeaderFactsErr
+            (http_types.local-error (HttpDuplicateHost) first-field-offset))]
+        [host-empty
+          (HttpRequestHeaderFactsErr
+            (http_types.local-error (HttpEmptyHost) first-field-offset))]
+        [else
+          (HttpRequestHeaderFactsOk
+            (HttpRequestHeaderFacts
+              framing
+              host-count
+              host-empty
+              saw-trailer
+              trailer-names))]))))
 
 ;: Reconcile request body intent with supplied framing fields and produce the
 ;: single plan consumed by later body encoding.
@@ -1505,152 +1412,142 @@
     [failed : bool false]
     [failure-kind : http_types.HttpHeadErrorKind (HttpHeadTooLarge)]
     [index : i64 0]
-    (begin
-      (set!
+    (set!
+      total
+      (bounded-length-add
+        (byte_buf.bytes-length method-bytes)
+        1
+        limits.max-total-bytes))
+    (set!
+      total
+      (bounded-length-add
         total
-        (bounded-length-add
-          (byte_buf.bytes-length method-bytes)
-          1
-          limits.max-total-bytes))
-      (set!
-        total
-        (bounded-length-add
-          total
-          (byte_buf.bytes-length target-bytes)
-          limits.max-total-bytes))
-      (set! total (bounded-length-add total 11 limits.max-total-bytes))
-      (if (< total 0)
-        (set! failed true)
-        unit)
-      (while (and (< index headers.len) (not failed))
-        (let
-          [field : (& headers http_types.HttpHeaderField)
-            (& (array-ref headers.slots index))]
-          (begin
-            (if (not (request-field-replaced? (& field.name)))
-              (let
-                [name : (& headers bytes)
-                  (http_types.header-name-bytes (& field.name))]
-                [value : (& headers bytes)
-                  (http_types.header-value-bytes (& field.value))]
-                [next-0 : i64
-                  (bounded-length-add
-                    total
-                    (byte_buf.bytes-length name)
-                    limits.max-total-bytes)]
-                [next-1 : i64
-                  (bounded-length-add
-                    next-0
-                    (byte_buf.bytes-length value)
-                    limits.max-total-bytes)]
-                [next-2 : i64
-                  (bounded-length-add next-1 4 limits.max-total-bytes)]
-                (if (< next-2 0)
-                  (set! failed true)
-                  (set! total next-2)))
+        (byte_buf.bytes-length target-bytes)
+        limits.max-total-bytes))
+    (set! total (bounded-length-add total 11 limits.max-total-bytes))
+    (if (< total 0)
+      (set! failed true)
+      unit)
+    (while (and (< index headers.len) (not failed))
+      (let
+        [field : (& headers http_types.HttpHeaderField)
+          (& (array-ref headers.slots index))]
+        (if (not (request-field-replaced? (& field.name)))
+          (let
+            [name : (& headers bytes)
+              (http_types.header-name-bytes (& field.name))]
+            [value : (& headers bytes)
+              (http_types.header-value-bytes (& field.value))]
+            [next-0 : i64
+              (bounded-length-add
+                total
+                (byte_buf.bytes-length name)
+                limits.max-total-bytes)]
+            [next-1 : i64
+              (bounded-length-add
+                next-0
+                (byte_buf.bytes-length value)
+                limits.max-total-bytes)]
+            [next-2 : i64 (bounded-length-add next-1 4 limits.max-total-bytes)]
+            (if (< next-2 0)
+              (set! failed true)
+              (set! total next-2)))
+          unit)
+        (set! index (+ index 1))))
+    (if (and (not failed) prepared.emit-content-length)
+      (let
+        [digits : String (string.int->string prepared.content-length)]
+        [value-len : i64 (string.string-length (& digits))]
+        [line-len : i64 (bounded-length-add 16 value-len limits.max-line-bytes)]
+        [field-total : i64
+          (bounded-length-add value-len 18 limits.max-total-bytes)]
+        [next : i64
+          (bounded-length-add total field-total limits.max-total-bytes)]
+        (cond
+          [(< line-len 0)
+            (set! failed true)
+            (set! failure-kind (HttpLineTooLong))]
+          [(or
+            (> 14 limits.max-name-bytes)
+            (> value-len limits.max-value-bytes))
+            (set! failed true)
+            (set!
+              failure-kind
+              (if (> 14 limits.max-name-bytes)
+                (HttpNameTooLong)
+                (HttpValueTooLong)))]
+          [(< next 0) (set! failed true)]
+          [else (set! total next)]))
+      unit)
+    (if (and (not failed) prepared.emit-transfer-encoding)
+      (let
+        [next : i64 (bounded-length-add total 28 limits.max-total-bytes)]
+        (cond
+          [(or
+            (< limits.max-line-bytes 26)
+            (< limits.max-name-bytes 17)
+            (< limits.max-value-bytes 7))
+            (set! failed true)
+            (set! failure-kind (HttpLineTooLong))]
+          [(< next 0) (set! failed true)]
+          [else (set! total next)]))
+      unit)
+    (if (and
+      (not failed)
+      (> (http_types.header-name-set-len (& prepared.trailer-names)) 0))
+      (let
+        [names-len : i64 0]
+        [name-index : i64 0]
+        (while (and
+          (<
+            name-index
+            (http_types.header-name-set-len (& prepared.trailer-names)))
+          (>= names-len 0))
+          (let
+            [name : (& prepared bytes)
+              (http_types.header-name-set-ref
+                (& prepared.trailer-names)
+                name-index)]
+            (if (> name-index 0)
+              (set!
+                names-len
+                (bounded-length-add names-len 2 limits.max-line-bytes))
               unit)
-            (set! index (+ index 1)))))
-      (if (and (not failed) prepared.emit-content-length)
+            (set!
+              names-len
+              (bounded-length-add
+                names-len
+                (byte_buf.bytes-length name)
+                limits.max-line-bytes))
+            (set! name-index (+ name-index 1))))
         (let
-          [digits : String (string.int->string prepared.content-length)]
-          [value-len : i64 (string.string-length (& digits))]
           [line-len : i64
-            (bounded-length-add 16 value-len limits.max-line-bytes)]
+            (bounded-length-add 9 names-len limits.max-line-bytes)]
           [field-total : i64
-            (bounded-length-add value-len 18 limits.max-total-bytes)]
+            (bounded-length-add names-len 11 limits.max-total-bytes)]
           [next : i64
             (bounded-length-add total field-total limits.max-total-bytes)]
           (cond
-            [(< line-len 0)
-              (begin
-                (set! failed true)
-                (set! failure-kind (HttpLineTooLong)))]
             [(or
-                (> 14 limits.max-name-bytes)
-                (> value-len limits.max-value-bytes))
-              (begin
-                (set! failed true)
-                (set!
-                  failure-kind
-                  (if (> 14 limits.max-name-bytes)
-                    (HttpNameTooLong)
-                    (HttpValueTooLong))))]
+              (< names-len 0)
+              (< line-len 0)
+              (< limits.max-name-bytes 7)
+              (> names-len limits.max-value-bytes))
+              (set! failed true)
+              (set! failure-kind (HttpLineTooLong))]
             [(< next 0) (set! failed true)]
-            [else (set! total next)]))
-        unit)
-      (if (and (not failed) prepared.emit-transfer-encoding)
-        (let
-          [next : i64 (bounded-length-add total 28 limits.max-total-bytes)]
-          (cond
-            [(or
-                (< limits.max-line-bytes 26)
-                (< limits.max-name-bytes 17)
-                (< limits.max-value-bytes 7))
-              (begin
-                (set! failed true)
-                (set! failure-kind (HttpLineTooLong)))]
-            [(< next 0) (set! failed true)]
-            [else (set! total next)]))
-        unit)
-      (if (and
-        (not failed)
-        (> (http_types.header-name-set-len (& prepared.trailer-names)) 0))
-        (let
-          [names-len : i64 0]
-          [name-index : i64 0]
-          (begin
-            (while (and
-              (<
-                name-index
-                (http_types.header-name-set-len (& prepared.trailer-names)))
-              (>= names-len 0))
-              (let
-                [name : (& prepared bytes)
-                  (http_types.header-name-set-ref
-                    (& prepared.trailer-names)
-                    name-index)]
-                (begin
-                  (if (> name-index 0)
-                    (set!
-                      names-len
-                      (bounded-length-add names-len 2 limits.max-line-bytes))
-                    unit)
-                  (set!
-                    names-len
-                    (bounded-length-add
-                      names-len
-                      (byte_buf.bytes-length name)
-                      limits.max-line-bytes))
-                  (set! name-index (+ name-index 1)))))
-            (let
-              [line-len : i64
-                (bounded-length-add 9 names-len limits.max-line-bytes)]
-              [field-total : i64
-                (bounded-length-add names-len 11 limits.max-total-bytes)]
-              [next : i64
-                (bounded-length-add total field-total limits.max-total-bytes)]
-              (cond
-                [(or
-                    (< names-len 0)
-                    (< line-len 0)
-                    (< limits.max-name-bytes 7)
-                    (> names-len limits.max-value-bytes))
-                  (begin
-                    (set! failed true)
-                    (set! failure-kind (HttpLineTooLong)))]
-                [(< next 0) (set! failed true)]
-                [else (set! total next)]))))
-        unit)
-      (if (not failed)
-        (set! total (bounded-length-add total 2 limits.max-total-bytes))
-        unit)
-      (if (< total 0)
-        (set! failed true)
-        unit)
-      (if failed
-        (HttpLengthErr
-          (http_types.local-error failure-kind limits.max-total-bytes))
-        (HttpLengthOk total)))))
+            [else (set! total next)])))
+      unit)
+    (if (not failed)
+      (set! total (bounded-length-add total 2 limits.max-total-bytes))
+      unit)
+    (if (< total 0)
+      (set! failed true)
+      unit)
+    (if failed
+      (HttpLengthErr
+        (http_types.local-error failure-kind limits.max-total-bytes))
+      (HttpLengthOk total))))
 
 ;: Append one canonical `name: value\r\n` request field.
 (define (append-request-field
@@ -1678,54 +1575,47 @@
     [target-bytes : (& target bytes) (http_types.request-target-bytes target)]
     [out : byte_buf.ByteBuf (byte_buf.with-capacity capacity)]
     [index : i64 0]
-    (begin
-      (set! out (byte_buf.append-bytes out method-bytes))
-      (set! out (byte_buf.append-string out " "))
-      (set! out (byte_buf.append-bytes out target-bytes))
-      (set! out (byte_buf.append-string out " HTTP/1.1\r\n"))
-      (while (< index headers.len)
+    (set! out (byte_buf.append-bytes out method-bytes))
+    (set! out (byte_buf.append-string out " "))
+    (set! out (byte_buf.append-bytes out target-bytes))
+    (set! out (byte_buf.append-string out " HTTP/1.1\r\n"))
+    (while (< index headers.len)
+      (let
+        [field : (& headers http_types.HttpHeaderField)
+          (& (array-ref headers.slots index))]
+        (if (not (request-field-replaced? (& field.name)))
+          (set! out (append-request-field out field))
+          unit)
+        (set! index (+ index 1))))
+    (when
+      prepared.emit-content-length
+      (set! out (byte_buf.append-string out "Content-Length: "))
+      (set!
+        out
+        (byte_buf.append-string
+          out
+          (string.int->string prepared.content-length)))
+      (set! out (byte_buf.append-string out "\r\n")))
+    (if prepared.emit-transfer-encoding
+      (set! out (byte_buf.append-string out "Transfer-Encoding: chunked\r\n"))
+      unit)
+    (when
+      (> (http_types.header-name-set-len (& prepared.trailer-names)) 0)
+      (set! out (byte_buf.append-string out "Trailer: "))
+      (set! index 0)
+      (while (<
+        index
+        (http_types.header-name-set-len (& prepared.trailer-names)))
         (let
-          [field : (& headers http_types.HttpHeaderField)
-            (& (array-ref headers.slots index))]
-          (begin
-            (if (not (request-field-replaced? (& field.name)))
-              (set! out (append-request-field out field))
-              unit)
-            (set! index (+ index 1)))))
-      (if prepared.emit-content-length
-        (begin
-          (set! out (byte_buf.append-string out "Content-Length: "))
-          (set!
-            out
-            (byte_buf.append-string
-              out
-              (string.int->string prepared.content-length)))
-          (set! out (byte_buf.append-string out "\r\n")))
-        unit)
-      (if prepared.emit-transfer-encoding
-        (set! out (byte_buf.append-string out "Transfer-Encoding: chunked\r\n"))
-        unit)
-      (if (> (http_types.header-name-set-len (& prepared.trailer-names)) 0)
-        (begin
-          (set! out (byte_buf.append-string out "Trailer: "))
-          (set! index 0)
-          (while (<
-            index
-            (http_types.header-name-set-len (& prepared.trailer-names)))
-            (let
-              [name : (& prepared bytes)
-                (http_types.header-name-set-ref
-                  (& prepared.trailer-names)
-                  index)]
-              (begin
-                (if (> index 0)
-                  (set! out (byte_buf.append-string out ", "))
-                  unit)
-                (set! out (byte_buf.append-bytes out name))
-                (set! index (+ index 1)))))
-          (set! out (byte_buf.append-string out "\r\n")))
-        unit)
-      (byte_buf.append-string out "\r\n"))))
+          [name : (& prepared bytes)
+            (http_types.header-name-set-ref (& prepared.trailer-names) index)]
+          (if (> index 0)
+            (set! out (byte_buf.append-string out ", "))
+            unit)
+          (set! out (byte_buf.append-bytes out name))
+          (set! index (+ index 1))))
+      (set! out (byte_buf.append-string out "\r\n")))
+    (byte_buf.append-string out "\r\n")))
 
 ;: Serialize one strict origin-form HTTP/1.1 request head and return the body
 ;: plan derived from the exact same validated framing facts. No output buffer

@@ -188,13 +188,10 @@
     (while (< index 8)
       (let
         [shift : i64 (- 56 (* index 8))]
-        (begin
-          (set!
-            (array-ref block (+ offset index))
-            (cast
-              (bit-and (shr value (cast shift : u64)) (cast 255 : u64))
-              : u8))
-          (set! index (+ index 1)))))))
+        (set!
+          (array-ref block (+ offset index))
+          (cast (bit-and (shr value (cast shift : u64)) (cast 255 : u64)) : u8))
+        (set! index (+ index 1))))))
 
 ;: Store one word in network order through an audited caller-owned sink.
 (unsafe
@@ -207,14 +204,13 @@
       (while (< index 8)
         (let
           [shift : i64 (- 56 (* index 8))]
-          (begin
-            (unsafe
-              (ptr-write!
-                (ptr-offset output (+ offset index))
-                (cast
-                  (bit-and (shr value (cast shift : u64)) (cast 255 : u64))
-                  : u8)))
-            (set! index (+ index 1))))))))
+          (unsafe
+            (ptr-write!
+              (ptr-offset output (+ offset index))
+              (cast
+                (bit-and (shr value (cast shift : u64)) (cast 255 : u64))
+                : u8)))
+          (set! index (+ index 1)))))))
 
 ;: Encode the checked 128-bit bit count into the last sixteen block bytes.
 (define (write-bit-length!
@@ -225,9 +221,8 @@
     [bit-high : u64
       (bit-or (shl byte-high (cast 3 : u64)) (shr byte-low (cast 61 : u64)))]
     [bit-low : u64 (shl byte-low (cast 3 : u64))]
-    (begin
-      (store-block-word-be! block 112 bit-high)
-      (store-block-word-be! block 120 bit-low))))
+    (store-block-word-be! block 112 bit-high)
+    (store-block-word-be! block 120 bit-low)))
 
 ;: Volatile-wipe a completed compression schedule in its owning frame.
 (unsafe
@@ -235,10 +230,9 @@
     (let
       [index : i64 0]
       (while (< index 80)
-        (begin
-          (unsafe
-            (volatile-store! (ptr-offset data index) (cast 0 : u64)))
-          (set! index (+ index 1)))))))
+        (unsafe
+          (volatile-store! (ptr-offset data index) (cast 0 : u64)))
+        (set! index (+ index 1))))))
 
 ;: Compress the complete block currently stored in `state`.
 (define (compress! [state : (&mut state Sha512State)]) : unit
@@ -327,65 +321,59 @@
         0x6c44198c4a475817)]
     [schedule : (Array u64 80) (make-array u64 80)]
     [index : i64 0]
-    (begin
-      (while (< index 16)
-        (begin
-          (set!
-            (array-ref schedule index)
-            (load-word-be (& state.block) (* index 8)))
-          (set! index (+ index 1))))
-      (while (< index 80)
-        (begin
-          (set!
-            (array-ref schedule index)
+    (while (< index 16)
+      (set!
+        (array-ref schedule index)
+        (load-word-be (& state.block) (* index 8)))
+      (set! index (+ index 1)))
+    (while (< index 80)
+      (set!
+        (array-ref schedule index)
+        (+
+          (sigma-small-one (array-ref schedule (- index 2)))
+          (array-ref schedule (- index 7))
+          (sigma-small-zero (array-ref schedule (- index 15)))
+          (array-ref schedule (- index 16))))
+      (set! index (+ index 1)))
+    (let
+      [a : u64 (array-ref state.words 0)]
+      [b : u64 (array-ref state.words 1)]
+      [c : u64 (array-ref state.words 2)]
+      [d : u64 (array-ref state.words 3)]
+      [e : u64 (array-ref state.words 4)]
+      [f : u64 (array-ref state.words 5)]
+      [g : u64 (array-ref state.words 6)]
+      [h : u64 (array-ref state.words 7)]
+      [round : i64 0]
+      (while (< round 80)
+        (let
+          [t1 : u64
             (+
-              (sigma-small-one (array-ref schedule (- index 2)))
-              (array-ref schedule (- index 7))
-              (sigma-small-zero (array-ref schedule (- index 15)))
-              (array-ref schedule (- index 16))))
-          (set! index (+ index 1))))
-      (let
-        [a : u64 (array-ref state.words 0)]
-        [b : u64 (array-ref state.words 1)]
-        [c : u64 (array-ref state.words 2)]
-        [d : u64 (array-ref state.words 3)]
-        [e : u64 (array-ref state.words 4)]
-        [f : u64 (array-ref state.words 5)]
-        [g : u64 (array-ref state.words 6)]
-        [h : u64 (array-ref state.words 7)]
-        [round : i64 0]
-        (begin
-          (while (< round 80)
-            (let
-              [t1 : u64
-                (+
-                  h
-                  (sigma-big-one e)
-                  (choose e f g)
-                  (array-ref constants round)
-                  (array-ref schedule round))]
-              [t2 : u64 (+ (sigma-big-zero a) (majority a b c))]
-              (begin
-                (set! h g)
-                (set! g f)
-                (set! f e)
-                (set! e (+ d t1))
-                (set! d c)
-                (set! c b)
-                (set! b a)
-                (set! a (+ t1 t2))
-                (set! round (+ round 1)))))
-          (set! (array-ref state.words 0) (+ (array-ref state.words 0) a))
-          (set! (array-ref state.words 1) (+ (array-ref state.words 1) b))
-          (set! (array-ref state.words 2) (+ (array-ref state.words 2) c))
-          (set! (array-ref state.words 3) (+ (array-ref state.words 3) d))
-          (set! (array-ref state.words 4) (+ (array-ref state.words 4) e))
-          (set! (array-ref state.words 5) (+ (array-ref state.words 5) f))
-          (set! (array-ref state.words 6) (+ (array-ref state.words 6) g))
-          (set! (array-ref state.words 7) (+ (array-ref state.words 7) h))))
-      (unsafe
-        (wipe-schedule-pointer!
-          (ptr-cast (ptr-addr-of schedule) : (MutPtr u64)))))))
+              h
+              (sigma-big-one e)
+              (choose e f g)
+              (array-ref constants round)
+              (array-ref schedule round))]
+          [t2 : u64 (+ (sigma-big-zero a) (majority a b c))]
+          (set! h g)
+          (set! g f)
+          (set! f e)
+          (set! e (+ d t1))
+          (set! d c)
+          (set! c b)
+          (set! b a)
+          (set! a (+ t1 t2))
+          (set! round (+ round 1))))
+      (set! (array-ref state.words 0) (+ (array-ref state.words 0) a))
+      (set! (array-ref state.words 1) (+ (array-ref state.words 1) b))
+      (set! (array-ref state.words 2) (+ (array-ref state.words 2) c))
+      (set! (array-ref state.words 3) (+ (array-ref state.words 3) d))
+      (set! (array-ref state.words 4) (+ (array-ref state.words 4) e))
+      (set! (array-ref state.words 5) (+ (array-ref state.words 5) f))
+      (set! (array-ref state.words 6) (+ (array-ref state.words 6) g))
+      (set! (array-ref state.words 7) (+ (array-ref state.words 7) h)))
+    (unsafe
+      (wipe-schedule-pointer! (ptr-cast (ptr-addr-of schedule) : (MutPtr u64))))))
 
 ;: True when public bookkeeping fields describe a live streaming state.
 (define (state-valid? [state : (& state Sha512State)]) : bool
@@ -416,35 +404,30 @@
           [(Sha512LengthOk length)
             (let
               [offset : i64 0]
-              (begin
-                (set! state.byte-length-high length.high)
-                (set! state.byte-length-low length.low)
-                (while (< offset input-length)
-                  (let
-                    [available : i64 (- 128 state.block-length)]
-                    [remaining : i64 (- input-length offset)]
-                    [take : i64
-                      (if (< remaining available)
-                        remaining
-                        available)]
-                    [copy-index : i64 0]
+              (set! state.byte-length-high length.high)
+              (set! state.byte-length-low length.low)
+              (while (< offset input-length)
+                (let
+                  [available : i64 (- 128 state.block-length)]
+                  [remaining : i64 (- input-length offset)]
+                  [take : i64
+                    (if (< remaining available)
+                      remaining
+                      available)]
+                  [copy-index : i64 0]
+                  (while (< copy-index take)
+                    (set!
+                      (array-ref state.block (+ state.block-length copy-index))
+                      (byte_buf.bytes-ref input (+ offset copy-index)))
+                    (set! copy-index (+ copy-index 1)))
+                  (set! state.block-length (+ state.block-length take))
+                  (set! offset (+ offset take))
+                  (if (= state.block-length 128)
                     (begin
-                      (while (< copy-index take)
-                        (begin
-                          (set!
-                            (array-ref
-                              state.block
-                              (+ state.block-length copy-index))
-                            (byte_buf.bytes-ref input (+ offset copy-index)))
-                          (set! copy-index (+ copy-index 1))))
-                      (set! state.block-length (+ state.block-length take))
-                      (set! offset (+ offset take))
-                      (if (= state.block-length 128)
-                        (begin
-                          (compress! state)
-                          (set! state.block-length 0))
-                        unit))))
-                (Sha512UpdateOk)))]))]))
+                      (compress! state)
+                      (set! state.block-length 0))
+                    unit)))
+              (Sha512UpdateOk))]))]))
 
 ;: Extend `state` from a raw, scoped source without constructing an ordinary
 ;: byte container. This is the unsafe adapter boundary for cleanup-owned crypto
@@ -473,37 +456,31 @@
           [(Sha512LengthOk length)
             (let
               [offset : i64 0]
-              (begin
-                (set! state.byte-length-high length.high)
-                (set! state.byte-length-low length.low)
-                (while (< offset input-length)
-                  (let
-                    [available : i64 (- 128 state.block-length)]
-                    [remaining : i64 (- input-length offset)]
-                    [take : i64
-                      (if (< remaining available)
-                        remaining
-                        available)]
-                    [copy-index : i64 0]
+              (set! state.byte-length-high length.high)
+              (set! state.byte-length-low length.low)
+              (while (< offset input-length)
+                (let
+                  [available : i64 (- 128 state.block-length)]
+                  [remaining : i64 (- input-length offset)]
+                  [take : i64
+                    (if (< remaining available)
+                      remaining
+                      available)]
+                  [copy-index : i64 0]
+                  (while (< copy-index take)
+                    (set!
+                      (array-ref state.block (+ state.block-length copy-index))
+                      (unsafe
+                        (ptr-read (ptr-offset input (+ offset copy-index)))))
+                    (set! copy-index (+ copy-index 1)))
+                  (set! state.block-length (+ state.block-length take))
+                  (set! offset (+ offset take))
+                  (if (= state.block-length 128)
                     (begin
-                      (while (< copy-index take)
-                        (begin
-                          (set!
-                            (array-ref
-                              state.block
-                              (+ state.block-length copy-index))
-                            (unsafe
-                              (ptr-read
-                                (ptr-offset input (+ offset copy-index)))))
-                          (set! copy-index (+ copy-index 1))))
-                      (set! state.block-length (+ state.block-length take))
-                      (set! offset (+ offset take))
-                      (if (= state.block-length 128)
-                        (begin
-                          (compress! state)
-                          (set! state.block-length 0))
-                        unit))))
-                (Sha512UpdateOk)))])])))
+                      (compress! state)
+                      (set! state.block-length 0))
+                    unit)))
+              (Sha512UpdateOk))])])))
 
 ;: Finalize into a caller-validated, non-overlapping 64-byte raw sink. This is
 ;: unsafe so an imported call cannot accidentally erase pointer validity,
@@ -519,47 +496,41 @@
       [else
         (let
           [cursor : i64 state.block-length]
-          (begin
-            (set! (array-ref state.block cursor) (cast 128 : u8))
-            (set! cursor (+ cursor 1))
-            (if (> cursor 112)
-              (begin
-                (while (< cursor 128)
-                  (begin
-                    (set! (array-ref state.block cursor) (cast 0 : u8))
-                    (set! cursor (+ cursor 1))))
-                (compress! state)
-                (set! cursor 0))
-              unit)
-            (while (< cursor 112)
-              (begin
+          (set! (array-ref state.block cursor) (cast 128 : u8))
+          (set! cursor (+ cursor 1))
+          (if (> cursor 112)
+            (begin
+              (while (< cursor 128)
                 (set! (array-ref state.block cursor) (cast 0 : u8))
-                (set! cursor (+ cursor 1))))
-            (write-bit-length!
-              (&mut state.block)
-              state.byte-length-high
-              state.byte-length-low)
-            (compress! state)
+                (set! cursor (+ cursor 1)))
+              (compress! state)
+              (set! cursor 0))
+            unit)
+          (while (< cursor 112)
+            (set! (array-ref state.block cursor) (cast 0 : u8))
+            (set! cursor (+ cursor 1)))
+          (write-bit-length!
+            (&mut state.block)
+            state.byte-length-high
+            state.byte-length-low)
+          (compress! state)
+          (let
+            [word-index : i64 0]
+            (while (< word-index 8)
+              (unsafe
+                (store-pointer-word-be!
+                  output
+                  (* word-index 8)
+                  (array-ref state.words word-index)))
+              (set! word-index (+ word-index 1)))
+            (set! state.finalized true)
+            (set! state.block-length 0)
             (let
-              [word-index : i64 0]
-              (begin
-                (while (< word-index 8)
-                  (begin
-                    (unsafe
-                      (store-pointer-word-be!
-                        output
-                        (* word-index 8)
-                        (array-ref state.words word-index)))
-                    (set! word-index (+ word-index 1))))
-                (set! state.finalized true)
-                (set! state.block-length 0)
-                (let
-                  [block-index : i64 0]
-                  (while (< block-index 128)
-                    (begin
-                      (set! (array-ref state.block block-index) (cast 0 : u8))
-                      (set! block-index (+ block-index 1)))))
-                (Sha512FinalizeIntoOk)))))])))
+              [block-index : i64 0]
+              (while (< block-index 128)
+                (set! (array-ref state.block block-index) (cast 0 : u8))
+                (set! block-index (+ block-index 1))))
+            (Sha512FinalizeIntoOk)))])))
 
 ;: Finalize `state` exactly once and return its ordinary public 64-byte digest.
 (define (finalize! [state : (&mut state Sha512State)]) : Sha512FinalizeResult
@@ -596,52 +567,48 @@
   (let
     [different : u64 (cast 0 : u64)]
     [index : i64 0]
-    (begin
-      (while (< index 64)
-        (begin
-          (set!
-            different
-            (bit-or
-              different
-              (cast
-                (bit-xor
-                  (array-ref left.octets index)
-                  (array-ref right.octets index))
-                : u64)))
-          (set! index (+ index 1))))
-      (= different (cast 0 : u64)))))
+    (while (< index 64)
+      (set!
+        different
+        (bit-or
+          different
+          (cast
+            (bit-xor
+              (array-ref left.octets index)
+              (array-ref right.octets index))
+            : u64)))
+      (set! index (+ index 1)))
+    (= different (cast 0 : u64))))
 
 ;: Render a public digest as exactly 128 lowercase hexadecimal characters.
 (define (to-hex [digest : (& digest Sha512Digest)]) : String
   (let
     [output : (MutPtr u8) (string.string-runtime-alloc 128)]
     [index : i64 0]
-    (begin
-      (while (< index 64)
-        (let
-          [byte : i64 (cast (array-ref digest.octets index) : i64)]
-          [high : i64 (/ byte 16)]
-          [low : i64 (% byte 16)]
-          (begin
-            (unsafe
-              (ptr-write!
-                (ptr-offset output (* index 2))
-                (cast
-                  (if (< high 10)
-                    (+ 48 high)
-                    (+ 87 high))
-                  : u8)))
-            (unsafe
-              (ptr-write!
-                (ptr-offset output (+ (* index 2) 1))
-                (cast
-                  (if (< low 10)
-                    (+ 48 low)
-                    (+ 87 low))
-                  : u8)))
-            (set! index (+ index 1)))))
-      (unsafe
-        (string-from-bytes (ptr-cast output : (Ptr u8)) 128)))))
+    (while (< index 64)
+      (let
+        [byte : i64 (cast (array-ref digest.octets index) : i64)]
+        [high : i64 (/ byte 16)]
+        [low : i64 (% byte 16)]
+        (unsafe
+          (ptr-write!
+            (ptr-offset output (* index 2))
+            (cast
+              (if (< high 10)
+                (+ 48 high)
+                (+ 87 high))
+              : u8)))
+        (unsafe
+          (ptr-write!
+            (ptr-offset output (+ (* index 2) 1))
+            (cast
+              (if (< low 10)
+                (+ 48 low)
+                (+ 87 low))
+              : u8)))
+        (set! index (+ index 1))))
+    (unsafe
+      (string-from-bytes (ptr-cast output : (Ptr u8)) 128))))
 
 ;: Construct the poisoned all-zero replacement installed by `wipe-state!`.
 (define (wiped-state) : Sha512State
@@ -664,22 +631,19 @@
       (unsafe
         (ptr-cast (ptr-addr-of previous.block) : (MutPtr u64)))]
     [index : i64 0]
-    (begin
-      (set! previous.finalized true)
-      (set! previous.block-length 0)
-      (set! previous.byte-length-high (cast 0 : u64))
-      (set! previous.byte-length-low (cast 0 : u64))
-      (while (< index 8)
-        (begin
-          (unsafe
-            (volatile-store! (ptr-offset word-data index) (cast 0 : u64)))
-          (set! index (+ index 1))))
-      (set! index 0)
-      (while (< index 16)
-        (begin
-          (unsafe
-            (volatile-store! (ptr-offset block-data index) (cast 0 : u64)))
-          (set! index (+ index 1)))))))
+    (set! previous.finalized true)
+    (set! previous.block-length 0)
+    (set! previous.byte-length-high (cast 0 : u64))
+    (set! previous.byte-length-low (cast 0 : u64))
+    (while (< index 8)
+      (unsafe
+        (volatile-store! (ptr-offset word-data index) (cast 0 : u64)))
+      (set! index (+ index 1)))
+    (set! index 0)
+    (while (< index 16)
+      (unsafe
+        (volatile-store! (ptr-offset block-data index) (cast 0 : u64)))
+      (set! index (+ index 1)))))
 
 ;: Zero the caller's digest before volatile-wiping its previous contents.
 (define (wipe-digest! [digest : (&mut digest Sha512Digest)]) : unit
@@ -691,10 +655,9 @@
         (ptr-cast (ptr-addr-of previous.octets) : (MutPtr u64)))]
     [index : i64 0]
     (while (< index 8)
-      (begin
-        (unsafe
-          (volatile-store! (ptr-offset data index) (cast 0 : u64)))
-        (set! index (+ index 1))))))
+      (unsafe
+        (volatile-store! (ptr-offset data index) (cast 0 : u64)))
+      (set! index (+ index 1)))))
 
 ;: Consume a state into an exact caller-owned 64-byte sink, then poison and
 ;: volatile-wipe the context on success or typed failure. The output length,
@@ -716,6 +679,5 @@
           [else
             (unsafe
               (finalize-into-pointer! state output))])]
-      (begin
-        (wipe-state! state)
-        result))))
+      (wipe-state! state)
+      result)))

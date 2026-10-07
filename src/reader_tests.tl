@@ -13,10 +13,8 @@
 (cfg test (import compiler_allocation_profile as allocation_profile))
 (import (result.result i64 String) as result_lex_i64)
 
-;; A pool grow preserves its source rows, so aggregate relocation must use an
-;; explicit shared view instead of consuming an element through ordinary
-;; by-value indexing. Exercise a String-bearing row across the exact capacity
-;; boundary as well as the scalar fields.
+;; A pool grow preserves its source rows. Exercise interned text across the
+;; exact capacity boundary as well as the scalar fields.
 (define (sp-node-pool-growth-preserves-string?) : bool
   (reader.sp-node-pool-reset!)
   (if (< (reader.sp-node-pool-capacity) 1)
@@ -27,19 +25,26 @@
     [old-cap : i64 (reader.sp-node-pool-capacity)]
     [i : i64 0]
     (while (<= i old-cap)
-      (reader.sp-node-push (Int i "__tl_pool_growth_marker" span))
+      (begin
+        (reader.sp-node-push
+          (Int i (reader.sp-text-id "__tl_pool_growth_marker") span))
+        unit)
       (set! i (+ i 1)))
     (let
       [grew : bool (> (reader.sp-node-pool-capacity) old-cap)]
       [first-ok : bool
         (match (reader.sp-node-get 0)
           [(Int value text _)
-            (and (= value 0) (string.eq text "__tl_pool_growth_marker"))]
+            (and
+              (= value 0)
+              (string.eq (reader.sp-text text) "__tl_pool_growth_marker"))]
           [_ false])]
       [boundary-ok : bool
         (match (reader.sp-node-get old-cap)
           [(Int value text _)
-            (and (= value old-cap) (string.eq text "__tl_pool_growth_marker"))]
+            (and
+              (= value old-cap)
+              (string.eq (reader.sp-text text) "__tl_pool_growth_marker"))]
           [_ false])]
       (reader.sp-node-pool-reset!)
       (and grew first-ok boundary-ok))))
@@ -1058,7 +1063,11 @@
     [builder : reader.SpannedSexprBuilder (reader.spanned-sexpr-builder-new)]
     [i : i64 0]
     (while (< i count)
-      (set! builder (reader.spanned-sexpr-builder-push builder (Int i "" span)))
+      (set!
+        builder
+        (reader.spanned-sexpr-builder-push
+          builder
+          (Int i (reader.sp-text-id "") span)))
       (set! i (+ i 1)))
     (match (reader.spanned-sexpr-list-from-builder builder span)
       [(List start length _)
@@ -1087,7 +1096,7 @@
       (while (< (reader.sp-node-pool-len) (- rows 3))
         (reader.sp-node-pool-fill!
           (reader.sp-node-pool-reserve! 1)
-          (Int 7 "__tl_pool_placement" span)))]
+          (Int 7 (reader.sp-text-id "__tl_pool_placement") span)))]
     [first-address : i64 (sp-node-pool-test-row-address 0)]
     [straddler : i64 (sp-node-pool-test-list 10 span)]
     [long : i64 (sp-node-pool-test-list (+ (* 2 rows) 5) span)]
@@ -1098,11 +1107,14 @@
         (= long (* 2 rows))
         (= after (+ (* 4 rows) 5))
         (match (reader.sp-node-get (- rows 1))
-          [(Int value text _) (and (= value 0) (string.eq text ""))]
+          [(Int value text _)
+            (and (= value 0) (string.eq (reader.sp-text text) ""))]
           [_ false]))]
     [_grow-directory : unit
       (while (<= (reader.sp-node-pool-capacity) (* 64 rows))
-        (reader.sp-node-push (Int 7 "" span))
+        (begin
+          (reader.sp-node-push (Int 7 (reader.sp-text-id "") span))
+          unit)
         unit)]
     [reads : bool
       (and
@@ -1226,3 +1238,52 @@
       (io.panic "reader: increasing long lists retained quadratic storage")))
   (reader.sp-node-pool-reset!)
   (reader.sp-node-pool-compact-retained!))
+
+(test
+  reader-empty-spelling-cache-owner-and-reset
+  (let
+    [installed : ci.InternCompatState (ci.intern-compat-state-capture-active)]
+    [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [_install-a : unit (ci.intern-compat-state-install! (& state-a))]
+    [empty-a : ci.InternId (reader.sp-text-id "")]
+    [_capture-a : unit
+      (ci.intern-compat-state-capture-from-globals! (&mut state-a))]
+    [_install-b : unit (ci.intern-compat-state-install! (& state-b))]
+    [_occupied : i64 (ci.intern "different-slot-zero")]
+    [_capture-b : unit
+      (ci.intern-compat-state-capture-from-globals! (&mut state-b))]
+    ;; Equal generations do not make two installed tables the same owner.
+    [_same-generation : unit
+      (set!
+        (array-ref state-b.reset-generation 0)
+        (ci.intern-compat-state-generation (& state-a)))]
+    [_reinstall-b : unit (ci.intern-compat-state-install! (& state-b))]
+    [empty-b : ci.InternId (reader.sp-text-id "")]
+    [owner-ok : bool
+      (and
+        (not (ci.intern-id-eq? empty-a empty-b))
+        (string.eq (reader.sp-text empty-b) ""))]
+    [count : i64 (ci.intern-pool-len)]
+    [reuse-ok : bool
+      (and
+        (ci.intern-id-eq? empty-b (reader.sp-text-id ""))
+        (= (ci.intern-pool-len) count))]
+    [_reset : unit (ci.intern-reset!)]
+    [_first : i64 (ci.intern "reset-slot-zero")]
+    [_second : i64 (ci.intern "reset-slot-one")]
+    [empty-reset : ci.InternId (reader.sp-text-id "")]
+    [reset-ok : bool
+      (and
+        (not (ci.intern-id-eq? empty-b empty-reset))
+        (string.eq (reader.sp-text empty-reset) ""))]
+    [_truncate : unit (ci.intern-reset-to! 1)]
+    [empty-truncated : ci.InternId (reader.sp-text-id "")]
+    [truncate-ok : bool
+      (and
+        (not (ci.intern-id-eq? empty-reset empty-truncated))
+        (string.eq (reader.sp-text empty-truncated) ""))]
+    [_restore : unit (ci.intern-compat-state-install! (& installed))]
+    (unless
+      (and owner-ok reuse-ok reset-ok truncate-ok)
+      (io.panic "reader: empty spelling cache crossed an owner or reset"))))

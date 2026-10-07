@@ -7543,6 +7543,188 @@
         [_ (No)])]
     [_ (No)]))
 
+;; How a by-value expression reads its value: 1 through a shared reference, 2
+;; through a mutable reference, 0 otherwise. Such a read is a `deref` of a
+;; reference-typed name, or a field, tuple or element projection whose receiver
+;; is one or is itself a reference-typed name, which a projection dereferences
+;; implicitly. A dotted local field name reads its expansion (#8554).
+(define (tc-reference-read-kind
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]) : i64
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+    [(BoxTake inner-box)
+      (tc-reference-name-kind
+        ctx
+        expr-bases
+        env
+        (ast.ast-expr-segment-bases-get expr-bases inner-box))]
+    [(StructGet receiver-box _)
+      (tc-reference-receiver-kind ctx expr-bases env receiver-box)]
+    [(TupleRef tuple-box _)
+      (tc-reference-receiver-kind ctx expr-bases env tuple-box)]
+    [(ArrayRef array-box _)
+      (tc-reference-receiver-kind ctx expr-bases env array-box)]
+    [(Var name)
+      (if (tc-dotted-local-field-name-id? env name)
+        (match (tc-dotted-local-field-expr-id env name)
+          [(Ok virtual-id)
+            (tc-reference-read-kind
+              ctx
+              expr-bases
+              env
+              (ast.ast-expr-segment-bases-get expr-bases virtual-id))]
+          [(Err _) 0])
+        0)]
+    [_ 0]))
+
+(define (tc-reference-receiver-kind
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [receiver-id : i64]) : i64
+  (let
+    [receiver : ast.AstExpr
+      (ast.ast-expr-segment-bases-get expr-bases receiver-id)]
+    [named : i64
+      (tc-reference-name-kind
+        ctx
+        expr-bases
+        env
+        (tc-global-shared-view receiver))]
+    (if (> named 0)
+      named
+      (tc-reference-read-kind ctx expr-bases env receiver))))
+
+;; 1 for a name bound to a shared reference, 2 for a mutable one, else 0.
+(define (tc-reference-name-kind
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]) : i64
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+    [(Var name)
+      (match (tc-lookup-id env name)
+        [(Ok ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx ty))
+            [(Ref _ _) 1]
+            [(MutRef _ _) 2]
+            [_ 0])]
+        [(Err _) 0])]
+    [_ 0]))
+
+;; A by-value use of a non-Copy value read through a reference would move it
+;; out of the reference. The region and reference escape checks reject that
+;; use before the move check sees it, and their arena advice does not fit, so
+;; they report this instead (#8554). Returns "" when `expr` reads no non-Copy
+;; value through a reference; `help` names the fix for the use's position.
+(define (tc-move-out-of-reference-error
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [expr : ast.AstExpr]
+  [ty : ast.AstType]
+  [help : String]) : String
+  (let
+    [kind : i64
+      (tc-reference-read-kind ctx expr-bases env (tc-global-shared-view expr))]
+    (if (or
+      (= kind 0)
+      (tc-type-copyable?
+        ctx
+        (tc-type-without-regions (tc-global-shared-view ty))))
+      ""
+      (tc-move-out-of-reference-message expr-bases expr ty kind help))))
+
+;; A `deref` the move check sees consuming a non-Copy referent has no single
+;; use position, so its help names both fixes.
+(define (tc-move-out-of-deref-help) : String
+  "borrow it with `(& ...)` instead, or use an owned clone")
+
+;; The E0208 for a by-value use of non-Copy `ty` read through a reference:
+;; `kind` 1 for a shared reference, 2 for a mutable one.
+(define (tc-move-out-of-reference-message
+  [expr-bases : i64]
+  [expr : ast.AstExpr]
+  [ty : ast.AstType]
+  [kind : i64]
+  [help : String]) : String
+  (let
+    [type-text : String (tc-type-render (tc-type-without-regions ty))]
+    [message : String
+      (str_cat.str-cat
+        (cdiag.compiler-diagnostic-typecheck-tag (MoveViolation))
+        "typecheck: cannot move a `"
+        (string.copy (& type-text))
+        "` out of a "
+        (if (= kind 2)
+          "mutable"
+          "shared")
+        " reference; `"
+        type-text
+        "` is not Copy")]
+    (match (tc-expr-maybe-span expr-bases expr)
+      [(Some span)
+        (tc-rich-error-one-secondary
+          span
+          message
+          help
+          span
+          "this reads the value through a reference")]
+      [(No) message])))
+
+;; The binding check of a `let` initializer, reporting a non-Copy value read
+;; through a reference as the move it would be (#8554).
+(define (tc-ensure-let-value-can-bind
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [init : ast.AstExpr]
+  [init-ty : ast.AstType]) : ResultTcUnit
+  (match (tc-ensure-reference-value-can-bind
+    env
+    (tc-global-shared-view init-ty))
+    [(Ok) Ok]
+    [(Err message)
+      (let
+        [moved : String
+          (tc-move-out-of-reference-error
+            ctx
+            (tc-context-expr-bases ctx)
+            env
+            init
+            init-ty
+            "bind a borrow `(& ...)` of it instead, or an owned clone")]
+        (Err
+          (if (> (string.string-length moved) 0)
+            moved
+            message)))]))
+
+;; The expression a body's value comes from: a `let` body's or `begin`'s last
+;; form, through any nesting.
+(define (tc-body-tail-expr [expr-bases : i64] [expr : ast.AstExpr]) : ast.AstExpr
+  (match (ast.ast-expr-unspan-with-segment-bases
+    expr-bases
+    (tc-global-shared-view expr))
+    [(Let let-box)
+      (match (ast.ast-let-box-shared-view let-box)
+        [(Let _ body-id)
+          (tc-body-tail-expr
+            expr-bases
+            (ast.ast-expr-segment-bases-get expr-bases body-id))])]
+    [(Begin items)
+      (if (> (ast.ast-expr-list-len (& items)) 0)
+        (tc-body-tail-expr
+          expr-bases
+          (ast.ast-expr-segment-bases-get
+            expr-bases
+            (ast.ast-expr-list-get
+              (& items)
+              (- (ast.ast-expr-list-len (& items)) 1)
+              0)))
+        expr)]
+    [_ expr]))
+
 ;; A direct array read through a reference rvalue can produce a region-tagged
 ;; move-only aggregate. Keep the sound confinement rejection, but make this
 ;; frequent vector-iteration shape actionable without changing diagnostics for
@@ -38341,9 +38523,24 @@
                         (tc-type-contains-reference?
                           (tc-global-shared-view got))))
                       (Err
-                        (tc-region-call-arg-error
-                          (tc-context-expr-bases ctx)
-                          effective-arg))
+                        (let
+                          [moved : String
+                            (tc-move-out-of-reference-error
+                              ctx
+                              (tc-context-expr-bases ctx)
+                              env
+                              (tc-global-shared-view effective-arg)
+                              (tc-global-shared-view got)
+                              (match (& constructor-target)
+                                [(Some _)
+                                  "construct with an owned clone of it, or make the field a reference"]
+                                [(No)
+                                  "pass an owned clone, or make the parameter a reference and pass `(& ...)`"]))]
+                          (if (> (string.string-length moved) 0)
+                            moved
+                            (tc-region-call-arg-error
+                              (tc-context-expr-bases ctx)
+                              effective-arg))))
                       (match (tc-global-shared-view constructor-target)
                         [(Some target)
                           (let
@@ -41321,8 +41518,10 @@
             (let
               [_
                 (try
-                  (tc-ensure-reference-value-can-bind
+                  (tc-ensure-let-value-can-bind
+                    ctx
                     env
+                    (tc-global-shared-view init)
                     (tc-global-shared-view init-ty)))]
               (tc-let-bindings-at
                 ctx
@@ -42445,8 +42644,10 @@
                   (let
                     [_
                       (try
-                        (tc-ensure-reference-value-can-bind
+                        (tc-ensure-let-value-can-bind
+                          ctx
                           env
+                          (tc-global-shared-view init)
                           (tc-global-shared-view init-ty)))]
                     [binding-ty : ast.AstType
                       (if (tc-type-contains-any-region
@@ -42499,8 +42700,10 @@
                 (let
                   [_
                     (try
-                      (tc-ensure-reference-value-can-bind
+                      (tc-ensure-let-value-can-bind
+                        ctx
                         env
+                        (tc-global-shared-view init)
                         (tc-global-shared-view init-ty)))]
                   [binding-ty : ast.AstType init-ty]
                   [facts : TcCheckedLetBindingFactState
@@ -74744,9 +74947,9 @@
               (tc-global-shared-view loop-carried)
               moved
               (tc-global-shared-view inner)))]
-        (match (tc-expr ctx env expr)
+        (match (tc-expr ctx env (tc-global-shared-view expr))
           [(Ok result-ty)
-            (if (tc-type-move-only? ctx result-ty)
+            (if (tc-type-move-only? ctx (tc-global-shared-view result-ty))
               (match (tc-expr ctx env (tc-global-shared-view inner))
                 [(Ok receiver-ty)
                   (match (tc-type-strip-region
@@ -74763,14 +74966,20 @@
                         receiver-ty)]
                     [(Ref _ _)
                       (Err
-                        (tc-kind-message
-                          (MoveViolation)
-                          "typecheck: cannot move non-Copy value through shared reference"))]
+                        (tc-move-out-of-reference-message
+                          expr-bases
+                          expr
+                          result-ty
+                          1
+                          (tc-move-out-of-deref-help)))]
                     [(MutRef _ _)
                       (Err
-                        (tc-kind-message
-                          (MoveViolation)
-                          "typecheck: cannot move non-Copy value through mutable reference without replacement"))]
+                        (tc-move-out-of-reference-message
+                          expr-bases
+                          expr
+                          result-ty
+                          2
+                          (tc-move-out-of-deref-help)))]
                     [_ (Ok moved1)])]
                 [(Err _) (Ok moved1)])
               (Ok moved1))]
@@ -87188,7 +87397,7 @@
               (tc-global-shared-view inner)))]
         (match (tc-expr ctx env (tc-global-shared-view expr))
           [(Ok result-ty)
-            (if (tc-type-move-only? ctx result-ty)
+            (if (tc-type-move-only? ctx (tc-global-shared-view result-ty))
               (match (tc-expr ctx env (tc-global-shared-view inner))
                 [(Ok receiver-ty)
                   (match (tc-type-strip-region
@@ -87204,14 +87413,20 @@
                         receiver-ty)]
                     [(Ref _ _)
                       (Err
-                        (tc-kind-message
-                          (MoveViolation)
-                          "typecheck: cannot move non-Copy value through shared reference"))]
+                        (tc-move-out-of-reference-message
+                          expr-bases
+                          expr
+                          result-ty
+                          1
+                          (tc-move-out-of-deref-help)))]
                     [(MutRef _ _)
                       (Err
-                        (tc-kind-message
-                          (MoveViolation)
-                          "typecheck: cannot move non-Copy value through mutable reference without replacement"))]
+                        (tc-move-out-of-reference-message
+                          expr-bases
+                          expr
+                          result-ty
+                          2
+                          (tc-move-out-of-deref-help)))]
                     [_ (Ok borrowed1)])]
                 [(Err _) (Ok borrowed1)])
               (tc-borrow-check-place-read-conflict
@@ -115415,7 +115630,7 @@
                 (match (tc-ensure-region-value-can-flow-into
                   env
                   (tc-global-shared-view resolved-ret)
-                  got
+                  (tc-global-shared-view got)
                   "return value")
                   [(Ok)
                     (match (tc-move-check-body-id
@@ -115449,11 +115664,24 @@
                   [(Err message)
                     (tc-body-type-facts-clear! body-state)
                     (Err
-                      (tc-rich-escape-at-expr
-                        (tc-context-expr-bases ctx)
-                        body
-                        message
-                        "function return type rejects this escaping value"))])]
+                      (let
+                        [moved : String
+                          (tc-move-out-of-reference-error
+                            ctx
+                            (tc-context-expr-bases ctx)
+                            env
+                            (tc-body-tail-expr
+                              (tc-context-expr-bases ctx)
+                              (tc-global-shared-view body))
+                            (tc-global-shared-view got)
+                            "return an owned clone, or return a reference tied to a parameter's lifetime")]
+                        (if (> (string.string-length moved) 0)
+                          moved
+                          (tc-rich-escape-at-expr
+                            (tc-context-expr-bases ctx)
+                            body
+                            message
+                            "function return type rejects this escaping value"))))])]
               [(Err message)
                 (tc-body-type-facts-clear! body-state)
                 (Err message)]))]

@@ -2321,6 +2321,21 @@ type is tied to such an input lifetime or to `program`.
   (RefBox value))
 ```
 
+`program` outlives every lifetime, so neither form needs a tied input when the
+reference is a `program` one. A borrow of a parameter or a local still cannot
+stand in for it:
+
+```lisp test=check name=program-lifetime-return-ok
+(defstruct Named
+  (name (& program str)))
+
+(define (name-of [named : Named]) : (& program str)
+  named.name)
+
+(define (make-named) : Named
+  (Named "world"))
+```
+
 A store through a mutable reference is checked against the destination's own
 lifetimes. A place reached through `(&mut m T)` may hold a reference whose
 lifetime appears in `T`, because every lifetime in `T` outlives the reference

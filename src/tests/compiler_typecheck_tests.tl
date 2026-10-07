@@ -4558,6 +4558,20 @@
         "(define (main [n : i64]) : (& n i64)
   (let [x : i64 1] (& x)))"
         "typecheck: reference value would escape lexical scope")]
+    ;; `program` outlives every lifetime, so a return or a returned aggregate
+    ;; may carry it without an input tied to it (#8630).
+    [return-program-ok : bool
+      (compiler-typecheck-ok?
+        "(defstruct Named (name (& program str)))
+(define (name-of [named : Named]) : (& program str)
+  named.name)
+(define (make-named) : Named
+  (Named \"world\"))")]
+    [return-program-param-borrow-error-ok : bool
+      (compiler-typecheck-error-ok?
+        "(define (main [n : i64]) : (& program i64)
+  (& n))"
+        "does not outlive required lifetime `program`")]
     [struct-field-ok : bool
       (compiler-typecheck-ok?
         "(defstruct RefBox (value (& n i64)))
@@ -4859,6 +4873,8 @@
       return-param-ref-ok
       return-untied-error-ok
       return-local-escape-error-ok
+      return-program-ok
+      return-program-param-borrow-error-ok
       struct-field-ok
       enum-payload-ok
       lifetime-struct-return-ok

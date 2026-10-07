@@ -1812,6 +1812,90 @@
             [(OkProcessOutput output) (Ran output)]
             [(ErrProcessOutput error) (SpawnFailed error)]))])))
 
+;; Where `build` has the linker write its output. A failed GNU `ld` deletes the
+;; file it was asked to write, so the linker never gets the destination itself
+;; (#8192): it writes into a fresh directory beside the destination, on the
+;; same filesystem, and only a successful link replaces the destination, by
+;; `fs.try-atomic-replace`. A destination whose parent does not exist cannot
+;; lose a file, so it is linked directly and the linker reports the parent.
+(defenum SourceToolLinkDestination
+  (Private String)
+  (Direct)
+  (Failed String))
+
+(define (source-tool-link-destination [destination : (& destination str)]) : SourceToolLinkDestination
+  (let
+    [parent : String (fs.dirname destination)]
+    [prefix : String ".typelisp-link"]
+    (match (fs.try-create-temp-dir-in (& parent) (& prefix))
+      [(OkIoString dir) (Private dir)]
+      [(ErrIoString error)
+        (match (source-tool-try-file-exists? (& parent))
+          [(OkIoBool false) (Direct)]
+          [_
+            (Failed
+              (str_cat.str-cat
+                "build: failed to create a private link directory beside "
+                (string.copy destination)
+                ": "
+                (io.error-message error)))])])))
+
+;; Remove the private link directory and every file the tools wrote in it.
+(define (source-tool-remove-private-link-dir [dir : (& dir str)]) : unit
+  (match (fs.try-read-dir dir)
+    [(OkIoStringVector entries)
+      (let
+        [index : i64 0]
+        (while (< index (fs.string-vector-len (& entries)))
+          (let
+            [name : String (fs.string-vector-get (& entries) index "")]
+            (source-tool-try-remove-file-if-exists
+              (& (fs.path-join dir (& name))))
+            unit)
+          (set! index (+ index 1))))]
+    [(ErrIoStringVector _) unit])
+  (source-tool-try-remove-dir-if-exists dir)
+  unit)
+
+;; A Windows `/DEBUG` link names its PDB after `/OUT`. Name it after the
+;; destination instead, so the PDB keeps its place and embedded path.
+(define (source-tool-link-inputs-for-destination
+  [target : backend.CompilerBackendTarget]
+  [link-dir : (& link-dir SourceToolLinkDestination)]
+  [destination : (& destination str)]
+  [inputs : SourceToolLinkInputs]) : SourceToolLinkInputs
+  (match target
+    [(Windows)
+      (match link-dir
+        [(Private _)
+          (if (ir.compiler-debug-info-enabled?)
+            (source-tool-link-inputs-add-raw-arg
+              inputs
+              (str_cat.str-cat
+                "/PDB:"
+                (source-tool-replace-extension (string.copy destination) ".pdb")))
+            inputs)]
+        [_ inputs])]
+    [(Linux) inputs]))
+
+;; Move a privately linked output onto its destination.
+(define (source-tool-publish-linked-output
+  [link-dir : (& link-dir SourceToolLinkDestination)]
+  [linked : (& linked str)]
+  [destination : (& destination str)]) : SourceToolCommandStatus
+  (match link-dir
+    [(Private _)
+      (match (fs.try-atomic-replace linked destination)
+        [(OkIoUnit) (Ok)]
+        [(ErrIoUnit error)
+          (Err
+            (str_cat.str-cat
+              "build: failed to replace "
+              (string.copy destination)
+              ": "
+              (io.error-message error)))])]
+    [_ (Ok)]))
+
 (define (source-tool-build-source-in-temp
   [source : String]
   [output : String]
@@ -1825,50 +1909,73 @@
   (let
     [files : SourceToolTempFiles
       (source-tool-temp-files temp-dir source target)]
-    [status : i64
-      (begin
-        ;; The executable goes beside the source (or to -o), not in the temp dir.
-        (set!
-          files.bin
-          (if has-output
-            output
-            (source-tool-default-output
-              (owned_view.compiler-owned-shared-view source)
-              target)))
-        (match (source-tool-link-inputs-for-source
+    ;; The executable goes beside the source (or to -o), not in the temp dir.
+    [destination : String
+      (if has-output
+        output
+        (source-tool-default-output
           (owned_view.compiler-owned-shared-view source)
-          (owned_view.compiler-owned-shared-view stdlib-roots)
-          (compiler_driver_core.compiler-driver-target-cfgs
-            target
-            (cfg_core.compiler-cfg-empty))
-          link-inputs)
-          [(Err message)
-            (io.print-error message)
-            1]
-          [(Ok effective-link-inputs)
-            (compiler_driver_core.compiler-driver-reset-file-state!)
-            (match (source-tool-link-program
-              (SourceToolLinkRequest
-                source
-                (Source stdlib-roots (cfg_core.compiler-cfg-empty))
-                target
-                opt-level
-                mode
-                effective-link-inputs
-                (owned_view.compiler-owned-shared-view files)
-                "build: failed to write assembly artifact"))
-              [(Err message)
-                (io.print-error message)
-                1]
-              [(Ok)
-                (io.print-format
-                  "{}"
-                  (str_cat.str-cat
-                    "Built "
-                    (owned_view.compiler-owned-shared-view files.bin)
-                    "\n"))
-                0])]))]
+          target))]
+    [link-dir : SourceToolLinkDestination
+      (source-tool-link-destination (& destination))]
+    [status : i64
+      (match (owned_view.compiler-owned-shared-view link-dir)
+        [(Failed message)
+          (io.print-error message)
+          1]
+        [_
+          (set!
+            files.bin
+            (match (owned_view.compiler-owned-shared-view link-dir)
+              [(Private dir)
+                (fs.path-join (& dir) (& (fs.basename (& destination))))]
+              [_ (string.copy destination)]))
+          (match (source-tool-link-inputs-for-source
+            (owned_view.compiler-owned-shared-view source)
+            (owned_view.compiler-owned-shared-view stdlib-roots)
+            (compiler_driver_core.compiler-driver-target-cfgs
+              target
+              (cfg_core.compiler-cfg-empty))
+            link-inputs)
+            [(Err message)
+              (io.print-error message)
+              1]
+            [(Ok effective-link-inputs)
+              (compiler_driver_core.compiler-driver-reset-file-state!)
+              (match (source-tool-link-program
+                (SourceToolLinkRequest
+                  source
+                  (Source stdlib-roots (cfg_core.compiler-cfg-empty))
+                  target
+                  opt-level
+                  mode
+                  (source-tool-link-inputs-for-destination
+                    target
+                    (& link-dir)
+                    (& destination)
+                    effective-link-inputs)
+                  (owned_view.compiler-owned-shared-view files)
+                  "build: failed to write assembly artifact"))
+                [(Err message)
+                  (io.print-error message)
+                  1]
+                [(Ok)
+                  (match (source-tool-publish-linked-output
+                    (& link-dir)
+                    (& files.bin)
+                    (& destination))
+                    [(Err message)
+                      (io.print-error message)
+                      1]
+                    [(Ok)
+                      (io.print-format
+                        "{}"
+                        (str_cat.str-cat "Built " destination "\n"))
+                      0])])])])]
     (source-tool-clean-temp-files files false)
+    (match link-dir
+      [(Private dir) (source-tool-remove-private-link-dir (& dir))]
+      [_ unit])
     status))
 
 (define (source-tool-build-source

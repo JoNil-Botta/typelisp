@@ -2467,14 +2467,16 @@
             (set! i (+ i 1)))))
       sum)))")
 
+;; The holders are `&mut`: a by-value one written in place would also carry
+;; its private entry copy (#7901), and these rows count only the field store.
 (define (compiler-lower-inline-direct-store-source) : String
   "(defstruct Wide (a i64) (b i64) (c i64))
 (defstruct Holder (wide Wide) (tail i64))
-(define (direct-field [h : Holder]) : i64
+(define (direct-field [h : (&mut h Holder)]) : i64
   (begin
     (set! h.wide (Wide 1 2 3))
     0))
-(define (direct-init [h : Holder]) : i64
+(define (direct-init [h : (&mut h Holder)]) : i64
   (begin
     (set! h.wide (init : Wide))
     0))
@@ -2695,6 +2697,58 @@
     (compiler-lower-ok?
       (compiler-lower-inline-enum-layout-cache-order-source-b))))
 
+;; #7901: a by-value parameter gets a private entry copy only when its body
+;; writes it in place. A read-only callee reads the caller's storage and keeps
+;; forwarding it in its tail calls; the caller copies an argument only when its
+;; storage could change during the call (a global, or a root another argument
+;; borrows `&mut`).
+(define (compiler-lower-private-param-source) : String
+  "(defstruct Triple (x i64) (y i64) (z i64))
+(define shared : Triple (Triple 4 5 6))
+(define (read-x [t : Triple]) : i64 t.x)
+(define (count-down [t : Triple] [n : i64]) : i64
+  (if (= n 0) t.x (count-down t (- n 1))))
+(define (bump [t : Triple]) : i64
+  (begin (set! t.x 9) t.x))
+(defstruct Named (name String) (x i64) (y i64))
+(define (bump-named [t : Named]) : i64
+  (begin (set! t.x 9) t.x))
+(define (read-after-write [t : Triple] [m : (&mut m Triple)]) : i64
+  (begin (set! m.x 1) t.x))
+(define (pass-local) : i64
+  (let [a : Triple (Triple 1 2 3)] (+ (read-x a) (count-down a 3))))
+(define (pass-global) : i64
+  (read-x shared))
+(define (pass-same-root) : i64
+  (let [a : Triple (Triple 1 2 3)] (read-after-write a (&mut a))))
+(define (pass-other-root) : i64
+  (let [a : Triple (Triple 1 2 3)] [b : Triple (Triple 4 5 6)]
+    (read-after-write a (&mut b))))")
+
+(define (compiler-lower-private-param-shape-ok?) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source (compiler-lower-private-param-source)))
+    [(Some functions)
+      (and
+        (= (lower-test-count functions "read-x" (CopyBytes)) 0)
+        (= (lower-test-count functions "count-down" (CopyBytes)) 0)
+        (=
+          (lower-test-function-tail-call-count
+            functions
+            "count-down"
+            "count-down")
+          1)
+        (= (lower-test-count functions "bump" (CopyBytes)) 1)
+        ;; A move-only argument's source is moved by the call, so a written
+        ;; move-only parameter keeps the caller's storage.
+        (= (lower-test-count functions "bump-named" (CopyBytes)) 0)
+        (= (lower-test-count functions "read-after-write" (CopyBytes)) 0)
+        (= (lower-test-count functions "pass-local" (CopyBytes)) 0)
+        (= (lower-test-count functions "pass-global" (CopyBytes)) 1)
+        (= (lower-test-count functions "pass-same-root" (CopyBytes)) 1)
+        (= (lower-test-count functions "pass-other-root" (CopyBytes)) 0))]
+    [_ false]))
+
 (define (compiler-lower-inline-aggregate-tests-ok?) : bool
   (and
     (compiler-lower-inline-struct-shape-ok?)
@@ -2707,6 +2761,7 @@
     (compiler-lower-inline-sret-enum-match-shape-ok?)
     (compiler-lower-inline-hot-loop-struct-shape-ok?)
     (compiler-lower-inline-direct-store-copy-shape-ok?)
+    (compiler-lower-private-param-shape-ok?)
     (compiler-lower-inline-enum-layout-cache-order-ok?)
     (compiler-lower-inline-error-ok?
       (compiler-lower-inline-recursive-error-source)

@@ -6,6 +6,7 @@
 (import compiler_ctfe as ctfe)
 (import compiler_diagnostic as diag)
 (import compiler_embedded_stdlib as embedded)
+(import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as cat)
 (import stdlib.test)
@@ -183,7 +184,10 @@
 
 ;; The ordinary inline harness deliberately uses an empty embedded payload.
 ;; Linux's alternate accepted separator forces fallback even inside the repo.
-;; Running this native entry outside the repo exercises fallback on both OSes.
+;; Running this native entry outside the repo exercises fallback on both OSes;
+;; inside it, Windows resolves the real file instead. Each kind is checked
+;; against the source the loader reads, which an `.tl` LZSS include embeds
+;; with its inline tests blanked (#8713).
 (cfg
   (not test)
   (define (main) : i64
@@ -193,24 +197,34 @@
       [pools : ast.AstNodePoolContext
         (ast.ast-node-pool-context-new-with-capacities 1 1)]
       [index : i64 0]
+      [resolved : String (cfg linux "stdlib\\option.tl" "stdlib/option.tl")]
       (match (embedded.compiler-embedded-stdlib-lookup "option.tl")
         [(CompilerEmbeddedStdlibSomeSource contents)
-          (while (< index 4)
-            (let
-              [kind : load.CompilerLoadIncludeKind (array-ref kinds index)]
-              (test.assert-true
-                (include-matches?
-                  kind
-                  (& pools)
-                  (load.compiler-load-include-from-resolved-with-pools
+          (let
+            [source : String
+              (if (io.file-exists? (string.copy resolved))
+                (load.compiler-load-read-file-text (string.copy resolved))
+                contents)]
+            (while (< index 4)
+              (let
+                [kind : load.CompilerLoadIncludeKind (array-ref kinds index)]
+                (test.assert-true
+                  (include-matches?
                     kind
-                    "entry.tl"
-                    "stdlib/option.tl"
-                    (cfg linux "stdlib\\option.tl" "stdlib/option.tl")
-                    cbi.compiler-builtin-id-fix-x
-                    pools)
-                  (string.copy contents))
-                "embedded fallback retains every materialization kind")
-              (set! index (+ index 1))))
-          42]
+                    (& pools)
+                    (load.compiler-load-include-from-resolved-with-pools
+                      kind
+                      "entry.tl"
+                      "stdlib/option.tl"
+                      (string.copy resolved)
+                      cbi.compiler-builtin-id-fix-x
+                      pools)
+                    (match kind
+                      [(LzssString)
+                        (embedded.compiler-embedded-stdlib-source-without-inline-tests
+                          (string.copy source))]
+                      [_ (string.copy source)]))
+                  "embedded fallback retains every materialization kind")
+                (set! index (+ index 1))))
+            42)]
         [_ 0]))))

@@ -9,6 +9,9 @@
 ;# storage companion. Runtime wrappers validate borrowed commands and copy once
 ;# at the owned `ProcessCommand` boundary before calling `process.tl`.
 ;#
+;# Borrowed commands use the inherited environment policy; for an exact child
+;# environment apply `process.command-with-exact-env-list` to `command-owned`.
+;#
 ;# Owned argv/env builders also expose vector-backed construction paths.
 ;# Borrowed builders use typed persistent nodes, so safe constructors cannot
 ;# inject raw reference words. Bytes are not copied before the explicit owned

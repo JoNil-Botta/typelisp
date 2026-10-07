@@ -9,6 +9,8 @@
 (import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import compiler_diagnostic as cdiag)
+(import compiler_lzss as lzss)
+(import stdlib.byte_buf_core)
 (import stdlib.string)
 
 (define (ctfe-reflect-info-must-use? [info : ctfe.CtfeReflectInfo]) : bool
@@ -3777,6 +3779,124 @@
               "unsupported stdlib.comptime field 'items'")]
           [(Ok _ _) false])))))
 
+;; Compress `source` as an `include-str-lzss` payload and decode it with the
+;; runtime decoder. Returns the token-stream length, or -1 unless the decoded
+;; bytes are exactly `source`.
+(define (compiler-ctfe-lzss-roundtrip-length [source : String]) : i64
+  (let
+    [envelope : String
+      (ctfe.ctfe-embedded-stdlib-binary-data-bytes (clone source))]
+    [envelope-len : i64 (string.string-length envelope)]
+    [source-len : i64 (string.string-length source)]
+    [header-len : i64
+      (+
+        (string.string-length (ctfe.ctfe-embedded-stdlib-compressed-prefix))
+        (string.string-length (string.int->string source-len))
+        1)]
+    [payload : (__tl_dyn-array u8) (__tl_make-array u8 envelope-len)]
+    [index : i64 0]
+    (while (< index envelope-len)
+      (set!
+        (array-ref payload index)
+        (cast (string.string-ref envelope index) : u8))
+      (set! index (+ index 1)))
+    (match (lzss.compiler-lzss-decode (& payload) source-len)
+      [(Ok bytes)
+        (let
+          [same : bool (= (array-length bytes) source-len)]
+          [cursor : i64 0]
+          (while (and same (< cursor source-len))
+            (unless
+              (=
+                (array-ref bytes cursor)
+                (cast (string.string-ref source cursor) : u8))
+              (set! same false))
+            (set! cursor (+ cursor 1)))
+          (if same
+            (- envelope-len header-len)
+            -1))]
+      [(Err _) -1])))
+
+;; Append `count` pseudo-random bytes below `alphabet`, seeded by `seed`.
+(define (compiler-ctfe-lzss-push-noise!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [count : i64]
+  [alphabet : i64]
+  [seed : i64]) : unit
+  (let
+    [state : i64 seed]
+    [index : i64 0]
+    (while (< index count)
+      (set! state (bit-and (+ (* state 1103515245) 12345) 2147483647))
+      (byte_buf_core.byte-buf-builder-push
+        (&mut out)
+        (cast (% (shr state 16) alphabet) : u8))
+      (set! index (+ index 1)))))
+
+;; `marker`, `gap` noise bytes, `marker` again, then the same with `gap` + 1:
+;; the first pair of copies is exactly 4096 bytes apart, the widest offset a
+;; token encodes, and the second pair is one byte too far.
+(define (compiler-ctfe-lzss-window-source [marker : String]) : String
+  (let
+    [gap : i64 (- 4096 (string.string-length marker))]
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity 8400)]
+    (byte_buf_core.byte-buf-builder-append-string (&mut out) (clone marker))
+    (compiler-ctfe-lzss-push-noise! (&mut out) gap 256 7)
+    (byte_buf_core.byte-buf-builder-append-string (&mut out) (clone marker))
+    (compiler-ctfe-lzss-push-noise! (&mut out) (+ gap 1) 256 11)
+    (byte_buf_core.byte-buf-builder-append-string (&mut out) marker)
+    (byte_buf_core.byte-buf-builder-to-string (& out))))
+
+(define (compiler-ctfe-lzss-noise-source [count : i64] [alphabet : i64]) : String
+  (let
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity count)]
+    (compiler-ctfe-lzss-push-noise! (&mut out) count alphabet 12345)
+    (byte_buf_core.byte-buf-builder-to-string (& out))))
+
+;; The compressor's tokens decode to the exact source at every parse
+;; boundary. "abc" at 15 matches 3 bytes, "bcdefghijk" at 16 matches 10: greedy
+;; parsing spends 22 bytes, the lazy step a literal and one 10-byte match (21).
+(define (compiler-ctfe-lzss-roundtrip-ok?) : bool
+  (and
+    (= (compiler-ctfe-lzss-roundtrip-length "") 0)
+    (= (compiler-ctfe-lzss-roundtrip-length "ab") 3)
+    (let
+      [lazy : i64
+        (compiler-ctfe-lzss-roundtrip-length "abcZbcdefghijk_abcdefghijk")]
+      (and (> lazy 0) (<= lazy 21)))
+    ;; Two deferrals in a row: "abc" < "bcde" < "cdefghijkl".
+    (>
+      (compiler-ctfe-lzss-roundtrip-length "abcQbcdeRcdefghijkl_abcdefghijkl")
+      0)
+    ;; A 5-byte match looks ahead to a longer one, a 6-byte match does not.
+    (> (compiler-ctfe-lzss-roundtrip-length "abcdeQbcdefghij_abcdefghij") 0)
+    (> (compiler-ctfe-lzss-roundtrip-length "abcdefQbcdefghijk_abcdefghijk") 0)
+    ;; Matches one byte short of and at the 18-byte maximum.
+    (>
+      (compiler-ctfe-lzss-roundtrip-length
+        "0123456789abcdefg#0123456789abcdefgh")
+      0)
+    (>
+      (compiler-ctfe-lzss-roundtrip-length
+        "0123456789abcdefgh#0123456789abcdefgh")
+      0)
+    (>
+      (compiler-ctfe-lzss-roundtrip-length
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+      0)
+    (>
+      (compiler-ctfe-lzss-roundtrip-length
+        (compiler-ctfe-lzss-window-source "<marker:0123456789>"))
+      0)
+    ;; Three symbols put about 150 window positions on every chain, past the
+    ;; 64-link walk cap.
+    (>
+      (compiler-ctfe-lzss-roundtrip-length
+        (compiler-ctfe-lzss-noise-source 6000 3))
+      0)))
+
 (define (compiler-ctfe-self-test) : i64
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
@@ -3812,6 +3932,7 @@
     (unless (compiler-ctfe-local-while-ok?) (return 1))
     (unless (compiler-ctfe-env-arena-ok?) (return 1))
     (unless (compiler-ctfe-generated-dotted-suffix-id-ok?) (return 1))
+    (unless (compiler-ctfe-lzss-roundtrip-ok?) (return 1))
     (cfg
       test
       (unless (compiler-ctfe-comptime-structural-fields-ok?) (return 1))

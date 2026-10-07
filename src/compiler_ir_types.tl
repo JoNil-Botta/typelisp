@@ -5025,7 +5025,10 @@
 ;; absent entry and an explicit conflict query as Unknown.
 (defstruct CompilerIrRepresentationIndex
   (word-counts ir_i64_i64_map.Map)
-  (class-masks ir_i64_i64_map.Map))
+  (class-masks ir_i64_i64_map.Map)
+  ;; Bit w proves that inline word w keeps its declared type across variants.
+  ;; Missing facts and words beyond the mask provide no speculation proof.
+  (stable-word-masks ir_i64_i64_map.Map))
 
 (defenum CompilerIrRepresentationKind
   (KnownOneWord)
@@ -5035,7 +5038,26 @@
 (define (compiler-ir-representation-index-empty) : CompilerIrRepresentationIndex
   (CompilerIrRepresentationIndex
     (ir_i64_i64_map.with-capacity 1)
+    (ir_i64_i64_map.with-capacity 1)
     (ir_i64_i64_map.with-capacity 1)))
+
+(define (compiler-ir-representation-index-stable-mask-known?
+  [index : (& index CompilerIrRepresentationIndex)]
+  [key : i64]) : bool
+  (ir_i64_i64_map.contains? (& index.stable-word-masks) key))
+
+(define (compiler-ir-representation-index-stable-mask
+  [index : (& index CompilerIrRepresentationIndex)]
+  [key : i64]) : i64
+  (match (ir_i64_i64_map.get (& index.stable-word-masks) key)
+    [(LookupFound mask) mask]
+    [(LookupMissing) 0]))
+
+(define (compiler-ir-representation-index-set-stable-mask!
+  [index : (&mut index CompilerIrRepresentationIndex)]
+  [key : i64]
+  [mask : i64]) : unit
+  (ir_i64_i64_map.insert-ref! (&mut index.stable-word-masks) key mask))
 
 (define (compiler-ir-representation-index-kind-for-key
   [index : (& index CompilerIrRepresentationIndex)]
@@ -9551,12 +9573,12 @@
         ;; proof. Preserve any prior conflict and fail closed deterministically.
         (ir_i64_i64_map.insert-ref! (&mut counts) key 0)
         (ir_i64_i64_map.insert-ref! (&mut masks) key 0)
-        (CompilerIrRepresentationIndex counts masks))
+        (CompilerIrRepresentationIndex counts masks index.stable-word-masks))
       (match (ir_i64_i64_map.get (& counts) key)
         [(LookupMissing)
           (ir_i64_i64_map.insert-ref! (&mut counts) key word-count)
           (ir_i64_i64_map.insert-ref! (&mut masks) key class-mask)
-          (CompilerIrRepresentationIndex counts masks)]
+          (CompilerIrRepresentationIndex counts masks index.stable-word-masks)]
         [(LookupFound found-count)
           (match (ir_i64_i64_map.get (& masks) key)
             [(LookupFound found-mask)
@@ -9565,11 +9587,17 @@
                 (begin
                   (ir_i64_i64_map.insert-ref! (&mut counts) key 0)
                   (ir_i64_i64_map.insert-ref! (&mut masks) key 0)
-                  (CompilerIrRepresentationIndex counts masks)))]
+                  (CompilerIrRepresentationIndex
+                    counts
+                    masks
+                    index.stable-word-masks)))]
             [(LookupMissing)
               (ir_i64_i64_map.insert-ref! (&mut counts) key 0)
               (ir_i64_i64_map.insert-ref! (&mut masks) key 0)
-              (CompilerIrRepresentationIndex counts masks)])]))))
+              (CompilerIrRepresentationIndex
+                counts
+                masks
+                index.stable-word-masks)])]))))
 
 (define (compiler-ir-representation-index-merge-one-word
   [index : CompilerIrRepresentationIndex]
@@ -9579,7 +9607,10 @@
     (let
       [counts : ir_i64_i64_map.Map index.word-counts]
       (ir_i64_i64_map.insert-ref! (&mut counts) key 1)
-      (CompilerIrRepresentationIndex counts index.class-masks))))
+      (CompilerIrRepresentationIndex
+        counts
+        index.class-masks
+        index.stable-word-masks))))
 
 (define (compiler-ir-representation-var-type-set!
   [types : (& types CompilerIrRepresentationVarTypes)]

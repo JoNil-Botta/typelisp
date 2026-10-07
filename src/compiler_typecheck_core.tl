@@ -50573,6 +50573,12 @@
     (bit-xor name-id (shr name-id 16))
     (- tc-agg-layout-cache-capacity 1)))
 
+;; The cache's slot table, for readers that walk every cached layout.
+(define (tc-agg-layout-cache-slots [state : TcAggLayoutCacheState]) : (__tl_dyn-array
+    TcAggLayoutCacheSlot)
+  (unsafe
+    (deref (tc-agg-layout-cache-state-view state)).agg-layout-cache))
+
 (define (tc-agg-layout-cache-probe-slot-for-state
   [state : TcAggLayoutCacheState]
   [name-id : i64]) : i64

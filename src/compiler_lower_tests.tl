@@ -1185,6 +1185,94 @@
         (= (lower-test-count functions "mut-len" (Return)) 1))]
     [_ false]))
 
+;; #8124: the type-stable word masks lowering hands the optimizer. Bit w is
+;; set when word w holds one type whatever the value: a multi-variant enum's
+;; tag but not its payload, a one-variant enum's payload, nested fields at
+;; their offsets, and nothing past 64 words.
+(define (compiler-lower-stable-word-mask-source) : String
+  "(defenum Two (A i64) (B (__tl_dyn-array i64)))
+(defstruct Inner (n i64) (t Two))
+(defstruct Outer (xs (__tl_dyn-array i64)) (inner Inner))
+(defstruct Holder (xs (__tl_dyn-array i64)))
+(defenum One (Only Holder))
+(defstruct W8 (a i64) (b i64) (c i64) (d i64) (e i64) (f i64) (g i64) (h i64))
+(defstruct Wide (w1 W8) (w2 W8) (w3 W8) (w4 W8) (w5 W8) (w6 W8) (w7 W8) (w8 W8) (w9 W8))
+(define (main) : i64 0)")
+
+(define (lower-test-nominal-id
+  [program : (& program ast.AstProgram)]
+  [name : String]) : i64
+  (match (owned_view.compiler-owned-reference-shared-view program)
+    [(Program decls-box)
+      (let
+        [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        [index : i64 0]
+        [name-id : i64 -1]
+        (while (and (< name-id 0) (< index decls.len))
+          (match (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))
+            [(DefStruct _ candidate _ _ _)
+              (when
+                (string.eq (tc_core.tc-env-key-name-text candidate) name)
+                (set! name-id candidate))]
+            [(DefEnum _ candidate _ _)
+              (when
+                (string.eq (tc_core.tc-env-key-name-text candidate) name)
+                (set! name-id candidate))]
+            [_ unit])
+          (set! index (+ index 1)))
+        name-id)]))
+
+(define (lower-test-stable-mask
+  [ctx : tc_core.TcContext]
+  [program : (& program ast.AstProgram)]
+  [name : String]
+  [want : i64]) : bool
+  (let
+    [name-id : i64 (lower-test-nominal-id program (string.copy name))]
+    (and
+      (>= name-id 0)
+      (match (tc_core.tc-inline-aggregate-layout-for-id ctx name-id)
+        [(Ok _)
+          (=
+            (ir.compiler-ir-representation-index-stable-mask
+              (&
+                (lower.lower-representation-index-stable-words
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  (tc_core.tc-context-job-state ctx)
+                  (ir.compiler-ir-representation-index-empty)))
+              (ast.ast-nominal-name-id-key name-id))
+            want)]
+        [(Err _) false]))))
+
+(define (compiler-lower-stable-word-masks-ok?) : bool
+  (tc_core.tc-agg-caches-reset!)
+  (match (parser.parse-ast-source (compiler-lower-stable-word-mask-source))
+    [(Ok program)
+      (match (csym.build-compiler-symbols program)
+        [(Ok symbols)
+          (match (csym.build-compiler-registries program)
+            [(Ok registries)
+              (let
+                [ctx : tc_core.TcContext
+                  (tc_core.tc-context-new
+                    (ast.ast-global-shared-view program)
+                    symbols
+                    registries
+                    ""
+                    cbi.compiler-builtin-id-fix-empty
+                    (ast.ast-node-pool-context-capture-active))]
+                (and
+                  (lower-test-stable-mask ctx (& program) "Two" 1)
+                  (lower-test-stable-mask ctx (& program) "Inner" 3)
+                  (lower-test-stable-mask ctx (& program) "Outer" 7)
+                  (lower-test-stable-mask ctx (& program) "Holder" 1)
+                  (lower-test-stable-mask ctx (& program) "One" 3)
+                  (lower-test-stable-mask ctx (& program) "W8" 255)
+                  (lower-test-stable-mask ctx (& program) "Wide" 0)))]
+            [(Err _) false])]
+        [(Err _) false])]
+    [(Err _) false]))
+
 ;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store.
 ;; Taking the array as a parameter avoids needing `make-array` here.
 (define (compiler-lower-array-access-source) : String

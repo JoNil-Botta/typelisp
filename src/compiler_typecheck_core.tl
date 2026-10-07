@@ -54701,8 +54701,13 @@
   [struct-name-id : i64]
   [scrut-ty : ast.AstType]
   [fields : ast.AstFieldDefList]) : ResultTcTypeList
+  ;; The declared field types name types from the struct's own module, so they
+  ;; resolve there, as `tc-struct-field-type-id` resolves a field read (#8727).
   (let
-    [field-types : ast.AstTypeList (tc-field-type-list ctx fields)]
+    [field-types : ast.AstTypeList
+      (tc-field-type-list
+        (tc-context-with-nominal-owner-module-id ctx struct-name-id)
+        fields)]
     [resolved-scrut-ty : ast.AstType
       (tc-type-strip-region
         (tc-resolve-type ctx (tc-global-shared-view scrut-ty)))]

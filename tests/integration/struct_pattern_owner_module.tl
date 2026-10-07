@@ -11,5 +11,6 @@
         (box (shapes.Line (shapes.Point 4) shapes.Kind.Solid 0)))]
     (+
       (user.line-score line)
+      (- (user.line-start-x line) 30)
       (- (user.shape-score seg) 4)
       (- 9 (user.shape-score (shapes.Shape.Dot (shapes.Point 9)))))))

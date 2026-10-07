@@ -2,6 +2,12 @@
 ;; in a non-root module: field types resolve in the struct's module (#8727).
 (import struct_pattern_owner_shapes as shapes)
 
+;; A same-named struct with another layout: a pattern on shapes.Line must still
+;; bind `start` as shapes.Point.
+(defstruct Point
+  (pad i64)
+  (x i64))
+
 (define (point-x [p : shapes.Point]) : i64
   p.x)
 
@@ -18,3 +24,7 @@
   (match shape
     [(Seg (box (shapes.Line start _ _))) (point-x start)]
     [(Dot p) (point-x p)]))
+
+(define (line-start-x [line : shapes.Line]) : i64
+  (match line
+    [(shapes.Line start _ _) start.x]))

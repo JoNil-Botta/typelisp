@@ -115,42 +115,45 @@
     (+ current amount)))
 
 ;: Read either a raw range byte or the inline byte used by the char wrapper.
-(define (format-debug-source-byte
-  [source : (Ptr u8)]
-  [index : i64]
-  [single-byte : u8]
-  [single-byte-source? : bool]) : u8
-  (if single-byte-source?
-    single-byte
-    (unsafe
-      (ptr-read (ptr-offset source index)))))
+(unsafe
+  (define (format-debug-source-byte
+    [source : (Ptr u8)]
+    [index : i64]
+    [single-byte : u8]
+    [single-byte-source? : bool]) : u8
+    (if single-byte-source?
+      single-byte
+      (unsafe
+        (ptr-read (ptr-offset source index))))))
 
 ;: Count the exact quoted Debug output before allocation or destination writes.
-(define (format-debug-rendered-length
-  [source : (Ptr u8)]
-  [source-len : i64]
-  [single-byte : u8]
-  [single-byte-source? : bool]
-  [delimiter : u8]) : i64
-  (let
-    [index : i64 0]
-    [output-len : i64 2]
-    (while (< index source-len)
-      (let
-        [byte : u8
-          (format-debug-source-byte
-            source
-            index
-            single-byte
-            single-byte-source?)]
-        [escape-class : i64 (format-debug-byte-class byte delimiter)]
-        (set!
-          output-len
-          (format-debug-checked-length-add
+(unsafe
+  (define (format-debug-rendered-length
+    [source : (Ptr u8)]
+    [source-len : i64]
+    [single-byte : u8]
+    [single-byte-source? : bool]
+    [delimiter : u8]) : i64
+    (let
+      [index : i64 0]
+      [output-len : i64 2]
+      (while (< index source-len)
+        (let
+          [byte : u8
+            (unsafe
+              (format-debug-source-byte
+                source
+                index
+                single-byte
+                single-byte-source?))]
+          [escape-class : i64 (format-debug-byte-class byte delimiter)]
+          (set!
             output-len
-            (format-debug-byte-width escape-class)))
-        (set! index (+ index 1))))
-    output-len))
+            (format-debug-checked-length-add
+              output-len
+              (format-debug-byte-width escape-class)))
+          (set! index (+ index 1))))
+      output-len)))
 
 ;: Convert one four-bit value to a lowercase ASCII hexadecimal digit.
 (define (format-debug-hex-digit [value : i64]) : u8
@@ -161,98 +164,127 @@
     : u8))
 
 ;: Write one byte into a caller-validated Debug destination range.
-(define (format-debug-write-code!
-  [dst : (MutPtr u8)]
-  [offset : i64]
-  [byte : u8]) : unit
-  (unsafe
-    (ptr-write! (ptr-offset dst offset) byte)))
+(unsafe
+  (define (format-debug-write-code!
+    [dst : (MutPtr u8)]
+    [offset : i64]
+    [byte : u8]) : unit
+    (unsafe
+      (ptr-write! (ptr-offset dst offset) byte))))
 
 ;: Write one classified Debug byte and return the next destination cursor.
-(define (format-debug-write-byte!
-  [dst : (MutPtr u8)]
-  [cursor : i64]
-  [byte : u8]
-  [escape-class : i64]) : i64
-  (if (= escape-class 0)
-    (format-debug-write-code! dst cursor byte)
-    (begin
-      (format-debug-write-code! dst cursor (cast 92 : u8))
-      (match escape-class
-        [1 (format-debug-write-code! dst (+ cursor 1) (cast 48 : u8))]
-        [2 (format-debug-write-code! dst (+ cursor 1) (cast 116 : u8))]
-        [3 (format-debug-write-code! dst (+ cursor 1) (cast 110 : u8))]
-        [4 (format-debug-write-code! dst (+ cursor 1) (cast 114 : u8))]
-        [5 (format-debug-write-code! dst (+ cursor 1) (cast 92 : u8))]
-        [6 (format-debug-write-code! dst (+ cursor 1) byte)]
-        [_
-          (format-debug-write-code! dst (+ cursor 1) (cast 120 : u8))
-          (format-debug-write-code!
-            dst
-            (+ cursor 2)
-            (format-debug-hex-digit (/ (cast byte : i64) 16)))
-          (format-debug-write-code!
-            dst
-            (+ cursor 3)
-            (format-debug-hex-digit (% (cast byte : i64) 16)))])))
-  (+ cursor (format-debug-byte-width escape-class)))
+(unsafe
+  (define (format-debug-write-byte!
+    [dst : (MutPtr u8)]
+    [cursor : i64]
+    [byte : u8]
+    [escape-class : i64]) : i64
+    (if (= escape-class 0)
+      (unsafe
+        (format-debug-write-code! dst cursor byte))
+      (begin
+        (unsafe
+          (format-debug-write-code! dst cursor (cast 92 : u8)))
+        (match escape-class
+          [1
+            (unsafe
+              (format-debug-write-code! dst (+ cursor 1) (cast 48 : u8)))]
+          [2
+            (unsafe
+              (format-debug-write-code! dst (+ cursor 1) (cast 116 : u8)))]
+          [3
+            (unsafe
+              (format-debug-write-code! dst (+ cursor 1) (cast 110 : u8)))]
+          [4
+            (unsafe
+              (format-debug-write-code! dst (+ cursor 1) (cast 114 : u8)))]
+          [5
+            (unsafe
+              (format-debug-write-code! dst (+ cursor 1) (cast 92 : u8)))]
+          [6
+            (unsafe
+              (format-debug-write-code! dst (+ cursor 1) byte))]
+          [_
+            (unsafe
+              (format-debug-write-code! dst (+ cursor 1) (cast 120 : u8)))
+            (unsafe
+              (format-debug-write-code!
+                dst
+                (+ cursor 2)
+                (format-debug-hex-digit (/ (cast byte : i64) 16))))
+            (unsafe
+              (format-debug-write-code!
+                dst
+                (+ cursor 3)
+                (format-debug-hex-digit (% (cast byte : i64) 16))))])))
+    (+ cursor (format-debug-byte-width escape-class))))
 
 ;: Render a byte range with one active quote delimiter.
 ;:
 ;: The count pass completes, including every checked length addition, before
 ;: allocation or destination derivation. The write pass then fills exactly one
 ;: fresh String allocation without constructing per-byte chunk Strings.
-(define (format-debug-bytes-core
-  [source : (Ptr u8)]
-  [source-len : i64]
-  [single-byte : u8]
-  [single-byte-source? : bool]
-  [delimiter : u8]) : String
-  (let
-    [output-len : i64
-      (format-debug-rendered-length
-        source
-        source-len
-        single-byte
-        single-byte-source?
-        delimiter)]
-    [dst : (MutPtr u8) (string.string-runtime-alloc output-len)]
-    [index : i64 0]
-    [cursor : i64 1]
-    (format-debug-write-code! dst 0 delimiter)
-    (while (< index source-len)
-      (let
-        [byte : u8
-          (format-debug-source-byte
+(unsafe
+  (define (format-debug-bytes-core
+    [source : (Ptr u8)]
+    [source-len : i64]
+    [single-byte : u8]
+    [single-byte-source? : bool]
+    [delimiter : u8]) : String
+    (let
+      [output-len : i64
+        (unsafe
+          (format-debug-rendered-length
             source
-            index
+            source-len
             single-byte
-            single-byte-source?)]
-        [escape-class : i64 (format-debug-byte-class byte delimiter)]
-        (set! cursor (format-debug-write-byte! dst cursor byte escape-class))
-        (set! index (+ index 1))))
-    (format-debug-write-code! dst cursor delimiter)
-    (unsafe
-      (string-from-bytes (ptr-cast dst : (Ptr u8)) output-len))))
+            single-byte-source?
+            delimiter))]
+      [dst : (MutPtr u8) (string.string-runtime-alloc output-len)]
+      [index : i64 0]
+      [cursor : i64 1]
+      (unsafe
+        (format-debug-write-code! dst 0 delimiter))
+      (while (< index source-len)
+        (let
+          [byte : u8
+            (unsafe
+              (format-debug-source-byte
+                source
+                index
+                single-byte
+                single-byte-source?))]
+          [escape-class : i64 (format-debug-byte-class byte delimiter)]
+          (set!
+            cursor
+            (unsafe
+              (format-debug-write-byte! dst cursor byte escape-class)))
+          (set! index (+ index 1))))
+      (unsafe
+        (format-debug-write-code! dst cursor delimiter))
+      (unsafe
+        (string-from-bytes (ptr-cast dst : (Ptr u8)) output-len)))))
 
 ;: Render owned String or borrowed str bytes as double-quoted Debug text.
 (define (format-debug-string-core [value : (& value str)]) : String
-  (format-debug-bytes-core
-    (unsafe
-      (string-data value))
-    (string.string-length value)
-    (cast 0 : u8)
-    false
-    (cast 34 : u8)))
+  (unsafe
+    (format-debug-bytes-core
+      (unsafe
+        (string-data value))
+      (string.string-length value)
+      (cast 0 : u8)
+      false
+      (cast 34 : u8))))
 
 ;: Render one byte-oriented char as single-quoted Debug text.
 (define (format-debug-char-core [value : char]) : String
-  (format-debug-bytes-core
-    (ptr-null : (Ptr u8))
-    1
-    (cast value : u8)
-    true
-    (cast 39 : u8)))
+  (unsafe
+    (format-debug-bytes-core
+      (ptr-null : (Ptr u8))
+      1
+      (cast value : u8)
+      true
+      (cast 39 : u8))))
 
 ;: Common runtime formatting options produced by the literal template plan.
 ;:
@@ -493,36 +525,38 @@
 ;:
 ;: The caller must guarantee that `[start, start + count)` is in bounds for
 ;: `dst`; this helper performs no independent allocation or range check.
-(define (format-write-fill!
-  [dst : (MutPtr u8)]
-  [start : i64]
-  [count : i64]
-  [fill : char]) : unit
-  (let
-    [index : i64 0]
-    [byte : u8 (cast fill : u8)]
-    (while (< index count)
-      (unsafe
-        (ptr-write! (ptr-offset dst (+ start index)) byte))
-      (set! index (+ index 1)))))
+(unsafe
+  (define (format-write-fill!
+    [dst : (MutPtr u8)]
+    [start : i64]
+    [count : i64]
+    [fill : char]) : unit
+    (let
+      [index : i64 0]
+      [byte : u8 (cast fill : u8)]
+      (while (< index count)
+        (unsafe
+          (ptr-write! (ptr-offset dst (+ start index)) byte))
+        (set! index (+ index 1))))))
 
 ;: Copy between caller-validated live source and destination byte ranges.
 ;:
 ;: The caller must guarantee that both ranges are in bounds. A zero-byte copy
 ;: does not derive a source pointer, which keeps empty rendered values valid.
-(define (format-copy-rendered-range!
-  [rendered : (& rendered str)]
-  [source-start : i64]
-  [dst : (MutPtr u8)]
-  [destination-start : i64]
-  [count : i64]) : unit
-  (if (= count 0)
-    unit
-    (let
-      [source : (Ptr u8)
-        (unsafe
-          (ptr-offset (string-data rendered) source-start))]
-      (string.str-copy-bytes-into source dst destination-start count))))
+(unsafe
+  (define (format-copy-rendered-range!
+    [rendered : (& rendered str)]
+    [source-start : i64]
+    [dst : (MutPtr u8)]
+    [destination-start : i64]
+    [count : i64]) : unit
+    (if (= count 0)
+      unit
+      (let
+        [source : (Ptr u8)
+          (unsafe
+            (ptr-offset (string-data rendered) source-start))]
+        (string.str-copy-bytes-into source dst destination-start count)))))
 
 ;: Resolve the byte length visible to shared Display padding.
 ;:
@@ -625,21 +659,24 @@
                         : u8)))
                   (set! cursor 1))
                 unit)
-              (format-copy-rendered-range!
-                (& rendered)
-                source-sign-len
-                dst
-                cursor
-                prefix-len)
+              (unsafe
+                (format-copy-rendered-range!
+                  (& rendered)
+                  source-sign-len
+                  dst
+                  cursor
+                  prefix-len))
               (set! cursor (+ cursor prefix-len))
-              (format-write-fill! dst cursor padding '0')
+              (unsafe
+                (format-write-fill! dst cursor padding '0'))
               (set! cursor (+ cursor padding))
-              (format-copy-rendered-range!
-                (& rendered)
-                (+ source-sign-len prefix-len)
-                dst
-                cursor
-                (- rendered-len (+ source-sign-len prefix-len))))
+              (unsafe
+                (format-copy-rendered-range!
+                  (& rendered)
+                  (+ source-sign-len prefix-len)
+                  dst
+                  cursor
+                  (- rendered-len (+ source-sign-len prefix-len)))))
             (let
               [alignment : i64
                 (if (= options.alignment 0)
@@ -654,7 +691,8 @@
                   [_ padding])]
               [right-padding : i64 (- padding left-padding)]
               [cursor : i64 left-padding]
-              (format-write-fill! dst 0 left-padding options.fill)
+              (unsafe
+                (format-write-fill! dst 0 left-padding options.fill))
               (if (= output-sign-len 1)
                 (begin
                   (unsafe
@@ -667,17 +705,19 @@
                         : u8)))
                   (set! cursor (+ cursor 1)))
                 unit)
-              (format-copy-rendered-range!
-                (& rendered)
-                source-sign-len
-                dst
-                cursor
-                (- display-len source-sign-len))
-              (format-write-fill!
-                dst
-                (- output-len right-padding)
-                right-padding
-                options.fill)))
+              (unsafe
+                (format-copy-rendered-range!
+                  (& rendered)
+                  source-sign-len
+                  dst
+                  cursor
+                  (- display-len source-sign-len)))
+              (unsafe
+                (format-write-fill!
+                  dst
+                  (- output-len right-padding)
+                  right-padding
+                  options.fill))))
           (unsafe
             (string-from-bytes (ptr-cast dst : (Ptr u8)) output-len)))))))
 
@@ -4896,22 +4936,25 @@
 ;: Invoke the fixed scalar renderer ABI after a macro has located the package's
 ;: first word. Keeping the function-pointer type in ordinary runtime code lets
 ;: the embedded macro image carry only scalar builder operations.
-(define (arguments-renderer-call-at
-  [renderer-address : i64]
-  [formatter-address : i64]
-  [anchors-address : i64]) : i64
-  (let
-    [call-addresses : (Array i64 2) (array formatter-address anchors-address)]
-    [status : i64
-      ((unsafe
-          (ptr-read
-            (int->ptr (cast renderer-address : u64) : (Ptr (-> (Ptr i64) i64)))))
-        (unsafe
-          (ptr-cast (__tl_array-data call-addresses) : (Ptr i64))))]
-    ;; The post-call reload keeps this caller-owned cell live across the
-    ;; indirect call instead of allowing a tail call to discard its frame.
-    ;; Renderers preserve the first word, so the added delta is always zero.
-    (+ status (- (array-ref call-addresses 0) formatter-address))))
+(unsafe
+  (define (arguments-renderer-call-at
+    [renderer-address : i64]
+    [formatter-address : i64]
+    [anchors-address : i64]) : i64
+    (let
+      [call-addresses : (Array i64 2) (array formatter-address anchors-address)]
+      [status : i64
+        ((unsafe
+            (ptr-read
+              (int->ptr
+                (cast renderer-address : u64)
+                : (Ptr (-> (Ptr i64) i64)))))
+          (unsafe
+            (ptr-cast (__tl_array-data call-addresses) : (Ptr i64))))]
+      ;; The post-call reload keeps this caller-owned cell live across the
+      ;; indirect call instead of allowing a tail call to discard its frame.
+      ;; Renderers preserve the first word, so the added delta is always zero.
+      (+ status (- (array-ref call-addresses 0) formatter-address)))))
 
 ;: Finish a retained Arguments package after every supplied value and lexical
 ;: capture has been converted to a shared anchor. The renderer receives only
@@ -5472,10 +5515,11 @@
                 (ptr->int (ptr-cast (ptr-addr-of ,arguments) : (Ptr u8)))
                 : i64)))]
         [call : comptime.Expr
-          `(stdlib.format.arguments-renderer-call-at
-            ,address-var
-            ,stream-address
-            (+ ,address-var stdlib.format.arguments-renderer-byte-size))]
+          `(unsafe
+            (stdlib.format.arguments-renderer-call-at
+              ,address-var
+              ,stream-address
+              (+ ,address-var stdlib.format.arguments-renderer-byte-size)))]
         ;; Force validation of the package shape at the resolved boundary.
         (if (= (tuple-element-count arguments-type) 2)
           unit
@@ -6877,7 +6921,8 @@
           (ptr-write! dst (cast '-' : u8)))
         (set! cursor 1)))
     (if (= precision 0)
-      (format-copy-rendered-range! (& digits) 0 dst cursor digits-len)
+      (unsafe
+        (format-copy-rendered-range! (& digits) 0 dst cursor digits-len))
       (if (<= decimal-position 0)
         (begin
           (unsafe
@@ -6886,25 +6931,36 @@
           (unsafe
             (ptr-write! (ptr-offset dst cursor) (cast '.' : u8)))
           (set! cursor (+ cursor 1))
-          (format-write-fill! dst cursor (- 0 decimal-position) '0')
+          (unsafe
+            (format-write-fill! dst cursor (- 0 decimal-position) '0'))
           (set! cursor (+ cursor (- 0 decimal-position)))
-          (format-copy-rendered-range! (& digits) 0 dst cursor digits-len)
+          (unsafe
+            (format-copy-rendered-range! (& digits) 0 dst cursor digits-len))
           (set! cursor (+ cursor digits-len))
-          (format-write-fill! dst cursor (- precision scale) '0'))
+          (unsafe
+            (format-write-fill! dst cursor (- precision scale) '0')))
         (begin
-          (format-copy-rendered-range! (& digits) 0 dst cursor decimal-position)
+          (unsafe
+            (format-copy-rendered-range!
+              (& digits)
+              0
+              dst
+              cursor
+              decimal-position))
           (set! cursor (+ cursor decimal-position))
           (unsafe
             (ptr-write! (ptr-offset dst cursor) (cast '.' : u8)))
           (set! cursor (+ cursor 1))
-          (format-copy-rendered-range!
-            (& digits)
-            decimal-position
-            dst
-            cursor
-            (- digits-len decimal-position))
+          (unsafe
+            (format-copy-rendered-range!
+              (& digits)
+              decimal-position
+              dst
+              cursor
+              (- digits-len decimal-position)))
           (set! cursor (+ cursor (- digits-len decimal-position)))
-          (format-write-fill! dst cursor (- precision scale) '0'))))
+          (unsafe
+            (format-write-fill! dst cursor (- precision scale) '0')))))
     (unsafe
       (string-from-bytes (ptr-cast dst : (Ptr u8)) output-len))))
 

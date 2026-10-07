@@ -8483,13 +8483,13 @@
           tc_core.tc-type-resolution-cache-capacity)
         (=
           (array-length scalar-data.size-cache)
-          tc_core.tc-agg-scalar-cache-capacity)
+          tc_core.tc-agg-scalar-cache-length)
         (=
           (array-length scalar-data.align-cache)
-          tc_core.tc-agg-scalar-cache-capacity)
+          tc_core.tc-agg-scalar-cache-length)
         (=
           (array-length scalar-data.regwords-cache)
-          tc_core.tc-agg-scalar-cache-capacity)
+          tc_core.tc-agg-scalar-cache-length)
         (=
           (array-length
             (__tl-project-field
@@ -8858,12 +8858,27 @@
             (tc_core.tc-agg-scalar-cache-state-data state-a)]
           [data-b : tc_core.TcAggScalarCacheStateData
             (tc_core.tc-agg-scalar-cache-state-data state-b)]
+          ;; Fill as the cached queries do: write the slot, then log it.
           (set! (array-ref data-a.size-cache 17) 9)
+          (tc_core.tc-agg-scalar-cache-note-filled! (&mut data-a.size-cache) 17)
           (set! (array-ref data-a.align-cache 17) 5)
+          (tc_core.tc-agg-scalar-cache-note-filled!
+            (&mut data-a.align-cache)
+            17)
           (set! (array-ref data-a.regwords-cache 17) 3)
+          (tc_core.tc-agg-scalar-cache-note-filled!
+            (&mut data-a.regwords-cache)
+            17)
           (set! (array-ref data-b.size-cache 17) 33)
+          (tc_core.tc-agg-scalar-cache-note-filled! (&mut data-b.size-cache) 17)
           (set! (array-ref data-b.align-cache 17) 17)
+          (tc_core.tc-agg-scalar-cache-note-filled!
+            (&mut data-b.align-cache)
+            17)
           (set! (array-ref data-b.regwords-cache 17) 2)
+          (tc_core.tc-agg-scalar-cache-note-filled!
+            (&mut data-b.regwords-cache)
+            17)
           (ci.intern-compat-state-install! decoy)
           (tc_core.tc-agg-caches-reset-for-job! job-a)
           (tc_core.tc-agg-size-cache-ensure-for-state!

@@ -117228,7 +117228,7 @@
     [_ unit]))
 
 (define (opt-const-global-mul-shift-count-params!
-  [counts : (& counts opt_i64_i64_map.Map)]
+  [counts : (&mut counts opt_i64_i64_map.Map)]
   [params : ir.CompilerIrParamSeq]) : unit
   (let
     [position : i64 0]
@@ -117291,7 +117291,7 @@
           ;; only definition the block scan sees, and a use of %x before it
           ;; still reads the argument.
           (opt-const-global-mul-shift-count-params!
-            counts
+            (&mut counts)
             (compiler-opt-global-shared-view params))
           (opt-blocks-visit
             blocks
@@ -130165,7 +130165,7 @@
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
   [defs : (& defs (__tl_dyn-array i64))]
   [sites : OptPureCallTable]
-  [env : (& env opt_i64_i64_map.Map)]
+  [env : (&mut env opt_i64_i64_map.Map)]
   [table : OptPureCallTable]
   [instrs : ir.CompilerIrInstrSeq]
   [changed : (&mut changed (__tl_dyn-array i64))]) : OptPureCallBlockOut
@@ -131309,7 +131309,7 @@
                     call-memory
                     defs
                     (compiler-opt-global-shared-view sites)
-                    env
+                    (&mut env)
                     entry
                     instrs
                     (&mut changed))

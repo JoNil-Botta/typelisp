@@ -429,6 +429,31 @@
               (process-api-repeat-a process.process-storage-max-string-bytes)
               (process.env-empty)))))
       "exact env accepts one row at the field cap")
+    ;; The cap is inclusive and each row costs `NAME=VALUE\0`: rows totalling
+    ;; exactly the cap are accepted, and one byte more is rejected.
+    (assert-process-no-string
+      (process.command-validation-error
+        (&
+          (process-api-exact-command
+            (process-api-env2
+              "A"
+              (process-api-repeat-a process.process-storage-max-string-bytes)
+              "B"
+              (process-api-repeat-a
+                (- process.process-storage-max-string-bytes 6))))))
+      "exact env accepts rows totalling exactly the block cap")
+    (assert-process-env-validation
+      (process.command-validation-error
+        (&
+          (process-api-exact-command
+            (process-api-env2
+              "A"
+              (process-api-repeat-a process.process-storage-max-string-bytes)
+              "B"
+              (process-api-repeat-a
+                (- process.process-storage-max-string-bytes 5))))))
+      "process: exact environment exceeds storage limit"
+      "exact env rejects rows one byte past the block cap")
     (assert-process-invalid-command
       (process.output
         (process-api-exact-command (process-api-env2 "DUP" "1" "DUP" "2")))

@@ -1579,97 +1579,73 @@
 ;: The var `instr` defines, or -1. Var ids are nonnegative.
 (define (compiler-ir-instr-dst [instr : (& instr CompilerIrInstr)]) : i64
   (match instr
-    [(CompilerIrInstr.Mov dst _ _) (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Alloc dst _) (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.AddrOf dst _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Gep dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Load dst _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Mov dst _ _) dst]
+    [(CompilerIrInstr.Alloc dst _) dst]
+    [(CompilerIrInstr.AddrOf dst _) dst]
+    [(CompilerIrInstr.Gep dst _ _ _) dst]
+    [(CompilerIrInstr.Load dst _ _) dst]
     [(CompilerIrInstr.StoreOwned _ _ _) -1]
     [(CompilerIrInstr.StorePtr _ _ _) -1]
     [(CompilerIrInstr.CopyBytes _ _ _) -1]
     [(CompilerIrInstr.BoundsCheck _ _ _) -1]
-    [(CompilerIrInstr.Cast dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Bitcast dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.BinOp dst _ _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.UnOp dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.LaneId dst _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Splat dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Cast dst _ _ _) dst]
+    [(CompilerIrInstr.Bitcast dst _ _ _) dst]
+    [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
+    [(CompilerIrInstr.UnOp dst _ _ _) dst]
+    [(CompilerIrInstr.LaneId dst _ _) dst]
+    [(CompilerIrInstr.Splat dst _ _ _) dst]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
+        payload-box.dst)]
     [(CompilerIrInstr.VectorPrefix payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
-    [(CompilerIrInstr.VectorReduce dst _ _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+        payload-box.dst)]
+    [(CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
     [(CompilerIrInstr.VectorCompare payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
-    [(CompilerIrInstr.MaskBinOp dst _ _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.MaskNot dst _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.MaskReduce dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+        payload-box.dst)]
+    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
+    [(CompilerIrInstr.MaskNot dst _ _) dst]
+    [(CompilerIrInstr.MaskReduce dst _ _ _) dst]
     [(CompilerIrInstr.Select payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
-    [(CompilerIrInstr.VectorLoad dst _ _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+        payload-box.dst)]
+    [(CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
     [(CompilerIrInstr.VectorStore _) -1]
     [(CompilerIrInstr.PredicatedStore _) -1]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
+        payload-box.dst)]
     [(CompilerIrInstr.GatherLoad payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
+        payload-box.dst)]
     [(CompilerIrInstr.VectorShuffle payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
-        (compiler-ir-box-field-shared-view payload-box dst))]
-    [(CompilerIrInstr.TailMask dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.EntryArgc dst)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.EntryArgv dst)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.EntryEnvp dst)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.CpuId dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Xgetbv dst _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Syscall dst _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Call dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.CallIndirect dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.CallIndirectC dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+        payload-box.dst)]
+    [(CompilerIrInstr.TailMask dst _ _ _) dst]
+    [(CompilerIrInstr.EntryArgc dst) dst]
+    [(CompilerIrInstr.EntryArgv dst) dst]
+    [(CompilerIrInstr.EntryEnvp dst) dst]
+    [(CompilerIrInstr.CpuId dst _ _ _) dst]
+    [(CompilerIrInstr.Xgetbv dst _) dst]
+    [(CompilerIrInstr.Syscall dst _) dst]
+    [(CompilerIrInstr.Call dst _ _ _) dst]
+    [(CompilerIrInstr.CallIndirect dst _ _ _) dst]
+    [(CompilerIrInstr.CallIndirectC dst _ _ _) dst]
     [(CompilerIrInstr.CallCAbiStoreResult _) -1]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult _) -1]
     [(CompilerIrInstr.SpmdCall payload-box)
@@ -1685,11 +1661,9 @@
     [(CompilerIrInstr.Branch _ _ _) -1]
     [(CompilerIrInstr.TotalEnumBranch _ _ _) -1]
     [(CompilerIrInstr.Return _) -1]
-    [(CompilerIrInstr.Phi dst _ _) (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Pack dst _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
-    [(CompilerIrInstr.Word dst _ _ _)
-      (owned_view.compiler-owned-pattern-copy dst)]
+    [(CompilerIrInstr.Phi dst _ _) dst]
+    [(CompilerIrInstr.Pack dst _ _) dst]
+    [(CompilerIrInstr.Word dst _ _ _) dst]
     [(CompilerIrInstr.TailCallIndirect _ _ _) -1]
     [(CompilerIrInstr.Switch _ _ _ _) -1]
     [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) -1]))
@@ -6098,9 +6072,9 @@
   (match (compiler-ir-global-shared-view instr)
     [(SpmdCall payload-box)
       (let
-        [callee (compiler-ir-box-field-shared-view payload-box callee)]
-        [backend (compiler-ir-box-field-shared-view payload-box backend)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [callee (deref payload-box).callee]
+        [backend (deref payload-box).backend]
+        [lanes (deref payload-box).lanes]
         [active-mask
           (compiler-ir-box-field-shared-view payload-box active-mask)]
         [args (compiler-ir-box-field-shared-view payload-box args)]
@@ -6350,7 +6324,7 @@
   (if (>= index (ast.ast-lifetime-list-len lifetimes))
     ""
     (str_cat.str-cat
-      (compiler-ir-lifetime-render
+      (compiler-ir-syntax-name-render
         structural-session
         (ast.ast-lifetime-list-get lifetimes index (ast.ast-lifetime-fallback)))
       (if (>= (+ index 1) (ast.ast-lifetime-list-len lifetimes))
@@ -6378,20 +6352,22 @@
     (compiler-ir-lifetime-list-render structural-session lifetimes)
     ")"))
 
-(define (compiler-ir-lifetime-render
+;; Type variables and lifetimes carry source or session-owned syntax IDs. Only
+;; decoded renderable IDs may index the intern pool, including in nested types.
+(define (compiler-ir-syntax-name-render
   [structural-session : cis.InternStructuralSessionHandle]
-  [region : i64]) : String
-  (if (ci.intern-renderable-id? region)
-    (ci.intern-str region)
+  [name : i64]) : String
+  (if (ci.intern-renderable-id? name)
+    (ci.intern-str name)
     (let
       [source-id : i64
         (cis.intern-structural-session-syntax-source-name-id-or
           structural-session
-          region
+          name
           -1)]
-      (if (>= source-id 0)
+      (if (ci.intern-renderable-id? source-id)
         (ci.intern-str source-id)
-        (str_cat.str-cat "<id:" (string.int->string region) ">")))))
+        (str_cat.str-cat "<id:" (string.int->string name) ">")))))
 
 (define (compiler-ir-type-render
   [structural-session : cis.InternStructuralSessionHandle]
@@ -6485,7 +6461,7 @@
     [(Region region inner)
       (str_cat.str-cat
         "(Region "
-        (compiler-ir-lifetime-render structural-session region)
+        (compiler-ir-syntax-name-render structural-session region)
         " "
         (compiler-ir-type-render
           structural-session
@@ -6495,7 +6471,7 @@
     [(Invalidate lifetime inner)
       (str_cat.str-cat
         "(Invalidate "
-        (compiler-ir-lifetime-render structural-session lifetime)
+        (compiler-ir-syntax-name-render structural-session lifetime)
         " "
         (compiler-ir-type-render
           structural-session
@@ -6505,7 +6481,7 @@
     [(Ref region inner)
       (str_cat.str-cat
         "(& "
-        (compiler-ir-lifetime-render structural-session region)
+        (compiler-ir-syntax-name-render structural-session region)
         " "
         (compiler-ir-type-render
           structural-session
@@ -6515,7 +6491,7 @@
     [(MutRef region inner)
       (str_cat.str-cat
         "(&mut "
-        (compiler-ir-lifetime-render structural-session region)
+        (compiler-ir-syntax-name-render structural-session region)
         " "
         (compiler-ir-type-render
           structural-session
@@ -6534,11 +6510,11 @@
         structural-session
         (ast.ast-nominal-name-id-display name)
         (deref lifetimes))]
-    [(Var name) (ci.intern-str name)]
+    [(Var name) (compiler-ir-syntax-name-render structural-session name)]
     [(VarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         structural-session
-        (ci.intern-str name)
+        (compiler-ir-syntax-name-render structural-session name)
         (deref lifetimes))]
     [(Ptr elem)
       (str_cat.str-cat
@@ -7108,11 +7084,11 @@
         (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(VectorBinOp payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [op (compiler-ir-box-field-shared-view payload-box op)]
         [lhs (compiler-ir-box-field-shared-view payload-box lhs)]
         [rhs (compiler-ir-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7128,11 +7104,11 @@
           (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(VectorPrefix payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
-        [op (compiler-ir-box-field-shared-view payload-box op)]
+        [dst (deref payload-box).dst]
+        [op (deref payload-box).op]
         [src (compiler-ir-box-field-shared-view payload-box src)]
         [carry (compiler-ir-box-field-shared-view payload-box carry)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7159,11 +7135,11 @@
         (compiler-ir-type-render structural-session type-segment-bases ty))]
     [(VectorCompare payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [op (compiler-ir-box-field-shared-view payload-box op)]
         [lhs (compiler-ir-box-field-shared-view payload-box lhs)]
         [rhs (compiler-ir-box-field-shared-view payload-box rhs)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7206,11 +7182,11 @@
         (string.int->string lanes))]
     [(Select payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [mask (compiler-ir-box-field-shared-view payload-box mask)]
         [on-true (compiler-ir-box-field-shared-view payload-box on-true)]
         [on-false (compiler-ir-box-field-shared-view payload-box on-false)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7240,7 +7216,7 @@
         [base (compiler-ir-box-field-shared-view payload-box base)]
         [index (compiler-ir-box-field-shared-view payload-box index)]
         [value (compiler-ir-box-field-shared-view payload-box value)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           "  vector_store "
@@ -7259,7 +7235,7 @@
         [index (compiler-ir-box-field-shared-view payload-box index)]
         [value (compiler-ir-box-field-shared-view payload-box value)]
         [mask (compiler-ir-box-field-shared-view payload-box mask)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           "  predicated_store "
@@ -7276,11 +7252,11 @@
           (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(PredicatedLoad payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [base (compiler-ir-box-field-shared-view payload-box base)]
         [index (compiler-ir-box-field-shared-view payload-box index)]
         [mask (compiler-ir-box-field-shared-view payload-box mask)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7296,13 +7272,12 @@
           (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(GatherLoad payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [base (compiler-ir-box-field-shared-view payload-box base)]
         [index-base (compiler-ir-box-field-shared-view payload-box index-base)]
         [index (compiler-ir-box-field-shared-view payload-box index)]
-        [lane-offset
-          (compiler-ir-box-field-shared-view payload-box lane-offset)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lane-offset (deref payload-box).lane-offset]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7322,7 +7297,7 @@
           (compiler-ir-type-render structural-session type-segment-bases ty)))]
     [(VectorShuffle payload-box)
       (let
-        [dst (compiler-ir-box-field-shared-view payload-box dst)]
+        [dst (deref payload-box).dst]
         [source (compiler-ir-box-field-shared-view payload-box source)]
         [selector-low
           (compiler-ir-box-field-shared-view payload-box selector-low)]
@@ -7330,7 +7305,7 @@
           (compiler-ir-box-field-shared-view payload-box selector-high)]
         [active-lanes
           (compiler-ir-box-field-shared-view payload-box active-lanes)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [lanes (deref payload-box).lanes]
         [ty (compiler-ir-box-field-shared-view payload-box ty)]
         (str_cat.str-cat
           (compiler-ir-dst-render dst)
@@ -7411,7 +7386,7 @@
     [(CallCAbiStoreResult payload-box)
       (let
         [base (compiler-ir-box-field-shared-view payload-box base)]
-        [name (compiler-ir-box-field-shared-view payload-box name)]
+        [name (deref payload-box).name]
         [args (compiler-ir-box-field-shared-view payload-box args)]
         [slots (compiler-ir-box-field-shared-view payload-box slots)]
         (str_cat.str-cat
@@ -7462,9 +7437,9 @@
         ty)]
     [(SpmdCall payload-box)
       (let
-        [callee (compiler-ir-box-field-shared-view payload-box callee)]
-        [backend (compiler-ir-box-field-shared-view payload-box backend)]
-        [lanes (compiler-ir-box-field-shared-view payload-box lanes)]
+        [callee (deref payload-box).callee]
+        [backend (deref payload-box).backend]
+        [lanes (deref payload-box).lanes]
         [active-mask
           (compiler-ir-box-field-shared-view payload-box active-mask)]
         [args (compiler-ir-box-field-shared-view payload-box args)]
@@ -9370,7 +9345,7 @@
     [(Region region inner)
       (str_cat.str-cat
         "(in "
-        (compiler-ir-lifetime-render
+        (compiler-ir-syntax-name-render
           (cis.InternStructuralSessionHandle 0)
           region)
         " "
@@ -9381,7 +9356,7 @@
     [(Invalidate lifetime inner)
       (str_cat.str-cat
         "(:invalidate "
-        (compiler-ir-lifetime-render
+        (compiler-ir-syntax-name-render
           (cis.InternStructuralSessionHandle 0)
           lifetime)
         " "
@@ -9392,7 +9367,7 @@
     [(Ref region inner)
       (str_cat.str-cat
         "(& "
-        (compiler-ir-lifetime-render
+        (compiler-ir-syntax-name-render
           (cis.InternStructuralSessionHandle 0)
           region)
         " "
@@ -9403,7 +9378,7 @@
     [(MutRef region inner)
       (str_cat.str-cat
         "(&mut "
-        (compiler-ir-lifetime-render
+        (compiler-ir-syntax-name-render
           (cis.InternStructuralSessionHandle 0)
           region)
         " "
@@ -9423,11 +9398,19 @@
         (cis.InternStructuralSessionHandle 0)
         (ast.ast-nominal-name-id-display name)
         (deref lifetimes))]
-    [(Var name) (str_cat.str-cat "'" (ci.intern-str name) "'")]
+    [(Var name)
+      (str_cat.str-cat
+        "'"
+        (compiler-ir-syntax-name-render
+          (cis.InternStructuralSessionHandle 0)
+          name)
+        "'")]
     [(VarArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
         (cis.InternStructuralSessionHandle 0)
-        (ci.intern-str name)
+        (compiler-ir-syntax-name-render
+          (cis.InternStructuralSessionHandle 0)
+          name)
         (deref lifetimes))]
     [(Ptr elem)
       (str_cat.str-cat
@@ -10482,26 +10465,23 @@
   [node : CompilerDebugTypeNode]) : i64
   (let
     [id : i64 graph.node-count]
-    (begin
-      (when
-        (>= id (array-length graph.nodes))
-        (let
-          [grown : (__tl_dyn-array CompilerDebugTypeNode)
-            (__tl_make-array CompilerDebugTypeNode (+ 16 (* 2 id)))]
-          [index : i64 0]
-          (begin
-            (while (< index id)
-              (begin
-                (set!
-                  (array-ref grown index)
-                  (owned_view.compiler-owned-array-element-shared-view
-                    graph.nodes
-                    index))
-                (set! index (+ index 1))))
-            (set! graph.nodes grown))))
-      (set! (array-ref graph.nodes id) node)
-      (set! graph.node-count (+ id 1))
-      id)))
+    (when
+      (>= id (array-length graph.nodes))
+      (let
+        [grown : (__tl_dyn-array CompilerDebugTypeNode)
+          (__tl_make-array CompilerDebugTypeNode (+ 16 (* 2 id)))]
+        [index : i64 0]
+        (while (< index id)
+          (set!
+            (array-ref grown index)
+            (owned_view.compiler-owned-array-element-shared-view
+              graph.nodes
+              index))
+          (set! index (+ index 1)))
+        (set! graph.nodes grown)))
+    (set! (array-ref graph.nodes id) node)
+    (set! graph.node-count (+ id 1))
+    id))
 
 (define (compiler-debug-type-graph-set-node!
   [graph : (&mut graph CompilerDebugTypeGraph)]
@@ -10514,25 +10494,22 @@
   [member : CompilerDebugTypeMember]) : unit
   (let
     [index : i64 graph.member-count]
-    (begin
-      (when
-        (>= index (array-length graph.members))
-        (let
-          [grown : (__tl_dyn-array CompilerDebugTypeMember)
-            (__tl_make-array CompilerDebugTypeMember (+ 16 (* 2 index)))]
-          [copy : i64 0]
-          (begin
-            (while (< copy index)
-              (begin
-                (set!
-                  (array-ref grown copy)
-                  (owned_view.compiler-owned-array-element-shared-view
-                    graph.members
-                    copy))
-                (set! copy (+ copy 1))))
-            (set! graph.members grown))))
-      (set! (array-ref graph.members index) member)
-      (set! graph.member-count (+ index 1)))))
+    (when
+      (>= index (array-length graph.members))
+      (let
+        [grown : (__tl_dyn-array CompilerDebugTypeMember)
+          (__tl_make-array CompilerDebugTypeMember (+ 16 (* 2 index)))]
+        [copy : i64 0]
+        (while (< copy index)
+          (set!
+            (array-ref grown copy)
+            (owned_view.compiler-owned-array-element-shared-view
+              graph.members
+              copy))
+          (set! copy (+ copy 1)))
+        (set! graph.members grown)))
+    (set! (array-ref graph.members index) member)
+    (set! graph.member-count (+ index 1))))
 
 (define (compiler-debug-type-kind-name [kind : i64]) : String
   (cond
@@ -10562,70 +10539,65 @@
           (string.int->string graph.node-count)
           "\n"))]
     [id : i64 0]
-    (begin
-      (while (< id graph.node-count)
-        (let
-          [node : CompilerDebugTypeNode
-            (owned_view.compiler-owned-array-element-shared-view graph.nodes id)]
-          [member : i64 node.first-member]
-          (begin
+    (while (< id graph.node-count)
+      (let
+        [node : CompilerDebugTypeNode
+          (owned_view.compiler-owned-array-element-shared-view graph.nodes id)]
+        [member : i64 node.first-member]
+        (set!
+          buf
+          (text_buf.append
+            buf
+            (str_cat.str-cat
+              "t"
+              (string.int->string id)
+              " "
+              (compiler-debug-type-kind-name node.kind)
+              " "
+              node.name
+              " size="
+              (string.int->string node.size)
+              " align="
+              (string.int->string node.align)
+              (if (>= node.target 0)
+                (str_cat.str-cat " target=t" (string.int->string node.target))
+                "")
+              (if (>= node.count 0)
+                (str_cat.str-cat " count=" (string.int->string node.count))
+                "")
+              (if (> node.register-words 0)
+                (str_cat.str-cat
+                  " regs="
+                  (string.int->string node.register-words))
+                "")
+              "\n")))
+        (while (< member (+ node.first-member node.member-count))
+          (let
+            [row : CompilerDebugTypeMember
+              (owned_view.compiler-owned-array-element-shared-view
+                graph.members
+                member)]
             (set!
               buf
               (text_buf.append
                 buf
-                (str_cat.str-cat
-                  "t"
-                  (string.int->string id)
-                  " "
-                  (compiler-debug-type-kind-name node.kind)
-                  " "
-                  node.name
-                  " size="
-                  (string.int->string node.size)
-                  " align="
-                  (string.int->string node.align)
-                  (if (>= node.target 0)
-                    (str_cat.str-cat
-                      " target=t"
-                      (string.int->string node.target))
-                    "")
-                  (if (>= node.count 0)
-                    (str_cat.str-cat " count=" (string.int->string node.count))
-                    "")
-                  (if (> node.register-words 0)
-                    (str_cat.str-cat
-                      " regs="
-                      (string.int->string node.register-words))
-                    "")
-                  "\n")))
-            (while (< member (+ node.first-member node.member-count))
-              (let
-                [row : CompilerDebugTypeMember
-                  (owned_view.compiler-owned-array-element-shared-view
-                    graph.members
-                    member)]
-                (begin
-                  (set!
-                    buf
-                    (text_buf.append
-                      buf
-                      (if (< row.type 0)
-                        (str_cat.str-cat
-                          "  variant "
-                          row.name
-                          " ="
-                          (string.int->string row.variant)
-                          "\n")
-                        (str_cat.str-cat
-                          (if (< row.variant 0)
-                            "  ."
-                            "    .")
-                          row.name
-                          " t"
-                          (string.int->string row.type)
-                          " @"
-                          (string.int->string row.offset)
-                          "\n"))))
-                  (set! member (+ member 1)))))
-            (set! id (+ id 1)))))
-      (text_buf.render buf))))
+                (if (< row.type 0)
+                  (str_cat.str-cat
+                    "  variant "
+                    row.name
+                    " ="
+                    (string.int->string row.variant)
+                    "\n")
+                  (str_cat.str-cat
+                    (if (< row.variant 0)
+                      "  ."
+                      "    .")
+                    row.name
+                    " t"
+                    (string.int->string row.type)
+                    " @"
+                    (string.int->string row.offset)
+                    "\n"))))
+            (set! member (+ member 1))))
+        (set! id (+ id 1))))
+    (text_buf.render buf)))

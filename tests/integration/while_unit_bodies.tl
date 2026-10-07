@@ -1,0 +1,82 @@
+(import stdlib.comptime)
+
+(define (body-value [value : i64]) : i64
+  value)
+
+(defmacro (loop-body [condition : Expr] [body : Expr]) : Expr
+  (comptime.expr-while condition body))
+
+(defmacro (loop-forms [condition : Expr] [body : Expr ...]) : Expr
+  `(while ,condition
+    ,@body))
+
+(defmacro (loop-form [condition : Expr] [body : Expr]) : Expr
+  `(while ,condition
+    ,body))
+
+(defmacro (count-loop) : Expr
+  (let
+    [i : i64 0]
+    (while (< i 3)
+      (set! i (+ i 1)))
+    (comptime.expr-int i)))
+
+(defmacro (emit-loop) : Decls
+  '(define (generated-loop) : i64
+    (let
+      [i : i64 0]
+      (while (< i 3)
+        (begin
+          (body-value i)
+          unit)
+        (set! i (+ i 1)))
+      i)))
+
+(emit-loop)
+
+(define (main) : i64
+  (when (!= (count-loop) 3) (return 1))
+  (let
+    [running : bool true]
+    [total : i64 0]
+    (while running
+      (begin
+        (body-value (+ total 1))
+        unit)
+      (set! total (+ total 10))
+      (set! running false))
+    (set! running true)
+    (loop-body
+      running
+      (begin
+        (body-value (+ total 1))
+        (set! total (+ total 20))
+        (set! running false)))
+    (set! running true)
+    (loop-form running (set! running false))
+    (set! running true)
+    (loop-form
+      running
+      (begin
+        (body-value total)
+        (set! running false)))
+    (set! running true)
+    (loop-forms
+      running
+      (begin
+        (begin
+          (body-value 99)
+          unit)
+        unit)
+      (set! total (+ total 6))
+      (set! running false))
+    (+
+      total
+      (generated-loop)
+      (comptime
+        (let
+          [i : i64 0]
+          (while (< i 3)
+            (set! i (+ i 1))
+            unit)
+          i)))))

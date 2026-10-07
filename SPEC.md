@@ -4354,7 +4354,11 @@ loop-carried owner.
 
 The join keeps separate normal/backedge, continue, break, and
 return/divergence outcomes. Move facts on `break` paths join the state after
-the loop, so a moved place cannot be used there. Return/divergence facts have
+the loop, so a moved place cannot be used there. A `break` or `continue` nested
+in an operand (a call argument, an operator operand, a `set!` value, a
+constructor element, a `return` operand, or an inner loop's condition or
+bounds) takes the same edge with the moves made up to it, including those of
+operands evaluated before it. Return/divergence facts have
 no successor in the function. The pre-loop state also reaches the post-loop
 join because the body may execute zero times; ordinary body fallthrough state
 is not propagated as a zero-trip substitute. Owners created inside the body
@@ -9399,8 +9403,9 @@ literals is not a call and does not trigger the rule. Prefer `in-arena`,
 `with-scratch`, `with-arena`, `rewind-safe!`, or `destroy-safe!` in new code.
 Opt-in rules: `--deprecated-string-concat` (deprecated concat primitives),
 `--redundant-function-name` (redundant module-prefix names),
-`--redundant-begin` (a `begin` of two or more forms written as a body form of
-a position that already takes a body sequence, with a machine-applicable fix
+`--redundant-begin` (a `begin` of two or more forms, none of them a `cfg`
+form, written as a body form of a position that already takes a body
+sequence, with a machine-applicable fix
 that splices its forms into that body; under `when` and `unless`, whose body
 forms must each be `unit`, it reports only when the forms the splice exposes
 are syntactically `unit`), and

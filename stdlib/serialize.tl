@@ -360,13 +360,12 @@
                         ,(comptime.expr-int (- payload-count 1))
                         (,sequence-empty-hook)))
                     (,empty-object-hook))))]
-            (begin
-              (set!
-                arms
-                (comptime.match-arm-list-cons
-                  (comptime.match-arm pattern body)
-                  arms))
-              (set! variant-index (- variant-index 1)))))
+            (set!
+              arms
+              (comptime.match-arm-list-cons
+                (comptime.match-arm pattern body)
+                arms))
+            (set! variant-index (- variant-index 1))))
         (comptime.expr-match value arms)))))
 
 ;: Emit an enum variant constructor from decoded payload expressions.
@@ -495,18 +494,17 @@
             (let
               [__serialize_payload_count : i64
                 (,length-hook ,payload ,err-ctor)]
-              (begin
-                (if (!= __serialize_payload_count ,payload-count-expr)
-                  (return (,err-ctor "serialize: enum payload length mismatch"))
-                  unit)
-                (stdlib.serialize.decode-enum-payload-items
-                  ,format-expr
-                  ,enum-type
-                  ,nested-alias
-                  ,payload
-                  ,err-ctor
-                  ,variant-index-expr
-                  0)))
+              (if (!= __serialize_payload_count ,payload-count-expr)
+                (return (,err-ctor "serialize: enum payload length mismatch"))
+                unit)
+              (stdlib.serialize.decode-enum-payload-items
+                ,format-expr
+                ,enum-type
+                ,nested-alias
+                ,payload
+                ,err-ctor
+                ,variant-index-expr
+                0))
             (stdlib.serialize.decode-enum-variants
               ,format-expr
               ,enum-type
@@ -608,27 +606,25 @@
                 [__serialize_value ,value]
                 [__serialize_items (,empty-hook)]
                 [__serialize_i : i64 (- ,length-expr 1)]
-                (begin
-                  (while (>= __serialize_i 0)
-                    (begin
-                      (set!
-                        __serialize_items
-                        (,element-hook
-                          __serialize_i
-                          (stdlib.serialize.encode-value
-                            ,format-expr
-                            ,element-type
-                            ,(comptime.expr-var element-alias)
-                            ;; `__serialize_value` owns the consumed input and
-                            ;; the loop visits each index below its length
-                            ;; once, so each element is copied out once.
-                            (unsafe
-                              (stdlib.serialize.serialize-array-element-shared-view
-                                __serialize_value
-                                __serialize_i)))
-                          __serialize_items))
-                      (set! __serialize_i (- __serialize_i 1))))
-                  (,finish-hook __serialize_items))))]
+                (while (>= __serialize_i 0)
+                  (set!
+                    __serialize_items
+                    (,element-hook
+                      __serialize_i
+                      (stdlib.serialize.encode-value
+                        ,format-expr
+                        ,element-type
+                        ,(comptime.expr-var element-alias)
+                        ;; `__serialize_value` owns the consumed input and
+                        ;; the loop visits each index below its length
+                        ;; once, so each element is copied out once.
+                        (unsafe
+                          (stdlib.serialize.serialize-array-element-shared-view
+                            __serialize_value
+                            __serialize_i)))
+                      __serialize_items))
+                  (set! __serialize_i (- __serialize_i 1)))
+                (,finish-hook __serialize_items)))]
           ["dyn-array"
             (let
               [element-type : comptime.Expr (array-element-type value-type)]
@@ -645,27 +641,25 @@
                 [__serialize_items (,empty-hook)]
                 [__serialize_i : i64
                   (- (__tl_array-length __serialize_value) 1)]
-                (begin
-                  (while (>= __serialize_i 0)
-                    (begin
-                      (set!
-                        __serialize_items
-                        (,element-hook
-                          __serialize_i
-                          (stdlib.serialize.encode-value
-                            ,format-expr
-                            ,element-type
-                            ,(comptime.expr-var element-alias)
-                            ;; `__serialize_value` owns the consumed input and
-                            ;; the loop visits each index below its length
-                            ;; once, so each element is copied out once.
-                            (unsafe
-                              (stdlib.serialize.serialize-array-element-shared-view
-                                __serialize_value
-                                __serialize_i)))
-                          __serialize_items))
-                      (set! __serialize_i (- __serialize_i 1))))
-                  (,finish-hook __serialize_items))))]
+                (while (>= __serialize_i 0)
+                  (set!
+                    __serialize_items
+                    (,element-hook
+                      __serialize_i
+                      (stdlib.serialize.encode-value
+                        ,format-expr
+                        ,element-type
+                        ,(comptime.expr-var element-alias)
+                        ;; `__serialize_value` owns the consumed input and
+                        ;; the loop visits each index below its length
+                        ;; once, so each element is copied out once.
+                        (unsafe
+                          (stdlib.serialize.serialize-array-element-shared-view
+                            __serialize_value
+                            __serialize_i)))
+                      __serialize_items))
+                  (set! __serialize_i (- __serialize_i 1)))
+                (,finish-hook __serialize_items)))]
           ["tuple"
             (let
               [empty-hook : comptime.Expr
@@ -793,35 +787,32 @@
                     (unsafe
                       (stdlib.serialize.serialize-shared-view __serialize_value))
                     ,err-ctor)]
-                (begin
-                  (if (!= __serialize_count ,length-expr)
-                    (return (,err-ctor "serialize: sequence length mismatch"))
-                    unit)
-                  (let
-                    [__serialize_out : ,value-type (init : ,value-type)]
-                    [__serialize_i : i64 0]
-                    (begin
-                      (while (< __serialize_i ,length-expr)
-                        (let
-                          [__serialize_decoded_item
-                            (stdlib.serialize.decode-value
-                              ,format-expr
-                              ,element-type
-                              ,(comptime.expr-var element-alias)
-                              (,element-hook
-                                (unsafe
-                                  (stdlib.serialize.serialize-shared-view
-                                    __serialize_value))
-                                __serialize_i
-                                ,err-ctor)
-                              ,err-ctor)]
-                          (begin
-                            (__tl_array-set!
-                              __serialize_out
-                              __serialize_i
-                              __serialize_decoded_item)
-                            (set! __serialize_i (+ __serialize_i 1)))))
-                      __serialize_out)))))]
+                (if (!= __serialize_count ,length-expr)
+                  (return (,err-ctor "serialize: sequence length mismatch"))
+                  unit)
+                (let
+                  [__serialize_out : ,value-type (init : ,value-type)]
+                  [__serialize_i : i64 0]
+                  (while (< __serialize_i ,length-expr)
+                    (let
+                      [__serialize_decoded_item
+                        (stdlib.serialize.decode-value
+                          ,format-expr
+                          ,element-type
+                          ,(comptime.expr-var element-alias)
+                          (,element-hook
+                            (unsafe
+                              (stdlib.serialize.serialize-shared-view
+                                __serialize_value))
+                            __serialize_i
+                            ,err-ctor)
+                          ,err-ctor)]
+                      (__tl_array-set!
+                        __serialize_out
+                        __serialize_i
+                        __serialize_decoded_item)
+                      (set! __serialize_i (+ __serialize_i 1))))
+                  __serialize_out)))]
           ["dyn-array"
             (let
               [element-type : comptime.Expr (array-element-type value-type)]
@@ -841,28 +832,26 @@
                 [__serialize_out : ,value-type
                   (__tl_make-array ,element-type __serialize_count)]
                 [__serialize_i : i64 0]
-                (begin
-                  (while (< __serialize_i __serialize_count)
-                    (let
-                      [__serialize_decoded_item
-                        (stdlib.serialize.decode-value
-                          ,format-expr
-                          ,element-type
-                          ,(comptime.expr-var element-alias)
-                          (,element-hook
-                            (unsafe
-                              (stdlib.serialize.serialize-shared-view
-                                __serialize_value))
-                            __serialize_i
-                            ,err-ctor)
-                          ,err-ctor)]
-                      (begin
-                        (__tl_array-set!
-                          __serialize_out
+                (while (< __serialize_i __serialize_count)
+                  (let
+                    [__serialize_decoded_item
+                      (stdlib.serialize.decode-value
+                        ,format-expr
+                        ,element-type
+                        ,(comptime.expr-var element-alias)
+                        (,element-hook
+                          (unsafe
+                            (stdlib.serialize.serialize-shared-view
+                              __serialize_value))
                           __serialize_i
-                          __serialize_decoded_item)
-                        (set! __serialize_i (+ __serialize_i 1)))))
-                  __serialize_out)))]
+                          ,err-ctor)
+                        ,err-ctor)]
+                    (__tl_array-set!
+                      __serialize_out
+                      __serialize_i
+                      __serialize_decoded_item)
+                    (set! __serialize_i (+ __serialize_i 1))))
+                __serialize_out))]
           ["tuple"
             (let
               [length-hook : comptime.Expr
@@ -876,18 +865,17 @@
                     (unsafe
                       (stdlib.serialize.serialize-shared-view __serialize_value))
                     ,err-ctor)]
-                (begin
-                  (if (!= __serialize_count ,length-expr)
-                    (return (,err-ctor "serialize: sequence length mismatch"))
-                    unit)
-                  (stdlib.serialize.decode-tuple-items
-                    ,format-expr
-                    ,value-type
-                    ,nested-alias
-                    (unsafe
-                      (stdlib.serialize.serialize-shared-view __serialize_value))
-                    ,err-ctor
-                    0))))]
+                (if (!= __serialize_count ,length-expr)
+                  (return (,err-ctor "serialize: sequence length mismatch"))
+                  unit)
+                (stdlib.serialize.decode-tuple-items
+                  ,format-expr
+                  ,value-type
+                  ,nested-alias
+                  (unsafe
+                    (stdlib.serialize.serialize-shared-view __serialize_value))
+                  ,err-ctor
+                  0)))]
           ["enum"
             (let
               [expect-object-hook : comptime.Expr
@@ -901,39 +889,38 @@
               [type-name : String (type-nominal-name value-type)]
               `(let
                 [__serialize_value ,value]
-                (begin
-                  (,expect-object-hook
-                    (unsafe
-                      (stdlib.serialize.serialize-shared-view __serialize_value))
-                    ,(comptime.expr-string type-name)
-                    ,err-ctor)
-                  (let
-                    [__serialize_tag_value
-                      (,field-value-hook
-                        (unsafe
-                          (stdlib.serialize.serialize-shared-view
-                            __serialize_value))
-                        ,(comptime.expr-string "tag")
-                        ,err-ctor)]
-                    [__serialize_payload_value
-                      (,field-value-hook
-                        (unsafe
-                          (stdlib.serialize.serialize-shared-view
-                            __serialize_value))
-                        ,(comptime.expr-string "payload")
-                        ,err-ctor)]
-                    [__serialize_tag : String
-                      (,decode-string-hook __serialize_tag_value ,err-ctor)]
-                    (stdlib.serialize.decode-enum-variants
-                      ,format-expr
-                      ,value-type
-                      ,nested-alias
+                (,expect-object-hook
+                  (unsafe
+                    (stdlib.serialize.serialize-shared-view __serialize_value))
+                  ,(comptime.expr-string type-name)
+                  ,err-ctor)
+                (let
+                  [__serialize_tag_value
+                    (,field-value-hook
                       (unsafe
                         (stdlib.serialize.serialize-shared-view
-                          __serialize_payload_value))
-                      ,err-ctor
-                      __serialize_tag
-                      0)))))]
+                          __serialize_value))
+                      ,(comptime.expr-string "tag")
+                      ,err-ctor)]
+                  [__serialize_payload_value
+                    (,field-value-hook
+                      (unsafe
+                        (stdlib.serialize.serialize-shared-view
+                          __serialize_value))
+                      ,(comptime.expr-string "payload")
+                      ,err-ctor)]
+                  [__serialize_tag : String
+                    (,decode-string-hook __serialize_tag_value ,err-ctor)]
+                  (stdlib.serialize.decode-enum-variants
+                    ,format-expr
+                    ,value-type
+                    ,nested-alias
+                    (unsafe
+                      (stdlib.serialize.serialize-shared-view
+                        __serialize_payload_value))
+                    ,err-ctor
+                    __serialize_tag
+                    0))))]
           [_
             (comptime.comptime-error
               (comptime.string-append "serialize: unsupported type " value-key))])])))
@@ -1403,24 +1390,22 @@
                 ;; `decode` owns `value`; every view below reads only that
                 ;; parameter, and no view outlives the call.
                 (define (decode [value : ,value-type]) : Result
-                  (begin
-                    (,expect-object-hook
+                  (,expect-object-hook
+                    (unsafe
+                      (stdlib.serialize.serialize-shared-view value))
+                    ,(comptime.expr-string type-name)
+                    ,err-ctor)
+                  (let
+                    [__serialize_out : ,T (init : ,T)]
+                    (stdlib.serialize.decode-fields
+                      ,format-module-expr
+                      ,T
+                      0
                       (unsafe
                         (stdlib.serialize.serialize-shared-view value))
-                      ,(comptime.expr-string type-name)
+                      __serialize_out
                       ,err-ctor)
-                    (let
-                      [__serialize_out : ,T (init : ,T)]
-                      (begin
-                        (stdlib.serialize.decode-fields
-                          ,format-module-expr
-                          ,T
-                          0
-                          (unsafe
-                            (stdlib.serialize.serialize-shared-view value))
-                          __serialize_out
-                          ,err-ctor)
-                        (,ok-ctor __serialize_out)))))
+                    (,ok-ctor __serialize_out)))
                 (,extra-decls-hook ,T)))]
           [_
             (let

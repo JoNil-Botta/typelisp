@@ -1460,28 +1460,22 @@
     (compiler-typecheck-repr-c-mixed-layout-ok?)))
 
 (define (compiler-typecheck-inline-layout-result [src : String] [name : String]) : tc_core.ResultTcUnit
-  (match (parser.parse-ast-source src)
-    [(Ok program)
-      (match (csym.build-compiler-symbols program)
-        [(Ok symbols)
-          (match (csym.build-compiler-registries program)
-            [(Ok registries)
-              (let
-                [ctx : tc_core.TcContext
-                  (tc_core.tc-context-new
-                    (ast.ast-global-shared-view program)
-                    symbols
-                    registries
-                    ""
-                    cbi.compiler-builtin-id-fix-empty
-                    (ast.ast-node-pool-context-capture-active))]
-                (tc_core.tc-inline-aggregate-layout-finite-ok
-                  ctx
-                  (tc_core.tc-global-shared-view name)
-                  (compiler-typecheck-fixture-nominal-id program name)))]
-            [(Err message) (Err message)])]
-        [(Err message) (Err message)])]
-    [(Err message) (Err message)]))
+  (let
+    [program (try (parser.parse-ast-source src))]
+    [symbols (try (csym.build-compiler-symbols program))]
+    [registries (try (csym.build-compiler-registries program))]
+    [ctx : tc_core.TcContext
+      (tc_core.tc-context-new
+        (ast.ast-global-shared-view program)
+        symbols
+        registries
+        ""
+        cbi.compiler-builtin-id-fix-empty
+        (ast.ast-node-pool-context-capture-active))]
+    (tc_core.tc-inline-aggregate-layout-finite-ok
+      ctx
+      (tc_core.tc-global-shared-view name)
+      (compiler-typecheck-fixture-nominal-id program name))))
 
 (define (compiler-typecheck-inline-layout-ok? [src : String] [name : String]) : bool
   (match (compiler-typecheck-inline-layout-result src name)
@@ -4993,8 +4987,50 @@
 (define (compiler-typecheck-stmt-if-cond-source) : String
   "(define (main) : i64 (if 1 2 3))")
 
+(define (compiler-typecheck-while-body-error-at? [body : String] [line : i64]) : bool
+  (compiler-typecheck-error-location-ok?
+    (str_cat.str-cat
+      "(define (s) : i64 1)\n(define (main) : unit\n  (while false\n"
+      body
+      "))")
+    "typecheck: while body must be unit: expected unit, found i64"
+    line
+    5))
+
+(define (compiler-typecheck-while-unit-body-tests-ok?) : bool
+  (and
+    (compiler-typecheck-while-body-error-at? "    (s)\n    unit" 4)
+    (compiler-typecheck-while-body-error-at? "    unit\n    (s)\n    unit" 5)
+    (compiler-typecheck-while-body-error-at? "    unit\n    unit\n    (s)" 6)
+    (compiler-typecheck-while-body-error-at? "    (s)" 4)
+    (compiler-typecheck-while-body-error-at? "    (break)\n    (s)\n    unit" 5)
+    (compiler-typecheck-while-body-error-at? "    (begin unit (s))" 4)
+    (compiler-typecheck-ok?
+      "(define (main) : unit
+  (while false (begin 1 unit) (begin (begin 2 unit) unit)))")
+    (compiler-typecheck-ok?
+      "(define (main) : unit
+  (while true (break) (continue) (return unit)))")
+    (compiler-typecheck-error-ok?
+      "(defmacro (empty-body [items : Expr ...]) : Expr
+  `(while false ,@items))
+(define (main) : unit (empty-body))"
+      "typecheck: while requires at least one body expression")
+    (compiler-typecheck-error-code-ok?
+      "(defmacro (empty-body [items : Expr ...]) : Expr
+  `(while false ,@items))
+(define (main) : unit (empty-body))"
+      (cdiag.compiler-diagnostic-code-typecheck-arity-mismatch)
+      "typecheck")
+    (compiler-typecheck-error-ok?
+      "(define (s) : i64 1)
+(defmacro (loop [value : Expr]) : Expr `(while false ,value unit))
+(define (main) : unit (loop (s)))"
+      "typecheck: while body must be unit: expected unit, found i64")))
+
 (define (compiler-typecheck-statement-tests-ok?) : bool
   (and
+    (compiler-typecheck-while-unit-body-tests-ok?)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stmt-if-cond-source)
       "typecheck: if condition must be bool: expected bool, found i32")
@@ -10282,7 +10318,156 @@
       (take-handle h)
       (let [h : i64 1] h)
       7)))"
-      "typecheck: cleanup owner `h` moved before with scope exit")))
+      "typecheck: cleanup owner `h` moved before with scope exit")
+    (compiler-typecheck-move-operand-loop-edge-tests-ok?)))
+
+;; #8575: a `break` or `continue` nested in an operand of a form the loop walker
+;; has no arm for takes its loop edge with the moves made up to it.
+(define (compiler-typecheck-move-operand-loop-source [body : String]) : String
+  (str_cat.str-cat
+    "(defstruct Token (id i64) (name String))
+(defstruct Pair (a i64) (b i64))
+(define (consume [t : Token]) : i64 t.id)
+(define (consume2 [t : Token] [n : i64]) : i64 (+ t.id n))
+(define (id [x : i64]) : i64 x)
+(define (keep [x : i64]) : unit unit)
+"
+    body))
+
+(define (compiler-typecheck-move-operand-loop-error-ok?
+  [body : String]
+  [message : String]) : bool
+  (compiler-typecheck-error-ok?
+    (compiler-typecheck-move-operand-loop-source body)
+    message))
+
+(define (compiler-typecheck-move-operand-loop-edge-tests-ok?) : bool
+  (and
+    ;; The break edge of each operand position reaches the use after the loop.
+    (compiler-typecheck-move-operand-loop-error-ok?
+      "(define (call-arg [t : Token] [flag : bool]) : i64
+  (begin
+    (while true
+      (keep (id (if flag (begin (consume t) (break)) 1)))
+      (break))
+    (consume t)))"
+      "typecheck: use of moved value `t`")
+    (compiler-typecheck-move-operand-loop-error-ok?
+      "(define (binary-operand [t : Token] [flag : bool]) : i64
+  (let [acc : i64 0]
+    (while true
+      (set! acc (+ (if flag (begin (consume t) (break)) 1) acc))
+      (break))
+    (+ acc (consume t))))"
+      "typecheck: use of moved value `t`")
+    (compiler-typecheck-move-operand-loop-error-ok?
+      "(define (set-value [t : Token] [flag : bool]) : i64
+  (let [acc : i64 0]
+    (while true
+      (set! acc (if flag (begin (consume t) (break)) 1))
+      (break))
+    (+ acc (consume t))))"
+      "typecheck: use of moved value `t`")
+    (compiler-typecheck-move-operand-loop-error-ok?
+      "(define (constructor-arg [t : Token] [flag : bool]) : i64
+  (let [acc : i64 0]
+    (while true
+      (let [p (Pair (if flag (begin (consume t) (break)) 1) 2)] (set! acc p.a))
+      (break))
+    (+ acc (consume t))))"
+      "typecheck: use of moved value `t`")
+    (compiler-typecheck-move-operand-loop-error-ok?
+      "(define (return-operand [t : Token] [flag : bool]) : i64
+  (begin
+    (while true
+      (return (if flag (begin (consume t) (break)) 1)))
+    (consume t)))"
+      "typecheck: use of moved value `t`")
+    ;; An inner loop's header runs in the outer loop, so its break leaves that.
+    (compiler-typecheck-move-operand-loop-error-ok?
+      "(define (inner-while-condition [t : Token] [flag : bool]) : i64
+  (let [acc : i64 0]
+    (while true
+      (while (if flag (begin (consume t) (break)) false) (set! acc 1))
+      (break))
+    (+ acc (consume t))))"
+      "typecheck: use of moved value `t`")
+    (compiler-typecheck-move-operand-loop-error-ok?
+      "(define (inner-foreach-bound [t : Token] [flag : bool] [out : (&mut (Array i64 3))]) : i64
+  (let [acc : i64 0]
+    (while true
+      (foreach ([i : i64 (if flag (begin (consume t) (break)) 0) 3])
+        (set! (array-ref out i) i))
+      (break))
+    (+ acc (consume t))))"
+      "typecheck: use of moved value `t`")
+    ;; An argument evaluated before the break has already moved its place.
+    (compiler-typecheck-move-operand-loop-error-ok?
+      "(define (earlier-arg [t : Token] [flag : bool]) : i64
+  (begin
+    (while true
+      (keep (consume2 t (if flag (break) 1)))
+      (return 0))
+    (consume t)))"
+      "typecheck: use of moved value `t`")
+    ;; A continue nested in an operand reaches the backedge, from its own
+    ;; statement and from an earlier one.
+    (compiler-typecheck-move-operand-loop-error-ok?
+      "(define (continue-operand [t : Token] [flag : bool]) : i64
+  (let [acc : i64 0]
+    (while (< acc 3)
+      (set! acc (+ acc 1))
+      (keep (id (if flag (begin (consume t) (continue)) 1)))
+      (break))
+    acc))"
+      "typecheck: cannot move loop-carried owner value `t`")
+    (compiler-typecheck-move-operand-loop-error-ok?
+      "(define (later-continue-operand [t : Token] [flag : bool]) : i64
+  (let [acc : i64 0]
+    (while (< acc 3)
+      (set! acc (+ acc (consume t)))
+      (keep (id (if flag (continue) 1)))
+      (break))
+    acc))"
+      "typecheck: cannot move loop-carried owner value `t`")
+    ;; Accepted: no use after the loop, a reinitialized place, a break that
+    ;; leaves only an inner loop, Copy values, and a continue with no move.
+    (compiler-typecheck-ok?
+      (compiler-typecheck-move-operand-loop-source
+        "(define (no-later-use [t : Token] [flag : bool]) : i64
+  (let [acc : i64 0]
+    (while true
+      (keep (id (if flag (begin (set! acc (consume t)) (break)) 1)))
+      (break))
+    acc))
+(define (reinitialized [t : Token] [flag : bool]) : i64
+  (let [acc : i64 0] [u : Token t]
+    (while true
+      (set! acc (+ (if flag (begin (set! acc (consume u)) (break)) 1) acc))
+      (break))
+    (set! u (Token 2 \"u\"))
+    (+ acc (consume u))))
+(define (inner-loop-break [flag : bool]) : i64
+  (let [acc : i64 0] [n : i64 0]
+    (while (< n 3)
+      (let [t : Token (Token n \"t\")]
+        (while true
+          (keep (id (if flag (begin (set! acc (+ acc (consume t))) (break)) 1)))
+          (break)))
+      (set! n (+ n 1)))
+    acc))
+(define (copy-only [x : i64] [flag : bool]) : i64
+  (let [acc : i64 0]
+    (while true
+      (keep (id (if flag (begin (set! acc x) (break)) 1)))
+      (break))
+    (+ acc x)))
+(define (continue-without-move [flag : bool]) : i64
+  (let [acc : i64 0]
+    (while (< acc 5)
+      (set! acc (+ acc 1))
+      (keep (id (if flag (continue) 1))))
+    acc))"))))
 
 ;; --- defdispatch frontend model ---------------------------------------------
 (define (compiler-typecheck-defdispatch-full-source) : String

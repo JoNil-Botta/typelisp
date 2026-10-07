@@ -974,13 +974,15 @@
   (match provenance
     [(Local) (Ok "")]
     [(Fetched alias checkout-root)
-      (match (package_source_core.package-source-confined-existing-file
-        alias
-        "manifest"
-        "typelisp.pkg"
-        checkout-root)
-        [(Err message) (Err message)]
-        [(Ok _) (Ok "")])]))
+      (let
+        [_
+          (try
+            (package_source_core.package-source-confined-existing-file
+              alias
+              "manifest"
+              "typelisp.pkg"
+              checkout-root))]
+        (Ok ""))]))
 
 (define (build-package-validate-fetched-checkout
   [provenance : BuildPackageSourceProvenance]
@@ -988,18 +990,21 @@
   (match provenance
     [(Local) (Ok "")]
     [(Fetched _ checkout-root)
-      (match (package_source_core.package-source-confined-existing-file
-        (owned_view.compiler-owned-shared-view manifest.name)
-        "entry"
-        manifest.entry
-        (owned_view.compiler-owned-shared-view checkout-root))
-        [(Err message) (Err message)]
-        [(Ok _)
-          (match (package_source_core.package-source-fetched-checkout-audit
-            manifest.name
-            checkout-root)
-            [(Err message) (Err message)]
-            [(Ok _) (Ok "")])])]))
+      (let
+        [_
+          (try
+            (package_source_core.package-source-confined-existing-file
+              (owned_view.compiler-owned-shared-view manifest.name)
+              "entry"
+              manifest.entry
+              (owned_view.compiler-owned-shared-view checkout-root)))]
+        (let
+          [_
+            (try
+              (package_source_core.package-source-fetched-checkout-audit
+                manifest.name
+                checkout-root))]
+          (Ok "")))]))
 
 (define (build-package-validate-graph-node-checkout
   [node : BuildPackageGraphNode]) : ResultBuildString
@@ -1180,18 +1185,19 @@
   [alias : String]
   [dep : (& dep BuildGitDependency)]
   [commit : String]) : package_lock_core.ResultPackageLockEntry
-  (match (build-git-dep-pin-kind
-    (owned_view.compiler-owned-shared-view alias)
-    dep)
-    [(Err message) (Err message)]
-    [(Ok kind)
-      (Ok
-        (package_lock_core.PackageLockEntry
-          alias
-          (string.copy (& dep.remote))
-          kind
-          (string.copy (& dep.pin-value))
-          commit))]))
+  (let
+    [kind
+      (try
+        (build-git-dep-pin-kind
+          (owned_view.compiler-owned-shared-view alias)
+          dep))]
+    (Ok
+      (package_lock_core.PackageLockEntry
+        alias
+        (string.copy (& dep.remote))
+        kind
+        (string.copy (& dep.pin-value))
+        commit))))
 
 (define (build-git-dependency-at-commit
   [dep : (& dep BuildGitDependency)]
@@ -1244,16 +1250,16 @@
   (string.trim (& output)))
 
 (define (build-resolve-git-head [alias : String] [root : String]) : ResultBuildString
-  (match (build-run-captured
-    (build-git-dep-error alias "git rev-parse")
-    (build-git-rev-parse-command root))
-    [(Err message) (Err message)]
-    [(Ok output)
-      (let
-        [commit : String (build-trim-command-output output)]
-        (if (= (string.string-length commit) 0)
-          (Err (build-git-dep-error alias "resolved commit is empty"))
-          (Ok commit)))]))
+  (let
+    [output
+      (try
+        (build-run-captured
+          (build-git-dep-error alias "git rev-parse")
+          (build-git-rev-parse-command root)))]
+    [commit : String (build-trim-command-output output)]
+    (if (= (string.string-length commit) 0)
+      (Err (build-git-dep-error alias "resolved commit is empty"))
+      (Ok commit))))
 
 (define (build-absolute-dep-root [manifest-dir : String] [dep-root : String]) : String
   (load.compiler-load-normalize-path
@@ -1472,69 +1478,72 @@
           "package cache prepare staging"
           error))]
     [(OkIoUnit)
-      (match (build-package-cache-staging-path
-        (owned_view.compiler-owned-shared-view alias)
-        root
-        key
-        1)
-        [(Err message) (Err message)]
-        [(Ok staged-path)
-          (match (build-run-captured
-            (build-git-dep-error alias "git clone")
-            (build-git-clone-command
-              (string.copy (& dep.remote))
-              (owned_view.compiler-owned-shared-view staged-path)))
-            [(Err message) (Err message)]
-            [(Ok _)
-              (match (build-run-captured
+      (let
+        [staged-path
+          (try
+            (build-package-cache-staging-path
+              (owned_view.compiler-owned-shared-view alias)
+              root
+              key
+              1))]
+        [_
+          (try
+            (build-run-captured
+              (build-git-dep-error alias "git clone")
+              (build-git-clone-command
+                (string.copy (& dep.remote))
+                (owned_view.compiler-owned-shared-view staged-path))))]
+        (let
+          [_
+            (try
+              (build-run-captured
                 (build-git-dep-error alias "git checkout")
                 (build-git-checkout-command
                   (owned_view.compiler-owned-shared-view staged-path)
-                  (build-git-checkout-ref dep)))
-                [(Err message) (Err message)]
-                [(Ok _)
-                  (match (build-run-captured
-                    (build-git-dep-error alias "git rev-parse")
-                    (build-git-rev-parse-command
-                      (owned_view.compiler-owned-shared-view staged-path)))
-                    [(Err message) (Err message)]
-                    [(Ok _)
-                      (if (not
-                        (io.file-exists?
-                          (build-package-cache-manifest-path (& staged-path))))
-                        (Err
-                          (build-git-dep-error
-                            alias
-                            "fetched package is missing typelisp.pkg"))
-                        (match (build-package-cache-write-marker
-                          (owned_view.compiler-owned-shared-view alias)
-                          (owned_view.compiler-owned-shared-view staged-path)
-                          key)
-                          [(Err message) (Err message)]
-                          [(Ok _)
-                            (match (build-package-cache-prepare-entry-parents-result
-                              (owned_view.compiler-owned-shared-view alias)
-                              root
-                              key)
-                              [(Err message) (Err message)]
-                              [(Ok _)
-                                (match (if replace-existing
-                                  (build-package-cache-move-conflict
-                                    (owned_view.compiler-owned-shared-view
-                                      alias)
-                                    (owned_view.compiler-owned-shared-view
-                                      entry-path))
-                                  (ResultBuildString.Ok
-                                    (owned_view.compiler-owned-shared-view
-                                      entry-path)))
-                                  [(Err message) (Err message)]
-                                  [(Ok _)
-                                    (build-package-cache-finalize-staged
-                                      alias
-                                      staged-path
-                                      entry-path
-                                      relative-entry-root
-                                      key)])])]))])])])])]))
+                  (build-git-checkout-ref dep))))]
+          (let
+            [_
+              (try
+                (build-run-captured
+                  (build-git-dep-error alias "git rev-parse")
+                  (build-git-rev-parse-command
+                    (owned_view.compiler-owned-shared-view staged-path))))]
+            (if (not
+              (io.file-exists?
+                (build-package-cache-manifest-path (& staged-path))))
+              (Err
+                (build-git-dep-error
+                  alias
+                  "fetched package is missing typelisp.pkg"))
+              (let
+                [_
+                  (try
+                    (build-package-cache-write-marker
+                      (owned_view.compiler-owned-shared-view alias)
+                      (owned_view.compiler-owned-shared-view staged-path)
+                      key))]
+                (let
+                  [_
+                    (try
+                      (build-package-cache-prepare-entry-parents-result
+                        (owned_view.compiler-owned-shared-view alias)
+                        root
+                        key))]
+                  (let
+                    [_
+                      (try
+                        (if replace-existing
+                          (build-package-cache-move-conflict
+                            (owned_view.compiler-owned-shared-view alias)
+                            (owned_view.compiler-owned-shared-view entry-path))
+                          (ResultBuildString.Ok
+                            (owned_view.compiler-owned-shared-view entry-path))))]
+                    (build-package-cache-finalize-staged
+                      alias
+                      staged-path
+                      entry-path
+                      relative-entry-root
+                      key))))))))]))
 
 (define (build-fetch-github-dependency-cached
   [manifest-dir : String]
@@ -1558,47 +1567,50 @@
       [(CompleteHit _)
         (if (io.file-exists? (build-package-cache-manifest-path (& entry-path)))
           (Ok relative-entry-root)
-          (match (build-ensure-package-cache-root
-            manifest-dir
-            (owned_view.compiler-owned-shared-view alias))
-            [(Err message) (Err message)]
-            [(Ok _)
-              (build-package-cache-fetch-staged
-                alias
-                dep
-                root
-                (& key)
-                entry-path
-                relative-entry-root
-                true)]))]
+          (let
+            [_
+              (try
+                (build-ensure-package-cache-root
+                  manifest-dir
+                  (owned_view.compiler-owned-shared-view alias)))]
+            (build-package-cache-fetch-staged
+              alias
+              dep
+              root
+              (& key)
+              entry-path
+              relative-entry-root
+              true)))]
       [(Miss _)
-        (match (build-ensure-package-cache-root
-          manifest-dir
-          (owned_view.compiler-owned-shared-view alias))
-          [(Err message) (Err message)]
-          [(Ok _)
-            (build-package-cache-fetch-staged
-              alias
-              dep
-              root
-              (& key)
-              entry-path
-              relative-entry-root
-              false)])]
+        (let
+          [_
+            (try
+              (build-ensure-package-cache-root
+                manifest-dir
+                (owned_view.compiler-owned-shared-view alias)))]
+          (build-package-cache-fetch-staged
+            alias
+            dep
+            root
+            (& key)
+            entry-path
+            relative-entry-root
+            false))]
       [(PartialOrCorrupt _ _)
-        (match (build-ensure-package-cache-root
-          manifest-dir
-          (owned_view.compiler-owned-shared-view alias))
-          [(Err message) (Err message)]
-          [(Ok _)
-            (build-package-cache-fetch-staged
-              alias
-              dep
-              root
-              (& key)
-              entry-path
-              relative-entry-root
-              true)])])))
+        (let
+          [_
+            (try
+              (build-ensure-package-cache-root
+                manifest-dir
+                (owned_view.compiler-owned-shared-view alias)))]
+          (build-package-cache-fetch-staged
+            alias
+            dep
+            root
+            (& key)
+            entry-path
+            relative-entry-root
+            true))])))
 
 (define (build-git-clone-if-needed
   [manifest-dir : String]
@@ -1632,36 +1644,40 @@
         (owned_view.compiler-owned-shared-view manifest-dir)
         (owned_view.compiler-owned-shared-view alias)))
       (Ok manifest-path)
-      (match (build-ensure-github-cache-parent
-        manifest-dir
-        (owned_view.compiler-owned-shared-view alias))
-        [(Err message) (Err message)]
-        [(Ok _)
-          (match (build-git-clone-if-needed
-            manifest-dir
-            (owned_view.compiler-owned-shared-view alias)
-            dep
-            (owned_view.compiler-owned-shared-view root))
-            [(Err message) (Err message)]
-            [(Ok _)
-              (match (build-run-captured
-                (build-git-dep-error alias "git checkout")
-                (build-git-checkout-command
-                  (owned_view.compiler-owned-shared-view root)
-                  (build-git-checkout-ref dep)))
-                [(Err message) (Err message)]
-                [(Ok _)
-                  (match (build-run-captured
+      (let
+        [_
+          (try
+            (build-ensure-github-cache-parent
+              manifest-dir
+              (owned_view.compiler-owned-shared-view alias)))]
+        (let
+          [_
+            (try
+              (build-git-clone-if-needed
+                manifest-dir
+                (owned_view.compiler-owned-shared-view alias)
+                dep
+                (owned_view.compiler-owned-shared-view root)))]
+          (let
+            [_
+              (try
+                (build-run-captured
+                  (build-git-dep-error alias "git checkout")
+                  (build-git-checkout-command
+                    (owned_view.compiler-owned-shared-view root)
+                    (build-git-checkout-ref dep))))]
+            (let
+              [_
+                (try
+                  (build-run-captured
                     (build-git-dep-error alias "git rev-parse")
-                    (build-git-rev-parse-command root))
-                    [(Err message) (Err message)]
-                    [(Ok _)
-                      (if (io.file-exists? manifest-path)
-                        (Ok (build-github-dep-relative-root alias))
-                        (Err
-                          (build-git-dep-error
-                            alias
-                            "fetched package is missing typelisp.pkg")))])])])]))))
+                    (build-git-rev-parse-command root)))]
+              (if (io.file-exists? manifest-path)
+                (Ok (build-github-dep-relative-root alias))
+                (Err
+                  (build-git-dep-error
+                    alias
+                    "fetched package is missing typelisp.pkg"))))))))))
 
 (define (build-fetch-github-dependency
   [manifest-dir : String]
@@ -1686,38 +1702,33 @@
       (owned_view.compiler-owned-shared-view entry.commit)]
     [locked-dep : BuildGitDependency
       (build-git-dependency-at-commit (& dep) locked-commit)]
-    (match (build-fetch-github-dependency-cached
-      manifest-dir
-      alias
-      (& locked-dep))
-      [(Err message) (Err message)]
-      [(Ok dep-root) (Ok (BuildResolvedGitDependency dep-root entry))])))
+    [dep-root
+      (try
+        (build-fetch-github-dependency-cached manifest-dir alias (& locked-dep)))]
+    (Ok (BuildResolvedGitDependency dep-root entry))))
 
 (define (build-resolve-github-dependency-without-lock
   [manifest-dir : String]
   [alias : String]
   [dep : BuildGitDependency]) : ResultBuildResolvedGitDependency
-  (match (build-fetch-github-dependency
-    (owned_view.compiler-owned-shared-view manifest-dir)
-    (owned_view.compiler-owned-shared-view alias)
-    (& dep))
-    [(Err message) (Err message)]
-    [(Ok dep-root)
-      (let
-        [commit-result : ResultBuildString
-          (if (build-git-dep-rev? (& dep))
-            (Ok (string.copy (& dep.pin-value)))
-            (build-resolve-git-head
-              (owned_view.compiler-owned-shared-view alias)
-              (build-absolute-dep-root
-                manifest-dir
-                (owned_view.compiler-owned-shared-view dep-root))))]
-        (match commit-result
-          [(Err message) (Err message)]
-          [(Ok commit)
-            (match (build-package-lock-entry alias (& dep) commit)
-              [(Err message) (Err message)]
-              [(Ok entry) (Ok (BuildResolvedGitDependency dep-root entry))])]))]))
+  (let
+    [dep-root
+      (try
+        (build-fetch-github-dependency
+          (owned_view.compiler-owned-shared-view manifest-dir)
+          (owned_view.compiler-owned-shared-view alias)
+          (& dep)))]
+    [commit-result : ResultBuildString
+      (if (build-git-dep-rev? (& dep))
+        (Ok (string.copy (& dep.pin-value)))
+        (build-resolve-git-head
+          (owned_view.compiler-owned-shared-view alias)
+          (build-absolute-dep-root
+            manifest-dir
+            (owned_view.compiler-owned-shared-view dep-root))))]
+    [commit (try commit-result)]
+    [entry (try (build-package-lock-entry alias (& dep) commit))]
+    (Ok (BuildResolvedGitDependency dep-root entry))))
 
 (define (build-resolve-github-dependency
   [manifest-dir : String]
@@ -1767,21 +1778,19 @@
         [parse-alias : String
           (string.substring alias 0 (string.string-length alias))]
         [parse-path : String (string.copy (& path))]
-        (match (build-parse-git-dependency parse-alias parse-path)
-          [(Err message) (Err message)]
-          [(Ok git-dep)
-            (match (build-resolve-github-dependency
+        [git-dep (try (build-parse-git-dependency parse-alias parse-path))]
+        [resolved
+          (try
+            (build-resolve-github-dependency
               manifest-dir
               (owned_view.compiler-owned-shared-view alias)
               git-dep
               lock-entries
-              lock-policy)
-              [(Err message) (Err message)]
-              [(Ok resolved)
-                (Ok
-                  (BuildResolvedPkgDep
-                    (load.CompilerPkgDep alias resolved.dep-root)
-                    (Some resolved.lock-entry)))])]))
+              lock-policy))]
+        (Ok
+          (BuildResolvedPkgDep
+            (load.CompilerPkgDep alias resolved.dep-root)
+            (Some resolved.lock-entry))))
       (Ok (BuildResolvedPkgDep (load.CompilerPkgDep alias path) (No))))))
 
 (define (build-package-lock-entry-list-add
@@ -1871,37 +1880,36 @@
         (load.compiler-pkg-dep-list-empty)
         (package_lock_entry_vec.new)
         false))
-    (match (build-package-resolve-dep-with-lock
-      (owned_view.compiler-owned-shared-view manifest-dir)
-      (owned_view.compiler-owned-shared-view lock-entries)
-      lock-policy
-      (load.compiler-pkg-dep-list-at deps index))
-      [(Err message) (Err message)]
-      [(Ok resolved-dep)
-        (match (build-package-resolve-deps-with-lock
-          manifest-dir
-          lock-entries
-          lock-policy
-          deps
-          (+ index 1))
-          [(Err message) (Err message)]
-          [(Ok resolved-rest)
-            (match (build-package-lock-entry-list-add
-              resolved-rest.lock-entries
-              (owned_view.compiler-owned-shared-view resolved-dep.lock-entry))
-              [(Err message) (Err message)]
-              [(Ok next-lock-entries)
-                (Ok
-                  (BuildResolvedPkgDeps
-                    (load.compiler-pkg-dep-list-cons
-                      resolved-dep.dep
-                      resolved-rest.deps)
-                    next-lock-entries
-                    (or
-                      resolved-rest.has-remote
-                      (match resolved-dep.lock-entry
-                        [(No) false]
-                        [(Some _) true]))))])])])))
+    (let
+      [resolved-dep
+        (try
+          (build-package-resolve-dep-with-lock
+            (owned_view.compiler-owned-shared-view manifest-dir)
+            (owned_view.compiler-owned-shared-view lock-entries)
+            lock-policy
+            (load.compiler-pkg-dep-list-at deps index)))]
+      [resolved-rest
+        (try
+          (build-package-resolve-deps-with-lock
+            manifest-dir
+            lock-entries
+            lock-policy
+            deps
+            (+ index 1)))]
+      [next-lock-entries
+        (try
+          (build-package-lock-entry-list-add
+            resolved-rest.lock-entries
+            (owned_view.compiler-owned-shared-view resolved-dep.lock-entry)))]
+      (Ok
+        (BuildResolvedPkgDeps
+          (load.compiler-pkg-dep-list-cons resolved-dep.dep resolved-rest.deps)
+          next-lock-entries
+          (or
+            resolved-rest.has-remote
+            (match resolved-dep.lock-entry
+              [(No) false]
+              [(Some _) true])))))))
 
 (define (build-package-resolve-manifest-deps
   [manifest-path : String]
@@ -1924,38 +1932,39 @@
     [(CompilerPkgKindBin)
       (let
         [manifest-dir : String (load.compiler-load-dirname manifest-path)]
-        (match (build-load-package-lock
-          (owned_view.compiler-owned-shared-view manifest-dir))
-          [(Err message) (Err message)]
-          [(Ok lock-state)
-            (match (build-package-resolve-deps-with-lock
+        [lock-state
+          (try
+            (build-load-package-lock
+              (owned_view.compiler-owned-shared-view manifest-dir)))]
+        [resolved
+          (try
+            (build-package-resolve-deps-with-lock
               manifest-dir
               (owned_view.compiler-owned-shared-view lock-state.entries)
               lock-policy
               (load.compiler-pkg-deps-list manifest.deps)
-              0)
-              [(Err message) (Err message)]
-              [(Ok resolved)
-                (match (build-package-lock-policy-check
-                  lock-policy
-                  (owned_view.compiler-owned-shared-view lock-state)
-                  resolved)
-                  [(Err message) (Err message)]
-                  [(Ok _)
-                    (match (build-package-maybe-write-lock
-                      lock-policy
-                      lock-state
-                      (owned_view.compiler-owned-shared-view resolved))
-                      [(Err message) (Err message)]
-                      [(Ok _)
-                        (Ok
-                          (load.CompilerPkgManifest
-                            manifest.name
-                            manifest.version
-                            manifest.kind
-                            manifest.entry
-                            (load.compiler-pkg-deps-from-list resolved.deps)
-                            manifest.link))])])])]))]))
+              0))]
+        [_
+          (try
+            (build-package-lock-policy-check
+              lock-policy
+              (owned_view.compiler-owned-shared-view lock-state)
+              resolved))]
+        (let
+          [_
+            (try
+              (build-package-maybe-write-lock
+                lock-policy
+                lock-state
+                (owned_view.compiler-owned-shared-view resolved)))]
+          (Ok
+            (load.CompilerPkgManifest
+              manifest.name
+              manifest.version
+              manifest.kind
+              manifest.entry
+              (load.compiler-pkg-deps-from-list resolved.deps)
+              manifest.link))))]))
 
 (define (build-package-normalize-manifest-path [manifest-path : String]) : String
   (load.compiler-load-normalize-path manifest-path))
@@ -2052,37 +2061,34 @@
       (build-package-dep-manifest-path
         manifest-dir
         (owned_view.compiler-owned-shared-view resolved-dep))]
-    (match (build-package-validate-fetched-checkout-before-manifest
-      (owned_view.compiler-owned-shared-view provenance))
-      [(Err message) (Err message)]
-      [(Ok _)
-        (match (build-load-manifest
-          (owned_view.compiler-owned-shared-view dep-manifest-path))
-          [(Err message)
+    [_
+      (try
+        (build-package-validate-fetched-checkout-before-manifest
+          (owned_view.compiler-owned-shared-view provenance)))]
+    (match (build-load-manifest
+      (owned_view.compiler-owned-shared-view dep-manifest-path))
+      [(Err message)
+        (Err (str_cat.str-cat "dependency `" resolved-dep.alias "`: " message))]
+      [(Ok dep-manifest)
+        (let
+          [_
+            (try
+              (build-package-validate-fetched-checkout
+                (owned_view.compiler-owned-shared-view provenance)
+                (owned_view.compiler-owned-shared-view dep-manifest)))]
+          (if (not (build-package-kind-lib? dep-manifest.kind))
             (Err
-              (str_cat.str-cat "dependency `" resolved-dep.alias "`: " message))]
-          [(Ok dep-manifest)
-            (match (build-package-validate-fetched-checkout
-              (owned_view.compiler-owned-shared-view provenance)
-              (owned_view.compiler-owned-shared-view dep-manifest))
-              [(Err message) (Err message)]
-              [(Ok _)
-                (if (not (build-package-kind-lib? dep-manifest.kind))
-                  (Err
-                    (str_cat.str-cat
-                      "build: dependency `"
-                      resolved-dep.alias
-                      "` at "
-                      dep-manifest-path
-                      " must be a staticlib package"))
-                  ;; Do not resolve or read the acquired library's lock. Its
-                  ;; dependency-free invariant is checked when the node enters
-                  ;; the graph below.
-                  (Ok
-                    (BuildPackageGraphNode
-                      dep-manifest-path
-                      dep-manifest
-                      provenance)))])])])))
+              (str_cat.str-cat
+                "build: dependency `"
+                resolved-dep.alias
+                "` at "
+                dep-manifest-path
+                " must be a staticlib package"))
+            ;; Do not resolve or read the acquired library's lock. Its
+            ;; dependency-free invariant is checked when the node enters
+            ;; the graph below.
+            (Ok
+              (BuildPackageGraphNode dep-manifest-path dep-manifest provenance))))])))
 
 (define (build-package-acquired-library-dependency-message
   [node : (& node BuildPackageGraphNode)]
@@ -2125,21 +2131,20 @@
   [state : BuildPackageGraphState]) : ResultBuildPackageGraphState
   (if (>= index (load.compiler-pkg-dep-list-count resolved-deps))
     (Ok state)
-    (match (build-package-load-dep-node
-      (owned_view.compiler-owned-shared-view manifest-dir)
-      (load.compiler-pkg-dep-list-at (& declared-deps) index)
-      (load.compiler-pkg-dep-list-at (& resolved-deps) index))
-      [(Err message) (Err message)]
-      [(Ok node)
-        (match (build-package-graph-add-node node state)
-          [(Err message) (Err message)]
-          [(Ok next-state)
-            (build-package-graph-add-deps
-              manifest-dir
-              declared-deps
-              resolved-deps
-              (+ index 1)
-              next-state)])])))
+    (let
+      [node
+        (try
+          (build-package-load-dep-node
+            (owned_view.compiler-owned-shared-view manifest-dir)
+            (load.compiler-pkg-dep-list-at (& declared-deps) index)
+            (load.compiler-pkg-dep-list-at (& resolved-deps) index)))]
+      [next-state (try (build-package-graph-add-node node state))]
+      (build-package-graph-add-deps
+        manifest-dir
+        declared-deps
+        resolved-deps
+        (+ index 1)
+        next-state))))
 
 (define (build-package-dependency-graph
   [manifest-path : String]
@@ -2155,14 +2160,15 @@
           root-path
           1)
         (build-package-graph-node-vec-new))]
-    (match (build-package-graph-add-deps
-      root-dir
-      (load.compiler-pkg-deps-list declared-manifest.deps)
-      (load.compiler-pkg-deps-list resolved-manifest.deps)
-      0
-      initial)
-      [(Err message) (Err message)]
-      [(Ok state) (Ok (BuildPackageGraph state.order))])))
+    [state
+      (try
+        (build-package-graph-add-deps
+          root-dir
+          (load.compiler-pkg-deps-list declared-manifest.deps)
+          (load.compiler-pkg-deps-list resolved-manifest.deps)
+          0
+          initial))]
+    (Ok (BuildPackageGraph state.order))))
 
 (define (build-mkdir-ok? [path : (& path str)]) : bool
   (let
@@ -2206,34 +2212,35 @@
       (load.compiler-load-join-root-path
         (string.copy identity-dir)
         "git-hash.txt")]
-    (match (build-run-captured
-      "build: cannot resolve root compiler source identity"
-      (build_run_core.source-tool-git-rev-parse-command repo-root))
-      [(Err message) (Err message)]
-      [(Ok output)
+    [output
+      (try
+        (build-run-captured
+          "build: cannot resolve root compiler source identity"
+          (build_run_core.source-tool-git-rev-parse-command repo-root)))]
+    [identity : String (build-trim-command-output output)]
+    (cond
+      [(not (tlci.tlci-producer-identity-valid? identity))
+        (Err
+          "build: root compiler source identity is not a full Git object name")]
+      [(not (build-mkdir-ok-owned? (string.copy target-dir)))
+        (Err
+          (str_cat.str-cat
+            "build: failed to create root compiler identity directory "
+            target-dir))]
+      [(not (build-mkdir-ok-owned? (string.copy identity-dir)))
+        (Err
+          (str_cat.str-cat
+            "build: failed to create root compiler identity directory "
+            identity-dir))]
+      [else
         (let
-          [identity : String (build-trim-command-output output)]
-          (cond
-            [(not (tlci.tlci-producer-identity-valid? identity))
-              (Err
-                "build: root compiler source identity is not a full Git object name")]
-            [(not (build-mkdir-ok-owned? (string.copy target-dir)))
-              (Err
-                (str_cat.str-cat
-                  "build: failed to create root compiler identity directory "
-                  target-dir))]
-            [(not (build-mkdir-ok-owned? (string.copy identity-dir)))
-              (Err
-                (str_cat.str-cat
-                  "build: failed to create root compiler identity directory "
-                  identity-dir))]
-            [else
-              (match (build_run_core.source-tool-write-file
+          [_
+            (try
+              (build_run_core.source-tool-write-file
                 identity-path
                 identity
-                "build: failed to write root compiler identity")
-                [(Err message) (Err message)]
-                [(Ok) (Ok identity)])]))])))
+                "build: failed to write root compiler identity"))]
+          (Ok identity))])))
 
 (define (build-package-compile-context
   [manifest-dir : String]
@@ -2747,10 +2754,12 @@
   [index : i64]) : ResultBuildString
   (if (>= index (build-package-graph-node-vec-len nodes))
     (Ok "")
-    (match (build-package-validate-graph-node-checkout
-      (build-package-graph-node-vec-at nodes index))
-      [(Err message) (Err message)]
-      [(Ok _) (build-package-validate-graph-checkouts-from nodes (+ index 1))])))
+    (let
+      [_
+        (try
+          (build-package-validate-graph-node-checkout
+            (build-package-graph-node-vec-at nodes index)))]
+      (build-package-validate-graph-checkouts-from nodes (+ index 1)))))
 
 (define (build-package-validate-graph-checkouts
   [nodes : BuildPackageGraphNodeVec]) : ResultBuildString
@@ -3487,20 +3496,21 @@
     [producer-identity : (& producer-identity str)]) : ResultBuildPackageTlciSourceInputs
     (if (not (tlci.tlci-producer-identity-valid? producer-identity))
       (Err "build: exact producer compiler identity is unavailable")
-      (match (package_source_core.package-source-discover-for
-        "build"
-        manifest-path
-        true)
-        [(Err message) (Err message)]
-        [(Ok source-set)
-          (match (package_source_core.package-source-set-digest
-            (owned_view.compiler-owned-shared-view source-set))
-            [(Err message)
-              (Err
-                (str_cat.str-cat
-                  "build: failed to compute package source digest: "
-                  message))]
-            [(Ok digest) (Ok (BuildPackageTlciSourceInputs source-set digest))])]))))
+      (let
+        [source-set
+          (try
+            (package_source_core.package-source-discover-for
+              "build"
+              manifest-path
+              true))]
+        (match (package_source_core.package-source-set-digest
+          (owned_view.compiler-owned-shared-view source-set))
+          [(Err message)
+            (Err
+              (str_cat.str-cat
+                "build: failed to compute package source digest: "
+                message))]
+          [(Ok digest) (Ok (BuildPackageTlciSourceInputs source-set digest))])))))
 
 ;; Only canonical text and owned catalog strings cross runtime lowering. Native
 ;; captures themselves contain AST pool indices and must remain inside capture.
@@ -3810,23 +3820,23 @@
           role
           " executable "
           executable))
-      (match (build-package-tool-file-digest
-        executable
-        (str_cat.str-cat
-          "build: cannot fingerprint "
-          (owned_view.compiler-owned-shared-view role)
-          " executable"))
-        [(Err message) (Err message)]
-        [(Ok digest)
-          (Ok
-            (str_cat.str-cat
-              (build-package-transcript-field "tool-role" role)
-              (build-package-transcript-field "tool-path" executable)
-              (build-package-transcript-field "tool-digest" digest)
-              (build-package-command-args-transcript
-                (process.command-argv command))
-              (build-package-command-env-transcript
-                (process.command-env command))))]))))
+      (let
+        [digest
+          (try
+            (build-package-tool-file-digest
+              executable
+              (str_cat.str-cat
+                "build: cannot fingerprint "
+                (owned_view.compiler-owned-shared-view role)
+                " executable")))]
+        (Ok
+          (str_cat.str-cat
+            (build-package-transcript-field "tool-role" role)
+            (build-package-transcript-field "tool-path" executable)
+            (build-package-transcript-field "tool-digest" digest)
+            (build-package-command-args-transcript
+              (process.command-argv command))
+            (build-package-command-env-transcript (process.command-env command))))))))
 
 (define (build-package-env-transcript-one [name : String]) : String
   (match (env.get (& name))
@@ -3853,15 +3863,16 @@
 
 (define (build-package-link-path-transcript [path : String]) : ResultBuildString
   (if (build-package-file-regular? (owned_view.compiler-owned-shared-view path))
-    (match (build-package-file-digest
-      path
-      "build: cannot fingerprint native link input")
-      [(Err message) (Err message)]
-      [(Ok digest)
-        (Ok
-          (str_cat.str-cat
-            (build-package-transcript-field "link-file-path" path)
-            (build-package-transcript-field "link-file-digest" digest)))])
+    (let
+      [digest
+        (try
+          (build-package-file-digest
+            path
+            "build: cannot fingerprint native link input"))]
+      (Ok
+        (str_cat.str-cat
+          (build-package-transcript-field "link-file-path" path)
+          (build-package-transcript-field "link-file-digest" digest))))
     (Ok "")))
 
 ;; Digest every raw argument and dependency archive that names a file.
@@ -3923,18 +3934,13 @@
         (match target
           [(Linux) (str_cat.str-cat "lib" library ".so")]
           [(Windows) ""]))]
-    (match (build-package-link-path-transcript direct)
-      [(Err message) (Err message)]
-      [(Ok direct-text)
-        (match (build-package-link-path-transcript first)
-          [(Err message) (Err message)]
-          [(Ok first-text)
-            (if (= (string.string-length second) 0)
-              (Ok (str_cat.str-cat direct-text first-text))
-              (match (build-package-link-path-transcript second)
-                [(Err message) (Err message)]
-                [(Ok second-text)
-                  (Ok (str_cat.str-cat direct-text first-text second-text))]))])])))
+    [direct-text (try (build-package-link-path-transcript direct))]
+    [first-text (try (build-package-link-path-transcript first))]
+    (if (= (string.string-length second) 0)
+      (Ok (str_cat.str-cat direct-text first-text))
+      (let
+        [second-text (try (build-package-link-path-transcript second))]
+        (Ok (str_cat.str-cat direct-text first-text second-text))))))
 
 (define (build-package-link-library-files-transcript
   [target : backend.CompilerBackendTarget]
@@ -3978,20 +3984,21 @@
 (define (build-package-link-file-transcript
   [target : backend.CompilerBackendTarget]
   [inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
-  (match (build-package-link-raw-file-transcript
-    (owned_view.compiler-owned-shared-view inputs))
-    [(Err message) (Err message)]
-    [(Ok raw-text)
-      (match (build-package-link-library-files-transcript
-        target
-        (owned_view.compiler-owned-shared-view inputs))
-        [(Err message) (Err message)]
-        [(Ok library-text)
-          (Ok
-            (str_cat.str-cat
-              raw-text
-              library-text
-              (build-package-link-origins-transcript inputs)))])]))
+  (let
+    [raw-text
+      (try
+        (build-package-link-raw-file-transcript
+          (owned_view.compiler-owned-shared-view inputs)))]
+    [library-text
+      (try
+        (build-package-link-library-files-transcript
+          target
+          (owned_view.compiler-owned-shared-view inputs)))]
+    (Ok
+      (str_cat.str-cat
+        raw-text
+        library-text
+        (build-package-link-origins-transcript inputs)))))
 
 ;; Each link input's kind, value and declaring package, manifest and field, in
 ;; declaration order (source-tool-link-inputs-origins).
@@ -4067,34 +4074,34 @@
   [obj-path : String]
   [artifact-path : String]
   [link-inputs : build_run_core.SourceToolLinkInputs]) : ResultBuildString
-  (match (build-package-artifact-command-for
-    kind
-    target
-    obj-path
-    artifact-path
-    (owned_view.compiler-owned-shared-view link-inputs))
-    [(Err message) (Err message)]
-    [(Ok command)
-      (match (build-package-command-transcript "runtime artifact tool" command)
-        [(Err message) (Err message)]
-        [(Ok command-text)
-          (match kind
-            [(CompilerPkgKindLib)
-              (Ok
-                (str_cat.str-cat
-                  base
-                  command-text
-                  (build-package-runtime-inherited-env-transcript)))]
-            [(CompilerPkgKindBin)
-              (match (build-package-link-file-transcript target link-inputs)
-                [(Err message) (Err message)]
-                [(Ok link-file-text)
-                  (Ok
-                    (str_cat.str-cat
-                      base
-                      command-text
-                      link-file-text
-                      (build-package-runtime-inherited-env-transcript)))])])])]))
+  (let
+    [command
+      (try
+        (build-package-artifact-command-for
+          kind
+          target
+          obj-path
+          artifact-path
+          (owned_view.compiler-owned-shared-view link-inputs)))]
+    [command-text
+      (try (build-package-command-transcript "runtime artifact tool" command))]
+    (match kind
+      [(CompilerPkgKindLib)
+        (Ok
+          (str_cat.str-cat
+            base
+            command-text
+            (build-package-runtime-inherited-env-transcript)))]
+      [(CompilerPkgKindBin)
+        (let
+          [link-file-text
+            (try (build-package-link-file-transcript target link-inputs))]
+          (Ok
+            (str_cat.str-cat
+              base
+              command-text
+              link-file-text
+              (build-package-runtime-inherited-env-transcript))))])))
 
 (define (build-package-runtime-input-transcript
   [kind : load.CompilerPkgKind]
@@ -4146,51 +4153,50 @@
         obj-path
         artifact-path
         link-inputs)
-      (match (build-package-assembler-command-for
-        target
-        asm-path
-        (owned_view.compiler-owned-shared-view obj-path))
-        [(Err message) (Err message)]
-        [(Ok assembler)
-          (match (build-package-command-transcript "assembler" assembler)
-            [(Err message) (Err message)]
-            [(Ok assembler-text)
-              (build-package-runtime-input-transcript-after-assembler
-                (str_cat.str-cat base assembler-text)
-                kind
-                target
-                obj-path
-                artifact-path
-                link-inputs)])]))))
+      (let
+        [assembler
+          (try
+            (build-package-assembler-command-for
+              target
+              asm-path
+              (owned_view.compiler-owned-shared-view obj-path)))]
+        [assembler-text
+          (try (build-package-command-transcript "assembler" assembler))]
+        (build-package-runtime-input-transcript-after-assembler
+          (str_cat.str-cat base assembler-text)
+          kind
+          target
+          obj-path
+          artifact-path
+          link-inputs)))))
 
 (define (build-package-runtime-output-fingerprint
   [input-transcript : String]
   [asm-path : (& asm-path str)]
   [obj-path : (& obj-path str)]
   [artifact-path : (& artifact-path str)]) : ResultBuildString
-  (match (build-package-file-digest
-    asm-path
-    "build: cannot fingerprint package assembly")
-    [(Err message) (Err message)]
-    [(Ok asm-digest)
-      (match (build-package-file-digest
-        obj-path
-        "build: cannot fingerprint package object")
-        [(Err message) (Err message)]
-        [(Ok obj-digest)
-          (match (build-package-file-digest
-            artifact-path
-            "build: cannot fingerprint package runtime artifact")
-            [(Err message) (Err message)]
-            [(Ok artifact-digest)
-              (Ok
-                (str_cat.str-cat
-                  input-transcript
-                  (build-package-transcript-field "assembly-output" asm-digest)
-                  (build-package-transcript-field "object-output" obj-digest)
-                  (build-package-transcript-field
-                    "runtime-output"
-                    artifact-digest)))])])]))
+  (let
+    [asm-digest
+      (try
+        (build-package-file-digest
+          asm-path
+          "build: cannot fingerprint package assembly"))]
+    [obj-digest
+      (try
+        (build-package-file-digest
+          obj-path
+          "build: cannot fingerprint package object"))]
+    [artifact-digest
+      (try
+        (build-package-file-digest
+          artifact-path
+          "build: cannot fingerprint package runtime artifact"))]
+    (Ok
+      (str_cat.str-cat
+        input-transcript
+        (build-package-transcript-field "assembly-output" asm-digest)
+        (build-package-transcript-field "object-output" obj-digest)
+        (build-package-transcript-field "runtime-output" artifact-digest)))))
 
 (define (build-package-runtime-outputs-regular?
   [asm-path : String]
@@ -4306,29 +4312,28 @@
   [artifact-path : (& artifact-path str)]
   [fingerprint-path : (& fingerprint-path str)]
   [tlci-path : (& tlci-path str)]) : ResultBuildPackageStagePaths
-  (match (build-package-stage-dir-attempt output-dir name 1)
-    [(Err message) (Err message)]
-    [(Ok dir)
-      (Ok
-        (BuildPackageStagePaths
+  (let
+    [dir (try (build-package-stage-dir-attempt output-dir name 1))]
+    (Ok
+      (BuildPackageStagePaths
+        (owned_view.compiler-owned-shared-view dir)
+        (build-package-stage-file
           (owned_view.compiler-owned-shared-view dir)
-          (build-package-stage-file
-            (owned_view.compiler-owned-shared-view dir)
-            "a"
-            asm-path)
-          (build-package-stage-file
-            (owned_view.compiler-owned-shared-view dir)
-            "o"
-            obj-path)
-          (build-package-stage-file
-            (owned_view.compiler-owned-shared-view dir)
-            "r"
-            artifact-path)
-          (build-package-stage-file
-            (owned_view.compiler-owned-shared-view dir)
-            "f"
-            fingerprint-path)
-          (build-package-stage-file dir "t" tlci-path)))]))
+          "a"
+          asm-path)
+        (build-package-stage-file
+          (owned_view.compiler-owned-shared-view dir)
+          "o"
+          obj-path)
+        (build-package-stage-file
+          (owned_view.compiler-owned-shared-view dir)
+          "r"
+          artifact-path)
+        (build-package-stage-file
+          (owned_view.compiler-owned-shared-view dir)
+          "f"
+          fingerprint-path)
+        (build-package-stage-file dir "t" tlci-path)))))
 
 (define (build-package-remove-staged-file [path : String]) : unit
   (fs.try-remove-file-if-exists (& path))
@@ -4697,27 +4702,27 @@
   [path : (& path str)]
   [asm : String]
   [target : backend.CompilerBackendTarget]) : build_run_core.SourceToolCommandStatus
-  (match (build_run_core.source-tool-write-file
-    path
-    asm
-    "build: failed to write package assembly")
-    [(Err message) (Err message)]
-    [(Ok)
-      (let
-        [haystack : String asm]
-        [needle : String ".note.GNU-stack"]
-        [note : String (build_run_core.source-tool-noexecstack-note)]
-        (if (and
-          (backend.compiler-backend-target-linux? target)
-          (not (string.contains (& haystack) (& needle))))
-          (match (io.try-append-file path (byte_buf.str-as-bytes (& note)))
-            [(OkIoUnit) Ok]
-            [(ErrIoUnit error)
-              (Err
-                (str_cat.str-cat
-                  "build: failed to write package assembly: "
-                  (io.error-message error)))])
-          Ok))]))
+  (let
+    [_
+      (try
+        (build_run_core.source-tool-write-file
+          path
+          asm
+          "build: failed to write package assembly"))]
+    [haystack : String asm]
+    [needle : String ".note.GNU-stack"]
+    [note : String (build_run_core.source-tool-noexecstack-note)]
+    (if (and
+      (backend.compiler-backend-target-linux? target)
+      (not (string.contains (& haystack) (& needle))))
+      (match (io.try-append-file path (byte_buf.str-as-bytes (& note)))
+        [(OkIoUnit) Ok]
+        [(ErrIoUnit error)
+          (Err
+            (str_cat.str-cat
+              "build: failed to write package assembly: "
+              (io.error-message error)))])
+      Ok)))
 
 (define (build-package-announce-freshness
   [artifact-path : String]
@@ -6172,20 +6177,20 @@
         mode
         lock-policy
         stdlib-roots)]
-    (match (build-package-validate-graph-node-checkout
-      (owned_view.compiler-owned-shared-view node))
-      [(Err message) (Err message)]
-      [(Ok _)
-        (match (process.start command)
-          [(OkProcessChild child)
-            (Ok (BuildPackageGraphWorker node artifacts child))]
-          [(ErrProcessChild error)
-            (Err
-              (str_cat.str-cat
-                "build: failed to start package dependency `"
-                name
-                "`: "
-                (process.error-message error)))])])))
+    [_
+      (try
+        (build-package-validate-graph-node-checkout
+          (owned_view.compiler-owned-shared-view node)))]
+    (match (process.start command)
+      [(OkProcessChild child)
+        (Ok (BuildPackageGraphWorker node artifacts child))]
+      [(ErrProcessChild error)
+        (Err
+          (str_cat.str-cat
+            "build: failed to start package dependency `"
+            name
+            "`: "
+            (process.error-message error)))])))
 
 (define (build-package-schedule-pass-with
   [nodes : BuildPackageGraphNodeVec]
@@ -6231,30 +6236,31 @@
           workers
           (+ index 1)
           count)
-        (match (build-package-start-worker
-          node
-          target
-          opt-level
-          profile
-          mode
-          lock-policy
-          stdlib-roots)
-          [(Err message) (Err message)]
-          [(Ok worker)
-            (build-string-index-map-put! (&mut scheduled) manifest-path 1)
-            (build-package-schedule-pass-with
-              nodes
-              scheduled
-              built
-              target
-              opt-level
-              profile
-              mode
-              lock-policy
-              stdlib-roots
-              (More worker (box workers))
-              (+ index 1)
-              count)])))))
+        (let
+          [worker
+            (try
+              (build-package-start-worker
+                node
+                target
+                opt-level
+                profile
+                mode
+                lock-policy
+                stdlib-roots))]
+          (build-string-index-map-put! (&mut scheduled) manifest-path 1)
+          (build-package-schedule-pass-with
+            nodes
+            scheduled
+            built
+            target
+            opt-level
+            profile
+            mode
+            lock-policy
+            stdlib-roots
+            (More worker (box workers))
+            (+ index 1)
+            count))))))
 
 (define (build-package-schedule-pass
   [nodes : BuildPackageGraphNodeVec]

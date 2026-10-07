@@ -20,6 +20,7 @@
 #   stage-stdlib+expected-stderr:<printf escapes>; $SRC in an expected stderr is
 #   the staged source the compiler reports (target/integration-verify/HOST/ROW/ROW.tl).
 # suite-members: space-separated smoke drivers the row's source runs.
+while_unit_bodies|all|0,1,2|tests/integration/while_unit_bodies.tl|42|-|-|-|stage-stdlib
 invariant_loop_call_negative|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|0|-|stage-stdlib
 invariant_loop_call_zero|all|0,2|tests/integration/invariant_loop_call.tl|0|0\n|1|-|stage-stdlib
 invariant_loop_call_skipped|all|0,2|tests/integration/invariant_loop_call.tl|0|5\n|2|-|stage-stdlib
@@ -160,6 +161,7 @@ compile_profile_vector_one_core|all|-|tests/integration/compile_profile_vector_o
 compile_profile_vector_struct_full|all|-|tests/integration/compile_profile_vector_struct_full.tl|42|-|-|stdlib/vector.tl|-
 compile_profile_layout_spec|all|-|tests/integration/compile_profile_layout_spec.tl|42|-|-|stdlib/comptime.tl|-
 decls_macro_scoped_forms|all|-,0,2|tests/integration/decls_macro_scoped_forms.tl|42|-|-|stdlib/arena.tl stdlib/string.tl|-
+decls_macro_nested_arguments|all|-|tests/integration/decls_macro_nested_arguments.tl|42|-|-|stdlib/comptime.tl|-
 compile_profile_nested_peak_reset|all|-|tests/integration/compile_profile_nested_peak_reset.tl|42|-|-|stdlib/profile.tl|-
 compile_profile_optimizer_escape|all|-|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-|-
 compile_profile_result_import|all|-|tests/integration/compile_profile_result_import.tl|42|-|-|-|-

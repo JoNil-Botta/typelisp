@@ -954,12 +954,13 @@
               (binary.compiler-incremental-binary-push-string!
                 (&mut out)
                 (& config.generated-source-policy))
-              (match (compiler-incremental-encode-config-extensions (& config))
-                [(Err error) (return (Err error))]
-                [(Ok extension-bytes)
-                  (byte_buf_core.byte-buf-builder-append-string
-                    (&mut out)
-                    extension-bytes)])]
+              (let
+                [extension-bytes
+                  (try
+                    (compiler-incremental-encode-config-extensions (& config)))]
+                (byte_buf_core.byte-buf-builder-append-string
+                  (&mut out)
+                  extension-bytes))]
             [(MacroComptime phase request result)
               (binary.compiler-incremental-binary-push-string!
                 (&mut out)
@@ -1148,11 +1149,10 @@
                   (owned_view.compiler-owned-array-element-shared-view
                     query.inputs
                     index)]
-                (match (compiler-incremental-encode-input (& input) limits)
-                  [(Err error) (return (Err error))]
-                  [(Ok record)
-                    (incremental_record_vec.push-ref! (&mut records) record)
-                    (set! index (+ index 1))])))
+                [record
+                  (try (compiler-incremental-encode-input (& input) limits))]
+                (incremental_record_vec.push-ref! (&mut records) record)
+                (set! index (+ index 1))))
             (incremental_record_sort.sort!
               (&mut records)
               compiler-incremental-record-less?)
@@ -1869,16 +1869,17 @@
 (define (compiler-incremental-decode-identity-metadata
   [identity : (& identity CompilerIncrementalIdentity)]
   [limits : (& limits CompilerIncrementalIdentityLimits)]) : ResultCompilerIncrementalDecodedQuery
-  (match (compiler-incremental-identity-decode (& identity.transcript) limits)
-    [(Err error) (Err error)]
-    [(Ok query)
-      (if (compiler-incremental-identity-metadata-valid? identity (& query))
-        (Ok query)
-        (Err
-          (compiler-incremental-error
-            compiler-incremental-error-fingerprint
-            0
-            "incremental identity metadata disagrees with transcript")))]))
+  (let
+    [query
+      (try
+        (compiler-incremental-identity-decode (& identity.transcript) limits))]
+    (if (compiler-incremental-identity-metadata-valid? identity (& query))
+      (Ok query)
+      (Err
+        (compiler-incremental-error
+          compiler-incremental-error-fingerprint
+          0
+          "incremental identity metadata disagrees with transcript")))))
 
 ;; Exact 32-byte fixture boundary expected by the opaque store work in #7023.
 ;; Store policy and result serialization are intentionally not selected here.

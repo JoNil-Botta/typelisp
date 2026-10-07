@@ -100,19 +100,18 @@
       [pt-none : option_point.Option (option_point.none)]
       [tag-some : option_tag.Option (option_tag.some (OptApiTagA 7))]
       [tag-none : option_tag.Option (option_tag.none)]
-      (begin
-        (test.assert-true
-          (option_point.is-some? (& pt-some))
-          "struct option some predicate")
-        (test.assert-true
-          (option_point.is-none? (& pt-none))
-          "struct option none predicate")
-        (test.assert-true
-          (option_tag.is-some? (& tag-some))
-          "enum option some predicate")
-        (test.assert-true
-          (option_tag.is-none? (& tag-none))
-          "enum option none predicate")))))
+      (test.assert-true
+        (option_point.is-some? (& pt-some))
+        "struct option some predicate")
+      (test.assert-true
+        (option_point.is-none? (& pt-none))
+        "struct option none predicate")
+      (test.assert-true
+        (option_tag.is-some? (& tag-some))
+        "enum option some predicate")
+      (test.assert-true
+        (option_tag.is-none? (& tag-none))
+        "enum option none predicate"))))
 
 (cfg
   test
@@ -121,21 +120,20 @@
     (let
       [hit : option_i64.Option (option_i64.some 41)]
       [miss : option_i64.Option (option_i64.none)]
-      (begin
-        (test.assert-true
-          (option_i64.is-some? (& hit))
-          "i64 option some predicate")
-        (test.assert-true
-          (option_i64.is-none? (& miss))
-          "i64 option none predicate")
-        (test.assert-i64-eq
-          (option_i64.value-or hit 0)
-          41
-          "i64 option value-or returns payload")
-        (test.assert-i64-eq
-          (option_i64.value-or miss 7)
-          7
-          "i64 option value-or returns fallback")))))
+      (test.assert-true
+        (option_i64.is-some? (& hit))
+        "i64 option some predicate")
+      (test.assert-true
+        (option_i64.is-none? (& miss))
+        "i64 option none predicate")
+      (test.assert-i64-eq
+        (option_i64.value-or hit 0)
+        41
+        "i64 option value-or returns payload")
+      (test.assert-i64-eq
+        (option_i64.value-or miss 7)
+        7
+        "i64 option value-or returns fallback"))))
 
 (cfg
   test
@@ -144,19 +142,18 @@
     (let
       [mapped : option_i64.Option
         (option_i64.map (option_i64.some 41) option-test-inc)]
-      (begin
-        (test.assert-i64-eq
-          (option_i64.value-or mapped 0)
-          42
-          "i64 option map transforms payload")
-        (test.assert-i64-eq
-          (option-test-duplicate-import-score (option_i64.some 9))
-          9
-          "duplicate option imports share the same generated type")
-        (test.assert-i64-eq
-          (option_i64_user.value-or (option_i64.some 12) 0)
-          12
-          "generated module option imports share the same generated type")))))
+      (test.assert-i64-eq
+        (option_i64.value-or mapped 0)
+        42
+        "i64 option map transforms payload")
+      (test.assert-i64-eq
+        (option-test-duplicate-import-score (option_i64.some 9))
+        9
+        "duplicate option imports share the same generated type")
+      (test.assert-i64-eq
+        (option_i64_user.value-or (option_i64.some 12) 0)
+        12
+        "generated module option imports share the same generated type"))))
 
 (cfg
   test
@@ -167,16 +164,15 @@
       [miss : option_string.Option (option_string.none)]
       [expected-hit : String "bee"]
       [expected-miss : String "fallback"]
-      (begin
-        (let
-          [actual-hit : String (option_string.value-or hit "bad")]
-          (test.assert-string-eq
-            (& actual-hit)
-            (& expected-hit)
-            "string option value-or returns payload"))
-        (let
-          [actual-miss : String (option_string.value-or miss "fallback")]
-          (test.assert-string-eq
-            (& actual-miss)
-            (& expected-miss)
-            "string option value-or returns fallback"))))))
+      (let
+        [actual-hit : String (option_string.value-or hit "bad")]
+        (test.assert-string-eq
+          (& actual-hit)
+          (& expected-hit)
+          "string option value-or returns payload"))
+      (let
+        [actual-miss : String (option_string.value-or miss "fallback")]
+        (test.assert-string-eq
+          (& actual-miss)
+          (& expected-miss)
+          "string option value-or returns fallback")))))

@@ -210,6 +210,13 @@ compiler-sized search workload that exposed copying during failed lookups.
 
 ## Compiler arena ownership
 
+`compiler-ast-context-dedup-half-load` in `src/tests/compiler_ast_types_smoke.tl`
+checks explicit type-index growth with an installed decoy, colliding hashes,
+caller-arena retirement and reset/reuse. Run it at opt0/1/2. The paired
+`compiler-ast-context-dedup-max-capacity` test temporarily lowers the existing
+capacity bound for a small real table and restores it before assertions.
+
+
 `src/tests/scan_storage_growth.tl` exercises geometric lexer and reader
 growth. It checks every token payload and position across growth against a
 fixed token-buffer budget, nested reader builders while the pool grows,
@@ -637,6 +644,15 @@ Compiler-development builds expose three opt-in `typelisp compile` diagnostics:
   dominance/use verifier for SSA-shaped functions before any output file is
   written. Failures name the function and, for operand failures, the block and
   instruction index.
+
+`tests/golden/ir_structural_names.tl` imports the compiler AST pool graph,
+including nested macro-local type variables. The IR observability gate dumps it
+at opt0/1/2 and after SSA. The IR smoke also checks source, macro-local and fresh
+syntax IDs in `Var`, `VarArgs` and nested pointer/slice types, plus wrong-owner,
+negative and out-of-range identities, including malformed decoded source IDs.
+Rendering decodes names through their
+structural session; an unresolvable identity prints `<id:N>` instead of indexing
+the source intern pool.
 
 The checked-in pass golden is
 [`../tests/golden/optimizer_fold.after-fold.ir`](../tests/golden/optimizer_fold.after-fold.ir).
@@ -1438,7 +1454,7 @@ the Windows runner cannot create.
 once, in batches of at most 32 files by default, and fails CI on any finding.
 Batches split at `src/` boundaries: all files receive the normal, redundant-name
 and supported name-case rules; only tracked compiler/tooling sources receive
-`--deprecated-string-concat` in that same invocation. The concat rejection
+`--deprecated-string-concat` and `--redundant-begin` in that same invocation. The concat rejection
 probe remains independent. `TYPELISP_LINT_BATCH_SIZE` must be a positive integer.
 Plain `typelisp lint <file.tl>` remains warn-only for reviewable cleanup slices.
 

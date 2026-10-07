@@ -15285,8 +15285,19 @@ f:
           ".section .rdata$TLBT,\"dr\""
           ".section .rdata$TLBS,\"dr\""
           "tl_backtrace_map_begin:"))]
+    ;; A two-form body has no `begin` node of its own. Its row still names the
+    ;; first form's location (line 2, column 3), not an empty path at 0:0, so
+    ;; the frame renders with a location and the runtime-path filter can match
+    ;; it (#8651).
+    [multi-form-ok : bool
+      (asm-ok?
+        (backend.compiler-backend-emit-source
+          "(define (two-forms [x : i64]) : i64\n  (+ x 1)\n  (+ x 2))\n(define (main) : i64 (two-forms 1))")
+        (has
+          "    .ascii \"two-forms\"\n.L_tl_backtrace_path_0:\n    .ascii \"<source>\"\n"
+          "    .quad .L_tl_backtrace_path_0\n    .quad 8\n    .quad 2\n    .quad 3\n"))]
     [_restore : unit (ir.compiler-debug-info-set-enabled! previous-debug)]
-    (and disabled-ok linux-ok windows-ok)))
+    (and disabled-ok linux-ok windows-ok multi-form-ok)))
 
 ;; Representation facts are per compile entry even when the explicit backend
 ;; state is reused by a batch. Rebuilding them must rewind their dedicated

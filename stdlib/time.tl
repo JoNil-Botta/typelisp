@@ -90,25 +90,23 @@
                   [bit : i64 512]
                   [quotient : i64 0]
                   [rest : i64 0]
-                  (begin
-                    (while (> bit 0)
+                  (while (> bit 0)
+                    (if (>= rest (- right rest))
                       (begin
-                        (if (>= rest (- right rest))
-                          (begin
-                            (set! rest (- rest (- right rest)))
-                            (set! quotient (+ (* quotient 2) 1)))
-                          (begin
-                            (set! rest (+ rest rest))
-                            (set! quotient (* quotient 2))))
-                        (if (not (= (bit-and 1000 bit) 0))
-                          (if (>= rest (- right remainder))
-                            (begin
-                              (set! rest (- rest (- right remainder)))
-                              (set! quotient (+ quotient 1)))
-                            (set! rest (+ rest remainder)))
-                          unit)
-                        (set! bit (/ bit 2))))
-                    quotient)))]
+                        (set! rest (- rest (- right rest)))
+                        (set! quotient (+ (* quotient 2) 1)))
+                      (begin
+                        (set! rest (+ rest rest))
+                        (set! quotient (* quotient 2))))
+                    (if (not (= (bit-and 1000 bit) 0))
+                      (if (>= rest (- right remainder))
+                        (begin
+                          (set! rest (- rest (- right remainder)))
+                          (set! quotient (+ quotient 1)))
+                        (set! rest (+ rest remainder)))
+                      unit)
+                    (set! bit (/ bit 2)))
+                  quotient))]
             [limit : i64 (/ 9223372036854775807 1000)]
             (if (> seconds limit)
               -2
@@ -137,9 +135,8 @@
 (define (timespec-from-ms!
   [timespec : (&mut timespec (__tl_dyn-array i64))]
   [milliseconds : i64]) : unit
-  (begin
-    (set! (array-ref timespec 0) (/ milliseconds 1000))
-    (set! (array-ref timespec 1) (* (% milliseconds 1000) 1000000))))
+  (set! (array-ref timespec 0) (/ milliseconds 1000))
+  (set! (array-ref timespec 1) (* (% milliseconds 1000) 1000000)))
 
 ;: Linux `clock_gettime(clock_id)` via raw syscall 228.
 (cfg
@@ -179,35 +176,33 @@
       [remaining : (__tl_dyn-array i64) (__tl_make-array i64 2)]
       [done : bool false]
       [ok : bool false]
-      (begin
-        (stdlib.time.timespec-from-ms! (&mut request) milliseconds)
-        (while (not done)
-          (let
-            [status : i64
-              (unsafe
-                (syscall
-                  35
-                  (unsafe
-                    (cast
-                      (ptr->int (ptr-cast (__tl_array-data request) : (Ptr u8)))
-                      : i64))
-                  (unsafe
-                    (cast
-                      (ptr->int
-                        (ptr-cast (__tl_array-data remaining) : (Ptr u8)))
-                      : i64))))]
-            (if (= status 0)
+      (stdlib.time.timespec-from-ms! (&mut request) milliseconds)
+      (while (not done)
+        (let
+          [status : i64
+            (unsafe
+              (syscall
+                35
+                (unsafe
+                  (cast
+                    (ptr->int (ptr-cast (__tl_array-data request) : (Ptr u8)))
+                    : i64))
+                (unsafe
+                  (cast
+                    (ptr->int (ptr-cast (__tl_array-data remaining) : (Ptr u8)))
+                    : i64))))]
+          (if (= status 0)
+            (begin
+              (set! ok true)
+              (set! done true))
+            (if (= status -4)
               (begin
-                (set! ok true)
-                (set! done true))
-              (if (= status -4)
-                (begin
-                  (set! (array-ref request 0) (array-ref remaining 0))
-                  (set! (array-ref request 1) (array-ref remaining 1)))
-                (set! done true)))))
-        (if ok
-          (OkTimeUnit)
-          (stdlib.time.sleep-unavailable "time: nanosleep unavailable"))))))
+                (set! (array-ref request 0) (array-ref remaining 0))
+                (set! (array-ref request 1) (array-ref remaining 1)))
+              (set! done true)))))
+      (if ok
+        (OkTimeUnit)
+        (stdlib.time.sleep-unavailable "time: nanosleep unavailable")))))
 
 ;: Windows kernel32 `GetSystemTimeAsFileTime` binding.
 (cfg
@@ -344,43 +339,40 @@
       [remaining : i64 milliseconds]
       [done : bool false]
       [ok : bool false]
-      (begin
-        (if (or
-          (= counter-ok (cast 0 : i32))
-          (= frequency-ok (cast 0 : i32))
-          (<= frequency 0))
-          (set! done true)
-          unit)
-        (while (not done)
+      (if (or
+        (= counter-ok (cast 0 : i32))
+        (= frequency-ok (cast 0 : i32))
+        (<= frequency 0))
+        (set! done true)
+        unit)
+      (while (not done)
+        (let
+          [chunk : u32 (stdlib.time.windows-sleep-chunk-ms remaining)]
+          (stdlib.time.windows-sleep chunk)
+          (if (> remaining (cast chunk : i64))
+            (set! remaining (- remaining (cast chunk : i64)))
+            (set! remaining 0))
           (let
-            [chunk : u32 (stdlib.time.windows-sleep-chunk-ms remaining)]
-            (begin
-              (stdlib.time.windows-sleep chunk)
-              (if (> remaining (cast chunk : i64))
-                (set! remaining (- remaining (cast chunk : i64)))
-                (set! remaining 0))
-              (let
-                [status : i32
-                  (stdlib.time.windows-query-performance-counter
-                    (unsafe
-                      (__tl_array-data counter)))]
-                [elapsed : i64 (- (array-ref counter 0) start)]
-                (if (or (= status (cast 0 : i32)) (< elapsed 0))
-                  (set! done true)
-                  (if (stdlib.time.windows-sleep-complete?
-                    elapsed
-                    frequency
-                    milliseconds)
-                    (begin
-                      (set! ok true)
-                      (set! done true))
-                    (if (= remaining 0)
-                      (set! remaining 1)
-                      unit)))))))
-        (if ok
-          (OkTimeUnit)
-          (stdlib.time.sleep-unavailable
-            "time: performance counter unavailable"))))))
+            [status : i32
+              (stdlib.time.windows-query-performance-counter
+                (unsafe
+                  (__tl_array-data counter)))]
+            [elapsed : i64 (- (array-ref counter 0) start)]
+            (if (or (= status (cast 0 : i32)) (< elapsed 0))
+              (set! done true)
+              (if (stdlib.time.windows-sleep-complete?
+                elapsed
+                frequency
+                milliseconds)
+                (begin
+                  (set! ok true)
+                  (set! done true))
+                (if (= remaining 0)
+                  (set! remaining 1)
+                  unit))))))
+      (if ok
+        (OkTimeUnit)
+        (stdlib.time.sleep-unavailable "time: performance counter unavailable")))))
 
 ;: Return wall-clock Unix epoch milliseconds.
 (define (unix-ms) : ResultTimeMs
@@ -411,9 +403,8 @@
 
 ;: Inline test failure helper.
 (define (test-fail) : unit
-  (begin
-    (/ 1 0)
-    unit))
+  (/ 1 0)
+  unit)
 
 ;: Inline test boolean assertion.
 (define (test-assert [ok : bool]) : unit
@@ -457,18 +448,16 @@
 (define (test-assert-unix-range [result : ResultTimeMs]) : unit
   (match result
     [(OkTimeMs ms)
-      (begin
-        (stdlib.time.test-assert (> ms 946684800000))
-        (stdlib.time.test-assert (< ms 4102444800000)))]
+      (stdlib.time.test-assert (> ms 946684800000))
+      (stdlib.time.test-assert (< ms 4102444800000))]
     [(ErrTimeMs _) (stdlib.time.test-fail)]))
 
 ;: Inline test assertion for monotonic timestamp shape.
 (define (test-assert-monotonic-nonnegative [result : ResultTimeMs]) : i64
   (match result
     [(OkTimeMs ms)
-      (begin
-        (stdlib.time.test-assert (>= ms 0))
-        ms)]
+      (stdlib.time.test-assert (>= ms 0))
+      ms]
     [(ErrTimeMs _) 0]))
 
 (test
@@ -491,12 +480,9 @@
     (stdlib.time.test-assert-unit-ok (stdlib.time.sleep-ms 0))
     (let
       [converted : (__tl_dyn-array i64) (__tl_make-array i64 2)]
-      (begin
-        (stdlib.time.timespec-from-ms! (&mut converted) 9223372036854775807)
-        (stdlib.time.test-assert-i64-eq
-          (array-ref converted 0)
-          9223372036854775)
-        (stdlib.time.test-assert-i64-eq (array-ref converted 1) 807000000)))
+      (stdlib.time.timespec-from-ms! (&mut converted) 9223372036854775807)
+      (stdlib.time.test-assert-i64-eq (array-ref converted 0) 9223372036854775)
+      (stdlib.time.test-assert-i64-eq (array-ref converted 1) 807000000))
     (cfg
       windows
       (begin
@@ -530,11 +516,8 @@
       [second : i64
         (stdlib.time.test-assert-monotonic-nonnegative
           (stdlib.time.monotonic-ms))]
-      (begin
-        (stdlib.time.test-assert (>= (- second first) 1))
-        (stdlib.time.test-assert-i64-eq
-          (stdlib.time.ms-or (OkTimeMs 123) 0)
-          123)
-        (stdlib.time.test-assert-i64-eq
-          (stdlib.time.ms-or (ErrTimeMs (TimeUnavailable "x")) 7)
-          7)))))
+      (stdlib.time.test-assert (>= (- second first) 1))
+      (stdlib.time.test-assert-i64-eq (stdlib.time.ms-or (OkTimeMs 123) 0) 123)
+      (stdlib.time.test-assert-i64-eq
+        (stdlib.time.ms-or (ErrTimeMs (TimeUnavailable "x")) 7)
+        7))))

@@ -461,9 +461,7 @@
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
             opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell
-              (owned_view.compiler-owned-shared-view pools)
-              program)
+            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler_driver_core.compiler-driver-retirement-clone-shells?
@@ -472,8 +470,7 @@
             spans)]
         [out : ResultCompilerWindowsBatchArtifact
           (begin
-            (compiler_ast_types.ast-node-pool-reader-use!
-              (owned_view.compiler-owned-shared-view pools))
+            (compiler_ast_types.ast-node-pool-reader-use! pools)
             (if (>= opt-level 1)
               (compiler_driver_core.compiler-driver-retire-lowered-source-arena!)
               unit)

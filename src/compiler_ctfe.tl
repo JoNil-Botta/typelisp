@@ -926,10 +926,7 @@
 
 (define (ctfe-untyped-expr-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(ast.AstType.Var name)
-      (=
-        (owned_view.compiler-owned-pattern-copy name)
-        (ctfe-untyped-expr-type-id))]
+    [(ast.AstType.Var name) (= name (ctfe-untyped-expr-type-id))]
     [_ false]))
 
 (define (ctfe-captured-expr-type-id) : i64
@@ -4565,8 +4562,7 @@
     [(While cond-box body-box)
       (let
         [cond : ast.AstExpr (ctfe-ast-get env cond-box)]
-        [body : ast.AstExpr (ctfe-ast-get env body-box)]
-        (ctfe-eval-while cond body expr env fuel))]
+        (ctfe-eval-while cond body-box expr env fuel))]
     [(Let let-box)
       (match (__tl-box-place let-box)
         [(Let bindings body-box)
@@ -5262,39 +5258,41 @@
         (string.copy name))
         [(Err d) (Err d)]
         [(Ok ty type-fuel)
-          (match (ctfe-eval-i64-arg
-            (ctfe-expr-arg args 1 env)
-            expr
-            env
-            type-fuel
-            (string.copy name))
-            [(Err d) (Err d)]
-            [(Ok first)
-              (if payload?
-                (match (ctfe-eval-i64-arg
-                  (ctfe-expr-arg args 2 env)
+          (let
+            [first
+              (try
+                (ctfe-eval-i64-arg
+                  (ctfe-expr-arg args 1 env)
                   expr
                   env
-                  first.fuel
-                  (string.copy name))
-                  [(Err d) (Err d)]
-                  [(Ok second)
-                    (ctfe-eval-type-reflection-at
-                      name
-                      ty
-                      first.value
-                      second.value
+                  type-fuel
+                  (string.copy name)))]
+            (if payload?
+              (let
+                [second
+                  (try
+                    (ctfe-eval-i64-arg
+                      (ctfe-expr-arg args 2 env)
                       expr
                       env
-                      second.fuel)])
+                      first.fuel
+                      (string.copy name)))]
                 (ctfe-eval-type-reflection-at
                   name
                   ty
                   first.value
-                  0
+                  second.value
                   expr
                   env
-                  first.fuel))])])
+                  second.fuel))
+              (ctfe-eval-type-reflection-at
+                name
+                ty
+                first.value
+                0
+                expr
+                env
+                first.fuel)))])
       (Err
         (box
           (ctfe-diagnostic-at-expr
@@ -5377,31 +5375,30 @@
       (match (ctfe-eval-string-arg text-arg expr env fuel "string-slice")
         [(Err d) (Err d)]
         [(Ok text _ text-fuel)
-          (match (ctfe-eval-i64-arg start-arg expr env text-fuel "string-slice")
-            [(Err d) (Err d)]
-            [(Ok start-value)
-              (match (ctfe-eval-i64-arg
-                len-arg
-                expr
-                env
-                start-value.fuel
-                "string-slice")
-                [(Err d) (Err d)]
-                [(Ok len-value)
-                  (let
-                    [start : i64 start-value.value]
-                    [len : i64 len-value.value]
-                    [text-len : i64 (string.string-length text)]
-                    (if (or (< start 0) (< len 0) (> (+ start len) text-len))
-                      (Err
-                        (box
-                          (ctfe-diagnostic-at-expr
-                            expr
-                            "string-slice range out of bounds")))
-                      (Ok
-                        (ctfe-generated-string-value
-                          (string.substring text start len))
-                        len-value.fuel)))])])]))
+          (let
+            [start-value
+              (try
+                (ctfe-eval-i64-arg start-arg expr env text-fuel "string-slice"))]
+            [len-value
+              (try
+                (ctfe-eval-i64-arg
+                  len-arg
+                  expr
+                  env
+                  start-value.fuel
+                  "string-slice"))]
+            [start : i64 start-value.value]
+            [len : i64 len-value.value]
+            [text-len : i64 (string.string-length text)]
+            (if (or (< start 0) (< len 0) (> (+ start len) text-len))
+              (Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "string-slice range out of bounds")))
+              (Ok
+                (ctfe-generated-string-value (string.substring text start len))
+                len-value.fuel)))]))
     (Err
       (box
         (ctfe-diagnostic-at-expr
@@ -5448,18 +5445,16 @@
   [env : CtfeEnv]
   [fuel : i64]
   [name : String]) : ResultCtfe
-  (match (ctfe-eval-i64-arg index-expr origin env fuel name)
-    [(Err d) (Err d)]
-    [(Ok index-arg-value)
-      (if (or
-        (< index-arg-value.value 0)
-        (>= index-arg-value.value (string.string-length text)))
-        (Err
-          (box
-            (ctfe-diagnostic-at-expr origin "string-ref index out of bounds")))
-        (Ok
-          (Char (string.string-ref text index-arg-value.value))
-          index-arg-value.fuel))]))
+  (let
+    [index-arg-value (try (ctfe-eval-i64-arg index-expr origin env fuel name))]
+    (if (or
+      (< index-arg-value.value 0)
+      (>= index-arg-value.value (string.string-length text)))
+      (Err
+        (box (ctfe-diagnostic-at-expr origin "string-ref index out of bounds")))
+      (Ok
+        (Char (string.string-ref text index-arg-value.value))
+        index-arg-value.fuel))))
 
 (define (ctfe-eval-string-to-int-call
   [name : String]
@@ -5483,12 +5478,11 @@
   (if (= (ctfe-expr-arg-count args) 1)
     (let
       [arg : ast.AstExpr (ctfe-expr-arg args 0 env)]
-      (match (ctfe-eval-i64-arg arg expr env fuel "string.int->string")
-        [(Err d) (Err d)]
-        [(Ok arg-value)
-          (Ok
-            (ctfe-generated-string-value (string.int->string arg-value.value))
-            arg-value.fuel)]))
+      [arg-value
+        (try (ctfe-eval-i64-arg arg expr env fuel "string.int->string"))]
+      (Ok
+        (ctfe-generated-string-value (string.int->string arg-value.value))
+        arg-value.fuel))
     (Err
       (box (ctfe-diagnostic-at-expr expr "string.int->string expects one i64")))))
 
@@ -5883,12 +5877,18 @@
         (set! tail-done true)))
     length))
 
+;; The longest match at `index` that is longer than `min-len`; a returned
+;; length of at most `min-len` means the capped walk found none. The walk
+;; visits the same candidates for any `min-len` and examines only those that
+;; can beat the best so far, so whenever the longest match is longer than
+;; `min-len` the first candidate on the chain with that length wins.
 (define (ctfe-embedded-stdlib-lzss-find-match
   [data : (Ptr u8)]
   [source-len : i64]
   [head : (Ptr i64)]
   [previous : (Ptr i64)]
-  [index : i64]) : CtfeEmbeddedStdlibLzssMatch
+  [index : i64]
+  [min-len : i64]) : CtfeEmbeddedStdlibLzssMatch
   (if (> (+ index 2) (- source-len 1))
     (CtfeEmbeddedStdlibLzssMatch 0 0)
     (let
@@ -5897,7 +5897,7 @@
           (ptr-read
             (ptr-offset head (ctfe-embedded-stdlib-lzss-hash data index))))]
       [best-offset : i64 0]
-      [best-len : i64 0]
+      [best-len : i64 min-len]
       [cap : i64
         (let
           [avail : i64 (- source-len index)]
@@ -5918,6 +5918,14 @@
       [chain : (Ptr i64)
         (unsafe
           (ptr-offset previous 0))]
+      ;; Chain links this position may still follow (zlib's max_chain). The
+      ;; walk stops when the 64th link is followed, without examining the
+      ;; candidate it reaches, so at most 64 candidates (the head and 63
+      ;; more) are examined per position. Uncapped, indentation runs put
+      ;; most positions of the 4096-byte window on the same "   " chain.
+      ;; Format and decoder are unaffected: any (offset, length) the walk
+      ;; picks is a valid token.
+      [links : i64 64]
       ;; best-len < cap exits once no candidate can improve the match; the
       ;; replaced best-len < 18 condition kept walking candidates that could
       ;; not win. It also bounds both reads below: index+best-len is under
@@ -5936,6 +5944,7 @@
           ;; wider loop needs for best-len and best-offset.
           (while (and
             (>= candidate floor)
+            (> links 0)
             (not
               (=
                 (ctfe-embedded-stdlib-lzss-byte data (+ candidate best-len))
@@ -5943,8 +5952,9 @@
             (set!
               candidate
               (unsafe
-                (ptr-read (ptr-offset chain candidate)))))
-          (if (< candidate floor)
+                (ptr-read (ptr-offset chain candidate))))
+            (set! links (- links 1)))
+          (if (or (< candidate floor) (= links 0))
             (return (CtfeEmbeddedStdlibLzssMatch best-offset best-len))
             (let
               [length : i64
@@ -5956,8 +5966,19 @@
               (set!
                 candidate
                 (unsafe
-                  (ptr-read (ptr-offset chain candidate))))))))
+                  (ptr-read (ptr-offset chain candidate))))
+              (set! links (- links 1))))))
       (CtfeEmbeddedStdlibLzssMatch best-offset best-len))))
+
+;; Emit one (offset, length) token: 12 bits of offset - 1, 4 of length - 3.
+(define (ctfe-embedded-stdlib-lzss-push-match!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [offset : i64]
+  [length : i64]) : unit
+  (let
+    [packed : i64 (+ (shl (- offset 1) 4) (- length 3))]
+    (byte_buf_core.byte-buf-builder-push out (cast (shr packed 8) : u8))
+    (byte_buf_core.byte-buf-builder-push out (cast (bit-and packed 255) : u8))))
 
 (define (ctfe-embedded-stdlib-lzss-compress [source : String]) : String
   (let
@@ -5989,6 +6010,10 @@
       (byte_buf_core.byte-buf-builder-with-capacity
         (+ source-len (+ (/ source-len 8) 1)))]
     [index : i64 0]
+    ;; A longer match found by the lazy lookahead, taken at the next token.
+    [pending-valid : bool false]
+    [pending-offset : i64 0]
+    [pending-length : i64 0]
     (ctfe-embedded-stdlib-array-fill! (&mut head) -1)
     (while (< index source-len)
       (let
@@ -5997,31 +6022,20 @@
         [bit : i64 0]
         (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0 : u8))
         (while (and (< bit 8) (< index source-len))
-          (match (ctfe-embedded-stdlib-lzss-find-match
-            data
-            source-len
-            head-view
-            previous-view
-            index)
+          (match (if pending-valid
+            (CtfeEmbeddedStdlibLzssMatch pending-offset pending-length)
+            ;; Shorter matches are emitted as literals anyway.
+            (ctfe-embedded-stdlib-lzss-find-match
+              data
+              source-len
+              head-view
+              previous-view
+              index
+              2))
             [(CtfeEmbeddedStdlibLzssMatch offset length)
-              (if (>= length 3)
-                (let
-                  [packed : i64 (+ (shl (- offset 1) 4) (- length 3))]
-                  (byte_buf_core.byte-buf-builder-push
-                    (&mut out)
-                    (cast (shr packed 8) : u8))
-                  (byte_buf_core.byte-buf-builder-push
-                    (&mut out)
-                    (cast (bit-and packed 255) : u8))
-                  (ctfe-embedded-stdlib-lzss-insert-range!
-                    data
-                    source-len
-                    head-slots
-                    previous-slots
-                    index
-                    length)
-                  (set! index (+ index length)))
-                (begin
+              (set! pending-valid false)
+              (cond
+                [(< length 3)
                   (set! flags (bit-or flags (shl 1 bit)))
                   (byte_buf_core.byte-buf-builder-push
                     (&mut out)
@@ -6032,7 +6046,67 @@
                     head-slots
                     previous-slots
                     index)
-                  (set! index (+ index 1))))])
+                  (set! index (+ index 1))]
+                [(< length 6)
+                  ;; One-step lazy matching: when the match at the next
+                  ;; position is longer, emit this byte as a literal and take
+                  ;; that match instead. `index` is inserted first so the
+                  ;; lookahead may refer to it; length >= 3 keeps index + 1
+                  ;; inside the source. Only short matches look ahead: a
+                  ;; longer one rarely loses to its successor, and every
+                  ;; lookahead is a second chain walk.
+                  (ctfe-embedded-stdlib-lzss-insert!
+                    data
+                    source-len
+                    head-slots
+                    previous-slots
+                    index)
+                  (match (ctfe-embedded-stdlib-lzss-find-match
+                    data
+                    source-len
+                    head-view
+                    previous-view
+                    (+ index 1)
+                    length)
+                    [(CtfeEmbeddedStdlibLzssMatch next-offset next-length)
+                      (if (> next-length length)
+                        (begin
+                          (set! flags (bit-or flags (shl 1 bit)))
+                          (byte_buf_core.byte-buf-builder-push
+                            (&mut out)
+                            (cast
+                              (ctfe-embedded-stdlib-lzss-byte data index)
+                              : u8))
+                          (set! pending-valid true)
+                          (set! pending-offset next-offset)
+                          (set! pending-length next-length)
+                          (set! index (+ index 1)))
+                        (begin
+                          (ctfe-embedded-stdlib-lzss-push-match!
+                            (&mut out)
+                            offset
+                            length)
+                          (ctfe-embedded-stdlib-lzss-insert-range!
+                            data
+                            source-len
+                            head-slots
+                            previous-slots
+                            (+ index 1)
+                            (- length 1))
+                          (set! index (+ index length))))])]
+                [else
+                  (ctfe-embedded-stdlib-lzss-push-match!
+                    (&mut out)
+                    offset
+                    length)
+                  (ctfe-embedded-stdlib-lzss-insert-range!
+                    data
+                    source-len
+                    head-slots
+                    previous-slots
+                    index
+                    length)
+                  (set! index (+ index length))])])
           (set! bit (+ bit 1)))
         (set! (array-ref out.slots flag-index) (cast flags : u8))))
     (byte_buf_core.byte-buf-builder-to-string (& out))))
@@ -8305,35 +8379,35 @@
         fuel
         "pattern-list-bindings")
         [(Ok prefix _ prefix-fuel)
-          (match (ctfe-eval-i64-arg
-            count-arg
-            expr
-            env
-            prefix-fuel
-            "pattern-list-bindings")
-            [(Ok count-value)
-              (let
-                [count : i64 count-value.value]
-                [count-fuel : i64 count-value.fuel]
-                (cond
-                  [(< count 0)
-                    (Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "pattern-list-bindings count must be non-negative")))]
-                  [(> count count-fuel)
-                    (Err
-                      (box
-                        (ctfe-diagnostic-at-expr
-                          expr
-                          "compile-time evaluation limit exceeded")))]
-                  [else
-                    (Ok
-                      (PatternList
-                        (ctfe-pattern-list-bindings-build env prefix count))
-                      (- count-fuel count))]))]
-            [(Err diag) (Err diag)])]
+          (let
+            [count-value
+              (try
+                (ctfe-eval-i64-arg
+                  count-arg
+                  expr
+                  env
+                  prefix-fuel
+                  "pattern-list-bindings"))]
+            [count : i64 count-value.value]
+            [count-fuel : i64 count-value.fuel]
+            (cond
+              [(< count 0)
+                (Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      expr
+                      "pattern-list-bindings count must be non-negative")))]
+              [(> count count-fuel)
+                (Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      expr
+                      "compile-time evaluation limit exceeded")))]
+              [else
+                (Ok
+                  (PatternList
+                    (ctfe-pattern-list-bindings-build env prefix count))
+                  (- count-fuel count))]))]
         [(Err diag) (Err diag)]))
     (Err
       (box
@@ -10039,7 +10113,7 @@
 ;; existing deterministic fuel diagnostic instead of relying on host state.
 (define (ctfe-eval-while
   [cond : ast.AstExpr]
-  [body : ast.AstExpr]
+  [body : ast.AstExprList]
   [origin : ast.AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
@@ -10048,7 +10122,7 @@
       (match cond-value
         [(Bool keep-going)
           (if keep-going
-            (match (compiler-ctfe-eval (clone body) env cond-fuel)
+            (match (ctfe-eval-begin-at (& body) 0 env cond-fuel)
               [(Ok _ body-fuel)
                 (ctfe-eval-while cond body origin env body-fuel)]
               [(Err diag) (Err diag)])
@@ -11163,13 +11237,15 @@
         (ctfe-ast-get env (ast.ast-expr-list-get exprs index 0))]
       (match (ctfe-lifetime-syntax-name (ctfe-expr-unspan env head-expr))
         [(Some name)
-          (match (ctfe-expr-list-to-lifetime-list-at
-            exprs
-            (+ index 1)
-            env
-            origin)
-            [(Ok tail) (Ok (ast.ast-lifetime-cons name tail))]
-            [(Err diag) (Err diag)])]
+          (let
+            [tail
+              (try
+                (ctfe-expr-list-to-lifetime-list-at
+                  exprs
+                  (+ index 1)
+                  env
+                  origin))]
+            (Ok (ast.ast-lifetime-cons name tail)))]
         [(None)
           (Err
             (box
@@ -11191,18 +11267,18 @@
         (ast.ast-expr-list-tail-from-ref (& args) 1)]
       (match (ctfe-expr-unspan env name-expr)
         [(Var name-id)
-          (match (ctfe-expr-list-to-lifetime-list lifetime-exprs env origin)
-            [(Ok lifetimes)
-              (Ok
-                (if is-struct
-                  (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                    (Struct name-id)
-                    (ast.ast-ty-struct-args name-id lifetimes))
-                  (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                    (Enum name-id)
-                    (ast.ast-ty-enum-args name-id lifetimes)))
-                fuel)]
-            [(Err diag) (Err diag)])]
+          (let
+            [lifetimes
+              (try (ctfe-expr-list-to-lifetime-list lifetime-exprs env origin))]
+            (Ok
+              (if is-struct
+                (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                  (Struct name-id)
+                  (ast.ast-ty-struct-args name-id lifetimes))
+                (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                  (Enum name-id)
+                  (ast.ast-ty-enum-args name-id lifetimes)))
+              fuel))]
         [_ (ctfe-type-expr-error origin)]))
     (ctfe-type-expr-error origin)))
 
@@ -11587,9 +11663,9 @@
   (let
     [out : ast.AstParamList
       (ast.ast-param-list-with-capacity (ast.ast-param-list-len (& params)))]
-    (match (ctfe-quote-param-list-into (& params) 0 env origin fuel (&mut out))
-      [(Ok out-fuel) (Ok out out-fuel)]
-      [(Err diag) (Err diag)])))
+    [out-fuel
+      (try (ctfe-quote-param-list-into (& params) 0 env origin fuel (&mut out)))]
+    (Ok out out-fuel)))
 
 (define (ctfe-quote-param-list-into
   [params : (& params ast.AstParamList)]
@@ -11675,15 +11751,16 @@
     [out : ast.AstLetBindingList
       (ast.ast-let-binding-list-with-capacity
         (ast.ast-let-binding-list-len (& bindings)))]
-    (match (ctfe-quote-let-binding-list-into
-      (& bindings)
-      0
-      env
-      fuel
-      quasiquote
-      (&mut out))
-      [(Ok out-fuel) (Ok out out-fuel)]
-      [(Err diag) (Err diag)])))
+    [out-fuel
+      (try
+        (ctfe-quote-let-binding-list-into
+          (& bindings)
+          0
+          env
+          fuel
+          quasiquote
+          (&mut out)))]
+    (Ok out out-fuel)))
 
 (define (ctfe-quote-let-binding-list-into
   [bindings : (& bindings ast.AstLetBindingList)]
@@ -11730,15 +11807,16 @@
     [out : ast.AstResourceBindingList
       (ast.ast-resource-binding-list-with-capacity
         (ast.ast-resource-binding-list-len (& bindings)))]
-    (match (ctfe-quote-resource-binding-list-into
-      (& bindings)
-      0
-      env
-      fuel
-      quasiquote
-      (&mut out))
-      [(Ok out-fuel) (Ok out out-fuel)]
-      [(Err diag) (Err diag)])))
+    [out-fuel
+      (try
+        (ctfe-quote-resource-binding-list-into
+          (& bindings)
+          0
+          env
+          fuel
+          quasiquote
+          (&mut out)))]
+    (Ok out out-fuel)))
 
 (define (ctfe-quote-resource-binding-list-into
   [bindings : (& bindings ast.AstResourceBindingList)]
@@ -11785,9 +11863,9 @@
   [quasiquote : bool]) : ResultCtfeQuoteArms
   (let
     [out : ast.AstMatchArmList (ast.ast-match-arm-list-with-capacity arms.len)]
-    (match (ctfe-quote-arm-list-into (& arms) 0 env fuel quasiquote (&mut out))
-      [(Ok out-fuel) (Ok out out-fuel)]
-      [(Err diag) (Err diag)])))
+    [out-fuel
+      (try (ctfe-quote-arm-list-into (& arms) 0 env fuel quasiquote (&mut out)))]
+    (Ok out out-fuel)))
 
 (define (ctfe-quote-arm-list-into
   [arms : (& arms ast.AstMatchArmList)]
@@ -12147,13 +12225,13 @@
         exprs
         ast.AstExpr.Unsafe)]
     [(While cond-box body-box)
-      (ctfe-quote-children-2
-        env
-        fuel
-        quasiquote
-        ast.ast-expr-while-with-pools
-        cond-box
-        body-box)]
+      (match (ctfe-quote-expr (ctfe-ast-get env cond-box) env fuel quasiquote)
+        [(Ok condition _ condition-fuel)
+          (match (ctfe-quote-expr-list body-box env condition-fuel quasiquote)
+            [(Ok body next-fuel)
+              (Ok (ctfe-ast-push env (While condition body)) (Expr) next-fuel)]
+            [(Err diag) (Err diag)])]
+        [(Err diag) (Err diag)])]
     [(ForOwnedState payload)
       (match (ctfe-quote-expr-list
         (ctfe-for-owned-state-exprs

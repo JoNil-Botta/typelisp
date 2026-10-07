@@ -166,6 +166,13 @@
   (Ok token_vec.Vec)
   (Err LinkerScriptError))
 
+(defstruct ScriptTokenRequest
+  (:lifetimes source input limits)
+  (source (& source str))
+  (data (& input (__tl_dyn-array u8)))
+  (limits (& limits LinkerScriptLimits))
+  (colon-separator bool))
+
 (define (byte-at [data : (& d (__tl_dyn-array u8))] [index : i64]) : i64
   (cast (array-ref data index) : i64))
 
@@ -173,7 +180,7 @@
   (or (= byte 32) (and (>= byte 9) (<= byte 13))))
 
 ;; A byte that ends a word without belonging to it.
-(define (delimiter? [byte : i64]) : bool
+(define (delimiter? [byte : i64] [version-map : bool]) : bool
   (or
     (space? byte)
     (= byte (cast '(' : i64))
@@ -181,6 +188,7 @@
     (= byte (cast ',' : i64))
     (= byte (cast '"' : i64))
     (= byte (cast ';' : i64))
+    (and version-map (= byte (cast ':' : i64)))
     (= byte (cast '{' : i64))
     (= byte (cast '}' : i64))))
 
@@ -200,6 +208,7 @@
     [(= byte (cast ')' : i64)) ")"]
     [(= byte (cast ',' : i64)) ","]
     [(= byte (cast ';' : i64)) ";"]
+    [(= byte (cast ':' : i64)) ":"]
     [(= byte (cast '{' : i64)) "{"]
     [else "}"]))
 
@@ -241,11 +250,12 @@
           (cat.str-cat "control byte " (string.int->string byte))))]
     [else (Ok)]))
 
-(define (tokenize
-  [source : (& s str)]
-  [data : (& d (__tl_dyn-array u8))]
-  [limits : (& l LinkerScriptLimits)]) : ResultTokens
+(define (tokenize [request : (& r (ScriptTokenRequest s d l))]) : ResultTokens
   (let
+    [source : (& s str) request.source]
+    [data : (& d (__tl_dyn-array u8)) request.data]
+    [limits : (& l LinkerScriptLimits) request.limits]
+    [version-map : bool request.colon-separator]
     [size : i64 (array-length data)]
     [tokens : token_vec.Vec (token_vec.new)]
     [cursor : Cursor (Cursor 0 1 1)]
@@ -374,6 +384,7 @@
                     (= byte (cast ')' : i64))
                     (= byte (cast ',' : i64))
                     (= byte (cast ';' : i64))
+                    (and version-map (= byte (cast ':' : i64)))
                     (= byte (cast '{' : i64))
                     (= byte (cast '}' : i64)))
                     (token_vec.push-ref!
@@ -396,7 +407,7 @@
                         (let
                           [inner : i64 (byte-at data cursor.pos)]
                           (if (or
-                            (delimiter? inner)
+                            (delimiter? inner version-map)
                             (comment-start? data cursor.pos size))
                             (set! done true)
                             (match (check-plain-byte source inner cursor)
@@ -1084,5 +1095,7 @@
             (string.int->string limits.max-bytes))))]
     [else
       (let
-        [tokens (try (tokenize source data limits))]
+        [request : (ScriptTokenRequest s d l)
+          (ScriptTokenRequest source data limits false)]
+        [tokens (try (tokenize (& request)))]
         (parse-tokens source tokens limits))]))

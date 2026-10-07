@@ -1809,12 +1809,18 @@
     [_ (lower-name-env-materialize-two names Nil)]))
 
 (define (lower-name-env-copy-into-pools
+  [_state : CompilerLowerState]
   [names : LowerNameEnv]
   [pools : ast.AstNodePoolContext]) : LowerNameEnv
   (let
     [base-arena : arena.Arena
       (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
-    (in-arena base-arena (lower-name-env-copy-active names))))
+    (in-arena
+      base-arena
+      (cfg
+        (any compile-profile test)
+        (lower-name-env-copy-active-profile _state names)
+        (lower-name-env-copy-active names)))))
 
 (define (lower-checked-dest-pools-commit!
   [lower-state : CompilerLowerState]
@@ -3000,26 +3006,6 @@
       [(Inline source-id logical-id symbol-id)
         (Inline source-id logical-id symbol-id)]
       [_ (lower-name-env-materialize-two-profile state names Nil)])))
-
-(cfg
-  (any compile-profile test)
-  (define (lower-name-env-copy-into-pools-profile
-    [state : CompilerLowerState]
-    [names : LowerNameEnv]
-    [pools : ast.AstNodePoolContext]) : LowerNameEnv
-    (let
-      [base-arena : arena.Arena
-        (arena.Arena (ast.ast-node-pool-context-base-arena pools))]
-      (in-arena base-arena (lower-name-env-copy-active-profile state names)))))
-
-(defmacro (lower-name-env-copy-into-pools-owned
-  [_state : Expr]
-  [names : Expr]
-  [pools : Expr]) : Expr
-  (cfg
-    (any compile-profile test)
-    `(lower-name-env-copy-into-pools-profile ,_state ,names ,pools)
-    `(lower-name-env-copy-into-pools ,names ,pools)))
 
 ;; The generated hashmap grows at three-quarter occupancy. One-and-a-half
 ;; slots per potential entry leaves space below that limit after power-of-two
@@ -4987,68 +4973,19 @@
         source-name
         source-id
         metadata)]
-    (lower-name-env-bind-ids
+    [bound-id : i64
       (if (csym.compiler-symbol-root-module-id? module-id)
         source-id
-        logical-id)
-      logical-id
-      symbol-id
-      names)))
-
-(cfg
-  (any compile-profile test)
-  (define (lower-name-env-add-module-extern-binding-id-profile
-    [state : CompilerLowerState]
-    [names : LowerNameEnv]
-    [_module : String]
-    [module-id : i64]
-    [source-name : String]
-    [source-id : i64]
-    [metadata : ast.AstExternMetadata]) : LowerNameEnv
-    (let
-      [logical-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
-      [symbol-id : i64
-        (lower-extern-logical-symbol-id
-          state
-          logical-id
-          source-name
-          source-id
-          metadata)]
+        logical-id)]
+    (cfg
+      (any compile-profile test)
       (lower-name-env-bind-ids-profile
         state
-        (if (csym.compiler-symbol-root-module-id? module-id)
-          source-id
-          logical-id)
+        bound-id
         logical-id
         symbol-id
-        names))))
-
-(defmacro (lower-name-env-add-module-extern-binding-id-owned
-  [_state : Expr]
-  [names : Expr]
-  [module : Expr]
-  [module-id : Expr]
-  [source-name : Expr]
-  [source-id : Expr]
-  [metadata : Expr]) : Expr
-  (cfg
-    (any compile-profile test)
-    `(lower-name-env-add-module-extern-binding-id-profile
-      ,_state
-      ,names
-      ,module
-      ,module-id
-      ,source-name
-      ,source-id
-      ,metadata)
-    `(lower-name-env-add-module-extern-binding-id
-      ,_state
-      ,names
-      ,module
-      ,module-id
-      ,source-name
-      ,source-id
-      ,metadata)))
+        names)
+      (lower-name-env-bind-ids bound-id logical-id symbol-id names))))
 
 (define (lower-name-env-add-struct-cleanup-in-module
   [lower-state : CompilerLowerState]
@@ -5191,10 +5128,6 @@
 (define (lower-tl-substring-symbol) : i64
   (cbi.compiler-builtin-refresh!)
   cbi.compiler-builtin-id-tl-substring)
-
-(define (lower-tl-str-view-symbol) : i64
-  (cbi.compiler-builtin-refresh!)
-  cbi.compiler-builtin-id-tl-str-view)
 
 (define (lower-tl-array-fill8-symbol) : i64
   (cbi.compiler-builtin-refresh!)
@@ -6007,7 +5940,7 @@
       ;; the exact external linker symbol.
       (let
         [name-str : String (lower-name-id-text lower-state name)]
-        (lower-name-env-add-module-extern-binding-id-owned
+        (lower-name-env-add-module-extern-binding-id
           lower-state
           names
           module
@@ -6094,6 +6027,7 @@
 ;; parser ID resolves unqualified source references, while the owner pair is the
 ;; stable backend/reachability identity.
 (define (lower-name-env-add-root-alias-from-latest
+  [_state : CompilerLowerState]
   [names : LowerNameEnv]
   [decl : ast.AstDecl]) : LowerNameEnv
   (match (lower-decl-lexical-binding-id decl)
@@ -6101,36 +6035,16 @@
     [(Some source-id)
       (match (lower-name-env-view (lower-global-shared-view names))
         [(Bind _ logical-id symbol-id _)
-          (lower-name-env-bind-ids source-id logical-id symbol-id names)]
-        [(Nil) names])]))
-
-(cfg
-  (any compile-profile test)
-  (define (lower-name-env-add-root-alias-from-latest-profile
-    [state : CompilerLowerState]
-    [names : LowerNameEnv]
-    [decl : ast.AstDecl]) : LowerNameEnv
-    (match (lower-decl-lexical-binding-id decl)
-      [(No) names]
-      [(Some source-id)
-        (match (lower-name-env-view (lower-global-shared-view names))
-          [(Bind _ logical-id symbol-id _)
+          (cfg
+            (any compile-profile test)
             (lower-name-env-bind-ids-profile
-              state
+              _state
               source-id
               logical-id
               symbol-id
-              names)]
-          [(Nil) names])])))
-
-(defmacro (lower-name-env-add-root-alias-from-latest-owned
-  [_state : Expr]
-  [names : Expr]
-  [decl : Expr]) : Expr
-  (cfg
-    (any compile-profile test)
-    `(lower-name-env-add-root-alias-from-latest-profile ,_state ,names ,decl)
-    `(lower-name-env-add-root-alias-from-latest ,names ,decl)))
+              names)
+            (lower-name-env-bind-ids source-id logical-id symbol-id names))]
+        [(Nil) names])]))
 
 (define (lower-name-env-from-decls-with-state
   [lower-state : CompilerLowerState]
@@ -6212,7 +6126,7 @@
                 (if (and
                   (csym.compiler-symbol-root-module-id? cur-module-id)
                   (not (csym.compiler-symbol-root-module-id? logical-module-id)))
-                  (lower-name-env-add-root-alias-from-latest-owned
+                  (lower-name-env-add-root-alias-from-latest
                     lower-state
                     owner-names
                     decl)
@@ -25951,34 +25865,6 @@
                 args
                 types
                 (+ index 1))])]))))
-
-;; Mutable-reference formals need call-aware lowering for writebacks, while
-;; borrowed Slice formals need it for the closed call-local unsize path.
-(define (lower-call-type-list-needs-call-aware-args?
-  [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]) : bool
-  (lower-call-type-list-needs-call-aware-args-at? ctx (& types) 0))
-
-(define (lower-call-type-list-needs-call-aware-args-at?
-  [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
-    (let
-      [head : ast.AstType
-        (tc_core.tc-context-type-get
-          ctx
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (match (tc_core.tc-type-strip-region (lower-global-shared-view head))
-        [(MutRef _ _) true]
-        [_
-          (if (tc_core.tc-call-slice-ref-formal? ctx head)
-            true
-            (lower-call-type-list-needs-call-aware-args-at?
-              ctx
-              types
-              (+ index 1)))]))))
 
 (define (lower-call-args-as-needed
   [ctx : tc_core.TcContext]
@@ -71175,7 +71061,7 @@
                           reach-keep-plan)]
                       [escaped-names : LowerNameEnv
                         (if (and detach-source? needs-specialization)
-                          (lower-name-env-copy-into-pools-owned
+                          (lower-name-env-copy-into-pools
                             lower-state
                             names
                             source-pools)

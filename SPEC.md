@@ -4500,9 +4500,15 @@ inspection rule selected by a function name.
 The internal ABI may transport a memory-class `Struct`, `Enum`, tuple, or fixed
 array indirectly, but every by-value parameter still exposes semantically
 private callee storage. Ordinary type rules permit callee-local mutation of its
-fields or elements; caller storage is neither aliased nor mutated. Declare a
-mutable-reference parameter and pass an explicit `&mut` borrow when mutation of
-the caller's aggregate place is intended.
+fields or elements, and the caller never observes it: a `Copyable` argument's
+storage is neither aliased nor mutated, and a move-only argument's source is
+moved by the call, so no later read of it exists. The parameter's value is
+also fixed at the call: a write made to the argument's place while the call
+runs, through a global or through a `&mut` borrow of the same root passed in
+another argument, is not visible through the parameter.
+Writes through raw pointers into an argument's storage remain the unsafe code's
+own obligation. Declare a mutable-reference parameter and pass an explicit
+`&mut` borrow when mutation of the caller's aggregate place is intended.
 
 **Whole-place and path moves.** The v1 checker accepts whole-place moves for
 locals, parameters, and whole constructor temporaries. It also tracks

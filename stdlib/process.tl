@@ -6,12 +6,18 @@
 ;# `tl_process_wait`;
 ;# unsupported target/runtime combinations return structured errors instead of
 ;# routing through Rust host actions or shell-tokenized command strings.
-;# Linux execution preserves inherited environment entries except names
-;# provided by `ProcessEnvList`, which are replaced by the override value.
-;# `ProcessEnvVec` is a vector-backed companion that converts to the same
-;# runtime boundary: inherited entries matching any override name are removed,
-;# overrides are emitted in vector order, and duplicate override names are
-;# preserved in vector order.
+;# A command's `ProcessEnvPolicy` selects the child environment. Under
+;# `ProcessEnvInherit` (every constructor and `command-with-env*` builder) the
+;# child inherits the parent environment except names provided by
+;# `ProcessEnvList`, which are replaced by the override value. `ProcessEnvVec`
+;# is a vector-backed companion that converts to the same runtime boundary:
+;# inherited entries matching any override name are removed, overrides are
+;# emitted in vector order, and duplicate override names are preserved in
+;# vector order. Under `ProcessEnvExact` (`command-with-exact-env*`) the child
+;# environment is exactly the validated rows and the parent environment is
+;# never read: duplicate names are rejected (byte-equal on Linux, ASCII
+;# case-insensitive on Windows), Linux passes the rows in row order and Windows
+;# in the case-folded name order `CreateProcess` requires.
 ;#
 ;# Usage: `(import stdlib.process)`
 ;#
@@ -105,12 +111,26 @@
   (present bool)
   (value String))
 
-;: Process command data: executable path, argv, cwd, env, and stdin.
+;: How a command's `env` rows form the child environment.
+;: `ProcessEnvInherit` starts from the parent environment and applies the rows
+;: as overrides. `ProcessEnvExact` gives the child exactly the rows.
+(defenum ProcessEnvPolicy
+  (ProcessEnvInherit)
+  (ProcessEnvExact))
+
+;: Total `NAME=VALUE` bytes, each with its terminating NUL, accepted for an
+;: exact child environment.
+(define process-exact-env-max-bytes : i64
+  2097152)
+
+;: Process command data: executable path, argv, cwd, env and its policy, and
+;: stdin.
 (defstruct ProcessCommand
   (executable String)
   (argv ProcessStringList)
   (cwd ProcessMaybeString)
   (env ProcessEnvList)
+  (env-policy ProcessEnvPolicy)
   (stdin ProcessMaybeString))
 
 ;: Captured process result data.
@@ -584,6 +604,7 @@
     argv
     (ProcessNoString)
     (env-empty)
+    (ProcessEnvInherit)
     (ProcessNoString)))
 
 ;: Construct a process command from an executable and a vector-backed argv
@@ -598,6 +619,7 @@
     (args-append (command-argv command) (args-single arg))
     (command-cwd command)
     (command-env command)
+    (command-env-policy command)
     (command-stdin command)))
 
 ;: Return a copy of `command` with `args` appended after existing argv entries.
@@ -609,6 +631,7 @@
     (args-append (command-argv command) args)
     (command-cwd command)
     (command-env command)
+    (command-env-policy command)
     (command-stdin command)))
 
 ;: Return a copy of `command` with the full argv list replaced by a
@@ -621,6 +644,7 @@
     (args-from-string-vec argv)
     (command-cwd command)
     (command-env command)
+    (command-env-policy command)
     (command-stdin command)))
 
 ;: Return a copy of `command` with vector-backed args appended after existing
@@ -631,14 +655,14 @@
   (command-with-args command (args-from-string-vec args)))
 
 ;: Construct a process command with every owned-storage field supplied
-;: explicitly.
+;: explicitly; `env` overrides the inherited environment.
 (define (command-full
   [executable : String]
   [argv : ProcessStringList]
   [cwd : ProcessMaybeString]
   [env : ProcessEnvList]
   [stdin : ProcessMaybeString]) : ProcessCommand
-  (ProcessCommand executable argv cwd env stdin))
+  (ProcessCommand executable argv cwd env (ProcessEnvInherit) stdin))
 
 ;: Return a copy of `command` with cwd set to `cwd`.
 (define (command-with-cwd [command : ProcessCommand] [cwd : String]) : ProcessCommand
@@ -647,9 +671,11 @@
     (command-argv command)
     (ProcessSomeString cwd)
     (command-env command)
+    (command-env-policy command)
     (command-stdin command)))
 
-;: Return a copy of `command` with an additional env override.
+;: Return a copy of `command` with an additional env override, inheriting the
+;: rest of the parent environment.
 (define (command-with-env
   [command : ProcessCommand]
   [name : String]
@@ -659,9 +685,11 @@
     (command-argv command)
     (command-cwd command)
     (env-cons name value (command-env command))
+    (ProcessEnvInherit)
     (command-stdin command)))
 
-;: Return a copy of `command` with the full env override list replaced.
+;: Return a copy of `command` with the full env override list replaced,
+;: inheriting the rest of the parent environment.
 (define (command-with-env-list
   [command : ProcessCommand]
   [env : ProcessEnvList]) : ProcessCommand
@@ -670,7 +698,38 @@
     (command-argv command)
     (command-cwd command)
     env
+    (ProcessEnvInherit)
     (command-stdin command)))
+
+;: Return a copy of `command` whose child environment is exactly `env`; the
+;: parent environment is not inherited.
+(define (command-with-exact-env-list
+  [command : ProcessCommand]
+  [env : ProcessEnvList]) : ProcessCommand
+  (ProcessCommand
+    (command-executable command)
+    (command-argv command)
+    (command-cwd command)
+    env
+    (ProcessEnvExact)
+    (command-stdin command)))
+
+;: Return a copy of `command` with one more exact-environment row in front of
+;: its existing rows; the parent environment is not inherited.
+(define (command-with-exact-env
+  [command : ProcessCommand]
+  [name : String]
+  [value : String]) : ProcessCommand
+  (let
+    [rows : ProcessEnvList (env-cons name value (command-env command))]
+    (command-with-exact-env-list command rows)))
+
+;: Return a copy of `command` whose child environment is exactly the
+;: vector-backed rows, converted to dense public storage.
+(define (command-with-exact-env-vec
+  [command : ProcessCommand]
+  [env : (& env ProcessEnvVec)]) : ProcessCommand
+  (command-with-exact-env-list command (env-vec-to-list env)))
 
 ;: Return a copy of `command` with env overrides replaced by vector-backed
 ;: storage converted to dense public storage.
@@ -686,6 +745,7 @@
     (command-argv command)
     (command-cwd command)
     (command-env command)
+    (command-env-policy command)
     (ProcessSomeString stdin)))
 
 ;: Return the executable path from `command`.
@@ -703,6 +763,18 @@
 ;: Return the env override list from `command`.
 (define (command-env [command : (& command ProcessCommand)]) : ProcessEnvList
   (process-env-list-shared-view command.env))
+
+;: Return the environment policy of `command`.
+(define (command-env-policy [command : (& command ProcessCommand)]) : ProcessEnvPolicy
+  (match command.env-policy
+    [(ProcessEnvInherit) (ProcessEnvInherit)]
+    [(ProcessEnvExact) (ProcessEnvExact)]))
+
+;: Return true when `command` runs with exactly its env rows.
+(define (command-env-exact? [command : (& command ProcessCommand)]) : bool
+  (match command.env-policy
+    [(ProcessEnvInherit) false]
+    [(ProcessEnvExact) true]))
 
 ;: Return the stdin setting from `command`.
 (define (command-stdin [command : (& command ProcessCommand)]) : ProcessMaybeString
@@ -902,12 +974,66 @@
     (env-validation-error-from env 0)
     (ProcessSomeString "process: environment storage is malformed")))
 
+;: Whether two environment variable names are the same variable on the
+;: target: byte-equal on Linux, equal after ASCII case folding on Windows.
+(define (env-name-same? [left : (& left str)] [right : (& right str)]) : bool
+  (cfg
+    windows
+    (= (process_runtime.env-name-fold-compare left right) 0)
+    (string.eq left right)))
+
+;: Return true when a row after `index` names the same variable as row `index`.
+(define (env-name-repeated-after? [env : (& env ProcessEnvList)] [index : i64]) : bool
+  (let
+    [name : String (env-name-ref env index)]
+    [other : i64 (+ index 1)]
+    [found : bool false]
+    (while (and (not found) (< other (env-count env)))
+      (let
+        [other-name : String (env-name-ref env other)]
+        (set! found (env-name-same? (& name) (& other-name))))
+      (set! other (+ other 1)))
+    found))
+
+;: Return the first exact-environment error in rows `index..` of `env`, whose
+;: rows already passed `env-validation-error`: a repeated name, or `NAME=VALUE`
+;: C strings totalling more than `process-exact-env-max-bytes`. `bytes` counts
+;: the earlier rows; every field is capped, so the sum cannot overflow.
+(define (env-exact-validation-error-from
+  [env : (& env ProcessEnvList)]
+  [index : i64]
+  [bytes : i64]) : ProcessMaybeString
+  (if (>= index (env-count env))
+    (ProcessNoString)
+    (let
+      [name : String (env-name-ref env index)]
+      [value : String (env-value-ref env index)]
+      [next-bytes : i64
+        (+ bytes (string-length (& name)) (string-length (& value)) 2)]
+      (cond
+        [(> next-bytes process-exact-env-max-bytes)
+          (ProcessSomeString "process: exact environment exceeds storage limit")]
+        [(env-name-repeated-after? env index)
+          (ProcessSomeString
+            "process: exact environment repeats a variable name")]
+        [else (env-exact-validation-error-from env (+ index 1) next-bytes)]))))
+
+;: Return the first validation error of a command's env rows under its policy.
+(define (env-policy-validation-error [command : (& command ProcessCommand)]) : ProcessMaybeString
+  (let
+    [env : ProcessEnvList (command-env command)]
+    (match (env-validation-error env)
+      [(ProcessSomeString message) (ProcessSomeString message)]
+      [(ProcessNoString)
+        (if (command-env-exact? command)
+          (env-exact-validation-error-from env 0 0)
+          (ProcessNoString))])))
+
 ;: Return the first command validation error, or `ProcessNoString`.
 (define (command-validation-error [command : (& command ProcessCommand)]) : ProcessMaybeString
   (let
     [executable : String (command-executable command)]
     [argv : ProcessStringList (command-argv command)]
-    [env : ProcessEnvList (command-env command)]
     (cond
       [(string.eq executable "")
         (ProcessSomeString "process: executable path is empty")]
@@ -929,8 +1055,8 @@
                       "process: cwd path exceeds storage limit")]
                   [(string-contains-char? (& cwd) '\0')
                     (ProcessSomeString "process: cwd path contains NUL")]
-                  [else (env-validation-error env)])]
-              [(ProcessNoString) (env-validation-error env)])])])))
+                  [else (env-policy-validation-error command)])]
+              [(ProcessNoString) (env-policy-validation-error command)])])])))
 
 ;: Return true when `command` passes stdlib validation.
 (define (command-valid? [command : (& command ProcessCommand)]) : bool
@@ -1011,11 +1137,14 @@
   (let
     [argv : ProcessStringList (command-argv command)]
     [env : ProcessEnvList (command-env command)]
-    (process_runtime.command-full
+    (process_runtime.command-full-with-env-policy
       (command-executable command)
       (runtime-args argv)
       (runtime-maybe-string (command-cwd command))
       (runtime-env env)
+      (if (command-env-exact? command)
+        process_runtime.process-runtime-env-exact
+        process_runtime.process-runtime-env-inherit)
       (runtime-maybe-string (command-stdin command)))))
 
 ;: Convert a runtime captured-output result to the public result enum.

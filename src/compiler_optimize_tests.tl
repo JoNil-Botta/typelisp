@@ -49538,6 +49538,422 @@
     once)
     [(Result next _) next]))
 
+;; --- rotation rounds in round regions --------------------------------------
+;; LOOPS sibling counted loops in a row, each behind its own preheader and each
+;; rotatable, so every round rotates exactly one of them. Loop K's counter is
+;; %(3K+1); the function returns the last one.
+(define (opt-rotate-ssa-many-siblings-blocks [loops : i64]) : ir.CompilerIrBlockList
+  (let
+    [text : String "entry:\n jump rr-m0\n"]
+    [index : i64 0]
+    (while (< index loops)
+      (let
+        [k index]
+        [phi : i64 (+ 1 (* 3 index))]
+        [next : String
+          (if (= (+ index 1) loops)
+            "rr-exit"
+            (str_cat.str-cat "rr-m" (string.int->string (+ index 1))))]
+        (set!
+          text
+          (str_cat.str-cat
+            text
+            (str_cat.str-cat
+              "rr-m"
+              (string.int->string k)
+              ":\n jump rr-h"
+              (string.int->string k)
+              "\nrr-h"
+              (string.int->string k)
+              ":\n %"
+              (string.int->string phi)
+              " = phi [0, rr-m"
+              (string.int->string k)
+              "], [%"
+              (string.int->string (+ phi 2))
+              ", rr-l"
+              (string.int->string k)
+              "] : i64\n")
+            (str_cat.str-cat
+              " %"
+              (string.int->string (+ phi 1))
+              " = lt %"
+              (string.int->string phi)
+              ", %0 : bool\n branch %"
+              (string.int->string (+ phi 1))
+              ", rr-b"
+              (string.int->string k)
+              ", "
+              next
+              "\n")
+            (str_cat.str-cat
+              "rr-b"
+              (string.int->string k)
+              ":\n %"
+              (string.int->string (+ phi 2))
+              " = add %"
+              (string.int->string phi)
+              ", 1 : i64\n jump rr-l"
+              (string.int->string k)
+              "\nrr-l"
+              (string.int->string k)
+              ":\n jump rr-h"
+              (string.int->string k)
+              "\n")))
+        (set! index (+ index 1))))
+    (irt.blocks
+      (str_cat.str-cat
+        text
+        "rr-exit:\n return %"
+        (string.int->string (- (* 3 loops) 2))))))
+
+(define (opt-rotate-ssa-many-siblings-function [loops : i64]) : ir.CompilerIrFunction
+  (Function
+    (opt-test-symbol "rotate_ssa_rounds")
+    (irt.params "n=%0:i64")
+    (I64)
+    (+ 1 (* 3 loops))
+    (opt-rotate-ssa-many-siblings-blocks loops)
+    Ordinary))
+
+;; The rounds over LOOPS siblings with FUEL rounds.
+(define (opt-rotate-ssa-many-siblings-run [loops : i64] [fuel : i64]) : ir.CompilerIrFunction
+  (let
+    [func : ir.CompilerIrFunction (opt-rotate-ssa-many-siblings-function loops)]
+    [context : opt.OptCfgContext
+      (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
+    (match (opt.opt-rotate-ssa-rounds func context fuel)
+      [(Result next _) next])))
+
+;; How many of the first LOOPS siblings have been rotated.
+(define (opt-rotate-ssa-rotated-count
+  [func : (& func ir.CompilerIrFunction)]
+  [loops : i64]) : i64
+  (let
+    [blocks : ir.CompilerIrBlockList (opt.opt-function-blocks func)]
+    [count : i64 0]
+    [index : i64 0]
+    (while (< index loops)
+      (when
+        (opt-block-list-has-label?
+          (ir.compiler-ir-block-list-view blocks)
+          (ir.compiler-ir-label
+            (str_cat.str-cat "rr-h" (string.int->string index) "__rotate_land")))
+        (set! count (+ count 1)))
+      (set! index (+ index 1)))
+    count))
+
+;; Refill every round region with junk, as the next pass to use them would, so a
+;; result that still pointed into one would read the junk.
+(define (opt-round-regions-test-clobber!) : unit
+  (let
+    [regions : opt.OptRoundRegions (opt.opt-round-regions-new)]
+    [slot : i64 0]
+    (while (< slot 3)
+      (opt.opt-round-regions-enter! (& regions) slot)
+      (let
+        [junk : (__tl_dyn-array i64) (__tl_make-array i64 65536)]
+        [word : i64 0]
+        (while (< word 65536)
+          (set! (array-ref junk word) -1)
+          (set! word (+ word 1))))
+      (set! slot (+ slot 1)))
+    (opt.opt-round-regions-leave! (& regions))))
+
+;; Bytes the rounds bump in their caller's arena, round regions excluded, or -1
+;; when they do not hand the caller's arena back.
+(cfg
+  test
+  (define (opt-rotate-ssa-caller-bytes [loops : i64] [fuel : i64]) : i64
+    (let
+      [home : i64 (arena.tl_arena_current)]
+      [scratch : arena.Arena (arena.make)]
+      [_enter : unit
+        (unsafe
+          (arena.tl_arena_set scratch.handle))]
+      [func : ir.CompilerIrFunction
+        (opt-rotate-ssa-many-siblings-function loops)]
+      [context : opt.OptCfgContext
+        (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
+      [start : i64
+        (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+          scratch.handle)]
+      [_result : opt.OptFunctionCtxResult
+        (opt.opt-rotate-ssa-rounds func context fuel)]
+      [returned? : bool (= (arena.tl_arena_current) scratch.handle)]
+      [bytes : i64
+        (-
+          (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+            scratch.handle)
+          start)]
+      (unsafe
+        (arena.tl_arena_set home))
+      (arena.destroy-safe! scratch)
+      (if returned?
+        bytes
+        -1))))
+
+;; Rounds after the first bank each rotation in a round home, so the caller's
+;; arena keeps one copy of the final function and its context: 24 rotations cost
+;; it about what one does instead of 24 times as much, and every loop is still
+;; rotated, verified and independent of the regions.
+(test
+  opt-rotate-ssa-later-rounds-keep-two-generations
+  (let
+    [one-round : i64 (opt-rotate-ssa-caller-bytes 24 1)]
+    [all-rounds : i64 (opt-rotate-ssa-caller-bytes 24 25)]
+    [rotated : ir.CompilerIrFunction (opt-rotate-ssa-many-siblings-run 24 25)]
+    [blocks-before : i64
+      (let
+        [blocks (opt.opt-function-blocks rotated)]
+        (ir.compiler-ir-block-list-count blocks))]
+    [instrs-before : i64
+      (let
+        [blocks (opt.opt-function-blocks rotated)]
+        (ir.compiler-ir-block-list-instruction-count blocks))]
+    (opt-round-regions-test-clobber!)
+    (test.assert-true
+      (> one-round 0)
+      "the first round runs in the caller's arena")
+    (test.assert-true
+      (> all-rounds 0)
+      "the rounds hand the caller's arena back")
+    (test.assert-true
+      (< all-rounds (* one-round 3))
+      "later rounds do not grow the caller's arena with the round count")
+    (test.assert-i64-eq
+      (opt-rotate-ssa-rotated-count rotated 24)
+      24
+      "every sibling is rotated")
+    (test.assert-i64-eq
+      (let
+        [blocks (opt.opt-function-blocks rotated)]
+        (ir.compiler-ir-block-list-count blocks))
+      blocks-before
+      "the result keeps its blocks once the regions are reused")
+    (test.assert-i64-eq
+      (let
+        [blocks (opt.opt-function-blocks rotated)]
+        (ir.compiler-ir-block-list-instruction-count blocks))
+      instrs-before
+      "the result keeps its instructions once the regions are reused")
+    (test.assert-true
+      (opt.opt-verify-ok? (opt.opt-verify-function rotated))
+      "the result verifies once the regions are reused")))
+
+;; Fuel counts rounds across the first round and the later ones alike: N rounds
+;; rotate exactly N siblings, zero rounds leave the function as it came, and a
+;; function whose loops run out before the fuel stops there.
+(test
+  opt-rotate-ssa-round-fuel-spans-regions
+  (let
+    [none : ir.CompilerIrFunction (opt-rotate-ssa-many-siblings-run 6 0)]
+    [one : ir.CompilerIrFunction (opt-rotate-ssa-many-siblings-run 6 1)]
+    [two : ir.CompilerIrFunction (opt-rotate-ssa-many-siblings-run 6 2)]
+    [five : ir.CompilerIrFunction (opt-rotate-ssa-many-siblings-run 6 5)]
+    [spare : ir.CompilerIrFunction (opt-rotate-ssa-many-siblings-run 6 40)]
+    (opt-round-regions-test-clobber!)
+    (test.assert-i64-eq (opt-rotate-ssa-rotated-count none 6) 0 "zero rounds")
+    (test.assert-i64-eq (opt-rotate-ssa-rotated-count one 6) 1 "one round")
+    (test.assert-i64-eq (opt-rotate-ssa-rotated-count two 6) 2 "two rounds")
+    (test.assert-i64-eq (opt-rotate-ssa-rotated-count five 6) 5 "five rounds")
+    (test.assert-i64-eq (opt-rotate-ssa-rotated-count spare 6) 6 "spare fuel")
+    (test.assert-true
+      (opt.opt-verify-ok? (opt.opt-verify-function two))
+      "two rounds verify")
+    (test.assert-true
+      (opt.opt-verify-ok? (opt.opt-verify-function five))
+      "five rounds verify")
+    (test.assert-true
+      (opt.opt-verify-ok? (opt.opt-verify-function spare))
+      "spare fuel verifies")))
+
+;; A rotatable loop, then the scan-past-refusal pair: the second round runs in
+;; the regions, refuses the leading loop of the pair and rotates the trailing one,
+;; and the function it banks comes back to the caller intact.
+(define (opt-rotate-ssa-later-refusal-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       jump h0
+     h0:
+       %9 = phi [0, entry], [%10, l0] : i64
+       %11 = lt %9, %0 : bool
+       branch %11, b0, pre
+     b0:
+       %10 = add %9, 1 : i64
+       jump l0
+     l0:
+       jump h0
+     pre:
+       jump header
+     header:
+       %1 = phi [0, pre], [%2, latch] : i64
+       %3 = lt %1, %0 : bool
+       branch %3, body, exit
+     body:
+       %4 = lt %1, 7 : bool
+       branch %4, cont, escape
+     cont:
+       %2 = add %1, 1 : i64
+       jump latch
+     latch:
+       jump header
+     escape:
+       jump done
+     exit:
+       jump done
+     done:
+       %5 = add %1, 0 : i64
+       jump h2
+     h2:
+       %6 = phi [0, done], [%7, l2] : i64
+       %8 = lt %6, %0 : bool
+       branch %8, b2, tail
+     b2:
+       %7 = add %6, 1 : i64
+       jump l2
+     l2:
+       jump h2
+     tail:
+       return %5"))
+
+(test
+  opt-rotate-ssa-later-round-scans-past-refusal
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-rotate-ssa-later-refusal-blocks)]
+    [rotated : ir.CompilerIrFunction
+      (match (opt.opt-rotate-ssa-function-with-context-result
+        (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
+        false
+        (Function
+          (opt-test-symbol "rotate_ssa_later_refusal")
+          (irt.params "n=%0:i64")
+          (I64)
+          12
+          blocks
+          Ordinary))
+        [(Result next _) next])]
+    (opt-round-regions-test-clobber!)
+    (let
+      [out : ir.CompilerIrBlockList (opt.opt-function-blocks rotated)]
+      (test.assert-true
+        (opt-block-list-has-label?
+          (ir.compiler-ir-block-list-view out)
+          (ir.compiler-ir-label "h0__rotate_land"))
+        "the first round rotates the leading loop")
+      (test.assert-false
+        (opt-block-list-has-label?
+          (ir.compiler-ir-block-list-view out)
+          (ir.compiler-ir-label "header__rotate_land"))
+        "a later round refuses the escaping loop")
+      (test.assert-true
+        (opt-block-list-has-label?
+          (ir.compiler-ir-block-list-view out)
+          (ir.compiler-ir-label "h2__rotate_land"))
+        "and still rotates the loop after it")
+      (test.assert-true
+        (opt.opt-verify-ok? (opt.opt-verify-function rotated))
+        "the result verifies once the regions are reused"))))
+
+;; Bytes in round region SLOT since its last reset.
+(cfg
+  test
+  (define (opt-round-region-test-bytes
+    [regions : (& regions opt.OptRoundRegions)]
+    [slot : i64]) : i64
+    (allocation_profile.compiler-allocation-profile-arena-bump-bytes
+      (array-ref regions.arenas slot))))
+
+;; A homed candidate that fails its verify leaves the carried function's home
+;; alone and returns to the work arena; a verified one moves the carried
+;; function into the other home. The failing input is a well-shaped counted loop
+;; whose exit returns a value nothing defines, so every rewrite of it fails the
+;; verify the scan runs after copying it into a home.
+(define (opt-rotate-ssa-homed-scan
+  [regions : (&mut regions opt.OptRoundRegions)]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : opt.OptFunctionCtxMaybe
+  (let
+    [func : ir.CompilerIrFunction
+      (Function
+        (opt-test-symbol "rotate_ssa_homed")
+        (irt.params "n=%0:i64")
+        (I64)
+        frame
+        blocks
+        Ordinary)]
+    [context : opt.OptCfgContext
+      (opt.opt-cfg-context-build (opt.opt-function-blocks func))]
+    [loops
+      (opt.opt-cfg-natural-loops-with-context
+        (opt.opt-function-blocks func)
+        context)]
+    (opt.opt-rotate-ssa-loops
+      regions
+      true
+      func
+      context
+      (opt_natural_loop_vec.view loops))))
+
+(test
+  opt-rotate-ssa-homed-candidate-commits-only-when-verified
+  (let
+    [regions : opt.OptRoundRegions (opt.opt-round-regions-new)]
+    (opt.opt-round-regions-enter! (& regions) 1)
+    (opt.opt-round-regions-enter-work! (& regions))
+    (let
+      [home-base : i64 (opt-round-region-test-bytes (& regions) 1)]
+      [failed : opt.OptFunctionCtxMaybe
+        (opt-rotate-ssa-homed-scan
+          (&mut regions)
+          6
+          (irt.blocks
+            "entry:
+               jump header
+             header:
+               %1 = phi [0, entry], [%2, latch] : i64
+               %3 = lt %1, %0 : bool
+               branch %3, body, exit
+             body:
+               %2 = add %1, 1 : i64
+               jump latch
+             latch:
+               jump header
+             exit:
+               return %5"))]
+      [failed-home : i64 regions.holder]
+      [failed-copied : i64 (opt-round-region-test-bytes (& regions) 1)]
+      [failed-in-work? : bool
+        (= (arena.tl_arena_current) (array-ref regions.arenas 0))]
+      [banked : opt.OptFunctionCtxMaybe
+        (opt-rotate-ssa-homed-scan
+          (&mut regions)
+          4
+          (opt-rotate-ssa-test-blocks false))]
+      [banked-home : i64 regions.holder]
+      [banked-in-work? : bool
+        (= (arena.tl_arena_current) (array-ref regions.arenas 0))]
+      (opt.opt-round-regions-leave! (& regions))
+      (test.assert-true
+        (match failed
+          [(No) true]
+          [(Some _ _) false])
+        "a candidate that fails its verify is refused")
+      (test.assert-true
+        (> failed-copied home-base)
+        "after its rewrite was copied into the free home")
+      (test.assert-i64-eq failed-home 0 "and leaves the carried home alone")
+      (test.assert-true failed-in-work? "and returns to the work arena")
+      (test.assert-true
+        (match banked
+          [(No) false]
+          [(Some _ _) true])
+        "a verified candidate is banked")
+      (test.assert-i64-eq banked-home 1 "in the free home")
+      (test.assert-true
+        banked-in-work?
+        "and the scan returns to the work arena"))))
+
 (define (compiler-optimize-rotate-ssa-self-test) : i64
   (let
     [rotated : ir.CompilerIrFunction (opt-rotate-ssa-test-run false)]

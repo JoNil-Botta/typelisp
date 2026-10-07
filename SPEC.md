@@ -1764,6 +1764,12 @@ Reference types are lifetime-bearing:
   value)` writes through an owned fixed array or a mutable array reference. Private
   `__tl_array-push!` mutates private dynamic buffers. Borrowed `str` source
   semantics are specified in section 3.11.
+- A value read through a reference does not own the referent. `(deref r)`, or
+  a field, tuple-element or element projection through `r` or through
+  `(deref r)`, may be used by value only when its type is `Copy`. A by-value
+  use of a non-`Copy` value read this way is a move out of the reference and
+  is rejected as a move violation (`E0208`): pass, bind or return a borrow
+  `(& ...)` of it, or an owned clone.
 
 In function signatures, the ordinary spelling elides the lifetime name:
 
@@ -9447,9 +9453,10 @@ Opt-in rules: `--deprecated-string-concat` (deprecated concat primitives),
 `--redundant-begin` (a `begin` of two or more forms, none of them a `cfg`
 form, written as a body form of a position that already takes a body
 sequence, with a machine-applicable fix
-that splices its forms into that body; under `when` and `unless`, whose body
-forms must each be `unit`, it reports only when the forms the splice exposes
-are syntactically `unit`), and
+that splices its forms into that body; under `when`, `unless` and `while`,
+whose body forms must each be `unit`, it reports only when the forms the
+splice exposes are syntactically `unit`; a `defmacro` body is not reported
+until the parser accepts the grammar's multi-form macro body, #8717), and
 `--prefer-dotted-field` is a deprecated no-op retained for CLI compatibility
 now that dotted field projection is the only public spelling.
 `--name-case` enables four independently suppressible rules:

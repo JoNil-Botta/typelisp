@@ -26,6 +26,7 @@
 (import read as reader)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+(import stdlib.text_buf)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
 (import token)
@@ -92354,36 +92355,62 @@
             [(Err diag) (Err diag)])]
         [(Err diag) (Err diag)]))))
 
-(define (macro-identity-key-sexpr
+;; A cons cell's key is `cons:<n>:`, its head's key (n bytes) and then its
+;; tail's key. The head's length prefix makes the encoding injective without
+;; escaping keys that are already encoded, so a key stays linear in the syntax
+;; it encodes (#8675). Escaping every sub-key again grew the key about four times
+;; per nesting level, which overflowed the stack for moderately nested
+;; declaration-macro arguments.
+(define (macro-identity-key-sexpr-into
   [session : cis.InternStructuralSessionHandle]
-  [sexpr : reader.SpannedSexpr]) : String
+  [sexpr : reader.SpannedSexpr]
+  [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match (reader.spanned-sexpr-view sexpr)
-    [(Int _ text _) (str_cat.str-cat "int:" (spec.spec-string-key text))]
+    [(Int _ text _)
+      (text_buf.append (text_buf.append buf "int:") (spec.spec-string-key text))]
     [(Sym name _)
-      (str_cat.str-cat
-        "sym:"
+      (text_buf.append
+        (text_buf.append buf "sym:")
         (spec.spec-string-key
           (macro-output-symbol-text-id
             session
             (ci.intern-syntax-id-value name)
             "identity-key")))]
-    [(Nil _) "nil"]
+    [(Nil _) (text_buf.append buf "nil")]
     [(Cons head tail _)
-      (str_cat.str-cat
-        "cons:"
-        (spec.spec-string-key (macro-identity-key-sexpr session head))
-        ":"
-        (spec.spec-string-key (macro-identity-key-sexpr session tail)))]
+      (let
+        [head-key : String (macro-identity-key-sexpr session head)]
+        (macro-identity-key-sexpr-into
+          session
+          tail
+          (text_buf.append
+            (text_buf.append
+              (text_buf.append-int
+                (text_buf.append buf "cons:")
+                (string.string-length head-key))
+              ":")
+            head-key)))]
     [(Str string-id _)
-      (str_cat.str-cat
-        "str:"
+      (text_buf.append
+        (text_buf.append buf "str:")
         (spec.spec-string-key (ci.intern-id-str string-id)))]
-    [(Char c _) (str_cat.str-cat "char:" (string.int->string (cast c : i64)))]
-    [(Float text _) (str_cat.str-cat "float:" (spec.spec-string-key text))]
+    [(Char c _)
+      (text_buf.append-int (text_buf.append buf "char:") (cast c : i64))]
+    [(Float text _)
+      (text_buf.append
+        (text_buf.append buf "float:")
+        (spec.spec-string-key text))]
     [(BracketList items _)
-      (str_cat.str-cat
-        "bracket:"
-        (spec.spec-string-key (macro-identity-key-sexpr session items)))]))
+      (macro-identity-key-sexpr-into
+        session
+        items
+        (text_buf.append buf "bracket:"))]))
+
+(define (macro-identity-key-sexpr
+  [session : cis.InternStructuralSessionHandle]
+  [sexpr : reader.SpannedSexpr]) : String
+  (text_buf.render
+    (macro-identity-key-sexpr-into session sexpr (text_buf.empty))))
 
 (define (macro-identity-key-syntax-expr
   [owner : (& owner MacroSexprOwner)]

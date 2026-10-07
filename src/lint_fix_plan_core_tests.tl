@@ -713,6 +713,94 @@
       1)
     "lint redundant-begin reports a while begin whose exposed forms are unit"))
 
+;; Since #8654 every direct `while` body form must be unit, exactly like the
+;; body forms of `when`/`unless`, so a begin that discards a value there is
+;; required. These are the stdlib/thread.tl shapes the begin migration spliced
+;; and #8668 restored: an i64 call (bare, or under `unsafe`, `let` or `if`)
+;; followed by `unit`, as the only body form or after another one. No finding,
+;; so the autofix never touches them.
+(test
+  lint-redundant-begin-keeps-while-discard-begins
+  (assert
+    (=
+      (lint_core.lint-findings-count
+        (redundant-begin-findings
+          "(define (wait [addr : i64]) : i64
+  addr)
+
+(define (spin [x : i64]) : unit
+  (while (> x 0)
+    (begin
+      (unsafe
+        (wait x))
+      unit))
+  (while (> x 0)
+    (begin
+      (wait x)
+      unit))
+  (while (> x 0)
+    (set! x (- x 1))
+    (begin
+      (let [y : i64 x] (wait y))
+      unit))
+  (while (> x 0)
+    (begin
+      (if (> x 1) (wait x) (wait 0))
+      (set! x 0)
+      unit)))
+"))
+      0)
+    "lint redundant-begin must keep a while begin that discards a value"))
+
+;; The fix for a while begin whose exposed forms are unit, next to a thread.tl
+;; shape it must leave alone: only the first loop changes, and its spliced
+;; body still has only unit forms.
+(test
+  lint-redundant-begin-while-fix-keeps-discards
+  (assert
+    (redundant-begin-round-trip-ok?
+      "(define (wait [addr : i64]) : i64
+  addr)
+
+(define (spin [x : i64]) : unit
+  (while (> x 0)
+    (begin
+      (set! x (- x 1))
+      (set! x (- x 1))))
+  (while (> x 0)
+    (begin
+      (unsafe
+        (wait x))
+      unit)))
+"
+      1
+      "(define (wait [addr : i64]) : i64
+  addr)
+
+(define (spin [x : i64]) : unit
+  (while (> x 0)
+      (set! x (- x 1))
+      (set! x (- x 1)))
+  (while (> x 0)
+    (begin
+      (unsafe
+        (wait x))
+      unit)))
+"
+      "(define (wait [addr : i64]) : i64
+  addr)
+
+(define (spin [x : i64]) : unit
+  (while (> x 0)
+    (set! x (- x 1))
+    (set! x (- x 1)))
+  (while (> x 0)
+    (begin
+      (unsafe
+        (wait x))
+      unit)))")
+    "lint redundant-begin while fix keeps discarding begins"))
+
 (test
   lint-redundant-begin-keeps-required-begins
   (assert
@@ -755,6 +843,11 @@
   `(begin
     (let [x : i64 1] '(begin x x))
     1))
+
+(defmacro (single-body [xs : Expr ...]) : Expr
+  (begin
+    (comptime.expr-list-length xs)
+    (comptime.expr-int 2)))
 "))
       0)
     "lint redundant-begin must keep required begins"))

@@ -1287,3 +1287,110 @@
     (unless
       (and owner-ok reuse-ok reset-ok truncate-ok)
       (io.panic "reader: empty spelling cache crossed an owner or reset"))))
+
+;; Slice views hand a list's children to slice patterns. A rest bound as `& _`
+;; comes back as a node through spanned-sexpr-drop, with the list's span.
+(define (reader-test-slice-views?) : bool
+  (reader.sp-node-pool-reset!)
+  (match (reader.data-result "(alpha (beta gamma) [delta] 7)")
+    [(Err _) false]
+    [(Ok form)
+      (match (reader.spanned-sexpr-slice-view form)
+        [(List (slice head inner bracket (Int seven _ _)) span)
+          (and
+            (reader-test-symbol? head "alpha")
+            (= seven 7)
+            (match (reader.spanned-sexpr-slice-view inner)
+              [(List (slice beta gamma) _)
+                (and
+                  (reader-test-symbol? beta "beta")
+                  (reader-test-symbol? gamma "gamma"))]
+              [_ false])
+            (match (reader.spanned-sexpr-slice-view bracket)
+              [(BracketList (slice delta) _)
+                (reader-test-symbol? delta "delta")]
+              [_ false])
+            (match (reader.sexpr-slice-view bracket)
+              [(List (slice _)) true]
+              [_ false])
+            (match (reader.spanned-sexpr-slice-view
+              (reader.spanned-sexpr-drop form 2))
+              [(List (slice (BracketList _ _ _) (Int _ _ _)) tail-span)
+                (and
+                  (=
+                    (token.span-start-line tail-span)
+                    (token.span-start-line span))
+                  (=
+                    (token.span-start-col tail-span)
+                    (token.span-start-col span)))]
+              [_ false])
+            (match (reader.sexpr-slice-view (reader.spanned-sexpr-drop form 4))
+              [(List (slice)) true]
+              [_ false]))]
+        [_ false])]))
+
+(test
+  reader-slice-views
+  (if (reader-test-slice-views?)
+    unit
+    (io.panic "reader: slice view self-test failed")))
+
+;; "(base base+1 ... base+count-1)".
+(define (reader-test-int-list-text [base : i64] [count : i64]) : String
+  (let
+    [text : String "("]
+    [index : i64 0]
+    (while (< index count)
+      (set! text (str_cat.str-cat text " " (string.int->string (+ base index))))
+      (set! index (+ index 1)))
+    (str_cat.str-cat text ")")))
+
+;; Whether LIST's slice view holds exactly COUNT ints counting up from BASE.
+(define (reader-test-slice-counts?
+  [list : reader.SpannedSexpr]
+  [base : i64]
+  [count : i64]) : bool
+  (match (reader.spanned-sexpr-slice-view list)
+    [(List items _)
+      (let
+        [index : i64 0]
+        [ok : bool (= (array-length items) count)]
+        (while (and ok (< index count))
+          (match (array-ref items index)
+            [(Int n _ _) (unless (= n (+ base index)) (set! ok false))]
+            [_ (set! ok false)])
+          (set! index (+ index 1)))
+        ok)]
+    [_ false]))
+
+;; A list never straddles a pool segment, so its slice view is one array: a
+;; list that would cross a boundary starts at the next segment, and a list
+;; longer than a segment has a dedicated array. Both read every child in order.
+(define (reader-test-slice-views-span-segments?) : bool
+  (reader.sp-node-pool-reset!)
+  (match (reader.data-result
+    (str_cat.str-cat
+      "("
+      (reader-test-int-list-text 0 1000)
+      (reader-test-int-list-text 5000 50)
+      (reader-test-int-list-text 9000 1500)
+      ")"))
+    [(Err _) false]
+    [(Ok form)
+      (match (reader.spanned-sexpr-slice-view form)
+        [(List (slice near-boundary crossing long) _)
+          (and
+            (reader-test-slice-counts? near-boundary 0 1000)
+            (reader-test-slice-counts? crossing 5000 50)
+            (reader-test-slice-counts? long 9000 1500)
+            (reader-test-slice-counts?
+              (reader.spanned-sexpr-drop long 1490)
+              10490
+              10))]
+        [_ false])]))
+
+(test
+  reader-slice-views-span-segments
+  (if (reader-test-slice-views-span-segments?)
+    unit
+    (io.panic "reader: slice view across pool segments failed")))

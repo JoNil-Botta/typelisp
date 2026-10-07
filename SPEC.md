@@ -3506,17 +3506,29 @@ definition before typechecking, lowering, and codegen.
 The compiler-owned `(include-str-lzss name "path")` form is the compressed
 runtime-static sibling of `include-str` and `include-bin`. It uses the same
 explicit input and path-resolution rules, deterministically LZSS-compresses
-the file's exact bytes at the loader boundary, and defines an opaque static
+the file's bytes at the loader boundary, and defines an opaque static
 `name : (__tl_dyn-array u8)`. The bounded binary-data payload starts with the
 compiler-owned `__typelisp_embedded_stdlib_lzss_v1__` marker, the decimal
-uncompressed byte length and a newline, followed by the token stream. Like
-`include-bin`, and unlike `include-str`, the input is never decoded or
-validated as text, so binary payloads round-trip exactly. This form exists for
-compiler-owned payload tables: the compiler embeds its stdlib source table
-through it. The stdlib comptime image is embedded with `include-bin` instead,
-as a compiler-owned TLCH envelope that carries the image's LZSS token stream
-in canonical Huffman form and is expanded back to the exact `.tlci` bytes on
-demand.
+uncompressed byte length and a newline, followed by the token stream.
+
+- A `path` that does not end in `.tl` is compressed exactly. Like
+  `include-bin`, and unlike `include-str`, the input is never decoded or
+  validated as text, so binary payloads round-trip exactly.
+- A `path` ending in `.tl` is a TypeLisp source. Before compression, each
+  top-level inline test is replaced by the line breaks it contained: every
+  `(test ...)` form, and every `(cfg test BODY)` form with exactly one body.
+  Every other byte is kept, so each remaining form keeps its line and column.
+  Strings, character literals and comments follow the lexer's rules, and a
+  source the lexer would reject, or whose brackets do not balance, is
+  compressed unchanged.
+
+This form exists for compiler-owned payload tables: the compiler embeds its
+stdlib source table through it. The embedded stdlib therefore carries no
+inline tests; those compile only under `--cfg test` from the repository
+sources (#8713). The stdlib comptime image is embedded with `include-bin`
+instead, as a compiler-owned TLCH envelope that carries the image's LZSS token
+stream in canonical Huffman form and is expanded back to the exact `.tlci`
+bytes on demand.
 
 #### 4.4.8 `(include-str-comptime name "path")` - compile-time text input
 
@@ -4488,9 +4500,15 @@ inspection rule selected by a function name.
 The internal ABI may transport a memory-class `Struct`, `Enum`, tuple, or fixed
 array indirectly, but every by-value parameter still exposes semantically
 private callee storage. Ordinary type rules permit callee-local mutation of its
-fields or elements; caller storage is neither aliased nor mutated. Declare a
-mutable-reference parameter and pass an explicit `&mut` borrow when mutation of
-the caller's aggregate place is intended.
+fields or elements, and the caller never observes it: a `Copyable` argument's
+storage is neither aliased nor mutated, and a move-only argument's source is
+moved by the call, so no later read of it exists. The parameter's value is
+also fixed at the call: a write made to the argument's place while the call
+runs, through a global or through a `&mut` borrow of the same root passed in
+another argument, is not visible through the parameter.
+Writes through raw pointers into an argument's storage remain the unsafe code's
+own obligation. Declare a mutable-reference parameter and pass an explicit
+`&mut` borrow when mutation of the caller's aggregate place is intended.
 
 **Whole-place and path moves.** The v1 checker accepts whole-place moves for
 locals, parameters, and whole constructor temporaries. It also tracks
@@ -9447,9 +9465,10 @@ Opt-in rules: `--deprecated-string-concat` (deprecated concat primitives),
 `--redundant-begin` (a `begin` of two or more forms, none of them a `cfg`
 form, written as a body form of a position that already takes a body
 sequence, with a machine-applicable fix
-that splices its forms into that body; under `when` and `unless`, whose body
-forms must each be `unit`, it reports only when the forms the splice exposes
-are syntactically `unit`), and
+that splices its forms into that body; under `when`, `unless` and `while`,
+whose body forms must each be `unit`, it reports only when the forms the
+splice exposes are syntactically `unit`; a `defmacro` body is not reported
+until the parser accepts the grammar's multi-form macro body, #8717), and
 `--prefer-dotted-field` is a deprecated no-op retained for CLI compatibility
 now that dotted field projection is the only public spelling.
 `--name-case` enables four independently suppressible rules:

@@ -219,10 +219,9 @@
 (define (compiler-ast-state-owned-type-dedup-budget-smoke?) : bool
   ;; Keep the source-macro self-host uniqueness budget from silently shrinking
   ;; (see `ast-type-node-pool-state-dedup-capacity`).
-  (>=
-    (array-length
-      (__tl-project-field (ast.ast-type-node-pool-state-create 1) dedup-slots))
-    131072))
+  (let
+    [state : ast.AstTypeNodePoolState (ast.ast-type-node-pool-state-create 1)]
+    (>= (ast.ty-node-dedup-table-capacity state.dedup-slots) 131072)))
 
 ;; At the half-load boundary a duplicate triggers growth but keeps its id.
 ;; The replacement descriptor and data must outlive the caller's scratch arena.
@@ -261,7 +260,8 @@
         (ast.ast-type-pool-cell-read pools.type-pool)]
       [count-at-hit : i64 state.count]
       [dedup-at-hit : i64 state.dedup-count]
-      [capacity-at-hit : i64 (array-length state.dedup-slots)]
+      [capacity-at-hit : i64
+        (ast.ty-node-dedup-table-capacity state.dedup-slots)]
       [new-id : i64 (ast.ast-node-pool-context-type-push pools (Char))]
       [ok : bool
         (and
@@ -321,6 +321,151 @@
     (compiler-ast-context-dedup-half-load-smoke?)
     "explicit dedup growth preserves ids, collisions, reset and arena ownership"))
 
+;; Whether every table slot of POOLS' dedup array is empty and its log reset,
+;; exactly as a full clear of the table leaves it.
+(define (compiler-ast-type-dedup-table-empty? [pools : ast.AstNodePoolContext]) : bool
+  (let
+    [state : ast.AstTypeNodePoolState
+      (ast.ast-type-pool-cell-read pools.type-pool)]
+    [slots : (__tl_dyn-array i64) (ast.ast-place-shared-view state.dedup-slots)]
+    [capacity : i64 (ast.ty-node-dedup-table-capacity slots)]
+    [empty : bool (= (array-ref slots capacity) 0)]
+    [i : i64 0]
+    (while (and empty (< i capacity))
+      (if (= (array-ref slots i) 0)
+        unit
+        (set! empty false))
+      (set! i (+ i 1)))
+    empty))
+
+;; Push COUNT distinct type variables starting at name START.
+(define (compiler-ast-type-dedup-push-vars
+  [pools : ast.AstNodePoolContext]
+  [start : i64]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (ast.ast-node-pool-context-type-push pools (Var (+ start index)))
+        unit)
+      (set! index (+ index 1)))))
+
+;; A dedup clear empties exactly the slots filled since the last one, whichever
+;; alias filled them: clears at the current count and at an interior mark,
+;; global-path inserts cleared through the context's stale state, an
+;; overflowing log, and a table rehashed by a grow all leave the table as empty
+;; as a full clear does, and deduplication keeps working afterwards.
+(define (compiler-ast-type-dedup-logged-clear-smoke?) : bool
+  (let
+    [active-before : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [ok : bool true]
+    (compiler-ast-type-dedup-push-vars pools 0 100)
+    (ast.ast-node-pool-context-type-dedup-clear! pools)
+    (set! ok (and ok (compiler-ast-type-dedup-table-empty? pools)))
+    (compiler-ast-type-dedup-push-vars pools 1000 200)
+    (ast.ast-node-pool-context-reset-to!
+      pools
+      (ast.ast-node-pool-context-expr-len pools)
+      150)
+    (set!
+      ok
+      (and
+        ok
+        (compiler-ast-type-dedup-table-empty? pools)
+        (= (ast.ast-node-pool-context-type-len pools) 150)))
+    (ast.ast-node-pool-context-install! pools)
+    (let
+      [index : i64 0]
+      (while (< index 300)
+        (begin
+          (ast.ty-node-push (& (Var (+ 5000 index))))
+          unit)
+        (set! index (+ index 1))))
+    (ast.ast-node-pool-context-install! active-before)
+    (ast.ast-node-pool-context-reset-to!
+      pools
+      (ast.ast-node-pool-context-expr-len pools)
+      0)
+    (set! ok (and ok (compiler-ast-type-dedup-table-empty? pools)))
+    (compiler-ast-type-dedup-push-vars
+      pools
+      0
+      (+ ast.ty-node-dedup-log-capacity 10))
+    (ast.ast-node-pool-context-type-dedup-clear! pools)
+    (set! ok (and ok (compiler-ast-type-dedup-table-empty? pools)))
+    (compiler-ast-type-dedup-push-vars pools 100000 70000)
+    (let
+      [state : ast.AstTypeNodePoolState
+        (ast.ast-type-pool-cell-read pools.type-pool)]
+      (set!
+        ok
+        (and ok (= (ast.ty-node-dedup-table-capacity state.dedup-slots) 262144))))
+    (ast.ast-node-pool-context-reset-to!
+      pools
+      (ast.ast-node-pool-context-expr-len pools)
+      0)
+    (set! ok (and ok (compiler-ast-type-dedup-table-empty? pools)))
+    (let
+      [bool-id : i64 (ast.ast-node-pool-context-type-push pools (Bool))]
+      (and
+        ok
+        (= bool-id 0)
+        (= (ast.ast-node-pool-context-type-push pools (Bool)) bool-id)
+        (= (ast.ast-node-pool-context-type-len pools) 1)))))
+
+;; Whether POOLS and its clone hold identical dedup arrays, log included.
+(define (compiler-ast-type-dedup-clone-equal? [pools : ast.AstNodePoolContext]) : bool
+  (let
+    [clone : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-clone-types-only pools)]
+    [source-state : ast.AstTypeNodePoolState
+      (ast.ast-type-pool-cell-read pools.type-pool)]
+    [clone-state : ast.AstTypeNodePoolState
+      (ast.ast-type-pool-cell-read clone.type-pool)]
+    [source : (__tl_dyn-array i64)
+      (ast.ast-place-shared-view source-state.dedup-slots)]
+    [copy : (__tl_dyn-array i64)
+      (ast.ast-place-shared-view clone-state.dedup-slots)]
+    [same : bool (= (array-length source) (array-length copy))]
+    [i : i64 0]
+    (while (and same (< i (array-length source)))
+      (if (= (array-ref source i) (array-ref copy i))
+        unit
+        (set! same false))
+      (set! i (+ i 1)))
+    same))
+
+;; Cloning a context's types copies its dedup array exactly, from the log when
+;; it is complete and in full when it overflowed.
+(define (compiler-ast-type-dedup-clone-smoke?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [ok : bool true]
+    (compiler-ast-type-dedup-push-vars pools 0 500)
+    (set! ok (and ok (compiler-ast-type-dedup-clone-equal? pools)))
+    (compiler-ast-type-dedup-push-vars
+      pools
+      1000
+      (+ ast.ty-node-dedup-log-capacity 10))
+    (and ok (compiler-ast-type-dedup-clone-equal? pools))))
+
+(test
+  compiler-ast-type-dedup-clone
+  (tl_test.assert-true
+    (compiler-ast-type-dedup-clone-smoke?)
+    "a types-only clone copies the dedup array exactly"))
+
+(test
+  compiler-ast-type-dedup-logged-clear
+  (tl_test.assert-true
+    (compiler-ast-type-dedup-logged-clear-smoke?)
+    "a logged dedup clear leaves the table as empty as a full clear"))
+
 ;; Use a small real index with the existing bound temporarily set to its
 ;; capacity. This exercises the maximum-capacity fallback without an 8M-node
 ;; fixture; restore the bound and installed owner before reporting assertions.
@@ -339,7 +484,9 @@
         state.count
         state.base-arena
         state.exhausted
-        (in-arena (arena.Arena state.base-arena) (__tl_make-array i64 8))
+        (in-arena
+          (arena.Arena state.base-arena)
+          (ast.ty-node-dedup-slots-new 8))
         state.dedup-count
         state.storage-arena
         state.segment-count)]
@@ -360,7 +507,8 @@
       [after-installed : i64 (ast.ast-node-pool-context-type-len pools)]
       [final-state : ast.AstTypeNodePoolState
         (ast.ast-type-pool-cell-read pools.type-pool)]
-      [capacity : i64 (array-length final-state.dedup-slots)]
+      [capacity : i64
+        (ast.ty-node-dedup-table-capacity final-state.dedup-slots)]
       [dedup-count : i64 final-state.dedup-count]
       (unsafe
         (ptr-write!

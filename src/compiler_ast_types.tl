@@ -2934,7 +2934,7 @@
     [segment-bases : (__tl_dyn-array i64)
       (in-arena (arena.Arena base-arena) (ast-node-pool-segment-base-table-new))]
     [dedup-slots : (__tl_dyn-array i64)
-      (in-arena (arena.Arena base-arena) (__tl_make-array i64 dedup-cap))]
+      (in-arena (arena.Arena base-arena) (ty-node-dedup-slots-new dedup-cap))]
     [storage-root : i64 (ast-node-pool-arena-make)]
     [segment-index : i64 0]
     (while (< segment-index segment-count)
@@ -2973,11 +2973,7 @@
 (define (ast-type-node-pool-state-dedup-clear [pool : AstTypeNodePoolState]) : AstTypeNodePoolState
   (let
     [slots : (__tl_dyn-array i64) pool.dedup-slots]
-    [cap : i64 (array-length slots)]
-    [i : i64 0]
-    (while (< i cap)
-      (set! (array-ref slots i) 0)
-      (set! i (+ i 1)))
+    (ty-node-dedup-slots-clear! (ast-place-shared-view slots))
     (AstTypeNodePoolState
       pool.segment-bases
       pool.count
@@ -3084,6 +3080,11 @@
         (owned_view.compiler-owned-reference-shared-view node))
         [(AstTypeNodePoolPushOk next id)
           (set! (array-ref dedup-slots idx) (+ id 1))
+          (ty-node-dedup-note-filled!
+            (unsafe
+              (__tl_array-data dedup-slots))
+            (+ mask 1)
+            idx)
           (AstTypeNodePoolPushOk
             (AstTypeNodePoolState
               next.segment-bases
@@ -3113,7 +3114,7 @@
   (let
     [dedup-slots : (__tl_dyn-array i64)
       (ast-place-shared-view pool.dedup-slots)]
-    [dedup-cap : i64 (array-length dedup-slots)]
+    [dedup-cap : i64 (ty-node-dedup-table-capacity dedup-slots)]
     [dedup-count : i64 pool.dedup-count]
     (if (>= (* dedup-count 2) dedup-cap)
       (if (>= dedup-cap ty-node-dedup-max-capacity)
@@ -3218,10 +3219,92 @@
 ;; enum slot tails beyond a variant's payload are uninitialized, so a byte
 ;; compare would dedup nondeterministically and break the stage2 == stage3
 ;; fixpoint. String payloads (lifetime names) compare by content.
+;;
+;; A dedup slots array ends with its dirty log: past the table's `capacity`
+;; slots, a count cell, then up to `ty-node-dedup-log-capacity` indices of table
+;; slots filled since the last clear. Every alias of the array (pool states,
+;; captured cells, the installed globals) shares the log, so a clear through any
+;; alias empties exactly the slots any alias filled. A count above the log
+;; capacity means the log overflowed, or a grow rehashed the table into place:
+;; the next clear then empties the whole table. Which slot holds an entry never
+;; affects which id a node resolves to, so the log only bounds the work.
+(define ty-node-dedup-log-capacity : i64
+  16384)
+(define ty-node-dedup-log-words : i64
+  16385)
+
+(define (ty-node-dedup-slots-new [capacity : i64]) : (__tl_dyn-array i64)
+  (__tl_make-array i64 (+ capacity ty-node-dedup-log-words)))
+
+(defmacro (ty-node-dedup-table-capacity [slots : Expr]) : i64
+  `(- (array-length ,slots) ty-node-dedup-log-words))
+
+;; Log table slot IDX as filled. TABLE points at the first of CAPACITY table
+;; slots; the log follows them.
+(define (ty-node-dedup-note-filled!
+  [table : (MutPtr i64)]
+  [capacity : i64]
+  [idx : i64]) : unit
+  (unsafe
+    (let
+      [count-cell : (MutPtr i64) (ptr-offset table capacity)]
+      [count : i64 (ptr-read count-cell)]
+      (if (< count ty-node-dedup-log-capacity)
+        (begin
+          (ptr-write! (ptr-offset count-cell (+ count 1)) idx)
+          (ptr-write! count-cell (+ count 1)))
+        (ptr-write! count-cell (+ ty-node-dedup-log-capacity 1))))))
+
+;; Empty every table slot filled since the last clear: the logged slots, or the
+;; whole table when the log overflowed. The table then holds no entry.
+(define (ty-node-dedup-slots-clear! [slots : (__tl_dyn-array i64)]) : unit
+  (let
+    [capacity : i64 (ty-node-dedup-table-capacity slots)]
+    [count : i64 (array-ref slots capacity)]
+    (if (> count ty-node-dedup-log-capacity)
+      (let
+        [i : i64 0]
+        (while (< i capacity)
+          (set! (array-ref slots i) 0)
+          (set! i (+ i 1))))
+      (let
+        [i : i64 1]
+        (while (<= i count)
+          (set! (array-ref slots (array-ref slots (+ capacity i))) 0)
+          (set! i (+ i 1)))))
+    (set! (array-ref slots capacity) 0)))
+
+;; A copy of SLOTS in the current arena. Unless the log overflowed, every
+;; filled table slot is logged, so copying those slots and the log into a fresh
+;; (all-empty) array reproduces the whole array.
+(define (ty-node-dedup-slots-copy [slots : (__tl_dyn-array i64)]) : (__tl_dyn-array
+    i64)
+  (let
+    [length : i64 (array-length slots)]
+    [capacity : i64 (ty-node-dedup-table-capacity slots)]
+    [copy : (__tl_dyn-array i64) (__tl_make-array i64 length)]
+    [count : i64 (array-ref slots capacity)]
+    (if (> count ty-node-dedup-log-capacity)
+      (let
+        [i : i64 0]
+        (while (< i length)
+          (set! (array-ref copy i) (array-ref slots i))
+          (set! i (+ i 1))))
+      (let
+        [i : i64 1]
+        (while (<= i count)
+          (let
+            [at : i64 (array-ref slots (+ capacity i))]
+            (set! (array-ref copy (+ capacity i)) at)
+            (set! (array-ref copy at) (array-ref slots at)))
+          (set! i (+ i 1)))
+        (set! (array-ref copy capacity) count)))
+    copy))
+
 (define ty-node-dedup-capacity : i64
   131072)
 (define ty-node-dedup-slots : (__tl_dyn-array i64)
-  (__tl_make-array i64 131072))
+  (ty-node-dedup-slots-new 131072))
 (define ty-node-dedup-slots-data-address : u64
   (unsafe
     (ptr->int (__tl_array-data ty-node-dedup-slots))))
@@ -3240,13 +3323,8 @@
 ;; shrinking would only re-pay the rehash. Read the extent off the array rather
 ;; than the capacity global so a grown table can never be half-cleared.
 (define (ty-node-dedup-clear!) : unit
-  (let
-    [capacity : i64 (array-length ty-node-dedup-slots)]
-    [i : i64 0]
-    (while (< i capacity)
-      (set! (array-ref ty-node-dedup-slots i) 0)
-      (set! i (+ i 1)))
-    (set! ty-node-dedup-count 0)))
+  (ty-node-dedup-slots-clear! (ast-place-shared-view ty-node-dedup-slots))
+  (set! ty-node-dedup-count 0))
 
 (define (ty-lifetime-list-hash-at
   [items : (& items AstLifetimeList)]
@@ -3383,9 +3461,9 @@
   (in-arena
     (arena.Arena base-arena)
     (let
-      [old-capacity : i64 (array-length old-slots)]
+      [old-capacity : i64 (ty-node-dedup-table-capacity old-slots)]
       [new-capacity : i64 (* old-capacity 2)]
-      [new-slots : (__tl_dyn-array i64) (__tl_make-array i64 new-capacity)]
+      [new-slots : (__tl_dyn-array i64) (ty-node-dedup-slots-new new-capacity)]
       [mask : i64 (- new-capacity 1)]
       [i : i64 0]
       (while (< i old-capacity)
@@ -3403,11 +3481,14 @@
                 (set! idx (bit-and (+ idx 1) mask)))
               (set! (array-ref new-slots idx) slot)))
           (set! i (+ i 1))))
+      ;; The rehash fills slots it does not log.
+      (set! (array-ref new-slots new-capacity) (+ ty-node-dedup-log-capacity 1))
       (ast-pool-cell-descriptor new-slots))))
 
 (define (ty-node-dedup-grow!) : unit
   (let
-    [new-capacity : i64 (* (array-length ty-node-dedup-slots) 2)]
+    [new-capacity : i64
+      (* (ty-node-dedup-table-capacity ty-node-dedup-slots) 2)]
     [slots-bits : u64
       (ast-type-dedup-grow-slots
         ty-node-pool-segment-bases
@@ -3450,6 +3531,7 @@
             [id : i64 (ty-node-push-raw node)]
             (unsafe
               (ptr-write! (ptr-offset slots idx) (+ id 1)))
+            (ty-node-dedup-note-filled! slots ty-node-dedup-capacity idx)
             (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
             (set! result id))
           (if (ty-node-shallow-eq? (- slot 1) node)
@@ -3610,7 +3692,9 @@
   (set! ty-node-pool-segment-count type-pool.segment-count)
   (set! ty-node-pool-generation (+ ty-node-pool-generation 1))
   (set! ty-node-pool-exhausted type-pool.exhausted)
-  (set! ty-node-dedup-capacity (array-length type-pool.dedup-slots))
+  (set!
+    ty-node-dedup-capacity
+    (ty-node-dedup-table-capacity type-pool.dedup-slots))
   (set!
     ty-node-dedup-slots
     (unsafe
@@ -4728,7 +4812,9 @@
       (set! ty-node-pool-storage-arena state.storage-arena)
       (set! ty-node-pool-segment-count state.segment-count)
       (set! ty-node-pool-exhausted state.exhausted)
-      (set! ty-node-dedup-capacity (array-length state.dedup-slots))
+      (set!
+        ty-node-dedup-capacity
+        (ty-node-dedup-table-capacity state.dedup-slots))
       (set! ty-node-dedup-slots state.dedup-slots)
       (set!
         ty-node-dedup-slots-data-address
@@ -4776,26 +4862,21 @@
           ;; source's insertion-ordered id.
           (set! i (+ i 1))]))
     (let
-      [source-dedup : (__tl_dyn-array i64) source-state.dedup-slots]
-      [dedup-cap : i64 (array-length source-dedup)]
-      [dedup-copy : (__tl_dyn-array i64) (__tl_make-array i64 dedup-cap)]
-      [dedup-i : i64 0]
-      (while (< dedup-i dedup-cap)
-        (set! (array-ref dedup-copy dedup-i) (array-ref source-dedup dedup-i))
-        (set! dedup-i (+ dedup-i 1)))
-      (let
-        [cloned : AstTypeNodePoolState (ast-type-pool-cell-read dest.type-pool)]
-        (ast-type-pool-cell-write!
-          dest.type-pool
-          (AstTypeNodePoolState
-            cloned.segment-bases
-            cloned.count
-            cloned.base-arena
-            source-state.exhausted
-            dedup-copy
-            source-state.dedup-count
-            cloned.storage-arena
-            cloned.segment-count))))
+      [dedup-copy : (__tl_dyn-array i64)
+        (ty-node-dedup-slots-copy
+          (ast-place-shared-view source-state.dedup-slots))]
+      [cloned : AstTypeNodePoolState (ast-type-pool-cell-read dest.type-pool)]
+      (ast-type-pool-cell-write!
+        dest.type-pool
+        (AstTypeNodePoolState
+          cloned.segment-bases
+          cloned.count
+          cloned.base-arena
+          source-state.exhausted
+          dedup-copy
+          source-state.dedup-count
+          cloned.storage-arena
+          cloned.segment-count)))
     (unsafe
       (arena.tl_arena_set previous-arena))
     dest))

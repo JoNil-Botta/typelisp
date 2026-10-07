@@ -24,10 +24,21 @@ externs, platform ABI symbols, allocation paths, and syscalls are unchanged.
 
 `thread-windows-entry` has type `(CFunc unsafe-non-null (-> i64 i64))`.
 The unsafe `CreateThread` adapter accepts that exact type, preserving the effect
-while passing its code address. A safe direct call is rejected, and assigning
-it to an ordinary `(-> i64 i64)` value is a type mismatch. #7725 owns the common
-representation; #7742 retains the full source/native-publication and Windows
-runtime acceptance checks for this consumer.
+while passing its code address. The `thread_windows_entry_*` rows in
+`tests/safety/manifest.txt` pin both directions for the Windows target, through
+the source and the embedded stdlib, without executing anything:
+- the permitted flow, a local of the exact type passed to the adapter inside
+  `unsafe`;
+- rejected safe calls (direct, through a local alias, a capture, a struct
+  field, a global, a generated declaration);
+- rejected conversions to an ordinary `(-> i64 i64)` (binding, return,
+  parameter, struct field, global, generated declaration), and `cast`, which
+  rejects every function type and so is no route either.
+
+Native thread execution on both hosts is covered by the `thread_*` and
+`atomic_intrinsics_thread_counter` rows of `tests/integration/native.manifest`,
+and semaphore create, wait, post and close by `stdlib/tests/thread_api.tl`.
+#7725 owns the common C function pointer representation.
 
 ## `stdlib.sync`
 

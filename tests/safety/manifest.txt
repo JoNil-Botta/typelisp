@@ -1178,6 +1178,11 @@ decls_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/decls_
 module_generated_selected_conflict_reject|check-fail|tests/safety/module_generated_selected_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_wildcard_conflict_reject|check-fail|tests/safety/module_generated_wildcard_conflict_reject.tl|-|ambiguous unqualified import
 module_generated_wildcard_selected_conflict_reject|check-fail|tests/safety/module_generated_wildcard_selected_conflict_reject.tl|-|ambiguous unqualified import
+# An unqualified import that binds a name the module declares itself is a
+# namespace collision too; a generated declaration counts once expanded and is
+# labelled at its generator.
+import_local_collision_generated_reject|check-fail|tests/safety/import_local_collision_generated_reject.tl|-|collides with the declaration of 'answer' in the entry module
+import_local_collision_generated_label_reject|check-fail|tests/safety/import_local_collision_generated_reject.tl|-|import_local_collision_generated_reject.tl:10:1
 generated_cfg_missing_decls_import_reject|check-fail|tests/safety/generated_cfg_missing_decls_import_reject.tl|-|cannot read import
 
 # Struct fields and enum variants past the former 1000-member registry stride

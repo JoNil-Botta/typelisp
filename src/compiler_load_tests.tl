@@ -1404,6 +1404,249 @@
       "Some"
       "chosen-some")))
 
+;; Start line of the diagnostic's only secondary label, or 0 without one.
+(define (compiler-load-diagnostic-label-line [diag : cdiag.CompilerDiagnostic]) : i64
+  (let
+    [labels : cdiag.CompilerDiagnosticLabelList
+      (cdiag.compiler-diagnostic-secondary-spans (& diag))]
+    (if (= (cdiag.compiler-diagnostic-label-list-count (& labels)) 1)
+      (let
+        [label : cdiag.CompilerDiagnosticLabel
+          (cdiag.compiler-diagnostic-label-list-get (& labels) 0)]
+        (cdiag.compiler-diagnostic-span-start-line (& label.span)))
+      0)))
+
+;; Both walkers reject ENTRY with the same diagnostic: MESSAGE at PATH:LINE,
+;; labelling the colliding local declaration at LABEL-LINE.
+(define (compiler-load-import-local-collision-rejected?
+  [entry : String]
+  [roots : svec.Vec]
+  [root : String]
+  [message : String]
+  [path : String]
+  [line : i64]
+  [label-line : i64]) : bool
+  (match (load.compiler-load-file-with-paths-and-roots
+    (string.copy (& entry))
+    (sym_i64_env.sym-i64-empty)
+    (ast.ast-place-shared-view roots))
+    [(Err ordinary-diag)
+      (let
+        [ordinary : cdiag.CompilerDiagnostic (deref ordinary-diag)]
+        (match (compiler-load-package-file-with-paths-and-roots
+          entry
+          (sym_i64_env.sym-i64-empty)
+          (ast.ast-place-shared-view roots)
+          root
+          (load.compiler-pkg-deps-empty))
+          [(Err package-diag)
+            (let
+              [package : cdiag.CompilerDiagnostic (deref package-diag)]
+              (and
+                (string.eq
+                  (cdiag.compiler-diagnostic-message (& ordinary))
+                  message)
+                (string.eq (cdiag.compiler-diagnostic-path (& ordinary)) path)
+                (= (cdiag.compiler-diagnostic-line (& ordinary)) line)
+                (=
+                  (compiler-load-diagnostic-label-line
+                    (owned_view.compiler-owned-shared-view ordinary))
+                  label-line)
+                (=
+                  (compiler-load-diagnostic-label-line
+                    (owned_view.compiler-owned-shared-view package))
+                  label-line)
+                (compiler-load-diagnostics-eq? ordinary package)))]
+          [(Ok _ _ _ _) false]))]
+    [(Ok _ _ _ _) false]))
+
+(define (compiler-load-import-local-collision-message
+  [name : String]
+  [module : String]) : String
+  (str_cat.str-cat
+    "compiler-load: unqualified import '"
+    (str_cat.str-cat
+      (string.copy (& name))
+      (str_cat.str-cat
+        "' from module 'pkg.local' collides with the declaration of '"
+        (str_cat.str-cat name (str_cat.str-cat "' in " module))))))
+
+;; An unqualified import (selected, aliased or wildcard) that binds a name its
+;; module declares itself is rejected at the import, whatever the order and
+;; whether the binding is used, for values, functions, types, constructors and
+;; macros, in entry and non-entry modules. Aliases and qualified access avoid
+;; the collision.
+(define (compiler-load-import-local-collision-ok?) : bool
+  (let
+    [root : String "target/cl_import_local_root"]
+    [roots : svec.Vec
+      (compiler-load-string-vec-one
+        (owned_view.compiler-owned-shared-view root))]
+    (load.compiler-load-test-mkdir (owned_view.compiler-owned-shared-view root))
+    (load.compiler-load-test-mkdir "target/cl_import_local_root/pkg")
+    (compiler-load-write-file-text
+      "target/cl_import_local_root/pkg/local.tl"
+      "(module pkg.local)
+(define answer : i64 42)
+(define (helper [x : i64]) : i64 (* x 100))
+(defstruct Pair (left i64))
+(defenum Shape (Circle i64) (Square i64))
+(defmacro (twice [value : Expr]) : Expr value)")
+    (compiler-load-write-file-text
+      "target/cl_import_local_root/pkg/dep.tl"
+      "(module pkg.dep)
+(import pkg.local.*)
+(define (helper [x : i64]) : i64 (+ x 1))
+(define (step0 [x : i64]) : i64 (helper x))")
+    (compiler-load-write-file-text
+      "target/cl_import_local_value.tl"
+      "(module collide.value)
+(import pkg.local.answer as value)
+(define value : i64 1)
+(define (main) : i64 0)")
+    (compiler-load-write-file-text
+      "target/cl_import_local_function.tl"
+      "(module collide.function)
+(import pkg.local.helper)
+(define (helper [x : i64]) : i64 x)
+(define (main) : i64 (helper 1))")
+    (compiler-load-write-file-text
+      "target/cl_import_local_type.tl"
+      "(module collide.type)
+(import pkg.local.*)
+(defstruct Pair (right i64))
+(define (main) : i64 0)")
+    (compiler-load-write-file-text
+      "target/cl_import_local_constructor.tl"
+      "(module collide.constructor)
+(import pkg.local.*)
+(defenum Local (Circle) (Other))
+(define (main) : i64 0)")
+    (compiler-load-write-file-text
+      "target/cl_import_local_macro.tl"
+      "(module collide.macro)
+(import pkg.local.twice)
+(defmacro (twice [value : Expr]) : Expr value)
+(define (main) : i64 0)")
+    (compiler-load-write-file-text
+      "target/cl_import_local_before.tl"
+      "(module collide.before)
+(define answer : i64 1)
+(import pkg.local.answer)
+(define (main) : i64 answer)")
+    (compiler-load-write-file-text
+      "target/cl_import_local_entry.tl"
+      "(import pkg.local.answer)
+(define answer : i64 1)
+(define (main) : i64 0)")
+    (compiler-load-write-file-text
+      "target/cl_import_local_dep.tl"
+      "(module collide.dep)
+(import pkg.dep as dep)
+(define (main) : i64 (dep.step0 10))")
+    (compiler-load-write-file-text
+      "target/cl_import_local_none.tl"
+      "(module collide.none)
+(import pkg.local.answer as imported)
+(import pkg.local as local)
+(define answer : i64 1)
+(define (main) : i64 (+ answer (+ imported local.answer)))")
+    (and
+      (compiler-load-import-local-collision-rejected?
+        "target/cl_import_local_value.tl"
+        (ast.ast-place-shared-view roots)
+        (owned_view.compiler-owned-shared-view root)
+        (compiler-load-import-local-collision-message
+          "value"
+          "module 'collide.value'")
+        "target/cl_import_local_value.tl"
+        2
+        3)
+      (compiler-load-import-local-collision-rejected?
+        "target/cl_import_local_function.tl"
+        (ast.ast-place-shared-view roots)
+        (owned_view.compiler-owned-shared-view root)
+        (compiler-load-import-local-collision-message
+          "helper"
+          "module 'collide.function'")
+        "target/cl_import_local_function.tl"
+        2
+        3)
+      (compiler-load-import-local-collision-rejected?
+        "target/cl_import_local_type.tl"
+        (ast.ast-place-shared-view roots)
+        (owned_view.compiler-owned-shared-view root)
+        (compiler-load-import-local-collision-message
+          "Pair"
+          "module 'collide.type'")
+        "target/cl_import_local_type.tl"
+        2
+        3)
+      (compiler-load-import-local-collision-rejected?
+        "target/cl_import_local_constructor.tl"
+        (ast.ast-place-shared-view roots)
+        (owned_view.compiler-owned-shared-view root)
+        (compiler-load-import-local-collision-message
+          "Circle"
+          "module 'collide.constructor'")
+        "target/cl_import_local_constructor.tl"
+        2
+        3)
+      (compiler-load-import-local-collision-rejected?
+        "target/cl_import_local_macro.tl"
+        (ast.ast-place-shared-view roots)
+        (owned_view.compiler-owned-shared-view root)
+        (compiler-load-import-local-collision-message
+          "twice"
+          "module 'collide.macro'")
+        "target/cl_import_local_macro.tl"
+        2
+        3)
+      (compiler-load-import-local-collision-rejected?
+        "target/cl_import_local_before.tl"
+        (ast.ast-place-shared-view roots)
+        (owned_view.compiler-owned-shared-view root)
+        (compiler-load-import-local-collision-message
+          "answer"
+          "module 'collide.before'")
+        "target/cl_import_local_before.tl"
+        3
+        2)
+      (compiler-load-import-local-collision-rejected?
+        "target/cl_import_local_entry.tl"
+        (ast.ast-place-shared-view roots)
+        (owned_view.compiler-owned-shared-view root)
+        (compiler-load-import-local-collision-message
+          "answer"
+          "the entry module")
+        "target/cl_import_local_entry.tl"
+        1
+        2)
+      (compiler-load-import-local-collision-rejected?
+        "target/cl_import_local_dep.tl"
+        (ast.ast-place-shared-view roots)
+        (owned_view.compiler-owned-shared-view root)
+        (compiler-load-import-local-collision-message
+          "helper"
+          "module 'pkg.dep'")
+        "target/cl_import_local_root/pkg/dep.tl"
+        2
+        3)
+      (match (load.compiler-load-file-with-paths-and-roots
+        "target/cl_import_local_none.tl"
+        (sym_i64_env.sym-i64-empty)
+        (ast.ast-place-shared-view roots))
+        [(Ok _ _ _ _) true]
+        [(Err _) false])
+      (match (compiler-load-package-file-with-paths-and-roots
+        "target/cl_import_local_none.tl"
+        (sym_i64_env.sym-i64-empty)
+        (ast.ast-place-shared-view roots)
+        (owned_view.compiler-owned-shared-view root)
+        (load.compiler-pkg-deps-empty))
+        [(Ok _ _ _ _) true]
+        [(Err _) false]))))
+
 (define (compiler-load-import-suffix-resolution-ok?) : bool
   (let
     [root : String "target/cl_import_suffix_root"]
@@ -5437,6 +5680,9 @@
   (unless
     (compiler-load-import-suffix-resolution-ok?)
     (return (io.panic "compiler-load: import suffix resolution smoke mismatch")))
+  (unless
+    (compiler-load-import-local-collision-ok?)
+    (return (io.panic "compiler-load: import/local collision smoke mismatch")))
   (unless
     (compiler-load-dotted-source-root-ok?)
     (return (io.panic "compiler-load: dotted source root smoke mismatch")))

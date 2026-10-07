@@ -231,14 +231,20 @@
 
 (defstruct CompilerLoadUnqualifiedImportState
   (source-ids load_i64_i64_map.Map)
-  (source-modules load_i64_i64_map.Map))
+  (source-modules load_i64_i64_map.Map)
+  ;; Declaration index of each name a module declares itself. Only modules
+  ;; with unqualified imports are recorded: no other module can collide.
+  (local-decls load_i64_i64_map.Map))
 
 (defstruct CompilerLoadUnqualifiedImportCollision
   (name String)
   (first-module String)
   (second-module String)
   (path String)
-  (span ast.AstSourceSpan))
+  (span ast.AstSourceSpan)
+  ;; Declaration index of the importing module's own declaration of `name`,
+  ;; or -1 when both bindings are imports.
+  (local-index i64))
 
 (defenum CompilerLoadUnqualifiedImportStep
   (Ok)
@@ -5489,12 +5495,15 @@
     decls
     (ast.ast-decl-path-list-new)))
 
+;; `local-index` is the declaration index when the binding is the importing
+;; module's own declaration, and -1 for an import.
 (define (compiler-load-unqualified-import-note
   [state : (&mut state CompilerLoadUnqualifiedImportState)]
   [importer-module : i64]
   [local-name : i64]
   [source-module : i64]
   [source-item : i64]
+  [local-index : i64]
   [path : String]
   [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
   (let
@@ -5513,13 +5522,22 @@
                   [(LookupMissing) cbi.compiler-builtin-id-fix-empty]))
               (ci.intern-str source-module)
               path
-              span)))]
+              span
+              (match (load_i64_i64_map.get (& state.local-decls) key)
+                [(LookupFound prior-index) prior-index]
+                [(LookupMissing) -1]))))]
       [(LookupMissing)
         (load_i64_i64_map.insert-ref! (&mut state.source-ids) key source-id)
         (load_i64_i64_map.insert-ref!
           (&mut state.source-modules)
           key
           source-module)
+        (when
+          (>= local-index 0)
+          (load_i64_i64_map.insert-ref!
+            (&mut state.local-decls)
+            key
+            local-index))
         (Ok)])))
 
 (define (compiler-load-unqualified-import-note-variants
@@ -5528,6 +5546,7 @@
   [source-module : i64]
   [variants : (& variants ast.AstVariantDefList)]
   [index : i64]
+  [local-index : i64]
   [path : String]
   [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
   (if (>= index (ast.ast-variant-def-list-len variants))
@@ -5543,6 +5562,7 @@
           name
           source-module
           name
+          local-index
           (owned_view.compiler-owned-shared-view path)
           span)
           [(Ok)
@@ -5552,6 +5572,7 @@
               source-module
               variants
               (+ index 1)
+              local-index
               path
               span)]
           [(Collision collision) (Collision collision)])])))
@@ -5561,6 +5582,7 @@
   [importer-module : i64]
   [source-module : i64]
   [decl : ast.AstDecl]
+  [local-index : i64]
   [path : String]
   [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
   (match (ast.ast-decl-unwrapped decl)
@@ -5571,6 +5593,7 @@
         name
         source-module
         name
+        local-index
         path
         span)]
     [(DefFn _ name _ _ _ _)
@@ -5580,6 +5603,7 @@
         name
         source-module
         name
+        local-index
         path
         span)]
     [(DefMacro _ name _ _ _)
@@ -5589,6 +5613,7 @@
         name
         source-module
         name
+        local-index
         path
         span)]
     [(DefDispatch _ name _)
@@ -5598,6 +5623,7 @@
         name
         source-module
         name
+        local-index
         path
         span)]
     [(Extern _ name _ _ _)
@@ -5607,6 +5633,7 @@
         name
         source-module
         name
+        local-index
         path
         span)]
     [(DefStruct _ name _ _ _)
@@ -5616,6 +5643,7 @@
         name
         source-module
         name
+        local-index
         path
         span)]
     [(DefStructLifetimes _ name _ _ _ _)
@@ -5625,6 +5653,7 @@
         name
         source-module
         name
+        local-index
         path
         span)]
     [(DefEnum _ name _ variants)
@@ -5634,6 +5663,7 @@
         name
         source-module
         name
+        local-index
         (owned_view.compiler-owned-shared-view path)
         span)
         [(Ok)
@@ -5643,6 +5673,7 @@
             source-module
             (& variants)
             0
+            local-index
             path
             span)]
         [(Collision collision) (Collision collision)])]
@@ -5653,6 +5684,7 @@
         name
         source-module
         name
+        local-index
         (owned_view.compiler-owned-shared-view path)
         span)
         [(Ok)
@@ -5662,6 +5694,7 @@
             source-module
             (& variants)
             0
+            local-index
             path
             span)]
         [(Collision collision) (Collision collision)])]
@@ -5692,12 +5725,84 @@
                 importer-module
                 source-module
                 decl
+                -1
                 (owned_view.compiler-owned-shared-view path)
                 span)
                 [(Ok) unit]
                 [(Collision collision) (return (Collision collision))]))])
         (set! index (+ index 1))))
     (Ok)))
+
+;; Note the declarations of every module that imports unqualified names, so an
+;; import that binds one of the module's own names is a collision whichever
+;; comes first. A module's own declarations of a name share one source, so
+;; noting them never collides. Both walks read declaration tags in place; a row
+;; is copied only inside a module with unqualified imports, and a program
+;; without such imports skips the second walk.
+(define (compiler-load-unqualified-import-note-locals
+  [state : (&mut state CompilerLoadUnqualifiedImportState)]
+  [decls : (& decls ast.AstDeclList)]) : unit
+  (let
+    [importers : load_i64_i64_map.Map (load_i64_i64_map.with-capacity 16)]
+    [any-importer : bool false]
+    [in-importer : bool false]
+    [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
+    [count : i64 (ast.ast-decl-list-len decls)]
+    [index : i64 0]
+    (while (< index count)
+      (match (ast.ast-decl-list-ref-borrowed decls index)
+        [(Module _)
+          (set!
+            cur-module
+            (ast.ast-decl-list-module-id-at
+              decls
+              index
+              cbi.compiler-builtin-id-fix-empty))]
+        [(Import _ (Spec (ModuleAll) _ (Some _) _ _))
+          (load_i64_i64_map.insert-ref! (&mut importers) cur-module 1)
+          (set! any-importer true)]
+        [(Import _ (Spec (ModuleItem _) _ (Some _) (Some _) _))
+          (load_i64_i64_map.insert-ref! (&mut importers) cur-module 1)
+          (set! any-importer true)]
+        [_ unit])
+      (set! index (+ index 1)))
+    (when
+      any-importer
+      (set! cur-module cbi.compiler-builtin-id-fix-empty)
+      (set!
+        in-importer
+        (match (load_i64_i64_map.get (& importers) cur-module)
+          [(LookupFound _) true]
+          [(LookupMissing) false]))
+      (set! index 0)
+      (while (< index count)
+        (match (ast.ast-decl-list-ref-borrowed decls index)
+          [(Module _)
+            (set!
+              cur-module
+              (ast.ast-decl-list-module-id-at
+                decls
+                index
+                cbi.compiler-builtin-id-fix-empty))
+            (set!
+              in-importer
+              (match (load_i64_i64_map.get (& importers) cur-module)
+                [(LookupFound _) true]
+                [(LookupMissing) false]))]
+          [_
+            (when
+              in-importer
+              (match (compiler-load-unqualified-import-note-decl
+                state
+                cur-module
+                cur-module
+                (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))
+                index
+                ""
+                (ast.ast-decl-span-fallback))
+                [(Ok) unit]
+                [(Collision _) unit]))])
+        (set! index (+ index 1))))))
 
 (define (compiler-load-unqualified-import-collision-message
   [collision : CompilerLoadUnqualifiedImportCollision]) : String
@@ -5715,18 +5820,75 @@
               collision.second-module
               "'; use explicit selected aliases or qualified access")))))))
 
+;; Declarations before the first module marker belong to an entry file
+;; without a `module` form, whose identity is empty.
+(define (compiler-load-unqualified-import-local-collision-message
+  [collision : CompilerLoadUnqualifiedImportCollision]) : String
+  (str_cat.str-cat
+    "compiler-load: unqualified import '"
+    (str_cat.str-cat
+      (string.copy (& collision.name))
+      (str_cat.str-cat
+        "' from module '"
+        (str_cat.str-cat
+          collision.second-module
+          (str_cat.str-cat
+            "' collides with the declaration of '"
+            (str_cat.str-cat
+              collision.name
+              (if (= (string.string-length collision.first-module) 0)
+                "' in the entry module"
+                (str_cat.str-cat
+                  "' in module '"
+                  (str_cat.str-cat collision.first-module "'"))))))))))
+
+;; The import is the primary span. An import that collides with the importing
+;; module's own declaration also labels that declaration when the parser
+;; recorded its span.
 (define (compiler-load-unqualified-import-collision-result
-  [collision : CompilerLoadUnqualifiedImportCollision]) : ResultCompilerLoadAliasCheck
-  (let
-    [message : String
-      (compiler-load-unqualified-import-collision-message
-        (owned_view.compiler-owned-shared-view collision))]
-    (Err
-      (box
-        (cdiag.compiler-diagnostic-from-ast-span
-          collision.path
-          collision.span
-          message)))))
+  [collision : CompilerLoadUnqualifiedImportCollision]
+  [decls : (& decls ast.AstDeclList)]
+  [paths : (& paths ast.AstDeclPathList)]) : ResultCompilerLoadAliasCheck
+  (if (< collision.local-index 0)
+    (let
+      [message : String
+        (compiler-load-unqualified-import-collision-message
+          (owned_view.compiler-owned-shared-view collision))]
+      (Err
+        (box
+          (cdiag.compiler-diagnostic-from-ast-span
+            collision.path
+            collision.span
+            message))))
+    (let
+      [diag : cdiag.CompilerDiagnostic
+        (cdiag.compiler-diagnostic-with-help
+          (cdiag.compiler-diagnostic-from-ast-span
+            (owned_view.compiler-owned-shared-view collision.path)
+            collision.span
+            (compiler-load-unqualified-import-local-collision-message
+              (owned_view.compiler-owned-shared-view collision)))
+          "alias the import with `as`, rename the declaration, or import the module and use qualified access")]
+      (Err
+        (box
+          (match (parser.compiler-parse-decl-span decls collision.local-index)
+            [(Some span)
+              (cdiag.compiler-diagnostic-with-secondary
+                diag
+                (cdiag.CompilerDiagnosticSpan
+                  (ast.ast-decl-path-list-get
+                    paths
+                    collision.local-index
+                    (owned_view.compiler-owned-shared-view collision.path))
+                  (ast.ast-source-span-start-line span)
+                  (ast.ast-source-span-start-col span)
+                  (ast.ast-source-span-end-line span)
+                  (ast.ast-source-span-end-col span))
+                (CompilerDiagnosticSomeString
+                  (str_cat.str-cat
+                    "'"
+                    (str_cat.str-cat collision.name "' is declared here"))))]
+            [(None) diag]))))))
 
 (define (compiler-load-check-unqualified-imports
   [fallback-path : String]
@@ -5737,10 +5899,12 @@
     [state : CompilerLoadUnqualifiedImportState
       (CompilerLoadUnqualifiedImportState
         (load_i64_i64_map.with-capacity 64)
+        (load_i64_i64_map.with-capacity 64)
         (load_i64_i64_map.with-capacity 64))]
     [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [index : i64 0]
+    (compiler-load-unqualified-import-note-locals (&mut state) (& decls))
     (while (< index count)
       (let
         [decl : ast.AstDecl
@@ -5763,7 +5927,10 @@
               [(Ok) unit]
               [(Collision collision)
                 (return
-                  (compiler-load-unqualified-import-collision-result collision))])]
+                  (compiler-load-unqualified-import-collision-result
+                    collision
+                    (& decls)
+                    paths))])]
           [(Import
             _
             (Spec
@@ -5795,12 +5962,16 @@
               alias
               source-module
               source-item
+              -1
               path
               (__tl-box-place span))
               [(Ok) unit]
               [(Collision collision)
                 (return
-                  (compiler-load-unqualified-import-collision-result collision))])]
+                  (compiler-load-unqualified-import-collision-result
+                    collision
+                    (& decls)
+                    paths))])]
           [_ unit])
         (set! index (+ index 1))))
     (Ok)))

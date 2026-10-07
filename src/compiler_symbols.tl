@@ -94,10 +94,6 @@
   (Ok CompilerSymbols)
   (Err (Box cdiag.CompilerDiagnostic)))
 
-(defenum CompilerSymbolsMaybeSpan
-  (No)
-  (Some ast.AstSourceSpan))
-
 (defenum CompilerMaybeString
   (CompilerNoString)
   (CompilerSomeString String))
@@ -169,39 +165,15 @@
     (set! compiler-symbols-last-error-span span)
     (set! compiler-symbols-last-error-has-span has-span)))
 
-;; The span of the first source-span wrapper reached from EXPR-ID through
-;; unary, annotation, cast and borrow nodes. A wrapper's own span is its
-;; sidecar view (an outer wrapper keeps its span as a ReSpan).
-(define (compiler-symbols-expr-maybe-span [expr-id : i64]) : CompilerSymbolsMaybeSpan
-  (if (>= (ast.ast-expr-span-wrapper-inner expr-id) 0)
-    (match (ast.ast-expr-view-span expr-id)
-      [(Some span) (Some span)]
-      [(No) No])
-    (match (ast.ast-node-get expr-id)
-      [(Unary _ inner) (compiler-symbols-expr-maybe-span inner)]
-      [(Ann inner _) (compiler-symbols-expr-maybe-span inner)]
-      [(Cast inner _) (compiler-symbols-expr-maybe-span inner)]
-      [(Borrow _ _ inner) (compiler-symbols-expr-maybe-span inner)]
-      [_ No])))
-
-(define (compiler-symbols-decl-maybe-span [decl : ast.AstDecl]) : CompilerSymbolsMaybeSpan
-  (match decl
-    [(Def decl-meta _ _ body) (compiler-symbols-expr-maybe-span body)]
-    [(DefFn decl-meta _ _ _ body _) (compiler-symbols-expr-maybe-span body)]
-    [(DefMacro decl-meta _ _ _ body) (compiler-symbols-expr-maybe-span body)]
-    [(Test _ _ _ span) (Some span)]
-    [(Unsafe inner-box) (compiler-symbols-decl-maybe-span (deref inner-box))]
-    [_ No]))
-
 (define (compiler-symbols-note-last-error-fallback!
   [decl : ast.AstDecl]
   [path : (& path str)]) : unit
   (set! compiler-symbols-last-error-path (string.copy path))
-  (match (compiler-symbols-decl-maybe-span decl)
+  (match (parser.compiler-parse-decl-body-span decl)
     [(Some span)
       (set! compiler-symbols-last-error-span span)
       (set! compiler-symbols-last-error-has-span true)]
-    [(No)
+    [(None)
       (set! compiler-symbols-last-error-span (ast.ast-decl-span-fallback))
       (set! compiler-symbols-last-error-has-span false)]))
 
@@ -218,11 +190,11 @@
       (set! compiler-symbols-last-error-span span)
       (set! compiler-symbols-last-error-has-span true)]
     [(None)
-      (match (compiler-symbols-decl-maybe-span decl)
+      (match (parser.compiler-parse-decl-body-span decl)
         [(Some span)
           (set! compiler-symbols-last-error-span span)
           (set! compiler-symbols-last-error-has-span true)]
-        [(No)
+        [(None)
           (set! compiler-symbols-last-error-span (ast.ast-decl-span-fallback))
           (set! compiler-symbols-last-error-has-span false)])]))
 

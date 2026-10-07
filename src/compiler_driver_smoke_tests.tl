@@ -1403,13 +1403,13 @@
                           "controlled pre-cache lower state B failure succeeded")]
                       [(not
                           (lower.compiler-lower-state-observation-eq?
-                            initial-a
-                            a-after-b-prepopulate-failure))
+                            (& initial-a)
+                            (& a-after-b-prepopulate-failure)))
                         (compiler-driver-reader-context-smoke-fail
                           "pre-cache state B failure mutated state A")]
                       [(lower.compiler-lower-state-observation-eq?
-                          initial-a
-                          a-before)
+                          (& initial-a)
+                          (& a-before))
                         (compiler-driver-reader-context-smoke-fail
                           "successful lower did not populate state A")]
                       [(not
@@ -1430,14 +1430,14 @@
                           "state B package identity was not reusable")]
                       [(not
                           (lower.compiler-lower-state-observation-eq?
-                            a-before
-                            a-after-b-reuse))
+                            (& a-before)
+                            (& a-after-b-reuse)))
                         (compiler-driver-reader-context-smoke-fail
                           "state B reuse mutated state A")]
                       [(not
                           (lower.compiler-lower-state-observation-eq?
-                            a-before
-                            a-after-b-final-reset))
+                            (& a-before)
+                            (& a-after-b-final-reset)))
                         (compiler-driver-reader-context-smoke-fail
                           "state B final reset mutated state A")]
                       [(not

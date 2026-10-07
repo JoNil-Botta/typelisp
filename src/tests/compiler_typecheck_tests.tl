@@ -5005,6 +5005,19 @@
     (compiler-typecheck-while-body-error-at? "    (s)" 4)
     (compiler-typecheck-while-body-error-at? "    (break)\n    (s)\n    unit" 5)
     (compiler-typecheck-while-body-error-at? "    (begin unit (s))" 4)
+    ;; The stdlib/thread.tl shape (#8667): an i64 call under `unsafe` needs
+    ;; its `(begin ... unit)`; spliced into the while body it is rejected.
+    (compiler-typecheck-while-body-error-at?
+      "    (unsafe\n      (s))\n    unit"
+      4)
+    (compiler-typecheck-ok?
+      "(define (s) : i64 1)
+(define (main) : unit
+  (while false
+    (begin
+      (unsafe
+        (s))
+      unit)))")
     (compiler-typecheck-ok?
       "(define (main) : unit
   (while false (begin 1 unit) (begin (begin 2 unit) unit)))")

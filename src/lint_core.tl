@@ -2051,7 +2051,14 @@
 ;; only reports a begin whose forms the splice exposes to that check (every
 ;; form but the last, through nested begins that may be spliced too) are
 ;; syntactically unit: `set!`, `while`, `when`, `unless`, `for`, `unit`, and
-;; `begin`/`let`/`unsafe`/`if` ending in those.
+;; `begin`/`let`/`unsafe`/`if` ending in those. Every other body position here
+;; (let, define, lambda, unsafe, for, in-arena, with-arena, with-escape,
+;; with-scratch, with, test, match and cond arms) discards non-final values
+;; like `begin` does, so a splice there never meets a unit check.
+;;
+;; `defmacro` is not one of them yet: the SPEC grammar gives it `expr+`, but
+;; the parser still takes exactly one body form, so a spliced macro body would
+;; be a "malformed defmacro" (#8717).
 ;: Child position from which a form headed by `head` evaluates a body
 ;: sequence, or -1. `nested` is false for a top-level form, where `unsafe` and
 ;: `begin` wrap declarations and where alone `(test name body...)` is a test
@@ -2075,7 +2082,6 @@
         (string.eq head "when")
         (string.eq head "unless")
         (string.eq head "lambda")
-        (string.eq head "defmacro")
         (string.eq head "in-arena")
         (string.eq head "with-arena")
         (string.eq head "with-escape")

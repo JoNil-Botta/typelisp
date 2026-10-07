@@ -79,19 +79,19 @@ in file {{work}}/stdlib-root/for_copy_macros.tl
 match \(defmacro \(for-copy[ ]
 
 # A `range` call and a borrowed slots/len struct expand to one counting
-# `while`: at -O2 nothing references the range iterator protocol. The
-# annotated clause of the control still steps `into-next`, which stays out of
-# line (#8555).
+# `while`: at -O0 and -O2 nothing references the range iterator protocol. The
+# annotated clause of the control still steps `into-next`. -O0 calls it out of
+# line; -O2 inlines it entirely since #8599, so the control runs at -O0.
 case range-counts-in-place
 source {{work}}/range-for.tl
-opt 2
+opt 0 2
 in asm
 not-contains into_next
 not-contains into_iterator
 
 case range-protocol-control
 source {{work}}/range-protocol.tl
-opt 2
+opt 0
 in asm
 contains call _tl_stdlib_iterator_stdlib_iterator_into_next
 

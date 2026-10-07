@@ -2318,7 +2318,8 @@ type is tied to such an input lifetime or to `program`.
 A store through a mutable reference is checked against the destination's own
 lifetimes. A place reached through `(&mut m T)` may hold a reference whose
 lifetime appears in `T`, because every lifetime in `T` outlives the reference
-`m` itself:
+`m` itself. A local or parameter named like that lifetime shadows it, and a
+borrow of it is checked against `m` like any other:
 
 ```lisp test=ignore name=lifetime-parameterized-mut-field-store-ok reason="illustrative store example; not a standalone program"
 (define (store [b : (&mut (RefBox a))] [v : (& a i64)]) : unit

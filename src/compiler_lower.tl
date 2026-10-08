@@ -65704,6 +65704,35 @@
           false))]
     [_ false]))
 
+;; A shared borrow of a by-value aggregate parameter passed in memory points at
+;; storage the caller provided, not at this frame, so it stays valid when a tail
+;; call reuses the frame, exactly like passing the parameter itself.
+(define (lower-tail-call-safe-param-borrow-arg?
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [expr : ast.AstExpr]) : bool
+  (match (ast.ast-expr-unspan (& expr))
+    [(Borrow mutable _ place-box)
+      (and
+        (not mutable)
+        (let
+          [place : ast.AstExpr (lower-context-expr-get ctx place-box)]
+          (and
+            (lower-tail-call-safe-param-aggregate-arg?
+              ctx
+              state
+              env
+              (lower-global-shared-view place))
+            (match (tc_core.tc-expr ctx type-env place)
+              [(Ok ty)
+                (and
+                  (lower-type-inline-storage? ctx (& ty))
+                  (not (lower-type-register-resident? ctx ty)))]
+              [(Err _) false]))))]
+    [_ false]))
+
 (define (lower-expr-list-contains-unsafe-inline-aggregate?
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -65736,7 +65765,18 @@
             (and
               (lower-type-contains-inline-aggregate? ctx ty)
               (not
-                (lower-tail-call-safe-param-aggregate-arg? ctx state env expr)))
+                (or
+                  (lower-tail-call-safe-param-aggregate-arg?
+                    ctx
+                    state
+                    env
+                    (lower-global-shared-view expr))
+                  (lower-tail-call-safe-param-borrow-arg?
+                    ctx
+                    state
+                    env
+                    type-env
+                    expr))))
             (lower-expr-list-contains-unsafe-inline-aggregate-at?
               ctx
               state

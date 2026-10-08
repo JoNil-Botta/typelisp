@@ -54757,28 +54757,42 @@
       (tc-fields-pattern-struct-id ctx (tc-global-shared-view ty))]
     (if (< struct-name-id 0)
       (ResultTcFieldsPattern.Err (tc-fields-pattern-requires-struct-message))
-      (match (tc-struct-decl-id ctx struct-name-id)
-        [(ResultTcStructDecl.Ok decl)
-          (match decl
-            [(TcStructDecl _ _ fields)
-              (match (tc-struct-pattern-field-types-for-scrut
+      ;; Like a positional struct pattern, a by-name one reads the
+      ;; representation, so a foreign opaque struct rejects it (#6999).
+      (match (tc-opaque-name-representation-ok
+        ctx
+        struct-name-id
+        "cannot match the")
+        [(ResultTcUnit.Err message) (ResultTcFieldsPattern.Err message)]
+        [(ResultTcUnit.Ok)
+          (tc-fields-pattern-resolve-struct ctx ty entries struct-name-id)]))))
+
+(define (tc-fields-pattern-resolve-struct
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [entries : ast.AstPatternList]
+  [struct-name-id : i64]) : ResultTcFieldsPattern
+  (match (tc-struct-decl-id ctx struct-name-id)
+    [(ResultTcStructDecl.Ok decl)
+      (match decl
+        [(TcStructDecl _ _ fields)
+          (match (tc-struct-pattern-field-types-for-scrut
+            ctx
+            struct-name-id
+            ty
+            (tc-global-shared-view fields))
+            [(ResultTcTypeList.Ok field-types)
+              (match (tc-fields-pattern-positional
                 ctx
                 struct-name-id
-                ty
-                (tc-global-shared-view fields))
-                [(ResultTcTypeList.Ok field-types)
-                  (match (tc-fields-pattern-positional
-                    ctx
-                    struct-name-id
-                    fields
-                    entries)
-                    [(parser.ResultAstPatternList.Ok positional)
-                      (ResultTcFieldsPattern.Ok positional field-types)]
-                    [(parser.ResultAstPatternList.Err message)
-                      (ResultTcFieldsPattern.Err message)])]
-                [(ResultTcTypeList.Err message)
-                  (ResultTcFieldsPattern.Err message)])])]
-        [(ResultTcStructDecl.Err message) (ResultTcFieldsPattern.Err message)]))))
+                fields
+                entries)
+                [(parser.ResultAstPatternList.Ok positional)
+                  (ResultTcFieldsPattern.Ok positional field-types)]
+                [(parser.ResultAstPatternList.Err message)
+                  (ResultTcFieldsPattern.Err message)])]
+            [(ResultTcTypeList.Err message) (ResultTcFieldsPattern.Err message)])])]
+    [(ResultTcStructDecl.Err message) (ResultTcFieldsPattern.Err message)]))
 
 ;; Binds a `(fields ...)` pattern as the positional struct pattern it stands
 ;; for: `mode` is StructField for an owned struct and BorrowedElement for a

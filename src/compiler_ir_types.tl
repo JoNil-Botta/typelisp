@@ -5077,7 +5077,7 @@
   [type-segment-bases : i64]
   [index : (& index CompilerIrRepresentationIndex)]
   [ty : ast.AstType]) : CompilerIrRepresentationKind
-  (match (ast.ast-aggregate-type-key type-segment-bases ty)
+  (match (ast.ast-aggregate-type-key type-segment-bases (& ty))
     [(Some key) (compiler-ir-representation-index-kind-for-key index key)]
     [(None) Unknown]))
 
@@ -9733,7 +9733,7 @@
   [ty : ast.AstType]
   [word-count : i64]
   [class-mask : i64]) : CompilerIrRepresentationIndex
-  (match (ast.ast-aggregate-type-key type-segment-bases ty)
+  (match (ast.ast-aggregate-type-key type-segment-bases (& ty))
     [(Some key)
       (compiler-ir-representation-index-merge-group
         index
@@ -9949,9 +9949,7 @@
   [ty : ast.AstType]) : CompilerIrRepresentationIndex
   (let
     [with-nominal : CompilerIrRepresentationIndex
-      (match (ast.ast-aggregate-type-key
-        type-segment-bases
-        (compiler-ir-global-shared-view ty))
+      (match (ast.ast-aggregate-type-key type-segment-bases (& ty))
         [(Some key)
           (if (compiler-ir-representation-internal-transport?
             type-segment-bases

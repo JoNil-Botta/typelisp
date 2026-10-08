@@ -34,7 +34,7 @@
   (lint_core.lint-walk-tail-expr (ast.ast-node-get e) threshold acc))
 
 (define (lint-test-var [name : String]) : i64
-  (ast.ast-node-push (Var (ci.intern-generated-name name))))
+  (ast.ast-node-push (Var (ci.intern-generated-name (& name)))))
 
 (define (lint-test-source-view [inner : i64] [span : ast.AstSourceSpan]) : i64
   (let
@@ -44,12 +44,15 @@
     view))
 
 (define (lint-test-expr-list2 [a : i64] [b : i64]) : ast.AstExprList
-  (ast.ast-expr-cons a (ast.ast-expr-cons b (ast.ast-expr-list-new))))
+  (ast.ast-expr-cons a (& (ast.ast-expr-cons b (& (ast.ast-expr-list-new))))))
 
 (define (lint-test-expr-list3 [a : i64] [b : i64] [c : i64]) : ast.AstExprList
   (ast.ast-expr-cons
     a
-    (ast.ast-expr-cons b (ast.ast-expr-cons c (ast.ast-expr-list-new)))))
+    (&
+      (ast.ast-expr-cons
+        b
+        (& (ast.ast-expr-cons c (& (ast.ast-expr-list-new))))))))
 
 (define (lint-name-set-smoke-ok?) : bool
   (let
@@ -259,57 +262,63 @@
   [set-ok-false : i64]) : unit
   (let
     [discarded-add : i64 (ast.ast-expr-binary (Add) one vx)]
-    [discarded-cast : i64 (ast.ast-expr-cast one (I64))]
+    [discarded-cast : i64 (ast.ast-expr-cast one (& (I64)))]
     [discarded-call : i64
       (ast.ast-expr-call (lint-test-var "side-effect?") (ast.ast-expr-list-new))]
     [no-effect-literal-begin : i64
       (ast.ast-node-push
         (Begin
-          (ast.ast-expr-cons one (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+          (ast.ast-expr-cons
+            one
+            (& (ast.ast-expr-cons vx (& (ast.ast-expr-list-new)))))))]
     [no-effect-var-begin : i64
       (ast.ast-node-push
         (Begin
-          (ast.ast-expr-cons vx (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
+          (ast.ast-expr-cons
+            vx
+            (& (ast.ast-expr-cons one (& (ast.ast-expr-list-new)))))))]
     [no-effect-add-begin : i64
       (ast.ast-node-push
         (Begin
           (ast.ast-expr-cons
             discarded-add
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons vx (& (ast.ast-expr-list-new)))))))]
     [no-effect-cast-begin : i64
       (ast.ast-node-push
         (Begin
           (ast.ast-expr-cons
             discarded-cast
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons vx (& (ast.ast-expr-list-new)))))))]
     [no-effect-tail-begin : i64
       (ast.ast-node-push
         (Begin
           (ast.ast-expr-cons
             unit-expr
-            (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons one (& (ast.ast-expr-list-new)))))))]
     [no-effect-clean-call-begin : i64
       (ast.ast-node-push
         (Begin
           (ast.ast-expr-cons
             discarded-call
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons vx (& (ast.ast-expr-list-new)))))))]
     [no-effect-clean-mutation-begin : i64
       (ast.ast-node-push
         (Begin
           (ast.ast-expr-cons
             set-ok-false
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons vx (& (ast.ast-expr-list-new)))))))]
     [no-effect-unsafe-begin : i64
       (ast.ast-node-push
         (Unsafe
-          (ast.ast-expr-cons one (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+          (ast.ast-expr-cons
+            one
+            (& (ast.ast-expr-cons vx (& (ast.ast-expr-list-new)))))))]
     [spanned-no-effect-var : i64
       (ast.ast-node-push
         (Begin
           (ast.ast-expr-cons
             (lint-test-source-view vx (ast.ast-source-span 31 9 31 10))
-            (ast.ast-expr-cons one (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons one (& (ast.ast-expr-list-new)))))))]
     (if (=
       (lint_core.lint-findings-count
         (lint-test-walk-tail
@@ -416,19 +425,20 @@
         (Begin
           (ast.ast-expr-cons
             return-one
-            (ast.ast-expr-cons
-              spanned-unreachable-var
-              (ast.ast-expr-cons vy (ast.ast-expr-list-new))))))]
+            (&
+              (ast.ast-expr-cons
+                spanned-unreachable-var
+                (& (ast.ast-expr-cons vy (& (ast.ast-expr-list-new)))))))))]
     [panic-call : i64
       (ast.ast-expr-call
         (lint-test-var "panic")
-        (ast.ast-expr-cons one (ast.ast-expr-list-new)))]
+        (ast.ast-expr-cons one (& (ast.ast-expr-list-new))))]
     [spanned-panic-call : i64
       (lint-test-source-view panic-call (ast.ast-source-span 43 9 43 24))]
     [qualified-panic-call : i64
       (ast.ast-expr-call
         (lint-test-var "io.panic")
-        (ast.ast-expr-cons one (ast.ast-expr-list-new)))]
+        (ast.ast-expr-cons one (& (ast.ast-expr-list-new))))]
     [spanned-qualified-panic-call : i64
       (lint-test-source-view
         qualified-panic-call
@@ -438,31 +448,32 @@
         (Begin
           (ast.ast-expr-cons
             spanned-panic-call
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons vx (& (ast.ast-expr-list-new)))))))]
     [qualified-padding-begin : i64
       (ast.ast-node-push
         (Begin
           (ast.ast-expr-cons
             spanned-qualified-panic-call
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons vx (& (ast.ast-expr-list-new)))))))]
     [clean-panic-tail-begin : i64
       (ast.ast-node-push
         (Begin
           (ast.ast-expr-cons
             unit-expr
-            (ast.ast-expr-cons spanned-panic-call (ast.ast-expr-list-new)))))]
+            (&
+              (ast.ast-expr-cons spanned-panic-call (& (ast.ast-expr-list-new)))))))]
     [unreachable-panic-unsafe : i64
       (ast.ast-node-push
         (Unsafe
           (ast.ast-expr-cons
             panic-call
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons vx (& (ast.ast-expr-list-new)))))))]
     [branch-local-return-begin : i64
       (ast.ast-node-push
         (Begin
           (ast.ast-expr-cons
             (ast.ast-expr-if vx return-one return-one)
-            (ast.ast-expr-cons vx (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons vx (& (ast.ast-expr-list-new)))))))]
     (if (=
       (lint_core.lint-findings-count
         (lint-test-walk-tail
@@ -765,12 +776,13 @@
         (Begin
           (ast.ast-expr-cons
             unit-expr
-            (ast.ast-expr-cons ladder3 (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons ladder3 (& (ast.ast-expr-list-new)))))))]
     [in-let : i64
       (ast.ast-expr-let
         (ast.ast-let-binding-cons
-          (ast.ast-let-binding-id (ci.intern-generated-name "y") (No) ladder3)
-          (ast.ast-let-binding-list-new))
+          (&
+            (ast.ast-let-binding-id (ci.intern-generated-name "y") (No) ladder3))
+          (& (ast.ast-let-binding-list-new)))
         vx)]
     [spanned : i64
       (lint-test-source-view ladder3 (ast.ast-source-span 7 3 9 4))]
@@ -1030,7 +1042,8 @@
 (define (lint-single-begin-smoke [vx : i64]) : unit
   (let
     [single-begin : i64
-      (ast.ast-node-push (Begin (ast.ast-expr-cons vx (ast.ast-expr-list-new))))]
+      (ast.ast-node-push
+        (Begin (ast.ast-expr-cons vx (& (ast.ast-expr-list-new)))))]
     [spanned-single-begin : i64
       (lint-test-source-view single-begin (ast.ast-source-span 51 3 51 13))]
     [empty-begin : i64 (ast.ast-node-push (Begin (ast.ast-expr-list-new)))]
@@ -1086,16 +1099,16 @@
     [nested-a-id : i64 (ci.intern-generated-name "a")]
     [outer-let-bindings : ast.AstLetBindingList
       (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id nested-a-id (No) one)
-        (ast.ast-let-binding-list-new))]
+        (& (ast.ast-let-binding-id nested-a-id (No) one))
+        (& (ast.ast-let-binding-list-new)))]
     [inner-let-bindings : ast.AstLetBindingList
       (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id (ci.intern-generated-name "b") (No) vx)
-        (ast.ast-let-binding-list-new))]
+        (& (ast.ast-let-binding-id (ci.intern-generated-name "b") (No) vx))
+        (& (ast.ast-let-binding-list-new)))]
     [shadowing-let-bindings : ast.AstLetBindingList
       (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id nested-a-id (No) one)
-        (ast.ast-let-binding-list-new))]
+        (& (ast.ast-let-binding-id nested-a-id (No) one))
+        (& (ast.ast-let-binding-list-new)))]
     [nested-let : i64
       (ast.ast-expr-let
         (ast.ast-global-shared-view outer-let-bindings)
@@ -1111,7 +1124,7 @@
           (Begin
             (ast.ast-expr-cons
               (ast.ast-expr-let inner-let-bindings vx)
-              (ast.ast-expr-cons vx (ast.ast-expr-list-new))))))]
+              (& (ast.ast-expr-cons vx (& (ast.ast-expr-list-new))))))))]
     [spanned-nested-let : i64
       (lint-test-source-view nested-let (ast.ast-source-span 11 5 15 6))]
     (if (=

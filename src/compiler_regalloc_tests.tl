@@ -8856,20 +8856,28 @@
 (define (compiler-reg-func2-ty) : ast.AstType
   (ast.ast-ty-func
     (ast.ast-type-cons
-      (compiler-reg-i64-ty)
-      (ast.ast-type-cons (compiler-reg-i64-ty) (ast.ast-type-list-new)))
-    (compiler-reg-i64-ty)))
+      (& (compiler-reg-i64-ty))
+      (&
+        (ast.ast-type-cons
+          (& (compiler-reg-i64-ty))
+          (& (ast.ast-type-list-new)))))
+    (& (compiler-reg-i64-ty))))
 
 (define (compiler-reg-func4-ty) : ast.AstType
   (ast.ast-ty-func
     (ast.ast-type-cons
-      (compiler-reg-i64-ty)
-      (ast.ast-type-cons
-        (compiler-reg-i64-ty)
+      (& (compiler-reg-i64-ty))
+      (&
         (ast.ast-type-cons
-          (compiler-reg-i64-ty)
-          (ast.ast-type-cons (compiler-reg-i64-ty) (ast.ast-type-list-new)))))
-    (compiler-reg-i64-ty)))
+          (& (compiler-reg-i64-ty))
+          (&
+            (ast.ast-type-cons
+              (& (compiler-reg-i64-ty))
+              (&
+                (ast.ast-type-cons
+                  (& (compiler-reg-i64-ty))
+                  (& (ast.ast-type-list-new)))))))))
+    (& (compiler-reg-i64-ty))))
 
 (define (compiler-reg-indirect-call-arg-function) : ir.CompilerIrFunction
   (Function
@@ -8944,7 +8952,7 @@
             (compiler-reg-test-instr-seq-prepend
               (Mov 3 (Var 0) (compiler-reg-i64-ty))
               (compiler-reg-test-instr-seq-prepend
-                (Mov 4 (Unit) (ast.ast-ty-dyn-array (I64)))
+                (Mov 4 (Unit) (ast.ast-ty-dyn-array (& (I64))))
                 (compiler-reg-test-instr-seq-prepend
                   (Mov 5 (I64 5) (compiler-reg-i64-ty))
                   (compiler-reg-test-instr-seq-prepend

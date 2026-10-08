@@ -90,8 +90,10 @@
     [total : i64 n]
     (i64v.push! values 4)
     (i64v.push! values n)
-    (for [item items] (set! total (+ total (- (cast (cast item : T) : i64) n))))
-    (for [n values] (set! total (+ total n)))
+    (for [item items]
+      (set! total (+ total (- (cast (cast item : T) : i64) n))))
+    (for [n values]
+      (set! total (+ total n)))
     total))
 
 (define (pointer-forms [comptime T : type] [comptime n : i64]) : i64

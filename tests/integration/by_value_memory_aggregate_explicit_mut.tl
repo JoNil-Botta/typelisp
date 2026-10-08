@@ -16,5 +16,7 @@
   (let
     [pair : WidePair (WidePair 0 2 3)]
     [local-left : i64 (set-left-local pair 40)]
+    ;; The by-value call left the caller's field alone (#7901).
+    [unchanged-left : i64 pair.left]
     (set-left! (&mut pair) 2)
-    (+ local-left pair.left)))
+    (+ local-left pair.left unchanged-left)))

@@ -383,10 +383,14 @@
       [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
       [items : ast.AstPatternList
         (ast.ast-pattern-cons
-          (Literal (Int 3 "3"))
-          (ast.ast-pattern-cons
-            Wildcard
-            (ast.ast-pattern-cons Wildcard (ast.ast-pattern-list-new))))]
+          (& (Literal (Int 3 "3")))
+          (&
+            (ast.ast-pattern-cons
+              (& (Wildcard))
+              (&
+                (ast.ast-pattern-cons
+                  (& (Wildcard))
+                  (& (ast.ast-pattern-list-new)))))))]
       (expr_codec.surface-ast-write-pattern!
         (&mut out)
         (&mut context)
@@ -578,7 +582,7 @@
         (and
           (codec.surface-ast-reader-valid? (& reader))
           (= (codec.surface-ast-reader-offset (& reader)) byte-count)
-          (ast.ast-extern-abi-eq? decoded abi))))))
+          (ast.ast-extern-abi-eq? (& decoded) (& abi)))))))
 
 ;; A tag past the last ABI fails the reader rather than decoding as any ABI.
 (cfg
@@ -677,7 +681,9 @@
         (codec.surface-ast-write-context-new session 0 0)]
       [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
       [body : ast.AstExprList
-        (ast.ast-expr-cons 4 (ast.ast-expr-cons 5 (ast.ast-expr-list-new)))]
+        (ast.ast-expr-cons
+          4
+          (& (ast.ast-expr-cons 5 (& (ast.ast-expr-list-new)))))]
       (expr_codec.surface-ast-write-expr!
         (&mut out)
         (&mut context)
@@ -1060,12 +1066,16 @@
             source-pools
             (ast.ast-type-cons-with-pools
               source-pools
-              I64
-              (ast.ast-type-list-new))
-            Bool))]
-      [slice-i64 : ast.AstType (ast.ast-ty-slice-with-pools source-pools I64)]
+              (& (I64))
+              (& (ast.ast-type-list-new)))
+            (& (Bool))))]
+      [slice-i64 : ast.AstType
+        (ast.ast-ty-slice-with-pools source-pools (& (I64)))]
       [borrowed-slice : ast.AstType
-        (ast.ast-ty-ref-with-pools source-pools borrow-lifetime-id slice-i64)]
+        (ast.ast-ty-ref-with-pools
+          source-pools
+          borrow-lifetime-id
+          (& slice-i64))]
       [body : i64
         (ast.ast-node-pool-context-expr-push
           source-pools
@@ -1185,7 +1195,7 @@
           (ast.ast-ty-invalidate-with-pools
             source-pools
             invalidate-lifetime-id
-            I64)
+            (& (I64)))
           false))
       (set!
         (array-ref decl-slots 0)
@@ -1222,8 +1232,8 @@
               8)
             No
             (ast.ast-field-def-cons
-              (Def (ci.intern-syntax-id-from-raw field-id) I64 No)
-              (ast.ast-field-def-list-new)))
+              (& (Def (ci.intern-syntax-id-from-raw field-id) I64 No))
+              (& (ast.ast-field-def-list-new))))
           1))
       (set! (array-ref path-slots 0) "test.tl")
       (set! (array-ref path-slots 1) "test.tl")

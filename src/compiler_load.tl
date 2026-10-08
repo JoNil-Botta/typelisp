@@ -2615,7 +2615,7 @@
           [id : i64 (ci.intern name)]
           (ci.intern-compat-state-capture-from-globals! interns)
           id)
-        (ci.intern-compat-state-intern interns name)))
+        (ci.intern-compat-state-intern interns (& name))))
     (ci.intern name)))
 
 (define (compiler-load-session-cache-enable!) : unit
@@ -4448,7 +4448,7 @@
   [contents : String]) : ast.AstDecl
   (ast.ast-decl-def-id
     name
-    (Some (ast.ast-ty-dyn-array-with-pools pools (U8)))
+    (Some (ast.ast-ty-dyn-array-with-pools pools (& (U8))))
     (ast.ast-node-pool-context-expr-push pools (BinaryData contents))))
 
 (define (compiler-load-include-str-lzss-def-with-pools
@@ -4991,8 +4991,8 @@
         (compiler-load-decl-list-append
           decls
           (ast.ast-decl-cons
-            (ast.ast-decl-module-id cbi.compiler-builtin-id-fix-empty)
-            (ast.ast-decl-list-new)))
+            (& (ast.ast-decl-module-id cbi.compiler-builtin-id-fix-empty))
+            (& (ast.ast-decl-list-new))))
         (compiler-load-decl-path-list-append
           (ast.ast-place-shared-view paths)
           (ast.ast-decl-path-list-prepend-builder-with-owner-id
@@ -5006,7 +5006,7 @@
           modules
           (ast.ast-decl-module-cons-id
             cbi.compiler-builtin-id-fix-empty
-            (ast.ast-decl-module-list-new)))
+            (& (ast.ast-decl-module-list-new))))
         seen)]
     [(Err diag) (Err diag)]))
 
@@ -5367,15 +5367,15 @@
   (if (compiler-load-decl-list-has-module? decls)
     (Ok
       (ast.ast-decl-cons
-        (ast.ast-decl-module-id module-name-id)
-        (ast.ast-decl-list-new))
+        (& (ast.ast-decl-module-id module-name-id))
+        (& (ast.ast-decl-list-new)))
       (ast.ast-decl-path-list-prepend-builder-with-owner-id
         (string.copy path)
         path-id
         (ast.ast-decl-path-list-new))
       (ast.ast-decl-module-cons-id
         module-name-id
-        (ast.ast-decl-module-list-new))
+        (& (ast.ast-decl-module-list-new)))
       seen)
     (Ok
       (ast.ast-decl-list-new)
@@ -5615,7 +5615,7 @@
   [local-index : i64]
   [path : String]
   [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
-  (match (ast.ast-decl-unwrapped decl)
+  (match (ast.ast-decl-unwrapped (& decl))
     [(Def _ name _ _)
       (compiler-load-unqualified-import-note
         state
@@ -6307,15 +6307,15 @@
           [(No) false])
           (Ok
             (ast.ast-decl-cons
-              (ast.ast-decl-module-id module-id)
-              (ast.ast-decl-list-new))
+              (& (ast.ast-decl-module-id module-id))
+              (& (ast.ast-decl-list-new)))
             (ast.ast-decl-path-list-prepend-builder-with-owner-id
               path
               source-path-id
               (ast.ast-decl-path-list-new))
             (ast.ast-decl-module-cons-id
               module-id
-              (ast.ast-decl-module-list-new))
+              (& (ast.ast-decl-module-list-new)))
             seen)
           (Ok
             (ast.ast-decl-list-new)
@@ -8984,7 +8984,7 @@
       (let
         [has-export : bool
           (compiler-load-surface-fn-export?
-            (ast.ast-fn-metadata-export metadata))]
+            (ast.ast-fn-metadata-export (& metadata)))]
         (compiler-load-surface-build-add-decl
           build
           (CompilerLoadSurfaceDecl
@@ -9036,7 +9036,7 @@
               (ast.ast-lifetime-list-new)
               repr
               cleanup
-              (ast.ast-decl-meta-aggregate-markers decl-meta)
+              (ast.ast-decl-meta-aggregate-markers (& decl-meta))
               fields)
             (CompilerLoadSurfaceMacroOther)
             has-cleanup
@@ -9064,7 +9064,7 @@
               lifetimes
               repr
               cleanup
-              (ast.ast-decl-meta-aggregate-markers decl-meta)
+              (ast.ast-decl-meta-aggregate-markers (& decl-meta))
               fields)
             (CompilerLoadSurfaceMacroOther)
             has-cleanup
@@ -9091,7 +9091,7 @@
             (CompilerLoadSurfaceEnumSignature
               (ast.ast-lifetime-list-new)
               cleanup
-              (ast.ast-decl-meta-aggregate-markers decl-meta)
+              (ast.ast-decl-meta-aggregate-markers (& decl-meta))
               variants)
             (CompilerLoadSurfaceMacroOther)
             has-cleanup
@@ -9118,7 +9118,7 @@
             (CompilerLoadSurfaceEnumSignature
               lifetimes
               cleanup
-              (ast.ast-decl-meta-aggregate-markers decl-meta)
+              (ast.ast-decl-meta-aggregate-markers (& decl-meta))
               variants)
             (CompilerLoadSurfaceMacroOther)
             has-cleanup
@@ -9427,7 +9427,7 @@
 (define (compiler-load-decl-defines-selected-item?
   [decl : ast.AstDecl]
   [item : i64]) : bool
-  (match (ast.ast-decl-unwrapped decl)
+  (match (ast.ast-decl-unwrapped (& decl))
     [(Def decl-meta name _ _) (= name item)]
     [(DefFn decl-meta name _ _ _ _) (= name item)]
     [(DefMacro decl-meta name _ _ _) (= name item)]
@@ -9484,7 +9484,7 @@
 ;; call. Until the fixed-point expansion has run it, the module's parsed
 ;; declarations are not its final export set.
 (define (compiler-load-decl-pending-generator? [decl : ast.AstDecl]) : bool
-  (match (ast.ast-decl-unwrapped decl)
+  (match (ast.ast-decl-unwrapped (& decl))
     [(Import _ (Spec kind _ _ _ _))
       (match kind
         [(Macro _ _) true]
@@ -10789,7 +10789,7 @@
         (match (ast.ast-program-copy-append-with-pools
           scratch-pools
           pools
-          (ast.ast-place-shared-view program))
+          (& program))
           [(AstProgramCompaction out-program _)
             (let
               [records-end : i64 (reader.sp-node-pool-len)]
@@ -12097,7 +12097,7 @@
     (>= index (ast.ast-param-list-len params))
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param _ ty _)
-        (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push ty))])
+        (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push (& ty)))])
     (compiler-load-param-type-list-into params (+ index 1) out)))
 
 (define (compiler-load-package-tlci-path
@@ -12285,7 +12285,7 @@
             module
             name
             spmd-interface)))
-      (ast.ast-ty-func (compiler-load-param-type-list params) ret))))
+      (ast.ast-ty-func (compiler-load-param-type-list params) (& ret)))))
 
 (define (compiler-load-package-transform-decl
   [package-owner : String]
@@ -12779,7 +12779,7 @@
                   (ast.ast-program-copy-append-with-pools
                     hydration.ast.pools
                     active-pools
-                    (ast.ast-program selection.decls))]
+                    (& (ast.ast-program selection.decls)))]
                 [copied-program : ast.AstProgram
                   (match (owned_view.compiler-owned-shared-view copy)
                     [(AstProgramCompaction program _) program])]

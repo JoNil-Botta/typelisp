@@ -824,9 +824,7 @@
 ;; them, and the driver runs it between phases, never during a traversal. A
 ;; slice view therefore outlives the traversal that holds it, but it must not
 ;; be kept across a handoff. It is typed `program` because no shorter owner can
-;; be named for the global pool, and a function cannot yet return a
-;; `(& program ...)` reference directly (#8630), so the views build it from a
-;; slice header.
+;; be named for the global pool.
 (defenum SpannedSexprSliceView
   (Int i64 String token.SourceSpan)
   (Sym ci.InternSyntaxId token.SourceSpan)
@@ -879,14 +877,16 @@
           : i64))
       (set! (array-ref sp-node-items-header 1) 0))))
 
-(defmacro (sp-node-items [start : Expr] [length : Expr]) : Expr
-  `(begin
-    (sp-node-items-header! ,start ,length)
-    (unsafe
-      (ptr-read
-        (ptr-cast
-          (__tl_array-data sp-node-items-header)
-          : (Ptr (& program (Slice SpannedSexpr))))))))
+;; The `length` rows from `start` as one slice, read back from the header.
+(define (sp-node-items [start : i64] [length : i64]) : (&
+    program
+    (Slice SpannedSexpr))
+  (sp-node-items-header! start length)
+  (unsafe
+    (ptr-read
+      (ptr-cast
+        (__tl_array-data sp-node-items-header)
+        : (Ptr (& program (Slice SpannedSexpr)))))))
 
 ;; Like `spanned-sexpr-view`, but a list is one `List` of its children.
 (define (spanned-sexpr-slice-view [s : SpannedSexpr]) : SpannedSexprSliceView
@@ -920,6 +920,24 @@
     [(BracketList start length span)
       (List (+ start count) (- length count) span)]
     [_ (io.panic "reader: spanned-sexpr-drop expects a list")]))
+
+;; A parenthesized list's children, and no items for any other node: what the
+;; `List` of `spanned-sexpr-slice-view` carries. A list walker's entry hands a
+;; node to its slice walker through this when a non-list behaves like `()`.
+(define (spanned-sexpr-items [s : SpannedSexpr]) : (&
+    program
+    (Slice SpannedSexpr))
+  (match s
+    [(List start length _) (sp-node-items start length)]
+    [_ (sp-node-items 0 0)]))
+
+;; Like `spanned-sexpr-items`, but a bracket list's children count too, as in
+;; `sexpr-slice-view`.
+(define (sexpr-items [s : SpannedSexpr]) : (& program (Slice SpannedSexpr))
+  (match s
+    [(List start length _) (sp-node-items start length)]
+    [(BracketList start length _) (sp-node-items start length)]
+    [_ (sp-node-items 0 0)]))
 
 (define (spanned-sexpr-span [s : SpannedSexpr]) : token.SourceSpan
   (match s

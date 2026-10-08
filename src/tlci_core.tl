@@ -580,6 +580,7 @@
     compiler-comptime-host-callback-expr-binding-clause-has-type?
     compiler-comptime-host-callback-expr-binding-clause-type
     compiler-comptime-host-callback-expr-binding-clause-init
+    compiler-comptime-host-callback-expr-binding-clause-init-callee
     compiler-comptime-host-callback-expr-binding-clause-list-length
     compiler-comptime-host-callback-expr-binding-clause-list-nth
     compiler-comptime-host-callback-pattern-list-bindings

@@ -812,7 +812,7 @@
       (and
         (= (intern_tests.intern-id-size) 4)
         (= (intern_tests.intern-syntax-id-size) 8)
-        (= (comptime (size-of (type AstExprBindingClause))) 72)
+        (= (comptime (size-of (type AstExprBindingClause))) 88)
         (= (comptime (size-of (type AstImportedSpmdSpecialization))) 40)
         (= (comptime (size-of (type AstImportedSpmdCallable))) 24))
       (io.panic

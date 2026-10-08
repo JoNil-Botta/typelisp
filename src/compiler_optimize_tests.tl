@@ -58398,6 +58398,12 @@
 ;; L6 negative : the latch's other successor `spin` loops back to the latch
 ;;               without passing the header. The latch can then run more often
 ;;               than `head`, and the add would run with it.
+;; L7 negative : `%4` is defined twice, the second time as `add %2, 5` in
+;;               `then` (a shape only a function SSA construction left alone
+;;               can have). `then` does not dominate the latch, so moving that
+;;               add would change `%4` on the path that skips `then`.
+;; L8 negative : the header phi `%2` is redefined in `then`, so `%2` at the
+;;               latch is not the `%2` the add read in `head`.
 ;;
 ;; The negatives were checked load-bearing by mutating the implementation and
 ;; confirming THIS test is what fails, with the code it reports:
@@ -58408,6 +58414,8 @@
 ;;   * `opt-latch-sink-exit-target` ignoring whether the compare reads `%n` ->
 ;;     code 50 (L5 moves).
 ;;   * `opt-latch-sink-reaches?` answering false -> code 60 (L6 moves).
+;;   * the `def-count` test of `%n` forced true -> code 70 (L7 moves).
+;;   * the `def-count` test of the phi forced true -> code 80 (L8 moves).
 (define (opt-ls-test-run [text : String]) : ir.CompilerIrFunction
   (opt.opt-latch-sink-function (irt.func text)))
 
@@ -58559,10 +58567,65 @@
        return %10
      }"))
 
+(define (opt-ls-test-l7) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       %4 = add %2, 5 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l8) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       %2 = add %3, 9 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch] : i64
+       return %10
+     }"))
+
 (define (opt-ls-test-head-count [out : (& out ir.CompilerIrFunction)]) : i64
   (let
     [blocks (opt.opt-function-blocks out)]
     (opt-gc-test-block-instr-count blocks 1)))
+
+(define (opt-ls-test-then-count [out : (& out ir.CompilerIrFunction)]) : i64
+  (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-block-instr-count blocks 2)))
 
 (define (opt-ls-test-latch-add? [out : (& out ir.CompilerIrFunction)]) : bool
   (match (let
@@ -58586,6 +58649,8 @@
     [l4 : ir.CompilerIrFunction (opt-ls-test-l4)]
     [l5 : ir.CompilerIrFunction (opt-ls-test-l5)]
     [l6 : ir.CompilerIrFunction (opt-ls-test-l6)]
+    [l7 : ir.CompilerIrFunction (opt-ls-test-l7)]
+    [l8 : ir.CompilerIrFunction (opt-ls-test-l8)]
     [l1-again : ir.CompilerIrFunction
       (opt.opt-latch-sink-function (ir.compiler-ir-global-shared-view l1))]
     (cond
@@ -58601,6 +58666,9 @@
       [(not (= (opt-ls-test-head-count l4) 5)) 40]
       [(not (= (opt-ls-test-head-count l5) 5)) 50]
       [(not (= (opt-ls-test-head-count l6) 5)) 60]
+      ;; L7: neither def of `%4` moves; `then` keeps add, add, jump.
+      [(not (= (opt-ls-test-then-count l7) 3)) 70]
+      [(not (= (opt-ls-test-head-count l8) 5)) 80]
       [else 42])))
 
 ;; --- global-cell condition (a): per-store observability ----------------------
@@ -63292,7 +63360,7 @@
   (test.assert-i64-eq
     (compiler-optimize-latch-sink-self-test)
     42
-    "a bump-first counter's increment moves into its latch before the loop-closing compare, idempotently; a body read, an exit-edge read from another block, a non-literal step, a latch that does not test the counter and a latch that can rerun without the header keep it in place"))
+    "a bump-first counter's increment moves into its latch before the loop-closing compare, idempotently; a body read, an exit-edge read from another block, a non-literal step, a latch that does not test the counter, a latch that can rerun without the header, and a counter or header phi with a second definition keep it in place"))
 
 (test
   global-cell-call-mod-ref

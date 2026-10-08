@@ -100649,7 +100649,9 @@
 ;; reads `%i`, so H dominates D; the latch L ends a path that carries `%n` into
 ;; H, so D dominates L. Every path from H to L therefore passes through D, and
 ;; at L both `%i` and `%n` come from the same, latest visit of H. Recomputing the
-;; add at L reproduces `%n` exactly.
+;; add at L reproduces `%n` exactly. Those dominance facts hold only for vars
+;; with one definition, and a function SSA construction left alone may have
+;; more, so both `%n` and `%i` must be defined exactly once (parameters count).
 ;;
 ;; What keeps the move from making code slower. The latch's terminator must be
 ;; the loop-closing Branch: one target is H, and its condition is a compare in L
@@ -100672,6 +100674,8 @@
   (phi-uses (__tl_dyn-array i64))
   ;; the edge label of those phi uses: -1 for none, -2 when they differ
   (phi-label (__tl_dyn-array i64))
+  ;; definitions of each var, parameters included
+  (def-count (__tl_dyn-array i64))
   ;; block label -> block index
   (labels opt_i64_i64_map.Map))
 
@@ -100687,8 +100691,10 @@
 
 (define (opt-latch-sink-facts
   [seq : (& seq ir.CompilerIrBlockSeq)]
+  [params : ir.CompilerIrParamSeq]
   [frame : i64]) : OptLatchSinkFacts
   (let
+    [def-count : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
     [def-block : (__tl_dyn-array i64) (opt-latch-sink-filled frame -1)]
     [def-index : (__tl_dyn-array i64) (opt-latch-sink-filled frame -1)]
     [uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
@@ -100697,6 +100703,7 @@
     [labels : opt_i64_i64_map.Map
       (opt_i64_i64_map.with-capacity (* 2 (+ seq.len 1)))]
     [b : i64 0]
+    (opt-def-counts-params! (&mut def-count) params)
     (while (< b seq.len)
       (match (ir.compiler-ir-block-seq-ref seq b)
         [(Block label instrs)
@@ -100739,12 +100746,22 @@
                       (set! (array-ref def-block dst) b)
                       (set! (array-ref def-index dst) j))]
                   [_ unit])
+                (opt-def-counts-instr!
+                  (&mut def-count)
+                  (compiler-opt-global-shared-view instr))
                 (opt-collect-instr-uses-array
                   (compiler-opt-global-shared-view uses)
                   instr))
               (set! j (+ j 1))))])
       (set! b (+ b 1)))
-    (OptLatchSinkFacts def-block def-index uses phi-uses phi-label labels)))
+    (OptLatchSinkFacts
+      def-block
+      def-index
+      uses
+      phi-uses
+      phi-label
+      def-count
+      labels)))
 
 ;; The BinOp defining `var` (its recorded block and index), or a non-BinOp
 ;; placeholder when there is none.
@@ -101019,6 +101036,10 @@
                             (>= def 0)
                             (not (= def latch))
                             (< count seq.len)
+                            (= (array-ref facts.def-count n) 1)
+                            (>= p 0)
+                            (< p frame)
+                            (= (array-ref facts.def-count p) 1)
                             ;; one move per var
                             (not
                               (opt-latch-sink-recorded?
@@ -101155,16 +101176,22 @@
 
 ;; The function with every admitted add moved into its latch. `changed` is
 ;; false, and the blocks are returned as they came, when nothing moved.
-(define (opt-latch-sink-blocks [frame : i64] [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
+(define (opt-latch-sink-blocks
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
   (let
     [seq : ir.CompilerIrBlockSeq (ir.compiler-ir-block-list-seq blocks)]
     (if (opt-latch-sink-candidates? seq)
-      (opt-latch-sink-move seq frame)
+      (opt-latch-sink-move seq params frame)
       (Result (Array seq) false))))
 
-(define (opt-latch-sink-move [seq : ir.CompilerIrBlockSeq] [frame : i64]) : OptBlockListPassResult
+(define (opt-latch-sink-move
+  [seq : ir.CompilerIrBlockSeq]
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]) : OptBlockListPassResult
   (let
-    [facts : OptLatchSinkFacts (opt-latch-sink-facts seq frame)]
+    [facts : OptLatchSinkFacts (opt-latch-sink-facts seq params frame)]
     [sites : OptLatchSinkSites (opt-latch-sink-sites seq frame facts)]
     (if (= sites.count 0)
       (Result (Array seq) false)
@@ -101214,7 +101241,10 @@
 (define (opt-latch-sink-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (match func
     [(Function name params ret-ty frame blocks function-abi)
-      (match (opt-latch-sink-blocks frame blocks)
+      (match (opt-latch-sink-blocks
+        (compiler-opt-global-shared-view params)
+        frame
+        blocks)
         [(Result next _) (Function name params ret-ty frame next function-abi)])]))
 
 (define (opt-latch-sink-final-pass
@@ -101222,7 +101252,10 @@
   [func : ir.CompilerIrFunction]) : OptFunctionPassResult
   (match func
     [(Function name params ret-ty frame blocks function-abi)
-      (match (opt-latch-sink-blocks frame blocks)
+      (match (opt-latch-sink-blocks
+        (compiler-opt-global-shared-view params)
+        frame
+        blocks)
         [(Result next changed)
           (if changed
             (Result

@@ -187,7 +187,7 @@
 ;; Running this native entry outside the repo exercises fallback on both OSes;
 ;; inside it, Windows resolves the real file instead. Each kind is checked
 ;; against the source the loader reads, which an `.tl` LZSS include embeds
-;; with its inline tests blanked (#8713).
+;; with its inline tests blanked (#8713) and prose comments cut (#8659).
 (cfg
   (not test)
   (define (main) : i64
@@ -221,7 +221,7 @@
                       pools)
                     (match kind
                       [(LzssString)
-                        (embedded.compiler-embedded-stdlib-source-without-inline-tests
+                        (embedded.compiler-embedded-stdlib-payload-source
                           (string.copy source))]
                       [_ (string.copy source)]))
                   "embedded fallback retains every materialization kind")

@@ -98135,7 +98135,19 @@
   (count i64)
   (owner-table-id i64)
   (owner-reset-generation i64)
-  (ready bool))
+  (ready bool)
+  ;; The surface macro index (see `macro-surface-index-ensure!`): open
+  ;; addressing over (module + 1, name), each slot holding the winning
+  ;; declaration's position. It stores positions, never values, so it may
+  ;; outlive the expansion scratch arena the value cache above may not.
+  (index-modules (__tl_dyn-array i64))
+  (index-names (__tl_dyn-array i64))
+  (index-positions (__tl_dyn-array i64))
+  (index-epoch i64)
+  (index-count i64)
+  (index-session i64)
+  (index-table-id i64)
+  (index-reset-generation i64))
 
 (define (tc-macro-surface-call-state-new) : TcMacroSurfaceCallStateData
   (TcMacroSurfaceCallStateData
@@ -98146,7 +98158,15 @@
     0
     -1
     -1
-    false))
+    false
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    -1
+    -1
+    -1
+    -1
+    -1))
 
 (define (tc-macro-surface-call-state-address-initialize [state : TcMacroState]) : i64
   (tc-macro-state-cell-initialize
@@ -98323,25 +98343,218 @@
       [_ (No)])
     (No)))
 
-(define (macro-surface-decls-call-decl-in-module
-  [expr-bases : i64]
-  [state : TcMacroState]
-  [decls : cload.CompilerLoadSurfaceDeclList]
-  [target-module-id : i64]
-  [base-id : i64]) : MacroMaybeDecl
+;; The surface macro index answers `macro-surface-summaries-call-decl-in-module`
+;; without its per-lookup walk over every declaration of every loaded summary,
+;; which the value cache below cannot absorb: that cache dies at every splice
+;; (its values live in the expansion scratch arena), so each declaration that
+;; names a macro paid one full walk per distinct macro it used.
+;;
+;; The walk returned the first declaration matching (module, name) that is a
+;; macro with a macro signature, visiting summaries newest first and each
+;; summary's declarations in source order. The index records exactly that
+;; winner: it visits physical summaries oldest to newest and declarations in
+;; reverse source order, letting every later visit overwrite. A slot packs the
+;; summary's physical index above bit 32 and the declaration index below it.
+;;
+;; The index is valid for one summary list. Appends keep every physical index,
+;; so a longer list from the same session at the same epoch only needs its new
+;; summaries visited; `compiler-load-surface-summaries-epoch` moves on every
+;; reset or removal, which forces a rebuild. Names are intern ids, so the
+;; source-name table identity is part of the key as well.
+(define (macro-surface-index-decl-indexable?
+  [decl : (& decl cload.CompilerLoadSurfaceDecl)]) : bool
+  (and
+    (match decl.kind
+      [(CompilerLoadSurfaceMacro) true]
+      [_ false])
+    (match decl.signature
+      [(CompilerLoadSurfaceMacroSignature _ _ _) true]
+      [_ false])))
+
+(define (macro-surface-index-slot [mask : i64] [module-key : i64] [name : i64]) : i64
+  (bit-and
+    (bit-xor
+      (* module-key -7046029254386353131)
+      (* (+ name 1) 1442695040888963407))
+    mask))
+
+;; Insert or overwrite (module, name) -> position. The table is sized to at
+;; least twice the macro declarations it can hold, so a free slot always ends
+;; the probe.
+(define (macro-surface-index-put!
+  [cache : (MutPtr TcMacroSurfaceCallStateData)]
+  [module-id : i64]
+  [name : i64]
+  [position : i64]) : unit
+  (unsafe
+    (let
+      [mask : i64 (- (array-length (deref cache).index-modules) 1)]
+      [module-key : i64 (+ module-id 1)]
+      [slot : i64 (macro-surface-index-slot mask module-key name)]
+      [done : bool false]
+      (while (not done)
+        (let
+          [present : i64 (array-ref (deref cache).index-modules slot)]
+          (cond
+            [(= present 0)
+              (set! (array-ref (deref cache).index-modules slot) module-key)
+              (set! (array-ref (deref cache).index-names slot) name)
+              (set! (array-ref (deref cache).index-positions slot) position)
+              (set! done true)]
+            [(and
+              (= present module-key)
+              (= (array-ref (deref cache).index-names slot) name))
+              (set! (array-ref (deref cache).index-positions slot) position)
+              (set! done true)]
+            [else (set! slot (bit-and (+ slot 1) mask))]))))))
+
+;; Visit physical summaries `[from, to)` oldest first, declarations in reverse.
+(define (macro-surface-index-visit!
+  [cache : (MutPtr TcMacroSurfaceCallStateData)]
+  [summaries : (& summaries cload.CompilerLoadSurfaceSummaryList)]
+  [from : i64]
+  [to : i64]) : unit
   (let
+    [count : i64 (cload.compiler-load-surface-summary-list-count summaries)]
+    [physical : i64 from]
+    (while (< physical to)
+      (let
+        [summary : cload.CompilerLoadSurfaceSummary
+          (cload.compiler-load-surface-summary-list-at
+            summaries
+            (- (- count physical) 1))]
+        [decls : cload.CompilerLoadSurfaceDeclList summary.decls]
+        [index : i64 (cload.compiler-load-surface-decl-list-count (& decls))]
+        (while (> index 0)
+          (set! index (- index 1))
+          (let
+            [decl : (& decls cload.CompilerLoadSurfaceDecl)
+              (cload.compiler-load-surface-decl-list-borrow-at (& decls) index)]
+            (when
+              (macro-surface-index-decl-indexable? decl)
+              (macro-surface-index-put!
+                cache
+                decl.module
+                decl.name
+                (+ (* physical 4294967296) index))))))
+      (set! physical (+ physical 1)))))
+
+;; The macro declarations of `summaries`, counted to size the table.
+(define (macro-surface-index-macro-count
+  [summaries : (& summaries cload.CompilerLoadSurfaceSummaryList)]) : i64
+  (let
+    [count : i64 (cload.compiler-load-surface-summary-list-count summaries)]
+    [total : i64 0]
     [index : i64 0]
-    (while (< index (cload.compiler-load-surface-decl-list-count decls))
-      (match (macro-surface-decl-call-decl-in-module
-        expr-bases
-        state
-        (cload.compiler-load-surface-decl-list-borrow-at (& decls) index)
-        target-module-id
-        base-id)
-        [(Some macro-name def-module declaration-id params ret body)
-          (return (Some macro-name def-module declaration-id params ret body))]
-        [(No) (set! index (+ index 1))]))
-    (No)))
+    (while (< index count)
+      (let
+        [summary : cload.CompilerLoadSurfaceSummary
+          (cload.compiler-load-surface-summary-list-at summaries index)]
+        [decls : cload.CompilerLoadSurfaceDeclList summary.decls]
+        [decl-index : i64 0]
+        (while (<
+          decl-index
+          (cload.compiler-load-surface-decl-list-count (& decls)))
+          (when
+            (macro-surface-index-decl-indexable?
+              (cload.compiler-load-surface-decl-list-borrow-at
+                (& decls)
+                decl-index))
+            (set! total (+ total 1)))
+          (set! decl-index (+ decl-index 1))))
+      (set! index (+ index 1)))
+    total))
+
+(define (macro-surface-index-ensure!
+  [state : TcMacroState]
+  [summaries : (& summaries cload.CompilerLoadSurfaceSummaryList)]) : unit
+  (let
+    [cache : (MutPtr TcMacroSurfaceCallStateData)
+      (tc-macro-surface-call-state-ptr state)]
+    [count : i64 (cload.compiler-load-surface-summary-list-count summaries)]
+    [epoch : i64 (cload.compiler-load-surface-summaries-epoch-value)]
+    [session : i64 (cload.compiler-load-active-session-owner-arena)]
+    [table-id : i64 (tc-macro-state-source-name-table-id state)]
+    [reset-generation : i64 (tc-macro-state-source-name-reset-generation state)]
+    (unsafe
+      (let
+        [same-list : bool
+          (and
+            (= (deref cache).index-epoch epoch)
+            (= (deref cache).index-session session)
+            (= (deref cache).index-table-id table-id)
+            (= (deref cache).index-reset-generation reset-generation)
+            (>= (deref cache).index-count 0)
+            (>= count (deref cache).index-count))]
+        (unless
+          (and same-list (= count (deref cache).index-count))
+          (let
+            [needed : i64
+              (* (+ (macro-surface-index-macro-count summaries) 1) 2)]
+            [capacity : i64 64]
+            (while (< capacity needed)
+              (set! capacity (* capacity 2)))
+            (if (and
+              same-list
+              (>= (array-length (deref cache).index-modules) capacity))
+              ;; Appends only: visit the new summaries over the kept table.
+              (macro-surface-index-visit!
+                cache
+                summaries
+                (deref cache).index-count
+                count)
+              (begin
+                (if (>= (array-length (deref cache).index-modules) capacity)
+                  (let
+                    [slot : i64 0]
+                    (while (< slot (array-length (deref cache).index-modules))
+                      (set! (array-ref (deref cache).index-modules slot) 0)
+                      (set! slot (+ slot 1))))
+                  (in-arena
+                    (arena.Arena (tc-macro-state-owner-arena state))
+                    (set!
+                      (deref cache).index-modules
+                      (__tl_make-array i64 capacity))
+                    (set!
+                      (deref cache).index-names
+                      (__tl_make-array i64 capacity))
+                    (set!
+                      (deref cache).index-positions
+                      (__tl_make-array i64 capacity))))
+                (macro-surface-index-visit! cache summaries 0 count)))
+            (set! (deref cache).index-epoch epoch)
+            (set! (deref cache).index-count count)
+            (set! (deref cache).index-session session)
+            (set! (deref cache).index-table-id table-id)
+            (set! (deref cache).index-reset-generation reset-generation)))))))
+
+;; The winning position for (module, name), or -1.
+(define (macro-surface-index-get
+  [state : TcMacroState]
+  [module-id : i64]
+  [name : i64]) : i64
+  (let
+    [cache : (Ptr TcMacroSurfaceCallStateData)
+      (tc-macro-surface-call-state-view state)]
+    (unsafe
+      (let
+        [mask : i64 (- (array-length (deref cache).index-modules) 1)]
+        [module-key : i64 (+ module-id 1)]
+        [slot : i64 (macro-surface-index-slot mask module-key name)]
+        [found : i64 -1]
+        [done : bool false]
+        (while (not done)
+          (let
+            [present : i64 (array-ref (deref cache).index-modules slot)]
+            (cond
+              [(= present 0) (set! done true)]
+              [(and
+                (= present module-key)
+                (= (array-ref (deref cache).index-names slot) name))
+                (set! found (array-ref (deref cache).index-positions slot))
+                (set! done true)]
+              [else (set! slot (bit-and (+ slot 1) mask))])))
+        found))))
 
 (define (macro-surface-summaries-call-decl-in-module
   [expr-bases : i64]
@@ -98349,22 +98562,27 @@
   [summaries : cload.CompilerLoadSurfaceSummaryList]
   [target-module-id : i64]
   [base-id : i64]) : MacroMaybeDecl
+  (macro-surface-index-ensure! state (& summaries))
   (let
-    [index : i64 0]
-    (while (< index (cload.compiler-load-surface-summary-list-count summaries))
+    [position : i64 (macro-surface-index-get state target-module-id base-id)]
+    (if (< position 0)
+      (No)
       (let
+        [count : i64
+          (cload.compiler-load-surface-summary-list-count (& summaries))]
+        [physical : i64 (shr position 32)]
+        [decl-index : i64 (bit-and position 4294967295)]
         [summary : cload.CompilerLoadSurfaceSummary
-          (cload.compiler-load-surface-summary-list-at summaries index)]
-        (match (macro-surface-decls-call-decl-in-module
+          (cload.compiler-load-surface-summary-list-at
+            summaries
+            (- (- count physical) 1))]
+        [decls : cload.CompilerLoadSurfaceDeclList summary.decls]
+        (macro-surface-decl-call-decl-in-module
           expr-bases
           state
-          summary.decls
+          (cload.compiler-load-surface-decl-list-borrow-at (& decls) decl-index)
           target-module-id
-          base-id)
-          [(Some macro-name def-module declaration-id params ret body)
-            (return (Some macro-name def-module declaration-id params ret body))]
-          [(No) (set! index (+ index 1))])))
-    (No)))
+          base-id)))))
 
 (define (macro-surface-call-decl-fill-in-module
   [expr-bases : i64]

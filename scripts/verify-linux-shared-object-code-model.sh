@@ -12,8 +12,8 @@ set -eu
 #   - no R_X86_64_TPOFF32 (local-exec TLS) relocation in the object;
 #   - no TEXTREL in the DSO, and DF_STATIC_TLS set;
 #   - no dynamic symbol the DSO defines: nothing TypeLisp is exported.
-# Then tests/shared-object/worker.tl is linked with shim.c into a DSO that
-# driver.c dlopens and calls from two threads at once.
+# Then tests/shared-object/worker.tl is linked with a C shim into a DSO that a
+# C driver dlopens and calls from two threads at once; this script writes both.
 #
 # The executable code model is untouched by the variable; the integration and
 # fixpoint gates cover its output.
@@ -148,10 +148,108 @@ if ! TYPELISP_BACKEND_CODE_MODEL=shared-object "$COMPILER" compile \
     sed 's/^/  /' "$DL/compile.stderr" >&2
     exit 1
 fi
+# The C halves of the test are written here: TypeLisp is the implementation
+# language, and C fixtures live in scripts (scripts/check-implementation-languages.sh).
+cat > "$DL/shim.c" <<'SHIM_C'
+/* shim.c - the export of the shared-object dlopen test (#8257). Every TypeLisp symbol in the DSO is hidden, so this shim, linked
+ * into the same DSO, is its one default-visibility entry. It runs the
+ * program's global initializers once, then calls the TypeLisp function.
+ * #8194's export and lifecycle children replace this with the real contract. */
+#include <pthread.h>
+
+extern void tl_shared_object_init(void);
+extern long _tl_worker_work(long seed);
+
+static pthread_once_t typelisp_once = PTHREAD_ONCE_INIT;
+
+static void typelisp_init(void) { tl_shared_object_init(); }
+
+__attribute__((visibility("default"))) long typelisp_test_work(long seed) {
+    pthread_once(&typelisp_once, typelisp_init);
+    return _tl_worker_work(seed);
+}
+SHIM_C
+cat > "$DL/driver.c" <<'DRIVER_C'
+/* driver.c - host of the shared-object dlopen test (#8257). It loads the DSO
+ * built from worker.tl and shim.c, then calls the
+ * test export from two threads at once, repeatedly. Each thread allocates
+ * through its own TypeLisp arena in the TLS block the dynamic loader gave the
+ * DSO. Every result must match the value computed here; exits 0 when all do. */
+#include <dlfcn.h>
+#include <pthread.h>
+#include <stdio.h>
+
+typedef long (*work_fn)(long);
+
+static work_fn work;
+
+static long digits(long value) {
+    long count = 1;
+    while (value >= 10) {
+        value /= 10;
+        count++;
+    }
+    return count;
+}
+
+static long expected(long seed) {
+    long total = 0;
+    for (long i = 0; i < 2000; i++) {
+        total += digits(seed + i) + 4;
+    }
+    return total;
+}
+
+static void *run(void *arg) {
+    long seed = (long)arg;
+    long want = expected(seed);
+    for (int round = 0; round < 50; round++) {
+        if (work(seed) != want) {
+            return (void *)1;
+        }
+    }
+    return (void *)0;
+}
+
+int main(int argc, char **argv) {
+    if (argc != 2) {
+        fprintf(stderr, "usage: driver LIBRARY\n");
+        return 2;
+    }
+    void *library = dlopen(argv[1], RTLD_NOW | RTLD_LOCAL);
+    if (library == NULL) {
+        fprintf(stderr, "dlopen: %s\n", dlerror());
+        return 1;
+    }
+    work = (work_fn)dlsym(library, "typelisp_test_work");
+    if (work == NULL) {
+        fprintf(stderr, "dlsym: %s\n", dlerror());
+        return 1;
+    }
+    pthread_t threads[2];
+    for (long t = 0; t < 2; t++) {
+        if (pthread_create(&threads[t], NULL, run, (void *)(995 + t * 9000)) != 0) {
+            return 1;
+        }
+    }
+    int failed = 0;
+    for (int t = 0; t < 2; t++) {
+        void *result;
+        pthread_join(threads[t], &result);
+        failed |= result != (void *)0;
+    }
+    if (failed) {
+        fprintf(stderr, "shared-object worker returned a wrong result\n");
+        return 1;
+    }
+    printf("ok\n");
+    return 0;
+}
+DRIVER_C
 as "$DL/worker.s" -o "$DL/worker.o"
-cc -fPIC -c "$ROOT/tests/shared-object/shim.c" -o "$DL/shim.o"
+cc -fPIC -c "$DL/shim.c" -o "$DL/shim.o"
 cc -shared -o "$DL/libworker.so" "$DL/worker.o" "$DL/shim.o" -lpthread
-cc "$ROOT/tests/shared-object/driver.c" -o "$DL/driver" -ldl -lpthread
+cc "$DL/driver.c" -o "$DL/driver" -ldl -lpthread
 exported=$(readelf --dyn-syms -W "$DL/libworker.so" | awk 'NR > 3 && $7 != "UND" { print $8 }')
 if [ "$exported" != "typelisp_test_work" ]; then
     echo "shared-object worker DSO must export only typelisp_test_work, exports: $exported" >&2

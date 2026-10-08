@@ -1,8 +1,8 @@
 ;; The TypeLisp side of the shared-object dlopen test (#8257): a global set by
 ;; a runtime initializer and a function that allocates through the arena.
 ;; scripts/verify-linux-shared-object-code-model.sh builds it with the
-;; shared-object code model, links it with shim.c into a DSO, and driver.c
-;; calls it from two host threads.
+;; shared-object code model, links it with the C shim it writes into a DSO, and
+;; its C driver calls it from two host threads.
 (import stdlib.string)
 
 (define suffix : String

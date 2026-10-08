@@ -18,6 +18,10 @@ stdlib.core_macros/or	1	variadic	expr	tests/integration/stdlib_serialize_json.tl
 stdlib.core_macros/when	2	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.core_macros/unless	2	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
 stdlib.core_macros/cond	1	variadic	expr	tests/integration/stdlib_serialize_json.tl	ok	default	assembly
+stdlib.core_macros/+=	2	fixed	expr	tests/integration/core_macros_compound_assign.tl	ok	default	assembly
+stdlib.core_macros/-=	2	fixed	expr	tests/integration/core_macros_compound_assign.tl	ok	default	assembly
+stdlib.core_macros/any?	2	variadic	expr	tests/integration/core_macros_any_all.tl	ok	default	assembly
+stdlib.core_macros/all?	2	variadic	expr	tests/integration/core_macros_any_all.tl	ok	default	assembly
 stdlib.core_macros/for	2	variadic	expr	tests/integration/for_macro.tl	ok	default	assembly
 stdlib.dense_list/compiler-dense-list-operations	7	variadic	decls	tests/integration/dense_list_generated.tl	ok	default	assembly
 stdlib.eq/eq-shared-view	1	fixed	expr	tests/integration/stdlib_eq_aggregate.tl	ok	default	assembly

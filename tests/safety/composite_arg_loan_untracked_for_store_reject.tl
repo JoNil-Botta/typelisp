@@ -34,7 +34,8 @@
           [views : (Array (& pair bytes) 1)
             (array (byte_buf.as-bytes (& pair.left)))]
           (begin
-            (for [item views] (set! view item))
+            (for [item views]
+              (set! view item))
             view)))]
     (begin
       (byte_buf.bytes-set!

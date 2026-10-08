@@ -14415,14 +14415,13 @@
       (clone_support.clone-root-entries-materialize-helper-names! roots)
       ;; Each case: decls, expected key. A helper name only conflicts in its
       ;; own module, and the first declaration in order wins.
-      (for
-        [case
-          (array
-            (tuple "keep clone$Pair" pair-key)
-            (tuple "@m clone$Pair" -1)
-            (tuple "clone$Box" -1)
-            (tuple "@m keep clone$Box" box-key)
-            (tuple "@m clone$Box @r clone$Pair" box-key))]
+      (for [case
+        (array
+          (tuple "keep clone$Pair" pair-key)
+          (tuple "@m clone$Pair" -1)
+          (tuple "clone$Box" -1)
+          (tuple "@m keep clone$Box" box-key)
+          (tuple "@m clone$Box @r clone$Pair" box-key))]
         (let
           [decls : ast.AstDeclList
             (compiler-lower-clone-conflict-decls (& (tuple-ref case 0)))]

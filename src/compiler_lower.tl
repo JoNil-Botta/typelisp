@@ -14829,18 +14829,14 @@
           result])]
     [(Err _) result]))
 
-(define (lower-state-register-address-taken-var?
-  [state : LowerState]
-  [var-id : i64]) : bool
+(define (lower-state-address-taken-var? [state : LowerState] [var-id : i64]) : bool
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
     (lower_i64_i64_map.contains?
       (& (__tl-project-field (__tl-box-place data) address-taken))
       var-id)))
 
-(define (lower-state-register-address-taken-mark
-  [state : LowerState]
-  [var-id : i64]) : LowerState
+(define (lower-state-address-taken-mark [state : LowerState] [var-id : i64]) : LowerState
   (let
     [data : (Box LowerStateData) (lower-state-box state)]
     (lower_i64_i64_map.insert-ref!
@@ -21468,7 +21464,7 @@
   [ty : ast.AstType]) : ResultLowerExpr
   (if (and
     (lower-type-register-resident? ctx (lower-global-shared-view ty))
-    (lower-state-register-address-taken-var? state local-id))
+    (lower-state-address-taken-var? state local-id))
     (match (lower-state-alloc-var state)
       [(Alloc addr-state addr-var)
         (match (lower-load-register-resident-from-ptr
@@ -25665,6 +25661,7 @@
     (& types)
     snapshots
     0
+    -1
     (lower_arg_writeback_vec.new)))
 
 ;; The name a by-value argument's place is rooted at, through projections and
@@ -25900,6 +25897,8 @@
                   [(Err _) false]))))]))
     (tc_core.tc-param-storage-resolved? ctx arg-ty)))
 
+;; `writes` is the `lower-call-arg-snapshot` status of the arguments from
+;; `index` on.
 (define (lower-call-args-as-at
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -25909,6 +25908,7 @@
   [types : (& types ast.AstTypeList)]
   [snapshots : i64]
   [index : i64]
+  [writes : i64]
   [writebacks : lower_arg_writeback_vec.Vec]) : ResultLowerCallArgs
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len types))
@@ -25944,6 +25944,12 @@
         (match lowered-arg
           [(Arg lowered-state lowered-value maybe-writeback)
             (let
+              ;; A memory-class aggregate passed by address is copied when its
+              ;; storage can change during the call (lower-call-arg-copy?); a
+              ;; scalar, raw pointer or register-resident value is snapshotted
+              ;; when a later argument writes its variable
+              ;; (lower-call-arg-snapshot). The two classes do not overlap, and
+              ;; a copy's fresh var is never snapshotted again.
               [copied : LowerExpr
                 (if (and
                   (lower-call-arg-aggregate-type?
@@ -25969,23 +25975,34 @@
                 (&mut next-writebacks)
                 maybe-writeback)
               (match copied
-                [(Expr arg-state value _)
-                  (match (lower-call-args-as-at
+                [(Expr copied-state copied-value copied-ty)
+                  (match (lower-call-arg-snapshot
                     ctx
-                    arg-state
-                    env
-                    type-env
+                    copied-state
                     args
-                    types
-                    snapshots
-                    (+ index 1)
-                    next-writebacks)
-                    [(Ok rest-state rest-values rest-writebacks)
-                      (Ok
-                        rest-state
-                        (ir.compiler-ir-value-seq-prepend value rest-values)
-                        rest-writebacks)]
-                    [(Err message) (Err message)])]))])))))
+                    index
+                    vars-before
+                    writes
+                    copied-value
+                    copied-ty)
+                    [(Snapshot arg-state value later-writes)
+                      (match (lower-call-args-as-at
+                        ctx
+                        arg-state
+                        env
+                        type-env
+                        args
+                        types
+                        snapshots
+                        (+ index 1)
+                        later-writes
+                        next-writebacks)
+                        [(Ok rest-state rest-values rest-writebacks)
+                          (Ok
+                            rest-state
+                            (ir.compiler-ir-value-seq-prepend value rest-values)
+                            rest-writebacks)]
+                        [(Err message) (Err message)])])]))])))))
 
 (define (lower-apply-arg-writeback
   [ctx : tc_core.TcContext]
@@ -26055,6 +26072,268 @@
 (define (lower-bootstrap-runtime-builtin-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-lower-bootstrap-runtime-id? name-id))
 
+;; SPEC section 5 evaluates call arguments left to right, so an argument keeps
+;; the value it had when it was evaluated. A scalar, raw pointer or
+;; register-resident aggregate read from storage lowers to the storage itself
+;; -- a local's var or a field var of a register-resident aggregate -- which the
+;; call reads only after every later argument has run:
+;; `(f x (begin (set! x 99) 0))` would pass 99. The argument is copied into a
+;; fresh var before the later arguments are lowered when one of them can write
+;; that storage:
+;; - a local read through a root name: a later `set!`, `replace!`, field or
+;;   element store, push, take, mutable borrow or `ptr-addr-of` rooted at that
+;;   name. Closures capture by value and cannot assign captured names, so a
+;;   call writes the local only through a borrow or raw address: one taken in
+;;   a later argument is such a form, one taken earlier is the last case.
+;; - other local storage the argument did not allocate, such as a block or
+;;   `let` result: any such form, whatever its root.
+;; - a local whose address was taken earlier: any later argument that is not a
+;;   plain read, since a callee can write it through that address.
+;; A global read is not copied yet: any callee can write it, and copying every
+;; global read before a later call costs code where none does (#8680).
+;; A memory-class aggregate argument is the address of its storage; copying it
+;; belongs to the by-value aggregate rules, not to this snapshot (#8433).
+(define (lower-call-arg-place-root-name
+  [ctx : tc_core.TcContext]
+  [expr : ast.AstExpr]) : i64
+  (match expr
+    [(Spanned inner-box _)
+      (lower-call-arg-place-root-name
+        ctx
+        (lower-context-expr-get ctx inner-box))]
+    [(Var name) name]
+    [(Ann inner-box _)
+      (lower-call-arg-place-root-name
+        ctx
+        (lower-context-expr-get ctx inner-box))]
+    [(Cast inner-box _)
+      (lower-call-arg-place-root-name
+        ctx
+        (lower-context-expr-get ctx inner-box))]
+    [(StructGet receiver-box _)
+      (lower-call-arg-place-root-name
+        ctx
+        (lower-context-expr-get ctx receiver-box))]
+    [(TupleRef tuple-box _)
+      (lower-call-arg-place-root-name
+        ctx
+        (lower-context-expr-get ctx tuple-box))]
+    [_ -1]))
+
+;; 2 when writing `target-name`'s place writes the variable `name`, or any
+;; variable when `name` is negative; otherwise 1.
+(define (lower-call-arg-name-write-code [name : i64] [target-name : i64]) : i64
+  (if (or (< name 0) (= target-name name))
+    2
+    1))
+
+(define (lower-call-arg-place-write-code
+  [ctx : tc_core.TcContext]
+  [name : i64]
+  [place-box : i64]) : i64
+  (lower-call-arg-name-write-code
+    name
+    (lower-call-arg-place-root-name ctx (lower-context-expr-get ctx place-box))))
+
+;; Whether evaluating the expression at `expr-box` can write a place: 0 never,
+;; 1 only places that are not rooted at the variable `name`, 2 a place rooted
+;; at `name` (any place when `name` is negative). Creating a closure runs none
+;; of its body, which cannot assign captured names anyway. Leaves end the walk
+;; without building a child list.
+(define (lower-call-arg-expr-write-code
+  [ctx : tc_core.TcContext]
+  [name : i64]
+  [expr-box : i64]) : i64
+  (let
+    [expr : ast.AstExpr (lower-context-expr-get ctx expr-box)]
+    (match (lower-global-shared-view expr)
+      [(Spanned inner-box _)
+        (lower-call-arg-expr-write-code ctx name inner-box)]
+      [(Literal _) 0]
+      [(Var _) 0]
+      [(Lambda _) 0]
+      [_
+        (let
+          [own : i64
+            (match (lower-global-shared-view expr)
+              [(Set target-name _)
+                (lower-call-arg-name-write-code name target-name)]
+              [(Replace place-box _)
+                (lower-call-arg-place-write-code ctx name place-box)]
+              [(StructSet receiver-box _ _)
+                (lower-call-arg-place-write-code ctx name receiver-box)]
+              [(ArraySet array-box _ _)
+                (lower-call-arg-place-write-code ctx name array-box)]
+              [(ArrayPush array-box _)
+                (lower-call-arg-place-write-code ctx name array-box)]
+              [(ArrayTake array-box _ _)
+                (lower-call-arg-place-write-code ctx name array-box)]
+              [(Borrow mutable _ place-box)
+                (if mutable
+                  (lower-call-arg-place-write-code ctx name place-box)
+                  0)]
+              [(PtrAddrOf place-box)
+                (lower-call-arg-place-write-code ctx name place-box)]
+              [_ 0])]
+          (if (= own 2)
+            2
+            (let
+              [children : i64
+                (lower-call-arg-exprs-write-code
+                  ctx
+                  name
+                  (& (ast.ast-expr-child-ids expr))
+                  0)]
+              (if (> children own)
+                children
+                own))))])))
+
+;; The largest write code of `exprs` from `index` on, stopping at 2.
+(define (lower-call-arg-exprs-write-code
+  [ctx : tc_core.TcContext]
+  [name : i64]
+  [exprs : (& exprs ast.AstExprList)]
+  [index : i64]) : i64
+  (let
+    [at : i64 index]
+    [code : i64 0]
+    (while (and (< code 2) (< at exprs.len))
+      (let
+        [next : i64
+          (lower-call-arg-expr-write-code
+            ctx
+            name
+            (ast.ast-expr-list-get exprs at 0))]
+        (when (> next code) (set! code next)))
+      (set! at (+ at 1)))
+    code))
+
+;; Whether evaluating the expression at `expr-box` only reads: no call, store
+;; or other effect runs.
+(define (lower-call-arg-expr-reads-only?
+  [ctx : tc_core.TcContext]
+  [expr-box : i64]) : bool
+  (match (lower-context-expr-get ctx expr-box)
+    [(Spanned inner-box _) (lower-call-arg-expr-reads-only? ctx inner-box)]
+    [(Literal _) true]
+    [(Var _) true]
+    [(Ann inner-box _) (lower-call-arg-expr-reads-only? ctx inner-box)]
+    [(Cast inner-box _) (lower-call-arg-expr-reads-only? ctx inner-box)]
+    [(Unary _ inner-box) (lower-call-arg-expr-reads-only? ctx inner-box)]
+    [(Binary _ left-box right-box)
+      (and
+        (lower-call-arg-expr-reads-only? ctx left-box)
+        (lower-call-arg-expr-reads-only? ctx right-box))]
+    [(StructGet receiver-box _)
+      (lower-call-arg-expr-reads-only? ctx receiver-box)]
+    [(TupleRef tuple-box _) (lower-call-arg-expr-reads-only? ctx tuple-box)]
+    [_ false]))
+
+;; Whether every argument of `args` from `index` on only reads.
+(define (lower-call-args-read-only?
+  [ctx : tc_core.TcContext]
+  [args : (& args ast.AstExprList)]
+  [index : i64]) : bool
+  (let
+    [at : i64 index]
+    [read-only : bool true]
+    (while (and read-only (< at args.len))
+      (set!
+        read-only
+        (lower-call-arg-expr-reads-only? ctx (ast.ast-expr-list-get args at 0)))
+      (set! at (+ at 1)))
+    read-only))
+
+;; Scalars, raw pointers and register-resident aggregates, which are carried
+;; as words. References keep their place identity and are never copied.
+(define (lower-call-arg-snapshot-type?
+  [ctx : tc_core.TcContext]
+  [ty : ast.AstType]) : bool
+  (match (lower-global-shared-view ty)
+    [(Unit) false]
+    [(Never) false]
+    [(Ptr _) true]
+    [(MutPtr _) true]
+    [(Ref _ _) false]
+    [(MutRef _ _) false]
+    [_
+      (or
+        (lower-clone-scalar-type? (lower-global-shared-view ty))
+        (lower-type-register-resident? ctx ty))]))
+
+;; A call argument's state and value after `lower-call-arg-snapshot`, and what
+;; is known about the arguments after it: 0 when none of them writes any place,
+;; -1 when that is unknown. The argument collectors pass it on, so a call's
+;; arguments are scanned for writes once as long as none is found.
+(defenum LowerCallArgSnapshot
+  (Snapshot LowerState ir.CompilerIrValue i64))
+
+;; The value argument `index` of `args` passes, copied when a later argument
+;; can write the storage it was read from (see above). `first-var` is the
+;; first var lowering the argument could allocate; `writes` is 0 when no
+;; argument from `index` on writes any place, else -1.
+(define (lower-call-arg-snapshot
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [args : (& args ast.AstExprList)]
+  [index : i64]
+  [first-var : i64]
+  [writes : i64]
+  [value : ir.CompilerIrValue]
+  [ty : ast.AstType]) : LowerCallArgSnapshot
+  (let
+    [later : i64 (+ index 1)]
+    [code : i64
+      (if (>= later args.len)
+        writes
+        (match (lower-global-shared-view value)
+          [(Var var-id)
+            (cond
+              [(>= var-id first-var) writes]
+              [(lower-state-address-taken-var? state var-id)
+                (if (or
+                  (not
+                    (lower-call-arg-snapshot-type?
+                      ctx
+                      (lower-global-shared-view ty)))
+                  (lower-call-args-read-only? ctx args later))
+                  writes
+                  2)]
+              [(= writes 0) 0]
+              [(not
+                  (lower-call-arg-snapshot-type?
+                    ctx
+                    (lower-global-shared-view ty)))
+                writes]
+              [else
+                (lower-call-arg-exprs-write-code
+                  ctx
+                  (lower-call-arg-place-root-name
+                    ctx
+                    (lower-context-expr-get
+                      ctx
+                      (ast.ast-expr-list-get args index 0)))
+                  args
+                  later)])]
+          [_ writes]))]
+    (if (= code 2)
+      (match (lower-state-alloc-var state)
+        [(Alloc allocated var-id)
+          (Snapshot
+            (lower-state-emit-at-expr
+              ctx
+              allocated
+              (Mov var-id value (lower-global-shared-view ty))
+              (lower-context-expr-get ctx (ast.ast-expr-list-get args index 0)))
+            (Var var-id)
+            -1)])
+      (Snapshot
+        state
+        value
+        (if (= code 0)
+          0
+          -1)))))
+
 (define (lower-args-as
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -26063,8 +26342,10 @@
   [args : (& args ast.AstExprList)]
   [types : ast.AstTypeList]
   [call-args? : bool]) : ResultLowerArgs
-  (lower-args-as-at ctx state env type-env (& args) (& types) call-args? 0))
+  (lower-args-as-at ctx state env type-env (& args) (& types) call-args? 0 -1))
 
+;; `writes` is the `lower-call-arg-snapshot` status of the arguments from
+;; `index` on.
 (define (lower-args-as-at
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -26073,7 +26354,8 @@
   [args : (& args ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
   [call-args? : bool]
-  [index : i64]) : ResultLowerArgs
+  [index : i64]
+  [writes : i64]) : ResultLowerArgs
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len types))
       (Ok state (ir.compiler-ir-value-seq-empty))
@@ -26141,21 +26423,32 @@
                           lowered-ty))])
                   lowered)]
               (match copied
-                [(Expr arg-state value _)
-                  (match (lower-args-as-at
+                [(Expr copied-state copied-value copied-ty)
+                  (match (lower-call-arg-snapshot
                     ctx
-                    arg-state
-                    env
-                    type-env
+                    copied-state
                     args
-                    types
-                    call-args?
-                    (+ index 1))
-                    [(Ok rest-state rest-values)
-                      (Ok
-                        rest-state
-                        (ir.compiler-ir-value-seq-prepend value rest-values))]
-                    [(Err message) (Err message)])]))]
+                    index
+                    vars-before
+                    writes
+                    copied-value
+                    copied-ty)
+                    [(Snapshot arg-state value later-writes)
+                      (match (lower-args-as-at
+                        ctx
+                        arg-state
+                        env
+                        type-env
+                        args
+                        types
+                        call-args?
+                        (+ index 1)
+                        later-writes)
+                        [(Ok rest-state rest-values)
+                          (Ok
+                            rest-state
+                            (ir.compiler-ir-value-seq-prepend value rest-values))]
+                        [(Err message) (Err message)])])]))]
           [(Err message) (Err (box (lower-diagnostic-at-expr ctx arg message)))])))))
 
 ;; Mutable-reference formals need call-aware lowering for writebacks, while
@@ -28565,13 +28858,7 @@
                       (AddrOf var-id local-id)
                       origin)]
                   [marked-state : LowerState
-                    (if (lower-type-register-resident?
-                      ctx
-                      (lower-global-shared-view place-ty))
-                      (lower-state-register-address-taken-mark
-                        addr-state
-                        local-id)
-                      addr-state)]
+                    (lower-state-address-taken-mark addr-state local-id)]
                   [addr-ty : ast.AstType
                     (tc_core.tc-type-without-regions
                       (tc_core.tc-resolve-type ctx place-ty))]
@@ -33925,7 +34212,7 @@
   [type-env : tc_core.TcTypeEnv]
   [args : ast.AstExprList]
   [types : ast.AstTypeList]) : ResultLowerArgs
-  (lower-c-abi-args-as-at ctx state env type-env (& args) (& types) 0))
+  (lower-c-abi-args-as-at ctx state env type-env (& args) (& types) 0 -1))
 
 (define (lower-c-abi-args-as-at
   [ctx : tc_core.TcContext]
@@ -33934,7 +34221,8 @@
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]
   [types : (& types ast.AstTypeList)]
-  [index : i64]) : ResultLowerArgs
+  [index : i64]
+  [writes : i64]) : ResultLowerArgs
   (if (>= index args.len)
     (if (>= index (ast.ast-type-list-len types))
       (Ok state (ir.compiler-ir-value-seq-empty))
@@ -33950,6 +34238,7 @@
         [arg-ty : ast.AstType
           (tc_core.tc-type-without-regions
             (tc_core.tc-resolve-type ctx expected))]
+        [first-var : i64 (lower-state-next-var state)]
         [lowered
           (try
             (lower-expr-expected
@@ -33960,8 +34249,20 @@
               (lower-global-shared-view arg)
               (lower-global-shared-view arg-ty)
               (lower-global-shared-view arg)))]
-        (match lowered
-          [(Expr arg-state value _)
+        [snapshot : LowerCallArgSnapshot
+          (match lowered
+            [(Expr lowered-state lowered-value _)
+              (lower-call-arg-snapshot
+                ctx
+                lowered-state
+                args
+                index
+                first-var
+                writes
+                lowered-value
+                (lower-global-shared-view arg-ty))])]
+        (match snapshot
+          [(Snapshot arg-state value later-writes)
             (match (lower-c-abi-aggregate-class
               ctx
               (lower-state-mode arg-state)
@@ -33974,7 +34275,8 @@
                   type-env
                   args
                   types
-                  (+ index 1))
+                  (+ index 1)
+                  later-writes)
                   [(Ok rest-state rest-values)
                     (Ok
                       rest-state
@@ -34008,7 +34310,8 @@
                       type-env
                       args
                       types
-                      (+ index 1))
+                      (+ index 1)
+                      later-writes)
                       [(Ok rest-state rest-values)
                         (Ok
                           rest-state
@@ -34031,7 +34334,8 @@
                       type-env
                       args
                       types
-                      (+ index 1))
+                      (+ index 1)
+                      later-writes)
                       [(Ok rest-state rest-values)
                         (Ok
                           rest-state
@@ -34047,7 +34351,8 @@
                   type-env
                   args
                   types
-                  (+ index 1))
+                  (+ index 1)
+                  later-writes)
                   [(Ok rest-state rest-values)
                     (Ok
                       rest-state
@@ -34078,7 +34383,8 @@
                         type-env
                         args
                         types
-                        (+ index 1))
+                        (+ index 1)
+                        later-writes)
                         [(Ok rest-state rest-values)
                           (Ok
                             rest-state
@@ -40926,11 +41232,7 @@
                 origin)]
             (Ok
               (Expr
-                (if (lower-type-register-resident?
-                  ctx
-                  (lower-global-shared-view place-ty))
-                  (lower-state-register-address-taken-mark addr-state local-id)
-                  addr-state)
+                (lower-state-address-taken-mark addr-state local-id)
                 (Var var-id)
                 place-ty)))])
       (Ok
@@ -42292,7 +42594,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : ast.AstExprList]) : ResultLowerArgs
-  (lower-args-at ctx state env type-env (& args) 0))
+  (lower-args-at ctx state env type-env (& args) 0 -1))
 
 (define (lower-args-at
   [ctx : tc_core.TcContext]
@@ -42300,21 +42602,40 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]
-  [index : i64]) : ResultLowerArgs
+  [index : i64]
+  [writes : i64]) : ResultLowerArgs
   (if (>= index args.len)
     (Ok state (ir.compiler-ir-value-seq-empty))
     (let
       [arg : ast.AstExpr
         (lower-context-expr-get ctx (ast.ast-expr-list-get args index 0))]
+      [first-var : i64 (lower-state-next-var state)]
       [lowered (try (lower-expr ctx state env type-env arg))]
       (match lowered
-        [(Expr arg-state value _)
-          (match (lower-args-at ctx arg-state env type-env args (+ index 1))
-            [(Ok rest-state rest-values)
-              (Ok
-                rest-state
-                (ir.compiler-ir-value-seq-prepend value rest-values))]
-            [(Err message) (Err message)])]))))
+        [(Expr lowered-state lowered-value lowered-ty)
+          (match (lower-call-arg-snapshot
+            ctx
+            lowered-state
+            args
+            index
+            first-var
+            writes
+            lowered-value
+            lowered-ty)
+            [(Snapshot arg-state value later-writes)
+              (match (lower-args-at
+                ctx
+                arg-state
+                env
+                type-env
+                args
+                (+ index 1)
+                later-writes)
+                [(Ok rest-state rest-values)
+                  (Ok
+                    rest-state
+                    (ir.compiler-ir-value-seq-prepend value rest-values))]
+                [(Err message) (Err message)])])]))))
 
 (define (lower-let-binding-type
   [ctx : tc_core.TcContext]

@@ -175,34 +175,54 @@
   (unsafe
     (string-runtime-copy-bytes! (ptr-offset dst doff) src n)))
 
+;: Expand to a copy of the `len` bytes at the `(Ptr u8)` `sp` to the
+;: `(MutPtr u8)` `dp`. The expansion belongs inside `unsafe`: both ranges must
+;: hold `len >= 0` bytes and must not overlap. Whole words go first, then the
+;: last word (or, below eight bytes, a pair of four-, two- or one-byte moves)
+;: is copied overlapping what is already written, which writes those bytes
+;: again with the same values.
+(defmacro (string-bytes-copy! [dp : Expr] [sp : Expr] [len : Expr]) : unit
+  `(cond
+    [(>= ,len 8)
+      (let
+        [dw : (MutPtr i64) (ptr-cast ,dp : (MutPtr i64))]
+        [sw : (Ptr i64) (ptr-cast ,sp : (Ptr i64))]
+        [words : i64 (shr ,len 3)]
+        [i : i64 0]
+        (while (< i words)
+          (ptr-write! (ptr-offset dw i) (ptr-read (ptr-offset sw i)))
+          (set! i (+ i 1)))
+        (ptr-write!
+          (ptr-cast (ptr-offset ,dp (- ,len 8)) : (MutPtr i64))
+          (ptr-read (ptr-cast (ptr-offset ,sp (- ,len 8)) : (Ptr i64)))))]
+    [(>= ,len 4)
+      (let
+        [head : u32 (ptr-read (ptr-cast ,sp : (Ptr u32)))]
+        [tail : u32
+          (ptr-read (ptr-cast (ptr-offset ,sp (- ,len 4)) : (Ptr u32)))]
+        (ptr-write! (ptr-cast ,dp : (MutPtr u32)) head)
+        (ptr-write! (ptr-cast (ptr-offset ,dp (- ,len 4)) : (MutPtr u32)) tail))]
+    [(>= ,len 2)
+      (let
+        [head : u16 (ptr-read (ptr-cast ,sp : (Ptr u16)))]
+        [tail : u16
+          (ptr-read (ptr-cast (ptr-offset ,sp (- ,len 2)) : (Ptr u16)))]
+        (ptr-write! (ptr-cast ,dp : (MutPtr u16)) head)
+        (ptr-write! (ptr-cast (ptr-offset ,dp (- ,len 2)) : (MutPtr u16)) tail))]
+    [(= ,len 1) (ptr-write! ,dp (ptr-read ,sp))]
+    [else unit]))
+
 ;: Copy `n` bytes from owned `chunk` into `dst` at byte offset `start`.
 (define (str-copy-owned-bytes-into
   [chunk : String]
   [dst : (MutPtr u8)]
   [start : i64]
   [n : i64]) : unit
-  (let
-    [src : (Ptr u8)
-      (unsafe
-        (string-data (& chunk)))]
-    [words : i64 (/ n 8)]
-    [src64 : (Ptr i64)
-      (unsafe
-        (ptr-cast src : (Ptr i64)))]
-    [dst64 : (MutPtr i64)
-      (unsafe
-        (ptr-cast (ptr-offset dst start) : (MutPtr i64)))]
-    [w : i64 0]
-    [b : i64 (* words 8)]
-    (while (< w words)
-      (unsafe
-        (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
-      (set! w (+ w 1)))
-    (while (< b n)
-      (unsafe
-        (ptr-write! (ptr-offset dst (+ start b)) (ptr-read (ptr-offset src b))))
-      (set! b (+ b 1)))
-    unit))
+  (unsafe
+    (let
+      [src : (Ptr u8) (string-data (& chunk))]
+      [dp : (MutPtr u8) (ptr-offset dst start)]
+      (string-bytes-copy! dp src n))))
 
 ;: Copy `n` bytes from borrowed `chunk` into `dst` at byte offset `start`.
 (define (str-copy-borrowed-bytes-into
@@ -210,28 +230,11 @@
   [dst : (MutPtr u8)]
   [start : i64]
   [n : i64]) : unit
-  (let
-    [src : (Ptr u8)
-      (unsafe
-        (string-data chunk))]
-    [words : i64 (/ n 8)]
-    [src64 : (Ptr i64)
-      (unsafe
-        (ptr-cast src : (Ptr i64)))]
-    [dst64 : (MutPtr i64)
-      (unsafe
-        (ptr-cast (ptr-offset dst start) : (MutPtr i64)))]
-    [w : i64 0]
-    [b : i64 (* words 8)]
-    (while (< w words)
-      (unsafe
-        (ptr-write! (ptr-offset dst64 w) (ptr-read (ptr-offset src64 w))))
-      (set! w (+ w 1)))
-    (while (< b n)
-      (unsafe
-        (ptr-write! (ptr-offset dst (+ start b)) (ptr-read (ptr-offset src b))))
-      (set! b (+ b 1)))
-    unit))
+  (unsafe
+    (let
+      [src : (Ptr u8) (string-data chunk)]
+      [dp : (MutPtr u8) (ptr-offset dst start)]
+      (string-bytes-copy! dp src n))))
 
 ;: Copy a checked borrowed byte range into a fresh active-arena String.
 (define (substring-copy-checked [text : (& text str)] [start : i64] [len : i64]) : String

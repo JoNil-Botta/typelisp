@@ -258,6 +258,69 @@
           (= replayed 1)
           (= changed (* tlci.tlci-host-callback-status-bad-request 1000)))))))
 
+;; Another well-formed batch of the same length at the same address (the same
+;; op under a wrong row hint, which falls back to the name) replaces the first
+;; batch's entry instead of sitting behind it: it is decoded once and then
+;; replayed, so five runs over the two batches add two entries. A stale entry
+;; that still shadowed the key would decode the second batch, and add an
+;; entry, on every run.
+(define (host-smoke-run-ops-cache-rekey-ok?) : bool
+  (let
+    [name : String "expr-list-empty"]
+    [hint : i64 (tlci.tlci-host-callback-row-index (& name))]
+    [other : i64
+      (if (=
+        (string.string-length (host-smoke-int (+ hint 1)))
+        (string.string-length (host-smoke-int hint)))
+        (+ hint 1)
+        (- hint 1))]
+    [first : String
+      (host-smoke-one "expr-list-empty" (host-smoke-zero-record 0))]
+    [second : String
+      (str_cat.str-cat
+        (host-smoke-int 1)
+        (host-smoke-int other)
+        (host-smoke-int (string.string-length name))
+        "expr-list-empty"
+        (host-smoke-int 1)
+        (host-smoke-zero-record 0))]
+    [len : i64 (string.string-length first)]
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 len)]
+    [index : i64 0]
+    [entries : i64 host.compiler-comptime-host-batch-cache-entries]
+    (while (< index len)
+      (set!
+        (array-ref bytes index)
+        (cast (cast (string.string-ref first index) : i64) : u8))
+      (set! index (+ index 1)))
+    (let
+      [base : i64
+        (cast
+          (unsafe
+            (ptr->int (__tl_array-data bytes)))
+          : i64)]
+      [ran-first : i64 (host-smoke-run-ops-outcome-at base len)]
+      [replayed-first : i64 (host-smoke-run-ops-outcome-at base len)]
+      [same-length : bool (= (string.string-length second) len)]
+      (set! index 0)
+      (while (and same-length (< index len))
+        (set!
+          (array-ref bytes index)
+          (cast (cast (string.string-ref second index) : i64) : u8))
+        (set! index (+ index 1)))
+      (let
+        [ran-second : i64 (host-smoke-run-ops-outcome-at base len)]
+        [replayed-second : i64 (host-smoke-run-ops-outcome-at base len)]
+        [again-second : i64 (host-smoke-run-ops-outcome-at base len)]
+        (and
+          same-length
+          (= ran-first 1)
+          (= replayed-first 1)
+          (= ran-second 1)
+          (= replayed-second 1)
+          (= again-second 1)
+          (= (- host.compiler-comptime-host-batch-cache-entries entries) 2))))))
+
 ;; A malformed batch is a bad request at the malformed token: the header
 ;; tokens resolve before any op runs, an earlier op in the same batch has
 ;; already run (which a failed expansion never commits), and a batch stops at
@@ -1612,6 +1675,8 @@
       (io.panic "comptime host smoke: run-ops rejections")]
     [(not (host-smoke-run-ops-cache-ok?))
       (io.panic "comptime host smoke: run-ops decoded-batch cache")]
+    [(not (host-smoke-run-ops-cache-rekey-ok?))
+      (io.panic "comptime host smoke: run-ops cache re-key")]
     [(not (host-smoke-type-kind-data-ok?))
       (io.panic "comptime host smoke: type-kind data status")]
     [(not (host-smoke-type-slice-ok?))

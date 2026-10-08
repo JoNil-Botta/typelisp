@@ -5387,7 +5387,8 @@
 ;; is keyed by the batch's address and length and keeps a copy of its bytes,
 ;; which a hit compares word by word before replaying, so an image mapped again
 ;; at the same address with other bytes (or any caller's own buffer) decodes
-;; afresh. Only well-formed batches are cached: a malformed one runs through the
+;; afresh, and that decoding replaces the stale entry for the key. Only
+;; well-formed batches are cached: a malformed one runs through the
 ;; interleaved decoder below exactly as before, so its status is unchanged.
 ;;
 ;; Entries live in one process-lifetime arena; a batch's words and records are
@@ -5481,22 +5482,22 @@
     (bit-xor (* base -7046029254386353131) (* (+ len 1) 1442695040888963407))
     (- (array-length compiler-comptime-host-batch-cache-slots) 1)))
 
-;; The cached entry for this batch whose bytes still match, or -1.
-(define (compiler-comptime-host-batch-cache-find [base : i64] [len : i64]) : i64
-  (if (= (array-length compiler-comptime-host-batch-cache-slots) 0)
-    -1
-    (let
-      [mask : i64 (- (array-length compiler-comptime-host-batch-cache-slots) 1)]
-      [slot : i64 (compiler-comptime-host-batch-cache-slot base len)]
-      [found : i64 -1]
-      [done : bool false]
-      (while (not done)
-        (let
-          [encoded : i64
-            (array-ref compiler-comptime-host-batch-cache-slots slot)]
-          (cond
-            [(= encoded 0) (set! done true)]
-            [(and
+;; The slot holding the entry for the batch at `base`/`len`, or the empty slot
+;; where it goes. A key has one slot: an entry decoded after the bytes at that
+;; address changed replaces the stale entry there, so a lookup never stops at
+;; the stale one and the cache gains one entry per change, not one per call.
+(define (compiler-comptime-host-batch-cache-key-slot [base : i64] [len : i64]) : i64
+  (let
+    [mask : i64 (- (array-length compiler-comptime-host-batch-cache-slots) 1)]
+    [slot : i64 (compiler-comptime-host-batch-cache-slot base len)]
+    [done : bool false]
+    (while (not done)
+      (let
+        [encoded : i64
+          (array-ref compiler-comptime-host-batch-cache-slots slot)]
+        (cond
+          [(= encoded 0) (set! done true)]
+          [(and
               (=
                 (array-ref
                   compiler-comptime-host-batch-cache-bases
@@ -5507,9 +5508,21 @@
                   compiler-comptime-host-batch-cache-lens
                   (- encoded 1))
                 len))
-              (set! found (- encoded 1))
-              (set! done true)]
-            [else (set! slot (bit-and (+ slot 1) mask))])))
+            (set! done true)]
+          [else (set! slot (bit-and (+ slot 1) mask))])))
+    slot))
+
+;; The cached entry for this batch whose bytes still match, or -1.
+(define (compiler-comptime-host-batch-cache-find [base : i64] [len : i64]) : i64
+  (if (= (array-length compiler-comptime-host-batch-cache-slots) 0)
+    -1
+    (let
+      [found : i64
+        (-
+          (array-ref
+            compiler-comptime-host-batch-cache-slots
+            (compiler-comptime-host-batch-cache-key-slot base len))
+          1)]
       (if (< found 0)
         -1
         (let
@@ -5531,7 +5544,8 @@
             found
             -1))))))
 
-;; Rebuild the slot table at `capacity` over the entries so far.
+;; Rebuild the slot table at `capacity` over the entries so far, oldest first,
+;; so a later entry for the same key replaces the stale one again.
 (define (compiler-comptime-host-batch-cache-rehash! [capacity : i64]) : unit
   (in-arena
     (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!))
@@ -5540,19 +5554,14 @@
       (__tl_make-array i64 capacity)))
   (let
     [entry : i64 0]
-    [mask : i64 (- capacity 1)]
     (while (< entry compiler-comptime-host-batch-cache-entries)
-      (let
-        [slot : i64
-          (compiler-comptime-host-batch-cache-slot
+      (set!
+        (array-ref
+          compiler-comptime-host-batch-cache-slots
+          (compiler-comptime-host-batch-cache-key-slot
             (array-ref compiler-comptime-host-batch-cache-bases entry)
-            (array-ref compiler-comptime-host-batch-cache-lens entry))]
-        (while (not
-          (= (array-ref compiler-comptime-host-batch-cache-slots slot) 0))
-          (set! slot (bit-and (+ slot 1) mask)))
-        (set!
-          (array-ref compiler-comptime-host-batch-cache-slots slot)
-          (+ entry 1)))
+            (array-ref compiler-comptime-host-batch-cache-lens entry)))
+        (+ entry 1))
       (set! entry (+ entry 1)))))
 
 ;; Decode the whole batch without running it. Returns the new entry's index,
@@ -5747,16 +5756,11 @@
                 128)
                 256
                 (* (array-length compiler-comptime-host-batch-cache-slots) 2)))
-            (let
-              [mask : i64
-                (- (array-length compiler-comptime-host-batch-cache-slots) 1)]
-              [slot : i64 (compiler-comptime-host-batch-cache-slot base len)]
-              (while (not
-                (= (array-ref compiler-comptime-host-batch-cache-slots slot) 0))
-                (set! slot (bit-and (+ slot 1) mask)))
-              (set!
-                (array-ref compiler-comptime-host-batch-cache-slots slot)
-                (+ entry 1))))
+            (set!
+              (array-ref
+                compiler-comptime-host-batch-cache-slots
+                (compiler-comptime-host-batch-cache-key-slot base len))
+              (+ entry 1)))
           entry)))))
 
 ;; Run a cached entry's records in order, stopping at the first non-ok status.

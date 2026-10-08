@@ -59,6 +59,21 @@ not-match ^[[:space:]]+subq \$[0-9]+, %rsp$
 count >= 1 __bce_fast:$
 count >= 1 __bce_fast__unroll_body:$
 
+# A `for` range loop advances its counter before the body, which kept the
+# current and next index live together and closed both loops of a versioned
+# `if` body with `jge exit; mov; jmp top`. The latch sink moves the add into
+# the latch, so both close with `add; cmp; jl` like the `while` twin: no `lea`
+# of the next index, no inverted exit branch.
+case latch-sink-for-range
+source tests/integration/latch_sink_for_loops.tl
+in fn latch_sink_count_if_for
+count = 2 ^[[:space:]]+jl \.L
+not-match ^[[:space:]]+jge \.L
+not-match ^[[:space:]]+leaq 1\(%r[a-z0-9]+\), %r
+in fn latch_sink_count_if_while
+count = 2 ^[[:space:]]+jl \.L
+not-match ^[[:space:]]+jge \.L
+
 # Divisor magic hoisting: constant multiplies fold into imm32 imuls; the /7
 # quotient reads the live dividend through %rax (one irreducible copy chain).
 case divmagic-hoist

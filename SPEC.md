@@ -3642,15 +3642,19 @@ uncompressed byte length and a newline, followed by the token stream.
 - A `path` ending in `.tl` is a TypeLisp source. Before compression, each
   top-level inline test is replaced by the line breaks it contained: every
   `(test ...)` form, and every `(cfg test BODY)` form with exactly one body.
-  Every other byte is kept, so each remaining form keeps its line and column.
-  Strings, character literals and comments follow the lexer's rules, and a
-  source the lexer would reject, or whose brackets do not balance, is
-  compressed unchanged.
+  Each prose comment outside those forms keeps only its first `;`, so every
+  line still reads as a comment, a doc comment or code. Doc comments (`;:` and
+  `;#`) and `name:` directive comments such as `lint-allow:` are kept whole,
+  and so is every comment inside a kept `(cfg test ...)` form. Every other
+  byte is kept, so each remaining form keeps its line and column. Strings,
+  character literals and comments follow the lexer's rules, and a source the
+  lexer would reject, or whose brackets do not balance, is compressed
+  unchanged.
 
 This form exists for compiler-owned payload tables: the compiler embeds its
 stdlib source table through it. The embedded stdlib therefore carries no
 inline tests; those compile only under `--cfg test` from the repository
-sources (#8713). The stdlib comptime image is embedded with `include-bin`
+sources (#8713). It carries no prose comment text either (#8659). The stdlib comptime image is embedded with `include-bin`
 instead, as a compiler-owned TLCH envelope that carries the image's LZSS token
 stream in canonical Huffman form and is expanded back to the exact `.tlci`
 bytes on demand.
@@ -7994,7 +7998,11 @@ full reset or arena destroy. `tl_region_mark`, `tl_arena_current`,
 read or update backend runtime state. Current-arena state is thread-local:
 Linux uses local-exec TLS, with the FS base installed by the freestanding
 entry before global initializers run; Windows x64 uses the TEB
-arbitrary-user slot (`GS:0x28`). Raw thread spawn initializes a fresh zero
+arbitrary-user slot (`GS:0x28`). Under the Linux shared-object code model
+(`docs/compiler-architecture.md`, #8257), the same accesses are initial-exec:
+each loads the variable's GOT offset and the DSO carries `DF_STATIC_TLS`.
+There is no entry, and `tl_shared_object_init` runs the global initializers.
+Raw thread spawn initializes a fresh zero
 current-arena slot before user code runs, so a worker's first allocation
 creates an independent default arena chain. The slot always contains that
 chain's stable root; allocator and mark/reset internals reach the changing
@@ -8007,7 +8015,8 @@ the current arena, or zero before the first allocation, as `i64`;
 `unsafe` context and a zero or stable-root value. It does not perform the
 physical-segment canonicalization provided by `tl_arena_set`. Both lower
 directly to the platform TLS access used by the backend helpers
-(`%fs:tl_current_arena@tpoff` on Linux, `GS:0x28` on Windows), emit no calls,
+(`%fs:tl_current_arena@tpoff` on Linux, through `@gottpoff` under the
+shared-object code model, and `GS:0x28` on Windows), emit no calls,
 and require no imports, so they are valid in `stdlib.runtime` before ordinary
 allocation is available. They name only the current-arena slot; arbitrary TLS
 slots are out of scope pending a separate

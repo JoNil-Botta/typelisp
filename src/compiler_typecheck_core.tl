@@ -31018,13 +31018,25 @@
   ;; by value (it needs owned `Box` storage to walk an `AstDecl.Unsafe` chain),
   ;; but it now reads the backing slot directly instead of a stepped-out copy,
   ;; so the 104 B row copy and the 144 B step result are gone.
+  ;; The summary index is working storage for this loop only (#8412). It is
+  ;; built in its own arena and destroyed when the loop ends: lookups read row
+  ;; copies whose payloads stay owned by the source pools, and every binding,
+  ;; lazy-import stub and message is made in the enclosing arena.
   (let
     [cur-env : TcTypeEnv env]
     [cur-module-id : i64 module-id]
     [message : String ""]
     [ok : bool true]
+    [enclosing-arena : i64 (arena.tl_arena_current)]
+    [index-arena : i64 (arena.tl_arena_make)]
+    [_switch-to-index : unit
+      (unsafe
+        (arena.tl_arena_set index-arena))]
     [summary-index : TcImportAliasSummaryIndex
       (tc-import-alias-summary-index-build (tc-global-shared-view all-decls))]
+    [_restore-enclosing : unit
+      (unsafe
+        (arena.tl_arena_set enclosing-arena))]
     [seen-aliases : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 512)]
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
@@ -31104,6 +31116,8 @@
                   unit))))]
         [_ unit])
       (set! index (+ index 1)))
+    (unsafe
+      (arena.tl_arena_destroy index-arena))
     (if (string.eq message "")
       (Ok cur-env)
       (Err message))))

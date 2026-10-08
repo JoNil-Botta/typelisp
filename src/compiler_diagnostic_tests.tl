@@ -506,7 +506,8 @@
     (compiler-diagnostic-typecheck-kind-row-is? (ThreadSafety) 18)
     (compiler-diagnostic-typecheck-kind-row-is? (ComptimeConstraint) 19)
     (compiler-diagnostic-typecheck-kind-row-is? (UnsafeCallableEffect) 20)
-    (compiler-diagnostic-typecheck-kind-row-is? (ForeignGlobalWrite) 21)))
+    (compiler-diagnostic-typecheck-kind-row-is? (ForeignGlobalWrite) 21)
+    (compiler-diagnostic-typecheck-kind-row-is? (OpaqueRepresentation) 22)))
 
 ;; The code a diagnostic built from `message` carries, or "" for none.
 (define (compiler-diagnostic-built-code [message : String]) : String
@@ -591,7 +592,7 @@
   (let
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
     [index : i64 0]
-    [ok : bool (= count 22)]
+    [ok : bool (= count 23)]
     (while (and ok (< index count))
       (let
         [code : String (cdiag.compiler-diagnostic-code-registry-code index)]

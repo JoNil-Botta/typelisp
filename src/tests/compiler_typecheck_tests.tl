@@ -2361,6 +2361,30 @@
       "BadRegion"
       "typecheck: inline aggregate layout cycle BadRegion -> BadRegion; insert (Box BadRegion) at the recursive edge")))
 
+;; The top-env alias builder retires its import-alias summary index before it
+;; returns (#8412). Every binding it made must stay usable after that: a
+;; repeated module alias, a `.*` import, an enum constructor through an alias,
+;; and a function of a revisited module.
+(define (compiler-typecheck-top-env-alias-index-tests-ok?) : bool
+  (and
+    (compiler-typecheck-ok? "(define (main) : i64 0)")
+    (compiler-typecheck-ok?
+      "(module shapes)
+(defenum Kind (Solid) (Dashed i64))
+(define (area) : i64 2)
+(module util)
+(define (twice [x : i64]) : i64 (* 2 x))
+(module main)
+(import shapes as s)
+(import shapes as s)
+(import util.*)
+(module shapes)
+(define (more) : i64 3)
+(module main)
+(define (main) : i64
+  (+ (s.area) (twice (s.more))
+    (match (s.Kind.Dashed 1) [(s.Kind.Dashed n) n] [_ 0])))")))
+
 (define (compiler-typecheck-nominal-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -11051,6 +11075,9 @@
   (if (compiler-typecheck-nominal-tests-ok?)
     unit
     (io.panic "typecheck: nominal tests failed"))
+  (if (compiler-typecheck-top-env-alias-index-tests-ok?)
+    unit
+    (io.panic "typecheck: top-env alias index tests failed"))
   (if (compiler-typecheck-abstraction-policy-tests-ok?)
     unit
     (io.panic "typecheck: abstraction policy tests failed"))

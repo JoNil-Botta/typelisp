@@ -5340,8 +5340,7 @@ explicit constructors.
   or bind nothing, enter one compiled copy of it straight from their tag or
   literal tests, so the arm dispatches as the separate arms it replaces
   would, in the same jump table. Alternatives that bind from different
-  positions get one copy per position (one per alternative when the body has
-  at most ten expression nodes); alternatives with refutable payload
+  positions get one copy per position; alternatives with refutable payload
   patterns bind first and then join a shared copy. In a match's final arm
   every alternative but the last is tested, so the last `slice` alternative
   there performs no length comparison. A nested or-pattern is tested as the

@@ -64304,8 +64304,8 @@
 
 ;; Dispatch a lowered scrutinee: enums (directly, through a shared reference,
 ;; or generic) match by tag, everything else by the scalar compare chain.
-;; Some or-pattern arms with a small body are first split into one arm per
-;; alternative (`lower-match-split-small-or-arms`).
+;; Or-pattern arms whose alternatives bind through different payload slots
+;; are first split by binding group (`lower-match-split-or-arms`).
 (define (lower-match-dispatch
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -64317,7 +64317,7 @@
   [cont : LowerMatchCont]) : ResultLowerExpr
   (let
     [arms : ast.AstMatchArmList
-      (lower-match-split-small-or-arms
+      (lower-match-split-or-arms
         ctx
         state
         (lower-match-pattern-scrut-ty ctx (lower-global-shared-view scrut-ty))
@@ -64349,12 +64349,11 @@
 ;; An or-pattern arm lowers its body once, and alternatives that bind alike
 ;; enter it straight from their tests (`lower-or-arm-body-start`). When the
 ;; alternatives bind through more than one block, a shared body would cost a
-;; jump the separate arms it replaces do not pay, so the arm is split first
-;; (`lower-match-or-arm-split`): into one arm per alternative when its body is
-;; small, else, when the alternatives are disjoint tag tests that bind only
-;; plain names, into one or-arm per group of alternatives that bind alike,
-;; each of which enters its body straight from its tests.
-(define (lower-match-split-small-or-arms
+;; jump the separate arms it replaces do not pay. If they are disjoint tag
+;; tests that bind only plain names, the arm is first split into one or-arm
+;; per group of alternatives that bind alike (`lower-match-or-arm-split`), so
+;; each group enters its own copy of the body straight from its tests.
+(define (lower-match-split-or-arms
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [scrut-ty : ast.AstType]
@@ -64375,9 +64374,7 @@
                 ctx
                 state
                 (lower-global-shared-view scrut-ty)
-                pattern
-                body
-                (= index (- arms.len 1)))]
+                pattern)]
             (unless
               (lower-or-arm-split-keep? (& split))
               (set! first index)
@@ -64405,19 +64402,16 @@
                         ctx
                         state
                         (lower-global-shared-view scrut-ty)
-                        (lower-global-shared-view pattern)
-                        body
-                        (= index (- arms.len 1)))])]
+                        (lower-global-shared-view pattern))])]
                 (lower-or-arm-split-into! (&mut out) pattern body split))])
           (set! index (+ index 1)))
         out))))
 
-;; How an or-pattern arm is lowered: kept whole, split into one arm per
-;; alternative, or split into one or-arm per binding group, given as each
-;; alternative's group (its group's first alternative).
+;; How an or-pattern arm is lowered: kept whole, or split into one or-arm per
+;; binding group, given as each alternative's group (its group's first
+;; alternative).
 (defenum LowerOrArmSplit
   (Keep)
-  (Alternatives)
   (Groups (__tl_dyn-array i64)))
 
 (define (lower-or-arm-split-keep? [split : (& split LowerOrArmSplit)]) : bool
@@ -64433,21 +64427,6 @@
   (match split
     [(LowerOrArmSplit.Keep)
       (ast.ast-match-arm-list-push out (ast.ast-match-arm pattern body))]
-    [(LowerOrArmSplit.Alternatives)
-      (let
-        [alternatives : ast.AstPatternList
-          (lower-pattern-or-alternatives pattern)]
-        [alternative : i64 0]
-        (while (< alternative alternatives.len)
-          (ast.ast-match-arm-list-push
-            out
-            (ast.ast-match-arm
-              (ast.ast-pattern-list-get
-                (& alternatives)
-                alternative
-                (ast.ast-pattern-fallback))
-              body))
-          (set! alternative (+ alternative 1))))]
     [(LowerOrArmSplit.Groups groups)
       ;; The alternatives are disjoint tag tests, so the groups may be tried
       ;; in any order; the group of the last alternative goes last, keeping
@@ -64497,9 +64476,7 @@
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [scrut-ty : ast.AstType]
-  [pattern : ast.AstPattern]
-  [body : i64]
-  [final? : bool]) : LowerOrArmSplit
+  [pattern : ast.AstPattern]) : LowerOrArmSplit
   (if (not
     (lower-pattern-needs-or-expansion? (lower-global-shared-view pattern)))
     (LowerOrArmSplit.Keep)
@@ -64508,22 +64485,11 @@
         (lower-pattern-or-alternatives (lower-global-shared-view pattern))]
       [groups : (__tl_dyn-array i64)
         (lower-or-arm-pattern-groups ctx state scrut-ty (& alternatives))]
-      (cond
-        [(lower-or-groups-single? (& groups)) (LowerOrArmSplit.Keep)]
-        [(and
-            (lower-or-arm-body-small? ctx body)
-            (or
-              (not final?)
-              (not
-                (lower-or-alternative-refutable-inside?
-                  (ast.ast-pattern-list-get
-                    (& alternatives)
-                    (- alternatives.len 1)
-                    (ast.ast-pattern-fallback))))))
-          (LowerOrArmSplit.Alternatives)]
-        [(lower-or-groups-disjoint? (& alternatives) (& groups))
-          (LowerOrArmSplit.Groups groups)]
-        [else (LowerOrArmSplit.Keep)]))))
+      (if (and
+        (not (lower-or-groups-single? (& groups)))
+        (lower-or-groups-disjoint? (& alternatives) (& groups)))
+        (LowerOrArmSplit.Groups groups)
+        (LowerOrArmSplit.Keep)))))
 
 ;; Every alternative's binding group (`lower-or-arm-alternative-groups`, groups
 ;; of one included). A literal alternative marks a scalar scrutinee.
@@ -64598,51 +64564,6 @@
     [(ast.AstPattern.Binding name) name]
     [(ast.AstPattern.Variant name _) name]
     [_ -1]))
-
-;; Whether an expanded alternative tests anything beyond its top-level tag,
-;; length or literal, judged from its spelling alone.
-(define (lower-or-alternative-refutable-inside? [pattern : ast.AstPattern]) : bool
-  (match pattern
-    [(Variant _ args-box) (lower-pattern-list-refutable? (deref args-box))]
-    [(Slice items-box _) (lower-pattern-list-refutable? (deref items-box))]
-    [_ false]))
-
-;; Whether an or-arm's body is cheap to lower once per alternative: at most
-;; `lower-or-arm-body-small-nodes` expression nodes, and no lambda.
-(define (lower-or-arm-body-small? [ctx : tc_core.TcContext] [id : i64]) : bool
-  (>= (lower-or-arm-body-budget-left ctx id (lower-or-arm-body-small-nodes)) 0))
-
-(define (lower-or-arm-body-small-nodes) : i64
-  10)
-
-;; The node budget left after counting `id`'s expression and its children, or
-;; -1 once it runs out or meets a lambda.
-(define (lower-or-arm-body-budget-left
-  [ctx : tc_core.TcContext]
-  [id : i64]
-  [budget : i64]) : i64
-  (if (<= budget 0)
-    -1
-    (let
-      [expr : ast.AstExpr
-        (ast.ast-expr-unspan (& (lower-context-expr-get ctx id)))]
-      (match (lower-global-shared-view expr)
-        [(Lambda _) -1]
-        [_
-          (let
-            [children : ast.AstExprChildList (ast.ast-expr-children expr)]
-            [index : i64 0]
-            [left : i64 (- budget 1)]
-            (while (and (>= left 0) (< index children.len))
-              (match (ast.ast-expr-child-list-get
-                (& children)
-                index
-                (ast.ast-expr-child-fallback))
-                [(Expr child)
-                  (set! left (lower-or-arm-body-budget-left ctx child left))]
-                [_ unit])
-              (set! index (+ index 1)))
-            left)]))))
 
 (define (lower-match-dispatch-arms
   [ctx : tc_core.TcContext]

@@ -169,6 +169,8 @@ compile_profile_nested_peak_reset|all|-|tests/integration/compile_profile_nested
 compile_profile_optimizer_escape|all|-|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-|-
 compile_profile_result_import|all|-|tests/integration/compile_profile_result_import.tl|42|-|-|-|-
 call_eval_order|all|-|tests/integration/call_eval_order.tl|42|-|-|-|-
+call_arg_snapshot|all|0,1,2|tests/integration/call_arg_snapshot.tl|42|-|-|-|-
+call_arg_snapshot_c_abi|all|0,1,2|tests/integration/call_arg_snapshot_c_abi.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c|-
 include_bin|all|-|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin|-
 compiler_load_includes|all|-|src/tests/compiler_load_includes.tl|42|-|-|compiler_load_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl|-
 include_str_comptime|all|-|tests/integration/include_str_comptime.tl|42|-|-|include/str/comptime/owner.tl include_str_comptime_payload.txt include_bin_payload.bin stdlib/comptime.tl|-
@@ -329,6 +331,7 @@ rmw_mem_operand_fold|all|-|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7
 rmw_mem_operand_fold|linux|0,1,2|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7 1024 0\n24 108\n36 24\n6 3\n|8 3|stdlib/io.tl stdlib/string.tl|-
 mem_dest_rmw_fold|all|-|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-|-
 copy_call_word|all|-|tests/integration/copy_call_word.tl|42|-|-|-|-
+copy_call_next_index|all|-,2|tests/integration/copy_call_next_index.tl|42|-|-|-|-
 load_sink_trap_parity|all|-|tests/integration/load_sink_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: $SRC:33:37: array index out of bounds: index=4 length=4\n
 mem_dest_rmw_trap_parity|all|-|tests/integration/mem_dest_rmw_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: $SRC:27:68: array index out of bounds: index=4 length=4\n
 gep_value_direct|all|-|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-

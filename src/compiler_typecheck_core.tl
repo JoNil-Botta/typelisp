@@ -641,6 +641,8 @@
   ;; a segmented declaration/path view. Zero outside that structural scope, so
   ;; idle compiler jobs retain no segment table or maximum-capacity storage.
   (macro-program-view-address i64)
+  ;; 1 while the program declares an `(:opaque)` aggregate (#6999), else 0.
+  (opaque-program i64)
   ;; One job-owned non-fatal channel is shared with lowering and codegen by
   ;; the compiler driver. Its payload arena remains lazy for ordinary jobs.
   (advisory-sink cdiag.CompilerAdvisorySink)
@@ -909,6 +911,7 @@
           (tc-spmd-traversal-state-new)
           (tc-type-resolution-cache-state-new)
           (tc-agg-scalar-cache-state-new)
+          0
           0
           0
           0
@@ -1493,6 +1496,21 @@
           (comptime (offset-of (type TcJobStateData) agg-layout-cache-address)))
         : (MutPtr i64))
       address)))
+
+(define (tc-job-state-opaque-program? [state : TcJobState]) : bool
+  (= (tc-job-state-field state opaque-program i64) 1))
+
+(define (tc-job-state-set-opaque-program! [state : TcJobState] [present : bool]) : unit
+  (unsafe
+    (ptr-write!
+      (ptr-cast
+        (ptr-offset
+          (int->ptr (cast state.address : u64) : (Ptr u8))
+          (comptime (offset-of (type TcJobStateData) opaque-program)))
+        : (MutPtr i64))
+      (if present
+        1
+        0))))
 
 (define (tc-job-state-macro-program-view-address [state : TcJobState]) : i64
   (tc-job-state-field state macro-program-view-address i64))
@@ -23935,7 +23953,17 @@
             (TypeMismatch)
             "typecheck: internal lifetime-elision function type mismatch"))])))
 
+;; Validate a written type. A REFERENT? type is the immediate referent of Ptr,
+;; MutPtr, & or &mut, the one position where an opaque aggregate foreign to the
+;; code's module family may appear (#6999); every other position holds it by
+;; value.
 (define (tc-source-type-policy-ok [ctx : TcContext] [ty : ast.AstType]) : ResultTcUnit
+  (tc-source-type-policy-ok-at ctx ty false))
+
+(define (tc-source-type-policy-ok-at
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [referent? : bool]) : ResultTcUnit
   (if (tc-type-unquote-marker? (tc-global-shared-view ty))
     Ok
     (let
@@ -23980,8 +24008,10 @@
               (TypeMismatch)
               "typecheck: bare Slice type is unsized; borrow it"))]
         [(Box elem) (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
-        [(Ptr elem) (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
-        [(MutPtr elem) (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
+        [(Ptr elem)
+          (tc-source-type-policy-ok-at ctx (ast.ty-node-get elem) true)]
+        [(MutPtr elem)
+          (tc-source-type-policy-ok-at ctx (ast.ty-node-get elem) true)]
         [(Ref lifetime inner)
           (if (tc-elided-lifetime? lifetime)
             (Err (tc-source-elided-reference-policy-message))
@@ -23994,7 +24024,7 @@
               ;; rejected by the normal source policy.
               [(Slice elem)
                 (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
-              [_ (tc-source-type-policy-ok ctx (ast.ty-node-get inner))]))]
+              [_ (tc-source-type-policy-ok-at ctx (ast.ty-node-get inner) true)]))]
         [(MutRef lifetime inner)
           (if (tc-elided-lifetime? lifetime)
             (Err (tc-source-elided-reference-policy-message))
@@ -24003,7 +24033,7 @@
               [(Bytes) Ok]
               [(Slice elem)
                 (tc-source-type-policy-ok ctx (ast.ty-node-get elem))]
-              [_ (tc-source-type-policy-ok ctx (ast.ty-node-get inner))]))]
+              [_ (tc-source-type-policy-ok-at ctx (ast.ty-node-get inner) true)]))]
         [(Region _ inner)
           (tc-source-type-policy-ok ctx (ast.ty-node-get inner))]
         [(Invalidate _ _)
@@ -24013,18 +24043,28 @@
               "typecheck: (:invalidate r T) is only valid as a parameter type"))]
         [(Str) (Err (tc-source-str-value-policy-message))]
         [(Bytes) (Err (tc-source-bytes-value-policy-message))]
-        [(Enum name) (tc-bare-nominal-lifetime-policy-ok ctx name)]
-        [(Struct name) (tc-bare-nominal-lifetime-policy-ok ctx name)]
+        [(Enum name)
+          (let
+            [_ (try (tc-source-opaque-value-policy-ok ctx name referent?))]
+            (tc-bare-nominal-lifetime-policy-ok ctx name))]
+        [(Struct name)
+          (let
+            [_ (try (tc-source-opaque-value-policy-ok ctx name referent?))]
+            (tc-bare-nominal-lifetime-policy-ok ctx name))]
         [(EnumArgs name lifetimes)
-          (tc-nominal-lifetime-use-policy-ok
-            ctx
-            name
-            (ast.ast-lifetime-list-box-shared-view lifetimes))]
+          (let
+            [_ (try (tc-source-opaque-value-policy-ok ctx name referent?))]
+            (tc-nominal-lifetime-use-policy-ok
+              ctx
+              name
+              (ast.ast-lifetime-list-box-shared-view lifetimes)))]
         [(StructArgs name lifetimes)
-          (tc-nominal-lifetime-use-policy-ok
-            ctx
-            name
-            (ast.ast-lifetime-list-box-shared-view lifetimes))]
+          (let
+            [_ (try (tc-source-opaque-value-policy-ok ctx name referent?))]
+            (tc-nominal-lifetime-use-policy-ok
+              ctx
+              name
+              (ast.ast-lifetime-list-box-shared-view lifetimes)))]
         [(VarArgs name _)
           (Err
             (tc-source-type-policy-message (tc-nominal-name-id-display name)))]
@@ -26274,6 +26314,9 @@
     [(Program decls-box)
       (let
         [decls : ast.AstDeclList (ast.ast-decl-list-box-shared-view decls-box)]
+        (tc-job-state-set-opaque-program!
+          (tc-context-job-state ctx)
+          (tc-opaque-decls-declare? (& decls)))
         (tc-source-decl-list-policy-diagnostic-in-module
           ctx
           decls
@@ -39073,14 +39116,17 @@
           (tc-env-key-has-name-id? name)
           (macro-hygiene-global-id? (tc-context-structural-session ctx) name))
         (not (tc-dotted-place-name-id? ctx env name)))
-        (tc-var-expr-after-local-field-check-mode
+        (tc-opaque-value-reference-ok
           ctx
-          env
           name
-          (tc-hygiene-name-text-id-for-session
-            (tc-context-structural-session ctx)
-            name)
-          true)
+          (tc-var-expr-after-local-field-check-mode
+            ctx
+            env
+            name
+            (tc-hygiene-name-text-id-for-session
+              (tc-context-structural-session ctx)
+              name)
+            true))
         (Err fallback-message))]
     [_ (Err fallback-message)]))
 
@@ -43020,6 +43066,12 @@
                 bindings
                 (+ index 1)
                 (tc-global-shared-view body)))]
+          [_
+            (try
+              (tc-opaque-by-value-ok
+                ctx
+                (tc-global-shared-view init-ty)
+                "cannot hold by value the"))]
           [body-state : TcBodyState (tc-context-body-state ctx)]
           (if body-state.inlay-hint-enabled
             (tc-inlay-hint-maybe-record-for-state
@@ -52905,6 +52957,20 @@
   [ctx : TcContext]
   [receiver-ty : ast.AstType]
   [field-id : i64]) : ResultTcType
+  (if (not (tc-job-state-opaque-program? (tc-context-job-state ctx)))
+    (tc-struct-get-result-type-checked-id ctx receiver-ty field-id)
+    (match (tc-opaque-representation-ok
+      ctx
+      (tc-type-strip-region
+        (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
+      "cannot access a field of the")
+      [(Ok) (tc-struct-get-result-type-checked-id ctx receiver-ty field-id)]
+      [(Err message) (Err message)])))
+
+(define (tc-struct-get-result-type-checked-id
+  [ctx : TcContext]
+  [receiver-ty : ast.AstType]
+  [field-id : i64]) : ResultTcType
   (match (tc-type-strip-region
     (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
     [(Struct struct-name)
@@ -53083,27 +53149,37 @@
   [field-id : i64]) : ResultTcBorrowPlace
   (match place
     [(TcBorrowPlace lifetime receiver-ty shared)
-      (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
-        [(Struct struct-name)
-          (let
-            [field-ty : ast.AstType
-              (try (tc-struct-field-type-id ctx struct-name field-id))]
-            (Ok (tc-borrow-place-projected-type lifetime field-ty shared)))]
-        [(StructArgs struct-name lifetimes)
-          (let
-            [field-ty : ast.AstType
-              (try
-                (tc-struct-field-type-with-args-id
-                  ctx
-                  struct-name
-                  (ast.ast-lifetime-list-box-shared-view lifetimes)
-                  field-id))]
-            (Ok (tc-borrow-place-projected-type lifetime field-ty shared)))]
+      (let
         [_
-          (Err
-            (tc-kind-message
-              (BorrowViolation)
-              "typecheck: field projection borrow requires struct place"))])]))
+          (if (tc-job-state-opaque-program? (tc-context-job-state ctx))
+            (try
+              (tc-opaque-representation-ok
+                ctx
+                (tc-type-strip-region
+                  (tc-resolve-type ctx (tc-global-shared-view receiver-ty)))
+                "cannot borrow a field of the"))
+            unit)]
+        (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+          [(Struct struct-name)
+            (let
+              [field-ty : ast.AstType
+                (try (tc-struct-field-type-id ctx struct-name field-id))]
+              (Ok (tc-borrow-place-projected-type lifetime field-ty shared)))]
+          [(StructArgs struct-name lifetimes)
+            (let
+              [field-ty : ast.AstType
+                (try
+                  (tc-struct-field-type-with-args-id
+                    ctx
+                    struct-name
+                    (ast.ast-lifetime-list-box-shared-view lifetimes)
+                    field-id))]
+              (Ok (tc-borrow-place-projected-type lifetime field-ty shared)))]
+          [_
+            (Err
+              (tc-kind-message
+                (BorrowViolation)
+                "typecheck: field projection borrow requires struct place"))]))]))
 
 (define (tc-borrow-place-tuple-field
   [ctx : TcContext]
@@ -54531,6 +54607,9 @@
   [args : ast.AstPatternList]
   [payload-regions : TcNameIdList]) : ResultTcEnv
   (let
+    [_
+      (try
+        (tc-opaque-name-representation-ok ctx enum-name-id "cannot match the"))]
     [enum-name : String (tc-nominal-name-id-display enum-name-id)]
     [variant-name : String
       (tc-env-key-display (tc-context-structural-session ctx) variant-name-id)]
@@ -54791,6 +54870,9 @@
   [pattern-name-id : i64]
   [args : ast.AstPatternList]) : ResultTcEnv
   (let
+    [_
+      (try
+        (tc-opaque-name-representation-ok ctx struct-name-id "cannot match the"))]
     [lookup-name
       (try
         (tc-source-struct-name-for-pattern
@@ -55024,6 +55106,9 @@
   [pattern-name-id : i64]
   [args : ast.AstPatternList]) : ResultTcEnv
   (let
+    [_
+      (try
+        (tc-opaque-name-representation-ok ctx struct-name-id "cannot match the"))]
     [lookup-name
       (try
         (tc-source-struct-name-for-pattern
@@ -55125,6 +55210,9 @@
   [enum-lifetimes : ast.AstLifetimeList]
   [args : ast.AstPatternList]) : ResultTcEnv
   (let
+    [_
+      (try
+        (tc-opaque-name-representation-ok ctx enum-name-id "cannot match the"))]
     [enum-name : String (tc-nominal-name-id-display enum-name-id)]
     [variant-name : String
       (tc-env-key-display (tc-context-structural-session ctx) variant-name-id)]
@@ -59813,6 +59901,12 @@
 (define (tc-init-expr [ctx : TcContext] [env : TcTypeEnv] [ty : ast.AstType]) : ResultTcType
   (let
     [resolved : ast.AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
+    [_
+      (try
+        (tc-opaque-representation-ok
+          ctx
+          (tc-global-shared-view resolved)
+          "cannot initialize the"))]
     [_ (try (tc-init-type-supported ctx env (tc-global-shared-view resolved)))]
     (Ok (tc-tag-active-region env resolved))))
 
@@ -60858,6 +60952,31 @@
                       context)]))]
             (Ok (Unit))))))))
 
+;; A name whose type holds an opaque aggregate by value, or a function whose
+;; parameters or result do, is unusable outside its module family (#6999).
+;; This covers the aggregate's constructors and nullary variants. RESULT is the
+;; name's type.
+(define (tc-opaque-value-reference-ok
+  [ctx : TcContext]
+  [name : i64]
+  [result : ResultTcType]) : ResultTcType
+  (match result
+    [(Ok ty)
+      (let
+        [opaque : i64 (tc-opaque-by-value-name ctx (tc-global-shared-view ty))]
+        (if (< opaque 0)
+          (Ok ty)
+          (Err
+            (tc-opaque-representation-message
+              opaque
+              (if (tc-constructor-name-id? ctx name)
+                "cannot construct the"
+                (str_cat.str-cat
+                  "cannot use "
+                  (tc-nominal-name-id-display name)
+                  ", which holds by value the"))))))]
+    [(Err message) (Err message)]))
+
 (define (tc-var-expr-after-local-field-check-mode
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -61004,7 +61123,12 @@
   [env : TcTypeEnv]
   [name : i64]
   [name-text : String]) : ResultTcType
-  (tc-var-expr-after-local-field-check-mode ctx env name name-text false))
+  (if (tc-job-state-opaque-program? (tc-context-job-state ctx))
+    (tc-opaque-value-reference-ok
+      ctx
+      name
+      (tc-var-expr-after-local-field-check-mode ctx env name name-text false))
+    (tc-var-expr-after-local-field-check-mode ctx env name name-text false)))
 
 (define (tc-source-lookup-error-or-variant-constructor
   [ctx : TcContext]
@@ -73691,6 +73815,215 @@
   (if (csym.compiler-symbol-root-module-id? module-id)
     "the entry module"
     (ci.intern-syntax-name-text-or module-id "<module>")))
+
+;; `(:opaque)` representation authority (#6999). An opaque struct or enum's
+;; representation belongs to its module family: the defining module and its
+;; dotted descendants. Elsewhere the type is usable only behind Ptr, MutPtr, &
+;; and &mut. Code a macro expands into a module is checked as that module's
+;; code, like E0220.
+;; Whether USE-MODULE is DEF-MODULE or one of its dotted descendants.
+(define (tc-opaque-module-in-family? [use-module : i64] [def-module : i64]) : bool
+  (if (tc-module-ids-same? use-module def-module)
+    true
+    (if (or
+      (csym.compiler-symbol-root-module-id? use-module)
+      (csym.compiler-symbol-root-module-id? def-module))
+      false
+      (let
+        [def-text : String (ci.intern-syntax-name-text-or def-module "")]
+        [use-text : String (ci.intern-syntax-name-text-or use-module "")]
+        [def-length : i64 (string.string-length def-text)]
+        (and
+          (> def-length 0)
+          (> (string.string-length use-text) def-length)
+          (string.is-string-prefix-at use-text def-text 0)
+          (= (string.string-ref use-text def-length) '.'))))))
+
+;; The symbol index of the struct or enum NAME-ID when it is declared
+;; (:opaque), else -1.
+(define (tc-opaque-decl-index [ctx : TcContext] [name-id : i64]) : i64
+  (let
+    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [handle : i64
+      (csym.compiler-symbols-lookup-type-id-or
+        symbols
+        name-id
+        (csym.compiler-symbols-missing-handle))]
+    [kind : i64
+      (if (csym.compiler-symbols-handle-found? handle)
+        (csym.compiler-symbol-handle-kind handle)
+        -1)]
+    (if (or
+      (= kind (csym.compiler-symbol-kind-defstruct))
+      (= kind (csym.compiler-symbol-kind-defenum)))
+      (let
+        [index : i64 (csym.compiler-symbol-handle-index handle)]
+        (match (csym.compiler-symbols-decl-at-index symbols index)
+          [(Ok decl)
+            (if (ast.ast-decl-opaque? (& decl))
+              index
+              -1)]
+          [(Err _) -1]))
+      -1)))
+
+;; Whether the code CTX checks lies outside the module family of the opaque
+;; aggregate at symbol INDEX.
+(define (tc-opaque-foreign-index? [ctx : TcContext] [index : i64]) : bool
+  (let
+    [symbols : (& ctx csym.CompilerSymbols) (tc-context-symbols ctx)]
+    [def-module : i64
+      (csym.compiler-symbols-owner-module-id-at-index-or
+        symbols
+        index
+        cbi.compiler-builtin-id-fix-empty)]
+    (not (tc-opaque-module-in-family? (tc-context-module-id ctx) def-module))))
+
+;; The name of TY when TY is a struct or enum declared (:opaque) whose module
+;; family excludes the code CTX checks, else -1.
+(define (tc-opaque-foreign-type-name [ctx : TcContext] [ty : ast.AstType]) : i64
+  (if (not (tc-job-state-opaque-program? (tc-context-job-state ctx)))
+    -1
+    (let
+      [name : i64
+        (match (tc-global-shared-view ty)
+          [(Struct name) name]
+          [(StructArgs name _) name]
+          [(Enum name) name]
+          [(EnumArgs name _) name]
+          [_ -1])]
+      [index : i64
+        (if (< name 0)
+          -1
+          (tc-opaque-decl-index ctx name))]
+      (if (and (>= index 0) (tc-opaque-foreign-index? ctx index))
+        name
+        -1))))
+
+;; Whether DECLS, module bodies included, declare an (:opaque) aggregate. The
+;; gates below cost nothing more than this flag for programs without one.
+(define (tc-opaque-decls-declare? [decls : (& decls ast.AstDeclList)]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (while (and (not found) (< index (ast.ast-decl-list-len decls)))
+      (let
+        [decl : ast.AstDecl (ast.ast-decl-list-ref decls index)]
+        (match (tc-global-shared-view decl)
+          [(ModuleBody _ body-box)
+            (set!
+              found
+              (tc-opaque-decls-declare?
+                (& (ast.ast-decl-list-box-shared-view body-box))))]
+          [_ (set! found (ast.ast-decl-opaque? (& decl)))]))
+      (set! index (+ index 1)))
+    found))
+
+;; E0221 text for USE (such as "cannot construct") applied to opaque NAME.
+(define (tc-opaque-representation-message [name : i64] [use : String]) : String
+  (tc-kind-message
+    (OpaqueRepresentation)
+    (str_cat.str-cat
+      "typecheck: "
+      use
+      " opaque type "
+      (tc-nominal-name-id-display name)
+      " outside its module family; there it is usable only behind Ptr, MutPtr, & or &mut")))
+
+;; A written type that holds an opaque aggregate by value: outside its module
+;; family only a pointer or reference referent may name it.
+(define (tc-source-opaque-value-policy-ok
+  [ctx : TcContext]
+  [name : i64]
+  [referent? : bool]) : ResultTcUnit
+  (if referent?
+    Ok
+    (tc-opaque-name-representation-ok ctx name "cannot hold by value the")))
+
+;; The first opaque aggregate foreign to CTX's module family that TY holds by
+;; value, else -1. A Ptr, MutPtr, & or &mut referent is not held by value.
+(define (tc-opaque-by-value-name [ctx : TcContext] [ty : ast.AstType]) : i64
+  (let
+    [resolved : ast.AstType (tc-resolve-type ctx ty)]
+    (match (tc-global-shared-view resolved)
+      [(Struct _) (tc-opaque-foreign-type-name ctx resolved)]
+      [(StructArgs _ _) (tc-opaque-foreign-type-name ctx resolved)]
+      [(Enum _) (tc-opaque-foreign-type-name ctx resolved)]
+      [(EnumArgs _ _) (tc-opaque-foreign-type-name ctx resolved)]
+      [(Tuple elems)
+        (tc-opaque-by-value-name-in-list
+          ctx
+          (& (ast.ast-type-list-box-shared-view elems))
+          0)]
+      [(Func args ret)
+        (let
+          [in-args : i64
+            (tc-opaque-by-value-name-in-list
+              ctx
+              (& (ast.ast-type-list-box-shared-view args))
+              0)]
+          (if (>= in-args 0)
+            in-args
+            (tc-opaque-by-value-name ctx (ast.ty-node-get ret))))]
+      [(Array elem _) (tc-opaque-by-value-name ctx (ast.ty-node-get elem))]
+      [(DynArray elem) (tc-opaque-by-value-name ctx (ast.ty-node-get elem))]
+      [(Box elem) (tc-opaque-by-value-name ctx (ast.ty-node-get elem))]
+      [(Region _ inner) (tc-opaque-by-value-name ctx (ast.ty-node-get inner))]
+      [_ -1])))
+
+(define (tc-opaque-by-value-name-in-list
+  [ctx : TcContext]
+  [types : (& types ast.AstTypeList)]
+  [index : i64]) : i64
+  (if (>= index (ast.ast-type-list-len types))
+    -1
+    (let
+      [found : i64
+        (tc-opaque-by-value-name
+          ctx
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))]
+      (if (>= found 0)
+        found
+        (tc-opaque-by-value-name-in-list ctx types (+ index 1))))))
+
+;; Err with E0221 when TY holds an opaque aggregate foreign to CTX's module
+;; family by value, such as an inferred `let` binding of a pointer read.
+(define (tc-opaque-by-value-ok
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [use : String]) : ResultTcUnit
+  (if (not (tc-job-state-opaque-program? (tc-context-job-state ctx)))
+    Ok
+    (let
+      [name : i64 (tc-opaque-by-value-name ctx ty)]
+      (if (< name 0)
+        Ok
+        (Err (tc-opaque-representation-message name use))))))
+
+;; Err with E0221 when NAME is an opaque aggregate foreign to CTX's module
+;; family, else Ok.
+(define (tc-opaque-name-representation-ok
+  [ctx : TcContext]
+  [name : i64]
+  [use : String]) : ResultTcUnit
+  (if (not (tc-job-state-opaque-program? (tc-context-job-state ctx)))
+    Ok
+    (let
+      [index : i64 (tc-opaque-decl-index ctx name)]
+      (if (and (>= index 0) (tc-opaque-foreign-index? ctx index))
+        (Err (tc-opaque-representation-message name use))
+        Ok))))
+
+;; Err with E0221 when TY is a foreign opaque aggregate, else Ok.
+(define (tc-opaque-representation-ok
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [use : String]) : ResultTcUnit
+  (let
+    [name : i64 (tc-opaque-foreign-type-name ctx ty)]
+    (if (< name 0)
+      Ok
+      (Err (tc-opaque-representation-message name use)))))
 
 (define (tc-move-global-owner-module-id [ctx : TcContext] [handle : i64]) : i64
   (csym.compiler-symbols-owner-module-id-at-index-or

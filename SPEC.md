@@ -732,9 +732,8 @@ or cleanup. It is not a warning or discard rule by itself. The marker may
 compose with valid `:lifetimes`, `:repr c` (structs), and `:cleanup` metadata;
 existing restrictions between those forms still apply. The canonical order
 for new declarations and emitted source is `:lifetimes`, `:repr`, `:align`,
-`:cleanup`, then zero-argument markers (`:must-use`, followed by `:opaque`
-when that marker is introduced). Existing valid metadata orders remain
-accepted.
+`:cleanup`, then zero-argument markers (`:must-use`, then `:opaque`; see
+section 3.5.4). Existing valid metadata orders remain accepted.
 
 ```lisp test=ignore name=must-use-aggregate-metadata reason="declaration metadata only"
 (defstruct Receipt
@@ -829,6 +828,59 @@ are 8 bytes with 8-byte alignment on both Linux x86_64 System V and Windows
 x64. If future targets need different pointer sizes or alignments, layout
 queries are target-sensitive compile-time results and tests must either pin
 the target or assert the target-specific values.
+
+#### 3.5.4 Opaque aggregates
+
+A `defstruct` or `defenum` may carry the zero-argument marker `(:opaque)`
+before its first field or variant. Like `(:must-use)` it takes no arguments,
+may appear only once and composes with the other aggregate metadata; it does
+not change layout or ABI. It keeps the type's representation inside its
+**module family**: the defining module and the modules whose identity is that
+module's name followed by `.` (its dotted descendants, such as `db.pool` for a
+type defined in `db`). Files without a `(module ...)` declaration share the
+entry module, which is one family.
+
+Outside the family the type's name stays visible but is usable only as the
+immediate referent of `Ptr`, `MutPtr`, `&` or `&mut`, including inside
+function types. Code there that does any of the following is rejected with
+E0221, even inside `unsafe`:
+
+- uses a constructor or nullary variant of the type, or `(init : T)`;
+- projects, sets or borrows one of its fields;
+- matches one of its variants or struct patterns, owned or borrowed;
+- writes the type by value: a parameter, result, `let` annotation, struct field,
+  enum payload, global, tuple or array element, `Box` contents, or a `(type T)`
+  operand, so `(size-of (type T))` is rejected;
+- binds a value that holds it by value with `let`, even without an annotation;
+- names a value or function whose type holds it by value, such as a function of
+  the defining module that returns it.
+
+Code a macro expands into a module is checked as that module's code.
+
+```lisp test=ignore name=opaque-aggregate reason="cross-module example"
+(module db)
+
+(defstruct Connection
+  (:opaque)
+  (fd i64))
+
+(define (connection-fd [c : (& a Connection)]) : i64
+  c.fd)
+```
+
+Another module may write `(& a db.Connection)` or `(Ptr db.Connection)` and call
+`db.connection-fd`, but not `(db.Connection 3)`, `c.fd`, or a parameter of type
+`db.Connection`.
+
+Not yet enforced:
+- a module of another package that declares itself inside the family's dotted
+  namespace is still treated as a family member (#8733);
+- layout queries and reflection still reach the representation through a type
+  derived from an allowed one, such as the `reference-element-type` of
+  `(& a T)` (#8735);
+- a value that `ptr-read` or `deref` yields is rejected only where it is bound
+  with `let` or named, and `ptr-offset` and `ptr-write!` are not checked
+  (#8734).
 
 ### 3.6 Type aliases
 

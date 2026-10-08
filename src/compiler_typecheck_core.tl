@@ -3983,7 +3983,10 @@
       unit)))
 
 (defenum TcBorrowPlace
-  (TcBorrowPlace i64 ast.AstType))
+  ;; The borrow's lifetime, the referent type, and whether the path to the
+  ;; referent passes through a shared reference. No `&mut` borrow may reach a
+  ;; referent through one (#8694).
+  (TcBorrowPlace i64 ast.AstType bool))
 
 (defenum ResultTcBorrowPlace
   (Ok TcBorrowPlace)
@@ -35819,7 +35822,7 @@
     [expr-bases : i64 (tc-context-expr-bases ctx)]
     [place (try (tc-borrow-place ctx expr-bases env arg))]
     (match place
-      [(TcBorrowPlace lifetime referent-ty)
+      [(TcBorrowPlace lifetime referent-ty _)
         (Ok (ast.ast-ty-ref lifetime (& referent-ty)))])))
 
 ;; The auto-borrow `(& arg)` as a value. Only the place is a node; the borrow
@@ -35842,7 +35845,7 @@
     (let
       [place : TcBorrowPlace (try (tc-borrow-place-var name got))]
       (match place
-        [(TcBorrowPlace lifetime referent-ty)
+        [(TcBorrowPlace lifetime referent-ty _)
           (Ok (ast.ast-ty-ref lifetime (& referent-ty)))]))))
 
 ;; Body-local memo for a call argument's non-contextual inferred type, keyed by
@@ -41484,7 +41487,7 @@
           (tc-global-shared-view source))
           [(Ok place)
             (match place
-              [(TcBorrowPlace lifetime _)
+              [(TcBorrowPlace lifetime _ _)
                 (Ok
                   (tc-slice-view-borrow-type ctx kind lifetime source-element))])]
           [(Err message)
@@ -52986,8 +52989,9 @@
 
 (define (tc-borrow-place-var-by-value [name : i64] [ty : ast.AstType]) : ResultTcBorrowPlace
   (match (tc-type-outer-region (tc-global-shared-view ty))
-    [(Some region) (Ok (TcBorrowPlace region (tc-borrow-referent-type ty)))]
-    [(No) (Ok (TcBorrowPlace name (tc-borrow-referent-type ty)))]))
+    [(Some region)
+      (Ok (TcBorrowPlace region (tc-borrow-referent-type ty) false))]
+    [(No) (Ok (TcBorrowPlace name (tc-borrow-referent-type ty) false))]))
 
 (define (tc-reference-containing-place-borrow-ok? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -53022,12 +53026,14 @@
       (Ok
         (TcBorrowPlace
           lifetime
-          (tc-borrow-referent-type (ast.ty-node-get referent-ty))))]
+          (tc-borrow-referent-type (ast.ty-node-get referent-ty))
+          true))]
     [(MutRef lifetime referent-ty)
       (Ok
         (TcBorrowPlace
           lifetime
-          (tc-borrow-referent-type (ast.ty-node-get referent-ty))))]
+          (tc-borrow-referent-type (ast.ty-node-get referent-ty))
+          false))]
     [_
       (if (and
         (tc-type-contains-reference? (tc-global-shared-view ty))
@@ -53046,34 +53052,43 @@
 ;; its referent. The stored reference owns the provenance lifetime; retaining
 ;; the enclosing place lifetime would make `(& (array-ref iter.slots i))`
 ;; appear to borrow the iterator state rather than the source array.
+;; A stored shared reference makes the rest of the path shared; a stored `&mut`
+;; reached through a shared one still grants only shared access.
 (define (tc-borrow-place-projected-type
   [fallback-lifetime : i64]
-  [projected-ty : ast.AstType]) : TcBorrowPlace
+  [projected-ty : ast.AstType]
+  [through-shared : bool]) : TcBorrowPlace
   ;; Field and tuple declarations are already resolved before projection; the
   ;; enclosing place has had any transient region tag stripped as well.
   (match (tc-global-shared-view projected-ty)
     [(Ref lifetime referent-ty)
       (TcBorrowPlace
         lifetime
-        (tc-borrow-referent-type (ast.ty-node-get referent-ty)))]
+        (tc-borrow-referent-type (ast.ty-node-get referent-ty))
+        true)]
     [(MutRef lifetime referent-ty)
       (TcBorrowPlace
         lifetime
-        (tc-borrow-referent-type (ast.ty-node-get referent-ty)))]
-    [_ (TcBorrowPlace fallback-lifetime (tc-borrow-referent-type projected-ty))]))
+        (tc-borrow-referent-type (ast.ty-node-get referent-ty))
+        through-shared)]
+    [_
+      (TcBorrowPlace
+        fallback-lifetime
+        (tc-borrow-referent-type projected-ty)
+        through-shared)]))
 
 (define (tc-borrow-place-struct-field-id
   [ctx : TcContext]
   [place : TcBorrowPlace]
   [field-id : i64]) : ResultTcBorrowPlace
   (match place
-    [(TcBorrowPlace lifetime receiver-ty)
+    [(TcBorrowPlace lifetime receiver-ty shared)
       (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
         [(Struct struct-name)
           (let
             [field-ty : ast.AstType
               (try (tc-struct-field-type-id ctx struct-name field-id))]
-            (Ok (tc-borrow-place-projected-type lifetime field-ty)))]
+            (Ok (tc-borrow-place-projected-type lifetime field-ty shared)))]
         [(StructArgs struct-name lifetimes)
           (let
             [field-ty : ast.AstType
@@ -53083,7 +53098,7 @@
                   struct-name
                   (ast.ast-lifetime-list-box-shared-view lifetimes)
                   field-id))]
-            (Ok (tc-borrow-place-projected-type lifetime field-ty)))]
+            (Ok (tc-borrow-place-projected-type lifetime field-ty shared)))]
         [_
           (Err
             (tc-kind-message
@@ -53095,7 +53110,7 @@
   [place : TcBorrowPlace]
   [index : i64]) : ResultTcBorrowPlace
   (match place
-    [(TcBorrowPlace lifetime tuple-ty)
+    [(TcBorrowPlace lifetime tuple-ty shared)
       (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
         [(Tuple elems)
           (let
@@ -53104,7 +53119,7 @@
                 (tc-type-list-ref
                   (ast.ast-type-list-box-shared-view elems)
                   index))]
-            (Ok (tc-borrow-place-projected-type lifetime elem-ty)))]
+            (Ok (tc-borrow-place-projected-type lifetime elem-ty shared)))]
         [_
           (Err
             (tc-kind-message
@@ -53115,24 +53130,29 @@
   [ctx : TcContext]
   [place : TcBorrowPlace]) : ResultTcBorrowPlace
   (match place
-    [(TcBorrowPlace lifetime array-ty)
+    [(TcBorrowPlace lifetime array-ty shared)
       (match (tc-type-strip-region
         (tc-resolve-type ctx (tc-global-shared-view array-ty)))
         [(Array elem-ty _)
           (Ok
             (TcBorrowPlace
               lifetime
-              (tc-borrow-referent-type (ast.ty-node-get elem-ty))))]
+              (tc-borrow-referent-type (ast.ty-node-get elem-ty))
+              shared))]
+        ;; Private buffer elements are heap storage the shared-path check does
+        ;; not cover yet (#8743); see `tc-borrow-referent-private-buffer?`.
         [(DynArray elem-ty)
           (Ok
             (TcBorrowPlace
               lifetime
-              (tc-borrow-referent-type (ast.ty-node-get elem-ty))))]
+              (tc-borrow-referent-type (ast.ty-node-get elem-ty))
+              false))]
         [(Slice elem-ty)
           (Ok
             (TcBorrowPlace
               lifetime
-              (tc-borrow-referent-type (ast.ty-node-get elem-ty))))]
+              (tc-borrow-referent-type (ast.ty-node-get elem-ty))
+              shared))]
         [_
           (Err
             (str_cat.str-cat
@@ -53143,13 +53163,16 @@
 
 (define (tc-borrow-place-box-get [ctx : TcContext] [place : TcBorrowPlace]) : ResultTcBorrowPlace
   (match place
-    [(TcBorrowPlace lifetime box-ty)
+    [(TcBorrowPlace lifetime box-ty _)
       (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
+        ;; Box contents are heap storage the shared-path check does not cover
+        ;; yet (#8743); see `tc-borrow-referent-private-buffer?`.
         [(Box inner-ty)
           (Ok
             (TcBorrowPlace
               lifetime
-              (tc-borrow-referent-type (ast.ty-node-get inner-ty))))]
+              (tc-borrow-referent-type (ast.ty-node-get inner-ty))
+              false))]
         [_
           (Err
             (tc-kind-message
@@ -53502,28 +53525,48 @@
           context
           "; reference value would escape lexical scope"))]))
 
+;; The compiler's own passes still write heap storage that they reach through a
+;; shared reference: private `__tl_dyn-array` buffers, their elements, and Box
+;; contents. Until those move behind `&mut` (#8743), a `&mut` borrow of a
+;; private buffer handle, or of storage behind a Box or private buffer, is not
+;; rejected for the shared path. Every other referent is.
+(define (tc-borrow-referent-private-buffer? [referent-ty : ast.AstType]) : bool
+  (match referent-ty
+    [(DynArray _) true]
+    [_ false]))
+
 (define (tc-borrow-place-result-type
   [mutable : bool]
   [lifetime : ast.AstBorrowLifetime]
   [place : TcBorrowPlace]) : ResultTcType
   (match place
-    [(TcBorrowPlace inferred referent-ty)
-      (match lifetime
-        [(Inferred)
-          (Ok
-            (if mutable
-              (ast.ast-ty-mut-ref inferred (& referent-ty))
-              (ast.ast-ty-ref inferred (& referent-ty))))]
-        [(Named requested)
-          (if (= requested inferred)
+    [(TcBorrowPlace inferred referent-ty through-shared)
+      (if (and
+        mutable
+        through-shared
+        (not
+          (tc-borrow-referent-private-buffer?
+            (tc-global-shared-view referent-ty))))
+        (Err
+          (tc-kind-message
+            (BorrowViolation)
+            "typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)"))
+        (match lifetime
+          [(Inferred)
             (Ok
               (if mutable
                 (ast.ast-ty-mut-ref inferred (& referent-ty))
-                (ast.ast-ty-ref inferred (& referent-ty))))
-            (Err
-              (tc-kind-message
-                (LifetimeMismatch)
-                "typecheck: borrow lifetime mismatch")))])]))
+                (ast.ast-ty-ref inferred (& referent-ty))))]
+          [(Named requested)
+            (if (= requested inferred)
+              (Ok
+                (if mutable
+                  (ast.ast-ty-mut-ref inferred (& referent-ty))
+                  (ast.ast-ty-ref inferred (& referent-ty))))
+              (Err
+                (tc-kind-message
+                  (LifetimeMismatch)
+                  "typecheck: borrow lifetime mismatch")))]))]))
 
 (define (tc-borrow-expr-with-policy
   [ctx : TcContext]

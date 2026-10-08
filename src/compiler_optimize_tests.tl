@@ -3264,7 +3264,7 @@
     (test.assert-true
       (opt-input-arena-all-placed? (& input) (& carried))
       "the carried survivors are the placed bodies")
-    (opt.opt-optimizer-input-release-all! (& input))))
+    (opt.opt-optimizer-input-release-all! (&mut input))))
 
 ;; A survivor the stage never placed is copied into the input arena, so the
 ;; loop still reads nothing from the arena that produced it: here the source
@@ -3419,14 +3419,15 @@
       2
       "two chunks wait for the loop")
     (let
-      [cursor : i64 (opt.opt-optimizer-input-release-passed! (& release) 0 0)]
+      [cursor : i64
+        (opt.opt-optimizer-input-release-passed! (&mut release) 0 0)]
       (test.assert-i64-eq cursor 0 "after main, chunk 0 still has a reader")
       (test.assert-true
         (> (array-ref release.chunks 0) 0)
         "chunk 0 stays open while input_loop is ahead")
       (set!
         cursor
-        (opt.opt-optimizer-input-release-passed! (& release) 1 cursor))
+        (opt.opt-optimizer-input-release-passed! (&mut release) 1 cursor))
       (test.assert-i64-eq cursor 1 "chunk 0 goes after input_loop")
       (test.assert-i64-eq (array-ref release.chunks 0) 0 "chunk 0 is released")
       (test.assert-true
@@ -3434,14 +3435,14 @@
         "chunk 1 stays open while input_leaf is ahead")
       (set!
         cursor
-        (opt.opt-optimizer-input-release-passed! (& release) 2 cursor))
+        (opt.opt-optimizer-input-release-passed! (&mut release) 2 cursor))
       (test.assert-i64-eq
         (array-ref release.chunks 1)
         0
         "chunk 1 goes after input_leaf")
       (set!
         cursor
-        (opt.opt-optimizer-input-release-passed! (& release) 3 cursor))
+        (opt.opt-optimizer-input-release-passed! (&mut release) 3 cursor))
       (test.assert-i64-eq cursor 2 "the copy releases no chunk")
       (let
         [copy-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks copy)]
@@ -3451,7 +3452,7 @@
             "input_leaf")
           1
           "the copied survivor outlives every chunk"))
-      (opt.opt-optimizer-input-release-all! (& input)))))
+      (opt.opt-optimizer-input-release-all! (&mut input)))))
 
 ;; The production level-2 path destroys the inline arena before its
 ;; per-function loop, so every body the loop reads must already be resident in

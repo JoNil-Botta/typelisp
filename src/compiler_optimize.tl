@@ -101697,7 +101697,7 @@
     (arena.tl_arena_destroy handle)))
 
 (define (opt-optimizer-input-release-chunk!
-  [release : (& release OptOptimizerInputRelease)]
+  [release : (&mut release OptOptimizerInputRelease)]
   [chunk : i64]) : unit
   (let
     [handle : i64 (array-ref release.chunks chunk)]
@@ -101791,7 +101791,7 @@
 ;; Release every input chunk whose last reader is at or before loop position
 ;; POSITION, starting from `order[cursor]`, and return the next cursor.
 (define (opt-optimizer-input-release-passed!
-  [release : (& release OptOptimizerInputRelease)]
+  [release : (&mut release OptOptimizerInputRelease)]
   [position : i64]
   [cursor : i64]) : i64
   (let
@@ -101807,11 +101807,12 @@
 
 ;; Release whatever input arenas remain once the loop has run: any chunk still
 ;; open, then the carrier.
-(define (opt-optimizer-input-release-all! [input : (& input OptOptimizerInput)]) : unit
+(define (opt-optimizer-input-release-all!
+  [input : (&mut input OptOptimizerInput)]) : unit
   (let
     [i : i64 0]
     (while (< i (array-length input.release.chunks))
-      (opt-optimizer-input-release-chunk! (& input.release) i)
+      (opt-optimizer-input-release-chunk! (&mut input.release) i)
       (set! i (+ i 1)))
     (opt-release-optimizer-input-arena "optimizer-input" input.arena)))
 
@@ -101831,7 +101832,7 @@
   [funcs : ir.CompilerIrFunctionSeq]
   [level : i64]
   [summaries : OptProgramSummaries]
-  [input : (& input OptOptimizerInput)]) : ir.CompilerIrFunctionSeq
+  [input : (&mut input OptOptimizerInput)]) : ir.CompilerIrFunctionSeq
   (if (= level 0)
     funcs
     (let
@@ -101921,7 +101922,7 @@
   [level : i64]
   [scratch : i64]
   [summaries : OptProgramSummaries]
-  [input : (& input OptOptimizerInput)]) : ir.CompilerIrFunctionSeq
+  [input : (&mut input OptOptimizerInput)]) : ir.CompilerIrFunctionSeq
   (let
     [index : i64 0]
     [release-cursor : i64 0]
@@ -101961,7 +101962,7 @@
         (set!
           release-cursor
           (opt-optimizer-input-release-passed!
-            (& input.release)
+            (&mut input.release)
             index
             release-cursor))
         (set! index (+ index 1))))
@@ -124194,7 +124195,7 @@
                         optimizer-functions
                         level
                         (compiler-opt-global-shared-view summaries)
-                        (& optimizer-input))]
+                        (&mut optimizer-input))]
                     ;; No live pointer into the optimizer-input arenas remains
                     ;; here; the loop has already released every chunk it
                     ;; passed. Every function in `optimized-functions` was
@@ -124217,7 +124218,8 @@
                         (opt-release-optimizer-input-arena
                           "optimize-inline"
                           inline-arena)
-                        (opt-optimizer-input-release-all! (& optimizer-input)))]
+                        (opt-optimizer-input-release-all!
+                          (&mut optimizer-input)))]
                     (begin
                       (cfg
                         compile-profile

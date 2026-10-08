@@ -898,6 +898,10 @@
     ;; reconstructed by interpreted quasiquote. Refs #5724, #6215.
     compiler-comptime-host-callback-expr-tuple
     compiler-comptime-host-callback-expr-array
+    ;; Loop control in templates, such as the `break` that ends a prelude
+    ;; `any?` / `all?` scan: push the node the parser produces.
+    compiler-comptime-host-callback-expr-break
+    compiler-comptime-host-callback-expr-continue
     ;; run-ops replays a batch of status ops encoded as data: `a` points at the
     ;; batch and `b` is its byte length. The batch names each op it uses, so
     ;; it binds callbacks by name like an image import, and it calls each op

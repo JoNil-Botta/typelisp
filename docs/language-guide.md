@@ -218,8 +218,8 @@ before ordinary typechecking. Legacy string-path imports are rejected; use a
 dotted module identity for every source import.
 
 The compile driver prepends the stdlib runtime and the core macro module as
-an implicit prelude, so bare `when`, `unless`, `and`, `or`, scalar `for`, and
-bracket-arm `cond` resolve without imports. Stdlib modules otherwise resolve
+an implicit prelude, so bare `when`, `unless`, `and`, `or`, scalar `for`,
+`any?`, `all?`, `+=`, `-=`, and bracket-arm `cond` resolve without imports. Stdlib modules otherwise resolve
 local-first, then from `--stdlib-root <dir>` (or the
 `TYPELISP_STDLIB_ROOT` fallback), then from the compiler's embedded copy of
 the checked-in stdlib. Prefer
@@ -266,8 +266,8 @@ the server host and accepts `target` plus a string-array `cfg` in
 
 ### Expression forms
 
-`if`, `when`, `unless`, `let`, scalar `for`, `while` (with unit
-`break`/`continue`),
+`if`, `when`, `unless`, `let`, scalar `for`, `any?`, `all?`, `while` (with
+unit `break`/`continue`), `+=`, `-=`,
 `begin`, `set!`, `match` (nested/recursive enum patterns, constructor-shaped
 struct patterns, `(slice ...)` length patterns over borrowed Slices, `_`),
 `ann`, `cast`, `return`, `try`, `foreach`,
@@ -328,8 +328,13 @@ use the end-state forms:
   imports are compatibility-only.
 - Prefer qualified short stdlib names such as `string.append`; flat
   module-prefixed names such as `string-append` are transitional.
-- Use the prelude spellings `when`, `unless`, `and`, `or`, scalar `for`, and
-  bracket-arm `cond`: `(cond [test expr ...] ... [else fallback ...])`.
+- Use the prelude spellings `when`, `unless`, `and`, `or`, scalar `for`,
+  `any?`, `all?`, `+=`, `-=`, and bracket-arm `cond`:
+  `(cond [test expr ...] ... [else fallback ...])`.
+- Count with `(for [i (iterator.range start end)] ...)` and walk a
+  collection with `(for [item (& items)] ...)` rather than a hand-written index
+  `while`; a range and a borrowed array, Slice,
+  `__tl_dyn-array` or slots/len struct expand to a plain counting loop.
 - Write a body sequence directly in a body position, including `match` and
   `cond` arms, rather than wrapping it in `begin`; `typelisp lint
   --redundant-begin` reports and fixes the wrappers.

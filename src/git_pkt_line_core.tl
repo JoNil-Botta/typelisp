@@ -116,15 +116,17 @@
   (Ok String)
   (Err GitProtocolError))
 
-;: Unconsumed input starts at `offset` of `pending`. Once `terminal`, the
-;: stream has ended and any further byte is `TrailingBytes`.
+;: Unconsumed input is `pending` from `offset`, then the `staged` bytes fed
+;: since the last merge. Once `terminal`, the stream has ended and any further
+;: byte is `TrailingBytes`.
 (defstruct GitPktReader
   (pending String)
   (offset i64)
+  (staged byte_buf.ByteBufBuilder)
   (terminal bool))
 
 (define (git-pkt-reader-new) : GitPktReader
-  (GitPktReader "" 0 false))
+  (GitPktReader "" 0 (byte_buf.byte-buf-builder-new) false))
 
 (define (git-pkt-byte [bytes : (& bytes str)] [index : i64]) : i64
   (cast (string.string-ref bytes index) : i64))
@@ -136,9 +138,15 @@
     [(and (>= byte 65) (<= byte 70)) (+ 10 (- byte 65))]
     [else -1]))
 
+;: Unconsumed bytes of `pending`, not counting staged input.
+(define (git-pkt-reader-pending-available [reader : (& reader GitPktReader)]) : i64
+  (- (string.string-length (& reader.pending)) reader.offset))
+
 ;: Unconsumed bytes buffered in `reader`.
 (define (git-pkt-reader-available [reader : (& reader GitPktReader)]) : i64
-  (- (string.string-length (& reader.pending)) reader.offset))
+  (+
+    (git-pkt-reader-pending-available reader)
+    (byte_buf.byte-buf-builder-len (& reader.staged))))
 
 ;: Append `chunk` to the unconsumed input. Input after the terminal packet is
 ;: refused.
@@ -147,29 +155,40 @@
   [chunk : (& chunk str)]) : ResultGitPktUnit
   (let
     [count : i64 (string.string-length chunk)]
-    [available : i64 (git-pkt-reader-available (& reader))]
     (cond
       [(= count 0) (Ok)]
       [reader.terminal (Err TrailingBytes)]
       [else
-        (let
-          [out : byte_buf.ByteBufBuilder
-            (byte_buf.byte-buf-builder-with-capacity (+ available count))]
-          (byte_buf.byte-buf-builder-append-string-range
-            (&mut out)
-            (string.substring (& reader.pending) reader.offset available)
-            0
-            available)
-          (byte_buf.byte-buf-builder-append-string-range
-            (&mut out)
-            (string.substring chunk 0 count)
-            0
-            count)
-          (set!
-            reader.pending
-            (byte_buf.byte-buf-builder-finish-string (& out)))
-          (set! reader.offset 0)
-          (Ok))])))
+        (byte_buf.byte-buf-builder-append-string-range
+          (&mut reader.staged)
+          (string.substring chunk 0 count)
+          0
+          count)
+        (Ok)])))
+
+;: Move the staged bytes behind the unconsumed part of `pending`. `next!` merges
+;: only once the next length header, or the whole next packet, has arrived, so
+;: each input byte is copied a bounded number of times however finely the
+;: input is split.
+(define (git-pkt-reader-merge! [reader : (&mut reader GitPktReader)]) : unit
+  (let
+    [rest : i64 (git-pkt-reader-pending-available (& reader))]
+    [staged : i64 (byte_buf.byte-buf-builder-len (& reader.staged))]
+    [out : byte_buf.ByteBufBuilder
+      (byte_buf.byte-buf-builder-with-capacity (+ rest staged))]
+    (byte_buf.byte-buf-builder-append-string-range
+      (&mut out)
+      (string.substring (& reader.pending) reader.offset rest)
+      0
+      rest)
+    (byte_buf.byte-buf-builder-append-array-range
+      (&mut out)
+      (& reader.staged.slots)
+      0
+      staged)
+    (set! reader.pending (byte_buf.byte-buf-builder-finish-string (& out)))
+    (set! reader.offset 0)
+    (set! reader.staged (byte_buf.byte-buf-builder-new))))
 
 ;: The next complete packet, `NeedMore` when the buffered input ends inside
 ;: one, or the framing error at the current position.
@@ -179,6 +198,9 @@
     [length : i64 0]
     [index : i64 0]
     (when (< available 4) (return (NeedMore)))
+    (when
+      (< (git-pkt-reader-pending-available (& reader)) 4)
+      (git-pkt-reader-merge! reader))
     (while (< index 4)
       (let
         [digit : i64
@@ -202,6 +224,9 @@
       [(> length git-pkt-max-length) (Err OversizedPacket)]
       [(< available length) (NeedMore)]
       [else
+        (when
+          (< (git-pkt-reader-pending-available (& reader)) length)
+          (git-pkt-reader-merge! reader))
         (let
           [payload : String
             (string.substring

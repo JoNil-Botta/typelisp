@@ -208,6 +208,67 @@
         (set! index (+ index 1)))
       (gp-require (string.eq (& all) (& expected)) "byte-at-a-time input"))))
 
+;: The packets of `stream` fed in `piece`-byte chunks, draining after each,
+;: then the end of input.
+(define (gp-frame-in-pieces [stream : (& stream str)] [piece : i64]) : String
+  (let
+    [reader : pkt.GitPktReader (pkt.git-pkt-reader-new)]
+    [count : i64 (string.string-length stream)]
+    [at : i64 0]
+    [out : String ""]
+    (while (< at count)
+      (let
+        [end : i64
+          (if (< (+ at piece) count)
+            (+ at piece)
+            count)]
+        (gp-feed (&mut reader) (gp-sub stream at end))
+        (let
+          [drained : String (gp-drain (&mut reader))]
+          (unless
+            (= (string.string-length (& drained)) 0)
+            (set! out (str_cat.str-cat out drained))))
+        (set! at end)))
+    (match (pkt.git-pkt-reader-end (& reader))
+      [(Ok) out]
+      [(Err error) (str_cat.str-cat out "!" (gp-error-name (& error)))])))
+
+(test
+  git-pkt-reader-assembles-largest-packets-from-small-pieces
+  (let
+    [largest : String (gp-pkt (gp-repeat 120 pkt.git-pkt-max-payload))]
+    [stream : String
+      (str_cat.str-cat
+        (string.copy (& largest))
+        (gp-line "between")
+        largest
+        (pkt.git-pkt-flush))]
+    [expected : String (gp-frame (string.copy (& stream)))]
+    (gp-require
+      (=
+        (string.string-length (& expected))
+        (+ (* 2 (+ 2 pkt.git-pkt-max-payload)) 15))
+      "two largest packets around a short one")
+    (gp-require
+      (string.eq (gp-frame-in-pieces (& stream) 1) (& expected))
+      "byte-at-a-time input")
+    (gp-require
+      (string.eq (gp-frame-in-pieces (& stream) 3) (& expected))
+      "three-byte pieces split every header")
+    (gp-require
+      (string.eq (gp-frame-in-pieces (& stream) 4093) (& expected))
+      "pieces that end inside a payload")
+    (gp-require
+      (string.eq
+        (gp-frame-in-pieces (& stream) (- pkt.git-pkt-max-length 1))
+        (& expected))
+      "pieces one byte short of a packet")
+    (gp-require
+      (string.eq
+        (gp-frame-in-pieces (& stream) (+ pkt.git-pkt-max-length 1))
+        (& expected))
+      "pieces one byte past a packet")))
+
 (test
   git-pkt-reader-rejects-malformed-lengths
   (gp-require

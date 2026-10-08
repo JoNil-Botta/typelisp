@@ -1754,6 +1754,11 @@ Reference types are lifetime-bearing:
 - Mutable references are exclusive, non-copying handles to the same referent.
   A mutable borrow of a place rooted at a global that another module declares
   is rejected; shared borrows of it remain valid (§4.4.2).
+- A `&mut` borrow reaches its referent only through owned storage and mutable
+  references. `(&mut r)`, or a field, tuple element or array element borrowed
+  through a shared reference `r` or through a shared reference stored in a
+  field, is rejected (E0207), in a call argument as in a `let`. Storage behind
+  a `Box` or a private buffer is not covered yet (#8743).
   The checker enforces many immutable borrows or one mutable borrow for
   tracked local, parameter, and global place paths. Tracked aggregate-place
   paths conflict only when they are the same path or one is an ancestor of the

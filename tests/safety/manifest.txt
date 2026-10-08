@@ -980,6 +980,18 @@ program_lifetime_return_param_borrow_reject|check-fail|tests/safety/program_life
 program_lifetime_return_local_reject|check-fail|tests/safety/program_lifetime_return_local_reject.tl|-|reference value would escape lexical scope
 program_lifetime_field_param_borrow_reject|check-fail|tests/safety/program_lifetime_field_param_borrow_reject.tl|-|source lifetime `n` does not outlive required lifetime `program`
 program_lifetime_arena_name_reject|check-fail|tests/safety/program_lifetime_arena_name_reject.tl|-|with-arena region cannot be the reserved lifetime 'program'
+# A `&mut` borrow reaches its referent only through owned storage and mutable
+# references, in call arguments and `let` alike (#8694).
+mut_borrow_through_shared_param_reject|check-fail|tests/safety/mut_borrow_through_shared_param_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_let_reject|check-fail|tests/safety/mut_borrow_through_shared_let_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_field_reject|check-fail|tests/safety/mut_borrow_through_shared_field_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_struct_reject|check-fail|tests/safety/mut_borrow_through_shared_struct_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_stored_shared_reject|check-fail|tests/safety/mut_borrow_through_stored_shared_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_slice_reject|check-fail|tests/safety/mut_borrow_through_shared_slice_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_nested_field_reject|check-fail|tests/safety/mut_borrow_through_shared_nested_field_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_tuple_reject|check-fail|tests/safety/mut_borrow_through_shared_tuple_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_deref_array_reject|check-fail|tests/safety/mut_borrow_through_shared_deref_array_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_mutable_paths_ok|run-exit|tests/safety/mut_borrow_mutable_paths_ok.tl|42|-
 vector_aggregate_ref_rvalue_call_reject|check-fail|tests/safety/vector_aggregate_ref_rvalue_call_reject.tl|-|borrow slots from a vector place or use the generated vector get helper
 vector_aggregate_ref_rvalue_workarounds_ok|check-ok|tests/safety/vector_aggregate_ref_rvalue_workarounds_ok.tl|-|-
 consume_parameter_use_after_move_reject|check-fail|tests/safety/consume_parameter_use_after_move_reject.tl|-|use of moved value `text`

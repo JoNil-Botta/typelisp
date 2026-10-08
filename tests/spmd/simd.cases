@@ -28,6 +28,22 @@ file inline_helper_variable_snapshot.tl
       (if (and (= (array-ref out 0) 1) (= (array-ref out 6) 7)) 42 1))))
 end-file
 
+file call_arg_snapshot_out_of_line.tl
+;; Over the inline node limit, so the call stays out of line.
+(define (first-out-of-line [a : i64] [b : i64]) : i64
+  (+ (+ (+ (+ (+ (+ (+ a 0) 0) 0) 0) 0) 0) (* b 0)))
+(define (fill [out : (&mut out (__tl_dyn-array i64))] [n : i64]) : unit
+  (foreach ([i : i64 0 n])
+    (let [x : i64 (+ i 1)]
+      (set! (array-ref out i)
+        (first-out-of-line x (begin (set! x 99) 0))))))
+(define (main) : i64
+  (let [out : (__tl_dyn-array i64) (__tl_make-array i64 7)]
+    (begin
+      (fill (&mut out) 7)
+      (if (and (= (array-ref out 0) 1) (= (array-ref out 6) 7)) 42 1))))
+end-file
+
 # SPMD SIMD codegen shapes and trap paths, run by scripts/verify-spmd-simd.sh
 # (gate stage2-spmd-simd-comparison) after its same-exit corpus. Shape cases
 # only compile, so they run on every host; trap cases build and run each mode,
@@ -445,6 +461,16 @@ empty
 # An unread unit parameter still evaluates its store on every active lane.
 case inline-helper-unit-argument
 source {{work}}/inline_helper_unit_argument.tl
+do link-run
+mode scalar avx2 avx512
+opt 0 1 2
+exit 42
+in stderr
+empty
+
+# #8433: an out-of-line call passes an earlier variable read's value too.
+case call-arg-snapshot-out-of-line
+source {{work}}/call_arg_snapshot_out_of_line.tl
 do link-run
 mode scalar avx2 avx512
 opt 0 1 2

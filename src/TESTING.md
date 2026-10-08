@@ -876,18 +876,23 @@ The optimizer emits four owners that it reads just before releasing them.
 is the same pattern for the fused post-prune late passes; both are already
 rewound to zero when they are read, so they stay on the `optimize` phase.
 `optimize-inline` is the whole-program inline stage's arena and `optimizer-input`
-is the arena the stage places each caller's final body in, which the per-function
-loop reads; both are read at their high-water mark, so they carry the shared
-`optimize.inline` phase: the arenas they name are already destroyed by the time
-the `optimize` snapshot runs, and folding them into that snapshot's unique-root
-sum would report storage the phase boundary no longer holds. The late scratch and
-the input arena are only created at `--opt-level 2` -- the level whose inline
-stage is the full census/SCC pipeline, and where the late passes run. So
-`--opt-level 2` emits both `optimize.inline` rows, the inline arena first
-(released before the per-function loop, once every survivor is resident in the
-input arena) and the input arena second (released after the loop). At
-`--opt-level 1` the loop reads the inline arena directly and only the
-`optimize-inline` row is emitted, after the loop.
+names the arenas the per-function loop reads its input from: the slot-range
+chunks the stage places each caller's final body in, and the carrier that holds
+the loop's sequence and any survivor copied there. All of them are read at their
+high-water mark, so they carry the shared `optimize.inline` phase: the arenas
+they name are already destroyed by the time the `optimize` snapshot runs, and
+folding them into that snapshot's unique-root sum would report storage the phase
+boundary no longer holds. The late scratch and the input arenas are only created
+at `--opt-level 2` -- the level whose inline stage is the full census/SCC
+pipeline, and where the late passes run. So `--opt-level 2` emits one
+`optimizer-input` row for each chunk no survivor is in, then the
+`optimize-inline` row (released before the per-function loop, once every
+survivor is resident in its chunk), then one `optimizer-input` row for each
+remaining chunk as the loop passes its last survivor, and the carrier's
+`optimizer-input` row last (released after the loop). The sum of the
+`optimizer-input` rows is the input's total size. At `--opt-level 1` the loop
+reads the inline arena directly and only the `optimize-inline` row is emitted,
+after the loop.
 
 ### LSP transcripts
 

@@ -247,7 +247,7 @@
             entry-decls)
           (compiler_load.compiler-load-decl-path-list-append
             prelude-paths
-            (ast.ast-decl-path-list-with-modules entry-paths entry-modules))
+            (ast.ast-decl-path-list-with-modules entry-paths (& entry-modules)))
           stdlib-roots
           cfgs
           cache-scope
@@ -316,7 +316,7 @@
     [(Ok decls paths modules _)
       (let
         [owned-paths : ast.AstDeclPathList
-          (ast.ast-decl-path-list-with-modules paths modules)]
+          (ast.ast-decl-path-list-with-modules paths (& modules))]
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
           (match (compiler-check-program
@@ -427,7 +427,9 @@
           path
           source
           prelude-decls
-          (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
+          (ast.ast-decl-path-list-with-modules
+            prelude-paths
+            (& prelude-modules))
           prelude-seen
           stdlib-roots
           manifest-dir
@@ -538,7 +540,9 @@
           path
           source
           prelude-decls
-          (ast.ast-decl-path-list-with-modules prelude-paths prelude-modules)
+          (ast.ast-decl-path-list-with-modules
+            prelude-paths
+            (& prelude-modules))
           prelude-seen
           (owned_view.compiler-owned-shared-view stdlib-roots)
           cfgs

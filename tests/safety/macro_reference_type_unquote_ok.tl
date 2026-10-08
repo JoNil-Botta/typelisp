@@ -14,7 +14,8 @@
 (define (sum [arr : (& a (Array i64 4))]) : i64
   (let
     [total : i64 0]
-    (for [x : (& a i64) arr] (set! total (+ total (deref x))))
+    (for [x : (& a i64) arr]
+      (set! total (+ total (deref x))))
     total))
 
 (define (read [x : (& a i64)]) : i64

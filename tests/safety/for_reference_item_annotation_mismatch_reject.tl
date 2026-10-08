@@ -4,7 +4,8 @@
   (let
     [total : i64 0]
     ; Must fail: the elements are i64, not i32.
-    (for [x : (& a i32) arr] (set! total (+ total 1)))
+    (for [x : (& a i32) arr]
+      (set! total (+ total 1)))
     total))
 
 (define (main) : i64

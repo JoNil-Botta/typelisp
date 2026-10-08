@@ -1778,7 +1778,7 @@
           [persisted : ast.AstType
             (in-arena
               (arena.Arena ready.payload-arena)
-              (ast.ty-node-persist binding-ty))]
+              (ast.ty-node-persist (& binding-ty)))]
           (set!
             (array-ref ready.facts slot)
             (TcCheckedLetBindingFact
@@ -2891,7 +2891,7 @@
   (ast.ast-node-pool-context-expr-push-cells
     expr-cell-address
     type-cell-address
-    node))
+    (& node)))
 
 (defenum TcUnboundSuggestionSnapshot
   (No)
@@ -4061,7 +4061,10 @@
       unit)))
 
 (defenum TcBorrowPlace
-  (TcBorrowPlace i64 ast.AstType))
+  ;; The borrow's lifetime, the referent type, and whether the path to the
+  ;; referent passes through a shared reference. No `&mut` borrow may reach a
+  ;; referent through one (#8694).
+  (TcBorrowPlace i64 ast.AstType bool))
 
 (defenum ResultTcBorrowPlace
   (Ok TcBorrowPlace)
@@ -7917,11 +7920,11 @@
 (define (tc-vector-ref-rvalue-source-span
   [expr-bases : i64]
   [arg : ast.AstExpr]) : TcMaybeAstSourceSpan
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases arg)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
     [(ArrayRef array-box _)
       (match (ast.ast-expr-unspan-with-segment-bases
         expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases array-box))
+        (& (ast.ast-expr-segment-bases-get expr-bases array-box)))
         [(StructGet receiver-box field)
           (if (= field cbi.compiler-builtin-id-fix-slots)
             (tc-expr-maybe-span
@@ -7941,7 +7944,7 @@
   [expr-bases : i64]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : i64
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(BoxTake inner-box)
       (tc-reference-name-kind
         ctx
@@ -7991,7 +7994,7 @@
   [expr-bases : i64]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : i64
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Var name)
       (match (tc-lookup-id env name)
         [(Ok ty)
@@ -8091,9 +8094,7 @@
 ;; The expression a body's value comes from: a `let` body's or `begin`'s last
 ;; form, through any nesting.
 (define (tc-body-tail-expr [expr-bases : i64] [expr : ast.AstExpr]) : ast.AstExpr
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Let let-box)
       (match (ast.ast-let-box-shared-view let-box)
         [(Let _ body-id)
@@ -12813,31 +12814,36 @@
         " requires enclosing scalar while"))))
 
 (define (tc-type-list1 [a : ast.AstType]) : ast.AstTypeList
-  (ast.ast-type-cons a (ast.ast-type-list-new)))
+  (ast.ast-type-cons (& a) (& (ast.ast-type-list-new))))
 
 (define (tc-type-list2 [a : ast.AstType] [b : ast.AstType]) : ast.AstTypeList
-  (ast.ast-type-cons a (ast.ast-type-cons b (ast.ast-type-list-new))))
+  (ast.ast-type-cons
+    (& a)
+    (& (ast.ast-type-cons (& b) (& (ast.ast-type-list-new))))))
 
 (define (tc-type-list3 [a : ast.AstType] [b : ast.AstType] [c : ast.AstType]) : ast.AstTypeList
   (ast.ast-type-cons
-    a
-    (ast.ast-type-cons b (ast.ast-type-cons c (ast.ast-type-list-new)))))
+    (& a)
+    (&
+      (ast.ast-type-cons
+        (& b)
+        (& (ast.ast-type-cons (& c) (& (ast.ast-type-list-new))))))))
 
 (define (tc-fn0 [ret : ast.AstType]) : ast.AstType
-  (ast.ast-ty-func (ast.ast-type-list-new) ret))
+  (ast.ast-ty-func (ast.ast-type-list-new) (& ret)))
 
 (define (tc-fn1 [a : ast.AstType] [ret : ast.AstType]) : ast.AstType
-  (ast.ast-ty-func (tc-type-list1 a) ret))
+  (ast.ast-ty-func (tc-type-list1 a) (& ret)))
 
 (define (tc-fn2 [a : ast.AstType] [b : ast.AstType] [ret : ast.AstType]) : ast.AstType
-  (ast.ast-ty-func (tc-type-list2 a b) ret))
+  (ast.ast-ty-func (tc-type-list2 a b) (& ret)))
 
 (define (tc-fn3
   [a : ast.AstType]
   [b : ast.AstType]
   [c : ast.AstType]
   [ret : ast.AstType]) : ast.AstType
-  (ast.ast-ty-func (tc-type-list3 a b c) ret))
+  (ast.ast-ty-func (tc-type-list3 a b c) (& ret)))
 
 (define (tc-fn4
   [a : ast.AstType]
@@ -12847,11 +12853,15 @@
   [ret : ast.AstType]) : ast.AstType
   (ast.ast-ty-func
     (ast.ast-type-cons
-      a
-      (ast.ast-type-cons
-        b
-        (ast.ast-type-cons c (ast.ast-type-cons d (ast.ast-type-list-new)))))
-    ret))
+      (& a)
+      (&
+        (ast.ast-type-cons
+          (& b)
+          (&
+            (ast.ast-type-cons
+              (& c)
+              (& (ast.ast-type-cons (& d) (& (ast.ast-type-list-new)))))))))
+    (& ret)))
 
 (define (tc-type-list-render [types : ast.AstTypeList]) : String
   (tc-type-list-render-at (& types) 0))
@@ -13055,12 +13065,17 @@
           (I64)
           (ast.ast-ty-tuple
             (ast.ast-type-cons
-              (I32)
-              (ast.ast-type-cons
-                (I32)
+              (& (I32))
+              (&
                 (ast.ast-type-cons
-                  (I32)
-                  (ast.ast-type-cons (I32) (ast.ast-type-list-new))))))))]
+                  (& (I32))
+                  (&
+                    (ast.ast-type-cons
+                      (& (I32))
+                      (&
+                        (ast.ast-type-cons
+                          (& (I32))
+                          (& (ast.ast-type-list-new))))))))))))]
     [e2 : TcTypeEnv
       (tc-bind-id e1 cbi.compiler-builtin-id-xgetbv (tc-fn1 (I64) (I64)))]
     (tc-bind-id e2 (tc-default-boundary-id) (Unit))))
@@ -13077,12 +13092,17 @@
           (I64)
           (ast.ast-ty-tuple
             (ast.ast-type-cons
-              (I32)
-              (ast.ast-type-cons
-                (I32)
+              (& (I32))
+              (&
                 (ast.ast-type-cons
-                  (I32)
-                  (ast.ast-type-cons (I32) (ast.ast-type-list-new))))))))]
+                  (& (I32))
+                  (&
+                    (ast.ast-type-cons
+                      (& (I32))
+                      (&
+                        (ast.ast-type-cons
+                          (& (I32))
+                          (& (ast.ast-type-list-new))))))))))))]
     [e2 : TcTypeEnv
       (tc-bind-id e1 cbi.compiler-builtin-id-xgetbv (tc-fn1 (I64) (I64)))]
     (tc-bind-id e2 (tc-default-boundary-id) (Unit))))
@@ -16588,7 +16608,7 @@
       (tc-lifetime-subst-apply
         subst
         (ast.ast-lifetime-list-get items index (ast.ast-lifetime-fallback)))
-      (tc-lifetime-subst-list-at subst items (+ index 1)))))
+      (& (tc-lifetime-subst-list-at subst items (+ index 1))))))
 
 ;; V1 lifetime names are owner names. Normal environment bindings own stack
 ;; slots, and the synthetic region marker owns a with-arena scope. Environment
@@ -17314,10 +17334,11 @@
   (if (>= index (ast.ast-type-list-len types))
     (ast.ast-type-list-new)
     (ast.ast-type-cons
-      (tc-type-without-regions
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (tc-type-list-without-regions-at types (+ index 1)))))
+      (&
+        (tc-type-without-regions
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
+      (& (tc-type-list-without-regions-at types (+ index 1))))))
 
 (define (tc-type-without-regions [ty : ast.AstType]) : ast.AstType
   (if (tc-type-contains-region-tag? (tc-global-shared-view ty))
@@ -17326,36 +17347,40 @@
         (ast.ast-ty-func
           (tc-type-list-without-regions
             (ast.ast-type-list-box-shared-view args))
-          (tc-type-without-regions (ast.ty-node-get ret)))]
+          (& (tc-type-without-regions (ast.ty-node-get ret))))]
       [(Tuple elems)
         (ast.ast-ty-tuple
           (tc-type-list-without-regions
             (ast.ast-type-list-box-shared-view elems)))]
       [(Array elem len)
-        (ast.ast-ty-array (tc-type-without-regions (ast.ty-node-get elem)) len)]
+        (ast.ast-ty-array
+          (& (tc-type-without-regions (ast.ty-node-get elem)))
+          len)]
       [(DynArray elem)
-        (ast.ast-ty-dyn-array (tc-type-without-regions (ast.ty-node-get elem)))]
+        (ast.ast-ty-dyn-array
+          (& (tc-type-without-regions (ast.ty-node-get elem))))]
       [(Slice elem)
-        (ast.ast-ty-slice (tc-type-without-regions (ast.ty-node-get elem)))]
+        (ast.ast-ty-slice (& (tc-type-without-regions (ast.ty-node-get elem))))]
       [(Box elem)
-        (ast.ast-ty-box (tc-type-without-regions (ast.ty-node-get elem)))]
+        (ast.ast-ty-box (& (tc-type-without-regions (ast.ty-node-get elem))))]
       [(Ptr elem)
-        (ast.ast-ty-ptr (tc-type-without-regions (ast.ty-node-get elem)))]
+        (ast.ast-ty-ptr (& (tc-type-without-regions (ast.ty-node-get elem))))]
       [(MutPtr elem)
-        (ast.ast-ty-mut-ptr (tc-type-without-regions (ast.ty-node-get elem)))]
+        (ast.ast-ty-mut-ptr
+          (& (tc-type-without-regions (ast.ty-node-get elem))))]
       [(Ref region inner)
         (ast.ast-ty-ref
           region
-          (tc-type-without-regions (ast.ty-node-get inner)))]
+          (& (tc-type-without-regions (ast.ty-node-get inner))))]
       [(MutRef region inner)
         (ast.ast-ty-mut-ref
           region
-          (tc-type-without-regions (ast.ty-node-get inner)))]
+          (& (tc-type-without-regions (ast.ty-node-get inner))))]
       [(Region _ inner) (tc-type-without-regions (ast.ty-node-get inner))]
       [(Invalidate lifetime inner)
         (ast.ast-ty-invalidate
           lifetime
-          (tc-type-without-regions (ast.ty-node-get inner)))]
+          (& (tc-type-without-regions (ast.ty-node-get inner))))]
       [(EnumArgs name lifetimes)
         (ast.ast-ty-enum-args
           name
@@ -17725,7 +17750,7 @@
               (ast.ast-type-list-get types offset (ast.ast-type-id-fallback)))
             index))]
       [next-out : ast.AstTypeList out]
-      (ast.ast-type-list-push (&mut next-out) (ast.ty-node-push item.ty))
+      (ast.ast-type-list-push (&mut next-out) (ast.ty-node-push (& item.ty)))
       (tc-elide-input-type-list-at
         type-bases
         types
@@ -17762,7 +17787,7 @@
               (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
             lifetime))]
       [next-out : ast.AstTypeList out]
-      (ast.ast-type-list-push (&mut next-out) (ast.ty-node-push item.ty))
+      (ast.ast-type-list-push (&mut next-out) (ast.ty-node-push (& item.ty)))
       (tc-elide-output-type-list-at
         type-bases
         types
@@ -17783,7 +17808,9 @@
         (tc-global-shared-view input-types))]
     [output : TcElidedType (try (tc-elide-output-type type-bases ret lifetime))]
     (Ok
-      (TcElidedType (ast.ast-ty-func input-types output.ty) inputs.next-index))))
+      (TcElidedType
+        (ast.ast-ty-func input-types (& output.ty))
+        inputs.next-index))))
 
 (define (tc-elide-input-type
   [type-bases : i64]
@@ -17812,7 +17839,8 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               index))]
-        (Ok (TcElidedType (ast.ast-ty-array inner.ty count) inner.next-index)))]
+        (Ok
+          (TcElidedType (ast.ast-ty-array (& inner.ty) count) inner.next-index)))]
     [(DynArray elem)
       (let
         [inner : TcElidedType
@@ -17821,7 +17849,7 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               index))]
-        (Ok (TcElidedType (ast.ast-ty-dyn-array inner.ty) inner.next-index)))]
+        (Ok (TcElidedType (ast.ast-ty-dyn-array (& inner.ty)) inner.next-index)))]
     [(Slice elem)
       (let
         [inner : TcElidedType
@@ -17830,7 +17858,7 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               index))]
-        (Ok (TcElidedType (ast.ast-ty-slice inner.ty) inner.next-index)))]
+        (Ok (TcElidedType (ast.ast-ty-slice (& inner.ty)) inner.next-index)))]
     [(Box elem)
       (let
         [inner : TcElidedType
@@ -17839,7 +17867,7 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               index))]
-        (Ok (TcElidedType (ast.ast-ty-box inner.ty) inner.next-index)))]
+        (Ok (TcElidedType (ast.ast-ty-box (& inner.ty)) inner.next-index)))]
     [(Ptr elem)
       (let
         [inner : TcElidedType
@@ -17848,7 +17876,7 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               index))]
-        (Ok (TcElidedType (ast.ast-ty-ptr inner.ty) inner.next-index)))]
+        (Ok (TcElidedType (ast.ast-ty-ptr (& inner.ty)) inner.next-index)))]
     [(MutPtr elem)
       (let
         [inner : TcElidedType
@@ -17857,7 +17885,7 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               index))]
-        (Ok (TcElidedType (ast.ast-ty-mut-ptr inner.ty) inner.next-index)))]
+        (Ok (TcElidedType (ast.ast-ty-mut-ptr (& inner.ty)) inner.next-index)))]
     [(Region region elem)
       (let
         [inner : TcElidedType
@@ -17866,7 +17894,10 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               index))]
-        (Ok (TcElidedType (ast.ast-ty-region region inner.ty) inner.next-index)))]
+        (Ok
+          (TcElidedType
+            (ast.ast-ty-region region (& inner.ty))
+            inner.next-index)))]
     [(Invalidate lifetime elem)
       (let
         [inner : TcElidedType
@@ -17877,7 +17908,7 @@
               index))]
         (Ok
           (TcElidedType
-            (ast.ast-ty-invalidate lifetime inner.ty)
+            (ast.ast-ty-invalidate lifetime (& inner.ty))
             inner.next-index)))]
     [(Ref lifetime elem)
       (let
@@ -17897,7 +17928,7 @@
               next-index))]
         (Ok
           (TcElidedType
-            (ast.ast-ty-ref next-lifetime inner.ty)
+            (ast.ast-ty-ref next-lifetime (& inner.ty))
             inner.next-index)))]
     [(MutRef lifetime elem)
       (let
@@ -17917,7 +17948,7 @@
               next-index))]
         (Ok
           (TcElidedType
-            (ast.ast-ty-mut-ref next-lifetime inner.ty)
+            (ast.ast-ty-mut-ref next-lifetime (& inner.ty))
             inner.next-index)))]
     [_ (Ok (TcElidedType ty index))]))
 
@@ -17948,7 +17979,7 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-array inner.ty count) 0)))]
+        (Ok (TcElidedType (ast.ast-ty-array (& inner.ty) count) 0)))]
     [(DynArray elem)
       (let
         [inner : TcElidedType
@@ -17957,7 +17988,7 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-dyn-array inner.ty) 0)))]
+        (Ok (TcElidedType (ast.ast-ty-dyn-array (& inner.ty)) 0)))]
     [(Slice elem)
       (let
         [inner : TcElidedType
@@ -17966,7 +17997,7 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-slice inner.ty) 0)))]
+        (Ok (TcElidedType (ast.ast-ty-slice (& inner.ty)) 0)))]
     [(Box elem)
       (let
         [inner : TcElidedType
@@ -17975,7 +18006,7 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-box inner.ty) 0)))]
+        (Ok (TcElidedType (ast.ast-ty-box (& inner.ty)) 0)))]
     [(Ptr elem)
       (let
         [inner : TcElidedType
@@ -17984,7 +18015,7 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-ptr inner.ty) 0)))]
+        (Ok (TcElidedType (ast.ast-ty-ptr (& inner.ty)) 0)))]
     [(MutPtr elem)
       (let
         [inner : TcElidedType
@@ -17993,7 +18024,7 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-mut-ptr inner.ty) 0)))]
+        (Ok (TcElidedType (ast.ast-ty-mut-ptr (& inner.ty)) 0)))]
     [(Region region elem)
       (let
         [inner : TcElidedType
@@ -18002,7 +18033,7 @@
               type-bases
               (ast.ast-type-segment-bases-get type-bases elem)
               lifetime))]
-        (Ok (TcElidedType (ast.ast-ty-region region inner.ty) 0)))]
+        (Ok (TcElidedType (ast.ast-ty-region region (& inner.ty)) 0)))]
     [(Ref name elem)
       (match lifetime
         [(No)
@@ -18018,7 +18049,7 @@
                     type-bases
                     (ast.ast-type-segment-bases-get type-bases elem)
                     lifetime))]
-              (Ok (TcElidedType (ast.ast-ty-ref name inner.ty) 0))))]
+              (Ok (TcElidedType (ast.ast-ty-ref name (& inner.ty)) 0))))]
         [(Some source)
           (let
             [inner : TcElidedType
@@ -18033,7 +18064,7 @@
                   (if (tc-elided-lifetime? name)
                     source
                     name)
-                  inner.ty)
+                  (& inner.ty))
                 0)))])]
     [(MutRef name elem)
       (match lifetime
@@ -18050,7 +18081,7 @@
                     type-bases
                     (ast.ast-type-segment-bases-get type-bases elem)
                     lifetime))]
-              (Ok (TcElidedType (ast.ast-ty-mut-ref name inner.ty) 0))))]
+              (Ok (TcElidedType (ast.ast-ty-mut-ref name (& inner.ty)) 0))))]
         [(Some source)
           (let
             [inner : TcElidedType
@@ -18065,7 +18096,7 @@
                   (if (tc-elided-lifetime? name)
                     source
                     name)
-                  inner.ty)
+                  (& inner.ty))
                 0)))])]
     [_ (Ok (TcElidedType ty 0))]))
 
@@ -18102,7 +18133,9 @@
     (ast.ast-type-list-new)
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param _ ty _)
-        (ast.ast-type-cons ty (tc-elided-param-type-list-at params (+ index 1)))])))
+        (ast.ast-type-cons
+          (& ty)
+          (& (tc-elided-param-type-list-at params (+ index 1))))])))
 
 (define (tc-elide-function-signature
   [type-bases : i64]
@@ -18420,7 +18453,7 @@
 
 (define (tc-tag-region [region : i64] [ty : ast.AstType]) : ast.AstType
   (if (tc-region-taggable-type? (tc-global-shared-view ty))
-    (ast.ast-ty-region region ty)
+    (ast.ast-ty-region region (& ty))
     ty))
 
 (define (tc-tag-active-region [env : TcTypeEnv] [ty : ast.AstType]) : ast.AstType
@@ -18573,11 +18606,12 @@
   (if (>= index (ast.ast-type-list-len types))
     (ast.ast-type-list-new)
     (ast.ast-type-cons
-      (tc-resolve-type
-        ctx
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (tc-resolve-type-list-at ctx types (+ index 1)))))
+      (&
+        (tc-resolve-type
+          ctx
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
+      (& (tc-resolve-type-list-at ctx types (+ index 1))))))
 
 (define (tc-resolve-type-list [ctx : TcContext] [types : ast.AstTypeList]) : ast.AstTypeList
   (let
@@ -19408,7 +19442,7 @@
       (try (tc-dotted-local-field-expr-id-after-check session name-id))]
     (match (ast.ast-expr-unspan-with-segment-bases
       expr-bases
-      (ast.ast-expr-segment-bases-get expr-bases get-id))
+      (& (ast.ast-expr-segment-bases-get expr-bases get-id)))
       [(StructGet receiver-box field)
         (Ok (ast.ast-expr-struct-set-id receiver-box field value))]
       [_ (Err "typecheck: internal dotted field target mismatch")])))
@@ -19568,7 +19602,7 @@
       (ast.ast-node-pool-context-expr-set!
         (tc-dotted-macro-journal-pool-at state index)
         (array-ref (tc-macro-walk-field state dotted-macro-journal-ids) index)
-        (tc-dotted-macro-journal-expr-at state index))
+        (& (tc-dotted-macro-journal-expr-at state index)))
       (tc-macro-walk-set! state dotted-macro-journal-len index)))
   (tc-macro-walk-set!
     state
@@ -19924,7 +19958,7 @@
       (match (ci.intern-source-name-session-resolve
         session
         (ci.intern-source-name-session-identity session source-name)
-        (ci.intern-syntax-name-text-or name ""))
+        (& (ci.intern-syntax-name-text-or name "")))
         [(ParsedIdentity source-id) source-id]
         [(GeneratedIdentity _ lookup)
           (match lookup
@@ -23197,35 +23231,41 @@
     [(Func args ret)
       (ast.ast-ty-func
         (tc-resolve-type-list ctx (ast.ast-type-list-box-shared-view args))
-        (tc-resolve-type ctx (ast.ty-node-get ret)))]
+        (& (tc-resolve-type ctx (ast.ty-node-get ret))))]
     [(CFunc signature mode)
       (CFunc
         (ast.ast-node-pool-reader-type-push
-          (tc-resolve-type ctx (ast.ty-node-get signature)))
+          (& (tc-resolve-type ctx (ast.ty-node-get signature))))
         mode)]
     [(Tuple elems)
       (ast.ast-ty-tuple
         (tc-resolve-type-list ctx (ast.ast-type-list-box-shared-view elems)))]
     [(Array elem len)
-      (ast.ast-ty-array (tc-resolve-type ctx (ast.ty-node-get elem)) len)]
+      (ast.ast-ty-array (& (tc-resolve-type ctx (ast.ty-node-get elem))) len)]
     [(DynArray elem)
-      (ast.ast-ty-dyn-array (tc-resolve-type ctx (ast.ty-node-get elem)))]
+      (ast.ast-ty-dyn-array (& (tc-resolve-type ctx (ast.ty-node-get elem))))]
     [(Slice elem)
-      (ast.ast-ty-slice (tc-resolve-type ctx (ast.ty-node-get elem)))]
-    [(Box elem) (ast.ast-ty-box (tc-resolve-type ctx (ast.ty-node-get elem)))]
-    [(Ptr elem) (ast.ast-ty-ptr (tc-resolve-type ctx (ast.ty-node-get elem)))]
+      (ast.ast-ty-slice (& (tc-resolve-type ctx (ast.ty-node-get elem))))]
+    [(Box elem)
+      (ast.ast-ty-box (& (tc-resolve-type ctx (ast.ty-node-get elem))))]
+    [(Ptr elem)
+      (ast.ast-ty-ptr (& (tc-resolve-type ctx (ast.ty-node-get elem))))]
     [(MutPtr elem)
-      (ast.ast-ty-mut-ptr (tc-resolve-type ctx (ast.ty-node-get elem)))]
+      (ast.ast-ty-mut-ptr (& (tc-resolve-type ctx (ast.ty-node-get elem))))]
     [(Ref region inner)
-      (ast.ast-ty-ref region (tc-resolve-type ctx (ast.ty-node-get inner)))]
+      (ast.ast-ty-ref region (& (tc-resolve-type ctx (ast.ty-node-get inner))))]
     [(MutRef region inner)
-      (ast.ast-ty-mut-ref region (tc-resolve-type ctx (ast.ty-node-get inner)))]
+      (ast.ast-ty-mut-ref
+        region
+        (& (tc-resolve-type ctx (ast.ty-node-get inner))))]
     [(Region region inner)
-      (ast.ast-ty-region region (tc-resolve-type ctx (ast.ty-node-get inner)))]
+      (ast.ast-ty-region
+        region
+        (& (tc-resolve-type ctx (ast.ty-node-get inner))))]
     [(Invalidate lifetime inner)
       (ast.ast-ty-invalidate
         lifetime
-        (tc-resolve-type ctx (ast.ty-node-get inner)))]
+        (& (tc-resolve-type ctx (ast.ty-node-get inner))))]
     [(VarArgs name lifetimes)
       (let
         [name-text : String
@@ -23253,11 +23293,12 @@
   (if (>= index (ast.ast-type-list-len types))
     (ast.ast-type-list-new)
     (ast.ast-type-cons
-      (tc-canonicalize-resolved-nominal-type
-        ctx
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (tc-canonicalize-resolved-nominal-type-list-at ctx types (+ index 1)))))
+      (&
+        (tc-canonicalize-resolved-nominal-type
+          ctx
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
+      (& (tc-canonicalize-resolved-nominal-type-list-at ctx types (+ index 1))))))
 
 (define (tc-canonicalize-resolved-nominal-type-list
   [ctx : TcContext]
@@ -23391,7 +23432,7 @@
         (tc-canonicalize-resolved-nominal-type-list
           ctx
           (ast.ast-type-list-box-shared-view args))
-        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get ret)))]
+        (& (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get ret))))]
     [(Tuple elems)
       (ast.ast-ty-tuple
         (tc-canonicalize-resolved-nominal-type-list
@@ -23399,39 +23440,39 @@
           (ast.ast-type-list-box-shared-view elems)))]
     [(Array elem len)
       (ast.ast-ty-array
-        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem))
+        (& (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem)))
         len)]
     [(DynArray elem)
       (ast.ast-ty-dyn-array
-        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem)))]
+        (& (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem))))]
     [(Slice elem)
       (ast.ast-ty-slice
-        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem)))]
+        (& (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem))))]
     [(Box elem)
       (ast.ast-ty-box
-        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem)))]
+        (& (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem))))]
     [(Ptr elem)
       (ast.ast-ty-ptr
-        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem)))]
+        (& (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem))))]
     [(MutPtr elem)
       (ast.ast-ty-mut-ptr
-        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem)))]
+        (& (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get elem))))]
     [(Ref region inner)
       (ast.ast-ty-ref
         region
-        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get inner)))]
+        (& (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get inner))))]
     [(MutRef region inner)
       (ast.ast-ty-mut-ref
         region
-        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get inner)))]
+        (& (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get inner))))]
     [(Region region inner)
       (ast.ast-ty-region
         region
-        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get inner)))]
+        (& (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get inner))))]
     [(Invalidate lifetime inner)
       (ast.ast-ty-invalidate
         lifetime
-        (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get inner)))]
+        (& (tc-canonicalize-resolved-nominal-type ctx (ast.ty-node-get inner))))]
     [(Enum name) (Enum (tc-source-owned-nominal-name-id ctx name))]
     [(EnumArgs name lifetimes)
       (EnumArgs (tc-source-owned-nominal-name-id ctx name) lifetimes)]
@@ -28534,7 +28575,7 @@
   [place : ast.AstExpr]) : ResultTcType
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    (tc-global-shared-view place))
+    (& place))
     [(Var name)
       (match (tc-ptr-addr-of-local-lookup env name)
         [(Ok ty) (tc-ptr-addr-of-root-type ctx ty)]
@@ -29238,7 +29279,7 @@
           [resolved : ast.AstType (tc-resolve-type ctx ty)]
           (ast.ast-type-list-push
             out
-            (ast.ast-node-pool-reader-type-push resolved)))])
+            (ast.ast-node-pool-reader-type-push (& resolved))))])
     (tc-param-type-list-into ctx params (+ index 1) out)))
 
 (define (tc-param-type-list [ctx : TcContext] [params : ast.AstParamList]) : ast.AstTypeList
@@ -29263,7 +29304,7 @@
         (ast.ast-type-list-push
           out
           (ast.ast-node-pool-reader-type-push
-            (tc-resolve-type ctx (tc-macro-signature-type ty))))])
+            (& (tc-resolve-type ctx (tc-macro-signature-type ty)))))])
     (tc-macro-param-type-list-into ctx params (+ index 1) out)))
 
 (define (tc-macro-param-type-list
@@ -29305,7 +29346,7 @@
     Ok
     (let
       [ty (try (tc-expr-id ctx env (ast.ast-expr-list-get exprs index 0)))]
-      (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push ty))
+      (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push (& ty)))
       (tc-expr-list-types-into-at ctx env exprs (+ index 1) out))))
 
 (define (tc-check-array-rest
@@ -30016,7 +30057,7 @@
           [(No)
             (match (ast.ast-expr-unspan-with-segment-bases
               (tc-context-expr-segment-bases ctx)
-              expr)
+              (& expr))
               [(Literal lit) (Ok (tc-literal-type lit))]
               [(Ann _ ty-id) (Ok (tc-resolve-type ctx (ast.ty-node-get ty-id)))]
               [_ (Err "typecheck: top-level value requires annotation")])]))]
@@ -30028,7 +30069,7 @@
         (Ok
           (ast.ast-ty-func
             (tc-param-type-list ctx signature.params)
-            (tc-resolve-type ctx signature.ret))))]
+            (& (tc-resolve-type ctx signature.ret)))))]
     [(Extern decl-meta _ _ _ ty) (Ok (tc-resolve-type ctx ty))]
     [(DefDispatch decl-meta name variants)
       (tc-dispatch-decl-type ctx name variants)]
@@ -30059,7 +30100,7 @@
           [(No)
             (match (ast.ast-expr-unspan-with-segment-bases
               (tc-context-expr-segment-bases ctx)
-              (tc-global-shared-view expr))
+              (& expr))
               [(Literal lit) (Ok (tc-literal-type lit))]
               [(Ann _ ty-id) (Ok (tc-resolve-type ctx (ast.ty-node-get ty-id)))]
               [_ (tc-expr ctx env expr)])]))]
@@ -30080,8 +30121,8 @@
       (ast.ast-field-def-fallback))
       [(Def _ ty _)
         (ast.ast-type-cons
-          (tc-resolve-type ctx ty)
-          (tc-field-type-list-at ctx fields (+ index 1)))])))
+          (& (tc-resolve-type ctx ty))
+          (& (tc-field-type-list-at ctx fields (+ index 1))))])))
 
 (define (tc-tag-regions [regions : TcNameIdList] [ty : ast.AstType]) : ast.AstType
   (if (tc-name-id-list-empty? regions)
@@ -30102,11 +30143,12 @@
   (if (>= index (ast.ast-type-list-len types))
     (ast.ast-type-list-new)
     (ast.ast-type-cons
-      (tc-tag-regions
-        regions
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (tc-tag-type-list-regions-at regions types (+ index 1)))))
+      (&
+        (tc-tag-regions
+          regions
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
+      (& (tc-tag-type-list-regions-at regions types (+ index 1))))))
 
 (define (tc-project-type-list-from-region-container
   [container-ty : ast.AstType]
@@ -30120,14 +30162,16 @@
   (if (>= index (ast.ast-type-list-len types))
     (ast.ast-type-list-new)
     (ast.ast-type-cons
-      (tc-project-from-region-container
-        (tc-global-shared-view container-ty)
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (tc-project-type-list-from-region-container-at
-        container-ty
-        types
-        (+ index 1)))))
+      (&
+        (tc-project-from-region-container
+          (tc-global-shared-view container-ty)
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
+      (&
+        (tc-project-type-list-from-region-container-at
+          container-ty
+          types
+          (+ index 1))))))
 
 (define (tc-enum-variant-constructor-type-id
   [ctx : TcContext]
@@ -30149,7 +30193,7 @@
         (tc-resolve-type-list
           (tc-context-with-owner-name-module ctx enum-name-id)
           fields)
-        ret))))
+        (& ret)))))
 
 (define (tc-bind-enum-variants-in-module-id
   [ctx : TcContext]
@@ -30402,7 +30446,7 @@
             (tc-field-type-list
               (tc-context-with-module-id ctx module module-id)
               fields)
-            (tc-global-shared-view struct-ty))]
+            (& struct-ty))]
         (ctfe_support.ctfe-module-value-add-id-for-state!
           (tc-context-ctfe-macro-state ctx)
           module-id
@@ -30428,7 +30472,7 @@
             (tc-field-type-list
               (tc-context-with-module-id ctx module module-id)
               fields)
-            (tc-global-shared-view struct-ty))]
+            (& struct-ty))]
         (ctfe_support.ctfe-module-value-add-id-for-state!
           (tc-context-ctfe-macro-state ctx)
           module-id
@@ -31069,7 +31113,7 @@
     [index : i64 0]
     (while (and ok (< index count))
       (match (ast.ast-decl-unwrapped
-        (tc-global-array-element-shared-view decl-slots (+ decl-offset index)))
+        (& (array-ref decl-slots (+ decl-offset index))))
         [(Module next-module) (set! cur-module-id next-module)]
         [(Import
             decl-meta
@@ -31646,9 +31690,7 @@
         [struct-ty : ast.AstType
           (Struct (tc-module-name-id-by-id (tc-context-module-id ctx) name))]
         [constructor-ty : ast.AstType
-          (ast.ast-ty-func
-            (tc-field-type-list ctx fields)
-            (tc-global-shared-view struct-ty))]
+          (ast.ast-ty-func (tc-field-type-list ctx fields) (& struct-ty))]
         (Ok
           (tc-bind-struct-cleanup-local-shadowed!
             ctx
@@ -31665,9 +31707,7 @@
             (tc-module-name-id-by-id (tc-context-module-id ctx) name)
             lifetimes)]
         [constructor-ty : ast.AstType
-          (ast.ast-ty-func
-            (tc-field-type-list ctx fields)
-            (tc-global-shared-view struct-ty))]
+          (ast.ast-ty-func (tc-field-type-list ctx fields) (& struct-ty))]
         (Ok
           (tc-bind-struct-cleanup-local-shadowed!
             ctx
@@ -31961,7 +32001,7 @@
 (define (tc-float-literal-expr? [ctx : TcContext] [expr : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-bases ctx)
-    expr)
+    (& expr))
     [(Literal lit)
       (match lit
         [(Float _) true]
@@ -32020,7 +32060,7 @@
 (define (tc-integer-literal-expr? [ctx : TcContext] [expr : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-bases ctx)
-    expr)
+    (& expr))
     [(Literal lit)
       (match lit
         [(Int _ _) true]
@@ -32352,7 +32392,7 @@
               env
               exprs
               (tc-global-shared-view elem-ty)))]
-        (Ok (ast.ast-ty-array elem-ty expected-len))))
+        (Ok (ast.ast-ty-array (& elem-ty) expected-len))))
     (tc-expr ctx env (Array exprs))))
 
 (define (tc-dyn-array-literal-element-supported
@@ -32392,7 +32432,7 @@
               env
               exprs
               (tc-global-shared-view resolved-elem)))]
-        (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array resolved-elem)))))))
+        (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& resolved-elem))))))))
 
 (define (tc-expr-dyn-array-literal-infer
   [ctx : TcContext]
@@ -32425,7 +32465,7 @@
                 env
                 rest
                 (tc-global-shared-view first-ty)))]
-          (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array first-ty))))))))
+          (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& first-ty)))))))))
 
 (define (tc-expr-dyn-array-literal-with-expected-or-actual
   [ctx : TcContext]
@@ -32543,7 +32583,7 @@
         (ast.ast-type-list-push
           out
           (ast.ast-node-pool-reader-type-push
-            (tc-contextual-result-type want got)))
+            (& (tc-contextual-result-type want got))))
         (tc-check-tuple-elements-with-expected-into-at
           ctx
           env
@@ -33016,7 +33056,7 @@
               (Ok
                 (tc-tag-active-region
                   env
-                  (ast.ast-ty-box (tc-contextual-result-type want got))))))]
+                  (ast.ast-ty-box (& (tc-contextual-result-type want got)))))))]
         [_ (tc-expr ctx env expr)])]
     [(Call func-box _)
       (let
@@ -33111,7 +33151,7 @@
   [expected : ast.AstType]) : ResultTcType
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    (tc-global-shared-view expr))
+    (& expr))
     [(Lambda lambda-box)
       (match (ast.ast-lambda-box-owned-copy lambda-box)
         [(Lambda params maybe-ret body-box)
@@ -33268,7 +33308,7 @@
       state
       (ast.ast-expr-list-get exprs index 0))
       [(Hit ty)
-        (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push ty))
+        (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push (& ty)))
         (tc-body-type-fact-list-types-into-at state exprs (+ index 1) out)]
       [(Miss) (Err "")])))
 
@@ -33719,11 +33759,11 @@
   (if (tc-private-intrinsic-unshadowed-id? ctx env name-id)
     (let
       [text : ast.AstType
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-value (Str))]
+        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-value (& (Str)))]
       [left : ast.AstType
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-left (Str))]
+        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-left (& (Str)))]
       [right : ast.AstType
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-right (Str))]
+        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-right (& (Str)))]
       (cond
         [(= name-id cbi.compiler-builtin-id-tl-private-string-length)
           (Ok (tc-fn1 text (I64)))]
@@ -33742,7 +33782,7 @@
   [func : ast.AstExpr]) : ResultTcType
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    func)
+    (& func))
     [(Var raw-name)
       (let
         [raw-text : String
@@ -33946,7 +33986,7 @@
 ;; id-returning variant: AstExpr.Var already carries the interned i64 name id,
 ;; so callers that only need the id avoid the id->String (intern-str) round trip.
 (define (tc-expr-var-name-id [expr-bases : i64] [expr : ast.AstExpr]) : i64
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Var name) name]
     [_ -1]))
 
@@ -33957,7 +33997,7 @@
   (tc-diag-string-prefix? message (tc-call-arity-message-prefix)))
 
 (define (tc-call-expr? [expr-bases : i64] [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Call _ _) true]
     [_ false]))
 
@@ -34804,7 +34844,7 @@
     [nid : i64 (tc-expr-var-name-id expr-bases (tc-global-shared-view func))]
     (if (>= nid 0)
       (tc-hygiene-name-text-id nid)
-      (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
+      (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
         [(Lambda _) "lambda"]
         [_ "call target"]))))
 
@@ -34912,7 +34952,7 @@
   [index : i64]) : TcMaybeNameId
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    (tc-global-shared-view func))
+    (& func))
     [(Lambda lambda-box)
       (match (ast.ast-lambda-box-shared-view lambda-box)
         [(Lambda params _ _) (tc-call-param-list-name-at (& params) index)])]
@@ -35096,10 +35136,11 @@
     (ast.ast-type-list-push
       out
       (ast.ast-node-pool-reader-type-push
-        (tc-lifetime-subst-type
-          subst
-          (ast.ty-node-get
-            (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))))
+        (&
+          (tc-lifetime-subst-type
+            subst
+            (ast.ty-node-get
+              (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))))
     (tc-lifetime-subst-type-list-into subst types out (+ index 1))))
 
 (define (tc-lifetime-subst-type [subst : TcLifetimeSubst] [ty : ast.AstType]) : ast.AstType
@@ -35109,7 +35150,7 @@
         (tc-lifetime-subst-type-list
           subst
           (ast.ast-type-list-box-shared-view args))
-        (tc-lifetime-subst-type subst (ast.ty-node-get ret)))]
+        (& (tc-lifetime-subst-type subst (ast.ty-node-get ret))))]
     [(Tuple elems)
       (ast.ast-ty-tuple
         (tc-lifetime-subst-type-list
@@ -35117,35 +35158,37 @@
           (ast.ast-type-list-box-shared-view elems)))]
     [(Array elem len)
       (ast.ast-ty-array
-        (tc-lifetime-subst-type subst (ast.ty-node-get elem))
+        (& (tc-lifetime-subst-type subst (ast.ty-node-get elem)))
         len)]
     [(DynArray elem)
       (ast.ast-ty-dyn-array
-        (tc-lifetime-subst-type subst (ast.ty-node-get elem)))]
+        (& (tc-lifetime-subst-type subst (ast.ty-node-get elem))))]
     [(Slice elem)
-      (ast.ast-ty-slice (tc-lifetime-subst-type subst (ast.ty-node-get elem)))]
+      (ast.ast-ty-slice
+        (& (tc-lifetime-subst-type subst (ast.ty-node-get elem))))]
     [(Box elem)
-      (ast.ast-ty-box (tc-lifetime-subst-type subst (ast.ty-node-get elem)))]
+      (ast.ast-ty-box (& (tc-lifetime-subst-type subst (ast.ty-node-get elem))))]
     [(Ptr elem)
-      (ast.ast-ty-ptr (tc-lifetime-subst-type subst (ast.ty-node-get elem)))]
+      (ast.ast-ty-ptr (& (tc-lifetime-subst-type subst (ast.ty-node-get elem))))]
     [(MutPtr elem)
-      (ast.ast-ty-mut-ptr (tc-lifetime-subst-type subst (ast.ty-node-get elem)))]
+      (ast.ast-ty-mut-ptr
+        (& (tc-lifetime-subst-type subst (ast.ty-node-get elem))))]
     [(Ref lifetime inner)
       (ast.ast-ty-ref
         (tc-lifetime-subst-apply subst lifetime)
-        (tc-lifetime-subst-type subst (ast.ty-node-get inner)))]
+        (& (tc-lifetime-subst-type subst (ast.ty-node-get inner))))]
     [(MutRef lifetime inner)
       (ast.ast-ty-mut-ref
         (tc-lifetime-subst-apply subst lifetime)
-        (tc-lifetime-subst-type subst (ast.ty-node-get inner)))]
+        (& (tc-lifetime-subst-type subst (ast.ty-node-get inner))))]
     [(Region region inner)
       (ast.ast-ty-region
         (tc-lifetime-subst-apply subst region)
-        (tc-lifetime-subst-type subst (ast.ty-node-get inner)))]
+        (& (tc-lifetime-subst-type subst (ast.ty-node-get inner))))]
     [(Invalidate lifetime inner)
       (ast.ast-ty-invalidate
         (tc-lifetime-subst-apply subst lifetime)
-        (tc-lifetime-subst-type subst (ast.ty-node-get inner)))]
+        (& (tc-lifetime-subst-type subst (ast.ty-node-get inner))))]
     [(EnumArgs name lifetimes)
       (ast.ast-ty-enum-args
         name
@@ -35857,8 +35900,8 @@
     [expr-bases : i64 (tc-context-expr-bases ctx)]
     [place (try (tc-borrow-place ctx expr-bases env arg))]
     (match place
-      [(TcBorrowPlace lifetime referent-ty)
-        (Ok (ast.ast-ty-ref lifetime referent-ty))])))
+      [(TcBorrowPlace lifetime referent-ty _)
+        (Ok (ast.ast-ty-ref lifetime (& referent-ty)))])))
 
 ;; The auto-borrow `(& arg)` as a value. Only the place is a node; the borrow
 ;; is returned rather than pushed and read back, so no pool is read here.
@@ -35880,8 +35923,8 @@
     (let
       [place : TcBorrowPlace (try (tc-borrow-place-var name got))]
       (match place
-        [(TcBorrowPlace lifetime referent-ty)
-          (Ok (ast.ast-ty-ref lifetime referent-ty))]))))
+        [(TcBorrowPlace lifetime referent-ty _)
+          (Ok (ast.ast-ty-ref lifetime (& referent-ty)))]))))
 
 ;; Body-local memo for a call argument's non-contextual inferred type, keyed by
 ;; the argument's Spanned payload node id. Call arguments are re-inferred by the
@@ -35994,7 +36037,7 @@
     (if (tc-call-immutable-ref-formal? ctx (tc-global-shared-view want))
       (match (ast.ast-expr-unspan-with-segment-bases
         (tc-context-expr-segment-bases ctx)
-        (tc-global-shared-view arg))
+        (& arg))
         [(Var name)
           (if (tc-dotted-place-name-id? ctx env name)
             (let
@@ -36079,7 +36122,7 @@
         (Ok arg)
         (match (ast.ast-expr-unspan-with-segment-bases
           (tc-context-expr-segment-bases ctx)
-          (tc-global-shared-view arg))
+          (& arg))
           [(Var name)
             (if (tc-dotted-place-name-id? ctx env name)
               (let
@@ -36630,8 +36673,8 @@
 
 (define (tc-call-dynamic-c-varargs-abi? [abi : ast.AstExternAbi]) : bool
   (or
-    (ast.ast-extern-abi-c-varargs-open? (tc-global-shared-view abi))
-    (ast.ast-extern-abi-c-varargs-typed? abi)))
+    (ast.ast-extern-abi-c-varargs-open? (& abi))
+    (ast.ast-extern-abi-c-varargs-typed? (& abi))))
 
 (define (tc-call-extern-abi-for-name-id [ctx : TcContext] [name-id : i64]) : TcMaybeExternAbi
   (let
@@ -36674,7 +36717,7 @@
 (define (tc-call-extern-abi [ctx : TcContext] [func : ast.AstExpr]) : TcMaybeExternAbi
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    func)
+    (& func))
     [(Var name) (tc-call-extern-abi-for-name-id ctx name)]
     [_ (No)]))
 
@@ -36852,7 +36895,7 @@
     cbi.compiler-builtin-id-arena-type
     (ast.ast-lifetime-cons
       (tc-arena-brand-id kind call-site-id)
-      (ast.ast-lifetime-list-new))))
+      (& (ast.ast-lifetime-list-new)))))
 
 (define (tc-arena-call-lookup-id
   [ctx : TcContext]
@@ -36903,7 +36946,7 @@
   [expr : ast.AstExpr]) : i64
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    expr)
+    (& expr))
     [(Call func-box args)
       (let
         [nid : i64
@@ -36928,7 +36971,7 @@
   [expr : ast.AstExpr]) : TcMaybeNameId
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    expr)
+    (& expr))
     [(Call func-box args)
       (if (= args.len 1)
         (let
@@ -37172,7 +37215,7 @@
 (define (tc-type-list-repeat [ty : ast.AstType] [count : i64]) : ast.AstTypeList
   (let
     [out : ast.AstTypeList (ast.ast-type-list-with-capacity count)]
-    [id : i64 (ast.ast-node-pool-reader-type-push ty)]
+    [id : i64 (ast.ast-node-pool-reader-type-push (& ty))]
     (tc-type-list-repeat-into (&mut out) id count)
     out))
 
@@ -37211,7 +37254,9 @@
       [resolved : ast.AstType (tc-resolve-type ctx (tc-global-shared-view ty))]
       (if (tc-extern-abi-value-type-ok? ctx (tc-global-shared-view resolved))
         (begin
-          (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push ty))
+          (ast.ast-type-list-push
+            out
+            (ast.ast-node-pool-reader-type-push (& ty)))
           (tc-call-open-varargs-tail-types-into-at ctx env args (+ index 1) out))
         (Err (tc-extern-abi-unsupported-message "variadic argument" resolved))))))
 
@@ -37226,12 +37271,12 @@
     [tail-args : ast.AstExprList
       (try
         (tc-call-varargs-tail-args (tc-context-expr-bases ctx) func args params))]
-    (if (ast.ast-extern-abi-c-varargs-open? (tc-global-shared-view abi))
+    (if (ast.ast-extern-abi-c-varargs-open? (& abi))
       (let
         [tail-types : ast.AstTypeList
           (try (tc-call-open-varargs-tail-types ctx env tail-args))]
         (Ok (tc-type-list-append params tail-types)))
-      (if (ast.ast-extern-abi-c-varargs-typed? (tc-global-shared-view abi))
+      (if (ast.ast-extern-abi-c-varargs-typed? (& abi))
         (let
           [tail-ty : ast.AstType
             (tc-resolve-type ctx (ast.ast-extern-abi-varargs-tail-type abi))]
@@ -37474,10 +37519,7 @@
         (tc-context-source-names ctx))]
     [identity : ci.InternSyntaxTextIdentity
       (ci.intern-source-name-session-identity session source-name-id)]
-    (match (ci.intern-source-name-session-resolve
-      session
-      identity
-      (tc-global-shared-view name))
+    (match (ci.intern-source-name-session-resolve session identity (& name))
       [(ParsedIdentity owned-id)
         (tc-thread-name-kind-owned
           (tc-job-state-thread-name-kind (tc-context-job-state ctx))
@@ -38443,7 +38485,7 @@
   [expr-bases : i64]
   [env : TcTypeEnv]
   [arg : ast.AstExpr]) : TcNameIdList
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases arg)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params _ body-box)
@@ -38463,7 +38505,7 @@
   [arg : ast.AstExpr]) : ResultTcUnit
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    arg)
+    (& arg))
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params _ body-box)
@@ -39023,7 +39065,7 @@
                     (tc-macro-type-param-kind? (tc-global-shared-view want))
                     (match (ast.ast-expr-unspan-with-segment-bases
                       (tc-context-expr-bases ctx)
-                      (tc-global-shared-view arg))
+                      (& arg))
                       [(TypeLiteral _) true]
                       [_ false]))
                     (tc-check-call-args-with-message-at
@@ -39102,7 +39144,7 @@
   [fallback-message : String]) : ResultTcType
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    func)
+    (& func))
     [(Var name)
       (if (and
         (or
@@ -39252,7 +39294,7 @@
     (while (and (not found) (< index args.len))
       (match (ast.ast-expr-unspan-with-segment-bases
         (tc-context-expr-bases ctx)
-        (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0)))
+        (& (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))))
         [(TypeLiteral _) (set! found true)]
         [_ unit])
       (set! index (+ index 1)))
@@ -39288,7 +39330,7 @@
             (and comptime? (tc-macro-type-param-kind? ty))
             (match (ast.ast-expr-unspan-with-segment-bases
               (tc-context-expr-bases ctx)
-              (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0)))
+              (& (tc-context-expr-get ctx (ast.ast-expr-list-get args index 0))))
               [(TypeLiteral ty-id)
                 (set! (array-ref names len) name)
                 (set!
@@ -39308,7 +39350,7 @@
         (tc-type-list-subst-comptime
           subst
           (ast.ast-type-list-box-shared-view params))
-        (tc-type-subst-comptime subst (ast.ty-node-get ret)))]
+        (& (tc-type-subst-comptime subst (ast.ty-node-get ret))))]
     [(Tuple elems)
       (ast.ast-ty-tuple
         (tc-type-list-subst-comptime
@@ -39316,35 +39358,37 @@
           (ast.ast-type-list-box-shared-view elems)))]
     [(Array elem len)
       (ast.ast-ty-array
-        (tc-type-subst-comptime subst (ast.ty-node-get elem))
+        (& (tc-type-subst-comptime subst (ast.ty-node-get elem)))
         len)]
     [(DynArray elem)
       (ast.ast-ty-dyn-array
-        (tc-type-subst-comptime subst (ast.ty-node-get elem)))]
+        (& (tc-type-subst-comptime subst (ast.ty-node-get elem))))]
     [(Slice elem)
-      (ast.ast-ty-slice (tc-type-subst-comptime subst (ast.ty-node-get elem)))]
+      (ast.ast-ty-slice
+        (& (tc-type-subst-comptime subst (ast.ty-node-get elem))))]
     [(Box elem)
-      (ast.ast-ty-box (tc-type-subst-comptime subst (ast.ty-node-get elem)))]
+      (ast.ast-ty-box (& (tc-type-subst-comptime subst (ast.ty-node-get elem))))]
     [(Ptr elem)
-      (ast.ast-ty-ptr (tc-type-subst-comptime subst (ast.ty-node-get elem)))]
+      (ast.ast-ty-ptr (& (tc-type-subst-comptime subst (ast.ty-node-get elem))))]
     [(MutPtr elem)
-      (ast.ast-ty-mut-ptr (tc-type-subst-comptime subst (ast.ty-node-get elem)))]
+      (ast.ast-ty-mut-ptr
+        (& (tc-type-subst-comptime subst (ast.ty-node-get elem))))]
     [(Ref region inner)
       (ast.ast-ty-ref
         region
-        (tc-type-subst-comptime subst (ast.ty-node-get inner)))]
+        (& (tc-type-subst-comptime subst (ast.ty-node-get inner))))]
     [(MutRef region inner)
       (ast.ast-ty-mut-ref
         region
-        (tc-type-subst-comptime subst (ast.ty-node-get inner)))]
+        (& (tc-type-subst-comptime subst (ast.ty-node-get inner))))]
     [(Region region inner)
       (ast.ast-ty-region
         region
-        (tc-type-subst-comptime subst (ast.ty-node-get inner)))]
+        (& (tc-type-subst-comptime subst (ast.ty-node-get inner))))]
     [(Invalidate lifetime inner)
       (ast.ast-ty-invalidate
         lifetime
-        (tc-type-subst-comptime subst (ast.ty-node-get inner)))]
+        (& (tc-type-subst-comptime subst (ast.ty-node-get inner))))]
     [(Var name)
       (let
         [index : i64 0]
@@ -39371,11 +39415,12 @@
   (if (>= index (ast.ast-type-list-len types))
     (ast.ast-type-list-new)
     (ast.ast-type-cons
-      (tc-type-subst-comptime
-        subst
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (tc-type-list-subst-comptime-at subst types (+ index 1)))))
+      (&
+        (tc-type-subst-comptime
+          subst
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
+      (& (tc-type-list-subst-comptime-at subst types (+ index 1))))))
 
 (define (tc-call-expr-ordinary
   [ctx : TcContext]
@@ -40383,7 +40428,7 @@
 (define (tc-clone-root-collection-decl-key
   [module-id : i64]
   [decl : ast.AstDecl]) : i64
-  (match (ast.ast-decl-unwrapped decl)
+  (match (ast.ast-decl-unwrapped (& decl))
     [(Def decl-meta name _ _)
       (csym.compiler-symbol-module-key-id-by-id module-id name)]
     [(DefFn decl-meta name _ _ _ _)
@@ -40992,7 +41037,7 @@
         decls
         index)
         (match (ast.ast-decl-unwrapped
-          (ast.ast-decl-list-get decls index (ast.ast-decl-fallback)))
+          (& (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))))
           [(Module next-module) (set! current-module-id next-module)]
           [(DefEnum _ decl-name _ variants)
             (let
@@ -41316,7 +41361,7 @@
   [func : ast.AstExpr]) : TcSliceViewCallKind
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    func)
+    (& func))
     [(Var raw-name)
       (let
         [raw-text : String
@@ -41351,7 +41396,7 @@
   ;; Borrow gating runs before a complete type environment is available.  It
   ;; therefore recognizes the raw spelling conservatively; the real
   ;; classifier above still performs shadowing checks before interception.
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
     [(Var raw-name)
       (let
         [raw-text : String
@@ -41456,10 +41501,13 @@
     [referent : ast.AstType
       (if (tc-slice-call-bytes? kind)
         (Bytes)
-        (ast.ast-ty-slice-with-pools (tc-context-pools ctx) element))]
+        (ast.ast-ty-slice-with-pools (tc-context-pools ctx) (& element)))]
     (if (tc-slice-call-mutable? kind)
-      (ast.ast-ty-mut-ref-with-pools (tc-context-pools ctx) lifetime referent)
-      (ast.ast-ty-ref-with-pools (tc-context-pools ctx) lifetime referent))))
+      (ast.ast-ty-mut-ref-with-pools
+        (tc-context-pools ctx)
+        lifetime
+        (& referent))
+      (ast.ast-ty-ref-with-pools (tc-context-pools ctx) lifetime (& referent)))))
 
 (define (tc-slice-view-result-type
   [ctx : TcContext]
@@ -41517,7 +41565,7 @@
           (tc-global-shared-view source))
           [(Ok place)
             (match place
-              [(TcBorrowPlace lifetime _)
+              [(TcBorrowPlace lifetime _ _)
                 (Ok
                   (tc-slice-view-borrow-type ctx kind lifetime source-element))])]
           [(Err message)
@@ -41580,11 +41628,12 @@
                   (ast.ast-ty-tuple
                     (ast.ast-type-cons-with-pools
                       (tc-context-pools ctx)
-                      (tc-global-shared-view half-ty)
-                      (ast.ast-type-cons-with-pools
-                        (tc-context-pools ctx)
-                        half-ty
-                        (ast.ast-type-list-new))))))))]
+                      (& half-ty)
+                      (&
+                        (ast.ast-type-cons-with-pools
+                          (tc-context-pools ctx)
+                          (& half-ty)
+                          (& (ast.ast-type-list-new))))))))))]
         [_
           (Err
             (tc-locate-error-at-expr
@@ -41691,7 +41740,7 @@
     [func : ast.AstExpr (tc-context-expr-get ctx func-id)]
     (match (ast.ast-expr-unspan-with-segment-bases
       (tc-context-expr-segment-bases ctx)
-      (tc-global-shared-view func))
+      (& func))
       [(Var raw-name)
         ;; Keep builtin dispatch identical to the string-name call path; only
         ;; the ordinary fallback needs the pooled function expression id.
@@ -41863,7 +41912,7 @@
   ;; already-escaping plain function value during the expansion walk.
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-bases ctx)
-    (tc-global-shared-view init))
+    (& init))
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params maybe-ret body-box)
@@ -42031,7 +42080,7 @@
   [expr-bases : i64]
   [env : TcTypeEnv]
   [init : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& init))
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params _ body-box)
@@ -42052,7 +42101,7 @@
   [init : ast.AstExpr]) : bool
   (let
     [expr-bases : i64 (tc-context-expr-bases ctx)]
-    (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
+    (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& init))
       [(Lambda lambda-box)
         (match (__tl-box-place lambda-box)
           [(Lambda params _ body-box)
@@ -42070,7 +42119,7 @@
     [expr-bases : i64 (tc-context-expr-bases ctx)]
     (and
       (tc-move-only-capturing-lambda-init? ctx env (tc-global-shared-view init))
-      (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
+      (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& init))
         [(Lambda lambda-box)
           (match (__tl-box-place lambda-box)
             [(Lambda params _ body-box)
@@ -42174,7 +42223,7 @@
               allow-copy-alias
               (match (ast.ast-expr-unspan-with-segment-bases
                 expr-bases
-                (tc-global-shared-view init))
+                (& init))
                 [(Var source-name)
                   (and
                     (string.eq (tc-env-key-name-text source-name) name)
@@ -42188,7 +42237,7 @@
               allow-copy-alias
               (match (ast.ast-expr-unspan-with-segment-bases
                 expr-bases
-                (tc-global-shared-view init))
+                (& init))
                 [(Lambda lambda-box)
                   (match (ast.ast-lambda-box-shared-view lambda-box)
                     [(Lambda params _ lambda-body-box)
@@ -42321,7 +42370,7 @@
   [func : ast.AstExpr]
   [name : String]
   [bound : TcStringList]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
     [(Var var-name)
       (and
         (string.eq (tc-env-key-name-text var-name) name)
@@ -42336,7 +42385,7 @@
   (not
     (tc-expr-uses-free-name?
       expr-bases
-      (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+      (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
       name
       bound)))
 
@@ -42345,9 +42394,7 @@
   [expr : ast.AstExpr]
   [name : String]
   [bound : TcStringList]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Var var-name)
       (not
         (and
@@ -42636,7 +42683,7 @@
       (tc-ref-closure-expr-list-local-uses-ok?
         expr-bases
         (ast.ast-expr-child-ids
-          (ast.ast-expr-unspan-with-segment-bases expr-bases expr))
+          (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))
         name
         bound)]))
 
@@ -42950,7 +42997,9 @@
                           index
                           body
                           name)]))]
-                (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
+                (match (ast.ast-expr-unspan-with-segment-bases
+                  expr-bases
+                  (& init))
                   [(Lambda lambda-box)
                     (match (__tl-box-place lambda-box)
                       [(Lambda params maybe-ret lambda-body-box)
@@ -42994,7 +43043,9 @@
                         index
                         body
                         name)]))]
-              (match (ast.ast-expr-unspan-with-segment-bases expr-bases init)
+              (match (ast.ast-expr-unspan-with-segment-bases
+                expr-bases
+                (& init))
                 [(Lambda lambda-box)
                   (match (__tl-box-place lambda-box)
                     [(Lambda params maybe-ret lambda-body-box)
@@ -43181,7 +43232,7 @@
 (define (tc-resource-cleanup-direct-name-ok
   [expr-bases : i64]
   [cleanup : ast.AstExpr]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases cleanup)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& cleanup))
     [(Var _) Ok]
     [_
       (Err
@@ -43421,7 +43472,7 @@
   [func : ast.AstExpr]) : TcNameLookup
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    func)
+    (& func))
     [(Var raw-name)
       (let
         [raw-text : String
@@ -43541,7 +43592,7 @@
   [expr-bases : i64]
   [spmd-env : TcSpmdEnv]
   [arg : ast.AstExpr]) : TcSpmdRole
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases arg)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
     [(Ann inner-box _)
       (tc-spmd-inline-helper-arg-role
         expr-bases
@@ -43946,8 +43997,7 @@
               [(Function)
                 (let
                   [symbol : String
-                    (ast.ast-extern-metadata-symbol
-                      (ast.ast-extern-metadata-box-shared-view metadata))]
+                    (ast.ast-extern-metadata-symbol (& (deref metadata)))]
                   (if (tc-spmd-atomic-public-symbol? symbol)
                     (Some symbol)
                     (No)))]
@@ -44382,7 +44432,7 @@
   [expr-bases : i64]
   [spmd-env : TcSpmdEnv]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -44405,9 +44455,7 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -44457,7 +44505,7 @@
       (tc-spmd-foreach-direct-index
         expr-bases
         spmd-env
-        (ast.ast-expr-unspan-with-segment-bases expr-bases expr))]))
+        (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))]))
 
 ;; The latest binding of NAME-ID at or below INDEX, or -1.
 (define (tc-spmd-env-latest-index-from
@@ -44497,7 +44545,7 @@
 (define (tc-spmd-row-major-atom [expr-bases : i64] [expr : ast.AstExpr]) : ast.AstExpr
   (let
     [unspanned : ast.AstExpr
-      (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
+      (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))]
     (match (tc-global-shared-view unspanned)
       [(Ann inner-box _)
         (tc-spmd-row-major-atom
@@ -44629,7 +44677,7 @@
         (tc-spmd-row-major-fail)
         (let
           [node : ast.AstExpr
-            (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
+            (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))]
           (match (tc-global-shared-view node)
             [(Literal _) acc]
             [(Var name)
@@ -44706,9 +44754,7 @@
   [acc : TcSpmdRowMajorTerms]) : TcSpmdRowMajorTerms
   (if (not acc.ok)
     acc
-    (match (ast.ast-expr-unspan-with-segment-bases
-      expr-bases
-      (tc-global-shared-view expr))
+    (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
       [(Ann inner-box _)
         (tc-spmd-row-major-terms
           ctx
@@ -44935,7 +44981,7 @@
   [expr-bases : i64]
   [spmd-env : TcSpmdEnv]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -44961,9 +45007,7 @@
   [env : TcTypeEnv]
   [spmd-env : TcSpmdEnv]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -45021,7 +45065,7 @@
       (tc-spmd-masked-if-direct-index
         expr-bases
         spmd-env
-        (ast.ast-expr-unspan-with-segment-bases expr-bases expr))]))
+        (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))]))
 
 (define (tc-spmd-masked-if-index
   [ctx : TcContext]
@@ -45169,7 +45213,7 @@
       expr-bases
       env
       spmd-env
-      (ast.ast-expr-unspan-with-segment-bases expr-bases expr))))
+      (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))))
 
 (define (tc-spmd-masked-if-expr-unspanned
   [ctx : TcContext]
@@ -45923,9 +45967,7 @@
 (define (tc-spmd-scan-body-no-nested-spmd
   [expr-bases : i64]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(TupleRef tuple-box index-box)
       (tc-spmd-scan-body-no-nested-pair
         expr-bases
@@ -45977,7 +46019,7 @@
       (tc-spmd-scan-body-no-nested-list
         expr-bases
         (ast.ast-expr-child-ids
-          (ast.ast-expr-unspan-with-segment-bases expr-bases expr)))]))
+          (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))))]))
 
 (define (tc-spmd-check-scan-body
   [ctx : TcContext]
@@ -46192,7 +46234,7 @@
       expr-bases
       env
       spmd-env
-      (ast.ast-expr-unspan-with-segment-bases expr-bases expr))))
+      (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))))
 
 (define (tc-spmd-reduce-class-unspanned
   [ctx : TcContext]
@@ -46474,7 +46516,7 @@
   [expr-bases : i64]
   [session : cis.InternStructuralSessionHandle]
   [func : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
     [(Var raw-name)
       (let
         [hygiene-global : bool (tc-hygiene-global-name-id? session raw-name)]
@@ -46778,9 +46820,7 @@
 (define (tc-spmd-lane-value-operand-ok [expr-bases : i64] [expr : ast.AstExpr]) : ResultTcUnit
   (let
     [unspanned : ast.AstExpr
-      (ast.ast-expr-unspan-with-segment-bases
-        expr-bases
-        (tc-global-shared-view expr))]
+      (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))]
     [reads-only : bool
       (match (tc-global-shared-view unspanned)
         [(Literal _) true]
@@ -47456,11 +47496,14 @@
               spmd-env
               (ast.ast-expr-cons
                 a-box
-                (ast.ast-expr-cons
-                  b-box
+                (&
                   (ast.ast-expr-cons
-                    c-box
-                    (ast.ast-expr-cons d-box (ast.ast-expr-list-new)))))
+                    b-box
+                    (&
+                      (ast.ast-expr-cons
+                        c-box
+                        (&
+                          (ast.ast-expr-cons d-box (& (ast.ast-expr-list-new)))))))))
               0)
               [(Ok (TcSpmdExprInfo _ _ bounds-env))
                 (let
@@ -51446,7 +51489,9 @@
 ;; by the caller) or its immediate referent do not change the representation.
 (define (tc-inline-aggregate-fat-reference? [ctx : TcContext] [inner : i64]) : bool
   (ast.ast-type-fat-referent?
-    (tc-type-strip-region (tc-resolve-type ctx (tc-context-type-get ctx inner)))))
+    (&
+      (tc-type-strip-region
+        (tc-resolve-type ctx (tc-context-type-get ctx inner))))))
 
 (define (tc-inline-aggregate-type-layout-with-stack
   [ctx : TcContext]
@@ -52909,7 +52954,7 @@
   [field-id : i64]) : ResultTcType
   (cond
     [(= field-id cbi.compiler-builtin-id-fix-items)
-      (Ok (DynArray (ast.ty-node-push elem-ty)))]
+      (Ok (DynArray (ast.ty-node-push (& elem-ty))))]
     [(= field-id cbi.compiler-builtin-id-fix-len) (Ok (I64))]
     [else (tc-comptime-unknown-field-id owner field-id)]))
 
@@ -53022,8 +53067,9 @@
 
 (define (tc-borrow-place-var-by-value [name : i64] [ty : ast.AstType]) : ResultTcBorrowPlace
   (match (tc-type-outer-region (tc-global-shared-view ty))
-    [(Some region) (Ok (TcBorrowPlace region (tc-borrow-referent-type ty)))]
-    [(No) (Ok (TcBorrowPlace name (tc-borrow-referent-type ty)))]))
+    [(Some region)
+      (Ok (TcBorrowPlace region (tc-borrow-referent-type ty) false))]
+    [(No) (Ok (TcBorrowPlace name (tc-borrow-referent-type ty) false))]))
 
 (define (tc-reference-containing-place-borrow-ok? [ty : ast.AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -53058,12 +53104,14 @@
       (Ok
         (TcBorrowPlace
           lifetime
-          (tc-borrow-referent-type (ast.ty-node-get referent-ty))))]
+          (tc-borrow-referent-type (ast.ty-node-get referent-ty))
+          true))]
     [(MutRef lifetime referent-ty)
       (Ok
         (TcBorrowPlace
           lifetime
-          (tc-borrow-referent-type (ast.ty-node-get referent-ty))))]
+          (tc-borrow-referent-type (ast.ty-node-get referent-ty))
+          false))]
     [_
       (if (and
         (tc-type-contains-reference? (tc-global-shared-view ty))
@@ -53082,34 +53130,43 @@
 ;; its referent. The stored reference owns the provenance lifetime; retaining
 ;; the enclosing place lifetime would make `(& (array-ref iter.slots i))`
 ;; appear to borrow the iterator state rather than the source array.
+;; A stored shared reference makes the rest of the path shared; a stored `&mut`
+;; reached through a shared one still grants only shared access.
 (define (tc-borrow-place-projected-type
   [fallback-lifetime : i64]
-  [projected-ty : ast.AstType]) : TcBorrowPlace
+  [projected-ty : ast.AstType]
+  [through-shared : bool]) : TcBorrowPlace
   ;; Field and tuple declarations are already resolved before projection; the
   ;; enclosing place has had any transient region tag stripped as well.
   (match (tc-global-shared-view projected-ty)
     [(Ref lifetime referent-ty)
       (TcBorrowPlace
         lifetime
-        (tc-borrow-referent-type (ast.ty-node-get referent-ty)))]
+        (tc-borrow-referent-type (ast.ty-node-get referent-ty))
+        true)]
     [(MutRef lifetime referent-ty)
       (TcBorrowPlace
         lifetime
-        (tc-borrow-referent-type (ast.ty-node-get referent-ty)))]
-    [_ (TcBorrowPlace fallback-lifetime (tc-borrow-referent-type projected-ty))]))
+        (tc-borrow-referent-type (ast.ty-node-get referent-ty))
+        through-shared)]
+    [_
+      (TcBorrowPlace
+        fallback-lifetime
+        (tc-borrow-referent-type projected-ty)
+        through-shared)]))
 
 (define (tc-borrow-place-struct-field-id
   [ctx : TcContext]
   [place : TcBorrowPlace]
   [field-id : i64]) : ResultTcBorrowPlace
   (match place
-    [(TcBorrowPlace lifetime receiver-ty)
+    [(TcBorrowPlace lifetime receiver-ty shared)
       (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
         [(Struct struct-name)
           (let
             [field-ty : ast.AstType
               (try (tc-struct-field-type-id ctx struct-name field-id))]
-            (Ok (tc-borrow-place-projected-type lifetime field-ty)))]
+            (Ok (tc-borrow-place-projected-type lifetime field-ty shared)))]
         [(StructArgs struct-name lifetimes)
           (let
             [field-ty : ast.AstType
@@ -53119,7 +53176,7 @@
                   struct-name
                   (ast.ast-lifetime-list-box-shared-view lifetimes)
                   field-id))]
-            (Ok (tc-borrow-place-projected-type lifetime field-ty)))]
+            (Ok (tc-borrow-place-projected-type lifetime field-ty shared)))]
         [_
           (Err
             (tc-kind-message
@@ -53131,7 +53188,7 @@
   [place : TcBorrowPlace]
   [index : i64]) : ResultTcBorrowPlace
   (match place
-    [(TcBorrowPlace lifetime tuple-ty)
+    [(TcBorrowPlace lifetime tuple-ty shared)
       (match (tc-type-strip-region (tc-resolve-type ctx tuple-ty))
         [(Tuple elems)
           (let
@@ -53140,7 +53197,7 @@
                 (tc-type-list-ref
                   (ast.ast-type-list-box-shared-view elems)
                   index))]
-            (Ok (tc-borrow-place-projected-type lifetime elem-ty)))]
+            (Ok (tc-borrow-place-projected-type lifetime elem-ty shared)))]
         [_
           (Err
             (tc-kind-message
@@ -53151,24 +53208,29 @@
   [ctx : TcContext]
   [place : TcBorrowPlace]) : ResultTcBorrowPlace
   (match place
-    [(TcBorrowPlace lifetime array-ty)
+    [(TcBorrowPlace lifetime array-ty shared)
       (match (tc-type-strip-region
         (tc-resolve-type ctx (tc-global-shared-view array-ty)))
         [(Array elem-ty _)
           (Ok
             (TcBorrowPlace
               lifetime
-              (tc-borrow-referent-type (ast.ty-node-get elem-ty))))]
+              (tc-borrow-referent-type (ast.ty-node-get elem-ty))
+              shared))]
+        ;; Private buffer elements are heap storage the shared-path check does
+        ;; not cover yet (#8743); see `tc-borrow-referent-private-buffer?`.
         [(DynArray elem-ty)
           (Ok
             (TcBorrowPlace
               lifetime
-              (tc-borrow-referent-type (ast.ty-node-get elem-ty))))]
+              (tc-borrow-referent-type (ast.ty-node-get elem-ty))
+              false))]
         [(Slice elem-ty)
           (Ok
             (TcBorrowPlace
               lifetime
-              (tc-borrow-referent-type (ast.ty-node-get elem-ty))))]
+              (tc-borrow-referent-type (ast.ty-node-get elem-ty))
+              shared))]
         [_
           (Err
             (str_cat.str-cat
@@ -53179,13 +53241,16 @@
 
 (define (tc-borrow-place-box-get [ctx : TcContext] [place : TcBorrowPlace]) : ResultTcBorrowPlace
   (match place
-    [(TcBorrowPlace lifetime box-ty)
+    [(TcBorrowPlace lifetime box-ty _)
       (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
+        ;; Box contents are heap storage the shared-path check does not cover
+        ;; yet (#8743); see `tc-borrow-referent-private-buffer?`.
         [(Box inner-ty)
           (Ok
             (TcBorrowPlace
               lifetime
-              (tc-borrow-referent-type (ast.ty-node-get inner-ty))))]
+              (tc-borrow-referent-type (ast.ty-node-get inner-ty))
+              false))]
         [_
           (Err
             (tc-kind-message
@@ -53218,7 +53283,7 @@
   [expr-bases : i64]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : ResultTcBorrowPlace
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Var name)
       (if (tc-dotted-place-name-id? ctx env name)
         (let
@@ -53308,7 +53373,7 @@
   [expr : ast.AstExpr]) : ResultTcUnit
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    expr)
+    (& expr))
     [(Var name)
       (let
         [ty (try (tc-lookup-visible-id ctx env name))]
@@ -53368,7 +53433,7 @@
   [expr : ast.AstExpr]) : ResultTcStorePlaceTarget
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    expr)
+    (& expr))
     [(Var name)
       (if (tc-dotted-place-name-id? ctx env name)
         (let
@@ -53538,28 +53603,48 @@
           context
           "; reference value would escape lexical scope"))]))
 
+;; The compiler's own passes still write heap storage that they reach through a
+;; shared reference: private `__tl_dyn-array` buffers, their elements, and Box
+;; contents. Until those move behind `&mut` (#8743), a `&mut` borrow of a
+;; private buffer handle, or of storage behind a Box or private buffer, is not
+;; rejected for the shared path. Every other referent is.
+(define (tc-borrow-referent-private-buffer? [referent-ty : ast.AstType]) : bool
+  (match referent-ty
+    [(DynArray _) true]
+    [_ false]))
+
 (define (tc-borrow-place-result-type
   [mutable : bool]
   [lifetime : ast.AstBorrowLifetime]
   [place : TcBorrowPlace]) : ResultTcType
   (match place
-    [(TcBorrowPlace inferred referent-ty)
-      (match lifetime
-        [(Inferred)
-          (Ok
-            (if mutable
-              (ast.ast-ty-mut-ref inferred referent-ty)
-              (ast.ast-ty-ref inferred referent-ty)))]
-        [(Named requested)
-          (if (= requested inferred)
+    [(TcBorrowPlace inferred referent-ty through-shared)
+      (if (and
+        mutable
+        through-shared
+        (not
+          (tc-borrow-referent-private-buffer?
+            (tc-global-shared-view referent-ty))))
+        (Err
+          (tc-kind-message
+            (BorrowViolation)
+            "typecheck: mutable borrow through a shared reference; borrow the owner mutably or pass a (&mut T)"))
+        (match lifetime
+          [(Inferred)
             (Ok
               (if mutable
-                (ast.ast-ty-mut-ref inferred referent-ty)
-                (ast.ast-ty-ref inferred referent-ty)))
-            (Err
-              (tc-kind-message
-                (LifetimeMismatch)
-                "typecheck: borrow lifetime mismatch")))])]))
+                (ast.ast-ty-mut-ref inferred (& referent-ty))
+                (ast.ast-ty-ref inferred (& referent-ty))))]
+          [(Named requested)
+            (if (= requested inferred)
+              (Ok
+                (if mutable
+                  (ast.ast-ty-mut-ref inferred (& referent-ty))
+                  (ast.ast-ty-ref inferred (& referent-ty))))
+              (Err
+                (tc-kind-message
+                  (LifetimeMismatch)
+                  "typecheck: borrow lifetime mismatch")))]))]))
 
 (define (tc-borrow-expr-with-policy
   [ctx : TcContext]
@@ -53718,7 +53803,7 @@
           [(ast.AstType.Slice elem)
             (match (ast.ast-expr-unspan-with-segment-bases
               (tc-context-expr-bases ctx)
-              operand)
+              (& operand))
               [(ast.AstExpr.Array exprs)
                 (ast.AstMaybeType.Some
                   (ast.AstType.Array elem (ast.ast-expr-list-len (& exprs))))]
@@ -53734,7 +53819,7 @@
   [want : ast.AstType]) : ResultTcType
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-bases ctx)
-    arg)
+    (& arg))
     [(ast.AstExpr.Borrow mutable lifetime-id operand-box)
       (match (ast.ast-borrow-lifetime-from-id lifetime-id)
         [(ast.AstBorrowLifetime.Named _)
@@ -53790,8 +53875,8 @@
                   [lifetime : i64 (tc-call-temporary-lifetime-id)]
                   (ResultTcType.Ok
                     (if mutable
-                      (ast.ast-ty-mut-ref lifetime referent-ty)
-                      (ast.ast-ty-ref lifetime referent-ty))))]))])]
+                      (ast.ast-ty-mut-ref lifetime (& referent-ty))
+                      (ast.ast-ty-ref lifetime (& referent-ty)))))]))])]
     [_ (ResultTcType.Err (tc-borrow-place-error-message))]))
 
 ;; Whether evaluating `expr` can leave an enclosing argument list early through
@@ -54262,10 +54347,13 @@
   [elem-ty : ast.AstType]) : ast.AstType
   (let
     [referent : ast.AstType
-      (ast.ast-ty-slice-with-pools (tc-context-pools ctx) elem-ty)]
+      (ast.ast-ty-slice-with-pools (tc-context-pools ctx) (& elem-ty))]
     (if mutable
-      (ast.ast-ty-mut-ref-with-pools (tc-context-pools ctx) lifetime referent)
-      (ast.ast-ty-ref-with-pools (tc-context-pools ctx) lifetime referent))))
+      (ast.ast-ty-mut-ref-with-pools
+        (tc-context-pools ctx)
+        lifetime
+        (& referent))
+      (ast.ast-ty-ref-with-pools (tc-context-pools ctx) lifetime (& referent)))))
 
 ;; Copy elements bind by value and take any payload pattern. Other elements
 ;; bind as references with the scrutinee's lifetime, as through `(& place)`; a
@@ -54287,13 +54375,17 @@
             (tc-bind-id
               env
               name
-              (ast.ast-ty-mut-ref lifetime (tc-type-without-regions elem-ty))))]
+              (ast.ast-ty-mut-ref
+                lifetime
+                (& (tc-type-without-regions elem-ty)))))]
         [(Var name _)
           (Ok
             (tc-bind-id
               env
               name
-              (ast.ast-ty-mut-ref lifetime (tc-type-without-regions elem-ty))))]
+              (ast.ast-ty-mut-ref
+                lifetime
+                (& (tc-type-without-regions elem-ty)))))]
         [_
           (Err
             (tc-kind-message
@@ -54730,8 +54822,13 @@
   [struct-name-id : i64]
   [scrut-ty : ast.AstType]
   [fields : ast.AstFieldDefList]) : ResultTcTypeList
+  ;; The declared field types name types from the struct's own module, so they
+  ;; resolve there, as `tc-struct-field-type-id` resolves a field read (#8727).
   (let
-    [field-types : ast.AstTypeList (tc-field-type-list ctx fields)]
+    [field-types : ast.AstTypeList
+      (tc-field-type-list
+        (tc-context-with-nominal-owner-module-id ctx struct-name-id)
+        fields)]
     [resolved-scrut-ty : ast.AstType
       (tc-type-strip-region
         (tc-resolve-type ctx (tc-global-shared-view scrut-ty)))]
@@ -54965,7 +55062,7 @@
       [_ (Err "typecheck: unsupported nested match pattern")])))
 
 (define (tc-borrowed-field-ref-type [lifetime : i64] [field-ty : ast.AstType]) : ast.AstType
-  (ast.ast-ty-ref lifetime (tc-borrow-referent-type field-ty)))
+  (ast.ast-ty-ref lifetime (& (tc-borrow-referent-type field-ty))))
 
 ;; The type of a name bound by a pattern matched through a shared reference
 ;; (section 5.13). A Copy payload, field, slot or element binds by value. A
@@ -56166,7 +56263,7 @@
   [decls : (& decls ast.AstDeclList)]
   [position : i64]) : i64
   (match (ast.ast-decl-unwrapped
-    (ast.ast-array-shared-view decls.slots (+ decls.offset position)))
+    (& (array-ref decls.slots (+ decls.offset position))))
     [(Import _ (Spec (ModuleAll) _ (Some target-module) _ _)) target-module]
     [_ -1]))
 
@@ -56285,9 +56382,10 @@
     [out : String prefix]
     (while (< j end)
       (match (ast.ast-decl-unwrapped
-        (ast.ast-array-shared-view
-          decls.slots
-          (+ decls.offset (array-ref tc-module-decl-index-positions j))))
+        (&
+          (array-ref
+            decls.slots
+            (+ decls.offset (array-ref tc-module-decl-index-positions j)))))
         [(DefEnum _ enum-name _ variants)
           (set!
             out
@@ -56480,7 +56578,7 @@
     (tc-context-symbols ctx)
     (csym.compiler-registry-handle-owner-index handle))
     [(Ok decl)
-      (match (ast.ast-decl-unwrapped decl)
+      (match (ast.ast-decl-unwrapped (& decl))
         [(DefEnum _ name _ _) name]
         [(DefEnumLifetimes _ name _ _ _) name]
         [_ -1])]
@@ -58541,7 +58639,7 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [in-index : bool]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Literal _) Ok]
     [(SpmdProgramIndex) Ok]
     [(SpmdProgramCount) Ok]
@@ -58995,7 +59093,7 @@
     [_ (try (tc-require-unsafe ctx env "ptr-addr-of"))]
     [ty : ast.AstType (try (tc-ptr-addr-of-place ctx env place))]
     [resolved : ast.AstType (tc-resolve-type ctx ty)]
-    (Ok (ast.ast-ty-mut-ptr (tc-type-without-regions resolved)))))
+    (Ok (ast.ast-ty-mut-ptr (& (tc-type-without-regions resolved))))))
 
 (define (tc-ptr-read-expr
   [ctx : TcContext]
@@ -59112,7 +59210,7 @@
     [_ (try (tc-require-unsafe ctx env "string-data"))]
     [str-ty : ast.AstType (try (tc-expr ctx env str))]
     (if (tc-length-handle-type? str-ty)
-      (Ok (ast.ast-ty-ptr (U8)))
+      (Ok (ast.ast-ty-ptr (& (U8))))
       (Err "typecheck: string-data requires String or bytes"))))
 
 (define (tc-string-from-bytes-expr
@@ -59152,8 +59250,10 @@
     [_ (try (tc-require-unsafe ctx env "__tl_array-data"))]
     [array-ty : ast.AstType (try (tc-expr ctx env array))]
     (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
-      [(Array elem-ty _) (Ok (ast.ast-ty-mut-ptr (ast.ty-node-get elem-ty)))]
-      [(DynArray elem-ty) (Ok (ast.ast-ty-mut-ptr (ast.ty-node-get elem-ty)))]
+      [(Array elem-ty _)
+        (Ok (ast.ast-ty-mut-ptr (& (ast.ty-node-get elem-ty))))]
+      [(DynArray elem-ty)
+        (Ok (ast.ast-ty-mut-ptr (& (ast.ty-node-get elem-ty))))]
       [_ (Err "typecheck: __tl_array-data requires an array")])))
 
 (define (tc-program-entry-ptr-expr
@@ -59162,7 +59262,7 @@
   [name : String]) : ResultTcType
   (let
     [_ (try (tc-require-unsafe ctx env name))]
-    (Ok (ast.ast-ty-ptr (ast.ast-ty-ptr (U8))))))
+    (Ok (ast.ast-ty-ptr (& (ast.ast-ty-ptr (& (U8))))))))
 
 (define (tc-cpuid-expr
   [ctx : TcContext]
@@ -59237,7 +59337,7 @@
           env
           (tc-global-shared-view inner)))]
     [inner-ty (try (tc-expr ctx env inner))]
-    (Ok (tc-tag-active-region env (ast.ast-ty-box inner-ty)))))
+    (Ok (tc-tag-active-region env (ast.ast-ty-box (& inner-ty))))))
 
 (define (tc-box-expr-with-expected-or-actual
   [ctx : TcContext]
@@ -59265,7 +59365,7 @@
           (tc-tag-active-region
             env
             (ast.ast-ty-box
-              (tc-contextual-result-type expected-inner-ty inner-ty)))))]
+              (& (tc-contextual-result-type expected-inner-ty inner-ty))))))]
     [_ (tc-box-expr ctx env inner)]))
 
 (define (tc-box-get-expr
@@ -59297,7 +59397,7 @@
           ctx
           env
           box-expr
-          (ast.ast-ty-box (tc-global-shared-view expected))))]
+          (ast.ast-ty-box (& expected))))]
     (match (tc-type-strip-region
       (tc-resolve-type ctx (tc-global-shared-view box-ty)))
       [(Box inner-ty)
@@ -59359,7 +59459,7 @@
   [receiver : ast.AstExpr]) : ast.AstMaybeType
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-bases ctx)
-    receiver)
+    (& receiver))
     [(BoxTake pointer-box)
       (match (tc-expr-id ctx env pointer-box)
         [(Ok pointer-ty)
@@ -59381,7 +59481,7 @@
   [place : ast.AstExpr]) : ast.AstMaybeType
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-bases ctx)
-    (tc-global-shared-view place))
+    (& place))
     [(BoxTake _) (tc-raw-deref-pointer-type ctx env place)]
     [(StructGet receiver-box _)
       (tc-raw-deref-place-pointer-type
@@ -59797,7 +59897,7 @@
 (define (tc-make-array-zero-literal-length?
   [expr-bases : i64]
   [len : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases len)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& len))
     [(Literal (Int value _)) (= value 0)]
     [_ false]))
 
@@ -59830,7 +59930,7 @@
                 (tc-kind-message
                   (ComptimeConstraint)
                   "typecheck: make-array length must be a non-negative compile-time integer"))
-              (tc-init-expr ctx env (ast.ast-ty-array elem count)))]
+              (tc-init-expr ctx env (ast.ast-ty-array (& elem) count)))]
           [_
             (Err
               (tc-kind-message
@@ -60273,8 +60373,9 @@
             (Ok
               (ast.ast-ty-func
                 (tc-param-type-list ctx params)
-                (tc-resolve-type ctx ret))))]
-        [(No) (Ok (ast.ast-ty-func (tc-param-type-list ctx params) body-ty))]))))
+                (& (tc-resolve-type ctx ret)))))]
+        [(No)
+          (Ok (ast.ast-ty-func (tc-param-type-list ctx params) (& body-ty)))]))))
 
 (define (tc-lambda-expr-normalized-with-capture-check
   [ctx : TcContext]
@@ -60469,7 +60570,7 @@
   [place : ast.AstExpr]) : bool
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    (tc-global-shared-view place))
+    (& place))
     [(Var name)
       (if (tc-dotted-place-name-id? ctx env name)
         (match (tc-dotted-local-field-expr-id-after-check
@@ -60497,7 +60598,7 @@
   [place : ast.AstExpr]) : ResultTcType
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-segment-bases ctx)
-    place)
+    (& place))
     [(Var name)
       (if (tc-dotted-place-name-id? ctx env name)
         (let
@@ -61074,7 +61175,7 @@
                     (tc-context-symbols ctx)
                     (csym.compiler-symbol-handle-index handle))
                     [(Ok decl)
-                      (match (ast.ast-decl-unwrapped decl)
+                      (match (ast.ast-decl-unwrapped (& decl))
                         [(Extern _ _ (Function) _ _) true]
                         [_ false])]
                     [(Err _) false])]
@@ -61152,7 +61253,7 @@
     [name-id : i64
       (match (ast.ast-expr-unspan-with-pools
         pools
-        (tc-context-expr-get ctx expr-id))
+        (& (tc-context-expr-get ctx expr-id)))
         [(Var name) name]
         [_ -1])]
     (if (>= name-id 0)
@@ -61165,7 +61266,7 @@
           (ctfe_support.ctfe-describe-expr
             (ast.ast-expr-unspan-with-pools
               pools
-              (tc-context-expr-get ctx expr-id))))))))
+              (& (tc-context-expr-get ctx expr-id)))))))))
 
 (define (tc-for-owned-expected-type [ctx : TcContext] [expected-id : i64]) : ResultTcType
   (let
@@ -61366,7 +61467,7 @@
                     message)]))]))]
     [(MacroExpansion inner _ _) (tc-expr-id ctx env inner)]
     [(Literal lit) (tc-literal-type-checked lit)]
-    [(BinaryData _) (Ok (ast.ast-ty-dyn-array (U8)))]
+    [(BinaryData _) (Ok (ast.ast-ty-dyn-array (& (U8))))]
     [(Var name)
       (if (and
         (not (tc-env-key-has-name-id? name))
@@ -61486,7 +61587,7 @@
                   env
                   rest
                   (tc-global-shared-view first-ty)))]
-            (Ok (ast.ast-ty-array first-ty (tc-expr-list-len exprs))))))]
+            (Ok (ast.ast-ty-array (& first-ty) (tc-expr-list-len exprs))))))]
     [(DynArray exprs) (tc-expr-dyn-array-literal-infer ctx env exprs)]
     [(FixedMakeArray elem-ty-id len-box)
       (tc-fixed-make-array-expr
@@ -61514,13 +61615,13 @@
                 (tc-context-expr-segment-bases ctx)
                 (tc-global-shared-view elem)
                 len))
-            (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array elem)))]
+            (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem))))]
           [else
             (let
               [_
                 (try
                   (tc-init-type-supported ctx env (tc-global-shared-view elem)))]
-              (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array elem))))]))]
+              (Ok (tc-tag-active-region env (ast.ast-ty-dyn-array (& elem)))))]))]
     [(ArrayRef array-box index-box)
       (let
         [array-ty (try (tc-expr-id ctx env array-box))]
@@ -61596,10 +61697,11 @@
                                 (Ok
                                   (ast.ast-ty-tuple
                                     (ast.ast-type-cons
-                                      (Bool)
-                                      (ast.ast-type-cons
-                                        elem-ty
-                                        (ast.ast-type-list-new)))))
+                                      (& (Bool))
+                                      (&
+                                        (ast.ast-type-cons
+                                          (& elem-ty)
+                                          (& (ast.ast-type-list-new)))))))
                                 (Err
                                   "typecheck: __tl_array-take! index must be integer")))
                             (Err
@@ -62504,7 +62606,7 @@
 (define (tc-check-extern-varargs-tail-type
   [ctx : TcContext]
   [abi : ast.AstExternAbi]) : ResultTcUnit
-  (if (ast.ast-extern-abi-c-varargs-typed? (tc-global-shared-view abi))
+  (if (ast.ast-extern-abi-c-varargs-typed? (& abi))
     (let
       [tail-ty : ast.AstType
         (tc-resolve-type ctx (ast.ast-extern-abi-varargs-tail-type abi))]
@@ -62521,7 +62623,8 @@
   (match (tc-global-shared-view metadata)
     [(Metadata abi _ _ _ _)
       (let
-        [explicit-abi : bool (ast.ast-extern-metadata-explicit-abi? metadata)]
+        [explicit-abi : bool
+          (ast.ast-extern-metadata-explicit-abi? (& metadata))]
         [resolved : ast.AstType (tc-resolve-type ctx ty)]
         (match kind
           [(Function)
@@ -62532,19 +62635,16 @@
                     ctx
                     (tc-global-shared-view resolved)))]
               (if (and
-                (ast.ast-extern-abi-c? (tc-global-shared-view abi))
-                (or
-                  explicit-abi
-                  (ast.ast-extern-abi-c-varargs? (tc-global-shared-view abi))))
+                (ast.ast-extern-abi-c? (& abi))
+                (or explicit-abi (ast.ast-extern-abi-c-varargs? (& abi))))
                 (let
                   [_ (try (tc-check-extern-c-abi ctx resolved))]
-                  (if (ast.ast-extern-abi-c-varargs?
-                    (tc-global-shared-view abi))
+                  (if (ast.ast-extern-abi-c-varargs? (& abi))
                     (tc-check-extern-varargs-tail-type ctx abi)
                     Ok))
                 Ok))]
           [(Value)
-            (if (ast.ast-extern-abi-c-varargs? abi)
+            (if (ast.ast-extern-abi-c-varargs? (& abi))
               (Err "typecheck: extern value cannot use c-varargs ABI")
               (tc-check-extern-value-c-abi ctx resolved))]))]))
 
@@ -64501,7 +64601,7 @@
   [state : TcMacroState]
   [expr : ast.AstExpr]
   [bound : TcStringList]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Var name-id)
       (let
         [abstract : TcMacroAbstractStateData
@@ -64525,7 +64625,7 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [bound : TcStringList]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Call func args)
       (and
         (=
@@ -64796,7 +64896,7 @@
           Ok)))))
 
 (define (tc-macro-abstract-kind-literal [expr-bases : i64] [expr : ast.AstExpr]) : TcMacroAbstractGuard
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Literal (String string-id)) (Kind (ci.intern-str string-id))]
     [_ No]))
 
@@ -64805,7 +64905,7 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [bound : TcStringList]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Call func args)
       (and
         (=
@@ -64844,9 +64944,7 @@
   [expr-bases : i64]
   [cond-expr : ast.AstExpr]
   [bound : TcStringList]) : TcMacroAbstractGuard
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view cond-expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& cond-expr))
     [(Binary (Eq) left right)
       (tc-macro-abstract-kind-equality
         state
@@ -66369,9 +66467,7 @@
   [moved : TcMovedSet]
   [local-id : i64]
   [init : ast.AstExpr]) : TcMovedSet
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view init))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& init))
     [(Lambda _)
       (tc-moved-add-owner-dependencies
         moved
@@ -67281,7 +67377,7 @@
     -2
     (match (ast.ast-expr-unspan-with-segment-bases
       expr-bases
-      (ast.ast-expr-segment-bases-get expr-bases expr-id))
+      (& (ast.ast-expr-segment-bases-get expr-bases expr-id)))
       [(Var name) name]
       [(Ann inner-box _) (tc-move-direct-tail-var-id ctx expr-bases inner-box)]
       [(Begin exprs) (tc-move-direct-tail-exprs-var-id ctx expr-bases exprs)]
@@ -67943,7 +68039,7 @@
 ;; The bare variable named by an init/rhs expression, unwrapping spans and
 ;; annotations, or none if the expression is not a whole-variable reference.
 (define (tc-move-bare-var [expr-bases : i64] [expr : ast.AstExpr]) : TcMaybeMoveName
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -67956,7 +68052,7 @@
 ;; recursive projection unwrapping; String path analysis renders only at its
 ;; compatibility boundary below.
 (define (tc-move-root-projection-var-id [expr-bases : i64] [expr : ast.AstExpr]) : TcMaybeNameId
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -68013,7 +68109,7 @@
 (define (tc-move-aggregate-path-projection?
   [expr-bases : i64]
   [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -68134,7 +68230,7 @@
           false)))))
 
 (define (tc-move-literal-index [expr-bases : i64] [expr : ast.AstExpr]) : TcMoveMaybeIndex
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -68153,7 +68249,7 @@
     [_ (No)]))
 
 (define (tc-move-direct-root-base-path [expr-bases : i64] [expr : ast.AstExpr]) : TcMaybeMovePath
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -68194,7 +68290,7 @@
     [_ (No)]))
 
 (define (tc-move-struct-field-path [expr-bases : i64] [expr : ast.AstExpr]) : TcMaybeMovePath
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -68215,7 +68311,7 @@
     [_ (No)]))
 
 (define (tc-move-tuple-element-path [expr-bases : i64] [expr : ast.AstExpr]) : TcMaybeMovePath
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -68236,7 +68332,7 @@
     [_ (No)]))
 
 (define (tc-move-array-element-path [expr-bases : i64] [expr : ast.AstExpr]) : TcMaybeMovePath
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -68408,7 +68504,7 @@
       origin-id)))
 
 (define (tc-move-box-projection? [expr-bases : i64] [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -68442,7 +68538,7 @@
   [expr-bases : i64]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (let
         [inner : ast.AstExpr
@@ -68648,7 +68744,7 @@
   [env : TcTypeEnv]
   [moved : TcMovedSet]
   [place : ast.AstExpr]) : TcMaybeNameId
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases place)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& place))
     [(Var name)
       (if (tc-dotted-place-name-id? ctx env name)
         (match (tc-dotted-local-field-expr-id-after-check
@@ -70949,7 +71045,7 @@
     (let
       [arg : ast.AstExpr
         (tc-context-expr-get ctx (ast.ast-expr-list-get (& args) 0 0))]
-      (match (ast.ast-expr-unspan-with-segment-bases expr-bases arg)
+      (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
         [(Lambda lambda-box)
           (match (__tl-box-place lambda-box)
             [(Lambda lambda-params _ body-box)
@@ -71005,7 +71101,7 @@
   [moved : TcMovedSet]
   [func : ast.AstExpr]
   [origin : ast.AstExpr]) : TcMoveResult
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
     [(Var name-id)
       (if (=
         (tc-move-local-call-capability locals name-id)
@@ -71913,7 +72009,7 @@
   [expr-id : i64]) : bool
   (match (ast.ast-expr-unspan-with-segment-bases
     expr-bases
-    (ast.ast-expr-segment-bases-get expr-bases expr-id))
+    (& (ast.ast-expr-segment-bases-get expr-bases expr-id)))
     [(Return _) true]
     [(Break) true]
     [(Continue) true]
@@ -72177,9 +72273,7 @@
   [moved : TcMovedSet]
   [place : ast.AstExpr]
   [origin : ast.AstExpr]) : TcMoveResult
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view place))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& place))
     [(Var name)
       (let
         [name-text : String
@@ -72388,7 +72482,7 @@
 (define (tc-projection-deref-root-operand
   [expr-bases : i64]
   [receiver : ast.AstExpr]) : i64
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases receiver)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& receiver))
     [(ast.AstExpr.StructGet inner-box _)
       (tc-projection-deref-root-operand
         expr-bases
@@ -72641,7 +72735,7 @@
     true
     (match (ast.ast-expr-unspan-with-segment-bases
       expr-bases
-      (ast.ast-expr-segment-bases-get expr-bases func-box))
+      (& (ast.ast-expr-segment-bases-get expr-bases func-box)))
       [(Var name-id)
         (match (tc-lookup-id env name-id)
           [(Ok func-ty) (tc-move-func-type-diverges? ctx func-ty)]
@@ -72688,7 +72782,7 @@
     (let
       [ids : ast.AstExprList
         (ast.ast-expr-child-ids
-          (ast.ast-expr-unspan-with-segment-bases expr-bases expr))]
+          (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))]
       [flow : TcMoveLoopFlow own]
       [index : i64 0]
       (while (< index (ast.ast-expr-list-len (& ids)))
@@ -72709,9 +72803,7 @@
   [expr-bases : i64]
   [env : TcTypeEnv]
   [expr : ast.AstExpr]) : TcMoveLoopFlow
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Begin exprs) (tc-move-loop-flow-exprs ctx expr-bases env exprs)]
     [(Unsafe exprs) (tc-move-loop-flow-exprs ctx expr-bases env exprs)]
     [(If cond-box then-box else-box)
@@ -73310,9 +73402,7 @@
   [expr : ast.AstExpr]
   [continuation-repeats : bool]
   [continuation-breaks : bool]) : TcMoveLoopResult
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Begin exprs)
       (tc-move-check-loop-exprs
         ctx
@@ -73882,9 +73972,7 @@
           ;; An expanded `set!` keeps its template span; the call site that
           ;; wraps the expansion locates the diagnostic instead.
           [(MacroExpansion _ _ _)
-            (match (ast.ast-expr-unspan-with-segment-bases
-              expr-bases
-              (tc-global-shared-view inner))
+            (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& inner))
               [(Set name _)
                 (let
                   [_
@@ -74459,9 +74547,13 @@
                   moved
                   (ast.ast-expr-cons
                     start-box
-                    (ast.ast-expr-cons
-                      end-box
-                      (ast.ast-expr-cons init-box (ast.ast-expr-list-new))))))]
+                    (&
+                      (ast.ast-expr-cons
+                        end-box
+                        (&
+                          (ast.ast-expr-cons
+                            init-box
+                            (& (ast.ast-expr-list-new)))))))))]
             [keep-moved
               (try
                 (tc-move-check-expr-id
@@ -76393,9 +76485,7 @@
     loop-carried
     shadowed
     moved
-    (ast.ast-expr-unspan-with-segment-bases
-      expr-bases
-      (tc-global-shared-view expr))
+    (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     expr
     result-ty
     consume))
@@ -76912,9 +77002,7 @@
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [expr : ast.AstExpr]) : ResultTcUnit
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(If _ then-box else-box)
       (let
         [_
@@ -77094,9 +77182,7 @@
   [moved : TcMovedSet]
   [expr : ast.AstExpr]
   [result-ty : ast.AstType]) : TcMoveResult
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(If _ then-box else-box)
       (let
         [then-moved
@@ -77257,7 +77343,7 @@
         locals
         loop-carried
         moved
-        (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+        (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
         result-ty)]))
 
 ;; Checker-only closure facts never enter AstType or the lowering ABI. Call
@@ -77551,7 +77637,7 @@
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Var name-id)
       (tc-closure-local-fact-move-only-code?
         (tc-closure-local-fact-code locals name-id))]
@@ -77696,9 +77782,7 @@
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [init : ast.AstExpr]) : i64
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view init))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& init))
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params _ body-box)
@@ -78059,7 +78143,7 @@
   [expr-bases : i64]
   [borrowed : TcMovedSet]
   [func : ast.AstExpr]) : TcMovedSet
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params _ body-box)
@@ -78112,9 +78196,7 @@
   [expr-bases : i64]
   [borrowed : TcMovedSet]
   [source : ast.AstExpr]) : TcMaybeMovePath
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view source))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& source))
     [(Var binding-id)
       (match (tc-borrow-check-split-provenance-for-binding-at
         (tc-moved-paths borrowed)
@@ -78127,7 +78209,9 @@
       (let
         [tuple-expr : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
-        (match (ast.ast-expr-unspan-with-segment-bases expr-bases tuple-expr)
+        (match (ast.ast-expr-unspan-with-segment-bases
+          expr-bases
+          (& tuple-expr))
           [(Var binding-id)
             (match (tc-borrow-check-split-provenance-for-binding-at
               (tc-moved-paths borrowed)
@@ -78152,11 +78236,11 @@
 (define (tc-borrow-check-split-projection
   [expr-bases : i64]
   [expr : ast.AstExpr]) : TcMaybeSliceSplitProjection
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(TupleRef tuple-box half)
       (match (ast.ast-expr-unspan-with-segment-bases
         expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases tuple-box))
+        (& (ast.ast-expr-segment-bases-get expr-bases tuple-box)))
         [(Var binding-id) (Some binding-id half)]
         [_ (No)])]
     [(Ann inner-box _)
@@ -78473,7 +78557,7 @@
   [expr-bases : i64]
   [locals : TcMovedSet]
   [expr : ast.AstExpr]) : TcMaybeMovePath
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Borrow _ _ place-box)
       (match (tc-borrow-check-place-path
         expr-bases
@@ -79619,9 +79703,7 @@
   [later : (& later ast.AstExprList)]
   [later-index : i64]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Set target value-box)
       (let
         [value : ast.AstExpr
@@ -79765,9 +79847,7 @@
     [_
       (let
         [unspanned : ast.AstExpr
-          (ast.ast-expr-unspan-with-segment-bases
-            expr-bases
-            (tc-global-shared-view expr))]
+          (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))]
         (cond
           [(>=
               (tc-borrow-check-composite-store-place-id
@@ -79986,7 +80066,7 @@
   [result-lifetimes : TcNameIdList]) : bool
   (let
     [unspanned : ast.AstExpr
-      (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
+      (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))]
     [here : bool
       (match (tc-global-shared-view unspanned)
         [(Set target _)
@@ -80228,7 +80308,7 @@
     (let
       [children : ast.AstExprList
         (ast.ast-expr-child-ids
-          (ast.ast-expr-unspan-with-segment-bases expr-bases expr))]
+          (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))]
       (tc-borrow-check-add-composite-sibling-effects-at
         ctx
         expr-bases
@@ -80453,7 +80533,7 @@
     expr-bases
     (ast.ast-expr-segment-bases-get expr-bases index-box))
     [(Some index)
-      (match (ast.ast-expr-unspan-with-segment-bases expr-bases base)
+      (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& base))
         [(Array items)
           (if (and (>= index 0) (< index items.len))
             (ast.ast-expr-list-get (& items) index 0)
@@ -80556,7 +80636,7 @@
   [expr : ast.AstExpr]) : bool
   (let
     [unspanned : ast.AstExpr
-      (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
+      (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))]
     (if (tc-borrow-check-composite-store? (tc-global-shared-view unspanned))
       true
       (let
@@ -80580,7 +80660,7 @@
   [expr : ast.AstExpr]) : bool
   (let
     [unspanned : ast.AstExpr
-      (ast.ast-expr-unspan-with-segment-bases expr-bases expr)]
+      (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))]
     (match (tc-global-shared-view unspanned)
       [(Break) true]
       [(Continue) true]
@@ -80626,7 +80706,7 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [name : i64]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Set target value-box)
       (or
         (= target name)
@@ -80879,9 +80959,7 @@
   [later : (& later ast.AstExprList)]
   [later-index : i64]
   [name : i64]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Set target value-box)
       (let
         [value : ast.AstExpr
@@ -80986,9 +81064,7 @@
     [_
       (let
         [unspanned : ast.AstExpr
-          (ast.ast-expr-unspan-with-segment-bases
-            expr-bases
-            (tc-global-shared-view expr))]
+          (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))]
         [value-id : i64
           (tc-borrow-check-composite-store-value-id
             (tc-global-shared-view unspanned))]
@@ -81247,9 +81323,7 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [name : i64]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Var var-name) (= var-name name)]
     [(If cond-box then-box else-box)
       (or
@@ -81354,9 +81428,7 @@
       (let
         [base : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases base-box)]
-        (match (ast.ast-expr-unspan-with-segment-bases
-          expr-bases
-          (tc-global-shared-view base))
+        (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& base))
           [(Tuple items)
             (if (and (>= index 0) (< index items.len))
               (tc-borrow-check-composite-value-uses-name?
@@ -81828,9 +81900,7 @@
   [binding-id : i64]
   [arg : ast.AstExpr]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view arg))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
     [(If cond-box then-box else-box)
       (tc-borrow-check-add-composite-if-arg
         ctx
@@ -81967,9 +82037,7 @@
       (let
         [base : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases base-box)]
-        (match (ast.ast-expr-unspan-with-segment-bases
-          expr-bases
-          (tc-global-shared-view base))
+        (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& base))
           [(Tuple items)
             (if (and (>= index 0) (< index items.len))
               (let
@@ -82173,9 +82241,7 @@
   [binding-id : i64]
   [arg : ast.AstExpr]
   [result-lifetimes : TcNameIdList]) : TcBorrowCheckResult
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view arg))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
     [(Borrow true _ place-box)
       (let
         [place : ast.AstExpr
@@ -82386,9 +82452,7 @@
             (Ok borrowed))
           (Ok borrowed))]
       [(No)
-        (match (ast.ast-expr-unspan-with-segment-bases
-          expr-bases
-          (tc-global-shared-view init))
+        (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& init))
           [(Call func-box args)
             (let
               [func : ast.AstExpr
@@ -83467,7 +83531,7 @@
       [(Ok effective-head)
         (match (ast.ast-expr-unspan-with-segment-bases
           expr-bases
-          (tc-global-shared-view effective-head))
+          (& effective-head))
           [(Borrow mutable _ place-box)
             (if (and
               mutable
@@ -83601,7 +83665,7 @@
         (Err (tc-locate-error-at-expr expr-bases head-expr message))])))
 
 (define (tc-call-explicit-borrow-expr? [expr-bases : i64] [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Borrow _ _ _) true]
     [_ false]))
 
@@ -83620,7 +83684,7 @@
       "borrow.call_arg"
       (tc-call-effective-arg-expr ctx env (tc-global-shared-view arg) ty))
       [(Ok effective)
-        (match (ast.ast-expr-unspan-with-segment-bases expr-bases effective)
+        (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& effective))
           [(Borrow mutable _ place-box)
             (let
               [place : ast.AstExpr
@@ -83991,9 +84055,7 @@
   [borrowed : TcMovedSet]
   [protected : TcMovedSet]
   [expr : ast.AstExpr]) : TcBorrowCheckResult
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Begin exprs)
       (tc-borrow-check-exprs-with-protected
         ctx
@@ -84019,7 +84081,7 @@
         env
         locals
         borrowed
-        (ast.ast-expr-unspan-with-segment-bases expr-bases expr))]))
+        (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))]))
 
 (define (tc-borrow-check-expr-id-retry-after-prune
   [ctx : TcContext]
@@ -84192,7 +84254,7 @@
   [env : TcTypeEnv]
   [expr : ast.AstExpr]
   [lifetime : i64]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Ann inner-box _)
       (tc-borrow-check-expr-stores-lifetime?
         ctx
@@ -85114,9 +85176,7 @@
   [borrowed : TcMovedSet]
   [protected : TcMovedSet]
   [expr : ast.AstExpr]) : TcBorrowCheckResult
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Begin exprs)
       (tc-borrow-check-exprs-loop
         ctx
@@ -85278,9 +85338,13 @@
                   borrowed
                   (ast.ast-expr-cons
                     start-box
-                    (ast.ast-expr-cons
-                      end-box
-                      (ast.ast-expr-cons init-box (ast.ast-expr-list-new))))))]
+                    (&
+                      (ast.ast-expr-cons
+                        end-box
+                        (&
+                          (ast.ast-expr-cons
+                            init-box
+                            (& (ast.ast-expr-list-new)))))))))]
             [keep-entry : TcMovedSet
               (tc-moved-remove-root-state (tc-moved-clone outer-borrowed) index)]
             [keep-borrowed
@@ -85326,7 +85390,7 @@
         env
         locals
         borrowed
-        (ast.ast-expr-unspan-with-segment-bases expr-bases expr))]))
+        (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr)))]))
 
 (define (tc-borrow-check-loop-path-expr
   [ctx : TcContext]
@@ -85337,9 +85401,7 @@
   [borrowed : TcMovedSet]
   [protected : TcMovedSet]
   [expr : ast.AstExpr]) : TcBorrowLoopResult
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Begin exprs)
       (tc-borrow-check-loop-path-exprs
         ctx
@@ -85633,9 +85695,7 @@
         (tc-type-collect-reference-lifetimes
           (tc-resolve-type ctx (tc-global-shared-view arg-ty)))
         result-lifetimes)
-        (match (ast.ast-expr-unspan-with-segment-bases
-          expr-bases
-          (tc-global-shared-view arg))
+        (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
           [(Borrow mutable _ place-box)
             (let
               [place : ast.AstExpr
@@ -86027,9 +86087,7 @@
   [borrowed : TcMovedSet]
   [closure-id : i64]
   [init : ast.AstExpr]) : TcMovedSet
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view init))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& init))
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params _ body-box)
@@ -87688,11 +87746,16 @@
                   borrowed
                   (ast.ast-expr-cons
                     a-box
-                    (ast.ast-expr-cons
-                      b-box
+                    (&
                       (ast.ast-expr-cons
-                        c-box
-                        (ast.ast-expr-cons d-box (ast.ast-expr-list-new)))))))]
+                        b-box
+                        (&
+                          (ast.ast-expr-cons
+                            c-box
+                            (&
+                              (ast.ast-expr-cons
+                                d-box
+                                (& (ast.ast-expr-list-new)))))))))))]
             [body-entry : TcMovedSet
               (tc-moved-remove-root-state
                 (tc-moved-remove-root-state bounds-borrowed outer)
@@ -87871,9 +87934,13 @@
                   borrowed
                   (ast.ast-expr-cons
                     start-box
-                    (ast.ast-expr-cons
-                      end-box
-                      (ast.ast-expr-cons init-box (ast.ast-expr-list-new))))))]
+                    (&
+                      (ast.ast-expr-cons
+                        end-box
+                        (&
+                          (ast.ast-expr-cons
+                            init-box
+                            (& (ast.ast-expr-list-new)))))))))]
             [keep-entry : TcMovedSet
               (tc-moved-remove-root-state (tc-moved-clone outer-borrowed) index)]
             [keep-borrowed
@@ -88491,9 +88558,7 @@
 ;; possibly auto-borrowed: `x`, `x.f`, `(& x.f)` or `(&mut x)`. -1 for any
 ;; other argument, and -2 for a borrow the gate does not look through.
 (define (tc-borrow-gate-arg-root [expr-bases : i64] [arg : ast.AstExpr]) : i64
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view arg))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
     [(Borrow _ lifetime-id operand-box)
       (match (ast.ast-borrow-lifetime-from-id lifetime-id)
         [(ast.AstBorrowLifetime.Inferred)
@@ -88512,7 +88577,7 @@
 
 ;; The root variable of a variable or field path, or -1.
 (define (tc-borrow-gate-place-root [expr-bases : i64] [expr : ast.AstExpr]) : i64
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Var name) name]
     [(StructGet receiver-box _)
       (tc-borrow-gate-place-root
@@ -88555,9 +88620,7 @@
           [(tc-borrow-gate-expr-relevant?
               ctx
               expr-bases
-              (match (ast.ast-expr-unspan-with-segment-bases
-                expr-bases
-                (tc-global-shared-view arg))
+              (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
                 [(Borrow _ _ operand-box)
                   (ast.ast-expr-segment-bases-get expr-bases operand-box)]
                 [_ arg]))
@@ -88743,7 +88806,7 @@
   [ctx : TcContext]
   [expr-bases : i64]
   [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Literal _) false]
     [(BinaryData _) false]
     [(Var _) false]
@@ -91967,7 +92030,7 @@
         [decl : ast.AstDecl
           (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
         [path : String (ast.ast-decl-path-list-get (& paths) index "")]
-        (match (ast.ast-decl-unwrapped (tc-global-shared-view decl))
+        (match (ast.ast-decl-unwrapped (& decl))
           [(Module name) (set! module-id name)]
           [_ (macro-definition-path-note-decl! ctx module-id decl path)])
         (set! index (+ index 1))))))
@@ -93060,7 +93123,7 @@
   [names : clone_support.CloneNameSet]
   [module-id : i64]
   [decl : ast.AstDecl]) : clone_support.CloneNameSet
-  (match (ast.ast-decl-unwrapped decl)
+  (match (ast.ast-decl-unwrapped (& decl))
     [(Import _ (Spec _ _ (Some target) (Some alias) _))
       (clone_support.clone-name-set-insert-alias-id
         names
@@ -93097,7 +93160,7 @@
         (let
           [decl : ast.AstDecl
             (ast.ast-decl-unwrapped
-              (macro-segmented-program-iter-current-decl (& iter)))]
+              (& (macro-segmented-program-iter-current-decl (& iter))))]
           (match (tc-global-shared-view decl)
             [(Module next-module) (set! module-id next-module)]
             [_
@@ -93124,7 +93187,7 @@
         (& iter.decls)
         iter.index)
         (match (ast.ast-decl-unwrapped
-          (macro-segmented-program-iter-current-decl (& iter)))
+          (& (macro-segmented-program-iter-current-decl (& iter))))
           [(Module next-module) (set! module-id next-module)]
           [(DefEnum _ name _ variants)
             (if (clone_support.clone-variant-list-able?
@@ -95087,7 +95150,7 @@
     (match (ast.ast-program-copy-append-above-with-maps
       pools
       pools
-      program
+      (& program)
       shared-expr-base
       shared-type-base
       expr-map-address
@@ -95804,7 +95867,7 @@
       span)))
 
 (define (macro-output-origin-arg-name [expr-bases : i64] [expr : ast.AstExpr]) : String
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Var name-id)
       (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
         (ci.intern-str name-id)
@@ -95821,13 +95884,13 @@
     [_ "<expression>"]))
 
 (define (macro-output-origin-name [expr-bases : i64] [origin : ast.AstExpr]) : String
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases origin)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& origin))
     [(Call func-box args)
       (let
         [func-name : String
           (match (ast.ast-expr-unspan-with-segment-bases
             expr-bases
-            (ast.ast-expr-segment-bases-get expr-bases func-box))
+            (& (ast.ast-expr-segment-bases-get expr-bases func-box)))
             [(Var name-id)
               (if (and (>= name-id 0) (< name-id (ci.intern-capacity)))
                 (ci.intern-str name-id)
@@ -95998,7 +96061,8 @@
                     (ci.intern-generated-name "CFunc")
                     span))
                 (macro-spanned-symbol-id
-                  (ci.intern-generated-name (ast.ast-c-function-mode-name mode))
+                  (ci.intern-generated-name
+                    (& (ast.ast-c-function-mode-name mode)))
                   span))
               signature-sexpr)
             span)))]
@@ -96646,9 +96710,10 @@
         (cbi.compiler-builtin-ctfe "if")
         (ast.ast-expr-cons
           cond-box
-          (ast.ast-expr-cons
-            then-box
-            (ast.ast-expr-cons else-box (ast.ast-expr-list-new))))
+          (&
+            (ast.ast-expr-cons
+              then-box
+              (& (ast.ast-expr-cons else-box (& (ast.ast-expr-list-new)))))))
         span
         origin)]
     [(Begin exprs)
@@ -96690,28 +96755,28 @@
       (macro-expr-list-with-head-symbol-id
         owner
         (cbi.compiler-builtin-ctfe "quote")
-        (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
+        (ast.ast-expr-cons inner-box (& (ast.ast-expr-list-new)))
         span
         origin)]
     [(Quasiquote inner-box)
       (macro-expr-list-with-head-symbol-id
         owner
         (cbi.compiler-builtin-ctfe "quasiquote")
-        (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
+        (ast.ast-expr-cons inner-box (& (ast.ast-expr-list-new)))
         span
         origin)]
     [(Unquote inner-box)
       (macro-expr-list-with-head-symbol-id
         owner
         (cbi.compiler-builtin-ctfe "unquote")
-        (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
+        (ast.ast-expr-cons inner-box (& (ast.ast-expr-list-new)))
         span
         origin)]
     [(UnquoteSplicing inner-box)
       (macro-expr-list-with-head-symbol-id
         owner
         (cbi.compiler-builtin-ctfe "unquote-splicing")
-        (ast.ast-expr-cons inner-box (ast.ast-expr-list-new))
+        (ast.ast-expr-cons inner-box (& (ast.ast-expr-list-new)))
         span
         origin)]
     [(Binary op left-id right-id)
@@ -97838,7 +97903,8 @@
   [form : reader.SpannedSexpr]
   [origin : ast.AstExpr]) : ResultMacroParsedDecls
   (match (parser.parse-ast-decl-maybe dispatch form)
-    [(SomeDecl decl) (Ok (ast.ast-decl-cons decl (ast.ast-decl-list-new)))]
+    [(SomeDecl decl)
+      (Ok (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new))))]
     [(Decls decls) (Ok decls)]
     [(NoDecl) (Ok (ast.ast-decl-list-new))]
     [(Err message) (Err (box (macro-output-syntax-diag origin message)))]))
@@ -97908,15 +97974,15 @@
   [dispatch : sym_i64_env.SymI64Env]
   [expr : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultMacroParsedDecls
-  (match (ast.ast-expr-unspan-with-segment-bases
-    owner.expr-bases
-    (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-segment-bases owner.expr-bases (& expr))
     [(Begin exprs) (macro-parse-decls-from-exprs owner dispatch exprs origin)]
     [(Call func-box args)
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get owner.expr-bases func-box)]
-        (match (ast.ast-expr-unspan-with-segment-bases owner.expr-bases func)
+        (match (ast.ast-expr-unspan-with-segment-bases
+          owner.expr-bases
+          (& func))
           [(Var name)
             (if (=
               (parser.compiler-parse-dispatch-tag-id
@@ -99233,14 +99299,15 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(BracketClause items)
       (if (> items.len 0)
         (match (ast.ast-expr-unspan-with-segment-bases
           expr-bases
-          (ast.ast-expr-segment-bases-get
-            expr-bases
-            (ast.ast-expr-list-get (& items) 0 0)))
+          (&
+            (ast.ast-expr-segment-bases-get
+              expr-bases
+              (ast.ast-expr-list-get (& items) 0 0))))
           [(Var name-id) (macro-hygiene-output-bind-id env name-id)]
           [_ env])
         env)]
@@ -99268,14 +99335,14 @@
   [expr-bases : i64]
   [expr : ast.AstExpr]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(Var name-id) (macro-hygiene-output-bind-id env name-id)]
     [(Call func-box params)
       (let
         [func : ast.AstExpr
           (ast.ast-expr-segment-bases-get expr-bases func-box)]
         [with-name : MacroHygieneEnv
-          (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
+          (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
             [(Var name-id) (macro-hygiene-output-bind-id env name-id)]
             [_ env])]
         (macro-hygiene-output-param-list-env expr-bases (& params) 0 with-name))]
@@ -99286,12 +99353,12 @@
   [env : MacroHygieneEnv]) : MacroHygieneEnv
   (match (ast.ast-expr-unspan-with-segment-bases
     (macro-hygiene-expr-segment-bases env)
-    expr)
+    (& expr))
     [(Var name-id) (macro-hygiene-output-bind-id env name-id)]
     [(Call func-box _)
       (match (ast.ast-expr-unspan-with-segment-bases
         (macro-hygiene-expr-segment-bases env)
-        (macro-hygiene-expr-get env func-box))
+        (& (macro-hygiene-expr-get env func-box)))
         [(Var name-id) (macro-hygiene-output-bind-id env name-id)]
         [_ env])]
     [_ env]))
@@ -99301,7 +99368,7 @@
   [env : MacroHygieneEnv]) : MacroHygieneEnv
   (match (ast.ast-expr-unspan-with-segment-bases
     (macro-hygiene-expr-segment-bases env)
-    expr)
+    (& expr))
     [(Var name-id) (macro-hygiene-output-bind-id env name-id)]
     [_ env]))
 
@@ -99324,7 +99391,7 @@
   [env : MacroHygieneEnv]) : MacroHygieneEnv
   (match (ast.ast-expr-unspan-with-segment-bases
     (macro-hygiene-expr-segment-bases env)
-    (tc-global-shared-view expr))
+    (& expr))
     [(Var name-id)
       (if pattern-name?
         (macro-hygiene-output-pattern-name-id env name-id)
@@ -99332,7 +99399,7 @@
     [(Call func-box _)
       (match (ast.ast-expr-unspan-with-segment-bases
         (macro-hygiene-expr-segment-bases env)
-        (macro-hygiene-expr-get env func-box))
+        (& (macro-hygiene-expr-get env func-box)))
         [(Var name-id)
           (let
             [source-id : i64
@@ -99346,7 +99413,7 @@
                   (string.eq (ci.intern-str source-id) ":lifetimes"))
                 (match (ast.ast-expr-unspan-with-segment-bases
                   (macro-hygiene-expr-segment-bases env)
-                  expr)
+                  (& expr))
                   [(Call _ args)
                     (macro-hygiene-output-bind-var-list-env (& args) 0 env)]
                   [_ env])]
@@ -99383,7 +99450,7 @@
       (if (> count 0)
         (match (ast.ast-expr-unspan-with-segment-bases
           (macro-hygiene-expr-segment-bases env)
-          (macro-hygiene-expr-get env (ast.ast-expr-list-get items 0 0)))
+          (& (macro-hygiene-expr-get env (ast.ast-expr-list-get items 0 0))))
           [(Var target-id) (macro-hygiene-output-bind-id env target-id)]
           [(Call _ _)
             (if (= count 1)
@@ -99403,7 +99470,7 @@
             (ast.ast-expr-list-get items (- count 1) 0))]
         (match (ast.ast-expr-unspan-with-segment-bases
           (macro-hygiene-expr-segment-bases env)
-          as-expr)
+          (& as-expr))
           [(Var as-id)
             (if (string.eq
               (ci.intern-str
@@ -99411,7 +99478,7 @@
               "as")
               (match (ast.ast-expr-unspan-with-segment-bases
                 (macro-hygiene-expr-segment-bases env)
-                alias-expr)
+                (& alias-expr))
                 [(Var alias-id)
                   (macro-hygiene-output-bind-id
                     (macro-hygiene-output-bind-id with-target as-id)
@@ -99422,7 +99489,10 @@
       (if (= count 1)
         (match (ast.ast-expr-unspan-with-segment-bases
           (macro-hygiene-expr-segment-bases env)
-          (macro-hygiene-expr-get with-target (ast.ast-expr-list-get items 0 0)))
+          (&
+            (macro-hygiene-expr-get
+              with-target
+              (ast.ast-expr-list-get items 0 0))))
           [(Var target-id)
             (let
               [source-id : i64
@@ -99457,7 +99527,7 @@
   [env : MacroHygieneEnv]) : MacroHygieneEnv
   (match (ast.ast-expr-unspan-with-segment-bases
     (macro-hygiene-expr-segment-bases env)
-    expr)
+    (& expr))
     [(Begin items) (macro-hygiene-output-decl-list-env (& items) 0 env)]
     [(Unsafe items) (macro-hygiene-output-decl-list-env (& items) 0 env)]
     [(Comptime inner-box)
@@ -99465,7 +99535,7 @@
     [(Call func-box args)
       (match (ast.ast-expr-unspan-with-segment-bases
         (macro-hygiene-expr-segment-bases env)
-        (macro-hygiene-expr-get env func-box))
+        (& (macro-hygiene-expr-get env func-box)))
         [(Var head-id)
           (let
             [source-head-id : i64
@@ -100778,7 +100848,7 @@
   [func : ast.AstExpr]
   [args : (& args ast.AstExprList)]
   [env : MacroHygieneEnv]) : MacroHygieneEnv
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
     [(Var head-id)
       (let
         [source-head-id : i64
@@ -100897,7 +100967,7 @@
           (ast.ast-type-list-box-shared-view args)
           env
           macro-name)
-        (macro-hygiene-type (macro-hygiene-type-get env ret) env macro-name))]
+        (& (macro-hygiene-type (macro-hygiene-type-get env ret) env macro-name)))]
     [(Tuple elems)
       (ast.ast-ty-tuple
         (macro-hygiene-type-list
@@ -100906,39 +100976,49 @@
           macro-name))]
     [(Array elem count)
       (ast.ast-ty-array
-        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name)
+        (&
+          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))
         count)]
     [(DynArray elem)
       (ast.ast-ty-dyn-array
-        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+        (&
+          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name)))]
     [(Slice elem)
       (ast.ast-ty-slice
-        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+        (&
+          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name)))]
     [(Box elem)
       (ast.ast-ty-box
-        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+        (&
+          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name)))]
     [(Ptr elem)
       (ast.ast-ty-ptr
-        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+        (&
+          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name)))]
     [(MutPtr elem)
       (ast.ast-ty-mut-ptr
-        (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name))]
+        (&
+          (macro-hygiene-type (macro-hygiene-type-get env elem) env macro-name)))]
     [(Ref region inner)
       (ast.ast-ty-ref
         (macro-hygiene-rename-lifetime-id env macro-name region)
-        (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
+        (&
+          (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name)))]
     [(MutRef region inner)
       (ast.ast-ty-mut-ref
         (macro-hygiene-rename-lifetime-id env macro-name region)
-        (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
+        (&
+          (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name)))]
     [(Region region inner)
       (ast.ast-ty-region
         (macro-hygiene-rename-lifetime-id env macro-name region)
-        (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
+        (&
+          (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name)))]
     [(Invalidate lifetime inner)
       (ast.ast-ty-invalidate
         (macro-hygiene-rename-lifetime-id env macro-name lifetime)
-        (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name))]
+        (&
+          (macro-hygiene-type (macro-hygiene-type-get env inner) env macro-name)))]
     [(EnumArgs name lifetimes)
       (ast.ast-ty-enum-args
         name
@@ -101009,8 +101089,8 @@
                 [(Params nrest final-env)
                   (Params
                     (ast.ast-param-cons
-                      (ast.ast-param-id renamed-id nty comptime?)
-                      nrest)
+                      (& (ast.ast-param-id renamed-id nty comptime?))
+                      (& nrest))
                     final-env)])]))])))
 
 (define (macro-hygiene-pattern-list
@@ -101314,7 +101394,10 @@
       (if reuse?
         (let
           [replacement : ast.AstExpr (macro-hygiene-expr-get env result)]
-          (ast.ast-node-pool-context-expr-set! env.pools expr-id replacement)
+          (ast.ast-node-pool-context-expr-set!
+            env.pools
+            expr-id
+            (& replacement))
           (ast.ast-node-pool-context-expr-truncate! env.pools result)
           expr-id)
         result)]
@@ -101406,7 +101489,7 @@
         (ast.ast-expr-call-with-pools
           env.pools
           (macro-hygiene-expr expr-bases func-box env macro-name depth)
-          (match (ast.ast-expr-unspan-with-segment-bases expr-bases func)
+          (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& func))
             [(Var name-id)
               (if (=
                 (tc-hygiene-template-source-id-or
@@ -101500,14 +101583,14 @@
         [len : i64 len-box]
         (ast.ast-expr-fixed-make-array-with-pools
           env.pools
-          (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)
+          (& (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name))
           (macro-hygiene-expr expr-bases len env macro-name depth)))]
     [(MakeArray ty-id len-box)
       (let
         [len : i64 len-box]
         (ast.ast-expr-make-array-with-pools
           env.pools
-          (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)
+          (& (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name))
           (macro-hygiene-expr expr-bases len env macro-name depth)))]
     [(ArrayRef array-box index-box)
       (let
@@ -101667,14 +101750,14 @@
         (ast.ast-expr-ann-with-pools
           env.pools
           (macro-hygiene-expr expr-bases inner env macro-name depth)
-          (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)))]
+          (& (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name))))]
     [(Cast inner-box ty-id)
       (let
         [inner : i64 inner-box]
         (ast.ast-expr-cast-with-pools
           env.pools
           (macro-hygiene-expr expr-bases inner env macro-name depth)
-          (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)))]
+          (& (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name))))]
     [(Borrow mutable lifetime-id place-box)
       (let
         [place : i64 place-box]
@@ -101970,14 +102053,15 @@
     [(TypeLiteral ty-id)
       (ast.ast-expr-type-literal-with-pools
         env.pools
-        (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name))]
+        (& (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)))]
     [(Init maybe-ty-id)
       (ast.ast-expr-init-maybe-with-pools
         env.pools
-        (macro-hygiene-maybe-type
-          (ast.ast-maybe-type-from-id maybe-ty-id)
-          env
-          macro-name))]
+        (&
+          (macro-hygiene-maybe-type
+            (ast.ast-maybe-type-from-id maybe-ty-id)
+            env
+            macro-name)))]
     [(Comptime inner-box)
       (let
         [inner : i64 inner-box]
@@ -102001,7 +102085,7 @@
         env.pools
         (PtrNull
           (ast.ty-node-push
-            (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name))))]
+            (& (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)))))]
     [(PtrNullCheck ptr-box)
       (let
         [ptr : i64 ptr-box]
@@ -102042,7 +102126,7 @@
         (ast.ast-expr-ptr-cast-with-pools
           env.pools
           (macro-hygiene-expr expr-bases ptr env macro-name depth)
-          (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)))]
+          (& (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name))))]
     [(PtrToInt ptr-box)
       (let
         [ptr : i64 ptr-box]
@@ -102055,7 +102139,7 @@
         (ast.ast-expr-int-to-ptr-with-pools
           env.pools
           (macro-hygiene-expr expr-bases value env macro-name depth)
-          (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name)))]
+          (& (macro-hygiene-type (ast.ty-node-get ty-id) env macro-name))))]
     [(StringData inner-box)
       (let
         [inner : i64 inner-box]
@@ -102234,7 +102318,7 @@
 (define (macro-import-alias-target-from-wrapped-decl
   [decl : ast.AstDecl]
   [alias-id : i64]) : TcMaybeNameId
-  (match (ast.ast-decl-unwrapped decl)
+  (match (ast.ast-decl-unwrapped (& decl))
     [(Import decl-meta spec)
       (macro-import-alias-target-from-spec spec alias-id)]
     [_ (No)]))
@@ -102805,7 +102889,7 @@
           (tc-global-array-element-shared-view
             decls.slots
             (+ decl-offset index))]
-        (match (ast.ast-decl-unwrapped decl)
+        (match (ast.ast-decl-unwrapped (& decl))
           [(Module next-module) (set! cur-module-id next-module)]
           [(Import decl-meta (Spec _ _ expected maybe-alias _))
             (match maybe-alias
@@ -102884,7 +102968,7 @@
       ;; skipped without the two 104 B rows `ast-decl-unwrapped` copies.
       (if (ast.ast-decl-list-unwrapped-module-or-import-at? (& decls) i)
         (match (ast.ast-decl-unwrapped
-          (tc-global-array-element-shared-view decl-slots (+ decl-offset i)))
+          (& (array-ref decl-slots (+ decl-offset i))))
           [(Module next-module) (set! cur-module-id next-module)]
           [(Import decl-meta (Spec _ _ expected maybe-alias _))
             (match maybe-alias
@@ -103157,7 +103241,7 @@
   [index : i64]
   [cur-module-id : i64]) : i64
   (match (ast.ast-decl-unwrapped
-    (tc-global-array-element-shared-view decls.slots (+ decls.offset index)))
+    (& (array-ref decls.slots (+ decls.offset index))))
     [(Module next-module) next-module]
     [(Import _decl-meta (Spec kind _ expected maybe-alias _))
       (if (macro-import-kind-module-alias? kind)
@@ -104259,11 +104343,12 @@
   (if (>= index (ast.ast-type-list-len types))
     (ast.ast-type-list-new)
     (ast.ast-type-cons
-      (macro-type-arg-module-qualify
-        ctx
-        (ast.ty-node-get
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (macro-type-arg-module-qualify-list-at ctx types (+ index 1)))))
+      (&
+        (macro-type-arg-module-qualify
+          ctx
+          (ast.ty-node-get
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
+      (& (macro-type-arg-module-qualify-list-at ctx types (+ index 1))))))
 
 (define (macro-type-arg-module-qualify [ctx : TcContext] [ty : ast.AstType]) : ast.AstType
   (match (tc-global-shared-view ty)
@@ -104272,7 +104357,7 @@
         (macro-type-arg-module-qualify-list
           ctx
           (ast.ast-type-list-box-shared-view args))
-        (macro-type-arg-module-qualify ctx (ast.ty-node-get ret)))]
+        (& (macro-type-arg-module-qualify ctx (ast.ty-node-get ret))))]
     [(Tuple elems)
       (ast.ast-ty-tuple
         (macro-type-arg-module-qualify-list
@@ -104280,39 +104365,39 @@
           (ast.ast-type-list-box-shared-view elems)))]
     [(Array elem len)
       (ast.ast-ty-array
-        (macro-type-arg-module-qualify ctx (ast.ty-node-get elem))
+        (& (macro-type-arg-module-qualify ctx (ast.ty-node-get elem)))
         len)]
     [(DynArray elem)
       (ast.ast-ty-dyn-array
-        (macro-type-arg-module-qualify ctx (ast.ty-node-get elem)))]
+        (& (macro-type-arg-module-qualify ctx (ast.ty-node-get elem))))]
     [(Slice elem)
       (ast.ast-ty-slice
-        (macro-type-arg-module-qualify ctx (ast.ty-node-get elem)))]
+        (& (macro-type-arg-module-qualify ctx (ast.ty-node-get elem))))]
     [(Box elem)
       (ast.ast-ty-box
-        (macro-type-arg-module-qualify ctx (ast.ty-node-get elem)))]
+        (& (macro-type-arg-module-qualify ctx (ast.ty-node-get elem))))]
     [(Ptr elem)
       (ast.ast-ty-ptr
-        (macro-type-arg-module-qualify ctx (ast.ty-node-get elem)))]
+        (& (macro-type-arg-module-qualify ctx (ast.ty-node-get elem))))]
     [(MutPtr elem)
       (ast.ast-ty-mut-ptr
-        (macro-type-arg-module-qualify ctx (ast.ty-node-get elem)))]
+        (& (macro-type-arg-module-qualify ctx (ast.ty-node-get elem))))]
     [(Ref region inner)
       (ast.ast-ty-ref
         region
-        (macro-type-arg-module-qualify ctx (ast.ty-node-get inner)))]
+        (& (macro-type-arg-module-qualify ctx (ast.ty-node-get inner))))]
     [(MutRef region inner)
       (ast.ast-ty-mut-ref
         region
-        (macro-type-arg-module-qualify ctx (ast.ty-node-get inner)))]
+        (& (macro-type-arg-module-qualify ctx (ast.ty-node-get inner))))]
     [(Region region inner)
       (ast.ast-ty-region
         region
-        (macro-type-arg-module-qualify ctx (ast.ty-node-get inner)))]
+        (& (macro-type-arg-module-qualify ctx (ast.ty-node-get inner))))]
     [(Invalidate lifetime inner)
       (ast.ast-ty-invalidate
         lifetime
-        (macro-type-arg-module-qualify ctx (ast.ty-node-get inner)))]
+        (& (macro-type-arg-module-qualify ctx (ast.ty-node-get inner))))]
     [(Var name) (Var (macro-type-arg-module-qualify-id ctx name))]
     [(VarArgs name lifetimes)
       (ast.ast-ty-var-args
@@ -104511,7 +104596,7 @@
 (define (macro-module-strategy-arg [ctx : TcContext] [arg : ast.AstExpr]) : ResultMacroModuleArg
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-bases ctx)
-    (tc-global-shared-view arg))
+    (& arg))
     [(Var name-id)
       (let
         [source-id : i64
@@ -104611,7 +104696,7 @@
 (define (macro-expr-clause-from-arg [ctx : TcContext] [arg : ast.AstExpr]) : ResultMacroClause
   (match (ast.ast-expr-unspan-with-segment-bases
     (tc-context-expr-bases ctx)
-    (tc-global-shared-view arg))
+    (& arg))
     [(BracketClause items) (macro-expr-clause-from-items ctx arg items)]
     [_
       (Err
@@ -104657,7 +104742,7 @@
 (define (macro-expr-colon? [expr-bases : i64] [expr-id : i64]) : bool
   (match (ast.ast-expr-unspan-with-segment-bases
     expr-bases
-    (ast.ast-expr-segment-bases-get expr-bases expr-id))
+    (& (ast.ast-expr-segment-bases-get expr-bases expr-id)))
     [(Var name) (= name cbi.compiler-builtin-id-fix-colon)]
     [_ false]))
 
@@ -104711,7 +104796,7 @@
       [name-expr : i64 (ast.ast-expr-list-get (& items) 0 0)]
       (match (ast.ast-expr-unspan-with-segment-bases
         expr-bases
-        (ast.ast-expr-segment-bases-get expr-bases name-expr))
+        (& (ast.ast-expr-segment-bases-get expr-bases name-expr)))
         [(Var name)
           (macro-expr-binding-clause-from-name
             expr-bases
@@ -104723,9 +104808,7 @@
 (define (macro-expr-binding-clause-from-arg
   [expr-bases : i64]
   [arg : ast.AstExpr]) : ResultMacroBindingClause
-  (match (ast.ast-expr-unspan-with-segment-bases
-    expr-bases
-    (tc-global-shared-view arg))
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
     [(BracketClause items)
       (macro-expr-binding-clause-from-items expr-bases arg items)]
     [_
@@ -104798,9 +104881,7 @@
         (ast.ast-expr-segment-bases-get
           expr-bases
           (ast.ast-expr-list-get args index 0))]
-      (match (ast.ast-expr-unspan-with-segment-bases
-        expr-bases
-        (tc-global-shared-view head-expr))
+      (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& head-expr))
         [(BracketClause _)
           (let
             [clause
@@ -104895,7 +104976,7 @@
       result)))
 
 (define (macro-operand-bracket-clause? [expr-bases : i64] [arg : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases arg)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& arg))
     [(BracketClause _) true]
     [_ false]))
 
@@ -107806,7 +107887,7 @@
         [(Err diag) (Err diag)])]))
 
 (define (macro-binding-prefix-form? [expr-bases : i64] [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-segment-bases expr-bases expr)
+  (match (ast.ast-expr-unspan-with-segment-bases expr-bases (& expr))
     [(BracketClause _) true]
     [_ false]))
 
@@ -108110,7 +108191,7 @@
   [session : cis.InternStructuralSessionHandle]
   [pools : ast.AstNodePoolContext]
   [expr : ast.AstExpr]) : ast.AstExpr
-  (match (ast.ast-expr-unspan-with-pools pools (tc-global-shared-view expr))
+  (match (ast.ast-expr-unspan-with-pools pools (& expr))
     [(Var name)
       (Var
         (macro-output-source-identity-id-at session name "generated-call-func"))]
@@ -108136,9 +108217,10 @@
     0
     (match (ast.ast-expr-unspan-with-pools
       pools
-      (ast.ast-node-pool-context-expr-get
-        pools
-        (ast.ast-expr-list-get args index 0)))
+      (&
+        (ast.ast-node-pool-context-expr-get
+          pools
+          (ast.ast-expr-list-get args index 0))))
       [(BracketClause _)
         (+
           1
@@ -108154,7 +108236,7 @@
     tail
     (ast.ast-expr-cons
       (ast.ast-expr-list-get args index 0)
-      (macro-generated-import-prepend-range args (+ index 1) end tail))))
+      (& (macro-generated-import-prepend-range args (+ index 1) end tail)))))
 
 (define (macro-generated-import-type-args-for-param
   [pools : ast.AstNodePoolContext]
@@ -108195,13 +108277,14 @@
             ty
             (ast.ast-expr-list-get args arg-index 0)
             env)
-          (macro-generated-import-type-args-at
-            pools
-            params
-            args
-            (+ param-index 1)
-            (+ arg-index 1)
-            env)))]))
+          (&
+            (macro-generated-import-type-args-at
+              pools
+              params
+              args
+              (+ param-index 1)
+              (+ arg-index 1)
+              env))))]))
 
 (define (macro-generated-import-type-args
   [pools : ast.AstNodePoolContext]
@@ -108260,7 +108343,7 @@
   [fallback : i64]) : i64
   (let
     [pools : ast.AstNodePoolContext (ctfe_support.ctfe-env-pools env)]
-    (match (ast.ast-expr-unspan-with-pools pools func)
+    (match (ast.ast-expr-unspan-with-pools pools (& func))
       [(Var name)
         (let
           [lookup-name : String
@@ -108333,9 +108416,7 @@
     [pools : ast.AstNodePoolContext (ctfe_support.ctfe-env-pools env)]
     [call-expr : ast.AstExpr (ast.ast-node-pool-context-expr-get pools call-id)]
     [rewritten : i64
-      (match (ast.ast-expr-unspan-with-pools
-        pools
-        (tc-global-shared-view call-expr))
+      (match (ast.ast-expr-unspan-with-pools pools (& call-expr))
         [(Call func-box args)
           (let
             [func : ast.AstExpr
@@ -108986,11 +109067,12 @@
                 ctx
                 env
                 (ast.ast-let-binding-cons
-                  (ast.ast-let-binding-id
-                    name
-                    (tc-global-shared-view maybe-ty)
-                    ninit)
-                  (ast.ast-let-binding-list-new)))]
+                  (&
+                    (ast.ast-let-binding-id
+                      name
+                      (tc-global-shared-view maybe-ty)
+                      ninit))
+                  (& (ast.ast-let-binding-list-new))))]
             ;; Expansion checks the binders that enclose a macro call (here,
             ;; for `with` bindings and for `match` scrutinees) so the call
             ;; sees their types. The check pushes through both `ctx`'s cells
@@ -109066,7 +109148,7 @@
           [single : ast.AstResourceBindingList
             (ast.ast-resource-binding-cons
               binding
-              (ast.ast-resource-binding-list-new))]
+              (& (ast.ast-resource-binding-list-new)))]
           [checked : ResultTcEnv (tc-resource-bindings ctx env single)]
           [_publish : unit (tc-context-publish-newer-pools! ctx)]
           (match checked
@@ -109104,7 +109186,7 @@
       (tc-context-structural-session ctx)]
     (match (ast.ast-expr-unspan-with-segment-bases
       (tc-context-expr-bases ctx)
-      func)
+      (& func))
       [(Var name)
         (if (or
           (macro-hygiene-global-id? structural-session name)
@@ -109845,9 +109927,7 @@
   (let
     [call-expr : ast.AstExpr (tc-context-expr-get ctx call-id)]
     [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-    (match (ast.ast-expr-unspan-with-pools
-      pools
-      (tc-global-shared-view call-expr))
+    (match (ast.ast-expr-unspan-with-pools pools (& call-expr))
       [(Call func-box _)
         (let
           [func : ast.AstExpr (tc-context-expr-get ctx func-box)]
@@ -109930,7 +110010,8 @@
             (tc-resolve-type ctx (tc-global-shared-view ret))]
           [body-env : TcTypeEnv (tc-bind-return-type params-env resolved-ret)]
           [nbody : i64 (try (macro-expand-node ctx body-env decls 0 body-box))]
-          (Ok (ast.ast-decl-def-fn-metadata-id name params ret nbody metadata)))]
+          (Ok
+            (ast.ast-decl-def-fn-metadata-id name params ret nbody (& metadata))))]
       [(Test _ _ _ _) (Ok decl)]
       [(Import decl-meta (Spec kind _ _ _ _))
         (match kind
@@ -109952,10 +110033,10 @@
   [decl : ast.AstDecl]
   [path : String]) : ResultMacroDeclExpansion
   (Ok
-    (ast.ast-decl-cons (tc-global-shared-view decl) (ast.ast-decl-list-new))
+    (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new)))
     (macro-paths-for-decls
       state
-      (ast.ast-decl-cons decl (ast.ast-decl-list-new))
+      (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new)))
       path)))
 
 (define (tc-macro-module-env-cache-storage-ensure! [state : TcMacroState]) : unit
@@ -110142,15 +110223,16 @@
         [(No) (Some cbi.compiler-builtin-id-fix-empty)]
         [_ alias])]
     (ast.ast-decl-cons
-      (Import
-        (ast.ast-decl-meta-runtime-shared-view)
-        (Spec
-          (Module)
-          target-module
-          (Some target-module-id)
-          binding-alias
-          (box span)))
-      (ast.ast-decl-list-new))))
+      (&
+        (Import
+          (ast.ast-decl-meta-runtime-shared-view)
+          (Spec
+            (Module)
+            target-module
+            (Some target-module-id)
+            binding-alias
+            (box span))))
+      (& (ast.ast-decl-list-new)))))
 
 (define (macro-module-import-marker-decl? [decl : ast.AstDecl]) : bool
   (match decl
@@ -110222,9 +110304,7 @@
   (let
     [call-expr : ast.AstExpr (tc-context-expr-get ctx call-id)]
     [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-    (match (ast.ast-expr-unspan-with-pools
-      pools
-      (tc-global-shared-view call-expr))
+    (match (ast.ast-expr-unspan-with-pools pools (& call-expr))
       [(Call func-box args)
         (let
           [func : ast.AstExpr (tc-context-expr-get ctx func-box)]
@@ -110464,11 +110544,11 @@
     (tc-global-shared-view call-expr)
     (match (ast.ast-expr-unspan-with-segment-bases
       (tc-context-expr-bases ctx)
-      call-expr)
+      (& call-expr))
       [(Call head-id _)
         (match (ast.ast-expr-unspan-with-segment-bases
           (tc-context-expr-bases ctx)
-          (tc-context-expr-get ctx head-id))
+          (& (tc-context-expr-get ctx head-id)))
           [(Var name-id)
             (macro-call-not-macro-message ctx decls module-id name-id)]
           [_ "typecheck: module-scope macro call has a non-symbol head"])]
@@ -110877,9 +110957,7 @@
   (let
     [call-expr : ast.AstExpr (tc-context-expr-get ctx call-id)]
     [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-    (match (ast.ast-expr-unspan-with-pools
-      pools
-      (tc-global-shared-view call-expr))
+    (match (ast.ast-expr-unspan-with-pools pools (& call-expr))
       [(Call func-box args)
         (let
           [func : ast.AstExpr (tc-context-expr-get ctx func-box)]
@@ -111084,9 +111162,7 @@
   (let
     [call-expr : ast.AstExpr (tc-context-expr-get ctx call-id)]
     [pools : ast.AstNodePoolContext (tc-context-pools ctx)]
-    (match (ast.ast-expr-unspan-with-pools
-      pools
-      (tc-global-shared-view call-expr))
+    (match (ast.ast-expr-unspan-with-pools pools (& call-expr))
       [(Call func-box args)
         (let
           [func : ast.AstExpr (tc-context-expr-get ctx func-box)]
@@ -111534,7 +111610,7 @@
       (match (ast.ast-program-copy-append-above-with-maps
         pools
         pools
-        (ast.ast-program expanded)
+        (& (ast.ast-program expanded))
         shared-expr-base
         shared-type-base
         expr-map-address
@@ -111910,7 +111986,7 @@
               (if (and
                 (= module-id importer-module-id)
                 (= imported-module target-module-id))
-                (ast.ast-decl-cons decl (ast.ast-decl-list-new))
+                (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new)))
                 (macro-generated-module-marker-in
                   rest
                   target-module-id
@@ -112997,7 +113073,7 @@
   [id : i64]) : bool
   (match (ast.ast-expr-unspan-with-segment-bases
     expr-bases
-    (ast.ast-expr-segment-bases-get expr-bases id))
+    (& (ast.ast-expr-segment-bases-get expr-bases id)))
     [(Var raw-id)
       (let
         [source-id : i64
@@ -115036,7 +115112,7 @@
   (match (ast.ast-decl-generated-meta decl)
     [(Some _ _ _ _)
       (let
-        [template : ast.AstDecl (ast.ast-decl-unwrapped decl)]
+        [template : ast.AstDecl (ast.ast-decl-unwrapped (& decl))]
         (match (tc-global-shared-view template)
           [(Import decl-meta (Spec kind import-path expected alias span))
             (if (macro-import-placeholder-kind? kind)
@@ -115180,7 +115256,7 @@
   (match (macro-generated-normal-import (tc-global-shared-view decl))
     [(No)
       (Ok
-        (ast.ast-decl-cons decl (ast.ast-decl-list-new))
+        (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new)))
         (ast.ast-decl-path-list-prepend-builder-with-owner-and-provenance-id
           decl-path
           decl-owner-id
@@ -115254,7 +115330,7 @@
                         alias
                         (tc-global-shared-view imported-decls))]
                     [source-import : ast.AstDeclList
-                      (ast.ast-decl-cons decl (ast.ast-decl-list-new))]
+                      (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new)))]
                     [tail-decls : ast.AstDeclList
                       (cload.compiler-load-decls-after-import
                         kind

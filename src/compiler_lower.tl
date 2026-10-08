@@ -1862,8 +1862,8 @@
           handoff.context
           (Context
             (ast.ast-node-pool-context-new
-              final-expr-state
-              final-type-state
+              (& final-expr-state)
+              (& final-type-state)
               dest-arena)))
         (let
           [committed-pools : ast.AstNodePoolContext
@@ -3249,11 +3249,9 @@
       (let
         [direct : bool (lower-logical-symbol-id-direct? logical-id source-id)]
         [link-id : i64
-          (ci.intern-id-value
-            (ast.ast-extern-metadata-symbol-id
-              (lower-global-shared-view metadata)))]
+          (ci.intern-id-value (ast.ast-extern-metadata-symbol-id (& metadata)))]
         (if (and
-          (ast.ast-extern-metadata-symbol-matches-source? metadata)
+          (ast.ast-extern-metadata-symbol-matches-source? (& metadata))
           direct)
           link-id
           (lower-logical-symbol-id-select logical-name logical-id direct)))]))
@@ -6191,7 +6189,7 @@
   (match (ast.ast-decl-generated-meta decl)
     [(Some generator item _ _)
       (if (string.eq generator "stdlib.clone/synthesize-helpers")
-        (match (ast.ast-decl-unwrapped decl)
+        (match (ast.ast-decl-unwrapped (& decl))
           [(DefFn decl-meta name _ _ _ _)
             (let
               [with-syntax-id : LowerNameEnv
@@ -8293,7 +8291,7 @@
   [func : ast.AstExpr]) : tc_core.TcNameLookup
   (let
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
-    (match (ast.ast-expr-unspan-with-pools (& pools) func)
+    (match (ast.ast-expr-unspan-with-pools (& pools) (& func))
       [(Var raw-name)
         (let
           [source-id : i64
@@ -8395,7 +8393,7 @@
     [(Ann inner-box _)
       (lower-spmd-inline-arg-stable? ctx (lower-context-expr-get ctx inner-box))]
     [(Borrow _ _ place-box)
-      (match (ast.ast-expr-unspan (lower-context-expr-get ctx place-box))
+      (match (ast.ast-expr-unspan (& (lower-context-expr-get ctx place-box)))
         [(Var _) true]
         [_ false])]
     [(Var _) false]
@@ -9939,7 +9937,7 @@
 (define (lower-reach-float-to-bits-literal-arg?
   [pools : (& pools ast.AstNodePoolContext)]
   [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-pools pools expr)
+  (match (ast.ast-expr-unspan-with-pools pools (& expr))
     [(Literal lit)
       (match lit
         [(Float _) true]
@@ -9947,7 +9945,7 @@
     [(Ann inner-box _)
       (match (ast.ast-expr-unspan-with-pools
         pools
-        (ast.ast-node-pool-context-expr-get pools inner-box))
+        (& (ast.ast-node-pool-context-expr-get pools inner-box)))
         [(Literal lit)
           (match lit
             [(Float _) true]
@@ -9956,7 +9954,7 @@
     [(Cast inner-box _)
       (match (ast.ast-expr-unspan-with-pools
         pools
-        (ast.ast-node-pool-context-expr-get pools inner-box))
+        (& (ast.ast-node-pool-context-expr-get pools inner-box)))
         [(Literal lit)
           (match lit
             [(Float _) true]
@@ -9968,12 +9966,12 @@
   [pools : (& pools ast.AstNodePoolContext)]
   [names : (& names LowerNameCache)]
   [expr : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan-with-pools pools expr)
+  (match (ast.ast-expr-unspan-with-pools pools (& expr))
     [(Call callee-box args)
       (let
         [callee : ast.AstExpr
           (ast.ast-node-pool-context-expr-get pools callee-box)]
-        (match (ast.ast-expr-unspan-with-pools pools callee)
+        (match (ast.ast-expr-unspan-with-pools pools (& callee))
           [(Var name)
             (and
               (= args.len 2)
@@ -9991,7 +9989,7 @@
   [callee : ast.AstExpr]
   [args : (& args ast.AstExprList)]) : bool
   (if (= args.len 2)
-    (match (ast.ast-expr-unspan-with-pools pools callee)
+    (match (ast.ast-expr-unspan-with-pools pools (& callee))
       [(Var name)
         (and
           (lower-reach-public-string-concat-source-id? names name)
@@ -10318,14 +10316,15 @@
             (ast.ast-node-pool-context-expr-push
               pools
               (Literal (String module-id)))
-            (ast.ast-expr-cons
-              (ast.ast-node-pool-context-expr-push
-                pools
-                (TypeLiteral
-                  (ast.ast-node-pool-context-type-push
-                    pools
-                    (tc_core.tc-resolve-type ctx (Var root-key-id)))))
-              out)))
+            (&
+              (ast.ast-expr-cons
+                (ast.ast-node-pool-context-expr-push
+                  pools
+                  (TypeLiteral
+                    (ast.ast-node-pool-context-type-push
+                      pools
+                      (tc_core.tc-resolve-type ctx (Var root-key-id)))))
+                (& out)))))
         (set! index (- index 1))))
     out))
 
@@ -10389,8 +10388,11 @@
                   (=
                     (clone_support.clone-helper-decl-count
                       (ast.ast-decl-cons
-                        (ast.ast-decl-module-id module-id)
-                        (ast.ast-decl-cons decl (ast.ast-decl-list-new)))
+                        (& (ast.ast-decl-module-id module-id))
+                        (&
+                          (ast.ast-decl-cons
+                            (& decl)
+                            (& (ast.ast-decl-list-new)))))
                       root-key-id
                       helper-name-id)
                     1))
@@ -10453,7 +10455,7 @@
       (match (ast.ast-program-copy-append-with-pools
         pools
         pools
-        (ast.ast-program generated))
+        (& (ast.ast-program generated)))
         [(AstProgramCompaction copied _)
           (match copied
             [(Program decls-box)
@@ -10585,9 +10587,7 @@
         (set! root (- root 1))))
     (while (and (< found 0) (< index count))
       (match (ast.ast-decl-unwrapped
-        (lower-global-array-element-shared-view
-          decl-slots
-          (+ decl-offset index)))
+        (& (array-ref decl-slots (+ decl-offset index))))
         [(Module next-module) (set! cur-module-id next-module)]
         [(DefFn decl-meta name _ _ _ _)
           (let
@@ -10660,7 +10660,7 @@
       [(Cons decl rest)
         (let
           [item : String
-            (match (ast.ast-decl-unwrapped (lower-global-shared-view decl))
+            (match (ast.ast-decl-unwrapped (& decl))
               [(Module module-id)
                 (str_cat.str-cat
                   "module:"
@@ -10874,9 +10874,7 @@
   [state : LowerReachState]
   [callee : ast.AstExpr]
   [args : (& args ast.AstExprList)]) : LowerReachState
-  (match (ast.ast-expr-unspan-with-pools
-    pools
-    (lower-global-shared-view callee))
+  (match (ast.ast-expr-unspan-with-pools pools (& callee))
     [(Var name)
       ;; Literal public-wrapper calls disappear into integer constants during
       ;; lowering, so do not keep an otherwise-dead wrapper just for that call.
@@ -10943,9 +10941,7 @@
             (lower-global-shared-view callee)
             args)]
         [concat-state : LowerReachState
-          (match (ast.ast-expr-unspan-with-pools
-            pools
-            (lower-global-shared-view callee))
+          (match (ast.ast-expr-unspan-with-pools pools (& callee))
             [(Var name)
               (if (or
                 (lower-reach-legacy-string-concat-source-id?
@@ -10963,7 +10959,7 @@
                 callee-state)]
             [_ callee-state])]
         [runtime-state : LowerReachState
-          (match (ast.ast-expr-unspan-with-pools pools callee)
+          (match (ast.ast-expr-unspan-with-pools pools (& callee))
             [(Var name)
               (if (lower-reach-string-snapshot-source-call?
                 (lower-name-cache-structural-session (& names))
@@ -12160,7 +12156,7 @@
                 [path-rest : ast.AstDeclPathList path-rest]
                 path-rest)]
             [(Nil) (ast.ast-decl-path-list-new)])]
-        (match (ast.ast-decl-unwrapped decl)
+        (match (ast.ast-decl-unwrapped (& decl))
           [(Module next-module)
             (let
               [next-module-str : String
@@ -14097,8 +14093,7 @@
       (let
         [logical-name-id : i64 (lower-module-name-key-id-by-id module-id name)]
         [export-state : LowerReachState
-          (match (ast.ast-fn-metadata-export
-            (lower-global-shared-view metadata))
+          (match (ast.ast-fn-metadata-export (& metadata))
             [(Export symbol)
               (if (lower-runtime-prelude-selective-export-id?
                 module-id
@@ -14106,7 +14101,7 @@
                 state
                 (lower-reach-add-logical all-functions state logical-name-id))]
             [(No) state])]
-        (match (ast.ast-fn-metadata-spmd-callable metadata)
+        (match (ast.ast-fn-metadata-spmd-callable (& metadata))
           [(No) export-state]
           [(Callable _)
             (lower-reach-add-logical all-functions export-state logical-name-id)]))]
@@ -14117,7 +14112,7 @@
             all-functions
             state
             (ci.intern-id-value
-              (ast.ast-extern-metadata-symbol-id (deref metadata))))]
+              (ast.ast-extern-metadata-symbol-id (& (deref metadata)))))]
         [(Value) state])]
     [(Unsafe inner-box)
       (let
@@ -15250,8 +15245,9 @@
 ;; on the referent are transparent; owning containers are not looked through.
 (define (lower-fat-reference? [ctx : tc_core.TcContext] [inner : i64]) : bool
   (ast.ast-type-fat-referent?
-    (tc_core.tc-type-strip-region
-      (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner)))))
+    (&
+      (tc_core.tc-type-strip-region
+        (tc_core.tc-resolve-type ctx (tc_core.tc-context-type-get ctx inner))))))
 
 (define (lower-type-size [ctx : tc_core.TcContext] [ty : (& ty ast.AstType)]) : i64
   (let
@@ -17623,11 +17619,11 @@
   [expr : ast.AstExpr]) : LowerMaybeStringConcatCall
   (let
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
-    (match (ast.ast-expr-unspan-with-pools (& pools) expr)
+    (match (ast.ast-expr-unspan-with-pools (& pools) (& expr))
       [(Call callee-box args)
         (match (ast.ast-expr-unspan-with-pools
           (& pools)
-          (tc_core.tc-context-expr-get ctx callee-box))
+          (& (tc_core.tc-context-expr-get ctx callee-box)))
           [(Var name)
             (let
               [raw-name-id : i64
@@ -18993,7 +18989,7 @@
   [place : ast.AstExpr]
   [origin : ast.AstExpr]
   [result-ty : ast.AstType]) : ResultLowerExpr
-  (match (ast.ast-expr-unspan place)
+  (match (ast.ast-expr-unspan (& place))
     [(Var name)
       (if (tc_core.tc-dotted-local-field-name-id? type-env name)
         (match (tc_core.tc-dotted-local-field-expr-id type-env name)
@@ -20251,7 +20247,8 @@
     (let
       [pattern : ast.AstPattern
         (ast.ast-pattern-list-get (& patterns) 0 (ast.ast-pattern-fallback))]
-      [rest-patterns : ast.AstPatternList (ast.ast-pattern-list-tail patterns)]
+      [rest-patterns : ast.AstPatternList
+        (ast.ast-pattern-list-tail (& patterns))]
       (if (ast.ast-type-list-empty? (& types))
         (Err
           (box (lower-diagnostic "lower: enum payload pattern arity mismatch")))
@@ -20844,8 +20841,9 @@
             name
             (ast.ast-ty-mut-ref
               lifetime
-              (tc_core.tc-type-without-regions
-                (lower-global-shared-view elem-ty))))
+              (&
+                (tc_core.tc-type-without-regions
+                  (lower-global-shared-view elem-ty)))))
             [(Ok next-state next-env next-type-env)
               (lower-bind-slice-mut-elements-at
                 ctx
@@ -21528,7 +21526,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [expr : ast.AstExpr]) : LowerState
-  (match (ast.ast-expr-unspan expr)
+  (match (ast.ast-expr-unspan (& expr))
     [(Var name) (lower-disarm-move-aware-resource-name state env name)]
     [_ state]))
 
@@ -21632,7 +21630,7 @@
               [(Function)
                 (let
                   [symbol : String
-                    (ast.ast-extern-metadata-symbol (deref metadata))]
+                    (ast.ast-extern-metadata-symbol (& (deref metadata)))]
                   (if (lower-atomic-public-symbol? symbol)
                     symbol
                     ""))]
@@ -21673,7 +21671,7 @@
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
   [func : ast.AstExpr]) : String
-  (match (ast.ast-expr-unspan func)
+  (match (ast.ast-expr-unspan (& func))
     [(Var raw-name)
       (let
         [source-id : i64
@@ -23258,15 +23256,18 @@
   [cleanup-name-id : i64]) : ast.AstType
   (ast.ast-ty-tuple
     (ast.ast-type-cons
-      (Var hidden-name-id)
-      (ast.ast-type-cons (Var cleanup-name-id) (ast.ast-type-list-new)))))
+      (& (Var hidden-name-id))
+      (&
+        (ast.ast-type-cons
+          (& (Var cleanup-name-id))
+          (& (ast.ast-type-list-new)))))))
 
 (define (lower-region-reset-metadata-type [hidden-name-id : i64]) : ast.AstType
   (Var hidden-name-id))
 
 (define (lower-arena-restore-metadata-type [hidden-name-id : i64]) : ast.AstType
   (ast.ast-ty-tuple
-    (ast.ast-type-cons (Var hidden-name-id) (ast.ast-type-list-new))))
+    (ast.ast-type-cons (& (Var hidden-name-id)) (& (ast.ast-type-list-new)))))
 
 (define (lower-type-env-push-cleanup
   [state : LowerState]
@@ -23289,10 +23290,14 @@
     (cis.intern-lower-private-identity-raw (lower-cleanup-marker-id state))
     (ast.ast-ty-tuple
       (ast.ast-type-cons
-        (Var hidden-name-id)
-        (ast.ast-type-cons
-          (Var cleanup-name-id)
-          (ast.ast-type-cons (Var live-name-id) (ast.ast-type-list-new)))))))
+        (& (Var hidden-name-id))
+        (&
+          (ast.ast-type-cons
+            (& (Var cleanup-name-id))
+            (&
+              (ast.ast-type-cons
+                (& (Var live-name-id))
+                (& (ast.ast-type-list-new))))))))))
 
 (define (lower-type-env-push-region-reset
   [state : LowerState]
@@ -23313,7 +23318,7 @@
     (lower-arena-restore-metadata-type hidden-name-id)))
 
 (define (lower-cleanup-name-id-from-expr [cleanup : ast.AstExpr]) : tc_core.ResultTcExprId
-  (match (ast.ast-expr-unspan cleanup)
+  (match (ast.ast-expr-unspan (& cleanup))
     [(Var name) (Ok name)]
     [_ (Err "lower: resource cleanup must be a direct function name")]))
 
@@ -23661,8 +23666,11 @@
   (Tuple
     (box
       (ast.ast-type-cons
-        (Var break-label-id)
-        (ast.ast-type-cons (Var continue-label-id) (ast.ast-type-list-new))))))
+        (& (Var break-label-id))
+        (&
+          (ast.ast-type-cons
+            (& (Var continue-label-id))
+            (& (ast.ast-type-list-new))))))))
 
 (define (lower-enter-loop-target
   [type-env : tc_core.TcTypeEnv]
@@ -25169,10 +25177,10 @@
 (define (lower-call-explicit-mut-borrow-var-id
   [ctx : tc_core.TcContext]
   [arg : ast.AstExpr]) : tc_core.TcMaybeNameId
-  (match (ast.ast-expr-unspan arg)
+  (match (ast.ast-expr-unspan (& arg))
     [(Borrow mutable _ place-box)
       (if mutable
-        (match (ast.ast-expr-unspan (lower-context-expr-get ctx place-box))
+        (match (ast.ast-expr-unspan (& (lower-context-expr-get ctx place-box)))
           [(Var name) (Some name)]
           [_ (No)])
         (No))]
@@ -25263,7 +25271,7 @@
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
   [effective-arg : ast.AstExpr]) : tc_core.ResultTcType
-  (match (ast.ast-expr-unspan (lower-global-shared-view effective-arg))
+  (match (ast.ast-expr-unspan (& effective-arg))
     [(Borrow mutable _ place-box)
       (let
         [place-expr : ast.AstExpr (lower-context-expr-get ctx place-box)]
@@ -25275,17 +25283,17 @@
               type-env
               place-expr))]
         (match place
-          [(TcBorrowPlace lifetime referent-ty)
+          [(TcBorrowPlace lifetime referent-ty _)
             (Ok
               (if mutable
                 (ast.ast-ty-mut-ref-with-pools
                   (tc_core.tc-context-pools ctx)
                   lifetime
-                  referent-ty)
+                  (& referent-ty))
                 (ast.ast-ty-ref-with-pools
                   (tc_core.tc-context-pools ctx)
                   lifetime
-                  referent-ty)))]))]
+                  (& referent-ty))))]))]
     [_ (tc_core.tc-call-arg-expr-type ctx type-env effective-arg)]))
 
 (define (lower-call-arg-normal-as
@@ -25522,7 +25530,7 @@
                           (ast.ast-ty-ref-with-pools
                             (tc_core.tc-context-pools ctx)
                             (tc_core.tc-call-temporary-lifetime-id)
-                            (lower-global-shared-view resolved-ty))
+                            (& resolved-ty))
                           (ast.AstType.U64))
                           [(LowerExpr.Expr cast-state ptr _)
                             (lower-emit-pack
@@ -26884,14 +26892,14 @@
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
       (ast.ast-expr-cons
         (ast.ast-expr-init head)
-        (lower-init-expr-list-from-types-at ctx types (+ index 1))))))
+        (& (lower-init-expr-list-from-types-at ctx types (+ index 1)))))))
 
 (define (lower-init-expr-list-repeat [ty : ast.AstType] [count : i64]) : ast.AstExprList
   (if (<= count 0)
     (ast.ast-expr-list-new)
     (ast.ast-expr-cons
       (ast.ast-expr-init (lower-global-shared-view ty))
-      (lower-init-expr-list-repeat ty (- count 1)))))
+      (& (lower-init-expr-list-repeat ty (- count 1))))))
 
 (define (lower-init-scalar
   [ctx : tc_core.TcContext]
@@ -27454,7 +27462,7 @@
   [function-state : CompilerLowerFunctionState]
   [func : ast.AstExpr]
   [args : ast.AstExprList]) : tc_core.ResultTcType
-  (match (ast.ast-expr-unspan func)
+  (match (ast.ast-expr-unspan (& func))
     [(Var name)
       (let
         [source-id : i64
@@ -27902,7 +27910,7 @@
         (tc_core.tc-context-expr-bases ctx)
         type-env
         (lower-global-shared-view init))
-        (match (ast.ast-expr-unspan (lower-global-shared-view init))
+        (match (ast.ast-expr-unspan (& init))
           [(Lambda lambda-box)
             (match (__tl-box-place lambda-box)
               [(Lambda params maybe-ret body-box)
@@ -28284,7 +28292,7 @@
         function-state
         (lower-context-expr-get ctx inner-box))]
     [(Literal lit) (Ok (tc_core.tc-literal-type lit))]
-    [(BinaryData _) (Ok (ast.ast-ty-dyn-array (U8)))]
+    [(BinaryData _) (Ok (ast.ast-ty-dyn-array (& (U8))))]
     [(SpmdProgramIndex) (Ok (I64))]
     [(SpmdProgramCount) (Ok (I64))]
     [(Var name)
@@ -28625,7 +28633,7 @@
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
     (match (ast.ast-expr-unspan-with-pools
       pools
-      (lower-context-expr-get ctx expr-id))
+      (& (lower-context-expr-get ctx expr-id)))
       [(Var name) name]
       [_ -1])))
 
@@ -28857,7 +28865,7 @@
         type-env
         expr
         origin
-        (ast.ast-ty-dyn-array (U8)))]
+        (ast.ast-ty-dyn-array (& (U8))))]
     [(Var name)
       (if (tc_core.tc-dotted-local-field-name-id? type-env name)
         (match (tc_core.tc-dotted-local-field-expr-id type-env name)
@@ -30042,7 +30050,7 @@
             (let
               [lowered
                 (try
-                  (match (ast.ast-expr-unspan (lower-global-shared-view place))
+                  (match (ast.ast-expr-unspan (& place))
                     [(Var name)
                       (lower-ptr-addr-of-local-address
                         ctx
@@ -30515,7 +30523,7 @@
             origin
             expected-resolved
             expected-ty)
-          (match (ast.ast-expr-unspan func)
+          (match (ast.ast-expr-unspan (& func))
             [(Var name)
               (match (lower-lookup-type-id
                 ctx
@@ -31128,7 +31136,7 @@
             env
             type-env
             inner
-            (ast.ast-ty-box (lower-global-shared-view result-ty))
+            (ast.ast-ty-box (& result-ty))
             result-ty)]
         [(Ref _ _)
           (lower-deref-from-expected-receiver
@@ -31683,8 +31691,7 @@
         [count : i64
           (tc_core.tc-expr-list-len (lower-global-shared-view values))]
         [byte-count : ir.CompilerIrValue (I64 (* count elem-size))]
-        [arr-ty : ast.AstType
-          (ast.ast-ty-dyn-array (lower-global-shared-view resolved-elem))]
+        [arr-ty : ast.AstType (ast.ast-ty-dyn-array (& resolved-elem))]
         (match (lower-state-alloc-var state)
           [(Alloc buf-alloc buf-var)
             (let
@@ -36763,7 +36770,7 @@
       [(Call func-box args)
         (let
           [func : ast.AstExpr (lower-context-expr-get ctx func-box)]
-          (match (ast.ast-expr-unspan func)
+          (match (ast.ast-expr-unspan (& func))
             [(Var name)
               (lower-direct-constructor-call-into
                 ctx
@@ -37262,7 +37269,7 @@
   [args : ast.AstExprList]
   [result-ty : ast.AstType]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (match (ast.ast-expr-unspan (lower-global-shared-view func))
+  (match (ast.ast-expr-unspan (& func))
     [(Lambda lambda-box)
       (match (__tl-box-place lambda-box)
         [(Lambda params maybe-ret body-box)
@@ -38610,7 +38617,7 @@
 (define (lower-atomic-pointer-func?
   [type-env : tc_core.TcTypeEnv]
   [func : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan func)
+  (match (ast.ast-expr-unspan (& func))
     [(Var raw-name)
       (let
         [name-id : i64
@@ -39043,7 +39050,7 @@
   [storage : ast.AstExpr]
   [elem-ty : ast.AstType]) : ResultLowerExpr
   (let
-    [array-ty : ast.AstType (ast.ast-ty-dyn-array elem-ty)]
+    [array-ty : ast.AstType (ast.ast-ty-dyn-array (& elem-ty))]
     [lowered
       (try
         (lower-expr ctx state env type-env (lower-global-shared-view storage)))]
@@ -39846,7 +39853,7 @@
       [(Expr done-state _ _) (Ok done-state)])))
 
 (define (lower-make-array-zero-literal-length? [len : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan len)
+  (match (ast.ast-expr-unspan (& len))
     [(Literal (Int value _)) (= value 0)]
     [_ false]))
 
@@ -40039,8 +40046,7 @@
       [(Expr len-state len-i64 _)
         (let
           [elem-size : i64 (lower-type-size ctx resolved-elem)]
-          [arr-ty : ast.AstType
-            (ast.ast-ty-dyn-array (lower-global-shared-view resolved-elem))]
+          [arr-ty : ast.AstType (ast.ast-ty-dyn-array (& resolved-elem))]
           (match (lower-state-fresh-label len-state "make_array_len_nonneg")
             [(Label s1 check-max-label)
               (match (lower-state-fresh-label s1 "make_array_len_fail")
@@ -40408,11 +40414,11 @@
                                         (lower-type-list-storage-size
                                           ctx
                                           (ast.ast-type-cons
-                                            (Bool)
-                                            (ast.ast-type-cons
-                                              (lower-global-shared-view
-                                                elem-ir-ty)
-                                              (ast.ast-type-list-new))))]
+                                            (& (Bool))
+                                            (&
+                                              (ast.ast-type-cons
+                                                (& elem-ir-ty)
+                                                (& (ast.ast-type-list-new))))))]
                                       (match (lower-reserve-heap-storage
                                         index-state
                                         result-storage-size
@@ -41137,7 +41143,7 @@
   [type-env : tc_core.TcTypeEnv]
   [place : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (match (ast.ast-expr-unspan place)
+  (match (ast.ast-expr-unspan (& place))
     [(Var name)
       (if (tc_core.tc-dotted-local-field-name-id? type-env name)
         (match (tc_core.tc-dotted-local-field-expr-id type-env name)
@@ -41533,7 +41539,7 @@
   [receiver : ast.AstExpr]
   [receiver-ty : ast.AstType]) : bool
   (if (lower-type-register-resident? ctx receiver-ty)
-    (match (ast.ast-expr-unspan receiver)
+    (match (ast.ast-expr-unspan (& receiver))
       [(Var name) (sym_i64_env.sym-i64-contains-id env name)]
       [_ false])
     false))
@@ -41572,7 +41578,7 @@
   [field-ir-ty : ast.AstType]
   [value : ast.AstExpr]
   [origin : ast.AstExpr]) : ResultLowerExpr
-  (match (ast.ast-expr-unspan receiver)
+  (match (ast.ast-expr-unspan (& receiver))
     [(Var name)
       (let
         [local-id : i64
@@ -42332,7 +42338,7 @@
         (tc_core.tc-context-expr-bases ctx)
         type-env
         (lower-global-shared-view init))
-        (match (ast.ast-expr-unspan (lower-global-shared-view init))
+        (match (ast.ast-expr-unspan (& init))
           [(Lambda lambda-box)
             (match (__tl-box-place lambda-box)
               [(Lambda params lambda-ret body-box)
@@ -42384,7 +42390,7 @@
         (tc_core.tc-context-expr-bases ctx)
         type-env
         (lower-global-shared-view init))
-        (match (ast.ast-expr-unspan (lower-global-shared-view init))
+        (match (ast.ast-expr-unspan (& init))
           [(Lambda lambda-box)
             (match (__tl-box-place lambda-box)
               [(Lambda params lambda-ret body-box)
@@ -43523,8 +43529,8 @@
     (ast.ast-expr-let-with-pools
       pools
       (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id value-id (No) value)
-        (ast.ast-let-binding-list-new))
+        (& (ast.ast-let-binding-id value-id (No) value))
+        (& (ast.ast-let-binding-list-new)))
       (ast.ast-expr-set-id-with-pools
         pools
         acc-id
@@ -43880,108 +43886,127 @@
           (Begin
             (ast.ast-expr-cons
               acc-update
-              (ast.ast-expr-cons
-                (ast.ast-expr-set-id-with-pools
-                  pools
-                  index-id
-                  (ast.ast-expr-binary-with-pools
+              (&
+                (ast.ast-expr-cons
+                  (ast.ast-expr-set-id-with-pools
                     pools
-                    (Add)
-                    (ast.ast-node-pool-context-expr-push pools (Var index-id))
-                    (ast.ast-node-pool-context-expr-push
+                    index-id
+                    (ast.ast-expr-binary-with-pools
                       pools
-                      (Literal (ast.ast-lit-int 1)))))
-                (ast.ast-expr-list-new))))))]
+                      (Add)
+                      (ast.ast-node-pool-context-expr-push pools (Var index-id))
+                      (ast.ast-node-pool-context-expr-push
+                        pools
+                        (Literal (ast.ast-lit-int 1)))))
+                  (& (ast.ast-expr-list-new))))))))]
     [root-id : i64
       (match split
         [(Split _ u-id)
           (ast.ast-expr-let-with-pools
             pools
             (ast.ast-let-binding-cons
-              (ast.ast-let-binding-id
-                acc-name-id
-                (Some acc-ty)
-                (ast.ast-node-pool-context-expr-push pools init))
-              (ast.ast-let-binding-cons
+              (&
                 (ast.ast-let-binding-id
-                  end-name-id
-                  (Some (lower-global-shared-view index-ty))
-                  (ast.ast-node-pool-context-expr-push pools end))
+                  acc-name-id
+                  (Some acc-ty)
+                  (ast.ast-node-pool-context-expr-push pools init)))
+              (&
                 (ast.ast-let-binding-cons
-                  (ast.ast-let-binding-id
-                    start-name-id
-                    (Some (lower-global-shared-view index-ty))
-                    (ast.ast-node-pool-context-expr-push pools start))
-                  (ast.ast-let-binding-cons
+                  (&
                     (ast.ast-let-binding-id
-                      index-id
-                      (Some index-ty)
-                      (ast.ast-node-pool-context-expr-push
-                        pools
-                        (Var start-name-id)))
+                      end-name-id
+                      (Some (lower-global-shared-view index-ty))
+                      (ast.ast-node-pool-context-expr-push pools end)))
+                  (&
                     (ast.ast-let-binding-cons
-                      (ast.ast-let-binding-id
-                        uniform-name-id
-                        (No)
-                        (ast.ast-node-pool-context-expr-push pools (Var u-id)))
-                      (ast.ast-let-binding-list-new))))))
+                      (&
+                        (ast.ast-let-binding-id
+                          start-name-id
+                          (Some (lower-global-shared-view index-ty))
+                          (ast.ast-node-pool-context-expr-push pools start)))
+                      (&
+                        (ast.ast-let-binding-cons
+                          (&
+                            (ast.ast-let-binding-id
+                              index-id
+                              (Some index-ty)
+                              (ast.ast-node-pool-context-expr-push
+                                pools
+                                (Var start-name-id))))
+                          (&
+                            (ast.ast-let-binding-cons
+                              (&
+                                (ast.ast-let-binding-id
+                                  uniform-name-id
+                                  (No)
+                                  (ast.ast-node-pool-context-expr-push
+                                    pools
+                                    (Var u-id))))
+                              (& (ast.ast-let-binding-list-new)))))))))))
             (ast.ast-node-pool-context-expr-push
               pools
               (Begin
                 (ast.ast-expr-cons
                   loop-id
-                  (ast.ast-expr-cons
-                    (ast.ast-expr-binary-with-pools
-                      pools
-                      (Add)
-                      (ast.ast-node-pool-context-expr-push
-                        pools
-                        (Var acc-name-id))
+                  (&
+                    (ast.ast-expr-cons
                       (ast.ast-expr-binary-with-pools
                         pools
-                        (Mul)
-                        (ast.ast-expr-binary-with-pools
-                          pools
-                          (Sub)
-                          (ast.ast-node-pool-context-expr-push
-                            pools
-                            (Var index-id))
-                          (ast.ast-node-pool-context-expr-push
-                            pools
-                            (Var start-name-id)))
+                        (Add)
                         (ast.ast-node-pool-context-expr-push
                           pools
-                          (Var uniform-name-id))))
-                    (ast.ast-expr-list-new))))))]
+                          (Var acc-name-id))
+                        (ast.ast-expr-binary-with-pools
+                          pools
+                          (Mul)
+                          (ast.ast-expr-binary-with-pools
+                            pools
+                            (Sub)
+                            (ast.ast-node-pool-context-expr-push
+                              pools
+                              (Var index-id))
+                            (ast.ast-node-pool-context-expr-push
+                              pools
+                              (Var start-name-id)))
+                          (ast.ast-node-pool-context-expr-push
+                            pools
+                            (Var uniform-name-id))))
+                      (& (ast.ast-expr-list-new))))))))]
         [_
           (ast.ast-expr-let-with-pools
             pools
             (ast.ast-let-binding-cons
-              (ast.ast-let-binding-id
-                acc-name-id
-                (Some acc-ty)
-                (ast.ast-node-pool-context-expr-push pools init))
-              (ast.ast-let-binding-cons
+              (&
                 (ast.ast-let-binding-id
-                  end-name-id
-                  (Some (lower-global-shared-view index-ty))
-                  (ast.ast-node-pool-context-expr-push pools end))
+                  acc-name-id
+                  (Some acc-ty)
+                  (ast.ast-node-pool-context-expr-push pools init)))
+              (&
                 (ast.ast-let-binding-cons
-                  (ast.ast-let-binding-id
-                    index-id
-                    (Some index-ty)
-                    (ast.ast-node-pool-context-expr-push pools start))
-                  (ast.ast-let-binding-list-new))))
+                  (&
+                    (ast.ast-let-binding-id
+                      end-name-id
+                      (Some (lower-global-shared-view index-ty))
+                      (ast.ast-node-pool-context-expr-push pools end)))
+                  (&
+                    (ast.ast-let-binding-cons
+                      (&
+                        (ast.ast-let-binding-id
+                          index-id
+                          (Some index-ty)
+                          (ast.ast-node-pool-context-expr-push pools start)))
+                      (& (ast.ast-let-binding-list-new)))))))
             (ast.ast-node-pool-context-expr-push
               pools
               (Begin
                 (ast.ast-expr-cons
                   loop-id
-                  (ast.ast-expr-cons
-                    (ast.ast-node-pool-context-expr-push
-                      pools
-                      (Var acc-name-id))
-                    (ast.ast-expr-list-new))))))])]
+                  (&
+                    (ast.ast-expr-cons
+                      (ast.ast-node-pool-context-expr-push
+                        pools
+                        (Var acc-name-id))
+                      (& (ast.ast-expr-list-new))))))))])]
     [root : ast.AstExpr (lower-context-expr-get ctx root-id)]
     (lower-expr ctx state env type-env root)))
 
@@ -44153,8 +44178,8 @@
     (ast.ast-expr-let-with-pools
       pools
       (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id value-id (No) value)
-        (ast.ast-let-binding-list-new))
+        (& (ast.ast-let-binding-id value-id (No) value))
+        (& (ast.ast-let-binding-list-new)))
       (ast.ast-expr-if-with-pools
         pools
         (ast.ast-expr-binary-with-pools
@@ -44209,21 +44234,26 @@
         (ast.ast-expr-let-with-pools
           pools
           (ast.ast-let-binding-cons
-            (ast.ast-let-binding-id
-              acc-name-id
-              (Some (lower-global-shared-view prefix-ty))
-              (ast.ast-node-pool-context-expr-push pools init))
-            (ast.ast-let-binding-cons
+            (&
               (ast.ast-let-binding-id
-                end-name-id
-                (Some (lower-global-shared-view index-ty))
-                (ast.ast-node-pool-context-expr-push pools end))
+                acc-name-id
+                (Some (lower-global-shared-view prefix-ty))
+                (ast.ast-node-pool-context-expr-push pools init)))
+            (&
               (ast.ast-let-binding-cons
-                (ast.ast-let-binding-id
-                  index-id
-                  (Some index-ty)
-                  (ast.ast-node-pool-context-expr-push pools start))
-                (ast.ast-let-binding-list-new))))
+                (&
+                  (ast.ast-let-binding-id
+                    end-name-id
+                    (Some (lower-global-shared-view index-ty))
+                    (ast.ast-node-pool-context-expr-push pools end)))
+                (&
+                  (ast.ast-let-binding-cons
+                    (&
+                      (ast.ast-let-binding-id
+                        index-id
+                        (Some index-ty)
+                        (ast.ast-node-pool-context-expr-push pools start)))
+                    (& (ast.ast-let-binding-list-new)))))))
           (ast.ast-node-pool-context-expr-push
             pools
             (Begin
@@ -44240,11 +44270,12 @@
                   (ast.ast-expr-let-with-pools
                     pools
                     (ast.ast-let-binding-cons
-                      (ast.ast-let-binding-id
-                        prefix-id
-                        (Some prefix-ty)
-                        prefix-value)
-                      (ast.ast-let-binding-list-new))
+                      (&
+                        (ast.ast-let-binding-id
+                          prefix-id
+                          (Some prefix-ty)
+                          prefix-value))
+                      (& (ast.ast-let-binding-list-new)))
                     (ast.ast-node-pool-context-expr-push
                       pools
                       (Begin
@@ -44255,23 +44286,25 @@
                             (ast.ast-node-pool-context-expr-push
                               pools
                               (Var prefix-id)))
-                          (ast.ast-expr-cons
-                            (ast.ast-node-pool-context-expr-push pools body)
+                          (&
                             (ast.ast-expr-cons
-                              (ast.ast-expr-set-id-with-pools
-                                pools
-                                index-id
-                                (ast.ast-expr-binary-with-pools
-                                  pools
-                                  (Add)
-                                  (ast.ast-node-pool-context-expr-push
+                              (ast.ast-node-pool-context-expr-push pools body)
+                              (&
+                                (ast.ast-expr-cons
+                                  (ast.ast-expr-set-id-with-pools
                                     pools
-                                    (Var index-id))
-                                  (ast.ast-node-pool-context-expr-push
-                                    pools
-                                    (Literal (ast.ast-lit-int 1)))))
-                              (ast.ast-expr-list-new))))))))
-                (ast.ast-expr-list-new)))))))))
+                                    index-id
+                                    (ast.ast-expr-binary-with-pools
+                                      pools
+                                      (Add)
+                                      (ast.ast-node-pool-context-expr-push
+                                        pools
+                                        (Var index-id))
+                                      (ast.ast-node-pool-context-expr-push
+                                        pools
+                                        (Literal (ast.ast-lit-int 1)))))
+                                  (& (ast.ast-expr-list-new)))))))))))
+                (& (ast.ast-expr-list-new))))))))))
 
 (define (lower-spmd-scan
   [ctx : tc_core.TcContext]
@@ -44401,7 +44434,7 @@
     [overflow-trap-id : i64
       (ast.ast-expr-array-ref-with-pools
         pools
-        (ast.ast-expr-fixed-make-array-with-pools pools (Unit) zero-id)
+        (ast.ast-expr-fixed-make-array-with-pools pools (& (Unit)) zero-id)
         zero-id)]
     [overflow-check-id : i64
       (ast.ast-expr-if-with-pools
@@ -44417,28 +44450,33 @@
       (ast.ast-expr-let-with-pools
         pools
         (ast.ast-let-binding-cons
-          (ast.ast-let-binding-id
-            slot-id
-            (Some (I64))
-            (ast.ast-node-pool-context-expr-push pools (Var cursor-id)))
-          (ast.ast-let-binding-list-new))
+          (&
+            (ast.ast-let-binding-id
+              slot-id
+              (Some (I64))
+              (ast.ast-node-pool-context-expr-push pools (Var cursor-id))))
+          (& (ast.ast-let-binding-list-new)))
         (ast.ast-node-pool-context-expr-push
           pools
           (Begin
             (ast.ast-expr-cons
               overflow-check-id
-              (ast.ast-expr-cons
-                (ast.ast-node-pool-context-expr-push pools body)
+              (&
                 (ast.ast-expr-cons
-                  (ast.ast-expr-set-id-with-pools
-                    pools
-                    cursor-id
-                    (ast.ast-expr-binary-with-pools
-                      pools
-                      (Add)
-                      (ast.ast-node-pool-context-expr-push pools (Var slot-id))
-                      one-id))
-                  (ast.ast-expr-list-new)))))))]
+                  (ast.ast-node-pool-context-expr-push pools body)
+                  (&
+                    (ast.ast-expr-cons
+                      (ast.ast-expr-set-id-with-pools
+                        pools
+                        cursor-id
+                        (ast.ast-expr-binary-with-pools
+                          pools
+                          (Add)
+                          (ast.ast-node-pool-context-expr-push
+                            pools
+                            (Var slot-id))
+                          one-id))
+                      (& (ast.ast-expr-list-new))))))))))]
     [loop-id : i64
       (ast.ast-expr-while-with-pools
         pools
@@ -44456,43 +44494,50 @@
                 (ast.ast-node-pool-context-expr-push pools keep)
                 selected-id
                 unit-id)
-              (ast.ast-expr-cons
-                (ast.ast-expr-set-id-with-pools
-                  pools
-                  index-id
-                  (ast.ast-expr-binary-with-pools
+              (&
+                (ast.ast-expr-cons
+                  (ast.ast-expr-set-id-with-pools
                     pools
-                    (Add)
-                    (ast.ast-node-pool-context-expr-push pools (Var index-id))
-                    one-id))
-                (ast.ast-expr-list-new))))))]
+                    index-id
+                    (ast.ast-expr-binary-with-pools
+                      pools
+                      (Add)
+                      (ast.ast-node-pool-context-expr-push pools (Var index-id))
+                      one-id))
+                  (& (ast.ast-expr-list-new))))))))]
     [root-id : i64
       (ast.ast-expr-let-with-pools
         pools
         (ast.ast-let-binding-cons
-          (ast.ast-let-binding-id
-            index-id
-            (Some (I64))
-            (ast.ast-node-pool-context-expr-push pools start))
-          (ast.ast-let-binding-cons
+          (&
             (ast.ast-let-binding-id
-              end-id
+              index-id
               (Some (I64))
-              (ast.ast-node-pool-context-expr-push pools end))
+              (ast.ast-node-pool-context-expr-push pools start)))
+          (&
             (ast.ast-let-binding-cons
-              (ast.ast-let-binding-id
-                cursor-id
-                (Some (I64))
-                (ast.ast-node-pool-context-expr-push pools init))
-              (ast.ast-let-binding-list-new))))
+              (&
+                (ast.ast-let-binding-id
+                  end-id
+                  (Some (I64))
+                  (ast.ast-node-pool-context-expr-push pools end)))
+              (&
+                (ast.ast-let-binding-cons
+                  (&
+                    (ast.ast-let-binding-id
+                      cursor-id
+                      (Some (I64))
+                      (ast.ast-node-pool-context-expr-push pools init)))
+                  (& (ast.ast-let-binding-list-new)))))))
         (ast.ast-node-pool-context-expr-push
           pools
           (Begin
             (ast.ast-expr-cons
               loop-id
-              (ast.ast-expr-cons
-                (ast.ast-node-pool-context-expr-push pools (Var cursor-id))
-                (ast.ast-expr-list-new))))))]
+              (&
+                (ast.ast-expr-cons
+                  (ast.ast-node-pool-context-expr-push pools (Var cursor-id))
+                  (& (ast.ast-expr-list-new))))))))]
     (lower-expr ctx state env type-env (lower-context-expr-get ctx root-id))))
 
 ;; A rank-2 foreach has one lowering in every backend mode, the scalar
@@ -44535,7 +44580,7 @@
     [trap-id : i64
       (ast.ast-expr-array-ref-with-pools
         pools
-        (ast.ast-expr-fixed-make-array-with-pools pools (Unit) zero-id)
+        (ast.ast-expr-fixed-make-array-with-pools pools (& (Unit)) zero-id)
         zero-id)]
     [y-span : i64 (lower-foreach2-binary pools (Sub) y1 y0)]
     [x-span : i64 (lower-foreach2-binary pools (Sub) x1 x0)]
@@ -44549,29 +44594,31 @@
               (ast.ast-expr-binary-with-pools pools (Lt) y-span zero-id)
               trap-id
               unit-id)
-            (ast.ast-expr-cons
-              (lower-foreach2-trap-if
-                pools
-                (ast.ast-expr-binary-with-pools pools (Lt) x-span zero-id)
-                trap-id
-                unit-id)
+            (&
               (ast.ast-expr-cons
                 (lower-foreach2-trap-if
                   pools
-                  (ast.ast-expr-binary-with-pools
-                    pools
-                    (Gt)
-                    y-span
-                    (ast.ast-expr-binary-with-pools
-                      pools
-                      (Div)
-                      (ast.ast-node-pool-context-expr-push
-                        pools
-                        (Literal (ast.ast-lit-int 9223372036854775807)))
-                      x-span))
+                  (ast.ast-expr-binary-with-pools pools (Lt) x-span zero-id)
                   trap-id
                   unit-id)
-                (ast.ast-expr-list-new))))))]
+                (&
+                  (ast.ast-expr-cons
+                    (lower-foreach2-trap-if
+                      pools
+                      (ast.ast-expr-binary-with-pools
+                        pools
+                        (Gt)
+                        y-span
+                        (ast.ast-expr-binary-with-pools
+                          pools
+                          (Div)
+                          (ast.ast-node-pool-context-expr-push
+                            pools
+                            (Literal (ast.ast-lit-int 9223372036854775807)))
+                          x-span))
+                      trap-id
+                      unit-id)
+                    (& (ast.ast-expr-list-new)))))))))]
     [inner-loop : i64 (lower-foreach2-loop pools inner-id x0 x1 body)]
     [outer-loop : i64 (lower-foreach2-loop pools outer-id y0 y1 inner-loop)]
     [nonempty : i64
@@ -44580,19 +44627,22 @@
         (Begin
           (ast.ast-expr-cons
             checks
-            (ast.ast-expr-cons outer-loop (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons outer-loop (& (ast.ast-expr-list-new)))))))]
     [root-id : i64
       (ast.ast-expr-let-with-pools
         pools
         (ast.ast-let-binding-cons
-          (ast.ast-let-binding-id y0 (Some (I64)) outer-start)
-          (ast.ast-let-binding-cons
-            (ast.ast-let-binding-id y1 (Some (I64)) outer-end)
+          (& (ast.ast-let-binding-id y0 (Some (I64)) outer-start))
+          (&
             (ast.ast-let-binding-cons
-              (ast.ast-let-binding-id x0 (Some (I64)) inner-start)
-              (ast.ast-let-binding-cons
-                (ast.ast-let-binding-id x1 (Some (I64)) inner-end)
-                (ast.ast-let-binding-list-new)))))
+              (& (ast.ast-let-binding-id y1 (Some (I64)) outer-end))
+              (&
+                (ast.ast-let-binding-cons
+                  (& (ast.ast-let-binding-id x0 (Some (I64)) inner-start))
+                  (&
+                    (ast.ast-let-binding-cons
+                      (& (ast.ast-let-binding-id x1 (Some (I64)) inner-end))
+                      (& (ast.ast-let-binding-list-new)))))))))
         (ast.ast-expr-if-with-pools
           pools
           (ast.ast-expr-binary-with-pools
@@ -44643,11 +44693,12 @@
   (ast.ast-expr-let-with-pools
     pools
     (ast.ast-let-binding-cons
-      (ast.ast-let-binding-id
-        coord
-        (Some (I64))
-        (lower-foreach2-var pools begin-id))
-      (ast.ast-let-binding-list-new))
+      (&
+        (ast.ast-let-binding-id
+          coord
+          (Some (I64))
+          (lower-foreach2-var pools begin-id)))
+      (& (ast.ast-let-binding-list-new)))
     (ast.ast-expr-while-with-pools
       pools
       (lower-foreach2-binary pools (Lt) coord end-id)
@@ -44656,18 +44707,19 @@
         (Begin
           (ast.ast-expr-cons
             body
-            (ast.ast-expr-cons
-              (ast.ast-expr-set-id-with-pools
-                pools
-                coord
-                (ast.ast-expr-binary-with-pools
+            (&
+              (ast.ast-expr-cons
+                (ast.ast-expr-set-id-with-pools
                   pools
-                  (Add)
-                  (lower-foreach2-var pools coord)
-                  (ast.ast-node-pool-context-expr-push
+                  coord
+                  (ast.ast-expr-binary-with-pools
                     pools
-                    (Literal (ast.ast-lit-int 1)))))
-              (ast.ast-expr-list-new))))))))
+                    (Add)
+                    (lower-foreach2-var pools coord)
+                    (ast.ast-node-pool-context-expr-push
+                      pools
+                      (Literal (ast.ast-lit-int 1)))))
+                (& (ast.ast-expr-list-new))))))))))
 
 (define (lower-spmd-broadcast
   [ctx : tc_core.TcContext]
@@ -45938,9 +45990,7 @@
   [args : (& args ast.AstExprList)]) : i64
   (let
     [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
-    (match (ast.ast-expr-unspan-with-pools
-      (& pools)
-      (lower-global-shared-view func))
+    (match (ast.ast-expr-unspan-with-pools (& pools) (& func))
       [(Var raw-name)
         (if (sym_i64_env.sym-i64-contains-id env raw-name)
           -1
@@ -55445,8 +55495,8 @@
                                     (if (and
                                       (ast.ast-type-eq-with-pools?
                                         (tc_core.tc-context-pools ctx)
-                                        (lower-global-shared-view then-ty)
-                                        (lower-global-shared-view else-ty))
+                                        (& then-ty)
+                                        (& else-ty))
                                       (lower-type-bool? then-ty))
                                       (Ok
                                         (lower-emit-mask-select
@@ -55459,8 +55509,8 @@
                                       (if (and
                                         (ast.ast-type-eq-with-pools?
                                           (tc_core.tc-context-pools ctx)
-                                          (lower-global-shared-view then-ty)
-                                          else-ty)
+                                          (& then-ty)
+                                          (& else-ty))
                                         (lower-avx512-masked-select-result-supported?
                                           else-state
                                           lanes
@@ -56962,7 +57012,7 @@
     (match (ast.ast-match-arm-list-get (& arms) 0 (ast.ast-match-arm-fallback))
       [(Arm pattern body-box)
         (let
-          [rest : ast.AstMatchArmList (ast.ast-match-arm-list-tail arms)]
+          [rest : ast.AstMatchArmList (ast.ast-match-arm-list-tail (& arms))]
           [final? : bool (ast.ast-match-arm-list-empty? (& rest))]
           [body : ast.AstExpr (lower-context-expr-get ctx body-box)]
           [masks
@@ -57040,9 +57090,12 @@
                                   [_
                                     (if (ast.ast-type-eq-with-pools?
                                       (tc_core.tc-context-pools ctx)
-                                      (tc_core.tc-type-without-regions
-                                        (lower-global-shared-view body-ty))
-                                      (tc_core.tc-type-without-regions rest-ty))
+                                      (&
+                                        (tc_core.tc-type-without-regions
+                                          (lower-global-shared-view body-ty)))
+                                      (&
+                                        (tc_core.tc-type-without-regions
+                                          rest-ty)))
                                       (lower-avx512-masked-match-select
                                         ctx
                                         rest-state
@@ -57294,9 +57347,10 @@
           [(Expr rest-state rest-value rest-ty)
             (if (ast.ast-type-eq-with-pools?
               (tc_core.tc-context-pools ctx)
-              (tc_core.tc-type-without-regions
-                (lower-global-shared-view body-ty))
-              (tc_core.tc-type-without-regions rest-ty))
+              (&
+                (tc_core.tc-type-without-regions
+                  (lower-global-shared-view body-ty)))
+              (& (tc_core.tc-type-without-regions rest-ty)))
               (lower-avx512-masked-match-select
                 ctx
                 rest-state
@@ -57489,7 +57543,7 @@
           scrut-ty
           pattern
           (lower-context-expr-get ctx body-box)
-          (ast.ast-match-arm-list-tail arms))])))
+          (ast.ast-match-arm-list-tail (& arms)))])))
 
 (define (lower-avx512-masked-match
   [ctx : tc_core.TcContext]
@@ -57749,7 +57803,7 @@
     (>= index (ast.ast-param-list-len params))
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param _ ty _)
-        (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push ty))])
+        (ast.ast-type-list-push out (ast.ast-node-pool-reader-type-push (& ty)))])
     (lower-spmd-source-param-types-at params (+ index 1) out)))
 
 (define (lower-spmd-source-signature
@@ -57759,7 +57813,7 @@
     [types : ast.AstTypeList
       (ast.ast-type-list-with-capacity (ast.ast-param-list-len (& params)))]
     (lower-spmd-source-param-types-at (& params) 0 (&mut types))
-    (tc_core.tc-type-render (ast.ast-ty-func types ret))))
+    (tc_core.tc-type-render (ast.ast-ty-func types (& ret)))))
 
 (define (lower-imported-spmd-params-at
   [ctx : tc_core.TcContext]
@@ -58393,11 +58447,11 @@
     [intern-state : ci.InternCompatState
       (compiler-lower-state-interns lower-state)]
     [package-atom : i64
-      (ci.intern-compat-state-intern (&mut intern-state) package-name)]
+      (ci.intern-compat-state-intern (&mut intern-state) (& package-name))]
     [canonical-text-atom : i64
-      (ci.intern-compat-state-intern (&mut intern-state) canonical-name)]
+      (ci.intern-compat-state-intern (&mut intern-state) (& canonical-name))]
     [signature-atom : i64
-      (ci.intern-compat-state-intern (&mut intern-state) signature)]
+      (ci.intern-compat-state-intern (&mut intern-state) (& signature))]
     [canonical-components : i64
       (ci.intern-compat-state-composite-pair-id
         (&mut intern-state)
@@ -58793,24 +58847,25 @@
         (&mut intern-state)
         (ci.intern-generated-symbol-role-spmd-private-parameter)
         handle
-        (match class
-          [(Uniform) (tc_core.tc-env-key-name-text name)]
-          [(Varying)
-            (if (lower-mode-avx2? mode)
-              (str_cat.str-cat
-                "__tl_spmd_varying_arg_avx2_"
-                (tc_core.tc-env-key-name-text name))
-              (str_cat.str-cat
-                "__tl_spmd_varying_arg_"
-                (tc_core.tc-env-key-name-text name)))]
-          [(Mask)
-            (if (lower-mode-avx2? mode)
-              (str_cat.str-cat
-                "__tl_spmd_mask_arg_avx2_"
-                (tc_core.tc-env-key-name-text name))
-              (str_cat.str-cat
-                "__tl_spmd_mask_arg_"
-                (tc_core.tc-env-key-name-text name)))])))))
+        (&
+          (match class
+            [(Uniform) (tc_core.tc-env-key-name-text name)]
+            [(Varying)
+              (if (lower-mode-avx2? mode)
+                (str_cat.str-cat
+                  "__tl_spmd_varying_arg_avx2_"
+                  (tc_core.tc-env-key-name-text name))
+                (str_cat.str-cat
+                  "__tl_spmd_varying_arg_"
+                  (tc_core.tc-env-key-name-text name)))]
+            [(Mask)
+              (if (lower-mode-avx2? mode)
+                (str_cat.str-cat
+                  "__tl_spmd_mask_arg_avx2_"
+                  (tc_core.tc-env-key-name-text name))
+                (str_cat.str-cat
+                  "__tl_spmd_mask_arg_"
+                  (tc_core.tc-env-key-name-text name)))]))))))
 
 (define (lower-spmd-private-param-symbol
   [lower-state : CompilerLowerState]
@@ -62457,7 +62512,7 @@
   [scrutinee : ast.AstExpr]
   [arms : ast.AstMatchArmList]
   [expr-ty : ast.AstType]) : ResultLowerExpr
-  (match (ast.ast-expr-unspan (lower-global-shared-view scrutinee))
+  (match (ast.ast-expr-unspan (& scrutinee))
     [(Borrow mutable _ place-box)
       (if mutable
         (lower-match-value ctx state env type-env scrutinee arms expr-ty)
@@ -62737,7 +62792,8 @@
     (let
       [pattern : ast.AstPattern
         (ast.ast-pattern-list-get (& patterns) 0 (ast.ast-pattern-fallback))]
-      [rest-patterns : ast.AstPatternList (ast.ast-pattern-list-tail patterns)]
+      [rest-patterns : ast.AstPatternList
+        (ast.ast-pattern-list-tail (& patterns))]
       (if (or
         (>= field-index (ast.ast-field-def-list-len fields))
         (>= field-index (ast.ast-type-list-len (& types))))
@@ -63740,7 +63796,7 @@
     (let
       [arm : ast.AstMatchArm
         (ast.ast-match-arm-list-get (& arms) 0 (ast.ast-match-arm-fallback))]
-      [rest : ast.AstMatchArmList (ast.ast-match-arm-list-tail arms)]
+      [rest : ast.AstMatchArmList (ast.ast-match-arm-list-tail (& arms))]
       (if (ast.ast-match-arm-list-empty? (& rest))
         (lower-match-catch-all
           ctx
@@ -64276,7 +64332,7 @@
     (let
       [arm : ast.AstMatchArm
         (ast.ast-match-arm-list-get (& arms) 0 (ast.ast-match-arm-fallback))]
-      [rest : ast.AstMatchArmList (ast.ast-match-arm-list-tail arms)]
+      [rest : ast.AstMatchArmList (ast.ast-match-arm-list-tail (& arms))]
       (match (lower-global-shared-view arm)
         [(Arm pat body-box)
           (let
@@ -64547,7 +64603,7 @@
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
   [callee : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan callee)
+  (match (ast.ast-expr-unspan (& callee))
     [(Ann inner-box _)
       (lower-tail-call-reference-capturing-lambda?
         ctx
@@ -64872,7 +64928,7 @@
             ctx
             (lower-global-shared-view ty)))
         (and
-          (match (ast.ast-expr-unspan arg)
+          (match (ast.ast-expr-unspan (& arg))
             [(Call _ _) true]
             [_ false])
           (lower-type-inline-struct-or-enum? ctx ty)))]
@@ -65194,7 +65250,7 @@
   [ret-ty : ast.AstType]
   [sret-var : i64]
   [origin : ast.AstExpr]) : ResultLowerState
-  (match (ast.ast-expr-unspan func)
+  (match (ast.ast-expr-unspan (& func))
     [(Var raw-name)
       (let
         [source-id : i64
@@ -65421,7 +65477,7 @@
   [ret-ty : ast.AstType]
   [sret-var : i64]
   [origin : ast.AstExpr]) : ResultLowerState
-  (match (ast.ast-expr-unspan (lower-global-shared-view callee))
+  (match (ast.ast-expr-unspan (& callee))
     [(ast.AstExpr.Var name)
       (let
         [unshadowed : bool (lower-tail-call-var-unshadowed? env name)]
@@ -65690,10 +65746,8 @@
       (= (array-ref storage.variant-keys slot) variant-name-id)
       (ast.ast-type-eq-with-pools?
         (tc_core.tc-context-pools ctx)
-        (lower-global-array-element-shared-view
-          storage.variant-scrutinee-types
-          slot)
-        (lower-global-shared-view scrut-ty)))
+        (& (array-ref storage.variant-scrutinee-types slot))
+        (& scrut-ty)))
       (lower-global-array-element-shared-view storage.variant-outcomes slot)
       (let
         [result : LowerVariantArmResolution
@@ -65717,7 +65771,7 @@
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
   [scrutinee : ast.AstExpr]) : bool
-  (match (ast.ast-expr-unspan (lower-global-shared-view scrutinee))
+  (match (ast.ast-expr-unspan (& scrutinee))
     [(Borrow mutable _ _)
       (if mutable
         false
@@ -66333,7 +66387,7 @@
     [(Call func-id _)
       (match (ast.ast-expr-unspan-with-segment-bases
         (tc_core.tc-context-expr-bases ctx)
-        (lower-context-expr-get ctx func-id))
+        (& (lower-context-expr-get ctx func-id)))
         [(Var name)
           (let
             [names : LowerNameCache (lower-state-names state)]
@@ -67144,7 +67198,7 @@
   [env : tc_core.TcTypeEnv]
   [decl : ast.AstDecl]) : tc_core.ResultTcType
   (let
-    [actual : ast.AstDecl (ast.ast-decl-unwrapped decl)]
+    [actual : ast.AstDecl (ast.ast-decl-unwrapped (& decl))]
     (match (lower-global-shared-view actual)
       [(Def decl-meta name _ _)
         (match (tc_core.tc-lookup-id env name)
@@ -67493,7 +67547,7 @@
               (&mut intern-state)
               (ci.intern-generated-symbol-role-cleanup-helper)
               id
-              display)
+              (& display))
             id))))))
 
 (define (lower-struct-cleanup-id-for-struct
@@ -67572,7 +67626,7 @@
         pools
         (ast.ast-node-pool-context-expr-push pools (Var value-name-id))
         field-name-id)
-      (ast.ast-expr-list-new))))
+      (& (ast.ast-expr-list-new)))))
 
 (define (lower-struct-cleanup-field-exprs
   [lower-state : CompilerLowerState]
@@ -67593,7 +67647,7 @@
                 (ci.intern-syntax-id-value cleanup-name)
                 value-name-id
                 (ci.intern-syntax-id-value field-name))
-              acc))]
+              (& acc)))]
         [(Owned)
           (let
             [cleanup-name-id : i64
@@ -67605,7 +67659,7 @@
                   cleanup-name-id
                   value-name-id
                   (ci.intern-syntax-id-value field-name))
-                acc)))])]))
+                (& acc))))])]))
 
 (define (lower-struct-cleanup-body-fields
   [lower-state : CompilerLowerState]
@@ -67681,8 +67735,8 @@
         (let
           [params : ast.AstParamList
             (ast.ast-param-cons
-              (ast.ast-param-id value-name-id struct-ty false)
-              (ast.ast-param-list-new))]
+              (& (ast.ast-param-id value-name-id struct-ty false))
+              (& (ast.ast-param-list-new)))]
           [body : ast.AstExpr
             (if (= exprs.len 0)
               (Literal Unit)
@@ -67742,7 +67796,7 @@
       (&mut intern-state)
       (ci.intern-generated-symbol-role-cleanup-payload)
       id
-      (str_cat.str-cat "__tl_cleanup_payload_" (string.int->string index)))
+      (& (str_cat.str-cat "__tl_cleanup_payload_" (string.int->string index))))
     id))
 
 (define (lower-enum-cleanup-call-expr
@@ -67754,7 +67808,7 @@
     (ast.ast-node-pool-context-expr-push pools (Var cleanup-name-id))
     (ast.ast-expr-cons
       (ast.ast-node-pool-context-expr-push pools (Var value-name-id))
-      (ast.ast-expr-list-new))))
+      (& (ast.ast-expr-list-new)))))
 
 (define (lower-enum-cleanup-payload-patterns
   [lower-state : CompilerLowerState]
@@ -67839,7 +67893,7 @@
                 pools
                 (ci.intern-syntax-id-value cleanup-name)
                 value-name-id)
-              acc))]
+              (& acc)))]
         [(Owned)
           (let
             [cleanup-name-id : i64
@@ -67865,7 +67919,7 @@
                   pools
                   cleanup-name-id
                   value-name-id)
-                acc)))]))))
+                (& acc))))]))))
 
 (define (lower-enum-cleanup-arm
   [lower-state : CompilerLowerState]
@@ -67963,8 +68017,8 @@
           type-cache
           logical-name
           (ast.ast-param-cons
-            (ast.ast-param-id value-name-id enum-ty false)
-            (ast.ast-param-list-new))
+            (& (ast.ast-param-id value-name-id enum-ty false))
+            (& (ast.ast-param-list-new)))
           (Unit)
           (let
             [match-id
@@ -68145,7 +68199,7 @@
           (ci.intern-compat-state-composite-rendered-name-record!
             (&mut intern-state)
             components
-            rendered))))))
+            (& rendered)))))))
 
 (define (lower-spmd-result-wrapper-prefix [role : i64]) : String
   (cond
@@ -68335,7 +68389,7 @@
                   (&mut intern-state)
                   role
                   handle
-                  rendered)
+                  (& rendered))
                 unit))))
         (set! index (+ index 1))))))
 
@@ -68402,11 +68456,12 @@
   (if (>= index (ast.ast-type-list-len types))
     (ast.ast-type-list-new)
     (ast.ast-type-cons
-      (tc_core.tc-type-without-regions
-        (tc_core.tc-context-type-get
-          ctx
-          (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
-      (lower-dispatch-type-list-without-regions-at ctx types (+ index 1)))))
+      (&
+        (tc_core.tc-type-without-regions
+          (tc_core.tc-context-type-get
+            ctx
+            (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))))
+      (& (lower-dispatch-type-list-without-regions-at ctx types (+ index 1))))))
 
 (define (lower-dispatch-param-type-count [types : (& types ast.AstTypeList)]) : i64
   (ast.ast-type-list-len (& types)))
@@ -69225,9 +69280,7 @@
     [decl-offset : i64 decls.offset]
     (while (< index count)
       (match (ast.ast-decl-unwrapped
-        (lower-global-array-element-shared-view
-          decl-slots
-          (+ decl-offset index)))
+        (& (array-ref decl-slots (+ decl-offset index))))
         [(Module next-module) (set! cur-module-id next-module)]
         [(DefFn decl-meta name _ _ body-box _)
           ;; The early-exit fact lookup takes the per-body typecheck state
@@ -69488,7 +69541,7 @@
                 (match (ast.ast-decl-generated-meta decl)
                   [(Some _ _ _ _) true]
                   [(No) false]))]
-            (match (ast.ast-decl-unwrapped (lower-global-shared-view decl))
+            (match (ast.ast-decl-unwrapped (& decl))
               [(ModuleBody _ _) (set! cur-decls rest)]
               [(Def decl-meta name _ expr-box)
                 (let
@@ -69639,7 +69692,7 @@
                             (lower-box-shared-view metadata))
                           (ci.intern-id-value
                             (ast.ast-extern-metadata-symbol-id
-                              (lower-box-shared-view metadata)))
+                              (& (deref metadata))))
                           (ast.ast-extern-metadata-link-inputs (deref metadata))
                           false))
                       (set! cur-decls rest))))]
@@ -69719,8 +69772,7 @@
                             (lower-global-shared-view params)
                             (lower-global-shared-view ret)
                             body
-                            (ast.ast-fn-metadata-spmd-callable
-                              (lower-global-shared-view metadata))
+                            (ast.ast-fn-metadata-spmd-callable (& metadata))
                             function-spans
                             (lower-global-shared-view cur-name-cache)
                             mode)
@@ -69737,7 +69789,8 @@
                             [(Ok callable-functions next-spans)
                               (let
                                 [_export : unit
-                                  (match (ast.ast-fn-metadata-export metadata)
+                                  (match (ast.ast-fn-metadata-export
+                                    (& metadata))
                                     [(No) unit]
                                     [(Export symbol)
                                       (ir.compiler-ir-extern-builder-push!
@@ -69752,10 +69805,11 @@
                                               (tc_core.tc-param-type-list
                                                 decl-ctx
                                                 params))
-                                            (tc_core.tc-type-without-regions
-                                              (tc_core.tc-resolve-type
-                                                decl-ctx
-                                                ret)))
+                                            (&
+                                              (tc_core.tc-type-without-regions
+                                                (tc_core.tc-resolve-type
+                                                  decl-ctx
+                                                  ret))))
                                           (C)
                                           (ci.intern-id-value symbol)
                                           (ast.ast-extern-link-input-list-new)
@@ -71480,7 +71534,7 @@
                             pools
                             (compiler-lower-checked-dest-pools-current
                               lower-state)
-                            specialized)
+                            (& specialized))
                           (AstProgramCompaction specialized pools))]
                       [source-program : ast.AstProgram
                         (match (lower-global-shared-view source-compaction)
@@ -71721,7 +71775,7 @@
                   (ast.ast-program-compact-with-pools
                     pools
                     (compiler-lower-checked-dest-pools-current lower-state)
-                    generated)
+                    (& generated))
                   (AstProgramCompaction generated pools))]
               [macro-program : ast.AstProgram
                 (match (lower-global-shared-view generated-compaction)
@@ -71844,7 +71898,7 @@
                                 committed-macro-pools
                                 (compiler-lower-checked-dest-pools-current
                                   lower-state)
-                                expanded)
+                                (& expanded))
                               (AstProgramCompaction
                                 (if retain-macro-source?
                                   macro-program
@@ -72103,7 +72157,7 @@
   [func-box : i64]) : bool
   (match (ast.ast-expr-unspan-with-pools
     pools
-    (ast.ast-node-pool-context-expr-get pools func-box))
+    (& (ast.ast-node-pool-context-expr-get pools func-box)))
     [(Var name) (= name cbi.compiler-builtin-id-fix-import)]
     [_ false]))
 

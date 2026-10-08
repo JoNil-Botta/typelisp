@@ -23,7 +23,20 @@
 (define (forward [q : Quad] [k : i64]) : Quad
   (shift (& q) k))
 
+;; A parameter the body writes has private storage in this frame (#7901), so a
+;; borrow of it is not a borrow of caller storage: the call keeps its frame, and
+;; the callee sees the write.
+(define (forward-written [q : Quad] [k : i64]) : Quad
+  (set! q.b 0)
+  (shift (& q) k))
+
+(define (total [q : (& Quad)]) : i64
+  (+ (+ q.a q.b) (+ q.c q.d)))
+
 (define (main) : i64
   (let
     [r : Quad (forward (Quad 10 5 6 7) 7)]
-    (+ (+ r.a r.b) (+ r.c r.d))))
+    [w : Quad (forward-written (Quad 10 5 6 7) 7)]
+    (if (= (total (& w)) 37)
+      (total (& r))
+      1)))

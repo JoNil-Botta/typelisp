@@ -1185,6 +1185,9 @@ loop_mut_borrow_stored_return_ok|check-ok|tests/safety/loop_mut_borrow_stored_re
 loop_mut_borrow_stored_break_reject|check-fail|tests/safety/loop_mut_borrow_stored_break_reject.tl|-|cannot assign to borrowed place `items[0]`
 loop_mut_borrow_return_or_continue_ok|check-ok|tests/safety/loop_mut_borrow_return_or_continue_ok.tl|-|-
 loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot assign to borrowed place `items[0]`
+loop_mut_borrow_operand_edges_ok|check-ok|tests/safety/loop_mut_borrow_operand_edges_ok.tl|-|-
+loop_mut_borrow_operand_break_reject|check-fail|tests/safety/loop_mut_borrow_operand_break_reject.tl|-|cannot assign to borrowed place `items[0]`
+loop_mut_borrow_operand_continue_reject|check-fail|tests/safety/loop_mut_borrow_operand_continue_reject.tl|-|cannot assign to borrowed place `items[0]`
 # A `try` operand keeps its own break, continue and return edges in the loop
 # move and borrow walkers.
 try_loop_break_move_reject|check-fail|tests/safety/try_loop_break_move_reject.tl|-|use of moved value `t`

@@ -2552,7 +2552,11 @@ iteration. Scalar loop joins distinguish normal fallthrough and `continue`
 backedges from `break`, `return`, and statically known divergent-call exits.
 Only facts that reach a backedge constrain the next iteration; break facts join
 the post-loop state, function/divergent exits do not, and the zero-trip entry
-state always reaches the post-loop join. Facts that may be carried by an outer
+state always reaches the post-loop join. A `break` or `continue` nested in an
+operand (a call argument, an operator operand, a `set!` value, a constructor
+element, a `let` binding, an `if` condition, a `match` scrutinee, a `return`
+operand, or an inner loop's condition or bounds) takes the same edge with the
+borrows live at it. Facts that may be carried by an outer
 lifetime-bearing local or aggregate stay live across later iterations and the
 loop exit until the carried value's last proven use; when the checker cannot
 prove otherwise it keeps the fact live conservatively. A plain auto-borrowed call argument whose

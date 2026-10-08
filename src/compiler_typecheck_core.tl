@@ -2468,7 +2468,10 @@
   (param-facts tc_i64_i64_map.Map)
   ;; These outlive every function's scratch arena, so they grow in the arena
   ;; the facts started in; 0 until then, when nothing is recorded.
-  (param-write-arena i64))
+  (param-write-arena i64)
+  ;; The address of the one-slot TcBorrowLoopExits cell; see
+  ;; tc-body-borrow-exits-swap!.
+  (borrow-exits-cell i64))
 
 ;; TcContext values are copied while resolving modules and rebuilding macro
 ;; views. Keep the mutable body analysis behind a shared one-slot cell so every
@@ -3163,7 +3166,8 @@
         false
         0
         (tc_i64_i64_map.with-capacity 0)
-        0))
+        0
+        (tc-borrow-loop-exits-cell-new)))
     (TcBodyState
       (cast
         (unsafe
@@ -3340,6 +3344,80 @@
                 (tc-moved-clone break-moved))))
           unit))
       unit)))
+
+;; The borrow checker's loop-path walker likewise hands a form it has no arm for
+;; to the non-loop walker, which treated a `break` or `continue` nested in it
+;; as divergence, so the borrow state on that exit edge never reached the join
+;; after the loop (#8671). The walker opens a collecting frame around such a
+;; form; each `break` and `continue` the non-loop walker reaches unions its
+;; borrowed set into the innermost frame's break or repeat state, which become
+;; the form's edges. A loop body entered from the non-loop walker opens a frame
+;; that does not collect, so its exits stay with that loop. Frames nest as the
+;; move checker's do.
+(define (tc-body-borrow-exits-cell [state : TcBodyState]) : i64
+  (let
+    [data : (Ptr TcBodyStateData) (tc-body-state-view state)]
+    (unsafe
+      (deref data).borrow-exits-cell)))
+
+;; Installs `next` as the innermost frame and returns the frame it replaces,
+;; rebuilt into fresh storage before the write (#7900).
+(define (tc-body-borrow-exits-swap!
+  [state : TcBodyState]
+  [next : TcBorrowLoopExits]) : TcBorrowLoopExits
+  (let
+    [cell : i64 (tc-body-borrow-exits-cell state)]
+    [read : TcBorrowLoopExits (tc-state-cell-read cell TcBorrowLoopExits)]
+    [replaced : TcBorrowLoopExits
+      (TcBorrowLoopExits
+        read.collecting
+        read.breaks
+        read.break-borrowed
+        read.repeats
+        read.repeat-borrowed)]
+    (tc-state-cell-write! cell TcBorrowLoopExits next)
+    replaced))
+
+;; Opens a collecting frame and returns the frame it replaces, which the caller
+;; reinstalls with tc-body-borrow-exits-swap! once the collected form is checked.
+(define (tc-body-borrow-exits-collect! [state : TcBodyState]) : TcBorrowLoopExits
+  (tc-body-borrow-exits-swap! state (tc-borrow-loop-exits-new true)))
+
+;; A `break` (`break?`) or `continue` the non-loop borrow walker reached with
+;; `borrowed` live.
+(define (tc-body-borrow-loop-exit-note!
+  [state : TcBodyState]
+  [borrowed : (& borrowed TcMovedSet)]
+  [break? : bool]) : unit
+  (let
+    [cell : i64 (tc-body-borrow-exits-cell state)]
+    [frame : TcBorrowLoopExits (tc-state-cell-read cell TcBorrowLoopExits)]
+    (when
+      frame.collecting
+      (tc-state-cell-write!
+        cell
+        TcBorrowLoopExits
+        (if break?
+          (TcBorrowLoopExits
+            true
+            true
+            (if frame.breaks
+              (tc-moved-union
+                (& frame.break-borrowed)
+                (tc-moved-clone borrowed))
+              (tc-moved-clone borrowed))
+            frame.repeats
+            frame.repeat-borrowed)
+          (TcBorrowLoopExits
+            true
+            frame.breaks
+            frame.break-borrowed
+            true
+            (if frame.repeats
+              (tc-moved-union
+                (& frame.repeat-borrowed)
+                (tc-moved-clone borrowed))
+              (tc-moved-clone borrowed))))))))
 
 (define (tc-body-move-operand-control? [state : TcBodyState]) : bool
   (let
@@ -65543,6 +65621,30 @@
           (ptr-cast (__tl_array-data cell) : (Ptr TcMoveBreakCollection))))
       : i64)))
 
+;; The borrow checker's counterpart of TcMoveBreakCollection (#8671): the
+;; innermost open frame of the borrow states at the `break`s and `continue`s
+;; the non-loop walker reaches inside one loop-body form. Each state is
+;; meaningful only once its flag is set. See `tc-body-borrow-exits-swap!`.
+(defstruct TcBorrowLoopExits
+  (collecting bool)
+  (breaks bool)
+  (break-borrowed TcMovedSet)
+  (repeats bool)
+  (repeat-borrowed TcMovedSet))
+
+(define (tc-borrow-loop-exits-new [collecting : bool]) : TcBorrowLoopExits
+  (TcBorrowLoopExits collecting false (tc-moved-empty) false (tc-moved-empty)))
+
+(define (tc-borrow-loop-exits-cell-new) : i64
+  (let
+    [cell : (__tl_dyn-array TcBorrowLoopExits)
+      (__tl_make-array TcBorrowLoopExits 1)]
+    (set! (array-ref cell 0) (tc-borrow-loop-exits-new false))
+    (cast
+      (unsafe
+        (ptr->int (ptr-cast (__tl_array-data cell) : (Ptr TcBorrowLoopExits))))
+      : i64)))
+
 (defenum TcMoveBindings
   (Ok TcTypeEnv TcMovedSet TcMovedSet TcMovedSet)
   (Err String))
@@ -84825,6 +84927,17 @@
           [break-prior? (box break-prior)]
           [else break-box]))]))
 
+;; Adds the exit edges a collecting frame gathered to `result`.
+(define (tc-borrow-loop-result-add-exits
+  [exits : TcBorrowLoopExits]
+  [result : TcBorrowLoopResult]) : TcBorrowLoopResult
+  (tc-borrow-loop-result-add-edges
+    exits.repeats
+    exits.repeat-borrowed
+    exits.breaks
+    exits.break-borrowed
+    result))
+
 (define (tc-borrow-loop-visible-edge-state
   [ctx : TcContext]
   [loop-env : TcTypeEnv]
@@ -85652,84 +85765,99 @@
         borrowed
         protected
         exprs)]
+    ;; The condition, `let` bindings and `return` operand are checked by the
+    ;; non-loop walker, so each runs in a collecting frame (#8671).
     [(If cond-box then-box else-box)
       (let
-        [borrowedc
-          (try
-            (tc-borrow-check-expr-id
+        [state : TcBodyState (tc-context-body-state ctx)]
+        [outer : TcBorrowLoopExits (tc-body-borrow-exits-collect! state)]
+        [checked-cond : TcBorrowCheckResult
+          (tc-borrow-check-expr-id
+            ctx
+            expr-bases
+            env
+            (tc-global-shared-view locals)
+            borrowed
+            cond-box)]
+        [exits : TcBorrowLoopExits (tc-body-borrow-exits-swap! state outer)]
+        [borrowedc (try checked-cond)]
+        (tc-borrow-loop-result-add-exits
+          exits
+          (tc-borrow-loop-result-branches
+            (tc-global-shared-view borrowedc)
+            (tc-borrow-check-loop-path-expr
               ctx
               expr-bases
               env
-              (tc-global-shared-view locals)
-              borrowed
-              cond-box))]
-        (tc-borrow-loop-result-branches
-          (tc-global-shared-view borrowedc)
-          (tc-borrow-check-loop-path-expr
-            ctx
-            expr-bases
-            env
-            loop-env
-            (tc-moved-clone locals)
-            (tc-moved-clone borrowedc)
-            (tc-global-shared-view borrowedc)
-            (ast.ast-expr-segment-bases-get expr-bases then-box))
-          (tc-borrow-check-loop-path-expr
-            ctx
-            expr-bases
-            env
-            loop-env
-            (tc-moved-clone locals)
-            (tc-moved-clone borrowedc)
-            borrowedc
-            (ast.ast-expr-segment-bases-get expr-bases else-box))))]
+              loop-env
+              (tc-moved-clone locals)
+              (tc-moved-clone borrowedc)
+              (tc-global-shared-view borrowedc)
+              (ast.ast-expr-segment-bases-get expr-bases then-box))
+            (tc-borrow-check-loop-path-expr
+              ctx
+              expr-bases
+              env
+              loop-env
+              (tc-moved-clone locals)
+              (tc-moved-clone borrowedc)
+              borrowedc
+              (ast.ast-expr-segment-bases-get expr-bases else-box)))))]
     [(Let let-box)
       (match (__tl-box-place let-box)
         [(Let bindings body-box)
-          (match (tc-borrow-check-let-bindings
-            ctx
-            expr-bases
-            env
-            (tc-moved-clone locals)
-            (tc-moved-clone borrowed)
-            (tc-global-shared-view borrowed)
-            bindings
-            body-box)
-            [(Err message) (Err message)]
-            [(Ok env2 locals2 borrowed2)
-              (match (tc-borrow-check-loop-path-expr
+          (let
+            [state : TcBodyState (tc-context-body-state ctx)]
+            [outer : TcBorrowLoopExits (tc-body-borrow-exits-collect! state)]
+            [bound
+              (tc-borrow-check-let-bindings
                 ctx
                 expr-bases
-                env2
-                loop-env
-                locals2
-                borrowed2
+                env
+                (tc-moved-clone locals)
+                (tc-moved-clone borrowed)
                 (tc-global-shared-view borrowed)
-                (ast.ast-expr-segment-bases-get expr-bases body-box))
-                [(Err message) (Err message)]
-                [(Ok normal? normal-box repeats? repeat-box breaks? break-box)
-                  (Ok
-                    normal?
-                    (box
-                      (tc-borrow-check-loop-visible-body-borrows
-                        ctx
-                        loop-env
-                        (tc-global-shared-view borrowed)
-                        (tc-moved-set-box-shared-view normal-box)))
-                    repeats?
-                    (box
-                      (tc-borrow-check-loop-visible-body-borrows
-                        ctx
-                        loop-env
-                        (tc-global-shared-view borrowed)
-                        (tc-moved-set-box-shared-view repeat-box)))
-                    breaks?
-                    (box
-                      (tc-borrow-check-loop-visible-body-borrows
-                        ctx
-                        loop-env
-                        borrowed
-                        (tc-moved-set-box-shared-view break-box))))])])])]
+                bindings
+                body-box)]
+            [exits : TcBorrowLoopExits (tc-body-borrow-exits-swap! state outer)]
+            (match bound
+              [(Err message) (Err message)]
+              [(Ok env2 locals2 borrowed2)
+                (match (tc-borrow-loop-result-add-exits
+                  exits
+                  (tc-borrow-check-loop-path-expr
+                    ctx
+                    expr-bases
+                    env2
+                    loop-env
+                    locals2
+                    borrowed2
+                    (tc-global-shared-view borrowed)
+                    (ast.ast-expr-segment-bases-get expr-bases body-box)))
+                  [(Err message) (Err message)]
+                  [(Ok normal? normal-box repeats? repeat-box breaks? break-box)
+                    (Ok
+                      normal?
+                      (box
+                        (tc-borrow-check-loop-visible-body-borrows
+                          ctx
+                          loop-env
+                          (tc-global-shared-view borrowed)
+                          (tc-moved-set-box-shared-view normal-box)))
+                      repeats?
+                      (box
+                        (tc-borrow-check-loop-visible-body-borrows
+                          ctx
+                          loop-env
+                          (tc-global-shared-view borrowed)
+                          (tc-moved-set-box-shared-view repeat-box)))
+                      breaks?
+                      (box
+                        (tc-borrow-check-loop-visible-body-borrows
+                          ctx
+                          loop-env
+                          borrowed
+                          (tc-moved-set-box-shared-view break-box))))])]))])]
     ;; `try` continues with its operand's value or leaves the function, so the
     ;; operand's own edges are the try's edges.
     [(Try inner-box)
@@ -85744,40 +85872,87 @@
         (ast.ast-expr-segment-bases-get expr-bases inner-box))]
     [(Return _)
       (let
-        [borrowed1
-          (try (tc-borrow-check-expr ctx expr-bases env locals borrowed expr))]
-        (Ok
-          false
-          (box borrowed1)
-          false
-          (box (tc-moved-empty))
-          false
-          (box (tc-moved-empty))))]
+        [state : TcBodyState (tc-context-body-state ctx)]
+        [outer : TcBorrowLoopExits (tc-body-borrow-exits-collect! state)]
+        [checked : TcBorrowCheckResult
+          (tc-borrow-check-expr ctx expr-bases env locals borrowed expr)]
+        [exits : TcBorrowLoopExits (tc-body-borrow-exits-swap! state outer)]
+        [borrowed1 (try checked)]
+        (tc-borrow-loop-result-add-exits
+          exits
+          (Ok
+            false
+            (box borrowed1)
+            false
+            (box (tc-moved-empty))
+            false
+            (box (tc-moved-empty)))))]
     [(Break)
       (Ok false (box borrowed) false (box (tc-moved-empty)) true (box borrowed))]
     [(Continue)
       (Ok false (box borrowed) true (box borrowed) false (box (tc-moved-empty)))]
+    ;; A form without its own arm is checked by the non-loop walker inside a
+    ;; collecting frame, so a `break` or `continue` nested in an operand adds
+    ;; its exit edge with the borrows live at it (#8671).
     [_
       (let
-        [borrowed1
-          (try
-            (tc-borrow-check-expr-loop
-              ctx
-              expr-bases
-              env
-              loop-env
-              locals
-              borrowed
-              protected
-              (tc-global-shared-view expr)))]
-        [flow : TcMoveLoopFlow (tc-move-loop-flow-expr ctx expr-bases env expr)]
-        (Ok
-          flow.normal
-          (box borrowed1)
-          flow.repeat
-          (box borrowed1)
-          flow.breaks
-          (box borrowed1)))]))
+        [state : TcBodyState (tc-context-body-state ctx)]
+        [outer : TcBorrowLoopExits (tc-body-borrow-exits-collect! state)]
+        [result : TcBorrowCheckResult
+          (tc-borrow-check-expr-loop
+            ctx
+            expr-bases
+            env
+            loop-env
+            locals
+            borrowed
+            protected
+            (tc-global-shared-view expr))]
+        [exits : TcBorrowLoopExits (tc-body-borrow-exits-swap! state outer)]
+        (match result
+          [(Err message) (Err message)]
+          [(Ok borrowed1)
+            (let
+              [flow : TcMoveLoopFlow
+                (tc-move-loop-flow-expr ctx expr-bases env expr)]
+              (tc-borrow-loop-result-add-exits
+                exits
+                (Ok
+                  flow.normal
+                  (box (tc-moved-clone (& borrowed1)))
+                  flow.repeat
+                  (box (tc-moved-clone (& borrowed1)))
+                  flow.breaks
+                  (box borrowed1))))]))]))
+
+;; A loop body entered from the non-loop walker: its `break`s and `continue`s
+;; belong to this loop, so its frame keeps them out of an enclosing loop-path
+;; form's collection (#8671).
+(define (tc-borrow-check-loop-body
+  [ctx : TcContext]
+  [expr-bases : i64]
+  [env : TcTypeEnv]
+  [loop-env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [protected : TcMovedSet]
+  [body : ast.AstExpr]) : TcBorrowLoopResult
+  (let
+    [state : TcBodyState (tc-context-body-state ctx)]
+    [outer : TcBorrowLoopExits
+      (tc-body-borrow-exits-swap! state (tc-borrow-loop-exits-new false))]
+    [result : TcBorrowLoopResult
+      (tc-borrow-check-loop-path-expr
+        ctx
+        expr-bases
+        env
+        loop-env
+        locals
+        borrowed
+        protected
+        body)]
+    [_ (tc-body-borrow-exits-swap! state outer)]
+    result))
 
 (define (tc-borrow-check-read-exprs
   [ctx : TcContext]
@@ -87606,7 +87781,7 @@
               (tc-global-shared-view locals)
               borrowed
               cond))]
-        (match (tc-borrow-check-loop-path-expr
+        (match (tc-borrow-check-loop-body
           ctx
           expr-bases
           env
@@ -87867,7 +88042,7 @@
               env
               (tc-global-shared-view body-entry)
               index
-              (tc-borrow-check-loop-path-expr
+              (tc-borrow-check-loop-body
                 ctx
                 expr-bases
                 body-env
@@ -87924,7 +88099,7 @@
               (tc-global-shared-view body-entry)
               inner
               (tc-borrow-loop-result-remove-root
-                (tc-borrow-check-loop-path-expr
+                (tc-borrow-check-loop-body
                   ctx
                   expr-bases
                   body-env
@@ -88447,8 +88622,20 @@
               inner
               return-ty)]
           [(Err _) (Ok borrowed1)]))]
-    [(Break) (Ok borrowed)]
-    [(Continue) (Ok borrowed)]
+    ;; The loop-path walker collects these exit states when the `break` or
+    ;; `continue` sits inside a form it has no arm for (#8671).
+    [(Break)
+      (tc-body-borrow-loop-exit-note!
+        (tc-context-body-state ctx)
+        (& borrowed)
+        true)
+      (Ok borrowed)]
+    [(Continue)
+      (tc-body-borrow-loop-exit-note!
+        (tc-context-body-state ctx)
+        (& borrowed)
+        false)
+      (Ok borrowed)]
     [(PtrNull _) (Ok borrowed)]
     [(PtrNullCheck inner-box)
       (let
@@ -88621,7 +88808,7 @@
           env
           (tc-global-shared-view body-entry)
           lane
-          (tc-borrow-check-loop-path-expr
+          (tc-borrow-check-loop-body
             ctx
             expr-bases
             (tc-bind-id env lane (I64))

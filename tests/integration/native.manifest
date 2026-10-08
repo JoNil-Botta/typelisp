@@ -328,6 +328,7 @@ rmw_mem_operand_fold|all|-|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7
 rmw_mem_operand_fold|linux|0,1,2|tests/integration/rmw_mem_operand_fold.tl|42|8 -24\n7 1024 0\n24 108\n36 24\n6 3\n|8 3|stdlib/io.tl stdlib/string.tl|-
 mem_dest_rmw_fold|all|-|tests/integration/mem_dest_rmw_fold.tl|42|-|-|-|-
 copy_call_word|all|-|tests/integration/copy_call_word.tl|42|-|-|-|-
+copy_call_next_index|all|-,2|tests/integration/copy_call_next_index.tl|42|-|-|-|-
 load_sink_trap_parity|all|-|tests/integration/load_sink_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: $SRC:33:37: array index out of bounds: index=4 length=4\n
 mem_dest_rmw_trap_parity|all|-|tests/integration/mem_dest_rmw_trap_parity.tl|134|rows\n|-|stdlib/io.tl|expected-stderr:tl: $SRC:27:68: array index out of bounds: index=4 length=4\n
 gep_value_direct|all|-|tests/integration/gep_value_direct.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-

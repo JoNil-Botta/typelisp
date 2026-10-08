@@ -2718,9 +2718,10 @@
 
 ;; Canonical ids of modules whose source matches the embedded stdlib payload.
 ;; The owning session's intern table gives these ids meaning: embedded source
-;; and disk source byte-identical to it once its inline tests are blanked
-;; (#8713) may use the catalog, while modified or otherwise untrusted roots
-;; must expand from their own source.
+;; and disk source byte-identical to it once prepared as the payload prepares
+;; it (inline tests blanked, #8713; prose comments cut, #8659) may use the
+;; catalog, while modified or otherwise untrusted roots must expand from their
+;; own source.
 (define (compiler-load-session-state-provenance-arena-value
   [state : CompilerLoadSessionState]) : i64
   (if (array-ref state.intern-state-ready 0)
@@ -2808,12 +2809,13 @@
     (compiler-load-session-state-note-embedded-module! state path)))
 
 ;: A stdlib module resolved from a root (or the working directory) whose
-;: source, with its inline tests blanked as the payload blanks them (#8713), is
-;: byte-identical to the embedded payload's copy carries embedded provenance
-;: for the macro route: the source-bound catalog is exact for it by
-;: construction, since inline tests define nothing outside `--cfg test`, and
-;: any other user modification breaks the equality and keeps that module on
-;: source interpretation. Cached per suffix; the compare runs
+;: source, prepared as the payload prepares it (inline tests blanked, #8713;
+;: prose comments cut, #8659), is byte-identical to the embedded payload's
+;: copy carries embedded provenance for the macro route: the source-bound
+;: catalog is exact for it by construction, since inline tests define nothing
+;: outside `--cfg test` and comments define nothing, and any other user
+;: modification breaks the equality and keeps that module on source
+;: interpretation. Cached per suffix; the compare runs
 ;: once per module per session. Every call also notes the module's canonical
 ;: name identity, whether or not the source matches.
 (define (compiler-load-session-state-note-embedded-equivalent-if-matching!
@@ -2841,14 +2843,10 @@
           (match (compiler-load-embedded-stdlib-source (string.copy suffix))
             [(CompilerEmbeddedStdlibSomeSource embedded-text)
               (let
-                [disk-text : String
-                  (ces.compiler-embedded-stdlib-source-without-inline-tests
-                    (compiler-load-read-file-text disk-path))]
-                (if (and
-                  (=
-                    (string.string-length disk-text)
-                    (string.string-length embedded-text))
-                  (string.eq disk-text embedded-text))
+                [disk-text : String (compiler-load-read-file-text disk-path)]
+                (if (ces.compiler-embedded-stdlib-source-matches-blanked?
+                  (& disk-text)
+                  (& embedded-text))
                   1
                   -1))]
             [(CompilerEmbeddedStdlibNoSource) -1])]
@@ -4495,8 +4493,8 @@
       ")")))
 
 ;; The bytes an include embeds. An `include-str-lzss` of a TypeLisp `.tl`
-;; source embeds it with its top-level inline tests blanked (#8713); every
-;; other include embeds `contents` exactly.
+;; source embeds it with its top-level inline tests blanked (#8713) and its
+;; prose comments cut (#8659); every other include embeds `contents` exactly.
 (define (compiler-load-include-contents
   [kind : CompilerLoadIncludeKind]
   [include-path : (& include-path str)]
@@ -4504,7 +4502,7 @@
   (match kind
     [(LzssString)
       (if (compiler-load-tl-path? include-path)
-        (ces.compiler-embedded-stdlib-source-without-inline-tests contents)
+        (ces.compiler-embedded-stdlib-payload-source contents)
         contents)]
     [_ contents]))
 

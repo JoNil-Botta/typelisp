@@ -1,7 +1,8 @@
 ;; The trusted-source check compares a stdlib module's disk text with its
-;; embedded copy in place, without building the blanked text (#8731). It must
-;; answer exactly what blank-then-compare answered, so this file keeps that
-;; blanker, verbatim from before #8731, as the reference.
+;; embedded copy in place, without building the payload text (#8731). It must
+;; answer exactly what prepare-then-compare answered, so this file keeps that
+;; preparation, verbatim from before #8731 (with #8764's comment cut), as the
+;; reference.
 (import compiler_embedded_stdlib as ces)
 (import lex as lexer)
 (import stdlib.byte_buf)
@@ -12,7 +13,7 @@
 (import stdlib.test)
 (import stdlib.text_buf)
 
-;; --- reference: blank-then-compare before #8731 ------------------------------
+;; --- reference: prepare-then-compare before #8731 ---------------------------
 ;; The end of the atom starting at `start`: the first byte that is whitespace
 ;; or one of `()[]";`, or `n`.
 (define (ref-atom-end [src : (& src str)] [start : i64] [n : i64]) : i64
@@ -69,13 +70,38 @@
             0))]
       [else 0])))
 
-;; `src` with each top-level inline test blanked: every `(test ...)` form and
-;; every `(cfg test BODY)` form with exactly one body is replaced by the line
-;; breaks it contained. All other bytes are kept, so each remaining form keeps
-;; its line and column. Strings, character literals and comments are skipped
-;; with the lexer's own scanners; a source they reject, or one whose brackets
-;; do not balance, is returned unchanged.
-(define (ref-source-without-inline-tests [src : String]) : String
+;; Whether the comment at `start..end` of `src` (from its first `;` to its
+;; line break) is prose that nothing reads. A doc comment (`;:` or `;#`) and a
+;; `name:` directive such as `lint-allow:` or `doctest-exit:` are not.
+(define (ref-prose-comment? [src : (& src str)] [start : i64] [end : i64]) : bool
+  (let
+    [j : i64 (+ start 1)]
+    (if (and
+      (< j end)
+      (or (= (__tl_string_ref src j) ':') (= (__tl_string_ref src j) '#')))
+      false
+      (begin
+        (while (and (< j end) (= (__tl_string_ref src j) ';'))
+          (set! j (+ j 1)))
+        (while (and (< j end) (= (__tl_string_ref src j) ' '))
+          (set! j (+ j 1)))
+        (let
+          [k : i64 j]
+          (while (and
+            (< k end)
+            (let
+              [c : char (__tl_string_ref src k)]
+              (or
+                (and (>= c 'a') (<= c 'z'))
+                (and (> k j) (>= c '0') (<= c '9'))
+                (and (> k j) (= c '-')))))
+            (set! k (+ k 1)))
+          (not (and (> k j) (< k end) (= (__tl_string_ref src k) ':'))))))))
+
+;; The source a module's payload embeds, as #8764 built it: each top-level
+;; inline test replaced by its line breaks, and each prose comment outside
+;; those forms cut to its first `;`.
+(define (ref-payload-source [src : String]) : String
   (let
     [n : i64 (string-length (& src))]
     [i : i64 0]
@@ -90,7 +116,23 @@
       (let
         [c : char (__tl_string_ref (& src) i)]
         (cond
-          [(= c ';') (set! i (lexer.scan-comment-end (& src) (+ i 1) n))]
+          [(= c ';')
+            (let
+              [end : i64 (lexer.scan-comment-end (& src) (+ i 1) n)]
+              [cut : i64
+                (if (and (> end i) (= (__tl_string_ref (& src) (- end 1)) '\r'))
+                  (- end 1)
+                  end)]
+              (when
+                (and
+                  (or (= depth 0) (= kind 0))
+                  (> cut (+ i 1))
+                  (ref-prose-comment? (& src) i cut))
+                (text_buf.append!
+                  out
+                  (string.substring (& src) copied (- (+ i 1) copied)))
+                (set! copied cut))
+              (set! i end))]
           [(= c '"')
             (when (= depth 1) (set! elements (+ elements 1)))
             (match (lexer.scan-str-end-result (& src) (+ i 1) n)
@@ -149,18 +191,17 @@
 (define (match-agrees? [src : String] [blanked : String]) : bool
   (=
     (ces.compiler-embedded-stdlib-source-matches-blanked? (& src) (& blanked))
-    (string.eq (ref-source-without-inline-tests (string.copy src)) blanked)))
+    (string.eq (ref-payload-source (string.copy src)) blanked)))
 
 ;; Both answers agree for `src` against its own blanked text, against `src`
 ;; itself, and against near misses of the blanked text; and the blanker built on
 ;; the shared scanner returns the reference's text.
 (define (source-agrees? [src : String]) : bool
   (let
-    [blanked : String (ref-source-without-inline-tests (string.copy src))]
+    [blanked : String (ref-payload-source (string.copy src))]
     (and
       (string.eq
-        (ces.compiler-embedded-stdlib-source-without-inline-tests
-          (string.copy src))
+        (ces.compiler-embedded-stdlib-payload-source (string.copy src))
         blanked)
       (match-agrees? (string.copy src) (string.copy blanked))
       (match-agrees? (string.copy src) (string.copy src))
@@ -179,24 +220,41 @@
     text
     (string.substring src end (- (string.string-length src) end))))
 
+;; The index of the first range that is a blanked form rather than a cut
+;; comment tail, or -1.
+(define (first-form-range
+  [src : (& src str)]
+  [ranges : (& ranges (__tl_dyn-array i64))]
+  [count : i64]) : i64
+  (let
+    [k : i64 0]
+    [found : i64 -1]
+    (while (and (< found 0) (< k count))
+      (when
+        (= (__tl_string_ref src (array-ref ranges (* k 2))) '(')
+        (set! found k))
+      (set! k (+ k 1)))
+    found))
+
 ;; A module's disk text against the reference's blanking of it, then the same
 ;; blanked text against edits of the module: inside its first inline test,
 ;; right before it, without it, with it moved to the end, and with a new test.
 (define (module-agrees? [src : String]) : bool
   (let
-    [blanked : String (ref-source-without-inline-tests (string.copy src))]
+    [blanked : String (ref-payload-source (string.copy src))]
     (and
       (source-agrees? (string.copy src))
       (match (ces.compiler-embedded-stdlib-inline-test-ranges (& src))
         [(Unscannable) true]
         [(Ranges ranges count)
-          (if (= count 0)
+          (if (< (first-form-range (& src) (& ranges) count) 0)
             (match-agrees?
               (str_cat.str-cat (string.copy src) "\n(test added (check 1))\n")
               (string.copy blanked))
             (let
-              [start : i64 (array-ref ranges 0)]
-              [end : i64 (+ (array-ref ranges 1) 1)]
+              [k : i64 (first-form-range (& src) (& ranges) count)]
+              [start : i64 (array-ref ranges (* k 2))]
+              [end : i64 (+ (array-ref ranges (+ (* k 2) 1)) 1)]
               [form : String (string.substring (& src) start (- end start))]
               (and
                 ;; One byte inside the form, past its head.
@@ -297,4 +355,27 @@
   (test.assert-true
     (source-agrees? "\r\n(test t\r\n (check 1))\r\n\r\n")
     "edge case 12")
-  (test.assert-true (source-agrees? "") "edge case 13"))
+  (test.assert-true (source-agrees? "") "edge case 13")
+  ;; The prose-comment cut (#8659): full-line and trailing prose, doc comments
+  ;; and directives kept, CRLF, a comment inside a kept form, inside a blanked
+  ;; test and in a kept two-body `cfg test`, and a comment at end of text.
+  (test.assert-true
+    (source-agrees?
+      ";; Why.\n(define a 1) ; note\n(test t ; inside\n (check))\n")
+    "edge case 14")
+  (test.assert-true
+    (source-agrees?
+      ";# Module.\n;: Item.\n;; lint-allow: unused-import\n(define a 1)\n")
+    "edge case 15")
+  (test.assert-true
+    (source-agrees? ";; prose\r\n(define a\r\n  ; inside\r\n  1)")
+    "edge case 16")
+  (test.assert-true
+    (source-agrees? "(cfg test (define a 1) ; kept\n (define a 2)) ;; end")
+    "edge case 17")
+  (test.assert-true
+    (match-agrees? ";; one\n(define a 1)\n" ";\n(define a 1)\n")
+    "edge case 18")
+  (test.assert-true
+    (match-agrees? ";; one\n(define a 1)\n" ";; one\n(define a 1)\n")
+    "edge case 19"))

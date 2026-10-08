@@ -1,6 +1,7 @@
 ;; verify.tl - Prove every build-time payload decodes to its source with the
-;; inline tests blanked, and that blanking removed exactly the top-level inline
-;; tests and moved no other token (#8713).
+;; inline tests blanked and prose comments cut, that blanking removed exactly
+;; the top-level inline tests and moved no other token (#8713), and that every
+;; other line is kept or is a prose comment cut to its first `;` (#8659).
 (import compiler_embedded_stdlib as embedded)
 (import compiler_intern as ci)
 (import lex as lexer)
@@ -220,15 +221,135 @@
       (< j after-count)
       (embedded-stdlib-verify-tag-is? (& after) j (token.tag-end)))))
 
+;; The lines of the top-level inline tests in `tokens`, as flags indexed by
+;; line number.
+(define (embedded-stdlib-verify-test-lines
+  [tokens : (& tokens EmbeddedStdlibVerifyTokens)]
+  [line-count : i64]) : (__tl_dyn-array bool)
+  (let
+    [flags : (__tl_dyn-array bool) (__tl_make-array bool (+ line-count 2))]
+    [count : i64 (array-length tokens.keys)]
+    [i : i64 0]
+    (while (and
+      (< i count)
+      (not (embedded-stdlib-verify-tag-is? tokens i (token.tag-end))))
+      (let
+        [close : i64 (embedded-stdlib-verify-close tokens i)]
+        (when
+          (embedded-stdlib-verify-inline-test? tokens i close)
+          (let
+            [line : i64 (array-ref tokens.lines i)]
+            (while (and
+              (<= line (array-ref tokens.lines close))
+              (<= line line-count))
+              (set! (array-ref flags line) true)
+              (set! line (+ line 1)))))
+        (set! i (+ close 1))))
+    flags))
+
+;; `text` split at each LF, without a final CR on any line.
+(define (embedded-stdlib-verify-split-lines [text : (& text str)]) : (__tl_dyn-array
+    String)
+  (let
+    [out : (__tl_dyn-array String) (__tl_make-array String 0)]
+    [length : i64 (string.string-length text)]
+    [start : i64 0]
+    (while (<= start length)
+      (let
+        [end : i64 (embedded-stdlib-verify-line-end text start)]
+        [line : String
+          (embedded-stdlib-verify-trim-cr
+            (string.substring text start (- end start)))]
+        (__tl_array-push! out line)
+        (set! start (+ end 1))))
+    out))
+
+;; Whether `cut` is `original` with a prose comment cut to its first `;`: a
+;; proper prefix ending in `;` whose removed tail is neither a doc comment
+;; (`:` or `#` right after that `;`) nor a `name:` directive.
+(define (embedded-stdlib-verify-prose-cut?
+  [original : (& original str)]
+  [cut : (& cut str)]) : bool
+  (let
+    [kept : i64 (string.string-length cut)]
+    [length : i64 (string.string-length original)]
+    (and
+      (> kept 0)
+      (< kept length)
+      (string.eq (string.substring original 0 kept) cut)
+      (= (string.string-ref cut (- kept 1)) ';')
+      (let
+        [next : char (string.string-ref original kept)]
+        [j : i64 kept]
+        (and
+          (not (= next ':'))
+          (not (= next '#'))
+          (begin
+            (while (and (< j length) (= (string.string-ref original j) ';'))
+              (set! j (+ j 1)))
+            (while (and (< j length) (= (string.string-ref original j) ' '))
+              (set! j (+ j 1)))
+            (let
+              [k : i64 j]
+              (while (and
+                (< k length)
+                (let
+                  [c : char (string.string-ref original k)]
+                  (or
+                    (and (>= c 'a') (<= c 'z'))
+                    (and (> k j) (>= c '0') (<= c '9'))
+                    (and (> k j) (= c '-')))))
+                (set! k (+ k 1)))
+              (not
+                (and
+                  (> k j)
+                  (< k length)
+                  (= (string.string-ref original k) ':'))))))))))
+
+;; Whether every line of `stripped` outside the inline tests equals the same
+;; line of `original` or is a prose comment cut from it, with the line count
+;; kept.
+(define (embedded-stdlib-verify-lines-kept
+  [original : String]
+  [stripped : String]) : bool
+  (let
+    [before : (__tl_dyn-array String)
+      (embedded-stdlib-verify-split-lines (& original))]
+    [after : (__tl_dyn-array String)
+      (embedded-stdlib-verify-split-lines (& stripped))]
+    [tokens : EmbeddedStdlibVerifyTokens
+      (embedded-stdlib-verify-lex (string.copy (& original)))]
+    [tests : (__tl_dyn-array bool)
+      (embedded-stdlib-verify-test-lines (& tokens) (array-length before))]
+    [index : i64 0]
+    [ok : bool (= (array-length before) (array-length after))]
+    (while (and ok (< index (array-length before)))
+      (let
+        [o : (& before str) (& (array-ref before index))]
+        [s : (& after str) (& (array-ref after index))]
+        (unless
+          (or
+            (array-ref tests (+ index 1))
+            (string.eq o s)
+            (embedded-stdlib-verify-prose-cut? o s))
+          (set! ok false)))
+      (set! index (+ index 1)))
+    ok))
+
 (define (embedded-stdlib-verify-one [suffix : (& suffix str)]) : bool
   (let
     [original : String
       (byte_buf.to-string (io.read-file (str_cat.str-cat "stdlib/" suffix)))]
     [expected : String
-      (embedded.compiler-embedded-stdlib-source-without-inline-tests
+      (embedded.compiler-embedded-stdlib-payload-source
         (string.copy (& original)))]
     (and
-      (embedded-stdlib-verify-tokens original (string.copy (& expected)))
+      (embedded-stdlib-verify-tokens
+        (string.copy (& original))
+        (string.copy (& expected)))
+      (embedded-stdlib-verify-lines-kept
+        (string.copy (& original))
+        (string.copy (& expected)))
       (match (embedded.compiler-embedded-stdlib-lookup
         (string.substring suffix 0 (string.string-length suffix)))
         [(CompilerEmbeddedStdlibSomeSource actual) (string.eq expected actual)]

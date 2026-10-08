@@ -100630,6 +100630,609 @@
             [(Result fixed _) (Result fixed true)])
           (Result func false))])))
 
+;; --- latch increment sinking -------------------------------------------------
+;;
+;; A counter that advances BEFORE its loop body keeps two values live across the
+;; body. The prelude `for` range and index expansions do this: `%n = add %i, 1`
+;; at the top so that `continue` still advances, the body reads `%i`, and the
+;; latch tests `%n < end`. The back edge then needs a copy `%i <- %n`, and the
+;; backend lays the latch out as `cmp; jge exit; mov; jmp top`. A `while` that
+;; advances last closes with one `cmp; jl top`.
+;;
+;; When every use of `%n` sits in the latch block or is a phi input on an edge
+;; out of it, moving `%n = add %i, <literal>` into the latch, just before its
+;; first use there, is exactly the `while` shape. `%i` dies at the add, the
+;; header phi coalesces, and the latch closes with one branch.
+;;
+;; Why the move needs no dominator query. `%i` is a phi of the header H that
+;; the latch edge enters, and the step is a literal. The original def block D
+;; reads `%i`, so H dominates D; the latch L ends a path that carries `%n` into
+;; H, so D dominates L. Every path from H to L therefore passes through D, and
+;; at L both `%i` and `%n` come from the same, latest visit of H. Recomputing the
+;; add at L reproduces `%n` exactly.
+;;
+;; What keeps the move from making code slower. The latch's terminator must be
+;; the loop-closing Branch: one target is H, and its condition is a compare in L
+;; that reads `%n`. In addition, L's other successor must not reach L again
+;; without passing through H or D. Otherwise L could run more often than D, and
+;; the add would run with it.
+;;
+;; It runs below the pipeline fixpoint, next to `cmp_dup`, because a later `gvn`
+;; would only fold the moved add back onto a body copy. An `%i + 1` read by the
+;; body leaves `%n` with a body use, and the move does not apply.
+;; Per-function facts, from one walk over every instruction.
+(defstruct OptLatchSinkFacts
+  ;; block index of each BinOp's definition, -1 for every other var
+  (def-block (__tl_dyn-array i64))
+  ;; its instruction index in that block
+  (def-index (__tl_dyn-array i64))
+  ;; every use, phi inputs included
+  (uses (__tl_dyn-array i64))
+  ;; uses as phi inputs
+  (phi-uses (__tl_dyn-array i64))
+  ;; the edge label of those phi uses: -1 for none, -2 when they differ
+  (phi-label (__tl_dyn-array i64))
+  ;; block label -> block index
+  (labels opt_i64_i64_map.Map))
+
+;; `n` slots, each holding `v`.
+(define (opt-latch-sink-filled [n : i64] [v : i64]) : (__tl_dyn-array i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [index : i64 0]
+    (while (< index n)
+      (set! (array-ref items index) v)
+      (set! index (+ index 1)))
+    items))
+
+(define (opt-latch-sink-facts
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [frame : i64]) : OptLatchSinkFacts
+  (let
+    [def-block : (__tl_dyn-array i64) (opt-latch-sink-filled frame -1)]
+    [def-index : (__tl_dyn-array i64) (opt-latch-sink-filled frame -1)]
+    [uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [phi-uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [phi-label : (__tl_dyn-array i64) (opt-latch-sink-filled frame -1)]
+    [labels : opt_i64_i64_map.Map
+      (opt_i64_i64_map.with-capacity (* 2 (+ seq.len 1)))]
+    [b : i64 0]
+    (while (< b seq.len)
+      (match (ir.compiler-ir-block-seq-ref seq b)
+        [(Block label instrs)
+          (opt_i64_i64_map.insert-ref! (&mut labels) label b)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [j : i64 0]
+            (while (< j count)
+              (let
+                [instr : ir.CompilerIrInstr
+                  (ir.compiler-ir-instr-seq-ref instrs j)]
+                (match (compiler-opt-global-shared-view instr)
+                  [(Phi _ inputs _)
+                    (let
+                      [k : i64 0]
+                      [len : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
+                      (while (< k len)
+                        (let
+                          [input : ir.CompilerIrPhiInput
+                            (ir.compiler-ir-phi-input-seq-ref inputs k)]
+                          (match input.value
+                            [(Var v)
+                              (when
+                                (and (>= v 0) (< v frame))
+                                (set!
+                                  (array-ref phi-uses v)
+                                  (+ (array-ref phi-uses v) 1))
+                                (let
+                                  [seen : i64 (array-ref phi-label v)]
+                                  (cond
+                                    [(= seen -1)
+                                      (set! (array-ref phi-label v) input.label)]
+                                    [(= seen input.label) unit]
+                                    [else (set! (array-ref phi-label v) -2)])))]
+                            [_ unit]))
+                        (set! k (+ k 1))))]
+                  [(BinOp dst _ _ _ _)
+                    (when
+                      (and (>= dst 0) (< dst frame))
+                      (set! (array-ref def-block dst) b)
+                      (set! (array-ref def-index dst) j))]
+                  [_ unit])
+                (opt-collect-instr-uses-array
+                  (compiler-opt-global-shared-view uses)
+                  instr))
+              (set! j (+ j 1))))])
+      (set! b (+ b 1)))
+    (OptLatchSinkFacts def-block def-index uses phi-uses phi-label labels)))
+
+;; The BinOp defining `var` (its recorded block and index), or a non-BinOp
+;; placeholder when there is none.
+(define (opt-latch-sink-def
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [facts : (& facts OptLatchSinkFacts)]
+  [var : i64]) : ir.CompilerIrInstr
+  (let
+    [block : i64 (array-ref facts.def-block var)]
+    (if (< block 0)
+      (Jump -1)
+      (match (ir.compiler-ir-block-seq-ref seq block)
+        [(Block _ instrs)
+          (ir.compiler-ir-instr-seq-ref instrs (array-ref facts.def-index var))]))))
+
+;; `instr` is `%n = add %p, <literal>`, in either operand order.
+(define (opt-latch-sink-step? [instr : ir.CompilerIrInstr] [n : i64] [p : i64]) : bool
+  (match instr
+    [(BinOp dst (Add) (Var lhs) (I64 _) _) (and (= dst n) (= lhs p))]
+    [(BinOp dst (Add) (I64 _) (Var rhs) _) (and (= dst n) (= rhs p))]
+    [_ false]))
+
+;; Uses of `n` among `instrs`' non-phi instructions. `scratch` only ever grows,
+;; so the count is the difference across the walk and no reset is needed.
+(define (opt-latch-sink-local-uses
+  [scratch : (__tl_dyn-array i64)]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [n : i64]) : i64
+  (let
+    [before : i64 (array-ref scratch n)]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [j : i64 0]
+    (while (< j count)
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs j)]
+        (match (compiler-opt-global-shared-view instr)
+          [(Phi _ _ _) unit]
+          [_
+            (opt-collect-instr-uses-array
+              (compiler-opt-global-shared-view scratch)
+              instr)]))
+      (set! j (+ j 1)))
+    (- (array-ref scratch n) before)))
+
+;; The latch's other successor when it ends in `branch %c, H, X` (either order),
+;; with `%c` a compare defined in the latch that reads `n`; -1 otherwise. An
+;; unknown target label also answers -1.
+(define (opt-latch-sink-exit-target
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [facts : (& facts OptLatchSinkFacts)]
+  [latch : i64]
+  [header-label : i64]
+  [n : i64]) : i64
+  (match (ir.compiler-ir-block-seq-ref seq latch)
+    [(Block _ instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+          [(Branch (Var c) true-label false-label)
+            (let
+              [other : i64
+                (cond
+                  [(= true-label header-label) false-label]
+                  [(= false-label header-label) true-label]
+                  [else -1])]
+              [test-reads-n : bool
+                (and
+                  (>= c 0)
+                  (< c (array-length facts.def-block))
+                  (= (array-ref facts.def-block c) latch)
+                  (match (ir.compiler-ir-instr-seq-ref
+                    instrs
+                    (array-ref facts.def-index c))
+                    [(BinOp _ op lhs rhs _)
+                      (and
+                        (ir.compiler-ir-binop-compare? op)
+                        (or (opt-value-is-var? lhs n) (opt-value-is-var? rhs n)))]
+                    [_ false]))]
+              (if (and
+                test-reads-n
+                (not (= other -1))
+                (not (= other header-label)))
+                (opt_i64_i64_map.get-value-or (& facts.labels) other -1)
+                -1))]
+          [_ -1]))]))
+
+;; Whether a walk from `start` that stops at `header` and `def` reaches `latch`.
+;; A block that ends in a switch counts as reaching it: the walk does not follow
+;; switch edges. `seen` holds a stamp per block; `stamp` is fresh per query.
+(define (opt-latch-sink-reaches?
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [facts : (& facts OptLatchSinkFacts)]
+  [seen : (__tl_dyn-array i64)]
+  [stack : (__tl_dyn-array i64)]
+  [stamp : i64]
+  [start : i64]
+  [header : i64]
+  [def : i64]
+  [latch : i64]) : bool
+  (let
+    [top : i64 1]
+    [found : bool false]
+    (set! (array-ref stack 0) start)
+    (while (and (> top 0) (not found))
+      (set! top (- top 1))
+      (let
+        [b : i64 (array-ref stack top)]
+        (cond
+          [(= b latch) (set! found true)]
+          [(or (< b 0) (= b header) (= b def) (= (array-ref seen b) stamp))
+            unit]
+          [else
+            (set! (array-ref seen b) stamp)
+            (match (ir.compiler-ir-block-seq-ref seq b)
+              [(Block _ instrs)
+                (let
+                  [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+                  (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+                    [(Jump target)
+                      (set!
+                        (array-ref stack top)
+                        (opt_i64_i64_map.get-value-or
+                          (& facts.labels)
+                          target
+                          -1))
+                      (set! top (+ top 1))]
+                    [(Branch _ t f)
+                      (set!
+                        (array-ref stack top)
+                        (opt_i64_i64_map.get-value-or (& facts.labels) t -1))
+                      (set!
+                        (array-ref stack (+ top 1))
+                        (opt_i64_i64_map.get-value-or (& facts.labels) f -1))
+                      (set! top (+ top 2))]
+                    [(TotalEnumBranch _ t f)
+                      (set!
+                        (array-ref stack top)
+                        (opt_i64_i64_map.get-value-or (& facts.labels) t -1))
+                      (set!
+                        (array-ref stack (+ top 1))
+                        (opt_i64_i64_map.get-value-or (& facts.labels) f -1))
+                      (set! top (+ top 2))]
+                    [(Switch _ _ _ _) (set! found true)]
+                    [(TotalEnumSwitch _ _ _ _ _) (set! found true)]
+                    [_ unit]))])])))
+    found))
+
+;; `instrs` without the instruction defining `n`.
+(define (opt-latch-sink-without [instrs : ir.CompilerIrInstrSeq] [n : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [j : i64 0]
+    (while (< j count)
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs j)]
+        (unless
+          (= (ir.compiler-ir-instr-dst instr) n)
+          (ir.compiler-ir-instr-builder-push! (&mut builder) instr)))
+      (set! j (+ j 1)))
+    (ir.compiler-ir-instr-builder-to-seq builder)))
+
+;; `instrs` with `def` placed before its first non-phi reader, which the
+;; latch's compare guarantees exists.
+(define (opt-latch-sink-with
+  [scratch : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [def : ir.CompilerIrInstr]
+  [n : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ count 1))]
+    [placed : bool false]
+    [j : i64 0]
+    (while (< j count)
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs j)]
+        (unless
+          placed
+          (match (compiler-opt-global-shared-view instr)
+            [(Phi _ _ _) unit]
+            [_
+              (let
+                [before : i64 (array-ref scratch n)]
+                (opt-collect-instr-uses-array
+                  (compiler-opt-global-shared-view scratch)
+                  (compiler-opt-global-shared-view instr))
+                (when
+                  (or (> (array-ref scratch n) before) (= j (- count 1)))
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (compiler-opt-global-shared-view def))
+                  (set! placed true)))]))
+        (ir.compiler-ir-instr-builder-push! (&mut builder) instr))
+      (set! j (+ j 1)))
+    (ir.compiler-ir-instr-builder-to-seq builder)))
+
+;; Whether `var` is among the first `count` recorded sites' vars.
+(define (opt-latch-sink-recorded?
+  [vars : (__tl_dyn-array i64)]
+  [count : i64]
+  [var : i64]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (while (and (< index count) (not found))
+      (when (= (array-ref vars index) var) (set! found true))
+      (set! index (+ index 1)))
+    found))
+
+;; The moves the facts admit, as parallel arrays of (var, def block, latch).
+(defstruct OptLatchSinkSites
+  (vars (__tl_dyn-array i64))
+  (defs (__tl_dyn-array i64))
+  (latches (__tl_dyn-array i64))
+  (count i64))
+
+(define (opt-latch-sink-sites
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [frame : i64]
+  [facts : (& facts OptLatchSinkFacts)]) : OptLatchSinkSites
+  (let
+    [vars : (__tl_dyn-array i64) (__tl_make-array i64 (+ seq.len 1))]
+    [defs : (__tl_dyn-array i64) (__tl_make-array i64 (+ seq.len 1))]
+    [latches : (__tl_dyn-array i64) (__tl_make-array i64 (+ seq.len 1))]
+    [count : i64 0]
+    ;; allocated on the first candidate that reaches the use test
+    [scratch : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [seen : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [stack : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [stamp : i64 0]
+    [h : i64 0]
+    (while (and (< h seq.len) (< count seq.len))
+      (match (ir.compiler-ir-block-seq-ref seq h)
+        [(Block header-label instrs)
+          (let
+            [total : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [j : i64 0]
+            [in-phis : bool true]
+            (while (and in-phis (< j total))
+              (match (ir.compiler-ir-instr-seq-ref instrs j)
+                [(Phi p inputs _)
+                  (let
+                    [k : i64 0]
+                    [len : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
+                    (while (< k len)
+                      (let
+                        [input : ir.CompilerIrPhiInput
+                          (ir.compiler-ir-phi-input-seq-ref inputs k)]
+                        [n : i64
+                          (match input.value
+                            [(Var v) v]
+                            [_ -1])]
+                        [latch : i64
+                          (if (or
+                            (< n 0)
+                            (>= n frame)
+                            (= input.label header-label))
+                            -1
+                            (opt_i64_i64_map.get-value-or
+                              (& facts.labels)
+                              input.label
+                              -1))]
+                        [def : i64
+                          (if (< latch 0)
+                            -1
+                            (array-ref facts.def-block n))]
+                        (when
+                          (and
+                            (>= def 0)
+                            (not (= def latch))
+                            (< count seq.len)
+                            ;; one move per var
+                            (not
+                              (opt-latch-sink-recorded?
+                                (compiler-opt-global-shared-view vars)
+                                count
+                                n))
+                            (= (array-ref facts.phi-label n) input.label)
+                            (opt-latch-sink-step?
+                              (opt-latch-sink-def seq facts n)
+                              n
+                              p))
+                          (let
+                            [exit : i64
+                              (opt-latch-sink-exit-target
+                                seq
+                                facts
+                                latch
+                                header-label
+                                n)]
+                            (when
+                              (>= exit 0)
+                              (when
+                                (= (array-length scratch) 0)
+                                (set! scratch (__tl_make-array i64 frame))
+                                (set! seen (opt-latch-sink-filled seq.len -1))
+                                (set!
+                                  stack
+                                  (__tl_make-array i64 (+ (* 2 seq.len) 2))))
+                              (set! stamp (+ stamp 1))
+                              (when
+                                (and
+                                  (=
+                                    (-
+                                      (array-ref facts.uses n)
+                                      (array-ref facts.phi-uses n))
+                                    (match (ir.compiler-ir-block-seq-ref
+                                      seq
+                                      latch)
+                                      [(Block _ latch-instrs)
+                                        (opt-latch-sink-local-uses
+                                          (compiler-opt-global-shared-view
+                                            scratch)
+                                          latch-instrs
+                                          n)]))
+                                  (not
+                                    (opt-latch-sink-reaches?
+                                      seq
+                                      facts
+                                      (compiler-opt-global-shared-view seen)
+                                      (compiler-opt-global-shared-view stack)
+                                      stamp
+                                      exit
+                                      h
+                                      def
+                                      latch)))
+                                (set! (array-ref vars count) n)
+                                (set! (array-ref defs count) def)
+                                (set! (array-ref latches count) latch)
+                                (set! count (+ count 1)))))))
+                      (set! k (+ k 1))))]
+                [_ (set! in-phis false)])
+              (set! j (+ j 1))))])
+      (set! h (+ h 1)))
+    (OptLatchSinkSites vars defs latches count)))
+
+;; The cheap test every opt2 function pays before any per-var array is built:
+;; some phi input `%n` on an edge from another block L is defined as
+;; `add _, <literal>` outside L. A function without a loop has no such input,
+;; and a `while` that advances last defines `%n` in its latch.
+(define (opt-latch-sink-candidates? [seq : (& seq ir.CompilerIrBlockSeq)]) : bool
+  (let
+    ;; var -> the label of the edge it arrives on
+    [edge-of : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 16)]
+    [found : bool false]
+    [b : i64 0]
+    (while (< b seq.len)
+      (match (ir.compiler-ir-block-seq-ref seq b)
+        [(Block label instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [j : i64 0]
+            [in-phis : bool true]
+            (while (and in-phis (< j count))
+              (match (ir.compiler-ir-instr-seq-ref instrs j)
+                [(Phi _ inputs _)
+                  (let
+                    [k : i64 0]
+                    [len : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
+                    (while (< k len)
+                      (let
+                        [input : ir.CompilerIrPhiInput
+                          (ir.compiler-ir-phi-input-seq-ref inputs k)]
+                        (match input.value
+                          [(Var v)
+                            (unless
+                              (= input.label label)
+                              (opt_i64_i64_map.insert-ref!
+                                (&mut edge-of)
+                                v
+                                input.label))]
+                          [_ unit]))
+                      (set! k (+ k 1))))]
+                [_ (set! in-phis false)])
+              (set! j (+ j 1))))])
+      (set! b (+ b 1)))
+    (unless
+      (= (opt_i64_i64_map.len (& edge-of)) 0)
+      (set! b 0)
+      (while (and (< b seq.len) (not found))
+        (match (ir.compiler-ir-block-seq-ref seq b)
+          [(Block label instrs)
+            (let
+              [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+              [j : i64 0]
+              (while (and (< j count) (not found))
+                (let
+                  [dst : i64
+                    (match (ir.compiler-ir-instr-seq-ref instrs j)
+                      [(BinOp d (Add) _ (I64 _) _) d]
+                      [(BinOp d (Add) (I64 _) _ _) d]
+                      [_ -1])]
+                  (when
+                    (and
+                      (>= dst 0)
+                      (opt_i64_i64_map.contains? (& edge-of) dst)
+                      (not
+                        (=
+                          (opt_i64_i64_map.get-value-or (& edge-of) dst label)
+                          label)))
+                    (set! found true)))
+                (set! j (+ j 1))))])
+        (set! b (+ b 1))))
+    found))
+
+;; The function with every admitted add moved into its latch. `changed` is
+;; false, and the blocks are returned as they came, when nothing moved.
+(define (opt-latch-sink-blocks [frame : i64] [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
+  (let
+    [seq : ir.CompilerIrBlockSeq (ir.compiler-ir-block-list-seq blocks)]
+    (if (opt-latch-sink-candidates? seq)
+      (opt-latch-sink-move seq frame)
+      (Result (Array seq) false))))
+
+(define (opt-latch-sink-move [seq : ir.CompilerIrBlockSeq] [frame : i64]) : OptBlockListPassResult
+  (let
+    [facts : OptLatchSinkFacts (opt-latch-sink-facts seq frame)]
+    [sites : OptLatchSinkSites (opt-latch-sink-sites seq frame facts)]
+    (if (= sites.count 0)
+      (Result (Array seq) false)
+      (let
+        [scratch : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+        [s : i64 0]
+        (while (< s sites.count)
+          (let
+            [n : i64 (array-ref sites.vars s)]
+            [def : i64 (array-ref sites.defs s)]
+            [latch : i64 (array-ref sites.latches s)]
+            [moved : ir.CompilerIrInstr
+              (match (ir.compiler-ir-block-seq-ref seq def)
+                [(Block _ def-instrs)
+                  (let
+                    [count : i64 (ir.compiler-ir-instr-seq-count def-instrs)]
+                    [j : i64 0]
+                    [out : ir.CompilerIrInstr (Jump -1)]
+                    (while (< j count)
+                      (let
+                        [instr : ir.CompilerIrInstr
+                          (ir.compiler-ir-instr-seq-ref def-instrs j)]
+                        (when
+                          (= (ir.compiler-ir-instr-dst instr) n)
+                          (set! out instr)))
+                      (set! j (+ j 1)))
+                    out)])]
+            (match (ir.compiler-ir-block-seq-ref seq def)
+              [(Block def-label def-instrs)
+                (set!
+                  (array-ref seq.slots def)
+                  (Block def-label (opt-latch-sink-without def-instrs n)))])
+            (match (ir.compiler-ir-block-seq-ref seq latch)
+              [(Block latch-label latch-instrs)
+                (set!
+                  (array-ref seq.slots latch)
+                  (Block
+                    latch-label
+                    (opt-latch-sink-with
+                      (compiler-opt-global-shared-view scratch)
+                      latch-instrs
+                      moved
+                      n)))]))
+          (set! s (+ s 1)))
+        (Result (Array seq) true)))))
+
+(define (opt-latch-sink-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match func
+    [(Function name params ret-ty frame blocks function-abi)
+      (match (opt-latch-sink-blocks frame blocks)
+        [(Result next _) (Function name params ret-ty frame next function-abi)])]))
+
+(define (opt-latch-sink-final-pass
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match func
+    [(Function name params ret-ty frame blocks function-abi)
+      (match (opt-latch-sink-blocks frame blocks)
+        [(Result next changed)
+          (if changed
+            (Result
+              (compiler-opt-debug-observe-function
+                type-segment-bases
+                "latch_sink"
+                (Function name params ret-ty frame next function-abi))
+              true)
+            (Result (Function name params ret-ty frame next function-abi) false))])]))
+
 ;; Compare/branch fusion, run BELOW the pipeline fixpoint and below every final
 ;; CFG pass, which is the only position where "no CSE round runs after it" is
 ;; actually true: `optimize-function-fixed-pass-with-summaries` feeds a changed
@@ -101424,6 +102027,13 @@
             (opt-cfg-straighten-below-threader-pass
               type-segment-bases
               (opt-pass-func s))
+            s)]
+        ;; Moves a bump-first counter's increment into its latch (the `for`
+        ;; range shape). It reads final block order and labels only, and
+        ;; `cmp_dup` below re-pairs the latch compare with its branch.
+        [s
+          (opt-pass-with-result
+            (opt-latch-sink-final-pass type-segment-bases (opt-pass-func s))
             s)]
         [s
           (opt-pass-with-result

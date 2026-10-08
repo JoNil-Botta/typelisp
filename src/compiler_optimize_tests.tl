@@ -58379,6 +58379,230 @@
       [(not (opt-cc-test-unchanged? c16)) 160]
       [else 42])))
 
+;; --- latch increment sinking -------------------------------------------------
+;;
+;; The fixture is the `for` range shape with an `if` body: the header `head`
+;; advances `%4 = add %2, 1` before the body, the body branches, and the latch
+;; `latch` tests `%4 < n` and closes the loop. Blocks: entry 0, head 1, then 2,
+;; latch 3, then exit (and `spin` in L6).
+;;
+;; L1 positive : the add leaves `head` (5 -> 4 instructions) and becomes the
+;;               latch's first non-phi instruction, right before the compare.
+;; L2 negative : the body (`then`) reads `%4`, so the add has a use outside the
+;;               latch and stays.
+;; L3 negative : `%4` reaches the exit through a phi input on an edge from
+;;               `then`, not from the latch. It must be defined before `then`.
+;; L4 negative : the step is the parameter `%0`, not a literal.
+;; L5 negative : the latch's branch tests the sum, not `%4`, so the latch is not
+;;               shown to be the loop-closing block of the counter.
+;; L6 negative : the latch's other successor `spin` loops back to the latch
+;;               without passing the header. The latch can then run more often
+;;               than `head`, and the add would run with it.
+;;
+;; The negatives were checked load-bearing by mutating the implementation and
+;; confirming THIS test is what fails, with the code it reports:
+;;   * the latch-local use count test in `opt-latch-sink-sites` forced true ->
+;;     code 20 (L2 moves).
+;;   * the `phi-label` test forced true -> code 30 (L3 moves).
+;;   * `opt-latch-sink-step?` accepting any right operand -> code 40 (L4 moves).
+;;   * `opt-latch-sink-exit-target` ignoring whether the compare reads `%n` ->
+;;     code 50 (L5 moves).
+;;   * `opt-latch-sink-reaches?` answering false -> code 60 (L6 moves).
+(define (opt-ls-test-run [text : String]) : ir.CompilerIrFunction
+  (opt.opt-latch-sink-function (irt.func text)))
+
+(define (opt-ls-test-l1) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l2) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, %4 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l3) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       %11 = gt %6, 9 : bool
+       branch %11, exit, latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch], [%4, then] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l4) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, %0 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l5) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %7, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l6) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 13 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then], [%7, spin] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, spin
+     spin:
+       %12 = gt %7, 100 : bool
+       branch %12, exit, latch
+     exit:
+       %10 = phi [0, entry], [%7, spin] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-head-count [out : (& out ir.CompilerIrFunction)]) : i64
+  (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-block-instr-count blocks 1)))
+
+(define (opt-ls-test-latch-add? [out : (& out ir.CompilerIrFunction)]) : bool
+  (match (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-instr-at blocks 3 1))
+    [(BinOp 4 (Add) (Var 2) (I64 1) _) true]
+    [_ false]))
+
+(define (opt-ls-test-latch-compare? [out : (& out ir.CompilerIrFunction)]) : bool
+  (match (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-instr-at blocks 3 2))
+    [(BinOp 8 (Lt) (Var 4) _ _) true]
+    [_ false]))
+
+(define (compiler-optimize-latch-sink-self-test) : i64
+  (let
+    [l1 : ir.CompilerIrFunction (opt-ls-test-l1)]
+    [l2 : ir.CompilerIrFunction (opt-ls-test-l2)]
+    [l3 : ir.CompilerIrFunction (opt-ls-test-l3)]
+    [l4 : ir.CompilerIrFunction (opt-ls-test-l4)]
+    [l5 : ir.CompilerIrFunction (opt-ls-test-l5)]
+    [l6 : ir.CompilerIrFunction (opt-ls-test-l6)]
+    [l1-again : ir.CompilerIrFunction
+      (opt.opt-latch-sink-function (ir.compiler-ir-global-shared-view l1))]
+    (cond
+      ;; L1: head is phi, phi, gt, branch; the latch is phi, add, lt, branch.
+      [(not (= (opt-ls-test-head-count l1) 4)) 10]
+      [(not (opt-ls-test-latch-add? l1)) 11]
+      [(not (opt-ls-test-latch-compare? l1)) 12]
+      ;; Idempotent: the moved add is already in the latch.
+      [(not (= (opt-ls-test-head-count l1-again) 4)) 13]
+      [(not (opt-ls-test-latch-add? l1-again)) 14]
+      [(not (= (opt-ls-test-head-count l2) 5)) 20]
+      [(not (= (opt-ls-test-head-count l3) 5)) 30]
+      [(not (= (opt-ls-test-head-count l4) 5)) 40]
+      [(not (= (opt-ls-test-head-count l5) 5)) 50]
+      [(not (= (opt-ls-test-head-count l6) 5)) 60]
+      [else 42])))
+
 ;; --- global-cell condition (a): per-store observability ----------------------
 ;;
 ;; Condition (a) is not "this function stores G" but "this function has a store
@@ -63062,6 +63286,13 @@
     (compiler-optimize-copy-call-self-test)
     42
     "an element copy in a __bce_fast clone becomes one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd (i64 slots) call, with an invariant+counter destination index admitted and idempotently; checked, unsupported-width, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width, below-floor and constant-value loops do not"))
+
+(test
+  latch-increment-sink
+  (test.assert-i64-eq
+    (compiler-optimize-latch-sink-self-test)
+    42
+    "a bump-first counter's increment moves into its latch before the loop-closing compare, idempotently; a body read, an exit-edge read from another block, a non-literal step, a latch that does not test the counter and a latch that can rerun without the header keep it in place"))
 
 (test
   global-cell-call-mod-ref

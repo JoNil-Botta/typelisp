@@ -2939,7 +2939,7 @@
               (tc_core.tc-global-shared-view prefix-cache-a)
               job-state-a
               (ast.ast-program decls)
-              (ast.ast-decl-path-list-with-modules paths modules)
+              (ast.ast-decl-path-list-with-modules paths (& modules))
               (tc_core.tc-global-shared-view roots)
               cfgs
               "typecheck-generated-import-state-threading"
@@ -3126,7 +3126,7 @@
               (tc_core.tc-global-shared-view prefix-cache)
               job-state
               (ast.ast-program decls)
-              (ast.ast-decl-path-list-with-modules paths modules)
+              (ast.ast-decl-path-list-with-modules paths (& modules))
               roots
               cfgs
               "typecheck-macro-transitive-dependency-state"

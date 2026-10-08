@@ -466,6 +466,9 @@ stdlib/tests/hashmap_mut_entry_value_borrow_live.tl|fail|typecheck: cannot mutab
 stdlib/tests/hashmap_macro_value_borrow_insert_live.tl|fail|typecheck: cannot mutably borrow borrowed place `m`
 stdlib/tests/hashmap_macro_mut_entry_insert_live.tl|fail|typecheck: cannot read mutably borrowed place `m`
 stdlib/tests/core_macros_for_missing_protocol.tl|fail|is missing protocol function
+stdlib/tests/core_macros_for_offset_slots_reject.tl|fail|is missing protocol function iterator
+stdlib/tests/core_macros_for_owned_dyn_array_reject.tl|fail|sources must be borrowed: write (& source) or (&mut source)
+stdlib/tests/core_macros_any_missing_predicate.tl|fail|any? expects one unannotated binding clause [name source] followed by one predicate
 stdlib/tests/process_borrowed_escape.tl|fail|typecheck: reference value would escape lexical scope
 stdlib/tests/queue_cleanup_element_reject.tl|fail|queue.deque: cleanup-owning element type struct_QueueCleanupElement is unsupported
 stdlib/tests/string_caller_result_escape.tl|fail|typecheck: reference value would escape lexical scope

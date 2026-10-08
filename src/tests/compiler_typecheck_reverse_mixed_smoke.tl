@@ -108,11 +108,11 @@
                   (csym.compiler-symbol-module-key-id-by-id
                     module-id
                     (ci.intern "ReverseMixedOther"))]
-                [actual : ast.AstType (ast.ast-ty-array (Enum flat-id) 1)]
+                [actual : ast.AstType (ast.ast-ty-array (& (Enum flat-id)) 1)]
                 [expected : ast.AstType
-                  (ast.ast-ty-array (Enum qualified-id) 1)]
+                  (ast.ast-ty-array (& (Enum qualified-id)) 1)]
                 [different : ast.AstType
-                  (ast.ast-ty-array (Enum other-qualified-id) 1)]
+                  (ast.ast-ty-array (& (Enum other-qualified-id)) 1)]
                 [lifetime-id : i64 (ci.intern "out")]
                 [type-module-ctx : compiler_typecheck_core.TcContext
                   (compiler_typecheck_core.tc-context-with-type-module-id
@@ -121,11 +121,11 @@
                 [type-env : compiler_typecheck_core.TcTypeEnv
                   (compiler_typecheck_core.tc-default-env)]
                 [actual-ref : ast.AstType
-                  (ast.ast-ty-mut-ref lifetime-id (Enum flat-id))]
+                  (ast.ast-ty-mut-ref lifetime-id (& (Enum flat-id)))]
                 [expected-ref : ast.AstType
-                  (ast.ast-ty-mut-ref lifetime-id (Enum qualified-id))]
+                  (ast.ast-ty-mut-ref lifetime-id (& (Enum qualified-id)))]
                 [different-ref : ast.AstType
-                  (ast.ast-ty-mut-ref lifetime-id (Enum other-qualified-id))]
+                  (ast.ast-ty-mut-ref lifetime-id (& (Enum other-qualified-id)))]
                 [other-constructor-id : i64
                   (ci.intern-generated-canonical-name "ReverseMixedOther.Value")]
                 [missing-constructor-id : i64

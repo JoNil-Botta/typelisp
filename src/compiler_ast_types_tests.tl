@@ -67,7 +67,7 @@
   (let
     [base-arena : i64 pool.base-arena]
     [persistent : ast.AstType
-      (in-arena (arena.Arena base-arena) (ast.ty-node-persist node))]
+      (in-arena (arena.Arena base-arena) (ast.ty-node-persist (& node)))]
     [biased-base : i64
       (unsafe
         (ptr-read
@@ -99,7 +99,9 @@
   [args : ast.AstTypeList]
   [ret : ast.AstType]
   [mode : ast.AstCFunctionMode]) : ast.AstType
-  (CFunc (ast.ast-node-pool-reader-type-push (ast.ast-ty-func args ret)) mode))
+  (CFunc
+    (ast.ast-node-pool-reader-type-push (& (ast.ast-ty-func args (& ret))))
+    mode))
 
 (define (ast-expr-clause-list-tail [items : ast.AstExprClauseList]) : ast.AstExprClauseList
   (let
@@ -137,7 +139,7 @@
 ;; The `-id` twins below are for walks that already hold an AstTypeId and
 ;; would otherwise round-trip it through `ty-node-get`/`ty-node-push`.
 (define (ast-expr-ann [expr : i64] [ty : ast.AstType]) : i64
-  (ast.ast-node-push (Ann expr (ast.ty-node-push ty))))
+  (ast.ast-node-push (Ann expr (ast.ty-node-push (& ty)))))
 
 (define (ast-expr-quasiquote [inner : i64]) : i64
   (ast.ast-node-push (Quasiquote inner)))
@@ -385,24 +387,26 @@
         (Begin
           (ast.ast-expr-cons
             one
-            (ast.ast-expr-cons two (ast.ast-expr-list-new)))))]
+            (& (ast.ast-expr-cons two (& (ast.ast-expr-list-new)))))))]
     [bindings : ast.AstLetBindingList
       (ast.ast-let-binding-cons
-        (ast.ast-let-binding-id cbi.compiler-builtin-id-fix-x (No) begin-expr)
-        (ast.ast-let-binding-list-new))]
+        (&
+          (ast.ast-let-binding-id cbi.compiler-builtin-id-fix-x (No) begin-expr))
+        (& (ast.ast-let-binding-list-new)))]
     [tuple-pattern : ast.AstPattern
       (ast.ast-pat-tuple
         (ast.ast-pattern-cons
-          (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-item)
-          (ast.ast-pattern-cons (Wildcard) (ast.ast-pattern-list-new))))]
+          (& (ast.ast-pat-binding-id cbi.compiler-builtin-id-fix-item))
+          (&
+            (ast.ast-pattern-cons (& (Wildcard)) (& (ast.ast-pattern-list-new))))))]
     [variant-pattern : ast.AstPattern
       (ast.ast-pat-variant-id
         cbi.compiler-builtin-id-fix-Some
-        (ast.ast-pattern-cons tuple-pattern (ast.ast-pattern-list-new)))]
+        (ast.ast-pattern-cons (& tuple-pattern) (& (ast.ast-pattern-list-new))))]
     [arms : ast.AstMatchArmList
       (ast.ast-match-arm-cons
-        (ast.ast-match-arm variant-pattern begin-expr)
-        (ast.ast-match-arm-list-new))]
+        (& (ast.ast-match-arm variant-pattern begin-expr))
+        (& (ast.ast-match-arm-list-new)))]
     [match-expr : i64
       (ast.ast-expr-match
         (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-input))
@@ -462,8 +466,8 @@
     [program : ast.AstProgram
       (ast.ast-program
         (ast.ast-decl-cons
-          nested
-          (ast.ast-decl-cons runtime (ast.ast-decl-list-new))))]
+          (& nested)
+          (& (ast.ast-decl-cons (& runtime) (& (ast.ast-decl-list-new))))))]
     (match program
       [(Program decls-box)
         (let
@@ -498,7 +502,7 @@
     (ast.ty-node-pool-reset!)
     (ast.ty-node-pool-truncate! capacity)
     (let
-      [id : i64 (ast.ty-node-push (I64))]
+      [id : i64 (ast.ty-node-push (& (I64)))]
       [len : i64 (ast.ty-node-pool-len)]
       [exhausted : bool (ast.ty-node-pool-exhausted?)]
       [grew : bool (> (ty-node-pool-capacity) capacity)]
@@ -508,30 +512,31 @@
 (define (compiler-ast-type-dedup-smoke?) : bool
   (ast.ty-node-pool-reset!)
   (let
-    [first-i64 : i64 (ast.ty-node-push (I64))]
+    [first-i64 : i64 (ast.ty-node-push (& (I64)))]
     [first-len : i64 (ast.ty-node-pool-len)]
-    [second-i64 : i64 (ast.ty-node-push (I64))]
+    [second-i64 : i64 (ast.ty-node-push (& (I64)))]
     [second-len : i64 (ast.ty-node-pool-len)]
-    [first-array : i64 (ast.ty-node-push (ast.ast-ty-array (I64) 4))]
+    [first-array : i64 (ast.ty-node-push (& (ast.ast-ty-array (& (I64)) 4)))]
     [array-len : i64 (ast.ty-node-pool-len)]
-    [second-array : i64 (ast.ty-node-push (ast.ast-ty-array (I64) 4))]
+    [second-array : i64 (ast.ty-node-push (& (ast.ast-ty-array (& (I64)) 4)))]
     [final-len : i64 (ast.ty-node-pool-len)]
-    [first-bytes : i64 (ast.ty-node-push (Bytes))]
+    [first-bytes : i64 (ast.ty-node-push (& (Bytes)))]
     [bytes-len : i64 (ast.ty-node-pool-len)]
-    [second-bytes : i64 (ast.ty-node-push (Bytes))]
+    [second-bytes : i64 (ast.ty-node-push (& (Bytes)))]
     [second-bytes-len : i64 (ast.ty-node-pool-len)]
-    [str-ty : i64 (ast.ty-node-push (Str))]
+    [str-ty : i64 (ast.ty-node-push (& (Str)))]
     [str-len : i64 (ast.ty-node-pool-len)]
-    [first-slice : i64 (ast.ty-node-push (ast.ast-ty-slice (I64)))]
+    [first-slice : i64 (ast.ty-node-push (& (ast.ast-ty-slice (& (I64)))))]
     [slice-len : i64 (ast.ty-node-pool-len)]
-    [second-slice : i64 (ast.ty-node-push (ast.ast-ty-slice (I64)))]
+    [second-slice : i64 (ast.ty-node-push (& (ast.ast-ty-slice (& (I64)))))]
     [second-slice-len : i64 (ast.ty-node-pool-len)]
-    [first-dyn-array : i64 (ast.ty-node-push (ast.ast-ty-dyn-array (I64)))]
+    [first-dyn-array : i64
+      (ast.ty-node-push (& (ast.ast-ty-dyn-array (& (I64)))))]
     [dyn-array-len : i64 (ast.ty-node-pool-len)]
     [nested-slice : i64
-      (ast.ty-node-push (ast.ast-ty-slice (ast.ast-ty-slice (I64))))]
+      (ast.ty-node-push (& (ast.ast-ty-slice (& (ast.ast-ty-slice (& (I64)))))))]
     [nested-slice-again : i64
-      (ast.ty-node-push (ast.ast-ty-slice (ast.ast-ty-slice (I64))))]
+      (ast.ty-node-push (& (ast.ast-ty-slice (& (ast.ast-ty-slice (& (I64)))))))]
     [ok : bool
       (and
         (= first-i64 second-i64)
@@ -551,11 +556,11 @@
         (not (= first-slice first-dyn-array))
         (= dyn-array-len 6)
         (= nested-slice nested-slice-again)
-        (= (ast.ast-type-tag (ast.ty-node-get first-slice)) 37)
+        (= (ast.ast-type-tag (& (ast.ty-node-get first-slice))) 37)
         (not
           (=
-            (ast.ty-node-hash-value (ast.ty-node-get first-slice))
-            (ast.ty-node-hash-value (ast.ty-node-get first-dyn-array)))))]
+            (ast.ty-node-hash-value (& (ast.ty-node-get first-slice)))
+            (ast.ty-node-hash-value (& (ast.ty-node-get first-dyn-array))))))]
     (ast.ty-node-pool-reset!)
     ok))
 
@@ -571,8 +576,8 @@
       (ast.AstSpmdSpecialization 8 (box classes) Varying 0))
     (let
       [copied : ast.AstFnMetadata
-        (ast.ast-fn-metadata-clone (SpmdCallable (box specializations)))]
-      (match (ast.ast-fn-metadata-spmd-callable copied)
+        (ast.ast-fn-metadata-clone (& (SpmdCallable (box specializations))))]
+      (match (ast.ast-fn-metadata-spmd-callable (& copied))
         [(Callable copied-items)
           (let
             [fallback : ast.AstSpmdSpecialization
@@ -626,7 +631,7 @@
       (&mut callables)
       (ast.AstImportedSpmdCallable signature specializations))
     (match (ast.ast-imported-spmd-metadata-clone
-      (Package "fixture" "1.0.0" name-id (box callables)))
+      (& (Package "fixture" "1.0.0" name-id (box callables))))
       [(Package owner version name copied-callables)
         (let
           [copied : ast.AstImportedSpmdCallableList (deref copied-callables)]
@@ -732,13 +737,13 @@
     [string-ty : ast.AstType (String)]
     [arg-tys : ast.AstTypeList
       (ast.ast-type-cons
-        (I64)
-        (ast.ast-type-cons string-ty (ast.ast-type-list-new)))]
+        (& (I64))
+        (& (ast.ast-type-cons (& string-ty) (& (ast.ast-type-list-new)))))]
     [ret-ty : ast.AstType
       (ast.ast-ty-ref
         (ci.intern-generated-name "r")
-        (ast.ast-ty-ptr (ast.ast-ty-array (I64) 4)))]
-    [fn-ty : ast.AstType (ast.ast-ty-func arg-tys ret-ty)]
+        (& (ast.ast-ty-ptr (& (ast.ast-ty-array (& (I64)) 4)))))]
+    [fn-ty : ast.AstType (ast.ast-ty-func arg-tys (& ret-ty))]
     [nested-ty-ok? : bool
       (match (ast.ast-place-shared-view fn-ty)
         [(Func _ ret)
@@ -774,7 +779,7 @@
     [param : ast.AstParam
       (ast.ast-param-id cbi.compiler-builtin-id-fix-x (I64) false)]
     [params : ast.AstParamList
-      (ast.ast-param-cons param (ast.ast-param-list-new))]
+      (ast.ast-param-cons (& param) (& (ast.ast-param-list-new)))]
     [decl : ast.AstDecl
       (ast.ast-decl-def-fn-id
         cbi.compiler-builtin-id-fix-main
@@ -782,10 +787,7 @@
         (I64)
         expr)]
     [program : ast.AstProgram
-      (ast.ast-program
-        (ast.ast-decl-cons
-          (ast.ast-place-shared-view decl)
-          (ast.ast-decl-list-new)))]
+      (ast.ast-program (ast.ast-decl-cons (& decl) (& (ast.ast-decl-list-new))))]
     (match program
       [(Program _)
         (if (and
@@ -798,7 +800,7 @@
           spmd-metadata-clone-ok?
           imported-spmd-metadata-clone-ok?)
           (+
-            (ast.ast-type-tag fn-ty)
+            (ast.ast-type-tag (& fn-ty))
             (+ (ast-expr-tag (ast.ast-node-get expr)) (ast-decl-tag decl)))
           0)])))
 

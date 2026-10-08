@@ -3027,7 +3027,7 @@
         (reader.stable-symbol-id name)
         (let
           [owner : ci.InternCompatState (compiler-parse-state-owner control)]
-          (ci.intern-compat-state-intern (&mut owner) name)))]
+          (ci.intern-compat-state-intern (&mut owner) (& name))))]
     (sym_i64_env.sym-i64-bind-id env name-id tag)))
 
 (define (compiler-parse-dispatch-binops [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
@@ -4066,7 +4066,7 @@
                 (ast.ast-ty-invalidate-with-pools
                   pools
                   (ci.intern-syntax-id-value lifetime)
-                  inner)))]
+                  (& inner))))]
           [_ (Err (parse-ast-invalidate-type-message))]))]
     [_ (Err (parse-ast-invalidate-type-message))]))
 
@@ -4090,7 +4090,10 @@
             (match (parse-ast-func-type-parts dispatch pools rest)
               [(Ok parsed-args parsed-ret)
                 (Ok
-                  (ast.ast-type-cons-with-pools pools parsed-arg parsed-args)
+                  (ast.ast-type-cons-with-pools
+                    pools
+                    (& parsed-arg)
+                    (& parsed-args))
                   parsed-ret)]
               [(Err message) (Err message)]))])]
     [_ (Err "parse: function type needs at least return type")]))
@@ -4162,12 +4165,12 @@
             (ast.ast-ty-mut-ref-with-pools
               pools
               cbi.compiler-builtin-id-fix-empty
-              inner-ty))
+              (& inner-ty)))
           (Ok
             (ast.ast-ty-ref-with-pools
               pools
               cbi.compiler-builtin-id-fix-empty
-              inner-ty))))]
+              (& inner-ty)))))]
     [(List (slice (Sym region _) inner))
       (let
         [inner-ty (try (parse-ast-type dispatch pools inner))]
@@ -4176,12 +4179,12 @@
             (ast.ast-ty-mut-ref-with-pools
               pools
               (ci.intern-syntax-id-value region)
-              inner-ty))
+              (& inner-ty)))
           (Ok
             (ast.ast-ty-ref-with-pools
               pools
               (ci.intern-syntax-id-value region)
-              inner-ty))))]
+              (& inner-ty)))))]
     [(List (slice _ _)) (Err "parse: reference lifetime must be an identifier")]
     [_
       (Err
@@ -4260,7 +4263,7 @@
               [(List (slice elem (Int size _ _)))
                 (let
                   [elem-ty (try (parse-ast-type dispatch pools elem))]
-                  (Ok (ast.ast-ty-array-with-pools pools elem-ty size)))]
+                  (Ok (ast.ast-ty-array-with-pools pools (& elem-ty) size)))]
               [(List (slice _ _)) (Err "parse: array size must be integer")]
               [_ (Err "parse: malformed array type")])]
           [(= tag (compiler-parse-tag-ty-dyn-array))
@@ -4489,7 +4492,7 @@
               (Ok
                 (ast.ast-param-id
                   (ci.intern-syntax-id-value name)
-                  (ast.ast-ty-invalidate-with-pools pools lifetime ty)
+                  (ast.ast-ty-invalidate-with-pools pools lifetime (& ty))
                   false))]
             [(Cons next _)
               (match (parse-ast-param-invalidate-metadata next)
@@ -4806,7 +4809,7 @@
     [name-id : i64 (ci.intern-syntax-id-value name)]
     [name-text : String (compiler-parse-dispatch-syntax-id-text dispatch name)]
     (match (reader.sexpr-view rest)
-      [(Nil) (Ok (ast.ast-macro-param name-id parsed-ty false))]
+      [(Nil) (Ok (ast.ast-macro-param name-id (& parsed-ty) false))]
       [(Cons suffix suffix-rest)
         (match (reader.sexpr-view (compiler-parse-place-shared-view suffix))
           [(Sym suffix-name)
@@ -4814,7 +4817,7 @@
               (ci.intern-syntax-id-value suffix-name)
               (cbi.compiler-builtin-ctfe "..."))
               (match (reader.sexpr-view suffix-rest)
-                [(Nil) (Ok (ast.ast-macro-param name-id parsed-ty true))]
+                [(Nil) (Ok (ast.ast-macro-param name-id (& parsed-ty) true))]
                 [_ (Err "parse: malformed macro operand")])
               (Err "parse: malformed macro operand"))]
           [(Cons _ _)
@@ -5610,11 +5613,11 @@
                 (Ok
                   (ast.ast-type-cons-with-pools
                     pools
-                    parsed-ty
-                    (ast.ast-type-list-new))
+                    (& parsed-ty)
+                    (& (ast.ast-type-list-new)))
                   (ast.ast-variant-payload-cleanup-cons
                     (No)
-                    (ast.ast-variant-payload-cleanup-list-new)))]
+                    (& (ast.ast-variant-payload-cleanup-list-new))))]
               [(Cons cleanup-node after-cleanup)
                 (let
                   [cleanup-form : reader.SpannedSexpr cleanup-node]
@@ -5637,11 +5640,11 @@
                             (Ok
                               (ast.ast-type-cons-with-pools
                                 pools
-                                parsed-ty
-                                parsed-rest)
+                                (& parsed-ty)
+                                (& parsed-rest))
                               (ast.ast-variant-payload-cleanup-cons
                                 parsed-cleanup
-                                cleanup-rest))]
+                                (& cleanup-rest)))]
                           [(Err message) (Err message)]))
                       (Err
                         "parse: enum payload cleanup metadata requires enum :cleanup metadata"))
@@ -5654,11 +5657,11 @@
                         (Ok
                           (ast.ast-type-cons-with-pools
                             pools
-                            parsed-ty
-                            parsed-rest)
+                            (& parsed-ty)
+                            (& parsed-rest))
                           (ast.ast-variant-payload-cleanup-cons
                             (No)
-                            cleanup-rest))]
+                            (& cleanup-rest)))]
                       [(Err message) (Err message)])))]
               [_ (Err "parse: malformed enum payload list")]))))]
     [_ (Err "parse: malformed enum payload list")]))
@@ -5808,7 +5811,7 @@
           parsed-lifetimes
           parsed-cleanup
           parsed-markers
-          (ast.ast-variant-def-cons parsed-variant parsed-rest))]
+          (ast.ast-variant-def-cons (& parsed-variant) (& parsed-rest)))]
       [(Err message) (Err message)])))
 
 (define (parse-ast-defenum-items
@@ -6452,7 +6455,7 @@
                 (try (parse-ast-expr-with-pools dispatch pools target-node))]
               (match (ast.ast-expr-unspan-with-pools
                 pools
-                (ast.ast-node-pool-context-expr-get pools parsed-target))
+                (& (ast.ast-node-pool-context-expr-get pools parsed-target)))
                 [(StructGet receiver-box field)
                   (Ok
                     (ast.ast-expr-struct-set-id-with-pools
@@ -6504,7 +6507,7 @@
   [expr-id : i64]) : bool
   (match (ast.ast-expr-unspan-with-pools
     pools
-    (ast.ast-node-pool-context-expr-get pools expr-id))
+    (& (ast.ast-node-pool-context-expr-get pools expr-id)))
     [(Var _) true]
     [(StructGet _ _) true]
     [(TupleRef _ index) (>= index 0)]
@@ -6541,8 +6544,8 @@
           [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
           [parsed-ty (try (parse-ast-type-spanned dispatch pools ty))]
           (if is-cast
-            (Ok (ast.ast-expr-cast-with-pools pools parsed-expr parsed-ty))
-            (Ok (ast.ast-expr-ann-with-pools pools parsed-expr parsed-ty))))
+            (Ok (ast.ast-expr-cast-with-pools pools parsed-expr (& parsed-ty)))
+            (Ok (ast.ast-expr-ann-with-pools pools parsed-expr (& parsed-ty)))))
         (Err "parse: expected ':' in annotation"))]
     [_ (Err "parse: malformed annotation")]))
 
@@ -6776,7 +6779,11 @@
         [(Ok parsed-ty)
           (let
             [parsed-len (try (parse-ast-expr-with-pools dispatch pools len))]
-            (Ok (ast.ast-expr-make-array-with-pools pools parsed-ty parsed-len)))]
+            (Ok
+              (ast.ast-expr-make-array-with-pools
+                pools
+                (& parsed-ty)
+                parsed-len)))]
         [(Err _) (parse-ast-dyn-array-literal dispatch pools rest)])]
     [_ (parse-ast-dyn-array-literal dispatch pools rest)]))
 
@@ -6790,7 +6797,10 @@
         [parsed-ty (try (parse-ast-type-spanned dispatch pools elem-ty))]
         [parsed-len (try (parse-ast-expr-with-pools dispatch pools len))]
         (Ok
-          (ast.ast-expr-fixed-make-array-with-pools pools parsed-ty parsed-len)))]
+          (ast.ast-expr-fixed-make-array-with-pools
+            pools
+            (& parsed-ty)
+            parsed-len)))]
     [_ (Err "parse: make-array expects exactly one type and one length")]))
 
 (define (parse-ast-array-ref-like
@@ -7538,8 +7548,12 @@
           [parsed-ty (try (parse-ast-type-spanned dispatch pools ty))]
           (if is-int-to-ptr
             (Ok
-              (ast.ast-expr-int-to-ptr-with-pools pools parsed-expr parsed-ty))
-            (Ok (ast.ast-expr-ptr-cast-with-pools pools parsed-expr parsed-ty))))
+              (ast.ast-expr-int-to-ptr-with-pools
+                pools
+                parsed-expr
+                (& parsed-ty)))
+            (Ok
+              (ast.ast-expr-ptr-cast-with-pools pools parsed-expr (& parsed-ty)))))
         (Err "parse: expected ':' in pointer cast"))]
     [_ (Err "parse: pointer cast expects (form expr : pointer-type)")]))
 
@@ -7673,21 +7687,30 @@
                 CompilerParseSemanticOriginKind.BindingDefinition)]
             (match (reader.spanned-sexpr-view region-node)
               [(Sym region _)
-                (match (reader.spanned-sexpr-view
-                  (compiler-parse-place-shared-view body))
-                  [(Nil _)
-                    (Err
-                      (str_cat.str-cat
-                        "parse: with-arena '"
-                        (compiler-parse-dispatch-syntax-id-text dispatch region)
-                        "' requires a non-empty body"))]
-                  [_
-                    (let
-                      [exprs (try (parse-ast-expr-list dispatch pools body))]
-                      (Ok
-                        (ast.ast-node-pool-context-expr-push
-                          pools
-                          (WithRegion (ci.intern-syntax-id-value region) exprs))))])]
+                (if (string.eq
+                  (compiler-parse-dispatch-syntax-id-text dispatch region)
+                  "program")
+                  (Err
+                    "parse: with-arena region cannot be the reserved lifetime 'program'")
+                  (match (reader.spanned-sexpr-view
+                    (compiler-parse-place-shared-view body))
+                    [(Nil _)
+                      (Err
+                        (str_cat.str-cat
+                          "parse: with-arena '"
+                          (compiler-parse-dispatch-syntax-id-text
+                            dispatch
+                            region)
+                          "' requires a non-empty body"))]
+                    [_
+                      (let
+                        [exprs (try (parse-ast-expr-list dispatch pools body))]
+                        (Ok
+                          (ast.ast-node-pool-context-expr-push
+                            pools
+                            (WithRegion
+                              (ci.intern-syntax-id-value region)
+                              exprs))))]))]
               [_ (Err "parse: with-arena region name must be an identifier")]))]
         [_ (Err "parse: malformed with-arena")])]
     [_ (Err "parse: malformed with-arena")]))
@@ -8926,7 +8949,7 @@
                   params
                   ret
                   body
-                  (ast.ast-fn-metadata-full export spmd-callable)))]
+                  (& (ast.ast-fn-metadata-full export spmd-callable))))]
             [(Callable _)
               (Err
                 "parse: define :spmd-callable cannot be used on functions with comptime parameters")])])
@@ -8936,7 +8959,7 @@
           params
           ret
           body
-          (ast.ast-fn-metadata-full export spmd-callable))))))
+          (& (ast.ast-fn-metadata-full export spmd-callable)))))))
 
 (define (parse-ast-define-fn-rest
   [dispatch : sym_i64_env.SymI64Env]
@@ -9262,7 +9285,7 @@
               [(Ok _ parsed-tail parsed-abi)
                 (Ok
                   -1
-                  (ast.ast-type-cons-with-pools pools ty parsed-tail)
+                  (ast.ast-type-cons-with-pools pools (& ty) (& parsed-tail))
                   parsed-abi)]
               [(Err message) (Err message)])]
           [(VarargsOpen)
@@ -9339,7 +9362,7 @@
 (define (parse-ast-extern-abi-combine
   [base : ast.AstExternAbi]
   [parsed : ast.AstExternAbi]) : ResultAstExternAbi
-  (if (ast.ast-extern-abi-c-varargs? (compiler-parse-place-shared-view base))
+  (if (ast.ast-extern-abi-c-varargs? (& base))
     (match parsed
       [(C) (Ok base)]
       [_ (Err "parse: extern varargs tail cannot be combined with another ABI")])
@@ -9481,7 +9504,11 @@
   [seen-abi : bool]
   [param-types : ast.AstTypeList]
   [ret : ast.AstType]) : ResultAstExternParts
-  (Ok abi symbol-id seen-abi (ast.ast-ty-func-with-pools pools param-types ret)))
+  (Ok
+    abi
+    symbol-id
+    seen-abi
+    (ast.ast-ty-func-with-pools pools param-types (& ret))))
 
 (define (parse-ast-extern-head-post-ret
   [dispatch : sym_i64_env.SymI64Env]
@@ -10164,7 +10191,7 @@
     [call-expr (try (parse-ast-expr-with-pools dispatch pools call-form))]
     (match (ast.ast-expr-unspan-with-pools
       pools
-      (ast.ast-node-pool-context-expr-get pools call-expr))
+      (& (ast.ast-node-pool-context-expr-get pools call-expr)))
       [(Call _ _)
         (match (reader.spanned-sexpr-slice-view tail)
           [(List (slice) _)
@@ -10645,7 +10672,7 @@
           (compiler-parse-place-shared-view form)))]
     (match (ast.ast-expr-unspan-with-pools
       pools
-      (ast.ast-node-pool-context-expr-get pools call-expr))
+      (& (ast.ast-node-pool-context-expr-get pools call-expr)))
       [(Call _ _)
         (parse-ast-import-spec
           (MacroDecls call-expr No)

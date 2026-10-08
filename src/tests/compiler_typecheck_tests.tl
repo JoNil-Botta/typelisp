@@ -2054,7 +2054,7 @@
                 (match (tc_core.tc-inline-aggregate-type-layout
                   ctx
                   (ast.ast-ty-array
-                    (ast.ast-ty-tuple (tc_core.tc-type-list2 (U8) (I32)))
+                    (& (ast.ast-ty-tuple (tc_core.tc-type-list2 (U8) (I32))))
                     2))
                   [(Ok info)
                     (if (and
@@ -2065,7 +2065,7 @@
                   [(Err _) (set! ok false)])
                 (match (tc_core.tc-inline-aggregate-type-layout
                   ctx
-                  (ast.ast-ty-box (Struct (ci.intern "InlinePacket"))))
+                  (ast.ast-ty-box (& (Struct (ci.intern "InlinePacket")))))
                   [(Ok info)
                     (if (and
                       (= (tc_core.tc-layout-info-size info) 8)
@@ -2075,7 +2075,7 @@
                   [(Err _) (set! ok false)])
                 (match (tc_core.tc-inline-aggregate-type-layout
                   ctx
-                  (ast.ast-ty-dyn-array (Struct (ci.intern "InlinePacket"))))
+                  (ast.ast-ty-dyn-array (& (Struct (ci.intern "InlinePacket")))))
                   [(Ok info)
                     (if (and
                       (= (tc_core.tc-layout-info-size info) 8)
@@ -2763,13 +2763,14 @@
 
 (define (compiler-typecheck-box-render-ok?) : bool
   (and
-    (string.eq (tc_core.tc-type-render (ast.ast-ty-box (I64))) "(Box i64)")
+    (string.eq (tc_core.tc-type-render (ast.ast-ty-box (& (I64)))) "(Box i64)")
     (tc_core.tc-type-eq
-      (ast.ast-ty-box (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (I64)))
-      (ast.ast-ty-box (I64)))
+      (ast.ast-ty-box
+        (& (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (& (I64)))))
+      (ast.ast-ty-box (& (I64))))
     (tc_core.tc-type-contains-region
       (ast.ast-ty-box
-        (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (String)))
+        (& (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (& (String)))))
       cbi.compiler-builtin-id-fix-n)))
 
 (define (compiler-typecheck-box-tests-ok?) : bool
@@ -3348,36 +3349,40 @@
 (define (compiler-typecheck-cleanup-struct-repr-c-ast-program) : ast.AstProgram
   (ast.ast-program
     (ast.ast-decl-cons
-      (ast.ast-decl-def-struct-id
-        (ci.intern-generated-name "Bad")
-        (ast.ast-struct-repr-c)
-        (ast.ast-struct-cleanup-fn-id
-          (ci.intern-syntax-id-from-raw
-            (ci.intern-generated-name "cleanup-bad")))
-        (ast.ast-field-def-cons
-          (ast.ast-field-def-id
-            (ci.intern-syntax-id-from-raw (ci.intern-generated-name "fd"))
-            (I64)
-            (No))
-          (ast.ast-field-def-list-new)))
-      (ast.ast-decl-list-new))))
+      (&
+        (ast.ast-decl-def-struct-id
+          (ci.intern-generated-name "Bad")
+          (ast.ast-struct-repr-c)
+          (ast.ast-struct-cleanup-fn-id
+            (ci.intern-syntax-id-from-raw
+              (ci.intern-generated-name "cleanup-bad")))
+          (ast.ast-field-def-cons
+            (&
+              (ast.ast-field-def-id
+                (ci.intern-syntax-id-from-raw (ci.intern-generated-name "fd"))
+                (I64)
+                (No)))
+            (& (ast.ast-field-def-list-new)))))
+      (& (ast.ast-decl-list-new)))))
 
 (define (compiler-typecheck-cleanup-struct-field-outside-ast-program) : ast.AstProgram
   (ast.ast-program
     (ast.ast-decl-cons
-      (ast.ast-decl-def-struct-id
-        (ci.intern-generated-name "Bad")
-        (Default)
-        (No)
-        (ast.ast-field-def-cons
-          (ast.ast-field-def-id
-            (ci.intern-syntax-id-from-raw (ci.intern-generated-name "fd"))
-            (I64)
-            (ast.ast-field-cleanup-fn-id
-              (ci.intern-syntax-id-from-raw
-                (ci.intern-generated-name "close-fd"))))
-          (ast.ast-field-def-list-new)))
-      (ast.ast-decl-list-new))))
+      (&
+        (ast.ast-decl-def-struct-id
+          (ci.intern-generated-name "Bad")
+          (Default)
+          (No)
+          (ast.ast-field-def-cons
+            (&
+              (ast.ast-field-def-id
+                (ci.intern-syntax-id-from-raw (ci.intern-generated-name "fd"))
+                (I64)
+                (ast.ast-field-cleanup-fn-id
+                  (ci.intern-syntax-id-from-raw
+                    (ci.intern-generated-name "close-fd")))))
+            (& (ast.ast-field-def-list-new)))))
+      (& (ast.ast-decl-list-new)))))
 
 (define (compiler-typecheck-cleanup-struct-tests-ok?) : bool
   (and
@@ -3447,20 +3452,22 @@
 (define (compiler-typecheck-cleanup-enum-payload-outside-ast-program) : ast.AstProgram
   (ast.ast-program
     (ast.ast-decl-cons
-      (ast.ast-decl-def-enum-id
-        (ci.intern-generated-name "Bad")
-        (No)
-        (ast.ast-variant-def-cons
-          (ast.ast-variant-def-id
-            (ci.intern-generated-name "A")
-            (ast.ast-type-cons (I64) (ast.ast-type-list-new))
-            (ast.ast-variant-payload-cleanup-cons
-              (ast.ast-variant-payload-cleanup-fn-id
-                (ci.intern-syntax-id-from-raw
-                  (ci.intern-generated-name "close-fd")))
-              (ast.ast-variant-payload-cleanup-list-new)))
-          (ast.ast-variant-def-list-new)))
-      (ast.ast-decl-list-new))))
+      (&
+        (ast.ast-decl-def-enum-id
+          (ci.intern-generated-name "Bad")
+          (No)
+          (ast.ast-variant-def-cons
+            (&
+              (ast.ast-variant-def-id
+                (ci.intern-generated-name "A")
+                (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
+                (ast.ast-variant-payload-cleanup-cons
+                  (ast.ast-variant-payload-cleanup-fn-id
+                    (ci.intern-syntax-id-from-raw
+                      (ci.intern-generated-name "close-fd")))
+                  (& (ast.ast-variant-payload-cleanup-list-new)))))
+            (& (ast.ast-variant-def-list-new)))))
+      (& (ast.ast-decl-list-new)))))
 
 (define (compiler-typecheck-cleanup-enum-tests-ok?) : bool
   (and
@@ -3608,32 +3615,32 @@
     (tc_core.tc-type-copyable? ctx (Never))
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-func (ast.ast-type-list-new) (I64)))
+      (ast.ast-ty-func (ast.ast-type-list-new) (& (I64))))
     (tc_core.tc-type-copyable?
       ctx
       (ast.ast-ty-ptr
-        (ast.ast-ty-region cbi.compiler-builtin-id-fix-value (String))))
+        (& (ast.ast-ty-region cbi.compiler-builtin-id-fix-value (& (String))))))
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-mut-ptr (ast.ast-ty-dyn-array (I64))))
+      (ast.ast-ty-mut-ptr (& (ast.ast-ty-dyn-array (& (I64))))))
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (String)))
+      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (& (String))))
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (Str)))
+      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (& (Str))))
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (Bytes)))
+      (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (& (Bytes))))
     ;; Arrays and tuples are structurally Copyable.
-    (tc_core.tc-type-copyable? ctx (ast.ast-ty-array (I64) 4))
-    (tc_core.tc-type-copyable? ctx (ast.ast-ty-array (I64) 0))
+    (tc_core.tc-type-copyable? ctx (ast.ast-ty-array (& (I64)) 4))
+    (tc_core.tc-type-copyable? ctx (ast.ast-ty-array (& (I64)) 0))
     (tc_core.tc-type-copyable?
       ctx
       (ast.ast-ty-tuple
         (ast.ast-type-cons
-          (I64)
-          (ast.ast-type-cons (Bool) (ast.ast-type-list-new)))))
+          (& (I64))
+          (& (ast.ast-type-cons (& (Bool)) (& (ast.ast-type-list-new)))))))
     (tc_core.tc-type-copyable? ctx (ast.ast-ty-tuple (ast.ast-type-list-new)))
     (tc_core.tc-type-copyable? ctx (Struct (ci.intern "Scalar")))
     (tc_core.tc-type-copyable? ctx (Struct (ci.intern "ScalarC")))
@@ -3646,14 +3653,14 @@
         (ci.intern "NestedCopy")
         (ast.ast-lifetime-cons
           cbi.compiler-builtin-id-fix-n
-          (ast.ast-lifetime-list-new))))
+          (& (ast.ast-lifetime-list-new)))))
     (tc_core.tc-type-copyable?
       ctx
       (ast.ast-ty-enum-args
         (ci.intern "NestedChoice")
         (ast.ast-lifetime-cons
           cbi.compiler-builtin-id-fix-n
-          (ast.ast-lifetime-list-new))))
+          (& (ast.ast-lifetime-list-new)))))
     ;; Lifetime arguments do not affect Copy; shared refs do.
     (tc_core.tc-type-copyable?
       ctx
@@ -3661,14 +3668,14 @@
         (ci.intern "RefBox")
         (ast.ast-lifetime-cons
           cbi.compiler-builtin-id-fix-n
-          (ast.ast-lifetime-list-new))))
+          (& (ast.ast-lifetime-list-new)))))
     (tc_core.tc-type-copyable?
       ctx
       (ast.ast-ty-enum-args
         (ci.intern "RefOption")
         (ast.ast-lifetime-cons
           cbi.compiler-builtin-id-fix-n
-          (ast.ast-lifetime-list-new))))
+          (& (ast.ast-lifetime-list-new)))))
     (tc_core.tc-type-copyable? ctx (I64))))
 
 (define (compiler-typecheck-move-kind-move-only-group-ok?
@@ -3677,10 +3684,10 @@
     (tc_core.tc-type-move-only? ctx (String))
     (tc_core.tc-type-move-only? ctx (Str))
     (tc_core.tc-type-move-only? ctx (Bytes))
-    (tc_core.tc-type-move-only? ctx (ast.ast-ty-dyn-array (I64)))
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-dyn-array (& (I64))))
     ;; Zero-length arrays still classify by element.
-    (tc_core.tc-type-move-only? ctx (ast.ast-ty-array (String) 0))
-    (tc_core.tc-type-move-only? ctx (ast.ast-ty-box (I64)))
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-array (& (String)) 0))
+    (tc_core.tc-type-move-only? ctx (ast.ast-ty-box (& (I64))))
     (tc_core.tc-type-move-only? ctx (Struct (ci.intern "Box")))
     (tc_core.tc-type-move-only? ctx (Enum (ci.intern "MoveOnlyEnum")))
     (tc_core.tc-type-move-only? ctx (Struct (ci.intern "CleanupScalar")))
@@ -3696,40 +3703,43 @@
       (ast.ast-ty-enum-args (ci.intern "RefOption") (ast.ast-lifetime-list-new)))
     (tc_core.tc-type-move-only?
       ctx
-      (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (I64)))
+      (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (& (I64))))
     (tc_core.tc-type-move-only?
       ctx
       (ast.ast-ty-tuple
         (ast.ast-type-cons
-          (Struct (ci.intern "Box"))
-          (ast.ast-type-cons
-            (ast.ast-ty-dyn-array (I64))
-            (ast.ast-type-list-new)))))))
+          (& (Struct (ci.intern "Box")))
+          (&
+            (ast.ast-type-cons
+              (& (ast.ast-ty-dyn-array (& (I64))))
+              (& (ast.ast-type-list-new)))))))))
 
 (define (compiler-typecheck-move-kind-wrapper-group-ok?
   [ctx : tc_core.TcContext]) : bool
   (and
     (tc_core.tc-type-copyable?
       ctx
-      (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (I64)))
+      (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (& (I64))))
     (tc_core.tc-type-copyable?
       ctx
       (ast.ast-ty-region
         cbi.compiler-builtin-id-fix-n
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-value (String))))
+        (& (ast.ast-ty-ref cbi.compiler-builtin-id-fix-value (& (String))))))
     (tc_core.tc-type-copyable?
       ctx
       (ast.ast-ty-region
         cbi.compiler-builtin-id-fix-n
-        (ast.ast-ty-tuple (ast.ast-type-cons (I64) (ast.ast-type-list-new)))))
+        (&
+          (ast.ast-ty-tuple
+            (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))))))
     (tc_core.tc-type-move-only?
       ctx
-      (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (String)))
+      (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (& (String))))
     (tc_core.tc-type-move-only?
       ctx
       (ast.ast-ty-region
         cbi.compiler-builtin-id-fix-value
-        (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (I64))))
+        (& (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-value (& (I64))))))
     (tc_core.tc-type-copyable? ctx (I64))
     (tc_core.tc-type-move-only? ctx (String))))
 
@@ -3929,15 +3939,20 @@
 
 (define (compiler-typecheck-raw-pointer-render-ok?) : bool
   (and
-    (string.eq (tc_core.tc-type-render (ast.ast-ty-ptr (I64))) "(Ptr i64)")
+    (string.eq (tc_core.tc-type-render (ast.ast-ty-ptr (& (I64)))) "(Ptr i64)")
     (string.eq
-      (tc_core.tc-type-render (ast.ast-ty-mut-ptr (ast.ast-ty-ptr (U8))))
+      (tc_core.tc-type-render
+        (ast.ast-ty-mut-ptr (& (ast.ast-ty-ptr (& (U8))))))
       "(MutPtr (Ptr u8))")
-    (tc_core.tc-type-eq (ast.ast-ty-ptr (I64)) (ast.ast-ty-ptr (I64)))
-    (not (tc_core.tc-type-eq (ast.ast-ty-ptr (I64)) (ast.ast-ty-mut-ptr (I64))))
+    (tc_core.tc-type-eq (ast.ast-ty-ptr (& (I64))) (ast.ast-ty-ptr (& (I64))))
+    (not
+      (tc_core.tc-type-eq
+        (ast.ast-ty-ptr (& (I64)))
+        (ast.ast-ty-mut-ptr (& (I64)))))
     (tc_core.tc-type-eq
-      (ast.ast-ty-ptr (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (I64)))
-      (ast.ast-ty-ptr (I64)))))
+      (ast.ast-ty-ptr
+        (& (ast.ast-ty-region cbi.compiler-builtin-id-fix-n (& (I64)))))
+      (ast.ast-ty-ptr (& (I64))))))
 
 (define (compiler-typecheck-raw-pointer-op-tests-ok?) : bool
   (and
@@ -4315,29 +4330,29 @@
     [string-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
-          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (String)))
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (& (String))))
         "(& n String)")]
     [str-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
-          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (Str)))
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (& (Str))))
         "(& n str)")]
     [bytes-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
-          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (Bytes)))
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (& (Bytes))))
         "(& n bytes)")]
     [bytes-mut-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
-          (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-n (Bytes)))
+          (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-n (& (Bytes))))
         "(&mut n bytes)")]
     [mut-ref-render-ok : bool
       (string.eq
         (tc_core.tc-type-render
           (ast.ast-ty-mut-ref
             cbi.compiler-builtin-id-fix-value
-            (ast.ast-ty-dyn-array (I64))))
+            (& (ast.ast-ty-dyn-array (& (I64))))))
         "(&mut value (__tl_dyn-array i64))")]
     [structural-lifetime-source : i64 (ci.intern "macro-lifetime")]
     [intern-state : ci.InternCompatState
@@ -4354,11 +4369,11 @@
                 structural-session
                 7
                 structural-lifetime-source))
-            (I64)))
+            (& (I64))))
         "(& macro-lifetime i64)")]
     [invalid-lifetime-render-ok : bool
       (string.eq
-        (tc_core.tc-type-render (ast.ast-ty-ref (ci.intern-capacity) (I64)))
+        (tc_core.tc-type-render (ast.ast-ty-ref (ci.intern-capacity) (& (I64))))
         (str_cat.str-cat
           "(& <id:"
           (string.int->string (ci.intern-capacity))
@@ -4370,7 +4385,7 @@
             (ci.intern "RefBox")
             (ast.ast-lifetime-cons
               cbi.compiler-builtin-id-fix-n
-              (ast.ast-lifetime-list-new))))
+              (& (ast.ast-lifetime-list-new)))))
         "(RefBox n)")]
     [str-eq-ok : bool (tc_core.tc-type-eq (Str) (Str))]
     [str-distinct-ok : bool (not (tc_core.tc-type-eq (Str) (String)))]
@@ -4383,37 +4398,37 @@
             (ci.intern "RefBox")
             (ast.ast-lifetime-cons
               cbi.compiler-builtin-id-fix-n
-              (ast.ast-lifetime-list-new)))
+              (& (ast.ast-lifetime-list-new))))
           (ast.ast-ty-struct-args
             (ci.intern "RefBox")
             (ast.ast-lifetime-cons
               cbi.compiler-builtin-id-fix-m
-              (ast.ast-lifetime-list-new)))))]
+              (& (ast.ast-lifetime-list-new))))))]
     [region-erased-eq-ok : bool
       (tc_core.tc-type-eq
         (ast.ast-ty-ref
           cbi.compiler-builtin-id-fix-n
-          (ast.ast-ty-region cbi.compiler-builtin-id-fix-value (I64)))
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (I64)))]
+          (& (ast.ast-ty-region cbi.compiler-builtin-id-fix-value (& (I64)))))
+        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (& (I64))))]
     [region-distinct-ok : bool
       (not
         (tc_core.tc-type-eq
-          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (I64))
-          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-m (I64))))]
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (& (I64)))
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-m (& (I64)))))]
     [mut-distinct-ok : bool
       (not
         (tc_core.tc-type-eq
-          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (I64))
-          (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-n (I64))))]
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (& (I64)))
+          (ast.ast-ty-mut-ref cbi.compiler-builtin-id-fix-n (& (I64)))))]
     [region-contains-ok : bool
       (tc_core.tc-type-contains-region
-        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (I64))
+        (ast.ast-ty-ref cbi.compiler-builtin-id-fix-n (& (I64)))
         cbi.compiler-builtin-id-fix-n)]
     [inner-region-contains-ok : bool
       (tc_core.tc-type-contains-region
         (ast.ast-ty-mut-ref
           cbi.compiler-builtin-id-fix-value
-          (ast.ast-ty-region cbi.compiler-builtin-id-fix-m (String)))
+          (& (ast.ast-ty-region cbi.compiler-builtin-id-fix-m (& (String)))))
         cbi.compiler-builtin-id-fix-m)]
     (and
       string-ref-render-ok
@@ -4558,6 +4573,20 @@
         "(define (main [n : i64]) : (& n i64)
   (let [x : i64 1] (& x)))"
         "typecheck: reference value would escape lexical scope")]
+    ;; `program` outlives every lifetime, so a return or a returned aggregate
+    ;; may carry it without an input tied to it (#8630).
+    [return-program-ok : bool
+      (compiler-typecheck-ok?
+        "(defstruct Named (name (& program str)))
+(define (name-of [named : Named]) : (& program str)
+  named.name)
+(define (make-named) : Named
+  (Named \"world\"))")]
+    [return-program-param-borrow-error-ok : bool
+      (compiler-typecheck-error-ok?
+        "(define (main [n : i64]) : (& program i64)
+  (& n))"
+        "typecheck: return type mismatch: expected (& program i64), found (& n i64); source lifetime `n` does not outlive required lifetime `program`")]
     [struct-field-ok : bool
       (compiler-typecheck-ok?
         "(defstruct RefBox (value (& n i64)))
@@ -4859,6 +4888,8 @@
       return-param-ref-ok
       return-untied-error-ok
       return-local-escape-error-ok
+      return-program-ok
+      return-program-param-borrow-error-ok
       struct-field-ok
       enum-payload-ok
       lifetime-struct-return-ok

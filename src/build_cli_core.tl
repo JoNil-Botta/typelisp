@@ -3153,7 +3153,7 @@
     [(DefFn decl-meta name params ret _ metadata)
       (if (= (string.string-length owned-path) 0)
         collector
-        (match (ast.ast-fn-metadata-spmd-callable metadata)
+        (match (ast.ast-fn-metadata-spmd-callable (& metadata))
           [(No) collector]
           [(Callable specializations)
             (if (match mode

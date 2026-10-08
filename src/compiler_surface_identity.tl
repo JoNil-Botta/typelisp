@@ -691,7 +691,7 @@
             (array-ref remap ref0)
             (array-ref remap ref1))
           (ci.intern-generated-qualified-name
-            name
+            (& name)
             (array-ref remap ref0)
             (array-ref remap ref1)))]
       [dotted
@@ -702,12 +702,12 @@
             (array-ref remap ref1)
             (array-ref remap ref2))
           (ci.intern-generated-dotted-name
-            name
+            (& name)
             (array-ref remap ref0)
             (array-ref remap ref1)
             (array-ref remap ref2)))]
       [canonical (ci.intern-generated-canonical-name name)]
-      [else (ci.intern-generated-name name)])))
+      [else (ci.intern-generated-name (& name))])))
 
 (define (surface-identity-hydrate-payload
   [payload : SurfaceIdentityPayload]

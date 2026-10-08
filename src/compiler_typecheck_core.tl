@@ -89704,6 +89704,8 @@
     TcMacroWalkStateData)
   (tc-state-cell-ptr (tc-macro-walk-state-address state) TcMacroWalkStateData))
 
+;; Whole-struct snapshot and write-back, for tests that inspect or seed the
+;; walk state. Compiler paths read and set single fields in place instead.
 (define (tc-macro-walk-state-data [state : TcMacroState]) : TcMacroWalkStateData
   (tc-state-cell-read (tc-macro-walk-state-address state) TcMacroWalkStateData))
 
@@ -89716,9 +89718,8 @@
     data))
 
 (defmacro (tc-macro-walk-field [state : Expr] [field : Expr]) : Expr
-  `(let
-    [data : TcMacroWalkStateData (tc-macro-walk-state-data ,state)]
-    (tc-global-shared-view (__tl-project-field data ,field))))
+  `(unsafe
+    (__tl-project-field (deref (tc-macro-walk-state-ptr ,state)) ,field)))
 
 (define tc-dependency-tlci-catalog-hits : i64
   0)
@@ -89815,11 +89816,15 @@
           (tc-dependency-tlci-route-counter-value state counter))
         (set! counter (+ counter 1))))))
 
+;; Field reads and writes go through the cell pointer. The walk state is a
+;; struct of several hundred bytes, and copying it whole to read or set one
+;; field was a measurable share of every macro call.
 (defmacro (tc-macro-walk-set! [state : Expr] [field : Expr] [value : Expr]) : Expr
-  `(let
-    [data : TcMacroWalkStateData (tc-macro-walk-state-data ,state)]
-    (__tl-project-set-field data ,field ,value)
-    (tc-macro-walk-state-data-set! ,state data)))
+  `(unsafe
+    (__tl-project-set-field
+      (deref (tc-macro-walk-state-ptr ,state))
+      ,field
+      ,value)))
 
 (define (tc-macro-ctfe-state [state : TcMacroState]) : ctfe_support.CompilerCtfeMacroState
   (tc-macro-walk-field state ctfe-macro-state))

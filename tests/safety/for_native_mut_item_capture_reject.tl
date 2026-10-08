@@ -4,8 +4,7 @@
       (lambda () : i64
         0)]
     (begin
-      (for
-        [item items]
+      (for [item items]
         (set!
           saved
           (lambda () : i64

@@ -1156,8 +1156,9 @@
     [pools : ast.AstNodePoolContext
       (ast.ast-node-pool-context-new-with-capacities 8 8)]
     [lifetime : i64 (ci.intern "ir-slice")]
-    [slice : ast.AstType (ast.ast-ty-slice-with-pools pools I64)]
-    [borrowed : ast.AstType (ast.ast-ty-ref-with-pools pools lifetime slice)]
+    [slice : ast.AstType (ast.ast-ty-slice-with-pools pools (& (I64)))]
+    [borrowed : ast.AstType
+      (ast.ast-ty-ref-with-pools pools lifetime (& slice))]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases (& pools))]
     [clone : ast.AstType
       (compiler_ir_types.compiler-ir-clone-type
@@ -1220,11 +1221,11 @@
     [args : ast.AstType
       (ast.ast-ty-var-args
         name
-        (ast.ast-lifetime-cons life (ast.ast-lifetime-list-new)))]
+        (ast.ast-lifetime-cons life (& (ast.ast-lifetime-list-new))))]
     [nested : ast.AstType
       (ast.ast-ty-slice-with-pools
         pools
-        (ast.ast-ty-ptr-with-pools pools (ast.ast-global-shared-view plain)))]
+        (& (ast.ast-ty-ptr-with-pools pools (& plain))))]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases pools)]
     (and
       (string.eq
@@ -1275,19 +1276,20 @@
           definition
           9
           (ci.intern-capacity)))]
-    [borrowed : ast.AstType (ast.ast-ty-ref-with-pools pools lifetime I64)]
+    [borrowed : ast.AstType
+      (ast.ast-ty-ref-with-pools pools lifetime (& (I64)))]
     [arithmetic-borrowed : ast.AstType
       (ast.ast-ty-ref-with-pools
         pools
         (cis.intern-fresh-local-identity-raw
           (cis.intern-structural-session-fresh-local-identity session 8 source))
-        I64)]
+        (& (I64)))]
     [other-intern : ci.InternCompatState (ci.intern-compat-state-new)]
     [other-session : cis.InternStructuralSessionHandle
       (cis.intern-structural-session-handle-from-source-names
         (ci.intern-source-name-session-handle-from-state (& other-intern)))]
     [invalid : ast.AstType
-      (ast.ast-ty-ref-with-pools pools (ci.intern-capacity) I64)]
+      (ast.ast-ty-ref-with-pools pools (ci.intern-capacity) (& (I64)))]
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases (& pools))]
     (and
       (compiler-ir-smoke-type-variable-render-ok?

@@ -127,6 +127,9 @@ vector_cleanup_consuming_iterator|all|-|tests/integration/vector_cleanup_consumi
 vector_bang_eval_once|all|-|tests/integration/vector_bang_eval_once.tl|42|-|-|stdlib/vector.tl|-
 dense_list_generated|all|-|tests/integration/dense_list_generated.tl|42|-|-|stdlib/dense_list.tl|-
 for_macro|all|-|tests/integration/for_macro.tl|42|-|-|stdlib/iterator.tl stdlib/string.tl stdlib/vector.tl|-
+for_macro_sources|all|-,0,2|tests/integration/for_macro_sources.tl|42|-|-|for_range_provider.tl for_slots_protocol_provider.tl stdlib/iterator.tl stdlib/string.tl|-
+core_macros_compound_assign|all|-,0,2|tests/integration/core_macros_compound_assign.tl|42|-|-|-|-
+core_macros_any_all|all|-|tests/integration/core_macros_any_all.tl|42|-|-|stdlib/iterator.tl|-
 macro_clause_capture_slice_view|all|-|tests/integration/macro_clause_capture_slice_view.tl|42|-|-|-|-
 macro_binder_pool_publication|all|-|tests/integration/macro_binder_pool_publication.tl|42|-|-|-|-
 macro_loop_control_operand|all|-|tests/integration/macro_loop_control_operand.tl|42|-|-|stdlib/iterator.tl|-
@@ -353,6 +356,7 @@ generated_cfg|all|0,1,2|tests/integration/generated_cfg.tl|42|-|-|-|stage-stdlib
 clone_imported_nominal_direct|all|-|tests/integration/clone_imported_nominal_direct.tl|41|-|-|clone_imported_nominal_dep.tl stdlib/string.tl|-
 comptime_layout_imported|all|0,1,2|tests/integration/comptime_layout_imported.tl|42|-|-|comptime_layout_imported_dep.tl comptime_layout_imported_other.tl|-
 clone_imported_nominal_wrapper|all|-|tests/integration/clone_imported_nominal_wrapper.tl|42|-|-|clone_imported_nominal_dep.tl stdlib/string.tl|-
+struct_pattern_owner_module|all|-,0,2|tests/integration/struct_pattern_owner_module.tl|42|-|-|struct_pattern_owner_shapes.tl struct_pattern_owner_user.tl|-
 entry_names_like_imported_variants|all|-|tests/integration/entry_names_like_imported_variants.tl|42|-|-|entry_names_like_imported_variants_dep.tl stdlib/iterator.tl|-
 comptime_scalar|all|-|tests/integration/comptime_scalar.tl|42|-|-|-|-
 comptime_type_specialization|all|-|tests/integration/comptime_type_specialization.tl|42|-|-|-|-
@@ -443,6 +447,7 @@ global_initializer|all|-|tests/integration/global_initializer.tl|120|-|-|-|-
 hello|all|-|tests/integration/hello.tl|42|-|-|-|-
 parameter_set_rebind|all|-|tests/integration/parameter_set_rebind.tl|42|-|-|-|-
 by_value_memory_aggregate_explicit_mut|all|-|tests/integration/by_value_memory_aggregate_explicit_mut.tl|42|-|-|-|-
+by_value_param_private_storage|all|-,0,1,2|tests/integration/by_value_param_private_storage.tl|42|-|-|-|-
 by_value_aggregate_abi|all|-|tests/integration/by_value_aggregate_abi.tl|42|-|-|stdlib/string.tl|-
 i16_min_div_neg1_trap|all|-|tests/integration/i16_min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n
 i16_min_rem_neg1_trap|all|-|tests/integration/i16_min_rem_neg1_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=-32768 divisor=-1\n

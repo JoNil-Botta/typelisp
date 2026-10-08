@@ -500,8 +500,7 @@
         data.recording
         (and
           (string.eq (& data.request-path) (& path))
-          (match (ast.ast-decl-unwrapped
-            (owned_view.compiler-owned-shared-view decl))
+          (match (ast.ast-decl-unwrapped (& decl))
             [(ast.AstDecl.DefMacro _ _ _ _ _) false]
             [_ true])))]
     (in-arena
@@ -696,7 +695,7 @@
           (array-ref data.facts.functions data.current-function).body
           (match (ast.ast-expr-unspan-with-pools
             (& pools)
-            (tc.tc-context-expr-get ctx expression))
+            (& (tc.tc-context-expr-get ctx expression)))
             [(ast.AstExpr.Foreach payload)
               (match (ast.ast-foreach-box-shared-view payload)
                 [(ast.AstForeach.Foreach index _ start _ _)
@@ -986,7 +985,7 @@
     [expr : ast.AstExpr
       (ast.ast-expr-unspan-with-pools
         (& pools)
-        (tc.tc-context-expr-get ctx expression))]
+        (& (tc.tc-context-expr-get ctx expression)))]
     (match expr
       [(ast.AstExpr.Var _)
         (compiler-semantic-fact-reference-identity recorder ctx env)]
@@ -1017,7 +1016,7 @@
     [expr : ast.AstExpr
       (ast.ast-expr-unspan-with-pools
         (& pools)
-        (tc.tc-context-expr-get ctx expression))]
+        (& (tc.tc-context-expr-get ctx expression)))]
     (match expr
       [(ast.AstExpr.Try operand)
         (match (tc.tc-semantic-recorded-type ctx operand)
@@ -1223,9 +1222,10 @@
             (array-ref data.frames (- data.frame-count 1)).forbidden
             (match (ast.ast-expr-unspan-with-pools
               (& pools)
-              (tc.tc-context-expr-get
-                ctx
-                (array-ref data.frames (- data.frame-count 1)).expression))
+              (&
+                (tc.tc-context-expr-get
+                  ctx
+                  (array-ref data.frames (- data.frame-count 1)).expression)))
               [(ast.AstExpr.Foreach payload)
                 (match (ast.ast-foreach-box-shared-view payload)
                   [(ast.AstForeach.Foreach _ _ _ _ body)
@@ -1290,7 +1290,7 @@
     [scope : i64
       (match (ast.ast-expr-unspan-with-pools
         (& pools)
-        (tc.tc-context-expr-get ctx expression))
+        (& (tc.tc-context-expr-get ctx expression)))
         [(ast.AstExpr.Let payload)
           (match (ast.ast-let-box-shared-view payload)
             [(ast.AstLet.Let _ body) body])]

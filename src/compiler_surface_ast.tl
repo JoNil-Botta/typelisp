@@ -1578,7 +1578,7 @@
         (ast.ast-program-compact-with-pools
           source-pools
           dest-pools
-          (ast.ast-program decls))]
+          (& (ast.ast-program decls)))]
       [context : codec.SurfaceAstWriteContext
         (codec.surface-ast-write-context-new
           structural-session

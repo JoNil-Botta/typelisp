@@ -18,13 +18,15 @@
         [shared-items : (Array i64 2) (array 4 5)]
         [mut-items : (Array i64 2) (array 1 2)]
         [total : i64 0]
-        (for [item items] (set! total (+ total item)))
-        (for [item (& shared-items)] (set! total (+ total (deref item))))
-        (for
-          [item (&mut mut-items)]
+        (for [item items]
+          (set! total (+ total item)))
+        (for [item (& shared-items)]
+          (set! total (+ total (deref item))))
+        (for [item (&mut mut-items)]
           (set! (deref item) (+ (deref item) 1))
           (set! total (+ total (deref item))))
-        (for [item slice-items] (set! total (+ total (deref item))))
+        (for [item slice-items]
+          (set! total (+ total (deref item))))
         (set! (array-ref out-slots lane) (+ total lane))))))
 
 (define (main) : i64

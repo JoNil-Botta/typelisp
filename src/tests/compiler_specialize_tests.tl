@@ -207,6 +207,12 @@
         (spec_ci.intern-str region)
         "_"
         (spec-type-key (ast.ty-node-get inner)))]
+    [(Invalidate lifetime inner)
+      (str_cat.str-cat
+        "invalidate_"
+        (spec_ci.intern-str lifetime)
+        "_"
+        (spec-type-key (ast.ty-node-get inner)))]
     [(Enum name)
       (str_cat.str-cat "enum_" (ast.ast-nominal-name-id-display name))]
     [(EnumArgs name lifetimes)
@@ -323,7 +329,7 @@
 
 ;; AstDecl names carry generated ids allocated outside the source-name table.
 (define (spec-materialize-generated-name-id [name : String]) : i64
-  (spec_ci.intern-generated-name name))
+  (spec_ci.intern-generated-name (& name)))
 
 ;; Self-test shim for the removed ambient value worker: the combined
 ;; substitution walk with no type bindings.
@@ -626,12 +632,15 @@
           (spec-template-env-has-template?
             wide
             cbi.compiler-builtin-id-fix-second))
-        ;; A missing-template name creates no record; all real shadows are
-        ;; dense slots, and the state grew beyond its initial capacity.
+        ;; Every shadow of a templated name appends one dense slot, even when
+        ;; the name is already shadowed, and a missing-template name appends
+        ;; none: x, x again, second, second over x, the pattern's two, and
+        ;; three each for the params, the bindings and params-then-bindings
+        ;; (15). The wide state grew beyond its initial capacity.
         (=
           (spec.spec-template-shadow-state-data
             (spec-template-env-shadow-state base)).len
-          18)
+          15)
         (=
           (spec.spec-template-shadow-state-data
             (spec-template-env-shadow-state wide)).len
@@ -676,15 +685,15 @@
         (I64)
         (spec.spec-type-subst-new))]
     (and
-      (string.eq (spec-type-key (ast.ast-ty-ptr (I64))) "ptr_i64")
+      (string.eq (spec-type-key (ast.ast-ty-ptr (& (I64)))) "ptr_i64")
       (string.eq
-        (spec-type-key (ast.ast-ty-mut-ptr (ast.ast-ty-ptr (U8))))
+        (spec-type-key (ast.ast-ty-mut-ptr (& (ast.ast-ty-ptr (& (U8))))))
         "mutptr_ptr_u8")
       (ctfe.ctfe-type-eq
         (spec-substitute-type
-          (ast.ast-ty-mut-ptr (Var cbi.compiler-builtin-id-fix-T))
+          (ast.ast-ty-mut-ptr (& (Var cbi.compiler-builtin-id-fix-T)))
           subs)
-        (ast.ast-ty-mut-ptr (I64))))))
+        (ast.ast-ty-mut-ptr (& (I64)))))))
 
 (define (compiler-specialize-owner-slice-type-ok?) : bool
   (let
@@ -693,9 +702,11 @@
     [intern-state : spec_ci.InternCompatState (spec_ci.intern-compat-state-new)]
     [owner : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools intern-state)]
-    [slice-i64 : ast.AstType (ast.ast-ty-slice-with-pools pools I64)]
+    [slice-i64 : ast.AstType (ast.ast-ty-slice-with-pools pools (& (I64)))]
     [slice-t : ast.AstType
-      (ast.ast-ty-slice-with-pools pools (Var cbi.compiler-builtin-id-fix-T))]
+      (ast.ast-ty-slice-with-pools
+        pools
+        (& (Var cbi.compiler-builtin-id-fix-T)))]
     [subs : spec.SpecTypeSubst
       (spec.spec-type-subst-cons
         cbi.compiler-builtin-id-fix-T
@@ -766,10 +777,10 @@
       (spec.spec-owner-context-new pools-a intern-a)]
     [owner-b : spec.SpecOwnerContext
       (spec.spec-owner-context-new pools-b intern-b)]
-    [array-a : ast.AstType (ast.ast-ty-array-with-pools pools-a (I64) 7)]
-    [array-b : ast.AstType (ast.ast-ty-array-with-pools pools-b (I64) 7)]
-    [nested-a : ast.AstType (ast.ast-ty-ptr-with-pools pools-a array-a)]
-    [nested-b : ast.AstType (ast.ast-ty-ptr-with-pools pools-b array-b)]
+    [array-a : ast.AstType (ast.ast-ty-array-with-pools pools-a (& (I64)) 7)]
+    [array-b : ast.AstType (ast.ast-ty-array-with-pools pools-b (& (I64)) 7)]
+    [nested-a : ast.AstType (ast.ast-ty-ptr-with-pools pools-a (& array-a))]
+    [nested-b : ast.AstType (ast.ast-ty-ptr-with-pools pools-b (& array-b))]
     [values-a : spec.SpecValueList
       (spec.spec-value-cons
         (Type (ast.ast-place-shared-view nested-a))
@@ -890,7 +901,7 @@
     [(Cons decl rest)
       (let
         [rest : ast.AstDeclList rest]
-        (match (ast.ast-decl-unwrapped decl)
+        (match (ast.ast-decl-unwrapped (& decl))
           [(DefFn decl-meta fn-name _ _ _ _)
             (if (string.eq (spec_ci.intern-str fn-name) name)
               (+ 1 (compiler-specialize-decl-list-count-defs rest name))
@@ -969,13 +980,13 @@
       (string.eq
         (spec-type-key
           (spec-substitute-type
-            (ast.ast-ty-ptr (Var cbi.compiler-builtin-id-fix-T))
+            (ast.ast-ty-ptr (& (Var cbi.compiler-builtin-id-fix-T)))
             subs))
         "ptr_i64")
       (string.eq
         (spec-type-key
           (spec-substitute-type
-            (ast.ast-ty-dyn-array (Var cbi.compiler-builtin-id-fix-T))
+            (ast.ast-ty-dyn-array (& (Var cbi.compiler-builtin-id-fix-T)))
             subs))
         "dynarray_i64")
       (string.eq
@@ -983,9 +994,9 @@
           (spec-substitute-type
             (ast.ast-ty-func
               (ast.ast-type-cons
-                (Var cbi.compiler-builtin-id-fix-T)
-                (ast.ast-type-list-new))
-              (Var cbi.compiler-builtin-id-fix-T))
+                (& (Var cbi.compiler-builtin-id-fix-T))
+                (& (ast.ast-type-list-new)))
+              (& (Var cbi.compiler-builtin-id-fix-T)))
             subs))
         "fn_i64_nil_to_i64")
       (string.eq
@@ -1512,13 +1523,13 @@
           (ast.ast-param-list-new)
           (I64)
           body
-          (ast.ast-fn-metadata-full No (Callable a-items)))
+          (& (ast.ast-fn-metadata-full No (Callable a-items))))
         (ast.ast-decl-def-fn-metadata-id
           generated-id
           (ast.ast-param-list-new)
           (I64)
           body
-          (ast.ast-fn-metadata-full No (Callable b-items)))))))
+          (& (ast.ast-fn-metadata-full No (Callable b-items))))))))
 
 (define (compiler-generated-test-metadata-distinct-ok?) : bool
   (let
@@ -1731,6 +1742,15 @@
   (unless (compiler-generated-test-metadata-distinct-ok?) (return 0))
   (unless (compiler-specialize-generated-symbol-records-growth-ok?) (return 0))
   1)
+
+(cfg
+  test
+  (test
+    specialize-self-test
+    (test.assert-i64-eq
+      (compiler-specialize-self-test)
+      1
+      "every specialization self-test check passes")))
 
 (cfg
   test

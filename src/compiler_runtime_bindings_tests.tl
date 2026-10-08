@@ -530,6 +530,28 @@
       "then ntdll.lib")
     (test.assert-true (= (array-length linux) 0) "no Linux providers")))
 
+;; Every distinct provider reaches the link, however many a table names.
+(test
+  runtime-bindings-providers-not-capped
+  (let
+    [text : String
+      "windows-x86_64\tA1\tfunction\ta1.lib\talways\tobject
+windows-x86_64\tA2\tfunction\ta2.lib\talways\tobject
+windows-x86_64\tA3\tfunction\ta3.lib\talways\tobject
+windows-x86_64\tA4\tfunction\ta4.lib\talways\tobject
+windows-x86_64\tA5\tfunction\ta5.lib\talways\tobject
+windows-x86_64\tA6\tfunction\ta6.lib\talways\tobject
+windows-x86_64\tA7\tfunction\ta7.lib\talways\tobject
+windows-x86_64\tA8\tfunction\ta8.lib\talways\tobject
+windows-x86_64\tA9\tfunction\ta9.lib\talways\tobject
+windows-x86_64\tB9\tfunction\ta9.lib\talways\tobject"]
+    [providers : (__tl_dyn-array String)
+      (bindings.compiler-runtime-binding-providers-in (& text) "windows-x86_64")]
+    (test.assert-true (= (array-length providers) 9) "nine distinct providers")
+    (test.assert-true
+      (string.eq (array-ref providers 8) "a9.lib")
+      "the ninth provider is kept")))
+
 ;; --- the Windows object route ----------------------------------------------
 (define (runtime-bindings-test-image [source : String]) : cobj.CompilerObjectImage
   (match (backend.compiler-backend-emit-source-object-image-for-target

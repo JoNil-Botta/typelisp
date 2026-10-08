@@ -246,6 +246,17 @@ windows-x86_64\tNtCreateFile\tfunction\tntdll.lib\tabi-fixture\tobject
       kind)
     "object"))
 
+;; An upper bound on the rows of `text`, and so on its distinct providers:
+;; its line breaks plus one.
+(define (compiler-runtime-binding-row-bound [text : (& text str)]) : i64
+  (let
+    [count : i64 1]
+    [index : i64 0]
+    (while (< index (string.string-length text))
+      (when (= (string.char-at text index) '\n') (set! count (+ count 1)))
+      (set! index (+ index 1)))
+    count))
+
 ;: `target`'s providers in the table `text`, in first-use order, without
 ;: repeats.
 (define (compiler-runtime-binding-providers-in
@@ -253,7 +264,8 @@ windows-x86_64\tNtCreateFile\tfunction\tntdll.lib\tabi-fixture\tobject
   [target : (& target str)]) : (__tl_dyn-array String)
   (let
     [length : i64 (string.string-length text)]
-    [out : (__tl_dyn-array String) (__tl_make-array String 8)]
+    [out : (__tl_dyn-array String)
+      (__tl_make-array String (compiler-runtime-binding-row-bound text))]
     [count : i64 0]
     [start : i64 0]
     (while (< start length)
@@ -268,7 +280,7 @@ windows-x86_64\tNtCreateFile\tfunction\tntdll.lib\tabi-fixture\tobject
             (when (string.eq (array-ref out index) provider) (set! seen true))
             (set! index (+ index 1)))
           (unless
-            (or seen (>= count (array-length out)))
+            seen
             (set! (array-ref out count) provider)
             (set! count (+ count 1))))
         (set! start (+ end 1))))

@@ -40609,3 +40609,253 @@ b_keep:
     (backend.compiler-backend-state-new (ci.intern-compat-state-capture-active))
     functions
     externs))
+
+;; --- Shared-object code model (#8257) ---------------------------------------
+;; The assembly pass alone, on text shaped like executable-model output.
+(define (compiler-backend-shared-object-text [text : String]) : String
+  (match (backend.compiler-backend-shared-object-assembly text)
+    [(Ok buf) (text_buf.render buf)]
+    [(Err diag)
+      (str_cat.str-cat
+        "ERR "
+        (cdiag.compiler-diagnostic-message (& (deref diag))))]))
+
+(define (compiler-backend-shared-object-pass-ok?) : bool
+  (let
+    [rewritten : String
+      (compiler-backend-shared-object-text
+        "    .text
+    .globl tl_arena_set
+tl_arena_set:
+    movq %rdi, %fs:tl_current_arena@tpoff
+    ret
+    .globl tl_region_reset
+tl_region_reset:
+    movq %fs:tl_current_arena@tpoff, %r8
+    movq $0, %fs:tl_current_arena@tpoff
+    xorq %rbx, %rbx
+    ret
+tl_thread_init:
+    subq $tl_current_arena@tpoff, %rsi
+    ret
+tl_thread_local_word_addr:
+    movq %fs:0, %rax
+    addq $tl_thread_local_word@tpoff, %rax
+    ret
+    .extern tl_ext_entry
+user_fn:
+    movq %rdi, %fs:tl_current_arena@tpoff
+    movq tl_ext_entry(%rip), %r8
+    leaq tl_ext_entry(%rip), %rdi
+    call tl_ext_entry
+    leaq .L_local(%rip), %rax
+    .pushsection .data.rel.ro,\"aw\",@progbits
+.L_site:
+    .quad .L_tl_str_data_0
+    .popsection
+    ret
+    .section .rodata
+.L_tl_str_data_0:
+    .string \"movq %fs:tl_current_arena@tpoff, \"
+.L_tl_str_0:
+    .quad .L_tl_str_data_0
+    .quad 12
+    .section .rodata
+    .balign 8
+.L_mask:
+    .quad 0x8000000000000000
+    .quad -1
+    .section .typelisp_backtrace,\"a\",@progbits
+    .quad user_fn
+    .data
+    .quad .+8
+")]
+    (and
+      (asm-has?
+        rewritten
+        "    .globl tl_arena_set\n    .hidden tl_arena_set\n"
+        "    .globl tl_region_reset\n    .hidden tl_region_reset\n"
+        ;; A store borrows the function's named scratch register.
+        "tl_arena_set:\n    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n"
+        "    movq tl_current_arena@gottpoff(%rip), %r8\n    movq %fs:(%r8), %r8\n"
+        "    movq tl_current_arena@gottpoff(%rip), %rbx\n    movq $0, %fs:(%rbx)\n    xorq %rbx, %rbx\n"
+        "    negq %rsi\n    addq tl_current_arena@gottpoff(%rip), %rsi\n    negq %rsi\n"
+        "    addq tl_thread_local_word@gottpoff(%rip), %rax\n"
+        ;; Generated code stores TLS only at a call site, where %rax is free.
+        "user_fn:\n    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n"
+        ;; An extern is read through the GOT; a call keeps its PLT form.
+        "    movq tl_ext_entry@GOTPCREL(%rip), %r8\n    movq (%r8), %r8\n"
+        "    movq tl_ext_entry@GOTPCREL(%rip), %rdi\n"
+        "    call tl_ext_entry\n"
+        "    leaq .L_local(%rip), %rax\n"
+        ;; Only the read-only run holding an address moves.
+        "    .section .data.rel.ro,\"aw\",@progbits\n.L_tl_str_data_0:\n"
+        "    .section .rodata\n    .balign 8\n.L_mask:\n"
+        "    .section .typelisp_backtrace,\"aw\",@progbits\n    .quad user_fn\n"
+        ;; Data that spells `@tpoff` is not code.
+        "    .string \"movq %fs:tl_current_arena@tpoff, \"\n"
+        "    .data\n    .quad .+8\n")
+      (asm-lacks? rewritten "%fs:tl_current_arena@tpoff, %r8" "$tl_" "ERR"))))
+
+;; The pass refuses what it cannot make position-independent rather than
+;; leaving a link failure for later.
+(define (compiler-backend-shared-object-pass-refusals-ok?) : bool
+  (and
+    (string.eq
+      (compiler-backend-shared-object-text
+        "tl_mystery:\n    movq %rdi, %fs:tl_current_arena@tpoff\n")
+      "ERR backend: no shared-object scratch register for TLS store `movq %rdi, %fs:tl_current_arena@tpoff` in tl_mystery")
+    (string.eq
+      (compiler-backend-shared-object-text
+        "user_fn:\n    movq %rax, %fs:tl_current_arena@tpoff\n")
+      "ERR backend: no shared-object scratch register for TLS store `movq %rax, %fs:tl_current_arena@tpoff` in user_fn")
+    (string.eq
+      (compiler-backend-shared-object-text
+        "user_fn:\n    cmpq $0, %fs:tl_current_arena@tpoff\n")
+      "ERR backend: no shared-object form for TLS access `cmpq $0, %fs:tl_current_arena@tpoff` in user_fn")
+    (string.eq
+      (compiler-backend-shared-object-text
+        "    .extern tl_ext\nuser_fn:\n    addq tl_ext(%rip), %rax\n")
+      "ERR backend: no shared-object form for extern access `addq tl_ext(%rip), %rax` in user_fn")
+    (string.eq
+      (compiler-backend-shared-object-text
+        "    .text\nuser_fn:\n    jmp .L_end\n.L_site:\n    .quad .L_tl_str_data_0\n.L_end:\n")
+      "ERR backend: shared-object code model leaves a relocated word in .text: .quad .L_tl_str_data_0")
+    ;; A named code section is code too, so the same word there is refused.
+    (string.eq
+      (compiler-backend-shared-object-text
+        "    .section .text.typelisp_runtime,\"ax\"\ntl_fn:\n    .quad tl_alloc\n")
+      "ERR backend: shared-object code model leaves a relocated word in .text: .quad tl_alloc")
+    ;; A pushed read-only run that holds an address moves as a push, so its
+    ;; `.popsection` still returns to the code it interrupted.
+    (string.eq
+      (compiler-backend-shared-object-text
+        "    .text\nuser_fn:\n    .pushsection .rodata\n.L_site:\n    .quad .L_tl_str_data_0\n    .popsection\n    ret\n")
+      "    .text\nuser_fn:\n    .pushsection .data.rel.ro,\"aw\",@progbits\n.L_site:\n    .quad .L_tl_str_data_0\n    .popsection\n    ret\n")))
+
+(define (compiler-backend-shared-object-probe-source) : String
+  "(import stdlib.string)
+
+(define label : String (string.int->string 4200))
+
+(define (main) : i64
+  (let
+    [text : String (string.int->string 17)]
+    (+ (string.string-length (& text)) (string.string-length (& label)))))")
+
+(define (compiler-backend-shared-object-program-asm
+  [target : backend.CompilerBackendTarget]) : backend.ResultCompilerBackend
+  (match (lower.lower-compiler-source-with-path-mode
+    "shared_object_probe.tl"
+    (compiler-backend-shared-object-probe-source)
+    (backend.compiler-backend-lower-mode-for-target target (Scalar)))
+    [(Ok program spans)
+      (let
+        [state : backend.CompilerBackendState
+          (backend.compiler-backend-state-new
+            (ci.intern-compat-state-capture-active))]
+        (backend.compiler-backend-state-set-shared-object-code-model!
+          state
+          true)
+        (backend.compiler-backend-emit-program-target-with-mode-with-pools-and-crt-and-profile-state-backend-state
+          state
+          (ast.ast-node-pool-context-capture-active)
+          program
+          target
+          (Scalar)
+          spans
+          true
+          false
+          (profile_state.compiler-profile-state-new)))]
+    [(Err diag) (Err diag)]))
+
+;; A whole program under the shared-object code model: no entry, its global
+;; initializer in `tl_shared_object_init`, every symbol hidden, initial-exec
+;; TLS throughout, and relocated constants out of `.rodata`. A target without
+;; an ELF object format refuses the request.
+(define (compiler-backend-shared-object-program-ok?) : bool
+  (and
+    (asm-ok?
+      (compiler-backend-shared-object-program-asm
+        (backend.CompilerBackendTarget.Linux))
+      (has
+        "tl_shared_object_init:\n    subq $8, %rsp\n    call "
+        "    .globl tl_alloc\n    .hidden tl_alloc\n"
+        ".globl main\n    .hidden main\n"
+        "tl_current_arena@gottpoff(%rip)"
+        "    .section .data.rel.ro,\"aw\",@progbits\n")
+      (lacks "_tl_start" "@tpoff" "jmp *.L"))
+    (match (compiler-backend-shared-object-program-asm
+      (backend.CompilerBackendTarget.Windows))
+      [(Ok _) false]
+      [(Err diag)
+        (string.eq
+          (cdiag.compiler-diagnostic-message (& (deref diag)))
+          "backend: the shared-object code model needs an ELF target; windows-x86_64 has none")])
+    (backend.compiler-backend-target-policy-for-code-model
+      (backend.CompilerBackendTarget.Linux)
+      true).shared-object
+    (not
+      (backend.compiler-backend-target-policy-new
+        (backend.CompilerBackendTarget.Linux)).shared-object)
+    (string.eq
+      (backend.compiler-direct-object-fallback-category (SharedObjectCodeModel))
+      "shared-object-code-model")))
+
+;; Every TLS store a Linux runtime helper makes, under the shared-object code
+;; model, for one feature set. compiler-backend-shared-object-tls-scratch names
+;; each helper's scratch register by hand: each pin below is a store with the
+;; instructions that show its register dead there (overwritten, or the helper
+;; returns unit). A changed store site breaks a pin or the store count; re-check
+;; the scratch table before updating them.
+(define (compiler-backend-shared-object-runtime-ok?
+  [arena-debug : bool]
+  [profile : bool]
+  [backtrace : bool]) : bool
+  (let
+    [rewritten : String
+      (compiler-backend-shared-object-text
+        (backend.compiler-backend-runtime-functions-for-target
+          (backend.CompilerBackendTarget.Linux)
+          (runtime_common.CompilerBackendRuntimeFeatures
+            true
+            true
+            true
+            arena-debug
+            profile
+            false
+            false
+            backtrace
+            31)))]
+    (and
+      (asm-has?
+        rewritten
+        "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    movq %r8, %rax\n"
+        "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    subq %rcx, %r10\n"
+        "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n    ret\n    .size tl_arena_set,"
+        "    movq tl_current_arena@gottpoff(%rip), %rbx\n    movq $0, %fs:(%rbx)\n    xorq %rbx, %rbx\n")
+      (or
+        (not backtrace)
+        (asm-has?
+          rewritten
+          "tl_backtrace_stack_set:\n    movq tl_backtrace_stack_low@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n    movq tl_backtrace_stack_high@gottpoff(%rip), %rax\n    movq %rsi, %fs:(%rax)\n    ret\n"))
+      (=
+        (backend.compiler-backend-string-count rewritten ", %fs:(")
+        (if backtrace
+          6
+          4))
+      (asm-lacks? rewritten "@tpoff" "ERR"))))
+
+(test
+  backend-shared-object-code-model
+  (unless
+    (and
+      (compiler-backend-shared-object-pass-ok?)
+      (compiler-backend-shared-object-pass-refusals-ok?)
+      (compiler-backend-shared-object-program-ok?)
+      (compiler-backend-shared-object-runtime-ok? false false false)
+      (compiler-backend-shared-object-runtime-ok? true false false)
+      (compiler-backend-shared-object-runtime-ok? false true false)
+      (compiler-backend-shared-object-runtime-ok? false false true)
+      (compiler-backend-shared-object-runtime-ok? true true true))
+    (io.panic "the shared-object code model rewrote an emission wrongly")))

@@ -8079,7 +8079,11 @@ full reset or arena destroy. `tl_region_mark`, `tl_arena_current`,
 read or update backend runtime state. Current-arena state is thread-local:
 Linux uses local-exec TLS, with the FS base installed by the freestanding
 entry before global initializers run; Windows x64 uses the TEB
-arbitrary-user slot (`GS:0x28`). Raw thread spawn initializes a fresh zero
+arbitrary-user slot (`GS:0x28`). Under the Linux shared-object code model
+(`docs/compiler-architecture.md`, #8257), the same accesses are initial-exec:
+each loads the variable's GOT offset and the DSO carries `DF_STATIC_TLS`.
+There is no entry, and `tl_shared_object_init` runs the global initializers.
+Raw thread spawn initializes a fresh zero
 current-arena slot before user code runs, so a worker's first allocation
 creates an independent default arena chain. The slot always contains that
 chain's stable root; allocator and mark/reset internals reach the changing
@@ -8092,7 +8096,8 @@ the current arena, or zero before the first allocation, as `i64`;
 `unsafe` context and a zero or stable-root value. It does not perform the
 physical-segment canonicalization provided by `tl_arena_set`. Both lower
 directly to the platform TLS access used by the backend helpers
-(`%fs:tl_current_arena@tpoff` on Linux, `GS:0x28` on Windows), emit no calls,
+(`%fs:tl_current_arena@tpoff` on Linux, through `@gottpoff` under the
+shared-object code model, and `GS:0x28` on Windows), emit no calls,
 and require no imports, so they are valid in `stdlib.runtime` before ordinary
 allocation is available. They name only the current-arena slot; arbitrary TLS
 slots are out of scope pending a separate

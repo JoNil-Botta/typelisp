@@ -52,7 +52,7 @@ run expand nested.tl --at 6:6
 stderr empty
 stdout contains macro: stdlib.core_macros/for
 stdout not-contains   2.
-stdout contains __for_source_0
+stdout contains __for_range (iterator.range 0 3)
 
 # A user macro defined in the inspected file, whose template invokes `when`:
 # the rendered expansion is the fully expanded form.

@@ -5332,17 +5332,17 @@ explicit constructors.
   cover is unreachable. A nested or-pattern is irrefutable when one
   alternative is or when its alternatives cover the payload type the way a
   match's arms would. The arm body runs once, for whichever alternative
-  matched, and is compiled once. Alternatives that bind every name from the
-  same payload position, or bind nothing, enter it straight from their tag
-  or literal tests, so such an arm dispatches as the separate arms it
-  replaces would, in the same jump table; alternatives that bind from
-  different positions each bind first and then join the body, and a small
-  body (at most ten expression nodes) is compiled once per alternative
-  instead. In a match's final arm every alternative but the last is tested,
-  so the last `slice` alternative there performs no length comparison. A
-  nested or-pattern is tested as the whole-arm alternatives it expands to, so
-  `(V (or a b) c)` tries `(V a c)` and then `(V b c)`. A varying `foreach`
-  match does not accept or-patterns.
+  matched. Alternatives that bind every name from the same payload position,
+  or bind nothing, enter one compiled copy of it straight from their tag or
+  literal tests, so the arm dispatches as the separate arms it replaces
+  would, in the same jump table. Alternatives that bind from different
+  positions get one copy per position (one per alternative when the body has
+  at most ten expression nodes); alternatives with refutable payload
+  patterns bind first and then join a shared copy. In a match's final arm
+  every alternative but the last is tested, so the last `slice` alternative
+  there performs no length comparison. A nested or-pattern is tested as the
+  whole-arm alternatives it expands to, so `(V (or a b) c)` tries `(V a c)`
+  and then `(V b c)`. A varying `foreach` match does not accept or-patterns.
 - `or` and `fields` are reserved pattern heads; in expressions `(or ...)`
   remains the short-circuiting boolean macro.
 - Scalar scrutinees support literal patterns plus `_`.

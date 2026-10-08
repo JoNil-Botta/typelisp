@@ -50619,6 +50619,9 @@
 ;; more importantly, the allocator sees it and the offset live at the same point
 ;; and gives them two registers, which is what lets the backend lower the test
 ;; as a bare `bt` instead of scavenging a scratch around a real shift.
+;; A run whose values fill its whole window needs no mask: the window guard
+;; alone is the test, and it branches straight to the run's target
+;; (`guard-target`), as a range test does.
 (define (opt-bit-test-rewrite-head
   [block : ir.CompilerIrBlock]
   [value-var : i64]
@@ -50626,7 +50629,8 @@
   [width : i64]
   [mask : i64]
   [false-label : i64]
-  [mask-label : i64]
+  [guard-target : i64]
+  [mask? : bool]
   [mask-var : i64]
   [offset-var : i64]
   [guard-var : i64]) : ir.CompilerIrBlock
@@ -50642,9 +50646,11 @@
           instrs
           0
           prefix-end)
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (ir.CompilerIrInstr.Mov mask-var (I64 mask) (U64)))
+        (when
+          mask?
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Mov mask-var (I64 mask) (U64))))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
           (ir.CompilerIrInstr.BinOp
@@ -50663,8 +50669,14 @@
             (U64)))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.Branch (Var guard-var) mask-label false-label))
+          (ir.CompilerIrInstr.Branch (Var guard-var) guard-target false-label))
         (Block label (ir.compiler-ir-instr-builder-to-seq builder)))]))
+
+;; Whether `mask` sets every bit of a window of `width + 1` values.
+(define (opt-bit-test-mask-full? [mask : i64] [width : i64]) : bool
+  (if (>= width (- (opt-bit-test-window-width) 1))
+    (= mask -1)
+    (= mask (- (shl 1 (+ width 1)) 1))))
 
 ;; The shift count is spelled `offset & 63` rather than bare `offset`. The two
 ;; are the same value on every edge that reaches this block -- the head block's
@@ -50723,6 +50735,11 @@
               (let
                 [mask-label : i64 (opt-bit-test-fresh-label all-blocks label 0)]
                 [first-var : i64 (+ frame (* slot (opt-bit-test-plan-vars)))]
+                [mask? : bool
+                  (not
+                    (opt-bit-test-mask-full?
+                      (array-ref plans.masks slot)
+                      (array-ref plans.widths slot)))]
                 (ir.compiler-ir-block-builder-push!
                   out
                   (opt-bit-test-rewrite-head
@@ -50732,21 +50749,26 @@
                     (array-ref plans.widths slot)
                     (array-ref plans.masks slot)
                     (array-ref plans.falses slot)
-                    mask-label
+                    (if mask?
+                      mask-label
+                      (array-ref plans.trues slot))
+                    mask?
                     first-var
                     (+ first-var 1)
                     (+ first-var 2)))
-                (ir.compiler-ir-block-builder-push!
-                  out
-                  (opt-bit-test-mask-block
-                    mask-label
-                    (array-ref plans.trues slot)
-                    (array-ref plans.falses slot)
-                    first-var
-                    (+ first-var 1)
-                    (+ first-var 3)
-                    (+ first-var 4)
-                    (+ first-var 5)))
+                (when
+                  mask?
+                  (ir.compiler-ir-block-builder-push!
+                    out
+                    (opt-bit-test-mask-block
+                      mask-label
+                      (array-ref plans.trues slot)
+                      (array-ref plans.falses slot)
+                      first-var
+                      (+ first-var 1)
+                      (+ first-var 3)
+                      (+ first-var 4)
+                      (+ first-var 5))))
                 (opt-bit-test-rewrite-blocks! out rest all-blocks plans frame))))])]))
 
 (define (opt-bit-test-values-var-and-literal?

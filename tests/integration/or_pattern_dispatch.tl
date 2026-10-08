@@ -85,7 +85,8 @@
           (h z 16)))]))
 
 ;; Two groups: `x` at the first payload word (Add, Sub, Dup) and at the
-;; second (Swap, Flag), through a borrow.
+;; second (Swap, Flag), through a borrow. Each group lowers as an or-arm of
+;; its own.
 (define (borrowed-groups [op : (& o Op)]) : i64
   (match op
     [(or (Add x _) (Sub x _) (Dup x) (Swap _ x) (Flag _ x))

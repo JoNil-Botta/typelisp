@@ -64320,7 +64320,7 @@
       (lower-match-split-small-or-arms
         ctx
         state
-        (lower-global-shared-view scrut-ty)
+        (lower-match-pattern-scrut-ty ctx (lower-global-shared-view scrut-ty))
         source-arms)]
     (lower-match-dispatch-arms
       ctx
@@ -64332,14 +64332,28 @@
       arms
       cont)))
 
+;; The type a match's patterns test: a borrowed enum's referent, as
+;; `lower-match-dispatch-arms` matches it, else the scrutinee type.
+(define (lower-match-pattern-scrut-ty
+  [ctx : tc_core.TcContext]
+  [scrut-ty : ast.AstType]) : ast.AstType
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-resolve-type ctx (lower-global-shared-view scrut-ty)))
+    [(Ref _ referent-box)
+      (tc_core.tc-type-strip-region
+        (tc_core.tc-resolve-type
+          ctx
+          (tc_core.tc-context-type-get ctx referent-box)))]
+    [_ scrut-ty]))
+
 ;; An or-pattern arm lowers its body once, and alternatives that bind alike
-;; enter it straight from their tests (`lower-or-arm-body-start`). Only when
-;; the alternatives bind through more than one block would a shared body cost
-;; a jump; a small body is then copied instead, one arm per alternative,
-;; which lowers exactly as the separate arms it stands for. The final arm
-;; keeps the shared form when its last alternative has refutable payload or
-;; element patterns, which only the shared form can test without a following
-;; arm.
+;; enter it straight from their tests (`lower-or-arm-body-start`). When the
+;; alternatives bind through more than one block, a shared body would cost a
+;; jump the separate arms it replaces do not pay, so the arm is split first
+;; (`lower-match-or-arm-split`): into one arm per alternative when its body is
+;; small, else, when the alternatives are disjoint tag tests that bind only
+;; plain names, into one or-arm per group of alternatives that bind alike,
+;; each of which enters its body straight from its tests.
 (define (lower-match-split-small-or-arms
   [ctx : tc_core.TcContext]
   [state : LowerState]
@@ -64348,44 +64362,32 @@
   (let
     [index : i64 0]
     [first : i64 -1]
+    [first-split : LowerOrArmSplit (LowerOrArmSplit.Keep)]
     (while (and (< first 0) (< index arms.len))
       (match (ast.ast-match-arm-list-get
         (& arms)
         index
         (ast.ast-match-arm-fallback))
         [(Arm pattern body)
-          (when
-            (lower-match-arm-splits-or?
-              ctx
-              state
-              (lower-global-shared-view scrut-ty)
-              pattern
-              body
-              (= index (- arms.len 1)))
-            (set! first index))])
+          (let
+            [split : LowerOrArmSplit
+              (lower-match-or-arm-split
+                ctx
+                state
+                (lower-global-shared-view scrut-ty)
+                pattern
+                body
+                (= index (- arms.len 1)))]
+            (unless
+              (lower-or-arm-split-keep? (& split))
+              (set! first index)
+              (set! first-split split)))])
       (set! index (+ index 1)))
-    (if (>= first 0)
+    (if (< first 0)
+      arms
       (let
-        [splits : (__tl_dyn-array bool) (__tl_make-array bool arms.len)]
         [out : ast.AstMatchArmList
           (ast.ast-match-arm-list-with-capacity (* 2 arms.len))]
-        (set! (array-ref splits first) true)
-        (while (< index arms.len)
-          (match (ast.ast-match-arm-list-get
-            (& arms)
-            index
-            (ast.ast-match-arm-fallback))
-            [(Arm pattern body)
-              (set!
-                (array-ref splits index)
-                (lower-match-arm-splits-or?
-                  ctx
-                  state
-                  (lower-global-shared-view scrut-ty)
-                  pattern
-                  body
-                  (= index (- arms.len 1))))])
-          (set! index (+ index 1)))
         (set! index 0)
         (while (< index arms.len)
           (match (ast.ast-match-arm-list-get
@@ -64393,58 +64395,146 @@
             index
             (ast.ast-match-arm-fallback))
             [(Arm pattern body)
-              (if (array-ref splits index)
-                (let
-                  [alternatives : ast.AstPatternList
-                    (lower-pattern-or-alternatives
-                      (lower-global-shared-view pattern))]
-                  [alternative : i64 0]
-                  (while (< alternative alternatives.len)
-                    (ast.ast-match-arm-list-push
-                      (&mut out)
-                      (ast.ast-match-arm
-                        (ast.ast-pattern-list-get
-                          (& alternatives)
-                          alternative
-                          (ast.ast-pattern-fallback))
-                        body))
-                    (set! alternative (+ alternative 1))))
-                (ast.ast-match-arm-list-push
-                  (&mut out)
-                  (ast.ast-match-arm pattern body)))])
+              (let
+                [split : LowerOrArmSplit
+                  (cond
+                    [(< index first) (LowerOrArmSplit.Keep)]
+                    [(= index first) (lower-global-shared-view first-split)]
+                    [else
+                      (lower-match-or-arm-split
+                        ctx
+                        state
+                        (lower-global-shared-view scrut-ty)
+                        (lower-global-shared-view pattern)
+                        body
+                        (= index (- arms.len 1)))])]
+                (lower-or-arm-split-into! (&mut out) pattern body split))])
           (set! index (+ index 1)))
-        out)
-      arms)))
+        out))))
 
-(define (lower-match-arm-splits-or?
+;; How an or-pattern arm is lowered: kept whole, split into one arm per
+;; alternative, or split into one or-arm per binding group, given as each
+;; alternative's group (its group's first alternative).
+(defenum LowerOrArmSplit
+  (Keep)
+  (Alternatives)
+  (Groups (__tl_dyn-array i64)))
+
+(define (lower-or-arm-split-keep? [split : (& split LowerOrArmSplit)]) : bool
+  (match split
+    [(LowerOrArmSplit.Keep) true]
+    [_ false]))
+
+(define (lower-or-arm-split-into!
+  [out : (&mut out ast.AstMatchArmList)]
+  [pattern : ast.AstPattern]
+  [body : i64]
+  [split : LowerOrArmSplit]) : unit
+  (match split
+    [(LowerOrArmSplit.Keep)
+      (ast.ast-match-arm-list-push out (ast.ast-match-arm pattern body))]
+    [(LowerOrArmSplit.Alternatives)
+      (let
+        [alternatives : ast.AstPatternList
+          (lower-pattern-or-alternatives pattern)]
+        [alternative : i64 0]
+        (while (< alternative alternatives.len)
+          (ast.ast-match-arm-list-push
+            out
+            (ast.ast-match-arm
+              (ast.ast-pattern-list-get
+                (& alternatives)
+                alternative
+                (ast.ast-pattern-fallback))
+              body))
+          (set! alternative (+ alternative 1))))]
+    [(LowerOrArmSplit.Groups groups)
+      ;; The alternatives are disjoint tag tests, so the groups may be tried
+      ;; in any order; the group of the last alternative goes last, keeping
+      ;; it the final fall-through.
+      (let
+        [alternatives : ast.AstPatternList
+          (lower-pattern-or-alternatives pattern)]
+        [total : i64 alternatives.len]
+        [last-group : i64 (array-ref groups (- total 1))]
+        [step : i64 0]
+        (while (<= step total)
+          (let
+            [group : i64
+              (if (< step total)
+                step
+                last-group)]
+            (when
+              (and
+                (= (array-ref groups group) group)
+                (or (= step total) (!= group last-group)))
+              (let
+                [members : ast.AstPatternList (ast.ast-pattern-list-new)]
+                [member : i64 group]
+                (while (< member total)
+                  (when
+                    (= (array-ref groups member) group)
+                    (ast.ast-pattern-list-push
+                      (&mut members)
+                      (ast.ast-pattern-list-get
+                        (& alternatives)
+                        member
+                        (ast.ast-pattern-fallback))))
+                  (set! member (+ member 1)))
+                (ast.ast-match-arm-list-push
+                  out
+                  (ast.ast-match-arm
+                    (if (= members.len 1)
+                      (ast.ast-pattern-list-get
+                        (& members)
+                        0
+                        (ast.ast-pattern-fallback))
+                      (ast.AstPattern.Or (box members)))
+                    body)))))
+          (set! step (+ step 1))))]))
+
+(define (lower-match-or-arm-split
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [scrut-ty : ast.AstType]
   [pattern : ast.AstPattern]
   [body : i64]
-  [final? : bool]) : bool
-  (and
-    (lower-pattern-needs-or-expansion? (lower-global-shared-view pattern))
-    (lower-or-arm-body-small? ctx body)
-    (or
-      (not final?)
-      (not
-        (lower-or-alternative-refutable-inside?
-          (lower-last-or-alternative (lower-global-shared-view pattern)))))
-    (not (lower-or-arm-binds-once? ctx state scrut-ty pattern))))
+  [final? : bool]) : LowerOrArmSplit
+  (if (not
+    (lower-pattern-needs-or-expansion? (lower-global-shared-view pattern)))
+    (LowerOrArmSplit.Keep)
+    (let
+      [alternatives : ast.AstPatternList
+        (lower-pattern-or-alternatives (lower-global-shared-view pattern))]
+      [groups : (__tl_dyn-array i64)
+        (lower-or-arm-pattern-groups ctx state scrut-ty (& alternatives))]
+      (cond
+        [(lower-or-groups-single? (& groups)) (LowerOrArmSplit.Keep)]
+        [(and
+            (lower-or-arm-body-small? ctx body)
+            (or
+              (not final?)
+              (not
+                (lower-or-alternative-refutable-inside?
+                  (ast.ast-pattern-list-get
+                    (& alternatives)
+                    (- alternatives.len 1)
+                    (ast.ast-pattern-fallback))))))
+          (LowerOrArmSplit.Alternatives)]
+        [(lower-or-groups-disjoint? (& alternatives) (& groups))
+          (LowerOrArmSplit.Groups groups)]
+        [else (LowerOrArmSplit.Keep)]))))
 
-;; Whether every alternative of an or-pattern arm binds alike, so their tests
-;; all enter the body block (`lower-or-arm-alternative-groups`). A literal
-;; alternative marks a scalar scrutinee.
-(define (lower-or-arm-binds-once?
+;; Every alternative's binding group (`lower-or-arm-alternative-groups`, groups
+;; of one included). A literal alternative marks a scalar scrutinee.
+(define (lower-or-arm-pattern-groups
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [scrut-ty : ast.AstType]
-  [pattern : ast.AstPattern]) : bool
+  [alternatives : (& alternatives ast.AstPatternList)]) : (__tl_dyn-array i64)
   (let
-    [alternatives : ast.AstPatternList (lower-pattern-or-alternatives pattern)]
     [first : ast.AstPattern
-      (ast.ast-pattern-list-get (& alternatives) 0 (ast.ast-pattern-fallback))]
+      (ast.ast-pattern-list-get alternatives 0 (ast.ast-pattern-fallback))]
     [names : tc_core.TcNameIdList
       (tc_core.tc-borrow-check-pattern-bound-names
         ctx
@@ -64458,25 +64548,56 @@
       (set! (array-ref name-ids index) (tc_core.tc-name-id-list-head cursor))
       (set! cursor (tc_core.tc-name-id-list-rest cursor))
       (set! index (+ index 1)))
-    (lower-or-groups-single?
-      (&
-        (lower-or-arm-alternative-groups
-          ctx
-          state
-          scrut-ty
-          (match first
-            [(ast.AstPattern.Literal _) (LowerOrScrutinee.Scalar)]
-            [_ (LowerOrScrutinee.Enum -1 (tc_core.TcMaybeNameId.No) false)])
-          (& alternatives)
-          (& name-ids))))))
+    (lower-or-arm-alternative-groups
+      ctx
+      state
+      scrut-ty
+      (match first
+        [(ast.AstPattern.Literal _) (LowerOrScrutinee.Scalar)]
+        [_ (LowerOrScrutinee.Enum -1 (tc_core.TcMaybeNameId.No) false)])
+      alternatives
+      (& name-ids)
+      true)))
 
-(define (lower-last-or-alternative [pattern : ast.AstPattern]) : ast.AstPattern
+;; Whether every alternative belongs to a binding group and tests a variant no
+;; other alternative tests, so the alternatives are disjoint and the groups
+;; can become separate or-arms.
+(define (lower-or-groups-disjoint?
+  [alternatives : (& alternatives ast.AstPatternList)]
+  [groups : (& groups (__tl_dyn-array i64))]) : bool
   (let
-    [alternatives : ast.AstPatternList (lower-pattern-or-alternatives pattern)]
-    (ast.ast-pattern-list-get
-      (& alternatives)
-      (- alternatives.len 1)
-      (ast.ast-pattern-fallback))))
+    [total : i64 (array-length groups)]
+    [index : i64 0]
+    (while (< index total)
+      (when (< (array-ref groups index) 0) (return false))
+      (let
+        [name : i64
+          (lower-or-alternative-variant-name
+            (ast.ast-pattern-list-get
+              alternatives
+              index
+              (ast.ast-pattern-fallback)))]
+        [other : i64 0]
+        (when (< name 0) (return false))
+        (while (< other index)
+          (when
+            (=
+              name
+              (lower-or-alternative-variant-name
+                (ast.ast-pattern-list-get
+                  alternatives
+                  other
+                  (ast.ast-pattern-fallback))))
+            (return false))
+          (set! other (+ other 1))))
+      (set! index (+ index 1)))
+    true))
+
+(define (lower-or-alternative-variant-name [pattern : ast.AstPattern]) : i64
+  (match pattern
+    [(ast.AstPattern.Binding name) name]
+    [(ast.AstPattern.Variant name _) name]
+    [_ -1]))
 
 ;; Whether an expanded alternative tests anything beyond its top-level tag,
 ;; length or literal, judged from its spelling alone.
@@ -65565,7 +65686,8 @@
           (lower-global-shared-view scrut-ty)
           (lower-global-shared-view scrutinee)
           (& alternatives)
-          (& name-ids))]
+          (& name-ids)
+          false)]
       [single? : bool (lower-or-groups-single? (& groups))]
       [last-group : i64 (lower-or-groups-largest (& groups))]
       [group-labels : (__tl_dyn-array i64)
@@ -65834,16 +65956,17 @@
 ;; same payload offset with the same type, or, binding nothing, literal and
 ;; variant alternatives alike. One bind block serves each group of two or
 ;; more. Returns, per alternative, the first alternative of its group, or -1
-;; for one bound on its own: a group of one, or one that binds through
-;; anything but plain names and wildcards (a refutable or nested payload
-;; pattern, a tuple, a slice).
+;; for one bound on its own: a group of one (unless `singletons?`), or one
+;; that binds through anything but plain names and wildcards (a refutable or
+;; nested payload pattern, a tuple, a slice).
 (define (lower-or-arm-alternative-groups
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [scrut-ty : ast.AstType]
   [scrutinee : LowerOrScrutinee]
   [alternatives : (& alternatives ast.AstPatternList)]
-  [name-ids : (& name-ids (__tl_dyn-array i64))]) : (__tl_dyn-array i64)
+  [name-ids : (& name-ids (__tl_dyn-array i64))]
+  [singletons? : bool]) : (__tl_dyn-array i64)
   (let
     [count : i64 (array-length name-ids)]
     [total : i64 alternatives.len]
@@ -65909,8 +66032,13 @@
             [first : i64 (array-ref groups index)]
             (set! (array-ref members first) (+ (array-ref members first) 1)))))
       (set! index (+ index 1)))
-    ;; A group of one binds on its own.
-    (set! index 0)
+    ;; A group of one binds on its own, unless `singletons?` asks for every
+    ;; group.
+    (set!
+      index
+      (if singletons?
+        total
+        0))
     (while (< index total)
       (let
         [first : i64 (array-ref groups index)]

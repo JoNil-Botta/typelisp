@@ -2880,6 +2880,12 @@
     [(or (Eight.Q2 x) (Eight.Q3 x) (Eight.Q4 x) (Eight.Q5 x))
       (+ (mix x 1) (mix x 2) (mix x 3) (mix x 4) (mix x 5) (mix x 6))]
     [(or Eight.Q6 Eight.Q7) 9]))
+(defenum Pair (L i64 i64) (R i64 i64) (M i64) (N))
+(define (split-groups [value : Pair]) : i64
+  (match value
+    [(or (Pair.L x _) (Pair.M x) (Pair.R _ x))
+      (+ (mix x 1) (mix x 2) (mix x 3) (mix x 4) (mix x 5) (mix x 6))]
+    [Pair.N 0]))
 (define (main) : i64 0)")
 
 ;; A refutable literal payload subpattern: `(Some 0)` tests the payload
@@ -6298,7 +6304,10 @@
         ;; and alternatives binding `x` from one slot bind it in the body
         ;; block, with no phi.
         (= (lower-test-count functions "shared" (TotalEnumBranch)) 4)
-        (= (lower-test-function-phi-count functions "shared") 0))]
+        (= (lower-test-function-phi-count functions "shared") 0)
+        ;; `x` comes from two payload slots: each slot's alternatives become
+        ;; an or-arm of their own, which binds in its body block.
+        (= (lower-test-function-phi-count functions "split-groups") 0))]
     [_ false]))
 
 (define (compiler-lower-enum-string-literal-payload-shape-ok?) : bool

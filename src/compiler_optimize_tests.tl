@@ -65581,6 +65581,56 @@
       (return 4))
     42))
 
+;; Returns 42 only when an equality chain over every value of its window,
+;; [3, 8] here, as an or-pattern arm over consecutive tags leaves, collapses to
+;; the window guard alone: it branches straight to the shared arm and builds
+;; no mask block.
+(define (compiler-optimize-bit-test-full-window-self-test) : i64
+  (let
+    [chain : ir.CompilerIrBlockList
+      (opt-bit-test-equality-chain (__tl_make-array 5 3 8 4 7 6))]
+    [blocks : ir.CompilerIrBlockList
+      (opt-bit-test-result-blocks
+        (opt-bit-test-equality-chain (__tl_make-array 5 3 8 4 7 6)))]
+    [head : ir.CompilerIrBlock
+      (opt-bit-test-block-at (& blocks) (ir.compiler-ir-label "entry"))]
+    [head-count : i64 (opt-block-instr-count head)]
+    (unless (opt-bit-test-changed? chain) (return 1))
+    (unless
+      (opt-bit-test-result-verified?
+        (opt-bit-test-equality-chain (__tl_make-array 5 3 8 4 7 6)))
+      (return 2))
+    (when
+      (opt-block-list-has-label?
+        (ir.compiler-ir-block-list-view blocks)
+        (ir.compiler-ir-label "entry__bit_test"))
+      (return 3))
+    (unless (>= head-count 3) (return 4))
+    (unless
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at head (- head-count 3))
+        17
+        Sub
+        (Var 0)
+        (I64 3))
+      (return 5))
+    (unless
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at head (- head-count 2))
+        18
+        Le
+        (Var 17)
+        (I64 5))
+      (return 6))
+    (unless
+      (opt-bit-test-branch-matches?
+        (opt-block-instr-at head (- head-count 1))
+        18
+        (ir.compiler-ir-label "hit")
+        (ir.compiler-ir-label "miss"))
+      (return 7))
+    42))
+
 ;; Returns 42 only when every refused shape is left exactly as it was.
 (define (compiler-optimize-bit-test-refusal-self-test) : i64
   (when (opt-bit-test-changed? (opt-bit-test-mixed-value-blocks)) (return 1))

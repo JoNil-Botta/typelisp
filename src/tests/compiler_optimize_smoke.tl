@@ -3634,6 +3634,13 @@
     "Closed ranges and equalities share one mask over a subtracted base"))
 
 (test
+  bit-test-full-window
+  (test.assert-i64-eq
+    (ot.compiler-optimize-bit-test-full-window-self-test)
+    42
+    "An equality chain over every value of its window becomes the window guard alone"))
+
+(test
   bit-test-refusals
   (test.assert-i64-eq
     (ot.compiler-optimize-bit-test-refusal-self-test)

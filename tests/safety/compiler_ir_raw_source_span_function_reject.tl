@@ -13,7 +13,7 @@
       (ir.compiler-source-spans-insert-instr
         (ir.compiler-source-spans-empty)
         raw-function
-        (ir.compiler-ir-global-shared-view instr)
+        (& instr)
         (ast.ast-source-span 1 1 1 1))]
     (begin
       spans

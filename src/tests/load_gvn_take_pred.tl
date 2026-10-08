@@ -20,7 +20,7 @@
     (while (>= i 0)
       (set!
         (array-ref labels i)
-        (ir.compiler-ir-label (string.int->string (+ i 10000))))
+        (ir.compiler-ir-label (& (string.int->string (+ i 10000)))))
       (set! i (- i 1)))
     (set! i 0)
     (while (< i (+ headers exits))

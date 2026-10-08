@@ -240,7 +240,7 @@
         (scan-doubled-source "(atom 0x7b 'q' \"bytes\" 1.5)\n" 9)]
       [caller : i64 (arena.tl_arena_current)]
       [valid : bool
-        (match (lex.spanned-result source)
+        (match (lex.spanned-result (& source))
           [(Err _) false]
           [(Ok tokens)
             (let
@@ -385,7 +385,7 @@
         "\"unterminated")]
     [caller : i64 (arena.tl_arena_current)]
     [error-ok : bool
-      (match (lex.spanned-result source)
+      (match (lex.spanned-result (& source))
         [(Ok _) false]
         [(Err err)
           (and

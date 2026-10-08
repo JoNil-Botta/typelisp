@@ -5389,7 +5389,7 @@
         [CompilerDiagnosticNoString
           (cdiag.compiler-diagnostic-code-for-typecheck-kind (Unclassified))])]
     (cdiag.compiler-diagnostic-with-category
-      (cdiag.compiler-diagnostic-with-code diag code)
+      (& (cdiag.compiler-diagnostic-with-code (& diag) code))
       "typecheck")))
 
 ;; The text of a typecheck error message without its kind tag, for code that
@@ -5611,7 +5611,7 @@
             (tc-located-error-field message end-col-start end-col-end)))
         clean-message)]
     (if (> (string.string-length help) 0)
-      (set! diag (cdiag.compiler-diagnostic-with-help diag help))
+      (set! diag (cdiag.compiler-diagnostic-with-help (& diag) help))
       unit)
     (while (> remaining 0)
       (let
@@ -5633,7 +5633,7 @@
         (set!
           diag
           (cdiag.compiler-diagnostic-with-secondary
-            diag
+            (& diag)
             (cdiag.CompilerDiagnosticSpan
               ""
               (string.>int (tc-located-error-field message idx sec-line-end))
@@ -5673,34 +5673,35 @@
             diag
             (cdiag.compiler-diagnostic-with-fix
               diag
-              (cdiag.compiler-diagnostic-fix-new
-                (tc-located-error-field message title-start title-end)
-                CompilerDiagnosticMachineApplicable
-                (cdiag.compiler-diagnostic-text-edit-single
-                  (cdiag.compiler-diagnostic-text-edit-new
-                    (cdiag.CompilerDiagnosticSpan
-                      ""
-                      (string.>int
-                        (tc-located-error-field message idx fix-line-end))
-                      (string.>int
-                        (tc-located-error-field
-                          message
-                          fix-col-start
-                          fix-col-end))
-                      (string.>int
-                        (tc-located-error-field
-                          message
-                          fix-end-line-start
-                          fix-end-line-end))
-                      (string.>int
-                        (tc-located-error-field
-                          message
-                          fix-end-col-start
-                          fix-end-col-end)))
-                    (string.substring
-                      message
-                      replacement-start
-                      (- (string.string-length message) replacement-start)))))))
+              (&
+                (cdiag.compiler-diagnostic-fix-new
+                  (tc-located-error-field message title-start title-end)
+                  CompilerDiagnosticMachineApplicable
+                  (cdiag.compiler-diagnostic-text-edit-single
+                    (cdiag.compiler-diagnostic-text-edit-new
+                      (cdiag.CompilerDiagnosticSpan
+                        ""
+                        (string.>int
+                          (tc-located-error-field message idx fix-line-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            fix-col-start
+                            fix-col-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            fix-end-line-start
+                            fix-end-line-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            fix-end-col-start
+                            fix-end-col-end)))
+                      (string.substring
+                        message
+                        replacement-start
+                        (- (string.string-length message) replacement-start))))))))
           unit))
       unit)
     (tc-canonical-diagnostic diag)))
@@ -5856,8 +5857,8 @@
     [origin-diag : cdiag.CompilerDiagnostic
       (if claim-origin
         (cdiag.compiler-diagnostic-with-path
-          inner-diag
-          (ci.intern-str origin-path-id))
+          (& inner-diag)
+          (& (ci.intern-str origin-path-id)))
         inner-diag)]
     ;; Decode recursively, then prepend this boundary. The resulting stable
     ;; order is explicitly outer-to-inner. Caller-origin markers only repath
@@ -5867,18 +5868,20 @@
         origin-diag
         (cdiag.compiler-diagnostic-with-secondary-if-new
           origin-diag
-          (cdiag.CompilerDiagnosticSpan
-            (if (< path-id 0)
-              ""
-              (ci.intern-str path-id))
-            (string.>int (tc-located-error-field message line-start line-end))
-            (string.>int (tc-located-error-field message col-start col-end))
-            (string.>int
-              (tc-located-error-field message end-line-start end-line-end))
-            (string.>int
-              (tc-located-error-field message end-col-start end-col-end)))
-          (CompilerDiagnosticSomeString
-            (tc-macro-expansion-frame-label macro-name-id))))
+          (&
+            (cdiag.CompilerDiagnosticSpan
+              (if (< path-id 0)
+                ""
+                (ci.intern-str path-id))
+              (string.>int (tc-located-error-field message line-start line-end))
+              (string.>int (tc-located-error-field message col-start col-end))
+              (string.>int
+                (tc-located-error-field message end-line-start end-line-end))
+              (string.>int
+                (tc-located-error-field message end-col-start end-col-end))))
+          (&
+            (CompilerDiagnosticSomeString
+              (tc-macro-expansion-frame-label macro-name-id)))))
       (or inner-decoded.primary-origin-claimed claim-origin))))
 
 (define (tc-macro-framed-error-diag [message : String]) : cdiag.CompilerDiagnostic
@@ -7684,7 +7687,7 @@
       (match origin
         [(Some span)
           (cdiag.compiler-diagnostic-with-primary-span
-            diag
+            (& diag)
             (cdiag.CompilerDiagnosticSpan
               ""
               (ast.ast-source-span-start-line span)
@@ -92284,14 +92287,16 @@
     [(Some span)
       (cdiag.compiler-diagnostic-with-secondary-if-new
         diag
-        (cdiag.CompilerDiagnosticSpan
-          path
-          (ast.ast-source-span-start-line span)
-          (ast.ast-source-span-start-col span)
-          (ast.ast-source-span-end-line span)
-          (ast.ast-source-span-end-col span))
-        (CompilerDiagnosticSomeString
-          (tc-macro-expansion-frame-label (ci.intern macro-name))))]
+        (&
+          (cdiag.CompilerDiagnosticSpan
+            path
+            (ast.ast-source-span-start-line span)
+            (ast.ast-source-span-start-col span)
+            (ast.ast-source-span-end-line span)
+            (ast.ast-source-span-end-col span)))
+        (&
+          (CompilerDiagnosticSomeString
+            (tc-macro-expansion-frame-label (ci.intern macro-name)))))]
     [(No) diag]))
 
 (define (macro-active-decl-path-id [ctx : TcContext]) : i64
@@ -95749,7 +95754,7 @@
                 (cdiag.compiler-diagnostic-typecheck-error-text (& diag)))]
             (box
               (cdiag.compiler-diagnostic-with-primary-span
-                diag
+                (& diag)
                 (cdiag.compiler-diagnostic-primary-span located))))))]))
 
 (define (macro-decl-generated? [decl : ast.AstDecl]) : bool
@@ -115922,14 +115927,16 @@
                     (box
                       (cdiag.compiler-diagnostic-with-secondary-if-new
                         (cdiag.compiler-diagnostic-box-shared-view diag)
-                        (cdiag.CompilerDiagnosticSpan
-                          decl-path
-                          (ast.ast-source-span-start-line span)
-                          (ast.ast-source-span-start-col span)
-                          (ast.ast-source-span-end-line span)
-                          (ast.ast-source-span-end-col span))
-                        (CompilerDiagnosticSomeString
-                          "generated import requested here"))))]))]
+                        (&
+                          (cdiag.CompilerDiagnosticSpan
+                            decl-path
+                            (ast.ast-source-span-start-line span)
+                            (ast.ast-source-span-start-col span)
+                            (ast.ast-source-span-end-line span)
+                            (ast.ast-source-span-end-col span)))
+                        (&
+                          (CompilerDiagnosticSomeString
+                            "generated import requested here")))))]))]
           [(Err message)
             (Err
               (box (macro-materialize-import-diagnostic decl-path span message)))]))]))

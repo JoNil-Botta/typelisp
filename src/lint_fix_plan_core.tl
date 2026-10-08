@@ -404,8 +404,9 @@
                   "")
                 (not
                   (diag.compiler-diagnostic-span-valid-for-edit?
-                    (diag.compiler-diagnostic-primary-span
-                      (& candidate.diagnostic))))
+                    (&
+                      (diag.compiler-diagnostic-primary-span
+                        (& candidate.diagnostic)))))
                 (not
                   (diag.compiler-diagnostic-fix-valid?
                     (diag.compiler-diagnostic-path candidate.diagnostic)

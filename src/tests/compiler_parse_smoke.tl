@@ -1171,12 +1171,12 @@
             (diagnostic.CompilerDiagnosticSpan "other.tl" 2 3 2 5)
             "λ")))]
     [diag : diagnostic.CompilerDiagnostic
-      (diagnostic.compiler-diagnostic-with-fix (clone plain) fix)]
+      (diagnostic.compiler-diagnostic-with-fix (clone plain) (& fix))]
     [copied : diagnostic.CompilerDiagnostic
       (diagnostic.compiler-diagnostic-copy diag)]
     [moved : diagnostic.CompilerDiagnostic
       (diagnostic.compiler-diagnostic-with-primary-span
-        (diagnostic.compiler-diagnostic-with-path copied "new.tl")
+        (& (diagnostic.compiler-diagnostic-with-path (& copied) "new.tl"))
         (diagnostic.CompilerDiagnosticSpan "new.tl" 4 5 4 6))]
     [fixes : diagnostic.CompilerDiagnosticFixSeq
       (diagnostic.compiler-diagnostic-fixes moved)]
@@ -1236,26 +1236,28 @@
     [unknown : diagnostic.CompilerDiagnostic
       (diagnostic.compiler-diagnostic-with-fix
         (clone base)
-        (diagnostic.compiler-diagnostic-fix-new
-          "Unknown span"
-          CompilerDiagnosticMachineApplicable
-          (diagnostic.compiler-diagnostic-text-edit-single
-            (diagnostic.compiler-diagnostic-text-edit-new
-              (diagnostic.CompilerDiagnosticSpan "" 0 0 0 0)
-              "x"))))]
+        (&
+          (diagnostic.compiler-diagnostic-fix-new
+            "Unknown span"
+            CompilerDiagnosticMachineApplicable
+            (diagnostic.compiler-diagnostic-text-edit-single
+              (diagnostic.compiler-diagnostic-text-edit-new
+                (diagnostic.CompilerDiagnosticSpan "" 0 0 0 0)
+                "x")))))]
     [overlap : diagnostic.CompilerDiagnostic
       (diagnostic.compiler-diagnostic-with-fix
         base
-        (diagnostic.compiler-diagnostic-fix-new
-          "Overlapping edits"
-          CompilerDiagnosticMachineApplicable
-          (compiler-diagnostic-test-edit-pair
-            (diagnostic.compiler-diagnostic-text-edit-new
-              (diagnostic.CompilerDiagnosticSpan "" 1 2 1 6)
-              "left")
-            (diagnostic.compiler-diagnostic-text-edit-new
-              (diagnostic.CompilerDiagnosticSpan "" 1 4 1 7)
-              "right"))))]
+        (&
+          (diagnostic.compiler-diagnostic-fix-new
+            "Overlapping edits"
+            CompilerDiagnosticMachineApplicable
+            (compiler-diagnostic-test-edit-pair
+              (diagnostic.compiler-diagnostic-text-edit-new
+                (diagnostic.CompilerDiagnosticSpan "" 1 2 1 6)
+                "left")
+              (diagnostic.compiler-diagnostic-text-edit-new
+                (diagnostic.CompilerDiagnosticSpan "" 1 4 1 7)
+                "right")))))]
     (and
       (=
         (__tl-project-field (diagnostic.compiler-diagnostic-fixes unknown) len)

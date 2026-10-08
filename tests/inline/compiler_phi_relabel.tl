@@ -36,10 +36,7 @@
       [inputs : ir.CompilerIrPhiInputSeq
         (ir.CompilerIrPhiInputSeq slots start count)]
       [result : ir.CompilerIrPhiInputSeq
-        (ir.compiler-ir-phi-input-seq-relabel
-          (ir.compiler-ir-global-shared-view inputs)
-          from
-          to)]
+        (ir.compiler-ir-phi-input-seq-relabel (& inputs) from to)]
       (test.assert-i64-eq result.len count "visible length")
       (test.assert-i64-eq result.start 0 "compact output")
       (test.assert-i64-eq (array-length result.slots) count "exact capacity")
@@ -98,7 +95,7 @@
       [before : i64 (profile.alloc-total)]
       [result : ir.CompilerIrPhiInputSeq
         (ir.compiler-ir-phi-input-seq-relabel
-          (ir.CompilerIrPhiInputSeq slots 0 count)
+          (& (ir.CompilerIrPhiInputSeq slots 0 count))
           7
           99)]
       [allocated : i64 (- (profile.alloc-total) before)]

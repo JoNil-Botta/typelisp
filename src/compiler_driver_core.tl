@@ -2099,7 +2099,7 @@
           typecheck-state
           (compiler_ir_types.compiler-ir-representation-index-build
             (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-            program)))]
+            (& program))))]
     (compiler_backend.compiler-backend-state-set-representations!
       backend-state
       (owned_view.compiler-owned-shared-view representations))
@@ -2893,7 +2893,9 @@
             unit)]
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [_profile-program-finish : unit
           (cfg
@@ -2977,7 +2979,9 @@
             unit)]
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [_profile-program-finish : unit
           (cfg
@@ -3056,7 +3060,9 @@
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -3105,7 +3111,9 @@
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -3154,7 +3162,9 @@
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -5291,7 +5301,7 @@
               (compiler-driver-advisories-for-job typecheck-state))
             (Ok
               (compiler-driver-ir-summary-render
-                (compiler_ir_types.compiler-ir-program-summary optimized))
+                (compiler_ir_types.compiler-ir-program-summary (& optimized)))
               (compiler-driver-advisories-for-job typecheck-state)))]))))
 
 (define (compiler-driver-emit-ir-summary-lowered-result-with-level
@@ -5302,7 +5312,9 @@
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -5390,7 +5402,7 @@
             (compiler_ir_types.compiler-ir-program-render
               structural-session
               type-segment-bases
-              optimized))]
+              (& optimized)))]
         (if (and
           (> (string.string-length dump-pass) 0)
           (= (string.string-length text) 0))
@@ -5453,7 +5465,9 @@
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -5602,7 +5616,7 @@
         sources
         (compiler_diagnostic.compiler-diagnostic-path diag))]
     (compiler_diagnostic.compiler-diagnostic-render-indexed-source
-      diag
+      (& diag)
       (& (array-ref sources.sources slot)))))
 
 (define (compiler-driver-print-advisories

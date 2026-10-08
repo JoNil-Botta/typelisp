@@ -6917,7 +6917,7 @@
 ;; success, or `Invalid` with line, col, message, and context on failure.
 (define (lsp-validate-forms-result [text : String]) : LspValidationResult
   (cbi.compiler-builtin-initialize-for-parse!)
-  (match (lexer.spanned-result (owned_view.compiler-owned-shared-view text))
+  (match (lexer.spanned-result (& text))
     [(Err err)
       (let
         [span : token.SourceSpan

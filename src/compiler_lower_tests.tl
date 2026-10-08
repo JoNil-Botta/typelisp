@@ -3078,7 +3078,7 @@
   [name : String]
   [want-line : i64]) : bool
   (match (ir.compiler-source-spans-lookup
-    spans
+    (& spans)
     (ir.compiler-ir-symbol-typed-id (ci.intern name)))
     [(Some span) (= (ast.ast-source-span-start-line span) want-line)]
     [(No) false]))
@@ -3087,10 +3087,7 @@
   (match (lower.lower-compiler-source src)
     [(Ok _ spans)
       (and
-        (=
-          (ir.compiler-source-spans-count
-            (owned_view.compiler-owned-shared-view spans))
-          2)
+        (= (ir.compiler-source-spans-count (& spans)) 2)
         (compiler-lower-span-start-line-ok?
           (owned_view.compiler-owned-shared-view spans)
           "inc"
@@ -3103,7 +3100,7 @@
     [(Ok program _)
       (let
         [summary : ir.CompilerIrSummary
-          (ir.compiler-ir-program-summary program)]
+          (ir.compiler-ir-program-summary (& program))]
         (and
           (= (ir.compiler-ir-summary-globals summary) 1)
           (= (ir.compiler-ir-summary-functions summary) 2)
@@ -9728,7 +9725,7 @@
               (set! found true)
               (set!
                 ordinary
-                (ir.compiler-ir-function-abi-ordinary? function-abi)))
+                (ir.compiler-ir-function-abi-ordinary? (& function-abi))))
             unit)])
       (set! index (+ index 1)))
     (and found ordinary)))
@@ -9747,7 +9744,7 @@
         (string.eq (ir.compiler-ir-spmd-private-abi-program-error functions) "")
         (lower-test-function-abi-ordinary? functions caller)
         (string.eq
-          (ir.compiler-ir-test-spmd-private-abi-shapes functions)
+          (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))
           expected))]
     [_ false]))
 
@@ -9763,7 +9760,7 @@
         [before : String
           (match (ir.compiler-ir-global-shared-view program)
             [(Program _ functions _)
-              (ir.compiler-ir-test-spmd-private-abi-shapes functions)])]
+              (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))])]
         [optimized : ir.CompilerIrProgram
           (match (optimize.optimize-program-with-spans-and-level
             program
@@ -9778,7 +9775,7 @@
                 (ir.compiler-ir-spmd-private-abi-program-error functions)
                 "")
               (string.eq
-                (ir.compiler-ir-test-spmd-private-abi-shapes functions)
+                (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))
                 before))]))]
     [(Err _) false]))
 

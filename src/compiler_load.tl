@@ -5891,18 +5891,19 @@
     (let
       [diag : cdiag.CompilerDiagnostic
         (cdiag.compiler-diagnostic-with-help
-          (cdiag.compiler-diagnostic-from-ast-span
-            (owned_view.compiler-owned-shared-view collision.path)
-            collision.span
-            (compiler-load-unqualified-import-local-collision-message
-              (owned_view.compiler-owned-shared-view collision)))
+          (&
+            (cdiag.compiler-diagnostic-from-ast-span
+              (owned_view.compiler-owned-shared-view collision.path)
+              collision.span
+              (compiler-load-unqualified-import-local-collision-message
+                (owned_view.compiler-owned-shared-view collision))))
           "alias the import with `as`, rename the declaration, or import the module and use qualified access")]
       (Err
         (box
           (match (parser.compiler-parse-decl-span decls collision.local-index)
             [(Some span)
               (cdiag.compiler-diagnostic-with-secondary
-                diag
+                (& diag)
                 (cdiag.CompilerDiagnosticSpan
                   (ast.ast-decl-path-list-get
                     paths
@@ -15159,7 +15160,7 @@
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultCompilerPkgManifestDiagnostic
-      (match (lexer.spanned-result source)
+      (match (lexer.spanned-result (& source))
         [(Err err)
           (Err (box (compiler-load-manifest-source-error-diagnostic path err)))]
         [(Ok toks)
@@ -15177,7 +15178,7 @@
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultCompilerPkgManifestDiagnostic
-      (match (lexer.spanned-result source)
+      (match (lexer.spanned-result (& source))
         [(Err err)
           (Err (box (compiler-load-manifest-source-error-diagnostic path err)))]
         [(Ok toks)

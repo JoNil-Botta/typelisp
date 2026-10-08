@@ -1318,7 +1318,7 @@
 ;; the node pool; callers truncate it to their own mark once they have copied
 ;; out what they need. A lexer error panics.
 (define (data-result [src : String]) : ResultSexpr
-  (match (lexer.spanned-result src)
+  (match (lexer.spanned-result (& src))
     [(Err err) (io.panic (token.source-error-message err))]
     [(Ok toks)
       (let

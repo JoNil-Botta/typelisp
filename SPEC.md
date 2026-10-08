@@ -3642,15 +3642,19 @@ uncompressed byte length and a newline, followed by the token stream.
 - A `path` ending in `.tl` is a TypeLisp source. Before compression, each
   top-level inline test is replaced by the line breaks it contained: every
   `(test ...)` form, and every `(cfg test BODY)` form with exactly one body.
-  Every other byte is kept, so each remaining form keeps its line and column.
-  Strings, character literals and comments follow the lexer's rules, and a
-  source the lexer would reject, or whose brackets do not balance, is
-  compressed unchanged.
+  Each prose comment outside those forms keeps only its first `;`, so every
+  line still reads as a comment, a doc comment or code. Doc comments (`;:` and
+  `;#`) and `name:` directive comments such as `lint-allow:` are kept whole,
+  and so is every comment inside a kept `(cfg test ...)` form. Every other
+  byte is kept, so each remaining form keeps its line and column. Strings,
+  character literals and comments follow the lexer's rules, and a source the
+  lexer would reject, or whose brackets do not balance, is compressed
+  unchanged.
 
 This form exists for compiler-owned payload tables: the compiler embeds its
 stdlib source table through it. The embedded stdlib therefore carries no
 inline tests; those compile only under `--cfg test` from the repository
-sources (#8713). The stdlib comptime image is embedded with `include-bin`
+sources (#8713). It carries no prose comment text either (#8659). The stdlib comptime image is embedded with `include-bin`
 instead, as a compiler-owned TLCH envelope that carries the image's LZSS token
 stream in canonical Huffman form and is expanded back to the exact `.tlci`
 bytes on demand.

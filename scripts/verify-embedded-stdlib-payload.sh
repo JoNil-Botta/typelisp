@@ -2,7 +2,8 @@
 set -eu
 
 # Validate the explicit build inputs and prove every payload decodes exactly to
-# its source with the top-level inline tests blanked (#8713).
+# its source with the top-level inline tests blanked (#8713) and prose comments
+# cut to their first `;` (#8659).
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 

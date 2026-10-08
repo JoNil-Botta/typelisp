@@ -2841,14 +2841,10 @@
           (match (compiler-load-embedded-stdlib-source (string.copy suffix))
             [(CompilerEmbeddedStdlibSomeSource embedded-text)
               (let
-                [disk-text : String
-                  (ces.compiler-embedded-stdlib-source-without-inline-tests
-                    (compiler-load-read-file-text disk-path))]
-                (if (and
-                  (=
-                    (string.string-length disk-text)
-                    (string.string-length embedded-text))
-                  (string.eq disk-text embedded-text))
+                [disk-text : String (compiler-load-read-file-text disk-path)]
+                (if (ces.compiler-embedded-stdlib-source-matches-blanked?
+                  (& disk-text)
+                  (& embedded-text))
                   1
                   -1))]
             [(CompilerEmbeddedStdlibNoSource) -1])]

@@ -66644,6 +66644,44 @@
     cbi.compiler-builtin-id-tl-mem-copy8-fwd
     cbi.compiler-builtin-id-tl-mem-copy-fwd))
 
+;; Whether a gep in the body is indexed by the counter's `next` itself. That is
+;; the shape of a loop that bumps its counter BEFORE the body -- `i = i + 1`,
+;; then `a[i]` -- and of the prelude `for` range expansion once GVN merges the
+;; body's `i + 1` with the advance. `opt-copy-call-offset-add?` admits it
+;; (`next` IS `counter + 1`), but the rewrite redefines `next` as `bound` in
+;; place, so a gep left reading it would start the copy `bound` elements past
+;; the first one the loop touched.
+(define (opt-copy-call-gep-reads-inext?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [index : i64]
+  [last : i64]
+  [inext : i64]) : bool
+  (if (>= index last)
+    false
+    (match (ir.compiler-ir-instr-seq-ref instrs index)
+      [(Gep _ _ (Var offset-var) _)
+        (or
+          (= offset-var inext)
+          (opt-copy-call-gep-reads-inext? instrs (+ index 1) last inext))]
+      [_ (opt-copy-call-gep-reads-inext? instrs (+ index 1) last inext)])))
+
+;; The body instruction as the rewritten block keeps it. With a `seed-next`
+;; (>= 0), a gep indexed by the counter's `next` reads it instead: the copy of
+;; the original increment, which at the seed iteration is the index the loop's
+;; FIRST access used.
+(define (opt-copy-call-kept-instr
+  [instr : ir.CompilerIrInstr]
+  [inext : i64]
+  [seed-next : i64]) : ir.CompilerIrInstr
+  (if (< seed-next 0)
+    instr
+    (match (compiler-opt-global-shared-view instr)
+      [(Gep dst base (Var offset-var) elem-ty)
+        (if (= offset-var inext)
+          (Gep dst base (Var seed-next) elem-ty)
+          instr)]
+      [_ instr])))
+
 (define (opt-copy-call-emit-body!
   [builder : (&mut builder ir.CompilerIrInstrBuilder)]
   [instrs : ir.CompilerIrInstrSeq]
@@ -66652,6 +66690,7 @@
   [last : i64]
   [shape : OptLoopCallShape]
   [site : OptCopyCallSite]
+  [seed-next : i64]
   [state : (&mut state OptLoopCallRewriteState)]) : unit
   (unless
     (>= index last)
@@ -66671,14 +66710,27 @@
             (ir.compiler-ir-call-args-array
               (ir.compiler-ir-value-seq3 site.dst-ptr site.src-ptr shape.bound))
             (Unit))))
-      ;; the counter's `next` is redefined as its exit value, `bound`
+      ;; the counter's `next` is redefined as its exit value, `bound`; a gep
+      ;; that read it reads `seed-next`, the original increment, instead
       (if (opt-loop-call-defines-inext? instrs index shape.inext)
+        (begin
+          (when
+            (>= seed-next 0)
+            (match (ir.compiler-ir-instr-seq-ref instrs index)
+              [(BinOp _ op lhs rhs ty)
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (BinOp seed-next op lhs rhs ty))]
+              [_ unit]))
+          (ir.compiler-ir-instr-builder-push!
+            (&mut builder)
+            (ir.CompilerIrInstr.Mov shape.inext shape.bound shape.ity)))
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
-          (ir.CompilerIrInstr.Mov shape.inext shape.bound shape.ity))
-        (ir.compiler-ir-instr-builder-push!
-          (&mut builder)
-          (ir.compiler-ir-instr-seq-ref instrs index))))
+          (opt-copy-call-kept-instr
+            (ir.compiler-ir-instr-seq-ref instrs index)
+            shape.inext
+            seed-next))))
     (opt-copy-call-emit-body!
       (&mut builder)
       instrs
@@ -66687,6 +66739,7 @@
       last
       (compiler-opt-global-shared-view shape)
       (compiler-opt-global-shared-view site)
+      seed-next
       state)))
 
 (define (opt-copy-call-rewrite-block
@@ -66700,7 +66753,15 @@
         [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
         [phi-count : i64 shape.phi-count]
         [builder : ir.CompilerIrInstrBuilder
-          (ir.compiler-ir-instr-builder-with-capacity (+ count 2))]
+          (ir.compiler-ir-instr-builder-with-capacity (+ count 3))]
+        [seed-next : i64
+          (if (opt-copy-call-gep-reads-inext?
+            instrs
+            phi-count
+            (- count 1)
+            shape.inext)
+            (opt-loop-call-alloc-var state)
+            -1)]
         (opt-loop-call-emit-phis! (&mut builder) instrs 0 phi-count label)
         (opt-copy-call-emit-body!
           (&mut builder)
@@ -66710,6 +66771,7 @@
           (- count 1)
           (compiler-opt-global-shared-view shape)
           site
+          seed-next
           state)
         (ir.compiler-ir-instr-builder-push!
           (&mut builder)
@@ -102101,7 +102163,7 @@
     summaries)
     [(Result next _) next]))
 
-;; Optimizer input arena (opt2 only).
+;; Optimizer input arenas (opt2 only).
 ;;
 ;; The whole-program inline stage runs in a dedicated arena, and by the time it
 ;; returns only its final rewritten bodies are still read: the devirtualized
@@ -102113,13 +102175,18 @@
 ;; whole arena -- dead generations included -- would otherwise stay resident
 ;; across the loop, which is where the opt2 process peak forms.
 ;;
-;; So the inline stage writes each caller's final body once, straight into this
-;; arena (`opt-optimizer-input-place`): the same single clone that escapes the
-;; body from its per-caller scratch phase, retargeted from the stage arena. The
-;; inline arena is then released before the loop starts with no survivor inside
-;; it, and this arena is released once the loop has escaped every optimized
-;; function into the enclosing arena. Placing bodies as they are finished avoids
-;; a second whole-program copy and its overlap with the live inline arena.
+;; So the inline stage writes each caller's final body once, straight into an
+;; input chunk chosen by its index slot (`opt-optimizer-input-place`): the same
+;; single clone that escapes the body from its per-caller scratch phase,
+;; retargeted from the stage arena. The inline arena is then released before the
+;; loop starts with no survivor inside it. The loop reads each survivor exactly
+;; once, in order, and nothing reads a body after its loop position: summaries
+;; hold no body pointers, and every optimized body is deep-cloned into the
+;; enclosing arena. So each chunk is released as soon as the loop has passed the
+;; last survivor in it (`opt-optimizer-input-release-passed!`), and a chunk that
+;; holds no survivor is released before the loop. Placing bodies as they are
+;; finished avoids a second whole-program copy and its overlap with the live
+;; inline arena.
 ;;
 ;; Level 1 keeps the direct path: its inline stage is the cheap tiny-leaf pass,
 ;; whose arena is a fraction of the level-2 one, and the loop reads it in place.
@@ -102128,82 +102195,141 @@
     0
     (arena.tl_arena_make)))
 
-;; The optimizer-input arena of one optimize call (0 below level 2) and the
-;; symbol ids of the bodies placed in it. The record lives in the inline arena
-;; and is read for the last time by `opt-optimizer-input-carry`, before that
-;; arena is released.
+;; How many slot-range chunks the placed bodies are spread over. Each chunk is
+;; its own arena, which commits a first segment on first use, so a few dozen
+;; chunks of a few MB each release the input steadily without one arena per
+;; body.
+(define opt-optimizer-input-chunk-count : i64
+  32)
+
+;; When the loop may release each input chunk, built by
+;; `opt-optimizer-input-carry` in the carrier arena. `chunks` holds each chunk's
+;; arena (0 once released or never used), `last` the last loop position that
+;; reads it (-1 for none), and `order` the chunks some position reads, by
+;; ascending `last`.
+(defstruct OptOptimizerInputRelease
+  (chunks (__tl_dyn-array i64))
+  (last (__tl_dyn-array i64))
+  (order (__tl_dyn-array i64)))
+
+(define (opt-optimizer-input-release-empty) : OptOptimizerInputRelease
+  (OptOptimizerInputRelease
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)))
+
+;; The input arenas of one optimize call and the bodies placed in them. `arena`
+;; (0 below level 2) holds the loop's sequence shell and any survivor copied
+;; there. `placed` maps a placed body's symbol id to its identity
+;; (`opt-optimizer-input-identity`) and `placed-chunk` to its chunk. These live
+;; in the inline arena and are read for the last time by
+;; `opt-optimizer-input-carry`, before that arena is released; `release`, which
+;; the carry builds in `arena`, is all the loop reads.
 (defstruct OptOptimizerInput
   (arena i64)
-  (placed opt_i64_i64_map.Map))
+  (placed opt_i64_i64_map.Map)
+  (placed-chunk opt_i64_i64_map.Map)
+  (slots-per-chunk i64)
+  (chunks (__tl_dyn-array i64))
+  (release OptOptimizerInputRelease))
 
 (define (opt-optimizer-input-new [arena-handle : i64] [function-count : i64]) : OptOptimizerInput
-  (OptOptimizerInput
-    arena-handle
-    (opt_i64_i64_map.with-capacity
+  (let
+    [capacity : i64
       (if (= arena-handle 0)
         1
-        (opt-function-index-capacity function-count)))))
+        (opt-function-index-capacity function-count))]
+    (OptOptimizerInput
+      arena-handle
+      (opt_i64_i64_map.with-capacity capacity)
+      (opt_i64_i64_map.with-capacity capacity)
+      (if (= arena-handle 0)
+        0
+        (+
+          (/
+            (+ function-count (- opt-optimizer-input-chunk-count 1))
+            opt-optimizer-input-chunk-count)
+          1))
+      (__tl_make-array
+        i64
+        (if (= arena-handle 0)
+          0
+          opt-optimizer-input-chunk-count))
+      (opt-optimizer-input-release-empty))))
 
-;; Escape one finished body out of its producer's scratch: into the input arena
-;; when there is one, recording its symbol id, otherwise into the current arena.
+;; A body's identity: the address of its block storage. A body rewritten after
+;; placement has new block storage, so it no longer matches its record.
+(define (opt-optimizer-input-identity [func : ir.CompilerIrFunction]) : i64
+  (match func
+    [(Function _ _ _ _ blocks _)
+      (match blocks
+        [(Array seq)
+          (let
+            [slots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
+            (cast
+              (unsafe
+                (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8))))
+              : i64))])]))
+
+;; The chunk of index slot SLOT; slots past the expected range share the last.
+(define (opt-optimizer-input-chunk-of
+  [input : (& input OptOptimizerInput)]
+  [slot : i64]) : i64
+  (let
+    [chunk : i64 (/ slot input.slots-per-chunk)]
+    (if (< chunk (array-length input.chunks))
+      chunk
+      (- (array-length input.chunks) 1))))
+
+;; Escape one finished body out of its producer's scratch: into the input chunk
+;; of index slot SLOT when there are input arenas, recording its symbol id,
+;; identity and chunk, otherwise into the current arena.
 (define (opt-optimizer-input-place
   [pools : ast.AstNodePoolContext]
   [input : (&mut input OptOptimizerInput)]
+  [slot : i64]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (if (= input.arena 0)
     (ir.compiler-ir-clone-function pools func)
-    (begin
-      (match (compiler-opt-global-shared-view func)
+    (let
+      [chunk : i64 (opt-optimizer-input-chunk-of input slot)]
+      [_open : unit
+        (when
+          (= (array-ref input.chunks chunk) 0)
+          (set! (array-ref input.chunks chunk) (arena.tl_arena_make)))]
+      [placed : ir.CompilerIrFunction
+        (in-arena
+          (arena.Arena (array-ref input.chunks chunk))
+          (ir.compiler-ir-clone-function pools func))]
+      (match (compiler-opt-global-shared-view placed)
         [(Function name _ _ _ _ _)
-          (opt_i64_i64_map.insert-ref!
-            (&mut input.placed)
-            (ir.compiler-ir-symbol-id name)
-            1)])
-      (in-arena
-        (arena.Arena input.arena)
-        (ir.compiler-ir-clone-function pools func)))))
+          (let
+            [id : i64 (ir.compiler-ir-symbol-id name)]
+            (opt_i64_i64_map.insert-ref!
+              (&mut input.placed)
+              id
+              (opt-optimizer-input-identity
+                (compiler-opt-global-shared-view placed)))
+            (opt_i64_i64_map.insert-ref! (&mut input.placed-chunk) id chunk))])
+      placed)))
 
+;; Whether FUNC is the body placed under its name.
 (define (opt-optimizer-input-placed?
   [input : (& input OptOptimizerInput)]
   [func : ir.CompilerIrFunction]) : bool
   (match (compiler-opt-global-shared-view func)
     [(Function name _ _ _ _ _)
-      (opt_i64_i64_map.contains?
-        (& input.placed)
-        (ir.compiler-ir-symbol-id name))]))
-
-;; The loop's input sequence, resident in the input arena. Every survivor the
-;; inline stage placed is used as is; any other survivor is copied here, so the
-;; loop never reads a body from the inline or lower-IR arenas.
-(define (opt-optimizer-input-carry
-  [pools : ast.AstNodePoolContext]
-  [input : (& input OptOptimizerInput)]
-  [funcs : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (if (= input.arena 0)
-    funcs
-    (in-arena
-      (arena.Arena input.arena)
       (let
-        [out : ir.CompilerIrFunctionSeq
-          (ir.compiler-ir-clone-function-seq-shell funcs)]
-        [i : i64 0]
-        (while (< i out.len)
-          (let
-            [func : ir.CompilerIrFunction
-              (compiler-opt-global-array-element-shared-view out.slots i)]
-            (if (opt-optimizer-input-placed?
-              input
-              (compiler-opt-global-shared-view func))
-              unit
-              (set!
-                (array-ref out.slots i)
-                (ir.compiler-ir-clone-function pools func)))
-            (set! i (+ i 1))))
-        out))))
+        [id : i64 (ir.compiler-ir-symbol-id name)]
+        (and
+          (opt_i64_i64_map.contains? (& input.placed) id)
+          (=
+            (opt_i64_i64_map.get-value-or (& input.placed) id 0)
+            (opt-optimizer-input-identity func))))]))
 
-;; Both optimizer-input arenas report under the same mid-phase label: each is
-;; read at its high-water mark and destroyed before the "optimize" phase
-;; snapshot, so neither belongs in that snapshot's unique-root total.
+;; Both kinds of optimizer-input arena report under the same mid-phase label:
+;; each is read at its high-water mark and destroyed before the "optimize"
+;; phase snapshot, so none belongs in that snapshot's unique-root total.
 (define (opt-release-optimizer-input-arena [owner : String] [handle : i64]) : unit
   (allocation_profile.compiler-allocation-profile-control!
     2
@@ -102212,6 +102338,126 @@
     handle)
   (unsafe
     (arena.tl_arena_destroy handle)))
+
+(define (opt-optimizer-input-release-chunk!
+  [release : (&mut release OptOptimizerInputRelease)]
+  [chunk : i64]) : unit
+  (let
+    [handle : i64 (array-ref release.chunks chunk)]
+    (unless
+      (= handle 0)
+      (opt-release-optimizer-input-arena "optimizer-input" handle)
+      (set! (array-ref release.chunks chunk) 0))))
+
+;; The loop's input sequence, resident in the input arenas. Every survivor the
+;; inline stage placed is used as is; any other survivor is copied into the
+;; carrier arena, so the loop never reads a body from the inline or lower-IR
+;; arenas. Builds the release schedule and releases the chunks no survivor is
+;; in.
+(define (opt-optimizer-input-carry
+  [pools : ast.AstNodePoolContext]
+  [input : (&mut input OptOptimizerInput)]
+  [funcs : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (if (= input.arena 0)
+    funcs
+    (in-arena
+      (arena.Arena input.arena)
+      (let
+        [out : ir.CompilerIrFunctionSeq
+          (ir.compiler-ir-clone-function-seq-shell funcs)]
+        [chunk-count : i64 (array-length input.chunks)]
+        [chunks : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+        [last : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+        [i : i64 0]
+        (while (< i chunk-count)
+          (set! (array-ref chunks i) (array-ref input.chunks i))
+          (set! (array-ref last i) -1)
+          (set! i (+ i 1)))
+        (set! i 0)
+        (while (< i out.len)
+          (let
+            [func : ir.CompilerIrFunction
+              (compiler-opt-global-array-element-shared-view out.slots i)]
+            (if (opt-optimizer-input-placed?
+              input
+              (compiler-opt-global-shared-view func))
+              (match (compiler-opt-global-shared-view func)
+                [(Function name _ _ _ _ _)
+                  (set!
+                    (array-ref
+                      last
+                      (opt_i64_i64_map.get-value-or
+                        (& input.placed-chunk)
+                        (ir.compiler-ir-symbol-id name)
+                        0))
+                    i)])
+              (set!
+                (array-ref out.slots i)
+                (ir.compiler-ir-clone-function pools func)))
+            (set! i (+ i 1))))
+        (let
+          [read-count : i64 0]
+          (set! i 0)
+          (while (< i chunk-count)
+            (if (< (array-ref last i) 0)
+              (unless
+                (= (array-ref chunks i) 0)
+                (opt-release-optimizer-input-arena
+                  "optimizer-input"
+                  (array-ref chunks i))
+                (set! (array-ref chunks i) 0))
+              (set! read-count (+ read-count 1)))
+            (set! i (+ i 1)))
+          (let
+            [order : (__tl_dyn-array i64) (__tl_make-array i64 read-count)]
+            [filled : i64 0]
+            ;; Insertion by `last`: chunk counts are a few dozen.
+            (set! i 0)
+            (while (< i chunk-count)
+              (unless
+                (< (array-ref last i) 0)
+                (let
+                  [at : i64 filled]
+                  (while (and
+                    (> at 0)
+                    (>
+                      (array-ref last (array-ref order (- at 1)))
+                      (array-ref last i)))
+                    (set! (array-ref order at) (array-ref order (- at 1)))
+                    (set! at (- at 1)))
+                  (set! (array-ref order at) i)
+                  (set! filled (+ filled 1))))
+              (set! i (+ i 1)))
+            (set! input.release (OptOptimizerInputRelease chunks last order))))
+        out))))
+
+;; Release every input chunk whose last reader is at or before loop position
+;; POSITION, starting from `order[cursor]`, and return the next cursor.
+(define (opt-optimizer-input-release-passed!
+  [release : (&mut release OptOptimizerInputRelease)]
+  [position : i64]
+  [cursor : i64]) : i64
+  (let
+    [next : i64 cursor]
+    (while (and
+      (< next (array-length release.order))
+      (<= (array-ref release.last (array-ref release.order next)) position))
+      (opt-optimizer-input-release-chunk!
+        release
+        (array-ref release.order next))
+      (set! next (+ next 1)))
+    next))
+
+;; Release whatever input arenas remain once the loop has run: any chunk still
+;; open, then the carrier.
+(define (opt-optimizer-input-release-all!
+  [input : (&mut input OptOptimizerInput)]) : unit
+  (let
+    [i : i64 0]
+    (while (< i (array-length input.release.chunks))
+      (opt-optimizer-input-release-chunk! (&mut input.release) i)
+      (set! i (+ i 1)))
+    (opt-release-optimizer-input-arena "optimizer-input" input.arena)))
 
 ;; Per-function arena escape. The optimizer fixpoint allocates throwaway IR
 ;; copies per pass and per iteration, none freed by the bump allocator. To cap
@@ -102228,7 +102474,8 @@
   [type-segment-bases : i64]
   [funcs : ir.CompilerIrFunctionSeq]
   [level : i64]
-  [summaries : OptProgramSummaries]) : ir.CompilerIrFunctionSeq
+  [summaries : OptProgramSummaries]
+  [input : (&mut input OptOptimizerInput)]) : ir.CompilerIrFunctionSeq
   (if (= level 0)
     funcs
     (let
@@ -102240,7 +102487,8 @@
           funcs
           level
           (arena.raw-handle scratch)
-          summaries)]
+          summaries
+          input)]
       (allocation_profile.compiler-allocation-profile-control!
         2
         "optimize"
@@ -102316,9 +102564,11 @@
   [funcs : ir.CompilerIrFunctionSeq]
   [level : i64]
   [scratch : i64]
-  [summaries : OptProgramSummaries]) : ir.CompilerIrFunctionSeq
+  [summaries : OptProgramSummaries]
+  [input : (&mut input OptOptimizerInput)]) : ir.CompilerIrFunctionSeq
   (let
     [index : i64 0]
+    [release-cursor : i64 0]
     [builder : ir.CompilerIrFunctionBuilder
       (ir.compiler-ir-function-builder-with-capacity funcs.len)]
     (while (< index funcs.len)
@@ -102352,6 +102602,12 @@
               "function"
               (compiler-opt-profile-function-name func)))]
         (ir.compiler-ir-function-builder-push! (&mut builder) optimized)
+        (set!
+          release-cursor
+          (opt-optimizer-input-release-passed!
+            (&mut input.release)
+            index
+            release-cursor))
         (set! index (+ index 1))))
     (ir.compiler-ir-function-builder-to-seq builder)))
 
@@ -114975,6 +115231,7 @@
               (opt-optimizer-input-place
                 pools
                 input
+                slot
                 (if (> one.len 0)
                   (compiler-opt-global-array-element-shared-view one.slots 0)
                   (compiler-opt-global-array-element-shared-view values slot))))
@@ -117871,7 +118128,7 @@
     [_ unit]))
 
 (define (opt-const-global-mul-shift-count-params!
-  [counts : (& counts opt_i64_i64_map.Map)]
+  [counts : (&mut counts opt_i64_i64_map.Map)]
   [params : ir.CompilerIrParamSeq]) : unit
   (let
     [position : i64 0]
@@ -117934,7 +118191,7 @@
           ;; only definition the block scan sees, and a use of %x before it
           ;; still reads the argument.
           (opt-const-global-mul-shift-count-params!
-            counts
+            (&mut counts)
             (compiler-opt-global-shared-view params))
           (opt-blocks-visit
             blocks
@@ -124550,7 +124807,7 @@
                     [optimizer-functions : ir.CompilerIrFunctionSeq
                       (opt-optimizer-input-carry
                         pools
-                        (& optimizer-input)
+                        (&mut optimizer-input)
                         pruned-functions)]
                     [_release-inline-arena-early : unit
                       (if (= carrier 0)
@@ -124580,9 +124837,11 @@
                         type-segment-bases
                         optimizer-functions
                         level
-                        (compiler-opt-global-shared-view summaries))]
-                    ;; No live pointer into the optimizer-input arena remains
-                    ;; here. Every function in `optimized-functions` was
+                        (compiler-opt-global-shared-view summaries)
+                        (&mut optimizer-input))]
+                    ;; No live pointer into the optimizer-input arenas remains
+                    ;; here; the loop has already released every chunk it
+                    ;; passed. Every function in `optimized-functions` was
                     ;; deep-cloned into the enclosing arena on its way out of the
                     ;; escaping optimizer -- level 2 through
                     ;; `compiler-ir-clone-function`, level 1 through the
@@ -124591,7 +124850,7 @@
                     ;; shell, which the inline stage only reads. That leaves
                     ;; `reachable-functions`, `pruned`/`pruned-functions`,
                     ;; `optimizer-functions`, `optimizer-input`, `summaries`, the
-                    ;; function index and the census as the arena's only
+                    ;; function index and the census as the arenas' only
                     ;; referents, and all of them
                     ;; are dead from here on: nothing below this binding reads
                     ;; them. `summaries` carries only i64/i64 maps and the
@@ -124602,9 +124861,8 @@
                         (opt-release-optimizer-input-arena
                           "optimize-inline"
                           inline-arena)
-                        (opt-release-optimizer-input-arena
-                          "optimizer-input"
-                          carrier))]
+                        (opt-optimizer-input-release-all!
+                          (&mut optimizer-input)))]
                     (begin
                       (cfg
                         compile-profile
@@ -130808,7 +131066,7 @@
   [call-memory : (& call-memory opt_i64_i64_map.Map)]
   [defs : (& defs (__tl_dyn-array i64))]
   [sites : OptPureCallTable]
-  [env : (& env opt_i64_i64_map.Map)]
+  [env : (&mut env opt_i64_i64_map.Map)]
   [table : OptPureCallTable]
   [instrs : ir.CompilerIrInstrSeq]
   [changed : (&mut changed (__tl_dyn-array i64))]) : OptPureCallBlockOut
@@ -131952,7 +132210,7 @@
                     call-memory
                     defs
                     (compiler-opt-global-shared-view sites)
-                    env
+                    (&mut env)
                     entry
                     instrs
                     (&mut changed))

@@ -3236,18 +3236,23 @@
         (owned_view.compiler-owned-shared-view out)
         (ir.compiler-ir-extern-seq-empty))
         [(Program _ functions) functions])]
+    ;; The stage output still holds the pruned bodies, whose chunk the carry
+    ;; releases, so read it first.
+    [out-placed? : bool (opt-input-arena-all-placed? (& input) (& out))]
+    [out-loop-leaf-calls : i64
+      (opt-input-arena-leaf-calls (& out) "input_loop")]
     [carried : ir.CompilerIrFunctionSeq
       (opt.opt-optimizer-input-carry
         (ast.ast-node-pool-reader-context-current)
-        (& input)
+        (&mut input)
         (owned_view.compiler-owned-shared-view survivors))]
     (test.assert-true (> bodies 0) "level 2 has an optimizer-input arena")
     (test.assert-i64-eq out.len 4 "the stage returns every index body")
     (test.assert-true
-      (opt-input-arena-all-placed? (& input) (& out))
+      out-placed?
       "rewritten, unrewritten and later pruned bodies are all placed")
     (test.assert-i64-eq
-      (opt-input-arena-leaf-calls (& out) "input_loop")
+      out-loop-leaf-calls
       0
       "the placed input_loop is its rewritten body")
     (test.assert-i64-eq survivors.len 2 "pruning keeps main and input_loop")
@@ -3259,8 +3264,7 @@
     (test.assert-true
       (opt-input-arena-all-placed? (& input) (& carried))
       "the carried survivors are the placed bodies")
-    (unsafe
-      (arena.tl_arena_destroy bodies))))
+    (opt.opt-optimizer-input-release-all! (&mut input))))
 
 ;; A survivor the stage never placed is copied into the input arena, so the
 ;; loop still reads nothing from the arena that produced it: here the source
@@ -3278,7 +3282,7 @@
     [carried : ir.CompilerIrFunctionSeq
       (opt.opt-optimizer-input-carry
         (ast.ast-node-pool-reader-context-current)
-        (& input)
+        (&mut input)
         functions)]
     [_destroy-source : unit
       (unsafe
@@ -3317,11 +3321,138 @@
     [carried : ir.CompilerIrFunctionSeq
       (opt.opt-optimizer-input-carry
         (ast.ast-node-pool-reader-context-current)
-        (& input)
+        (&mut input)
         (owned_view.compiler-owned-shared-view out))]
     (test.assert-i64-eq input.arena 0 "level 1 has no optimizer-input arena")
     (test.assert-i64-eq input.placed.len 0 "level 1 places nothing")
+    (test.assert-i64-eq
+      (array-length input.release.order)
+      0
+      "level 1 has no input chunk to release")
     (test.assert-i64-eq carried.len out.len "the loop reads the stage output")))
+
+;; Each placed body goes into the chunk of its index slot (#8446). The carry
+;; releases a chunk no survivor is in, and the loop releases each other chunk
+;; only once it has passed that chunk's last survivor. A survivor whose name was
+;; placed but whose body is a different one is copied into the carrier, which
+;; outlives every chunk.
+(test
+  optimizer-input-chunks-release-after-last-survivor
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [carrier : i64 (opt.opt-optimizer-input-carrier 2)]
+    ;; Four functions give two slots per chunk.
+    [input : opt.OptOptimizerInput (opt.opt-optimizer-input-new carrier 4)]
+    [functions : ir.CompilerIrFunctionSeq (opt-input-arena-functions)]
+    [placed-main : ir.CompilerIrFunction
+      (opt.opt-optimizer-input-place
+        pools
+        (&mut input)
+        0
+        (ir.compiler-ir-function-seq-ref (& functions) 0))]
+    [placed-loop : ir.CompilerIrFunction
+      (opt.opt-optimizer-input-place
+        pools
+        (&mut input)
+        1
+        (ir.compiler-ir-function-seq-ref (& functions) 1))]
+    [placed-leaf : ir.CompilerIrFunction
+      (opt.opt-optimizer-input-place
+        pools
+        (&mut input)
+        2
+        (ir.compiler-ir-function-seq-ref (& functions) 2))]
+    [placed-dead : ir.CompilerIrFunction
+      (opt.opt-optimizer-input-place
+        pools
+        (&mut input)
+        9
+        (ir.compiler-ir-function-seq-ref (& functions) 3))]
+    [dead-placed? : bool
+      (opt.opt-optimizer-input-placed?
+        (& input)
+        (owned_view.compiler-owned-shared-view placed-dead))]
+    [survivors : ir.CompilerIrFunctionSeq
+      (let
+        [builder : ir.CompilerIrFunctionBuilder
+          (ir.compiler-ir-function-builder-with-capacity 4)]
+        (ir.compiler-ir-function-builder-push! (&mut builder) placed-main)
+        (ir.compiler-ir-function-builder-push! (&mut builder) placed-loop)
+        (ir.compiler-ir-function-builder-push! (&mut builder) placed-leaf)
+        (ir.compiler-ir-function-builder-push!
+          (&mut builder)
+          (ir.compiler-ir-function-seq-ref (& functions) 3))
+        (ir.compiler-ir-function-builder-to-seq builder))]
+    [carried : ir.CompilerIrFunctionSeq
+      (opt.opt-optimizer-input-carry pools (&mut input) survivors)]
+    [release : opt.OptOptimizerInputRelease input.release]
+    [copy : ir.CompilerIrFunction
+      (ir.compiler-ir-function-seq-ref (& carried) 3)]
+    (test.assert-true dead-placed? "a placed body matches its record")
+    (test.assert-false
+      (opt.opt-optimizer-input-placed?
+        (& input)
+        (owned_view.compiler-owned-shared-view copy))
+      "a different body under a placed name is not the placed one")
+    (test.assert-i64-eq (array-length release.chunks) 32 "one entry per chunk")
+    (test.assert-true (> (array-ref release.chunks 0) 0) "chunk 0 is open")
+    (test.assert-true (> (array-ref release.chunks 1) 0) "chunk 1 is open")
+    (test.assert-i64-eq
+      (array-ref release.chunks 4)
+      0
+      "the chunk no survivor is in is released at the carry")
+    (test.assert-i64-eq
+      (array-ref release.chunks 2)
+      0
+      "an unused chunk is never opened")
+    (test.assert-i64-eq
+      (array-ref release.last 0)
+      1
+      "chunk 0 is last read by input_loop")
+    (test.assert-i64-eq
+      (array-ref release.last 1)
+      2
+      "chunk 1 is last read by input_leaf")
+    (test.assert-i64-eq (array-ref release.last 4) -1 "chunk 4 has no reader")
+    (test.assert-i64-eq
+      (array-length release.order)
+      2
+      "two chunks wait for the loop")
+    (let
+      [cursor : i64
+        (opt.opt-optimizer-input-release-passed! (&mut release) 0 0)]
+      (test.assert-i64-eq cursor 0 "after main, chunk 0 still has a reader")
+      (test.assert-true
+        (> (array-ref release.chunks 0) 0)
+        "chunk 0 stays open while input_loop is ahead")
+      (set!
+        cursor
+        (opt.opt-optimizer-input-release-passed! (&mut release) 1 cursor))
+      (test.assert-i64-eq cursor 1 "chunk 0 goes after input_loop")
+      (test.assert-i64-eq (array-ref release.chunks 0) 0 "chunk 0 is released")
+      (test.assert-true
+        (> (array-ref release.chunks 1) 0)
+        "chunk 1 stays open while input_leaf is ahead")
+      (set!
+        cursor
+        (opt.opt-optimizer-input-release-passed! (&mut release) 2 cursor))
+      (test.assert-i64-eq
+        (array-ref release.chunks 1)
+        0
+        "chunk 1 goes after input_leaf")
+      (set!
+        cursor
+        (opt.opt-optimizer-input-release-passed! (&mut release) 3 cursor))
+      (test.assert-i64-eq cursor 2 "the copy releases no chunk")
+      (let
+        [copy-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks copy)]
+        (test.assert-i64-eq
+          (opt-count-direct-call-name-blocks
+            (ir.compiler-ir-block-list-view copy-blocks)
+            "input_leaf")
+          1
+          "the copied survivor outlives every chunk"))
+      (opt.opt-optimizer-input-release-all! (&mut input)))))
 
 ;; The production level-2 path destroys the inline arena before its
 ;; per-function loop, so every body the loop reads must already be resident in
@@ -57716,6 +57847,11 @@
 ;; C16 negative : an i64 store fed by a u8 load. The store fixes the width, and
 ;;                a load that disagrees means the body does not move eight bytes
 ;;                per iteration -- the wide-element twin of C8.
+;; C17 positive : the counter is bumped BEFORE the body, so both geps are
+;;                indexed by its `next` (`%8 = add %4, 1`). The rewrite redefines
+;;                `%8` as `bound`, so the geps must read a fresh copy of the
+;;                increment instead, the index the FIRST iteration used; left on
+;;                `%8` the call would start `bound` elements past it.
 ;;
 ;; These negatives were checked load-bearing by mutating the implementation and
 ;; confirming THIS test is what fails, with the code it reports:
@@ -57731,6 +57867,8 @@
 ;;     and 130 (C13): with no width there is nothing for the scan's own tests to
 ;;     disagree with, so every one of them compares 0 against 0 and passes.
 ;;   * `opt-copy-call-scan-body`'s Load-width arm dropped -> code 160 (C16).
+;;   * `opt-copy-call-kept-instr` made to return its instruction unchanged ->
+;;     code 172 (C17's source gep still reads `%8`).
 ;;   * `opt-copy-call-escape-ok?`'s Load arm dropped (i.e. reverting to
 ;;     `opt-fill-call-escape-ok?`, which never sees a Load) -> code 120 (C12).
 ;; C12 is why this pass has its own escape check at all. Its fixture carries the
@@ -58164,6 +58302,50 @@
 (define (opt-cc-test-loaded) : ir.CompilerIrValue
   (Var 6))
 
+;; C17: the bump-first copy loop, `i = i + 1` then `dst[i] = src[i]`.
+(define (opt-cc-test-next-index) : ir.CompilerIrFunction
+  (opt-copy-call-function
+    (irt.func
+      "function @cc_fn(src=%0:u64, bound=%1:i64, dst=%2:u64) -> i64 vars 13 {
+       cc.entry:
+         jump while_body.33__bce_guard
+       while_body.33__bce_guard:
+         %3 = lt 0, %1 : bool
+         branch %3, while_body.33__bce_fast, cc.exit
+       while_body.33__bce_fast:
+         %4 = phi [0, while_body.33__bce_guard], [%8, while_body.33__bce_fast] : i64
+         %8 = add %4, 1 : i64
+         %5 = gep %0, %8 : i64
+         %6 = load %5 : i64
+         %7 = gep %2, %8 : i64
+         store_ptr %7, %6 : i64
+         %9 = lt %8, %1 : bool
+         branch %9, while_body.33__bce_fast, cc.exit
+       cc.exit:
+         return 0
+       }")))
+
+;; The offset var of the loop block's gep at `index`, or -1.
+(define (opt-cc-test-gep-offset
+  [out : (& out ir.CompilerIrFunction)]
+  [index : i64]) : i64
+  (match (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-instr-at blocks 2 index))
+    [(Gep _ _ (Var offset) _) offset]
+    [_ -1]))
+
+;; Whether the loop block's instruction at `index` is `%dst = add %4, 1`.
+(define (opt-cc-test-seed-add?
+  [out : (& out ir.CompilerIrFunction)]
+  [index : i64]
+  [dst : i64]) : bool
+  (match (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-instr-at blocks 2 index))
+    [(BinOp d (Add) (Var 4) (I64 1) _) (= d dst)]
+    [_ false]))
+
 (define (compiler-optimize-copy-call-self-test) : i64
   (let
     [c1 : ir.CompilerIrFunction
@@ -58337,6 +58519,7 @@
         false
         false
         false)]
+    [c17 : ir.CompilerIrFunction (opt-cc-test-next-index)]
     [c11 : ir.CompilerIrFunction
       (opt-copy-call-function (ir.compiler-ir-global-shared-view c1))]
     (cond
@@ -58377,6 +58560,14 @@
       [(not (opt-cc-test-loop-has-call8-const? c15 4 4)) 151]
       [(not (= (opt-cc-test-loop-store-count c15 0 8) 0)) 152]
       [(not (opt-cc-test-unchanged? c16)) 160]
+      ;; C17: phi, add(seed copy), mov(inext), gep(src), load, gep(dst), call,
+      ;; lt, jump. The seed copy is %13 and the call %14.
+      [(not (= (opt-cc-test-loop-instr-count c17) 9)) 170]
+      [(not (opt-cc-test-seed-add? c17 1 13)) 171]
+      [(not (= (opt-cc-test-gep-offset c17 3) 13)) 172]
+      [(not (= (opt-cc-test-gep-offset c17 5) 13)) 173]
+      [(not (opt-cc-test-loop-has-call8? c17 6)) 174]
+      [(not (= (opt.opt-function-frame c17) 15)) 175]
       [else 42])))
 
 ;; --- latch increment sinking -------------------------------------------------
@@ -63353,7 +63544,7 @@
   (test.assert-i64-eq
     (compiler-optimize-copy-call-self-test)
     42
-    "an element copy in a __bce_fast clone becomes one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd (i64 slots) call, with an invariant+counter destination index admitted and idempotently; checked, unsupported-width, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width, below-floor and constant-value loops do not"))
+    "an element copy in a __bce_fast clone becomes one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd (i64 slots) call, with an invariant+counter destination index admitted and idempotently, and a bump-first loop's geps on the counter's next reading the first iteration's index; checked, unsupported-width, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width, below-floor and constant-value loops do not"))
 
 (test
   latch-increment-sink

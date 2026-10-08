@@ -5378,7 +5378,429 @@
 ;; batch and is returned; a malformed token ends it with a bad request. Ops
 ;; that already ran cannot be observed then, because a failed expansion
 ;; commits nothing, exactly as when a native chain stops at a failing op.
+;; --- decoded run-ops batches --------------------------------------------------
+;;
+;; A `run-ops` batch is constant data the producer wrote into the image, so its
+;; decoding -- names resolved to callback rows, integers read digit by digit --
+;; comes out the same every time the native code passes it. The host decodes
+;; each distinct batch once and afterwards replays the decoded records. An entry
+;; is keyed by the batch's address and length and keeps a copy of its bytes,
+;; which a hit compares word by word before replaying, so an image mapped again
+;; at the same address with other bytes (or any caller's own buffer) decodes
+;; afresh. Only well-formed batches are cached: a malformed one runs through the
+;; interleaved decoder below exactly as before, so its status is unchanged.
+;;
+;; Entries live in one process-lifetime arena; a batch's words and records are
+;; contiguous runs of the flat lanes, located by the entry's start offsets.
+(define compiler-comptime-host-batch-cache-arena : i64
+  0)
+(define compiler-comptime-host-batch-cache-slots : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define compiler-comptime-host-batch-cache-entries : i64
+  0)
+(define compiler-comptime-host-batch-cache-bases : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define compiler-comptime-host-batch-cache-lens : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define compiler-comptime-host-batch-cache-word-starts : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define compiler-comptime-host-batch-cache-record-starts : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define compiler-comptime-host-batch-cache-record-counts : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define compiler-comptime-host-batch-cache-words-len : i64
+  0)
+(define compiler-comptime-host-batch-cache-words : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define compiler-comptime-host-batch-cache-records-len : i64
+  0)
+
+;; Four lanes per record: callback row, then its three immediates.
+(define compiler-comptime-host-batch-cache-records : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+
+(define (compiler-comptime-host-batch-cache-arena-ensure!) : i64
+  (when
+    (= compiler-comptime-host-batch-cache-arena 0)
+    (set! compiler-comptime-host-batch-cache-arena (arena.tl_arena_make_small)))
+  compiler-comptime-host-batch-cache-arena)
+
+;; `lane` with room for `needed` elements, copied into a larger array in the
+;; cache arena when it has less.
+(define (compiler-comptime-host-batch-cache-grown
+  [lane : (__tl_dyn-array i64)]
+  [used : i64]
+  [needed : i64]) : (__tl_dyn-array i64)
+  (if (<= needed (array-length lane))
+    lane
+    (let
+      [capacity : i64
+        (if (< (array-length lane) 64)
+          64
+          (array-length lane))]
+      (while (< capacity needed)
+        (set! capacity (* capacity 2)))
+      (in-arena
+        (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!))
+        (let
+          [next : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
+          [index : i64 0]
+          (while (< index used)
+            (set! (array-ref next index) (array-ref lane index))
+            (set! index (+ index 1)))
+          next)))))
+
+;; The batch word at `word` (8 bytes from `base + 8 * word`), the final partial
+;; word zero-padded; it never reads past `base + len`.
+(define (compiler-comptime-host-batch-word
+  [base : i64]
+  [len : i64]
+  [word : i64]) : i64
+  (let
+    [offset : i64 (* word 8)]
+    (if (<= (+ offset 8) len)
+      (unsafe
+        (ptr-read (int->ptr (+ base offset) : (Ptr i64))))
+      (let
+        [value : i64 0]
+        [index : i64 (- len 1)]
+        (while (>= index offset)
+          (set!
+            value
+            (bit-or
+              (shl value 8)
+              (cast
+                (unsafe
+                  (ptr-read (int->ptr (+ base index) : (Ptr u8))))
+                : i64)))
+          (set! index (- index 1)))
+        value))))
+
+(define (compiler-comptime-host-batch-cache-slot [base : i64] [len : i64]) : i64
+  (bit-and
+    (bit-xor (* base -7046029254386353131) (* (+ len 1) 1442695040888963407))
+    (- (array-length compiler-comptime-host-batch-cache-slots) 1)))
+
+;; The cached entry for this batch whose bytes still match, or -1.
+(define (compiler-comptime-host-batch-cache-find [base : i64] [len : i64]) : i64
+  (if (= (array-length compiler-comptime-host-batch-cache-slots) 0)
+    -1
+    (let
+      [mask : i64 (- (array-length compiler-comptime-host-batch-cache-slots) 1)]
+      [slot : i64 (compiler-comptime-host-batch-cache-slot base len)]
+      [found : i64 -1]
+      [done : bool false]
+      (while (not done)
+        (let
+          [encoded : i64
+            (array-ref compiler-comptime-host-batch-cache-slots slot)]
+          (cond
+            [(= encoded 0) (set! done true)]
+            [(and
+              (=
+                (array-ref
+                  compiler-comptime-host-batch-cache-bases
+                  (- encoded 1))
+                base)
+              (=
+                (array-ref
+                  compiler-comptime-host-batch-cache-lens
+                  (- encoded 1))
+                len))
+              (set! found (- encoded 1))
+              (set! done true)]
+            [else (set! slot (bit-and (+ slot 1) mask))])))
+      (if (< found 0)
+        -1
+        (let
+          [start : i64
+            (array-ref compiler-comptime-host-batch-cache-word-starts found)]
+          [words : i64 (/ (+ len 7) 8)]
+          [word : i64 0]
+          [same : bool true]
+          (while (and same (< word words))
+            (unless
+              (=
+                (compiler-comptime-host-batch-word base len word)
+                (array-ref
+                  compiler-comptime-host-batch-cache-words
+                  (+ start word)))
+              (set! same false))
+            (set! word (+ word 1)))
+          (if same
+            found
+            -1))))))
+
+;; Rebuild the slot table at `capacity` over the entries so far.
+(define (compiler-comptime-host-batch-cache-rehash! [capacity : i64]) : unit
+  (in-arena
+    (arena.Arena (compiler-comptime-host-batch-cache-arena-ensure!))
+    (set!
+      compiler-comptime-host-batch-cache-slots
+      (__tl_make-array i64 capacity)))
+  (let
+    [entry : i64 0]
+    [mask : i64 (- capacity 1)]
+    (while (< entry compiler-comptime-host-batch-cache-entries)
+      (let
+        [slot : i64
+          (compiler-comptime-host-batch-cache-slot
+            (array-ref compiler-comptime-host-batch-cache-bases entry)
+            (array-ref compiler-comptime-host-batch-cache-lens entry))]
+        (while (not
+          (= (array-ref compiler-comptime-host-batch-cache-slots slot) 0))
+          (set! slot (bit-and (+ slot 1) mask)))
+        (set!
+          (array-ref compiler-comptime-host-batch-cache-slots slot)
+          (+ entry 1)))
+      (set! entry (+ entry 1)))))
+
+;; Decode the whole batch without running it. Returns the new entry's index,
+;; or -1 when the batch is malformed (nothing is cached then).
+(define (compiler-comptime-host-batch-cache-decode! [base : i64] [len : i64]) : i64
+  (let
+    [batch : CompilerComptimeHostBatch
+      (CompilerComptimeHostBatch base len 0 true)]
+    [resolved : (Array i64 64) (init : (Array i64 64))]
+    [name-count : i64 (compiler-comptime-host-batch-int! (&mut batch))]
+    [index : i64 0]
+    (when
+      (or (< name-count 1) (> name-count tlci.tlci-run-ops-names-cap))
+      (set! batch.ok false))
+    (while (and batch.ok (< index name-count))
+      (let
+        [hint : i64 (compiler-comptime-host-batch-int! (&mut batch))]
+        [length : i64 (compiler-comptime-host-batch-int! (&mut batch))]
+        (if (or (not batch.ok) (< length 1) (> length (- batch.len batch.pos)))
+          (set! batch.ok false)
+          (let
+            [found : i64
+              (compiler-comptime-host-batch-name-index
+                (& batch)
+                hint
+                batch.pos
+                length)]
+            (if (< found 0)
+              (set! batch.ok false)
+              (begin
+                (set! (array-ref resolved index) found)
+                (set! batch.pos (+ batch.pos length))
+                (set! index (+ index 1))))))))
+    (let
+      [record-count : i64 (compiler-comptime-host-batch-int! (&mut batch))]
+      [record-start : i64 compiler-comptime-host-batch-cache-records-len]
+      [record : i64 0]
+      (when (< record-count 1) (set! batch.ok false))
+      (when
+        batch.ok
+        (set!
+          compiler-comptime-host-batch-cache-records
+          (compiler-comptime-host-batch-cache-grown
+            (compiler-comptime-host-global-shared-view
+              compiler-comptime-host-batch-cache-records)
+            record-start
+            (+ record-start (* record-count 4)))))
+      (while (and batch.ok (< record record-count))
+        (let
+          [op : i64
+            (if (< batch.pos batch.len)
+              (- (compiler-comptime-host-batch-byte (& batch) batch.pos) 48)
+              -1)]
+          [byte-len : i64 -1]
+          [arg : i64 0]
+          [lane : i64 (+ record-start (* record 4))]
+          (if (or (< op 0) (>= op name-count))
+            (set! batch.ok false)
+            (begin
+              (set! batch.pos (+ batch.pos 1))
+              (set!
+                (array-ref compiler-comptime-host-batch-cache-records lane)
+                (array-ref resolved op))))
+          (while (and batch.ok (< arg 3))
+            (if (and
+              (< batch.pos batch.len)
+              (= (compiler-comptime-host-batch-byte (& batch) batch.pos) 35))
+              (let
+                [count : i64
+                  (begin
+                    (set! batch.pos (+ batch.pos 1))
+                    (compiler-comptime-host-batch-int! (&mut batch)))]
+                (if (or
+                  (not batch.ok)
+                  (>= byte-len 0)
+                  (< count 0)
+                  (> count (- batch.len batch.pos))
+                  (= arg 2))
+                  (set! batch.ok false)
+                  (begin
+                    (set!
+                      (array-ref
+                        compiler-comptime-host-batch-cache-records
+                        (+ lane 1 arg))
+                      (+ batch.base batch.pos))
+                    (set! batch.pos (+ batch.pos count))
+                    (set! byte-len count)
+                    (set! arg (+ arg 1)))))
+              (let
+                [value : i64
+                  (if (and
+                    (< batch.pos batch.len)
+                    (=
+                      (compiler-comptime-host-batch-byte (& batch) batch.pos)
+                      64))
+                    (begin
+                      (set! batch.pos (+ batch.pos 1))
+                      0)
+                    (compiler-comptime-host-batch-int! (&mut batch)))]
+                (when
+                  (and (>= byte-len 0) (not (= value byte-len)))
+                  (set! batch.ok false))
+                (set! byte-len -1)
+                (set!
+                  (array-ref
+                    compiler-comptime-host-batch-cache-records
+                    (+ lane 1 arg))
+                  value)
+                (set! arg (+ arg 1)))))
+          (set! record (+ record 1))))
+      (if (not (and batch.ok (= record record-count) (= batch.pos batch.len)))
+        -1
+        (let
+          [entry : i64 compiler-comptime-host-batch-cache-entries]
+          [words : i64 (/ (+ len 7) 8)]
+          [word-start : i64 compiler-comptime-host-batch-cache-words-len]
+          [word : i64 0]
+          (set!
+            compiler-comptime-host-batch-cache-words
+            (compiler-comptime-host-batch-cache-grown
+              (compiler-comptime-host-global-shared-view
+                compiler-comptime-host-batch-cache-words)
+              word-start
+              (+ word-start words)))
+          (while (< word words)
+            (set!
+              (array-ref
+                compiler-comptime-host-batch-cache-words
+                (+ word-start word))
+              (compiler-comptime-host-batch-word base len word))
+            (set! word (+ word 1)))
+          (set!
+            compiler-comptime-host-batch-cache-bases
+            (compiler-comptime-host-batch-cache-grown
+              (compiler-comptime-host-global-shared-view
+                compiler-comptime-host-batch-cache-bases)
+              entry
+              (+ entry 1)))
+          (set!
+            compiler-comptime-host-batch-cache-lens
+            (compiler-comptime-host-batch-cache-grown
+              (compiler-comptime-host-global-shared-view
+                compiler-comptime-host-batch-cache-lens)
+              entry
+              (+ entry 1)))
+          (set!
+            compiler-comptime-host-batch-cache-word-starts
+            (compiler-comptime-host-batch-cache-grown
+              (compiler-comptime-host-global-shared-view
+                compiler-comptime-host-batch-cache-word-starts)
+              entry
+              (+ entry 1)))
+          (set!
+            compiler-comptime-host-batch-cache-record-starts
+            (compiler-comptime-host-batch-cache-grown
+              (compiler-comptime-host-global-shared-view
+                compiler-comptime-host-batch-cache-record-starts)
+              entry
+              (+ entry 1)))
+          (set!
+            compiler-comptime-host-batch-cache-record-counts
+            (compiler-comptime-host-batch-cache-grown
+              (compiler-comptime-host-global-shared-view
+                compiler-comptime-host-batch-cache-record-counts)
+              entry
+              (+ entry 1)))
+          (set! (array-ref compiler-comptime-host-batch-cache-bases entry) base)
+          (set! (array-ref compiler-comptime-host-batch-cache-lens entry) len)
+          (set!
+            (array-ref compiler-comptime-host-batch-cache-word-starts entry)
+            word-start)
+          (set!
+            (array-ref compiler-comptime-host-batch-cache-record-starts entry)
+            record-start)
+          (set!
+            (array-ref compiler-comptime-host-batch-cache-record-counts entry)
+            record-count)
+          (set!
+            compiler-comptime-host-batch-cache-words-len
+            (+ word-start words))
+          (set!
+            compiler-comptime-host-batch-cache-records-len
+            (+ record-start (* record-count 4)))
+          (set! compiler-comptime-host-batch-cache-entries (+ entry 1))
+          ;; Keep the slot table at most half full.
+          (if (>=
+            (* compiler-comptime-host-batch-cache-entries 2)
+            (array-length compiler-comptime-host-batch-cache-slots))
+            (compiler-comptime-host-batch-cache-rehash!
+              (if (<
+                (array-length compiler-comptime-host-batch-cache-slots)
+                128)
+                256
+                (* (array-length compiler-comptime-host-batch-cache-slots) 2)))
+            (let
+              [mask : i64
+                (- (array-length compiler-comptime-host-batch-cache-slots) 1)]
+              [slot : i64 (compiler-comptime-host-batch-cache-slot base len)]
+              (while (not
+                (= (array-ref compiler-comptime-host-batch-cache-slots slot) 0))
+                (set! slot (bit-and (+ slot 1) mask)))
+              (set!
+                (array-ref compiler-comptime-host-batch-cache-slots slot)
+                (+ entry 1))))
+          entry)))))
+
+;; Run a cached entry's records in order, stopping at the first non-ok status.
+(define (compiler-comptime-host-batch-cache-replay
+  [session : i64]
+  [entry : i64]) : i64
+  (let
+    [start : i64
+      (array-ref compiler-comptime-host-batch-cache-record-starts entry)]
+    [count : i64
+      (array-ref compiler-comptime-host-batch-cache-record-counts entry)]
+    [record : i64 0]
+    [status : i64 tlci.tlci-host-callback-status-ok]
+    (while (and (= status tlci.tlci-host-callback-status-ok) (< record count))
+      (let
+        [lane : i64 (+ start (* record 4))]
+        (set!
+          status
+          (compiler-comptime-host-batch-call
+            (array-ref compiler-comptime-host-batch-cache-records lane)
+            session
+            (array-ref compiler-comptime-host-batch-cache-records (+ lane 1))
+            (array-ref compiler-comptime-host-batch-cache-records (+ lane 2))
+            (array-ref compiler-comptime-host-batch-cache-records (+ lane 3)))))
+      (set! record (+ record 1)))
+    status))
+
+;; Run the batch at `base`/`len`: replay its cached decoding, decoding and
+;; caching it first when it is well formed, else run it interleaved.
 (define (compiler-comptime-host-run-batch
+  [session : i64]
+  [base : i64]
+  [len : i64]) : i64
+  (let
+    [cached : i64 (compiler-comptime-host-batch-cache-find base len)]
+    (if (>= cached 0)
+      (compiler-comptime-host-batch-cache-replay session cached)
+      (let
+        [decoded : i64 (compiler-comptime-host-batch-cache-decode! base len)]
+        (if (>= decoded 0)
+          (compiler-comptime-host-batch-cache-replay session decoded)
+          (compiler-comptime-host-run-batch-interleaved session base len))))))
+
+(define (compiler-comptime-host-run-batch-interleaved
   [session : i64]
   [base : i64]
   [len : i64]) : i64

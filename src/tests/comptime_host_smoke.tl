@@ -202,6 +202,12 @@
 ;; Run `batch` in a fresh one-operand session; the status and the value-stack
 ;; depth it left, as `status * 1000 + depth`.
 (define (host-smoke-run-ops-outcome [batch : String]) : i64
+  (host-smoke-run-ops-outcome-at
+    (host-smoke-name-ptr batch)
+    (string.string-length batch)))
+
+;; The same over the `len` batch bytes at address `base`.
+(define (host-smoke-run-ops-outcome-at [base : i64] [len : i64]) : i64
   (let
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [operands : (__tl_dyn-array ctfe.CompilerCtfeValue)
@@ -212,11 +218,45 @@
       [status : i64
         (host-smoke-invoke
           host.compiler-comptime-host-callback-run-ops
-          (host-smoke-name-ptr batch)
-          (string.string-length batch))]
+          base
+          len)]
       [depth : i64 host.compiler-comptime-host-stack-len]
       (host.compiler-comptime-host-session-close!)
       (+ (* status 1000) depth))))
+
+;; The host decodes a well-formed batch once and replays the decoding when the
+;; same bytes come back. A replay must have the first run's outcome, and bytes
+;; that changed at the same address must be decoded afresh: here the second
+;; batch's op byte names no batch name, which the decoder rejects before any op
+;; runs, where a stale replay would run the first batch's op.
+(define (host-smoke-run-ops-cache-ok?) : bool
+  (let
+    [text : String
+      (host-smoke-one "expr-list-empty" (host-smoke-zero-record 0))]
+    [len : i64 (string.string-length text)]
+    [bytes : (__tl_dyn-array u8) (__tl_make-array u8 len)]
+    [index : i64 0]
+    (while (< index len)
+      (set!
+        (array-ref bytes index)
+        (cast (cast (string.string-ref text index) : i64) : u8))
+      (set! index (+ index 1)))
+    (let
+      [base : i64
+        (cast
+          (unsafe
+            (ptr->int (__tl_array-data bytes)))
+          : i64)]
+      [first : i64 (host-smoke-run-ops-outcome-at base len)]
+      [replayed : i64 (host-smoke-run-ops-outcome-at base len)]
+      ;; The record is the batch's last four bytes; its first is the op.
+      (set! (array-ref bytes (- len 4)) (cast 49 : u8))
+      (let
+        [changed : i64 (host-smoke-run-ops-outcome-at base len)]
+        (and
+          (= first 1)
+          (= replayed 1)
+          (= changed (* tlci.tlci-host-callback-status-bad-request 1000)))))))
 
 ;; A malformed batch is a bad request at the malformed token: the header
 ;; tokens resolve before any op runs, an earlier op in the same batch has
@@ -1570,6 +1610,8 @@
       (io.panic "comptime host smoke: run-ops construction")]
     [(not (host-smoke-run-ops-rejects-ok?))
       (io.panic "comptime host smoke: run-ops rejections")]
+    [(not (host-smoke-run-ops-cache-ok?))
+      (io.panic "comptime host smoke: run-ops decoded-batch cache")]
     [(not (host-smoke-type-kind-data-ok?))
       (io.panic "comptime host smoke: type-kind data status")]
     [(not (host-smoke-type-slice-ok?))

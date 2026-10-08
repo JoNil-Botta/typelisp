@@ -888,6 +888,10 @@
   (UnsupportedCoffImage)
   (ObjectFixup)
   (ObjectRelocation)
+  ;; A Windows object relocation against an external symbol that the runtime
+  ;; binding table does not admit to the object route (#8318): the section,
+  ;; the relocation's containing label and that label's offset, and the symbol.
+  (UndeclaredExternal String String i64 String)
   (MissingEntrySymbol)
   (MissingRuntimeEntry)
   (EmptyTextSection)
@@ -81030,6 +81034,7 @@
     [(UnsupportedCoffImage) "unsupported-coff-image"]
     [(ObjectFixup) "unsupported-object-fixup"]
     [(ObjectRelocation) "unsupported-external-relocation"]
+    [(UndeclaredExternal _ _ _ _) "unsupported-external-relocation"]
     [(MissingEntrySymbol) "missing-entry-symbol"]
     [(MissingRuntimeEntry) "missing-runtime-entry"]
     [(EmptyTextSection) "empty-text-section"]
@@ -81053,12 +81058,24 @@
         (string.int->string count)
         "|limit="
         (string.int->string limit))]
+    [(UndeclaredExternal section label offset symbol)
+      (str_cat.str-cat
+        "section="
+        section
+        "|label="
+        label
+        "|label-offset="
+        (string.int->string offset)
+        "|symbol="
+        symbol)]
     [_ ""]))
 
 (define (compiler-direct-object-fallback-transcript
   [reason : CompilerDirectObjectFallbackReason]) : String
   (let
-    [category : String (compiler-direct-object-fallback-category reason)]
+    [category : String
+      (compiler-direct-object-fallback-category
+        (owned_view.compiler-owned-shared-view reason))]
     [context : String (compiler-direct-object-fallback-context reason)]
     (if (string.eq context "")
       category

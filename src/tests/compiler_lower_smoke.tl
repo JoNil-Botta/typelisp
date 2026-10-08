@@ -813,6 +813,9 @@
     (lower_tests.compiler-lower-stable-word-masks-ok?)
     (io.panic "lower: stable word mask smoke mismatch"))
   (unless
+    (lower_tests.compiler-lower-call-arg-snapshot-shape-ok?)
+    (io.panic "lower: call argument snapshot smoke mismatch"))
+  (unless
     (lower_tests.compiler-lower-array-access-shape-ok?
       (lower_tests.compiler-lower-array-access-source))
     (io.panic "lower: array access smoke mismatch"))

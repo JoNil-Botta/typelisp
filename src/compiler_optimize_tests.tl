@@ -3236,18 +3236,23 @@
         (owned_view.compiler-owned-shared-view out)
         (ir.compiler-ir-extern-seq-empty))
         [(Program _ functions) functions])]
+    ;; The stage output still holds the pruned bodies, whose chunk the carry
+    ;; releases, so read it first.
+    [out-placed? : bool (opt-input-arena-all-placed? (& input) (& out))]
+    [out-loop-leaf-calls : i64
+      (opt-input-arena-leaf-calls (& out) "input_loop")]
     [carried : ir.CompilerIrFunctionSeq
       (opt.opt-optimizer-input-carry
         (ast.ast-node-pool-reader-context-current)
-        (& input)
+        (&mut input)
         (owned_view.compiler-owned-shared-view survivors))]
     (test.assert-true (> bodies 0) "level 2 has an optimizer-input arena")
     (test.assert-i64-eq out.len 4 "the stage returns every index body")
     (test.assert-true
-      (opt-input-arena-all-placed? (& input) (& out))
+      out-placed?
       "rewritten, unrewritten and later pruned bodies are all placed")
     (test.assert-i64-eq
-      (opt-input-arena-leaf-calls (& out) "input_loop")
+      out-loop-leaf-calls
       0
       "the placed input_loop is its rewritten body")
     (test.assert-i64-eq survivors.len 2 "pruning keeps main and input_loop")
@@ -3259,8 +3264,7 @@
     (test.assert-true
       (opt-input-arena-all-placed? (& input) (& carried))
       "the carried survivors are the placed bodies")
-    (unsafe
-      (arena.tl_arena_destroy bodies))))
+    (opt.opt-optimizer-input-release-all! (&mut input))))
 
 ;; A survivor the stage never placed is copied into the input arena, so the
 ;; loop still reads nothing from the arena that produced it: here the source
@@ -3278,7 +3282,7 @@
     [carried : ir.CompilerIrFunctionSeq
       (opt.opt-optimizer-input-carry
         (ast.ast-node-pool-reader-context-current)
-        (& input)
+        (&mut input)
         functions)]
     [_destroy-source : unit
       (unsafe
@@ -3317,11 +3321,138 @@
     [carried : ir.CompilerIrFunctionSeq
       (opt.opt-optimizer-input-carry
         (ast.ast-node-pool-reader-context-current)
-        (& input)
+        (&mut input)
         (owned_view.compiler-owned-shared-view out))]
     (test.assert-i64-eq input.arena 0 "level 1 has no optimizer-input arena")
     (test.assert-i64-eq input.placed.len 0 "level 1 places nothing")
+    (test.assert-i64-eq
+      (array-length input.release.order)
+      0
+      "level 1 has no input chunk to release")
     (test.assert-i64-eq carried.len out.len "the loop reads the stage output")))
+
+;; Each placed body goes into the chunk of its index slot (#8446). The carry
+;; releases a chunk no survivor is in, and the loop releases each other chunk
+;; only once it has passed that chunk's last survivor. A survivor whose name was
+;; placed but whose body is a different one is copied into the carrier, which
+;; outlives every chunk.
+(test
+  optimizer-input-chunks-release-after-last-survivor
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-reader-context-current)]
+    [carrier : i64 (opt.opt-optimizer-input-carrier 2)]
+    ;; Four functions give two slots per chunk.
+    [input : opt.OptOptimizerInput (opt.opt-optimizer-input-new carrier 4)]
+    [functions : ir.CompilerIrFunctionSeq (opt-input-arena-functions)]
+    [placed-main : ir.CompilerIrFunction
+      (opt.opt-optimizer-input-place
+        pools
+        (&mut input)
+        0
+        (ir.compiler-ir-function-seq-ref (& functions) 0))]
+    [placed-loop : ir.CompilerIrFunction
+      (opt.opt-optimizer-input-place
+        pools
+        (&mut input)
+        1
+        (ir.compiler-ir-function-seq-ref (& functions) 1))]
+    [placed-leaf : ir.CompilerIrFunction
+      (opt.opt-optimizer-input-place
+        pools
+        (&mut input)
+        2
+        (ir.compiler-ir-function-seq-ref (& functions) 2))]
+    [placed-dead : ir.CompilerIrFunction
+      (opt.opt-optimizer-input-place
+        pools
+        (&mut input)
+        9
+        (ir.compiler-ir-function-seq-ref (& functions) 3))]
+    [dead-placed? : bool
+      (opt.opt-optimizer-input-placed?
+        (& input)
+        (owned_view.compiler-owned-shared-view placed-dead))]
+    [survivors : ir.CompilerIrFunctionSeq
+      (let
+        [builder : ir.CompilerIrFunctionBuilder
+          (ir.compiler-ir-function-builder-with-capacity 4)]
+        (ir.compiler-ir-function-builder-push! (&mut builder) placed-main)
+        (ir.compiler-ir-function-builder-push! (&mut builder) placed-loop)
+        (ir.compiler-ir-function-builder-push! (&mut builder) placed-leaf)
+        (ir.compiler-ir-function-builder-push!
+          (&mut builder)
+          (ir.compiler-ir-function-seq-ref (& functions) 3))
+        (ir.compiler-ir-function-builder-to-seq builder))]
+    [carried : ir.CompilerIrFunctionSeq
+      (opt.opt-optimizer-input-carry pools (&mut input) survivors)]
+    [release : opt.OptOptimizerInputRelease input.release]
+    [copy : ir.CompilerIrFunction
+      (ir.compiler-ir-function-seq-ref (& carried) 3)]
+    (test.assert-true dead-placed? "a placed body matches its record")
+    (test.assert-false
+      (opt.opt-optimizer-input-placed?
+        (& input)
+        (owned_view.compiler-owned-shared-view copy))
+      "a different body under a placed name is not the placed one")
+    (test.assert-i64-eq (array-length release.chunks) 32 "one entry per chunk")
+    (test.assert-true (> (array-ref release.chunks 0) 0) "chunk 0 is open")
+    (test.assert-true (> (array-ref release.chunks 1) 0) "chunk 1 is open")
+    (test.assert-i64-eq
+      (array-ref release.chunks 4)
+      0
+      "the chunk no survivor is in is released at the carry")
+    (test.assert-i64-eq
+      (array-ref release.chunks 2)
+      0
+      "an unused chunk is never opened")
+    (test.assert-i64-eq
+      (array-ref release.last 0)
+      1
+      "chunk 0 is last read by input_loop")
+    (test.assert-i64-eq
+      (array-ref release.last 1)
+      2
+      "chunk 1 is last read by input_leaf")
+    (test.assert-i64-eq (array-ref release.last 4) -1 "chunk 4 has no reader")
+    (test.assert-i64-eq
+      (array-length release.order)
+      2
+      "two chunks wait for the loop")
+    (let
+      [cursor : i64
+        (opt.opt-optimizer-input-release-passed! (&mut release) 0 0)]
+      (test.assert-i64-eq cursor 0 "after main, chunk 0 still has a reader")
+      (test.assert-true
+        (> (array-ref release.chunks 0) 0)
+        "chunk 0 stays open while input_loop is ahead")
+      (set!
+        cursor
+        (opt.opt-optimizer-input-release-passed! (&mut release) 1 cursor))
+      (test.assert-i64-eq cursor 1 "chunk 0 goes after input_loop")
+      (test.assert-i64-eq (array-ref release.chunks 0) 0 "chunk 0 is released")
+      (test.assert-true
+        (> (array-ref release.chunks 1) 0)
+        "chunk 1 stays open while input_leaf is ahead")
+      (set!
+        cursor
+        (opt.opt-optimizer-input-release-passed! (&mut release) 2 cursor))
+      (test.assert-i64-eq
+        (array-ref release.chunks 1)
+        0
+        "chunk 1 goes after input_leaf")
+      (set!
+        cursor
+        (opt.opt-optimizer-input-release-passed! (&mut release) 3 cursor))
+      (test.assert-i64-eq cursor 2 "the copy releases no chunk")
+      (let
+        [copy-blocks : ir.CompilerIrBlockList (opt.opt-function-blocks copy)]
+        (test.assert-i64-eq
+          (opt-count-direct-call-name-blocks
+            (ir.compiler-ir-block-list-view copy-blocks)
+            "input_leaf")
+          1
+          "the copied survivor outlives every chunk"))
+      (opt.opt-optimizer-input-release-all! (&mut input)))))
 
 ;; The production level-2 path destroys the inline arena before its
 ;; per-function loop, so every body the loop reads must already be resident in
@@ -58439,6 +58570,298 @@
       [(not (= (opt.opt-function-frame c17) 15)) 175]
       [else 42])))
 
+;; --- latch increment sinking -------------------------------------------------
+;;
+;; The fixture is the `for` range shape with an `if` body: the header `head`
+;; advances `%4 = add %2, 1` before the body, the body branches, and the latch
+;; `latch` tests `%4 < n` and closes the loop. Blocks: entry 0, head 1, then 2,
+;; latch 3, then exit (and `spin` in L6).
+;;
+;; L1 positive : the add leaves `head` (5 -> 4 instructions) and becomes the
+;;               latch's first non-phi instruction, right before the compare.
+;; L2 negative : the body (`then`) reads `%4`, so the add has a use outside the
+;;               latch and stays.
+;; L3 negative : `%4` reaches the exit through a phi input on an edge from
+;;               `then`, not from the latch. It must be defined before `then`.
+;; L4 negative : the step is the parameter `%0`, not a literal.
+;; L5 negative : the latch's branch tests the sum, not `%4`, so the latch is not
+;;               shown to be the loop-closing block of the counter.
+;; L6 negative : the latch's other successor `spin` loops back to the latch
+;;               without passing the header. The latch can then run more often
+;;               than `head`, and the add would run with it.
+;; L7 negative : `%4` is defined twice, the second time as `add %2, 5` in
+;;               `then` (a shape only a function SSA construction left alone
+;;               can have). `then` does not dominate the latch, so moving that
+;;               add would change `%4` on the path that skips `then`.
+;; L8 negative : the header phi `%2` is redefined in `then`, so `%2` at the
+;;               latch is not the `%2` the add read in `head`.
+;;
+;; The negatives were checked load-bearing by mutating the implementation and
+;; confirming THIS test is what fails, with the code it reports:
+;;   * the latch-local use count test in `opt-latch-sink-sites` forced true ->
+;;     code 20 (L2 moves).
+;;   * the `phi-label` test forced true -> code 30 (L3 moves).
+;;   * `opt-latch-sink-step?` accepting any right operand -> code 40 (L4 moves).
+;;   * `opt-latch-sink-exit-target` ignoring whether the compare reads `%n` ->
+;;     code 50 (L5 moves).
+;;   * `opt-latch-sink-reaches?` answering false -> code 60 (L6 moves).
+;;   * the `def-count` test of `%n` forced true -> code 70 (L7 moves).
+;;   * the `def-count` test of the phi forced true -> code 80 (L8 moves).
+(define (opt-ls-test-run [text : String]) : ir.CompilerIrFunction
+  (opt.opt-latch-sink-function (irt.func text)))
+
+(define (opt-ls-test-l1) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l2) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, %4 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l3) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       %11 = gt %6, 9 : bool
+       branch %11, exit, latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch], [%4, then] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l4) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, %0 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l5) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %7, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l6) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 13 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then], [%7, spin] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, spin
+     spin:
+       %12 = gt %7, 100 : bool
+       branch %12, exit, latch
+     exit:
+       %10 = phi [0, entry], [%7, spin] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l7) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       %4 = add %2, 5 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-l8) : ir.CompilerIrFunction
+  (opt-ls-test-run
+    "function @ls_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %9 = lt 0, %0 : bool
+       branch %9, head, exit
+     head:
+       %2 = phi [0, entry], [%4, latch] : i64
+       %3 = phi [0, entry], [%7, latch] : i64
+       %4 = add %2, 1 : i64
+       %5 = gt %2, 3 : bool
+       branch %5, then, latch
+     then:
+       %6 = add %3, 1 : i64
+       %2 = add %3, 9 : i64
+       jump latch
+     latch:
+       %7 = phi [%3, head], [%6, then] : i64
+       %8 = lt %4, %0 : bool
+       branch %8, head, exit
+     exit:
+       %10 = phi [0, entry], [%7, latch] : i64
+       return %10
+     }"))
+
+(define (opt-ls-test-head-count [out : (& out ir.CompilerIrFunction)]) : i64
+  (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-block-instr-count blocks 1)))
+
+(define (opt-ls-test-then-count [out : (& out ir.CompilerIrFunction)]) : i64
+  (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-block-instr-count blocks 2)))
+
+(define (opt-ls-test-latch-add? [out : (& out ir.CompilerIrFunction)]) : bool
+  (match (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-instr-at blocks 3 1))
+    [(BinOp 4 (Add) (Var 2) (I64 1) _) true]
+    [_ false]))
+
+(define (opt-ls-test-latch-compare? [out : (& out ir.CompilerIrFunction)]) : bool
+  (match (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-instr-at blocks 3 2))
+    [(BinOp 8 (Lt) (Var 4) _ _) true]
+    [_ false]))
+
+(define (compiler-optimize-latch-sink-self-test) : i64
+  (let
+    [l1 : ir.CompilerIrFunction (opt-ls-test-l1)]
+    [l2 : ir.CompilerIrFunction (opt-ls-test-l2)]
+    [l3 : ir.CompilerIrFunction (opt-ls-test-l3)]
+    [l4 : ir.CompilerIrFunction (opt-ls-test-l4)]
+    [l5 : ir.CompilerIrFunction (opt-ls-test-l5)]
+    [l6 : ir.CompilerIrFunction (opt-ls-test-l6)]
+    [l7 : ir.CompilerIrFunction (opt-ls-test-l7)]
+    [l8 : ir.CompilerIrFunction (opt-ls-test-l8)]
+    [l1-again : ir.CompilerIrFunction
+      (opt.opt-latch-sink-function (ir.compiler-ir-global-shared-view l1))]
+    (cond
+      ;; L1: head is phi, phi, gt, branch; the latch is phi, add, lt, branch.
+      [(not (= (opt-ls-test-head-count l1) 4)) 10]
+      [(not (opt-ls-test-latch-add? l1)) 11]
+      [(not (opt-ls-test-latch-compare? l1)) 12]
+      ;; Idempotent: the moved add is already in the latch.
+      [(not (= (opt-ls-test-head-count l1-again) 4)) 13]
+      [(not (opt-ls-test-latch-add? l1-again)) 14]
+      [(not (= (opt-ls-test-head-count l2) 5)) 20]
+      [(not (= (opt-ls-test-head-count l3) 5)) 30]
+      [(not (= (opt-ls-test-head-count l4) 5)) 40]
+      [(not (= (opt-ls-test-head-count l5) 5)) 50]
+      [(not (= (opt-ls-test-head-count l6) 5)) 60]
+      ;; L7: neither def of `%4` moves; `then` keeps add, add, jump.
+      [(not (= (opt-ls-test-then-count l7) 3)) 70]
+      [(not (= (opt-ls-test-head-count l8) 5)) 80]
+      [else 42])))
+
 ;; --- global-cell condition (a): per-store observability ----------------------
 ;;
 ;; Condition (a) is not "this function stores G" but "this function has a store
@@ -63122,6 +63545,13 @@
     (compiler-optimize-copy-call-self-test)
     42
     "an element copy in a __bce_fast clone becomes one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd (i64 slots) call, with an invariant+counter destination index admitted and idempotently, and a bump-first loop's geps on the counter's next reading the first iteration's index; checked, unsupported-width, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width, below-floor and constant-value loops do not"))
+
+(test
+  latch-increment-sink
+  (test.assert-i64-eq
+    (compiler-optimize-latch-sink-self-test)
+    42
+    "a bump-first counter's increment moves into its latch before the loop-closing compare, idempotently; a body read, an exit-edge read from another block, a non-literal step, a latch that does not test the counter, a latch that can rerun without the header, and a counter or header phi with a second definition keep it in place"))
 
 (test
   global-cell-call-mod-ref

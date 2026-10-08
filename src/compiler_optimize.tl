@@ -100692,6 +100692,642 @@
             [(Result fixed _) (Result fixed true)])
           (Result func false))])))
 
+;; --- latch increment sinking -------------------------------------------------
+;;
+;; A counter that advances BEFORE its loop body keeps two values live across the
+;; body. The prelude `for` range and index expansions do this: `%n = add %i, 1`
+;; at the top so that `continue` still advances, the body reads `%i`, and the
+;; latch tests `%n < end`. The back edge then needs a copy `%i <- %n`, and the
+;; backend lays the latch out as `cmp; jge exit; mov; jmp top`. A `while` that
+;; advances last closes with one `cmp; jl top`.
+;;
+;; When every use of `%n` sits in the latch block or is a phi input on an edge
+;; out of it, moving `%n = add %i, <literal>` into the latch, just before its
+;; first use there, is exactly the `while` shape. `%i` dies at the add, the
+;; header phi coalesces, and the latch closes with one branch.
+;;
+;; Why the move needs no dominator query. `%i` is a phi of the header H that
+;; the latch edge enters, and the step is a literal. The original def block D
+;; reads `%i`, so H dominates D; the latch L ends a path that carries `%n` into
+;; H, so D dominates L. Every path from H to L therefore passes through D, and
+;; at L both `%i` and `%n` come from the same, latest visit of H. Recomputing the
+;; add at L reproduces `%n` exactly. Those dominance facts hold only for vars
+;; with one definition, and a function SSA construction left alone may have
+;; more, so both `%n` and `%i` must be defined exactly once (parameters count).
+;;
+;; What keeps the move from making code slower. The latch's terminator must be
+;; the loop-closing Branch: one target is H, and its condition is a compare in L
+;; that reads `%n`. In addition, L's other successor must not reach L again
+;; without passing through H or D. Otherwise L could run more often than D, and
+;; the add would run with it.
+;;
+;; It runs below the pipeline fixpoint, next to `cmp_dup`, because a later `gvn`
+;; would only fold the moved add back onto a body copy. An `%i + 1` read by the
+;; body leaves `%n` with a body use, and the move does not apply.
+;; Per-function facts, from one walk over every instruction.
+(defstruct OptLatchSinkFacts
+  ;; block index of each BinOp's definition, -1 for every other var
+  (def-block (__tl_dyn-array i64))
+  ;; its instruction index in that block
+  (def-index (__tl_dyn-array i64))
+  ;; every use, phi inputs included
+  (uses (__tl_dyn-array i64))
+  ;; uses as phi inputs
+  (phi-uses (__tl_dyn-array i64))
+  ;; the edge label of those phi uses: -1 for none, -2 when they differ
+  (phi-label (__tl_dyn-array i64))
+  ;; definitions of each var, parameters included
+  (def-count (__tl_dyn-array i64))
+  ;; block label -> block index
+  (labels opt_i64_i64_map.Map))
+
+;; `n` slots, each holding `v`.
+(define (opt-latch-sink-filled [n : i64] [v : i64]) : (__tl_dyn-array i64)
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 n)]
+    [index : i64 0]
+    (while (< index n)
+      (set! (array-ref items index) v)
+      (set! index (+ index 1)))
+    items))
+
+(define (opt-latch-sink-facts
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]) : OptLatchSinkFacts
+  (let
+    [def-count : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [def-block : (__tl_dyn-array i64) (opt-latch-sink-filled frame -1)]
+    [def-index : (__tl_dyn-array i64) (opt-latch-sink-filled frame -1)]
+    [uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [phi-uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [phi-label : (__tl_dyn-array i64) (opt-latch-sink-filled frame -1)]
+    [labels : opt_i64_i64_map.Map
+      (opt_i64_i64_map.with-capacity (* 2 (+ seq.len 1)))]
+    [b : i64 0]
+    (opt-def-counts-params! (&mut def-count) params)
+    (while (< b seq.len)
+      (match (ir.compiler-ir-block-seq-ref seq b)
+        [(Block label instrs)
+          (opt_i64_i64_map.insert-ref! (&mut labels) label b)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [j : i64 0]
+            (while (< j count)
+              (let
+                [instr : ir.CompilerIrInstr
+                  (ir.compiler-ir-instr-seq-ref instrs j)]
+                (match (compiler-opt-global-shared-view instr)
+                  [(Phi _ inputs _)
+                    (let
+                      [k : i64 0]
+                      [len : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
+                      (while (< k len)
+                        (let
+                          [input : ir.CompilerIrPhiInput
+                            (ir.compiler-ir-phi-input-seq-ref inputs k)]
+                          (match input.value
+                            [(Var v)
+                              (when
+                                (and (>= v 0) (< v frame))
+                                (set!
+                                  (array-ref phi-uses v)
+                                  (+ (array-ref phi-uses v) 1))
+                                (let
+                                  [seen : i64 (array-ref phi-label v)]
+                                  (cond
+                                    [(= seen -1)
+                                      (set! (array-ref phi-label v) input.label)]
+                                    [(= seen input.label) unit]
+                                    [else (set! (array-ref phi-label v) -2)])))]
+                            [_ unit]))
+                        (set! k (+ k 1))))]
+                  [(BinOp dst _ _ _ _)
+                    (when
+                      (and (>= dst 0) (< dst frame))
+                      (set! (array-ref def-block dst) b)
+                      (set! (array-ref def-index dst) j))]
+                  [_ unit])
+                (opt-def-counts-instr!
+                  (&mut def-count)
+                  (compiler-opt-global-shared-view instr))
+                (opt-collect-instr-uses-array
+                  (compiler-opt-global-shared-view uses)
+                  instr))
+              (set! j (+ j 1))))])
+      (set! b (+ b 1)))
+    (OptLatchSinkFacts
+      def-block
+      def-index
+      uses
+      phi-uses
+      phi-label
+      def-count
+      labels)))
+
+;; The BinOp defining `var` (its recorded block and index), or a non-BinOp
+;; placeholder when there is none.
+(define (opt-latch-sink-def
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [facts : (& facts OptLatchSinkFacts)]
+  [var : i64]) : ir.CompilerIrInstr
+  (let
+    [block : i64 (array-ref facts.def-block var)]
+    (if (< block 0)
+      (Jump -1)
+      (match (ir.compiler-ir-block-seq-ref seq block)
+        [(Block _ instrs)
+          (ir.compiler-ir-instr-seq-ref instrs (array-ref facts.def-index var))]))))
+
+;; `instr` is `%n = add %p, <literal>`, in either operand order.
+(define (opt-latch-sink-step? [instr : ir.CompilerIrInstr] [n : i64] [p : i64]) : bool
+  (match instr
+    [(BinOp dst (Add) (Var lhs) (I64 _) _) (and (= dst n) (= lhs p))]
+    [(BinOp dst (Add) (I64 _) (Var rhs) _) (and (= dst n) (= rhs p))]
+    [_ false]))
+
+;; Uses of `n` among `instrs`' non-phi instructions. `scratch` only ever grows,
+;; so the count is the difference across the walk and no reset is needed.
+(define (opt-latch-sink-local-uses
+  [scratch : (__tl_dyn-array i64)]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [n : i64]) : i64
+  (let
+    [before : i64 (array-ref scratch n)]
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [j : i64 0]
+    (while (< j count)
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs j)]
+        (match (compiler-opt-global-shared-view instr)
+          [(Phi _ _ _) unit]
+          [_
+            (opt-collect-instr-uses-array
+              (compiler-opt-global-shared-view scratch)
+              instr)]))
+      (set! j (+ j 1)))
+    (- (array-ref scratch n) before)))
+
+;; The latch's other successor when it ends in `branch %c, H, X` (either order),
+;; with `%c` a compare defined in the latch that reads `n`; -1 otherwise. An
+;; unknown target label also answers -1.
+(define (opt-latch-sink-exit-target
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [facts : (& facts OptLatchSinkFacts)]
+  [latch : i64]
+  [header-label : i64]
+  [n : i64]) : i64
+  (match (ir.compiler-ir-block-seq-ref seq latch)
+    [(Block _ instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+          [(Branch (Var c) true-label false-label)
+            (let
+              [other : i64
+                (cond
+                  [(= true-label header-label) false-label]
+                  [(= false-label header-label) true-label]
+                  [else -1])]
+              [test-reads-n : bool
+                (and
+                  (>= c 0)
+                  (< c (array-length facts.def-block))
+                  (= (array-ref facts.def-block c) latch)
+                  (match (ir.compiler-ir-instr-seq-ref
+                    instrs
+                    (array-ref facts.def-index c))
+                    [(BinOp _ op lhs rhs _)
+                      (and
+                        (ir.compiler-ir-binop-compare? op)
+                        (or (opt-value-is-var? lhs n) (opt-value-is-var? rhs n)))]
+                    [_ false]))]
+              (if (and
+                test-reads-n
+                (not (= other -1))
+                (not (= other header-label)))
+                (opt_i64_i64_map.get-value-or (& facts.labels) other -1)
+                -1))]
+          [_ -1]))]))
+
+;; Whether a walk from `start` that stops at `header` and `def` reaches `latch`.
+;; A block that ends in a switch counts as reaching it: the walk does not follow
+;; switch edges. `seen` holds a stamp per block; `stamp` is fresh per query.
+(define (opt-latch-sink-reaches?
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [facts : (& facts OptLatchSinkFacts)]
+  [seen : (__tl_dyn-array i64)]
+  [stack : (__tl_dyn-array i64)]
+  [stamp : i64]
+  [start : i64]
+  [header : i64]
+  [def : i64]
+  [latch : i64]) : bool
+  (let
+    [top : i64 1]
+    [found : bool false]
+    (set! (array-ref stack 0) start)
+    (while (and (> top 0) (not found))
+      (set! top (- top 1))
+      (let
+        [b : i64 (array-ref stack top)]
+        (cond
+          [(= b latch) (set! found true)]
+          [(or (< b 0) (= b header) (= b def) (= (array-ref seen b) stamp))
+            unit]
+          [else
+            (set! (array-ref seen b) stamp)
+            (match (ir.compiler-ir-block-seq-ref seq b)
+              [(Block _ instrs)
+                (let
+                  [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+                  (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+                    [(Jump target)
+                      (set!
+                        (array-ref stack top)
+                        (opt_i64_i64_map.get-value-or
+                          (& facts.labels)
+                          target
+                          -1))
+                      (set! top (+ top 1))]
+                    [(Branch _ t f)
+                      (set!
+                        (array-ref stack top)
+                        (opt_i64_i64_map.get-value-or (& facts.labels) t -1))
+                      (set!
+                        (array-ref stack (+ top 1))
+                        (opt_i64_i64_map.get-value-or (& facts.labels) f -1))
+                      (set! top (+ top 2))]
+                    [(TotalEnumBranch _ t f)
+                      (set!
+                        (array-ref stack top)
+                        (opt_i64_i64_map.get-value-or (& facts.labels) t -1))
+                      (set!
+                        (array-ref stack (+ top 1))
+                        (opt_i64_i64_map.get-value-or (& facts.labels) f -1))
+                      (set! top (+ top 2))]
+                    [(Switch _ _ _ _) (set! found true)]
+                    [(TotalEnumSwitch _ _ _ _ _) (set! found true)]
+                    [_ unit]))])])))
+    found))
+
+;; `instrs` without the instruction defining `n`.
+(define (opt-latch-sink-without [instrs : ir.CompilerIrInstrSeq] [n : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity count)]
+    [j : i64 0]
+    (while (< j count)
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs j)]
+        (unless
+          (= (ir.compiler-ir-instr-dst instr) n)
+          (ir.compiler-ir-instr-builder-push! (&mut builder) instr)))
+      (set! j (+ j 1)))
+    (ir.compiler-ir-instr-builder-to-seq builder)))
+
+;; `instrs` with `def` placed before its first non-phi reader, which the
+;; latch's compare guarantees exists.
+(define (opt-latch-sink-with
+  [scratch : (__tl_dyn-array i64)]
+  [instrs : ir.CompilerIrInstrSeq]
+  [def : ir.CompilerIrInstr]
+  [n : i64]) : ir.CompilerIrInstrSeq
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [builder : ir.CompilerIrInstrBuilder
+      (ir.compiler-ir-instr-builder-with-capacity (+ count 1))]
+    [placed : bool false]
+    [j : i64 0]
+    (while (< j count)
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs j)]
+        (unless
+          placed
+          (match (compiler-opt-global-shared-view instr)
+            [(Phi _ _ _) unit]
+            [_
+              (let
+                [before : i64 (array-ref scratch n)]
+                (opt-collect-instr-uses-array
+                  (compiler-opt-global-shared-view scratch)
+                  (compiler-opt-global-shared-view instr))
+                (when
+                  (or (> (array-ref scratch n) before) (= j (- count 1)))
+                  (ir.compiler-ir-instr-builder-push!
+                    (&mut builder)
+                    (compiler-opt-global-shared-view def))
+                  (set! placed true)))]))
+        (ir.compiler-ir-instr-builder-push! (&mut builder) instr))
+      (set! j (+ j 1)))
+    (ir.compiler-ir-instr-builder-to-seq builder)))
+
+;; Whether `var` is among the first `count` recorded sites' vars.
+(define (opt-latch-sink-recorded?
+  [vars : (__tl_dyn-array i64)]
+  [count : i64]
+  [var : i64]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (while (and (< index count) (not found))
+      (when (= (array-ref vars index) var) (set! found true))
+      (set! index (+ index 1)))
+    found))
+
+;; The moves the facts admit, as parallel arrays of (var, def block, latch).
+(defstruct OptLatchSinkSites
+  (vars (__tl_dyn-array i64))
+  (defs (__tl_dyn-array i64))
+  (latches (__tl_dyn-array i64))
+  (count i64))
+
+(define (opt-latch-sink-sites
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [frame : i64]
+  [facts : (& facts OptLatchSinkFacts)]) : OptLatchSinkSites
+  (let
+    [vars : (__tl_dyn-array i64) (__tl_make-array i64 (+ seq.len 1))]
+    [defs : (__tl_dyn-array i64) (__tl_make-array i64 (+ seq.len 1))]
+    [latches : (__tl_dyn-array i64) (__tl_make-array i64 (+ seq.len 1))]
+    [count : i64 0]
+    ;; allocated on the first candidate that reaches the use test
+    [scratch : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [seen : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [stack : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [stamp : i64 0]
+    [h : i64 0]
+    (while (and (< h seq.len) (< count seq.len))
+      (match (ir.compiler-ir-block-seq-ref seq h)
+        [(Block header-label instrs)
+          (let
+            [total : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [j : i64 0]
+            [in-phis : bool true]
+            (while (and in-phis (< j total))
+              (match (ir.compiler-ir-instr-seq-ref instrs j)
+                [(Phi p inputs _)
+                  (let
+                    [k : i64 0]
+                    [len : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
+                    (while (< k len)
+                      (let
+                        [input : ir.CompilerIrPhiInput
+                          (ir.compiler-ir-phi-input-seq-ref inputs k)]
+                        [n : i64
+                          (match input.value
+                            [(Var v) v]
+                            [_ -1])]
+                        [latch : i64
+                          (if (or
+                            (< n 0)
+                            (>= n frame)
+                            (= input.label header-label))
+                            -1
+                            (opt_i64_i64_map.get-value-or
+                              (& facts.labels)
+                              input.label
+                              -1))]
+                        [def : i64
+                          (if (< latch 0)
+                            -1
+                            (array-ref facts.def-block n))]
+                        (when
+                          (and
+                            (>= def 0)
+                            (not (= def latch))
+                            (< count seq.len)
+                            (= (array-ref facts.def-count n) 1)
+                            (>= p 0)
+                            (< p frame)
+                            (= (array-ref facts.def-count p) 1)
+                            ;; one move per var
+                            (not
+                              (opt-latch-sink-recorded?
+                                (compiler-opt-global-shared-view vars)
+                                count
+                                n))
+                            (= (array-ref facts.phi-label n) input.label)
+                            (opt-latch-sink-step?
+                              (opt-latch-sink-def seq facts n)
+                              n
+                              p))
+                          (let
+                            [exit : i64
+                              (opt-latch-sink-exit-target
+                                seq
+                                facts
+                                latch
+                                header-label
+                                n)]
+                            (when
+                              (>= exit 0)
+                              (when
+                                (= (array-length scratch) 0)
+                                (set! scratch (__tl_make-array i64 frame))
+                                (set! seen (opt-latch-sink-filled seq.len -1))
+                                (set!
+                                  stack
+                                  (__tl_make-array i64 (+ (* 2 seq.len) 2))))
+                              (set! stamp (+ stamp 1))
+                              (when
+                                (and
+                                  (=
+                                    (-
+                                      (array-ref facts.uses n)
+                                      (array-ref facts.phi-uses n))
+                                    (match (ir.compiler-ir-block-seq-ref
+                                      seq
+                                      latch)
+                                      [(Block _ latch-instrs)
+                                        (opt-latch-sink-local-uses
+                                          (compiler-opt-global-shared-view
+                                            scratch)
+                                          latch-instrs
+                                          n)]))
+                                  (not
+                                    (opt-latch-sink-reaches?
+                                      seq
+                                      facts
+                                      (compiler-opt-global-shared-view seen)
+                                      (compiler-opt-global-shared-view stack)
+                                      stamp
+                                      exit
+                                      h
+                                      def
+                                      latch)))
+                                (set! (array-ref vars count) n)
+                                (set! (array-ref defs count) def)
+                                (set! (array-ref latches count) latch)
+                                (set! count (+ count 1)))))))
+                      (set! k (+ k 1))))]
+                [_ (set! in-phis false)])
+              (set! j (+ j 1))))])
+      (set! h (+ h 1)))
+    (OptLatchSinkSites vars defs latches count)))
+
+;; The cheap test every opt2 function pays before any per-var array is built:
+;; some phi input `%n` on an edge from another block L is defined as
+;; `add _, <literal>` outside L. A function without a loop has no such input,
+;; and a `while` that advances last defines `%n` in its latch.
+(define (opt-latch-sink-candidates? [seq : (& seq ir.CompilerIrBlockSeq)]) : bool
+  (let
+    ;; var -> the label of the edge it arrives on
+    [edge-of : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 16)]
+    [found : bool false]
+    [b : i64 0]
+    (while (< b seq.len)
+      (match (ir.compiler-ir-block-seq-ref seq b)
+        [(Block label instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [j : i64 0]
+            [in-phis : bool true]
+            (while (and in-phis (< j count))
+              (match (ir.compiler-ir-instr-seq-ref instrs j)
+                [(Phi _ inputs _)
+                  (let
+                    [k : i64 0]
+                    [len : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
+                    (while (< k len)
+                      (let
+                        [input : ir.CompilerIrPhiInput
+                          (ir.compiler-ir-phi-input-seq-ref inputs k)]
+                        (match input.value
+                          [(Var v)
+                            (unless
+                              (= input.label label)
+                              (opt_i64_i64_map.insert-ref!
+                                (&mut edge-of)
+                                v
+                                input.label))]
+                          [_ unit]))
+                      (set! k (+ k 1))))]
+                [_ (set! in-phis false)])
+              (set! j (+ j 1))))])
+      (set! b (+ b 1)))
+    (unless
+      (= (opt_i64_i64_map.len (& edge-of)) 0)
+      (set! b 0)
+      (while (and (< b seq.len) (not found))
+        (match (ir.compiler-ir-block-seq-ref seq b)
+          [(Block label instrs)
+            (let
+              [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+              [j : i64 0]
+              (while (and (< j count) (not found))
+                (let
+                  [dst : i64
+                    (match (ir.compiler-ir-instr-seq-ref instrs j)
+                      [(BinOp d (Add) _ (I64 _) _) d]
+                      [(BinOp d (Add) (I64 _) _ _) d]
+                      [_ -1])]
+                  (when
+                    (and
+                      (>= dst 0)
+                      (opt_i64_i64_map.contains? (& edge-of) dst)
+                      (not
+                        (=
+                          (opt_i64_i64_map.get-value-or (& edge-of) dst label)
+                          label)))
+                    (set! found true)))
+                (set! j (+ j 1))))])
+        (set! b (+ b 1))))
+    found))
+
+;; The function with every admitted add moved into its latch. `changed` is
+;; false, and the blocks are returned as they came, when nothing moved.
+(define (opt-latch-sink-blocks
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
+  (let
+    [seq : ir.CompilerIrBlockSeq (ir.compiler-ir-block-list-seq blocks)]
+    (if (opt-latch-sink-candidates? seq)
+      (opt-latch-sink-move seq params frame)
+      (Result (Array seq) false))))
+
+(define (opt-latch-sink-move
+  [seq : ir.CompilerIrBlockSeq]
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]) : OptBlockListPassResult
+  (let
+    [facts : OptLatchSinkFacts (opt-latch-sink-facts seq params frame)]
+    [sites : OptLatchSinkSites (opt-latch-sink-sites seq frame facts)]
+    (if (= sites.count 0)
+      (Result (Array seq) false)
+      (let
+        [scratch : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+        [s : i64 0]
+        (while (< s sites.count)
+          (let
+            [n : i64 (array-ref sites.vars s)]
+            [def : i64 (array-ref sites.defs s)]
+            [latch : i64 (array-ref sites.latches s)]
+            [moved : ir.CompilerIrInstr
+              (match (ir.compiler-ir-block-seq-ref seq def)
+                [(Block _ def-instrs)
+                  (let
+                    [count : i64 (ir.compiler-ir-instr-seq-count def-instrs)]
+                    [j : i64 0]
+                    [out : ir.CompilerIrInstr (Jump -1)]
+                    (while (< j count)
+                      (let
+                        [instr : ir.CompilerIrInstr
+                          (ir.compiler-ir-instr-seq-ref def-instrs j)]
+                        (when
+                          (= (ir.compiler-ir-instr-dst instr) n)
+                          (set! out instr)))
+                      (set! j (+ j 1)))
+                    out)])]
+            (match (ir.compiler-ir-block-seq-ref seq def)
+              [(Block def-label def-instrs)
+                (set!
+                  (array-ref seq.slots def)
+                  (Block def-label (opt-latch-sink-without def-instrs n)))])
+            (match (ir.compiler-ir-block-seq-ref seq latch)
+              [(Block latch-label latch-instrs)
+                (set!
+                  (array-ref seq.slots latch)
+                  (Block
+                    latch-label
+                    (opt-latch-sink-with
+                      (compiler-opt-global-shared-view scratch)
+                      latch-instrs
+                      moved
+                      n)))]))
+          (set! s (+ s 1)))
+        (Result (Array seq) true)))))
+
+(define (opt-latch-sink-function [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
+  (match func
+    [(Function name params ret-ty frame blocks function-abi)
+      (match (opt-latch-sink-blocks
+        (compiler-opt-global-shared-view params)
+        frame
+        blocks)
+        [(Result next _) (Function name params ret-ty frame next function-abi)])]))
+
+(define (opt-latch-sink-final-pass
+  [type-segment-bases : i64]
+  [func : ir.CompilerIrFunction]) : OptFunctionPassResult
+  (match func
+    [(Function name params ret-ty frame blocks function-abi)
+      (match (opt-latch-sink-blocks
+        (compiler-opt-global-shared-view params)
+        frame
+        blocks)
+        [(Result next changed)
+          (if changed
+            (Result
+              (compiler-opt-debug-observe-function
+                type-segment-bases
+                "latch_sink"
+                (Function name params ret-ty frame next function-abi))
+              true)
+            (Result (Function name params ret-ty frame next function-abi) false))])]))
+
 ;; Compare/branch fusion, run BELOW the pipeline fixpoint and below every final
 ;; CFG pass, which is the only position where "no CSE round runs after it" is
 ;; actually true: `optimize-function-fixed-pass-with-summaries` feeds a changed
@@ -101487,6 +102123,13 @@
               type-segment-bases
               (opt-pass-func s))
             s)]
+        ;; Moves a bump-first counter's increment into its latch (the `for`
+        ;; range shape). It reads final block order and labels only, and
+        ;; `cmp_dup` below re-pairs the latch compare with its branch.
+        [s
+          (opt-pass-with-result
+            (opt-latch-sink-final-pass type-segment-bases (opt-pass-func s))
+            s)]
         [s
           (opt-pass-with-result
             (opt-cmp-dup-final-pass type-segment-bases (opt-pass-func s))
@@ -101520,7 +102163,7 @@
     summaries)
     [(Result next _) next]))
 
-;; Optimizer input arena (opt2 only).
+;; Optimizer input arenas (opt2 only).
 ;;
 ;; The whole-program inline stage runs in a dedicated arena, and by the time it
 ;; returns only its final rewritten bodies are still read: the devirtualized
@@ -101532,13 +102175,18 @@
 ;; whole arena -- dead generations included -- would otherwise stay resident
 ;; across the loop, which is where the opt2 process peak forms.
 ;;
-;; So the inline stage writes each caller's final body once, straight into this
-;; arena (`opt-optimizer-input-place`): the same single clone that escapes the
-;; body from its per-caller scratch phase, retargeted from the stage arena. The
-;; inline arena is then released before the loop starts with no survivor inside
-;; it, and this arena is released once the loop has escaped every optimized
-;; function into the enclosing arena. Placing bodies as they are finished avoids
-;; a second whole-program copy and its overlap with the live inline arena.
+;; So the inline stage writes each caller's final body once, straight into an
+;; input chunk chosen by its index slot (`opt-optimizer-input-place`): the same
+;; single clone that escapes the body from its per-caller scratch phase,
+;; retargeted from the stage arena. The inline arena is then released before the
+;; loop starts with no survivor inside it. The loop reads each survivor exactly
+;; once, in order, and nothing reads a body after its loop position: summaries
+;; hold no body pointers, and every optimized body is deep-cloned into the
+;; enclosing arena. So each chunk is released as soon as the loop has passed the
+;; last survivor in it (`opt-optimizer-input-release-passed!`), and a chunk that
+;; holds no survivor is released before the loop. Placing bodies as they are
+;; finished avoids a second whole-program copy and its overlap with the live
+;; inline arena.
 ;;
 ;; Level 1 keeps the direct path: its inline stage is the cheap tiny-leaf pass,
 ;; whose arena is a fraction of the level-2 one, and the loop reads it in place.
@@ -101547,82 +102195,141 @@
     0
     (arena.tl_arena_make)))
 
-;; The optimizer-input arena of one optimize call (0 below level 2) and the
-;; symbol ids of the bodies placed in it. The record lives in the inline arena
-;; and is read for the last time by `opt-optimizer-input-carry`, before that
-;; arena is released.
+;; How many slot-range chunks the placed bodies are spread over. Each chunk is
+;; its own arena, which commits a first segment on first use, so a few dozen
+;; chunks of a few MB each release the input steadily without one arena per
+;; body.
+(define opt-optimizer-input-chunk-count : i64
+  32)
+
+;; When the loop may release each input chunk, built by
+;; `opt-optimizer-input-carry` in the carrier arena. `chunks` holds each chunk's
+;; arena (0 once released or never used), `last` the last loop position that
+;; reads it (-1 for none), and `order` the chunks some position reads, by
+;; ascending `last`.
+(defstruct OptOptimizerInputRelease
+  (chunks (__tl_dyn-array i64))
+  (last (__tl_dyn-array i64))
+  (order (__tl_dyn-array i64)))
+
+(define (opt-optimizer-input-release-empty) : OptOptimizerInputRelease
+  (OptOptimizerInputRelease
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)
+    (__tl_make-array i64 0)))
+
+;; The input arenas of one optimize call and the bodies placed in them. `arena`
+;; (0 below level 2) holds the loop's sequence shell and any survivor copied
+;; there. `placed` maps a placed body's symbol id to its identity
+;; (`opt-optimizer-input-identity`) and `placed-chunk` to its chunk. These live
+;; in the inline arena and are read for the last time by
+;; `opt-optimizer-input-carry`, before that arena is released; `release`, which
+;; the carry builds in `arena`, is all the loop reads.
 (defstruct OptOptimizerInput
   (arena i64)
-  (placed opt_i64_i64_map.Map))
+  (placed opt_i64_i64_map.Map)
+  (placed-chunk opt_i64_i64_map.Map)
+  (slots-per-chunk i64)
+  (chunks (__tl_dyn-array i64))
+  (release OptOptimizerInputRelease))
 
 (define (opt-optimizer-input-new [arena-handle : i64] [function-count : i64]) : OptOptimizerInput
-  (OptOptimizerInput
-    arena-handle
-    (opt_i64_i64_map.with-capacity
+  (let
+    [capacity : i64
       (if (= arena-handle 0)
         1
-        (opt-function-index-capacity function-count)))))
+        (opt-function-index-capacity function-count))]
+    (OptOptimizerInput
+      arena-handle
+      (opt_i64_i64_map.with-capacity capacity)
+      (opt_i64_i64_map.with-capacity capacity)
+      (if (= arena-handle 0)
+        0
+        (+
+          (/
+            (+ function-count (- opt-optimizer-input-chunk-count 1))
+            opt-optimizer-input-chunk-count)
+          1))
+      (__tl_make-array
+        i64
+        (if (= arena-handle 0)
+          0
+          opt-optimizer-input-chunk-count))
+      (opt-optimizer-input-release-empty))))
 
-;; Escape one finished body out of its producer's scratch: into the input arena
-;; when there is one, recording its symbol id, otherwise into the current arena.
+;; A body's identity: the address of its block storage. A body rewritten after
+;; placement has new block storage, so it no longer matches its record.
+(define (opt-optimizer-input-identity [func : ir.CompilerIrFunction]) : i64
+  (match func
+    [(Function _ _ _ _ blocks _)
+      (match blocks
+        [(Array seq)
+          (let
+            [slots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
+            (cast
+              (unsafe
+                (ptr->int (ptr-cast (__tl_array-data slots) : (Ptr u8))))
+              : i64))])]))
+
+;; The chunk of index slot SLOT; slots past the expected range share the last.
+(define (opt-optimizer-input-chunk-of
+  [input : (& input OptOptimizerInput)]
+  [slot : i64]) : i64
+  (let
+    [chunk : i64 (/ slot input.slots-per-chunk)]
+    (if (< chunk (array-length input.chunks))
+      chunk
+      (- (array-length input.chunks) 1))))
+
+;; Escape one finished body out of its producer's scratch: into the input chunk
+;; of index slot SLOT when there are input arenas, recording its symbol id,
+;; identity and chunk, otherwise into the current arena.
 (define (opt-optimizer-input-place
   [pools : ast.AstNodePoolContext]
   [input : (&mut input OptOptimizerInput)]
+  [slot : i64]
   [func : ir.CompilerIrFunction]) : ir.CompilerIrFunction
   (if (= input.arena 0)
     (ir.compiler-ir-clone-function pools func)
-    (begin
-      (match (compiler-opt-global-shared-view func)
+    (let
+      [chunk : i64 (opt-optimizer-input-chunk-of input slot)]
+      [_open : unit
+        (when
+          (= (array-ref input.chunks chunk) 0)
+          (set! (array-ref input.chunks chunk) (arena.tl_arena_make)))]
+      [placed : ir.CompilerIrFunction
+        (in-arena
+          (arena.Arena (array-ref input.chunks chunk))
+          (ir.compiler-ir-clone-function pools func))]
+      (match (compiler-opt-global-shared-view placed)
         [(Function name _ _ _ _ _)
-          (opt_i64_i64_map.insert-ref!
-            (&mut input.placed)
-            (ir.compiler-ir-symbol-id name)
-            1)])
-      (in-arena
-        (arena.Arena input.arena)
-        (ir.compiler-ir-clone-function pools func)))))
+          (let
+            [id : i64 (ir.compiler-ir-symbol-id name)]
+            (opt_i64_i64_map.insert-ref!
+              (&mut input.placed)
+              id
+              (opt-optimizer-input-identity
+                (compiler-opt-global-shared-view placed)))
+            (opt_i64_i64_map.insert-ref! (&mut input.placed-chunk) id chunk))])
+      placed)))
 
+;; Whether FUNC is the body placed under its name.
 (define (opt-optimizer-input-placed?
   [input : (& input OptOptimizerInput)]
   [func : ir.CompilerIrFunction]) : bool
   (match (compiler-opt-global-shared-view func)
     [(Function name _ _ _ _ _)
-      (opt_i64_i64_map.contains?
-        (& input.placed)
-        (ir.compiler-ir-symbol-id name))]))
-
-;; The loop's input sequence, resident in the input arena. Every survivor the
-;; inline stage placed is used as is; any other survivor is copied here, so the
-;; loop never reads a body from the inline or lower-IR arenas.
-(define (opt-optimizer-input-carry
-  [pools : ast.AstNodePoolContext]
-  [input : (& input OptOptimizerInput)]
-  [funcs : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
-  (if (= input.arena 0)
-    funcs
-    (in-arena
-      (arena.Arena input.arena)
       (let
-        [out : ir.CompilerIrFunctionSeq
-          (ir.compiler-ir-clone-function-seq-shell funcs)]
-        [i : i64 0]
-        (while (< i out.len)
-          (let
-            [func : ir.CompilerIrFunction
-              (compiler-opt-global-array-element-shared-view out.slots i)]
-            (if (opt-optimizer-input-placed?
-              input
-              (compiler-opt-global-shared-view func))
-              unit
-              (set!
-                (array-ref out.slots i)
-                (ir.compiler-ir-clone-function pools func)))
-            (set! i (+ i 1))))
-        out))))
+        [id : i64 (ir.compiler-ir-symbol-id name)]
+        (and
+          (opt_i64_i64_map.contains? (& input.placed) id)
+          (=
+            (opt_i64_i64_map.get-value-or (& input.placed) id 0)
+            (opt-optimizer-input-identity func))))]))
 
-;; Both optimizer-input arenas report under the same mid-phase label: each is
-;; read at its high-water mark and destroyed before the "optimize" phase
-;; snapshot, so neither belongs in that snapshot's unique-root total.
+;; Both kinds of optimizer-input arena report under the same mid-phase label:
+;; each is read at its high-water mark and destroyed before the "optimize"
+;; phase snapshot, so none belongs in that snapshot's unique-root total.
 (define (opt-release-optimizer-input-arena [owner : String] [handle : i64]) : unit
   (allocation_profile.compiler-allocation-profile-control!
     2
@@ -101631,6 +102338,126 @@
     handle)
   (unsafe
     (arena.tl_arena_destroy handle)))
+
+(define (opt-optimizer-input-release-chunk!
+  [release : (&mut release OptOptimizerInputRelease)]
+  [chunk : i64]) : unit
+  (let
+    [handle : i64 (array-ref release.chunks chunk)]
+    (unless
+      (= handle 0)
+      (opt-release-optimizer-input-arena "optimizer-input" handle)
+      (set! (array-ref release.chunks chunk) 0))))
+
+;; The loop's input sequence, resident in the input arenas. Every survivor the
+;; inline stage placed is used as is; any other survivor is copied into the
+;; carrier arena, so the loop never reads a body from the inline or lower-IR
+;; arenas. Builds the release schedule and releases the chunks no survivor is
+;; in.
+(define (opt-optimizer-input-carry
+  [pools : ast.AstNodePoolContext]
+  [input : (&mut input OptOptimizerInput)]
+  [funcs : ir.CompilerIrFunctionSeq]) : ir.CompilerIrFunctionSeq
+  (if (= input.arena 0)
+    funcs
+    (in-arena
+      (arena.Arena input.arena)
+      (let
+        [out : ir.CompilerIrFunctionSeq
+          (ir.compiler-ir-clone-function-seq-shell funcs)]
+        [chunk-count : i64 (array-length input.chunks)]
+        [chunks : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+        [last : (__tl_dyn-array i64) (__tl_make-array i64 chunk-count)]
+        [i : i64 0]
+        (while (< i chunk-count)
+          (set! (array-ref chunks i) (array-ref input.chunks i))
+          (set! (array-ref last i) -1)
+          (set! i (+ i 1)))
+        (set! i 0)
+        (while (< i out.len)
+          (let
+            [func : ir.CompilerIrFunction
+              (compiler-opt-global-array-element-shared-view out.slots i)]
+            (if (opt-optimizer-input-placed?
+              input
+              (compiler-opt-global-shared-view func))
+              (match (compiler-opt-global-shared-view func)
+                [(Function name _ _ _ _ _)
+                  (set!
+                    (array-ref
+                      last
+                      (opt_i64_i64_map.get-value-or
+                        (& input.placed-chunk)
+                        (ir.compiler-ir-symbol-id name)
+                        0))
+                    i)])
+              (set!
+                (array-ref out.slots i)
+                (ir.compiler-ir-clone-function pools func)))
+            (set! i (+ i 1))))
+        (let
+          [read-count : i64 0]
+          (set! i 0)
+          (while (< i chunk-count)
+            (if (< (array-ref last i) 0)
+              (unless
+                (= (array-ref chunks i) 0)
+                (opt-release-optimizer-input-arena
+                  "optimizer-input"
+                  (array-ref chunks i))
+                (set! (array-ref chunks i) 0))
+              (set! read-count (+ read-count 1)))
+            (set! i (+ i 1)))
+          (let
+            [order : (__tl_dyn-array i64) (__tl_make-array i64 read-count)]
+            [filled : i64 0]
+            ;; Insertion by `last`: chunk counts are a few dozen.
+            (set! i 0)
+            (while (< i chunk-count)
+              (unless
+                (< (array-ref last i) 0)
+                (let
+                  [at : i64 filled]
+                  (while (and
+                    (> at 0)
+                    (>
+                      (array-ref last (array-ref order (- at 1)))
+                      (array-ref last i)))
+                    (set! (array-ref order at) (array-ref order (- at 1)))
+                    (set! at (- at 1)))
+                  (set! (array-ref order at) i)
+                  (set! filled (+ filled 1))))
+              (set! i (+ i 1)))
+            (set! input.release (OptOptimizerInputRelease chunks last order))))
+        out))))
+
+;; Release every input chunk whose last reader is at or before loop position
+;; POSITION, starting from `order[cursor]`, and return the next cursor.
+(define (opt-optimizer-input-release-passed!
+  [release : (&mut release OptOptimizerInputRelease)]
+  [position : i64]
+  [cursor : i64]) : i64
+  (let
+    [next : i64 cursor]
+    (while (and
+      (< next (array-length release.order))
+      (<= (array-ref release.last (array-ref release.order next)) position))
+      (opt-optimizer-input-release-chunk!
+        release
+        (array-ref release.order next))
+      (set! next (+ next 1)))
+    next))
+
+;; Release whatever input arenas remain once the loop has run: any chunk still
+;; open, then the carrier.
+(define (opt-optimizer-input-release-all!
+  [input : (&mut input OptOptimizerInput)]) : unit
+  (let
+    [i : i64 0]
+    (while (< i (array-length input.release.chunks))
+      (opt-optimizer-input-release-chunk! (&mut input.release) i)
+      (set! i (+ i 1)))
+    (opt-release-optimizer-input-arena "optimizer-input" input.arena)))
 
 ;; Per-function arena escape. The optimizer fixpoint allocates throwaway IR
 ;; copies per pass and per iteration, none freed by the bump allocator. To cap
@@ -101647,7 +102474,8 @@
   [type-segment-bases : i64]
   [funcs : ir.CompilerIrFunctionSeq]
   [level : i64]
-  [summaries : OptProgramSummaries]) : ir.CompilerIrFunctionSeq
+  [summaries : OptProgramSummaries]
+  [input : (&mut input OptOptimizerInput)]) : ir.CompilerIrFunctionSeq
   (if (= level 0)
     funcs
     (let
@@ -101659,7 +102487,8 @@
           funcs
           level
           (arena.raw-handle scratch)
-          summaries)]
+          summaries
+          input)]
       (allocation_profile.compiler-allocation-profile-control!
         2
         "optimize"
@@ -101735,9 +102564,11 @@
   [funcs : ir.CompilerIrFunctionSeq]
   [level : i64]
   [scratch : i64]
-  [summaries : OptProgramSummaries]) : ir.CompilerIrFunctionSeq
+  [summaries : OptProgramSummaries]
+  [input : (&mut input OptOptimizerInput)]) : ir.CompilerIrFunctionSeq
   (let
     [index : i64 0]
+    [release-cursor : i64 0]
     [builder : ir.CompilerIrFunctionBuilder
       (ir.compiler-ir-function-builder-with-capacity funcs.len)]
     (while (< index funcs.len)
@@ -101771,6 +102602,12 @@
               "function"
               (compiler-opt-profile-function-name func)))]
         (ir.compiler-ir-function-builder-push! (&mut builder) optimized)
+        (set!
+          release-cursor
+          (opt-optimizer-input-release-passed!
+            (&mut input.release)
+            index
+            release-cursor))
         (set! index (+ index 1))))
     (ir.compiler-ir-function-builder-to-seq builder)))
 
@@ -114394,6 +115231,7 @@
               (opt-optimizer-input-place
                 pools
                 input
+                slot
                 (if (> one.len 0)
                   (compiler-opt-global-array-element-shared-view one.slots 0)
                   (compiler-opt-global-array-element-shared-view values slot))))
@@ -123969,7 +124807,7 @@
                     [optimizer-functions : ir.CompilerIrFunctionSeq
                       (opt-optimizer-input-carry
                         pools
-                        (& optimizer-input)
+                        (&mut optimizer-input)
                         pruned-functions)]
                     [_release-inline-arena-early : unit
                       (if (= carrier 0)
@@ -123999,9 +124837,11 @@
                         type-segment-bases
                         optimizer-functions
                         level
-                        (compiler-opt-global-shared-view summaries))]
-                    ;; No live pointer into the optimizer-input arena remains
-                    ;; here. Every function in `optimized-functions` was
+                        (compiler-opt-global-shared-view summaries)
+                        (&mut optimizer-input))]
+                    ;; No live pointer into the optimizer-input arenas remains
+                    ;; here; the loop has already released every chunk it
+                    ;; passed. Every function in `optimized-functions` was
                     ;; deep-cloned into the enclosing arena on its way out of the
                     ;; escaping optimizer -- level 2 through
                     ;; `compiler-ir-clone-function`, level 1 through the
@@ -124010,7 +124850,7 @@
                     ;; shell, which the inline stage only reads. That leaves
                     ;; `reachable-functions`, `pruned`/`pruned-functions`,
                     ;; `optimizer-functions`, `optimizer-input`, `summaries`, the
-                    ;; function index and the census as the arena's only
+                    ;; function index and the census as the arenas' only
                     ;; referents, and all of them
                     ;; are dead from here on: nothing below this binding reads
                     ;; them. `summaries` carries only i64/i64 maps and the
@@ -124021,9 +124861,8 @@
                         (opt-release-optimizer-input-arena
                           "optimize-inline"
                           inline-arena)
-                        (opt-release-optimizer-input-arena
-                          "optimizer-input"
-                          carrier))]
+                        (opt-optimizer-input-release-all!
+                          (&mut optimizer-input)))]
                     (begin
                       (cfg
                         compile-profile

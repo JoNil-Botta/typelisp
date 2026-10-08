@@ -40436,9 +40436,6 @@
   [name-id : i64]) : bool
   (let
     [helper-id : i64 (ctfe_support.ctfe-comptime-helper-call-name-id name-id)]
-    [helper-name : String
-      (ctfe_support.ctfe-comptime-helper-lookup-name
-        (tc-global-shared-view name))]
     (and
       (ctfe_support.ctfe-builtin-reflection-id? helper-id)
       ;; Macro transformer checking installs the bare helper ID in its private
@@ -40449,8 +40446,14 @@
         (not (tc-source-value-bound-id? ctx env name-id))
         ;; A real stdlib.comptime wrapper is source-bound, but its qualified
         ;; spelling still denotes the compile-time primitive. Preserve local
-        ;; bare shadowing and unrelated `other.type-expr` functions.
-        (not (string.eq helper-name name))))))
+        ;; bare shadowing and unrelated `other.type-expr` functions. The
+        ;; spelling is only needed here, so it is computed here: every call
+        ;; expression passes through this test, and the lookup copies the name.
+        (not
+          (string.eq
+            (ctfe_support.ctfe-comptime-helper-lookup-name
+              (tc-global-shared-view name))
+            name))))))
 
 ;; The clone-able type set is a whole-program fixpoint (O(types*fields) plus a
 ;; type-name map build). It is invariant across a compile, but `tc-clone-able-

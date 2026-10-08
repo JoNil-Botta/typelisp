@@ -11,6 +11,7 @@
 (import compiler_object as cobj)
 (import compiler_object_coff)
 (import compiler_object_elf)
+(import compiler_runtime_bindings as runtime_bindings)
 (import compiler_windows_coff_core)
 (import stdlib.env)
 (import stdlib.byte_buf)
@@ -1204,10 +1205,20 @@
 ;; The backend emits its own entry (_tl_start) plus kernel32-backed shims for the
 ;; CRT-ABI symbols the runtime/stdlib reference. Stdlib random seeding uses
 ;; kernel32 FFI only, so no advapi32; no COM (ole32/oleaut32) is needed either.
+;; The import libraries the Windows runtime binding table names, in first-use
+;; order (#8318): kernel32.lib, then ntdll.lib.
 (define (source-tool-windows-link-libs) : process.ProcessStringList
-  (process.args-cons
-    "kernel32.lib"
-    (process.args-cons "ntdll.lib" (process.args-empty))))
+  (let
+    [providers : (__tl_dyn-array String)
+      (runtime_bindings.compiler-runtime-binding-providers "windows-x86_64")]
+    [libs : process.ProcessStringList (process.args-empty)]
+    [index : i64 (- (array-length providers) 1)]
+    (while (>= index 0)
+      (set!
+        libs
+        (process.args-cons (string.copy (& (array-ref providers index))) libs))
+      (set! index (- index 1)))
+    libs))
 
 ;; Keep the historical 256 MiB PE reserve used by the native-link scripts. The
 ;; freestanding entry now uses this stack only for bounded argv/fiber bootstrap;

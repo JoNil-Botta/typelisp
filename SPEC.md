@@ -732,9 +732,8 @@ or cleanup. It is not a warning or discard rule by itself. The marker may
 compose with valid `:lifetimes`, `:repr c` (structs), and `:cleanup` metadata;
 existing restrictions between those forms still apply. The canonical order
 for new declarations and emitted source is `:lifetimes`, `:repr`, `:align`,
-`:cleanup`, then zero-argument markers (`:must-use`, followed by `:opaque`
-when that marker is introduced). Existing valid metadata orders remain
-accepted.
+`:cleanup`, then zero-argument markers (`:must-use`, then `:opaque`; see
+section 3.5.4). Existing valid metadata orders remain accepted.
 
 ```lisp test=ignore name=must-use-aggregate-metadata reason="declaration metadata only"
 (defstruct Receipt
@@ -829,6 +828,59 @@ are 8 bytes with 8-byte alignment on both Linux x86_64 System V and Windows
 x64. If future targets need different pointer sizes or alignments, layout
 queries are target-sensitive compile-time results and tests must either pin
 the target or assert the target-specific values.
+
+#### 3.5.4 Opaque aggregates
+
+A `defstruct` or `defenum` may carry the zero-argument marker `(:opaque)`
+before its first field or variant. Like `(:must-use)` it takes no arguments,
+may appear only once and composes with the other aggregate metadata; it does
+not change layout or ABI. It keeps the type's representation inside its
+**module family**: the defining module and the modules whose identity is that
+module's name followed by `.` (its dotted descendants, such as `db.pool` for a
+type defined in `db`). Files without a `(module ...)` declaration share the
+entry module, which is one family.
+
+Outside the family the type's name stays visible but is usable only as the
+immediate referent of `Ptr`, `MutPtr`, `&` or `&mut`, including inside
+function types. Code there that does any of the following is rejected with
+E0221, even inside `unsafe`:
+
+- uses a constructor or nullary variant of the type, or `(init : T)`;
+- projects, sets or borrows one of its fields;
+- matches one of its variants or struct patterns, owned or borrowed;
+- writes the type by value: a parameter, result, `let` annotation, struct field,
+  enum payload, global, tuple or array element, `Box` contents, or a `(type T)`
+  operand, so `(size-of (type T))` is rejected;
+- binds a value that holds it by value with `let`, even without an annotation;
+- names a value or function whose type holds it by value, such as a function of
+  the defining module that returns it.
+
+Code a macro expands into a module is checked as that module's code.
+
+```lisp test=ignore name=opaque-aggregate reason="cross-module example"
+(module db)
+
+(defstruct Connection
+  (:opaque)
+  (fd i64))
+
+(define (connection-fd [c : (& a Connection)]) : i64
+  c.fd)
+```
+
+Another module may write `(& a db.Connection)` or `(Ptr db.Connection)` and call
+`db.connection-fd`, but not `(db.Connection 3)`, `c.fd`, or a parameter of type
+`db.Connection`.
+
+Not yet enforced:
+- a module of another package that declares itself inside the family's dotted
+  namespace is still treated as a family member (#8733);
+- layout queries and reflection still reach the representation through a type
+  derived from an allowed one, such as the `reference-element-type` of
+  `(& a T)` (#8735);
+- a value that `ptr-read` or `deref` yields is rejected only where it is bound
+  with `let` or named, and `ptr-offset` and `ptr-write!` are not checked
+  (#8734).
 
 ### 3.6 Type aliases
 
@@ -1754,6 +1806,11 @@ Reference types are lifetime-bearing:
 - Mutable references are exclusive, non-copying handles to the same referent.
   A mutable borrow of a place rooted at a global that another module declares
   is rejected; shared borrows of it remain valid (§4.4.2).
+- A `&mut` borrow reaches its referent only through owned storage and mutable
+  references. `(&mut r)`, or a field, tuple element or array element borrowed
+  through a shared reference `r` or through a shared reference stored in a
+  field, is rejected (E0207), in a call argument as in a `let`. Storage behind
+  a `Box` or a private buffer is not covered yet (#8743).
   The checker enforces many immutable borrows or one mutable borrow for
   tracked local, parameter, and global place paths. Tracked aggregate-place
   paths conflict only when they are the same path or one is an ancestor of the
@@ -2495,7 +2552,11 @@ iteration. Scalar loop joins distinguish normal fallthrough and `continue`
 backedges from `break`, `return`, and statically known divergent-call exits.
 Only facts that reach a backedge constrain the next iteration; break facts join
 the post-loop state, function/divergent exits do not, and the zero-trip entry
-state always reaches the post-loop join. Facts that may be carried by an outer
+state always reaches the post-loop join. A `break` or `continue` nested in an
+operand (a call argument, an operator operand, a `set!` value, a constructor
+element, a `let` binding, an `if` condition, a `match` scrutinee, a `return`
+operand, or an inner loop's condition or bounds) takes the same edge with the
+borrows live at it. Facts that may be carried by an outer
 lifetime-bearing local or aggregate stay live across later iterations and the
 loop exit until the carried value's last proven use; when the checker cannot
 prove otherwise it keeps the fact live conservatively. A plain auto-borrowed call argument whose
@@ -3581,15 +3642,19 @@ uncompressed byte length and a newline, followed by the token stream.
 - A `path` ending in `.tl` is a TypeLisp source. Before compression, each
   top-level inline test is replaced by the line breaks it contained: every
   `(test ...)` form, and every `(cfg test BODY)` form with exactly one body.
-  Every other byte is kept, so each remaining form keeps its line and column.
-  Strings, character literals and comments follow the lexer's rules, and a
-  source the lexer would reject, or whose brackets do not balance, is
-  compressed unchanged.
+  Each prose comment outside those forms keeps only its first `;`, so every
+  line still reads as a comment, a doc comment or code. Doc comments (`;:` and
+  `;#`) and `name:` directive comments such as `lint-allow:` are kept whole,
+  and so is every comment inside a kept `(cfg test ...)` form. Every other
+  byte is kept, so each remaining form keeps its line and column. Strings,
+  character literals and comments follow the lexer's rules, and a source the
+  lexer would reject, or whose brackets do not balance, is compressed
+  unchanged.
 
 This form exists for compiler-owned payload tables: the compiler embeds its
 stdlib source table through it. The embedded stdlib therefore carries no
 inline tests; those compile only under `--cfg test` from the repository
-sources (#8713). The stdlib comptime image is embedded with `include-bin`
+sources (#8713). It carries no prose comment text either (#8659). The stdlib comptime image is embedded with `include-bin`
 instead, as a compiler-owned TLCH envelope that carries the image's LZSS token
 stream in canonical Huffman form and is expanded back to the exact `.tlci`
 bytes on demand.
@@ -4851,7 +4916,10 @@ arena-owned storage escape the scoped region.
 - Direct calls: the callee is a known function name.
 - Indirect calls: the callee is a variable or parameter of function type,
   including a named top-level function passed as a function value.
-- Arguments are evaluated left-to-right.
+- Arguments are evaluated left-to-right. Each argument passes the value it had
+  when it was evaluated. A later argument that assigns or writes the variable,
+  field or element an earlier argument read does not change the earlier
+  argument's value. Writes through a borrow, a raw pointer or a callee count too.
 - Arguments are passed per the platform calling convention (§11); arguments
   beyond register capacity are passed on the stack.
 
@@ -9441,6 +9509,11 @@ After every row succeeds, the compiler writes deterministic
 target-scoped ABI reasons identify, respectively, an ordinary call, a function
 entry signature, or a returned value whose ABI shape is outside the temporary
 proven subset accepted by direct Windows object lowering.
+An external relocation target is linkable only when the compiler's per-target
+runtime binding table declares it with the object route. That table also
+supplies the import libraries Windows source builds link. A relocation against
+any other external symbol falls back with `unsupported-external-relocation`.
+The table never names a compiler-owned runtime symbol (`tl_` or `_tl_`).
 Compile, type, backend, object-serialization, and file-write errors fail the
 batch and do not produce the result plan. Each source is loaded, checked,
 lowered, and optimized once; an automatic assembly fallback renders from that

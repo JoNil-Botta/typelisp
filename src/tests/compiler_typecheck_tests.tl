@@ -10393,7 +10393,8 @@
       (let [h : i64 1] h)
       7)))"
       "typecheck: cleanup owner `h` moved before with scope exit")
-    (compiler-typecheck-move-operand-loop-edge-tests-ok?)))
+    (compiler-typecheck-move-operand-loop-edge-tests-ok?)
+    (compiler-typecheck-borrow-operand-loop-edge-tests-ok?)))
 
 ;; #8575: a `break` or `continue` nested in an operand of a form the loop walker
 ;; has no arm for takes its loop edge with the moves made up to it.
@@ -10542,6 +10543,120 @@
       (set! acc (+ acc 1))
       (keep (id (if flag (continue) 1))))
     acc))"))))
+
+;; #8671: the borrow checker's counterpart. A `break` or `continue` nested in an
+;; operand takes its loop edge with the borrows live at it.
+(define (compiler-typecheck-borrow-operand-loop-source [body : String]) : String
+  (str_cat.str-cat
+    "(defstruct Pair (a i64) (b i64))
+(define (read-refs [refs : (__tl_dyn-array (&mut items i64))]) : i64 0)
+(define (pick [x : i64]) : i64 x)
+(define (keep [x : i64]) : unit unit)
+"
+    body))
+
+(define (compiler-typecheck-borrow-operand-loop-error-ok? [body : String]) : bool
+  (compiler-typecheck-error-ok?
+    (compiler-typecheck-borrow-operand-loop-source body)
+    "typecheck: cannot assign to borrowed place `items[0]`"))
+
+(define (compiler-typecheck-borrow-operand-loop-edge-tests-ok?) : bool
+  (and
+    ;; The break edge of each operand position reaches the write after the
+    ;; loop.
+    (compiler-typecheck-borrow-operand-loop-error-ok?
+      "(define (call-arg [run : bool] [items : (__tl_dyn-array i64)] [refs : (__tl_dyn-array (&mut items i64))]) : i64
+  (begin
+    (while run
+      (keep (pick (if run (begin (__tl_array-push! refs (&mut (array-ref items 0))) (break)) 1)))
+      (break))
+    (set! (array-ref items 0) 4)
+    (read-refs refs)))")
+    (compiler-typecheck-borrow-operand-loop-error-ok?
+      "(define (binary-operand [run : bool] [items : (__tl_dyn-array i64)] [refs : (__tl_dyn-array (&mut items i64))]) : i64
+  (let [acc : i64 0]
+    (while run
+      (set! acc (+ (if run (begin (__tl_array-push! refs (&mut (array-ref items 0))) (break)) 1) acc))
+      (break))
+    (set! (array-ref items 0) 4)
+    (+ acc (read-refs refs))))")
+    (compiler-typecheck-borrow-operand-loop-error-ok?
+      "(define (constructor-binding [run : bool] [items : (__tl_dyn-array i64)] [refs : (__tl_dyn-array (&mut items i64))]) : i64
+  (let [acc : i64 0]
+    (while run
+      (let [p (Pair (if run (begin (__tl_array-push! refs (&mut (array-ref items 0))) (break)) 1) 2)] (set! acc p.a))
+      (break))
+    (set! (array-ref items 0) 4)
+    (+ acc (read-refs refs))))")
+    (compiler-typecheck-borrow-operand-loop-error-ok?
+      "(define (if-condition [run : bool] [items : (__tl_dyn-array i64)] [refs : (__tl_dyn-array (&mut items i64))]) : i64
+  (let [acc : i64 0]
+    (while run
+      (if (< (pick (if run (begin (__tl_array-push! refs (&mut (array-ref items 0))) (break)) 1)) 3) (set! acc 1) (set! acc 2))
+      (break))
+    (set! (array-ref items 0) 4)
+    (+ acc (read-refs refs))))")
+    (compiler-typecheck-borrow-operand-loop-error-ok?
+      "(define (return-operand [run : bool] [items : (__tl_dyn-array i64)] [refs : (__tl_dyn-array (&mut items i64))]) : i64
+  (begin
+    (while run
+      (return (pick (if run (begin (__tl_array-push! refs (&mut (array-ref items 0))) (break)) 1))))
+    (set! (array-ref items 0) 4)
+    (read-refs refs)))")
+    (compiler-typecheck-borrow-operand-loop-error-ok?
+      "(define (match-scrutinee [run : bool] [items : (__tl_dyn-array i64)] [refs : (__tl_dyn-array (&mut items i64))]) : i64
+  (let [acc : i64 0]
+    (while run
+      (match (pick (if run (begin (__tl_array-push! refs (&mut (array-ref items 0))) (break)) 1)) [0 (set! acc 1)] [_ (set! acc 2)])
+      (break))
+    (set! (array-ref items 0) 4)
+    (+ acc (read-refs refs))))")
+    ;; An inner loop's body keeps its own breaks; one nested in an operand
+    ;; still reaches the outer loop's exit through the inner loop's.
+    (compiler-typecheck-borrow-operand-loop-error-ok?
+      "(define (inner-body [run : bool] [items : (__tl_dyn-array i64)] [refs : (__tl_dyn-array (&mut items i64))]) : i64
+  (begin
+    (while run
+      (while run (keep (if run (begin (__tl_array-push! refs (&mut (array-ref items 0))) (break)) 1)))
+      (break))
+    (set! (array-ref items 0) 4)
+    (read-refs refs)))")
+    ;; A continue nested in an operand reaches the backedge, from which the
+    ;; loop exits.
+    (compiler-typecheck-borrow-operand-loop-error-ok?
+      "(define (continue-operand [run : bool] [items : (__tl_dyn-array i64)] [refs : (__tl_dyn-array (&mut items i64))]) : i64
+  (begin
+    (while run
+      (keep (pick (if run (begin (__tl_array-push! refs (&mut (array-ref items 0))) (continue)) 1)))
+      (break))
+    (set! (array-ref items 0) 4)
+    (read-refs refs)))")
+    ;; Accepted: a body-local borrow ended at the break, a stored borrow read
+    ;; only through its holder, and breaks with no borrow live.
+    (compiler-typecheck-ok?
+      (compiler-typecheck-borrow-operand-loop-source
+        "(define (local-borrow [run : bool] [items : (__tl_dyn-array i64)]) : i64
+  (begin
+    (while run
+      (let [slot : (&mut items i64) (&mut (array-ref items 0))]
+        (keep (if run (begin (set! (deref slot) 40) (break)) 1)))
+      (break))
+    (set! (array-ref items 0) 1)
+    (array-ref items 0)))
+(define (holder-read [run : bool] [items : (__tl_dyn-array i64)] [refs : (__tl_dyn-array (&mut items i64))]) : i64
+  (begin
+    (while run
+      (keep (pick (if run (begin (__tl_array-push! refs (&mut (array-ref items 0))) (break)) 1)))
+      (break))
+    (read-refs refs)))
+(define (no-borrow [run : bool] [items : (__tl_dyn-array i64)]) : i64
+  (let [acc : i64 0]
+    (while run
+      (let [x : i64 (pick (if run (break) 1))] (set! acc x))
+      (if (< (pick (if run (continue) 1)) 3) (set! acc 1) (set! acc 2))
+      (return (pick (if run (break) acc))))
+    (set! (array-ref items 0) acc)
+    (array-ref items 0)))"))))
 
 ;; --- defdispatch frontend model ---------------------------------------------
 (define (compiler-typecheck-defdispatch-full-source) : String

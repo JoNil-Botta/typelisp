@@ -1,5 +1,6 @@
 ;; compiler_embedded_stdlib.tl - Compressed stdlib source fallback: each module's
-;; source with its inline tests blanked (#8713).
+;; source with its inline tests blanked (#8713) and its prose comments cut to
+;; their first `;` (#8659).
 (cfg test (import compiler_embedded_stdlib_payload_seed as payload))
 (cfg (not test) (import compiler_embedded_stdlib_payload as payload))
 (import compiler_lzss as lzss)
@@ -110,13 +111,46 @@
             0))]
       [else 0])))
 
-;; `src` with each top-level inline test blanked: every `(test ...)` form and
-;; every `(cfg test BODY)` form with exactly one body is replaced by the line
-;; breaks it contained. All other bytes are kept, so each remaining form keeps
-;; its line and column. Strings, character literals and comments are skipped
-;; with the lexer's own scanners; a source they reject, or one whose brackets
-;; do not balance, is returned unchanged.
-(define (compiler-embedded-stdlib-source-without-inline-tests [src : String]) : String
+;; Whether the comment at `start..end` of `src` (from its first `;` to its
+;; line break) is prose that nothing reads. A doc comment (`;:` or `;#`) and a
+;; `name:` directive such as `lint-allow:` or `doctest-exit:` are not.
+(define (compiler-embedded-stdlib-prose-comment?
+  [src : (& src str)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [j : i64 (+ start 1)]
+    (if (and
+      (< j end)
+      (or (= (__tl_string_ref src j) ':') (= (__tl_string_ref src j) '#')))
+      false
+      (begin
+        (while (and (< j end) (= (__tl_string_ref src j) ';'))
+          (set! j (+ j 1)))
+        (while (and (< j end) (= (__tl_string_ref src j) ' '))
+          (set! j (+ j 1)))
+        (let
+          [k : i64 j]
+          (while (and
+            (< k end)
+            (let
+              [c : char (__tl_string_ref src k)]
+              (or
+                (and (>= c 'a') (<= c 'z'))
+                (and (> k j) (>= c '0') (<= c '9'))
+                (and (> k j) (= c '-')))))
+            (set! k (+ k 1)))
+          (not (and (> k j) (< k end) (= (__tl_string_ref src k) ':'))))))))
+
+;; The source a module's payload embeds. Each top-level inline test is
+;; replaced by the line breaks it contained: every `(test ...)` form and every
+;; `(cfg test BODY)` form with exactly one body. Each prose comment outside
+;; those forms keeps only its first `;`, so the line still reads as a comment;
+;; doc comments and directives are kept whole. All other bytes are kept, so
+;; each remaining form keeps its line and column. Strings, character literals
+;; and comments are skipped with the lexer's own scanners; a source they
+;; reject, or one whose brackets do not balance, is returned unchanged.
+(define (compiler-embedded-stdlib-payload-source [src : String]) : String
   (let
     [n : i64 (string-length (& src))]
     [i : i64 0]
@@ -131,7 +165,23 @@
       (let
         [c : char (__tl_string_ref (& src) i)]
         (cond
-          [(= c ';') (set! i (lexer.scan-comment-end (& src) (+ i 1) n))]
+          [(= c ';')
+            (let
+              [end : i64 (lexer.scan-comment-end (& src) (+ i 1) n)]
+              [cut : i64
+                (if (and (> end i) (= (__tl_string_ref (& src) (- end 1)) '\r'))
+                  (- end 1)
+                  end)]
+              (when
+                (and
+                  (or (= depth 0) (= kind 0))
+                  (> cut (+ i 1))
+                  (compiler-embedded-stdlib-prose-comment? (& src) i cut))
+                (text_buf.append!
+                  out
+                  (string.substring (& src) copied (- (+ i 1) copied)))
+                (set! copied cut))
+              (set! i end))]
           [(= c '"')
             (when (= depth 1) (set! elements (+ elements 1)))
             (match (lexer.scan-str-end-result (& src) (+ i 1) n)

@@ -1184,6 +1184,14 @@ in asm
 contains .Ltl_mem_copy8_fwd_loop:
 match [ ]{4}rep movsq
 
+# A copy loop that bumps its counter before the body indexes both geps by the
+# counter's `next`. It is still one call; the integration twin checks that the
+# call starts at the first element the loop wrote.
+case copy-call-next-index
+source tests/integration/copy_call_next_index.tl
+in fn _tl_copy_call_next_index_grow
+count-fixed = 1 call tl_mem_copy8_fwd
+
 case copy-call-word-peephole
 source benchmarks/peephole_lines/bench.tl
 in fn _tl_bench_pl_run_chunk

@@ -431,6 +431,9 @@
 (define (compiler-diagnostic-code-typecheck-foreign-global-write) : String
   "E0220")
 
+(define (compiler-diagnostic-code-typecheck-opaque-representation) : String
+  "E0221")
+
 ;; One kind per published typecheck code, append-only like the codes.
 ;; `Unclassified` is `E0200`: an internal or not yet named kind.
 (defenum CompilerTypecheckKind
@@ -454,7 +457,8 @@
   (ThreadSafety)
   (ComptimeConstraint)
   (UnsafeCallableEffect)
-  (ForeignGlobalWrite))
+  (ForeignGlobalWrite)
+  (OpaqueRepresentation))
 
 (define (compiler-diagnostic-code-for-typecheck-kind
   [kind : CompilerTypecheckKind]) : String
@@ -485,7 +489,9 @@
     [(UnsafeCallableEffect)
       (compiler-diagnostic-code-typecheck-unsafe-callable-effect)]
     [(ForeignGlobalWrite)
-      (compiler-diagnostic-code-typecheck-foreign-global-write)]))
+      (compiler-diagnostic-code-typecheck-foreign-global-write)]
+    [(OpaqueRepresentation)
+      (compiler-diagnostic-code-typecheck-opaque-representation)]))
 
 ;; The kind tag sits in front of the message text: `__tl_tc_kind:<code>:`.
 ;; It holds no `|`, so it survives inside the typechecker's `|`-delimited
@@ -525,7 +531,8 @@
     [(ThreadSafety) "__tl_tc_kind:E0217:"]
     [(ComptimeConstraint) "__tl_tc_kind:E0218:"]
     [(UnsafeCallableEffect) "__tl_tc_kind:E0219:"]
-    [(ForeignGlobalWrite) "__tl_tc_kind:E0220:"]))
+    [(ForeignGlobalWrite) "__tl_tc_kind:E0220:"]
+    [(OpaqueRepresentation) "__tl_tc_kind:E0221:"]))
 
 ;; `message` tagged with `kind`.
 (define (compiler-diagnostic-typecheck-tagged
@@ -606,7 +613,7 @@
 ;; detailed explanation. `owner` identifies the subsystem responsible for
 ;; keeping the classification and explanation current.
 (define (compiler-diagnostic-code-registry-count) : i64
-  22)
+  23)
 
 (define (compiler-diagnostic-code-registry-code [index : i64]) : String
   (cond
@@ -632,6 +639,7 @@
     [(= index 19) (compiler-diagnostic-code-typecheck-comptime-constraint)]
     [(= index 20) (compiler-diagnostic-code-typecheck-unsafe-callable-effect)]
     [(= index 21) (compiler-diagnostic-code-typecheck-foreign-global-write)]
+    [(= index 22) (compiler-diagnostic-code-typecheck-opaque-representation)]
     [else ""]))
 
 (define (compiler-diagnostic-code-registry-title [index : i64]) : String
@@ -658,6 +666,7 @@
     [(= index 19) "compile-time constraint"]
     [(= index 20) "unsafe callable effect erasure"]
     [(= index 21) "global written outside its module"]
+    [(= index 22) "opaque representation used outside its module family"]
     [else ""]))
 
 (define (compiler-diagnostic-code-or-empty [diag : (& diag CompilerDiagnostic)]) : String

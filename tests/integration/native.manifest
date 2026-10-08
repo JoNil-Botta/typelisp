@@ -169,6 +169,8 @@ compile_profile_nested_peak_reset|all|-|tests/integration/compile_profile_nested
 compile_profile_optimizer_escape|all|-|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-|-
 compile_profile_result_import|all|-|tests/integration/compile_profile_result_import.tl|42|-|-|-|-
 call_eval_order|all|-|tests/integration/call_eval_order.tl|42|-|-|-|-
+call_arg_snapshot|all|0,1,2|tests/integration/call_arg_snapshot.tl|42|-|-|-|-
+call_arg_snapshot_c_abi|all|0,1,2|tests/integration/call_arg_snapshot_c_abi.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c|-
 include_bin|all|-|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin|-
 compiler_load_includes|all|-|src/tests/compiler_load_includes.tl|42|-|-|compiler_load_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl|-
 include_str_comptime|all|-|tests/integration/include_str_comptime.tl|42|-|-|include/str/comptime/owner.tl include_str_comptime_payload.txt include_bin_payload.bin stdlib/comptime.tl|-

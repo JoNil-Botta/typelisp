@@ -107,6 +107,22 @@ storage before cleanup. Such a call cannot become a tail call. A later argument
 that can leave early is rejected when it would bypass an earlier temporary's
 cleanup; cleanup-containing aggregates without their own disposer are rejected.
 
+The call instruction reads its operands only after every argument has been
+lowered, so an argument read from storage would see later arguments' writes.
+That storage is a local's var or a register-resident field var.
+`lower-call-arg-snapshot` copies a scalar, raw-pointer or register-resident
+aggregate argument into a fresh var before the later arguments are lowered,
+when one of them can write that storage. For a read through a name, that is a
+`set!`, `replace!`, field or element store, push, take, mutable borrow or
+`ptr-addr-of` rooted at the name. Other local storage, such as a block result,
+counts any such form. An address-taken local counts any later argument that
+is not a plain read. A global read is not copied yet (#8680). The typed, untyped, call-aware and C ABI
+argument collectors all apply it (#8433). The write scan skips closure bodies.
+Once a call's remaining arguments are found free of writes, the collectors
+pass that on, so the arguments after them are not scanned again. Memory-class
+aggregates pass their storage address and follow the by-value aggregate rules
+instead.
+
 Vector reduction sources are read-only IR operands. AVX2 four-lane signed
 `i64` min/max needs an accumulator, a lane sibling and a comparison-mask
 scratch family: its second comparison must not write through the source's XMM
@@ -881,12 +897,16 @@ arena, have fixed capacity, or hold scalars, and the per-walk caller views are
 unpublished before each rewind, so nothing that outlives a caller points into
 its phase.
 
-That final-body clone writes into the optimize call's optimizer-input arena
-(`OptOptimizerInput`), not the stage arena, and records the body's symbol id.
-Every slot is placed, rewritten or not. The input the per-function loop reads is
-the pruned survivors, taken from that arena. A survivor with no recorded
-placement is copied there. So the inline arena is released before the loop with
-no body the loop reads, and no second whole-program copy overlaps it. Level 1
+That final-body clone writes into one of the optimize call's optimizer-input
+chunks (`OptOptimizerInput`), chosen by the body's index slot, not the stage
+arena, and records the body's symbol id, identity (its block storage address)
+and chunk. Every slot is placed, rewritten or not. The input the per-function
+loop reads is the pruned survivors, taken from those chunks. A survivor with no
+matching placement is copied into the call's carrier arena. So the inline arena
+is released before the loop with no body the loop reads, and no second
+whole-program copy overlaps it. The loop reads each survivor once, in order, and
+nothing reads a body after its position, so a chunk is released when no survivor
+is in it (before the loop) or once the loop passes its last survivor. Level 1
 has no input arena and reads the tiny-leaf stage's arena in place.
 
 The checked inliner's literal-argument scan borrows dense block storage directly.
@@ -985,6 +1005,22 @@ do not allocate. Generated-declaration reuse in `compiler_specialize.tl` compare
 these semantic flags even when the aggregates have identical ABI. The existing
 AST wrapper, surface roundtrip, and specialization selftests guard these rules;
 serialized metadata changes also require a surface-AST schema version change.
+
+Bit 1 of the marker word is `(:opaque)` (#6999, surface AST schema 18). The
+typechecker enforces it with E0221 at a few choke points in
+`compiler_typecheck_core.tl`:
+- the source type policy, where only a pointer or reference referent may name a
+  foreign opaque aggregate;
+- name references, which covers constructors, nullary variants and functions
+  whose signatures hold the type by value;
+- `init`, field access and field borrows;
+- inferred `let` bindings;
+- the owned and borrowed struct and variant pattern binders.
+
+`tc-opaque-foreign-index?` decides membership from the symbol's owner module
+against the checking context's module, using dotted-descendant identity.
+`tc-opaque-decls-declare?` sets a per-job flag when the program declares any
+opaque aggregate, so programs without one pay only that flag test.
 
 `AstExpr.While` keeps its direct body forms in an `AstExprList` (surface AST
 schema 17). Typechecking requires each form to be unit-valued and locates a

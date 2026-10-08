@@ -40617,7 +40617,18 @@ user_fn:
     (string.eq
       (compiler-backend-shared-object-text
         "    .text\nuser_fn:\n    jmp .L_end\n.L_site:\n    .quad .L_tl_str_data_0\n.L_end:\n")
-      "ERR backend: shared-object code model leaves a relocated word in .text: .quad .L_tl_str_data_0")))
+      "ERR backend: shared-object code model leaves a relocated word in .text: .quad .L_tl_str_data_0")
+    ;; A named code section is code too, so the same word there is refused.
+    (string.eq
+      (compiler-backend-shared-object-text
+        "    .section .text.typelisp_runtime,\"ax\"\ntl_fn:\n    .quad tl_alloc\n")
+      "ERR backend: shared-object code model leaves a relocated word in .text: .quad tl_alloc")
+    ;; A pushed read-only run that holds an address moves as a push, so its
+    ;; `.popsection` still returns to the code it interrupted.
+    (string.eq
+      (compiler-backend-shared-object-text
+        "    .text\nuser_fn:\n    .pushsection .rodata\n.L_site:\n    .quad .L_tl_str_data_0\n    .popsection\n    ret\n")
+      "    .text\nuser_fn:\n    .pushsection .data.rel.ro,\"aw\",@progbits\n.L_site:\n    .quad .L_tl_str_data_0\n    .popsection\n    ret\n")))
 
 (define (compiler-backend-shared-object-probe-source) : String
   "(import stdlib.string)

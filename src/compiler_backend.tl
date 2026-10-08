@@ -76954,6 +76954,38 @@ tl_shared_object_init:
         1]
       [else 0])))
 
+;; Whether the section directive whose first byte is at START of TEXT selects
+;; code: a `.text` directive, or a `.section`/`.pushsection` of a `.text*`
+;; section such as the runtime's `.text.typelisp_runtime`.
+(define (compiler-backend-shared-object-text-section?
+  [text : (& text str)]
+  [start : i64]) : bool
+  (or
+    (string.is-string-prefix-at text ".text" start)
+    (string.is-string-prefix-at text ".section .text" start)
+    (string.is-string-prefix-at text ".pushsection .text" start)))
+
+;; The directive that replaces a moved read-only section directive whose first
+;; byte is at START of TEXT: the same kind (a push stays a push, so its
+;; `.popsection` still matches), now writable for the loader's relocations.
+(define (compiler-backend-shared-object-moved-section
+  [text : (& text str)]
+  [start : i64]) : String
+  (let
+    [push : bool (string.is-string-prefix-at text ".pushsection " start)]
+    [name-start : i64
+      (if push
+        (+ start 13)
+        (+ start 9))]
+    (str_cat.str-cat
+      (if push
+        "    .pushsection "
+        "    .section ")
+      (if (string.is-string-prefix-at text ".typelisp_backtrace" name-start)
+        ".typelisp_backtrace"
+        ".data.rel.ro")
+      ",\"aw\",@progbits")))
+
 ;; Whether the line [START, END) of TEXT mentions a local-exec TLS offset.
 (define (compiler-backend-shared-object-tls-line?
   [text : (& text str)]
@@ -77133,7 +77165,7 @@ tl_shared_object_init:
                   (set! depth (+ depth 1)))
                 (set!
                   in-text
-                  (string.is-string-prefix-at (& text) ".text" first))
+                  (compiler-backend-shared-object-text-section? (& text) first))
                 (when (or (= kind 2) (= kind 5)) (set! chunk-start start))])]
           [(compiler-backend-shared-object-relocated-word? (& text) first end)
             (cond
@@ -77191,12 +77223,9 @@ tl_shared_object_init:
                     (text_buf.append
                       out
                       (string.substring (& text) copied (- start copied)))
-                    (if (string.is-string-prefix-at
+                    (compiler-backend-shared-object-moved-section
                       (& text)
-                      ".section .typelisp_backtrace"
-                      first)
-                      "    .section .typelisp_backtrace,\"aw\",@progbits"
-                      "    .section .data.rel.ro,\"aw\",@progbits")))
+                      first)))
                 (set! copied end)]
               [(string.is-string-prefix-at (& text) ".globl " first)
                 (set!

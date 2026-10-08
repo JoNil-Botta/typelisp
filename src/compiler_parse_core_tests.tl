@@ -2132,6 +2132,80 @@
       "(test bad (:must-use) unit)"
       "parse: unknown test metadata :must-use")))
 
+(define (compiler-parse-first-decl-markers [source : String]) : i64
+  (match (parser.parse-ast-source source)
+    [(Ok (Program decls-box))
+      (let
+        [decls : ast.AstDeclList (deref decls-box)]
+        (if (= (ast.ast-decl-list-len (& decls)) 1)
+          (let
+            [decl (ast.ast-decl-list-ref decls 0)]
+            (ast.ast-decl-aggregate-markers decl))
+          -1))]
+    [(Err _) -1]))
+
+;; `(:opaque)` is the second aggregate marker bit (#6999), parsed like
+;; `(:must-use)` and composing with it and with the other aggregate metadata.
+(define (compiler-parse-opaque-metadata-ok?) : bool
+  (and
+    (= (compiler-parse-first-decl-markers "(defstruct Handle (id i64))") 0)
+    (=
+      (compiler-parse-first-decl-markers
+        "(defstruct Handle (:opaque) (id i64))")
+      2)
+    (=
+      (compiler-parse-first-decl-markers
+        "(defenum State (:opaque) (Idle) (Busy i64))")
+      2)
+    (=
+      (compiler-parse-first-decl-markers
+        "(defstruct Handle (:must-use) (:opaque) (id i64))")
+      3)
+    (=
+      (compiler-parse-first-decl-markers
+        "(defenum State (:opaque) (:must-use) (Idle))")
+      3)
+    (=
+      (compiler-parse-first-decl-markers
+        "(defstruct View (:lifetimes a) (:opaque) (value (& a i64)))")
+      2)
+    (=
+      (compiler-parse-first-decl-markers
+        "(defstruct Stat (:opaque) (:repr c) (size i64))")
+      2)
+    (=
+      (compiler-parse-first-decl-markers
+        "(defstruct File (:cleanup close-file) (:opaque) (fd i64))")
+      2)
+    (=
+      (compiler-parse-first-decl-markers
+        "(defenum File (:cleanup close-file) (:opaque) (Open i64))")
+      2)
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:opaque) (:opaque) (x i64))"
+      "parse: duplicate defstruct :opaque metadata")
+    (compiler-parse-error-ok?
+      "(defenum Bad (:opaque) (:opaque) (Yes))"
+      "parse: duplicate defenum :opaque metadata")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:opaque x) (x i64))"
+      "parse: :opaque metadata takes no arguments")
+    (compiler-parse-error-ok?
+      "(defenum Bad (:opaque x) (Yes))"
+      "parse: :opaque metadata takes no arguments")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (x i64) (:opaque))"
+      "parse: defstruct metadata must appear before fields")
+    (compiler-parse-error-ok?
+      "(defenum Bad (Yes) (:opaque))"
+      "parse: defenum metadata must appear before variants")
+    (compiler-parse-error-ok?
+      "(defstruct Bad (:cleanup close-bad) (x i64 (:opaque)))"
+      "parse: unknown field metadata :opaque")
+    (compiler-parse-error-ok?
+      "(define (bad) (:opaque) : i64 1)"
+      "parse: unknown define metadata :opaque")))
+
 (define (compiler-parse-cleanup-error-tests-ok?) : bool
   (and
     (compiler-parse-error-ok?
@@ -2518,6 +2592,7 @@
     [(not (compiler-parse-unsafe-decl-error-tests-ok?)) false]
     [(not (compiler-parse-repr-c-error-tests-ok?)) false]
     [(not (compiler-parse-must-use-metadata-ok?)) false]
+    [(not (compiler-parse-opaque-metadata-ok?)) false]
     [(not (compiler-parse-cleanup-error-tests-ok?)) false]
     [(not (compiler-parse-error-ok? "(module)" "parse: malformed module"))
       false]

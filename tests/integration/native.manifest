@@ -169,6 +169,8 @@ compile_profile_nested_peak_reset|all|-|tests/integration/compile_profile_nested
 compile_profile_optimizer_escape|all|-|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-|-
 compile_profile_result_import|all|-|tests/integration/compile_profile_result_import.tl|42|-|-|-|-
 call_eval_order|all|-|tests/integration/call_eval_order.tl|42|-|-|-|-
+call_arg_snapshot|all|0,1,2|tests/integration/call_arg_snapshot.tl|42|-|-|-|-
+call_arg_snapshot_c_abi|all|0,1,2|tests/integration/call_arg_snapshot_c_abi.tl|42|-|-|benchmarks/c_abi_slice_ptr_len/baseline.c|-
 include_bin|all|-|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin|-
 compiler_load_includes|all|-|src/tests/compiler_load_includes.tl|42|-|-|compiler_load_tests.tl compiler_ast_types_tests.tl compiler_intern_tests.tl|-
 include_str_comptime|all|-|tests/integration/include_str_comptime.tl|42|-|-|include/str/comptime/owner.tl include_str_comptime_payload.txt include_bin_payload.bin stdlib/comptime.tl|-
@@ -313,6 +315,7 @@ checked_cheap_tier_claim_leaf_abort|all|-,2|tests/integration/checked_cheap_tier
 synth_wrapped_probe|all|-|tests/integration/synth_wrapped_probe.tl|42|-|-|-|-
 synth_wrapped_probe_abort|all|-,2|tests/integration/synth_wrapped_probe_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:37:36: array index out of bounds: index=64 length=64\n
 synth_tail_wrapper|all|-|tests/integration/synth_tail_wrapper.tl|42|-|-|-|-
+tail_borrow_param|all|-,0,2|tests/integration/tail_borrow_param.tl|42|-|-|-|-
 synth_tail_wrapper_abort|all|-,2|tests/integration/synth_tail_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:37:36: array index out of bounds: index=64 length=64\n
 synth_struct_accessor|all|-|tests/integration/synth_struct_accessor.tl|42|-|-|-|-
 synth_struct_accessor_abort|all|-|tests/integration/synth_struct_accessor_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:38:32: array index out of bounds: index=71 length=64\n

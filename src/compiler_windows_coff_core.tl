@@ -12,6 +12,7 @@
 (import compiler_profile_state as profile_state)
 (import compiler_object_coff)
 (import compiler_object_layout as layout)
+(import compiler_runtime_bindings as bindings)
 (import compiler_driver_core)
 (import compiler_typecheck_core)
 (import compiler_ast_types)
@@ -42,24 +43,22 @@
     (Box compiler_diagnostic.CompilerDiagnostic)
     compiler_diagnostic.CompilerAdvisoryList))
 
+(define (compiler-windows-coff-symbol-kind-text
+  [kind : cobj.CompilerObjectSymbolKind]) : String
+  (match kind
+    [(Function) "function"]
+    [(Data) "data"]
+    [_ ""]))
+
+;; Whether a direct Windows object may relocate against external `name`: the
+;; runtime binding table admits it to the object route (#8318).
 (define (compiler-windows-coff-extern-linkable?
   [name : String]
   [kind : cobj.CompilerObjectSymbolKind]) : bool
-  (and
-    (cobj.compiler-object-symbol-kind-eq? kind (Function))
-    (or
-      (string.eq name "ExitProcess")
-      (string.eq name "ConvertThreadToFiber")
-      (string.eq name "CreateFiberEx")
-      (string.eq name "GetCommandLineA")
-      (string.eq name "GetStdHandle")
-      (string.eq name "NtCreateFile")
-      (string.eq name "SetThreadStackGuarantee")
-      (string.eq name "SetUnhandledExceptionFilter")
-      (string.eq name "SwitchToFiber")
-      (string.eq name "WriteFile")
-      (string.eq name "VirtualAlloc")
-      (string.eq name "VirtualFree"))))
+  (bindings.compiler-runtime-binding-object-route?
+    "windows-x86_64"
+    (& name)
+    (& (compiler-windows-coff-symbol-kind-text kind))))
 
 (define (compiler-windows-coff-relocation-target-linkable?
   [symbols : cobj.CompilerObjectSymbolList]
@@ -82,49 +81,75 @@
             (set! index (+ index 1)))]))
     ok))
 
-(define (compiler-windows-coff-relocations-linkable?
+;; The index of the first relocation against an external symbol the binding
+;; table does not admit, or -1. A relocation against a local symbol is checked
+;; by the image's own target resolution instead.
+(define (compiler-windows-coff-undeclared-relocation
   [symbols : cobj.CompilerObjectSymbolList]
-  [relocs : cobj.CompilerObjectRelocationList]) : bool
+  [relocs : cobj.CompilerObjectRelocationList]) : i64
   (let
     [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
-    [ok : bool true]
-    (while (and ok (< index count))
+    [found : i64 -1]
+    (while (and (< found 0) (< index count))
       (match (cobj.compiler-object-relocation-list-ref relocs index)
         [(Relocation _ _ _ target)
           (if (compiler-windows-coff-relocation-target-linkable?
             (owned_view.compiler-owned-shared-view symbols)
             target)
             (set! index (+ index 1))
-            (set! ok false))]))
-    ok))
+            (set! found index))]))
+    found))
+
+(define (compiler-windows-coff-relocations-linkable?
+  [symbols : cobj.CompilerObjectSymbolList]
+  [relocs : cobj.CompilerObjectRelocationList]) : bool
+  (< (compiler-windows-coff-undeclared-relocation symbols relocs) 0))
+
+;; The fallback for relocation `index`: its section, its containing label and
+;; that label's offset, and the undeclared symbol.
+(define (compiler-windows-coff-undeclared-external
+  [image : cobj.CompilerObjectImage]
+  [index : i64]) : compiler_backend.CompilerDirectObjectFallbackReason
+  (match (cobj.compiler-object-relocation-list-ref image.relocations index)
+    [(Relocation section label _ target)
+      (UndeclaredExternal
+        (compiler_object_coff.compiler-object-coff-section-name section)
+        (owned_view.compiler-owned-shared-view label)
+        (layout.compiler-object-layout-section-label-offset image section label)
+        target)]))
 
 (define (compiler-windows-coff-linkability [image : cobj.CompilerObjectImage]) : CompilerWindowsCoffLinkability
-  (cond
-    [(not (compiler_object_coff.compiler-object-coff-image-supported? image))
-      (Unavailable UnsupportedCoffImage)]
-    [(not
-        (compiler-windows-coff-relocations-linkable?
-          (owned_view.compiler-owned-shared-view image.symbols)
-          (owned_view.compiler-owned-shared-view image.relocations)))
-      (Unavailable ObjectRelocation)]
-    [(not
-        (cobj.compiler-object-symbol-list-contains?
-          image.symbols
-          "_tl_start"
-          (Export)
-          (Function)))
-      (Unavailable MissingEntrySymbol)]
-    [(<
-        (layout.compiler-object-layout-section-label-offset
-          image
-          (Text)
-          "tl_setup_argv")
-        0)
-      (Unavailable MissingRuntimeEntry)]
-    [(<= (layout.compiler-object-layout-section-raw-size image (Text)) 0)
-      (Unavailable EmptyTextSection)]
-    [else (Linkable)]))
+  (let
+    [undeclared : i64
+      (compiler-windows-coff-undeclared-relocation
+        (owned_view.compiler-owned-shared-view image.symbols)
+        (owned_view.compiler-owned-shared-view image.relocations))]
+    (cond
+      [(not (compiler_object_coff.compiler-object-coff-image-supported? image))
+        (Unavailable UnsupportedCoffImage)]
+      [(>= undeclared 0)
+        (Unavailable
+          (compiler-windows-coff-undeclared-external
+            (owned_view.compiler-owned-shared-view image)
+            undeclared))]
+      [(not
+          (cobj.compiler-object-symbol-list-contains?
+            image.symbols
+            "_tl_start"
+            (Export)
+            (Function)))
+        (Unavailable MissingEntrySymbol)]
+      [(<
+          (layout.compiler-object-layout-section-label-offset
+            image
+            (Text)
+            "tl_setup_argv")
+          0)
+        (Unavailable MissingRuntimeEntry)]
+      [(<= (layout.compiler-object-layout-section-raw-size image (Text)) 0)
+        (Unavailable EmptyTextSection)]
+      [else (Linkable)])))
 
 (define (compiler-windows-coff-linkable? [image : cobj.CompilerObjectImage]) : bool
   (match (compiler-windows-coff-linkability image)

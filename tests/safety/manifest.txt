@@ -1185,6 +1185,9 @@ loop_mut_borrow_stored_return_ok|check-ok|tests/safety/loop_mut_borrow_stored_re
 loop_mut_borrow_stored_break_reject|check-fail|tests/safety/loop_mut_borrow_stored_break_reject.tl|-|cannot assign to borrowed place `items[0]`
 loop_mut_borrow_return_or_continue_ok|check-ok|tests/safety/loop_mut_borrow_return_or_continue_ok.tl|-|-
 loop_mut_borrow_continue_edge_reject|check-fail|tests/safety/loop_mut_borrow_continue_edge_reject.tl|-|cannot assign to borrowed place `items[0]`
+loop_mut_borrow_operand_edges_ok|check-ok|tests/safety/loop_mut_borrow_operand_edges_ok.tl|-|-
+loop_mut_borrow_operand_break_reject|check-fail|tests/safety/loop_mut_borrow_operand_break_reject.tl|-|cannot assign to borrowed place `items[0]`
+loop_mut_borrow_operand_continue_reject|check-fail|tests/safety/loop_mut_borrow_operand_continue_reject.tl|-|cannot assign to borrowed place `items[0]`
 # A `try` operand keeps its own break, continue and return edges in the loop
 # move and borrow walkers.
 try_loop_break_move_reject|check-fail|tests/safety/try_loop_break_move_reject.tl|-|use of moved value `t`
@@ -1319,6 +1322,26 @@ foreign_global_macro_write_reject|check-fail|tests/safety/foreign_global_macro_w
 foreign_global_macro_caller_place_reject|check-fail|tests/safety/foreign_global_macro_caller_place_reject.tl|-|typecheck: cannot assign to part of global `pair` owned by module `foreign_global_dep`
 foreign_global_access_defined|run-exit|tests/safety/foreign_global_access_defined.tl|42|-
 foreign_global_shadow_defined|run-exit|tests/safety/foreign_global_shadow_defined.tl|42|-
+
+# (:opaque) aggregates (#6999): opaque_dep and its dotted descendants own the
+# representation; elsewhere the types are usable only behind Ptr, MutPtr, &
+# and &mut, and every other use is E0221, unsafe included.
+opaque_family_descendant_ok|run-exit|tests/safety/opaque_family_descendant_ok.tl|42|-
+opaque_foreign_pointer_ok|run-exit|tests/safety/opaque_foreign_pointer_ok.tl|42|-
+opaque_foreign_construct_reject|check-fail|tests/safety/opaque_foreign_construct_reject.tl|-|typecheck: cannot construct the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_variant_reject|check-fail|tests/safety/opaque_foreign_variant_reject.tl|-|typecheck: cannot construct the opaque type opaque_dep/State outside its module family
+opaque_foreign_init_reject|check-fail|tests/safety/opaque_foreign_init_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_field_reject|check-fail|tests/safety/opaque_foreign_field_reject.tl|-|typecheck: cannot access a field of the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_field_borrow_reject|check-fail|tests/safety/opaque_foreign_field_borrow_reject.tl|-|typecheck: cannot borrow a field of the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_unsafe_field_reject|check-fail|tests/safety/opaque_foreign_unsafe_field_reject.tl|-|typecheck: cannot access a field of the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_match_reject|check-fail|tests/safety/opaque_foreign_match_reject.tl|-|typecheck: cannot match the opaque type opaque_dep/State outside its module family
+opaque_foreign_param_reject|check-fail|tests/safety/opaque_foreign_param_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_struct_field_reject|check-fail|tests/safety/opaque_foreign_struct_field_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_tuple_reject|check-fail|tests/safety/opaque_foreign_tuple_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_box_reject|check-fail|tests/safety/opaque_foreign_box_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_by_value_fn_reject|check-fail|tests/safety/opaque_foreign_by_value_fn_reject.tl|-|typecheck: cannot use opaque_dep.make, which holds by value the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_macro_reject|check-fail|tests/safety/opaque_foreign_macro_reject.tl|-|typecheck: cannot construct the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_ptr_read_reject|check-fail|tests/safety/opaque_foreign_ptr_read_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
 
 # JSON live-prefix validation and checked arithmetic, including strategy hooks.
 json_sequence_live_prefix|run-exit|tests/safety/json_sequence_live_prefix.tl|42|-

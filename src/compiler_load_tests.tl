@@ -2772,9 +2772,7 @@
       [(Err _) false])))
 
 (define (compiler-load-strip-tests-case-ok? [source : String] [want : String]) : bool
-  (string.eq
-    (ces.compiler-embedded-stdlib-source-without-inline-tests source)
-    want))
+  (string.eq (ces.compiler-embedded-stdlib-payload-source source) want))
 
 ;; The inline-test blanking rule: top-level `(test ...)` and one-body
 ;; `(cfg test ...)` forms only, line breaks kept, lexer-exact strings,
@@ -2799,13 +2797,54 @@
       "(testing 1)(test-foo 2)(define (f) (test 3))"
       "(testing 1)(test-foo 2)(define (f) (test 3))")
     ;; Parens inside strings, character literals and comments do not count.
+    ;; The comment is prose, so only its `;` stays.
     (compiler-load-strip-tests-case-ok?
       "(define s \"(test x) \\\" )\")\n(define c '(')\n; (test y\n(test z)\n"
-      "(define s \"(test x) \\\" )\")\n(define c '(')\n; (test y\n\n")
+      "(define s \"(test x) \\\" )\")\n(define c '(')\n;\n\n")
     ;; Unbalanced or unlexable sources are returned unchanged.
     (compiler-load-strip-tests-case-ok? "(test x" "(test x")
     (compiler-load-strip-tests-case-ok? "(test x))" "(test x))")
     (compiler-load-strip-tests-case-ok? "(test \"x)" "(test \"x)")))
+
+;; The prose-comment rule (#8659): a comment outside the blanked tests keeps
+;; only its first `;`, so every line still reads as it did (comment, doc or
+;; code) and every token keeps its line and column. Doc comments, `name:`
+;; directives and the bytes of strings and character literals are kept.
+(define (compiler-load-trim-prose-comments-ok?) : bool
+  (and
+    (compiler-load-strip-tests-case-ok?
+      ";; Why this exists.\n(define a 1) ; trailing note\n"
+      ";\n(define a 1) ;\n")
+    (compiler-load-strip-tests-case-ok?
+      ";# Module doc.\n;: Item doc.\n(define a 1) ;: not a doc line, still kept\n"
+      ";# Module doc.\n;: Item doc.\n(define a 1) ;: not a doc line, still kept\n")
+    (compiler-load-strip-tests-case-ok?
+      ";; lint-allow: unused-import\n;; doctest-exit: 42\n; ok-1: kept\n"
+      ";; lint-allow: unused-import\n;; doctest-exit: 42\n; ok-1: kept\n")
+    ;; A capital, a dot or a leading digit is prose, not a directive name.
+    (compiler-load-strip-tests-case-ok?
+      ";; Note: prose\n;; e.g.: prose\n;; 1x: prose\n"
+      ";\n;\n;\n")
+    (compiler-load-strip-tests-case-ok?
+      ";; prose\r\n(define a 1)"
+      ";\r\n(define a 1)")
+    (compiler-load-strip-tests-case-ok?
+      "(define a\n  ;; inside a kept form\n  1)"
+      "(define a\n  ;\n  1)")
+    ;; A kept two-body `(cfg test ...)` keeps its comments whole.
+    (compiler-load-strip-tests-case-ok?
+      "(cfg test (define a 1) ; note\n  (define a 2))"
+      "(cfg test (define a 1) ; note\n  (define a 2))")
+    (compiler-load-strip-tests-case-ok?
+      ";; before\n(test t ; inside\n  (check))\n;; after\n"
+      ";\n\n\n;\n")
+    (compiler-load-strip-tests-case-ok?
+      "(define s \"; not a comment\")\n(define c ';')\n"
+      "(define s \"; not a comment\")\n(define c ';')\n")
+    (compiler-load-strip-tests-case-ok?
+      "(define a 1) ;; no newline"
+      "(define a 1) ;")
+    (compiler-load-strip-tests-case-ok? ";\n;;\n" ";\n;\n")))
 
 (define (compiler-load-missing-include-str-ok?) : bool
   (match (load.compiler-load-source
@@ -5833,6 +5872,9 @@
   (unless
     (compiler-load-strip-inline-tests-ok?)
     (return (io.panic "compiler-load: inline-test blanking smoke mismatch")))
+  (unless
+    (compiler-load-trim-prose-comments-ok?)
+    (return (io.panic "compiler-load: prose-comment trimming smoke mismatch")))
   (unless
     (compiler-load-missing-include-str-ok?)
     (return (io.panic "compiler-load: missing include-str smoke mismatch")))

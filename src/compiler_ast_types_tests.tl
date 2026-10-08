@@ -893,3 +893,56 @@
           (ast.ast-decl-must-use? unsafe-decl)
           (ast.ast-decl-comptime-only? unsafe-decl))
         (io.panic "aggregate marker wrapper semantics or allocation changed")))))
+
+;; In-place writes below the protected floor are undone by the restore (#8757).
+;; Two writes to one persistent node restore to its parsed form, a write above
+;; the floor is not journaled and survives, and a floor of 0 drops the journal.
+(define (compiler-ast-protected-restore-ok?) : bool
+  (let
+    [base : i64 (ast.ast-node-pool-len)]
+    [kept : i64 (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-input))]
+    [_floor : unit (ast.ast-node-protected-floor-set! (ast.ast-node-pool-len))]
+    [above : i64 (ast.ast-node-push (Var cbi.compiler-builtin-id-fix-cond))]
+    (ast.ast-node-set! kept (Literal (ast.ast-lit-int 7)))
+    (ast.ast-node-set! kept (Literal (ast.ast-lit-int 8)))
+    (ast.ast-node-set! above (Literal (ast.ast-lit-int 9)))
+    (let
+      [journaled : i64 (ast.ast-node-protected-journal-count)]
+      [rewritten : bool
+        (match (ast.ast-node-get kept)
+          [(Literal _) true]
+          [_ false])]
+      (ast.ast-node-protected-restore!)
+      (let
+        [restored : bool
+          (match (ast.ast-node-get kept)
+            [(Var id) (= id cbi.compiler-builtin-id-fix-input)]
+            [_ false])]
+        [above-kept : bool
+          (match (ast.ast-node-get above)
+            [(Literal _) true]
+            [_ false])]
+        [emptied : bool (= (ast.ast-node-protected-journal-count) 0)]
+        (ast.ast-node-set! kept (Literal (ast.ast-lit-int 10)))
+        (let
+          [noted-again : bool (= (ast.ast-node-protected-journal-count) 1)]
+          (ast.ast-node-protected-floor-set! 0)
+          (let
+            [dropped : bool (= (ast.ast-node-protected-journal-count) 0)]
+            (ast.ast-node-pool-reset-to! base)
+            (and
+              (= journaled 2)
+              rewritten
+              restored
+              above-kept
+              emptied
+              noted-again
+              dropped)))))))
+
+(cfg
+  test
+  (test
+    compiler-ast-protected-node-restore
+    (unless
+      (compiler-ast-protected-restore-ok?)
+      (io.panic "in-place writes below the protected floor were not undone"))))

@@ -396,8 +396,9 @@ contracts, and intentional panic/exit-status checks.
    build input and lookup arm. The
    compiler build compresses the source bytes directly, with each top-level
    inline test (`(test ...)`, one-body `(cfg test ...)`) blanked to its line
-   breaks, so installed compilers carry no test code; never add
-   `stdlib/tests/*.tl` fixtures.
+   breaks and each prose comment cut to its first `;`, so installed compilers
+   carry no test code or comment prose. Doc comments and `name:` directives
+   such as `lint-allow:` stay whole. Never add `stdlib/tests/*.tl` fixtures.
 6. Add inline `(test ...)` items next to declarations for source-local runnable
    API behavior; `scripts/verify-inline-tests.sh` discovers them automatically.
 7. Add focused fixtures under `stdlib/tests/` only for rejection, multi-file,
@@ -419,9 +420,11 @@ contracts, and intentional panic/exit-status checks.
 
 Run `scripts/verify-embedded-stdlib-payload.sh` to validate all 62 explicit
 build inputs, prove deterministic one-byte mutation propagation, and decode
-every embedded module against its source with the inline tests blanked. It
-also re-lexes both texts and proves the blanking removed exactly the top-level
-inline tests and left every other token at its line and column.
+every embedded module against its source with the inline tests blanked and
+prose comments cut. It also re-lexes both texts and proves the blanking
+removed exactly the top-level inline tests and left every other token at its
+line and column. Every other line must be unchanged or a prose comment cut to
+its first `;`.
 `scripts/verify-stdlib.sh` includes this gate in CI.
 
 The verifier intentionally fails when a new top-level `stdlib/*.tl` module or a

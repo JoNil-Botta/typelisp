@@ -436,7 +436,7 @@
           (ci.intern-source-name-session-handle-from-state intern-state))]
       [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
       (codec.surface-ast-write-i64! (&mut out) 0)
-      (codec.surface-ast-write-i64! (&mut out) 2)
+      (codec.surface-ast-write-i64! (&mut out) 4)
       (let
         [reader : codec.SurfaceAstReader
           (codec.surface-ast-reader-new
@@ -913,6 +913,14 @@
         (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Comptime No 1)))
         true
         1)
+      (surface-ast-decl-meta-roundtrip-ok?
+        (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Runtime 2)))
+        false
+        2)
+      (surface-ast-decl-meta-roundtrip-ok?
+        (ast.AstDeclMeta (box (ast.AstDeclMetaValue.Comptime No 3)))
+        true
+        3)
       (surface-ast-decl-meta-invalid-flags-ok?)
       (surface-ast-extern-abi-roundtrip-ok? C)
       (surface-ast-extern-abi-roundtrip-ok? CVarargsOpen)

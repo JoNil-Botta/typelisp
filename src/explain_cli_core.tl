@@ -495,6 +495,42 @@ See also:
     SPEC.md, \"Default visibility\"; tests/safety/foreign_global_selected_set_reject.tl.
 ")
 
+(define (diagnostic-explain-e0221) : String
+  "E0221: opaque representation used outside its module family
+
+Description:
+    A struct or enum declared with (:opaque) keeps its representation inside
+    its module family: the defining module and its dotted descendant modules
+    from the same package or source root. Elsewhere the type's name stays
+    usable only behind Ptr, MutPtr, & and &mut. Constructing it, initializing
+    it, projecting, setting or borrowing its fields, matching its variants or
+    fields, and holding it by value in a parameter, return, let, field,
+    payload, global, tuple, array or Box are rejected, even inside unsafe. A
+    (module ...) declaration does not join a family from another package, and
+    code a macro expands into a module is checked as that module's code.
+
+Minimal failing example:
+    ;; db.tl
+    (module db)
+    (defstruct Connection
+      (:opaque)
+      (fd i64))
+    ;; main.tl
+    (import db.Connection)
+    (define (main) : i64
+      (let
+        [c : Connection (Connection 3)]
+        c.fd))
+
+Fix:
+    Call functions that the defining module provides, and hold the value
+    behind a pointer or reference, for example
+    (define (open) : (MutPtr Connection) ...) in db.tl.
+
+See also:
+    SPEC.md, \"Opaque aggregates\"; tests/safety/opaque_foreign_construct_reject.tl.
+")
+
 (define (diagnostic-explain-ascii-fold-char [c : char]) : char
   (if (and (>= c 'A') (<= c 'Z'))
     (cast (+ (cast c : i64) 32) : char)
@@ -634,6 +670,10 @@ See also:
         code
         (cdiag.compiler-diagnostic-code-typecheck-foreign-global-write))
       (DiagnosticExplainDetailed (diagnostic-explain-e0220))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-typecheck-opaque-representation))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0221))]
     [else DiagnosticExplainUnknown]))
 
 (define (diagnostic-explain-print-registry-row [index : i64]) : unit

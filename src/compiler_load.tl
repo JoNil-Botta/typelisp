@@ -6037,8 +6037,32 @@
         (set! (array-ref state.surface-summary-owner-arena 0) fresh)
         fresh))))
 
+;; Moves whenever a surface-summary list loses or reorders entries: a reset or
+;; a source removal. An append keeps every earlier summary at its physical
+;; index, so it changes only the count. Readers that index summaries by
+;; position (the typechecker's macro surface index) rebuild when this moves.
+;; It is process-wide and only ever grows, so a reader that also keys on its
+;; session and count never mistakes one list for another.
+(define compiler-load-surface-summaries-epoch : i64
+  0)
+
+(define (compiler-load-surface-summaries-epoch-bump!) : unit
+  (set!
+    compiler-load-surface-summaries-epoch
+    (+ compiler-load-surface-summaries-epoch 1)))
+
+(define (compiler-load-surface-summaries-epoch-value) : i64
+  compiler-load-surface-summaries-epoch)
+
+;; The owner arena of the active load session, which identifies it.
+(define (compiler-load-active-session-owner-arena) : i64
+  (__tl-project-field
+    (compiler-load-active-session-state-shared-view)
+    owner-arena))
+
 (define (compiler-load-session-state-surface-summaries-reset!
   [state : CompilerLoadSessionState]) : unit
+  (compiler-load-surface-summaries-epoch-bump!)
   (let
     [payload-owner : i64
       (compiler-load-session-state-surface-summary-owner-arena (& state))]
@@ -6382,6 +6406,7 @@
 (define (compiler-load-session-state-surface-summary-remove-source!
   [state : CompilerLoadSessionState]
   [source-path-id : i64]) : unit
+  (compiler-load-surface-summaries-epoch-bump!)
   (let
     [payload-owner : i64
       (compiler-load-session-state-surface-summary-owner-arena-ensure!

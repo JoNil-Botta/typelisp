@@ -1276,6 +1276,27 @@
         [(Err _) false])]
     [(Err _) false]))
 
+;; #8433: a call argument read from a variable is copied before the later
+;; arguments only when one of them can write it. The counts are each
+;; function's var copies: `unrelated` and `assigned` hold their `set!`'s own
+;; copy, and `assigned` adds the snapshot.
+(define (compiler-lower-call-arg-snapshot-source) : String
+  "(define (first [a : i64] [_b : i64]) : i64 a)
+(define (plain [x : i64] [y : i64]) : i64 (first x (+ y 1)))
+(define (unrelated [x : i64] [y : i64]) : i64 (first x (begin (set! y 2) y)))
+(define (assigned [x : i64]) : i64 (first x (begin (set! x 2) 0)))
+(define (main) : i64 (+ (plain 1 2) (+ (unrelated 1 2) (assigned 1))))")
+
+(define (compiler-lower-call-arg-snapshot-shape-ok?) : bool
+  (match (lower-test-functions
+    (lower.lower-compiler-source (compiler-lower-call-arg-snapshot-source)))
+    [(Some functions)
+      (and
+        (= (lower-test-count functions "plain" (CopyMov)) 0)
+        (= (lower-test-count functions "unrelated" (CopyMov)) 1)
+        (= (lower-test-count functions "assigned" (CopyMov)) 2))]
+    [_ false]))
+
 ;; `array-ref`/`array-set!` lower to a bounds-checked typed element load/store.
 ;; Taking the array as a parameter avoids needing `make-array` here.
 (define (compiler-lower-array-access-source) : String
@@ -3516,6 +3537,15 @@
         0)]
     [_ 0]))
 
+;; A `mov` that copies a var rather than materializing a constant.
+(define (lower-test-instr-copy-mov-count [instr : ir.CompilerIrInstr]) : i64
+  (match instr
+    [(Mov _ value _)
+      (match value
+        [(Var _) 1]
+        [_ 0])]
+    [_ 0]))
+
 (define (lower-test-instr-u64-mov-count [instr : ir.CompilerIrInstr]) : i64
   (match instr
     [(Mov _ _ ty)
@@ -3719,6 +3749,7 @@
   (Branch)
   (Cast)
   (CopyBytes)
+  (CopyMov)
   (Cpuid)
   (F64Mov u64)
   (GepOffset i64)
@@ -3755,6 +3786,7 @@
     [(Branch) (lower-test-instr-branch-count instr)]
     [(Cast) (lower-test-instr-cast-count instr)]
     [(CopyBytes) (lower-test-instr-copy-bytes-count instr)]
+    [(CopyMov) (lower-test-instr-copy-mov-count instr)]
     [(Cpuid) (lower-test-instr-cpuid-count instr)]
     [(F64Mov want) (lower-test-instr-f64-mov-count instr want)]
     [(GepOffset want) (lower-test-instr-gep-offset-count instr want)]

@@ -31,6 +31,7 @@ duplicate rows.
 | E0218 | typecheck | compile-time constraint | typechecker | raise-site `CompilerTypecheckKind` | detailed |
 | E0219 | typecheck | unsafe callable effect erasure | typechecker | raise-site `CompilerTypecheckKind` | detailed |
 | E0220 | typecheck | global written outside its module | typechecker | raise-site `CompilerTypecheckKind` | detailed |
+| E0221 | typecheck | opaque representation used outside its module family | typechecker | raise-site `CompilerTypecheckKind` | detailed |
 
 Parser and typechecker canonicalization are the current production sites for
 stable public codes. Loader, package, macro, lowering, backend, linker,

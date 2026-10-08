@@ -1743,8 +1743,9 @@
           (ctfe 322 "__tl_semantic_origin_value_qualifier")
           (ctfe 323 "__tl_semantic_origin_value_name")
           (ctfe 324 "__tl_semantic_origin_binding_definition")
+          (ctfe 325 ":opaque")
           ;; The by-name struct pattern head (compiler_parse_core.tl).
-          (ctfe 325 "fields")))
+          (ctfe 326 "fields")))
         [(comptime.Expr.Call _ items) items]
         [_
           (comptime.comptime-error
@@ -2414,6 +2415,9 @@
         (compiler-builtin-ctfe ":must-use")
         (ci.intern-source-slice ":must-use" 0 9))
       (=
+        (compiler-builtin-ctfe ":opaque")
+        (ci.intern-source-slice ":opaque" 0 7))
+      (=
         (compiler-builtin-ctfe "c-function")
         (ci.intern-source-slice "c-function" 0 10))
       (= (compiler-builtin-ctfe "CFunc") (ci.intern-source-slice "CFunc" 0 5))
@@ -2472,7 +2476,11 @@
       (not
         (=
           (compiler-builtin-ctfe ":must-use")
-          (ci.intern-generated-canonical-name ":must-use"))))))
+          (ci.intern-generated-canonical-name ":must-use")))
+      (not
+        (=
+          (compiler-builtin-ctfe ":opaque")
+          (ci.intern-generated-canonical-name ":opaque"))))))
 
 (cfg
   test

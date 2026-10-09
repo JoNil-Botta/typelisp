@@ -20,13 +20,13 @@ native_link_detect_host
 # forced-source fallback happens only for the root consumer on both hosts.
 case "$NL_HOST_OS" in
     windows)
-        TRUSTED_PREFIX_SKIPPED=234
-        FAILURE_PREFIX_SKIPPED=219
+        TRUSTED_PREFIX_SKIPPED=235
+        FAILURE_PREFIX_SKIPPED=220
         FORCED_SOURCE_FALLBACKS=1
         ;;
     *)
-        TRUSTED_PREFIX_SKIPPED=229
-        FAILURE_PREFIX_SKIPPED=214
+        TRUSTED_PREFIX_SKIPPED=230
+        FAILURE_PREFIX_SKIPPED=215
         FORCED_SOURCE_FALLBACKS=1
         ;;
 esac

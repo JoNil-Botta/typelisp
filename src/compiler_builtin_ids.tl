@@ -1744,7 +1744,8 @@
           (ctfe 323 "__tl_semantic_origin_value_name")
           (ctfe 324 "__tl_semantic_origin_binding_definition")
           (ctfe 325 ":opaque")
-          (ctfe 326 "expr-binding-clause-init-callee")))
+          (ctfe 326 "expr-binding-clause-init-callee")
+          (ctfe 327 "expr-call-args")))
         [(comptime.Expr.Call _ items) items]
         [_
           (comptime.comptime-error

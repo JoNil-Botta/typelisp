@@ -4109,6 +4109,44 @@
         [(Call _ call-args) (compiler-comptime-host-push! (ExprList call-args))]
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
+;; expr-call-args: replace the Expr on top of the stack with its call
+;; arguments, or an empty list when it is not a call. Spans and caller-origin
+;; markers are looked through, as for operand-expr-call-args.
+(define (compiler-comptime-host-callback-expr-call-args
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (if (< compiler-comptime-host-stack-len 1)
+      tlci.tlci-host-callback-status-bad-request
+      (let
+        [value : ctfe_support.CompilerCtfeValue
+          (compiler-comptime-host-stack-value 1)]
+        [node : i64 (compiler-comptime-host-value-node value)]
+        [pools : ast.AstNodePoolContext
+          (compiler-comptime-host-value-pools value)]
+        [captured : bool
+          (match value
+            [(CapturedExpr _ _ _) true]
+            [_ false])]
+        (if (< node 0)
+          tlci.tlci-host-callback-status-bad-request
+          (match (compiler-comptime-host-unspanned-expr
+            (& pools)
+            (ast.ast-node-pool-context-expr-get pools node))
+            [(Call _ call-args)
+              (compiler-comptime-host-replace!
+                1
+                (if captured
+                  (CapturedExprList call-args pools)
+                  (ExprList call-args)))]
+            [_
+              (compiler-comptime-host-replace!
+                1
+                (ExprList (ast.ast-expr-list-new)))]))))))
+
 ;; The `comptime.Expr.Int` half: a data probe plus a value read that the
 ;; generated entry only issues inside the probe's matching arm. Refs #5602.
 ;; expr-ptr-cast pops the type value then the pointer expression, the same

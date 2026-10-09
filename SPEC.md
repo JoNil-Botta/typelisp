@@ -1073,6 +1073,9 @@ value, a macro, a struct constructor or enum variant, an extern or dispatch
 function, a function of the root program module, a hygiene-renamed name from
 another macro's expansion, and a slash-qualified spelling. A non-empty result
 therefore names the function the call runs; `""` means unknown.
+`(expr-call-args expr)` returns the argument expressions of a call
+expression as an `ExprList`, looking through source spans and caller-origin
+markers, and an empty list for any other expression.
 Cons-list helpers such as `expr-list-head` and `expr-list-tail` are not part
 of the public macro ABI.
 

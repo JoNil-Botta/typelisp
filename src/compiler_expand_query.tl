@@ -297,7 +297,7 @@
   [out : (&mut out CompilerExpandText)]
   [names : doc_expand.DocExpandContext]
   [s : reader.SpannedSexpr]) : unit
-  (match (reader.spanned-sexpr-slice-view s)
+  (match (reader.spanned-sexpr-view s)
     [(Int n text _)
       (compiler-expand-text-append!
         out

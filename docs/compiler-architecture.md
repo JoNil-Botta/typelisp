@@ -137,6 +137,31 @@ borrowed-Slice boundaries even on default native declarations. The broader
 explicit-C ABI checker remains separate because private runtime declarations
 also use native contracts outside the ordinary C signature subset.
 
+Signature lifetime elision (`tc-elide-function-signature`) returns a
+signature as written when it has no elided reference anywhere the normalizer
+visits (nested function types, tuples and containers included). It returns the
+original parameter list and return type: no replacement list and no rebuilt
+types (#8410). Its consumers only read the result, and the source
+declarations' pools outlive checked typechecking and lowering, so the shared
+lists stay valid. Consumers read child type ids through the installed pool,
+so a signature is shared only when `type-bases` is that pool's own segment
+table. One read through another table is rebuilt even with nothing to elide,
+which relocates it into the installed pool. A signature with an elided reference is rebuilt under the current
+owner. The single candidate for its return lifetime is folded straight
+from the normalized parameters, with no type-list projection.
+
+Several caches key on type-node ids, so an id the pool has dropped and reused
+must never be read as the node it used to name (#8410).
+- **Dedup index.** A pool state restored to an earlier count keeps the dedup
+  index it shares. A dedup entry naming an id at or past the count is stale
+  and is never a hit.
+- **Resolution memo.** The typecheck memo starts a new epoch whenever the pool
+  generation moves: truncation, a context reset, or an install.
+- **Install and restore.** A check that installs `ctx` and then restores the
+  previous pools restores the installed context itself, not a capture. A
+  capture's fresh cells would stop explicit pushes through `ctx` from
+  reaching the pool globals.
+
 Borrowed pattern bindings share one type/lowering contract:
 `tc-borrowed-binding-type` copies `Copy` parts, projects boxed storage as a
 shared reference, and otherwise retains a reference to the part. Lowering uses

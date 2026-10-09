@@ -3212,9 +3212,12 @@
               next.storage-arena
               next.segment-count)
             id)])
-      (if (ty-node-shallow-value-eq?
-        (ast-type-node-pool-state-get pool (- slot 1))
-        (owned_view.compiler-owned-reference-shared-view node))
+      ;; As in `ty-node-dedup-probe-push`, an entry past the count is stale.
+      (if (and
+        (< (- slot 1) pool.count)
+        (ty-node-shallow-value-eq?
+          (ast-type-node-pool-state-get pool (- slot 1))
+          (owned_view.compiler-owned-reference-shared-view node)))
         (AstTypeNodePoolPushOk pool (- slot 1))
         (ast-type-node-pool-state-push-dedup
           pool
@@ -3650,7 +3653,12 @@
             (ty-node-dedup-note-filled! slots ty-node-dedup-capacity idx)
             (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
             (set! result id))
-          (if (ty-node-shallow-eq? (- slot 1) node)
+          ;; An entry naming an id at or past the count outlived its node: a
+          ;; pool restored to an earlier state keeps the shared index. It
+          ;; is never a hit, or the next append would reuse its id (#8410).
+          (if (and
+            (< (- slot 1) ty-node-pool-count)
+            (ty-node-shallow-eq? (- slot 1) node))
             (set! result (- slot 1))
             (set! idx (bit-and (+ idx 1) mask))))))
     result))
@@ -4527,6 +4535,9 @@
   [pools : AstNodePoolContext]
   [expr-mark : i64]
   [type-mark : i64]) : unit
+  ;; A reset keeps the pool's segment table, so id-keyed memos bound to it see
+  ;; no other change: the generation tells them its ids may now name new nodes.
+  (set! ty-node-pool-generation (+ ty-node-pool-generation 1))
   (ast-expr-pool-cell-write!
     pools.expr-pool
     (ast-expr-node-pool-state-reset-to

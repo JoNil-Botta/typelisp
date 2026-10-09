@@ -466,6 +466,78 @@
     (compiler-ast-type-dedup-logged-clear-smoke?)
     "a logged dedup clear leaves the table as empty as a full clear"))
 
+;; A pool restored to an earlier state keeps the dedup index it shares, so an
+;; entry can name an id at or past the count. Pushing the same node again must
+;; append it, through either API; returning the stale id would let the next
+;; append overwrite it (#8410).
+(define (compiler-ast-type-state-with-count
+  [state : ast.AstTypeNodePoolState]
+  [count : i64]) : ast.AstTypeNodePoolState
+  (ast.AstTypeNodePoolState
+    state.segment-bases
+    count
+    state.base-arena
+    state.exhausted
+    state.dedup-slots
+    state.dedup-count
+    state.storage-arena
+    state.segment-count))
+
+(define (compiler-ast-type-dedup-stale-entry-smoke?) : bool
+  (let
+    [active-before : ast.AstNodePoolContext
+      (if (ast.ast-node-pool-has-active-context?)
+        (ast.ast-node-pool-context-active-live)
+        (ast.ast-node-pool-context-capture-active))]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [_first : i64 (ast.ast-node-pool-context-type-push pools (Str))]
+    [mark : i64 (ast.ast-node-pool-context-type-len pools)]
+    [_dropped : i64 (ast.ast-node-pool-context-type-push pools (I64))]
+    [_explicit-rollback : unit
+      (ast.ast-type-pool-cell-write!
+        pools.type-pool
+        (compiler-ast-type-state-with-count
+          (ast.ast-type-pool-cell-read pools.type-pool)
+          mark))]
+    [explicit-again : i64 (ast.ast-node-pool-context-type-push pools (I64))]
+    [explicit-next : i64 (ast.ast-node-pool-context-type-push pools (Bool))]
+    [explicit-kept : bool
+      (match (ast.ast-node-pool-context-type-get (& pools) explicit-again)
+        [(I64) true]
+        [_ false])]
+    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [global-mark : i64 (ast.ty-node-pool-len)]
+    [_dropped-global : i64 (ast.ty-node-push (& (Char)))]
+    [_global-rollback : unit
+      (begin
+        (ast.ast-type-pool-cell-write!
+          pools.type-pool
+          (compiler-ast-type-state-with-count
+            (ast.ast-type-pool-cell-read pools.type-pool)
+            global-mark))
+        (ast.ast-node-pool-context-install! pools))]
+    [global-again : i64 (ast.ty-node-push (& (Char)))]
+    [global-next : i64 (ast.ty-node-push (& (Unit)))]
+    [global-kept : bool
+      (match (ast.ty-node-get global-again)
+        [(Char) true]
+        [_ false])]
+    (ast.ast-node-pool-context-install! active-before)
+    (and
+      (= explicit-again mark)
+      (= explicit-next (+ mark 1))
+      explicit-kept
+      (= global-again global-mark)
+      (= global-next (+ global-mark 1))
+      global-kept)))
+
+(test
+  compiler-ast-type-dedup-stale-entry
+  (tl_test.assert-true
+    (compiler-ast-type-dedup-stale-entry-smoke?)
+    "a dedup entry past the pool count is never a hit"))
+
 ;; Use a small real index with the existing bound temporarily set to its
 ;; capacity. This exercises the maximum-capacity fallback without an 8M-node
 ;; fixture; restore the bound and installed owner before reporting assertions.

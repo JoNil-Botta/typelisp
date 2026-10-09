@@ -463,6 +463,33 @@
       unit
       (io.panic "typecheck: macro transformer pool preparation failed"))))
 
+;; The stdlib comptime surface check installs `ctx` and then restores what was
+;; installed before. Restoring a capture would leave fresh cells installed over
+;; the same storage, so a later explicit push through `ctx` would stop reaching
+;; the pool globals and the next global push would overwrite its node (#8410).
+(test
+  tc-stdlib-comptime-surface-check-keeps-installed-cells
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [ctx : tc_core.TcContext (macro-prepare-test-ctx pools)]
+    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [checked : bool
+      (match (tc_core.tc-stdlib-comptime-surface-ok ctx)
+        [(Ok) true]
+        [(Err _) false])]
+    [still-installed : bool
+      (ast.ast-node-pool-context-type-installed? (& pools))]
+    [explicit : i64 (ast.ast-node-pool-context-type-push pools (I64))]
+    [global : i64 (ast.ty-node-push (& (Bool)))]
+    (ast.ast-node-pool-context-install! installed)
+    (if (and checked still-installed (= global (+ explicit 1)))
+      unit
+      (io.panic
+        "typecheck: the comptime surface check left other pool cells installed"))))
+
 (test
   tc-context-expression-pool-isolation
   (let
@@ -2068,10 +2095,15 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-active-live)]
     [params : ast.AstParamList (ast.ast-param-list-with-capacity 0)]
     [index : i64 0]
+    ;; Elided references take the general path; a signature without one is
+    ;; returned as written (#8410).
     (while (< index count)
       (ast.ast-param-list-push
         (&mut params)
-        (ast.ast-param-id (ci.intern "elided") (I64) false))
+        (ast.ast-param-id
+          (ci.intern "elided")
+          (ast.ast-ty-ref cbi.compiler-builtin-id-fix-empty (& (I64)))
+          false))
       (set! index (+ index 1)))
     (match (tc_core.tc-elide-function-signature
       (ast.ast-node-pool-context-type-segment-bases pools)
@@ -2095,6 +2127,283 @@
     unit
     (io.panic
       "typecheck: an elided parameter list should reserve exactly its length")))
+
+;; --- signature elision fast path (#8410) -----------------------------------
+(define (tc-elide-test-i64) : ast.AstType
+  (I64))
+
+(define (tc-elide-test-ref [lifetime : i64] [inner : ast.AstType]) : ast.AstType
+  (ast.ast-ty-ref lifetime (& inner)))
+
+;; An elided `(& i64)`.
+(define (tc-elide-test-elided-ref) : ast.AstType
+  (tc-elide-test-ref cbi.compiler-builtin-id-fix-empty (tc-elide-test-i64)))
+
+;; `params` with one more parameter of type `ty`.
+(define (tc-elide-test-with [params : ast.AstParamList] [ty : ast.AstType]) : ast.AstParamList
+  (let
+    [out : ast.AstParamList params]
+    (ast.ast-param-list-push
+      (&mut out)
+      (ast.ast-param-id (ci.intern "p") ty false))
+    out))
+
+(define (tc-elide-test-one [ty : ast.AstType]) : ast.AstParamList
+  (tc-elide-test-with (ast.ast-param-list-with-capacity 2) ty))
+
+(define (tc-elide-test-two [a : ast.AstType] [b : ast.AstType]) : ast.AstParamList
+  (tc-elide-test-with (tc-elide-test-one a) b))
+
+;; The installed pool context itself, so restoring it keeps its cells
+;; installed; a capture would install fresh cells over the same storage.
+(define (tc-elide-test-installed-context) : ast.AstNodePoolContext
+  (if (ast.ast-node-pool-has-active-context?)
+    (ast.ast-node-pool-context-active-live)
+    (ast.ast-node-pool-context-capture-active)))
+
+(define (tc-elide-test-run [params : ast.AstParamList] [ret : ast.AstType]) : tc_core.ResultTcElidedSignature
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-active-live)]
+    (tc_core.tc-elide-function-signature
+      (ast.ast-node-pool-context-type-segment-bases pools)
+      params
+      ret)))
+
+;; The lifetime of reference type `ty`, or -1.
+(define (tc-elide-test-lifetime [ty : ast.AstType]) : i64
+  (match ty
+    [(Ref lifetime _) lifetime]
+    [(MutRef lifetime _) lifetime]
+    [_ -1]))
+
+(define (tc-elide-test-param-lifetime
+  [params : (& params ast.AstParamList)]
+  [index : i64]) : i64
+  (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+    [(Param _ ty _) (tc-elide-test-lifetime ty)]))
+
+;; A signature without an elided reference comes back as written: the same
+;; parameter storage and the same named lifetimes.
+(define (tc-elide-fast-path-ok?) : bool
+  (let
+    [named : i64 (ci.intern "named")]
+    [params : ast.AstParamList
+      (tc-elide-test-with
+        (tc-elide-test-two
+          (tc-elide-test-i64)
+          (tc-elide-test-ref named (tc-elide-test-i64)))
+        (ast.ast-ty-tuple (ast.ast-type-list-new)))]
+    [storage : u64
+      (unsafe
+        (ptr->int (__tl_array-data params.slots)))]
+    (match (tc-elide-test-run
+      params
+      (tc-elide-test-ref named (tc-elide-test-i64)))
+      [(Ok signature)
+        (and
+          (=
+            (unsafe
+              (ptr->int (__tl_array-data signature.params.slots)))
+            storage)
+          (= (tc-elide-test-param-lifetime (& signature.params) 1) named)
+          (= (tc-elide-test-lifetime signature.ret) named))]
+      [(Err _) false])))
+
+;; An elided input reference is renamed and becomes the elided return's
+;; lifetime; the source parameter list keeps its elided lifetime.
+(define (tc-elide-general-path-ok?) : bool
+  (let
+    [params : ast.AstParamList
+      (tc-elide-test-two (tc-elide-test-i64) (tc-elide-test-elided-ref))]
+    [hidden : i64 (tc_core.tc-elided-lifetime-name 0)]
+    (match (tc-elide-test-run
+      (owned_view.compiler-owned-shared-view params)
+      (tc-elide-test-elided-ref))
+      [(Ok signature)
+        (and
+          (= (tc-elide-test-param-lifetime (& signature.params) 1) hidden)
+          (= (tc-elide-test-lifetime signature.ret) hidden)
+          (=
+            (tc-elide-test-param-lifetime (& params) 1)
+            cbi.compiler-builtin-id-fix-empty))]
+      [(Err _) false])))
+
+;; An elided return with no candidate, or with two, is ambiguous. A nested
+;; function type is its own scope: its reference is no candidate for the
+;; outer return, so one named outer reference is the only candidate.
+(define (tc-elide-candidates-ok?) : bool
+  (let
+    [named : i64 (ci.intern "named")]
+    [nested : ast.AstType
+      (ast.ast-ty-func
+        (ast.ast-type-cons
+          (& (tc-elide-test-elided-ref))
+          (& (ast.ast-type-list-new)))
+        (& (tc-elide-test-i64)))]
+    (and
+      (match (tc-elide-test-run
+        (tc-elide-test-one (tc-elide-test-i64))
+        (tc-elide-test-elided-ref))
+        [(Ok _) false]
+        [(Err _) true])
+      (match (tc-elide-test-run
+        (tc-elide-test-two
+          (tc-elide-test-elided-ref)
+          (tc-elide-test-elided-ref))
+        (tc-elide-test-elided-ref))
+        [(Ok _) false]
+        [(Err _) true])
+      (match (tc-elide-test-run
+        (tc-elide-test-one (owned_view.compiler-owned-shared-view nested))
+        (tc-elide-test-elided-ref))
+        [(Ok _) false]
+        [(Err _) true])
+      (match (tc-elide-test-run
+        (tc-elide-test-two nested (tc-elide-test-ref named (tc-elide-test-i64)))
+        (tc-elide-test-elided-ref))
+        [(Ok signature) (= (tc-elide-test-lifetime signature.ret) named)]
+        [(Err _) false]))))
+
+;; An elided reference nested in a tuple parameter still takes the general
+;; path and is the single candidate.
+(define (tc-elide-nested-shape-ok?) : bool
+  (let
+    [tuple : ast.AstType
+      (ast.ast-ty-tuple
+        (ast.ast-type-cons
+          (& (tc-elide-test-elided-ref))
+          (&
+            (ast.ast-type-cons
+              (& (tc-elide-test-i64))
+              (& (ast.ast-type-list-new))))))]
+    (match (tc-elide-test-run
+      (tc-elide-test-one tuple)
+      (tc-elide-test-elided-ref))
+      [(Ok signature)
+        (=
+          (tc-elide-test-lifetime signature.ret)
+          (tc_core.tc-elided-lifetime-name 0))]
+      [(Err _) false])))
+
+;; The lifetime of the first element type of parameter 0's tuple or function
+;; argument list, or -1.
+(define (tc-elide-test-inner-lifetime [params : (& params ast.AstParamList)]) : i64
+  (match (ast.ast-param-list-get params 0 (ast.ast-param-fallback))
+    [(Param _ ty _)
+      (match ty
+        [(Tuple elems)
+          (tc-elide-test-lifetime
+            (ast.ty-node-get
+              (ast.ast-type-list-get
+                (& (ast.ast-type-list-box-shared-view elems))
+                0
+                (ast.ast-type-id-fallback))))]
+        [(Func args _)
+          (tc-elide-test-lifetime
+            (ast.ty-node-get
+              (ast.ast-type-list-get
+                (& (ast.ast-type-list-box-shared-view args))
+                0
+                (ast.ast-type-id-fallback))))]
+        [(Box elem) (tc-elide-test-lifetime (ast.ty-node-get elem))]
+        [_ -1])]))
+
+;; An elided reference only inside a nested function type, a tuple or a box,
+;; with no reference in the return, is still normalized: the fast path must
+;; see through each shape.
+(define (tc-elide-inner-only-ok?) : bool
+  (let
+    [hidden : i64 (tc_core.tc-elided-lifetime-name 0)]
+    [nested : ast.AstType
+      (ast.ast-ty-func
+        (ast.ast-type-cons
+          (& (tc-elide-test-elided-ref))
+          (& (ast.ast-type-list-new)))
+        (& (tc-elide-test-i64)))]
+    [tuple : ast.AstType
+      (ast.ast-ty-tuple
+        (ast.ast-type-cons
+          (& (tc-elide-test-elided-ref))
+          (& (ast.ast-type-list-new))))]
+    (and
+      (match (tc-elide-test-run (tc-elide-test-one nested) (tc-elide-test-i64))
+        [(Ok signature)
+          (= (tc-elide-test-inner-lifetime (& signature.params)) hidden)]
+        [(Err _) false])
+      (match (tc-elide-test-run (tc-elide-test-one tuple) (tc-elide-test-i64))
+        [(Ok signature)
+          (= (tc-elide-test-inner-lifetime (& signature.params)) hidden)]
+        [(Err _) false])
+      (match (tc-elide-test-run
+        (tc-elide-test-one (ast.ast-ty-box (& (tc-elide-test-elided-ref))))
+        (tc-elide-test-i64))
+        [(Ok signature)
+          (= (tc-elide-test-inner-lifetime (& signature.params)) hidden)]
+        [(Err _) false]))))
+
+;; A signature read through a table other than the installed pool's is
+;; relocated even with nothing to elide: consumers read child ids through
+;; `ty-node-get`. The source and installed pools hold different nodes at the
+;; same id, so an unrelocated reference would read `Bool` back.
+(define (tc-elide-foreign-table-ok?) : bool
+  (let
+    [installed : ast.AstNodePoolContext (tc-elide-test-installed-context)]
+    [source : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [target : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 8 8)]
+    [elem : i64 (ast.ast-node-pool-context-type-push source (I64))]
+    [shadow : i64 (ast.ast-node-pool-context-type-push target (Bool))]
+    [named : i64 (ci.intern "a")]
+    [_install : unit (ast.ast-node-pool-context-install! target)]
+    [result : tc_core.ResultTcElidedSignature
+      (tc_core.tc-elide-function-signature
+        (ast.ast-node-pool-context-type-segment-bases source)
+        (tc-elide-test-one (Ref named elem))
+        (tc-elide-test-i64))]
+    [ok : bool
+      (match result
+        [(Ok signature)
+          (match (ast.ast-param-list-get
+            (& signature.params)
+            0
+            (ast.ast-param-fallback))
+            [(Param _ ty _)
+              (match ty
+                [(Ref lifetime inner)
+                  (and
+                    (= elem shadow)
+                    (= lifetime named)
+                    (match (ast.ty-node-get inner)
+                      [(I64) true]
+                      [_ false]))]
+                [_ false])])]
+        [(Err _) false])]
+    (ast.ast-node-pool-context-install! installed)
+    ok))
+
+;; Every case appends through the installed pool, so the test runs in a fresh
+;; one: an earlier test can leave the installed pool's dedup index naming ids
+;; past its count, and an append would then return an id a later one reuses.
+(test
+  tc-elide-function-signature-paths
+  (let
+    [previous : ast.AstNodePoolContext (tc-elide-test-installed-context)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 64 64)]
+    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [ok : bool
+      (and
+        (tc-elide-fast-path-ok?)
+        (tc-elide-general-path-ok?)
+        (tc-elide-candidates-ok?)
+        (tc-elide-nested-shape-ok?)
+        (tc-elide-inner-only-ok?)
+        (tc-elide-foreign-table-ok?))]
+    (ast.ast-node-pool-context-install! previous)
+    (unless
+      ok
+      (io.panic "typecheck: signature elision took the wrong path or result"))))
 
 (define (tc-resolve-type-list-with-pools
   [ctx : tc_core.TcContext]
@@ -2139,6 +2448,46 @@
 
 ;; Uncached explicit-pool compatibility twin. Production contexts use the
 ;; job-owned memo below; standalone pool-isolation tests retain this raw worker.
+;; The resolution memo answers by type id, so a pool that drops nodes must not
+;; leave answers for the ids it reuses (#8410). After truncating the installed
+;; pool, or resetting its context, the id that held a concrete node is reused
+;; for a `Var`, which must read as needing resolution.
+(test
+  tc-type-resolution-memo-forgets-reused-ids
+  (let
+    [installed : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-capture-active)]
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [name-id : i64 (ci.intern "Expr")]
+    [_install : unit (ast.ast-node-pool-context-install! pools)]
+    [concrete : i64 (ast.ast-node-pool-context-type-push pools (I64))]
+    [concrete-answer : bool (tc-type-needs-resolution-id? concrete)]
+    [_truncate : unit (ast.ty-node-pool-truncate! concrete)]
+    [reused : i64 (ast.ast-node-pool-context-type-push pools (Var name-id))]
+    [reused-answer : bool (tc-type-needs-resolution-id? reused)]
+    [mark : i64 (ast.ast-node-pool-context-type-len pools)]
+    [reset-concrete : i64 (ast.ast-node-pool-context-type-push pools (Bool))]
+    [reset-concrete-answer : bool (tc-type-needs-resolution-id? reset-concrete)]
+    [_reset : unit
+      (ast.ast-node-pool-context-reset-to!
+        pools
+        (ast.ast-node-pool-context-expr-len pools)
+        mark)]
+    [reset-reused : i64
+      (ast.ast-node-pool-context-type-push pools (Var name-id))]
+    [reset-reused-answer : bool (tc-type-needs-resolution-id? reset-reused)]
+    (ast.ast-node-pool-context-install! installed)
+    (if (and
+      (= reused concrete)
+      (not concrete-answer)
+      reused-answer
+      (= reset-reused reset-concrete)
+      (not reset-concrete-answer)
+      reset-reused-answer)
+      unit
+      (io.panic "typecheck: the resolution memo kept an answer for a reused id"))))
+
 (define (tc-type-list-needs-resolution-with-bases?
   [type-bases : i64]
   [types : ast.AstTypeList]) : bool

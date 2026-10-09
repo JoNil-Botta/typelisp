@@ -305,7 +305,8 @@
   (slots (__tl_dyn-array i64))
   (epoch i64)
   (type-pool-owner-id i64)
-  (type-segment-bases i64))
+  (type-segment-bases i64)
+  (pool-generation i64))
 
 (defstruct TcTypeResolutionCacheState
   (address i64))
@@ -839,6 +840,7 @@
         (arena.tl_arena_current)
         (__tl_make-array i64 0)
         1
+        0
         0
         0))
     (TcTypeResolutionCacheState
@@ -14282,7 +14284,16 @@
 
 (define (tc-stdlib-comptime-surface-ok [ctx : TcContext]) : ResultTcUnit
   (let
-    [prev : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    ;; Restore the installed context itself. A capture has fresh cells over the
+    ;; same storage: reinstalling one would leave `ctx`'s cells uninstalled, so
+    ;; explicit pushes through them would no longer reach the pool globals that
+    ;; every other push appends through, and the two would overwrite each
+    ;; other's nodes (#8410). It would also roll the count back over the spec
+    ;; nodes pushed below.
+    [prev : ast.AstNodePoolContext
+      (if (ast.ast-node-pool-has-active-context?)
+        (ast.ast-node-pool-context-active-live)
+        (ast.ast-node-pool-context-capture-active))]
     [_install : unit (tc-context-install-pools! ctx)]
     ;; The well-known spec builder pushes fresh type nodes (e.g. the
     ;; `(Box Expr)` payload of Expr.Splice) into this context's type-node pool.
@@ -17742,12 +17753,14 @@
 (define (tc-signature-single-input-lifetime
   [type-bases : i64]
   [types : ast.AstTypeList]) : TcMaybeNameId
-  (let
-    [lifetimes : TcNameIdList
-      (tc-signature-input-type-list-lifetimes-into type-bases types Nil)]
-    (if (= (tc-name-id-list-len lifetimes) 1)
-      (Some (tc-name-id-list-head lifetimes))
-      (No))))
+  (tc-name-id-list-single
+    (tc-signature-input-type-list-lifetimes-into type-bases types Nil)))
+
+;; The only lifetime in `lifetimes`, or none when there are zero or several.
+(define (tc-name-id-list-single [lifetimes : TcNameIdList]) : TcMaybeNameId
+  (if (= (tc-name-id-list-len lifetimes) 1)
+    (Some (tc-name-id-list-head lifetimes))
+    (No)))
 
 (define (tc-elide-input-type-list
   [type-bases : i64]
@@ -18151,39 +18164,133 @@
             item.next-index
             next-out))])))
 
-(define (tc-elided-param-type-list [params : (& params ast.AstParamList)]) : ast.AstTypeList
-  (tc-elided-param-type-list-at (& params) 0))
+;; Whether `ty` holds a reference with an elided lifetime anywhere the
+;; signature normalizer visits, nested function types included. A signature
+;; without one normalizes to itself (#8410).
+(define (tc-type-has-elided-reference? [type-bases : i64] [ty : ast.AstType]) : bool
+  (match (tc-global-shared-view ty)
+    [(Func args ret)
+      (if (tc-type-list-has-elided-reference?
+        type-bases
+        (ast.ast-type-list-box-shared-view args)
+        0)
+        true
+        (tc-type-elem-has-elided-reference? type-bases ret))]
+    [(Tuple elems)
+      (tc-type-list-has-elided-reference?
+        type-bases
+        (ast.ast-type-list-box-shared-view elems)
+        0)]
+    [(Ref lifetime elem)
+      (if (tc-elided-lifetime? lifetime)
+        true
+        (tc-type-elem-has-elided-reference? type-bases elem))]
+    [(MutRef lifetime elem)
+      (if (tc-elided-lifetime? lifetime)
+        true
+        (tc-type-elem-has-elided-reference? type-bases elem))]
+    [_
+      (tc-type-elem-has-elided-reference? type-bases (tc-type-wrapper-elem ty))]))
 
-(define (tc-elided-param-type-list-at
+;; The element type of a one-element wrapper the normalizer walks into, or -1.
+(define (tc-type-wrapper-elem [ty : ast.AstType]) : i64
+  (match ty
+    [(Array elem _) elem]
+    [(DynArray elem) elem]
+    [(Slice elem) elem]
+    [(Box elem) elem]
+    [(Ptr elem) elem]
+    [(MutPtr elem) elem]
+    [(Region _ elem) elem]
+    [(Invalidate _ elem) elem]
+    [_ -1]))
+
+(define (tc-type-elem-has-elided-reference? [type-bases : i64] [elem : i64]) : bool
+  (if (< elem 0)
+    false
+    (tc-type-has-elided-reference?
+      type-bases
+      (ast.ast-type-segment-bases-get type-bases elem))))
+
+(define (tc-type-list-has-elided-reference?
+  [type-bases : i64]
+  [types : ast.AstTypeList]
+  [index : i64]) : bool
+  (if (>= index (ast.ast-type-list-len (& types)))
+    false
+    (if (tc-type-has-elided-reference?
+      type-bases
+      (ast.ast-type-segment-bases-get
+        type-bases
+        (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))))
+      true
+      (tc-type-list-has-elided-reference? type-bases types (+ index 1)))))
+
+(define (tc-param-list-has-elided-reference?
+  [type-bases : i64]
   [params : (& params ast.AstParamList)]
-  [index : i64]) : ast.AstTypeList
+  [index : i64]) : bool
   (if (>= index (ast.ast-param-list-len params))
-    (ast.ast-type-list-new)
+    false
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param _ ty _)
-        (ast.ast-type-cons
-          (& ty)
-          (& (tc-elided-param-type-list-at params (+ index 1))))])))
+        (if (tc-type-has-elided-reference? type-bases ty)
+          true
+          (tc-param-list-has-elided-reference? type-bases params (+ index 1)))])))
+
+;; The distinct reference lifetimes among `params`' types, from `index` on, as
+;; the input candidates for an elided return. Nested function types are their
+;; own scope (`tc-signature-input-lifetimes-into`).
+(define (tc-param-list-input-lifetimes-into
+  [type-bases : i64]
+  [params : (& params ast.AstParamList)]
+  [index : i64]
+  [out : TcNameIdList]) : TcNameIdList
+  (if (>= index (ast.ast-param-list-len params))
+    out
+    (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
+      [(Param _ ty _)
+        (tc-param-list-input-lifetimes-into
+          type-bases
+          params
+          (+ index 1)
+          (tc-signature-input-lifetimes-into type-bases ty out))])))
 
 (define (tc-elide-function-signature
   [type-bases : i64]
   [params : ast.AstParamList]
   [ret : ast.AstType]) : ResultTcElidedSignature
-  (let
-    [inputs : TcElidedParams
-      (try
-        (tc-elide-input-params-at
-          type-bases
-          (& params)
-          0
-          0
-          (ast.ast-param-list-with-capacity (ast.ast-param-list-len (& params)))))]
-    [input-params : ast.AstParamList inputs.params]
-    [input-types : ast.AstTypeList (tc-elided-param-type-list input-params)]
-    [lifetime : TcMaybeNameId
-      (tc-signature-single-input-lifetime type-bases input-types)]
-    [output : TcElidedType (try (tc-elide-output-type type-bases ret lifetime))]
-    (Ok (TcElidedSignature input-params output.ty))))
+  ;; A signature with no elided reference normalizes to itself, so it is
+  ;; returned as written: no replacement parameter list, no rebuilt types
+  ;; (#8410). Source declarations outlive every checked consumer. Consumers
+  ;; read child type ids through the installed pool (`ty-node-get`), so this
+  ;; holds only when `type-bases` is that pool's own table. A signature read
+  ;; through any other table is rebuilt even with nothing to elide: the
+  ;; rebuild relocates it into the installed pool.
+  (if (if (= type-bases ast.ty-node-pool-segment-bases)
+    (if (tc-param-list-has-elided-reference? type-bases (& params) 0)
+      false
+      (not
+        (tc-type-has-elided-reference? type-bases (tc-global-shared-view ret))))
+    false)
+    (Ok (TcElidedSignature params ret))
+    (let
+      [inputs : TcElidedParams
+        (try
+          (tc-elide-input-params-at
+            type-bases
+            (& params)
+            0
+            0
+            (ast.ast-param-list-with-capacity
+              (ast.ast-param-list-len (& params)))))]
+      [input-params : ast.AstParamList inputs.params]
+      [lifetime : TcMaybeNameId
+        (tc-name-id-list-single
+          (tc-param-list-input-lifetimes-into type-bases (& input-params) 0 Nil))]
+      [output : TcElidedType
+        (try (tc-elide-output-type type-bases ret lifetime))]
+      (Ok (TcElidedSignature input-params output.ty)))))
 
 (define (tc-type-list-collect-reference-lifetimes
   [types : ast.AstTypeList]
@@ -18686,17 +18793,24 @@
   [state : TcTypeResolutionCacheState]
   [type-pool-owner-id : i64]
   [type-segment-bases : i64]) : unit
+  ;; Answers are keyed by type id, so they hold only while the bound pool
+  ;; keeps every node it had. Another pool or table starts a new epoch, and so
+  ;; does a new pool generation: a truncation, reset or swap may have reused
+  ;; an id for a different node (#8410).
   (let
     [data : (MutPtr TcTypeResolutionCacheStateData)
       (tc-type-resolution-cache-state-ptr state)]
+    [generation : i64 (ast.ty-node-pool-generation-value)]
     (unsafe
       (unless
         (and
           (= (deref data).type-pool-owner-id type-pool-owner-id)
-          (= (deref data).type-segment-bases type-segment-bases))
+          (= (deref data).type-segment-bases type-segment-bases)
+          (= (deref data).pool-generation generation))
         (set! (deref data).epoch (+ (deref data).epoch 1))
         (set! (deref data).type-pool-owner-id type-pool-owner-id)
-        (set! (deref data).type-segment-bases type-segment-bases)))))
+        (set! (deref data).type-segment-bases type-segment-bases)
+        (set! (deref data).pool-generation generation)))))
 
 (define (tc-type-resolution-cache-bind-pools-for-job!
   [job-state : TcJobState]
@@ -18714,12 +18828,18 @@
 
 (define (tc-type-resolution-cache-ensure-bound-for-state!
   [state : TcTypeResolutionCacheState]) : unit
-  (if (=
-    (unsafe
-      (deref (tc-type-resolution-cache-state-view state)).type-segment-bases)
-    0)
-    (tc-type-resolution-cache-bind-active-for-state! state)
-    unit))
+  (let
+    [type-segment-bases : i64
+      (unsafe
+        (deref (tc-type-resolution-cache-state-view state)).type-segment-bases)]
+    (if (= type-segment-bases 0)
+      (tc-type-resolution-cache-bind-active-for-state! state)
+      ;; Keep the current binding; a new pool generation still starts an epoch.
+      (tc-type-resolution-cache-bind!
+        state
+        (unsafe
+          (deref (tc-type-resolution-cache-state-view state)).type-pool-owner-id)
+        type-segment-bases))))
 
 (define (tc-type-list-needs-resolution-for-state?
   [state : TcTypeResolutionCacheState]

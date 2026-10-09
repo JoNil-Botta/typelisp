@@ -1829,7 +1829,8 @@ Reference types are lifetime-bearing:
   references. `(&mut r)`, or a field, tuple element or array element borrowed
   through a shared reference `r` or through a shared reference stored in a
   field, is rejected (E0207), in a call argument as in a `let`. Storage behind
-  a `Box` or a private buffer is not covered yet (#8743).
+  a `Box` or a private buffer counts as owned through it: such a borrow reached
+  through a shared reference is rejected too.
   The checker enforces many immutable borrows or one mutable borrow for
   tracked local, parameter, and global place paths. Tracked aggregate-place
   paths conflict only when they are the same path or one is an ancestor of the
@@ -5334,12 +5335,56 @@ explicit constructors.
   patterns are rejected with focused diagnostics. In enum contexts, `(box
   ...)` resolves as an enum variant pattern when the expected enum has such a
   variant.
+- `(fields f [p g] ...)` matches a struct by field name wherever a struct
+  pattern may appear: a struct or `(& S)` scrutinee, a struct field, tuple
+  slot, array element, enum payload, or `(box ...)` payload. A bare `f` binds
+  field `f` to a local named `f`; `[p g]` matches field `g` against the
+  pattern `p`, so `[local g]` binds field `g` as `local`. `p` is any pattern a
+  struct field accepts: a binding, `_`, or a nested irrefutable tuple, array,
+  struct, or `(fields ...)` pattern. Fields the pattern does not name are
+  ignored, so it stands for the positional struct pattern with `_` in their
+  places. It needs at least one entry; naming a field the struct does not
+  declare, or naming a field twice, is rejected. Positional struct patterns
+  are unchanged.
+- `(or p1 p2 ...)` matches when any of its two or more alternatives does,
+  trying them left to right. It may be an arm's whole pattern, an enum
+  payload sub-pattern at any depth, such as `(Move dst (or (Small) (Large)))`,
+  or a `slice` element pattern. Struct field, `(fields ...)` entry,
+  `(box ...)`, tuple slot, and array element sub-patterns must stay
+  irrefutable, so an or-pattern there is rejected. Every alternative must
+  bind exactly the same names, each at the same type, including a `slice`
+  pattern's `rest`; the arm body sees the names bound by whichever
+  alternative matched. At the top of an enum arm each alternative is itself a
+  top-level pattern, so a bare identifier there names a nullary variant:
+  `[(or Red Green) ...]`. An alternative that follows one matching every value
+  is rejected as unreachable, as an arm after `_` is. Exhaustiveness and
+  reachability treat an or-pattern as the union of its alternatives, as if
+  each were an arm of its own: an arm covers a variant when one alternative
+  does, `slice` alternatives cover the union of their lengths (so
+  `[(or (slice) (slice _)) ...]` and `[(slice _ _ & _) ...]` are complete), and
+  a `slice` alternative whose lengths earlier arms and alternatives already
+  cover is unreachable. A nested or-pattern is irrefutable when one
+  alternative is or when its alternatives cover the payload type the way a
+  match's arms would. The arm body runs once, for whichever alternative
+  matched. Alternatives that bind every name from the same payload position,
+  or bind nothing, enter one compiled copy of it straight from their tag or
+  literal tests, so the arm dispatches as the separate arms it replaces
+  would, in the same jump table. Alternatives that bind from different
+  positions get one copy per position; alternatives with refutable payload
+  patterns bind first and then join a shared copy. In a match's final arm
+  every alternative but the last is tested, so the last `slice` alternative
+  there performs no length comparison. A nested or-pattern is tested as the
+  whole-arm alternatives it expands to, so `(V (or a b) c)` tries `(V a c)`
+  and then `(V b c)`. A varying `foreach` match does not accept or-patterns.
+- `or` and `fields` are reserved pattern heads; in expressions `(or ...)`
+  remains the short-circuiting boolean macro.
 - Scalar scrutinees support literal patterns plus `_`.
 - String literal patterns compare string contents, not pointer identity.
 - Bindings in aggregate patterns introduce variables for payloads, fields,
   slots, or elements.
-- A bare identifier at the top level of an enum `match` arm resolves as a
-  nullary variant name. It is not a fresh catch-all binding; use `_` for that.
+- A bare identifier at the top level of an enum `match` arm, or of one of its
+  or-pattern alternatives, resolves as a nullary variant name. It is not a
+  fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
 - All arms must return the same type: the type of each arm's last body
   expression. An arm whose type does not merge with the others is checked again
@@ -5363,6 +5408,44 @@ as `(& tree Tree)`:
 (define (main) : i64
   (sum (& (Tree.Node (box (Tree.Leaf 3)) (box (Tree.Leaf 7))))))
 ```
+
+```lisp test=run name=or-pattern-shared-arm exit=42 stdout=""
+(defstruct SelectPayload
+  (mask i64)
+  (dst i64))
+
+(defenum Instr
+  (Load i64 i64)
+  (EntryArgc i64)
+  (Select (Box SelectPayload))
+  (Halt))
+
+(define (instr-dst [instr : Instr]) : i64
+  (match instr
+    [(or (Load dst _) (EntryArgc dst) (Select (box (fields dst)))) dst]
+    [Halt -1]))
+
+(define (main) : i64
+  (+ (instr-dst (Load 40 7)) (instr-dst (Select (box (SelectPayload 0 2))))))
+```
+
+Every alternative binds `dst`, from a positional payload or by name from the
+boxed payload struct, and all of them run the same arm body.
+
+```lisp test=run name=or-slice-pattern-lengths exit=42 stdout=""
+(define (pair-sum [xs : (& (Slice i64))]) : i64
+  (match xs
+    [(or (slice) (slice _)) 0]
+    [(slice a b & _) (+ a b)]))
+
+(define (main) : i64
+  (let
+    [items : (Array i64 3) (array 40 2 7)]
+    (+ (pair-sum (& items)) (pair-sum (slice-view items 2 1)))))
+```
+
+The first arm covers views of zero and one element and the second every
+longer view, so the match is exhaustive without `_`.
 
 ### 5.14 `(lambda ([param : type] ...) [: ret_type] body...)` — anonymous function
 
@@ -5503,9 +5586,32 @@ flattened, and the two coordinate names must differ.
   rejected; masked branches apply the same rule to their reads and writes.
   Helper bodies and nested `foreach` bodies see no rank-2 coordinate, so a
   row-major write there is rejected.
-- Every backend mode lowers a rank-2 domain to the scalar reference; native
-  row-local gangs are a separate extension (#7191). Rank-1 `foreach` is
-  unchanged.
+- Every backend mode keeps the scalar reference's results. The SIMD modes map
+  the domain to row-local gangs (#7191):
+  - The rows run in source order, in a scalar loop over `y`, and `y` advances
+    only after its row completes. Each row is a rank-1 gang loop over
+    consecutive `x` values from `x-begin`, ending in the row's own protected
+    tail, so no gang reaches into the next row and nothing flattens the two
+    coordinates.
+  - `y` is uniform within each gang; for the checker both coordinates stay
+    varying, so the row-major write rule above is unchanged.
+  - `program-index` is the lane within the current row's gang and restarts at
+    0 on every row. `program-count` is the full gang width, in a row's partial
+    tail as well.
+  - An array accessed at `x + R`, such as a row-major index, is read and
+    written through a view whose element 0 is element `R + x-begin`. R must be
+    row-stable: literals and enclosing `i64` locals the body never assigns,
+    borrows `&mut`, or rebinds, combined by `+`, `-` and `*`. It is computed
+    once per row, before the row's first gang. A row whose view would start
+    before or after its array, or whose span overflows, runs as the scalar
+    reference, so an out-of-range access traps at the same element in every
+    mode.
+  - A body no gang plan covers, such as one with atomic effects or other
+    memory shapes, runs each row as the scalar reference, where
+    `program-index` is 0 and `program-count` is 1, rather than being
+    diagnosed. `foreach-active` keeps its own SIMD rule (#8307).
+
+  Rank-1 `foreach` is unchanged.
 
 ```lisp test=check name=spmd-foreach-rank2-row-major
 
@@ -8030,11 +8136,18 @@ arbitrary-user slot (`GS:0x28`). Under the Linux shared-object code model
 (`docs/compiler-architecture.md`, #8257), the same accesses are initial-exec:
 each loads the variable's GOT offset and the DSO carries `DF_STATIC_TLS`.
 There is no entry, and `tl_shared_object_init` runs the global initializers.
-Raw thread spawn initializes a fresh zero
-current-arena slot before user code runs, so a worker's first allocation
-creates an independent default arena chain. The slot always contains that
-chain's stable root; allocator and mark/reset internals reach the changing
-physical head through the root's `root.current` field.
+Raw thread spawn initializes a fresh current-arena slot before user code
+runs, so a worker's first allocation creates an independent default arena
+chain. Once a chain exists, the slot contains its stable root; allocator and
+mark/reset internals reach the changing physical head through the root's
+`root.current` field. Before that, and after a full reset, the slot holds a
+static null-arena sentinel rather than zero: its flag word marks it shared, so
+inline allocation fast paths take the runtime slow path without a separate
+null test, and runtime helpers recognize it by a dedicated null flag.
+`tl_arena_current` and `(tls-current-arena)` still report it as zero, and
+`tl_arena_set` and `(tls-current-arena-set!)` store it for zero. The Linux slot
+is initialized to the sentinel in its TLS image, and the freestanding entry,
+raw thread spawn and the Windows entries store it explicitly.
 
 The compiler provides two allocation-free current-arena TLS intrinsics for
 runtime-prelude code: `(tls-current-arena)` returns the stable root handle for
@@ -9158,7 +9271,7 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 | `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |
 | `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
 | `spmd-compact` | Supported: ordered scalar reference | Supported: ordered scalar reference | Supported: ordered scalar reference | Cross-mode runtime, overflow-order, and destination-proof gates |
-| Rank-2 `foreach` domains | Supported: ordered scalar reference | Supported: ordered scalar reference; native row-local gangs are #7191 | Supported: ordered scalar reference; native row-local gangs are #7191 | `tests/integration/spmd_foreach_2d.tl`, the SPMD same-exit corpus and product-overflow trap case, and the `spmd_foreach2_*` safety rows; `foreach-active` inside the body follows its own row (#8307) |
+| Rank-2 `foreach` domains | Supported: ordered scalar reference | Supported: row-local native gangs over row-origin views; scalar reference rows for other bodies | Supported: row-local native gangs over row-origin views; scalar reference rows for other bodies | `tests/integration/spmd_foreach_2d.tl`, `tests/spmd/foreach_2d_native.tl` and the rest of the SPMD same-exit corpus, the `foreach-2d-*` shape and row-range trap cases, `lane-identity-2d`, and the `spmd_foreach2_*` safety rows; `foreach-active` inside the body follows its own row (#8307) |
 | `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `tests/spmd/gang-width.cases` (broadcast cases) |
 | `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
 | `foreach-active` / `lane-value` | Supported: one-lane reference | Rejected: not yet lowered (#8307) | Rejected: not yet lowered (#8307) | `tests/integration/spmd_foreach_active.tl`, `tests/spmd/foreach_active_simd_reject.tl` |

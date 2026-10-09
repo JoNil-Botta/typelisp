@@ -56,7 +56,7 @@
         (smoke-cfg-index-test-block label 44)
         (smoke-cfg-index-test-block label 55))]
     [_refresh : unit
-      (opt.opt-cfg-index-refresh-blocks! index replacement-blocks)]
+      (opt.opt-cfg-index-refresh-blocks! (&mut index) replacement-blocks)]
     [dense-second : i64
       (smoke-cfg-index-block-return (opt.opt-cfg-index-block index 1))]
     [_newer-index : opt.OptCfgIndex
@@ -3643,6 +3643,13 @@
     "Closed ranges and equalities share one mask over a subtracted base"))
 
 (test
+  bit-test-full-window
+  (test.assert-i64-eq
+    (ot.compiler-optimize-bit-test-full-window-self-test)
+    42
+    "An equality chain over every value of its window becomes the window guard alone"))
+
+(test
   bit-test-refusals
   (test.assert-i64-eq
     (ot.compiler-optimize-bit-test-refusal-self-test)
@@ -3777,6 +3784,10 @@
 (test
   bounds-dom-slice-word
   (smoke-require-42 (ot.compiler-optimize-bounds-dom-slice-word-self-test)))
+
+(test
+  bounds-dom-addr-taken
+  (smoke-require-42 (ot.compiler-optimize-bounds-dom-addr-taken-self-test)))
 
 (test
   range-merge

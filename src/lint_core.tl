@@ -2759,6 +2759,9 @@
 
 (define (lint-pattern-names [pattern : ast.AstPattern] [names : LintNames]) : LintNames
   (match pattern
+    [(Or items) (lint-pattern-list-names (deref items) names)]
+    [(Fields items) (lint-pattern-list-names (deref items) names)]
+    [(Field _ items) (lint-pattern-list-names (deref items) names)]
     [(Var _ maybe-ty) (lint-maybe-type-names maybe-ty names)]
     [(Tuple items) (lint-pattern-list-names (deref items) names)]
     [(Array items) (lint-pattern-list-names (deref items) names)]
@@ -3798,6 +3801,11 @@
     [(Array items)
       (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
     [(Slice items _)
+      (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
+    [(Or items) (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
+    [(Fields items)
+      (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
+    [(Field _ items)
       (lint-unsafe-pattern-list-add-bindings (deref items) scope 0)]
     [(Wildcard) scope]
     [(Binding name) (lint-unsafe-scope-add-id scope name)]
@@ -6981,6 +6989,12 @@
       (lint-name-case-pattern-list (deref items) source cursor limit findings)]
     [(Slice items _)
       (lint-name-case-pattern-list (deref items) source cursor limit findings)]
+    [(Or items)
+      (lint-name-case-pattern-list (deref items) source cursor limit findings)]
+    [(Fields items)
+      (lint-name-case-pattern-list (deref items) source cursor limit findings)]
+    [(Field _ items)
+      (lint-name-case-pattern-list (deref items) source cursor limit findings)]
     [(Variant name items)
       (let
         [variant : LintNameCasePatternScan
@@ -7018,6 +7032,27 @@
         limit
         findings
         false)]
+    ;; Each alternative of a root or-pattern is itself a root.
+    [(ast.AstPattern.Or items)
+      (let
+        [alternatives : ast.AstPatternList (deref items)]
+        [scan : LintNameCasePatternScan
+          (LintNameCasePatternScan findings cursor)]
+        [index : i64 0]
+        (while (< index alternatives.len)
+          (set!
+            scan
+            (lint-name-case-match-pattern
+              (ast.ast-pattern-list-get
+                (& alternatives)
+                index
+                (ast.ast-pattern-fallback))
+              source
+              scan.next-index
+              limit
+              scan.findings))
+          (set! index (+ index 1)))
+        scan)]
     [_ (lint-name-case-pattern pattern source cursor limit findings)]))
 
 (defstruct LintNameCaseDeclState
@@ -8237,6 +8272,14 @@
       (lint-unused-variable-pattern-list-bindings
         (ast.ast-pattern-list-box-shared-view items)
         state)]
+    [(Fields items)
+      (lint-unused-variable-pattern-list-bindings
+        (ast.ast-pattern-list-box-shared-view items)
+        state)]
+    [(Field _ items)
+      (lint-unused-variable-pattern-list-bindings
+        (ast.ast-pattern-list-box-shared-view items)
+        state)]
     [(Wildcard) state]
     [(Binding name)
       (lint-unused-variable-add-to-current-frame
@@ -8250,6 +8293,18 @@
       (lint-unused-variable-pattern-list-bindings
         (ast.ast-pattern-list-box-shared-view items)
         state)]
+    ;; Every alternative binds the same names, so the first one stands for
+    ;; them all; adding each would leave the others' copies unused.
+    [(Or items)
+      (let
+        [alternatives : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view items)]
+        (lint-unused-variable-pattern-bindings
+          (ast.ast-pattern-list-get
+            (& alternatives)
+            0
+            (ast.ast-pattern-fallback))
+          state))]
     [(Literal _) state]))
 
 (define (lint-unused-variable-expr-list

@@ -13,3 +13,5 @@ spmd_short_tail	scalar	supported	-
 spmd_short_tail	avx2	supported	-
 spmd_mask	scalar	supported	-
 spmd_mask	avx2	supported	-
+spmd_foreach_2d	scalar	supported	-
+spmd_foreach_2d	avx2	supported	-

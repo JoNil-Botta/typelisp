@@ -5496,9 +5496,32 @@ flattened, and the two coordinate names must differ.
   rejected; masked branches apply the same rule to their reads and writes.
   Helper bodies and nested `foreach` bodies see no rank-2 coordinate, so a
   row-major write there is rejected.
-- Every backend mode lowers a rank-2 domain to the scalar reference; native
-  row-local gangs are a separate extension (#7191). Rank-1 `foreach` is
-  unchanged.
+- Every backend mode keeps the scalar reference's results. The SIMD modes map
+  the domain to row-local gangs (#7191):
+  - The rows run in source order, in a scalar loop over `y`, and `y` advances
+    only after its row completes. Each row is a rank-1 gang loop over
+    consecutive `x` values from `x-begin`, ending in the row's own protected
+    tail, so no gang reaches into the next row and nothing flattens the two
+    coordinates.
+  - `y` is uniform within each gang; for the checker both coordinates stay
+    varying, so the row-major write rule above is unchanged.
+  - `program-index` is the lane within the current row's gang and restarts at
+    0 on every row. `program-count` is the full gang width, in a row's partial
+    tail as well.
+  - An array accessed at `x + R`, such as a row-major index, is read and
+    written through a view whose element 0 is element `R + x-begin`. R must be
+    row-stable: literals and enclosing `i64` locals the body never assigns,
+    borrows `&mut`, or rebinds, combined by `+`, `-` and `*`. It is computed
+    once per row, before the row's first gang. A row whose view would start
+    before or after its array, or whose span overflows, runs as the scalar
+    reference, so an out-of-range access traps at the same element in every
+    mode.
+  - A body no gang plan covers, such as one with atomic effects or other
+    memory shapes, runs each row as the scalar reference, where
+    `program-index` is 0 and `program-count` is 1, rather than being
+    diagnosed. `foreach-active` keeps its own SIMD rule (#8307).
+
+  Rank-1 `foreach` is unchanged.
 
 ```lisp test=check name=spmd-foreach-rank2-row-major
 
@@ -9158,7 +9181,7 @@ ordered or non-canonical execution; it is not an unsupported fallback.
 | `spmd-reduce` | Supported: reference semantics | Supported: native eligible folds; scalar reference for other supported value shapes | Supported: native eligible folds; scalar reference for other supported value shapes | Reduction-matrix and gather-reduce gates; direct byte-product results receive the specified unsupported sum-result type diagnostic |
 | `spmd-scan` | Supported: reference semantics | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | Supported: native canonical range-wide prefixes; scalar reference for other supported shapes | AVX2 and AVX-512 prefix-shape gates |
 | `spmd-compact` | Supported: ordered scalar reference | Supported: ordered scalar reference | Supported: ordered scalar reference | Cross-mode runtime, overflow-order, and destination-proof gates |
-| Rank-2 `foreach` domains | Supported: ordered scalar reference | Supported: ordered scalar reference; native row-local gangs are #7191 | Supported: ordered scalar reference; native row-local gangs are #7191 | `tests/integration/spmd_foreach_2d.tl`, the SPMD same-exit corpus and product-overflow trap case, and the `spmd_foreach2_*` safety rows; `foreach-active` inside the body follows its own row (#8307) |
+| Rank-2 `foreach` domains | Supported: ordered scalar reference | Supported: row-local native gangs over row-origin views; scalar reference rows for other bodies | Supported: row-local native gangs over row-origin views; scalar reference rows for other bodies | `tests/integration/spmd_foreach_2d.tl`, `tests/spmd/foreach_2d_native.tl` and the rest of the SPMD same-exit corpus, the `foreach-2d-*` shape and row-range trap cases, `lane-identity-2d`, and the `spmd_foreach2_*` safety rows; `foreach-active` inside the body follows its own row (#8307) |
 | `spmd-broadcast` | Supported: one-lane reference | Supported: gang-width semantics | Supported: gang-width semantics | `tests/spmd/gang-width.cases` (broadcast cases) |
 | `spmd-shuffle` | Supported: one-lane reference | Supported: native numeric permutations | Supported: native numeric permutations | Shuffle differential, trap, and shape gates |
 | `foreach-active` / `lane-value` | Supported: one-lane reference | Rejected: not yet lowered (#8307) | Rejected: not yet lowered (#8307) | `tests/integration/spmd_foreach_active.tl`, `tests/spmd/foreach_active_simd_reject.tl` |

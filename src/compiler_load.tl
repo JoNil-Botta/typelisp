@@ -7396,6 +7396,27 @@
         alias
         summary
         locals)]
+    [(Or patterns)
+      (compiler-load-session-state-lazy-pattern-list-demand
+        state
+        (deref patterns)
+        alias
+        summary
+        locals)]
+    [(Fields patterns)
+      (compiler-load-session-state-lazy-pattern-list-demand
+        state
+        (deref patterns)
+        alias
+        summary
+        locals)]
+    [(Field _ patterns)
+      (compiler-load-session-state-lazy-pattern-list-demand
+        state
+        (deref patterns)
+        alias
+        summary
+        locals)]
     [(Variant name patterns)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-session-state-lazy-name-demand
@@ -7484,6 +7505,21 @@
         (deref patterns)
         locals)]
     [(Slice patterns _)
+      (compiler-load-session-state-lazy-pattern-list-locals
+        state
+        (deref patterns)
+        locals)]
+    [(Or patterns)
+      (compiler-load-session-state-lazy-pattern-list-locals
+        state
+        (deref patterns)
+        locals)]
+    [(Fields patterns)
+      (compiler-load-session-state-lazy-pattern-list-locals
+        state
+        (deref patterns)
+        locals)]
+    [(Field _ patterns)
       (compiler-load-session-state-lazy-pattern-list-locals
         state
         (deref patterns)

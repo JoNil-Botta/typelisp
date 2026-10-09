@@ -5,6 +5,7 @@
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 (import compiler_object as cobj)
+(import compiler_machine_x64 as mx)
 (cfg test (import stdlib.test))
 
 (defenum ResultCompilerObjectAsm
@@ -225,6 +226,9 @@
         "    xorpd "
         target
         "(%rip), %xmm0\n")
+      true]
+    [(Machine instr)
+      (compiler-object-asm-append! out (mx.compiler-machine-x64-asm-line instr))
       true]
     [(Bytes bytes)
       (compiler-object-asm-append-bytes! out bytes)

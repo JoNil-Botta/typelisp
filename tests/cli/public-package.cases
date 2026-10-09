@@ -67,10 +67,10 @@ contains producer-compiler-identity: {{producer}}
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
 contains surface-package-identity: present schema-version=2 bytes=
-contains surface-frontend-ast: present schema-version=18 bytes=
+contains surface-frontend-ast: present schema-version=19 bytes=
 contains surface-frontend-facts: present schema-version=1 bytes=
 not-contains surface-package-identity: present schema-version=2 bytes=0
-not-contains surface-frontend-ast: present schema-version=18 bytes=0
+not-contains surface-frontend-ast: present schema-version=19 bytes=0
 not-contains surface-frontend-facts: present schema-version=1 bytes=0
 contains surface-trust-producer-identity: {{producer}}
 contains surface-trust-policy: exact-producer-and-source-binding-required
@@ -89,10 +89,10 @@ contains producer-compiler-identity: {{producer}}
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
 contains surface-package-identity: present schema-version=2 bytes=
-contains surface-frontend-ast: present schema-version=18 bytes=
+contains surface-frontend-ast: present schema-version=19 bytes=
 contains surface-frontend-facts: present schema-version=1 bytes=
 not-contains surface-package-identity: present schema-version=2 bytes=0
-not-contains surface-frontend-ast: present schema-version=18 bytes=0
+not-contains surface-frontend-ast: present schema-version=19 bytes=0
 not-contains surface-frontend-facts: present schema-version=1 bytes=0
 contains surface-trust-producer-identity: {{producer}}
 contains surface-trust-policy: exact-producer-and-source-binding-required
@@ -302,10 +302,10 @@ contains producer-compiler-identity: {{producer}}
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
 contains surface-package-identity: present schema-version=2 bytes=
-contains surface-frontend-ast: present schema-version=18 bytes=
+contains surface-frontend-ast: present schema-version=19 bytes=
 contains surface-frontend-facts: present schema-version=1 bytes=
 not-contains surface-package-identity: present schema-version=2 bytes=0
-not-contains surface-frontend-ast: present schema-version=18 bytes=0
+not-contains surface-frontend-ast: present schema-version=19 bytes=0
 not-contains surface-frontend-facts: present schema-version=1 bytes=0
 contains surface-trust-producer-identity: {{producer}}
 contains surface-trust-policy: exact-producer-and-source-binding-required
@@ -325,10 +325,10 @@ contains package-name: split_math
 contains source-set-binding-schema: 1
 not-contains source-set-digest: unavailable
 contains surface-package-identity: present schema-version=2 bytes=
-contains surface-frontend-ast: present schema-version=18 bytes=
+contains surface-frontend-ast: present schema-version=19 bytes=
 contains surface-frontend-facts: present schema-version=1 bytes=
 not-contains surface-package-identity: present schema-version=2 bytes=0
-not-contains surface-frontend-ast: present schema-version=18 bytes=0
+not-contains surface-frontend-ast: present schema-version=19 bytes=0
 not-contains surface-frontend-facts: present schema-version=1 bytes=0
 contains surface-trust-producer-identity: {{producer}}
 contains surface-trust-policy: exact-producer-and-source-binding-required
@@ -400,7 +400,7 @@ test -f "{{dir}}/target/release/walk_pkg.s"
 stdout match Built[ ]
 in file {{dir}}/target/release/walk_pkg.s
 contains main:
-contains-any _tl_walk_pkg_src_math_inc || _tl_walk_pkg_src_math_math_inc ||     movl $42, %eax || 0x48,0xc7,0xc0,0x2a,0x00,0x00,0x00
+contains-any _tl_walk_pkg_src_math_inc || _tl_walk_pkg_src_math_math_inc ||     movl $42, %eax ||     movq $42, %rax
 
 case package-missing-dep-file
 file typelisp.pkg

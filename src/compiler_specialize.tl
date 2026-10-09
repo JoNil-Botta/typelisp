@@ -1135,6 +1135,21 @@
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (spec-template-env-shadow-pattern-list templates patterns))]
+    [(Or patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-template-env-shadow-pattern-list templates patterns))]
+    [(Fields patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-template-env-shadow-pattern-list templates patterns))]
+    [(Field _ patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-template-env-shadow-pattern-list templates patterns))]
     [(Wildcard) (spec-template-env-shared-view templates)]
     [(Binding name) (spec-template-env-shadow-name templates name)]
     [(Variant _ patterns-box)
@@ -2078,7 +2093,7 @@
             (& rendered)))))))
 
 (define (spec-reserve-specialized-symbol-with-owner
-  [owner : (& owner SpecOwnerContext)]
+  [owner : (&mut owner SpecOwnerContext)]
   [key : SpecStructuralKey]
   [template-name : String]
   [values : SpecValueList]) : i64
@@ -2117,7 +2132,7 @@
         (set! index (+ index 1))))))
 
 (define (spec-materialize-owner-generated-symbols!
-  [owner : (& owner SpecOwnerContext)]) : unit
+  [owner : (&mut owner SpecOwnerContext)]) : unit
   (spec-materialize-generated-symbol-records-with-owner!
     owner
     (& (array-ref owner.generated-symbol-records 0)))
@@ -4167,6 +4182,21 @@
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (spec-subst-remove-pattern-list subs patterns))]
+    [(Or patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-subst-remove-pattern-list subs patterns))]
+    [(Fields patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-subst-remove-pattern-list subs patterns))]
+    [(Field _ patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-subst-remove-pattern-list subs patterns))]
     [(Wildcard) (spec-subst-shared-view subs)]
     [(Binding name) (spec-subst-remove-name subs name)]
     [(Variant _ patterns-box)
@@ -4971,7 +5001,7 @@
                 (let
                   [generated-name-id : i64
                     (spec-reserve-specialized-symbol-with-owner
-                      pools
+                      (&mut pools)
                       structural-key
                       name
                       (spec-place-shared-view values))]
@@ -6664,7 +6694,7 @@
               [(Ok rewritten state)
                 (match state
                   [(State generated _ _ _)
-                    (spec-materialize-owner-generated-symbols! owner)
+                    (spec-materialize-owner-generated-symbols! (&mut owner))
                     (Ok
                       (ast.ast-program
                         (spec-decl-list-append rewritten generated)))])]
@@ -6721,7 +6751,7 @@
                   [(Ok rewritten rewritten-paths state)
                     (match state
                       [(State generated _ _ _)
-                        (spec-materialize-owner-generated-symbols! owner)
+                        (spec-materialize-owner-generated-symbols! (&mut owner))
                         (Ok
                           (ast.ast-program
                             (spec-decl-list-append rewritten generated))

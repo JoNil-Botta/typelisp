@@ -2487,7 +2487,7 @@
               "exit")]
           [pk : reg.CompilerRegLoopParkPlan
             (reg.compiler-reg-loop-park-plan-make count vars)]
-          (reg.compiler-reg-loop-park-plan-reset! pk)
+          (reg.compiler-reg-loop-park-plan-reset! (&mut pk))
           (set! (array-ref pk.park-var 0) 1)
           (set! (array-ref pk.park-carrier 0) vars)
           (set! (array-ref pk.park-loop 0) 0)
@@ -2571,7 +2571,7 @@
             (reg.compiler-reg-loop-park-splice-label seq header 0)]
           [pk : reg.CompilerRegLoopParkPlan
             (reg.compiler-reg-loop-park-plan-make count vars)]
-          (reg.compiler-reg-loop-park-plan-reset! pk)
+          (reg.compiler-reg-loop-park-plan-reset! (&mut pk))
           (set! (array-ref pk.park-var 0) 1)
           (set! (array-ref pk.park-carrier 0) vars)
           (set! (array-ref pk.park-loop 0) 0)
@@ -2676,7 +2676,7 @@
           (reg.compiler-reg-var-types-empty)
           (reg.compiler-reg-call-split-empty))]
       [dropped : (__tl_dyn-array bool) (__tl_make-array bool 8)]
-      (reg.compiler-reg-loop-park-plan-reset! pk)
+      (reg.compiler-reg-loop-park-plan-reset! (&mut pk))
       ;; loop 0 targets var 2, which the replan registerised; loop 1 targets
       ;; var 4, which it did not
       (set! (array-ref pk.resident-mask 2) 1)

@@ -3209,8 +3209,8 @@
         point))))
 
 (define (compiler-reg-extend-set-words
-  [starts : (& starts (__tl_dyn-array i64))]
-  [ends : (& ends (__tl_dyn-array i64))]
+  [starts : (&mut starts (__tl_dyn-array i64))]
+  [ends : (&mut ends (__tl_dyn-array i64))]
   [set : live.CompilerLiveI64Set]
   [word-index : i64]
   [point : i64]) : unit
@@ -3225,8 +3225,8 @@
         (if (= bits 0)
           unit
           (compiler-reg-extend-set-word-bits
-            (&mut starts)
-            (&mut ends)
+            starts
+            ends
             bits
             (* index (live.compiler-live-set-word-bits))
             point)))
@@ -3266,8 +3266,8 @@
 ;; directly (compiler-reg-extend-set-words exists only to recover those same ids
 ;; from freshly allocated bitsets); live-after stays a word walk.
 (define (compiler-reg-extend-instr
-  [starts : (& starts (__tl_dyn-array i64))]
-  [ends : (& ends (__tl_dyn-array i64))]
+  [starts : (&mut starts (__tl_dyn-array i64))]
+  [ends : (&mut ends (__tl_dyn-array i64))]
   [live-after : live.CompilerLiveI64Set]
   [point : i64]
   [instr : ir.CompilerIrInstr]) : unit
@@ -3290,24 +3290,19 @@
           point))
       (begin
         (compiler-reg-extend-interval
-          (&mut starts)
-          (&mut ends)
+          starts
+          ends
           (ir.compiler-ir-instr-dst instr)
           point)
-        (compiler-reg-extend-interval-ids!
-          (&mut starts)
-          (&mut ends)
-          ids
-          id-count
-          point)))
+        (compiler-reg-extend-interval-ids! starts ends ids id-count point)))
     (compiler-reg-extend-set-words starts ends live-after 0 (+ point 1))))
 
 (define (compiler-reg-live-intervals-instr-seq
   [instrs : ir.CompilerIrInstrSeq]
   [live-afters : live.CompilerLiveInstrSetVec]
   [point : i64]
-  [starts : (& starts (__tl_dyn-array i64))]
-  [ends : (& ends (__tl_dyn-array i64))]) : i64
+  [starts : (&mut starts (__tl_dyn-array i64))]
+  [ends : (&mut ends (__tl_dyn-array i64))]) : i64
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
@@ -3432,8 +3427,8 @@
   [blocks : ir.CompilerIrBlockList]
   [liveness : live.CompilerFunctionLiveness]
   [point : i64]
-  [starts : (& starts (__tl_dyn-array i64))]
-  [ends : (& ends (__tl_dyn-array i64))]) : i64
+  [starts : (&mut starts (__tl_dyn-array i64))]
+  [ends : (&mut ends (__tl_dyn-array i64))]) : i64
   (match blocks
     [(Array seq)
       (let
@@ -3503,8 +3498,8 @@
           blocks
           liveness
           0
-          starts
-          ends)
+          (&mut starts)
+          (&mut ends))
         (compiler-reg-interval-arrays-to-seq
           starts
           ends
@@ -4940,8 +4935,8 @@
 (define (compiler-reg-bits-mentions-instr-seq
   [instrs : ir.CompilerIrInstrSeq]
   [point : i64]
-  [starts : (& starts (__tl_dyn-array i64))]
-  [ends : (& ends (__tl_dyn-array i64))]) : i64
+  [starts : (&mut starts (__tl_dyn-array i64))]
+  [ends : (&mut ends (__tl_dyn-array i64))]) : i64
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
@@ -4971,7 +4966,7 @@
     [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     (compiler-reg-fill-i64-array (&mut starts) -1)
     (compiler-reg-fill-i64-array (&mut ends) -1)
-    (compiler-reg-bits-mentions-instr-seq instrs 0 starts ends)
+    (compiler-reg-bits-mentions-instr-seq instrs 0 (&mut starts) (&mut ends))
     (compiler-reg-interval-arrays-to-seq
       starts
       ends
@@ -5024,8 +5019,8 @@
               (compiler-reg-bits-mentions-instr-seq
                 (compiler-reg-global-shared-view instrs)
                 (array-ref bounds block)
-                starts
-                ends))
+                (&mut starts)
+                (&mut ends)))
             (live.compiler-live-block-use-def-ids!
               instrs
               block
@@ -16845,7 +16840,7 @@
     (__tl_make-array i64 3)))
 
 (define (compiler-reg-loop-park-plan-reset!
-  [pk : (& pk CompilerRegLoopParkPlan)]) : unit
+  [pk : (&mut pk CompilerRegLoopParkPlan)]) : unit
   (compiler-reg-fill-i64-array (&mut pk.pre-mask) 0)
   (compiler-reg-fill-i64-array (&mut pk.direct-mask) 0)
   (compiler-reg-fill-i64-array (&mut pk.resident-mask) 0)
@@ -17593,7 +17588,7 @@
     (__tl_make-array i64 2)))
 
 (define (compiler-reg-loop-park-scratch-reset!
-  [sc : (& sc CompilerRegLoopParkScratch)]) : unit
+  [sc : (&mut sc CompilerRegLoopParkScratch)]) : unit
   (compiler-reg-fill-i64-array (&mut sc.resident-stamp) 0)
   (compiler-reg-loop-park-fill-bool-array (&mut sc.taken) false)
   (compiler-reg-loop-park-fill-bool-array (&mut sc.picked) false)
@@ -17976,8 +17971,8 @@
   (let
     [index : i64 0]
     [generation : i64 gen-base]
-    (compiler-reg-loop-park-plan-reset! pk)
-    (compiler-reg-loop-park-scratch-reset! sc)
+    (compiler-reg-loop-park-plan-reset! (&mut pk))
+    (compiler-reg-loop-park-scratch-reset! (&mut sc))
     (while (< index order-count)
       (let
         [h : i64 (array-ref order index)]
@@ -23408,7 +23403,7 @@
 
 (define (compiler-reg-greedy-merge-pass!
   [src : (& src (__tl_dyn-array i64))]
-  [dst : (& dst (__tl_dyn-array i64))]
+  [dst : (&mut dst (__tl_dyn-array i64))]
   [ref-counts : (& ref-counts (__tl_dyn-array i64))]
   [count : i64]
   [width : i64]) : unit
@@ -23424,7 +23419,7 @@
           (if (< (+ lo (+ width width)) count)
             (+ lo (+ width width))
             count)]
-        (compiler-reg-greedy-merge-run! src (&mut dst) ref-counts lo mid hi)
+        (compiler-reg-greedy-merge-run! src dst ref-counts lo mid hi)
         (set! lo hi)))))
 
 (define (compiler-reg-greedy-copy-range!
@@ -23457,7 +23452,12 @@
       (while (< width count)
         (if flipped
           (compiler-reg-greedy-merge-pass! buf arr ref-counts count width)
-          (compiler-reg-greedy-merge-pass! arr buf ref-counts count width))
+          (compiler-reg-greedy-merge-pass!
+            arr
+            (&mut buf)
+            ref-counts
+            count
+            width))
         (set! flipped (not flipped))
         (set! width (+ width width)))
       (if flipped
@@ -28134,14 +28134,14 @@
 
 (define (compiler-reg-vector-stack-words-params!
   [params : ir.CompilerIrParamSeq]
-  [words : (& words (__tl_dyn-array i64))]) : unit
+  [words : (&mut words (__tl_dyn-array i64))]) : unit
   (let
     [position : i64 0]
     (while (< position params.len)
       (match (ir.compiler-ir-param-seq-ref params position)
         [(Param name _ var)
           (if (compiler-reg-spmd-avx2-special-param? name)
-            (compiler-reg-vector-stack-words-set-mask! (&mut words) var)
+            (compiler-reg-vector-stack-words-set-mask! words var)
             unit)])
       (set! position (+ position 1)))))
 
@@ -29966,8 +29966,8 @@
   [instrs : ir.CompilerIrInstrSeq]
   [live-afters : live.CompilerLiveInstrSetVec]
   [point : i64]
-  [starts : (& starts (__tl_dyn-array i64))]
-  [ends : (& ends (__tl_dyn-array i64))]) : i64
+  [starts : (&mut starts (__tl_dyn-array i64))]
+  [ends : (&mut ends (__tl_dyn-array i64))]) : i64
   (let
     [slots : (__tl_dyn-array ir.CompilerIrInstr) instrs.slots]
     [count : i64 instrs.len]
@@ -30000,13 +30000,13 @@
               out-point))
           (begin
             (compiler-reg-extend-interval
-              (&mut starts)
-              (&mut ends)
+              starts
+              ends
               (ir.compiler-ir-instr-dst instr)
               out-point)
             (compiler-reg-extend-interval-ids!
-              (&mut starts)
-              (&mut ends)
+              starts
+              ends
               ids
               id-count
               out-point)))
@@ -30019,8 +30019,8 @@
   [blocks : ir.CompilerIrBlockList]
   [liveness : live.CompilerFunctionLiveness]
   [point : i64]
-  [starts : (& starts (__tl_dyn-array i64))]
-  [ends : (& ends (__tl_dyn-array i64))]) : i64
+  [starts : (&mut starts (__tl_dyn-array i64))]
+  [ends : (&mut ends (__tl_dyn-array i64))]) : i64
   (match blocks
     [(Array seq)
       (let
@@ -30994,8 +30994,8 @@
           (compiler-reg-global-shared-view blocks)
           liveness
           0
-          ep-starts
-          ep-ends)
+          (&mut ep-starts)
+          (&mut ep-ends))
         (compiler-reg-color-scalar-witness-blocks!
           (compiler-reg-global-shared-view blocks)
           (&mut wit-a)
@@ -31171,7 +31171,7 @@
           (begin
             (compiler-reg-vector-stack-words-params!
               (compiler-reg-global-shared-view params)
-              vector-stack-words)
+              (&mut vector-stack-words))
             (compiler-reg-vector-stack-words-blocks!
               (compiler-reg-global-shared-view blocks)
               (&mut vector-stack-words))

@@ -6,6 +6,7 @@
 (import stdlib.byte_buf_core)
 (import stdlib.string)
 (import compiler_object as cobj)
+(import compiler_machine_x64 as mx)
 
 (define (compiler-object-layout-string-length [text : (& text str)]) : i64
   (__tl_string_length text))
@@ -137,6 +138,7 @@
     [(SubRspImm8 _) 4]
     [(MovRcxRax) 3]
     [(XorpdRip _) 8]
+    [(Machine instr) (mx.compiler-machine-x64-size instr)]
     [(Bytes bytes) (compiler-object-layout-string-length bytes)]
     [(Raw bytes) (compiler-object-layout-string-length bytes)]
     ;; The rest are REX + opcode + ModRM rip-relative forms with a rel32.
@@ -567,6 +569,7 @@
     [(AddRcxRip _) (compiler-object-layout-push-rel32-instr! out "48010d")]
     [(MovRcxRax) (compiler-object-layout-push-hex! out "4889c1")]
     [(XorpdRip _) (compiler-object-layout-push-rel32-instr! out "660f5705")]
+    [(Machine instr) (mx.compiler-machine-x64-encode! out instr)]
     [(Bytes bytes) (compiler-object-layout-push-string-bytes! out bytes)]
     [(Raw bytes) (compiler-object-layout-push-string-bytes! out bytes)]))
 

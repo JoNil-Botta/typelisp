@@ -684,6 +684,8 @@ borrowed_pattern_copy_deferred|all|0,1,2|tests/safety/borrowed_pattern_copy_defe
 box_deref_copy_projection_reuse|all|0,1,2|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-|-|-|-
 fixed_array_match_pattern|all|-|tests/integration/fixed_array_match_pattern.tl|42|-|-|stdlib/string.tl|-
 slice_match_pattern|all|0,1,2|tests/integration/slice_match_pattern.tl|42|-|-|stdlib/string.tl stdlib/vector.tl|-
+or_pattern_match|all|-,0,1,2|tests/integration/or_pattern_match.tl|42|-|-|stdlib/string.tl|-
+or_pattern_dispatch|all|-,0,1,2|tests/integration/or_pattern_dispatch.tl|42|-|-|-|-
 u16_div_zero_trap|all|-|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=1 divisor=0\n
 u64_float_casts|all|-,0,1,2|tests/integration/u64_float_casts.tl|0|-|-|stdlib/math.tl|-
 u64_high_bit_load_compare|all|-|tests/integration/u64_high_bit_load_compare.tl|42|-|-|-|-
@@ -819,6 +821,7 @@ range_loop_shapes_protocol_abort|all|-,2|tests/integration/range_loop_shapes.tl|
 range_loop_shapes_fields_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 2|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:55:46: array index out of bounds: index=16 length=16\n
 range_loop_shapes_advance_first_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 3|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:116:48: array index out of bounds: index=16 length=16\n
 latch_sink_for_loops|all|0,2|tests/integration/latch_sink_for_loops.tl|42|-|-|stdlib/iterator.tl|-
+counter_sink_loops|all|0,1,2|tests/integration/counter_sink_loops.tl|42|-|-|-|-
 specialize_resource_scope|all|-|tests/integration/specialize_resource_scope.tl|42|-|-|-|-
 specialize_substitution_forms|all|-|tests/integration/specialize_substitution_forms.tl|42|-|-|stdlib/vector.tl|-
 specialize_binder_shadow|all|-|tests/integration/specialize_binder_shadow.tl|42|-|-|-|-

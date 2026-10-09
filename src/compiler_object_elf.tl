@@ -88,9 +88,7 @@
       (match (cobj.compiler-object-section-list-ref sections index)
         [(Section kind _ instrs)
           (match kind
-            [(Pdata) (set! ok false)]
-            [(Xdata) (set! ok false)]
-            [(Rsrc) (set! ok false)]
+            [(or (Pdata) (Xdata) (Rsrc)) (set! ok false)]
             [_
               (if (layout.compiler-object-layout-instrs-encodable? instrs true)
                 (set! index (+ index 1))
@@ -467,22 +465,15 @@
 (define (compiler-object-elf-relocation-type
   [kind : cobj.CompilerObjectRelocationKind]) : i64
   (match kind
-    [(Call) compiler-object-elf-r-x86-64-plt32]
-    [(TailCall) compiler-object-elf-r-x86-64-plt32]
+    [(or (Call) (TailCall)) compiler-object-elf-r-x86-64-plt32]
     [(Abs64) compiler-object-elf-r-x86-64-64]
-    [(RipValue) compiler-object-elf-r-x86-64-pc32]
-    [(RipAddress) compiler-object-elf-r-x86-64-pc32]
-    [(Branch) compiler-object-elf-r-x86-64-pc32]
+    [(or (RipValue) (RipAddress) (Branch)) compiler-object-elf-r-x86-64-pc32]
     [_ 0]))
 
 (define (compiler-object-elf-relocation-addend
   [kind : cobj.CompilerObjectRelocationKind]) : i64
   (match kind
-    [(Call) -4]
-    [(TailCall) -4]
-    [(RipValue) -4]
-    [(RipAddress) -4]
-    [(Branch) -4]
+    [(or (Call) (TailCall) (RipValue) (RipAddress) (Branch)) -4]
     [_ 0]))
 
 (define (compiler-object-elf-render-relocation-record!
@@ -639,8 +630,7 @@
 
 (define (compiler-object-elf-symbol-type [kind : cobj.CompilerObjectSymbolKind]) : i64
   (match kind
-    [(Function) 2]
-    [(Runtime) 2]
+    [(or (Function) (Runtime)) 2]
     [(Data) 1]
     [_ 0]))
 
@@ -752,13 +742,10 @@
   (match kind
     [(Text)
       (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-execinstr)]
-    [(Data)
+    [(or (Data) (Bss))
       (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-write)]
     [(Rodata) compiler-object-elf-shf-alloc]
-    [(Bss) (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-write)]
-    [(Pdata) 0]
-    [(Xdata) 0]
-    [(Rsrc) 0]))
+    [(or (Pdata) (Xdata) (Rsrc)) 0]))
 
 (define (compiler-object-elf-push-section-header!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]

@@ -1220,29 +1220,14 @@
 
 (define (compiler-reg-float-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(F64) true]
-    [(F32) true]
+    [(or (F64) (F32)) true]
     [_ false]))
 
 (define (compiler-reg-scalar-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(I64) true]
-    [(I32) true]
-    [(I16) true]
-    [(I8) true]
-    [(U64) true]
-    [(U32) true]
-    [(U16) true]
-    [(U8) true]
-    [(F64) true]
-    [(F32) true]
-    [(Bool) true]
-    [(Char) true]
-    [(Func _ _) true]
-    [(Ptr _) true]
-    [(MutPtr _) true]
-    [(Ref _ _) true]
-    [(MutRef _ _) true]
+    [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool) (Char)
+         (Func _ _) (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _))
+      true]
     [_ false]))
 
 ;; Aggregate types represented as a single 8-byte handle (an arena/heap pointer
@@ -1254,19 +1239,11 @@
 ;; AstType.Expr/AstType.ExprList are excluded.
 (define (compiler-reg-handle-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(String) true]
-    [(Str) true]
-    [(Box _) true]
-    [(Array _ _) true]
-    [(DynArray _) true]
+    [(or (String) (Str) (Box _) (Array _ _) (DynArray _) (Enum _) (EnumArgs _ _)
+         (Struct _) (StructArgs _ _) (Var _) (VarArgs _ _))
+      true]
     ;; Bare Slice has no runtime by-value representation.
     [(Slice _) false]
-    [(Enum _) true]
-    [(EnumArgs _ _) true]
-    [(Struct _) true]
-    [(StructArgs _ _) true]
-    [(Var _) true]
-    [(VarArgs _ _) true]
     [_ false]))
 
 (define (compiler-reg-register-eligible-type? [ty : (& ty ast.AstType)]) : bool
@@ -1377,46 +1354,29 @@
   [present : (&mut present (__tl_dyn-array i64))]
   [types : (&mut types (__tl_dyn-array ast.AstType))]) : unit
   (match instr
-    [(Mov dst _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
-    [(AddrOf dst _)
+    [(or (Mov dst _ ty) (Load dst _ ty) (Cast dst _ _ ty) (Bitcast dst _ _ ty)
+         (UnOp dst _ _ ty) (VectorReduce dst _ _ _ ty) (Call dst _ _ ty)
+         (Phi dst _ ty) (Pack dst _ ty) (Word dst _ _ ty))
+      (compiler-reg-var-type-array-set! present types dst ty)]
+    [(or (AddrOf dst _) (Gep dst _ _ _))
       (compiler-reg-var-type-array-set!
         present
         types
         dst
         (compiler-reg-addr-of-result-type))]
-    [(Gep dst _ _ _)
-      (compiler-reg-var-type-array-set!
-        present
-        types
-        dst
-        (compiler-reg-addr-of-result-type))]
-    [(Load dst _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
-    [(Cast dst _ _ to-ty)
-      (compiler-reg-var-type-array-set! present types dst to-ty)]
-    [(Bitcast dst _ _ to-ty)
-      (compiler-reg-var-type-array-set! present types dst to-ty)]
     [(BinOp dst op _ _ ty)
       (compiler-reg-var-type-array-set!
         present
         types
         dst
         (ir.compiler-ir-binop-result-type (& op) ty))]
-    [(UnOp dst _ _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
-    [(VectorReduce dst _ _ _ elem-ty)
-      (compiler-reg-var-type-array-set! present types dst elem-ty)]
     [(MaskReduce dst _ _ _)
       (compiler-reg-var-type-array-set! present types dst (Bool))]
-    [(Call dst _ _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
-    [(SpmdCall payload-box)
-      (let
-        [result (compiler-reg-box-field-shared-view payload-box result)]
-        (match result
-          [(Unit) unit]
-          [(Value dst _ ty)
-            (compiler-reg-var-type-array-set! present types dst ty)]))]
-    [(Phi dst _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
-    [(Pack dst _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
-    [(Word dst _ _ ty) (compiler-reg-var-type-array-set! present types dst ty)]
+    [(SpmdCall (box (fields result)))
+      (match result
+        [(Unit) unit]
+        [(Value dst _ ty)
+          (compiler-reg-var-type-array-set! present types dst ty)])]
     ;; SEL-1. A SCALAR select (`lanes` 0, the if-conversion result) defines a
     ;; plain typed value like the Mov/BinOp it replaced, and it was the one
     ;; scalar def this table did not record. Without a type the value is not
@@ -1686,8 +1646,7 @@
 ;; so those pairs are not same-valued at the 64-bit register level.
 (define (compiler-reg-int-width-64? [ty : ast.AstType]) : bool
   (match ty
-    [(I64) true]
-    [(U64) true]
+    [(or (I64) (U64)) true]
     [_ false]))
 
 (define (compiler-reg-cast-copy-64?
@@ -1705,13 +1664,7 @@
 
 (define (compiler-reg-binop-destructive-commutative? [op : ir.CompilerIrBinOp]) : bool
   (match op
-    [(Add) true]
-    [(Mul) true]
-    [(And) true]
-    [(Or) true]
-    [(BitAnd) true]
-    [(BitOr) true]
-    [(BitXor) true]
+    [(or (Add) (Mul) (And) (Or) (BitAnd) (BitOr) (BitXor)) true]
     [_ false]))
 
 ;; GAP8-C. A two-address BinOp ties its destination to an operand's home, and
@@ -1741,10 +1694,7 @@
 ;; `x - MEM`), and the logical `And`/`Or` have no memory-form mnemonic there.
 (define (compiler-reg-alu-mem-fold-commutative? [op : ir.CompilerIrBinOp]) : bool
   (match op
-    [(Add) true]
-    [(BitAnd) true]
-    [(BitOr) true]
-    [(BitXor) true]
+    [(or (Add) (BitAnd) (BitOr) (BitXor)) true]
     [_ false]))
 
 ;; The var defined by a fusable `gep; load` pair immediately before `index`, or
@@ -5866,45 +5816,30 @@
       (set!
         out
         (match (array-ref slots index)
-          [(Call _ _ args _)
+          [(or (Call _ _ args _) (TailCall _ args _))
             (live.compiler-live-set-union
               out
               (live.compiler-live-call-args-vars (& args)))]
-          [(CallCAbiStoreResult payload-box)
-            (let
-              [base (compiler-reg-box-field-shared-view payload-box base)]
-              [args (compiler-reg-box-field-shared-view payload-box args)]
-              (live.compiler-live-set-union
-                out
+          [(CallCAbiStoreResult (box (fields base args)))
+            (live.compiler-live-set-union
+              out
+              (live.compiler-live-value-vars-into
+                (live.compiler-live-call-args-vars (& args))
+                (& base)))]
+          [(CallIndirectCAbiStoreResult (box (fields base [func callee] args)))
+            (live.compiler-live-set-union
+              out
+              (live.compiler-live-value-vars-into
                 (live.compiler-live-value-vars-into
                   (live.compiler-live-call-args-vars (& args))
-                  (& base))))]
-          [(CallIndirectCAbiStoreResult payload-box)
-            (let
-              [base (compiler-reg-box-field-shared-view payload-box base)]
-              [func (compiler-reg-box-field-shared-view payload-box callee)]
-              [args (compiler-reg-box-field-shared-view payload-box args)]
-              (live.compiler-live-set-union
-                out
-                (live.compiler-live-value-vars-into
-                  (live.compiler-live-value-vars-into
-                    (live.compiler-live-call-args-vars (& args))
-                    (& base))
-                  (& func))))]
-          [(SpmdCall payload-box)
-            (let
-              [active-mask
-                (compiler-reg-box-field-shared-view payload-box active-mask)]
-              [args (compiler-reg-box-field-shared-view payload-box args)]
-              (live.compiler-live-set-union
-                out
-                (live.compiler-live-value-vars-into
-                  (live.compiler-live-spmd-call-args-vars (& args))
-                  (& active-mask))))]
-          [(TailCall _ args _)
+                  (& base))
+                (& func)))]
+          [(SpmdCall (box (fields active-mask args)))
             (live.compiler-live-set-union
               out
-              (live.compiler-live-call-args-vars (& args)))]
+              (live.compiler-live-value-vars-into
+                (live.compiler-live-spmd-call-args-vars (& args))
+                (& active-mask)))]
           [(TailCallIndirect func args _)
             (live.compiler-live-set-union
               out
@@ -5971,8 +5906,7 @@
                 (compiler-reg-var-types-representations types)
                 ty)))]
         [(No) false])]
-    [(F64 _) false]
-    [(Unit) false]
+    [(or (F64 _) (Unit)) false]
     [_ true]))
 
 (define (compiler-reg-call-args-array-gp-class?
@@ -6006,14 +5940,7 @@
       (and
         (compiler-reg-call-arg-gp-class? type-segment-bases a types)
         (compiler-reg-call-arg-gp-class? type-segment-bases b types))]
-    [(Array values)
-      (compiler-reg-call-args-array-gp-class?
-        type-segment-bases
-        (compiler-reg-global-shared-view values)
-        types
-        0
-        (array-length values))]
-    [(Sret values _)
+    [(or (Array values) (Sret values _))
       (compiler-reg-call-args-array-gp-class?
         type-segment-bases
         (compiler-reg-global-shared-view values)
@@ -6130,13 +6057,7 @@
       (or
         (compiler-reg-call-arg-group? type-segment-bases a types)
         (compiler-reg-call-arg-group? type-segment-bases b types))]
-    [(Array values)
-      (compiler-reg-call-args-array-has-group?
-        type-segment-bases
-        values
-        types
-        0)]
-    [(Sret values _)
+    [(or (Array values) (Sret values _))
       (compiler-reg-call-args-array-has-group?
         type-segment-bases
         values
@@ -6257,17 +6178,7 @@
             1
             0)
           (+ start 1)))]
-    [(Array values)
-      (compiler-reg-call-arg-vars-selective-array
-        out
-        values
-        types
-        target-abi
-        0
-        start
-        0
-        start)]
-    [(Sret values _)
+    [(or (Array values) (Sret values _))
       (compiler-reg-call-arg-vars-selective-array
         out
         values
@@ -6348,33 +6259,26 @@
               0
               target-abi
               true)]
-          [(CallCAbiStoreResult payload-box)
-            (let
-              [base (compiler-reg-box-field-shared-view payload-box base)]
-              [args (compiler-reg-box-field-shared-view payload-box args)]
-              (compiler-reg-call-arg-vars-unless-gp-parallel
-                type-segment-bases
+          [(CallCAbiStoreResult (box (fields base args)))
+            (compiler-reg-call-arg-vars-unless-gp-parallel
+              type-segment-bases
+              (live.compiler-live-value-vars-into out (& base))
+              args
+              types
+              0
+              target-abi
+              false)]
+          [(CallIndirectCAbiStoreResult (box (fields base [func callee] args)))
+            (compiler-reg-call-arg-vars-unless-gp-parallel
+              type-segment-bases
+              (live.compiler-live-value-vars-into
                 (live.compiler-live-value-vars-into out (& base))
-                args
-                types
-                0
-                target-abi
-                false))]
-          [(CallIndirectCAbiStoreResult payload-box)
-            (let
-              [base (compiler-reg-box-field-shared-view payload-box base)]
-              [func (compiler-reg-box-field-shared-view payload-box callee)]
-              [args (compiler-reg-box-field-shared-view payload-box args)]
-              (compiler-reg-call-arg-vars-unless-gp-parallel
-                type-segment-bases
-                (live.compiler-live-value-vars-into
-                  (live.compiler-live-value-vars-into out (& base))
-                  (& func))
-                args
-                types
-                0
-                target-abi
-                false))]
+                (& func))
+              args
+              types
+              0
+              target-abi
+              false)]
           ;; Tail calls (M-G2a): the true tail-jump path marshals args FIRST
           ;; (compiler-backend-emit-tail-call routes a gp-parallel shape --
           ;; tail-stack-count 0, target always an in-program function, so
@@ -6403,7 +6307,7 @@
           ;; safely marshal register-homed GP user args, but the closure
           ;; pointer itself is loaded after argument setup and remains
           ;; memory-sourced.
-          [(TailCallIndirect func args _)
+          [(or (TailCallIndirect func args _) (CallIndirect _ func args _))
             (compiler-reg-call-arg-vars-unless-gp-parallel
               type-segment-bases
               (live.compiler-live-value-vars-into out (& func))
@@ -6417,15 +6321,6 @@
           ;; through the same base-aware backend parallel move; the closure
           ;; descriptor/call target remains memory-sourced because it is loaded
           ;; after argument setup.
-          [(CallIndirect _ func args _)
-            (compiler-reg-call-arg-vars-unless-gp-parallel
-              type-segment-bases
-              (live.compiler-live-value-vars-into out (& func))
-              args
-              types
-              1
-              target-abi
-              false)]
           [(CallIndirectC _ func args _)
             (compiler-reg-call-arg-vars-unless-gp-parallel
               type-segment-bases
@@ -6643,8 +6538,8 @@
   [instr : ir.CompilerIrInstr]
   [set : live.CompilerLiveI64Set]) : live.CompilerLiveI64Set
   (match instr
-    [(LaneId dst _ _) (live.compiler-live-set-insert set dst)]
-    [(Splat dst _ _ _) (live.compiler-live-set-insert set dst)]
+    [(or (LaneId dst _ _) (Splat dst _ _ _) (VectorLoad dst _ _ _ _))
+      (live.compiler-live-set-insert set dst)]
     [(VectorBinOp payload-box)
       (let
         [dst (deref payload-box).dst]
@@ -6663,7 +6558,6 @@
         (if (= lanes 0)
           set
           (live.compiler-live-set-insert set dst)))]
-    [(VectorLoad dst _ _ _ _) (live.compiler-live-set-insert set dst)]
     [(PredicatedLoad payload-box)
       (let
         [dst (deref payload-box).dst]
@@ -6684,14 +6578,7 @@
         [backend (deref payload-box).backend]
         [result (compiler-reg-box-field-shared-view payload-box result)]
         (match backend
-          [(Avx512)
-            (match result
-              [(Unit) set]
-              [(Value dst class _)
-                (match class
-                  [(Varying) (live.compiler-live-set-insert set dst)]
-                  [_ set])])]
-          [(Avx2)
+          [(or (Avx512) (Avx2))
             (match result
               [(Unit) set]
               [(Value dst class _)
@@ -6709,8 +6596,8 @@
       (let
         [dst (deref payload-box).dst]
         (live.compiler-live-set-insert set dst))]
-    [(MaskBinOp dst _ _ _ _) (live.compiler-live-set-insert set dst)]
-    [(MaskNot dst _ _) (live.compiler-live-set-insert set dst)]
+    [(or (MaskBinOp dst _ _ _ _) (MaskNot dst _ _) (TailMask dst _ _ _))
+      (live.compiler-live-set-insert set dst)]
     [(VectorPrefix payload-box)
       (let
         [dst (deref payload-box).dst]
@@ -6725,20 +6612,12 @@
         (match elem-ty
           [(Bool) (live.compiler-live-set-insert set dst)]
           [_ set]))]
-    [(TailMask dst _ _ _) (live.compiler-live-set-insert set dst)]
     [(SpmdCall payload-box)
       (let
         [backend (deref payload-box).backend]
         [result (compiler-reg-box-field-shared-view payload-box result)]
         (match backend
-          [(Avx512)
-            (match result
-              [(Unit) set]
-              [(Value dst class _)
-                (match class
-                  [(Mask) (live.compiler-live-set-insert set dst)]
-                  [_ set])])]
-          [(Avx2)
+          [(or (Avx512) (Avx2))
             (match result
               [(Unit) set]
               [(Value dst class _)
@@ -7162,14 +7041,12 @@
       (or
         (compiler-reg-registers-overlap? a reg)
         (compiler-reg-registers-overlap? b reg))]
-    [(Spill _) false]
-    [(Remat _) false]))
+    [(or (Spill _) (Remat _)) false]))
 
 (define (compiler-reg-location-primary-register
   [location : CompilerRegLocation]) : i64
   (match location
-    [(Register found) found]
-    [(RegisterPair first _) first]
+    [(or (Register found) (RegisterPair found _)) found]
     [_ cabi.compiler-reg-id-invalid]))
 
 (define (compiler-reg-assignment-table-var-uses-register?
@@ -8757,21 +8634,12 @@
 ;; only (never forces a spill/evict).
 (define (compiler-reg-binop-two-address? [op : (& op ir.CompilerIrBinOp)]) : bool
   (match op
-    [(Div) false]
-    [(Mod) false]
-    [(SafeDiv) false]
-    [(SafeMod) false]
+    [(or (Div) (Mod) (SafeDiv) (SafeMod)) false]
     [_ true]))
 
 (define (compiler-reg-binop-commutative? [op : ir.CompilerIrBinOp]) : bool
   (match op
-    [(Add) true]
-    [(Mul) true]
-    [(And) true]
-    [(Or) true]
-    [(BitAnd) true]
-    [(BitOr) true]
-    [(BitXor) true]
+    [(or (Add) (Mul) (And) (Or) (BitAnd) (BitOr) (BitXor)) true]
     [_ false]))
 
 (define (compiler-reg-copy-hints-from-binops-instr!
@@ -9116,16 +8984,10 @@
       (set!
         out
         (match (array-ref slots index)
-          [(Call _ _ _ _) (live.compiler-live-set-insert out p)]
-          [(CallIndirect _ _ _ _) (live.compiler-live-set-insert out p)]
-          [(CallIndirectC _ _ _ _) (live.compiler-live-set-insert out p)]
-          [(CallCAbiStoreResult payload-box)
+          [(or (Call _ _ _ _) (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)
+               (CallCAbiStoreResult _) (CallIndirectCAbiStoreResult _)
+               (SpmdCall _) (TailCall _ _ _) (TailCallIndirect _ _ _))
             (live.compiler-live-set-insert out p)]
-          [(CallIndirectCAbiStoreResult payload-box)
-            (live.compiler-live-set-insert out p)]
-          [(SpmdCall payload-box) (live.compiler-live-set-insert out p)]
-          [(TailCall _ _ _) (live.compiler-live-set-insert out p)]
-          [(TailCallIndirect _ _ _) (live.compiler-live-set-insert out p)]
           [_ out]))
       (set! p (+ p 2))
       (set! index (+ index 1)))
@@ -9166,12 +9028,7 @@
 
 (define (compiler-reg-backend-clobber-binop? [op : ir.CompilerIrBinOp]) : bool
   (match op
-    [(Div) true]
-    [(Mod) true]
-    [(SafeDiv) true]
-    [(SafeMod) true]
-    [(Shl _) true]
-    [(Shr _) true]
+    [(or (Div) (Mod) (SafeDiv) (SafeMod) (Shl _) (Shr _)) true]
     [_ false]))
 
 ;; Every instruction that clobbers the whole caller-saved set. This is the one
@@ -9183,19 +9040,11 @@
 (define (compiler-reg-backend-caller-clobber-instr?
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(Call _ _ _ _) true]
-    [(CallIndirect _ _ _ _) true]
-    [(CallIndirectC _ _ _ _) true]
-    [(CallCAbiStoreResult _) true]
-    [(CallIndirectCAbiStoreResult _) true]
-    [(SpmdCall _) true]
-    [(TailCall _ _ _) true]
-    [(TailCallIndirect _ _ _) true]
-    [(Syscall _ _) true]
-    [(BoundsCheck _ _ _) true]
-    [(CpuId _ _ _ _) true]
-    [(Xgetbv _ _) true]
-    [(Pack _ _ _) true]
+    [(or (Call _ _ _ _) (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)
+         (CallCAbiStoreResult _) (CallIndirectCAbiStoreResult _) (SpmdCall _)
+         (TailCall _ _ _) (TailCallIndirect _ _ _) (Syscall _ _)
+         (BoundsCheck _ _ _) (CpuId _ _ _ _) (Xgetbv _ _) (Pack _ _ _))
+      true]
     [(BinOp _ op _ _ _) (compiler-reg-backend-clobber-binop? op)]
     [_ false]))
 
@@ -9204,11 +9053,9 @@
 ;; count as a call, and a loop holding it would only lose its hoisted constants.
 (define (compiler-reg-call-instr? [instr : ir.CompilerIrInstr]) : bool
   (match (compiler-reg-global-shared-view instr)
-    [(BoundsCheck _ _ _) false]
-    [(CpuId _ _ _ _) false]
-    [(Xgetbv _ _) false]
-    [(Pack _ _ _) false]
-    [(BinOp _ _ _ _ _) false]
+    [(or (BoundsCheck _ _ _) (CpuId _ _ _ _) (Xgetbv _ _) (Pack _ _ _)
+         (BinOp _ _ _ _ _))
+      false]
     [_ (compiler-reg-backend-caller-clobber-instr? instr)]))
 
 ;; The tail-call family, exhaustively: the two IR instructions after which
@@ -9224,8 +9071,7 @@
 ;; classifies them as control flow (compiler-reg-call-region-control-flow-instr?).
 (define (compiler-reg-tail-call-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(TailCall _ _ _) true]
-    [(TailCallIndirect _ _ _) true]
+    [(or (TailCall _ _ _) (TailCallIndirect _ _ _)) true]
     [_ false]))
 
 ;; A call after which control comes back here: the call family minus the tail
@@ -9268,8 +9114,7 @@
   [_type-segment-bases : i64]
   [instr : ir.CompilerIrInstr]) : bool
   (match (compiler-reg-global-shared-view instr)
-    [(BoundsCheck _ _ _) false]
-    [(Pack _ _ _) false]
+    [(or (BoundsCheck _ _ _) (Pack _ _ _)) false]
     ;; GAP3a: a shift by an in-range CONSTANT count is emitted as `shlq $imm, reg`
     ;; (compiler-backend-binop-immediate-shift-asm) and never reads or writes
     ;; %rcx/%cl, so it is NOT a clobber point. Only variable-count shifts (or
@@ -9297,10 +9142,7 @@
 ;;   kind 6 = call-like MINUS the tail-call family (see kind 6 below)
 (define (compiler-reg-clobber-binop-div? [op : (& op ir.CompilerIrBinOp)]) : bool
   (match op
-    [(Div) true]
-    [(Mod) true]
-    [(SafeDiv) true]
-    [(SafeMod) true]
+    [(or (Div) (Mod) (SafeDiv) (SafeMod)) true]
     [_ false]))
 
 ;; A shift binop clobbers %rcx ONLY when its count is emitted through the %cl
@@ -9320,14 +9162,10 @@
 ;; value homed in %rcx.
 (define (compiler-reg-clobber-shift-width [ty : ast.AstType]) : i64
   (match ty
-    [(I64) 64]
-    [(U64) 64]
-    [(I32) 32]
-    [(U32) 32]
-    [(I16) 16]
-    [(U16) 16]
-    [(I8) 8]
-    [(U8) 8]
+    [(or (I64) (U64)) 64]
+    [(or (I32) (U32)) 32]
+    [(or (I16) (U16)) 16]
+    [(or (I8) (U8)) 8]
     [_ 0]))
 
 ;; True when rhs is a constant shift count the backend emits as an immediate
@@ -9342,10 +9180,7 @@
   (match rhs
     [(I64 n)
       (if (match (& count-ty)
-        [(I64) true]
-        [(I32) true]
-        [(I16) true]
-        [(I8) true]
+        [(or (I64) (I32) (I16) (I8)) true]
         [_ false])
         (and (>= n 0) (< n (compiler-reg-clobber-shift-width lhs-ty)))
         (match count-ty
@@ -9753,14 +9588,10 @@
 ;; blocks is ranked rather than silently flattened to depth zero.
 (define (compiler-reg-loop-nest-terminator? [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(Jump _) true]
-    [(Branch _ _ _) true]
-    [(TotalEnumBranch _ _ _) true]
-    [(Return _) true]
-    [(TailCall _ _ _) true]
-    [(TailCallIndirect _ _ _) true]
-    [(Switch _ _ _ _) true]
-    [(TotalEnumSwitch _ _ _ _ _) true]
+    [(or (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _) (Return _)
+         (TailCall _ _ _) (TailCallIndirect _ _ _) (Switch _ _ _ _)
+         (TotalEnumSwitch _ _ _ _ _))
+      true]
     [_ false]))
 
 (define (compiler-reg-loop-nest-falls-through? [block : ir.CompilerIrBlock]) : bool
@@ -9777,11 +9608,8 @@
 (define (compiler-reg-loop-nest-succ-bound-instr [instr : ir.CompilerIrInstr]) : i64
   (match instr
     [(Jump _) 1]
-    [(Branch _ _ _) 2]
-    [(TotalEnumBranch _ _ _) 2]
-    [(Return _) 0]
-    [(TailCall _ _ _) 0]
-    [(TailCallIndirect _ _ _) 0]
+    [(or (Branch _ _ _) (TotalEnumBranch _ _ _)) 2]
+    [(or (Return _) (TailCall _ _ _) (TailCallIndirect _ _ _)) 0]
     [(Switch _ _ cases _) (+ 1 (ir.compiler-ir-switch-case-seq-count cases))]
     [(TotalEnumSwitch _ _ cases _ _)
       (+ 2 (ir.compiler-ir-switch-case-seq-count cases))]
@@ -10761,8 +10589,8 @@
             (if (<= len 0)
               unit
               (match (ir.compiler-ir-instr-seq-ref instrs (- len 1))
-                [(Switch _ _ _ _) (set! (array-ref splits index) 1)]
-                [(TotalEnumSwitch _ _ _ _ _) (set! (array-ref splits index) 1)]
+                [(or (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
+                  (set! (array-ref splits index) 1)]
                 [_ unit])))])
       (set! index (+ index 1)))))
 
@@ -11104,14 +10932,9 @@
 ;; String / Bytes materialise as one `leaq label(%rip)` exactly like GlobalAddr.
 (define (compiler-reg-remat-value? [value : ir.CompilerIrValue]) : bool
   (match value
-    [(I64 _) true]
-    [(Bool _) true]
-    [(Char _) true]
-    [(F64 _) true]
-    [(GlobalAddr _) true]
-    [(Function _) true]
-    [(String _) true]
-    [(Bytes _) true]
+    [(or (I64 _) (Bool _) (Char _) (F64 _) (GlobalAddr _) (Function _)
+         (String _) (Bytes _))
+      true]
     [_ false]))
 
 ;; The same candidate set for a MOV, where a read of a global cell additionally
@@ -11163,11 +10986,7 @@
   [base : (& base ir.CompilerIrValue)]
   [offset : (& offset ir.CompilerIrValue)]) : bool
   (match base
-    [(GlobalAddr _)
-      (match offset
-        [(I64 _) true]
-        [_ false])]
-    [(Var _)
+    [(or (GlobalAddr _) (Var _))
       (match offset
         [(I64 _) true]
         [_ false])]
@@ -11201,8 +11020,7 @@
 ;; narrow-typed constant is not a shape the hot rows carry.
 (define (compiler-reg-remat-word-int-type? [ty : ast.AstType]) : bool
   (match ty
-    [(I64) true]
-    [(U64) true]
+    [(or (I64) (U64)) true]
     [_ false]))
 
 (define (compiler-reg-remat-recompute-literal?
@@ -11235,10 +11053,7 @@
   [ty : ast.AstType]
   [cells-clean : bool]) : bool
   (match (compiler-reg-global-shared-view value)
-    [(GlobalAddr _) true]
-    [(Function _) true]
-    [(String _) true]
-    [(Bytes _) true]
+    [(or (GlobalAddr _) (Function _) (String _) (Bytes _)) true]
     ;; W3 step (c). A read of a FROZEN global cell recomputes as
     ;; `movq g(%rip), %r` -- one instruction, the same one the reload replaced,
     ;; and one a compare can fold outright (compiler-backend-compare-memory-
@@ -11466,8 +11281,7 @@
 
 (define (compiler-reg-remat-instr-mutates-memory? [instr : ir.CompilerIrInstr]) : bool
   (match (ir.compiler-ir-instr-effect (& instr))
-    [(MemoryWrite) true]
-    [(Unknown) true]
+    [(or (MemoryWrite) (Unknown)) true]
     [_ false]))
 
 (define (compiler-reg-remat-instrs-mutates-memory?
@@ -11562,25 +11376,21 @@
 ;; is, whose target is the {data, len} pair. `OptLoadLocField`'s `header?`.
 (define (compiler-reg-invariant-handle-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(DynArray _) true]
-    [(String) true]
+    [(or (DynArray _) (String)) true]
     [_ false]))
 
 ;; A `&`/`&mut` reference parameter or local: dereferenceable, and its target is
 ;; a struct/aggregate, not a payload buffer.
 (define (compiler-reg-invariant-reference-type? [ty : ast.AstType]) : bool
   (match ty
-    [(Ref _ _) true]
-    [(MutRef _ _) true]
+    [(or (Ref _ _) (MutRef _ _)) true]
     [_ false]))
 
 ;; The static type a DATA word is loaded at. Only these become element roots, so
 ;; a `len` word (i64) can never be mistaken for a buffer pointer.
 (define (compiler-reg-invariant-raw-pointer-type? [ty : ast.AstType]) : bool
   (match ty
-    [(U64) true]
-    [(Ptr _) true]
-    [(MutPtr _) true]
+    [(or (U64) (Ptr _) (MutPtr _)) true]
     [_ false]))
 
 ;; Typed-word alias classes, the allocator's copy of `opt-load-type-alias-class`
@@ -11589,20 +11399,12 @@
 ;; reason (two words, one of them a plain length).
 (define (compiler-reg-invariant-alias-class [ty : ast.AstType]) : i64
   (match ty
-    [(I64) 1]
-    [(U64) 1]
-    [(I32) 2]
-    [(U32) 2]
-    [(I16) 3]
-    [(U16) 3]
+    [(or (I64) (U64)) 1]
+    [(or (I32) (U32)) 2]
+    [(or (I16) (U16)) 3]
     [(F64) 4]
     [(F32) 5]
-    [(DynArray _) 6]
-    [(String) 6]
-    [(Box _) 6]
-    [(Ptr _) 6]
-    [(MutPtr _) 6]
-    [(Func _ _) 6]
+    [(or (DynArray _) (String) (Box _) (Ptr _) (MutPtr _) (Func _ _)) 6]
     [_ 0]))
 
 (define (compiler-reg-invariant-var-type
@@ -11634,8 +11436,7 @@
 ;; this function.
 (define (compiler-reg-invariant-opaque-write? [instr : ir.CompilerIrInstr]) : bool
   (match (ir.compiler-ir-instr-effect (& instr))
-    [(MemoryWrite) true]
-    [(Unknown) true]
+    [(or (MemoryWrite) (Unknown)) true]
     [_ false]))
 
 ;; Copy one var's address classification onto another (a `mov`/`cast` of a
@@ -11723,21 +11524,7 @@
               (compiler-reg-invariant-addr-element))
             unit)]
         [_ unit])]
-    [(Mov dst value _)
-      (if (not (= (compiler-reg-invariant-array-at def-counts dst) 1))
-        unit
-        (match value
-          [(Var b)
-            (compiler-reg-invariant-copy-addr! addr-kinds addr-headers dst b)]
-          [_ unit]))]
-    [(Cast dst value _ _)
-      (if (not (= (compiler-reg-invariant-array-at def-counts dst) 1))
-        unit
-        (match value
-          [(Var b)
-            (compiler-reg-invariant-copy-addr! addr-kinds addr-headers dst b)]
-          [_ unit]))]
-    [(Bitcast dst value _ _)
+    [(or (Mov dst value _) (Cast dst value _ _) (Bitcast dst value _ _))
       (if (not (= (compiler-reg-invariant-array-at def-counts dst) 1))
         unit
         (match value
@@ -11745,18 +11532,7 @@
             (compiler-reg-invariant-copy-addr! addr-kinds addr-headers dst b)]
           [_ unit]))]
     [(Phi dst _ _) (compiler-reg-invariant-set-at! phi-defs dst 1)]
-    [(StorePtr addr _ ty)
-      (let
-        [element? : bool
-          (match addr
-            [(Var p)
-              (=
-                (compiler-reg-invariant-array-at addr-kinds p)
-                (compiler-reg-invariant-addr-element))]
-            [_ false])]
-        [class : i64 (compiler-reg-invariant-alias-class ty)]
-        (unless (and element? (> class 0)) (set! (array-ref writes 0) 1)))]
-    [(StoreOwned addr _ ty)
+    [(or (StorePtr addr _ ty) (StoreOwned addr _ ty))
       (let
         [element? : bool
           (match addr
@@ -12704,11 +12480,7 @@
   [value : ir.CompilerIrValue]) : bool
   (match value
     [(Var var) (live.compiler-live-set-contains? params var)]
-    [(I64 _) true]
-    [(F64 _) true]
-    [(Bool _) true]
-    [(Char _) true]
-    [(Unit) true]
+    [(or (I64 _) (F64 _) (Bool _) (Char _) (Unit)) true]
     [_ false]))
 
 (define (compiler-reg-early-exit-return-block?
@@ -14686,8 +14458,7 @@
 
 (define (compiler-reg-call-hole-shift-op? [op : ir.CompilerIrBinOp]) : bool
   (match op
-    [(Shl _) true]
-    [(Shr _) true]
+    [(or (Shl _) (Shr _)) true]
     [_ false]))
 
 (define (compiler-reg-call-hole-same-var?
@@ -16030,11 +15801,9 @@
     [(No) false]
     [(Some location)
       (match location
-        [(Register _) true]
-        [(RegisterPair _ _) true]
+        [(or (Register _) (RegisterPair _ _) (Remat _)) true]
         ;; A rematerialised value is recomputed at each use and has no spill
         ;; store at all, so the split achieved what it was selected for.
-        [(Remat _) true]
         [(Spill _) false])]))
 
 ;; Drop every selection the replan did not improve: a memory candidate the
@@ -18047,8 +17816,8 @@
       false
       (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
         [(Jump t) (= t target-label)]
-        [(Branch _ t f) (or (= t target-label) (= f target-label))]
-        [(TotalEnumBranch _ t f) (or (= t target-label) (= f target-label))]
+        [(or (Branch _ t f) (TotalEnumBranch _ t f))
+          (or (= t target-label) (= f target-label))]
         [(Switch _ _ cases default)
           (and
             (= default target-label)
@@ -21601,9 +21370,7 @@
   [representations : ir.CompilerIrRepresentationIndex]
   [ty : ast.AstType]) : bool
   (match (compiler-reg-global-shared-view ty)
-    [(Ref _ inner)
-      (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)]
-    [(MutRef _ inner)
+    [(or (Ref _ inner) (MutRef _ inner))
       (ast.ast-type-segment-bases-fat-referent? type-segment-bases inner)]
     [(Region _ inner)
       (compiler-reg-type-register-group?
@@ -21623,8 +21390,7 @@
   [representations : ir.CompilerIrRepresentationIndex]
   [ty : ast.AstType]) : bool
   (match (compiler-reg-global-shared-view ty)
-    [(Ref _ _) false]
-    [(MutRef _ _) false]
+    [(or (Ref _ _) (MutRef _ _)) false]
     [(Region _ inner)
       (compiler-reg-type-register-group-has-sse?
         type-segment-bases
@@ -22423,8 +22189,7 @@
         var
         (compiler-reg-greedy-pool-index occupancy first)
         (compiler-reg-greedy-pool-index occupancy second))]
-    [(Spill _) unit]
-    [(Remat _) unit]))
+    [(or (Spill _) (Remat _)) unit]))
 
 ;; `interval-index` seeds the per-register union. Every query against the
 ;; returned occupancy MUST pass the same index: the union is a materialised view
@@ -22747,9 +22512,7 @@
                       reg-index))
                     reg-index
                     -1))]
-              [(RegisterPair _ _) -1]
-              [(Spill _) -1]
-              [(Remat _) -1])]
+              [(or (RegisterPair _ _) (Spill _) (Remat _)) -1])]
           [(No) -1])))))
 
 ;; RAGreedy Component 1 cascade cap (LLVM canEvictInterference / cascade number).
@@ -24210,16 +23973,7 @@
         prefs
         parents)
       (compiler-reg-arg-pref-value! target-abi pool b (+ start 1) prefs parents)]
-    [(Array values)
-      (compiler-reg-arg-pref-array-at!
-        target-abi
-        pool
-        values
-        0
-        start
-        prefs
-        parents)]
-    [(Sret values _)
+    [(or (Array values) (Sret values _))
       (compiler-reg-arg-pref-array-at!
         target-abi
         pool
@@ -24249,24 +24003,14 @@
   [prefs : (&mut prefs (__tl_dyn-array i64))]
   [parents : (& parents (__tl_dyn-array i64))]) : unit
   (match instr
-    [(Call _ _ args _)
+    [(or (Call _ _ args _) (TailCall _ args _) (CallIndirectC _ _ args _))
       (compiler-reg-arg-pref-args! target-abi pool args prefs parents)]
-    [(CallCAbiStoreResult payload-box)
-      (let
-        [args (compiler-reg-box-field-shared-view payload-box args)]
-        (compiler-reg-arg-pref-args! target-abi pool args prefs parents))]
-    [(CallIndirectCAbiStoreResult payload-box)
-      (let
-        [args (compiler-reg-box-field-shared-view payload-box args)]
-        (compiler-reg-arg-pref-args! target-abi pool args prefs parents))]
-    [(TailCall _ args _)
+    [(CallCAbiStoreResult (box (fields args)))
       (compiler-reg-arg-pref-args! target-abi pool args prefs parents)]
-    [(TailCallIndirect _ args _)
+    [(CallIndirectCAbiStoreResult (box (fields args)))
+      (compiler-reg-arg-pref-args! target-abi pool args prefs parents)]
+    [(or (TailCallIndirect _ args _) (CallIndirect _ _ args _))
       (compiler-reg-arg-pref-args-at! target-abi pool args 1 prefs parents)]
-    [(CallIndirect _ _ args _)
-      (compiler-reg-arg-pref-args-at! target-abi pool args 1 prefs parents)]
-    [(CallIndirectC _ _ args _)
-      (compiler-reg-arg-pref-args! target-abi pool args prefs parents)]
     [_ unit]))
 
 ;; M-C (part 2): call-result %rax preference. The backend stores a scalar call
@@ -24316,15 +24060,7 @@
   [prefs : (&mut prefs (__tl_dyn-array i64))]
   [parents : (& parents (__tl_dyn-array i64))]) : unit
   (match instr
-    [(Call dst _ _ ty)
-      (if (compiler-reg-float-type? ty)
-        unit
-        (compiler-reg-result-pref-var! dst rax-idx prefs parents))]
-    [(CallIndirect dst _ _ ty)
-      (if (compiler-reg-float-type? ty)
-        unit
-        (compiler-reg-result-pref-var! dst rax-idx prefs parents))]
-    [(CallIndirectC dst _ _ ty)
+    [(or (Call dst _ _ ty) (CallIndirect dst _ _ ty) (CallIndirectC dst _ _ ty))
       (if (compiler-reg-float-type? ty)
         unit
         (compiler-reg-result-pref-var! dst rax-idx prefs parents))]
@@ -24570,18 +24306,7 @@
           (+ position 1)
           prefs
           parents))]
-    [(Array values)
-      (compiler-reg-float-arg-pref-array!
-        target-abi
-        pool
-        values
-        types
-        0
-        0
-        position
-        prefs
-        parents)]
-    [(Sret values _)
+    [(or (Array values) (Sret values _))
       (compiler-reg-float-arg-pref-array!
         target-abi
         pool
@@ -24601,7 +24326,7 @@
   [prefs : (&mut prefs (__tl_dyn-array i64))]
   [parents : (& parents (__tl_dyn-array i64))]) : unit
   (match instr
-    [(Call _ _ args _)
+    [(or (Call _ _ args _) (TailCall _ args _) (CallIndirectC _ _ args _))
       (compiler-reg-float-arg-pref-args-at!
         target-abi
         pool
@@ -24610,29 +24335,7 @@
         0
         prefs
         parents)]
-    [(CallCAbiStoreResult payload-box)
-      (let
-        [args (compiler-reg-box-field-shared-view payload-box args)]
-        (compiler-reg-float-arg-pref-args-at!
-          target-abi
-          pool
-          args
-          types
-          0
-          prefs
-          parents))]
-    [(CallIndirectCAbiStoreResult payload-box)
-      (let
-        [args (compiler-reg-box-field-shared-view payload-box args)]
-        (compiler-reg-float-arg-pref-args-at!
-          target-abi
-          pool
-          args
-          types
-          0
-          prefs
-          parents))]
-    [(TailCall _ args _)
+    [(CallCAbiStoreResult (box (fields args)))
       (compiler-reg-float-arg-pref-args-at!
         target-abi
         pool
@@ -24641,31 +24344,22 @@
         0
         prefs
         parents)]
-    [(TailCallIndirect _ args _)
+    [(CallIndirectCAbiStoreResult (box (fields args)))
+      (compiler-reg-float-arg-pref-args-at!
+        target-abi
+        pool
+        args
+        types
+        0
+        prefs
+        parents)]
+    [(or (TailCallIndirect _ args _) (CallIndirect _ _ args _))
       (compiler-reg-float-arg-pref-args-at!
         target-abi
         pool
         args
         types
         1
-        prefs
-        parents)]
-    [(CallIndirect _ _ args _)
-      (compiler-reg-float-arg-pref-args-at!
-        target-abi
-        pool
-        args
-        types
-        1
-        prefs
-        parents)]
-    [(CallIndirectC _ _ args _)
-      (compiler-reg-float-arg-pref-args-at!
-        target-abi
-        pool
-        args
-        types
-        0
         prefs
         parents)]
     [_ unit]))
@@ -24856,17 +24550,7 @@
           (+ position 1)
           parents
           assignments))]
-    [(Array values)
-      (compiler-reg-float-arg-demote-array!
-        target-abi
-        values
-        types
-        0
-        0
-        position
-        parents
-        assignments)]
-    [(Sret values _)
+    [(or (Array values) (Sret values _))
       (compiler-reg-float-arg-demote-array!
         target-abi
         values
@@ -24884,7 +24568,7 @@
   [parents : (& parents (__tl_dyn-array i64))]
   [assignments : CompilerRegAssignmentTable]) : unit
   (match instr
-    [(Call _ _ args _)
+    [(or (Call _ _ args _) (TailCall _ args _) (CallIndirectC _ _ args _))
       (compiler-reg-float-arg-demote-args!
         target-abi
         args
@@ -24892,27 +24576,7 @@
         0
         parents
         assignments)]
-    [(CallCAbiStoreResult payload-box)
-      (let
-        [args (compiler-reg-box-field-shared-view payload-box args)]
-        (compiler-reg-float-arg-demote-args!
-          target-abi
-          args
-          types
-          0
-          parents
-          assignments))]
-    [(CallIndirectCAbiStoreResult payload-box)
-      (let
-        [args (compiler-reg-box-field-shared-view payload-box args)]
-        (compiler-reg-float-arg-demote-args!
-          target-abi
-          args
-          types
-          0
-          parents
-          assignments))]
-    [(TailCall _ args _)
+    [(CallCAbiStoreResult (box (fields args)))
       (compiler-reg-float-arg-demote-args!
         target-abi
         args
@@ -24920,28 +24584,20 @@
         0
         parents
         assignments)]
-    [(TailCallIndirect _ args _)
+    [(CallIndirectCAbiStoreResult (box (fields args)))
+      (compiler-reg-float-arg-demote-args!
+        target-abi
+        args
+        types
+        0
+        parents
+        assignments)]
+    [(or (TailCallIndirect _ args _) (CallIndirect _ _ args _))
       (compiler-reg-float-arg-demote-args!
         target-abi
         args
         types
         1
-        parents
-        assignments)]
-    [(CallIndirect _ _ args _)
-      (compiler-reg-float-arg-demote-args!
-        target-abi
-        args
-        types
-        1
-        parents
-        assignments)]
-    [(CallIndirectC _ _ args _)
-      (compiler-reg-float-arg-demote-args!
-        target-abi
-        args
-        types
-        0
         parents
         assignments)]
     [_ unit]))
@@ -25167,20 +24823,7 @@
       (compiler-reg-group-pair-add-value-var
         (compiler-reg-group-pair-add-value-var set a)
         b)]
-    [(Array arr)
-      (let
-        [n : i64 (array-length arr)]
-        [i : i64 0]
-        [acc : live.CompilerLiveI64Set set]
-        (while (< i n)
-          (set!
-            acc
-            (compiler-reg-group-pair-add-value-var
-              acc
-              (compiler-reg-global-array-element-shared-view arr i)))
-          (set! i (+ i 1)))
-        acc)]
-    [(Sret arr _)
+    [(or (Array arr) (Sret arr _))
       (let
         [n : i64 (array-length arr)]
         [i : i64 0]
@@ -25203,9 +24846,7 @@
   [set : live.CompilerLiveI64Set]
   [instr : ir.CompilerIrInstr]) : live.CompilerLiveI64Set
   (match instr
-    [(Call _ _ args _) (compiler-reg-group-pair-add-call-args set args)]
-    [(CallIndirect _ _ args _) (compiler-reg-group-pair-add-call-args set args)]
-    [(CallIndirectC _ _ args _)
+    [(or (Call _ _ args _) (CallIndirect _ _ args _) (CallIndirectC _ _ args _))
       (compiler-reg-group-pair-add-call-args set args)]
     [_ set]))
 
@@ -25483,8 +25124,7 @@
                 (if (or (= first reg) (= second reg))
                   (set! blocked true)
                   unit)]
-              [(Spill _) unit]
-              [(Remat _) unit])]
+              [(or (Spill _) (Remat _)) unit])]
           [(No) unit])
         (set! i (+ i 1))))
     (if blocked
@@ -26435,8 +26075,7 @@
                         var)
                         [(Some location)
                           (match location
-                            [(Register _) true]
-                            [(RegisterPair _ _) true]
+                            [(or (Register _) (RegisterPair _ _)) true]
                             [_ false])]
                         [(No) false])
                       var)
@@ -28076,17 +27715,10 @@
 
 (define (compiler-reg-vector-elem-size [ty : ast.AstType]) : i64
   (match ty
-    [(I8) 1]
-    [(U8) 1]
-    [(Bool) 1]
-    [(I16) 2]
-    [(U16) 2]
-    [(I32) 4]
-    [(U32) 4]
-    [(F32) 4]
-    [(I64) 8]
-    [(U64) 8]
-    [(F64) 8]
+    [(or (I8) (U8) (Bool)) 1]
+    [(or (I16) (U16)) 2]
+    [(or (I32) (U32) (F32)) 4]
+    [(or (I64) (U64) (F64)) 8]
     [_ 8]))
 
 (define (compiler-reg-vector-stack-words-for-shape
@@ -28168,9 +27800,8 @@
   [instr : ir.CompilerIrInstr]
   [words : (&mut words (__tl_dyn-array i64))]) : unit
   (match instr
-    [(LaneId dst lanes elem-ty)
-      (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)]
-    [(Splat dst _ lanes elem-ty)
+    [(or (LaneId dst lanes elem-ty) (Splat dst _ lanes elem-ty)
+         (VectorLoad dst _ _ lanes elem-ty))
       (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)]
     [(VectorBinOp payload-box)
       (let
@@ -28198,12 +27829,8 @@
       (let
         [dst (deref payload-box).dst]
         (compiler-reg-vector-stack-words-set-mask! words dst))]
-    [(MaskBinOp dst _ _ _ _)
+    [(or (MaskBinOp dst _ _ _ _) (MaskNot dst _ _) (TailMask dst _ _ _))
       (compiler-reg-vector-stack-words-set-mask! words dst)]
-    [(MaskNot dst _ _) (compiler-reg-vector-stack-words-set-mask! words dst)]
-    [(TailMask dst _ _ _) (compiler-reg-vector-stack-words-set-mask! words dst)]
-    [(VectorLoad dst _ _ lanes elem-ty)
-      (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)]
     [(PredicatedLoad payload-box)
       (let
         [dst (deref payload-box).dst]
@@ -28798,8 +28425,7 @@
   (match to-ty
     [(U64)
       (match from-ty
-        [(Tuple _) true]
-        [(Array _ _) true]
+        [(or (Tuple _) (Array _ _)) true]
         [_ false])]
     [_ false]))
 
@@ -28818,7 +28444,7 @@
             dst
             (array-ref range-of-var src))
           false))]
-    [(Gep dst base _ _)
+    [(or (Gep dst base _ _) (Mov dst base _))
       (compiler-reg-color-propagate-root-code
         (compiler-reg-color-set-root!
           roots
@@ -28834,13 +28460,6 @@
             dst
             (compiler-reg-color-value-root roots src)))
         0)]
-    [(Mov dst value _)
-      (compiler-reg-color-propagate-root-code
-        (compiler-reg-color-set-root!
-          roots
-          invalid
-          dst
-          (compiler-reg-color-value-root roots value)))]
     [(Phi dst inputs _)
       (compiler-reg-color-propagate-root-code
         (compiler-reg-color-set-root!
@@ -28862,35 +28481,8 @@
             (if (and (>= left 0) (= left right))
               (compiler-reg-color-set-root! roots invalid dst left)
               false))))]
-    [(Call dst _ args _)
-      (match args
-        [(Sret values index)
-          (compiler-reg-color-propagate-root-code
-            (if (and (>= index 0) (< index (array-length values)))
-              (compiler-reg-color-set-root!
-                roots
-                invalid
-                dst
-                (compiler-reg-color-value-root
-                  roots
-                  (compiler-reg-global-array-element-shared-view values index)))
-              false))]
-        [_ 0])]
-    [(CallIndirect dst _ args _)
-      (match args
-        [(Sret values index)
-          (compiler-reg-color-propagate-root-code
-            (if (and (>= index 0) (< index (array-length values)))
-              (compiler-reg-color-set-root!
-                roots
-                invalid
-                dst
-                (compiler-reg-color-value-root
-                  roots
-                  (compiler-reg-global-array-element-shared-view values index)))
-              false))]
-        [_ 0])]
-    [(CallIndirectC dst _ args _)
+    [(or (Call dst _ args _) (CallIndirect dst _ args _)
+         (CallIndirectC dst _ args _))
       (match args
         [(Sret values index)
           (compiler-reg-color-propagate-root-code
@@ -29196,7 +28788,7 @@
   [roots : (__tl_dyn-array i64)]
   [invalid : (__tl_dyn-array bool)]) : unit
   (match (compiler-reg-global-shared-view instr)
-    [(Mov dst value _)
+    [(or (Mov dst value _) (Gep dst value _ _))
       (let
         [root : i64 (compiler-reg-color-value-root roots value)]
         (if (and
@@ -29206,19 +28798,7 @@
             (not (= (array-ref roots dst) root))))
           (compiler-reg-color-invalidate-root! (&mut invalid) root)
           unit))]
-    [(Gep dst base _ _)
-      (let
-        [root : i64 (compiler-reg-color-value-root roots base)]
-        (if (and
-          (>= root 0)
-          (or
-            (>= dst (array-length roots))
-            (not (= (array-ref roots dst) root))))
-          (compiler-reg-color-invalidate-root! (&mut invalid) root)
-          unit))]
-    [(StorePtr _ src _)
-      (compiler-reg-color-invalidate-value! roots invalid src)]
-    [(StoreOwned _ src _)
+    [(or (StorePtr _ src _) (StoreOwned _ src _))
       (compiler-reg-color-invalidate-value! roots invalid src)]
     [(Cast _ src from-ty to-ty)
       (if (compiler-reg-color-structural-sret-cast? from-ty to-ty)
@@ -29246,48 +28826,33 @@
         (if (and (>= right 0) (not (= right dst-root)))
           (compiler-reg-color-invalidate-root! (&mut invalid) right)
           unit))]
-    [(Syscall _ args)
+    [(or (Syscall _ args) (TailCall _ args _))
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
     [(Call _ name args _)
       (if (string.eq (ir.compiler-ir-symbol-text name) "tl_memcpy")
         unit
         (compiler-reg-color-invalidate-call-args! roots invalid args))]
-    [(CallIndirect _ callee args _)
+    [(or (CallIndirect _ callee args _) (CallIndirectC _ callee args _))
       (compiler-reg-color-invalidate-value!
         (compiler-reg-global-shared-view roots)
         (compiler-reg-global-shared-view invalid)
         callee)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
-    [(CallIndirectC _ callee args _)
+    [(CallCAbiStoreResult (box (fields base args)))
+      (compiler-reg-color-invalidate-value!
+        (compiler-reg-global-shared-view roots)
+        (compiler-reg-global-shared-view invalid)
+        base)
+      (compiler-reg-color-invalidate-call-args! roots invalid args)]
+    [(CallIndirectCAbiStoreResult (box (fields base callee args)))
+      (compiler-reg-color-invalidate-value!
+        (compiler-reg-global-shared-view roots)
+        (compiler-reg-global-shared-view invalid)
+        base)
       (compiler-reg-color-invalidate-value!
         (compiler-reg-global-shared-view roots)
         (compiler-reg-global-shared-view invalid)
         callee)
-      (compiler-reg-color-invalidate-call-args! roots invalid args)]
-    [(CallCAbiStoreResult payload-box)
-      (let
-        [base (compiler-reg-box-field-shared-view payload-box base)]
-        [args (compiler-reg-box-field-shared-view payload-box args)]
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          base)
-        (compiler-reg-color-invalidate-call-args! roots invalid args))]
-    [(CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-reg-box-field-shared-view payload-box base)]
-        [callee (compiler-reg-box-field-shared-view payload-box callee)]
-        [args (compiler-reg-box-field-shared-view payload-box args)]
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          base)
-        (compiler-reg-color-invalidate-value!
-          (compiler-reg-global-shared-view roots)
-          (compiler-reg-global-shared-view invalid)
-          callee)
-        (compiler-reg-color-invalidate-call-args! roots invalid args))]
-    [(TailCall _ args _)
       (compiler-reg-color-invalidate-call-args! roots invalid args)]
     [(Phi dst inputs _)
       (compiler-reg-color-invalidate-phi!
@@ -29298,20 +28863,11 @@
           (- 0 1))
         inputs)]
     ;; These read no operand that invalidates a colour.
-    [(Alloc _ _) unit]
-    [(AddrOf _ _) unit]
-    [(Load _ _ _) unit]
-    [(CopyBytes _ _ _) unit]
-    [(LaneId _ _ _) unit]
-    [(EntryArgc _) unit]
-    [(EntryArgv _) unit]
-    [(EntryEnvp _) unit]
-    [(Jump _) unit]
-    [(Pack _ _ _) unit]
-    [(Word _ _ _ _) unit]
-    [(TailCallIndirect _ _ _) unit]
-    [(Switch _ _ _ _) unit]
-    [(TotalEnumSwitch _ _ _ _ _) unit]
+    [(or (Alloc _ _) (AddrOf _ _) (Load _ _ _) (CopyBytes _ _ _) (LaneId _ _ _)
+         (EntryArgc _) (EntryArgv _) (EntryEnvp _) (Jump _) (Pack _ _ _)
+         (Word _ _ _ _) (TailCallIndirect _ _ _) (Switch _ _ _ _)
+         (TotalEnumSwitch _ _ _ _ _))
+      unit]
     [_
       (ir.compiler-ir-instr-visit-uses
         instr
@@ -30569,14 +30125,7 @@
 ;; them anyway, and naming them here keeps the reason local.
 (define (compiler-reg-color-scalar-step-op? [op : ir.CompilerIrBinOp]) : bool
   (match op
-    [(Add) true]
-    [(Sub) true]
-    [(Mul) true]
-    [(And) true]
-    [(Or) true]
-    [(BitAnd) true]
-    [(BitOr) true]
-    [(BitXor) true]
+    [(or (Add) (Sub) (Mul) (And) (Or) (BitAnd) (BitOr) (BitXor)) true]
     [_ false]))
 
 ;; Offer one BinOp operand as the induction-step witness. Both operands are
@@ -31794,8 +31343,7 @@
   (match (compiler-reg-assignment-lookup assignments var)
     [(Some location)
       (match location
-        [(Register _) true]
-        [(RegisterPair _ _) true]
+        [(or (Register _) (RegisterPair _ _)) true]
         [_ false])]
     [_ false]))
 
@@ -31814,8 +31362,7 @@
       [(I64) true]
       [_ false])
     (match op
-      [(Min) true]
-      [(Max) true]
+      [(or (Min) (Max)) true]
       [_ false])))
 
 (define (compiler-reg-copy-i64-array!
@@ -31969,9 +31516,7 @@
 ;; ordinary allocation of store-heavy loops.
 (define (compiler-reg-early-scratch-literal? [value : ir.CompilerIrValue]) : bool
   (match value
-    [(I64 _) true]
-    [(Bool _) true]
-    [(Char _) true]
+    [(or (I64 _) (Bool _) (Char _)) true]
     [_ false]))
 
 (define (compiler-reg-early-scratch-target? [instr : ir.CompilerIrInstr]) : bool
@@ -31980,8 +31525,7 @@
       (and
         (not (compiler-reg-float-type? ty))
         (match op
-          [(SafeDiv) true]
-          [(SafeMod) true]
+          [(or (SafeDiv) (SafeMod)) true]
           [_ false])
         (compiler-reg-early-scratch-literal? rhs))]
     [_ false]))
@@ -31992,8 +31536,7 @@
       (if (and
         (not (compiler-reg-float-type? ty))
         (match op
-          [(SafeDiv) true]
-          [(SafeMod) true]
+          [(or (SafeDiv) (SafeMod)) true]
           [_ false])
         (compiler-reg-early-scratch-literal? rhs))
         5
@@ -32602,15 +32145,7 @@
         (if (compiler-reg-scratch-var-spilled? assignments dst)
           1
           0))]
-    [(StorePtr address value _)
-      (+
-        (if (compiler-reg-scratch-value-spilled? assignments address)
-          1
-          0)
-        (if (compiler-reg-scratch-value-spilled? assignments value)
-          1
-          0))]
-    [(StoreOwned address value _)
+    [(or (StorePtr address value _) (StoreOwned address value _))
       (+
         (if (compiler-reg-scratch-value-spilled? assignments address)
           1
@@ -32876,14 +32411,10 @@
 (define (compiler-reg-call-region-control-flow-instr?
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(Jump _) true]
-    [(Branch _ _ _) true]
-    [(TotalEnumBranch _ _ _) true]
-    [(Return _) true]
-    [(Switch _ _ _ _) true]
-    [(TotalEnumSwitch _ _ _ _ _) true]
-    [(TailCall _ _ _) true]
-    [(TailCallIndirect _ _ _) true]
+    [(or (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _) (Return _)
+         (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _) (TailCall _ _ _)
+         (TailCallIndirect _ _ _))
+      true]
     [_ false]))
 
 ;; Exit stores for every active root whose region ends at `point` (emitted

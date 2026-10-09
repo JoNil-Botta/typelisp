@@ -71,12 +71,9 @@
             (+ offset (- align rem)))))]
     [(Bytes bytes) (+ offset (__tl_string_length bytes))]
     [(String text) (+ offset (+ (__tl_string_length text) 1))]
-    [(F64 _) (+ offset 8)]
-    [(F32 _) (+ offset 4)]
-    [(I64 _) (+ offset 8)]
+    [(or (F64 _) (I64 _) (SymbolAddress _)) (+ offset 8)]
     [(Zero count) (+ offset count)]
-    [(SymbolAddress _) (+ offset 8)]
-    [(SymbolRva32 _) (+ offset 4)]))
+    [(or (F32 _) (SymbolRva32 _)) (+ offset 4)]))
 
 (defstruct CompilerObjectDataRecordList
   (slots (__tl_dyn-array CompilerObjectDataRecord))
@@ -727,11 +724,7 @@
     [found : bool false]
     (while (and (not found) (< index count))
       (match (compiler-object-instr-list-ref instrs index)
-        [(Bytes value)
-          (if (compiler-object-string-contains? value bytes 0)
-            (set! found true)
-            (set! index (+ index 1)))]
-        [(Raw value)
+        [(or (Bytes value) (Raw value))
           (if (compiler-object-string-contains? value bytes 0)
             (set! found true)
             (set! index (+ index 1)))]

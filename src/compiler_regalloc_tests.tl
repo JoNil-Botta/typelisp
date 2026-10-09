@@ -8305,8 +8305,7 @@
   (match maybe-location
     [(Some location)
       (match location
-        [(Register _) true]
-        [(RegisterPair _ _) true]
+        [(or (Register _) (RegisterPair _ _)) true]
         [_ false])]
     [_ false]))
 
@@ -15020,27 +15019,9 @@
       (set!
         out
         (match (array-ref slots index)
-          [(Call _ _ _ _)
-            (live.compiler-live-set-union
-              out
-              (live.compiler-live-after (& liveness) label instr-index))]
-          [(CallCAbiStoreResult payload-box)
-            (live.compiler-live-set-union
-              out
-              (live.compiler-live-after (& liveness) label instr-index))]
-          [(CallIndirectCAbiStoreResult payload-box)
-            (live.compiler-live-set-union
-              out
-              (live.compiler-live-after (& liveness) label instr-index))]
-          [(SpmdCall payload-box)
-            (live.compiler-live-set-union
-              out
-              (live.compiler-live-after (& liveness) label instr-index))]
-          [(TailCall _ _ _)
-            (live.compiler-live-set-union
-              out
-              (live.compiler-live-after (& liveness) label instr-index))]
-          [(TailCallIndirect _ _ _)
+          [(or (Call _ _ _ _) (CallCAbiStoreResult _)
+               (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCall _ _ _)
+               (TailCallIndirect _ _ _))
             (live.compiler-live-set-union
               out
               (live.compiler-live-after (& liveness) label instr-index))]
@@ -15340,21 +15321,12 @@
 (define (compiler-reg-backend-win64-extra-clobber-instr?
   [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(Alloc _ _) false]
-    [(BoundsCheck _ _ _) false]
-    [(CpuId _ _ _ _) false]
-    [(Xgetbv _ _) false]
-    [(Syscall _ _) false]
-    [(Call _ _ _ _) false]
-    [(CallIndirect _ _ _ _) false]
-    [(CallIndirectC _ _ _ _) false]
-    [(CallCAbiStoreResult _) false]
-    [(CallIndirectCAbiStoreResult _) false]
-    [(SpmdCall _) false]
-    [(TailCall _ _ _) false]
-    [(TailCallIndirect _ _ _) false]
-    [(Jump _) false]
-    [(Phi _ _ _) false]
+    [(or (Alloc _ _) (BoundsCheck _ _ _) (CpuId _ _ _ _) (Xgetbv _ _)
+         (Syscall _ _) (Call _ _ _ _) (CallIndirect _ _ _ _)
+         (CallIndirectC _ _ _ _) (CallCAbiStoreResult _)
+         (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCall _ _ _)
+         (TailCallIndirect _ _ _) (Jump _) (Phi _ _ _))
+      false]
     [_ true]))
 
 (define (compiler-reg-backend-caller-clobber-instr-for-abi?
@@ -15497,8 +15469,8 @@
       (set!
         out
         (match (array-ref slots index)
-          [(Call _ _ _ _) (live.compiler-live-set-insert out p)]
-          [(SpmdCall payload-box) (live.compiler-live-set-insert out p)]
+          [(or (Call _ _ _ _) (SpmdCall _))
+            (live.compiler-live-set-insert out p)]
           [_ out]))
       (set! p (+ p 2))
       (set! index (+ index 1)))
@@ -15691,11 +15663,7 @@
   [type-segment-bases : i64]
   [ty : ast.AstType]) : bool
   (match ty
-    [(Struct name)
-      (and
-        (ir.compiler-ir-symbol-owned? name)
-        (compiler-reg-private-memory-name? (ir.compiler-ir-symbol-text name)))]
-    [(StructArgs name _)
+    [(or (Struct name) (StructArgs name _))
       (and
         (ir.compiler-ir-symbol-owned? name)
         (compiler-reg-private-memory-name? (ir.compiler-ir-symbol-text name)))]
@@ -15711,8 +15679,7 @@
   [ty : ast.AstType]
   [word-index : i64]) : bool
   (match (reg.compiler-reg-global-shared-view ty)
-    [(Ref _ _) false]
-    [(MutRef _ _) false]
+    [(or (Ref _ _) (MutRef _ _)) false]
     [(Region _ inner)
       (compiler-reg-type-register-group-word-sse?
         type-segment-bases

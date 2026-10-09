@@ -4616,10 +4616,10 @@ moving it. These are limited to:
   their explicit-lifetime forms.
 - Borrowed enum matches over `(& place)` / `(& lifetime place)`. The match
   inspects the active enum variant without moving the enum owner.
-- Borrowed tuple matches over `(& place)` / `(& lifetime place)`. Tuple
-  subpattern bindings follow the borrowed-pattern binding rule of section
-  5.13: a `Copy` slot is copied, and any other slot binds a shared reference
-  carrying the scrutinee lifetime.
+- Borrowed tuple and struct matches over `(& place)` / `(& lifetime place)`.
+  Tuple slot and struct field subpattern bindings follow the borrowed-pattern
+  binding rule of section 5.13: a `Copy` slot or field is copied, and any
+  other binds a shared reference carrying the scrutinee lifetime.
 - Calls and typed operations whose parameter or receiver is `(& lifetime T)`
   or `(&mut lifetime T)`. The ordinary call rules in section 3.10 insert an
   immutable auto-borrow or reborrow when the formal parameter is an immutable
@@ -5236,7 +5236,9 @@ explicit constructors.
   and `(geometry.Point x y)`. Fields are matched by declaration order,
   mirroring constructor calls. Field subpatterns are field bindings, `_`, and
   nested irrefutable struct patterns; refutable field subpatterns such as
-  literals or enum variants are rejected.
+  literals or enum variants are rejected. Matching a shared borrowed struct
+  `(& S)` binds its fields by the borrowed-pattern binding rule below and does
+  not move the owner.
 - Tuple scrutinees support the constructor-shaped `(tuple p1 ... pn)` pattern.
   Its arity must exactly match `(Tuple T1 ... Tn)`. Slot subpatterns are
   irrefutable bindings, `_`, or nested tuple, struct, and box patterns, and

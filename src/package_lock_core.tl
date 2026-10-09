@@ -225,11 +225,11 @@
         (Ok next)))))
 
 (define (package-lock-field-string-value
-  [ftail : reader.SpannedSexpr]
+  [ftail : (& program (Slice reader.SpannedSexpr))]
   [fname : String]) : ResultPackageLockString
-  (match (reader.sexpr-view ftail)
-    [(List (slice (Str val-id _))) (Ok (ci.intern-id-str val-id))]
-    [(List (slice (Str _ _) & _))
+  (match ftail
+    [(slice (Str val-id _)) (Ok (ci.intern-id-str val-id))]
+    [(slice (Str _ _) & _)
       (Err
         (str_cat.str-cat
           "package-lock: field `"
@@ -267,12 +267,13 @@
             (Ok (PackageLockPin pin-kind pin-value)))))]
     [_ (package-lock-pin-shape-error)]))
 
-(define (package-lock-field-pin-value [ftail : reader.SpannedSexpr]) : ResultPackageLockPin
-  (match (reader.sexpr-view ftail)
-    [(List (slice pin-form)) (package-lock-pin-form pin-form)]
+(define (package-lock-field-pin-value
+  [ftail : (& program (Slice reader.SpannedSexpr))]) : ResultPackageLockPin
+  (match ftail
+    [(slice pin-form) (package-lock-pin-form pin-form)]
     [_ (Err "package-lock: field `pin` takes one value")]))
 
-(define (package-lock-entry-fields-items
+(define (package-lock-entry-fields
   [fields : (& program (Slice reader.SpannedSexpr))]
   [alias : String]
   [has-alias : bool]
@@ -306,92 +307,90 @@
         [else (Ok (PackageLockEntry alias url pin-kind pin-value commit))])]
     [(slice field & rest)
       (match (reader.sexpr-view field)
-        [(List (slice (Sym fname _) & _))
-          (let
-            [ftail (reader.spanned-sexpr-drop field 1)]
-            (cond
-              [(string.eq (package-lock-symbol-text fname) "alias")
-                (if has-alias
-                  (Err "package-lock: duplicate dependency field `alias`")
-                  (let
-                    [value
-                      (try
-                        (package-lock-field-string-value
-                          ftail
-                          (package-lock-symbol-text fname)))]
-                    (package-lock-entry-fields-items
-                      rest
-                      value
-                      true
-                      url
-                      has-url
-                      pin-kind
-                      pin-value
-                      has-pin
-                      commit
-                      has-commit)))]
-              [(string.eq (package-lock-symbol-text fname) "url")
-                (if has-url
-                  (Err "package-lock: duplicate dependency field `url`")
-                  (let
-                    [value
-                      (try
-                        (package-lock-field-string-value
-                          ftail
-                          (package-lock-symbol-text fname)))]
-                    (package-lock-entry-fields-items
-                      rest
-                      alias
-                      has-alias
-                      value
-                      true
-                      pin-kind
-                      pin-value
-                      has-pin
-                      commit
-                      has-commit)))]
-              [(string.eq (package-lock-symbol-text fname) "pin")
-                (if has-pin
-                  (Err "package-lock: duplicate dependency field `pin`")
-                  (let
-                    [pin (try (package-lock-field-pin-value ftail))]
-                    (package-lock-entry-fields-items
-                      rest
-                      alias
-                      has-alias
-                      url
-                      has-url
-                      pin.kind
-                      pin.value
-                      true
-                      commit
-                      has-commit)))]
-              [(string.eq (package-lock-symbol-text fname) "commit")
-                (if has-commit
-                  (Err "package-lock: duplicate dependency field `commit`")
-                  (let
-                    [value
-                      (try
-                        (package-lock-field-string-value
-                          ftail
-                          (package-lock-symbol-text fname)))]
-                    (package-lock-entry-fields-items
-                      rest
-                      alias
-                      has-alias
-                      url
-                      has-url
-                      pin-kind
-                      pin-value
-                      has-pin
-                      value
-                      true)))]
-              [else
-                (Err
-                  (str_cat.str-cat
-                    "package-lock: unknown dependency field `"
-                    (package-lock-symbol-text fname)
-                    "`"))]))]
+        [(List (slice (Sym fname _) & ftail))
+          (cond
+            [(string.eq (package-lock-symbol-text fname) "alias")
+              (if has-alias
+                (Err "package-lock: duplicate dependency field `alias`")
+                (let
+                  [value
+                    (try
+                      (package-lock-field-string-value
+                        ftail
+                        (package-lock-symbol-text fname)))]
+                  (package-lock-entry-fields
+                    rest
+                    value
+                    true
+                    url
+                    has-url
+                    pin-kind
+                    pin-value
+                    has-pin
+                    commit
+                    has-commit)))]
+            [(string.eq (package-lock-symbol-text fname) "url")
+              (if has-url
+                (Err "package-lock: duplicate dependency field `url`")
+                (let
+                  [value
+                    (try
+                      (package-lock-field-string-value
+                        ftail
+                        (package-lock-symbol-text fname)))]
+                  (package-lock-entry-fields
+                    rest
+                    alias
+                    has-alias
+                    value
+                    true
+                    pin-kind
+                    pin-value
+                    has-pin
+                    commit
+                    has-commit)))]
+            [(string.eq (package-lock-symbol-text fname) "pin")
+              (if has-pin
+                (Err "package-lock: duplicate dependency field `pin`")
+                (let
+                  [pin (try (package-lock-field-pin-value ftail))]
+                  (package-lock-entry-fields
+                    rest
+                    alias
+                    has-alias
+                    url
+                    has-url
+                    pin.kind
+                    pin.value
+                    true
+                    commit
+                    has-commit)))]
+            [(string.eq (package-lock-symbol-text fname) "commit")
+              (if has-commit
+                (Err "package-lock: duplicate dependency field `commit`")
+                (let
+                  [value
+                    (try
+                      (package-lock-field-string-value
+                        ftail
+                        (package-lock-symbol-text fname)))]
+                  (package-lock-entry-fields
+                    rest
+                    alias
+                    has-alias
+                    url
+                    has-url
+                    pin-kind
+                    pin-value
+                    has-pin
+                    value
+                    true)))]
+            [else
+              (Err
+                (str_cat.str-cat
+                  "package-lock: unknown dependency field `"
+                  (package-lock-symbol-text fname)
+                  "`"))])]
         [(List (slice _ & _))
           (Err "package-lock: dependency fields must start with a field name")]
         [_ (Err "package-lock: dependency fields must be lists")])]))
@@ -408,7 +407,7 @@
       (match (reader.sexpr-view head)
         [(Sym name)
           (if (string.eq (package-lock-symbol-text name) "dependency")
-            (package-lock-entry-fields-items
+            (package-lock-entry-fields
               rest
               ""
               false
@@ -426,13 +425,6 @@
     [_ (Err "package-lock: dependency entries must be lists")]))
 
 (define (package-lock-dependencies-entries
-  [entries : reader.SpannedSexpr]
-  [acc : package_lock_entry_vec.Vec]) : ResultPackageLockEntryList
-  (match (reader.sexpr-view entries)
-    [(List items) (package-lock-dependencies-entries-items items acc)]
-    [_ (Err "package-lock: `dependencies` must contain dependency lists")]))
-
-(define (package-lock-dependencies-entries-items
   [entries : (& program (Slice reader.SpannedSexpr))]
   [acc : package_lock_entry_vec.Vec]) : ResultPackageLockEntryList
   (match entries
@@ -441,9 +433,9 @@
       (let
         [parsed (try (package-lock-entry-from-form entry))]
         [next (try (package-lock-entry-list-insert acc parsed))]
-        (package-lock-dependencies-entries-items rest next))]))
+        (package-lock-dependencies-entries rest next))]))
 
-(define (package-lock-fields-items
+(define (package-lock-fields
   [fields : (& program (Slice reader.SpannedSexpr))]
   [version : String]
   [has-version : bool]
@@ -462,39 +454,32 @@
         [else (Ok (PackageLockFile version entries))])]
     [(slice field & rest)
       (match (reader.sexpr-view field)
-        [(List (slice (Sym fname _) & _))
-          (let
-            [ftail (reader.spanned-sexpr-drop field 1)]
-            (if (string.eq (package-lock-symbol-text fname) "version")
-              (if has-version
-                (Err "package-lock: duplicate field `version`")
+        [(List (slice (Sym fname _) & ftail))
+          (if (string.eq (package-lock-symbol-text fname) "version")
+            (if has-version
+              (Err "package-lock: duplicate field `version`")
+              (let
+                [value
+                  (try
+                    (package-lock-field-string-value
+                      ftail
+                      (package-lock-symbol-text fname)))]
+                (package-lock-fields rest value true entries has-deps)))
+            (if (string.eq (package-lock-symbol-text fname) "dependencies")
+              (if has-deps
+                (Err "package-lock: duplicate field `dependencies`")
                 (let
-                  [value
+                  [parsed
                     (try
-                      (package-lock-field-string-value
+                      (package-lock-dependencies-entries
                         ftail
-                        (package-lock-symbol-text fname)))]
-                  (package-lock-fields-items rest value true entries has-deps)))
-              (if (string.eq (package-lock-symbol-text fname) "dependencies")
-                (if has-deps
-                  (Err "package-lock: duplicate field `dependencies`")
-                  (let
-                    [parsed
-                      (try
-                        (package-lock-dependencies-entries
-                          ftail
-                          (package_lock_entry_vec.new)))]
-                    (package-lock-fields-items
-                      rest
-                      version
-                      has-version
-                      parsed
-                      true)))
-                (Err
-                  (str_cat.str-cat
-                    "package-lock: unknown field `"
-                    (package-lock-symbol-text fname)
-                    "`")))))]
+                        (package_lock_entry_vec.new)))]
+                  (package-lock-fields rest version has-version parsed true)))
+              (Err
+                (str_cat.str-cat
+                  "package-lock: unknown field `"
+                  (package-lock-symbol-text fname)
+                  "`"))))]
         [(List (slice _ & _))
           (Err "package-lock: fields must start with a field name")]
         [_ (Err "package-lock: fields must be lists")])]))
@@ -511,7 +496,7 @@
       (match (reader.sexpr-view head)
         [(Sym name)
           (if (string.eq (package-lock-symbol-text name) "typelisp-lock")
-            (package-lock-fields-items
+            (package-lock-fields
               rest
               ""
               false

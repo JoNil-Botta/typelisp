@@ -14686,11 +14686,11 @@
 ;; aggregates prove nothing. Lifetime arguments do not change layout.
 (define (lower-representation-nominal-name [ty : ast.AstType]) : i64
   (match ty
+    ;; An enum payload names its type unresolved. A cached layout under the
+    ;; name makes it nominal; a type parameter has none and stays unstable.
     [(or (Struct name) (StructArgs name _) (Enum name) (EnumArgs name _)
          (Var name) (VarArgs name _))
       name]
-    ;; An enum payload names its type unresolved. A cached layout under the
-    ;; name makes it nominal; a type parameter has none and stays unstable.
     [_ -1]))
 
 (define (lower-representation-stable-type-mask
@@ -17175,12 +17175,12 @@
   [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-strip-region
     (tc_core.tc-canonicalize-inferred-type ctx (tc_core.tc-resolve-type ctx ty)))
-    [(or (I64) (U64) (F64) (I32) (U32) (F32) (I16) (U16) (I8) (U8) (Bool) (Char)
-         (Ptr _) (MutPtr _) (Str) (Bytes))
-      true]
     ;; Borrowing a raw-pointer value borrows the one-word pointer slot; it does
     ;; not dereference the raw pointer's target. Pointer formatting relies on
     ;; this shape before its separately unsafe ptr->int conversion.
+    [(or (I64) (U64) (F64) (I32) (U32) (F32) (I16) (U16) (I8) (U8) (Bool) (Char)
+         (Ptr _) (MutPtr _) (Str) (Bytes))
+      true]
     [(Tuple elems)
       (lower-supported-reference-type-list-with-stack?
         ctx
@@ -17190,6 +17190,13 @@
     ;; one element is a lowerable value: reference-bearing elements (shared
     ;; `str`/scalar views, lifetime-parameterized records) keep the layout they
     ;; have as struct fields (#8111). A dynamic array stays reference-free.
+    ;; Borrowing a Box value takes the address of its one-word owning handle.
+    ;; The pointee remains behind the Box and is lowered separately when the
+    ;; resulting reference is dereferenced.
+    ;; A Slice is supported only when it is the immediate referent of a
+    ;; borrowed reference; bare Slice remains unsized and has no by-value
+    ;; borrow layout.  Its elements follow the fixed-array rule above: a Slice
+    ;; views an array's inline elements.
     [(or (Array elem-ty _) (Box elem-ty) (Slice elem-ty))
       (lower-supported-reference-type-with-stack?
         ctx
@@ -17199,13 +17206,6 @@
       (not
         (tc_core.tc-type-contains-reference?
           (tc_core.tc-context-type-get ctx elem-ty)))]
-    ;; Borrowing a Box value takes the address of its one-word owning handle.
-    ;; The pointee remains behind the Box and is lowered separately when the
-    ;; resulting reference is dereferenced.
-    ;; A Slice is supported only when it is the immediate referent of a
-    ;; borrowed reference; bare Slice remains unsized and has no by-value
-    ;; borrow layout.  Its elements follow the fixed-array rule above: a Slice
-    ;; views an array's inline elements.
     [(Struct name)
       (lower-supported-reference-struct-args-with-stack?
         ctx
@@ -30165,6 +30165,7 @@
             (match lowered
               [(Expr box-state box-value _)
                 (Ok (Expr box-state box-value result-ty))]))]
+        ;; The raw pointer is the address of its pointee.
         [(or (MutRef _ _) (MutPtr _))
           (let
             [lowered : LowerExpr
@@ -30172,7 +30173,6 @@
             (match lowered
               [(Expr receiver-state receiver-value _)
                 (Ok (Expr receiver-state receiver-value result-ty))]))]
-        ;; The raw pointer is the address of its pointee.
         [(Ref _ _)
           (if allow-shared
             (let
@@ -62449,12 +62449,12 @@
   [scrut-ty : ast.AstType]
   [pattern : ast.AstPattern]) : ResultLowerEnv
   (match pattern
+    ;; A typed binding; the typechecker already matched its annotation (#8581).
     [(or (Binding name) (Var name _))
       (Ok
         state
         (sym_i64_env.sym-i64-bind-id env name scrut-var)
         (tc_core.tc-bind-id type-env name scrut-ty))]
-    ;; A typed binding; the typechecker already matched its annotation (#8581).
     [(Tuple patterns-box)
       (match (tc_core.tc-type-strip-region
         (tc_core.tc-resolve-type ctx (lower-global-shared-view scrut-ty)))
@@ -67451,14 +67451,14 @@
     [(or (Struct _) (StructArgs _ _) (Enum _) (EnumArgs _ _) (Tuple _)
          (Array _ _))
       true]
-    [(or (Region _ inner) (Ref _ inner) (MutRef _ inner))
-      (lower-type-contains-inline-aggregate?
-        ctx
-        (tc_core.tc-context-type-get ctx inner))]
     ;; A reference can point INTO the current frame (memory-aggregate
     ;; locals live in frame slots), so a ref arg whose referent is or
     ;; contains an inline aggregate makes a tail call unsafe -- the callee
     ;; would read through a pointer into the reused/abandoned frame.
+    [(or (Region _ inner) (Ref _ inner) (MutRef _ inner))
+      (lower-type-contains-inline-aggregate?
+        ctx
+        (tc_core.tc-context-type-get ctx inner))]
     [_ false]))
 
 (define (lower-param-list-contains-unsupported-reference?

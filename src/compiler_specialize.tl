@@ -1135,6 +1135,21 @@
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (spec-template-env-shadow-pattern-list templates patterns))]
+    [(Or patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-template-env-shadow-pattern-list templates patterns))]
+    [(Fields patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-template-env-shadow-pattern-list templates patterns))]
+    [(Field _ patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-template-env-shadow-pattern-list templates patterns))]
     [(Wildcard) (spec-template-env-shared-view templates)]
     [(Binding name) (spec-template-env-shadow-name templates name)]
     [(Variant _ patterns-box)
@@ -4163,6 +4178,21 @@
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (spec-subst-remove-pattern-list subs patterns))]
     [(Slice patterns-box _)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-subst-remove-pattern-list subs patterns))]
+    [(Or patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-subst-remove-pattern-list subs patterns))]
+    [(Fields patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (spec-subst-remove-pattern-list subs patterns))]
+    [(Field _ patterns-box)
       (let
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]

@@ -148,7 +148,17 @@
         (surface-ast-write-pattern-list! out context (deref items))]
       [(Literal literal)
         (codec.surface-ast-write-i64! out 5)
-        (codec.surface-ast-write-literal! out context literal)])))
+        (codec.surface-ast-write-literal! out context literal)]
+      [(Or items)
+        (codec.surface-ast-write-i64! out 8)
+        (surface-ast-write-pattern-list! out context (deref items))]
+      [(Fields items)
+        (codec.surface-ast-write-i64! out 9)
+        (surface-ast-write-pattern-list! out context (deref items))]
+      [(Field name items)
+        (codec.surface-ast-write-i64! out 10)
+        (codec.surface-ast-write-name! out context name)
+        (surface-ast-write-pattern-list! out context (deref items))])))
 
 (define (surface-ast-read-pattern-list!
   [reader : (&mut reader codec.SurfaceAstReader)]) : ast.AstPatternList
@@ -184,6 +194,12 @@
         (let
           [has-rest : bool (codec.surface-ast-read-bool! reader)]
           (Slice (box (surface-ast-read-pattern-list! reader)) has-rest))]
+      [(= tag 8) (Or (box (surface-ast-read-pattern-list! reader)))]
+      [(= tag 9) (Fields (box (surface-ast-read-pattern-list! reader)))]
+      [(= tag 10)
+        (Field
+          (codec.surface-ast-read-name! reader)
+          (box (surface-ast-read-pattern-list! reader)))]
       [else
         (codec.surface-ast-reader-fail!
           reader

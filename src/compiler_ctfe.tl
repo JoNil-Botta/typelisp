@@ -10582,7 +10582,32 @@
     [(Tuple _) (No)]
     [(Array _) (No)]
     ;; Comptime values have no Slice representation.
-    [(Slice _ _) (No)]))
+    [(Slice _ _) (No)]
+    [(Or alternatives-box)
+      (ctfe-match-or-pattern (deref alternatives-box) 0 value value-ty env)]
+    ;; Comptime values have no struct form, so struct patterns never match.
+    [(Fields _) (No)]
+    [(Field _ _) (No)]))
+
+;; An or-pattern matches with the first alternative that does.
+(define (ctfe-match-or-pattern
+  [alternatives : ast.AstPatternList]
+  [index : i64]
+  [value : CompilerCtfeValue]
+  [value-ty : ast.AstType]
+  [env : CtfeEnv]) : CtfePatternMatch
+  (if (>= index alternatives.len)
+    (No)
+    (match (ctfe-match-pattern
+      (ast.ast-pattern-list-get
+        (& alternatives)
+        index
+        (ast.ast-pattern-fallback))
+      (ctfe-value-owned-copy (& value))
+      (clone value-ty)
+      env)
+      [(Matched matched-env) (Matched matched-env)]
+      [(No) (ctfe-match-or-pattern alternatives (+ index 1) value value-ty env)])))
 
 (define (ctfe-eval-match-arms
   [value : CompilerCtfeValue]
@@ -11831,7 +11856,21 @@
         (ast.ast-pat-variant-id
           (ctfe-quote-name-id env name)
           (ctfe-quote-pattern-list args env)))]
-    [(Literal lit) (Literal lit)]))
+    [(Literal lit) (Literal lit)]
+    [(Or patterns-box)
+      (let
+        [patterns : ast.AstPatternList (deref patterns-box)]
+        (ast.ast-pat-or (ctfe-quote-pattern-list patterns env)))]
+    [(Fields patterns-box)
+      (let
+        [patterns : ast.AstPatternList (deref patterns-box)]
+        (ast.ast-pat-fields (ctfe-quote-pattern-list patterns env)))]
+    ;; The field name names a struct field, not a binder, so only the entry's
+    ;; pattern is quoted.
+    [(Field name patterns-box)
+      (let
+        [patterns : ast.AstPatternList (deref patterns-box)]
+        (Field name (box (ctfe-quote-pattern-list patterns env))))]))
 
 (define (ctfe-quote-let-binding-list
   [bindings : ast.AstLetBindingList]
@@ -13347,7 +13386,30 @@
       (match b
         [(Literal b-lit)
           (ctfe-literal-eq (ctfe-env-structural-session (& env)) a-lit b-lit)]
-        [_ false])]))
+        [_ false])]
+    [(ast.AstPattern.Or a-items-box)
+      (let
+        [a-items : ast.AstPatternList (deref a-items-box)]
+        (match b
+          [(ast.AstPattern.Or b-items-box)
+            (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box))]
+          [_ false]))]
+    [(ast.AstPattern.Fields a-items-box)
+      (let
+        [a-items : ast.AstPatternList (deref a-items-box)]
+        (match b
+          [(ast.AstPattern.Fields b-items-box)
+            (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box))]
+          [_ false]))]
+    [(ast.AstPattern.Field a-name a-items-box)
+      (let
+        [a-items : ast.AstPatternList (deref a-items-box)]
+        (match b
+          [(ast.AstPattern.Field b-name b-items-box)
+            (and
+              (= a-name b-name)
+              (ctfe-pattern-list-eq-in-env env a-items (deref b-items-box)))]
+          [_ false]))]))
 
 (define (ctfe-pattern-list-eq-in-env
   [env : CtfeEnv]

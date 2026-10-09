@@ -778,6 +778,7 @@ lsp_position_edit_smoke|linux|-|src/tests/lsp_position_edit_smoke.tl|42|-|-|lsp_
 function_lifetime_elision|all|-|tests/integration/function_lifetime_elision.tl|42|-|-|stdlib/io.tl|-
 consume_parameters|all|-|tests/integration/consume_parameters.tl|0|-|-|consume/parameters/helper.tl stdlib/string.tl|-
 comptime_module_value_reflection|all|-|tests/integration/comptime_module_value_reflection.tl|42|-|-|reflection/signature/provider.tl stdlib/comptime.tl|-
+comptime_init_callee|all|-|tests/integration/comptime_init_callee.tl|42|-|-|init_callee/probe.tl init_callee/provider.tl stdlib/comptime.tl stdlib/iterator.tl stdlib/string.tl|-
 comptime_type_expr_worklist|all|-|tests/integration/comptime_type_expr_worklist.tl|42|-|-|stdlib/comptime.tl|-
 comptime_lambda_reflected_closure|all|-|tests/integration/comptime_lambda_reflected_closure.tl|42|-|-|stdlib/comptime.tl stdlib/string.tl|-
 str_cat_scoped_region|all|-|tests/integration/str_cat_scoped_region.tl|42|-|-|-|-
@@ -809,6 +810,7 @@ range_loop_shapes|all|-|tests/integration/range_loop_shapes.tl|42|80 76 77 77 76
 range_loop_shapes_protocol_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 1|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:35:69: array index out of bounds: index=16 length=16\n
 range_loop_shapes_fields_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 2|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:55:46: array index out of bounds: index=16 length=16\n
 range_loop_shapes_advance_first_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 3|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:116:48: array index out of bounds: index=16 length=16\n
+latch_sink_for_loops|all|0,2|tests/integration/latch_sink_for_loops.tl|42|-|-|stdlib/iterator.tl|-
 specialize_resource_scope|all|-|tests/integration/specialize_resource_scope.tl|42|-|-|-|-
 specialize_substitution_forms|all|-|tests/integration/specialize_substitution_forms.tl|42|-|-|stdlib/vector.tl|-
 float_comparisons_embedded|all|-|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|-

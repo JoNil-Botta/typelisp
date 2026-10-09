@@ -36,7 +36,7 @@ src/compiler_backend.tl	compiler-backend-windows-driver-runtime-ok?	test	test-on
 src/compiler_backend_object_target_linux.tl	compiler-backend-object-target-linux-image	leaf	object-format	target-linux	1	The Linux leaf owns ELF entry and image policy.
 src/compiler_backend_object_target_tests.tl	*	test	test-only	target-linux|target-windows	4	Object-target tests name the targets they exercise.
 src/compiler_backend_object_target_windows.tl	compiler-backend-object-target-windows-image	leaf	object-format	target-windows	1	The Windows leaf owns COFF entry, unwind, and manifest policy.
-src/compiler_backend_tests.tl	*	test	test-only	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|compiler-backend-target-windows[?]|linux-x86_64|target-linux|target-windows|windows-x86_64	390	Backend tests name the targets they exercise.
+src/compiler_backend_tests.tl	*	test	test-only	CompilerBackendTarget[.]Linux|CompilerBackendTarget[.]Windows|compiler-backend-target-windows[?]|linux-x86_64|target-linux|target-windows|windows-x86_64	396	Backend tests name the targets they exercise.
 src/compiler_lower.tl	enum:CompilerLowerMode	lower	backend-mode	CompilerLowerMode[.](Linux|Windows)(Scalar|Avx2|Avx512)	6	Target-aware lower modes preserve host ABI while selecting scalar or SIMD lowering.
 src/compiler_lower.tl	lower-c-abi-aggregate-class-from-layout	lower	abi	lower-mode-(linux|windows)-c-abi[?]	3	System V and Win64 C aggregate layout classes intentionally differ.
 src/compiler_lower.tl	lower-c-abi-aggregate-size-message	lower	abi	lower-mode-windows-c-abi[?]	1	Win64 aggregate diagnostics describe the target-specific supported slice.

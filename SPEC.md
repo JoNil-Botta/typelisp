@@ -1057,6 +1057,22 @@ calls. They can inspect binding-clause captures with
 `expr-binding-clause-list-length`, and `expr-binding-clause-list-nth`.
 `expr-binding-clause-list->expr-list` converts a binding-clause list back
 into bracket-clause operand syntax for explicit splicing into macro calls.
+`(expr-binding-clause-init-callee clause)` returns the canonical identity of
+the module-level function that the clause's initializer calls directly, as a
+`String` `module/name`: `"stdlib.iterator/range"` for
+`[i (iterator.range 0 n)]`. `module` is the canonical path of the module that
+declares the function and `name` its declared name, whichever import alias or
+full module path the call is spelled with. The compiler resolves the call head
+where the macro is called, as it resolves that call when checking it, and does
+not evaluate the initializer. The result is `""` when the initializer is not a
+call, or when its head is not a `define`d function of a named module or the
+compiler cannot be sure which declaration it names. That covers a local
+binding of the head's name, which shadows declarations (a parameter, a `let`
+binding, or a local whose field a dotted head names), a call through a function
+value, a macro, a struct constructor or enum variant, an extern or dispatch
+function, a function of the root program module, a hygiene-renamed name from
+another macro's expansion, and a slash-qualified spelling. A non-empty result
+therefore names the function the call runs; `""` means unknown.
 Cons-list helpers such as `expr-list-head` and `expr-list-tail` are not part
 of the public macro ABI.
 
@@ -3642,15 +3658,19 @@ uncompressed byte length and a newline, followed by the token stream.
 - A `path` ending in `.tl` is a TypeLisp source. Before compression, each
   top-level inline test is replaced by the line breaks it contained: every
   `(test ...)` form, and every `(cfg test BODY)` form with exactly one body.
-  Every other byte is kept, so each remaining form keeps its line and column.
-  Strings, character literals and comments follow the lexer's rules, and a
-  source the lexer would reject, or whose brackets do not balance, is
-  compressed unchanged.
+  Each prose comment outside those forms keeps only its first `;`, so every
+  line still reads as a comment, a doc comment or code. Doc comments (`;:` and
+  `;#`) and `name:` directive comments such as `lint-allow:` are kept whole,
+  and so is every comment inside a kept `(cfg test ...)` form. Every other
+  byte is kept, so each remaining form keeps its line and column. Strings,
+  character literals and comments follow the lexer's rules, and a source the
+  lexer would reject, or whose brackets do not balance, is compressed
+  unchanged.
 
 This form exists for compiler-owned payload tables: the compiler embeds its
 stdlib source table through it. The embedded stdlib therefore carries no
 inline tests; those compile only under `--cfg test` from the repository
-sources (#8713). The stdlib comptime image is embedded with `include-bin`
+sources (#8713). It carries no prose comment text either (#8659). The stdlib comptime image is embedded with `include-bin`
 instead, as a compiler-owned TLCH envelope that carries the image's LZSS token
 stream in canonical Huffman form and is expanded back to the exact `.tlci`
 bytes on demand.
@@ -7994,7 +8014,11 @@ full reset or arena destroy. `tl_region_mark`, `tl_arena_current`,
 read or update backend runtime state. Current-arena state is thread-local:
 Linux uses local-exec TLS, with the FS base installed by the freestanding
 entry before global initializers run; Windows x64 uses the TEB
-arbitrary-user slot (`GS:0x28`). Raw thread spawn initializes a fresh zero
+arbitrary-user slot (`GS:0x28`). Under the Linux shared-object code model
+(`docs/compiler-architecture.md`, #8257), the same accesses are initial-exec:
+each loads the variable's GOT offset and the DSO carries `DF_STATIC_TLS`.
+There is no entry, and `tl_shared_object_init` runs the global initializers.
+Raw thread spawn initializes a fresh zero
 current-arena slot before user code runs, so a worker's first allocation
 creates an independent default arena chain. The slot always contains that
 chain's stable root; allocator and mark/reset internals reach the changing
@@ -8007,7 +8031,8 @@ the current arena, or zero before the first allocation, as `i64`;
 `unsafe` context and a zero or stable-root value. It does not perform the
 physical-segment canonicalization provided by `tl_arena_set`. Both lower
 directly to the platform TLS access used by the backend helpers
-(`%fs:tl_current_arena@tpoff` on Linux, `GS:0x28` on Windows), emit no calls,
+(`%fs:tl_current_arena@tpoff` on Linux, through `@gottpoff` under the
+shared-object code model, and `GS:0x28` on Windows), emit no calls,
 and require no imports, so they are valid in `stdlib.runtime` before ordinary
 allocation is available. They name only the current-arena slot; arbitrary TLS
 slots are out of scope pending a separate

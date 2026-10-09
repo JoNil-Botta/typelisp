@@ -15777,10 +15777,17 @@
         [found : bool false]
         ;; Read the shared store once: this membership path is substantially
         ;; hotter than materializing `rest` snapshots one node at a time.
+        [name-len : i64 (string.string-length name)]
+        ;; Most entries differ in length; compare those without a call.
         (while (and (not found) (> remaining 0))
-          (if (string.eq
-            (& (__tl-project-field (array-ref nodes index) value))
-            name)
+          (if (and
+            (=
+              (string.string-length
+                (& (__tl-project-field (array-ref nodes index) value)))
+              name-len)
+            (string.eq
+              (& (__tl-project-field (array-ref nodes index) value))
+              name))
             (set! found true)
             unit)
           (set! index (__tl-project-field (array-ref nodes index) parent))
@@ -31142,13 +31149,25 @@
   ;; by value (it needs owned `Box` storage to walk an `AstDecl.Unsafe` chain),
   ;; but it now reads the backing slot directly instead of a stepped-out copy,
   ;; so the 104 B row copy and the 144 B step result are gone.
+  ;; The summary index is working storage for this loop only (#8412). It is
+  ;; built in its own arena and destroyed when the loop ends: lookups read row
+  ;; copies whose payloads stay owned by the source pools, and every binding,
+  ;; lazy-import stub and message is made in the enclosing arena.
   (let
     [cur-env : TcTypeEnv env]
     [cur-module-id : i64 module-id]
     [message : String ""]
     [ok : bool true]
+    [enclosing-arena : i64 (arena.tl_arena_current)]
+    [index-arena : i64 (arena.tl_arena_make)]
+    [_switch-to-index : unit
+      (unsafe
+        (arena.tl_arena_set index-arena))]
     [summary-index : TcImportAliasSummaryIndex
       (tc-import-alias-summary-index-build (tc-global-shared-view all-decls))]
+    [_restore-enclosing : unit
+      (unsafe
+        (arena.tl_arena_set enclosing-arena))]
     [seen-aliases : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 512)]
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
@@ -31228,6 +31247,8 @@
                   unit))))]
         [_ unit])
       (set! index (+ index 1)))
+    (unsafe
+      (arena.tl_arena_destroy index-arena))
     (if (string.eq message "")
       (Ok cur-env)
       (Err message))))
@@ -40436,9 +40457,6 @@
   [name-id : i64]) : bool
   (let
     [helper-id : i64 (ctfe_support.ctfe-comptime-helper-call-name-id name-id)]
-    [helper-name : String
-      (ctfe_support.ctfe-comptime-helper-lookup-name
-        (tc-global-shared-view name))]
     (and
       (ctfe_support.ctfe-builtin-reflection-id? helper-id)
       ;; Macro transformer checking installs the bare helper ID in its private
@@ -40449,8 +40467,14 @@
         (not (tc-source-value-bound-id? ctx env name-id))
         ;; A real stdlib.comptime wrapper is source-bound, but its qualified
         ;; spelling still denotes the compile-time primitive. Preserve local
-        ;; bare shadowing and unrelated `other.type-expr` functions.
-        (not (string.eq helper-name name))))))
+        ;; bare shadowing and unrelated `other.type-expr` functions. The
+        ;; spelling is only needed here, so it is computed here: every call
+        ;; expression passes through this test, and the lookup copies the name.
+        (not
+          (string.eq
+            (ctfe_support.ctfe-comptime-helper-lookup-name
+              (tc-global-shared-view name))
+            name))))))
 
 ;; The clone-able type set is a whole-program fixpoint (O(types*fields) plus a
 ;; type-name map build). It is invariant across a compile, but `tc-clone-able-
@@ -90224,6 +90248,8 @@
     TcMacroWalkStateData)
   (tc-state-cell-ptr (tc-macro-walk-state-address state) TcMacroWalkStateData))
 
+;; Whole-struct snapshot and write-back, for tests that inspect or seed the
+;; walk state. Compiler paths read and set single fields in place instead.
 (define (tc-macro-walk-state-data [state : TcMacroState]) : TcMacroWalkStateData
   (tc-state-cell-read (tc-macro-walk-state-address state) TcMacroWalkStateData))
 
@@ -90236,9 +90262,8 @@
     data))
 
 (defmacro (tc-macro-walk-field [state : Expr] [field : Expr]) : Expr
-  `(let
-    [data : TcMacroWalkStateData (tc-macro-walk-state-data ,state)]
-    (tc-global-shared-view (__tl-project-field data ,field))))
+  `(unsafe
+    (__tl-project-field (deref (tc-macro-walk-state-ptr ,state)) ,field)))
 
 (define tc-dependency-tlci-catalog-hits : i64
   0)
@@ -90335,11 +90360,15 @@
           (tc-dependency-tlci-route-counter-value state counter))
         (set! counter (+ counter 1))))))
 
+;; Field reads and writes go through the cell pointer. The walk state is a
+;; struct of several hundred bytes, and copying it whole to read or set one
+;; field was a measurable share of every macro call.
 (defmacro (tc-macro-walk-set! [state : Expr] [field : Expr] [value : Expr]) : Expr
-  `(let
-    [data : TcMacroWalkStateData (tc-macro-walk-state-data ,state)]
-    (__tl-project-set-field data ,field ,value)
-    (tc-macro-walk-state-data-set! ,state data)))
+  `(unsafe
+    (__tl-project-set-field
+      (deref (tc-macro-walk-state-ptr ,state))
+      ,field
+      ,value)))
 
 (define (tc-macro-ctfe-state [state : TcMacroState]) : ctfe_support.CompilerCtfeMacroState
   (tc-macro-walk-field state ctfe-macro-state))
@@ -99215,38 +99244,51 @@
             base-id)))]))
 
 ;; The comptime reflection helpers a macro body may name, in every spelling the
-;; body can reach them by. One walk tests all of them: the walker's shadowing is
-;; per name (every binder is recorded, whatever it binds), so "some spelling
-;; occurs free" is exactly the disjunction of the per-spelling walks this made
-;; one at a time.
+;; body can reach them by. A transformer naming one has its operands captured
+;; with their produced types and binding-clause callees. One walk tests all of
+;; them: the walker's shadowing is per name (every binder is recorded, whatever
+;; it binds), so "some spelling occurs free" is exactly the disjunction of the
+;; per-spelling walks this made one at a time. The spellings are distinct, so
+;; the list is consed without `tc-string-list-add`'s membership scan. The newer
+;; `expr-binding-clause-init-callee` lists only spellings a body can still
+;; reach; source names with `/` are rejected.
 (define (macro-expr-type-helper-names) : TcStringList
   (let
     [names : TcStringList Nil]
-    (set! names (tc-string-list-add names "expr-type"))
-    (set! names (tc-string-list-add names "comptime.expr-type"))
-    (set! names (tc-string-list-add names "comptime/expr-type"))
-    (set! names (tc-string-list-add names "stdlib.comptime.expr-type"))
-    (set! names (tc-string-list-add names "stdlib.comptime/expr-type"))
-    (set! names (tc-string-list-add names "stdlib/comptime.expr-type"))
-    (set! names (tc-string-list-add names "stdlib/comptime/expr-type"))
-    (set! names (tc-string-list-add names "expr-string?"))
-    (set! names (tc-string-list-add names "comptime.expr-string?"))
-    (set! names (tc-string-list-add names "comptime/expr-string?"))
-    (set! names (tc-string-list-add names "stdlib.comptime.expr-string?"))
-    (set! names (tc-string-list-add names "stdlib.comptime/expr-string?"))
-    (set! names (tc-string-list-add names "stdlib/comptime.expr-string?"))
-    (set! names (tc-string-list-add names "expr-string-value"))
-    (set! names (tc-string-list-add names "comptime.expr-string-value"))
-    (set! names (tc-string-list-add names "comptime/expr-string-value"))
-    (set! names (tc-string-list-add names "stdlib.comptime.expr-string-value"))
-    (set! names (tc-string-list-add names "stdlib.comptime/expr-string-value"))
-    (set! names (tc-string-list-add names "stdlib/comptime.expr-string-value"))
-    (set! names (tc-string-list-add names "string-slice"))
-    (set! names (tc-string-list-add names "comptime.string-slice"))
-    (set! names (tc-string-list-add names "comptime/string-slice"))
-    (set! names (tc-string-list-add names "stdlib.comptime.string-slice"))
-    (set! names (tc-string-list-add names "stdlib.comptime/string-slice"))
-    (set! names (tc-string-list-add names "stdlib/comptime.string-slice"))
+    (set! names (tc-string-list-cons names "expr-type"))
+    (set! names (tc-string-list-cons names "comptime.expr-type"))
+    (set! names (tc-string-list-cons names "comptime/expr-type"))
+    (set! names (tc-string-list-cons names "stdlib.comptime.expr-type"))
+    (set! names (tc-string-list-cons names "stdlib.comptime/expr-type"))
+    (set! names (tc-string-list-cons names "stdlib/comptime.expr-type"))
+    (set! names (tc-string-list-cons names "stdlib/comptime/expr-type"))
+    (set! names (tc-string-list-cons names "expr-string?"))
+    (set! names (tc-string-list-cons names "comptime.expr-string?"))
+    (set! names (tc-string-list-cons names "comptime/expr-string?"))
+    (set! names (tc-string-list-cons names "stdlib.comptime.expr-string?"))
+    (set! names (tc-string-list-cons names "stdlib.comptime/expr-string?"))
+    (set! names (tc-string-list-cons names "stdlib/comptime.expr-string?"))
+    (set! names (tc-string-list-cons names "expr-string-value"))
+    (set! names (tc-string-list-cons names "comptime.expr-string-value"))
+    (set! names (tc-string-list-cons names "comptime/expr-string-value"))
+    (set! names (tc-string-list-cons names "stdlib.comptime.expr-string-value"))
+    (set! names (tc-string-list-cons names "stdlib.comptime/expr-string-value"))
+    (set! names (tc-string-list-cons names "stdlib/comptime.expr-string-value"))
+    (set! names (tc-string-list-cons names "string-slice"))
+    (set! names (tc-string-list-cons names "comptime.string-slice"))
+    (set! names (tc-string-list-cons names "comptime/string-slice"))
+    (set! names (tc-string-list-cons names "stdlib.comptime.string-slice"))
+    (set! names (tc-string-list-cons names "stdlib.comptime/string-slice"))
+    (set! names (tc-string-list-cons names "stdlib/comptime.string-slice"))
+    (set! names (tc-string-list-cons names "expr-binding-clause-init-callee"))
+    (set!
+      names
+      (tc-string-list-cons names "comptime.expr-binding-clause-init-callee"))
+    (set!
+      names
+      (tc-string-list-cons
+        names
+        "stdlib.comptime.expr-binding-clause-init-callee"))
     names))
 
 (define (macro-expr-uses-expr-type? [expr-bases : i64] [expr : ast.AstExpr]) : bool
@@ -105786,6 +105828,128 @@
         captured)]
     [(Err _) (ctfe_support.ctfe-untyped-expr-type)]))
 
+;; The declaration a call head names, as the `module/name` key the
+;; typechecker resolves it to, when that declaration is a `define`d function of
+;; a named module; otherwise -1. The head is resolved the way a call target is
+;; at this site: a local binding (bare, or the leading segment of a dotted
+;; place) shadows every declaration, and hygiene names, macro heads, values,
+;; constructors, variants, externs, dispatches and root-module functions report
+;; none. The key's module and name must be those of the declaration it maps
+;; to, since an import alias can map a key to another module's declaration.
+(define (macro-call-head-function-key
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [call : ast.AstExpr]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    (match (ast.ast-expr-unspan-with-segment-bases
+      (tc-context-expr-segment-bases ctx)
+      (& func))
+      [(Var name)
+        (if (or
+          (not (tc-env-key-has-name-id? name))
+          (tc-hygiene-global-name-id? session name)
+          (tc-hygiene-local-name-id? session name)
+          (and
+            (tc-type-env-scoped-runtime-active? env)
+            (>= (tc-type-env-scoped-runtime-lookup-index env name) 0))
+          (tc-name-local-bound-before-module-scan-id? env name)
+          (tc-dotted-place-name-id? ctx env name))
+          -1
+          (match (tc-unqualified-import-ambiguity-message ctx env name)
+            [(Some _) -1]
+            [(No)
+              (match (tc-source-name-lookup-key-with-field-check-lookup
+                ctx
+                env
+                (tc-hygiene-name-text-id-for-session session name)
+                name
+                false)
+                [(Err _) -1]
+                [(Ok _ key)
+                  (let
+                    [module-id : i64 (tc-qualified-name-module-id key)]
+                    [base-id : i64 (tc-qualified-name-base-id key)]
+                    [handle : i64
+                      (if (and
+                        (csym.compiler-composite-pair-key-id? key)
+                        (ci.intern-renderable-id? module-id)
+                        (ci.intern-renderable-id? base-id)
+                        (not (csym.compiler-symbol-root-module-id? module-id)))
+                        (csym.compiler-symbols-lookup-value-in-module-id-or
+                          (tc-context-symbols ctx)
+                          module-id
+                          base-id
+                          (csym.compiler-symbols-missing-handle))
+                        (csym.compiler-symbols-missing-handle))]
+                    (if (and
+                      (csym.compiler-symbols-handle-found? handle)
+                      (=
+                        (csym.compiler-symbol-handle-kind handle)
+                        (csym.compiler-symbol-kind-function-define))
+                      (=
+                        (csym.compiler-symbols-owner-module-id-at-index-or
+                          (tc-context-symbols ctx)
+                          (csym.compiler-symbol-handle-index handle)
+                          -1)
+                        module-id)
+                      (match (csym.compiler-symbols-decl-at-index
+                        (tc-context-symbols ctx)
+                        (csym.compiler-symbol-handle-index handle))
+                        [(Ok decl)
+                          (match (ast.ast-decl-unwrapped (& decl))
+                            [(DefFn _ decl-name _ _ _ _) (= decl-name base-id)]
+                            [_ false])]
+                        [(Err _) false])
+                      ;; The checked call reads the head's type from this
+                      ;; binding; without it the call does not resolve here.
+                      (match (tc-lookup-unsafe-key-id
+                        env
+                        (tc-env-name-key-id session key))
+                        [(Ok _ _) true]
+                        [(Err _) false])
+                      (match (tc-context-program ctx)
+                        [(Program decls-box)
+                          (match (macro-call-decl
+                            ctx
+                            (tc-global-shared-view func)
+                            (ast.ast-decl-list-box-shared-view decls-box)
+                            (tc-global-shared-view call))
+                            [(Ok maybe-decl)
+                              (match (tc-global-shared-view maybe-decl)
+                                [(No) true]
+                                [_ false])]
+                            [(Err _) false])]))
+                      key
+                      -1))])]))]
+      [_ -1])))
+
+;; `macro-call-head-function-key` for a binding clause's initializer when it
+;; is a call, otherwise -1.
+(define (macro-captured-binding-init-callee-key
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [init-id : i64]) : i64
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc-context-expr-segment-bases ctx)
+    (& (tc-context-expr-get ctx init-id)))
+    [(Call func-id _)
+      (let
+        [key : i64
+          (macro-call-head-function-key
+            ctx
+            env
+            (tc-context-expr-get ctx func-id)
+            (tc-context-expr-get ctx init-id))]
+        ;; Checking a dotted head for a local place can type its leading
+        ;; segment through the global pushers. Adopt those nodes before the
+        ;; transformer pushes through `ctx`.
+        (tc-context-publish-newer-pools! ctx)
+        key)]
+    [_ -1]))
+
 (define (macro-captured-binding-clause
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -105808,12 +105972,22 @@
     ;; Publish it before another clause is checked or the transformer projects
     ;; this initializer and materializes its caller-origin expression marker.
     [_publish-captured : unit (tc-context-install-pools! ctx)]
+    [callee-key : i64
+      (if capture-expr-types
+        (macro-captured-binding-init-callee-key ctx env init-id)
+        -1)]
     (ast.AstExprBindingClause
       clause.name
       clause.has-type
       clause.ty
       init-id
       init-produced
+      (if capture-expr-types
+        (tc-qualified-name-module-id callee-key)
+        clause.init-callee-module)
+      (if capture-expr-types
+        (tc-qualified-name-base-id callee-key)
+        clause.init-callee-name)
       clause.span)))
 
 (define (macro-captured-binding-clause-list

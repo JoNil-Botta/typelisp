@@ -81,6 +81,7 @@ stage2-codegen-target-parity	all	stage2 codegen target parity	bootstrap-fixpoint
 stage2-backend-target-assembly-parity	all	stage2 backend target assembly parity	bootstrap-fixpoint	stage2	256	-	scripts/check-backend-target-asm-parity.sh
 stage2-windows-coff-batch-plan	all	stage2 Windows COFF batch plan	bootstrap-fixpoint	stage2	512	-	scripts/verify-compile-batch-windows-coff.sh
 stage2-pic-relocation-verifier	all	stage2 PIC relocation verifier	bootstrap-fixpoint	stage2	256	-	scripts/verify-pic-relocations.sh
+stage2-linux-shared-object-code-model	linux	stage2 Linux shared-object code model	bootstrap-fixpoint	stage2	2560	-	scripts/verify-linux-shared-object-code-model.sh
 stage2-coff-relocation-overflow-verifier	all	stage2 COFF relocation-overflow verifier	bootstrap-fixpoint	stage2	256	-	scripts/verify-coff-relocation-overflow.sh
 stage2-safety-corpus	all	stage2 safety corpus	bootstrap-fixpoint	stage2	1792	-	scripts/verify-safety-corpus.sh
 integration-manifest-validator-self-tests	all	integration manifest validator self-tests	-	-	256	-	scripts/verify-integration-manifest-validator.sh

@@ -679,6 +679,7 @@ tree|all|-|tests/integration/tree.tl|3|-|-|-|-
 tuple_values|all|-|tests/integration/tuple_values.tl|42|-|-|-|-
 tuple_match_pattern|all|-|tests/integration/tuple_match_pattern.tl|42|-|-|stdlib/string.tl|-
 borrowed_struct_pattern_string|all|0,1,2|tests/integration/borrowed_struct_pattern_string.tl|42|-|-|stdlib/string.tl stdlib/io.tl|stage-stdlib
+string_literal_eq|all|0,1,2|tests/integration/string_literal_eq.tl|42|-|-|stdlib/string.tl stdlib/str_cat_runtime.tl|-
 borrow_temporary_call_arg|all|0,1,2|tests/safety/borrow_temporary_call_arg_ok.tl|42|-|-|stdlib/string.tl|-
 borrow_temporary_cleanup|all|0,1,2|tests/safety/borrow_temporary_cleanup_ok.tl|42|-|-|-|-
 borrowed_pattern_copy_binding|all|0,1,2|tests/safety/borrowed_pattern_copy_binding_ok.tl|42|-|-|stdlib/string.tl|-

@@ -1,7 +1,7 @@
 ;; `(for [i (iterator.range s e)] ...)` and `range-inclusive` over a direct call
 ;; count from the call's arguments: no range value, no protocol call. The
-;; exported functions pair `for` loops with their `while` twins for the
-;; optimizer's counter sink, which gives them the same code. `main` checks
+;; optimizer's counter sink then gives the loop its `while` twin's code at
+;; levels 1 and 2 (tests/codegen/asm-shape.cases pins the twins). `main` checks
 ;; the semantics the lean expansion must keep: single evaluation and order of
 ;; the bounds, empty and negative ranges, `break`, `continue`, nesting, a
 ;; reassigned item, inclusive ranges at both i64 extremes, a literal end, and a

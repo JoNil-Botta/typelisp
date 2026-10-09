@@ -1183,6 +1183,29 @@ closed [compiler-owned executable template registry](../docs/compiler-x64-execut
 It records mutation-sensitive source identities and typed control/frame events
 for later native-code certification.
 
+Typed machine instructions (`compiler_machine_x64.tl`, #7055) are the shared
+post-register-allocation form both output routes are migrating to. A
+`MachineInstr` states its form, operand width, physical registers (by
+`compiler_abi` register id, which for the general-purpose registers is the
+hardware encoding number) and immediate. `compiler-machine-x64-asm-line` spells
+it and `compiler-machine-x64-encode!` encodes it. Neither chooses a register, a
+width or a form. Construction goes through `compiler-machine-x64-checked`, which
+turns an operand the form cannot encode into a diagnostic.
+
+The pilot family is integer register-to-register `mov` and imm32 `mov`.
+- **Assembly route.** `compiler-backend-emit-load-i64-immediate-into`,
+  `-emit-load-register-to-reg` and the register homes of `-emit-load-var-into`
+  build records.
+- **Object route.** It carries them as `CompilerObjectX64Instr.Machine`, which
+  the layout encodes and `compiler_object_asm` prints as instruction text
+  instead of `.byte`s.
+- **What stays as before.** A `movq` naming an XMM register is a different
+  instruction and keeps its text. The full-width `movabsq` keeps its bytes until
+  #7022.
+- **Extension rules.** They head the module. A family enters with every operand
+  explicit and with assembler-derived goldens. It never enters as preformatted
+  text or preencoded bytes.
+
 Structured object branches reuse flags only from the immediately preceding
 integer comparison in the same IR block, when that comparison defines the
 branch operand. Its `setcc`, zero extension and frame store preserve flags;

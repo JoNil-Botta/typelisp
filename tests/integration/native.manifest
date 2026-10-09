@@ -685,6 +685,8 @@ borrowed_pattern_copy_deferred|all|0,1,2|tests/safety/borrowed_pattern_copy_defe
 box_deref_copy_projection_reuse|all|0,1,2|tests/safety/box_deref_copy_projection_reuse_ok.tl|42|-|-|-|-
 fixed_array_match_pattern|all|-|tests/integration/fixed_array_match_pattern.tl|42|-|-|stdlib/string.tl|-
 slice_match_pattern|all|0,1,2|tests/integration/slice_match_pattern.tl|42|-|-|stdlib/string.tl stdlib/vector.tl|-
+or_pattern_match|all|-,0,1,2|tests/integration/or_pattern_match.tl|42|-|-|stdlib/string.tl|-
+or_pattern_dispatch|all|-,0,1,2|tests/integration/or_pattern_dispatch.tl|42|-|-|-|-
 u16_div_zero_trap|all|-|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expected-stderr:tl: $SRC:3:5: integer division or remainder error: dividend=1 divisor=0\n
 u64_float_casts|all|-,0,1,2|tests/integration/u64_float_casts.tl|0|-|-|stdlib/math.tl|-
 u64_high_bit_load_compare|all|-|tests/integration/u64_high_bit_load_compare.tl|42|-|-|-|-

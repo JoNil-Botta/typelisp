@@ -24653,6 +24653,21 @@
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (tc-source-pattern-list-policy-ok ctx patterns))]
+    [(Or patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (tc-source-pattern-list-policy-ok ctx patterns))]
+    [(Fields patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (tc-source-pattern-list-policy-ok ctx patterns))]
+    [(Field _ patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (tc-source-pattern-list-policy-ok ctx patterns))]
     [(Variant _ patterns-box)
       (let
         [patterns : ast.AstPatternList
@@ -45707,21 +45722,41 @@
   [scrut-ty : ast.AstType]
   [pattern : ast.AstPattern]) : TcNameIdList
   (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
-    [(Enum _)
-      (match pattern
-        [(Variant _ args-box)
-          (tc-pattern-list-add-bound-name-ids
-            (ast.ast-pattern-list-box-shared-view args-box)
-            Nil)]
-        [_ Nil])]
-    [(EnumArgs _ _)
-      (match pattern
-        [(Variant _ args-box)
-          (tc-pattern-list-add-bound-name-ids
-            (ast.ast-pattern-list-box-shared-view args-box)
-            Nil)]
-        [_ Nil])]
-    [_ (tc-pattern-add-bound-name-ids pattern Nil)]))
+    [(ast.AstType.Enum _)
+      (tc-enum-arm-pattern-bound-name-ids pattern TcNameIdList.Nil)]
+    [(ast.AstType.EnumArgs _ _)
+      (tc-enum-arm-pattern-bound-name-ids pattern TcNameIdList.Nil)]
+    [_ (tc-pattern-add-bound-name-ids pattern TcNameIdList.Nil)]))
+
+;; The names an enum match arm's pattern binds: a variant pattern's payload
+;; binders, and for an or-pattern those of every alternative. A bare name at
+;; the top of an enum arm is a nullary variant, not a binder.
+(define (tc-enum-arm-pattern-bound-name-ids
+  [pattern : ast.AstPattern]
+  [bound : TcNameIdList]) : TcNameIdList
+  (match pattern
+    [(ast.AstPattern.Variant _ args-box)
+      (tc-pattern-list-add-bound-name-ids
+        (ast.ast-pattern-list-box-shared-view args-box)
+        bound)]
+    [(ast.AstPattern.Or alternatives-box)
+      (let
+        [alternatives : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view alternatives-box)]
+        [out : TcNameIdList bound]
+        [index : i64 0]
+        (while (< index alternatives.len)
+          (set!
+            out
+            (tc-enum-arm-pattern-bound-name-ids
+              (ast.ast-pattern-list-get
+                (& alternatives)
+                index
+                (ast.ast-pattern-fallback))
+              out))
+          (set! index (+ index 1)))
+        out)]
+    [_ bound]))
 
 (define (tc-spmd-match-bind-pattern-names
   [arm-env : TcTypeEnv]
@@ -45742,6 +45777,60 @@
           (tc-name-id-list-rest names)
           class)
         (Err (tc-spmd-match-pattern-binding-diagnostic ty))))))
+
+;; Lane-masked lowering of a varying `match` tests each arm's single pattern,
+;; so an or-pattern there is rejected rather than lowered.
+(define (tc-spmd-bind-match-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [scrut-ty : ast.AstType]
+  [scrut-class : TcSpmdClass]
+  [pattern : ast.AstPattern]) : ResultTcEnv
+  (if (and
+    (tc-spmd-varying? scrut-class)
+    (tc-pattern-contains-or? (tc-global-shared-view pattern)))
+    (ResultTcEnv.Err
+      (tc-kind-message
+        (cdiag.CompilerTypecheckKind.Spmd)
+        "typecheck: foreach varying match does not support or-patterns"))
+    (tc-bind-match-pattern ctx env scrut-ty pattern)))
+
+(define (tc-pattern-contains-or? [pattern : ast.AstPattern]) : bool
+  (match pattern
+    [(ast.AstPattern.Or _) true]
+    [(ast.AstPattern.Variant _ items-box)
+      (tc-pattern-list-contains-or?
+        (ast.ast-pattern-list-box-shared-view items-box))]
+    [(ast.AstPattern.Tuple items-box)
+      (tc-pattern-list-contains-or?
+        (ast.ast-pattern-list-box-shared-view items-box))]
+    [(ast.AstPattern.Array items-box)
+      (tc-pattern-list-contains-or?
+        (ast.ast-pattern-list-box-shared-view items-box))]
+    [(ast.AstPattern.Slice items-box _)
+      (tc-pattern-list-contains-or?
+        (ast.ast-pattern-list-box-shared-view items-box))]
+    [(ast.AstPattern.Fields items-box)
+      (tc-pattern-list-contains-or?
+        (ast.ast-pattern-list-box-shared-view items-box))]
+    [(ast.AstPattern.Field _ items-box)
+      (tc-pattern-list-contains-or?
+        (ast.ast-pattern-list-box-shared-view items-box))]
+    [_ false]))
+
+(define (tc-pattern-list-contains-or? [patterns : ast.AstPatternList]) : bool
+  (let
+    [index : i64 0]
+    (while (< index patterns.len)
+      (when
+        (tc-pattern-contains-or?
+          (ast.ast-pattern-list-get
+            (& patterns)
+            index
+            (ast.ast-pattern-fallback)))
+        (return true))
+      (set! index (+ index 1)))
+    false))
 
 (define (tc-spmd-masked-if-match-arms
   [ctx : TcContext]
@@ -45779,10 +45868,11 @@
             (ast.ast-expr-segment-bases-get expr-bases body-box)]
           [arm-env
             (try
-              (tc-bind-match-pattern
+              (tc-spmd-bind-match-pattern
                 ctx
                 env
                 (tc-global-shared-view scrut-ty)
+                scrut-class
                 (tc-global-shared-view pattern)))]
           [arm-spmd-env
             (try
@@ -45875,10 +45965,11 @@
           [mark : TcSpmdEnvMark (tc-spmd-env-mark spmd-env)]
           [arm-env
             (try
-              (tc-bind-match-pattern
+              (tc-spmd-bind-match-pattern
                 ctx
                 env
                 (tc-global-shared-view scrut-ty)
+                scrut-class
                 (tc-global-shared-view pattern)))]
           [arm-spmd-env
             (try
@@ -47846,6 +47937,21 @@
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (tc-pattern-list-add-bound-names patterns bound))]
+    [(Or patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (tc-pattern-list-add-bound-names patterns bound))]
+    [(Fields patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (tc-pattern-list-add-bound-names patterns bound))]
+    [(Field _ patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (tc-pattern-list-add-bound-names patterns bound))]
     [(Wildcard) bound]
     [(Binding name) (tc-string-list-add bound (tc-env-key-name-text name))]
     [(Variant _ patterns-box)
@@ -47887,6 +47993,18 @@
         (ast.ast-pattern-list-box-shared-view patterns-box)
         bound)]
     [(Slice patterns-box _)
+      (tc-pattern-list-add-bound-name-ids
+        (ast.ast-pattern-list-box-shared-view patterns-box)
+        bound)]
+    [(Or patterns-box)
+      (tc-pattern-list-add-bound-name-ids
+        (ast.ast-pattern-list-box-shared-view patterns-box)
+        bound)]
+    [(Fields patterns-box)
+      (tc-pattern-list-add-bound-name-ids
+        (ast.ast-pattern-list-box-shared-view patterns-box)
+        bound)]
+    [(Field _ patterns-box)
       (tc-pattern-list-add-bound-name-ids
         (ast.ast-pattern-list-box-shared-view patterns-box)
         bound)]
@@ -48880,6 +48998,21 @@
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (tc-pattern-list-add-bound-source-ids session patterns bound))]
     [(Slice patterns-box _)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (tc-pattern-list-add-bound-source-ids session patterns bound))]
+    [(Or patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (tc-pattern-list-add-bound-source-ids session patterns bound))]
+    [(Fields patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (tc-pattern-list-add-bound-source-ids session patterns bound))]
+    [(Field _ patterns-box)
       (let
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
@@ -54288,6 +54421,410 @@
           (try (tc-bind-pattern-list-element ctx env mode pattern ty))]
         (tc-bind-pattern-list-at ctx next-env mode patterns types (+ index 1))))))
 
+;; Where an or-pattern sits: an arm's whole pattern, checked against the
+;; scrutinee like any arm pattern, or an enum payload position, owned or
+;; borrowed. Struct field, box, tuple and array sub-patterns must be
+;; irrefutable, so an or-pattern there could never reach a later alternative;
+;; those positions reject it.
+(defenum TcOrPatternSite
+  (Arm)
+  (Payload TcPatternListMode))
+
+(define (tc-or-pattern-position-message) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Pattern)
+    "typecheck: an or-pattern must be a whole match arm pattern or an enum payload pattern; struct field, box, tuple and array sub-patterns must be irrefutable"))
+
+(define (tc-bind-or-alternative
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [site : TcOrPatternSite]
+  [ty : ast.AstType]
+  [pattern : ast.AstPattern]) : ResultTcEnv
+  (match site
+    [(TcOrPatternSite.Arm) (tc-bind-match-pattern ctx env ty pattern)]
+    [(TcOrPatternSite.Payload mode)
+      (tc-bind-pattern-list-element ctx env mode pattern ty)]))
+
+(define (tc-or-alternative-bound-names
+  [ctx : TcContext]
+  [site : TcOrPatternSite]
+  [ty : ast.AstType]
+  [pattern : ast.AstPattern]) : TcNameIdList
+  (match site
+    [(TcOrPatternSite.Arm) (tc-borrow-check-pattern-bound-names ctx ty pattern)]
+    [(TcOrPatternSite.Payload _)
+      (tc-pattern-add-bound-name-ids pattern TcNameIdList.Nil)]))
+
+;; Whether `pattern` matches every value at its site, leaving nothing for a
+;; later alternative.
+(define (tc-or-alternative-catchall?
+  [ctx : TcContext]
+  [site : TcOrPatternSite]
+  [ty : ast.AstType]
+  [pattern : ast.AstPattern]) : bool
+  (match site
+    ;; Like the arm coverage walk, a borrowed enum arm is checked against the
+    ;; enum, where a bare identifier names a nullary variant.
+    [(TcOrPatternSite.Arm)
+      (tc-match-pattern-catchall-for-type?
+        ctx
+        (tc-match-coverage-type ctx ty)
+        pattern)]
+    [(TcOrPatternSite.Payload _) (tc-sub-pattern-irrefutable? ctx pattern ty)]))
+
+(define (tc-or-binding-types [env : TcTypeEnv] [names : TcNameIdList]) : (__tl_dyn-array
+    ast.AstType)
+  (let
+    [types : (__tl_dyn-array ast.AstType)
+      (__tl_make-array ast.AstType (tc-name-id-list-len names))]
+    [cursor : TcNameIdList names]
+    [index : i64 0]
+    (while (not (tc-name-id-list-empty? cursor))
+      (set!
+        (array-ref types index)
+        (match (tc-lookup-id env (tc-name-id-list-head cursor))
+          [(ResultTcType.Ok ty) ty]
+          [(ResultTcType.Err _) (ast.AstType.Unit)]))
+      (set! cursor (tc-name-id-list-rest cursor))
+      (set! index (+ index 1)))
+    types))
+
+(define (tc-or-alternative-label [index : i64]) : String
+  (str_cat.str-cat "alternative " (string.int->string (+ index 1))))
+
+;; Checks that the or-pattern alternative at `index`, bound into `alt-env`,
+;; binds exactly the first alternative's names at the first alternative's
+;; types.
+(define (tc-or-alternative-bindings-ok
+  [alt-env : TcTypeEnv]
+  [first-names : TcNameIdList]
+  [first-types : (__tl_dyn-array ast.AstType)]
+  [alt-names : TcNameIdList]
+  [index : i64]) : ResultTcUnit
+  (let
+    [cursor : TcNameIdList first-names]
+    [slot : i64 0]
+    (while (not (tc-name-id-list-empty? cursor))
+      (let
+        [name : i64 (tc-name-id-list-head cursor)]
+        [first-ty : ast.AstType
+          (tc-global-array-element-shared-view first-types slot)]
+        (when
+          (not (tc-name-id-list-contains alt-names name))
+          (return
+            (ResultTcUnit.Err
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.Pattern)
+                (str_cat.str-cat
+                  "typecheck: or-pattern alternative 1 binds `"
+                  (tc-env-key-name-text name)
+                  "` but "
+                  (tc-or-alternative-label index)
+                  " does not")))))
+        (match (tc-lookup-id alt-env name)
+          [(ResultTcType.Ok alt-ty)
+            (unless
+              (tc-type-eq
+                (tc-global-shared-view first-ty)
+                (tc-global-shared-view alt-ty))
+              (return
+                (ResultTcUnit.Err
+                  (tc-kind-message
+                    (cdiag.CompilerTypecheckKind.TypeMismatch)
+                    (str_cat.str-cat
+                      "typecheck: or-pattern binding `"
+                      (tc-env-key-name-text name)
+                      "` has type "
+                      (tc-type-render first-ty)
+                      " in alternative 1 but "
+                      (tc-type-render alt-ty)
+                      " in "
+                      (tc-or-alternative-label index))))))]
+          [(ResultTcType.Err message) (return (ResultTcUnit.Err message))])
+        (set! slot (+ slot 1))
+        (set! cursor (tc-name-id-list-rest cursor))))
+    (set! cursor alt-names)
+    (while (not (tc-name-id-list-empty? cursor))
+      (let
+        [name : i64 (tc-name-id-list-head cursor)]
+        (unless
+          (tc-name-id-list-contains first-names name)
+          (return
+            (ResultTcUnit.Err
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.Pattern)
+                (str_cat.str-cat
+                  "typecheck: or-pattern "
+                  (tc-or-alternative-label index)
+                  " binds `"
+                  (tc-env-key-name-text name)
+                  "` but alternative 1 does not")))))
+        (set! cursor (tc-name-id-list-rest cursor))))
+    ResultTcUnit.Ok))
+
+;; An or-pattern checks every alternative against the same type from the same
+;; environment. Each alternative must bind exactly the first one's names, each
+;; at the same type, and no alternative may follow one that already matches
+;; every value. The arm body sees the first alternative's bindings.
+(define (tc-bind-or-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [site : TcOrPatternSite]
+  [ty : ast.AstType]
+  [alternatives : ast.AstPatternList]) : ResultTcEnv
+  (let
+    [first : ast.AstPattern
+      (ast.ast-pattern-list-get (& alternatives) 0 (ast.ast-pattern-fallback))]
+    [first-names : TcNameIdList
+      (tc-or-alternative-bound-names
+        ctx
+        (tc-global-shared-view site)
+        (tc-global-shared-view ty)
+        (tc-global-shared-view first))]
+    [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save env)]
+    [first-bound : ResultTcEnv
+      (tc-bind-or-alternative
+        ctx
+        env
+        (tc-global-shared-view site)
+        (tc-global-shared-view ty)
+        (tc-global-shared-view first))]
+    [first-types : (__tl_dyn-array ast.AstType)
+      (match first-bound
+        [(ResultTcEnv.Ok first-env) (tc-or-binding-types first-env first-names)]
+        [(ResultTcEnv.Err message) (return (ResultTcEnv.Err message))])]
+    [index : i64 1]
+    (tc-type-env-scoped-runtime-restore! (tc-global-shared-view saved))
+    (while (< index alternatives.len)
+      (let
+        [previous : ast.AstPattern
+          (ast.ast-pattern-list-get
+            (& alternatives)
+            (- index 1)
+            (ast.ast-pattern-fallback))]
+        [alternative : ast.AstPattern
+          (ast.ast-pattern-list-get
+            (& alternatives)
+            index
+            (ast.ast-pattern-fallback))]
+        (when
+          (tc-or-alternative-catchall?
+            ctx
+            (tc-global-shared-view site)
+            (tc-global-shared-view ty)
+            previous)
+          (return
+            (ResultTcEnv.Err
+              (tc-kind-message
+                (cdiag.CompilerTypecheckKind.Pattern)
+                (str_cat.str-cat
+                  "typecheck: unreachable or-pattern "
+                  (tc-or-alternative-label index)
+                  " after an alternative that matches every value")))))
+        (match (tc-bind-or-alternative
+          ctx
+          env
+          (tc-global-shared-view site)
+          (tc-global-shared-view ty)
+          (tc-global-shared-view alternative))
+          [(ResultTcEnv.Ok alt-env)
+            (match (tc-or-alternative-bindings-ok
+              alt-env
+              first-names
+              (tc-global-shared-view first-types)
+              (tc-or-alternative-bound-names
+                ctx
+                (tc-global-shared-view site)
+                (tc-global-shared-view ty)
+                alternative)
+              index)
+              [(ResultTcUnit.Ok) unit]
+              [(ResultTcUnit.Err message) (return (ResultTcEnv.Err message))])]
+          [(ResultTcEnv.Err message) (return (ResultTcEnv.Err message))])
+        (tc-type-env-scoped-runtime-restore! (tc-global-shared-view saved))
+        (set! index (+ index 1))))
+    (tc-bind-or-alternative ctx env site ty first)))
+
+;; The struct a `(fields ...)` pattern matches at type `ty`: its name id, or -1
+;; when `ty` is not a struct.
+(define (tc-fields-pattern-struct-id [ctx : TcContext] [ty : ast.AstType]) : i64
+  (match (tc-type-strip-region (tc-resolve-type ctx (tc-global-shared-view ty)))
+    [(ast.AstType.Struct struct-name) struct-name]
+    [(ast.AstType.StructArgs struct-name _) struct-name]
+    [_ -1]))
+
+(define (tc-fields-pattern-requires-struct-message) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Pattern)
+    "typecheck: (fields ...) pattern requires a struct value"))
+
+(define (tc-field-def-index-by-text
+  [fields : (& fields ast.AstFieldDefList)]
+  [text : (& text str)]) : i64
+  (let
+    [index : i64 0]
+    (while (< index (ast.ast-field-def-list-len fields))
+      (begin
+        (match (ast.ast-field-def-list-get
+          fields
+          index
+          (ast.ast-field-def-fallback))
+          [(ast.AstFieldDef.Def field-name _ _)
+            (when
+              (string.eq
+                (tc-env-key-name-text (ci.intern-syntax-id-value field-name))
+                text)
+              (return index))])
+        (set! index (+ index 1))))
+    -1))
+
+;; The positional field patterns a `(fields ...)` pattern stands for against
+;; the struct `struct-name-id` declaring `fields`: each field takes the pattern
+;; of the entry naming it, and `_` when no entry does.
+(define (tc-fields-pattern-positional
+  [ctx : TcContext]
+  [struct-name-id : i64]
+  [fields : ast.AstFieldDefList]
+  [entries : ast.AstPatternList]) : parser.ResultAstPatternList
+  (let
+    [slots : (__tl_dyn-array i64) (__tl_make-array i64 entries.len)]
+    [index : i64 0]
+    [out : ast.AstPatternList
+      (ast.ast-pattern-list-with-capacity
+        (ast.ast-field-def-list-len (& fields)))]
+    (while (< index entries.len)
+      (match (ast.ast-pattern-list-get
+        (& entries)
+        index
+        (ast.ast-pattern-fallback))
+        [(ast.AstPattern.Field name _)
+          (let
+            [text : String (tc-env-key-name-text name)]
+            [slot : i64 (tc-field-def-index-by-text (& fields) text)]
+            [earlier : i64 0]
+            (when
+              (< slot 0)
+              (return
+                (parser.ResultAstPatternList.Err
+                  (tc-unknown-struct-field-message ctx struct-name-id name))))
+            (while (< earlier index)
+              (when
+                (= (array-ref slots earlier) slot)
+                (return
+                  (parser.ResultAstPatternList.Err
+                    (tc-kind-message
+                      (cdiag.CompilerTypecheckKind.Pattern)
+                      (str_cat.str-cat
+                        "typecheck: (fields ...) pattern names field `"
+                        text
+                        "` twice")))))
+              (set! earlier (+ earlier 1)))
+            (set! (array-ref slots index) slot)
+            (set! index (+ index 1)))]
+        [_
+          (return
+            (parser.ResultAstPatternList.Err
+              "typecheck: internal: malformed (fields ...) pattern"))]))
+    (set! index 0)
+    (while (< index (ast.ast-field-def-list-len (& fields)))
+      (let
+        [entry : i64 0]
+        [pattern : ast.AstPattern ast.AstPattern.Wildcard]
+        (while (< entry entries.len)
+          (begin
+            (if (= (array-ref slots entry) index)
+              (match (ast.ast-pattern-list-get
+                (& entries)
+                entry
+                (ast.ast-pattern-fallback))
+                [(ast.AstPattern.Field _ items-box)
+                  (let
+                    [items : ast.AstPatternList
+                      (ast.ast-pattern-list-box-shared-view items-box)]
+                    (set! pattern (ast.ast-pattern-field-sub (& items))))]
+                [_ unit])
+              unit)
+            (set! entry (+ entry 1))))
+        (ast.ast-pattern-list-push (&mut out) pattern)
+        (set! index (+ index 1))))
+    (parser.ResultAstPatternList.Ok out)))
+
+;; The positional field patterns and their types for a `(fields ...)` pattern
+;; matched at struct type `ty`.
+(defenum ResultTcFieldsPattern
+  (Ok ast.AstPatternList ast.AstTypeList)
+  (Err String))
+
+(define (tc-fields-pattern-resolve
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [entries : ast.AstPatternList]) : ResultTcFieldsPattern
+  (let
+    [struct-name-id : i64
+      (tc-fields-pattern-struct-id ctx (tc-global-shared-view ty))]
+    (if (< struct-name-id 0)
+      (ResultTcFieldsPattern.Err (tc-fields-pattern-requires-struct-message))
+      ;; Like a positional struct pattern, a by-name one reads the
+      ;; representation, so a foreign opaque struct rejects it (#6999).
+      (match (tc-opaque-name-representation-ok
+        ctx
+        struct-name-id
+        "cannot match the")
+        [(ResultTcUnit.Err message) (ResultTcFieldsPattern.Err message)]
+        [(ResultTcUnit.Ok)
+          (tc-fields-pattern-resolve-struct ctx ty entries struct-name-id)]))))
+
+(define (tc-fields-pattern-resolve-struct
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [entries : ast.AstPatternList]
+  [struct-name-id : i64]) : ResultTcFieldsPattern
+  (match (tc-struct-decl-id ctx struct-name-id)
+    [(ResultTcStructDecl.Ok decl)
+      (match decl
+        [(TcStructDecl _ _ fields)
+          (match (tc-struct-pattern-field-types-for-scrut
+            ctx
+            struct-name-id
+            ty
+            (tc-global-shared-view fields))
+            [(ResultTcTypeList.Ok field-types)
+              (match (tc-fields-pattern-positional
+                ctx
+                struct-name-id
+                fields
+                entries)
+                [(parser.ResultAstPatternList.Ok positional)
+                  (ResultTcFieldsPattern.Ok positional field-types)]
+                [(parser.ResultAstPatternList.Err message)
+                  (ResultTcFieldsPattern.Err message)])]
+            [(ResultTcTypeList.Err message) (ResultTcFieldsPattern.Err message)])])]
+    [(ResultTcStructDecl.Err message) (ResultTcFieldsPattern.Err message)]))
+
+;; Binds a `(fields ...)` pattern as the positional struct pattern it stands
+;; for: `mode` is StructField for an owned struct and BorrowedElement for a
+;; borrowed one.
+(define (tc-bind-fields-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [mode : TcPatternListMode]
+  [ty : ast.AstType]
+  [entries : ast.AstPatternList]) : ResultTcEnv
+  (match (tc-fields-pattern-resolve ctx ty entries)
+    [(ResultTcFieldsPattern.Ok positional field-types)
+      (tc-bind-pattern-list ctx env mode positional field-types)]
+    [(ResultTcFieldsPattern.Err message) (ResultTcEnv.Err message)]))
+
+(define (tc-fields-pattern-irrefutable?
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [entries : ast.AstPatternList]) : bool
+  (match (tc-fields-pattern-resolve ctx ty entries)
+    [(ResultTcFieldsPattern.Ok positional field-types)
+      (tc-pattern-list-irrefutable? ctx positional field-types)]
+    [(ResultTcFieldsPattern.Err _) false]))
+
 (define (tc-tuple-pattern-element-types
   [ctx : TcContext]
   [tuple-ty : ast.AstType]) : ResultTcTypeList
@@ -54656,6 +55193,14 @@
             (tc-kind-message
               (Pattern)
               "typecheck: tuple element pattern requires an irrefutable aggregate pattern"))])]
+    [(ast.AstPattern.Fields entries-box)
+      (tc-bind-fields-pattern
+        ctx
+        env
+        TcPatternListMode.StructField
+        elem-ty
+        (ast.ast-pattern-list-box-shared-view entries-box))]
+    [(ast.AstPattern.Or _) (ResultTcEnv.Err (tc-or-pattern-position-message))]
     [_
       (Err
         (tc-kind-message
@@ -54817,6 +55362,11 @@
               name
               (ast.ast-pattern-list-box-shared-view args-box))]
           [_ false]))]
+    [(ast.AstPattern.Fields entries-box)
+      (tc-fields-pattern-irrefutable?
+        ctx
+        inner-ty
+        (ast.ast-pattern-list-box-shared-view entries-box))]
     [_ false]))
 
 (define (tc-bind-box-pattern
@@ -54830,16 +55380,28 @@
       (let
         [inner : ast.AstPattern
           (ast.ast-pattern-list-get args-ref 0 (ast.ast-pattern-fallback))]
-        (if (tc-box-pattern-inner-supported?
-          ctx
-          (tc-global-shared-view inner)
-          (tc-global-shared-view inner-ty))
-          (tc-bind-sub-pattern ctx env inner inner-ty)
-          (Err
-            (tc-kind-message
-              (Pattern)
-              "typecheck: box pattern only supports irrefutable binding, wildcard, or nested box patterns"))))
-      (Err
+        (match (tc-global-shared-view inner)
+          ;; Binding the fields reports an unknown or refutable field itself.
+          [(ast.AstPattern.Fields entries-box)
+            (tc-bind-fields-pattern
+              ctx
+              env
+              TcPatternListMode.StructField
+              inner-ty
+              (ast.ast-pattern-list-box-shared-view entries-box))]
+          [(ast.AstPattern.Or _)
+            (ResultTcEnv.Err (tc-or-pattern-position-message))]
+          [_
+            (if (tc-box-pattern-inner-supported?
+              ctx
+              (tc-global-shared-view inner)
+              (tc-global-shared-view inner-ty))
+              (tc-bind-sub-pattern ctx env inner inner-ty)
+              (ResultTcEnv.Err
+                (tc-kind-message
+                  (cdiag.CompilerTypecheckKind.Pattern)
+                  "typecheck: box pattern only supports irrefutable binding, wildcard, or nested box patterns")))]))
+      (ResultTcEnv.Err
         (tc-kind-message
           (ArityMismatch)
           "typecheck: box pattern expects exactly one inner pattern")))))
@@ -55040,6 +55602,14 @@
                 (tc-kind-message
                   (Pattern)
                   "typecheck: struct field pattern only supports binding, wildcard, or nested struct patterns"))]))]
+      [(ast.AstPattern.Fields entries-box)
+        (tc-bind-fields-pattern
+          ctx
+          env
+          TcPatternListMode.StructField
+          ty
+          (ast.ast-pattern-list-box-shared-view entries-box))]
+      [(ast.AstPattern.Or _) (ResultTcEnv.Err (tc-or-pattern-position-message))]
       [_
         (Err
           (tc-kind-message
@@ -55152,7 +55722,21 @@
                   (tc-kind-message
                     (Pattern)
                     "typecheck: nested variant pattern requires enum field")))]))]
-      [_ (Err "typecheck: unsupported nested match pattern")])))
+      [(ast.AstPattern.Or alternatives-box)
+        (tc-bind-or-pattern
+          ctx
+          env
+          (TcOrPatternSite.Payload TcPatternListMode.Sub)
+          ty
+          (ast.ast-pattern-list-box-shared-view alternatives-box))]
+      [(ast.AstPattern.Fields entries-box)
+        (tc-bind-fields-pattern
+          ctx
+          env
+          TcPatternListMode.StructField
+          ty
+          (ast.ast-pattern-list-box-shared-view entries-box))]
+      [_ (ResultTcEnv.Err "typecheck: unsupported nested match pattern")])))
 
 (define (tc-borrowed-field-ref-type [lifetime : i64] [field-ty : ast.AstType]) : ast.AstType
   (ast.ast-ty-ref lifetime (& (tc-borrow-referent-type field-ty))))
@@ -55284,6 +55868,14 @@
             (tc-kind-message
               (cdiag.CompilerTypecheckKind.Pattern)
               "typecheck: borrowed tuple element pattern requires binding, wildcard, or nested tuple or struct pattern"))])]
+    [(ast.AstPattern.Fields entries-box)
+      (tc-bind-fields-pattern
+        ctx
+        env
+        (TcPatternListMode.BorrowedElement lifetime)
+        elem-ty
+        (ast.ast-pattern-list-box-shared-view entries-box))]
+    [(ast.AstPattern.Or _) (ResultTcEnv.Err (tc-or-pattern-position-message))]
     [_
       (ResultTcEnv.Err
         (tc-kind-message
@@ -55456,6 +56048,20 @@
                   (tc-kind-message
                     (cdiag.CompilerTypecheckKind.Pattern)
                     "typecheck: nested variant pattern requires enum field")))]))]
+      [(ast.AstPattern.Or alternatives-box)
+        (tc-bind-or-pattern
+          ctx
+          env
+          (TcOrPatternSite.Payload (TcPatternListMode.BorrowedSub lifetime))
+          ty
+          (ast.ast-pattern-list-box-shared-view alternatives-box))]
+      [(ast.AstPattern.Fields entries-box)
+        (tc-bind-fields-pattern
+          ctx
+          env
+          (TcPatternListMode.BorrowedElement lifetime)
+          ty
+          (ast.ast-pattern-list-box-shared-view entries-box))]
       [_ (ResultTcEnv.Err "typecheck: unsupported nested match pattern")])))
 
 (define (tc-bind-borrowed-enum-match-pattern
@@ -55528,6 +56134,13 @@
             (tc-env-key-name-text pattern-name)
             pattern-name
             (ast.ast-pattern-list-box-shared-view args-box))]
+        [(ast.AstPattern.Fields entries-box)
+          (tc-bind-fields-pattern
+            ctx
+            env
+            (TcPatternListMode.BorrowedElement lifetime)
+            referent-ty
+            (ast.ast-pattern-list-box-shared-view entries-box))]
         [_
           (Err
             (tc-kind-message
@@ -55559,6 +56172,13 @@
                   env
                   name
                   (tc-contextual-result-type expected actual))))]))]
+    [(Or alternatives-box)
+      (tc-bind-or-pattern
+        ctx
+        env
+        TcOrPatternSite.Arm
+        scrut-ty
+        (ast.ast-pattern-list-box-shared-view alternatives-box))]
     [_ (tc-bind-match-pattern-unannotated ctx env scrut-ty pattern)]))
 
 (define (tc-bind-match-pattern-unannotated
@@ -55719,6 +56339,13 @@
             (ci.intern-str pattern-name)
             pattern-name
             (ast.ast-pattern-list-box-shared-view args-box))]
+        [(ast.AstPattern.Fields entries-box)
+          (tc-bind-fields-pattern
+            ctx
+            env
+            TcPatternListMode.StructField
+            scrut-ty
+            (ast.ast-pattern-list-box-shared-view entries-box))]
         [_
           (Err
             "typecheck: struct match only supports constructor-shaped, binding, or wildcard patterns")])]
@@ -55736,6 +56363,13 @@
             (ci.intern-str pattern-name)
             pattern-name
             (ast.ast-pattern-list-box-shared-view args-box))]
+        [(ast.AstPattern.Fields entries-box)
+          (tc-bind-fields-pattern
+            ctx
+            env
+            TcPatternListMode.StructField
+            scrut-ty
+            (ast.ast-pattern-list-box-shared-view entries-box))]
         [_
           (Err
             "typecheck: struct match only supports constructor-shaped, binding, or wildcard patterns")])]
@@ -57736,6 +58370,16 @@
   [pattern : ast.AstPattern]
   [field-ty : ast.AstType]) : bool
   (match pattern
+    [(Or alternatives-box)
+      (tc-or-pattern-irrefutable?
+        ctx
+        (ast.ast-pattern-list-box-shared-view alternatives-box)
+        field-ty)]
+    [(Fields entries-box)
+      (tc-fields-pattern-irrefutable?
+        ctx
+        field-ty
+        (ast.ast-pattern-list-box-shared-view entries-box))]
     [(Wildcard) true]
     [(Var _ _) true]
     [(Binding _) true]
@@ -57857,6 +58501,116 @@
         (if (tc-sub-pattern-irrefutable? ctx pattern ty)
           (tc-pattern-list-irrefutable-at? ctx patterns types (+ index 1))
           false)))))
+
+;; An or-pattern sub-pattern matches every value of `ty` when one alternative
+;; does, or when its alternatives together cover `ty`: every variant of an
+;; enum, each by a variant pattern with an irrefutable payload, both `bool`
+;; literals, or every length of a borrowed Slice or fixed array. This stays apart from the arm-level coverage walk, which runs for
+;; every enum `match` and must not become recursive through it.
+(define (tc-or-pattern-irrefutable?
+  [ctx : TcContext]
+  [alternatives : ast.AstPatternList]
+  [ty : ast.AstType]) : bool
+  (let
+    [flat : ast.AstMatchArmList
+      (ast.ast-match-arm-list-with-capacity alternatives.len)]
+    [index : i64 0]
+    (tc-or-pattern-flatten-into! (ast.ast-pat-or alternatives) 0 (&mut flat))
+    (while (< index flat.len)
+      (begin
+        (match (ast.ast-match-arm-list-get
+          (& flat)
+          index
+          (ast.ast-match-arm-fallback))
+          [(ast.AstMatchArm.Arm alternative _)
+            (when
+              (tc-sub-pattern-irrefutable?
+                ctx
+                alternative
+                (tc-global-shared-view ty))
+              (return true))])
+        (set! index (+ index 1))))
+    (match (tc-type-strip-region
+      (tc-resolve-type ctx (tc-global-shared-view ty)))
+      [(ast.AstType.Enum enum-name)
+        (tc-or-alternatives-cover-enum?
+          ctx
+          (& flat)
+          enum-name
+          (ast.ast-lifetime-list-new))]
+      [(ast.AstType.EnumArgs enum-name lifetimes)
+        (tc-or-alternatives-cover-enum?
+          ctx
+          (& flat)
+          enum-name
+          (ast.ast-lifetime-list-box-shared-view lifetimes))]
+      [(ast.AstType.Bool)
+        (and
+          (tc-match-arms-cover-bool? (& flat) true)
+          (tc-match-arms-cover-bool? (& flat) false))]
+      [_
+        (match (tc-slice-pattern-scrutinee ctx (tc-global-shared-view ty))
+          [(TcSlicePatternScrutinee.View _ _ elem-ty array-length)
+            (match (tc-slice-match-exhaustive-ok
+              ctx
+              elem-ty
+              array-length
+              (& flat))
+              [(ResultTcUnit.Ok) true]
+              [(ResultTcUnit.Err _) false])]
+          [(TcSlicePatternScrutinee.Invalid) false])])))
+
+(define (tc-or-alternatives-cover-enum?
+  [ctx : TcContext]
+  [alternatives : (& alternatives ast.AstMatchArmList)]
+  [enum-id : i64]
+  [enum-lifetimes : ast.AstLifetimeList]) : bool
+  (match (tc-context-enum-variants-id
+    ctx
+    enum-id
+    (tc-nominal-name-id-display enum-id))
+    [(parser.ResultAstVariantDefList.Ok variants)
+      (let
+        [variant-index : i64 0]
+        (while (< variant-index variants.len)
+          (match (ast.ast-variant-def-list-get
+            (& variants)
+            variant-index
+            (ast.ast-variant-def-fallback))
+            [(ast.AstVariantDef.Def variant-id _ _)
+              (let
+                [index : i64 0]
+                [covered : bool false]
+                (while (and (not covered) (< index alternatives.len))
+                  (begin
+                    (match (ast.ast-match-arm-list-get
+                      alternatives
+                      index
+                      (ast.ast-match-arm-fallback))
+                      [(ast.AstMatchArm.Arm alternative _)
+                        (match alternative
+                          [(ast.AstPattern.Variant name args-box)
+                            (when
+                              (and
+                                (tc-variant-name-matches-id?
+                                  ctx
+                                  enum-id
+                                  name
+                                  variant-id)
+                                (tc-variant-pattern-irrefutable-id?
+                                  ctx
+                                  enum-id
+                                  variant-id
+                                  (tc-global-shared-view enum-lifetimes)
+                                  (ast.ast-pattern-list-box-shared-view
+                                    args-box)))
+                              (set! covered true))]
+                          [_ unit])])
+                    (set! index (+ index 1))))
+                (unless covered (return false))
+                (set! variant-index (+ variant-index 1)))]))
+        true)]
+    [(parser.ResultAstVariantDefList.Err _) false]))
 
 (define (tc-pattern-covers-variant?
   [ctx : TcContext]
@@ -58026,6 +58780,7 @@
   [variants : ast.AstVariantDefList]
   [arms : ast.AstMatchArmList]) : ResultTcUnit
   (let
+    [arms : ast.AstMatchArmList (tc-or-pattern-flattened-arms arms)]
     [arm-names : TcArmVariantNames (tc-arm-variant-names ctx (& arms) enum-id)]
     (tc-enum-variants-exhaustive-ok-at
       ctx
@@ -58035,6 +58790,63 @@
       arms
       (& arm-names)
       0)))
+
+;; Coverage treats an arm-level or-pattern as the union of its alternatives,
+;; which is what one arm per alternative covers. Arms without one are returned
+;; as they are.
+(define (tc-or-pattern-flattened-arms [arms : ast.AstMatchArmList]) : ast.AstMatchArmList
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (while (and (not found) (< index arms.len))
+      (begin
+        (match (ast.ast-match-arm-list-get
+          (& arms)
+          index
+          (ast.ast-match-arm-fallback))
+          [(ast.AstMatchArm.Arm pattern _)
+            (match pattern
+              [(ast.AstPattern.Or _) (set! found true)]
+              [_ unit])])
+        (set! index (+ index 1))))
+    (if found
+      (let
+        [out : ast.AstMatchArmList
+          (ast.ast-match-arm-list-with-capacity arms.len)]
+        (set! index 0)
+        (while (< index arms.len)
+          (begin
+            (match (ast.ast-match-arm-list-get
+              (& arms)
+              index
+              (ast.ast-match-arm-fallback))
+              [(ast.AstMatchArm.Arm pattern body)
+                (tc-or-pattern-flatten-into! pattern body (&mut out))])
+            (set! index (+ index 1))))
+        out)
+      arms)))
+
+(define (tc-or-pattern-flatten-into!
+  [pattern : ast.AstPattern]
+  [body : i64]
+  [out : (&mut out ast.AstMatchArmList)]) : unit
+  (match (tc-global-shared-view pattern)
+    [(ast.AstPattern.Or alternatives-box)
+      (let
+        [alternatives : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view alternatives-box)]
+        [index : i64 0]
+        (while (< index alternatives.len)
+          (begin
+            (tc-or-pattern-flatten-into!
+              (ast.ast-pattern-list-get
+                (& alternatives)
+                index
+                (ast.ast-pattern-fallback))
+              body
+              out)
+            (set! index (+ index 1)))))]
+    [_ (ast.ast-match-arm-list-push out (ast.ast-match-arm pattern body))]))
 
 (define (tc-enum-variants-exhaustive-ok-at
   [ctx : TcContext]
@@ -58086,12 +58898,61 @@
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(Arm pattern _)
-        (match pattern
+        (match (tc-global-shared-view pattern)
           [(Wildcard) true]
           [(Binding _) true]
           ;; A typed binding, such as `for`'s annotated item (#8581).
           [(Var _ _) true]
+          [(Or _)
+            (or
+              (tc-pattern-plain-catchall? pattern)
+              (tc-match-arms-have-catchall-at? arms (+ index 1)))]
           [_ (tc-match-arms-have-catchall-at? arms (+ index 1))])])))
+
+;; A wildcard or binding, or an or-pattern with one as an alternative.
+(define (tc-pattern-plain-catchall? [pattern : ast.AstPattern]) : bool
+  (match pattern
+    [(ast.AstPattern.Wildcard) true]
+    [(ast.AstPattern.Binding _) true]
+    [(ast.AstPattern.Var _ _) true]
+    [(ast.AstPattern.Or alternatives-box)
+      (let
+        [alternatives : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view alternatives-box)]
+        [index : i64 0]
+        (while (< index alternatives.len)
+          (when
+            (tc-pattern-plain-catchall?
+              (ast.ast-pattern-list-get
+                (& alternatives)
+                index
+                (ast.ast-pattern-fallback)))
+            (return true))
+          (set! index (+ index 1)))
+        false)]
+    [_ false]))
+
+;; The literal `want`, or an or-pattern with it as an alternative.
+(define (tc-pattern-covers-bool? [pattern : ast.AstPattern] [want : bool]) : bool
+  (match pattern
+    [(ast.AstPattern.Literal (ast.AstLiteral.Bool value)) (= value want)]
+    [(ast.AstPattern.Or alternatives-box)
+      (let
+        [alternatives : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view alternatives-box)]
+        [index : i64 0]
+        (while (< index alternatives.len)
+          (when
+            (tc-pattern-covers-bool?
+              (ast.ast-pattern-list-get
+                (& alternatives)
+                index
+                (ast.ast-pattern-fallback))
+              want)
+            (return true))
+          (set! index (+ index 1)))
+        false)]
+    [_ false]))
 
 (define (tc-match-arms-have-catchall-for-type?
   [ctx : TcContext]
@@ -58131,11 +58992,15 @@
   (if (>= index arms.len)
     false
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
-      [(Arm pattern _)
-        (match pattern
-          [(Literal (Bool value))
+      [(ast.AstMatchArm.Arm pattern _)
+        (match (tc-global-shared-view pattern)
+          [(ast.AstPattern.Literal (ast.AstLiteral.Bool value))
             (if (= value want)
               true
+              (tc-match-arms-cover-bool-at? arms want (+ index 1)))]
+          [(ast.AstPattern.Or _)
+            (or
+              (tc-pattern-covers-bool? pattern want)
               (tc-match-arms-cover-bool-at? arms want (+ index 1)))]
           [_ (tc-match-arms-cover-bool-at? arms want (+ index 1))])])))
 
@@ -58178,6 +59043,11 @@
             (tc-env-key-name-text name)
             name
             (ast.ast-pattern-list-box-shared-view args-box))]
+        [(ast.AstPattern.Fields entries-box)
+          (tc-fields-pattern-irrefutable?
+            ctx
+            scrut-ty
+            (ast.ast-pattern-list-box-shared-view entries-box))]
         [_ false])]
     [(StructArgs struct-name _)
       (match pattern
@@ -58192,6 +59062,11 @@
             (tc-env-key-name-text name)
             name
             (ast.ast-pattern-list-box-shared-view args-box))]
+        [(ast.AstPattern.Fields entries-box)
+          (tc-fields-pattern-irrefutable?
+            ctx
+            scrut-ty
+            (ast.ast-pattern-list-box-shared-view entries-box))]
         [_ false])]
     [(Tuple elem-types-box)
       (match pattern
@@ -58370,27 +59245,84 @@
         ctx
         scrut-ty
         (ast.AstPattern.Binding name))]
+    ;; An or-pattern arm is a catch-all when one alternative is. Coverage by
+    ;; several alternatives together is checked like one arm per alternative.
+    [(Or alternatives-box)
+      (let
+        [alternatives : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view alternatives-box)]
+        [index : i64 0]
+        (while (< index alternatives.len)
+          (when
+            (tc-match-pattern-catchall-for-type?
+              ctx
+              (tc-global-shared-view scrut-ty)
+              (ast.ast-pattern-list-get
+                (& alternatives)
+                index
+                (ast.ast-pattern-fallback)))
+            (return true))
+          (set! index (+ index 1)))
+        false)]
     [_ (tc-match-pattern-catchall-for-shape? ctx scrut-ty pattern)]))
 
-;; The most element patterns any slice arm has, or -1 without slice arms.
+;; The most element patterns any slice arm or slice alternative of an
+;; or-pattern arm has, or -1 without either.
 (define (tc-slice-arms-max-count [arms : (& arms ast.AstMatchArmList)]) : i64
   (let
     [index : i64 0]
     [most : i64 -1]
     (while (< index arms.len)
-      (match (ast.ast-match-arm-list-get
-        arms
-        index
-        (ast.ast-match-arm-fallback))
-        [(Arm (Slice items-box has-rest) _)
-          (let
-            [items : ast.AstPatternList
-              (ast.ast-pattern-list-box-shared-view items-box)]
-            [count : i64 (tc-slice-pattern-element-count (& items) has-rest)]
-            (when (> count most) (set! most count)))]
-        [_ unit])
-      (set! index (+ index 1)))
+      (begin
+        (match (ast.ast-match-arm-list-get
+          arms
+          index
+          (ast.ast-match-arm-fallback))
+          [(ast.AstMatchArm.Arm (ast.AstPattern.Slice items-box has-rest) _)
+            (let
+              [items : ast.AstPatternList
+                (ast.ast-pattern-list-box-shared-view items-box)]
+              [count : i64 (tc-slice-pattern-element-count (& items) has-rest)]
+              (when (> count most) (set! most count)))]
+          [(ast.AstMatchArm.Arm (ast.AstPattern.Or alternatives-box) _)
+            (set!
+              most
+              (tc-slice-or-alternatives-max-count
+                (ast.ast-pattern-list-box-shared-view alternatives-box)
+                most))]
+          [_ unit])
+        (set! index (+ index 1))))
     most))
+
+;; `most`, raised to the element count of any slice alternative of an
+;; or-pattern, including those of nested or-patterns.
+(define (tc-slice-or-alternatives-max-count
+  [alternatives : ast.AstPatternList]
+  [most : i64]) : i64
+  (let
+    [index : i64 0]
+    [result : i64 most]
+    (while (< index alternatives.len)
+      (begin
+        (match (ast.ast-pattern-list-get
+          (& alternatives)
+          index
+          (ast.ast-pattern-fallback))
+          [(ast.AstPattern.Slice items-box has-rest)
+            (let
+              [items : ast.AstPatternList
+                (ast.ast-pattern-list-box-shared-view items-box)]
+              [count : i64 (tc-slice-pattern-element-count (& items) has-rest)]
+              (when (> count result) (set! result count)))]
+          [(ast.AstPattern.Or nested-box)
+            (set!
+              result
+              (tc-slice-or-alternatives-max-count
+                (ast.ast-pattern-list-box-shared-view nested-box)
+                result))]
+          [_ unit])
+        (set! index (+ index 1))))
+    result))
 
 ;; Records the lengths a slice arm covers when its element patterns are all
 ;; irrefutable: an exact arm marks `exact`, and the result is the smallest
@@ -58447,11 +59379,26 @@
       "typecheck: unreachable match arm after a slice pattern that matches every length"
       "typecheck: unreachable match arm: earlier slice patterns already match every length it matches")))
 
+;; The same for the or-pattern alternative at `index` of an arm.
+(define (tc-slice-unreachable-alternative-message
+  [index : i64]
+  [after-catchall : bool]) : String
+  (tc-kind-message
+    (cdiag.CompilerTypecheckKind.Pattern)
+    (str_cat.str-cat
+      "typecheck: unreachable or-pattern "
+      (tc-or-alternative-label index)
+      (if after-catchall
+        " after a slice pattern that matches every length"
+        ": earlier slice patterns already match every length it matches"))))
+
 ;; Length coverage of a slice match (SPEC 5.13). An arm is unreachable when
 ;; earlier arms with irrefutable element patterns already match every length it
 ;; can match; any arm after an irrefutable slice pattern, such as
 ;; `(slice & rest)`, is unreachable like one after `_`. Arms after `_` are left
-;; to `tc-match-arm-reachability-ok`.
+;; to `tc-match-arm-reachability-ok`. An or-pattern arm's slice alternatives
+;; count as arms of their own, so its lengths are the union of theirs and an
+;; alternative whose lengths are already covered is unreachable.
 (define (tc-slice-match-arm-reachability-ok
   [ctx : TcContext]
   [scrut-ty : ast.AstType]
@@ -58468,43 +59415,97 @@
         [catchall : bool false]
         [index : i64 0]
         (while (< index arms.len)
-          (when catchall (return (Err (tc-slice-unreachable-arm-message true))))
           (match (ast.ast-match-arm-list-get
             arms
             index
             (ast.ast-match-arm-fallback))
-            [(Arm (Slice items-box has-rest) _)
+            [(ast.AstMatchArm.Arm pattern _)
               (let
-                [items : ast.AstPatternList
-                  (ast.ast-pattern-list-box-shared-view items-box)]
-                [count : i64
-                  (tc-slice-pattern-element-count (& items) has-rest)]
+                [or-arm? : bool
+                  (match (tc-global-shared-view pattern)
+                    [(ast.AstPattern.Or _) true]
+                    [_ false])]
+                [alternatives : ast.AstMatchArmList
+                  (ast.ast-match-arm-list-with-capacity
+                    (if or-arm?
+                      4
+                      0))]
+                [alt-index : i64 0]
                 (when
-                  (if has-rest
-                    (tc-slice-lengths-from-covered? (& exact) rest-min count)
-                    (tc-slice-length-covered? (& exact) rest-min count))
-                  (return (Err (tc-slice-unreachable-arm-message false))))
-                (set!
                   catchall
-                  (tc-slice-pattern-irrefutable?
-                    ctx
-                    (tc-global-shared-view items)
-                    has-rest
-                    (tc-global-shared-view scrut-ty)))
-                (set!
-                  rest-min
-                  (tc-slice-cover-add-arm!
-                    ctx
-                    (&mut exact)
-                    rest-min
-                    (& items)
-                    count
-                    has-rest
-                    (tc-global-shared-view elem-ty))))]
-            [_ unit])
-          (set! index (+ index 1)))
-        Ok)]
-    [(Invalid) Ok]))
+                  (return
+                    (ResultTcUnit.Err (tc-slice-unreachable-arm-message true))))
+                (when
+                  or-arm?
+                  (tc-or-pattern-flatten-into!
+                    (tc-global-shared-view pattern)
+                    0
+                    (&mut alternatives)))
+                (while (<
+                  alt-index
+                  (if or-arm?
+                    alternatives.len
+                    1))
+                  (begin
+                    (when
+                      catchall
+                      (return
+                        (ResultTcUnit.Err
+                          (tc-slice-unreachable-alternative-message
+                            alt-index
+                            true))))
+                    (match (if or-arm?
+                      (match (ast.ast-match-arm-list-get
+                        (& alternatives)
+                        alt-index
+                        (ast.ast-match-arm-fallback))
+                        [(ast.AstMatchArm.Arm alternative _) alternative])
+                      (tc-global-shared-view pattern))
+                      [(ast.AstPattern.Slice items-box has-rest)
+                        (let
+                          [items : ast.AstPatternList
+                            (ast.ast-pattern-list-box-shared-view items-box)]
+                          [count : i64
+                            (tc-slice-pattern-element-count (& items) has-rest)]
+                          (when
+                            (if has-rest
+                              (tc-slice-lengths-from-covered?
+                                (& exact)
+                                rest-min
+                                count)
+                              (tc-slice-length-covered?
+                                (& exact)
+                                rest-min
+                                count))
+                            (return
+                              (ResultTcUnit.Err
+                                (if or-arm?
+                                  (tc-slice-unreachable-alternative-message
+                                    alt-index
+                                    false)
+                                  (tc-slice-unreachable-arm-message false)))))
+                          (set!
+                            catchall
+                            (tc-slice-pattern-irrefutable?
+                              ctx
+                              (tc-global-shared-view items)
+                              has-rest
+                              (tc-global-shared-view scrut-ty)))
+                          (set!
+                            rest-min
+                            (tc-slice-cover-add-arm!
+                              ctx
+                              (&mut exact)
+                              rest-min
+                              (& items)
+                              count
+                              has-rest
+                              (tc-global-shared-view elem-ty))))]
+                      [_ unit])
+                    (set! alt-index (+ alt-index 1))))
+                (set! index (+ index 1)))]))
+        ResultTcUnit.Ok)]
+    [(TcSlicePatternScrutinee.Invalid) ResultTcUnit.Ok]))
 
 (define (tc-slice-match-missing-length-message [length : i64] [open : bool]) : String
   (tc-kind-message
@@ -58519,7 +59520,8 @@
 ;; A slice match without a catch-all arm is exhaustive when its arms with
 ;; irrefutable element patterns cover every length: lengths below the smallest
 ;; `& rest` arm each need an exact arm. A borrowed fixed array only needs its
-;; own length.
+;; own length. Or-pattern arms arrive flattened into one arm per alternative,
+;; so they cover the union of their alternatives' lengths.
 (define (tc-slice-match-exhaustive-ok
   [ctx : TcContext]
   [elem-ty : ast.AstType]
@@ -58652,10 +59654,13 @@
         (tc-global-shared-view arms))
         Ok
         (match (tc-slice-pattern-scrutinee ctx scrut-ty)
-          [(View _ _ elem-ty array-length)
-            (tc-slice-match-exhaustive-ok ctx elem-ty array-length (& arms))]
-          [(Invalid)
-            (Err
+          [(TcSlicePatternScrutinee.View _ _ elem-ty array-length)
+            (let
+              [flat : ast.AstMatchArmList
+                (tc-or-pattern-flattened-arms (tc-global-shared-view arms))]
+              (tc-slice-match-exhaustive-ok ctx elem-ty array-length (& flat)))]
+          [(TcSlicePatternScrutinee.Invalid)
+            (ResultTcUnit.Err
               (tc-kind-message
                 (NonExhaustiveMatch)
                 "typecheck: non-exhaustive match"))]))]))
@@ -59269,7 +60274,14 @@
         (tc-raw-pointer-elem
           (tc-resolve-type ctx ptr-ty)
           "typecheck: ptr-read requires a raw pointer operand"))]
-    (Ok (tc-resolve-type ctx elem))))
+    [resolved : ast.AstType (tc-resolve-type ctx elem)]
+    [_
+      (try
+        (tc-opaque-by-value-ok
+          ctx
+          (tc-global-shared-view resolved)
+          "cannot read through a pointer to the"))]
+    (Ok resolved)))
 
 (define (tc-ptr-write-expr
   [ctx : TcContext]
@@ -59285,6 +60297,12 @@
           (tc-mut-pointer-elem
             (tc-resolve-type ctx ptr-ty)
             "typecheck: ptr-write! requires a MutPtr pointer operand"))]
+      [_
+        (try
+          (tc-opaque-by-value-ok
+            ctx
+            (tc-global-shared-view elem)
+            "cannot write through a pointer to the"))]
       [value-ty
         (try
           (tc-expr-with-expected-or-actual
@@ -59310,11 +60328,14 @@
     (let
       [ptr-ty : ast.AstType (try (tc-expr ctx env ptr))]
       [resolved-ptr : ast.AstType (tc-resolve-type ctx ptr-ty)]
-      [_
+      [elem : ast.AstType
         (try
           (tc-raw-pointer-elem
             (tc-global-shared-view resolved-ptr)
             "typecheck: ptr-offset requires a raw pointer operand"))]
+      ;; An offset scales by the pointee's size, part of its representation.
+      [_
+        (try (tc-opaque-by-value-ok ctx elem "cannot offset a pointer to the"))]
       [offset-ty : ast.AstType
         (try (tc-expr-with-expected-or-actual ctx env offset (I64)))]
       (if (tc-integer-type? offset-ty)
@@ -59539,8 +60560,10 @@
     (match (tc-type-strip-region
       (tc-resolve-type ctx (tc-global-shared-view box-ty)))
       [(Box inner-ty)
-        (Ok
-          (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty)))]
+        (tc-opaque-by-value-result
+          ctx
+          (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty))
+          "cannot read out of a box the")]
       [_
         (Err
           (tc-kind-message
@@ -59566,11 +60589,14 @@
         (let
           [projected : ast.AstType
             (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty))]
-          (if (tc-type-compatible?
-            (tc-global-shared-view expected)
-            (tc-global-shared-view projected))
-            (Ok (tc-contextual-result-type expected projected))
-            (Ok projected)))]
+          (tc-opaque-by-value-result
+            ctx
+            (if (tc-type-compatible?
+              (tc-global-shared-view expected)
+              (tc-global-shared-view projected))
+              (tc-contextual-result-type expected projected)
+              projected)
+            "cannot read out of a box the"))]
       [_
         (Err
           (tc-kind-message
@@ -59701,7 +60727,10 @@
   [receiver : ast.AstExpr]) : ResultTcType
   (let
     [receiver-ty : ast.AstType (try (tc-expr ctx env receiver))]
-    (tc-deref-result-type ctx receiver-ty)))
+    (tc-opaque-by-value-result
+      ctx
+      (try (tc-deref-result-type ctx receiver-ty))
+      "cannot dereference by value the")))
 
 (define (tc-deref-expr-with-expected-or-actual
   [ctx : TcContext]
@@ -59718,11 +60747,14 @@
           (let
             [projected : ast.AstType
               (try (tc-deref-result-type ctx receiver-ty))]
-            (if (tc-type-compatible?
-              (tc-global-shared-view expected)
-              (tc-global-shared-view projected))
-              (Ok (tc-contextual-result-type expected projected))
-              (Ok projected)))])]
+            (tc-opaque-by-value-result
+              ctx
+              (if (tc-type-compatible?
+                (tc-global-shared-view expected)
+                (tc-global-shared-view projected))
+                (tc-contextual-result-type expected projected)
+                projected)
+              "cannot dereference by value the"))])]
     [(Err _)
       ;; Preserve contextual inference for `(deref (box (init)))`.
       (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)]))
@@ -74176,6 +75208,19 @@
         Ok
         (Err (tc-opaque-representation-message name use))))))
 
+;; TY, the value an operation yields, or E0221 when TY holds an opaque
+;; aggregate foreign to CTX's module family by value. Gating the operations
+;; that read through a pointer, reference or box (#8734) leaves no unwritten
+;; source of such a value: the expressions that pass one along (if, match,
+;; begin) only ever receive it from a gated operation.
+(define (tc-opaque-by-value-result
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [use : String]) : ResultTcType
+  (match (tc-opaque-by-value-ok ctx (tc-global-shared-view ty) use)
+    [(Ok) (Ok ty)]
+    [(Err message) (Err message)]))
+
 ;; Err with E0221 when NAME is an opaque aggregate foreign to CTX's module
 ;; family, else Ok.
 (define (tc-opaque-name-representation-ok
@@ -83529,23 +84574,27 @@
   [pattern : ast.AstPattern]) : TcNameIdList
   (match (tc-type-strip-region
     (tc-resolve-type ctx (tc-match-coverage-type ctx scrut-ty)))
-    [(Enum _)
-      (match pattern
-        [(Variant _ patterns-box)
+    [(ast.AstType.Enum _)
+      (match (tc-global-shared-view pattern)
+        [(ast.AstPattern.Variant _ patterns-box)
           (let
             [patterns : ast.AstPatternList
               (ast.ast-pattern-list-box-shared-view patterns-box)]
-            (tc-pattern-list-add-bound-name-ids patterns Nil))]
-        [_ Nil])]
-    [(EnumArgs _ _)
-      (match pattern
-        [(Variant _ patterns-box)
+            (tc-pattern-list-add-bound-name-ids patterns TcNameIdList.Nil))]
+        [(ast.AstPattern.Or _)
+          (tc-enum-arm-pattern-bound-name-ids pattern TcNameIdList.Nil)]
+        [_ TcNameIdList.Nil])]
+    [(ast.AstType.EnumArgs _ _)
+      (match (tc-global-shared-view pattern)
+        [(ast.AstPattern.Variant _ patterns-box)
           (let
             [patterns : ast.AstPatternList
               (ast.ast-pattern-list-box-shared-view patterns-box)]
-            (tc-pattern-list-add-bound-name-ids patterns Nil))]
-        [_ Nil])]
-    [_ (tc-pattern-add-bound-name-ids pattern Nil)]))
+            (tc-pattern-list-add-bound-name-ids patterns TcNameIdList.Nil))]
+        [(ast.AstPattern.Or _)
+          (tc-enum-arm-pattern-bound-name-ids pattern TcNameIdList.Nil)]
+        [_ TcNameIdList.Nil])]
+    [_ (tc-pattern-add-bound-name-ids pattern TcNameIdList.Nil)]))
 
 (define (tc-borrow-check-pattern-locals
   [ctx : TcContext]
@@ -96818,8 +97867,61 @@
         has-rest
         span
         origin)]
-    [(Var _ _)
-      (Err
+    [(ast.AstPattern.Or patterns-box)
+      (let
+        [patterns : reader.SpannedSexpr
+          (try
+            (macro-pattern-list-to-spanned-sexpr
+              session
+              (ast.ast-pattern-list-box-shared-view patterns-box)
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (reader.spanned-sexpr-list-prepend
+            (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe "or") span)
+            patterns
+            span)))]
+    [(ast.AstPattern.Fields patterns-box)
+      (let
+        [patterns : reader.SpannedSexpr
+          (try
+            (macro-pattern-list-to-spanned-sexpr
+              session
+              (ast.ast-pattern-list-box-shared-view patterns-box)
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (reader.spanned-sexpr-list-prepend
+            (macro-spanned-symbol-id (ci.intern "fields") span)
+            patterns
+            span)))]
+    ;; Always the explicit `[pattern field]` spelling, which also covers the
+    ;; bare-name shorthand.
+    [(ast.AstPattern.Field name patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        [sub : reader.SpannedSexpr
+          (try
+            (macro-pattern-to-spanned-sexpr
+              session
+              (ast.ast-pattern-field-sub (& patterns))
+              span
+              origin))]
+        (ResultMacroSexpr.Ok
+          (reader.spanned-sexpr-bracket-list
+            (reader.spanned-sexpr-list2
+              sub
+              (macro-spanned-symbol-id
+                (macro-output-source-identity-id-at
+                  session
+                  name
+                  "pattern-field")
+                span)
+              span)
+            span)))]
+    [(ast.AstPattern.Var _ _)
+      (ResultMacroSexpr.Err
         (box
           (macro-output-syntax-diag
             origin
@@ -101853,7 +102955,36 @@
                 (macro-hygiene-rename-var-id env macro-name name)
                 nargs)
               next-env)]))]
-    [(Literal lit) (Pattern (Literal lit) env)]))
+    [(ast.AstPattern.Literal lit)
+      (MacroHygienePattern.Pattern (ast.AstPattern.Literal lit) env)]
+    ;; A binder's renamed id depends only on its template name and depth, so
+    ;; every alternative renames a shared binder alike.
+    [(ast.AstPattern.Or patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (match (macro-hygiene-pattern-list patterns env macro-name depth)
+          [(MacroHygienePatternList.PatternList npatterns next-env)
+            (MacroHygienePattern.Pattern (ast.ast-pat-or npatterns) next-env)]))]
+    [(ast.AstPattern.Fields patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (match (macro-hygiene-pattern-list patterns env macro-name depth)
+          [(MacroHygienePatternList.PatternList npatterns next-env)
+            (MacroHygienePattern.Pattern
+              (ast.ast-pat-fields npatterns)
+              next-env)]))]
+    ;; A field name names a declared struct field, not a binder.
+    [(ast.AstPattern.Field name patterns-box)
+      (let
+        [patterns : ast.AstPatternList
+          (ast.ast-pattern-list-box-shared-view patterns-box)]
+        (match (macro-hygiene-pattern-list patterns env macro-name depth)
+          [(MacroHygienePatternList.PatternList npatterns next-env)
+            (MacroHygienePattern.Pattern
+              (ast.AstPattern.Field name (box npatterns))
+              next-env)]))]))
 
 (define (macro-hygiene-let-bindings
   [expr-bases : i64]
@@ -110254,6 +111385,11 @@
       (let
         [nexprs (try (macro-expand-exprs ctx env decls depth exprs))]
         (Ok (ast.ast-node-push (Tuple nexprs))))]
+    ;; The index is a literal integer, not an expression.
+    [(TupleRef tuple-box index)
+      (let
+        [ntuple (try (macro-expand-node ctx env decls depth tuple-box))]
+        (Ok (ast.ast-expr-tuple-ref ntuple index)))]
     [(Array exprs)
       (let
         [nexprs (try (macro-expand-exprs ctx env decls depth exprs))]
@@ -110550,6 +111686,16 @@
         [nlive (try (macro-expand-node ctx env decls depth live-box))]
         [nindex (try (macro-expand-node ctx env decls depth index-box))]
         (Ok (ast.ast-expr-array-take narray nlive nindex)))]
+    [(ArrayPush array-box value-box)
+      (let
+        [narray (try (macro-expand-node ctx env decls depth array-box))]
+        [nvalue (try (macro-expand-node ctx env decls depth value-box))]
+        (Ok (ast.ast-node-push (ArrayPush narray nvalue))))]
+    [(StringRef string-box index-box)
+      (let
+        [nstring (try (macro-expand-node ctx env decls depth string-box))]
+        [nindex (try (macro-expand-node ctx env decls depth index-box))]
+        (Ok (ast.ast-node-push (StringRef nstring nindex))))]
     [(Replace place-box replacement-box)
       (let
         [nplace (try (macro-expand-node ctx env decls depth place-box))]
@@ -110699,7 +111845,159 @@
       (let
         [nvalue (try (macro-expand-node ctx env decls depth value-box))]
         (Ok (ast.ast-node-push (LaneValue nvalue))))]
-    [_ (Ok (ast.ast-node-push expr))]))
+    ;; The range binder is in scope for the value; the range and initial value
+    ;; are evaluated outside it.
+    [(SpmdReduce reduce-box)
+      (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
+        [(Reduce op index index-ty start-box end-box init-box value-box)
+          (let
+            [nstart (try (macro-expand-node ctx env decls depth start-box))]
+            [nend (try (macro-expand-node ctx env decls depth end-box))]
+            [ninit (try (macro-expand-node ctx env decls depth init-box))]
+            [nvalue
+              (try
+                (macro-expand-node
+                  ctx
+                  (tc-bind-id
+                    env
+                    index
+                    (tc-resolve-type ctx (tc-global-shared-view index-ty)))
+                  decls
+                  depth
+                  value-box))]
+            (Ok
+              (ast.ast-node-push
+                (SpmdReduce
+                  (box (Reduce op index index-ty nstart nend ninit nvalue))))))])]
+    ;; The range binder is in scope for the value and the body, the prefix
+    ;; binder for the body; the range and the prefix's initial value are
+    ;; evaluated outside both.
+    [(SpmdScan scan-box)
+      (match (ast.ast-spmd-scan-box-shared-view scan-box)
+        [(Scan
+            op
+            index
+            index-ty
+            start-box
+            end-box
+            prefix
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (let
+            [value-env : TcTypeEnv
+              (tc-bind-id
+                env
+                index
+                (tc-resolve-type ctx (tc-global-shared-view index-ty)))]
+            [nstart (try (macro-expand-node ctx env decls depth start-box))]
+            [nend (try (macro-expand-node ctx env decls depth end-box))]
+            [ninit (try (macro-expand-node ctx env decls depth init-box))]
+            [nvalue
+              (try (macro-expand-node ctx value-env decls depth value-box))]
+            [nbody
+              (try
+                (macro-expand-node
+                  ctx
+                  (tc-bind-id
+                    value-env
+                    prefix
+                    (tc-resolve-type ctx (tc-global-shared-view prefix-ty)))
+                  decls
+                  depth
+                  body-box))]
+            (Ok
+              (ast.ast-node-push
+                (SpmdScan
+                  (box
+                    (Scan
+                      op
+                      index
+                      index-ty
+                      nstart
+                      nend
+                      prefix
+                      prefix-ty
+                      ninit
+                      nvalue
+                      nbody))))))])]
+    ;; The range binder is in scope for the predicate and the body, the slot
+    ;; binder for the body; the range and the slot's initial value are evaluated
+    ;; outside both.
+    [(SpmdCompact compact-box)
+      (match (ast.ast-spmd-compact-box-shared-view compact-box)
+        [(Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [keep-env : TcTypeEnv
+              (tc-bind-id
+                env
+                index
+                (tc-resolve-type ctx (tc-global-shared-view index-ty)))]
+            [nstart (try (macro-expand-node ctx env decls depth start-box))]
+            [nend (try (macro-expand-node ctx env decls depth end-box))]
+            [ninit (try (macro-expand-node ctx env decls depth init-box))]
+            [nkeep (try (macro-expand-node ctx keep-env decls depth keep-box))]
+            [nbody
+              (try
+                (macro-expand-node
+                  ctx
+                  (tc-bind-id
+                    keep-env
+                    slot
+                    (tc-resolve-type ctx (tc-global-shared-view slot-ty)))
+                  decls
+                  depth
+                  body-box))]
+            (Ok
+              (ast.ast-node-push
+                (SpmdCompact
+                  (box
+                    (Compact
+                      index
+                      index-ty
+                      nstart
+                      nend
+                      slot
+                      slot-ty
+                      ninit
+                      nkeep
+                      nbody))))))])]
+    [(SpmdBroadcast value-box lane-box)
+      (let
+        [nvalue (try (macro-expand-node ctx env decls depth value-box))]
+        [nlane (try (macro-expand-node ctx env decls depth lane-box))]
+        (Ok (ast.ast-node-push (SpmdBroadcast nvalue nlane))))]
+    [(SpmdShuffle value-box lane-box)
+      (let
+        [nvalue (try (macro-expand-node ctx env decls depth value-box))]
+        [nlane (try (macro-expand-node ctx env decls depth lane-box))]
+        (Ok (ast.ast-node-push (SpmdShuffle nvalue nlane))))]
+    ;; Leaves: no child expression to expand.
+    [(Literal _) (Ok (ast.ast-node-push expr))]
+    [(Var _) (Ok (ast.ast-node-push expr))]
+    [(TypeLiteral _) (Ok (ast.ast-node-push expr))]
+    [(Init _) (Ok (ast.ast-node-push expr))]
+    [(PtrNull _) (Ok (ast.ast-node-push expr))]
+    [(Break) (Ok (ast.ast-node-push expr))]
+    [(Continue) (Ok (ast.ast-node-push expr))]
+    [(ProgramArgc) (Ok (ast.ast-node-push expr))]
+    [(ProgramArgv) (Ok (ast.ast-node-push expr))]
+    [(ProgramEnvp) (Ok (ast.ast-node-push expr))]
+    ;; Quote forms hold syntax as data; a call inside one is not a call.
+    [(Quote _) (Ok (ast.ast-node-push expr))]
+    [(Quasiquote _) (Ok (ast.ast-node-push expr))]
+    [(Unquote _) (Ok (ast.ast-node-push expr))]
+    [(UnquoteSplicing _) (Ok (ast.ast-node-push expr))]))
 
 (define (macro-expand-module-call-position
   [ctx : TcContext]
@@ -113045,10 +114343,8 @@
             (tc-global-shared-view decls)
             func)
           (macro-exprs-use-macro? ctx expr-bases decls args)))]
-    [(TupleRef a b)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls b))]
+    ;; The index is a literal integer, not an expression.
+    [(TupleRef a _) (macro-node-uses-macro? ctx expr-bases decls a)]
     ;; These forms are conservatively assumed to use a macro.
     [(Break) true]
     [(Continue) true]
@@ -113336,15 +114632,12 @@
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
             (macro-expr-might-fire? state expr-bases body))])]
     [(Tuple exprs) (macro-expr-list-might-fire? state expr-bases exprs)]
-    [(TupleRef tuple-box index-box)
-      (let
-        [tuple : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (or
-          (macro-expr-might-fire? state expr-bases tuple)
-          (macro-expr-might-fire? state expr-bases index)))]
+    ;; The index is a literal integer, not an expression.
+    [(TupleRef tuple-box _)
+      (macro-expr-might-fire?
+        state
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases tuple-box))]
     [(Array exprs) (macro-expr-list-might-fire? state expr-bases exprs)]
     [(DynArray exprs) (macro-expr-list-might-fire? state expr-bases exprs)]
     [(FixedMakeArray _ len-box)

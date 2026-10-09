@@ -4218,6 +4218,134 @@
     (load.compiler-load-session-state-use! previous-state)
     ok))
 
+;; #8765: a batch's retained stdlib proofs match exactly the disk text they
+;; were made from, survive the per-entry provenance reset, are replaced per
+;; suffix, grow past their first slots, and are kept only while retention is
+;; on. The test payload embeds no stdlib copy, so the proof is checked against
+;; the payload form directly.
+(define (compiler-load-proof-matches?
+  [state : (& state load.CompilerLoadSessionState)]
+  [suffix : String]
+  [text : String]) : bool
+  (let
+    [blanked : String
+      (ces.compiler-embedded-stdlib-payload-source (string.copy text))]
+    (load.compiler-load-session-state-stdlib-proof-matches?
+      state
+      (& suffix)
+      (& text)
+      (& blanked))))
+
+(define (compiler-load-retained-stdlib-proofs-ok?) : bool
+  (let
+    [state : load.CompilerLoadSessionState
+      (load.compiler-load-session-state-new)]
+    [suffix : String "proof_probe.tl"]
+    [text : String ";; Why.\n(define kept : i64 1)\n(test t (check kept))\n"]
+    [edited : String ";; Why.\n(define kept : i64 1)\n(test t (check 2))\n"]
+    [_off : unit
+      (load.compiler-load-session-state-retain-stdlib-proof!
+        (& state)
+        (& suffix)
+        (& text))]
+    [off-count : i64
+      (load.compiler-load-session-state-stdlib-proofs (& state)).len]
+    [off-match : bool
+      (compiler-load-proof-matches?
+        (& state)
+        (string.copy suffix)
+        (string.copy text))]
+    [_on : unit
+      (load.compiler-load-session-state-retain-stdlib-proofs! (& state))]
+    [_proved : unit
+      (load.compiler-load-session-state-retain-stdlib-proof!
+        (& state)
+        (& suffix)
+        (& text))]
+    [same-text : bool
+      (compiler-load-proof-matches?
+        (& state)
+        (string.copy suffix)
+        (string.copy text))]
+    ;; An edit inside a dropped test still has the same payload form, but it
+    ;; is not the proved text.
+    [edited-text : bool
+      (compiler-load-proof-matches?
+        (& state)
+        (string.copy suffix)
+        (string.copy edited))]
+    [other-suffix : bool
+      (compiler-load-proof-matches?
+        (& state)
+        "proof_other.tl"
+        (string.copy text))]
+    [_next-entry : unit
+      (load.compiler-load-session-state-embedded-provenance-reset!
+        (load.compiler-load-global-shared-view state))]
+    [after-reset : bool
+      (compiler-load-proof-matches?
+        (& state)
+        (string.copy suffix)
+        (string.copy text))]
+    [_replace : unit
+      (load.compiler-load-session-state-retain-stdlib-proof!
+        (& state)
+        (& suffix)
+        (& edited))]
+    [replaced-count : i64
+      (load.compiler-load-session-state-stdlib-proofs (& state)).len]
+    [replaced-new : bool
+      (compiler-load-proof-matches?
+        (& state)
+        (string.copy suffix)
+        (string.copy edited))]
+    [replaced-old : bool
+      (compiler-load-proof-matches?
+        (& state)
+        (string.copy suffix)
+        (string.copy text))]
+    [index : i64 0]
+    (while (< index 20)
+      (let
+        [grown-suffix : String
+          (str_cat.str-cat "proof_" (string.int->string index) ".tl")]
+        (load.compiler-load-session-state-retain-stdlib-proof!
+          (& state)
+          (& grown-suffix)
+          (& text)))
+      (set! index (+ index 1)))
+    (let
+      [grown-count : i64
+        (load.compiler-load-session-state-stdlib-proofs (& state)).len]
+      [first-grown : bool
+        (compiler-load-proof-matches? (& state) "proof_0.tl" (string.copy text))]
+      [last-grown : bool
+        (compiler-load-proof-matches?
+          (& state)
+          "proof_19.tl"
+          (string.copy text))]
+      [_release : unit
+        (load.compiler-load-session-state-release-stdlib-proofs! (& state))]
+      [released-count : i64
+        (load.compiler-load-session-state-stdlib-proofs (& state)).len]
+      [released-match : bool
+        (compiler-load-proof-matches? (& state) "proof_0.tl" (string.copy text))]
+      (and
+        (= off-count 0)
+        (not off-match)
+        same-text
+        (not edited-text)
+        (not other-suffix)
+        after-reset
+        (= replaced-count 1)
+        replaced-new
+        (not replaced-old)
+        (= grown-count 21)
+        first-grown
+        last-grown
+        (= released-count 0)
+        (not released-match)))))
+
 (define (compiler-load-session-embedded-provenance-isolation-ok?) : bool
   (let
     [previous-state : load.CompilerLoadSessionState
@@ -5659,6 +5787,9 @@
     (compiler-load-session-embedded-provenance-isolation-ok?)
     (return
       (io.panic "compiler-load: embedded provenance isolation smoke mismatch")))
+  (unless
+    (compiler-load-retained-stdlib-proofs-ok?)
+    (return (io.panic "compiler-load: retained stdlib proofs mismatch")))
   (unless
     (compiler-load-canonical-stdlib-path-claims-ok?)
     (return (io.panic "compiler-load: canonical stdlib path claims mismatch")))

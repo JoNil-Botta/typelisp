@@ -504,8 +504,10 @@ Description:
     from the same package or source root. Elsewhere the type's name stays
     usable only behind Ptr, MutPtr, & and &mut. Constructing it, initializing
     it, projecting, setting or borrowing its fields, matching its variants or
-    fields, and holding it by value in a parameter, return, let, field,
-    payload, global, tuple, array or Box are rejected, even inside unsafe. A
+    fields, holding it by value in a parameter, return, let, field,
+    payload, global, tuple, array or Box, and reading or writing it by value
+    through ptr-read, ptr-write!, ptr-offset, deref or a Box are rejected,
+    even inside unsafe. A
     (module ...) declaration does not join a family from another package, and
     code a macro expands into a module is checked as that module's code.
 

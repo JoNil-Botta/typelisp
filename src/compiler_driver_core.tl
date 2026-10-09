@@ -346,6 +346,18 @@
   (compiler_typecheck_core.tc-prefix-snapshot-cache-enable-for-state!
     state.typecheck-prefix-cache))
 
+;: A batch keeps each stdlib module's trusted-source proof across its entries
+;: (#8765); release drops them when the batch ends.
+(define (compiler-driver-state-retain-stdlib-proofs!
+  [state : (& state CompilerDriverState)]) : unit
+  (compiler_load.compiler-load-session-state-retain-stdlib-proofs!
+    (& state.load-session)))
+
+(define (compiler-driver-state-release-stdlib-proofs!
+  [state : (& state CompilerDriverState)]) : unit
+  (compiler_load.compiler-load-session-state-release-stdlib-proofs!
+    (& state.load-session)))
+
 (define (compiler-driver-state-prefix-cache-disable!
   [state : CompilerDriverState]) : unit
   (compiler_typecheck_core.tc-prefix-snapshot-cache-disable-for-state!

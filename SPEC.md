@@ -853,7 +853,12 @@ E0221, even inside `unsafe`:
   operand, so `(size-of (type T))` is rejected;
 - binds a value that holds it by value with `let`, even without an annotation;
 - names a value or function whose type holds it by value, such as a function of
-  the defining module that returns it.
+  the defining module that returns it;
+- yields a value that holds it by value without writing the type: `ptr-read`,
+  a `deref` read, or reading a `Box`'s contents. `ptr-write!` writes such a
+  value and `ptr-offset` scales by its size, so both are rejected too. A
+  dereference that stays a place, as in the reborrow `(& (deref c))`, is not a
+  read.
 
 Code a macro expands into a module is checked as that module's code.
 
@@ -877,10 +882,7 @@ Not yet enforced:
   namespace is still treated as a family member (#8733);
 - layout queries and reflection still reach the representation through a type
   derived from an allowed one, such as the `reference-element-type` of
-  `(& a T)` (#8735);
-- a value that `ptr-read` or `deref` yields is rejected only where it is bound
-  with `let` or named, and `ptr-offset` and `ptr-write!` are not checked
-  (#8734).
+  `(& a T)` (#8735).
 
 ### 3.6 Type aliases
 
@@ -5338,12 +5340,56 @@ explicit constructors.
   patterns are rejected with focused diagnostics. In enum contexts, `(box
   ...)` resolves as an enum variant pattern when the expected enum has such a
   variant.
+- `(fields f [p g] ...)` matches a struct by field name wherever a struct
+  pattern may appear: a struct or `(& S)` scrutinee, a struct field, tuple
+  slot, array element, enum payload, or `(box ...)` payload. A bare `f` binds
+  field `f` to a local named `f`; `[p g]` matches field `g` against the
+  pattern `p`, so `[local g]` binds field `g` as `local`. `p` is any pattern a
+  struct field accepts: a binding, `_`, or a nested irrefutable tuple, array,
+  struct, or `(fields ...)` pattern. Fields the pattern does not name are
+  ignored, so it stands for the positional struct pattern with `_` in their
+  places. It needs at least one entry; naming a field the struct does not
+  declare, or naming a field twice, is rejected. Positional struct patterns
+  are unchanged.
+- `(or p1 p2 ...)` matches when any of its two or more alternatives does,
+  trying them left to right. It may be an arm's whole pattern, an enum
+  payload sub-pattern at any depth, such as `(Move dst (or (Small) (Large)))`,
+  or a `slice` element pattern. Struct field, `(fields ...)` entry,
+  `(box ...)`, tuple slot, and array element sub-patterns must stay
+  irrefutable, so an or-pattern there is rejected. Every alternative must
+  bind exactly the same names, each at the same type, including a `slice`
+  pattern's `rest`; the arm body sees the names bound by whichever
+  alternative matched. At the top of an enum arm each alternative is itself a
+  top-level pattern, so a bare identifier there names a nullary variant:
+  `[(or Red Green) ...]`. An alternative that follows one matching every value
+  is rejected as unreachable, as an arm after `_` is. Exhaustiveness and
+  reachability treat an or-pattern as the union of its alternatives, as if
+  each were an arm of its own: an arm covers a variant when one alternative
+  does, `slice` alternatives cover the union of their lengths (so
+  `[(or (slice) (slice _)) ...]` and `[(slice _ _ & _) ...]` are complete), and
+  a `slice` alternative whose lengths earlier arms and alternatives already
+  cover is unreachable. A nested or-pattern is irrefutable when one
+  alternative is or when its alternatives cover the payload type the way a
+  match's arms would. The arm body runs once, for whichever alternative
+  matched. Alternatives that bind every name from the same payload position,
+  or bind nothing, enter one compiled copy of it straight from their tag or
+  literal tests, so the arm dispatches as the separate arms it replaces
+  would, in the same jump table. Alternatives that bind from different
+  positions get one copy per position; alternatives with refutable payload
+  patterns bind first and then join a shared copy. In a match's final arm
+  every alternative but the last is tested, so the last `slice` alternative
+  there performs no length comparison. A nested or-pattern is tested as the
+  whole-arm alternatives it expands to, so `(V (or a b) c)` tries `(V a c)`
+  and then `(V b c)`. A varying `foreach` match does not accept or-patterns.
+- `or` and `fields` are reserved pattern heads; in expressions `(or ...)`
+  remains the short-circuiting boolean macro.
 - Scalar scrutinees support literal patterns plus `_`.
 - String literal patterns compare string contents, not pointer identity.
 - Bindings in aggregate patterns introduce variables for payloads, fields,
   slots, or elements.
-- A bare identifier at the top level of an enum `match` arm resolves as a
-  nullary variant name. It is not a fresh catch-all binding; use `_` for that.
+- A bare identifier at the top level of an enum `match` arm, or of one of its
+  or-pattern alternatives, resolves as a nullary variant name. It is not a
+  fresh catch-all binding; use `_` for that.
 - The `_` wildcard matches any remaining value (used for exhaustiveness).
 - All arms must return the same type: the type of each arm's last body
   expression. An arm whose type does not merge with the others is checked again
@@ -5367,6 +5413,44 @@ as `(& tree Tree)`:
 (define (main) : i64
   (sum (& (Tree.Node (box (Tree.Leaf 3)) (box (Tree.Leaf 7))))))
 ```
+
+```lisp test=run name=or-pattern-shared-arm exit=42 stdout=""
+(defstruct SelectPayload
+  (mask i64)
+  (dst i64))
+
+(defenum Instr
+  (Load i64 i64)
+  (EntryArgc i64)
+  (Select (Box SelectPayload))
+  (Halt))
+
+(define (instr-dst [instr : Instr]) : i64
+  (match instr
+    [(or (Load dst _) (EntryArgc dst) (Select (box (fields dst)))) dst]
+    [Halt -1]))
+
+(define (main) : i64
+  (+ (instr-dst (Load 40 7)) (instr-dst (Select (box (SelectPayload 0 2))))))
+```
+
+Every alternative binds `dst`, from a positional payload or by name from the
+boxed payload struct, and all of them run the same arm body.
+
+```lisp test=run name=or-slice-pattern-lengths exit=42 stdout=""
+(define (pair-sum [xs : (& (Slice i64))]) : i64
+  (match xs
+    [(or (slice) (slice _)) 0]
+    [(slice a b & _) (+ a b)]))
+
+(define (main) : i64
+  (let
+    [items : (Array i64 3) (array 40 2 7)]
+    (+ (pair-sum (& items)) (pair-sum (slice-view items 2 1)))))
+```
+
+The first arm covers views of zero and one element and the second every
+longer view, so the match is exhaustive without `_`.
 
 ### 5.14 `(lambda ([param : type] ...) [: ret_type] body...)` — anonymous function
 

@@ -400,7 +400,7 @@ test -f "{{dir}}/target/release/walk_pkg.s"
 stdout match Built[ ]
 in file {{dir}}/target/release/walk_pkg.s
 contains main:
-contains-any _tl_walk_pkg_src_math_inc || _tl_walk_pkg_src_math_math_inc ||     movl $42, %eax || 0x48,0xc7,0xc0,0x2a,0x00,0x00,0x00
+contains-any _tl_walk_pkg_src_math_inc || _tl_walk_pkg_src_math_math_inc ||     movl $42, %eax ||     movq $42, %rax
 
 case package-missing-dep-file
 file typelisp.pkg

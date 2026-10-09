@@ -6129,6 +6129,13 @@
       (string.eq
         (compiler-backend-test-emit-load-var assignments 0 "%rax")
         "    movq %r8, %rax\n")
+      ;; An XMM home is MOVQ xmm, which is not a machine record.
+      (string.eq
+        (compiler-backend-test-emit-load-var
+          (compiler-backend-peephole-assignments)
+          1
+          "%rax")
+        "    movq %xmm2, %rax\n")
       (string.eq
         (backend.compiler-backend-emit-store-var
           assignments

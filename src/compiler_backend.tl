@@ -15728,7 +15728,10 @@
         (compiler-backend-global-shared-view reg))]
     (cond
       [(= dst home) unit]
-      [(mx.compiler-machine-x64-gpr? dst)
+      ;; An XMM home is MOVQ xmm, another instruction, and keeps its text.
+      [(and
+          (mx.compiler-machine-x64-gpr? dst)
+          (mx.compiler-machine-x64-gpr? home))
         (compiler-backend-asm-append-machine!
           out
           (mx.MachineInstr.MovRR (W64) dst home))]

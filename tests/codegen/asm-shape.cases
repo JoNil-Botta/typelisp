@@ -1028,6 +1028,15 @@ in fn _tl_bit_test_mask_admission_bit63_set
 match ^[[:space:]]+andq %r[a-z0-9]+, %r[a-z0-9]+$
 match ^[[:space:]]+cmpq %r[a-z0-9]+, %r[a-z0-9]+$
 
+# A bit test whose target carries a loop phi still fuses to `bt` + jcc, with
+# the phi copies on an edge block (none here: the counter keeps its register),
+# not a variable shift.
+case bit-test-phi-edge
+source tests/integration/bit_test_phi_edge.tl
+in fn _tl_bit_test_phi_edge_count_defs
+match ^[[:space:]]+btq %r[a-z0-9]+, %r[a-z0-9]+$
+not-match ^[[:space:]]+shrq %cl, %r
+
 # sqrt lowers to sqrtsd/sqrtss with no call and no private helper.
 case stdlib-math-sqrt
 source tests/integration/stdlib_math_ieee.tl

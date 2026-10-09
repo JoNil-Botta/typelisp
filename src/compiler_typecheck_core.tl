@@ -55510,8 +55510,8 @@
 ;; For a struct referent (#8583) a constructor-shaped pattern binds each field
 ;; through the borrow, as a borrowed tuple element does
 ;; (`tc-borrowed-binding-type`: by value when `Copy`, else a reference into the
-;; scrutinee), and a binding takes the reference itself. Any other referent
-;; binds as a scalar.
+;; scrutinee). A wildcard or binding, and any pattern on another referent, binds
+;; as a scalar: a binding takes the reference itself.
 (define (tc-bind-borrowed-struct-match-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -55525,11 +55525,14 @@
         [(Struct name) name]
         [(StructArgs name _) name]
         [_ -1])]
-    (if (< struct-name 0)
+    [atom : bool
+      (match (& pattern)
+        [(Wildcard) true]
+        [(Binding _) true]
+        [_ false])]
+    (if (or (< struct-name 0) atom)
       (tc-bind-scalar-match-pattern env scrut-ty pattern)
       (match pattern
-        [(Wildcard) (Ok env)]
-        [(Binding name) (Ok (tc-bind-id env name scrut-ty))]
         [(Variant pattern-name args-box)
           (tc-bind-borrowed-struct-pattern
             ctx

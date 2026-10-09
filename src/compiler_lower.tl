@@ -63836,8 +63836,53 @@
               (tc_core.tc-type-strip-region
                 (tc_core.tc-resolve-type ctx scrut-ty)))
             (deref args-box))
-          (Err (box (lower-diagnostic "lower: unsupported match pattern")))))]
+          (lower-bind-borrowed-struct-match
+            ctx
+            state
+            env
+            type-env
+            scrut-var
+            scrut-ty
+            name
+            (deref args-box))))]
     [_ (Ok state env type-env)]))
+
+;; A struct pattern on a `(& S)` scrutinee (#8583): the scrutinee holds the
+;; struct's address, and each field binds through the borrow like a borrowed
+;; tuple element.
+(define (lower-bind-borrowed-struct-match
+  [ctx : tc_core.TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : tc_core.TcTypeEnv]
+  [scrut-var : i64]
+  [scrut-ty : ast.AstType]
+  [name : i64]
+  [args : ast.AstPatternList]) : ResultLowerEnv
+  (match (tc_core.tc-type-strip-region
+    (tc_core.tc-resolve-type ctx (lower-global-shared-view scrut-ty)))
+    [(Ref borrow-lifetime referent-box)
+      (let
+        [referent-ty : ast.AstType
+          (tc_core.tc-context-type-get ctx referent-box)]
+        (if (lower-struct-pattern-for-type?
+          ctx
+          (lower-global-shared-view referent-ty)
+          name)
+          (lower-bind-borrowed-struct-pattern
+            ctx
+            state
+            env
+            type-env
+            borrow-lifetime
+            (Var scrut-var)
+            (lower-global-shared-view referent-ty)
+            (lower-struct-type-name-or-empty
+              (tc_core.tc-type-strip-region
+                (tc_core.tc-resolve-type ctx referent-ty)))
+            args)
+          (Err (box (lower-diagnostic "lower: unsupported match pattern")))))]
+    [_ (Err (box (lower-diagnostic "lower: unsupported match pattern")))]))
 
 ;; The switch-form pass is deliberately the only place that may materialize
 ;; the final enum tag and unreachable default. Lowering keeps the classic

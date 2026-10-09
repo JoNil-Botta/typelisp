@@ -274,6 +274,12 @@ licm_element_bound_opt2|all|2|tests/integration/licm_element_bound.tl|42|0\n0\n0
 licm_addr_taken_local|all|0,1,2|tests/integration/licm_addr_taken_local.tl|42|-|-|-|-
 licm_addr_taken_reset|all|0,1,2|tests/integration/licm_addr_taken_reset.tl|42|-|-|-|-
 fold_addr_taken_local|all|0,1,2|tests/integration/fold_addr_taken_local.tl|42|-|-|-|-
+bounds_dom_addr_taken_local|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|42|-|0 2 0|stdlib/io.tl stdlib/string.tl|-
+bounds_dom_addr_taken_local_last|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|43|-|0 3 1|stdlib/io.tl stdlib/string.tl|-
+bounds_dom_addr_taken_local_check_abort|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|134|-|0 4 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:77:31: array index out of bounds: index=4 length=4\n
+bounds_dom_addr_taken_local_copy_abort|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|134|-|0 4 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:90:31: array index out of bounds: index=4 length=4\n
+bounds_dom_addr_taken_local_check_below_abort|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|134|-|3 -1 1|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:77:31: array index out of bounds: index=-1 length=4\n
+bounds_dom_addr_taken_local_copy_below_abort|all|0,1,2|tests/integration/bounds_dom_addr_taken_local.tl|134|-|3 -1 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:90:31: array index out of bounds: index=-1 length=4\n
 licm_element_bound_abort_opt2|all|2|tests/integration/licm_element_bound.tl|134|0\n0\n0\n|4 1|stdlib/io.tl stdlib/string.tl stdlib/vector.tl|expected-stderr:tl: $SRC:88:62: array index out of bounds: index=4398046511104 length=4\n
 licm_guarded_read|all|-|tests/integration/licm_guarded_read.tl|42|254\n122\n0\n122\n|1 3 8|stdlib/io.tl stdlib/string.tl|-
 licm_guarded_read_opt2|all|2|tests/integration/licm_guarded_read.tl|42|254\n122\n0\n122\n|1 3 8|stdlib/io.tl stdlib/string.tl|stage-stdlib
@@ -662,6 +668,7 @@ thread_safe_string|all|-|tests/integration/thread_safe_string.tl|42|-|-|stdlib/a
 thread_safe_i64_vec|all|-|tests/integration/thread_safe_i64_vec.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl stdlib/vector.tl|-
 thread_safe_box_i64|all|-|tests/integration/thread_safe_box_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 atomic_thread_spawn|all|-|tests/integration/atomic_thread_spawn.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+null_arena_sentinel|all|-|tests/integration/null_arena_sentinel.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 safe_threading_example|all|-|examples/safe_threading.tl|42|safe threading score: 42\n|-|stdlib/arena.tl stdlib/io.tl stdlib/thread.tl stdlib/string.tl stdlib/str_cat.tl|-
 arena_lifetimes_example|all|-|examples/arena_lifetimes.tl|42|arena lifetime score: 42\n|-|stdlib/arena.tl stdlib/io.tl stdlib/profile.tl stdlib/thread.tl stdlib/string.tl stdlib/test.tl|-
 tl_alloc|all|-|tests/integration/tl_alloc.tl|0|-|-|-|-
@@ -779,6 +786,7 @@ function_lifetime_elision|all|-|tests/integration/function_lifetime_elision.tl|4
 consume_parameters|all|-|tests/integration/consume_parameters.tl|0|-|-|consume/parameters/helper.tl stdlib/string.tl|-
 comptime_module_value_reflection|all|-|tests/integration/comptime_module_value_reflection.tl|42|-|-|reflection/signature/provider.tl stdlib/comptime.tl|-
 comptime_init_callee|all|-|tests/integration/comptime_init_callee.tl|42|-|-|init_callee/probe.tl init_callee/provider.tl stdlib/comptime.tl stdlib/iterator.tl stdlib/string.tl|-
+comptime_expr_call_args|all|-|tests/integration/comptime_expr_call_args.tl|42|-|-|stdlib/comptime.tl stdlib/iterator.tl|-
 comptime_type_expr_worklist|all|-|tests/integration/comptime_type_expr_worklist.tl|42|-|-|stdlib/comptime.tl|-
 comptime_lambda_reflected_closure|all|-|tests/integration/comptime_lambda_reflected_closure.tl|42|-|-|stdlib/comptime.tl stdlib/string.tl|-
 str_cat_scoped_region|all|-|tests/integration/str_cat_scoped_region.tl|42|-|-|-|-
@@ -814,6 +822,7 @@ latch_sink_for_loops|all|0,2|tests/integration/latch_sink_for_loops.tl|42|-|-|st
 counter_sink_loops|all|0,1,2|tests/integration/counter_sink_loops.tl|42|-|-|-|-
 specialize_resource_scope|all|-|tests/integration/specialize_resource_scope.tl|42|-|-|-|-
 specialize_substitution_forms|all|-|tests/integration/specialize_substitution_forms.tl|42|-|-|stdlib/vector.tl|-
+specialize_binder_shadow|all|-|tests/integration/specialize_binder_shadow.tl|42|-|-|-|-
 float_comparisons_embedded|all|-|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|-
 float_comparisons_source|all|0,1,2|tests/integration/float_comparisons.tl|0|-|-|stdlib/math.tl|stage-stdlib
 decls_generated_imports|all|-|tests/integration/decls_generated_imports.tl|42|-|-|decls_generated_import_dep.tl decls_generated_import_empty.tl decls_generated_import_macro_dep.tl|-

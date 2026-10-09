@@ -9691,7 +9691,7 @@
     (compiler_optimize.opt-type-eq
       type-segment-bases
       load-elem-ty
-      (compiler-backend-global-shared-view bin-elem-ty))
+      (& bin-elem-ty))
     (compiler-backend-vector-binop-memory-source-supported?
       op
       bin-lanes
@@ -20476,7 +20476,7 @@
                     (if (compiler_regalloc.compiler-reg-vector-reduce-mask-scratch?
                       op
                       lanes
-                      (compiler-backend-global-shared-view elem-ty))
+                      (& elem-ty))
                       (compiler-backend-scavenge-xmm-reg
                         dst
                         (compiler-backend-three-exclude
@@ -24079,17 +24079,18 @@
           (let
             [ids : backend_label_i64_map.Map
               (compiler_regalloc.compiler-reg-loop-depth-block-ids
-                (compiler-backend-global-shared-view dense-blocks)
-                (backend_label_i64_map.with-capacity
-                  (compiler_regalloc.compiler-reg-bits-map-capacity count))
+                (& dense-blocks)
+                (&
+                  (backend_label_i64_map.with-capacity
+                    (compiler_regalloc.compiler-reg-bits-map-capacity count)))
                 0)]
             [nest : compiler_regalloc.CompilerRegLoopNest
-              (compiler_regalloc.compiler-reg-loop-nest-build dense-blocks)]
+              (compiler_regalloc.compiler-reg-loop-nest-build (& dense-blocks))]
             [points : (__tl_dyn-array i64)
               (compiler_regalloc.compiler-reg-loop-phi-mb-block-points orig)]
             [interval-index : compiler_regalloc.CompilerRegIntervalIndex
               (compiler_regalloc.compiler-reg-interval-index-build
-                intervals
+                (& intervals)
                 vars)]
             ;; At most one site can be published for each final IR
             ;; instruction. Use that function-derived bound for both site and
@@ -24137,9 +24138,7 @@
               (compiler_regalloc.compiler-reg-loop-nest-header-count nest))
               (let
                 [h : i64
-                  (compiler_regalloc.compiler-reg-loop-nest-header
-                    (compiler-backend-global-shared-view nest)
-                    hx)]
+                  (compiler_regalloc.compiler-reg-loop-nest-header (& nest) hx)]
                 [total : i64 0]
                 [rlo : i64 0]
                 [le : i64 0]
@@ -24579,7 +24578,7 @@
       (set!
         out
         (compiler_regalloc.compiler-reg-interval-seq-append
-          out
+          (& out)
           (compiler_regalloc.CompilerRegInterval
             (+ vars index)
             (array-ref lo index)
@@ -28838,9 +28837,9 @@
       ;; lint-allow: nested-if-ladder
       (if (and
         (compiler_regalloc.compiler-reg-clobber-binop-shift?
-          (compiler-backend-global-shared-view op)
-          (compiler-backend-global-shared-view rhs)
-          (compiler-backend-global-shared-view operand-ty))
+          (& op)
+          (& rhs)
+          (& operand-ty))
         (not
           (compiler-backend-binop-rcx-shift?
             backend-state
@@ -35791,11 +35790,12 @@
     [src-reg : String
       (compiler-backend-value-scalar-register backend-state assignments src)]
     (if (and
-      (not (compiler_optimize.opt-type-eq type-segment-bases from-ty (U64)))
+      (not (compiler_optimize.opt-type-eq type-segment-bases from-ty (& (U64))))
       (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
       (not (string.eq src-reg "")))
       (Ok (compiler-backend-int-to-float-cast-reg-asm src-reg to-ty dst-home))
-      (if (not (compiler_optimize.opt-type-eq type-segment-bases from-ty (U64)))
+      (if (not
+        (compiler_optimize.opt-type-eq type-segment-bases from-ty (& (U64))))
         (let
           [src-tmp : String
             (if (string.eq src-reg "")
@@ -35989,10 +35989,7 @@
   [program-index : CompilerBackendProgramIndex]
   [backend-state : CompilerBackendState]) : ResultCompilerBackend
   (if (and
-    (compiler_optimize.opt-type-eq
-      type-segment-bases
-      from-ty
-      (compiler-backend-global-shared-view to-ty))
+    (compiler_optimize.opt-type-eq type-segment-bases from-ty (& to-ty))
     (compiler-backend-value-same-home?
       backend-state
       assignments
@@ -41828,8 +41825,8 @@
           right)
           [(Some right-location)
             (compiler_regalloc.compiler-reg-location-eq?
-              left-location
-              right-location)]
+              (& left-location)
+              (& right-location))]
           [(No) false])]
       [(No) false])))
 
@@ -51881,9 +51878,7 @@
             [(Gep gep-dst2 base2 offset2 elem-ty2)
               (if (and
                 (compiler-backend-var-single-use? ctx.use-counts gep-dst2)
-                (compiler_optimize.opt-value-eq
-                  base2
-                  (compiler-backend-global-shared-view base)))
+                (compiler_optimize.opt-value-eq (& base2) (& base)))
                 (match (compiler-backend-value-as-i64 offset2)
                   [(Some _) (No)]
                   [(None)
@@ -54212,8 +54207,8 @@
       [(Gep gep-dst2 base2 offset2 elem-ty2)
         (if (and
           (compiler-backend-var-single-use? ctx.use-counts gep-dst2)
-          (compiler_optimize.opt-value-eq base2 base)
-          (compiler_optimize.opt-value-eq offset2 offset)
+          (compiler_optimize.opt-value-eq (& base2) (& base))
+          (compiler_optimize.opt-value-eq (& offset2) (& offset))
           (=
             (compiler-backend-type-size ctx.type-segment-bases elem-ty2)
             (compiler-backend-type-size ctx.type-segment-bases elem-ty)))
@@ -54738,9 +54733,7 @@
             [(Gep gep-dst2 base2 offset2 elem-ty2)
               (if (and
                 (compiler-backend-var-single-use? ctx.use-counts gep-dst2)
-                (compiler_optimize.opt-value-eq
-                  base2
-                  (compiler-backend-global-shared-view base)))
+                (compiler_optimize.opt-value-eq (& base2) (& base)))
                 (match (compiler-backend-value-as-i64 offset2)
                   [(Some _)
                     (if (< after-gep instrs.len)
@@ -57550,9 +57543,7 @@
       (match maybe-gep
         [(Gep gep-dst base offset elem-ty)
           (if (and
-            (compiler_optimize.opt-value-eq
-              base
-              (compiler-backend-global-shared-view ptr))
+            (compiler_optimize.opt-value-eq (& base) (& ptr))
             (compiler-backend-var-single-use? ctx.use-counts gep-dst))
             (match (compiler-backend-value-as-i64 offset)
               [(Some n)
@@ -58222,7 +58213,7 @@
                   (compiler_optimize.opt-type-eq
                     ctx.type-segment-bases
                     ty
-                    (compiler-backend-global-shared-view ctx.ret-ty)))
+                    (& ctx.ret-ty)))
                   (compiler-backend-emit-terminator-into
                     (compiler-backend-emit-call-return
                       ctx.type-segment-bases
@@ -62695,7 +62686,7 @@
           (let
             [interval-index : compiler_regalloc.CompilerRegIntervalIndex
               (compiler_regalloc.compiler-reg-interval-index-build
-                intervals
+                (& intervals)
                 slot-vars)]
             [starts : (__tl_dyn-array i64) interval-index.starts]
             [ends : (__tl_dyn-array i64) interval-index.ends]
@@ -63607,7 +63598,7 @@
       (compiler-backend-peephole-predcount-bump
         counts
         (compiler_optimize.opt-cfg-block-successors-with-next
-          (compiler_ir_types.compiler-ir-block-seq-ref blocks index)
+          (& (compiler_ir_types.compiler-ir-block-seq-ref blocks index))
           (compiler-backend-block-seq-label-or-empty blocks (+ index 1)))))))
 
 ;; True iff `block`'s terminator is a conditional branch that NEEDS phi-copy edge
@@ -63697,7 +63688,7 @@
             (= 1 (backend_label_i64_map.get-value-or (& predcount) cur-label 0))
             (compiler_optimize.opt-label-contains
               (compiler_optimize.opt-cfg-block-successors-with-next
-                prev
+                (& prev)
                 cur-label)
               cur-label))
             (compiler-backend-peephole-carry-safe-insert!
@@ -64923,7 +64914,7 @@
       (match (owned_view.compiler-owned-reference-shared-view block)
         [(Block _ instrs)
           (if (compiler_regalloc.compiler-reg-seq-has-returning-call-or-syscall?
-            instrs)
+            (& instrs))
             true
             (compiler-backend-blocks-have-returning-call? rest))])]))
 
@@ -68160,10 +68151,7 @@
     [i : i64 0]
     (while (< i header-count)
       (let
-        [h : i64
-          (compiler_regalloc.compiler-reg-loop-nest-header
-            (compiler-backend-global-shared-view nest)
-            i)]
+        [h : i64 (compiler_regalloc.compiler-reg-loop-nest-header (& nest) i)]
         (set! (array-ref sorted i) h)
         (set! generation (+ generation 1))
         (set!
@@ -70954,7 +70942,7 @@
             (compiler_regalloc.compiler-reg-cold-call-rewrite-function-with-representations
               type-segment-bases
               early-exit-func
-              (compiler-backend-program-index-representations program-index))
+              (& (compiler-backend-program-index-representations program-index)))
             (Rewrite early-exit-func (- 0 1)))]
         [cold-call-func : compiler_ir_types.CompilerIrFunction
           (compiler_regalloc.compiler-reg-cold-call-rewrite-function-value
@@ -70967,7 +70955,7 @@
             [(Function _ _ _ out-vars _ _) out-vars])]
         [cold-call-temp-start : i64
           (compiler_regalloc.compiler-reg-cold-call-rewrite-temp-start
-            cold-call-rewrite)]
+            (& cold-call-rewrite))]
         [walk-func : compiler_ir_types.CompilerIrFunction
           (Function
             name
@@ -71009,25 +70997,26 @@
         [walk-types : compiler_regalloc.CompilerRegVarTypes
           (if scalar-plan?
             (compiler_regalloc.compiler-reg-function-var-types-with-representations-and-metrics
-              (compiler-backend-global-shared-view walk-func)
-              (compiler-backend-program-index-representations program-index)
+              (& walk-func)
+              (& (compiler-backend-program-index-representations program-index))
               (compiler-backend-state-metrics program-index.backend-state))
             (compiler_regalloc.compiler-reg-var-types-empty-with-representations
-              (compiler-backend-program-index-representations program-index)))]
+              (& (compiler-backend-program-index-representations program-index))))]
         [reg-plan : compiler_regalloc.CompilerRegPlan
           (if (compiler-backend-mode-scalar? mode)
             (if scalar-registers-enabled
               (compiler_regalloc.compiler-reg-plan-function-scalar-cold-with-type-segment-bases-for-abi-with-types-and-advisory-sink
                 type-segment-bases
                 fn-abi
-                (compiler-backend-global-shared-view walk-func)
+                (& walk-func)
                 cold-call-temp-start
                 walk-types
                 (compiler-backend-state-advisory-sink
                   program-index.backend-state))
               (compiler_regalloc.compiler-reg-plan-function-stack-only-with-representations-and-metrics-and-advisory-sink
-                (compiler-backend-global-shared-view walk-func)
-                (compiler-backend-program-index-representations program-index)
+                (& walk-func)
+                (&
+                  (compiler-backend-program-index-representations program-index))
                 (compiler-backend-state-metrics program-index.backend-state)
                 (compiler-backend-state-advisory-sink
                   program-index.backend-state)))
@@ -71035,16 +71024,18 @@
               (compiler_regalloc.compiler-reg-plan-function-avx2-with-type-segment-bases-for-abi-and-representations-and-metrics-and-advisory-sink
                 type-segment-bases
                 fn-abi
-                (compiler-backend-global-shared-view walk-func)
-                (compiler-backend-program-index-representations program-index)
+                (& walk-func)
+                (&
+                  (compiler-backend-program-index-representations program-index))
                 (compiler-backend-state-metrics program-index.backend-state)
                 (compiler-backend-state-advisory-sink
                   program-index.backend-state))
               (compiler_regalloc.compiler-reg-plan-function-with-type-segment-bases-for-abi-and-representations-and-metrics-and-advisory-sink
                 type-segment-bases
                 fn-abi
-                (compiler-backend-global-shared-view walk-func)
-                (compiler-backend-program-index-representations program-index)
+                (& walk-func)
+                (&
+                  (compiler-backend-program-index-representations program-index))
                 (compiler-backend-state-metrics program-index.backend-state)
                 (compiler-backend-state-advisory-sink
                   program-index.backend-state))))]
@@ -71068,9 +71059,9 @@
             (compiler_regalloc.compiler-reg-call-hole-split-rewrite-function
               type-segment-bases
               fn-abi
-              walk-func
+              (& walk-func)
               walk-types
-              reg-plan
+              (& reg-plan)
               cold-call-temp-start)
             (compiler_regalloc.compiler-reg-call-hole-split-none
               walk-func
@@ -71086,10 +71077,10 @@
             (compiler-backend-global-shared-view call-hole-split))]
         [hole-vars : i64
           (compiler_regalloc.compiler-reg-call-hole-split-vars
-            (compiler-backend-global-shared-view call-hole-split))]
+            (& call-hole-split))]
         [hole-types : compiler_regalloc.CompilerRegVarTypes
           (compiler_regalloc.compiler-reg-call-hole-split-types
-            (compiler-backend-global-shared-view call-hole-split))]
+            (& call-hole-split))]
         [hole-reg-plan : compiler_regalloc.CompilerRegPlan
           (compiler_regalloc.compiler-reg-call-hole-split-plan
             (compiler-backend-global-shared-view call-hole-split))]
@@ -71099,7 +71090,7 @@
         ;; [hole-vars, split-vars), contiguously.
         [hole-temp-start : i64
           (compiler_regalloc.compiler-reg-call-hole-split-temp-start
-            call-hole-split)]
+            (& call-hole-split))]
         ;; P3c: the greedy homes a value for its WHOLE interval, so a value that
         ;; is live ACROSS a hot inner loop but never referenced in it keeps its
         ;; register through that loop while the loop's own residents spill or
@@ -71118,9 +71109,9 @@
             (compiler_regalloc.compiler-reg-loop-park-rewrite-function
               type-segment-bases
               fn-abi
-              hole-func
+              (& hole-func)
               hole-types
-              hole-reg-plan
+              (& hole-reg-plan)
               hole-temp-start
               cold-call-split?)
             (compiler_regalloc.compiler-reg-call-hole-split-none
@@ -71134,13 +71125,13 @@
         ;; round declines, these are the pre-split values unchanged.
         [split-blocks : compiler_ir_types.CompilerIrBlockList
           (compiler_regalloc.compiler-reg-call-hole-split-blocks
-            (compiler-backend-global-shared-view loop-park-split))]
+            (& loop-park-split))]
         [split-vars : i64
           (compiler_regalloc.compiler-reg-call-hole-split-vars
-            (compiler-backend-global-shared-view loop-park-split))]
+            (& loop-park-split))]
         [split-types : compiler_regalloc.CompilerRegVarTypes
           (compiler_regalloc.compiler-reg-call-hole-split-types
-            (compiler-backend-global-shared-view loop-park-split))]
+            (& loop-park-split))]
         [split-reg-plan : compiler_regalloc.CompilerRegPlan
           (compiler_regalloc.compiler-reg-call-hole-split-plan
             (compiler-backend-global-shared-view loop-park-split))]
@@ -71156,7 +71147,7 @@
               split-blocks
               split-vars
               split-types
-              (compiler-backend-global-shared-view split-reg-plan))
+              (& split-reg-plan))
             (Rewrite
               split-blocks
               split-vars
@@ -71168,7 +71159,7 @@
           (if call-save-enabled
             (compiler_regalloc.compiler-reg-plan-with-call-save-rewrite
               (compiler-backend-global-shared-view split-reg-plan)
-              (compiler-backend-global-shared-view call-save-rewrite))
+              (& call-save-rewrite))
             split-reg-plan)]
         [rewritten-blocks : compiler_ir_types.CompilerIrBlockList
           (match (compiler-backend-global-shared-view call-save-rewrite)
@@ -71180,24 +71171,24 @@
         ;; coloring stays on the ordinary plan.
         [scratch-vars : i64
           (compiler_regalloc.compiler-reg-plan-var-count
-            (compiler-backend-global-shared-view rewritten-reg-plan)
+            (& rewritten-reg-plan)
             rewritten-vars)]
         [plan-types : compiler_regalloc.CompilerRegVarTypes
-          (compiler_regalloc.compiler-reg-plan-types
-            (compiler-backend-global-shared-view rewritten-reg-plan))]
+          (compiler_regalloc.compiler-reg-plan-types (& rewritten-reg-plan))]
         ;; Computed once per function: the gate below, the coloring pass, and
         ;; the frame layout all consume it (the per-block fixpoint scan is too
         ;; costly to repeat).
         [fn-group-vars : compiler_liveness.CompilerLiveI64Set
           (compiler_regalloc.compiler-reg-function-group-vars
             type-segment-bases
-            (Function
-              name
-              (compiler-backend-global-shared-view params)
-              (compiler-backend-global-shared-view ret-ty)
-              scratch-vars
-              (compiler-backend-global-shared-view rewritten-blocks)
-              (compiler-backend-global-shared-view function-abi))
+            (&
+              (Function
+                name
+                (compiler-backend-global-shared-view params)
+                (compiler-backend-global-shared-view ret-ty)
+                scratch-vars
+                (compiler-backend-global-shared-view rewritten-blocks)
+                (compiler-backend-global-shared-view function-abi)))
             plan-types)]
         [has-group-vars : bool
           (> (compiler_liveness.compiler-live-set-count fn-group-vars) 0)]
@@ -71209,7 +71200,7 @@
             scratch-vars
             (compiler-backend-global-shared-view rewritten-blocks)
             (compiler_regalloc.compiler-reg-plan-assignments
-              (compiler-backend-global-shared-view rewritten-reg-plan))
+              (& rewritten-reg-plan))
             (and
               (compiler-backend-mode-scalar? mode)
               (not scalar-registers-enabled)))]
@@ -71247,13 +71238,13 @@
             None
             (compiler_regalloc.compiler-reg-color-stack-slots-with-stack-only
               type-segment-bases
-              (compiler-backend-global-shared-view rewritten-reg-plan)
-              (compiler-backend-global-shared-view fn-group-vars)
-              (compiler-backend-global-shared-view params)
-              (compiler-backend-global-shared-view rewritten-blocks)
+              (& rewritten-reg-plan)
+              (& fn-group-vars)
+              (& params)
+              (& rewritten-blocks)
               scratch-vars
               rewritten-vars
-              coloring-pinned-vars
+              (& coloring-pinned-vars)
               (and
                 (compiler-backend-mode-scalar? mode)
                 (not scalar-registers-enabled))))]
@@ -71287,13 +71278,13 @@
           (match (compiler-backend-global-shared-view coloring)
             [(None)
               (compiler_regalloc.compiler-reg-plan-assignments
-                (compiler-backend-global-shared-view rewritten-reg-plan))]
+                (& rewritten-reg-plan))]
             [(Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-assignments
-                remap
+                (& remap)
                 emit-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
-                  (compiler-backend-global-shared-view rewritten-reg-plan)))])]
+                  (& rewritten-reg-plan)))])]
         ;; Install the final authoritative table for direct operand-home lookup
         ;; in large functions. Caller-save and
         ;; slot-coloring re-plans are all folded into this table, so no emission
@@ -71340,20 +71331,20 @@
           (match (compiler-backend-global-shared-view coloring)
             [(None)
               (compiler_regalloc.compiler-reg-plan-assignments
-                rewritten-reg-plan)]
+                (& rewritten-reg-plan))]
             [(Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-assignments
-                remap
+                (& remap)
                 emit-vars
                 (compiler_regalloc.compiler-reg-plan-assignments
-                  rewritten-reg-plan))])]
+                  (& rewritten-reg-plan)))])]
         [colored-blocks : compiler_ir_types.CompilerIrBlockList
           (match (compiler-backend-global-shared-view coloring)
             [(None) rewritten-blocks]
             [(Remap remap _)
               (compiler_regalloc.compiler-reg-remap-blocks
-                remap
-                rewritten-blocks)])]
+                (& remap)
+                (& rewritten-blocks))])]
         ;; #block-placement: the last word on layout. Every view below --
         ;; scavenge intervals, const-hoist, #jump-forward, phi targets, the
         ;; emission walk itself -- is derived from THIS list, so choosing the
@@ -71365,7 +71356,7 @@
           (match (compiler-backend-global-shared-view coloring)
             [(None) params]
             [(Remap remap _)
-              (compiler_regalloc.compiler-reg-remap-params remap params)])]
+              (compiler_regalloc.compiler-reg-remap-params (& remap) (& params))])]
         ;; RG-1: the registers the FINAL body can name (see
         ;; compiler-backend-plan-body-reg-mask). Computed on the emitted IR and
         ;; the emitted parameter list, in the same var-id domain as
@@ -71409,14 +71400,15 @@
                     (compiler-backend-global-shared-view emit-blocks-list)
                     function-abi)]
                 (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
-                  (compiler-backend-global-shared-view scavenge-func)
-                  (compiler_liveness.compiler-live-analyze-function
-                    (& scavenge-func))
+                  (& scavenge-func)
+                  (&
+                    (compiler_liveness.compiler-live-analyze-function
+                      (& scavenge-func)))
                   false))
               (compiler_regalloc.CompilerRegIntervalSelection.Selection
                 (compiler_regalloc.compiler-reg-interval-seq-empty)
                 (compiler_regalloc.compiler-reg-interval-index-build
-                  (compiler_regalloc.compiler-reg-interval-seq-empty)
+                  (& (compiler_regalloc.compiler-reg-interval-seq-empty))
                   0))))]
         [scavenge-intervals : compiler_regalloc.CompilerRegIntervalSeq
           (match (compiler-backend-global-shared-view scavenge-selection)
@@ -71430,7 +71422,7 @@
             [(None) plan-types]
             [(Remap remap _)
               (compiler_regalloc.compiler-reg-color-rebuild-types
-                remap
+                (& remap)
                 emit-vars
                 plan-types)])]
         [emit-group-vars-base : compiler_liveness.CompilerLiveI64Set
@@ -71440,12 +71432,13 @@
               (compiler-backend-remap-group-vars fn-group-vars remap)])]
         [emit-group-vars : compiler_liveness.CompilerLiveI64Set
           (compiler_regalloc.compiler-reg-group-vars-fixpoint
-            (compiler-backend-late-group-vars-blocks
-              type-segment-bases
-              program-index
-              emit-group-vars-base
-              (compiler-backend-global-shared-view emit-blocks-list))
-            (compiler-backend-global-shared-view emit-blocks-list))]
+            (&
+              (compiler-backend-late-group-vars-blocks
+                type-segment-bases
+                program-index
+                emit-group-vars-base
+                (compiler-backend-global-shared-view emit-blocks-list)))
+            (& emit-blocks-list))]
         [addressable-group-vars : compiler_liveness.CompilerLiveI64Set
           (if (> (compiler_liveness.compiler-live-set-count emit-group-vars) 0)
             (compiler-backend-addressable-group-vars-blocks
@@ -80823,24 +80816,26 @@ tl_shared_object_init:
             (compiler-backend-function-label-scope program-index name)]
           [types : compiler_regalloc.CompilerRegVarTypes
             (compiler_regalloc.compiler-reg-function-var-types-with-metrics
-              (Function
-                name
-                (compiler-backend-global-shared-view params)
-                (compiler-backend-global-shared-view ret-ty)
-                vars
-                (compiler-backend-global-shared-view blocks)
-                (compiler-backend-global-shared-view function-abi))
+              (&
+                (Function
+                  name
+                  (compiler-backend-global-shared-view params)
+                  (compiler-backend-global-shared-view ret-ty)
+                  vars
+                  (compiler-backend-global-shared-view blocks)
+                  (compiler-backend-global-shared-view function-abi)))
               (compiler-backend-state-metrics program-index.backend-state))]
           [groups : compiler_liveness.CompilerLiveI64Set
             (compiler_regalloc.compiler-reg-function-group-vars
               type-segment-bases
-              (Function
-                name
-                (compiler-backend-global-shared-view params)
-                ret-ty
-                vars
-                (compiler-backend-global-shared-view blocks)
-                function-abi)
+              (&
+                (Function
+                  name
+                  (compiler-backend-global-shared-view params)
+                  ret-ty
+                  vars
+                  (compiler-backend-global-shared-view blocks)
+                  function-abi))
               types)]
           [_group-enable : unit
             (begin
@@ -81942,7 +81937,7 @@ tl_shared_object_init:
                       (compiler_optimize.opt-type-eq
                         type-segment-bases
                         ty
-                        indexed-ty)))
+                        (& indexed-ty))))
                   (return false)))])
           (set! index (+ index 1)))
         true))))
@@ -81968,7 +81963,7 @@ tl_shared_object_init:
     [_
       (match (compiler-backend-value-type types global-types value)
         [(Some actual)
-          (compiler_optimize.opt-type-eq type-segment-bases actual expected)]
+          (compiler_optimize.opt-type-eq type-segment-bases actual (& expected))]
         [(No) false])]))
 
 (define (compiler-backend-object-call-abi-args-match?
@@ -82034,7 +82029,7 @@ tl_shared_object_init:
               (compiler_optimize.opt-type-eq
                 type-segment-bases
                 dst-ty
-                (compiler-backend-global-shared-view ret-ty))]
+                (& ret-ty))]
             [(No) false])]
         (cond
           [(> count (compiler-backend-object-abi-capacity target))
@@ -82055,7 +82050,7 @@ tl_shared_object_init:
               (compiler_optimize.opt-type-eq
                 type-segment-bases
                 expected-ret
-                ret-ty))
+                (& ret-ty)))
             (Unsupported
               (compiler-backend-object-unsupported-abi-category target Call))]
           [(not dst-matches)
@@ -82220,7 +82215,7 @@ tl_shared_object_init:
                   (compiler_optimize.opt-type-eq
                     type-segment-bases
                     ret-ty
-                    indexed-ret))
+                    (& indexed-ret)))
                 (Unsupported
                   (compiler-backend-object-unsupported-abi-category
                     target
@@ -82229,9 +82224,10 @@ tl_shared_object_init:
                 (let
                   [types : compiler_regalloc.CompilerRegVarTypes
                     (compiler_regalloc.compiler-reg-function-var-types-with-representations-and-metrics
-                      func
-                      (compiler-backend-program-index-representations
-                        program-index)
+                      (& func)
+                      (&
+                        (compiler-backend-program-index-representations
+                          program-index))
                       (compiler-backend-state-metrics
                         program-index.backend-state))]
                   (compiler-backend-object-blocks-abi-eligibility

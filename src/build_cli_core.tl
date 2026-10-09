@@ -1093,7 +1093,7 @@
       [(Ok snapshot)
         (if snapshot.existed
           (match (package_lock_core.package-lock-parse
-            (string.copy snapshot.source))
+            (& (string.copy snapshot.source)))
             [(Err message)
               (Err
                 (str_cat.str-cat

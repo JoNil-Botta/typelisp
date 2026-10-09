@@ -76,11 +76,12 @@
         (compiler-parallel-move-resource-eq? source1 resource))]))
 
 (define (compiler-parallel-move-edge-seq-source-uses-resource?
-  [edges : CompilerParallelMoveEdgeSeq]
+  [edges : (& CompilerParallelMoveEdgeSeq)]
   [resource : i64]
   [exclude-id : i64]) : bool
   (let
-    [slots : (__tl_dyn-array CompilerParallelMoveEdge) edges.slots]
+    [slots : (__tl_dyn-array CompilerParallelMoveEdge)
+      (owned_view.compiler-owned-reference-shared-view (& edges.slots))]
     [count : i64 edges.len]
     [index : i64 0]
     (while (< index count)
@@ -101,11 +102,11 @@
     [(ParallelMoveEdge id dest0 dest1 _ _)
       (or
         (compiler-parallel-move-edge-seq-source-uses-resource?
-          (compiler-parallel-move-shared-view blockers)
+          (& (compiler-parallel-move-shared-view blockers))
           dest0
           id)
         (compiler-parallel-move-edge-seq-source-uses-resource?
-          blockers
+          (& blockers)
           dest1
           id))]))
 

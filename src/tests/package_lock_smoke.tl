@@ -27,7 +27,7 @@
     "  ))\n"))
 
 (define (package-lock-valid-parse-ok?) : bool
-  (match (package_lock_core.package-lock-parse (package-lock-valid-source))
+  (match (package_lock_core.package-lock-parse (& (package-lock-valid-source)))
     [(Err _) false]
     [(Ok lock)
       (let
@@ -51,7 +51,7 @@
             "abcdef0123456789abcdef0123456789abcdef01")))]))
 
 (define (package-lock-emit-stable-ok?) : bool
-  (match (package_lock_core.package-lock-parse (package-lock-valid-source))
+  (match (package_lock_core.package-lock-parse (& (package-lock-valid-source)))
     [(Err _) false]
     [(Ok lock)
       (string.eq
@@ -59,11 +59,11 @@
         (package-lock-expected-emitted))]))
 
 (define (package-lock-round-trip-ok?) : bool
-  (match (package_lock_core.package-lock-parse (package-lock-valid-source))
+  (match (package_lock_core.package-lock-parse (& (package-lock-valid-source)))
     [(Err _) false]
     [(Ok lock)
       (match (package_lock_core.package-lock-parse
-        (package_lock_core.package-lock-emit (& lock)))
+        (& (package_lock_core.package-lock-emit (& lock))))
         [(Err _) false]
         [(Ok again)
           (let
@@ -117,18 +117,19 @@
 (cfg
   test
   (define (package-lock-growth-order-ok?) : bool
-    (match (package_lock_core.package-lock-parse (package-lock-growth-source))
+    (match (package_lock_core.package-lock-parse
+      (& (package-lock-growth-source)))
       [(Err _) false]
       [(Ok lock)
         (if (package-lock-growth-entries-ok? (& lock.entries))
           (match (package_lock_core.package-lock-parse
-            (package_lock_core.package-lock-emit (& lock)))
+            (& (package_lock_core.package-lock-emit (& lock))))
             [(Err _) false]
             [(Ok again) (package-lock-growth-entries-ok? (& again.entries))])
           false)])))
 
 (define (package-lock-parse-rejects? [source : String] [expected : String]) : bool
-  (match (package_lock_core.package-lock-parse source)
+  (match (package_lock_core.package-lock-parse (& source))
     [(Err message) (string.eq message expected)]
     [(Ok _) false]))
 

@@ -8945,14 +8945,16 @@
 ;; The operand rewrite of one pass, for opt-rewrite-operands: global copy
 ;; propagation (and its vector-only form for the SIMD payloads whose scalar
 ;; operands keep their vars), the SCCP constant rewrite, the global-cell
-;; substitution, and SSA renaming (with the def's new var, or -1 to keep it).
+;; substitution, SSA renaming (with the def's new var, or -1 to keep it), and
+;; a plain var-to-var renaming.
 ;; The passes share one expansion of compiler-ir-instr-map.
 (defenum OptOperandRewrite
   (GlobalCopy OptGlobalFactTable OptDomInfo i64 i64)
   (GlobalCopyVector OptGlobalFactTable OptDomInfo i64 i64)
   (Sccp OptSccpEnv)
   (GlobalCell opt_i64_i64_map.Map)
-  (SsaRename OptSsaRenameEnv i64))
+  (SsaRename OptSsaRenameEnv i64)
+  (Rename (__tl_dyn-array i64)))
 
 (define (opt-vector-role? [role : ir.CompilerIrOperandRole]) : bool
   (match role
@@ -8980,7 +8982,19 @@
         value)]
     [(Sccp env) (opt-sccp-rewrite-value env value)]
     [(GlobalCell plan) (opt-global-cell-subst-value plan value)]
-    [(SsaRename env _) (opt-ssa-rewrite-value env value)]))
+    [(SsaRename env _) (opt-ssa-rewrite-value env value)]
+    [(Rename map) (opt-rename-value map value)]))
+
+;; `value` with a var `v` that `map` sends somewhere (`map[v] >= 0`) replaced.
+(define (opt-rename-value
+  [map : (__tl_dyn-array i64)]
+  [value : ir.CompilerIrValue]) : ir.CompilerIrValue
+  (match (compiler-opt-global-shared-view value)
+    [(Var v)
+      (if (and (>= v 0) (< v (array-length map)) (>= (array-ref map v) 0))
+        (Var (array-ref map v))
+        value)]
+    [_ value]))
 
 (define (opt-operand-rewrite-def [rewrite : OptOperandRewrite] [dst : i64]) : i64
   (match rewrite
@@ -99412,6 +99426,811 @@
     "bounds_group"
     (opt-bg-function-fixed func (opt-bg-function-rounds))))
 
+;; --- counter increment sinking -----------------------------------------------
+;;
+;; The prelude `for` advances its index BEFORE the user body, so that
+;; `continue` still moves to the next item. A range loop lowers to
+;;
+;;   P:  %idx = <start> ... jump H
+;;   H:  %c = lt %idx, %end
+;;       branch %c, B, X
+;;   B:  %item = mov %idx
+;;       %t = add %idx, 1
+;;       %idx = mov %t
+;;       <body, reading %item>
+;;       jump H                         (and so does every `continue`)
+;;
+;; and an array loop computes its item from %idx where the copy stands. Two
+;; values then stay live across the body: level 1 stores both on every
+;; iteration, and the level-2 loop passes meet a counter stepped at the top
+;; instead of in the latch (the copy and fill loop idioms do not match it). A
+;; `while` that advances last has neither cost. This pass writes the first
+;; shape as the second before any loop pass runs, at both levels: the step pair
+;; leaves B and goes before the `jump H` of every latch, and a copy
+;; `%item = mov %idx` heading B is dropped, its readers reading %idx.
+;;
+;; It applies when
+;;   1. B's only predecessor is H, and B directly follows a block that ends in
+;;      a branch to it (a `while` lowers its body right after its header). The
+;;      step pair `%t = add %idx, <literal>`, `%idx = mov %t` sits in B's first
+;;      instructions, after one that reads %idx and before at least one more
+;;      than the terminator;
+;;   2. %idx has one other definition, in a block P other than B and H that
+;;      ends in `jump H`; %t is defined and read once;
+;;   3. %idx is read only in H and in B up to the step, and not address-taken;
+;;   4. every other predecessor of H is a latch: it ends in `jump H`, and a walk
+;;      back over predecessors from it stops at B without meeting H or a block
+;;      without predecessors, so every path to it passes B after the last H;
+;;   5. to drop the copy, %item is defined once, never address-taken, and every
+;;      block reading it passes the same walk.
+;; A function the inliner priced reaches the pipeline already in SSA form, where
+;; the counter is a phi of H and the step feeds it from the latch;
+;; `opt-counter-sink-admit-ssa!` handles that shape.
+;; Then H sees the same %idx on every entry: from P its definition, and from a
+;; latch the value it entered B with plus the step, because by 2 and 4 nothing
+;; else writes %idx on the way and no other latch lies between. Between B and
+;; the latch %idx keeps the value it entered B with, which is %item's, and by 3
+;; and 5 nothing reads either anywhere else.
+;;
+;; It rewrites instructions only, never the CFG, and both stages that run it
+;; sit where the pass state holds no CFG context (`ctx-valid?` is false), so
+;; they hand the blocks back through `opt-pass-with-block-result`.
+;;
+;; A step at most this many instructions into its block is considered, so the
+;; scan for candidates stays a few instructions per block.
+(define (opt-counter-sink-prefix-limit) : i64
+  16)
+
+;; The counter `%v` when `instrs[j]` and `instrs[j + 1]` are the step pair
+;; `%t = add %v, <literal>` (either operand order) and `%v = mov %t`; else -1.
+(define (opt-counter-sink-step
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [j : i64]) : i64
+  (match (ir.compiler-ir-instr-seq-ref instrs (+ j 1))
+    [(Mov dst (Var src) _)
+      (match (ir.compiler-ir-instr-seq-ref instrs j)
+        [(BinOp t (Add) (Var lhs) (I64 _) _)
+          (if (and (= t src) (= lhs dst) (not (= t dst)))
+            dst
+            -1)]
+        [(BinOp t (Add) (I64 _) (Var rhs) _)
+          (if (and (= t src) (= rhs dst) (not (= t dst)))
+            dst
+            -1)]
+        [_ -1])]
+    [_ -1]))
+
+;; The phi `%i` of the block `prev` when `instrs[j]` is `%t = add %i, <literal>`
+;; (either operand order): the SSA shape of the step. Else -1.
+(define (opt-counter-sink-ssa-step
+  [prev : (& prev ir.CompilerIrInstrSeq)]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [j : i64]) : i64
+  (let
+    [i : i64
+      (match (ir.compiler-ir-instr-seq-ref instrs j)
+        [(BinOp _ (Add) (Var lhs) (I64 _) _) lhs]
+        [(BinOp _ (Add) (I64 _) (Var rhs) _) rhs]
+        [_ -1])]
+    [count : i64 (ir.compiler-ir-instr-seq-count prev)]
+    [k : i64 0]
+    [found : i64 -1]
+    ;; Phis lead their block.
+    (while (and (>= i 0) (< k count))
+      (match (ir.compiler-ir-instr-seq-ref prev k)
+        [(Phi dst _ _)
+          (when (= dst i) (set! found i))
+          (set! k (+ k 1))]
+        [_ (set! k count)]))
+    found))
+
+;; The length of the step at `j`: 2 when `%n = mov %t` follows the add, else 1.
+(define (opt-counter-sink-step-len
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [j : i64]) : i64
+  (let
+    [t : i64
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs j)]
+        (ir.compiler-ir-instr-dst instr))]
+    (if (< (+ j 1) (ir.compiler-ir-instr-seq-count instrs))
+      (match (ir.compiler-ir-instr-seq-ref instrs (+ j 1))
+        [(Mov _ (Var src) _)
+          (if (= src t)
+            2
+            1)]
+        [_ 1])
+      1)))
+
+;; The position of the block's step under condition 1's shape (without the
+;; predecessor test), or -1. `prev` is the block before it.
+(define (opt-counter-sink-site
+  [prev : (& prev ir.CompilerIrInstrSeq)]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]) : i64
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    [last : i64
+      (if (< (- count 3) (opt-counter-sink-prefix-limit))
+        (- count 3)
+        (opt-counter-sink-prefix-limit))]
+    ;; Only a header that starts with a phi can hold the SSA shape.
+    [ssa? : bool
+      (and
+        (> (ir.compiler-ir-instr-seq-count prev) 0)
+        (match (ir.compiler-ir-instr-seq-ref prev 0)
+          [(Phi _ _ _) true]
+          [_ false]))]
+    [j : i64 0]
+    [found : i64 -1]
+    (while (and (< found 0) (<= j last))
+      (if (and ssa? (>= (opt-counter-sink-ssa-step prev instrs j) 0))
+        (when
+          (< (+ j (opt-counter-sink-step-len instrs j)) (- count 1))
+          (set! found j))
+        (let
+          [v : i64
+            (if (and (>= j 1) (<= j (- count 4)))
+              (opt-counter-sink-step instrs j)
+              -1)]
+          [k : i64 0]
+          (while (and (>= v 0) (< found 0) (< k j))
+            (let
+              [instr : ir.CompilerIrInstr
+                (ir.compiler-ir-instr-seq-ref instrs k)]
+              (when (opt-load-sink-instr-uses-var? instr v) (set! found j)))
+            (set! k (+ k 1)))))
+      (set! j (+ j 1)))
+    found))
+
+;; Whether `instrs` ends in a branch with `label` as one of its targets.
+(define (opt-counter-sink-branch-targets?
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [label : i64]) : bool
+  (let
+    [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+    (and
+      (> count 0)
+      (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+        [(Branch _ yes no) (or (= yes label) (= no label))]
+        [_ false]))))
+
+;; Block `b`'s site when the block before it ends in a branch to it, as a
+;; `while` lowers its body right after its header; -1 otherwise.
+(define (opt-counter-sink-block-site
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [b : i64]) : i64
+  (if (< b 1)
+    -1
+    (match (ir.compiler-ir-block-seq-ref seq b)
+      [(Block label instrs)
+        (match (ir.compiler-ir-block-seq-ref seq (- b 1))
+          [(Block _ prev)
+            (if (opt-counter-sink-branch-targets? prev label)
+              (opt-counter-sink-site prev instrs)
+              -1)])])))
+
+;; The cheap test every function pays: some block that a branch ending the
+;; block before it targets has a site. Each block is matched once.
+(define (opt-counter-sink-candidates? [seq : (& seq ir.CompilerIrBlockSeq)]) : bool
+  (let
+    [b : i64 0]
+    [found : bool false]
+    [branches? : bool false]
+    (while (and (not found) (< b seq.len))
+      (match (ir.compiler-ir-block-seq-ref seq b)
+        [(Block _ instrs)
+          (when
+            (and
+              branches?
+              (match (ir.compiler-ir-block-seq-ref seq (- b 1))
+                [(Block _ prev) (>= (opt-counter-sink-site prev instrs) 0)]))
+            (set! found true))
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            (set!
+              branches?
+              (and
+                (> count 0)
+                (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+                  [(Branch _ _ _) true]
+                  [_ false]))))])
+      (set! b (+ b 1)))
+    found))
+
+(define (opt-counter-sink-function-candidates?
+  [func : (& func ir.CompilerIrFunction)]) : bool
+  (match func
+    [(Function _ _ _ _ blocks _)
+      (match blocks
+        [(Array seq) (opt-counter-sink-candidates? seq)])]))
+
+;; The candidates, six slots each: the block, the step position, the counter,
+;; the copy's destination when B starts with `%item = mov %idx` (-1 otherwise),
+;; and for the SSA shape the var that feeds the header phi (-1 otherwise) and
+;; the step's length.
+(define (opt-counter-sink-cands [seq : (& seq ir.CompilerIrBlockSeq)]) : opt_dense_i64_vec.Vec
+  (let
+    [cands : opt_dense_i64_vec.Vec (opt_dense_i64_vec.new)]
+    [b : i64 0]
+    (while (< b seq.len)
+      (match (ir.compiler-ir-block-seq-ref seq b)
+        [(Block _ instrs)
+          (let
+            [j : i64 (opt-counter-sink-block-site seq b)]
+            (when
+              (>= j 0)
+              (let
+                [pre : i64 (opt-counter-sink-step instrs j)]
+                [len : i64
+                  (if (>= pre 0)
+                    2
+                    (opt-counter-sink-step-len instrs j))]
+                [v : i64
+                  (if (>= pre 0)
+                    pre
+                    (match (ir.compiler-ir-instr-seq-ref instrs j)
+                      [(BinOp _ (Add) (Var lhs) (I64 _) _) lhs]
+                      [(BinOp _ (Add) _ (Var rhs) _) rhs]
+                      [_ -1]))]
+                (opt_dense_i64_vec.push-ref! (&mut cands) b)
+                (opt_dense_i64_vec.push-ref! (&mut cands) j)
+                (opt_dense_i64_vec.push-ref! (&mut cands) v)
+                (opt_dense_i64_vec.push-ref!
+                  (&mut cands)
+                  (match (ir.compiler-ir-instr-seq-ref instrs 0)
+                    [(Mov dst (Var src) _)
+                      (if (and (>= pre 0) (= src v) (not (= dst v)))
+                        dst
+                        -1)]
+                    [_ -1]))
+                (opt_dense_i64_vec.push-ref!
+                  (&mut cands)
+                  (if (>= pre 0)
+                    -1
+                    (let
+                      [instr : ir.CompilerIrInstr
+                        (ir.compiler-ir-instr-seq-ref instrs (+ j (- len 1)))]
+                      (ir.compiler-ir-instr-dst instr))))
+                (opt_dense_i64_vec.push-ref! (&mut cands) len))))])
+      (set! b (+ b 1)))
+    cands))
+
+;; Per-function facts, from one walk over every instruction: definition and
+;; use counts (parameters count as definitions), and the blocks that read each
+;; candidate's copy, as (candidate, block) pairs in block order.
+(defstruct OptCounterSinkFacts
+  (defs (__tl_dyn-array i64))
+  (uses (__tl_dyn-array i64))
+  (item-blocks opt_dense_i64_vec.Vec))
+
+(define (opt-counter-sink-facts
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]
+  [cands : (& cands opt_dense_i64_vec.Vec)]) : OptCounterSinkFacts
+  (let
+    [defs : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [uses : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+    [cand-count : i64 (/ (opt_dense_i64_vec.len cands) 6)]
+    [seen : (__tl_dyn-array i64) (__tl_make-array i64 cand-count)]
+    [item-blocks : opt_dense_i64_vec.Vec (opt_dense_i64_vec.new)]
+    [b : i64 0]
+    (opt-def-counts-params! (&mut defs) params)
+    (while (< b seq.len)
+      (match (ir.compiler-ir-block-seq-ref seq b)
+        [(Block _ instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [j : i64 0]
+            (while (< j count)
+              (let
+                [instr : ir.CompilerIrInstr
+                  (ir.compiler-ir-instr-seq-ref instrs j)]
+                (opt-def-counts-instr!
+                  (&mut defs)
+                  (compiler-opt-global-shared-view instr))
+                (opt-collect-instr-uses-array
+                  (compiler-opt-global-shared-view uses)
+                  instr))
+              (set! j (+ j 1))))])
+      (let
+        [c : i64 0]
+        (while (< c cand-count)
+          (let
+            [item : i64 (opt_dense_i64_vec.get cands (+ (* c 6) 3) -1)]
+            (when
+              (and
+                (>= item 0)
+                (< item frame)
+                (> (array-ref uses item) (array-ref seen c)))
+              (set! (array-ref seen c) (array-ref uses item))
+              (opt_dense_i64_vec.push-ref! (&mut item-blocks) c)
+              (opt_dense_i64_vec.push-ref! (&mut item-blocks) b)))
+          (set! c (+ c 1))))
+      (set! b (+ b 1)))
+    (OptCounterSinkFacts defs uses item-blocks)))
+
+;; Reads of `var` in `instrs[0..end)`, or -1 when one of them takes its address.
+(define (opt-counter-sink-local-uses
+  [scratch : (__tl_dyn-array i64)]
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [end : i64]
+  [var : i64]) : i64
+  (let
+    [before : i64 (array-ref scratch var)]
+    [j : i64 0]
+    [taken : bool false]
+    (while (< j end)
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs j)]
+        (match (compiler-opt-global-shared-view instr)
+          [(AddrOf _ src) (when (= src var) (set! taken true))]
+          [_ unit])
+        (opt-collect-instr-uses-array
+          (compiler-opt-global-shared-view scratch)
+          instr))
+      (set! j (+ j 1)))
+    (if taken
+      -1
+      (- (array-ref scratch var) before))))
+
+;; `opt-counter-sink-local-uses` over all of block `id`.
+(define (opt-counter-sink-block-uses
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [scratch : (__tl_dyn-array i64)]
+  [id : i64]
+  [end : i64]
+  [var : i64]) : i64
+  (match (ir.compiler-ir-block-seq-ref seq id)
+    [(Block _ instrs)
+      (opt-counter-sink-local-uses
+        scratch
+        instrs
+        (if (< end 0)
+          (ir.compiler-ir-instr-seq-count instrs)
+          end)
+        var)]))
+
+;; 1 when block `id` ends in `jump <label>`, 2 when it also defines `var`, 0
+;; when it does not end in that jump.
+(define (opt-counter-sink-jump-kind
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [id : i64]
+  [label : i64]
+  [var : i64]) : i64
+  (match (ir.compiler-ir-block-seq-ref seq id)
+    [(Block _ instrs)
+      (let
+        [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+        [kind : i64
+          (if (and
+            (> count 0)
+            (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
+              [(Jump target) (= target label)]
+              [_ false]))
+            1
+            0)]
+        [j : i64 0]
+        (while (and (= kind 1) (< j count))
+          (let
+            [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs j)]
+            (when (= (ir.compiler-ir-instr-dst instr) var) (set! kind 2)))
+          (set! j (+ j 1)))
+        kind)]))
+
+;; The block-wide walk state: a stamp per block and an explicit stack, each
+;; block pushed at most once per walk.
+(defstruct OptCounterSinkWalk
+  (seen (__tl_dyn-array i64))
+  (stack (__tl_dyn-array i64))
+  (top i64)
+  (stamp i64))
+
+(define (opt-counter-sink-walk-begin! [walk : (&mut walk OptCounterSinkWalk)]) : unit
+  (set! walk.top 0)
+  (set! walk.stamp (+ walk.stamp 1)))
+
+(define (opt-counter-sink-walk-push!
+  [walk : (&mut walk OptCounterSinkWalk)]
+  [id : i64]) : unit
+  (when
+    (not (= (array-ref walk.seen id) walk.stamp))
+    (set! (array-ref walk.seen id) walk.stamp)
+    (set! (array-ref walk.stack walk.top) id)
+    (set! walk.top (+ walk.top 1))))
+
+;; Condition 4's walk from the pushed blocks: back over predecessors, stopping
+;; at `b`; false on meeting `h` or a block without predecessors.
+(define (opt-counter-sink-walk-after?
+  [index : (& index OptCfgIndex)]
+  [walk : (&mut walk OptCounterSinkWalk)]
+  [b : i64]
+  [h : i64]) : bool
+  (let
+    [ok : bool true]
+    (while (and ok (> walk.top 0))
+      (set! walk.top (- walk.top 1))
+      (let
+        [u : i64 (array-ref walk.stack walk.top)]
+        (cond
+          [(= u b) unit]
+          [(= u h) (set! ok false)]
+          [else
+            (let
+              [start : i64 (array-ref index.preds.offsets u)]
+              [end : i64 (array-ref index.preds.offsets (+ u 1))]
+              [e : i64 start]
+              (if (= start end)
+                (set! ok false)
+                (while (< e end)
+                  (opt-counter-sink-walk-push!
+                    walk
+                    (array-ref index.preds.edges e))
+                  (set! e (+ e 1)))))])))
+    ok))
+
+;; What the admissions decided.
+(defstruct OptCounterSinkPlan
+  ;; block -> the candidate whose latch it is, -1 for none, -2 for a header
+  (latch-of (__tl_dyn-array i64))
+  ;; block -> the candidate whose step leaves it, -1 for none
+  (site-of (__tl_dyn-array i64))
+  ;; candidate -> whether its copy is dropped
+  (drop-copy (__tl_dyn-array bool))
+  ;; var -> the var its readers read instead, -1 for none
+  (rename (__tl_dyn-array i64))
+  ;; block -> whether it reads a renamed var
+  (renamed (__tl_dyn-array bool))
+  (count i64))
+
+;; The SSA shape of candidate `c`, which a function the inliner already priced
+;; reaches the live pipeline in: the counter `%v` is a phi of H, and the step's
+;; result `%n` is read only by that phi, on the edge from the one latch L. L
+;; ends in `jump H` and passes condition 4's walk. Moving the step into L keeps
+;; every value: `%v` does not change within an iteration, and nothing else reads
+;; `%n` or the add's own result. Records what it admits in `plan`.
+(define (opt-counter-sink-admit-ssa!
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [index : (& index OptCfgIndex)]
+  [facts : (& facts OptCounterSinkFacts)]
+  [plan : (&mut plan OptCounterSinkPlan)]
+  [walk : (&mut walk OptCounterSinkWalk)]
+  [frame : i64]
+  [c : i64]
+  [b : i64]
+  [t : i64]
+  [v : i64]
+  [n : i64]) : unit
+  (let
+    [pred-start : i64 (array-ref index.preds.offsets b)]
+    [h : i64
+      (if (= (- (array-ref index.preds.offsets (+ b 1)) pred-start) 1)
+        (array-ref index.preds.edges pred-start)
+        b)]
+    [latch : i64 -1]
+    [ok : bool
+      (and
+        (not (= h b))
+        (= (array-ref plan.latch-of h) -1)
+        (>= t 0)
+        (< t frame)
+        (>= n 0)
+        (< n frame)
+        (= (array-ref facts.defs t) 1)
+        (= (array-ref facts.uses t) 1)
+        (= (array-ref facts.defs n) 1)
+        (= (array-ref facts.uses n) 1))]
+    (when
+      ok
+      (match (ir.compiler-ir-block-seq-ref seq h)
+        [(Block _ instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [k : i64 0]
+            (while (< k count)
+              (match (ir.compiler-ir-instr-seq-ref instrs k)
+                [(Phi dst inputs _)
+                  (when
+                    (= dst v)
+                    (let
+                      [m : i64 0]
+                      [len : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
+                      (while (< m len)
+                        (let
+                          [input : ir.CompilerIrPhiInput
+                            (ir.compiler-ir-phi-input-seq-ref inputs m)]
+                          (when
+                            (opt-value-is-var? (& input.value) n)
+                            (match (opt-cfg-index-id index input.label)
+                              [(Some q)
+                                (if (< latch 0)
+                                  (set! latch q)
+                                  (set! ok false))]
+                              [(None) (set! ok false)])))
+                        (set! m (+ m 1)))))
+                  (set! k (+ k 1))]
+                [_ (set! k count)])))])
+      (opt-counter-sink-walk-begin! walk)
+      (when
+        (and
+          ok
+          (>= latch 0)
+          (= (array-ref plan.latch-of latch) -1)
+          (>
+            (opt-counter-sink-jump-kind seq latch (array-ref index.labels h) -1)
+            0))
+        (opt-counter-sink-walk-push! walk latch)
+        (when
+          (opt-counter-sink-walk-after? index walk b h)
+          (set! (array-ref plan.latch-of h) -2)
+          (set! (array-ref plan.site-of b) c)
+          (set! (array-ref plan.latch-of latch) c)
+          (set! plan.count (+ plan.count 1)))))))
+
+;; Conditions 1-4 for candidate `c`, and 5 for its copy; records what they
+;; admit in `plan`.
+(define (opt-counter-sink-admit!
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [index : (& index OptCfgIndex)]
+  [facts : (& facts OptCounterSinkFacts)]
+  [cands : (& cands opt_dense_i64_vec.Vec)]
+  [plan : (&mut plan OptCounterSinkPlan)]
+  [walk : (&mut walk OptCounterSinkWalk)]
+  [scratch : (__tl_dyn-array i64)]
+  [frame : i64]
+  [c : i64]) : unit
+  (let
+    [b : i64 (opt_dense_i64_vec.get cands (* c 6) -1)]
+    [j : i64 (opt_dense_i64_vec.get cands (+ (* c 6) 1) -1)]
+    [v : i64 (opt_dense_i64_vec.get cands (+ (* c 6) 2) -1)]
+    [item : i64 (opt_dense_i64_vec.get cands (+ (* c 6) 3) -1)]
+    [next : i64 (opt_dense_i64_vec.get cands (+ (* c 6) 4) -1)]
+    [pred-start : i64 (array-ref index.preds.offsets b)]
+    [h : i64
+      (if (and
+        (< v frame)
+        (= (- (array-ref index.preds.offsets (+ b 1)) pred-start) 1))
+        (array-ref index.preds.edges pred-start)
+        b)]
+    [t : i64
+      (match (ir.compiler-ir-block-seq-ref seq b)
+        [(Block _ instrs)
+          (let
+            [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs j)]
+            (ir.compiler-ir-instr-dst instr))])]
+    (when
+      (>= next 0)
+      (opt-counter-sink-admit-ssa! seq index facts plan walk frame c b t v next))
+    (when
+      (and
+        (< next 0)
+        (not (= h b))
+        (= (array-ref plan.latch-of h) -1)
+        (>= t 0)
+        (< t frame)
+        (= (array-ref facts.defs t) 1)
+        (= (array-ref facts.uses t) 1)
+        (= (array-ref facts.defs v) 2))
+      (let
+        [in-h : i64
+          (opt-counter-sink-block-uses
+            seq
+            (compiler-opt-global-shared-view scratch)
+            h
+            -1
+            v)]
+        [in-b : i64
+          (opt-counter-sink-block-uses
+            seq
+            (compiler-opt-global-shared-view scratch)
+            b
+            (+ j 1)
+            v)]
+        [h-label : i64 (array-ref index.labels h)]
+        [e-start : i64 (array-ref index.preds.offsets h)]
+        [e-end : i64 (array-ref index.preds.offsets (+ h 1))]
+        [e : i64 e-start]
+        [p : i64 -1]
+        [ok : bool
+          (and
+            (>= in-h 0)
+            (>= in-b 0)
+            (= (+ in-h in-b) (array-ref facts.uses v)))]
+        (opt-counter-sink-walk-begin! walk)
+        ;; H's predecessors: P, the block other than B that defines %idx, and
+        ;; latches. Each must end in `jump H`.
+        (while (and ok (< e e-end))
+          (let
+            [q : i64 (array-ref index.preds.edges e)]
+            [kind : i64 (opt-counter-sink-jump-kind seq q h-label v)]
+            (cond
+              [(and (= kind 2) (not (= q b)) (< p 0)) (set! p q)]
+              [(and (> kind 0) (= (array-ref plan.latch-of q) -1))
+                (opt-counter-sink-walk-push! walk q)]
+              [else (set! ok false)]))
+          (set! e (+ e 1)))
+        (when
+          (and
+            ok
+            (>= p 0)
+            (> walk.top 0)
+            (opt-counter-sink-walk-after? index walk b h))
+          (set! (array-ref plan.latch-of h) -2)
+          (set! (array-ref plan.site-of b) c)
+          (set! plan.count (+ plan.count 1))
+          (set! e e-start)
+          (while (< e e-end)
+            (let
+              [q : i64 (array-ref index.preds.edges e)]
+              (when (not (= q p)) (set! (array-ref plan.latch-of q) c)))
+            (set! e (+ e 1)))
+          ;; Condition 5: every block reading the copy passes the walk.
+          (when
+            (and (>= item 0) (< item frame) (= (array-ref facts.defs item) 1))
+            (let
+              [pairs : i64 (opt_dense_i64_vec.len (& facts.item-blocks))]
+              [k : i64 0]
+              (opt-counter-sink-walk-begin! walk)
+              (while (and ok (< k pairs))
+                (when
+                  (= (opt_dense_i64_vec.get (& facts.item-blocks) k -1) c)
+                  (let
+                    [u : i64
+                      (opt_dense_i64_vec.get (& facts.item-blocks) (+ k 1) -1)]
+                    (when
+                      (<
+                        (opt-counter-sink-block-uses
+                          seq
+                          (compiler-opt-global-shared-view scratch)
+                          u
+                          -1
+                          item)
+                        0)
+                      (set! ok false))
+                    (opt-counter-sink-walk-push! walk u)))
+                (set! k (+ k 2)))
+              (when
+                (and ok (opt-counter-sink-walk-after? index walk b h))
+                (set! (array-ref plan.drop-copy c) true)
+                (set! (array-ref plan.rename item) v)
+                (set! k 0)
+                (while (< k pairs)
+                  (when
+                    (= (opt_dense_i64_vec.get (& facts.item-blocks) k -1) c)
+                    (set!
+                      (array-ref
+                        plan.renamed
+                        (opt_dense_i64_vec.get (& facts.item-blocks) (+ k 1) -1))
+                      true))
+                  (set! k (+ k 2)))))))))))
+
+;; One block of the rewritten function.
+(define (opt-counter-sink-block
+  [seq : (& seq ir.CompilerIrBlockSeq)]
+  [cands : (& cands opt_dense_i64_vec.Vec)]
+  [plan : (& plan OptCounterSinkPlan)]
+  [rename : (__tl_dyn-array i64)]
+  [id : i64]) : ir.CompilerIrBlock
+  (match (ir.compiler-ir-block-seq-ref seq id)
+    [(Block label instrs)
+      (let
+        [site : i64 (array-ref plan.site-of id)]
+        [latch : i64 (array-ref plan.latch-of id)]
+        [renamed : bool (array-ref plan.renamed id)]
+        (if (and (< site 0) (< latch 0) (not renamed))
+          (Block label instrs)
+          (let
+            [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
+            [builder : ir.CompilerIrInstrBuilder
+              (ir.compiler-ir-instr-builder-with-capacity (+ count 2))]
+            [step : i64
+              (if (>= site 0)
+                (opt_dense_i64_vec.get cands (+ (* site 6) 1) -1)
+                -1)]
+            [step-end : i64
+              (if (>= site 0)
+                (+ step (opt_dense_i64_vec.get cands (+ (* site 6) 5) -1))
+                -1)]
+            [first : i64
+              (if (and (>= site 0) (array-ref plan.drop-copy site))
+                1
+                0)]
+            [j : i64 0]
+            (while (< j count)
+              (when
+                (and (>= latch 0) (= j (- count 1)))
+                (match (ir.compiler-ir-block-seq-ref
+                  seq
+                  (opt_dense_i64_vec.get cands (* latch 6) -1))
+                  [(Block _ site-instrs)
+                    (let
+                      [at : i64
+                        (opt_dense_i64_vec.get cands (+ (* latch 6) 1) -1)]
+                      [end : i64
+                        (+
+                          at
+                          (opt_dense_i64_vec.get cands (+ (* latch 6) 5) -1))]
+                      (while (< at end)
+                        (ir.compiler-ir-instr-builder-push!
+                          (&mut builder)
+                          (ir.compiler-ir-instr-seq-ref site-instrs at))
+                        (set! at (+ at 1))))]))
+              (when
+                (not (or (< j first) (and (>= j step) (< j step-end))))
+                (ir.compiler-ir-instr-builder-push!
+                  (&mut builder)
+                  (if renamed
+                    (opt-rewrite-operands
+                      (Rename (compiler-opt-global-shared-view rename))
+                      (ir.compiler-ir-instr-seq-ref instrs j))
+                    (ir.compiler-ir-instr-seq-ref instrs j))))
+              (set! j (+ j 1)))
+            (Block label (ir.compiler-ir-instr-builder-to-seq builder)))))]))
+
+(define (opt-counter-sink-blocks
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptBlockListPassResult
+  (let
+    [seq : ir.CompilerIrBlockSeq (ir.compiler-ir-block-list-seq blocks)]
+    (if (not (opt-counter-sink-candidates? (& seq)))
+      (Result (Array seq) false)
+      (let
+        [cands : opt_dense_i64_vec.Vec (opt-counter-sink-cands (& seq))]
+        [index : OptCfgIndex
+          (opt-cfg-index-build (Array (compiler-opt-global-shared-view seq)))]
+        (if (or (not index.labels-unique) (not index.targets-known))
+          (Result (Array seq) false)
+          (let
+            [facts : OptCounterSinkFacts
+              (opt-counter-sink-facts (& seq) params frame (& cands))]
+            [cand-count : i64 (/ (opt_dense_i64_vec.len (& cands)) 6)]
+            [plan : OptCounterSinkPlan
+              (OptCounterSinkPlan
+                (opt-group-split-filled seq.len -1)
+                (opt-group-split-filled seq.len -1)
+                (__tl_make-array bool cand-count)
+                (opt-group-split-filled frame -1)
+                (__tl_make-array bool seq.len)
+                0)]
+            [walk : OptCounterSinkWalk
+              (OptCounterSinkWalk
+                (__tl_make-array i64 seq.len)
+                (__tl_make-array i64 seq.len)
+                0
+                0)]
+            [scratch : (__tl_dyn-array i64) (__tl_make-array i64 frame)]
+            [c : i64 0]
+            (while (< c cand-count)
+              (opt-counter-sink-admit!
+                (& seq)
+                (& index)
+                (& facts)
+                (& cands)
+                (&mut plan)
+                (&mut walk)
+                (compiler-opt-global-shared-view scratch)
+                frame
+                c)
+              (set! c (+ c 1)))
+            (if (= plan.count 0)
+              (Result (Array seq) false)
+              (let
+                [builder : ir.CompilerIrBlockBuilder
+                  (ir.compiler-ir-block-builder-with-capacity seq.len)]
+                [id : i64 0]
+                (while (< id seq.len)
+                  (ir.compiler-ir-block-builder-push!
+                    (&mut builder)
+                    (opt-counter-sink-block
+                      (& seq)
+                      (& cands)
+                      (& plan)
+                      (compiler-opt-global-shared-view plan.rename)
+                      id))
+                  (set! id (+ id 1)))
+                (Result (ir.compiler-ir-block-builder-to-list builder) true)))))))))
+
 ;; --- the per-function pass manager ------------------------------------------
 ;;
 ;; A pipeline threads one OptPassState from stage to stage: the function as the
@@ -99837,6 +100656,20 @@
     ;; Dominator and natural-loop analyses use the integer CFG index. Their
     ;; admission decisions are loop-local, so an unrelated block elsewhere in
     ;; the enclosing function must not turn the loop pipeline off.
+    ;; Before every loop pass, so they meet a counter stepped in its latch.
+    [s
+      (opt-stage
+        "counter_sink"
+        (opt-live-only
+          s
+          (if (opt-counter-sink-function-candidates? s.func)
+            (opt-pass-with-block-result
+              (opt-counter-sink-blocks
+                (opt-pass-params s)
+                (opt-pass-frame s)
+                (opt-pass-blocks s))
+              s)
+            s)))]
     [s (opt-stage "rotation" (opt-pass-rotation pools s))]
     ;; A multi-def register-group var becomes one word var per word, which the
     ;; SSA below renames (opt-group-split-function). A split hands SSA a stale
@@ -100591,6 +101424,17 @@
             (opt-pass-frame s)
             (opt-pass-params s)
             (opt-pass-blocks s))
+          s))]
+    [s
+      (opt-stage
+        "counter_sink"
+        (if (opt-counter-sink-function-candidates? s.func)
+          (opt-pass-with-block-result
+            (opt-counter-sink-blocks
+              (opt-pass-params s)
+              (opt-pass-frame s)
+              (opt-pass-blocks s))
+            s)
           s))]
     [s
       (opt-stage

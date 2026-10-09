@@ -2,6 +2,7 @@
 ;;
 ;; Parser result/error wrappers, typechecker registries, inferred types, and
 ;; lowered IR metadata live elsewhere.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
@@ -300,7 +301,7 @@
   (let
     [i : i64 start]
     (while (and (< i end) (= (string.string-ref text i) '0'))
-      (set! i (+ i 1)))
+      (+= i 1))
     i))
 
 (define (ast-int-literal-magnitude-leq-limit?
@@ -332,7 +333,7 @@
                 (if (> actual want)
                   (set! result 1)
                   unit))
-              (set! i (+ i 1))))
+              (+= i 1)))
           (<= result 0))])))
 
 (define (ast-int-literal-magnitude-fits-limit?
@@ -357,16 +358,14 @@
 (define (ast-int-literal-u64-magnitude [text : (& text str)]) : u64
   (let
     [base : u64 (cast (ast-int-literal-base text) : u64)]
-    [i : i64 (ast-int-literal-value-start text)]
     [n : i64 (string.string-length text)]
     [value : u64 (cast 0 : u64)]
-    (while (< i n)
+    (for [i (iterator.range (ast-int-literal-value-start text) n)]
       (set!
         value
         (+
           (* value base)
-          (cast (ast-int-literal-digit-value (string.string-ref text i)) : u64)))
-      (set! i (+ i 1)))
+          (cast (ast-int-literal-digit-value (string.string-ref text i)) : u64))))
     value))
 
 (define (ast-int-literal-i64-bits [text : (& text str)]) : i64
@@ -837,10 +836,8 @@
   (let
     [count : i64 value.len]
     [slots : (__tl_dyn-array AstParam) (__tl_make-array AstParam count)]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref slots index) (ast-array-shared-view value.slots index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref slots index) (ast-array-shared-view value.slots index)))
     (AstParamList slots count)))
 
 (define (ast-lambda-box-owned-copy [value : (Box AstLambda)]) : AstLambda
@@ -1504,10 +1501,8 @@
       (in-arena
         (arena.Arena node-pool-base-arena)
         (__tl_make-array AstExprCanonicalSpanRecord new-capacity))]
-    [i : i64 0]
-    (while (< i ast-node-canonical-span-count)
-      (set! (array-ref next i) (array-ref old i))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 ast-node-canonical-span-count)]
+      (set! (array-ref next i) (array-ref old i)))
     (set! ast-node-canonical-span-records next)))
 
 ;; In-place rewrites of persistent nodes (#8757). A session that caches parsed
@@ -1553,10 +1548,8 @@
         (__tl_make-array i64 new-capacity))]
     [used : i64
       (* ast-node-protected-journal-len ast-node-protected-journal-stride)]
-    [i : i64 0]
-    (while (< i used)
-      (set! (array-ref next i) (array-ref old i))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 used)]
+      (set! (array-ref next i) (array-ref old i)))
     (set! ast-node-protected-journal next)))
 
 ;; Record node `id`, stored at address `dest` with its span slot in
@@ -1581,36 +1574,32 @@
       [source : (Ptr i64)
         (unsafe
           (int->ptr dest : (Ptr i64)))]
-      [word : i64 0]
       (set! (array-ref ast-node-protected-journal at) dest)
-      (while (< word 4)
+      (for [word (iterator.range 0 4)]
         (set!
           (array-ref ast-node-protected-journal (+ at (+ word 1)))
           (unsafe
-            (ptr-read (ptr-offset source word))))
-        (set! word (+ word 1)))
+            (ptr-read (ptr-offset source word)))))
       (set! (array-ref ast-node-protected-journal (+ at 5)) slot-bases)
       (set! (array-ref ast-node-protected-journal (+ at 6)) id)
       (set! (array-ref ast-node-protected-journal (+ at 7)) prior-slot)
-      (set! ast-node-protected-journal-len (+ ast-node-protected-journal-len 1)))))
+      (+= ast-node-protected-journal-len 1))))
 
 ;: Undo every recorded in-place write, newest first, and empty the journal.
 (define (ast-node-protected-restore!) : unit
   (while (> ast-node-protected-journal-len 0)
-    (set! ast-node-protected-journal-len (- ast-node-protected-journal-len 1))
+    (-= ast-node-protected-journal-len 1)
     (let
       [at : i64
         (* ast-node-protected-journal-len ast-node-protected-journal-stride)]
       [dest : (MutPtr i64)
         (unsafe
           (int->ptr (array-ref ast-node-protected-journal at) : (MutPtr i64)))]
-      [word : i64 0]
-      (while (< word 4)
+      (for [word (iterator.range 0 4)]
         (unsafe
           (ptr-write!
             (ptr-offset dest word)
-            (array-ref ast-node-protected-journal (+ at (+ word 1)))))
-        (set! word (+ word 1)))
+            (array-ref ast-node-protected-journal (+ at (+ word 1))))))
       (ast-expr-span-slot-set-in-bases!
         (array-ref ast-node-protected-journal (+ at 5))
         (array-ref ast-node-protected-journal (+ at 6))
@@ -1626,10 +1615,8 @@
       (in-arena
         (arena.Arena node-pool-base-arena)
         (__tl_make-array AstExprReSpan new-capacity))]
-    [i : i64 0]
-    (while (< i ast-node-respan-count)
-      (set! (array-ref next i) (array-ref old i))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 ast-node-respan-count)]
+      (set! (array-ref next i) (array-ref old i)))
     (set! ast-node-respan-records next)))
 
 (define (ast-expr-semantic-node-from-span-slot
@@ -1959,17 +1946,15 @@
       (set! ast-node-span-records-monotonic? true))
     (if ast-node-span-records-monotonic?
       (let
-        [id : i64 mark]
         [canonical-count : i64 ast-node-canonical-span-count]
         [respan-count : i64 ast-node-respan-count]
         ;; The common transactional rollback touches only the discarded
         ;; suffix and the records whose owner/view lies in that suffix.
-        (while (< id ast-node-pool-count)
+        (for [id (iterator.range mark ast-node-pool-count)]
           (ast-expr-span-slot-set-in-bases!
             ast-node-span-slot-segment-bases
             id
-            0)
-          (set! id (+ id 1)))
+            0))
         (while (and
           (> canonical-count 0)
           (>=
@@ -1997,7 +1982,7 @@
                 semantic
                 0)
               unit)
-            (set! canonical-count (- canonical-count 1))))
+            (-= canonical-count 1)))
         (while (and
           (> respan-count 0)
           (>=
@@ -2007,41 +1992,38 @@
                 view-node)
               : i64)
             mark))
-          (set! respan-count (- respan-count 1)))
+          (-= respan-count 1))
         (set! ast-node-canonical-span-count canonical-count)
         (set! ast-node-respan-count respan-count))
-      (let
-        [id : i64 mark]
-        (while (< id ast-node-pool-count)
-          (let
-            [slot : i64
-              (ast-expr-span-slot-get-from-bases
-                ast-node-span-slot-segment-bases
-                id)]
-            (if (and (> slot 0) (<= slot ast-node-canonical-span-count))
-              (let
-                [record : AstExprCanonicalSpanRecord
-                  (array-ref ast-node-canonical-span-records (- slot 1))]
-                [semantic : i64 (cast record.semantic-node : i64)]
-                (if (and
-                  (= (cast record.owner-node : i64) id)
-                  (< semantic mark)
-                  (=
-                    (ast-expr-span-slot-get-from-bases
-                      ast-node-span-slot-segment-bases
-                      semantic)
-                    slot))
-                  (ast-expr-span-slot-set-in-bases!
-                    ast-node-span-slot-segment-bases
-                    semantic
-                    0)
-                  unit))
-              unit)
-            (ast-expr-span-slot-set-in-bases!
+      (for [id (iterator.range mark ast-node-pool-count)]
+        (let
+          [slot : i64
+            (ast-expr-span-slot-get-from-bases
               ast-node-span-slot-segment-bases
-              id
-              0)
-            (set! id (+ id 1))))))))
+              id)]
+          (if (and (> slot 0) (<= slot ast-node-canonical-span-count))
+            (let
+              [record : AstExprCanonicalSpanRecord
+                (array-ref ast-node-canonical-span-records (- slot 1))]
+              [semantic : i64 (cast record.semantic-node : i64)]
+              (if (and
+                (= (cast record.owner-node : i64) id)
+                (< semantic mark)
+                (=
+                  (ast-expr-span-slot-get-from-bases
+                    ast-node-span-slot-segment-bases
+                    semantic)
+                  slot))
+                (ast-expr-span-slot-set-in-bases!
+                  ast-node-span-slot-segment-bases
+                  semantic
+                  0)
+                unit))
+            unit)
+          (ast-expr-span-slot-set-in-bases!
+            ast-node-span-slot-segment-bases
+            id
+            0))))))
 
 (define (ast-node-pool-truncate! [mark : i64]) : unit
   (ast-expr-span-reset-active-to! mark)
@@ -2115,8 +2097,7 @@
         (arena.Arena base-arena)
         (__tl_make-array AstExprReSpan ast-expr-span-record-initial-capacity))]
     [storage-root : i64 (ast-node-pool-arena-make)]
-    [segment-index : i64 0]
-    (while (< segment-index segment-count)
+    (for [segment-index (iterator.range 0 segment-count)]
       (let
         [segment : (__tl_dyn-array AstExpr)
           (in-arena
@@ -2131,8 +2112,7 @@
           (ast-expr-node-pool-biased-segment-base (& segment) segment-index))
         (set!
           (array-ref span-slot-segment-bases segment-index)
-          (ast-expr-span-slot-biased-segment-base (& span-slots) segment-index))
-        (set! segment-index (+ segment-index 1))))
+          (ast-expr-span-slot-biased-segment-base (& span-slots) segment-index))))
     (AstExprNodePoolState
       (cast
         (unsafe
@@ -2207,10 +2187,8 @@
         (arena.Arena pool.base-arena)
         (__tl_make-array AstExprCanonicalSpanRecord next-capacity))]
     [count : i64 pool.canonical-span-count]
-    [i : i64 0]
-    (while (< i count)
-      (set! (array-ref next i) (array-ref old i))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 count)]
+      (set! (array-ref next i) (array-ref old i)))
     (ast-expr-node-pool-state-with-canonical-spans pool next count)))
 
 (define (ast-expr-node-pool-state-record-direct-span
@@ -2269,7 +2247,7 @@
         [respan-count : i64 pool.respan-count]
         (while (< id pool.count)
           (ast-expr-span-slot-set-in-bases! pool.span-slot-segment-bases id 0)
-          (set! id (+ id 1)))
+          (+= id 1))
         (while (and
           (> canonical-count 0)
           (>=
@@ -2295,7 +2273,7 @@
                 semantic
                 0)
               unit)
-            (set! canonical-count (- canonical-count 1))))
+            (-= canonical-count 1)))
         (while (and
           (> respan-count 0)
           (>=
@@ -2305,7 +2283,7 @@
                 view-node)
               : i64)
             mark))
-          (set! respan-count (- respan-count 1)))
+          (-= respan-count 1))
         (AstExprNodePoolState
           pool.segment-bases
           mark
@@ -2350,7 +2328,7 @@
                   unit))
               unit)
             (ast-expr-span-slot-set-in-bases! pool.span-slot-segment-bases id 0)
-            (set! id (+ id 1))))
+            (+= id 1)))
         (AstExprNodePoolState
           pool.segment-bases
           mark
@@ -2413,19 +2391,17 @@
           (arena.Arena pool.base-arena)
           (__tl_make-array AstExprCanonicalSpanRecord capacity))]
       [count : i64 pool.canonical-span-count]
-      [i : i64 0]
       ;; Records contain only scalar ids/spans. The exclusive pool borrow
       ;; keeps both arena-backed arrays alive for this copy, and no element
       ;; pointer is retained when the new backing array is installed. The old
       ;; array stays in the base arena: snapshots of this pool may still
       ;; read it.
-      (while (< i count)
+      (for [i (iterator.range 0 count)]
         (unsafe
           (ptr-write!
             (ptr-offset (__tl_array-data next) i)
             (ptr-read
-              (ptr-offset (__tl_array-data pool.canonical-span-records) i))))
-        (set! i (+ i 1)))
+              (ptr-offset (__tl_array-data pool.canonical-span-records) i)))))
       (set! pool.canonical-span-records next))))
 
 (define (ast-expr-node-pool-state-canonical-records-grow-in-place!
@@ -2443,15 +2419,13 @@
         (arena.Arena pool.base-arena)
         (__tl_make-array AstExprReSpan next-capacity))]
     [count : i64 pool.respan-count]
-    [i : i64 0]
     ;; ReSpan rows are scalar-only too; the raw copy is scoped entirely before
     ;; replacing the array descriptor and cannot cross reset or compaction.
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (unsafe
         (ptr-write!
           (ptr-offset (__tl_array-data next) i)
-          (ptr-read (ptr-offset (__tl_array-data pool.respan-records) i))))
-      (set! i (+ i 1)))
+          (ptr-read (ptr-offset (__tl_array-data pool.respan-records) i)))))
     (set! pool.respan-records next)))
 
 (define (ast-expr-node-pool-state-note-span-in-place!
@@ -2758,7 +2732,7 @@
         [(MissingSidecar) (set! ok false)]
         [(UnexpectedDifference) (set! ok false)]
         [_ unit])
-      (set! id (+ id 1)))
+      (+= id 1))
     ok))
 
 (define (ast-expr-canonical-span [id : i64]) : AstMaybeSourceSpan
@@ -3059,8 +3033,7 @@
     [dedup-slots : (__tl_dyn-array i64)
       (in-arena (arena.Arena base-arena) (ty-node-dedup-slots-new dedup-cap))]
     [storage-root : i64 (ast-node-pool-arena-make)]
-    [segment-index : i64 0]
-    (while (< segment-index segment-count)
+    (for [segment-index (iterator.range 0 segment-count)]
       (let
         [segment : (__tl_dyn-array AstType)
           (in-arena
@@ -3068,8 +3041,7 @@
             (__tl_make-array AstType ast-type-node-pool-segment-size))]
         (set!
           (array-ref segment-bases segment-index)
-          (ast-type-node-pool-biased-segment-base (& segment) segment-index))
-        (set! segment-index (+ segment-index 1))))
+          (ast-type-node-pool-biased-segment-base (& segment) segment-index))))
     (AstTypeNodePoolState
       (cast
         (unsafe
@@ -3385,16 +3357,10 @@
     [capacity : i64 (ty-node-dedup-table-capacity slots)]
     [count : i64 (array-ref slots capacity)]
     (if (> count ty-node-dedup-log-capacity)
-      (let
-        [i : i64 0]
-        (while (< i capacity)
-          (set! (array-ref slots i) 0)
-          (set! i (+ i 1))))
-      (let
-        [i : i64 1]
-        (while (<= i count)
-          (set! (array-ref slots (array-ref slots (+ capacity i))) 0)
-          (set! i (+ i 1)))))
+      (for [i (iterator.range 0 capacity)]
+        (set! (array-ref slots i) 0))
+      (for [i (iterator.range 1 (+ count 1))]
+        (set! (array-ref slots (array-ref slots (+ capacity i))) 0)))
     (set! (array-ref slots capacity) 0)))
 
 ;; A copy of SLOTS in the current arena. Unless the log overflowed, every
@@ -3408,19 +3374,14 @@
     [copy : (__tl_dyn-array i64) (__tl_make-array i64 length)]
     [count : i64 (array-ref slots capacity)]
     (if (> count ty-node-dedup-log-capacity)
-      (let
-        [i : i64 0]
-        (while (< i length)
-          (set! (array-ref copy i) (array-ref slots i))
-          (set! i (+ i 1))))
-      (let
-        [i : i64 1]
-        (while (<= i count)
+      (for [i (iterator.range 0 length)]
+        (set! (array-ref copy i) (array-ref slots i)))
+      (begin
+        (for [i (iterator.range 1 (+ count 1))]
           (let
             [at : i64 (array-ref slots (+ capacity i))]
             (set! (array-ref copy (+ capacity i)) at)
-            (set! (array-ref copy at) (array-ref slots at)))
-          (set! i (+ i 1)))
+            (set! (array-ref copy at) (array-ref slots at))))
         (set! (array-ref copy capacity) count)))
     copy))
 
@@ -3452,32 +3413,26 @@
 (define (ty-lifetime-list-hash-at
   [items : (& items AstLifetimeList)]
   [len : i64]
-  [seed : i64]
-  [index : i64]) : i64
-  (if (>= index len)
-    (hash.combine seed 11)
+  [seed : i64]) : i64
+  (for [index (iterator.range 0 len)]
     (let
       [name : i64 (array-ref items.slots index)]
-      (ty-lifetime-list-hash-at items len (hash.combine seed name) (+ index 1)))))
+      (set! seed (hash.combine seed name))))
+  (hash.combine seed 11))
 
 (define (ty-lifetime-list-hash [items : (& items AstLifetimeList)] [seed : i64]) : i64
-  (ty-lifetime-list-hash-at items (ast-lifetime-list-len items) seed 0))
+  (ty-lifetime-list-hash-at items (ast-lifetime-list-len items) seed))
 
 (define (ty-type-list-hash-at
   [items : (& items AstTypeList)]
   [len : i64]
-  [seed : i64]
-  [index : i64]) : i64
-  (if (>= index len)
-    (hash.combine seed 13)
-    (ty-type-list-hash-at
-      items
-      len
-      (hash.combine seed (array-ref items.slots index))
-      (+ index 1))))
+  [seed : i64]) : i64
+  (for [index (iterator.range 0 len)]
+    (set! seed (hash.combine seed (array-ref items.slots index))))
+  (hash.combine seed 13))
 
 (define (ty-type-list-hash [items : (& items AstTypeList)] [seed : i64]) : i64
-  (ty-type-list-hash-at items (ast-type-list-len items) seed 0))
+  (ty-type-list-hash-at items (ast-type-list-len items) seed))
 
 ;; Map a node hash onto a dedup slot. `ty-node-hash-value` is deliberately left
 ;; alone (its values are also the file's documented, test-pinned hash contract);
@@ -3588,8 +3543,7 @@
       [new-capacity : i64 (* old-capacity 2)]
       [new-slots : (__tl_dyn-array i64) (ty-node-dedup-slots-new new-capacity)]
       [mask : i64 (- new-capacity 1)]
-      [i : i64 0]
-      (while (< i old-capacity)
+      (for [i (iterator.range 0 old-capacity)]
         (let
           [slot : i64 (array-ref old-slots i)]
           (if (= slot 0)
@@ -3602,8 +3556,7 @@
                   mask)]
               (while (not (= (array-ref new-slots idx) 0))
                 (set! idx (bit-and (+ idx 1) mask)))
-              (set! (array-ref new-slots idx) slot)))
-          (set! i (+ i 1))))
+              (set! (array-ref new-slots idx) slot)))))
       ;; The rehash fills slots it does not log.
       (set! (array-ref new-slots new-capacity) (+ ty-node-dedup-log-capacity 1))
       (ast-pool-cell-descriptor new-slots))))
@@ -3655,7 +3608,7 @@
             (unsafe
               (ptr-write! (ptr-offset slots idx) (+ id 1)))
             (ty-node-dedup-note-filled! slots ty-node-dedup-capacity idx)
-            (set! ty-node-dedup-count (+ ty-node-dedup-count 1))
+            (+= ty-node-dedup-count 1)
             (set! result id))
           (if (ty-node-shallow-eq? (- slot 1) node)
             (set! result (- slot 1))
@@ -3718,7 +3671,7 @@
 ;; happens at most a few times per compile (parse rollback, per-compile reset).
 (define (ty-node-pool-truncate! [mark : i64]) : unit
   (set! ty-node-pool-count mark)
-  (set! ty-node-pool-generation (+ ty-node-pool-generation 1))
+  (+= ty-node-pool-generation 1)
   (ty-node-dedup-clear!)
   (ast-node-pool-active-context-capture-type!))
 
@@ -3813,7 +3766,7 @@
   (set! ty-node-pool-count type-pool.count)
   (set! ty-node-pool-storage-arena type-pool.storage-arena)
   (set! ty-node-pool-segment-count type-pool.segment-count)
-  (set! ty-node-pool-generation (+ ty-node-pool-generation 1))
+  (+= ty-node-pool-generation 1)
   (set! ty-node-pool-exhausted type-pool.exhausted)
   (set!
     ty-node-dedup-capacity
@@ -4083,9 +4036,7 @@
     (begin
       (cfg
         compile-profile
-        (set!
-          ast-node-pool-context-profile-allocations
-          (+ ast-node-pool-context-profile-allocations 1))
+        (+= ast-node-pool-context-profile-allocations 1)
         unit)
       ;; The cells and the state records already have their intended owners.
       ;; Publish the records shallowly: an aggregate assignment would create a
@@ -4974,8 +4925,7 @@
         1
         (+ (* count 2) 1024)
         new-arena)]
-    [i : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (match (ast-type-node-pool-state-push-raw
         (ast-type-pool-cell-read dest.type-pool)
         (ast-type-node-pool-state-get source-state i))
@@ -4983,7 +4933,7 @@
           (ast-type-pool-cell-write! dest.type-pool next)
           ;; Raw pushes append exactly once and therefore retain the
           ;; source's insertion-ordered id.
-          (set! i (+ i 1))]))
+          unit]))
     (let
       [dedup-copy : (__tl_dyn-array i64)
         (ty-node-dedup-slots-copy
@@ -5421,7 +5371,7 @@
   0)
 
 (define (ast-ty-invalidate-id [lifetime : i64] [inner : i64]) : AstType
-  (set! ast-invalidate-type-count (+ ast-invalidate-type-count 1))
+  (+= ast-invalidate-type-count 1)
   (Invalidate lifetime inner))
 
 (define (ast-ty-invalidate [lifetime : i64] [inner : (& AstType)]) : AstType
@@ -5631,7 +5581,7 @@
   (Param name ty is-comptime))
 
 (define (ast-comptime-param-id [name : i64] [ty : AstType]) : AstParam
-  (set! ast-comptime-param-count (+ ast-comptime-param-count 1))
+  (+= ast-comptime-param-count 1)
   (Param name ty true))
 
 (define (ast-param-fallback) : AstParam
@@ -5933,12 +5883,10 @@
     [count : i64 (ast-spmd-param-class-list-len items)]
     [out : AstSpmdParamClassList
       (ast-spmd-param-class-list-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (ast-spmd-param-class-list-push
         (&mut out)
-        (ast-spmd-param-class-list-get items index Uniform))
-      (set! index (+ index 1)))
+        (ast-spmd-param-class-list-get items index Uniform)))
     out))
 
 (define (ast-spmd-specialization-clone [item : AstSpmdSpecialization]) : AstSpmdSpecialization
@@ -5957,16 +5905,14 @@
     [count : i64 (ast-spmd-specialization-list-len items)]
     [out : AstSpmdSpecializationList
       (ast-spmd-specialization-list-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (ast-spmd-specialization-list-push
         (&mut out)
         (ast-spmd-specialization-clone
           (ast-spmd-specialization-list-get
             items
             index
-            (ast-spmd-specialization-fallback))))
-      (set! index (+ index 1)))
+            (ast-spmd-specialization-fallback)))))
     out))
 
 (define (ast-renderable-name-id-fallback) : ci.InternId
@@ -6121,15 +6067,13 @@
     [count : i64 (ast-imported-spmd-specialization-list-len items)]
     [out : AstImportedSpmdSpecializationList
       (ast-imported-spmd-specialization-list-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (ast-imported-spmd-specialization-list-push
         (&mut out)
         (ast-imported-spmd-specialization-list-get
           items
           index
-          (ast-imported-spmd-specialization-fallback)))
-      (set! index (+ index 1)))
+          (ast-imported-spmd-specialization-fallback))))
     out))
 
 (define (ast-imported-spmd-callable-list-clone
@@ -6138,8 +6082,7 @@
     [count : i64 (ast-imported-spmd-callable-list-len items)]
     [out : AstImportedSpmdCallableList
       (ast-imported-spmd-callable-list-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [item : AstImportedSpmdCallable
           (ast-imported-spmd-callable-list-get
@@ -6151,8 +6094,7 @@
           (AstImportedSpmdCallable
             item.signature
             (ast-imported-spmd-specialization-list-clone
-              (& item.specializations))))
-        (set! index (+ index 1))))
+              (& item.specializations))))))
     out))
 
 (define (ast-imported-spmd-metadata-clone
@@ -9515,7 +9457,7 @@
   (let
     [index : i64 (+ v.offset v.len)]
     (set! (array-ref v.slots index) value)
-    (set! v.len (+ v.len 1))))
+    (+= v.len 1)))
 
 ;; Append one declaration read straight out of a source slot array.
 ;;
@@ -9542,7 +9484,7 @@
   (let
     [index : i64 (+ v.offset v.len)]
     (set! (array-ref v.slots index) (array-ref src src-index))
-    (set! v.len (+ v.len 1))))
+    (+= v.len 1)))
 
 (define (ast-decl-list-step [items : (& items AstDeclList)]) : AstDeclListStep
   (let
@@ -10016,7 +9958,7 @@
     (set!
       (array-ref v.owner-ids (+ (array-length v.slots) index))
       provenance-id)
-    (set! v.len (+ v.len 1))))
+    (+= v.len 1)))
 
 (define (ast-decl-path-list-push-with-owner-id
   [v : (&mut v AstDeclPathList)]
@@ -10211,7 +10153,7 @@
   (let
     [index : i64 (+ v.offset v.len)]
     (set! (array-ref v.slots index) value)
-    (set! v.len (+ v.len 1))))
+    (+= v.len 1)))
 
 (define (ast-decl-module-list-append-from
   [out : (&mut out AstDeclModuleList)]
@@ -10268,9 +10210,8 @@
   (let
     [capacity : i64 (array-length paths.slots)]
     [owner-ids : (__tl_dyn-array i64) (__tl_make-array i64 (* capacity 2))]
-    [index : i64 0]
     [count : i64 (ast-decl-path-list-len (& paths))]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [module-id : i64
           (ast-decl-module-list-get-id
@@ -10294,8 +10235,7 @@
           (ast-decl-path-list-provenance-id
             (& paths)
             index
-            cbi.compiler-builtin-id-fix-empty))
-        (set! index (+ index 1))))
+            cbi.compiler-builtin-id-fix-empty))))
     (AstDeclPathList
       paths.slots
       owner-ids
@@ -10450,18 +10390,14 @@
   compile-profile
   (define (ast-compaction-profile-note-source-expr!) : unit
     (if ast-compaction-profile-active
-      (set!
-        ast-compaction-profile-source-shared-expr-refs
-        (+ ast-compaction-profile-source-shared-expr-refs 1))
+      (+= ast-compaction-profile-source-shared-expr-refs 1)
       unit)))
 
 (cfg
   compile-profile
   (define (ast-compaction-profile-note-survivor-expr!) : unit
     (if ast-compaction-profile-active
-      (set!
-        ast-compaction-profile-survivor-expr-nodes
-        (+ ast-compaction-profile-survivor-expr-nodes 1))
+      (+= ast-compaction-profile-survivor-expr-nodes 1)
       unit)))
 
 (cfg
@@ -10470,9 +10406,7 @@
     (if (not ast-compaction-profile-active)
       unit
       (if (< id ast-compaction-profile-source-type-base)
-        (set!
-          ast-compaction-profile-source-shared-type-refs
-          (+ ast-compaction-profile-source-shared-type-refs 1))
+        (+= ast-compaction-profile-source-shared-type-refs 1)
         (let
           [slot : i64 (- id ast-compaction-profile-source-type-base)]
           (if (or
@@ -10482,9 +10416,7 @@
             (unless
               (> (array-ref ast-compaction-profile-survivor-type-map slot) 0)
               (set! (array-ref ast-compaction-profile-survivor-type-map slot) 1)
-              (set!
-                ast-compaction-profile-survivor-type-nodes
-                (+ ast-compaction-profile-survivor-type-nodes 1)))))))))
+              (+= ast-compaction-profile-survivor-type-nodes 1))))))))
 
 (cfg
   compile-profile
@@ -11241,15 +11173,13 @@
     [count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 decls.offset]
     [decl-slots : (__tl_dyn-array AstDecl) decls.slots]
-    [index : i64 0]
     [out : AstDeclList (ast-decl-list-with-capacity count)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (ast-decl-list-push
         (&mut out)
         (ast-compaction-remap-decl
           remap
-          (& (array-ref decl-slots (+ decl-offset index)))))
-      (set! index (+ index 1)))
+          (& (array-ref decl-slots (+ decl-offset index))))))
     out))
 
 (define (ast-compaction-remap-program
@@ -11562,10 +11492,8 @@
   [count : i64]) : AstFieldAligns
   (let
     [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref out index) (ast-field-aligns-ref fields index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref out index) (ast-field-aligns-ref fields index)))
     (AstFieldAligns out)))
 
 ;; `repr` with field `index` declaring `align`. The array grows only for a
@@ -11645,20 +11573,20 @@
 (define (ast-lifetime-list-eq-at?
   [a : (& a AstLifetimeList)]
   [b : (& b AstLifetimeList)]
-  [len : i64]
-  [index : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  [len : i64]) : bool
+  (for [index (iterator.range 0 len)]
+    (unless
       (= (array-ref a.slots index) (array-ref b.slots index))
-      (ast-lifetime-list-eq-at? a b len (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (ast-lifetime-list-eq? [a : AstLifetimeList] [b : AstLifetimeList]) : bool
   (let
     [len : i64 (ast-lifetime-list-len (& a))]
     (and
       (= len (ast-lifetime-list-len (& b)))
-      (ast-lifetime-list-eq-at? (& a) (& b) len 0))))
+      (ast-lifetime-list-eq-at? (& a) (& b) len))))
 
 (define (ast-type-eq? [a : AstType] [b : AstType]) : bool
   (ast-type-children-eq? a b ast-type-installed-ids-eq?))
@@ -11723,16 +11651,14 @@
   (let
     [alen : i64 (ast-extern-link-input-list-len a)]
     [blen : i64 (ast-extern-link-input-list-len b)]
-    (and (= alen blen) (ast-extern-link-input-list-eq-at? a b 0 alen))))
+    (and (= alen blen) (ast-extern-link-input-list-eq-at? a b alen))))
 
 (define (ast-extern-link-input-list-eq-at?
   [a : (& a AstExternLinkInputList)]
   [b : (& b AstExternLinkInputList)]
-  [index : i64]
   [len : i64]) : bool
-  (if (>= index len)
-    true
-    (and
+  (for [index (iterator.range 0 len)]
+    (unless
       (ast-extern-link-input-eq?
         (&
           (ast-extern-link-input-list-get
@@ -11744,7 +11670,9 @@
             b
             index
             (ast-extern-link-input-fallback))))
-      (ast-extern-link-input-list-eq-at? a b (+ index 1) len))))
+      (return false))
+    unit)
+  true)
 
 (define (ast-extern-metadata-symbol [metadata : (& AstExternMetadata)]) : String
   (match (owned_view.compiler-owned-reference-shared-view metadata)

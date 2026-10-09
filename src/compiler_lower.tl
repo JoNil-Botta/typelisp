@@ -2,6 +2,7 @@
 ;;
 ;; The lowerer accepts the checked program and builds a deterministic
 ;; CompilerIrProgram.
+(import stdlib.iterator)
 (import stdlib.arena)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -87,11 +88,8 @@
   [dst : (&mut dst (__tl_dyn-array (__tl_dyn-array LowerNameBinding)))]
   [src : (& src (__tl_dyn-array (__tl_dyn-array LowerNameBinding)))]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (set! (array-ref dst index) (array-ref src index))))
 
 (define (lower-name-store-add-segment! [store : (&mut store LowerNameStore)]) : unit
   (let
@@ -774,11 +772,9 @@
 (define (lower-comptime-error-id-cache-fingerprint
   [cache : (__tl_dyn-array i64)]) : i64
   (let
-    [index : i64 0]
     [out : i64 0]
-    (while (< index lower-comptime-cache-size)
-      (set! out (hash.combine out (hash.i64 (array-ref cache index))))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 lower-comptime-cache-size)]
+      (set! out (hash.combine out (hash.i64 (array-ref cache index)))))
     out))
 
 (define (compiler-lower-checked-pools-state-fingerprint
@@ -849,7 +845,7 @@
         (=
           (array-ref left.fingerprints index)
           (array-ref right.fingerprints index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     same))
 
 ;; IR vars allocated before an enclosing loop survive its backedge. Track the
@@ -1774,8 +1770,7 @@
       (let
         [count : i64 (ast.ast-decl-path-list-len (& paths))]
         [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity count)]
-        [index : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (let
             [path : String (ast.ast-decl-path-list-get (& paths) index "")]
             [owned-path : String (string.copy (& path))]
@@ -1789,8 +1784,7 @@
               (ast.ast-decl-path-list-provenance-id
                 (& paths)
                 index
-                cbi.compiler-builtin-id-fix-empty))
-            (set! index (+ index 1))))
+                cbi.compiler-builtin-id-fix-empty))))
         out))))
 
 (define (lower-clear-macro-expanded-source-caches-into-pools!
@@ -2694,7 +2688,7 @@
                 binding.symbol-id
                 (- write 1)))
             (set! cursor binding.parent)
-            (set! write (- write 1)))))]))
+            (-= write 1))))]))
 
 (define (lower-name-env-materialize-two
   [left : LowerNameEnv]
@@ -2747,7 +2741,7 @@
           (set!
             (array-ref bindings index)
             (LowerNameFlatBinding source-id logical-id symbol-id))
-          (set! index (+ index 1))
+          (+= index 1)
           (set! cur rest)]))
     (set! index (- count 1))
     (while (>= index 0)
@@ -2760,7 +2754,7 @@
             binding.logical-id
             binding.symbol-id
             out))
-        (set! index (- index 1))))
+        (-= index 1)))
     out))
 
 (define (lower-name-env-append [left : LowerNameEnv] [right : LowerNameEnv]) : LowerNameEnv
@@ -3046,7 +3040,7 @@
               (lower-name-binding-logical-alias?
                 binding.source-id
                 binding.logical-id)
-              (set! count (+ count 1)))
+              (+= count 1))
             (set! cursor binding.parent)))
         count)]))
 
@@ -3171,7 +3165,7 @@
                   (when
                     (< child 0)
                     (set! child next-node)
-                    (set! next-node (+ next-node 1))
+                    (+= next-node 1)
                     (lower_i64_i64_map.insert-ref! (&mut edges) edge-key child))
                   (set! node child)
                   (set!
@@ -3465,11 +3459,8 @@
   [source : (__tl_dyn-array LowerNameCache)]
   [destination : (&mut destination (__tl_dyn-array LowerNameCache))]
   [len : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index len)
-      (set! (array-ref destination index) (array-ref source index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 len)]
+    (set! (array-ref destination index) (array-ref source index))))
 
 (define (lower-module-name-cache-store-grow [store : LowerModuleNameCacheStore]) : LowerModuleNameCacheStore
   (let
@@ -4504,10 +4495,8 @@
         (if (< count 1)
           1
           count))]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref slots index) -1)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref slots index) -1))
     (compiler-lower-state-set-alias-symbol-memo! lower-state slots)))
 
 (define (lower-alias-symbol-memo-release! [lower-state : CompilerLowerState]) : unit
@@ -5238,13 +5227,11 @@
 (define (lower-dirname [path : String]) : String
   (let
     [n : i64 (string.string-length path)]
-    [i : i64 0]
     [last : i64 -1]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (if (lower-path-separator? (string.string-ref path i))
         (set! last i)
-        (set! last last))
-      (set! i (+ i 1)))
+        (set! last last)))
     (if (< last 0)
       ""
       (string.substring path 0 (+ last 1)))))
@@ -5260,14 +5247,12 @@
       (let
         [buf : text_buf.TextBuf
           (text_buf.append (text_buf.empty) (svec.get (& segments) 0 ""))]
-        [i : i64 1]
-        (while (< i count)
+        (for [i (iterator.range 1 count)]
           (set!
             buf
             (text_buf.append
               (text_buf.append buf "/")
-              (svec.get (& segments) i "")))
-          (set! i (+ i 1)))
+              (svec.get (& segments) i ""))))
         (text_buf.render buf)))))
 
 (define (lower-path-normalize-segment
@@ -5321,7 +5306,7 @@
                 unit)
               (set! segment-start (+ i 1)))]
           [else unit])
-        (set! i (+ i 1))))
+        (+= i 1)))
     (if (not ok)
       false
       (let
@@ -5448,7 +5433,7 @@
               rooted)
             (set! segment-start (+ i 1)))
           (set! segment-start segment-start))
-        (set! i (+ i 1)))
+        (+= i 1))
       (lower-path-normalize-segment
         (string.substring path segment-start (- n segment-start))
         (&mut segments)
@@ -5488,7 +5473,7 @@
               (if (=
                 (cast (string.string-ref text (+ start i)) : i64)
                 (cast (string.string-ref prefix i) : i64))
-                (set! i (+ i 1))
+                (+= i 1)
                 (set! ok false))
               (set! ok false)))
           (= i prefix-len))))))
@@ -6082,10 +6067,9 @@
   [module-id : i64]) : LowerNameEnv
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 module-id]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (lower-global-array-element-shared-view
@@ -6132,8 +6116,7 @@
                     lower-state
                     owner-names
                     decl)
-                  owner-names)))])
-        (set! index (+ index 1))))
+                  owner-names)))])))
     cur-names))
 
 (define (lower-name-env-add-clone-decl-in-module-inner
@@ -6276,7 +6259,6 @@
   [initial-module-id : i64]) : LowerNameEnv
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 initial-module-id]
     ;; Match the backing slot rather than binding the row to a local first: the
@@ -6284,7 +6266,7 @@
     ;; and hands the slot straight on (aggregate arguments pass by reference).
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [decl-offset : i64 decls.offset]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl-path : String (ast.ast-decl-path-list-get (& paths) index "")]
         (match (lower-global-array-element-shared-view
@@ -6305,8 +6287,7 @@
                 cur-module-id
                 (lower-global-array-element-shared-view
                   decl-slots
-                  (+ decl-offset index))))])
-        (set! index (+ index 1))))
+                  (+ decl-offset index))))])))
     cur-names))
 
 (define (lower-name-env-add-clone-decls
@@ -6761,11 +6742,13 @@
     (if (< slot 0)
       cur-names
       (let
-        [index : i64 (lower-global-array-element-shared-view starts slot)]
         [end : i64 (lower-global-array-element-shared-view ends slot)]
         [decl-offset : i64 decls.offset]
         [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
-        (while (< index end)
+        (for [index
+          (iterator.range
+            (lower-global-array-element-shared-view starts slot)
+            end)]
           (let
             [position : i64
               (lower-global-array-element-shared-view positions index)]
@@ -6800,8 +6783,7 @@
                     (lower-global-shared-view target-module)
                     target-module-id
                     decl
-                    path-aware))])
-            (set! index (+ index 1))))
+                    path-aware))])))
         cur-names))))
 
 ;; --- per-program module -> decl-position index ------------------
@@ -6885,10 +6867,9 @@
           [ends : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
           [positions : (__tl_dyn-array i64) (__tl_make-array i64 (+ count 1))]
           [cur-module-id : i64 empty-module-id]
-          [i : i64 0]
           [running : i64 0]
           ;; Pass 1: assign a dense slot per module id and count its decls.
-          (while (< i count)
+          (for [i (iterator.range 0 count)]
             (match (array-ref decl-slots (+ decl-offset i))
               [(Module next-module) (set! cur-module-id next-module)]
               [_
@@ -6903,21 +6884,17 @@
                             (&mut modules)
                             cur-module-id
                             new-slot)
-                          (set! module-count (+ module-count 1))
+                          (+= module-count 1)
                           new-slot)])]
-                  (set! (array-ref counts slot) (+ (array-ref counts slot) 1)))])
-            (set! i (+ i 1)))
+                  (set! (array-ref counts slot) (+ (array-ref counts slot) 1)))]))
           ;; Prefix sums: starts fixed, ends double as fill cursors below.
-          (set! i 0)
-          (while (< i module-count)
+          (for [i (iterator.range 0 module-count)]
             (set! (array-ref starts i) running)
             (set! (array-ref ends i) running)
-            (set! running (+ running (array-ref counts i)))
-            (set! i (+ i 1)))
+            (+= running (array-ref counts i)))
           ;; Pass 2: fill program-order positions per module slot.
           (set! cur-module-id empty-module-id)
-          (set! i 0)
-          (while (< i count)
+          (for [i (iterator.range 0 count)]
             (match (array-ref decl-slots (+ decl-offset i))
               [(Module next-module) (set! cur-module-id next-module)]
               [_
@@ -6927,8 +6904,7 @@
                       [cursor : i64 (array-ref ends slot)]
                       (set! (array-ref positions cursor) i)
                       (set! (array-ref ends slot) (+ cursor 1)))]
-                  [(LookupMissing) unit])])
-            (set! i (+ i 1)))
+                  [(LookupMissing) unit])]))
           (compiler-lower-state-set-module-decl-index-modules!
             lower-state
             modules)
@@ -6979,12 +6955,14 @@
     (if (< slot 0)
       cur-names
       (let
-        [j : i64 (lower-global-array-element-shared-view starts slot)]
         [end : i64 (lower-global-array-element-shared-view ends slot)]
         [target-module : String
           (lower-name-id-text lower-state target-module-id)]
         [alias : String (lower-name-id-text lower-state alias-id)]
-        (while (< j end)
+        (for [j
+          (iterator.range
+            (lower-global-array-element-shared-view starts slot)
+            end)]
           (let
             [decl : ast.AstDecl
               (lower-global-array-element-shared-view
@@ -7011,8 +6989,7 @@
                     alias-id
                     (lower-global-shared-view target-module)
                     target-module-id
-                    decl))])
-            (set! j (+ j 1))))
+                    decl))])))
         cur-names))))
 
 (define (lower-name-env-add-selected-item-alias
@@ -7092,7 +7069,6 @@
   [path-aware : bool]) : LowerNameEnv
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [cur-module-id : i64 initial-module-id]
     ;; Seed the overlay membership set from the base env so the per-alias
@@ -7107,7 +7083,7 @@
     (lower-alias-symbol-memo-reset!
       lower-state
       (ast.ast-decl-list-len (& all-decls)))
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (lower-global-array-element-shared-view
@@ -7142,8 +7118,7 @@
           [_ unit])
         (match decl
           [(Module next-module) (set! cur-module-id next-module)]
-          [_ unit])
-        (set! index (+ index 1))))
+          [_ unit])))
     (lower-alias-symbol-memo-release! lower-state)
     cur-names))
 
@@ -7192,9 +7167,11 @@
     (if (< slot 0)
       cur-names
       (let
-        [j : i64 (lower-global-array-element-shared-view starts slot)]
         [end : i64 (lower-global-array-element-shared-view ends slot)]
-        (while (< j end)
+        (for [j
+          (iterator.range
+            (lower-global-array-element-shared-view starts slot)
+            end)]
           (let
             [decl : ast.AstDecl
               (lower-global-array-element-shared-view
@@ -7226,8 +7203,7 @@
                     target-module
                     alias
                     cbi.compiler-builtin-id-fix-empty))]
-              [_ unit])
-            (set! j (+ j 1))))
+              [_ unit])))
         cur-names))))
 
 (define (lower-name-env-with-import-aliases-in-module-cache
@@ -7516,7 +7492,7 @@
               [(Err message)
                 (set! result (Err message))
                 (set! done true)])])
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if done
       result
       (Ok
@@ -7566,11 +7542,8 @@
   [source : (__tl_dyn-array LowerModuleLocalView)]
   [destination : (&mut destination (__tl_dyn-array LowerModuleLocalView))]
   [len : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index len)
-      (set! (array-ref destination index) (array-ref source index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 len)]
+    (set! (array-ref destination index) (array-ref source index))))
 
 (define (lower-module-local-view-store-grow [store : LowerModuleLocalViewStore]) : LowerModuleLocalViewStore
   (let
@@ -7722,7 +7695,7 @@
                 (&mut last-markers)
                 module-id
                 count)
-              (set! count (+ count 1))]
+              (+= count 1)]
             [_ unit])
           (set! cursor rest)]))
     (LowerModuleViewEpochs
@@ -7796,7 +7769,7 @@
           (lower-global-shared-view view))
         (__tl_array-push! epochs.modules module-id)
         (__tl_array-push! epochs.module-epochs epoch)
-        (set! epochs.built (+ epochs.built 1))
+        (+= epochs.built 1)
         (Ok view))]))
 
 ;; Release every epoch the loop has passed at marker index MARKER: each one
@@ -7819,8 +7792,7 @@
       [store : LowerModuleLocalViewStore
         (compiler-lower-state-active-module-local-views lower-state)]
       [modules : lower_i64_i64_map.Map store.modules]
-      [index : i64 0]
-      (while (< index epochs.built)
+      (for [index (iterator.range 0 epochs.built)]
         (if (= (array-ref epochs.module-epochs index) epoch)
           (begin
             (lower_i64_i64_map.remove-ref!
@@ -7834,8 +7806,7 @@
                 1)
               unit)
             unit)
-          unit)
-        (set! index (+ index 1)))
+          unit))
       (compiler-lower-state-set-active-module-local-views!
         lower-state
         (LowerModuleLocalViewStore modules store.values store.len))
@@ -7854,7 +7825,7 @@
     [index : i64 items.len]
     [found : bool false]
     (while (and (not found) (> index 0))
-      (set! index (- index 1))
+      (-= index 1)
       (if (= (array-ref items.slots index) name)
         (set! found true)
         unit))
@@ -7866,10 +7837,8 @@
     (let
       [len : i64 items.len]
       [slots : (__tl_dyn-array i64) (__tl_make-array i64 (+ len 1))]
-      [index : i64 0]
-      (while (< index len)
-        (set! (array-ref slots index) (array-ref items.slots index))
-        (set! index (+ index 1)))
+      (for [index (iterator.range 0 len)]
+        (set! (array-ref slots index) (array-ref items.slots index)))
       (set! (array-ref slots len) name)
       (LowerIdSet slots (+ len 1)))))
 
@@ -7980,14 +7949,10 @@
             (__tl_make-array
               LowerVariantArmResolution
               lower-variant-arm-memo-cap)]
-          [index : i64 0]
-          (while (< index tc-rtf-cap)
-            (set! (array-ref rtf-generations index) 0)
-            (set! index (+ index 1)))
-          (set! index 0)
-          (while (< index lower-variant-arm-memo-cap)
-            (set! (array-ref variant-stamps index) 0)
-            (set! index (+ index 1)))
+          (for [index (iterator.range 0 tc-rtf-cap)]
+            (set! (array-ref rtf-generations index) 0))
+          (for [index (iterator.range 0 lower-variant-arm-memo-cap)]
+            (set! (array-ref variant-stamps index) 0))
           (set! storage.rtf-generations rtf-generations)
           (set! storage.rtf-ids rtf-ids)
           (set! storage.rtf-types rtf-types)
@@ -8198,7 +8163,7 @@
     [index : i64 subs.len]
     [found : i64 -1]
     (while (> index 0)
-      (set! index (- index 1))
+      (-= index 1)
       (when
         (= (array-ref subs.names index) name)
         (set! found index)
@@ -8214,15 +8179,13 @@
     [len : i64 subs.len]
     [names : (__tl_dyn-array i64) (__tl_make-array i64 len)]
     [values : (__tl_dyn-array ast.AstExpr) (__tl_make-array ast.AstExpr len)]
-    [index : i64 0]
     [kept : i64 0]
-    (while (< index len)
+    (for [index (iterator.range 0 len)]
       (unless
         (= (array-ref subs.names index) name)
         (set! (array-ref names kept) (array-ref subs.names index))
         (set! (array-ref values kept) (array-ref subs.values index))
-        (set! kept (+ kept 1)))
-      (set! index (+ index 1)))
+        (+= kept 1)))
     (LowerSpmdInlineSubst names values kept)))
 
 (define (lower-spmd-inline-subst-cons
@@ -8234,11 +8197,9 @@
     [names : (__tl_dyn-array i64) (__tl_make-array i64 (+ len 1))]
     [values : (__tl_dyn-array ast.AstExpr)
       (__tl_make-array ast.AstExpr (+ len 1))]
-    [index : i64 0]
-    (while (< index len)
+    (for [index (iterator.range 0 len)]
       (set! (array-ref names index) (array-ref rest.names index))
-      (set! (array-ref values index) (array-ref rest.values index))
-      (set! index (+ index 1)))
+      (set! (array-ref values index) (array-ref rest.values index)))
     (set! (array-ref names len) name)
     (set! (array-ref values len) value)
     (LowerSpmdInlineSubst names values (+ len 1))))
@@ -8492,7 +8453,6 @@
           env
           type-env
           (& exprs)
-          0
           subst
           shadowed
           (&mut out)))]
@@ -8504,12 +8464,10 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [exprs : (& exprs ast.AstExprList)]
-  [index : i64]
   [subst : LowerSpmdInlineSubst]
   [shadowed : LowerIdSet]
   [out : (&mut out ast.AstExprList)]) : ResultLowerAstExprList
-  (if (>= index exprs.len)
-    (Ok (ast.ast-expr-list-new))
+  (for [index (iterator.range 0 exprs.len)]
     (let
       [head-id : i64 (ast.ast-expr-list-get exprs index 0)]
       [head : ast.AstExpr (lower-context-expr-get ctx head-id)]
@@ -8524,16 +8482,8 @@
             subst
             shadowed))]
       (ast.ast-expr-list-push out (lower-context-expr-push ctx rewritten-head))
-      (lower-spmd-inline-expr-list-into
-        ctx
-        function-state
-        env
-        type-env
-        exprs
-        (+ index 1)
-        subst
-        shadowed
-        out))))
+      unit))
+  (Ok (ast.ast-expr-list-new)))
 
 (define (lower-spmd-inline-let-bindings
   [ctx : tc_core.TcContext]
@@ -9571,10 +9521,9 @@
   [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-module-id : i64 module-id]
     [cur-out : lower_i64_i64_map.Map out]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (lower-global-array-element-shared-view
@@ -9619,8 +9568,7 @@
                       (&mut cur-out)
                       logical-id
                       slot)))]
-              [(No) unit])])
-        (set! index (+ index 1))))
+              [(No) unit])])))
     cur-out))
 
 (define (lower-function-set-from-decls
@@ -10337,7 +10285,7 @@
                       pools
                       (tc_core.tc-resolve-type ctx (Var root-key-id)))))
                 (& out)))))
-        (set! index (- index 1))))
+        (-= index 1)))
     out))
 
 (define (lower-clone-handoff-request-decl
@@ -10545,7 +10493,7 @@
             (compiler-lower-state-intern-str lower-state helper-name-id)))
           (set! found root-key-id)
           unit)
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (lower-clone-handoff-source-conflict-in-module
@@ -10596,7 +10544,7 @@
           (array-ref next root)
           (lower_i64_i64_map.get-value-or (& heads) root-module-id -1))
         (lower_i64_i64_map.insert-ref! (&mut heads) root-module-id root)
-        (set! root (- root 1))))
+        (-= root 1)))
     (while (and (< found 0) (< index count))
       (match (ast.ast-decl-unwrapped
         (& (array-ref decl-slots (+ decl-offset index))))
@@ -10615,7 +10563,7 @@
                     (set! found (array-ref keys candidate)))
                   (set! candidate (array-ref next candidate))))))]
         [_ unit])
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (lower-clone-handoff-source-conflict
@@ -10658,7 +10606,7 @@
             1))
           unit
           (set! ok false))
-        (set! index (+ index 1))))
+        (+= index 1)))
     ok))
 
 (define (lower-clone-handoff-generated-summary-at
@@ -12089,18 +12037,14 @@
 (define (lower-function-decl-count [decls : ast.AstDeclList]) : i64
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [out : i64 0]
-    (while (< index count)
-      (set!
+    (for [index (iterator.range 0 count)]
+      (+=
         out
-        (+
-          out
-          (lower-function-decl-count-one
-            (lower-global-array-element-shared-view
-              decls.slots
-              (+ decls.offset index)))))
-      (set! index (+ index 1)))
+        (lower-function-decl-count-one
+          (lower-global-array-element-shared-view
+            decls.slots
+            (+ decls.offset index)))))
     out))
 
 (define (lower-function-body-index-add
@@ -12409,10 +12353,9 @@
   [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [cur-out : lower_i64_i64_map.Map out]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (lower-global-array-element-shared-view
@@ -12440,8 +12383,7 @@
                 decl
                 logical-module-id
                 names
-                cur-out))])
-        (set! index (+ index 1))))
+                cur-out))])))
     cur-out))
 
 (define (lower-dispatch-variant-set-from-decls
@@ -13657,10 +13599,9 @@
     [count : i64 (ast.ast-decl-list-len (& decls))]
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [decl-offset : i64 decls.offset]
-    [index : i64 0]
     [current-module : String module]
     [current-used : lower_i64_i64_map.Map used]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (lower-global-array-element-shared-view
         decl-slots
         (+ decl-offset index))
@@ -13693,8 +13634,7 @@
                 (lower-global-array-element-shared-view
                   decl-slots
                   (+ decl-offset index))))
-            unit)])
-      (set! index (+ index 1)))
+            unit)]))
     current-used))
 
 (define (lower-used-types-expand-fixed
@@ -13717,7 +13657,7 @@
             ""
             (lower-global-shared-view current))]
         (set! current next)
-        (set! iterations (+ iterations 1))
+        (+= iterations 1)
         (if (or
           (= before (lower_i64_i64_map.len (& current)))
           (>= iterations 8))
@@ -13732,10 +13672,8 @@
   (let
     [cache : (__tl_dyn-array i64)
       (compiler-lower-state-comptime-error-cache lower-state)]
-    [index : i64 0]
-    (while (< index lower-comptime-cache-size)
-      (set! (array-ref cache index) 0)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 lower-comptime-cache-size)]
+      (set! (array-ref cache index) 0))
     (set! (array-ref cache lower-comptime-cache-generation-index) -1)
     (set! (array-ref cache lower-comptime-cache-table-id-index) -1)))
 
@@ -13894,8 +13832,7 @@
       (ast.ast-decl-path-list-with-capacity count)]
     [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [source-module-id : i64 cbi.compiler-builtin-id-fix-empty]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [decl : ast.AstDecl
           (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback))]
@@ -13944,17 +13881,14 @@
               cbi.compiler-builtin-id-fix-empty)))
         (match decl
           [(Module next-module) (set! source-module-id next-module)]
-          [_ unit])
-        (set! index (+ index 1))))
+          [_ unit])))
     (Filtered out out-paths (LowerDeclKeepPlan keep count))))
 
 (define (lower-decl-keep-plan-all [count : i64]) : LowerDeclKeepPlan
   (let
     [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref keep index) 1)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref keep index) 1))
     (LowerDeclKeepPlan keep count)))
 
 (define (lower-decl-required-by-clone-roots?
@@ -14003,7 +13937,7 @@
             (match decl
               [(Module next-module) (set! module-id next-module)]
               [_ unit])
-            (set! index (+ index 1))))
+            (+= index 1)))
         (LowerDeclKeepPlan keep source-count))]))
 
 (define (lower-decl-keep-plan-copy-into-pools
@@ -14018,10 +13952,8 @@
         [source : (__tl_dyn-array i64) plan.keep]
         [count : i64 plan.source-count]
         [keep : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-        [index : i64 0]
-        (while (< index count)
-          (set! (array-ref keep index) (array-ref source index))
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 count)]
+          (set! (array-ref keep index) (array-ref source index)))
         (LowerDeclKeepPlan keep count)))))
 
 (define (lower-decl-keep-plan-apply
@@ -14038,14 +13970,12 @@
         [source-count : i64 plan.source-count]
         [keep : (__tl_dyn-array i64) plan.keep]
         [out : ast.AstDeclList (ast.ast-decl-list-with-capacity count)]
-        [index : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (if (or (>= index source-count) (not (= (array-ref keep index) 0)))
             (ast.ast-decl-list-push
               (&mut out)
               (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback)))
-            unit)
-          (set! index (+ index 1)))
+            unit))
         (ast.ast-program out))]))
 
 (define (lower-decl-keep-plan-apply-paths
@@ -14060,8 +13990,7 @@
         source-count
         count)]
     [out : ast.AstDeclPathList (ast.ast-decl-path-list-with-capacity limit)]
-    [index : i64 0]
-    (while (< index limit)
+    (for [index (iterator.range 0 limit)]
       (when
         (not (= (array-ref keep index) 0))
         (ast.ast-decl-path-list-push-with-owner-and-provenance-id
@@ -14074,8 +14003,7 @@
           (ast.ast-decl-path-list-provenance-id
             (& paths)
             index
-            cbi.compiler-builtin-id-fix-empty)))
-      (set! index (+ index 1)))
+            cbi.compiler-builtin-id-fix-empty))))
     out))
 
 (defenum LowerReachStateCell
@@ -14088,9 +14016,8 @@
   [state : LowerReachState]) : LowerReachState
   (let
     [cell : LowerReachStateCell (Occupied state)]
-    [index : i64 0]
     [count : i64 (clone_support.clone-root-entries-len roots)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match cell
         [(Occupied current)
           (set!
@@ -14103,8 +14030,7 @@
                 (clone_support.clone-root-entries-helper-id-at-or
                   roots
                   index
-                  -1))))])
-      (set! index (+ index 1)))
+                  -1))))]))
     (match cell
       [(Occupied result) result])))
 
@@ -14540,9 +14466,8 @@
         [uniform-types : (__tl_dyn-array ast.AstType) cache-data.uniform-types]
         [uniform-vectors : (__tl_dyn-array ir.CompilerIrValue)
           cache-data.uniform-vectors]
-        [index : i64 0]
         [count : i64 cache-data.uniform-count]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (when
             (and
               (lower-vector-map-ir-value-eq?
@@ -14553,8 +14478,7 @@
                 (lower-global-array-element-shared-view uniform-types index)))
             (return
               (Some
-                (lower-global-array-element-shared-view uniform-vectors index))))
-          (set! index (+ index 1)))
+                (lower-global-array-element-shared-view uniform-vectors index)))))
         (No))]))
 
 (define (lower-masked-preheader-uniform-add!
@@ -14596,14 +14520,12 @@
         [cache-data : LowerMaskedPreheaderCacheData (deref cache)]
         [array-vars : (__tl_dyn-array i64) cache-data.array-vars]
         [array-data : (__tl_dyn-array ir.CompilerIrValue) cache-data.array-data]
-        [index : i64 0]
         [count : i64 cache-data.array-count]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (when
             (= array-var (array-ref array-vars index))
             (return
-              (Some (lower-global-array-element-shared-view array-data index))))
-          (set! index (+ index 1)))
+              (Some (lower-global-array-element-shared-view array-data index)))))
         (No))]))
 
 (define (lower-masked-preheader-array-data-add!
@@ -15451,8 +15373,10 @@
       [(Struct _ _ fields)
         (let
           [mask : i64 0]
-          [at : i64 0]
-          (while (< at (tc_core.tc-inline-field-layout-list-count (& fields)))
+          (for [at
+            (iterator.range
+              0
+              (tc_core.tc-inline-field-layout-list-count (& fields)))]
             (match (tc_core.tc-inline-field-layout-list-ref (& fields) at)
               [(Field _ ty offset)
                 (set!
@@ -15465,8 +15389,7 @@
                       index
                       ty
                       offset
-                      (- fuel 1))))])
-            (set! at (+ at 1)))
+                      (- fuel 1))))]))
           mask)]
       [(Enum _ _ variants)
         (let
@@ -15475,27 +15398,25 @@
             (= (tc_core.tc-inline-variant-layout-list-count (& variants)) 1)
             (match (tc_core.tc-inline-variant-layout-list-ref (& variants) 0)
               [(Variant _ _ _ payloads)
-                (let
-                  [at : i64 0]
-                  (while (<
-                    at
-                    (tc_core.tc-inline-payload-layout-list-count (& payloads)))
-                    (match (tc_core.tc-inline-payload-layout-list-ref
-                      (& payloads)
-                      at)
-                      [(Payload _ ty offset)
-                        (set!
+                (for [at
+                  (iterator.range
+                    0
+                    (tc_core.tc-inline-payload-layout-list-count (& payloads)))]
+                  (match (tc_core.tc-inline-payload-layout-list-ref
+                    (& payloads)
+                    at)
+                    [(Payload _ ty offset)
+                      (set!
+                        mask
+                        (bit-or
                           mask
-                          (bit-or
-                            mask
-                            (lower-representation-stable-field-mask
-                              type-segment-bases
-                              state
-                              index
-                              ty
-                              offset
-                              (- fuel 1))))])
-                    (set! at (+ at 1))))]))
+                          (lower-representation-stable-field-mask
+                            type-segment-bases
+                            state
+                            index
+                            ty
+                            offset
+                            (- fuel 1))))]))]))
           mask)])))
 
 (define (lower-representation-stable-nominal-mask
@@ -15549,8 +15470,7 @@
           (tc_core.TcAggLayoutCacheState address)]
         [slots : (__tl_dyn-array tc_core.TcAggLayoutCacheSlot)
           (tc_core.tc-agg-layout-cache-slots state)]
-        [at : i64 0]
-        (while (< at (array-length slots))
+        (for [at (iterator.range 0 (array-length slots))]
           (match (owned_view.compiler-owned-array-element-shared-view slots at)
             [(Full name _)
               (lower-representation-stable-nominal-mask
@@ -15560,8 +15480,7 @@
                 name
                 64)
               unit]
-            [(Empty) unit])
-          (set! at (+ at 1)))))
+            [(Empty) unit]))))
     index))
 
 (define (lower-type-align [ctx : tc_core.TcContext] [ty : (& ty ast.AstType)]) : i64
@@ -15619,15 +15538,13 @@
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]
   [cursor : i64]) : i64
-  (lower-type-list-extent-at ctx (& types) cursor 0))
+  (lower-type-list-extent-at ctx (& types) cursor))
 
 (define (lower-type-list-extent-at
   [ctx : tc_core.TcContext]
   [types : (& types ast.AstTypeList)]
-  [cursor : i64]
-  [index : i64]) : i64
-  (if (>= index (ast.ast-type-list-len types))
-    cursor
+  [cursor : i64]) : i64
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
     (let
       [ty : ast.AstType
         (tc_core.tc-context-type-get
@@ -15635,11 +15552,8 @@
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
       [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
       [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
-      (lower-type-list-extent-at
-        ctx
-        types
-        (+ offset (lower-type-size ctx resolved))
-        (+ index 1)))))
+      (set! cursor (+ offset (lower-type-size ctx resolved)))))
+  cursor)
 
 (define (lower-type-list-storage-size
   [ctx : tc_core.TcContext]
@@ -15716,15 +15630,13 @@
   [ctx : tc_core.TcContext]
   [variants : ast.AstVariantDefList]
   [max-size : i64]) : i64
-  (lower-enum-variants-storage-size-at ctx (& variants) max-size 0))
+  (lower-enum-variants-storage-size-at ctx (& variants) max-size))
 
 (define (lower-enum-variants-storage-size-at
   [ctx : tc_core.TcContext]
   [variants : (& variants ast.AstVariantDefList)]
-  [max-size : i64]
-  [index : i64]) : i64
-  (if (>= index variants.len)
-    max-size
+  [max-size : i64]) : i64
+  (for [index (iterator.range 0 variants.len)]
     (let
       [size : i64
         (lower-variant-storage-size
@@ -15733,13 +15645,12 @@
             variants
             index
             (ast.ast-variant-def-fallback)))]
-      (lower-enum-variants-storage-size-at
-        ctx
-        variants
+      (set!
+        max-size
         (if (> size max-size)
           size
-          max-size)
-        (+ index 1)))))
+          max-size))))
+  max-size)
 
 (define (lower-enum-storage-size
   [ctx : tc_core.TcContext]
@@ -18040,27 +17951,23 @@
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]
   [stack : LowerIdSet]) : bool
-  (lower-supported-reference-type-list-with-stack-at? ctx (& types) stack 0))
+  (lower-supported-reference-type-list-with-stack-at? ctx (& types) stack))
 
 (define (lower-supported-reference-type-list-with-stack-at?
   [ctx : tc_core.TcContext]
   [types : (& types ast.AstTypeList)]
-  [stack : LowerIdSet]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    true
-    (and
+  [stack : LowerIdSet]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
+    (unless
       (lower-supported-reference-type-with-stack?
         ctx
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))
         (lower-global-shared-view stack))
-      (lower-supported-reference-type-list-with-stack-at?
-        ctx
-        types
-        stack
-        (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (lower-supported-reference-type-list-subst-with-stack?
   [ctx : tc_core.TcContext]
@@ -18071,18 +17978,15 @@
     ctx
     subst
     (& types)
-    stack
-    0))
+    stack))
 
 (define (lower-supported-reference-type-list-subst-with-stack-at?
   [ctx : tc_core.TcContext]
   [subst : tc_core.TcLifetimeSubst]
   [types : (& types ast.AstTypeList)]
-  [stack : LowerIdSet]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    true
-    (and
+  [stack : LowerIdSet]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
+    (unless
       (lower-supported-reference-type-with-stack?
         ctx
         (tc_core.tc-lifetime-subst-type
@@ -18091,12 +17995,9 @@
             ctx
             (ast.ast-type-list-get types index (ast.ast-type-id-fallback))))
         (lower-global-shared-view stack))
-      (lower-supported-reference-type-list-subst-with-stack-at?
-        ctx
-        subst
-        types
-        stack
-        (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (lower-supported-reference-field-list-with-stack?
   [ctx : tc_core.TcContext]
@@ -18107,33 +18008,27 @@
     ctx
     subst
     (& fields)
-    stack
-    0))
+    stack))
 
 (define (lower-supported-reference-field-list-with-stack-at?
   [ctx : tc_core.TcContext]
   [subst : tc_core.TcLifetimeSubst]
   [fields : (& fields ast.AstFieldDefList)]
-  [stack : LowerIdSet]
-  [index : i64]) : bool
-  (if (>= index fields.len)
-    true
+  [stack : LowerIdSet]) : bool
+  (for [index (iterator.range 0 fields.len)]
     (match (ast.ast-field-def-list-get
       fields
       index
       (ast.ast-field-def-fallback))
       [(Def _ ty _)
-        (and
+        (unless
           (lower-supported-reference-type-with-stack?
             ctx
             (tc_core.tc-lifetime-subst-type subst ty)
             (lower-global-shared-view stack))
-          (lower-supported-reference-field-list-with-stack-at?
-            ctx
-            subst
-            fields
-            stack
-            (+ index 1)))])))
+          (return false))
+        unit]))
+  true)
 
 (define (lower-supported-reference-variant-list-with-stack?
   [ctx : tc_core.TcContext]
@@ -18144,34 +18039,28 @@
     ctx
     subst
     (& variants)
-    stack
-    0))
+    stack))
 
 (define (lower-supported-reference-variant-list-with-stack-at?
   [ctx : tc_core.TcContext]
   [subst : tc_core.TcLifetimeSubst]
   [variants : (& variants ast.AstVariantDefList)]
-  [stack : LowerIdSet]
-  [index : i64]) : bool
-  (if (>= index variants.len)
-    true
+  [stack : LowerIdSet]) : bool
+  (for [index (iterator.range 0 variants.len)]
     (match (ast.ast-variant-def-list-get
       variants
       index
       (ast.ast-variant-def-fallback))
       [(Def _ fields _)
-        (and
+        (unless
           (lower-supported-reference-type-list-subst-with-stack?
             ctx
             subst
             fields
             (lower-global-shared-view stack))
-          (lower-supported-reference-variant-list-with-stack-at?
-            ctx
-            subst
-            variants
-            stack
-            (+ index 1)))])))
+          (return false))
+        unit]))
+  true)
 
 (define (lower-supported-reference-struct-args-with-stack?
   [ctx : tc_core.TcContext]
@@ -18735,7 +18624,7 @@
           [(Tuple elem-tys)
             (let
               [info : LowerFieldInfo
-                (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
+                (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
               (match info
                 [(Info offset field-ty)
                   (match (lower-gep-byte tuple-state tuple-value offset)
@@ -18756,7 +18645,7 @@
               [(Tuple elem-tys)
                 (let
                   [info : LowerFieldInfo
-                    (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
+                    (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
                   (match info
                     [(Info offset field-ty)
                       (match (lower-gep-byte tuple-state tuple-value offset)
@@ -18784,7 +18673,7 @@
               [(Tuple elem-tys)
                 (let
                   [info : LowerFieldInfo
-                    (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
+                    (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
                   (match info
                     [(Info offset field-ty)
                       (match (lower-gep-byte tuple-state tuple-value offset)
@@ -19532,14 +19421,12 @@
       (if (tc_core.tc-name-qualified? name)
         (tc_core.tc-qualified-name-base name)
         name)]
-    [i : i64 0]
     [last-dot : i64 -1]
     [n : i64 (string.string-length source)]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (if (string.char-eq (string.string-ref source i) '.')
         (set! last-dot i)
-        unit)
-      (set! i (+ i 1)))
+        unit))
     (if (and (>= last-dot 0) (< last-dot (- n 1)))
       (string.substring source (+ last-dot 1) (- n (+ last-dot 1)))
       source)))
@@ -20229,7 +20116,7 @@
                 (ast.ast-expr-list-get (& children) index -1))
               name)
             (set! found true))
-          (set! index (+ index 1)))
+          (+= index 1))
         found)]))
 
 ;; A tuple or fixed-array payload for its element patterns: the loaded value
@@ -20844,12 +20731,10 @@
   [count : i64]) : ast.AstPatternList
   (let
     [out : ast.AstPatternList (ast.ast-pattern-list-with-capacity count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (ast.ast-pattern-list-push
         (&mut out)
-        (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback)))
-      (set! index (+ index 1)))
+        (ast.ast-pattern-list-get items index (ast.ast-pattern-fallback))))
     out))
 
 ;; Binds a name to the address of element `index`, typed `ref-ty`.
@@ -21048,10 +20933,8 @@
             (tc_core.tc-context-pools ctx)
             (lower-global-shared-view elem-ty))]
         [types : ast.AstTypeList (ast.ast-type-list-with-capacity count)]
-        [index : i64 0]
-        (while (< index count)
-          (ast.ast-type-list-push (&mut types) elem-id)
-          (set! index (+ index 1)))
+        (for [index (iterator.range 0 count)]
+          (ast.ast-type-list-push (&mut types) elem-id))
         (lower-bind-variant-payloads
           ctx
           state
@@ -21370,17 +21253,16 @@
     [_ false]))
 
 (define (lower-pattern-list-refutable? [patterns : ast.AstPatternList]) : bool
-  (lower-pattern-list-refutable-at? (& patterns) 0))
+  (lower-pattern-list-refutable-at? (& patterns)))
 
 (define (lower-pattern-list-refutable-at?
-  [patterns : (& patterns ast.AstPatternList)]
-  [index : i64]) : bool
-  (if (>= index patterns.len)
-    false
-    (if (lower-pattern-refutable?
-      (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback)))
-      true
-      (lower-pattern-list-refutable-at? patterns (+ index 1)))))
+  [patterns : (& patterns ast.AstPatternList)]) : bool
+  (for [index (iterator.range 0 patterns.len)]
+    (when
+      (lower-pattern-refutable?
+        (ast.ast-pattern-list-get patterns index (ast.ast-pattern-fallback)))
+      (return true)))
+  false)
 
 (define (lower-pattern-refutable-for-type?
   [ctx : tc_core.TcContext]
@@ -21466,36 +21348,31 @@
   [ctx : tc_core.TcContext]
   [struct-id : i64]
   [fields : (& fields ast.AstFieldDefList)]
-  [field-name : String]
-  [index : i64]) : ResultLowerFieldInfo
-  (if (>= index fields.len)
-    (Err
-      (box
-        (lower-diagnostic
-          (str_cat.str-cat "lower: unknown struct field " field-name))))
+  [field-name : String]) : ResultLowerFieldInfo
+  (for [index (iterator.range 0 fields.len)]
     (match (ast.ast-field-def-list-get
       fields
       index
       (ast.ast-field-def-fallback))
       [(Def name ty _)
-        (if (string.eq
-          (tc_core.tc-env-key-name-text (ci.intern-syntax-id-value name))
-          field-name)
-          (match (tc_core.tc-inline-aggregate-layout-for-id ctx struct-id)
-            [(Ok layout)
-              (Ok
-                (Info
-                  (tc_core.tc-inline-aggregate-layout-field-offset-id
-                    layout
-                    (ci.intern-syntax-id-value name))
-                  (tc_core.tc-resolve-type ctx ty)))]
-            [(Err message) (Err (box (lower-diagnostic message)))])
-          (lower-field-info-from-list-at
-            ctx
-            struct-id
-            fields
-            field-name
-            (+ index 1)))])))
+        (when
+          (string.eq
+            (tc_core.tc-env-key-name-text (ci.intern-syntax-id-value name))
+            field-name)
+          (return
+            (match (tc_core.tc-inline-aggregate-layout-for-id ctx struct-id)
+              [(Ok layout)
+                (Ok
+                  (Info
+                    (tc_core.tc-inline-aggregate-layout-field-offset-id
+                      layout
+                      (ci.intern-syntax-id-value name))
+                    (tc_core.tc-resolve-type ctx ty)))]
+              [(Err message) (Err (box (lower-diagnostic message)))])))]))
+  (Err
+    (box
+      (lower-diagnostic
+        (str_cat.str-cat "lower: unknown struct field " field-name)))))
 
 ;; A struct field's offset, from the one inline aggregate layout that also
 ;; answers `offset-of` (default and `(:repr c)` structs alike, including
@@ -21515,8 +21392,7 @@
           field-ctx
           struct-id
           (& fields)
-          field-name
-          0)]
+          field-name)]
       [(Err message) (Err (box (lower-diagnostic message)))])))
 
 (define (lower-var-id
@@ -21937,7 +21813,7 @@
         [(Capture capture-name-id _ _ _)
           (if (= capture-name-id name-id)
             (set! found true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     found))
 
 (define (lower-capture-list-empty) : LowerCaptureList
@@ -25521,7 +25397,7 @@
         (ast.ast-expr-list-get args index 0))
         (set! found true)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 ;; The symbol of a cleanup-owning type's declared cleanup function.
@@ -26148,9 +26024,8 @@
     [(Some items)
       (let
         [count : i64 (lower_arg_writeback_vec.len (& items))]
-        [index : i64 0]
         [out : LowerState state]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (set!
             out
             (lower-apply-arg-writeback
@@ -26159,8 +26034,7 @@
               (lower_arg_writeback_vec.get
                 (& items)
                 index
-                (lower-global-shared-view lower-arg-writeback-fallback))))
-          (set! index (+ index 1)))
+                (lower-global-shared-view lower-arg-writeback-fallback)))))
         out)]))
 
 (define (lower-bootstrap-runtime-builtin-id? [name-id : i64]) : bool
@@ -26299,7 +26173,7 @@
             name
             (ast.ast-expr-list-get exprs at 0))]
         (when (> next code) (set! code next)))
-      (set! at (+ at 1)))
+      (+= at 1))
     code))
 
 ;; Whether evaluating the expression at `expr-box` only reads: no call, store
@@ -26335,7 +26209,7 @@
       (set!
         read-only
         (lower-call-arg-expr-reads-only? ctx (ast.ast-expr-list-get args at 0)))
-      (set! at (+ at 1)))
+      (+= at 1))
     read-only))
 
 ;; Scalars, raw pointers and register-resident aggregates, which are carried
@@ -28189,8 +28063,7 @@
           (let
             [alternatives : ast.AstPatternList (deref alternatives-box)]
             [out : sym_i64_env.SymI64Env env]
-            [index : i64 0]
-            (while (< index alternatives.len)
+            (for [index (iterator.range 0 alternatives.len)]
               (set!
                 out
                 (lower-match-pattern-bind-local-names
@@ -28200,8 +28073,7 @@
                   (ast.ast-pattern-list-get
                     (& alternatives)
                     index
-                    (ast.ast-pattern-fallback))))
-              (set! index (+ index 1)))
+                    (ast.ast-pattern-fallback)))))
             out)]
         [_ env])]
     [_ (lower-pattern-bind-local-names env pattern)]))
@@ -31650,10 +31522,8 @@
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]
   [target : i64]
-  [index : i64]
   [cursor : i64]) : ResultLowerFieldInfo
-  (if (>= index (ast.ast-type-list-len (& types)))
-    (Err (box (lower-diagnostic "lower: tuple-ref index out of range")))
+  (for [index (iterator.range 0 (ast.ast-type-list-len (& types)))]
     (let
       [ty : ast.AstType
         (tc_core.tc-context-type-get
@@ -31662,13 +31532,9 @@
       [resolved : ast.AstType (tc_core.tc-resolve-type ctx ty)]
       [offset : i64 (lower-align-up cursor (lower-type-align ctx resolved))]
       (if (= index target)
-        (Ok (Info offset resolved))
-        (lower-tuple-elem-info
-          ctx
-          types
-          target
-          (+ index 1)
-          (+ offset (lower-type-size ctx resolved)))))))
+        (return (Ok (Info offset resolved)))
+        (set! cursor (+ offset (lower-type-size ctx resolved))))))
+  (Err (box (lower-diagnostic "lower: tuple-ref index out of range"))))
 
 ;; Evaluate each tuple element (preserving side effects even for zero-sized
 ;; elements) and store the sized ones into the aggregate at their field offset,
@@ -32163,7 +32029,7 @@
           [(Tuple elem-tys)
             (let
               [info : LowerFieldInfo
-                (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
+                (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
               (match info
                 [(Info offset elem-ty)
                   (if (> (lower-type-size ctx elem-ty) 0)
@@ -33159,20 +33025,21 @@
 (define (lower-c-abi-inline-fields-integer-only?
   [ctx : tc_core.TcContext]
   [fields : (& fields tc_core.TcInlineFieldLayoutList)]) : bool
-  (lower-c-abi-inline-fields-integer-only-at? ctx fields 0))
+  (lower-c-abi-inline-fields-integer-only-at? ctx fields))
 
 (define (lower-c-abi-inline-fields-integer-only-at?
   [ctx : tc_core.TcContext]
-  [fields : (& fields tc_core.TcInlineFieldLayoutList)]
-  [index : i64]) : bool
-  (if (>= index (tc_core.tc-inline-field-layout-list-count fields))
-    true
-    (and
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]) : bool
+  (for [index
+    (iterator.range 0 (tc_core.tc-inline-field-layout-list-count fields))]
+    (unless
       (lower-c-abi-integer-field-type?
         ctx
         (tc_core.tc-inline-field-layout-type
           (tc_core.tc-inline-field-layout-list-ref fields index)))
-      (lower-c-abi-inline-fields-integer-only-at? ctx fields (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (lower-c-abi-win64-register-struct-id?
   [ctx : tc_core.TcContext]
@@ -33199,20 +33066,21 @@
 (define (lower-c-abi-inline-fields-win64-register?
   [ctx : tc_core.TcContext]
   [fields : (& fields tc_core.TcInlineFieldLayoutList)]) : bool
-  (lower-c-abi-inline-fields-win64-register-at? ctx fields 0))
+  (lower-c-abi-inline-fields-win64-register-at? ctx fields))
 
 (define (lower-c-abi-inline-fields-win64-register-at?
   [ctx : tc_core.TcContext]
-  [fields : (& fields tc_core.TcInlineFieldLayoutList)]
-  [index : i64]) : bool
-  (if (>= index (tc_core.tc-inline-field-layout-list-count fields))
-    true
-    (and
+  [fields : (& fields tc_core.TcInlineFieldLayoutList)]) : bool
+  (for [index
+    (iterator.range 0 (tc_core.tc-inline-field-layout-list-count fields))]
+    (unless
       (lower-c-abi-win64-register-field-type?
         ctx
         (tc_core.tc-inline-field-layout-type
           (tc_core.tc-inline-field-layout-list-ref fields index)))
-      (lower-c-abi-inline-fields-win64-register-at? ctx fields (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (lower-c-abi-register-aggregate-fields-ok?
   [ctx : tc_core.TcContext]
@@ -34150,42 +34018,38 @@
 (define (lower-internal-structural-resolved-type-list?
   [ctx : tc_core.TcContext]
   [types : (& types ast.AstTypeList)]) : bool
-  (lower-internal-structural-resolved-type-list-at? ctx (& types) 0))
+  (lower-internal-structural-resolved-type-list-at? ctx (& types)))
 
 (define (lower-internal-structural-resolved-type-list-at?
   [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
+  [types : (& types ast.AstTypeList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
     (let
       [ty : ast.AstType
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (or
-        (lower-internal-structural-resolved-type? ty)
-        (lower-internal-structural-resolved-type-list-at? ctx types (+ index 1))))))
+      (when (lower-internal-structural-resolved-type? ty) (return true))
+      unit))
+  false)
 
 (define (lower-internal-structural-type-list?
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]) : bool
-  (lower-internal-structural-type-list-at? ctx (& types) 0))
+  (lower-internal-structural-type-list-at? ctx (& types)))
 
 (define (lower-internal-structural-type-list-at?
   [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    false
+  [types : (& types ast.AstTypeList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
     (let
       [ty : ast.AstType
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (or
-        (lower-internal-structural-type? ctx ty)
-        (lower-internal-structural-type-list-at? ctx types (+ index 1))))))
+      (when (lower-internal-structural-type? ctx ty) (return true))
+      unit))
+  false)
 
 (define (lower-internal-aggregate-key
   [ctx : tc_core.TcContext]
@@ -34587,23 +34451,21 @@
 (define (lower-c-abi-ir-return-slots-from
   [slots : LowerCAbiSlotList]
   [out : (&mut out (__tl_dyn-array ir.CompilerIrCAbiReturnSlot))]
-  [index : i64]
   [count : i64]) : unit
-  (if (>= index count)
-    unit
+  (for [index (iterator.range 0 count)]
     (match (lower-c-abi-slot-list-ref slots index)
       [(Slot scalar-ty offset)
         (set!
           (array-ref out index)
           (ir.CompilerIrCAbiReturnSlot.Slot scalar-ty offset))
-        (lower-c-abi-ir-return-slots-from slots out (+ index 1) count)])))
+        unit])))
 
 (define (lower-c-abi-ir-return-slots [slots : LowerCAbiSlotList]) : ir.CompilerIrCAbiReturnSlotSeq
   (let
     [count : i64 (lower-c-abi-slot-list-count slots)]
     [out : (__tl_dyn-array ir.CompilerIrCAbiReturnSlot)
       (__tl_make-array ir.CompilerIrCAbiReturnSlot count)]
-    (lower-c-abi-ir-return-slots-from slots (&mut out) 0 count)
+    (lower-c-abi-ir-return-slots-from slots (&mut out) count)
     (ir.CompilerIrCAbiReturnSlotSeq out count)))
 
 (define (lower-c-abi-materialize-stored-register-result
@@ -39779,22 +39641,19 @@
 (define (lower-init-default-share-safe-type-list?
   [ctx : tc_core.TcContext]
   [types : ast.AstTypeList]) : bool
-  (lower-init-default-share-safe-type-list-at? ctx (& types) 0))
+  (lower-init-default-share-safe-type-list-at? ctx (& types)))
 
 (define (lower-init-default-share-safe-type-list-at?
   [ctx : tc_core.TcContext]
-  [types : (& types ast.AstTypeList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len types))
-    true
+  [types : (& types ast.AstTypeList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
     (let
       [head : ast.AstType
         (tc_core.tc-context-type-get
           ctx
           (ast.ast-type-list-get types index (ast.ast-type-id-fallback)))]
-      (if (lower-init-default-share-safe? ctx head)
-        (lower-init-default-share-safe-type-list-at? ctx types (+ index 1))
-        false))))
+      (unless (lower-init-default-share-safe? ctx head) (return false))))
+  true)
 
 (define (lower-init-default-share-safe-struct?
   [ctx : tc_core.TcContext]
@@ -40178,7 +40037,7 @@
         [(EnumArgs _ _)
           (lower-make-array-zero-fill-enum-supported? ctx resolved)]
         [(Tuple elems)
-          (lower-make-array-zero-fill-type-list-supported? ctx (deref elems) 0)]
+          (lower-make-array-zero-fill-type-list-supported? ctx (deref elems))]
         [(Array elem _)
           (lower-make-array-zero-fill-supported?
             ctx
@@ -40190,17 +40049,16 @@
 ;; store instead of running the per-element default-init loop.
 (define (lower-make-array-zero-fill-type-list-supported?
   [ctx : tc_core.TcContext]
-  [types : ast.AstTypeList]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-type-list-len (& types)))
-    true
-    (if (lower-make-array-zero-fill-supported?
-      ctx
-      (tc_core.tc-context-type-get
+  [types : ast.AstTypeList]) : bool
+  (for [index (iterator.range 0 (ast.ast-type-list-len (& types)))]
+    (unless
+      (lower-make-array-zero-fill-supported?
         ctx
-        (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))))
-      (lower-make-array-zero-fill-type-list-supported? ctx types (+ index 1))
-      false)))
+        (tc_core.tc-context-type-get
+          ctx
+          (ast.ast-type-list-get (& types) index (ast.ast-type-id-fallback))))
+      (return false)))
+  true)
 
 ;; A struct can be zero-filled when every field's default is all-zero bytes
 ;; (default-layout only, mirroring lower-init-struct).
@@ -40229,8 +40087,7 @@
               (lower-struct-constructor-field-types-for-result
                 field-ctx
                 struct-ty
-                fields))
-            0)]
+                fields)))]
         [(Err _) false]))))
 
 ;; An enum can be zero-filled when its default value is all-zero bytes. That
@@ -40269,8 +40126,7 @@
                         (lower-enum-constructor-fields-for-result
                           field-ctx
                           enum-ty
-                          fields))
-                      0))]))])]
+                          fields))))]))])]
       [(Err _) false])))
 
 (define (lower-make-array-zero-fill
@@ -41503,7 +41359,7 @@
     [(Tuple elem-tys)
       (let
         [info : LowerFieldInfo
-          (try (lower-tuple-elem-info ctx (deref elem-tys) index 0 0))]
+          (try (lower-tuple-elem-info ctx (deref elem-tys) index 0))]
         (match info
           [(Info offset elem-ty)
             (match (lower-gep-byte state base offset)
@@ -44123,25 +43979,21 @@
   [ctx : tc_core.TcContext]
   [name : i64]
   [exprs : ast.AstExprList]) : bool
-  (lower-spmd-reduce-expr-list-writes-id-at? ctx name (& exprs) 0))
+  (lower-spmd-reduce-expr-list-writes-id-at? ctx name (& exprs)))
 
 (define (lower-spmd-reduce-expr-list-writes-id-at?
   [ctx : tc_core.TcContext]
   [name : i64]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : bool
-  (if (>= expr-index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [expr-index (iterator.range 0 exprs.len)]
+    (when
       (lower-spmd-reduce-node-writes-id?
         ctx
         name
         (ast.ast-expr-list-get exprs expr-index 0))
-      (lower-spmd-reduce-expr-list-writes-id-at?
-        ctx
-        name
-        exprs
-        (+ expr-index 1)))))
+      (return true))
+    unit)
+  false)
 
 ;; A `let` binding list blocks the split when it rebinds `name` (a `Var name`
 ;; read inside would no longer mean the outer variable) or when any binding
@@ -44150,16 +44002,15 @@
   [ctx : tc_core.TcContext]
   [name : i64]
   [bindings : ast.AstLetBindingList]) : bool
-  (lower-spmd-reduce-let-bindings-write-id-at? ctx name (& bindings) 0))
+  (lower-spmd-reduce-let-bindings-write-id-at? ctx name (& bindings)))
 
 (define (lower-spmd-reduce-let-bindings-write-id-at?
   [ctx : tc_core.TcContext]
   [name : i64]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
-    (or
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
+  (for [binding-index
+    (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
+    (when
       (match (ast.ast-let-binding-list-get
         bindings
         binding-index
@@ -44168,11 +44019,9 @@
           (or
             (= bind-name name)
             (lower-spmd-reduce-node-writes-id? ctx name init-box))])
-      (lower-spmd-reduce-let-bindings-write-id-at?
-        ctx
-        name
-        bindings
-        (+ binding-index 1)))))
+      (return true))
+    unit)
+  false)
 
 ;; Strip `Spanned`/`Ann` wrappers to see the syntactic head of an expression
 ;; (mirrors the unwrapping in `lower-simple-vector-reduce`).
@@ -45095,7 +44944,6 @@
     [bound-vars : (__tl_dyn-array i64) (__tl_make-array i64 4)]
     [check-env : sym_i64_env.SymI64Env (lower-global-shared-view env)]
     [check-type-env : tc_core.TcTypeEnv (lower-global-shared-view type-env)]
-    [index : i64 0]
     [s : LowerState state]
     [inner-check-label : i64 (ir.compiler-ir-label-none)]
     [checks-label : i64 (ir.compiler-ir-label-none)]
@@ -45108,7 +44956,7 @@
     (set! (array-ref bound-vars 2) x0)
     (set! (array-ref bound-vars 3) x1)
     ;; The span and product checks read the bounds through private names.
-    (while (< index 4)
+    (for [index (iterator.range 0 4)]
       (let
         [id : i64
           (cis.intern-lower-private-identity-raw
@@ -45120,8 +44968,7 @@
             check-env
             id
             (array-ref bound-vars index)))
-        (set! check-type-env (tc_core.tc-bind-id check-type-env id (I64))))
-      (set! index (+ index 1)))
+        (set! check-type-env (tc_core.tc-bind-id check-type-env id (I64)))))
     (match (lower-state-fresh-label s "foreach2_inner_check")
       [(Label next-s label)
         (set! s next-s)
@@ -45657,7 +45504,7 @@
             (set! (array-ref offsets index) offset)
             unit)
           (set! found true))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if found
       (LowerArrayVarSet vars offsets count)
       (begin
@@ -45672,31 +45519,27 @@
     [vars : (__tl_dyn-array i64) right.vars]
     [offsets : (__tl_dyn-array i64) right.offsets]
     [count : i64 right.count]
-    [index : i64 0]
     [out : LowerArrayVarSet left]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (lower-array-var-set-add
           out
           (array-ref vars index)
-          (array-ref offsets index)))
-      (set! index (+ index 1)))
+          (array-ref offsets index))))
     out))
 
 (define (lower-array-var-set-max-offset [set : (& set LowerArrayVarSet)]) : i64
   (let
     [offsets : (__tl_dyn-array i64) set.offsets]
     [count : i64 set.count]
-    [index : i64 0]
     [max-offset : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [offset : i64 (array-ref offsets index)]
         (if (> offset max-offset)
           (set! max-offset offset)
-          unit)
-        (set! index (+ index 1))))
+          unit)))
     max-offset))
 
 (define (lower-masked-vector-index-literal-offset
@@ -45951,7 +45794,7 @@
     [out : lower_i64_i64_map.Map (lower-masked-vector-empty-lane-locals)]
     [index : i64 items.len]
     (while (> index 0)
-      (set! index (- index 1))
+      (-= index 1)
       (lower_i64_i64_map.insert-ref!
         (&mut out)
         (array-ref items.slots index)
@@ -47254,8 +47097,7 @@
                       index
                       lane-locals
                       scrut-lanes
-                      (& arms)
-                      0)))])]
+                      (& arms))))])]
           [_ false])]
       [(Let let-box)
         ;; The body's lane locals extend views of `lane-locals` in place, so the
@@ -47343,8 +47185,7 @@
           form
           index
           lane-locals
-          (& exprs)
-          0)]
+          (& exprs))]
       [(ArrayRef arr-box idx-box)
         (or
           (lower-masked-vector-body-has-varying-with-locals?
@@ -47432,11 +47273,9 @@
   [form : LowerMaskedVaryingForm]
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : bool
-  (if (>= expr-index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [expr-index (iterator.range 0 exprs.len)]
+    (when
       (lower-masked-vector-body-has-varying-with-locals?
         ctx
         function-state
@@ -47447,17 +47286,9 @@
         (lower-global-shared-view index)
         lane-locals
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
-      (lower-masked-vector-expr-list-has-varying-with-locals-at?
-        ctx
-        function-state
-        mode
-        env
-        type-env
-        form
-        index
-        lane-locals
-        exprs
-        (+ expr-index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-masked-vector-let-bindings-have-varying-with-locals-at?
   [ctx : tc_core.TcContext]
@@ -47529,16 +47360,14 @@
   [index : String]
   [lane-locals : lower_i64_i64_map.Map]
   [scrut-lanes : i64]
-  [arms : (& arms ast.AstMatchArmList)]
-  [arm-index : i64]) : bool
-  (if (>= arm-index arms.len)
-    false
+  [arms : (& arms ast.AstMatchArmList)]) : bool
+  (for [arm-index (iterator.range 0 arms.len)]
     (match (ast.ast-match-arm-list-get
       arms
       arm-index
       (ast.ast-match-arm-fallback))
       [(Arm pattern body-box)
-        (or
+        (when
           (let
             [index-arg (lower-global-shared-view index)]
             [lane-locals-arg
@@ -47556,18 +47385,9 @@
               index-arg
               lane-locals-arg
               (lower-context-expr-get ctx body-box)))
-          (lower-masked-vector-match-arms-have-varying-with-locals-at?
-            ctx
-            function-state
-            mode
-            env
-            type-env
-            form
-            index
-            lane-locals
-            scrut-lanes
-            arms
-            (+ arm-index 1)))])))
+          (return true))
+        unit]))
+  false)
 
 (define (lower-masked-vector-body-has-varying?
   [ctx : tc_core.TcContext]
@@ -47920,8 +47740,7 @@
     type-env
     index
     enum-locals
-    (& exprs)
-    0))
+    (& exprs)))
 
 (define (lower-masked-vector-expr-list-has-varying-enum-match-with-locals-at?
   [ctx : tc_core.TcContext]
@@ -47929,11 +47748,9 @@
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
   [enum-locals : LowerIdSet]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : bool
-  (if (>= expr-index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [expr-index (iterator.range 0 exprs.len)]
+    (when
       (lower-masked-vector-body-has-varying-enum-match-with-locals?
         ctx
         env
@@ -47941,14 +47758,9 @@
         index
         enum-locals
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
-      (lower-masked-vector-expr-list-has-varying-enum-match-with-locals-at?
-        ctx
-        env
-        type-env
-        index
-        enum-locals
-        exprs
-        (+ expr-index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-masked-vector-let-bindings-have-varying-enum-match-with-locals?
   [ctx : tc_core.TcContext]
@@ -48023,8 +47835,7 @@
     type-env
     index
     enum-locals
-    (& arms)
-    0))
+    (& arms)))
 
 (define (lower-masked-vector-match-arms-have-varying-enum-match-with-locals-at?
   [ctx : tc_core.TcContext]
@@ -48032,16 +47843,14 @@
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
   [enum-locals : LowerIdSet]
-  [arms : (& arms ast.AstMatchArmList)]
-  [arm-index : i64]) : bool
-  (if (>= arm-index arms.len)
-    false
+  [arms : (& arms ast.AstMatchArmList)]) : bool
+  (for [arm-index (iterator.range 0 arms.len)]
     (match (ast.ast-match-arm-list-get
       arms
       arm-index
       (ast.ast-match-arm-fallback))
       [(Arm _ body-box)
-        (or
+        (when
           (lower-masked-vector-body-has-varying-enum-match-with-locals?
             ctx
             env
@@ -48049,14 +47858,9 @@
             index
             enum-locals
             (lower-context-expr-get ctx body-box))
-          (lower-masked-vector-match-arms-have-varying-enum-match-with-locals-at?
-            ctx
-            env
-            type-env
-            index
-            enum-locals
-            arms
-            (+ arm-index 1)))])))
+          (return true))
+        unit]))
+  false)
 
 (define (lower-masked-vector-body-has-varying-enum-match?
   [ctx : tc_core.TcContext]
@@ -48258,32 +48062,25 @@
     env
     type-env
     index
-    (& exprs)
-    0))
+    (& exprs)))
 
 (define (lower-masked-vector-expr-list-has-bool-array-lane-at?
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : bool
-  (if (>= expr-index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [expr-index (iterator.range 0 exprs.len)]
+    (when
       (lower-masked-vector-body-has-bool-array-lane?
         ctx
         env
         type-env
         index
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
-      (lower-masked-vector-expr-list-has-bool-array-lane-at?
-        ctx
-        env
-        type-env
-        index
-        exprs
-        (+ expr-index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-masked-vector-let-bindings-have-bool-array-lane?
   [ctx : tc_core.TcContext]
@@ -48296,18 +48093,16 @@
     env
     type-env
     index
-    (& bindings)
-    0))
+    (& bindings)))
 
 (define (lower-masked-vector-let-bindings-have-bool-array-lane-at?
   [ctx : tc_core.TcContext]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
+  (for [binding-index
+    (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
     (match (ast.ast-let-binding-list-get
       bindings
       binding-index
@@ -48315,20 +48110,16 @@
       [(Binding _ _ init-box)
         (let
           [init : ast.AstExpr (lower-context-expr-get ctx init-box)]
-          (or
+          (when
             (lower-masked-vector-body-has-bool-array-lane?
               ctx
               env
               type-env
               index
               init)
-            (lower-masked-vector-let-bindings-have-bool-array-lane-at?
-              ctx
-              env
-              type-env
-              index
-              bindings
-              (+ binding-index 1))))])))
+            (return true))
+          unit)]))
+  false)
 
 ;; The calls an SPMD body's strategy depends on: a call to an SPMD helper that
 ;; stays out of line (an imported callable, or a helper whose body needs its
@@ -48449,8 +48240,7 @@
             env
             type-env
             probe
-            (& args)
-            0)))]
+            (& args))))]
     [(Let let-box)
       (match (__tl-box-place let-box)
         [(Let bindings body-box)
@@ -48461,8 +48251,7 @@
               env
               type-env
               probe
-              (& bindings)
-              0)
+              (& bindings))
             (lower-spmd-expr-has-call?
               ctx
               function-state
@@ -48500,8 +48289,7 @@
         env
         type-env
         probe
-        (& exprs)
-        0)]
+        (& exprs))]
     [(ArrayRef array-box index-box)
       (or
         (lower-spmd-expr-has-call?
@@ -48568,11 +48356,9 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [probe : LowerSpmdCallProbe]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [index (iterator.range 0 exprs.len)]
+    (when
       (lower-spmd-expr-has-call?
         ctx
         function-state
@@ -48580,14 +48366,9 @@
         type-env
         probe
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (lower-spmd-expr-list-has-call-at?
-        ctx
-        function-state
-        env
-        type-env
-        probe
-        exprs
-        (+ index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-spmd-let-bindings-have-call-at?
   [ctx : tc_core.TcContext]
@@ -48595,16 +48376,15 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [probe : LowerSpmdCallProbe]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
+  (for [binding-index
+    (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
     (match (ast.ast-let-binding-list-get
       bindings
       binding-index
       (ast.ast-let-binding-fallback))
       [(Binding _ _ init-box)
-        (or
+        (when
           (lower-spmd-expr-has-call?
             ctx
             function-state
@@ -48612,14 +48392,9 @@
             type-env
             probe
             (lower-context-expr-get ctx init-box))
-          (lower-spmd-let-bindings-have-call-at?
-            ctx
-            function-state
-            env
-            type-env
-            probe
-            bindings
-            (+ binding-index 1)))])))
+          (return true))
+        unit]))
+  false)
 
 ;; What a foreach body holds that only the masked SPMD strategy lowers, computed
 ;; once per body: the masked strategy is chosen on these facts, and when it
@@ -49074,22 +48849,22 @@
                   ctx
                   probe
                   (lower-context-expr-get ctx scrutinee-box))
-                (lower-vector-match-arms-have-at? ctx probe (& arms) 0))])]
+                (lower-vector-match-arms-have-at? ctx probe (& arms)))])]
         [(Shuffle) false])]
     [(Let let-box)
       (match (__tl-box-place let-box)
         [(Let bindings body-box)
           (or
-            (lower-vector-let-bindings-have-at? ctx probe (& bindings) 0)
+            (lower-vector-let-bindings-have-at? ctx probe (& bindings))
             (lower-vector-body-has?
               ctx
               probe
               (lower-context-expr-get ctx body-box)))])]
-    [(Begin exprs) (lower-vector-expr-list-has-at? ctx probe (& exprs) 0)]
+    [(Begin exprs) (lower-vector-expr-list-has-at? ctx probe (& exprs))]
     [(Call func-box args)
       (or
         (lower-vector-body-has? ctx probe (lower-context-expr-get ctx func-box))
-        (lower-vector-expr-list-has-at? ctx probe (& args) 0))]
+        (lower-vector-expr-list-has-at? ctx probe (& args)))]
     [(ArraySet arr-box idx-box value-box)
       (or
         (lower-vector-body-has? ctx probe (lower-context-expr-get ctx arr-box))
@@ -49113,55 +48888,52 @@
 (define (lower-vector-match-arms-have-at?
   [ctx : tc_core.TcContext]
   [probe : LowerVectorBodyProbe]
-  [arms : (& arms ast.AstMatchArmList)]
-  [index : i64]) : bool
-  (if (>= index arms.len)
-    false
+  [arms : (& arms ast.AstMatchArmList)]) : bool
+  (for [index (iterator.range 0 arms.len)]
     (match (ast.ast-match-arm-list-get arms index (ast.ast-match-arm-fallback))
       [(Arm _ body-box)
-        (or
+        (when
           (lower-vector-body-has?
             ctx
             probe
             (lower-context-expr-get ctx body-box))
-          (lower-vector-match-arms-have-at? ctx probe arms (+ index 1)))])))
+          (return true))
+        unit]))
+  false)
 
 (define (lower-vector-expr-list-has-at?
   [ctx : tc_core.TcContext]
   [probe : LowerVectorBodyProbe]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [index (iterator.range 0 exprs.len)]
+    (when
       (lower-vector-body-has?
         ctx
         probe
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (lower-vector-expr-list-has-at? ctx probe exprs (+ index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-vector-let-bindings-have-at?
   [ctx : tc_core.TcContext]
   [probe : LowerVectorBodyProbe]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
+  (for [binding-index
+    (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
     (match (ast.ast-let-binding-list-get
       bindings
       binding-index
       (ast.ast-let-binding-fallback))
       [(Binding _ _ init-box)
-        (or
+        (when
           (lower-vector-body-has?
             ctx
             probe
             (lower-context-expr-get ctx init-box))
-          (lower-vector-let-bindings-have-at?
-            ctx
-            probe
-            bindings
-            (+ binding-index 1)))])))
+          (return true))
+        unit]))
+  false)
 
 (define (lower-vector-call-target-has-atomic?
   [ctx : tc_core.TcContext]
@@ -49220,10 +48992,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
   [numeric-context : spmd_numeric.CompilerSpmdNumericContext]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : LowerMaybeSpmdNumericFailure
-  (if (>= index exprs.len)
-    (No)
+  [exprs : (& exprs ast.AstExprList)]) : LowerMaybeSpmdNumericFailure
+  (for [index (iterator.range 0 exprs.len)]
     (match (lower-spmd-numeric-failure
       ctx
       function-state
@@ -49232,17 +49002,9 @@
       type-env
       numeric-context
       (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      [(Some origin decision) (Some origin decision)]
-      [(No)
-        (lower-spmd-numeric-failure-in-expr-list-at
-          ctx
-          function-state
-          mode
-          env
-          type-env
-          numeric-context
-          exprs
-          (+ index 1))])))
+      [(Some origin decision) (return (Some origin decision))]
+      [(No) unit]))
+  (No))
 
 (define (lower-spmd-numeric-failure-in-expr-list
   [ctx : tc_core.TcContext]
@@ -49259,8 +49021,7 @@
     env
     type-env
     numeric-context
-    (& exprs)
-    0))
+    (& exprs)))
 
 (define (lower-spmd-numeric-failure-in-let-bindings-at
   [ctx : tc_core.TcContext]
@@ -49905,36 +49666,35 @@
   [ctx : tc_core.TcContext]
   [want-left : bool]
   [exprs : ast.AstExprList]) : bool
-  (lower-spmd-expr-list-has-shift-at? ctx want-left (& exprs) 0))
+  (lower-spmd-expr-list-has-shift-at? ctx want-left (& exprs)))
 
 (define (lower-spmd-expr-list-has-shift-at?
   [ctx : tc_core.TcContext]
   [want-left : bool]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
-    (or
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [index (iterator.range 0 exprs.len)]
+    (when
       (lower-spmd-expr-has-shift?
         ctx
         want-left
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0)))
-      (lower-spmd-expr-list-has-shift-at? ctx want-left exprs (+ index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-spmd-let-bindings-have-shift?
   [ctx : tc_core.TcContext]
   [want-left : bool]
   [bindings : ast.AstLetBindingList]) : bool
-  (lower-spmd-let-bindings-have-shift-at? ctx want-left (& bindings) 0))
+  (lower-spmd-let-bindings-have-shift-at? ctx want-left (& bindings)))
 
 (define (lower-spmd-let-bindings-have-shift-at?
   [ctx : tc_core.TcContext]
   [want-left : bool]
-  [bindings : (& bindings ast.AstLetBindingList)]
-  [binding-index : i64]) : bool
-  (if (>= binding-index (ast.ast-let-binding-list-len bindings))
-    false
-    (or
+  [bindings : (& bindings ast.AstLetBindingList)]) : bool
+  (for [binding-index
+    (iterator.range 0 (ast.ast-let-binding-list-len bindings))]
+    (when
       (match (ast.ast-let-binding-list-get
         bindings
         binding-index
@@ -49944,11 +49704,9 @@
             ctx
             want-left
             (lower-context-expr-get ctx init-box))])
-      (lower-spmd-let-bindings-have-shift-at?
-        ctx
-        want-left
-        bindings
-        (+ binding-index 1)))))
+      (return true))
+    unit)
+  false)
 
 (define (lower-simple-vector-map-unsupported-shift-lane
   [ctx : tc_core.TcContext]
@@ -49985,8 +49743,7 @@
         type-env
         index
         want-left
-        (& exprs)
-        0)]
+        (& exprs))]
     [(ArraySet arr-box set-index-box value-box)
       (let
         [arr : ast.AstExpr (lower-context-expr-get ctx arr-box)]
@@ -50018,10 +49775,8 @@
   [type-env : tc_core.TcTypeEnv]
   [index : (& index str)]
   [want-left : bool]
-  [exprs : (& exprs ast.AstExprList)]
-  [expr-index : i64]) : LowerMaybeAstType
-  (if (>= expr-index exprs.len)
-    (No)
+  [exprs : (& exprs ast.AstExprList)]) : LowerMaybeAstType
+  (for [expr-index (iterator.range 0 exprs.len)]
     (match (lower-simple-vector-map-unsupported-shift-lane
       ctx
       mode
@@ -50030,17 +49785,9 @@
       index
       want-left
       (lower-context-expr-get ctx (ast.ast-expr-list-get exprs expr-index 0)))
-      [(Some lane-ty) (Some lane-ty)]
-      [(No)
-        (lower-simple-vector-map-expr-list-unsupported-shift-lane-at
-          ctx
-          mode
-          env
-          type-env
-          index
-          want-left
-          exprs
-          (+ expr-index 1))])))
+      [(Some lane-ty) (return (Some lane-ty))]
+      [(No) unit]))
+  (No))
 
 (define (lower-simple-vector-map-casted-literal
   [ctx : tc_core.TcContext]
@@ -50695,7 +50442,7 @@
         [(LowerVectorMapStore array-var-found _)
           (if (= array-var-found array-var)
             (set! found true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     found))
 
 (define (lower-vector-map-store-list-input-uses-destination?
@@ -50716,17 +50463,16 @@
                     (lower-global-shared-view value-plan)
                     dst-array)
                     (set! found true)
-                    (set! dst-index (+ dst-index 1)))]))
-            (set! index (+ index 1)))]))
+                    (+= dst-index 1))]))
+            (+= index 1))]))
     found))
 
 (define (lower-vector-map-store-list-array-vars
   [stores : LowerVectorMapStoreList]) : LowerArrayVarSet
   (let
     [count : i64 stores.count]
-    [index : i64 0]
     [arrays : LowerArrayVarSet (lower-array-var-set-empty)]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (lower-vector-map-store-list-ref stores index)
         [(LowerVectorMapStore dst-array value-plan)
           (set!
@@ -50735,7 +50481,7 @@
               arrays
               (lower-vector-map-value-array-vars value-plan)))
           (set! arrays (lower-array-var-set-add arrays dst-array 0))
-          (set! index (+ index 1))]))
+          unit]))
     arrays))
 
 (define (lower-simple-vector-map-store
@@ -51826,7 +51572,6 @@
         [s : LowerState
           (lower-state-emit alloc-state (Mov end-var end-value (I64)))]
         [limit : ir.CompilerIrValue Unit]
-        [index : i64 0]
         [count : i64 arrays.count]
         ;; Materialize the end bound before comparing it: direct literal
         ;; endpoints do not retain their width through scalar min selection.
@@ -51841,7 +51586,7 @@
           [(Expr next-s value _)
             (set! s next-s)
             (set! limit value)])
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (match (lower-vector-loop-array-limit
             s
             (array-ref arrays.vars index)
@@ -51853,8 +51598,7 @@
                 array-limit)
                 [(Expr next-s value _)
                   (set! s next-s)
-                  (set! limit value)])])
-          (set! index (+ index 1)))
+                  (set! limit value)])]))
         (Expr s limit (I64)))]))
 
 (define (lower-vector-loop-next-ok
@@ -53605,7 +53349,7 @@
         (set!
           found
           (Some (lower-global-array-element-shared-view cache.values index)))
-        (set! index (+ index 1))))
+        (+= index 1)))
     found))
 
 (define (lower-vector-map-value-cache-add
@@ -53703,8 +53447,7 @@
   (let
     [s : LowerState state]
     [next-cache : LowerVectorMapValueCache cache]
-    [index : i64 0]
-    (while (< index arrays.count)
+    (for [index (iterator.range 0 arrays.count)]
       (let
         [array-var : i64 (array-ref arrays.vars index)]
         (match (lower-sequence-data-pointer-value s array-var)
@@ -53715,8 +53458,7 @@
               (lower-vector-map-value-cache-add
                 next-cache
                 (ArrayData array-var)
-                data-ptr))])
-        (set! index (+ index 1))))
+                data-ptr))])))
     (Emit s Unit next-cache)))
 
 (define (lower-vector-map-preheader-cache-plan
@@ -53751,8 +53493,7 @@
       (let
         [s : LowerState data-state]
         [cache : LowerVectorMapValueCache data-cache]
-        [index : i64 0]
-        (while (< index stores.count)
+        (for [index (iterator.range 0 stores.count)]
           (match (lower-vector-map-store-list-ref stores index)
             [(LowerVectorMapStore _ value-plan)
               (match (lower-vector-map-preheader-cache-leaves
@@ -53763,8 +53504,7 @@
                 (lower-global-shared-view cache))
                 [(Emit next-s _ next-cache)
                   (set! s next-s)
-                  (set! cache next-cache)])])
-          (set! index (+ index 1)))
+                  (set! cache next-cache)])]))
         (Emit s Unit cache))]))
 
 (define (lower-emit-shuffle-selector-plan
@@ -54631,7 +54371,7 @@
         [(LowerVectorMapStore _ value-plan)
           (if (lower-vector-map-value-needs-scalar-tail? value-plan)
             (set! needs-tail true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     needs-tail))
 
 (define (lower-vector-map-store-list-has-gather?
@@ -54645,7 +54385,7 @@
         [(LowerVectorMapStore _ value-plan)
           (if (lower-vector-map-value-has-gather? value-plan)
             (set! has-gather true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     has-gather))
 
 (define (lower-vector-map-store-list-has-shuffle?
@@ -54659,7 +54399,7 @@
         [(LowerVectorMapStore _ value-plan)
           (if (lower-vector-map-value-has-shuffle? value-plan)
             (set! has-shuffle true)
-            (set! index (+ index 1)))]))
+            (+= index 1))]))
     has-shuffle))
 
 (define (lower-maybe-vector-map-needs-scalar-tail? [plan : LowerMaybeVectorMap]) : bool
@@ -54920,7 +54660,6 @@
         [tail-cond : ir.CompilerIrValue Unit]
         [scalar-value : ir.CompilerIrValue Unit]
         [elem-ptr : ir.CompilerIrValue Unit]
-        [store-index : i64 0]
         (match (lower-state-alloc-var s)
           [(Alloc next-s var)
             (set! s next-s)
@@ -54957,7 +54696,7 @@
           (lower-state-finish-block
             (lower-state-emit s (Branch tail-cond body-label exit-label))
             body-label))
-        (while (< store-index stores.count)
+        (for [store-index (iterator.range 0 stores.count)]
           (match (lower-vector-map-store-list-ref stores store-index)
             [(LowerVectorMapStore dst-array value-plan)
               (match (lower-emit-scalar-vector-map-value
@@ -54991,7 +54730,7 @@
                   (lower-global-shared-view elem-ptr)
                   (lower-global-shared-view scalar-value)
                   (lower-global-shared-view elem-ty)))
-              (set! store-index (+ store-index 1))]))
+              unit]))
         (match (lower-state-alloc-var s)
           [(Alloc inc-alloc inc-var)
             (match (lower-state-alloc-var inc-alloc)
@@ -55033,12 +54772,11 @@
         [count : i64 stores.count]
         [results : (__tl_dyn-array ir.CompilerIrValue)
           (__tl_make-array ir.CompilerIrValue count)]
-        [store-index : i64 0]
         [cache : LowerVectorMapValueCache preheader-cache]
         [result-vec : ir.CompilerIrValue Unit]
         ;; Evaluate all values before the first store so common loads and
         ;; products stay in one side-effect-free region for normal CSE.
-        (while (< store-index count)
+        (for [store-index (iterator.range 0 count)]
           (match (lower-vector-map-store-list-ref stores store-index)
             [(LowerVectorMapStore _ value-plan)
               (match (lower-emit-vector-map-value-cached
@@ -55055,9 +54793,8 @@
                   (set! result-vec value)
                   (set! cache next-cache)])
               (set! (array-ref results store-index) result-vec)
-              (set! store-index (+ store-index 1))]))
-        (set! store-index 0)
-        (while (< store-index count)
+              unit]))
+        (for [store-index (iterator.range 0 count)]
           (match (lower-vector-map-store-list-ref stores store-index)
             [(LowerVectorMapStore dst-array _)
               (match (lower-vector-map-value-cache-lookup
@@ -55087,7 +54824,7 @@
                         store-index)
                       lanes
                       (lower-global-shared-view elem-ty)))])
-              (set! store-index (+ store-index 1))]))
+              unit]))
         (lower-state-emit s (Mov index-var next-index (I64))))]
     [(No) state]))
 
@@ -55107,9 +54844,8 @@
   (let
     [s : LowerState state]
     [next-ok : ir.CompilerIrValue ok]
-    [index : i64 0]
     [count : i64 arrays.count]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [array-var : i64 (array-ref arrays.vars index)]
         [offset : i64 (array-ref arrays.offsets index)]
@@ -55134,8 +54870,7 @@
                       (Bool))
                       [(Expr next-state value _)
                         (set! s next-state)
-                        (set! next-ok value)])])])])
-        (set! index (+ index 1))))
+                        (set! next-ok value)])])])])))
     (Expr s next-ok (Bool))))
 
 (define (lower-predicated-tail-limit [offset : i64]) : i64
@@ -56141,7 +55876,6 @@
     [s : LowerState state]
     [lane-id : ir.CompilerIrValue Unit]
     [result : ir.CompilerIrValue Unit]
-    [lane : i64 0]
     (match (lower-emit-lane-id s lanes (I64))
       [(Expr next-state value _)
         (set! s next-state)
@@ -56150,7 +55884,7 @@
       [(Expr next-state value _)
         (set! s next-state)
         (set! result value)])
-    (while (< lane lanes)
+    (for [lane (iterator.range 0 lanes)]
       (let
         [one-lane : ir.CompilerIrValue Unit]
         [lane-value : ir.CompilerIrValue Unit]
@@ -56191,8 +55925,7 @@
               (I64))
               [(Expr next-state value _)
                 (set! s next-state)
-                (set! result value)])])
-        (set! lane (+ lane 1))))
+                (set! result value)])])))
     (Ok (Expr s result (I64)))))
 
 (define (lower-avx512-masked-vector-binop
@@ -57072,7 +56805,6 @@
     [s : LowerState state]
     [lane-id : ir.CompilerIrValue Unit]
     [result : ir.CompilerIrValue Unit]
-    [lane : i64 0]
     (match (lower-emit-lane-id s lanes (lower-global-shared-view lane-ty))
       [(Expr next-state value _)
         (set! s next-state)
@@ -57091,7 +56823,7 @@
       [(Expr next-state value _)
         (set! s next-state)
         (set! result value)])
-    (while (< lane lanes)
+    (for [lane (iterator.range 0 lanes)]
       (let
         [one-lane : ir.CompilerIrValue Unit]
         [lane-active-mask : ir.CompilerIrValue Unit]
@@ -57160,8 +56892,7 @@
                 (lower-global-shared-view field-ty))
                 [(Expr next-state value _)
                   (set! s next-state)
-                  (set! result value)])]))
-        (set! lane (+ lane 1))))
+                  (set! result value)])]))))
     (Expr s result field-ty)))
 
 (define (lower-avx2-enum-tag-arm-masks
@@ -57176,7 +56907,6 @@
   (let
     [s : LowerState state]
     [arm-mask : ir.CompilerIrValue Unit]
-    [lane : i64 0]
     (match (lower-avx2-enum-zero-mask
       s
       (lower-global-shared-view lane-id)
@@ -57185,7 +56915,7 @@
       [(Expr next-state value _)
         (set! s next-state)
         (set! arm-mask value)])
-    (while (< lane lanes)
+    (for [lane (iterator.range 0 lanes)]
       (let
         [one-lane : ir.CompilerIrValue Unit]
         [lane-active-mask : ir.CompilerIrValue Unit]
@@ -57242,8 +56972,7 @@
               lanes)
               [(Expr next-state value _)
                 (set! s next-state)
-                (set! arm-mask value)])])
-        (set! lane (+ lane 1))))
+                (set! arm-mask value)])])))
     (match (lower-emit-mask-binop
       s
       (And)
@@ -58421,10 +58150,8 @@
 (define (lower-imported-spmd-params-at
   [ctx : tc_core.TcContext]
   [types : (& types ast.AstTypeList)]
-  [index : i64]
   [out : (&mut out ast.AstParamList)]) : unit
-  (if (>= index (ast.ast-type-list-len types))
-    unit
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
     (let
       [ty : ast.AstType
         (tc_core.tc-context-type-get
@@ -58433,7 +58160,7 @@
       (ast.ast-param-list-push
         out
         (ast.AstParam.Param cbi.compiler-builtin-id-fix-empty ty false))
-      (lower-imported-spmd-params-at ctx types (+ index 1) out))))
+      unit)))
 
 (define (lower-imported-spmd-params
   [ctx : tc_core.TcContext]
@@ -58441,7 +58168,7 @@
   (let
     [out : ast.AstParamList
       (ast.ast-param-list-with-capacity (ast.ast-type-list-len (& types)))]
-    (lower-imported-spmd-params-at ctx (& types) 0 (&mut out))
+    (lower-imported-spmd-params-at ctx (& types) (&mut out))
     out))
 
 (define (lower-imported-spmd-call-arg-code [arg : ir.CompilerIrSpmdCallArg]) : String
@@ -59217,8 +58944,7 @@
       [count : i64 (- (ast.ast-param-list-len params) index)]
       [slots : (__tl_dyn-array ir.CompilerIrSpmdCallArg)
         (__tl_make-array ir.CompilerIrSpmdCallArg count)]
-      [cursor : i64 index]
-      (while (< cursor (ast.ast-param-list-len params))
+      (for [cursor (iterator.range index (ast.ast-param-list-len params))]
         (match (ast.ast-param-list-get params cursor (ast.ast-param-fallback))
           [(Param _ ty _)
             (let
@@ -59237,8 +58963,7 @@
                       Varying)])]
               (set!
                 (array-ref slots (- cursor index))
-                (ir.CompilerIrSpmdCallArg.Arg class Unit resolved)))])
-        (set! cursor (+ cursor 1)))
+                (ir.CompilerIrSpmdCallArg.Arg class Unit resolved)))]))
       (ir.CompilerIrSpmdCallArgSeq slots count))))
 
 (define (lower-spmd-package-index-name
@@ -59281,10 +59006,8 @@
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]
   [classes : (& classes ast.AstSpmdParamClassList)]
-  [lanes : i64]
-  [index : i64]) : String
-  (if (>= index (ast.ast-param-list-len params))
-    ""
+  [lanes : i64]) : String
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param _ ty _)
         (let
@@ -59296,7 +59019,8 @@
             [(not
                 (lower-spmd-package-abi-type-supported?
                   (lower-global-shared-view resolved)))
-              "lower: :spmd-callable parameter type is not supported by private ABI v1"]
+              (return
+                "lower: :spmd-callable parameter type is not supported by private ABI v1")]
             [(and
                 (match class
                   [(Varying) true]
@@ -59308,14 +59032,10 @@
                       (CompilerLowerMode.Avx512)
                       resolved)
                     lanes)))
-              "lower: :spmd-callable lane width does not match varying parameter type"]
-            [else
-              (lower-spmd-package-param-validation-error-at
-                ctx
-                params
-                classes
-                lanes
-                (+ index 1))]))])))
+              (return
+                "lower: :spmd-callable lane width does not match varying parameter type")]
+            [else unit]))]))
+  "")
 
 (define (lower-spmd-package-specialization-validation-error
   [ctx : tc_core.TcContext]
@@ -59340,8 +59060,7 @@
         ctx
         (& params)
         (& classes)
-        specialization.lanes
-        0)]
+        specialization.lanes)]
     [env : sym_i64_env.SymI64Env
       (lower-bind-params params 1 (sym_i64_env.sym-i64-empty))]
     [type-env : tc_core.TcTypeEnv
@@ -59513,7 +59232,6 @@
       (& params)
       args
       mode
-      0
       idx
       (&mut builder))
     (ir.compiler-ir-param-builder-to-seq builder)))
@@ -59524,11 +59242,9 @@
   [params : (& params ast.AstParamList)]
   [args : (& args ir.CompilerIrSpmdCallArgSeq)]
   [mode : CompilerLowerMode]
-  [index : i64]
   [idx : i64]
   [builder : (&mut builder ir.CompilerIrParamBuilder)]) : unit
-  (if (>= index (ast.ast-param-list-len params))
-    unit
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
         (match (lower-spmd-call-arg-at args index)
@@ -59544,15 +59260,7 @@
                         (tc_core.tc-resolve-type ctx ty)))]
                   (lower-one-word-register-storage-type ctx ty-arg))
                 idx))
-            (lower-spmd-private-param-list-into!
-              lower-state
-              ctx
-              params
-              args
-              mode
-              (+ index 1)
-              (+ idx 1)
-              builder)])])))
+            (set! idx (+ idx 1))])])))
 
 (define (lower-spmd-private-helper-name
   [names : LowerNameCache]
@@ -59645,8 +59353,7 @@
       (match index
         [(Appended _) true]
         [_ false])]
-    [ordinal : i64 0]
-    (while (< ordinal physical-params.len)
+    (for [ordinal (iterator.range 0 physical-params.len)]
       (match (ir.compiler-ir-param-seq-ref physical-params ordinal)
         [(Param _ ty _)
           (ir.compiler-ir-spmd-private-param-seq-push!
@@ -59661,8 +59368,7 @@
                   (match (lower-spmd-call-arg-at call-args (- ordinal 1))
                     [(Arg class _ source-ty)
                       (Source (- ordinal 1) class source-ty)])])
-              ty))])
-      (set! ordinal (+ ordinal 1)))
+              ty))]))
     (ir.CompilerIrSpmdPrivateAbi
       (V1)
       callee
@@ -59694,7 +59400,7 @@
             (begin
               (set! found (clone function-abi))
               (set! index -1))
-            (set! index (- index 1)))]))
+            (-= index 1))]))
     found))
 
 (define (lower-spmd-private-param-list-append-index
@@ -61408,7 +61114,6 @@
         [count : i64 stores.count]
         [results : (__tl_dyn-array ir.CompilerIrValue)
           (__tl_make-array ir.CompilerIrValue count)]
-        [store-index : i64 0]
         [cache : LowerVectorMapValueCache (lower-vector-map-value-cache-empty)]
         [mask : ir.CompilerIrValue Unit]
         [result-vec : ir.CompilerIrValue Unit]
@@ -61420,7 +61125,7 @@
           [(Expr next-s value _)
             (set! s next-s)
             (set! mask value)])
-        (while (< store-index count)
+        (for [store-index (iterator.range 0 count)]
           (match (lower-vector-map-store-list-ref stores store-index)
             [(LowerVectorMapStore _ value-plan)
               (match (lower-emit-vector-map-value-cached
@@ -61439,9 +61144,8 @@
                   (set! result-vec value)
                   (set! cache next-cache)])
               (set! (array-ref results store-index) result-vec)
-              (set! store-index (+ store-index 1))]))
-        (set! store-index 0)
-        (while (< store-index count)
+              unit]))
+        (for [store-index (iterator.range 0 count)]
           (match (lower-vector-map-store-list-ref stores store-index)
             [(LowerVectorMapStore dst-array _)
               (set!
@@ -61454,7 +61158,7 @@
                   (lower-global-shared-view mask)
                   lanes
                   (lower-global-shared-view elem-ty)))
-              (set! store-index (+ store-index 1))]))
+              unit]))
         s)]
     [(No) state]))
 
@@ -61463,15 +61167,13 @@
   [arrays : (& arrays LowerArrayVarSet)]) : LowerState
   (let
     [s : LowerState state]
-    [array-index : i64 0]
-    (while (< array-index arrays.count)
+    (for [array-index (iterator.range 0 arrays.count)]
       (let
         [array-var : i64 (array-ref arrays.vars array-index)]
         (match (lower-sequence-data-pointer-value s array-var)
           [(Expr next-state data-ptr _)
             (set! s next-state)
-            (lower-masked-preheader-array-data-add! s array-var data-ptr)])
-        (set! array-index (+ array-index 1))))
+            (lower-masked-preheader-array-data-add! s array-var data-ptr)])))
     s))
 
 (define (lower-avx512-masked-map-body
@@ -62508,13 +62210,10 @@
 (define (lower-spmd-array-view-note-patterns!
   [flags : (&mut flags lower_i64_i64_map.Map)]
   [patterns : ast.AstPatternList]) : unit
-  (let
-    [index : i64 0]
-    (while (< index patterns.len)
-      (lower-spmd-array-view-note-pattern!
-        flags
-        (ast.ast-pattern-list-get (& patterns) index (ast.ast-pattern-fallback)))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 patterns.len)]
+    (lower-spmd-array-view-note-pattern!
+      flags
+      (ast.ast-pattern-list-get (& patterns) index (ast.ast-pattern-fallback)))))
 
 ;; Names a node carries as payload rather than as a `Var` child: binders and
 ;; the whole-variable `set!` target. Each counts as an "other" use that binds.
@@ -62529,23 +62228,17 @@
       [(Let let-box)
         (match (__tl-box-place let-box)
           [(Let bindings _)
-            (let
-              [index : i64 0]
-              (while (< index bindings.len)
-                (match (array-ref bindings.slots index)
-                  [(Binding name _ _)
-                    (lower-spmd-array-view-note! flags name other)])
-                (set! index (+ index 1))))])]
+            (for [index (iterator.range 0 bindings.len)]
+              (match (array-ref bindings.slots index)
+                [(Binding name _ _)
+                  (lower-spmd-array-view-note! flags name other)]))])]
       [(Lambda lambda-box)
         (match (__tl-box-place lambda-box)
           [(Lambda params _ _)
-            (let
-              [index : i64 0]
-              (while (< index params.len)
-                (match (array-ref params.slots index)
-                  [(Param name _ _)
-                    (lower-spmd-array-view-note! flags name other)])
-                (set! index (+ index 1))))])]
+            (for [index (iterator.range 0 params.len)]
+              (match (array-ref params.slots index)
+                [(Param name _ _)
+                  (lower-spmd-array-view-note! flags name other)]))])]
       [(Foreach foreach-box)
         (match (__tl-box-place foreach-box)
           [(Foreach name _ _ _ _)
@@ -62570,13 +62263,10 @@
       [(WithResource resource-box)
         (match (__tl-box-place resource-box)
           [(WithResource bindings _)
-            (let
-              [index : i64 0]
-              (while (< index bindings.len)
-                (match (array-ref bindings.slots index)
-                  [(Binding name _ _ _)
-                    (lower-spmd-array-view-note! flags name other)])
-                (set! index (+ index 1))))])]
+            (for [index (iterator.range 0 bindings.len)]
+              (match (array-ref bindings.slots index)
+                [(Binding name _ _ _)
+                  (lower-spmd-array-view-note! flags name other)]))])]
       [(ForeachActive lane _) (lower-spmd-array-view-note! flags lane other)]
       [_ unit])))
 
@@ -62624,11 +62314,10 @@
       (let
         [children : ast.AstExprChildList
           (ast.ast-expr-children (lower-global-shared-view expr))]
-        [index : i64 0]
         (lower-spmd-array-view-note-payload-names!
           flags
           (lower-global-shared-view expr))
-        (while (< index children.len)
+        (for [index (iterator.range 0 children.len)]
           (match (ast.ast-expr-child-list-get
             (& children)
             index
@@ -62640,8 +62329,7 @@
                 (lower-context-expr-get ctx child-id))]
             [(Pattern pattern)
               (lower-spmd-array-view-note-pattern! flags pattern)]
-            [_ unit])
-          (set! index (+ index 1))))]))
+            [_ unit])))]))
 
 (define (lower-spmd-array-view-elem? [ty : ast.AstType]) : bool
   (match (tc_core.tc-type-without-regions ty)
@@ -63003,7 +62691,7 @@
             (= item.name name)
             (lower-row-origin-same? ctx item.origin origin))
           (set! found index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 (define (lower-row-origin-drop!
@@ -63059,7 +62747,7 @@
           (if (< found 0)
             (begin
               (__tl_array-push! plan.items (LowerRowOrigin name origin write))
-              (set! plan.count (+ plan.count 1)))
+              (+= plan.count 1))
             (when
               write
               (let
@@ -63127,8 +62815,7 @@
       (let
         [children : ast.AstExprList
           (ast.ast-expr-child-ids (lower-global-shared-view expr))]
-        [index : i64 0]
-        (while (< index (ast.ast-expr-list-len (& children)))
+        (for [index (iterator.range 0 (ast.ast-expr-list-len (& children)))]
           (lower-row-origin-collect!
             ctx
             env
@@ -63138,8 +62825,7 @@
             plan
             (lower-context-expr-get
               ctx
-              (ast.ast-expr-list-get (& children) index -1)))
-          (set! index (+ index 1))))]))
+              (ast.ast-expr-list-get (& children) index -1)))))]))
 
 ;; The element type id of NAME's binding when it is a sequence a view can read
 ;; in lanes, a dynamic array, fixed array or Slice of scalar lanes or a
@@ -63224,7 +62910,6 @@
     [kept : (__tl_dyn-array LowerRowOrigin) (__tl_make-array LowerRowOrigin 0)]
     [count : i64 0]
     [dynamic : bool false]
-    [index : i64 0]
     (lower-row-origin-collect!
       ctx
       env
@@ -63233,12 +62918,11 @@
       index-id
       (&mut plan)
       body)
-    (while (< index plan.count)
+    (for [index (iterator.range 0 plan.count)]
       (let
         [item : LowerRowOrigin (array-ref plan.items index)]
-        [other : i64 0]
         [shared : bool false]
-        (while (< other plan.count)
+        (for [other (iterator.range 0 plan.count)]
           (let
             [peer : LowerRowOrigin (array-ref plan.items other)]
             (when
@@ -63246,19 +62930,17 @@
                 (!= other index)
                 (= peer.name item.name)
                 (or item.write peer.write))
-              (set! shared true)))
-          (set! other (+ other 1)))
+              (set! shared true))))
         (unless
           (or
             shared
             (lower_i64_i64_map.contains? (& plan.dropped) item.name)
             (< (lower-row-origin-elem-id ctx env type-env item.name) 0))
           (__tl_array-push! kept item)
-          (set! count (+ count 1))
+          (+= count 1)
           (unless
             (lower-row-origin-literal? ctx item.origin)
-            (set! dynamic true))))
-      (set! index (+ index 1)))
+            (set! dynamic true)))))
     (if (and
       dynamic
       (=
@@ -63338,8 +63020,8 @@
                 (ast.ast-expr-child-ids (lower-global-shared-view expr))]
               [rewritten : ast.AstExprList (ast.ast-expr-list-new)]
               [changed : bool false]
-              [index : i64 0]
-              (while (< index (ast.ast-expr-list-len (& children)))
+              (for [index
+                (iterator.range 0 (ast.ast-expr-list-len (& children)))]
                 (let
                   [child : i64 (ast.ast-expr-list-get (& children) index -1)]
                   [next : i64
@@ -63354,8 +63036,7 @@
                       row-start
                       child)]
                   (when (!= next child) (set! changed true))
-                  (ast.ast-expr-list-push (&mut rewritten) next))
-                (set! index (+ index 1)))
+                  (ast.ast-expr-list-push (&mut rewritten) next)))
               (if changed
                 (lower-context-expr-push
                   ctx
@@ -63384,7 +63065,7 @@
           (let
             [entry : LowerRowOrigin (array-ref plan.items item)]
             (when (= entry.name name) (set! found item)))
-          (set! item (+ item 1)))
+          (+= item 1))
         (if (< found 0)
           -1
           (lower-row-origin-find
@@ -63455,7 +63136,6 @@
         (lower-private-identity state SpmdRowStart))]
     [native-env : sym_i64_env.SymI64Env (lower-global-shared-view env)]
     [native-type-env : tc_core.TcTypeEnv (lower-global-shared-view type-env)]
-    [item-index : i64 0]
     (match (lower-row-origin-hold s start-value (I64))
       [(Alloc next var)
         (set! s next)
@@ -63479,7 +63159,7 @@
           [(Alloc joined ok)
             (set! s joined)
             (set! ok-var ok)])])
-    (while (< item-index plan.count)
+    (for [item-index (iterator.range 0 plan.count)]
       (let
         [item : LowerRowOrigin (array-ref plan.items item-index)]
         [origin
@@ -63554,8 +63234,7 @@
         (set!
           (array-ref view-ids item-index)
           (cis.intern-lower-private-identity-raw
-            (lower-private-identity s (SpmdRowView item-index)))))
-      (set! item-index (+ item-index 1)))
+            (lower-private-identity s (SpmdRowView item-index))))))
     (match (lower-state-fresh-label s "row_origin_native")
       [(Label next label)
         (set! s next)
@@ -63575,8 +63254,7 @@
         native-label))
     ;; The native row: one view per plan item, then the rewritten body over the
     ;; row index from 0.
-    (set! item-index 0)
-    (while (< item-index plan.count)
+    (for [item-index (iterator.range 0 plan.count)]
       (let
         [item : LowerRowOrigin (array-ref plan.items item-index)]
         [elem-id : i64 (lower-row-origin-elem-id ctx env type-env item.name)]
@@ -63623,8 +63301,7 @@
                           (tc_core.tc-bind-id
                             native-type-env
                             (array-ref view-ids item-index)
-                            view-ty))])])])]))
-      (set! item-index (+ item-index 1)))
+                            view-ty))])])])])))
     (let
       [rewritten : i64
         (lower-row-origin-rewrite
@@ -63876,21 +63553,20 @@
     [_
       (let
         [children : ast.AstExprList (ast.ast-expr-child-ids expr)]
-        (lower-find-foreach-active-at ctx (& children) 0 origin))]))
+        (lower-find-foreach-active-at ctx (& children) origin))]))
 
 (define (lower-find-foreach-active-at
   [ctx : tc_core.TcContext]
   [children : (& children ast.AstExprList)]
-  [index : i64]
   [origin : ast.AstExpr]) : LowerMaybeAstExpr
-  (if (>= index children.len)
-    No
+  (for [index (iterator.range 0 children.len)]
     (match (lower-find-foreach-active
       ctx
       (lower-context-expr-get ctx (ast.ast-expr-list-get children index 0))
       (lower-global-shared-view origin))
-      [(Some found) (Some found)]
-      [(No) (lower-find-foreach-active-at ctx children (+ index 1) origin)])))
+      [(Some found) (return (Some found))]
+      [(No) unit]))
+  No)
 
 ;; Scalar reference lowering: the scalar gang is one lane wide, so the body
 ;; runs once, for lane 0, the lane program-index reads. A masked-out index
@@ -65289,8 +64965,7 @@
     -2
     (let
       [total : i64 0]
-      [index : i64 0]
-      (while (< index (ast.ast-match-arm-list-len rest))
+      (for [index (iterator.range 0 (ast.ast-match-arm-list-len rest))]
         (match (ast.ast-match-arm-list-get
           rest
           index
@@ -65301,8 +64976,7 @@
                 (lower-total-enum-pattern-compares
                   (lower-global-shared-view pat))]
               (when (< compares 0) (return -2))
-              (set! total (+ total compares)))])
-        (set! index (+ index 1)))
+              (+= total compares))]))
       (- total 1))))
 
 ;; The tag comparisons an arm pattern makes when it names enum variants only:
@@ -65323,18 +64997,15 @@
 
 (define (lower-total-enum-alternatives-explicit?
   [alternatives : (& alternatives ast.AstPatternList)]) : bool
-  (let
-    [index : i64 0]
-    (while (< index alternatives.len)
-      (match (ast.ast-pattern-list-get
-        alternatives
-        index
-        (ast.ast-pattern-fallback))
-        [(Binding _) unit]
-        [(Variant _ _) unit]
-        [_ (return false)])
-      (set! index (+ index 1)))
-    true))
+  (for [index (iterator.range 0 alternatives.len)]
+    (match (ast.ast-pattern-list-get
+      alternatives
+      index
+      (ast.ast-pattern-fallback))
+      [(Binding _) unit]
+      [(Variant _ _) unit]
+      [_ (return false)]))
+  true)
 
 (define (lower-enum-match-next-label-base
   [total-enum-switch? : bool]
@@ -65564,7 +65235,7 @@
               (lower-or-arm-split-keep? (& split))
               (set! first index)
               (set! first-split split)))])
-      (set! index (+ index 1)))
+      (+= index 1))
     (if (< first 0)
       arms
       (let
@@ -65589,7 +65260,7 @@
                         (lower-global-shared-view scrut-ty)
                         (lower-global-shared-view pattern))])]
                 (lower-or-arm-split-into! (&mut out) pattern body split))])
-          (set! index (+ index 1)))
+          (+= index 1))
         out))))
 
 ;; How an or-pattern arm is lowered: kept whole, or split into one or-arm per
@@ -65621,8 +65292,7 @@
           (lower-pattern-or-alternatives pattern)]
         [total : i64 alternatives.len]
         [last-group : i64 (array-ref groups (- total 1))]
-        [step : i64 0]
-        (while (<= step total)
+        (for [step (iterator.range 0 (+ total 1))]
           (let
             [group : i64
               (if (< step total)
@@ -65634,8 +65304,7 @@
                 (or (= step total) (!= group last-group)))
               (let
                 [members : ast.AstPatternList (ast.ast-pattern-list-new)]
-                [member : i64 group]
-                (while (< member total)
+                (for [member (iterator.range group total)]
                   (when
                     (= (array-ref groups member) group)
                     (ast.ast-pattern-list-push
@@ -65643,8 +65312,7 @@
                       (ast.ast-pattern-list-get
                         (& alternatives)
                         member
-                        (ast.ast-pattern-fallback))))
-                  (set! member (+ member 1)))
+                        (ast.ast-pattern-fallback)))))
                 (ast.ast-match-arm-list-push
                   out
                   (ast.ast-match-arm
@@ -65654,8 +65322,7 @@
                         0
                         (ast.ast-pattern-fallback))
                       (ast.AstPattern.Or (box members)))
-                    body)))))
-          (set! step (+ step 1))))]))
+                    body)))))))]))
 
 (define (lower-match-or-arm-split
   [ctx : tc_core.TcContext]
@@ -65694,11 +65361,9 @@
     [count : i64 (tc_core.tc-name-id-list-len names)]
     [name-ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [cursor : tc_core.TcNameIdList names]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set! (array-ref name-ids index) (tc_core.tc-name-id-list-head cursor))
-      (set! cursor (tc_core.tc-name-id-list-rest cursor))
-      (set! index (+ index 1)))
+      (set! cursor (tc_core.tc-name-id-list-rest cursor)))
     (lower-or-arm-alternative-groups
       ctx
       state
@@ -65718,8 +65383,7 @@
   [groups : (& groups (__tl_dyn-array i64))]) : bool
   (let
     [total : i64 (array-length groups)]
-    [index : i64 0]
-    (while (< index total)
+    (for [index (iterator.range 0 total)]
       (when (< (array-ref groups index) 0) (return false))
       (let
         [name : i64
@@ -65728,9 +65392,8 @@
               alternatives
               index
               (ast.ast-pattern-fallback)))]
-        [other : i64 0]
         (when (< name 0) (return false))
-        (while (< other index)
+        (for [other (iterator.range 0 index)]
           (when
             (=
               name
@@ -65739,9 +65402,7 @@
                   alternatives
                   other
                   (ast.ast-pattern-fallback))))
-            (return false))
-          (set! other (+ other 1))))
-      (set! index (+ index 1)))
+            (return false)))))
     true))
 
 (define (lower-or-alternative-variant-name [pattern : ast.AstPattern]) : i64
@@ -66256,15 +65917,12 @@
     [_ false]))
 
 (define (lower-pattern-list-needs-or-expansion? [args : ast.AstPatternList]) : bool
-  (let
-    [index : i64 0]
-    (while (< index args.len)
-      (when
-        (lower-pattern-needs-or-expansion?
-          (ast.ast-pattern-list-get (& args) index (ast.ast-pattern-fallback)))
-        (return true))
-      (set! index (+ index 1)))
-    false))
+  (for [index (iterator.range 0 args.len)]
+    (when
+      (lower-pattern-needs-or-expansion?
+        (ast.ast-pattern-list-get (& args) index (ast.ast-pattern-fallback)))
+      (return true)))
+  false)
 
 ;; The or-free alternatives an arm pattern expands to, in the order they are
 ;; tried: an or-pattern's alternatives, and for a variant or slice pattern with
@@ -66284,53 +65942,44 @@
     [(ast.AstPattern.Or alternatives-box)
       (let
         [alternatives : ast.AstPatternList (deref alternatives-box)]
-        [index : i64 0]
-        (while (< index alternatives.len)
-          (begin
-            (lower-pattern-or-alternatives-into!
-              (ast.ast-pattern-list-get
-                (& alternatives)
-                index
-                (ast.ast-pattern-fallback))
-              out)
-            (set! index (+ index 1)))))]
+        (for [index (iterator.range 0 alternatives.len)]
+          (lower-pattern-or-alternatives-into!
+            (ast.ast-pattern-list-get
+              (& alternatives)
+              index
+              (ast.ast-pattern-fallback))
+            out)))]
     [(ast.AstPattern.Variant name args-box)
       (if (lower-pattern-needs-or-expansion? (lower-global-shared-view pattern))
         (let
           [combos : ast.AstPatternList
             (lower-pattern-list-or-combinations (deref args-box))]
-          [index : i64 0]
-          (while (< index combos.len)
-            (begin
-              (ast.ast-pattern-list-push
-                out
-                (ast.ast-pat-variant-id
-                  name
-                  (lower-pattern-list-combination-items
-                    (ast.ast-pattern-list-get
-                      (& combos)
-                      index
-                      (ast.ast-pattern-fallback)))))
-              (set! index (+ index 1)))))
+          (for [index (iterator.range 0 combos.len)]
+            (ast.ast-pattern-list-push
+              out
+              (ast.ast-pat-variant-id
+                name
+                (lower-pattern-list-combination-items
+                  (ast.ast-pattern-list-get
+                    (& combos)
+                    index
+                    (ast.ast-pattern-fallback)))))))
         (ast.ast-pattern-list-push out pattern))]
     [(ast.AstPattern.Slice items-box has-rest)
       (if (lower-pattern-needs-or-expansion? (lower-global-shared-view pattern))
         (let
           [combos : ast.AstPatternList
             (lower-pattern-list-or-combinations (deref items-box))]
-          [index : i64 0]
-          (while (< index combos.len)
-            (begin
-              (ast.ast-pattern-list-push
-                out
-                (ast.ast-pat-slice
-                  (lower-pattern-list-combination-items
-                    (ast.ast-pattern-list-get
-                      (& combos)
-                      index
-                      (ast.ast-pattern-fallback)))
-                  has-rest))
-              (set! index (+ index 1)))))
+          (for [index (iterator.range 0 combos.len)]
+            (ast.ast-pattern-list-push
+              out
+              (ast.ast-pat-slice
+                (lower-pattern-list-combination-items
+                  (ast.ast-pattern-list-get
+                    (& combos)
+                    index
+                    (ast.ast-pattern-fallback)))
+                has-rest))))
         (ast.ast-pattern-list-push out pattern))]
     [_ (ast.ast-pattern-list-push out pattern)]))
 
@@ -66339,11 +65988,10 @@
 (define (lower-pattern-list-or-combinations [args : ast.AstPatternList]) : ast.AstPatternList
   (let
     [combos : ast.AstPatternList (ast.ast-pattern-list-new)]
-    [arg-index : i64 0]
     (ast.ast-pattern-list-push
       (&mut combos)
       (ast.ast-pat-tuple (ast.ast-pattern-list-new)))
-    (while (< arg-index args.len)
+    (for [arg-index (iterator.range 0 args.len)]
       (let
         [choices : ast.AstPatternList
           (lower-pattern-or-alternatives
@@ -66352,8 +66000,7 @@
               arg-index
               (ast.ast-pattern-fallback)))]
         [next : ast.AstPatternList (ast.ast-pattern-list-new)]
-        [prefix-index : i64 0]
-        (while (< prefix-index combos.len)
+        (for [prefix-index (iterator.range 0 combos.len)]
           (let
             [prefix : ast.AstPatternList
               (lower-pattern-list-combination-items
@@ -66361,8 +66008,7 @@
                   (& combos)
                   prefix-index
                   (ast.ast-pattern-fallback)))]
-            [choice-index : i64 0]
-            (while (< choice-index choices.len)
+            (for [choice-index (iterator.range 0 choices.len)]
               (let
                 [extended : ast.AstPatternList
                   (ast.ast-pattern-list-with-capacity (+ prefix.len 1))]
@@ -66375,11 +66021,8 @@
                     (ast.ast-pattern-fallback)))
                 (ast.ast-pattern-list-push
                   (&mut next)
-                  (ast.ast-pat-tuple extended))
-                (set! choice-index (+ choice-index 1))))
-            (set! prefix-index (+ prefix-index 1))))
-        (set! combos next)
-        (set! arg-index (+ arg-index 1))))
+                  (ast.ast-pat-tuple extended))))))
+        (set! combos next)))
     combos))
 
 (define (lower-pattern-list-combination-items [combo : ast.AstPattern]) : ast.AstPatternList
@@ -66776,14 +66419,12 @@
         [(LowerOrScrutinee.Enum _ _ _) true]
         [(LowerOrScrutinee.Scalar) false])]
     [cursor : tc_core.TcNameIdList names]
-    [name-index : i64 0]
     [index : i64 0]
-    (while (< name-index count)
+    (for [name-index (iterator.range 0 count)]
       (set!
         (array-ref name-ids name-index)
         (tc_core.tc-name-id-list-head cursor))
-      (set! cursor (tc_core.tc-name-id-list-rest cursor))
-      (set! name-index (+ name-index 1)))
+      (set! cursor (tc_core.tc-name-id-list-rest cursor)))
     (let
       [groups : (__tl_dyn-array i64)
         (lower-or-arm-alternative-groups
@@ -66830,7 +66471,7 @@
                     [(LowerLabel.Label label-state label)
                       (set! current label-state)
                       (set! (array-ref group-labels index) label)])))
-              (set! index (+ index 1)))
+              (+= index 1))
             (set! index 0)
             (while (< index alternatives.len)
               (let
@@ -66901,7 +66542,7 @@
                         (&mut labels)
                         (&mut types))
                         [(ResultLowerEnv.Ok bound-state _ _)
-                          (set! sources (+ sources 1))
+                          (+= sources 1)
                           (let
                             [jumped : LowerState
                               (lower-state-emit
@@ -66914,7 +66555,7 @@
                                 (lower-state-finish-block jumped fail-label))))]
                         [(ResultLowerEnv.Err message)
                           (return (ResultLowerEnv.Err message))]))
-                    (set! index (+ index 1))])))
+                    (+= index 1)])))
             (when
               (>= trap-label 0)
               (set!
@@ -66959,7 +66600,7 @@
                     (&mut labels)
                     (&mut types))
                     [(ResultLowerEnv.Ok bound-state _ _)
-                      (set! sources (+ sources 1))
+                      (+= sources 1)
                       (set!
                         current
                         (lower-state-emit
@@ -66967,7 +66608,7 @@
                           (ir.CompilerIrInstr.Jump body-label)))]
                     [(ResultLowerEnv.Err message)
                       (return (ResultLowerEnv.Err message))])))
-              (set! index (+ index 1)))
+              (+= index 1))
             (if single?
               (lower-or-alternative-bind
                 ctx
@@ -67033,8 +66674,7 @@
     [(ResultLowerEnv.Ok bound-state bound-env bound-type-env)
       (let
         [count : i64 (array-length name-ids)]
-        [name-index : i64 0]
-        (while (< name-index count)
+        (for [name-index (iterator.range 0 count)]
           (let
             [name : i64 (array-ref name-ids name-index)]
             [var : i64 (sym_i64_env.sym-i64-lookup-id-or bound-env name -1)]
@@ -67052,8 +66692,7 @@
                 [(tc_core.ResultTcType.Ok ty)
                   (set! (array-ref types name-index) ty)]
                 [(tc_core.ResultTcType.Err message)
-                  (return (ResultLowerEnv.Err (box (lower-diagnostic message))))]))
-            (set! name-index (+ name-index 1))))
+                  (return (ResultLowerEnv.Err (box (lower-diagnostic message))))]))))
         (set! (array-ref labels source) (lower-state-current-label bound-state))
         (ResultLowerEnv.Ok bound-state bound-env bound-type-env))]
     [(ResultLowerEnv.Err message) (ResultLowerEnv.Err message)]))
@@ -67082,8 +66721,7 @@
     [offsets : (__tl_dyn-array i64) (__tl_make-array i64 (* total count))]
     [types : (__tl_dyn-array ast.AstType)
       (__tl_make-array ast.AstType (* total count))]
-    [index : i64 0]
-    (while (< index total)
+    (for [index (iterator.range 0 total)]
       (set! (array-ref groups index) -1)
       (when
         (lower-or-alternative-binding-key!
@@ -67127,31 +66765,29 @@
                                 types
                                 (+ (* index count) slot))))
                           (set! same? false))
-                        (set! slot (+ slot 1)))
+                        (+= slot 1))
                       same?))))
               (set! (array-ref groups index) other))
-            (set! other (+ other 1)))
+            (+= other 1))
           (when
             (< (array-ref groups index) 0)
             (set! (array-ref groups index) index))
           (let
             [first : i64 (array-ref groups index)]
-            (set! (array-ref members first) (+ (array-ref members first) 1)))))
-      (set! index (+ index 1)))
+            (set! (array-ref members first) (+ (array-ref members first) 1))))))
     ;; A group of one binds on its own, unless `singletons?` asks for every
     ;; group.
-    (set!
-      index
-      (if singletons?
-        total
-        0))
-    (while (< index total)
+    (for [index
+      (iterator.range
+        (if singletons?
+          total
+          0)
+        total)]
       (let
         [first : i64 (array-ref groups index)]
         (when
           (and (>= first 0) (< (array-ref members first) 2))
-          (set! (array-ref groups index) -1)))
-      (set! index (+ index 1)))
+          (set! (array-ref groups index) -1))))
     groups))
 
 ;; Records how or-pattern alternative `pattern` binds the arm's names, as row
@@ -67206,14 +66842,13 @@
                         ctx
                         enum-id
                         handle-name-id))]
-                  [index : i64 0]
                   [payload-cursor : i64 8]
                   [found : i64 0]
                   (unless
                     (= args.len (ast.ast-type-list-len (& resolved-fields)))
                     (return false))
                   (set! (array-ref enum-ids row) enum-id)
-                  (while (< index args.len)
+                  (for [index (iterator.range 0 args.len)]
                     (let
                       [name : i64
                         (match (ast.ast-pattern-list-get
@@ -67262,8 +66897,7 @@
                           (set!
                             (array-ref types (+ (* row count) slot))
                             resolved)
-                          (set! found (+ found 1))))
-                      (set! index (+ index 1))))
+                          (+= found 1)))))
                   (= found count))]
               [_ false])]
           [_ false])])))
@@ -67271,21 +66905,15 @@
 (define (lower-or-name-slot
   [name-ids : (& name-ids (__tl_dyn-array i64))]
   [name : i64]) : i64
-  (let
-    [slot : i64 0]
-    (while (< slot (array-length name-ids))
-      (when (= (array-ref name-ids slot) name) (return slot))
-      (set! slot (+ slot 1)))
-    -1))
+  (for [slot (iterator.range 0 (array-length name-ids))]
+    (when (= (array-ref name-ids slot) name) (return slot)))
+  -1)
 
 ;; Whether one group holds every alternative (`lower-or-arm-alternative-groups`).
 (define (lower-or-groups-single? [groups : (& groups (__tl_dyn-array i64))]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (array-length groups))
-      (unless (= (array-ref groups index) 0) (return false))
-      (set! index (+ index 1)))
-    true))
+  (for [index (iterator.range 0 (array-length groups))]
+    (unless (= (array-ref groups index) 0) (return false)))
+  true)
 
 ;; The first alternative of the group with the most alternatives, the later
 ;; on a tie, or -1 when no alternatives share a bind block.
@@ -67294,18 +66922,14 @@
     [total : i64 (array-length groups)]
     [best : i64 -1]
     [best-size : i64 0]
-    [index : i64 0]
-    (while (< index total)
+    (for [index (iterator.range 0 total)]
       (when
         (= (array-ref groups index) index)
         (let
           [size : i64 0]
-          [member : i64 index]
-          (while (< member total)
-            (when (= (array-ref groups member) index) (set! size (+ size 1)))
-            (set! member (+ member 1)))
-          (when (>= size best-size) (set! best index) (set! best-size size))))
-      (set! index (+ index 1)))
+          (for [member (iterator.range index total)]
+            (when (= (array-ref groups member) index) (+= size 1)))
+          (when (>= size best-size) (set! best index) (set! best-size size)))))
     best))
 
 ;; Binds each or-pattern name in the shared body block to a phi of the vars
@@ -67325,8 +66949,7 @@
     [current : LowerState state]
     [body-env : sym_i64_env.SymI64Env env]
     [body-type-env : tc_core.TcTypeEnv type-env]
-    [name-index : i64 0]
-    (while (< name-index count)
+    (for [name-index (iterator.range 0 count)]
       (let
         [inputs : ir.CompilerIrPhiInputSeq (ir.compiler-ir-phi-input-seq-empty)]
         [source : i64 (- sources 1)]
@@ -67340,7 +66963,7 @@
                 (array-ref values (+ (* source count) name-index)))
               (array-ref labels source)
               inputs))
-          (set! source (- source 1)))
+          (-= source 1))
         (match (lower-state-alloc-var current)
           [(LowerAlloc.Alloc allocated var-id)
             (set!
@@ -67362,8 +66985,7 @@
               (tc_core.tc-bind-id
                 body-type-env
                 (array-ref name-ids name-index)
-                ty))])
-        (set! name-index (+ name-index 1))))
+                ty))])))
     (ResultLowerEnv.Ok current body-env body-type-env)))
 
 ;; Lowers an arm whose pattern needs or-expansion: the shared body block, then
@@ -68327,21 +67949,21 @@
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
   [args : (& args ast.AstExprList)]) : bool
-  (lower-rvo-args-cannot-alias-sret-at? ctx type-env (& args) 0))
+  (lower-rvo-args-cannot-alias-sret-at? ctx type-env (& args)))
 
 (define (lower-rvo-args-cannot-alias-sret-at?
   [ctx : tc_core.TcContext]
   [type-env : tc_core.TcTypeEnv]
-  [args : (& args ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index args.len)
-    true
-    (and
+  [args : (& args ast.AstExprList)]) : bool
+  (for [index (iterator.range 0 args.len)]
+    (unless
       (lower-rvo-arg-cannot-alias-sret?
         ctx
         type-env
         (lower-context-expr-get ctx (ast.ast-expr-list-get args index 0)))
-      (lower-rvo-args-cannot-alias-sret-at? ctx type-env args (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (lower-rvo-callee-has-early-return-id?
   [state : LowerState]
@@ -68812,24 +68434,21 @@
     state
     env
     type-env
-    (& exprs)
-    0))
+    (& exprs)))
 
 (define (lower-expr-list-contains-unsafe-inline-aggregate-at?
   [ctx : tc_core.TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : tc_core.TcTypeEnv]
-  [exprs : (& exprs ast.AstExprList)]
-  [index : i64]) : bool
-  (if (>= index exprs.len)
-    false
+  [exprs : (& exprs ast.AstExprList)]) : bool
+  (for [index (iterator.range 0 exprs.len)]
     (let
       [expr : ast.AstExpr
         (lower-context-expr-get ctx (ast.ast-expr-list-get exprs index 0))]
       (match (tc_core.tc-expr ctx type-env (lower-global-shared-view expr))
         [(Ok ty)
-          (or
+          (when
             (and
               (lower-type-contains-inline-aggregate? ctx ty)
               (not
@@ -68845,21 +68464,10 @@
                     env
                     type-env
                     expr))))
-            (lower-expr-list-contains-unsafe-inline-aggregate-at?
-              ctx
-              state
-              env
-              type-env
-              exprs
-              (+ index 1)))]
-        [(Err _)
-          (lower-expr-list-contains-unsafe-inline-aggregate-at?
-            ctx
-            state
-            env
-            type-env
-            exprs
-            (+ index 1))]))))
+            (return true))
+          unit]
+        [(Err _) unit])))
+  false)
 
 (define (lower-tail-call-inline-aggregate-risk?
   [ctx : tc_core.TcContext]
@@ -69386,22 +68994,17 @@
 (define (lower-internal-param-list-contains-structural?
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]) : bool
-  (lower-internal-param-list-contains-structural-at? ctx (& params) 0))
+  (lower-internal-param-list-contains-structural-at? ctx (& params)))
 
 (define (lower-internal-param-list-contains-structural-at?
   [ctx : tc_core.TcContext]
-  [params : (& params ast.AstParamList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-param-list-len params))
-    false
+  [params : (& params ast.AstParamList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param _ ty _)
-        (or
-          (lower-internal-structural-type? ctx ty)
-          (lower-internal-param-list-contains-structural-at?
-            ctx
-            params
-            (+ index 1)))])))
+        (when (lower-internal-structural-type? ctx ty) (return true))
+        unit]))
+  false)
 
 (define (lower-bind-params
   [params : (& params ast.AstParamList)]
@@ -69432,7 +69035,7 @@
     [builder : ir.CompilerIrParamBuilder
       (ir.compiler-ir-param-builder-with-capacity
         (ast.ast-param-list-len (& params)))]
-    (lower-param-list-into! ctx (& params) 0 idx (&mut builder))
+    (lower-param-list-into! ctx (& params) idx (&mut builder))
     (ir.compiler-ir-param-builder-to-seq builder)))
 
 ;; Internal functions keep one physical IR argument per source parameter. A
@@ -69455,7 +69058,6 @@
           ctx
           mode
           (& params)
-          0
           source-start
           (&mut builder))
         (ir.compiler-ir-param-builder-to-seq builder))]
@@ -69469,11 +69071,9 @@
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
   [params : (& params ast.AstParamList)]
-  [index : i64]
   [idx : i64]
   [builder : (&mut builder ir.CompilerIrParamBuilder)]) : unit
-  (if (>= index (ast.ast-param-list-len params))
-    unit
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
         (ir.compiler-ir-param-builder-push!
@@ -69482,13 +69082,7 @@
             (tc_core.tc-env-key-name-text name)
             (lower-internal-param-physical-type ctx mode ty)
             idx))
-        (lower-internal-param-list-into!
-          ctx
-          mode
-          params
-          (+ index 1)
-          (+ idx 1)
-          builder)])))
+        (set! idx (+ idx 1))])))
 
 (define (lower-internal-param-storage-two
   [physical : ir.CompilerIrValue]
@@ -69958,8 +69552,8 @@
                 (let
                   [local-bindings : sym_i64_env.SymI64Env bindings]
                   [local-types : tc_core.TcTypeEnv type-env]
-                  [index : i64 0]
-                  (while (< index (ast.ast-let-binding-list-len (& lets)))
+                  (for [index
+                    (iterator.range 0 (ast.ast-let-binding-list-len (& lets)))]
                     (match (ast.ast-let-binding-list-get
                       (& lets)
                       index
@@ -70022,8 +69616,7 @@
                             [(Err _)
                               (pointer_proof.pointer-proof-input-fail!
                                 input
-                                "pointer proof: missing binding type")])
-                          (set! index (+ index 1)))]))
+                                "pointer proof: missing binding type")]))]))
                   (pointer_proof.pointer-proof-input-push-operand!
                     input
                     (&mut operands)
@@ -70047,8 +69640,7 @@
                 (match (lower-global-shared-view expr)
                   [(Call _ _) 1]
                   [_ 0])]
-              [index : i64 start]
-              (while (< index children.len)
+              (for [index (iterator.range start children.len)]
                 (pointer_proof.pointer-proof-input-push-operand!
                   input
                   (&mut operands)
@@ -70059,8 +69651,7 @@
                     bindings
                     child-env
                     (ast.ast-expr-list-get (& children) index -1)
-                    span))
-                (set! index (+ index 1))))])
+                    span))))])
         (pointer_proof.pointer-proof-input-push!
           input
           function
@@ -70090,8 +69681,7 @@
         [pools : ast.AstNodePoolContext (tc_core.tc-context-pools ctx)]
         [span : ir.CompilerMaybeSourceSpan
           (lower-ast-expr-span (& pools) (lower-global-shared-view body))]
-        [index : i64 0]
-        (while (< index (ast.ast-param-list-len (& params)))
+        (for [index (iterator.range 0 (ast.ast-param-list-len (& params)))]
           (match (ast.ast-param-list-get
             (& params)
             index
@@ -70113,8 +69703,7 @@
                 (pointer_proof.pointer-proof-input-push-operand!
                   input
                   (&mut references)
-                  reference)
-                (set! index (+ index 1)))]))
+                  reference))]))
         (pointer_proof.pointer-proof-input-add-function!
           input
           (pointer_proof.PointerProofFunction
@@ -70133,11 +69722,9 @@
 (define (lower-param-list-into!
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]
-  [index : i64]
   [idx : i64]
   [builder : (&mut builder ir.CompilerIrParamBuilder)]) : unit
-  (if (>= index (ast.ast-param-list-len params))
-    unit
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param name ty _)
         (ir.compiler-ir-param-builder-push!
@@ -70151,7 +69738,7 @@
                     (tc_core.tc-resolve-type ctx ty)))]
               (lower-one-word-register-storage-type ctx ty-arg))
             idx))
-        (lower-param-list-into! ctx params (+ index 1) (+ idx 1) builder)])))
+        (set! idx (+ idx 1))])))
 
 ;; sret ABI: append the hidden result-slot pointer param at index
 ;; `sret-var` (the var id reserved just past the real params). Internal calling
@@ -70199,22 +69786,17 @@
 (define (lower-param-list-contains-unsupported-reference?
   [ctx : tc_core.TcContext]
   [params : (& params ast.AstParamList)]) : bool
-  (lower-param-list-contains-unsupported-reference-at? ctx (& params) 0))
+  (lower-param-list-contains-unsupported-reference-at? ctx (& params)))
 
 (define (lower-param-list-contains-unsupported-reference-at?
   [ctx : tc_core.TcContext]
-  [params : (& params ast.AstParamList)]
-  [index : i64]) : bool
-  (if (>= index (ast.ast-param-list-len params))
-    false
+  [params : (& params ast.AstParamList)]) : bool
+  (for [index (iterator.range 0 (ast.ast-param-list-len params))]
     (match (ast.ast-param-list-get params index (ast.ast-param-fallback))
       [(Param _ ty _)
-        (or
-          (not (lower-supported-function-param-type? ctx ty))
-          (lower-param-list-contains-unsupported-reference-at?
-            ctx
-            params
-            (+ index 1)))])))
+        (when (not (lower-supported-function-param-type? ctx ty)) (return true))
+        unit]))
+  false)
 
 (define (lower-supported-function-return-type?
   [ctx : tc_core.TcContext]
@@ -70564,15 +70146,13 @@
                 (lower-global-shared-view elem-ty))
                 (let
                   [bits : i64 (lower-static-array-element-bits value)]
-                  [byte : i64 0]
-                  (while (< byte elem-size)
+                  (for [byte (iterator.range 0 elem-size)]
                     (byte_buf_core.byte-buf-builder-push
                       bytes
-                      (cast (bit-and (shr bits (* 8 byte)) 255) : u8))
-                    (set! byte (+ byte 1))))
+                      (cast (bit-and (shr bits (* 8 byte)) 255) : u8))))
                 (set! ok false))]
             [(Err _) (set! ok false)])
-          (set! index (+ index 1)))
+          (+= index 1))
         ok)]
     [_ false]))
 
@@ -71782,8 +71362,7 @@
       (compiler-lower-state-interns lower-state)]
     [count : i64
       (ci.intern-compat-state-generated-role-record-count intern-state)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [handle : i64
           (ci.intern-compat-state-generated-role-record-handle-at
@@ -71819,8 +71398,7 @@
                   role
                   handle
                   (& rendered))
-                unit))))
-        (set! index (+ index 1))))))
+                unit))))))))
 
 (define (lower-dispatch-isa-role-tag [isa : ast.AstDispatchIsa]) : i64
   (match isa
@@ -71921,7 +71499,6 @@
       ctx
       mode
       (& types)
-      0
       source-start
       (&mut builder))
     (ir.compiler-ir-param-builder-to-seq builder)))
@@ -71930,11 +71507,9 @@
   [ctx : tc_core.TcContext]
   [mode : CompilerLowerMode]
   [types : (& types ast.AstTypeList)]
-  [index : i64]
   [idx : i64]
   [builder : (&mut builder ir.CompilerIrParamBuilder)]) : unit
-  (if (>= index (ast.ast-type-list-len types))
-    unit
+  (for [index (iterator.range 0 (ast.ast-type-list-len types))]
     (let
       [source-ty : ast.AstType
         (tc_core.tc-context-type-get
@@ -71946,13 +71521,7 @@
           (str_cat.str-cat "arg" (string.int->string index))
           (lower-internal-param-physical-type ctx mode source-ty)
           idx))
-      (lower-dispatch-physical-param-list-into!
-        ctx
-        mode
-        types
-        (+ index 1)
-        (+ idx 1)
-        builder))))
+      (set! idx (+ idx 1)))))
 
 (define (lower-dispatch-physical-param-values [count : i64] [idx : i64]) : ir.CompilerIrValueSeq
   (let
@@ -71962,41 +71531,33 @@
         (- count idx))]
     [slots : (__tl_dyn-array ir.CompilerIrValue)
       (__tl_make-array ir.CompilerIrValue len)]
-    [cursor : i64 0]
-    (while (< cursor len)
-      (set! (array-ref slots cursor) (ir.CompilerIrValue.Var (+ idx cursor)))
-      (set! cursor (+ cursor 1)))
+    (for [cursor (iterator.range 0 len)]
+      (set! (array-ref slots cursor) (ir.CompilerIrValue.Var (+ idx cursor))))
     (ir.CompilerIrValueSeq slots len)))
 
 (define (lower-dispatch-find-internal-name-from
   [variants : (& variants ast.AstDispatchVariantList)]
-  [index : i64]
   [module-id : i64]
   [names : LowerNameCache]
   [dispatch-symbol : i64]
   [wanted : ast.AstDispatchIsa]) : LowerMaybeIrSymbol
-  (if (>= index variants.len)
-    (No)
+  (for [index (iterator.range 0 variants.len)]
     (match (ast.ast-dispatch-variant-list-get
       variants
       index
       (ast.ast-dispatch-variant-fallback))
       [(Variant isa variant-name)
-        (if (tc_core.tc-dispatch-isa-eq? isa wanted)
-          (Some
-            (lower-dispatch-variant-role-symbol
-              names
-              dispatch-symbol
-              module-id
-              isa
-              variant-name))
-          (lower-dispatch-find-internal-name-from
-            variants
-            (+ index 1)
-            module-id
-            names
-            dispatch-symbol
-            wanted))])))
+        (when
+          (tc_core.tc-dispatch-isa-eq? isa wanted)
+          (return
+            (Some
+              (lower-dispatch-variant-role-symbol
+                names
+                dispatch-symbol
+                module-id
+                isa
+                variant-name))))]))
+  (No))
 
 (define (lower-dispatch-find-internal-name
   [variants : (& variants ast.AstDispatchVariantList)]
@@ -72006,7 +71567,6 @@
   [wanted : ast.AstDispatchIsa]) : LowerMaybeIrSymbol
   (lower-dispatch-find-internal-name-from
     (& variants)
-    0
     module-id
     names
     dispatch-symbol
@@ -72701,7 +72261,6 @@
   [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
     [count : i64 (ast.ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-module-id : i64 module-id]
     [name-cache : LowerNameCache (lower-name-cache-from-env lower-state names)]
     [cur-out : lower_i64_i64_map.Map out]
@@ -72711,7 +72270,7 @@
     ;; projection costs nothing.
     [decl-slots : (__tl_dyn-array ast.AstDecl) decls.slots]
     [decl-offset : i64 decls.offset]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (match (ast.ast-decl-unwrapped
         (& (array-ref decl-slots (+ decl-offset index))))
         [(Module next-module) (set! cur-module-id next-module)]
@@ -72738,8 +72297,7 @@
                     key-id)
                   1))
               unit))]
-        [_ unit])
-      (set! index (+ index 1)))
+        [_ unit]))
     cur-out))
 
 (define (lower-rvo-early-return-functions-from-decls
@@ -73314,7 +72872,7 @@
                   [skip-runtime : bool
                     (lower-comptime-runtime-skip-module? next-module-str)]
                   [marker : i64 marker-index]
-                  [_next-marker : unit (set! marker-index (+ marker-index 1))]
+                  [_next-marker : unit (+= marker-index 1)]
                   (match (lower-module-local-view-cached
                     lower-state
                     ctx
@@ -73643,16 +73201,10 @@
   [ret : ast.AstType]) : unit
   (when
     (ir.compiler-debug-info-enabled?)
-    (let
-      [index : i64 0]
-      (while (< index (ast.ast-param-list-len (& params)))
-        (match (ast.ast-param-list-get
-          (& params)
-          index
-          (ast.ast-param-fallback))
-          [(ast.AstParam.Param _ ty _) (lower-debug-type-root! owner ctx ty)])
-        (set! index (+ index 1)))
-      (lower-debug-type-root! owner ctx ret))))
+    (for [index (iterator.range 0 (ast.ast-param-list-len (& params)))]
+      (match (ast.ast-param-list-get (& params) index (ast.ast-param-fallback))
+        [(ast.AstParam.Param _ ty _) (lower-debug-type-root! owner ctx ty)]))
+    (lower-debug-type-root! owner ctx ret)))
 
 (define (compiler-lower-state-debug-type-graph [owner : CompilerLowerState]) : ir.CompilerDebugTypeGraph
   (let
@@ -73690,7 +73242,7 @@
         [id : i64 (lower_i64_i64_map.get-value-or (& types.index) slot -1)]
         (if (or (< id 0) (string.eq (& (array-ref types.keys id)) key))
           (set! found true)
-          (set! slot (+ slot 1)))))
+          (+= slot 1))))
     slot))
 
 (define (lower-debug-type-find
@@ -73713,14 +73265,12 @@
       (let
         [keys : (__tl_dyn-array String)
           (__tl_make-array String (+ 16 (* 2 id)))]
-        [index : i64 0]
-        (while (< index id)
+        (for [index (iterator.range 0 id)]
           (set!
             (array-ref keys index)
             (owned_view.compiler-owned-array-element-shared-view
               types.keys
-              index))
-          (set! index (+ index 1)))
+              index)))
         (set! types.keys keys)))
     (lower_i64_i64_map.insert-ref!
       (&mut types.index)
@@ -73944,10 +73494,9 @@
     [count : i64 (ast.ast-type-list-len (& elems))]
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [offsets : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
     [cursor : i64 0]
     [checked : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [elem : ast.AstType
           (lower-debug-type-resolve
@@ -73966,20 +73515,17 @@
         (set! checked (+ expected (tc_core.tc-layout-info-size elem-layout)))
         (set! (array-ref offsets index) offset)
         (set! cursor (+ offset (lower-type-size ctx (& elem))))
-        (set! (array-ref ids index) (lower-debug-type-id! ctx types elem))
-        (set! index (+ index 1))))
+        (set! (array-ref ids index) (lower-debug-type-id! ctx types elem))))
     (let
       [first : i64 types.graph.member-count]
-      (set! index 0)
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (lower-debug-member!
           types
           -1
           (string.int->string index)
           index
           (array-ref ids index)
-          (array-ref offsets index))
-        (set! index (+ index 1)))
+          (array-ref offsets index)))
       (ir.CompilerDebugTypeNode
         ir.compiler-debug-type-tuple
         name
@@ -74068,18 +73614,15 @@
         (let
           [count : i64 (tc_core.tc-inline-field-layout-list-count (& fields))]
           [ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-          [index : i64 0]
-          (while (< index count)
+          (for [index (iterator.range 0 count)]
             (match (tc_core.tc-inline-field-layout-list-ref (& fields) index)
               [(tc_core.TcInlineFieldLayout.Field _ field-ty _)
                 (set!
                   (array-ref ids index)
-                  (lower-debug-type-id! ctx types field-ty))])
-            (set! index (+ index 1)))
+                  (lower-debug-type-id! ctx types field-ty))]))
           (let
             [first : i64 types.graph.member-count]
-            (set! index 0)
-            (while (< index count)
+            (for [index (iterator.range 0 count)]
               (match (tc_core.tc-inline-field-layout-list-ref (& fields) index)
                 [(tc_core.TcInlineFieldLayout.Field field-id _ offset)
                   (lower-debug-member!
@@ -74088,8 +73631,7 @@
                     (tc_core.tc-env-key-name-text field-id)
                     field-id
                     (array-ref ids index)
-                    offset)])
-              (set! index (+ index 1)))
+                    offset)]))
             (ir.CompilerDebugTypeNode
               ir.compiler-debug-type-struct
               name
@@ -74121,10 +73663,8 @@
     (while (< variant count)
       (match (tc_core.tc-inline-variant-layout-list-ref (& variants) variant)
         [(tc_core.TcInlineVariantLayout.Variant _ _ _ payloads)
-          (set!
-            total
-            (+ total (tc_core.tc-inline-payload-layout-list-count (& payloads))))])
-      (set! variant (+ variant 1)))
+          (+= total (tc_core.tc-inline-payload-layout-list-count (& payloads)))])
+      (+= variant 1))
     (let
       [ids : (__tl_dyn-array i64) (__tl_make-array i64 total)]
       [slot : i64 0]
@@ -74132,21 +73672,19 @@
       (while (< variant count)
         (match (tc_core.tc-inline-variant-layout-list-ref (& variants) variant)
           [(tc_core.TcInlineVariantLayout.Variant _ _ _ payloads)
-            (let
-              [index : i64 0]
-              (while (<
-                index
-                (tc_core.tc-inline-payload-layout-list-count (& payloads)))
-                (match (tc_core.tc-inline-payload-layout-list-ref
-                  (& payloads)
-                  index)
-                  [(tc_core.TcInlinePayloadLayout.Payload _ payload-ty _)
-                    (set!
-                      (array-ref ids slot)
-                      (lower-debug-type-id! ctx types payload-ty))])
-                (set! slot (+ slot 1))
-                (set! index (+ index 1))))])
-        (set! variant (+ variant 1)))
+            (for [index
+              (iterator.range
+                0
+                (tc_core.tc-inline-payload-layout-list-count (& payloads)))]
+              (match (tc_core.tc-inline-payload-layout-list-ref
+                (& payloads)
+                index)
+                [(tc_core.TcInlinePayloadLayout.Payload _ payload-ty _)
+                  (set!
+                    (array-ref ids slot)
+                    (lower-debug-type-id! ctx types payload-ty))])
+              (+= slot 1))])
+        (+= variant 1))
       (let
         [first : i64 types.graph.member-count]
         (set! variant 0)
@@ -74156,35 +73694,33 @@
             (& variants)
             variant)
             [(tc_core.TcInlineVariantLayout.Variant variant-id _ _ payloads)
-              (let
-                [index : i64 0]
-                (lower-debug-member!
-                  types
-                  variant
-                  (tc_core.tc-env-key-name-text variant-id)
-                  variant-id
-                  -1
-                  -1)
-                (while (<
-                  index
-                  (tc_core.tc-inline-payload-layout-list-count (& payloads)))
-                  (match (tc_core.tc-inline-payload-layout-list-ref
-                    (& payloads)
-                    index)
-                    [(tc_core.TcInlinePayloadLayout.Payload
-                        payload-index
-                        _
-                        offset)
-                      (lower-debug-member!
-                        types
-                        variant
-                        (string.int->string payload-index)
-                        payload-index
-                        (array-ref ids slot)
-                        offset)])
-                  (set! slot (+ slot 1))
-                  (set! index (+ index 1))))])
-          (set! variant (+ variant 1)))
+              (lower-debug-member!
+                types
+                variant
+                (tc_core.tc-env-key-name-text variant-id)
+                variant-id
+                -1
+                -1)
+              (for [index
+                (iterator.range
+                  0
+                  (tc_core.tc-inline-payload-layout-list-count (& payloads)))]
+                (match (tc_core.tc-inline-payload-layout-list-ref
+                  (& payloads)
+                  index)
+                  [(tc_core.TcInlinePayloadLayout.Payload
+                      payload-index
+                      _
+                      offset)
+                    (lower-debug-member!
+                      types
+                      variant
+                      (string.int->string payload-index)
+                      payload-index
+                      (array-ref ids slot)
+                      offset)])
+                (+= slot 1))])
+          (+= variant 1))
         (ir.CompilerDebugTypeNode
           ir.compiler-debug-type-enum
           name
@@ -74284,7 +73820,7 @@
                       (lower-global-shared-view aggregate)
                       variant-id
                       row.name-id))))
-              (set! member (+ member 1))))]
+              (+= member 1)))]
         [(tc_core.ResultTcInlineAggregateLayout.Err _) unit]))))
 
 (define (lower-compiler-program-checked-with-names-mode

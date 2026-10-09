@@ -110254,6 +110254,11 @@
       (let
         [nexprs (try (macro-expand-exprs ctx env decls depth exprs))]
         (Ok (ast.ast-node-push (Tuple nexprs))))]
+    ;; The index is a literal integer, not an expression.
+    [(TupleRef tuple-box index)
+      (let
+        [ntuple (try (macro-expand-node ctx env decls depth tuple-box))]
+        (Ok (ast.ast-expr-tuple-ref ntuple index)))]
     [(Array exprs)
       (let
         [nexprs (try (macro-expand-exprs ctx env decls depth exprs))]
@@ -110550,6 +110555,16 @@
         [nlive (try (macro-expand-node ctx env decls depth live-box))]
         [nindex (try (macro-expand-node ctx env decls depth index-box))]
         (Ok (ast.ast-expr-array-take narray nlive nindex)))]
+    [(ArrayPush array-box value-box)
+      (let
+        [narray (try (macro-expand-node ctx env decls depth array-box))]
+        [nvalue (try (macro-expand-node ctx env decls depth value-box))]
+        (Ok (ast.ast-node-push (ArrayPush narray nvalue))))]
+    [(StringRef string-box index-box)
+      (let
+        [nstring (try (macro-expand-node ctx env decls depth string-box))]
+        [nindex (try (macro-expand-node ctx env decls depth index-box))]
+        (Ok (ast.ast-node-push (StringRef nstring nindex))))]
     [(Replace place-box replacement-box)
       (let
         [nplace (try (macro-expand-node ctx env decls depth place-box))]
@@ -110699,7 +110714,159 @@
       (let
         [nvalue (try (macro-expand-node ctx env decls depth value-box))]
         (Ok (ast.ast-node-push (LaneValue nvalue))))]
-    [_ (Ok (ast.ast-node-push expr))]))
+    ;; The range binder is in scope for the value; the range and initial value
+    ;; are evaluated outside it.
+    [(SpmdReduce reduce-box)
+      (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
+        [(Reduce op index index-ty start-box end-box init-box value-box)
+          (let
+            [nstart (try (macro-expand-node ctx env decls depth start-box))]
+            [nend (try (macro-expand-node ctx env decls depth end-box))]
+            [ninit (try (macro-expand-node ctx env decls depth init-box))]
+            [nvalue
+              (try
+                (macro-expand-node
+                  ctx
+                  (tc-bind-id
+                    env
+                    index
+                    (tc-resolve-type ctx (tc-global-shared-view index-ty)))
+                  decls
+                  depth
+                  value-box))]
+            (Ok
+              (ast.ast-node-push
+                (SpmdReduce
+                  (box (Reduce op index index-ty nstart nend ninit nvalue))))))])]
+    ;; The range binder is in scope for the value and the body, the prefix
+    ;; binder for the body; the range and the prefix's initial value are
+    ;; evaluated outside both.
+    [(SpmdScan scan-box)
+      (match (ast.ast-spmd-scan-box-shared-view scan-box)
+        [(Scan
+            op
+            index
+            index-ty
+            start-box
+            end-box
+            prefix
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (let
+            [value-env : TcTypeEnv
+              (tc-bind-id
+                env
+                index
+                (tc-resolve-type ctx (tc-global-shared-view index-ty)))]
+            [nstart (try (macro-expand-node ctx env decls depth start-box))]
+            [nend (try (macro-expand-node ctx env decls depth end-box))]
+            [ninit (try (macro-expand-node ctx env decls depth init-box))]
+            [nvalue
+              (try (macro-expand-node ctx value-env decls depth value-box))]
+            [nbody
+              (try
+                (macro-expand-node
+                  ctx
+                  (tc-bind-id
+                    value-env
+                    prefix
+                    (tc-resolve-type ctx (tc-global-shared-view prefix-ty)))
+                  decls
+                  depth
+                  body-box))]
+            (Ok
+              (ast.ast-node-push
+                (SpmdScan
+                  (box
+                    (Scan
+                      op
+                      index
+                      index-ty
+                      nstart
+                      nend
+                      prefix
+                      prefix-ty
+                      ninit
+                      nvalue
+                      nbody))))))])]
+    ;; The range binder is in scope for the predicate and the body, the slot
+    ;; binder for the body; the range and the slot's initial value are evaluated
+    ;; outside both.
+    [(SpmdCompact compact-box)
+      (match (ast.ast-spmd-compact-box-shared-view compact-box)
+        [(Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [keep-env : TcTypeEnv
+              (tc-bind-id
+                env
+                index
+                (tc-resolve-type ctx (tc-global-shared-view index-ty)))]
+            [nstart (try (macro-expand-node ctx env decls depth start-box))]
+            [nend (try (macro-expand-node ctx env decls depth end-box))]
+            [ninit (try (macro-expand-node ctx env decls depth init-box))]
+            [nkeep (try (macro-expand-node ctx keep-env decls depth keep-box))]
+            [nbody
+              (try
+                (macro-expand-node
+                  ctx
+                  (tc-bind-id
+                    keep-env
+                    slot
+                    (tc-resolve-type ctx (tc-global-shared-view slot-ty)))
+                  decls
+                  depth
+                  body-box))]
+            (Ok
+              (ast.ast-node-push
+                (SpmdCompact
+                  (box
+                    (Compact
+                      index
+                      index-ty
+                      nstart
+                      nend
+                      slot
+                      slot-ty
+                      ninit
+                      nkeep
+                      nbody))))))])]
+    [(SpmdBroadcast value-box lane-box)
+      (let
+        [nvalue (try (macro-expand-node ctx env decls depth value-box))]
+        [nlane (try (macro-expand-node ctx env decls depth lane-box))]
+        (Ok (ast.ast-node-push (SpmdBroadcast nvalue nlane))))]
+    [(SpmdShuffle value-box lane-box)
+      (let
+        [nvalue (try (macro-expand-node ctx env decls depth value-box))]
+        [nlane (try (macro-expand-node ctx env decls depth lane-box))]
+        (Ok (ast.ast-node-push (SpmdShuffle nvalue nlane))))]
+    ;; Leaves: no child expression to expand.
+    [(Literal _) (Ok (ast.ast-node-push expr))]
+    [(Var _) (Ok (ast.ast-node-push expr))]
+    [(TypeLiteral _) (Ok (ast.ast-node-push expr))]
+    [(Init _) (Ok (ast.ast-node-push expr))]
+    [(PtrNull _) (Ok (ast.ast-node-push expr))]
+    [(Break) (Ok (ast.ast-node-push expr))]
+    [(Continue) (Ok (ast.ast-node-push expr))]
+    [(ProgramArgc) (Ok (ast.ast-node-push expr))]
+    [(ProgramArgv) (Ok (ast.ast-node-push expr))]
+    [(ProgramEnvp) (Ok (ast.ast-node-push expr))]
+    ;; Quote forms hold syntax as data; a call inside one is not a call.
+    [(Quote _) (Ok (ast.ast-node-push expr))]
+    [(Quasiquote _) (Ok (ast.ast-node-push expr))]
+    [(Unquote _) (Ok (ast.ast-node-push expr))]
+    [(UnquoteSplicing _) (Ok (ast.ast-node-push expr))]))
 
 (define (macro-expand-module-call-position
   [ctx : TcContext]
@@ -113045,10 +113212,8 @@
             (tc-global-shared-view decls)
             func)
           (macro-exprs-use-macro? ctx expr-bases decls args)))]
-    [(TupleRef a b)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls b))]
+    ;; The index is a literal integer, not an expression.
+    [(TupleRef a _) (macro-node-uses-macro? ctx expr-bases decls a)]
     ;; These forms are conservatively assumed to use a macro.
     [(Break) true]
     [(Continue) true]
@@ -113336,15 +113501,12 @@
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
             (macro-expr-might-fire? state expr-bases body))])]
     [(Tuple exprs) (macro-expr-list-might-fire? state expr-bases exprs)]
-    [(TupleRef tuple-box index-box)
-      (let
-        [tuple : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (or
-          (macro-expr-might-fire? state expr-bases tuple)
-          (macro-expr-might-fire? state expr-bases index)))]
+    ;; The index is a literal integer, not an expression.
+    [(TupleRef tuple-box _)
+      (macro-expr-might-fire?
+        state
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases tuple-box))]
     [(Array exprs) (macro-expr-list-might-fire? state expr-bases exprs)]
     [(DynArray exprs) (macro-expr-list-might-fire? state expr-bases exprs)]
     [(FixedMakeArray _ len-box)

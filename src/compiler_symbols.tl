@@ -3047,11 +3047,11 @@
               (ast.ast-place-shared-view all-decls)
               target-module
               alias)]
-          [(or (Import _ (Spec _ _ (Some _) (No) _)) (Import _ _)) true]
           ;; File-backed imports do not install symbol/registry aliases. The
           ;; macro walk materializes them immediately afterward; that path
           ;; performs the conservative whole-program rebuild unless the import
           ;; loads no new declarations.
+          [(or (Import _ (Spec _ _ (Some _) (No) _)) (Import _ _)) true]
           [(ModuleBody _ body-box)
             (compiler-symbols-insert-aliases-self-contained?
               (ast.ast-place-shared-view all-decls)

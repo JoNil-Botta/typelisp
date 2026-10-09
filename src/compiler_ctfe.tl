@@ -4626,6 +4626,7 @@
     [(or (I16) (U16)) 2]
     [(or (I8) (U8) (Bool) (Char)) 1]
     [(or (Unit) (Never)) 0]
+    ;; Bare slices remain unsized; only borrowed Slice references have layout.
     [(or (Str) (Bytes) (Expr) (ExprList) (Slice _)) -1]
     [(Array elem count)
       (let
@@ -4637,7 +4638,6 @@
         (if (< elem-size 0)
           -1
           (* elem-size count)))]
-    ;; Bare slices remain unsized; only borrowed Slice references have layout.
     [(or (Ref _ inner) (MutRef _ inner))
       (if (ctfe-fat-reference? pools inner)
         16
@@ -4647,13 +4647,13 @@
         pools
         layouts
         (ast.ast-node-pool-context-type-get pools inner))]
+    [(or (Struct name) (StructArgs name _))
+      (ctfe-layout-size-or layouts name 8)]
     ;; An enum occupies its 8-byte tag plus max-aligned payload storage inline,
     ;; exactly like a struct occupies its fields, so its size comes from the
     ;; recorded layout rather than from the tag width. Returning the tag width
     ;; here reported 8 for every enum while `offset-of` on a struct field of the
     ;; same type reported the real inline size.
-    [(or (Struct name) (StructArgs name _))
-      (ctfe-layout-size-or layouts name 8)]
     [(or (Enum name) (EnumArgs name _) (Var name) (VarArgs name _))
       (ctfe-layout-size-or layouts name -1)]))
 
@@ -10409,10 +10409,10 @@
                 env)
               (No))]
           [_ (No)]))]
-    ;; Comptime values have no Slice representation.
     [(Or alternatives-box)
       (ctfe-match-or-pattern (deref alternatives-box) 0 value value-ty env)]
     ;; Comptime values have no struct form, so struct patterns never match.
+    ;; Comptime values have no Slice representation.
     [(or (Tuple _) (Array _) (Slice _ _) (Fields _) (Field _ _)) (No)]))
 
 ;; An or-pattern matches with the first alternative that does.

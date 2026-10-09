@@ -1837,12 +1837,12 @@
           (if (tltest-reachable-name-marked? session names name)
             (tltest-reach-mark-expr session body names)
             names)])]
-    [(or (DefMacro _ _ _ _ body) (Import _ (Spec (MacroDecls body _) _ _ _ _)))
-      (tltest-reach-mark-expr session body names)]
     ;; A top-level declaration macro call stays unexpanded here and is always
     ;; kept (tltest-reachable-runtime-decl?). Its arguments are the caller's
     ;; references: a constant named only by `(gen-slots first ...)` must survive
     ;; pruning, or the expansion reads an unbound name.
+    [(or (DefMacro _ _ _ _ body) (Import _ (Spec (MacroDecls body _) _ _ _ _)))
+      (tltest-reach-mark-expr session body names)]
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]

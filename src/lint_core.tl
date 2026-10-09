@@ -8456,10 +8456,10 @@
         (lint-expr-list-requires-enclosing-unsafe? exprs))
       (lint-unused-unsafe-finish-state
         (lint-unused-variable-expr-list exprs state))]
+    ;; A `deref` needs unsafe only through a raw pointer, which takes types.
     [(or (Cast _ _) (BoxTake _))
       (lint-unused-unsafe-block-mark-unknown!)
       (lint-unused-variable-children node-id state span)]
-    ;; A `deref` needs unsafe only through a raw pointer, which takes types.
     [(Borrow _ lifetime-id _)
       (lint-unused-variable-children
         node-id

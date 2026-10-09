@@ -1805,9 +1805,9 @@
     (match decl
       ;; DefMacro templates are checked by CTFE/macro expansion rather than the
       ;; final runtime body checker that publishes retained let facts.
-      [(or (DefMacro _ _ _ _ _) (Test _ _ _ _)) false]
       ;; Test bodies stay in the parsed program for tooling but ordinary source
       ;; checking deliberately does not execute/typecheck them.
+      [(or (DefMacro _ _ _ _ _) (Test _ _ _ _)) false]
       [(Unsafe inner)
         (compiler-semantic-decl-retains-checked-let-facts? path (deref inner))]
       [_ true])))
@@ -3284,11 +3284,11 @@
   (match (ast.ast-node-get node-id)
     [(or (Unquote inner) (UnquoteSplicing inner))
       (compiler-semantic-walk-node! state scope env inner)]
+    ;; CTFE preserves a nested quasiquote wholesale. Its unquotes belong to
+    ;; the future quasiquote evaluation rather than the surrounding macro.
     [(or (Quote _) (Quasiquote _) (Replace _ _) (ForOwnedState _)
          (ForOwnedStep _))
       unit]
-    ;; CTFE preserves a nested quasiquote wholesale. Its unquotes belong to
-    ;; the future quasiquote evaluation rather than the surrounding macro.
     ;; Template syntax: only expression children can hold an unquote.
     [_
       (ast.ast-expr-for-each-child

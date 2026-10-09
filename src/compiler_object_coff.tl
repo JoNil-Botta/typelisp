@@ -98,12 +98,6 @@
           (bit-or
             compiler-object-coff-section-mem-read
             compiler-object-coff-section-mem-write)))]
-    [(Rodata)
-      (bit-or
-        compiler-object-coff-section-cnt-initialized-data
-        (bit-or
-          compiler-object-coff-section-align-8
-          compiler-object-coff-section-mem-read))]
     [(Bss)
       (bit-or
         compiler-object-coff-section-cnt-uninitialized-data
@@ -112,19 +106,7 @@
           (bit-or
             compiler-object-coff-section-mem-read
             compiler-object-coff-section-mem-write)))]
-    [(Pdata)
-      (bit-or
-        compiler-object-coff-section-cnt-initialized-data
-        (bit-or
-          compiler-object-coff-section-align-8
-          compiler-object-coff-section-mem-read))]
-    [(Xdata)
-      (bit-or
-        compiler-object-coff-section-cnt-initialized-data
-        (bit-or
-          compiler-object-coff-section-align-8
-          compiler-object-coff-section-mem-read))]
-    [(Rsrc)
+    [(or (Rodata) (Pdata) (Xdata) (Rsrc))
       (bit-or
         compiler-object-coff-section-cnt-initialized-data
         (bit-or
@@ -421,13 +403,10 @@
 (define (compiler-object-coff-relocation-type
   [kind : cobj.CompilerObjectRelocationKind]) : i64
   (match kind
-    [(Call) compiler-object-coff-reloc-amd64-rel32]
-    [(TailCall) compiler-object-coff-reloc-amd64-rel32]
+    [(or (Call) (TailCall) (RipValue) (RipAddress) (Branch))
+      compiler-object-coff-reloc-amd64-rel32]
     [(Abs64) compiler-object-coff-reloc-amd64-addr64]
     [(Addr32Nb) compiler-object-coff-reloc-amd64-addr32nb]
-    [(RipValue) compiler-object-coff-reloc-amd64-rel32]
-    [(RipAddress) compiler-object-coff-reloc-amd64-rel32]
-    [(Branch) compiler-object-coff-reloc-amd64-rel32]
     [_ 0]))
 
 (define (compiler-object-coff-render-relocation-record!

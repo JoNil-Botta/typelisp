@@ -129,11 +129,8 @@
   [instr : cobj.CompilerObjectX64Instr]) : i64
   (match instr
     [(Label _) 0]
-    [(Call _) 5]
-    [(TailCall _) 5]
-    [(Jump _) 5]
-    [(Ja _) 6]
-    [(Jcc _ _) 6]
+    [(or (Call _) (TailCall _) (Jump _)) 5]
+    [(or (Ja _) (Jcc _ _)) 6]
     [(Branch _ _) 14]
     [(SubRspImm8 _) 4]
     [(MovRcxRax) 3]
@@ -176,21 +173,15 @@
   (match instr
     [(Call target) (One (Call) target)]
     [(TailCall target) (One (TailCall) target)]
-    [(Jump target) (One (Branch) target)]
-    [(Ja target) (One (Branch) target)]
-    [(Jcc _ target) (One (Branch) target)]
+    [(or (Jump target) (Ja target) (Jcc _ target)) (One (Branch) target)]
     [(Branch true-target false-target) (Branch true-target false-target)]
-    [(LoadRip target) (One (RipValue) target)]
-    [(MovRcxRip target) (One (RipValue) target)]
-    [(MovRdxRip target) (One (RipValue) target)]
-    [(XorpdRip target) (One (RipValue) target)]
-    [(LoadRipAddress target) (One (RipAddress) target)]
-    [(LoadRipAddressR11 target) (One (RipAddress) target)]
-    [(StoreRip target) (One (RipAddress) target)]
-    [(LoadRipAddressRdx target) (One (RipAddress) target)]
-    [(StoreR14Rip target) (One (RipAddress) target)]
-    [(StoreR15Rip target) (One (RipAddress) target)]
-    [(AddRcxRip target) (One (RipAddress) target)]
+    [(or (LoadRip target) (MovRcxRip target) (MovRdxRip target)
+         (XorpdRip target))
+      (One (RipValue) target)]
+    [(or (LoadRipAddress target) (LoadRipAddressR11 target) (StoreRip target)
+         (LoadRipAddressRdx target) (StoreR14Rip target) (StoreR15Rip target)
+         (AddRcxRip target))
+      (One (RipAddress) target)]
     [_ (None)]))
 
 (define (compiler-object-layout-instr-relocation-count
@@ -264,11 +255,7 @@
       (match section
         [(Text)
           (match kind
-            [(Call) true]
-            [(TailCall) true]
-            [(RipValue) true]
-            [(RipAddress) true]
-            [(Branch) true]
+            [(or (Call) (TailCall) (RipValue) (RipAddress) (Branch)) true]
             [_ false])]
         [_
           (match kind
@@ -542,8 +529,8 @@
   (match instr
     [(Label _) unit]
     [(Call _) (compiler-object-layout-push-rel32-instr! out "e8")]
-    [(TailCall _) (compiler-object-layout-push-rel32-instr! out "e9")]
-    [(Jump _) (compiler-object-layout-push-rel32-instr! out "e9")]
+    [(or (TailCall _) (Jump _))
+      (compiler-object-layout-push-rel32-instr! out "e9")]
     [(Ja _) (compiler-object-layout-push-rel32-instr! out "0f87")]
     [(Jcc cc _)
       (compiler-object-layout-push-u8! out 0x0f)

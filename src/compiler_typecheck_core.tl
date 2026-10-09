@@ -5389,7 +5389,7 @@
         [CompilerDiagnosticNoString
           (cdiag.compiler-diagnostic-code-for-typecheck-kind (Unclassified))])]
     (cdiag.compiler-diagnostic-with-category
-      (cdiag.compiler-diagnostic-with-code diag code)
+      (& (cdiag.compiler-diagnostic-with-code (& diag) code))
       "typecheck")))
 
 ;; The text of a typecheck error message without its kind tag, for code that
@@ -5611,7 +5611,7 @@
             (tc-located-error-field message end-col-start end-col-end)))
         clean-message)]
     (if (> (string.string-length help) 0)
-      (set! diag (cdiag.compiler-diagnostic-with-help diag help))
+      (set! diag (cdiag.compiler-diagnostic-with-help (& diag) help))
       unit)
     (while (> remaining 0)
       (let
@@ -5633,7 +5633,7 @@
         (set!
           diag
           (cdiag.compiler-diagnostic-with-secondary
-            diag
+            (& diag)
             (cdiag.CompilerDiagnosticSpan
               ""
               (string.>int (tc-located-error-field message idx sec-line-end))
@@ -5673,34 +5673,35 @@
             diag
             (cdiag.compiler-diagnostic-with-fix
               diag
-              (cdiag.compiler-diagnostic-fix-new
-                (tc-located-error-field message title-start title-end)
-                CompilerDiagnosticMachineApplicable
-                (cdiag.compiler-diagnostic-text-edit-single
-                  (cdiag.compiler-diagnostic-text-edit-new
-                    (cdiag.CompilerDiagnosticSpan
-                      ""
-                      (string.>int
-                        (tc-located-error-field message idx fix-line-end))
-                      (string.>int
-                        (tc-located-error-field
-                          message
-                          fix-col-start
-                          fix-col-end))
-                      (string.>int
-                        (tc-located-error-field
-                          message
-                          fix-end-line-start
-                          fix-end-line-end))
-                      (string.>int
-                        (tc-located-error-field
-                          message
-                          fix-end-col-start
-                          fix-end-col-end)))
-                    (string.substring
-                      message
-                      replacement-start
-                      (- (string.string-length message) replacement-start)))))))
+              (&
+                (cdiag.compiler-diagnostic-fix-new
+                  (tc-located-error-field message title-start title-end)
+                  CompilerDiagnosticMachineApplicable
+                  (cdiag.compiler-diagnostic-text-edit-single
+                    (cdiag.compiler-diagnostic-text-edit-new
+                      (cdiag.CompilerDiagnosticSpan
+                        ""
+                        (string.>int
+                          (tc-located-error-field message idx fix-line-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            fix-col-start
+                            fix-col-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            fix-end-line-start
+                            fix-end-line-end))
+                        (string.>int
+                          (tc-located-error-field
+                            message
+                            fix-end-col-start
+                            fix-end-col-end)))
+                      (string.substring
+                        message
+                        replacement-start
+                        (- (string.string-length message) replacement-start))))))))
           unit))
       unit)
     (tc-canonical-diagnostic diag)))
@@ -5856,8 +5857,8 @@
     [origin-diag : cdiag.CompilerDiagnostic
       (if claim-origin
         (cdiag.compiler-diagnostic-with-path
-          inner-diag
-          (ci.intern-str origin-path-id))
+          (& inner-diag)
+          (& (ci.intern-str origin-path-id)))
         inner-diag)]
     ;; Decode recursively, then prepend this boundary. The resulting stable
     ;; order is explicitly outer-to-inner. Caller-origin markers only repath
@@ -5867,18 +5868,20 @@
         origin-diag
         (cdiag.compiler-diagnostic-with-secondary-if-new
           origin-diag
-          (cdiag.CompilerDiagnosticSpan
-            (if (< path-id 0)
-              ""
-              (ci.intern-str path-id))
-            (string.>int (tc-located-error-field message line-start line-end))
-            (string.>int (tc-located-error-field message col-start col-end))
-            (string.>int
-              (tc-located-error-field message end-line-start end-line-end))
-            (string.>int
-              (tc-located-error-field message end-col-start end-col-end)))
-          (CompilerDiagnosticSomeString
-            (tc-macro-expansion-frame-label macro-name-id))))
+          (&
+            (cdiag.CompilerDiagnosticSpan
+              (if (< path-id 0)
+                ""
+                (ci.intern-str path-id))
+              (string.>int (tc-located-error-field message line-start line-end))
+              (string.>int (tc-located-error-field message col-start col-end))
+              (string.>int
+                (tc-located-error-field message end-line-start end-line-end))
+              (string.>int
+                (tc-located-error-field message end-col-start end-col-end))))
+          (&
+            (CompilerDiagnosticSomeString
+              (tc-macro-expansion-frame-label macro-name-id)))))
       (or inner-decoded.primary-origin-claimed claim-origin))))
 
 (define (tc-macro-framed-error-diag [message : String]) : cdiag.CompilerDiagnostic
@@ -7684,7 +7687,7 @@
       (match origin
         [(Some span)
           (cdiag.compiler-diagnostic-with-primary-span
-            diag
+            (& diag)
             (cdiag.CompilerDiagnosticSpan
               ""
               (ast.ast-source-span-start-line span)
@@ -15777,10 +15780,17 @@
         [found : bool false]
         ;; Read the shared store once: this membership path is substantially
         ;; hotter than materializing `rest` snapshots one node at a time.
+        [name-len : i64 (string.string-length name)]
+        ;; Most entries differ in length; compare those without a call.
         (while (and (not found) (> remaining 0))
-          (if (string.eq
-            (& (__tl-project-field (array-ref nodes index) value))
-            name)
+          (if (and
+            (=
+              (string.string-length
+                (& (__tl-project-field (array-ref nodes index) value)))
+              name-len)
+            (string.eq
+              (& (__tl-project-field (array-ref nodes index) value))
+              name))
             (set! found true)
             unit)
           (set! index (__tl-project-field (array-ref nodes index) parent))
@@ -92298,14 +92308,16 @@
     [(Some span)
       (cdiag.compiler-diagnostic-with-secondary-if-new
         diag
-        (cdiag.CompilerDiagnosticSpan
-          path
-          (ast.ast-source-span-start-line span)
-          (ast.ast-source-span-start-col span)
-          (ast.ast-source-span-end-line span)
-          (ast.ast-source-span-end-col span))
-        (CompilerDiagnosticSomeString
-          (tc-macro-expansion-frame-label (ci.intern macro-name))))]
+        (&
+          (cdiag.CompilerDiagnosticSpan
+            path
+            (ast.ast-source-span-start-line span)
+            (ast.ast-source-span-start-col span)
+            (ast.ast-source-span-end-line span)
+            (ast.ast-source-span-end-col span)))
+        (&
+          (CompilerDiagnosticSomeString
+            (tc-macro-expansion-frame-label (ci.intern macro-name)))))]
     [(No) diag]))
 
 (define (macro-active-decl-path-id [ctx : TcContext]) : i64
@@ -95763,7 +95775,7 @@
                 (cdiag.compiler-diagnostic-typecheck-error-text (& diag)))]
             (box
               (cdiag.compiler-diagnostic-with-primary-span
-                diag
+                (& diag)
                 (cdiag.compiler-diagnostic-primary-span located))))))]))
 
 (define (macro-decl-generated? [decl : ast.AstDecl]) : bool
@@ -99237,38 +99249,51 @@
             base-id)))]))
 
 ;; The comptime reflection helpers a macro body may name, in every spelling the
-;; body can reach them by. One walk tests all of them: the walker's shadowing is
-;; per name (every binder is recorded, whatever it binds), so "some spelling
-;; occurs free" is exactly the disjunction of the per-spelling walks this made
-;; one at a time.
+;; body can reach them by. A transformer naming one has its operands captured
+;; with their produced types and binding-clause callees. One walk tests all of
+;; them: the walker's shadowing is per name (every binder is recorded, whatever
+;; it binds), so "some spelling occurs free" is exactly the disjunction of the
+;; per-spelling walks this made one at a time. The spellings are distinct, so
+;; the list is consed without `tc-string-list-add`'s membership scan. The newer
+;; `expr-binding-clause-init-callee` lists only spellings a body can still
+;; reach; source names with `/` are rejected.
 (define (macro-expr-type-helper-names) : TcStringList
   (let
     [names : TcStringList Nil]
-    (set! names (tc-string-list-add names "expr-type"))
-    (set! names (tc-string-list-add names "comptime.expr-type"))
-    (set! names (tc-string-list-add names "comptime/expr-type"))
-    (set! names (tc-string-list-add names "stdlib.comptime.expr-type"))
-    (set! names (tc-string-list-add names "stdlib.comptime/expr-type"))
-    (set! names (tc-string-list-add names "stdlib/comptime.expr-type"))
-    (set! names (tc-string-list-add names "stdlib/comptime/expr-type"))
-    (set! names (tc-string-list-add names "expr-string?"))
-    (set! names (tc-string-list-add names "comptime.expr-string?"))
-    (set! names (tc-string-list-add names "comptime/expr-string?"))
-    (set! names (tc-string-list-add names "stdlib.comptime.expr-string?"))
-    (set! names (tc-string-list-add names "stdlib.comptime/expr-string?"))
-    (set! names (tc-string-list-add names "stdlib/comptime.expr-string?"))
-    (set! names (tc-string-list-add names "expr-string-value"))
-    (set! names (tc-string-list-add names "comptime.expr-string-value"))
-    (set! names (tc-string-list-add names "comptime/expr-string-value"))
-    (set! names (tc-string-list-add names "stdlib.comptime.expr-string-value"))
-    (set! names (tc-string-list-add names "stdlib.comptime/expr-string-value"))
-    (set! names (tc-string-list-add names "stdlib/comptime.expr-string-value"))
-    (set! names (tc-string-list-add names "string-slice"))
-    (set! names (tc-string-list-add names "comptime.string-slice"))
-    (set! names (tc-string-list-add names "comptime/string-slice"))
-    (set! names (tc-string-list-add names "stdlib.comptime.string-slice"))
-    (set! names (tc-string-list-add names "stdlib.comptime/string-slice"))
-    (set! names (tc-string-list-add names "stdlib/comptime.string-slice"))
+    (set! names (tc-string-list-cons names "expr-type"))
+    (set! names (tc-string-list-cons names "comptime.expr-type"))
+    (set! names (tc-string-list-cons names "comptime/expr-type"))
+    (set! names (tc-string-list-cons names "stdlib.comptime.expr-type"))
+    (set! names (tc-string-list-cons names "stdlib.comptime/expr-type"))
+    (set! names (tc-string-list-cons names "stdlib/comptime.expr-type"))
+    (set! names (tc-string-list-cons names "stdlib/comptime/expr-type"))
+    (set! names (tc-string-list-cons names "expr-string?"))
+    (set! names (tc-string-list-cons names "comptime.expr-string?"))
+    (set! names (tc-string-list-cons names "comptime/expr-string?"))
+    (set! names (tc-string-list-cons names "stdlib.comptime.expr-string?"))
+    (set! names (tc-string-list-cons names "stdlib.comptime/expr-string?"))
+    (set! names (tc-string-list-cons names "stdlib/comptime.expr-string?"))
+    (set! names (tc-string-list-cons names "expr-string-value"))
+    (set! names (tc-string-list-cons names "comptime.expr-string-value"))
+    (set! names (tc-string-list-cons names "comptime/expr-string-value"))
+    (set! names (tc-string-list-cons names "stdlib.comptime.expr-string-value"))
+    (set! names (tc-string-list-cons names "stdlib.comptime/expr-string-value"))
+    (set! names (tc-string-list-cons names "stdlib/comptime.expr-string-value"))
+    (set! names (tc-string-list-cons names "string-slice"))
+    (set! names (tc-string-list-cons names "comptime.string-slice"))
+    (set! names (tc-string-list-cons names "comptime/string-slice"))
+    (set! names (tc-string-list-cons names "stdlib.comptime.string-slice"))
+    (set! names (tc-string-list-cons names "stdlib.comptime/string-slice"))
+    (set! names (tc-string-list-cons names "stdlib/comptime.string-slice"))
+    (set! names (tc-string-list-cons names "expr-binding-clause-init-callee"))
+    (set!
+      names
+      (tc-string-list-cons names "comptime.expr-binding-clause-init-callee"))
+    (set!
+      names
+      (tc-string-list-cons
+        names
+        "stdlib.comptime.expr-binding-clause-init-callee"))
     names))
 
 (define (macro-expr-uses-expr-type? [expr-bases : i64] [expr : ast.AstExpr]) : bool
@@ -105808,6 +105833,128 @@
         captured)]
     [(Err _) (ctfe_support.ctfe-untyped-expr-type)]))
 
+;; The declaration a call head names, as the `module/name` key the
+;; typechecker resolves it to, when that declaration is a `define`d function of
+;; a named module; otherwise -1. The head is resolved the way a call target is
+;; at this site: a local binding (bare, or the leading segment of a dotted
+;; place) shadows every declaration, and hygiene names, macro heads, values,
+;; constructors, variants, externs, dispatches and root-module functions report
+;; none. The key's module and name must be those of the declaration it maps
+;; to, since an import alias can map a key to another module's declaration.
+(define (macro-call-head-function-key
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : ast.AstExpr]
+  [call : ast.AstExpr]) : i64
+  (let
+    [session : cis.InternStructuralSessionHandle
+      (tc-context-structural-session ctx)]
+    (match (ast.ast-expr-unspan-with-segment-bases
+      (tc-context-expr-segment-bases ctx)
+      (& func))
+      [(Var name)
+        (if (or
+          (not (tc-env-key-has-name-id? name))
+          (tc-hygiene-global-name-id? session name)
+          (tc-hygiene-local-name-id? session name)
+          (and
+            (tc-type-env-scoped-runtime-active? env)
+            (>= (tc-type-env-scoped-runtime-lookup-index env name) 0))
+          (tc-name-local-bound-before-module-scan-id? env name)
+          (tc-dotted-place-name-id? ctx env name))
+          -1
+          (match (tc-unqualified-import-ambiguity-message ctx env name)
+            [(Some _) -1]
+            [(No)
+              (match (tc-source-name-lookup-key-with-field-check-lookup
+                ctx
+                env
+                (tc-hygiene-name-text-id-for-session session name)
+                name
+                false)
+                [(Err _) -1]
+                [(Ok _ key)
+                  (let
+                    [module-id : i64 (tc-qualified-name-module-id key)]
+                    [base-id : i64 (tc-qualified-name-base-id key)]
+                    [handle : i64
+                      (if (and
+                        (csym.compiler-composite-pair-key-id? key)
+                        (ci.intern-renderable-id? module-id)
+                        (ci.intern-renderable-id? base-id)
+                        (not (csym.compiler-symbol-root-module-id? module-id)))
+                        (csym.compiler-symbols-lookup-value-in-module-id-or
+                          (tc-context-symbols ctx)
+                          module-id
+                          base-id
+                          (csym.compiler-symbols-missing-handle))
+                        (csym.compiler-symbols-missing-handle))]
+                    (if (and
+                      (csym.compiler-symbols-handle-found? handle)
+                      (=
+                        (csym.compiler-symbol-handle-kind handle)
+                        (csym.compiler-symbol-kind-function-define))
+                      (=
+                        (csym.compiler-symbols-owner-module-id-at-index-or
+                          (tc-context-symbols ctx)
+                          (csym.compiler-symbol-handle-index handle)
+                          -1)
+                        module-id)
+                      (match (csym.compiler-symbols-decl-at-index
+                        (tc-context-symbols ctx)
+                        (csym.compiler-symbol-handle-index handle))
+                        [(Ok decl)
+                          (match (ast.ast-decl-unwrapped (& decl))
+                            [(DefFn _ decl-name _ _ _ _) (= decl-name base-id)]
+                            [_ false])]
+                        [(Err _) false])
+                      ;; The checked call reads the head's type from this
+                      ;; binding; without it the call does not resolve here.
+                      (match (tc-lookup-unsafe-key-id
+                        env
+                        (tc-env-name-key-id session key))
+                        [(Ok _ _) true]
+                        [(Err _) false])
+                      (match (tc-context-program ctx)
+                        [(Program decls-box)
+                          (match (macro-call-decl
+                            ctx
+                            (tc-global-shared-view func)
+                            (ast.ast-decl-list-box-shared-view decls-box)
+                            (tc-global-shared-view call))
+                            [(Ok maybe-decl)
+                              (match (tc-global-shared-view maybe-decl)
+                                [(No) true]
+                                [_ false])]
+                            [(Err _) false])]))
+                      key
+                      -1))])]))]
+      [_ -1])))
+
+;; `macro-call-head-function-key` for a binding clause's initializer when it
+;; is a call, otherwise -1.
+(define (macro-captured-binding-init-callee-key
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [init-id : i64]) : i64
+  (match (ast.ast-expr-unspan-with-segment-bases
+    (tc-context-expr-segment-bases ctx)
+    (& (tc-context-expr-get ctx init-id)))
+    [(Call func-id _)
+      (let
+        [key : i64
+          (macro-call-head-function-key
+            ctx
+            env
+            (tc-context-expr-get ctx func-id)
+            (tc-context-expr-get ctx init-id))]
+        ;; Checking a dotted head for a local place can type its leading
+        ;; segment through the global pushers. Adopt those nodes before the
+        ;; transformer pushes through `ctx`.
+        (tc-context-publish-newer-pools! ctx)
+        key)]
+    [_ -1]))
+
 (define (macro-captured-binding-clause
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -105830,12 +105977,22 @@
     ;; Publish it before another clause is checked or the transformer projects
     ;; this initializer and materializes its caller-origin expression marker.
     [_publish-captured : unit (tc-context-install-pools! ctx)]
+    [callee-key : i64
+      (if capture-expr-types
+        (macro-captured-binding-init-callee-key ctx env init-id)
+        -1)]
     (ast.AstExprBindingClause
       clause.name
       clause.has-type
       clause.ty
       init-id
       init-produced
+      (if capture-expr-types
+        (tc-qualified-name-module-id callee-key)
+        clause.init-callee-module)
+      (if capture-expr-types
+        (tc-qualified-name-base-id callee-key)
+        clause.init-callee-name)
       clause.span)))
 
 (define (macro-captured-binding-clause-list
@@ -115936,14 +116093,16 @@
                     (box
                       (cdiag.compiler-diagnostic-with-secondary-if-new
                         (cdiag.compiler-diagnostic-box-shared-view diag)
-                        (cdiag.CompilerDiagnosticSpan
-                          decl-path
-                          (ast.ast-source-span-start-line span)
-                          (ast.ast-source-span-start-col span)
-                          (ast.ast-source-span-end-line span)
-                          (ast.ast-source-span-end-col span))
-                        (CompilerDiagnosticSomeString
-                          "generated import requested here"))))]))]
+                        (&
+                          (cdiag.CompilerDiagnosticSpan
+                            decl-path
+                            (ast.ast-source-span-start-line span)
+                            (ast.ast-source-span-start-col span)
+                            (ast.ast-source-span-end-line span)
+                            (ast.ast-source-span-end-col span)))
+                        (&
+                          (CompilerDiagnosticSomeString
+                            "generated import requested here")))))]))]
           [(Err message)
             (Err
               (box (macro-materialize-import-diagnostic decl-path span message)))]))]))

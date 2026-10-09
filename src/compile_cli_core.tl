@@ -24,6 +24,7 @@
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.byte_buf)
+(import stdlib.env)
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.vector)
@@ -90,7 +91,7 @@
     (while (< index (cli_svec.len names))
       (set!
         env
-        (cfg_core.compiler-cfg-enable env (cli_svec.get names index "")))
+        (cfg_core.compiler-cfg-enable env (& (cli_svec.get names index ""))))
       (set! index (+ index 1)))
     env))
 
@@ -105,7 +106,7 @@
         env
         (cfg_core.compiler-cfg-enable-with-intern-state
           env
-          (cli_svec.get names index "")
+          (& (cli_svec.get names index ""))
           intern-state))
       (set! index (+ index 1)))
     env))
@@ -596,6 +597,18 @@
         result
         output-path))))
 
+;; Whether this `compile` asks for the Linux shared-object code model
+;; (#8257). The cdylib target (#7481) will select it; until then this variable
+;; is the test hook scripts/verify-linux-shared-object-code-model.sh drives it
+;; with.
+(define (compile-cli-shared-object-env-name) : String
+  "TYPELISP_BACKEND_CODE_MODEL")
+
+(define (compile-cli-shared-object-requested?) : bool
+  (match (env.get (& (compile-cli-shared-object-env-name)))
+    [(EnvSomeString value) (string.eq value "shared-object")]
+    [(EnvNoString) false]))
+
 (define (compile-cli-run-compile-file
   [state : compiler_driver_core.CompilerDriverState]
   [input-path : String]
@@ -663,6 +676,9 @@
                 compile-cli-trace-passes-requested
                 (string.copy (& compile-cli-dump-ir-pass))
                 compile-cli-verify-ir-requested)
+              (backend.compiler-backend-state-set-shared-object-code-model!
+                (compiler_driver_core.compiler-driver-state-backend (& state))
+                (compile-cli-shared-object-requested?))
               (let
                 [emit-cfgs : sym_i64_env.SymI64Env
                   (compile-cli-cfg-names-to-env-with-intern-state
@@ -1781,6 +1797,9 @@
                 state)
               (compiler_driver_core.compiler-driver-state-prefix-cache-clear!
                 state)
+              (backend.compiler-backend-state-set-shared-object-code-model!
+                (compiler_driver_core.compiler-driver-state-backend (& state))
+                (compile-cli-shared-object-requested?))
               (if has-windows-coff-plan
                 (let
                   [remove-status : i64

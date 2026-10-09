@@ -38,6 +38,58 @@ thread, survives arena changes and must never escape to another thread.
 Issue [#8638](https://github.com/JoNil-Botta/typelisp/issues/8638) consumes this
 primitive for the private I/O error channel; Windows uses its native TLS API.
 
+The Linux shared-object code model
+([#8257](https://github.com/JoNil-Botta/typelisp/issues/8257)) makes an ELF
+emission link with `-shared` into a DSO. It is the code-generation half of the
+`cdylib` tracker [#8194](https://github.com/JoNil-Botta/typelisp/issues/8194).
+A backend state flag selects it
+(`compiler-backend-state-set-shared-object-code-model!`); its target policy
+carries `shared-object`. Until a `cdylib` target exists
+([#7481](https://github.com/JoNil-Botta/typelisp/issues/7481)), only tests
+request it: `typelisp compile` sets the flag when
+`TYPELISP_BACKEND_CODE_MODEL=shared-object`. The model differs from the
+executable one as follows:
+
+- **TLS is initial-exec.** An `@tpoff` access loads the variable's GOT offset
+  (`@gottpoff`) and goes through `%fs:(reg)`, and the DSO carries
+  `DF_STATIC_TLS`. A store borrows a scratch register, which
+  `compiler-backend-shared-object-tls-scratch` names for each runtime helper
+  that stores TLS. Generated code stores TLS only at a call site, where `%rax`
+  is clobbered.
+- **Nothing is exported.** Every `.globl` symbol is also `.hidden`.
+- **Relocated constants move.** A read-only run that holds a relocated word
+  moves to `.data.rel.ro`, and the backtrace table becomes writable. Pure
+  bytes stay in `.rodata`. A relocated word left in `.text` is an error.
+- **Externs go through the GOT.** A `.extern` read through `%rip` uses its GOT
+  entry.
+- **No entry.** There is no `_tl_start` and no startup template.
+  `tl_shared_object_init` runs the global initializers, and absolute switch
+  tables are off.
+- **No direct objects.** The ELF writer has no GOTTPOFF relocation, so direct
+  objects fall back to assembly with reason `shared-object-code-model`.
+- **Windows refuses.** A Windows target refuses the request.
+
+The rewrite runs on the final assembly, after the template catalog has checked
+the runtime bytes it pins, so executable output is unchanged byte for byte.
+[`scripts/verify-linux-shared-object-code-model.sh`](../scripts/verify-linux-shared-object-code-model.sh)
+links every Linux integration program as a DSO with `cc -shared` and
+`ld -shared`. With `readelf`, it checks for:
+- no text relocation;
+- no local-exec TLS;
+- `DF_STATIC_TLS` set;
+- no defined dynamic symbol.
+
+It then `dlopen`s a DSO and calls one export from two threads.
+
+Limits:
+- Whoever loads the DSO calls `tl_shared_object_init` once before any other
+  TypeLisp code. The test's hand-written shim does this; #8260 owns the real
+  lifecycle.
+- Exports come from a hand-written shim until the export policy (#8263) lands.
+- Raw thread spawn inside a DSO is unsupported. `tl_thread_init` installs its
+  own FS base
+  ([#8762](https://github.com/JoNil-Botta/typelisp/issues/8762)).
+
 `compiler_module_name.tl` owns the complete dotted import-name contract used by
 both the parser and LSP: nonempty components, no path separators or colon, and
 no final `.tl` suffix. It preserves the existing byte-level name predicate;
@@ -506,6 +558,23 @@ Every example is its own program.
 - **Check-only examples** reset the interner to the session floor first (`compiler-check-reset-interns!`, as lint does per file). So nothing an earlier example or file interned or generated reaches them. The session's program cache survives, so examples still share loaded dependencies.
 
 A batched run therefore gives each file the result it gets alone (#8580). `scripts/verify-doc-tests.sh` fails a batched run that fails while every file passes alone; its per-file probe only locates failures.
+
+A session's program cache hands every later check the same parsed AST
+([#8757](https://github.com/JoNil-Botta/typelisp/issues/8757)). Typecheck rewrites
+a few parsed nodes in place:
+- a dotted local field becomes a projection;
+- macro hygiene renames;
+- an expected bare variant is retargeted.
+
+The rewritten nodes' new children lie above the session's AST floor, which the
+next reset discards. So the AST pools journal every in-place write to a node
+below the floor (`ast-node-protected-note!`). A cached session's pool reset
+restores those nodes, newest first, before it truncates to the floor
+(`ast-node-protected-restore!`). Each check therefore sees its cached programs
+exactly as parsed, so none of these can inherit an earlier check's rewrites:
+- an LSP edit;
+- a later `typelisp test` file;
+- a later doc example.
 
 The lifetime tests in
 [`compiler_package_discovery_lifetime_tests.tl`](../src/tests/compiler_package_discovery_lifetime_tests.tl)

@@ -34,7 +34,7 @@
     [(Err _) false]))
 
 (define (fe-lex-spanned-float-token-ok? [src : String] [expected : String]) : bool
-  (match (lx.spanned-result src)
+  (match (lx.spanned-result (& src))
     [(Ok toks)
       (let
         [value : tk.Token (tk.spanned-token-tok (lx.array-shared-view toks 0))]

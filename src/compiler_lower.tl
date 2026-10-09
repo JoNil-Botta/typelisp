@@ -14931,7 +14931,7 @@
     (Label
       state
       (ir.compiler-ir-label
-        (str_cat.str-cat prefix "." (string.int->string next-label))))))
+        (& (str_cat.str-cat prefix "." (string.int->string next-label)))))))
 
 (define (lower-state-fresh-lambda-name [state : LowerState]) : LowerLambdaName
   (let
@@ -14966,7 +14966,7 @@
 (define (lower-runtime-abort-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
     [(BoundsCheck _ _ _) true]
-    [(BinOp _ op _ _ _) (ir.compiler-ir-binop-may-fault? op)]
+    [(BinOp _ op _ _ _) (ir.compiler-ir-binop-may-fault? (& op))]
     [(Call _ name _ _)
       (let
         [text : String (ir.compiler-ir-symbol-text name)]
@@ -14997,7 +14997,7 @@
               (lower-boxed-box-field-shared-view data spans)
               (ir.compiler-ir-symbol-typed-id
                 (lower-box-field-shared-view data function))
-              (lower-global-shared-view instr)
+              (& instr)
               (lower-state-current-source-path-id state)
               span)]
           [(No) (lower-boxed-box-field-shared-view data spans)])]
@@ -15031,16 +15031,17 @@
             [data : (Box LowerStateData) (lower-state-box state)]
             [bounds-label : i64
               (ir.compiler-ir-label
-                (str_cat.str-cat
-                  (str_cat.str-cat label-prefix ".")
-                  (string.int->string
-                    (- (lower-box-field-shared-view data next-label) 1))))]
+                (&
+                  (str_cat.str-cat
+                    (str_cat.str-cat label-prefix ".")
+                    (string.int->string
+                      (- (lower-box-field-shared-view data next-label) 1)))))]
             [next-spans : ir.CompilerSourceSpans
               (ir.compiler-source-spans-insert-instr-located
                 (lower-boxed-box-field-shared-view data spans)
                 (ir.compiler-ir-symbol-typed-id
                   (lower-box-field-shared-view data function))
-                (BoundsCheck Unit Unit bounds-label)
+                (& (BoundsCheck Unit Unit bounds-label))
                 (lower-state-current-source-path-id state)
                 span)]
             (__tl-project-set-field
@@ -15115,7 +15116,7 @@
     [data : (Box LowerStateData) (lower-state-box state)]
     (ir.compiler-ir-function-builder-append-seq!
       (&mut (__tl-project-field (__tl-box-place data) functions))
-      new-functions)
+      (& new-functions))
     (__tl-project-set-field (__tl-box-place data) spans (box new-spans))
     state))
 
@@ -15956,7 +15957,7 @@
                   call-var
                   (lower-derived-symbol-id "tl_memcpy")
                   (ir.compiler-ir-call-args-from-seq
-                    (ir.compiler-ir-value-seq3 dst-addr src-addr (I64 size)))
+                    (& (ir.compiler-ir-value-seq3 dst-addr src-addr (I64 size))))
                   (Unit)))])])]))
 
 (define (lower-emit-memcpy-value
@@ -15978,7 +15979,7 @@
                   call-var
                   (lower-derived-symbol-id "tl_memcpy")
                   (ir.compiler-ir-call-args-from-seq
-                    (ir.compiler-ir-value-seq3 dst-addr src-addr size))
+                    (& (ir.compiler-ir-value-seq3 dst-addr src-addr size)))
                   (Unit)))])])]))
 
 (define (lower-copy-bytes
@@ -17765,7 +17766,7 @@
             (Call
               var-id
               (lower-string-concat-runtime-name count)
-              (ir.compiler-ir-call-args-from-seq values)
+              (ir.compiler-ir-call-args-from-seq (& values))
               (String)))
           (Var var-id)
           (String))])))
@@ -17785,7 +17786,7 @@
       (ir.compiler-ir-value-builder-with-capacity
         (+ prefix.len (* (- end index) 2)))]
     [_prefix : unit
-      (ir.compiler-ir-value-builder-append-seq! (&mut builder) prefix)]
+      (ir.compiler-ir-value-builder-append-seq! (&mut builder) (& prefix))]
     (match (lower-string-concat-values-at!
       ctx
       state
@@ -23240,10 +23241,10 @@
       (match record
         [(WhileExit ordinal)
           (ir.compiler-ir-label
-            (str_cat.str-cat "while_exit." (string.int->string ordinal)))]
+            (& (str_cat.str-cat "while_exit." (string.int->string ordinal))))]
         [(WhileHeader ordinal)
           (ir.compiler-ir-label
-            (str_cat.str-cat "while_header." (string.int->string ordinal)))]
+            (& (str_cat.str-cat "while_header." (string.int->string ordinal))))]
         [_ (ci.tl_oob_abort)])]
     [(No) (ci.tl_oob_abort)]))
 
@@ -26000,7 +26001,9 @@
                         [(Ok rest-state rest-values rest-writebacks)
                           (Ok
                             rest-state
-                            (ir.compiler-ir-value-seq-prepend value rest-values)
+                            (ir.compiler-ir-value-seq-prepend
+                              (& value)
+                              (& rest-values))
                             rest-writebacks)]
                         [(Err message) (Err message)])])]))])))))
 
@@ -26447,7 +26450,9 @@
                         [(Ok rest-state rest-values)
                           (Ok
                             rest-state
-                            (ir.compiler-ir-value-seq-prepend value rest-values))]
+                            (ir.compiler-ir-value-seq-prepend
+                              (& value)
+                              (& rest-values)))]
                         [(Err message) (Err message)])])]))]
           [(Err message) (Err (box (lower-diagnostic-at-expr ctx arg message)))])))))
 
@@ -29529,7 +29534,7 @@
                                           left-value
                                           right-value
                                           (if (ir.compiler-ir-binop-compare?
-                                            (lower-binop op right-ty))
+                                            (& (lower-binop op right-ty)))
                                             left-ty
                                             (owned_view.compiler-owned-shared-view
                                               result-ty)))
@@ -32783,7 +32788,7 @@
               var-id
               (lower-tl-substring-symbol)
               (ir.compiler-ir-call-args-from-seq
-                (ir.compiler-ir-value-seq3 src-ptr start-value len-value))
+                (& (ir.compiler-ir-value-seq3 src-ptr start-value len-value)))
               (String)))
           (Var var-id)
           (String)))]))
@@ -34280,7 +34285,9 @@
                   [(Ok rest-state rest-values)
                     (Ok
                       rest-state
-                      (ir.compiler-ir-value-seq-prepend value rest-values))]
+                      (ir.compiler-ir-value-seq-prepend
+                        (& value)
+                        (& rest-values)))]
                   [(Err message) (Err message)])]
               [(Integer scalar-ty size)
                 ;; A register-resident aggregate is carried as a
@@ -34316,8 +34323,8 @@
                         (Ok
                           rest-state
                           (ir.compiler-ir-value-seq-prepend
-                            scalar-value
-                            rest-values))]
+                            (& scalar-value)
+                            (& rest-values)))]
                       [(Err message) (Err message)])])]
               [(Register slots _)
                 (match (lower-c-abi-register-arg-slot-values
@@ -34389,8 +34396,8 @@
                           (Ok
                             rest-state
                             (ir.compiler-ir-value-seq-prepend
-                              copy-value
-                              rest-values))]
+                              (& copy-value)
+                              (& rest-values)))]
                         [(Err message) (Err message)])]))]
               [(Unsupported message)
                 (Err (box (lower-diagnostic-at-expr ctx arg message)))]
@@ -34437,7 +34444,9 @@
               [(Ok rest-state rest-values)
                 (Ok
                   rest-state
-                  (ir.compiler-ir-value-seq-prepend slot-value rest-values))]
+                  (ir.compiler-ir-value-seq-prepend
+                    (& slot-value)
+                    (& rest-values)))]
               [(Err message) (Err message)])])])))
 
 (define (lower-c-abi-register-arg-slot-values
@@ -34451,7 +34460,7 @@
 (define (lower-value-seq-append
   [values : ir.CompilerIrValueSeq]
   [tail : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
-  (ir.compiler-ir-value-seq-append values tail))
+  (ir.compiler-ir-value-seq-append (& values) (& tail)))
 
 (define (lower-c-abi-ir-return-slots-from
   [slots : LowerCAbiSlotList]
@@ -34675,7 +34684,7 @@
                 target
                 true
                 var-id
-                (ir.compiler-ir-call-args-from-seq values)
+                (ir.compiler-ir-call-args-from-seq (& values))
                 (lower-global-shared-view result-ty))]
             (lower-c-abi-finish-call-result
               ctx
@@ -34698,7 +34707,7 @@
                 target
                 true
                 var-id
-                (ir.compiler-ir-call-args-from-seq values)
+                (ir.compiler-ir-call-args-from-seq (& values))
                 (lower-global-shared-view scalar-ty))]
             (lower-c-abi-finish-call-result
               ctx
@@ -34727,7 +34736,7 @@
                           target
                           true
                           var-id
-                          (ir.compiler-ir-call-args-from-seq values)
+                          (ir.compiler-ir-call-args-from-seq (& values))
                           scalar-ty)]
                       (lower-c-abi-finish-call-result
                         ctx
@@ -34758,7 +34767,7 @@
                       base-state
                       target
                       (lower-global-shared-view base)
-                      (ir.compiler-ir-call-args-from-seq values)
+                      (ir.compiler-ir-call-args-from-seq (& values))
                       (lower-c-abi-ir-return-slots slots))]
                   (match (lower-c-abi-materialize-stored-register-result
                     ctx
@@ -34803,9 +34812,7 @@
                     true
                     var-id
                     (ir.compiler-ir-call-args-sret-from-seq
-                      (ir.compiler-ir-value-seq-prepend
-                        (lower-global-shared-view base)
-                        values)
+                      (& (ir.compiler-ir-value-seq-prepend (& base) (& values)))
                       0)
                     (U64))]
                 (lower-c-abi-finish-call-result
@@ -34867,7 +34874,7 @@
 (define (lower-value-seq-append-one
   [values : ir.CompilerIrValueSeq]
   [extra : ir.CompilerIrValue]) : ir.CompilerIrValueSeq
-  (ir.compiler-ir-value-seq-append-one values extra))
+  (ir.compiler-ir-value-seq-append-one (& values) (& extra)))
 
 ;; For a call whose result is an inline aggregate, allocate the result slot on
 ;; the caller's stack and append its pointer as the hidden trailing arg. Uses
@@ -34907,13 +34914,13 @@
     (lower-inline-aggregate-abi-copy-needed? ctx result-ty))
     (let
       [index : i64 (- values.len 1)]
-      (ir.compiler-ir-call-args-sret-from-seq values index))
-    (ir.compiler-ir-call-args-from-seq values)))
+      (ir.compiler-ir-call-args-sret-from-seq (& values) index))
+    (ir.compiler-ir-call-args-from-seq (& values))))
 
 (define (lower-value-seq-prepend-one
   [head : ir.CompilerIrValue]
   [tail : ir.CompilerIrValueSeq]) : ir.CompilerIrValueSeq
-  (ir.compiler-ir-value-seq-prepend head tail))
+  (ir.compiler-ir-value-seq-prepend (& head) (& tail)))
 
 (define (lower-internal-return-class-for-symbol
   [ctx : tc_core.TcContext]
@@ -35194,9 +35201,10 @@
                                 false
                                 call-var
                                 (ir.compiler-ir-call-args-sret-from-seq
-                                  (lower-value-seq-prepend-one
-                                    sret-pointer
-                                    physical-values)
+                                  (&
+                                    (lower-value-seq-prepend-one
+                                      sret-pointer
+                                      physical-values))
                                   0)
                                 (U64))
                               origin)
@@ -35230,7 +35238,7 @@
                         target
                         false
                         call-var
-                        (ir.compiler-ir-call-args-from-seq physical-values)
+                        (ir.compiler-ir-call-args-from-seq (& physical-values))
                         physical-ret)
                       origin)]
                   (lower-internal-materialize-call-result
@@ -35837,7 +35845,7 @@
             (Call
               var-id
               name
-              (ir.compiler-ir-call-args-from-seq values)
+              (ir.compiler-ir-call-args-from-seq (& values))
               (lower-global-shared-view result-ty)))
           (Var var-id)
           result-ty))]))
@@ -38733,7 +38741,7 @@
             rhs
             (lower-global-shared-view ty)))
         (Var v)
-        (ir.compiler-ir-binop-result-type op ty))]))
+        (ir.compiler-ir-binop-result-type (& op) ty))]))
 
 ;; A BoundsCheck is emitted as one unsigned `cmpq length, index`, so a operand
 ;; that is already a width-64 integer needs no materialised `Cast ... : u64`:
@@ -39071,7 +39079,7 @@
               var-id
               (lower-atomic-pointer-raw-symbol name elem-ty)
               (ir.compiler-ir-call-args-from-seq
-                (ir.compiler-ir-value-seq3 ptr expected new-value))
+                (& (ir.compiler-ir-value-seq3 ptr expected new-value)))
               (lower-one-word-register-storage-type ctx result-ty))
             origin)
           (Var var-id)
@@ -42566,7 +42574,9 @@
                 [(Ok rest-state rest-values)
                   (Ok
                     rest-state
-                    (ir.compiler-ir-value-seq-prepend cast-value rest-values))]
+                    (ir.compiler-ir-value-seq-prepend
+                      (& cast-value)
+                      (& rest-values)))]
                 [(Err message) (Err message)])])]))))
 
 (define (lower-syscall
@@ -42583,7 +42593,7 @@
             (Expr
               (lower-state-emit
                 allocated
-                (Syscall var-id (ir.compiler-ir-call-args-from-seq values)))
+                (Syscall var-id (ir.compiler-ir-call-args-from-seq (& values))))
               (Var var-id)
               (I64)))])]
     [(Err message) (Err message)]))
@@ -42634,7 +42644,7 @@
                 [(Ok rest-state rest-values)
                   (Ok
                     rest-state
-                    (ir.compiler-ir-value-seq-prepend value rest-values))]
+                    (ir.compiler-ir-value-seq-prepend (& value) (& rest-values)))]
                 [(Err message) (Err message)])])]))))
 
 (define (lower-let-binding-type
@@ -43552,10 +43562,11 @@
                 (ir.compiler-ir-phi-input-seq-prepend
                   then-value
                   then-end-label
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    else-value
-                    else-end-label
-                    (ir.compiler-ir-phi-input-seq-empty)))
+                  (&
+                    (ir.compiler-ir-phi-input-seq-prepend
+                      else-value
+                      else-end-label
+                      (& (ir.compiler-ir-phi-input-seq-empty)))))
                 expr-ir-ty))
             (Var var-id)
             expr-ty))])))
@@ -59338,7 +59349,7 @@
 (define (lower-spmd-call-args-append
   [args : ir.CompilerIrSpmdCallArgSeq]
   [extra : ir.CompilerIrSpmdCallArg]) : ir.CompilerIrSpmdCallArgSeq
-  (ir.compiler-ir-spmd-call-arg-seq-append args extra))
+  (ir.compiler-ir-spmd-call-arg-seq-append (& args) extra))
 
 ;; The private SPMD ABI descriptor of a generated helper (#7405), built from
 ;; the helper's physical signature and the call argument classification it was
@@ -59940,7 +59951,7 @@
             [next-functions : ir.CompilerIrFunctionBuilder functions]
             (ir.compiler-ir-function-builder-append-seq!
               (&mut next-functions)
-              lowered)
+              (& lowered))
             (lower-spmd-package-specializations-from
               ctx
               top-env
@@ -63972,7 +63983,7 @@
                     (ir.compiler-ir-phi-input-seq-prepend
                       body-value
                       body-end-label
-                      phi-inputs)))))]))]
+                      (& phi-inputs))))))]))]
     [(Tail ret-ty sret-var)
       (let
         [body-state
@@ -65133,7 +65144,7 @@
                           tail-state
                           (TailCallIndirect
                             func-value
-                            (ir.compiler-ir-call-args-from-seq tail-values)
+                            (ir.compiler-ir-call-args-from-seq (& tail-values))
                             (lower-one-word-register-storage-type ctx ret-ty))
                           origin))]
                     [(Err message) (Err message)])]
@@ -65405,7 +65416,7 @@
                                   call-var
                                   call-name
                                   (ir.compiler-ir-call-args-from-seq
-                                    sret-values)
+                                    (& sret-values))
                                   result-ir-ty)
                                 origin)]
                             [writeback-state : LowerState
@@ -65914,7 +65925,7 @@
                           tail-state
                           (ir.CompilerIrInstr.TailCall
                             target-id
-                            (ir.compiler-ir-call-args-from-seq tail-values)
+                            (ir.compiler-ir-call-args-from-seq (& tail-values))
                             (lower-one-word-register-storage-type ctx ret-ty))
                           origin)))]
                   [(ResultLowerArgs.Err message) (ResultLowerState.Err message)])]
@@ -67756,7 +67767,7 @@
     (arena.Arena (lower-ir-arena-get))
     (ir.compiler-ir-clone-function-seq
       (ast.ast-node-pool-reader-context-current)
-      functions)))
+      (& functions))))
 
 (define (lower-function-escaping
   [ctx : tc_core.TcContext]
@@ -67811,7 +67822,7 @@
               (arena.tl_arena_set enclosing))
             (let
               [escaped-spans : ir.CompilerSourceSpans
-                (ir.compiler-source-spans-append-new spans function-spans)]
+                (ir.compiler-source-spans-append-new spans (& function-spans))]
               (unsafe
                 (arena.tl_arena_set scratch)
                 (arena.tl_region_reset mark)
@@ -68989,10 +69000,11 @@
         base
         cbi.compiler-builtin-id-tl-atomic-i64-cas-ptr
         (ir.compiler-ir-call-args-from-seq
-          (ir.compiler-ir-value-seq3
-            (GlobalAddr cache-name)
-            (I64 0)
-            (Function fn-name)))
+          (&
+            (ir.compiler-ir-value-seq3
+              (GlobalAddr cache-name)
+              (I64 0)
+              (Function fn-name))))
         (I64)))
     (ir.compiler-ir-instr-builder-push!
       (&mut instrs)
@@ -69054,12 +69066,14 @@
   [base : i64]
   [tail : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (let
-    [check-label : i64 (ir.compiler-ir-label (string.copy prefix))]
+    [check-label : i64 (ir.compiler-ir-label (& (string.copy prefix)))]
     [osxsave-label : i64
-      (ir.compiler-ir-label (str_cat.str-cat (string.copy prefix) "_osxsave"))]
+      (ir.compiler-ir-label
+        (& (str_cat.str-cat (string.copy prefix) "_osxsave")))]
     [xcr0-label : i64
-      (ir.compiler-ir-label (str_cat.str-cat (string.copy prefix) "_xcr0"))]
-    [leaf7-label : i64 (ir.compiler-ir-label (str_cat.str-cat prefix "_leaf7"))]
+      (ir.compiler-ir-label (& (str_cat.str-cat (string.copy prefix) "_xcr0")))]
+    [leaf7-label : i64
+      (ir.compiler-ir-label (& (str_cat.str-cat prefix "_leaf7")))]
     [max-leaf-var : i64 base]
     [max-ok-var : i64 (+ base 1)]
     [leaf1-ecx-var : i64 (+ base 2)]
@@ -69256,7 +69270,7 @@
           (lower-internal-return-physical-type ctx mode ret-ty)]
         [args : ir.CompilerIrCallArgs
           (ir.compiler-ir-call-args-from-seq
-            (lower-dispatch-physical-param-values param-count 0))]
+            (& (lower-dispatch-physical-param-values param-count 0)))]
         [maybe-avx2 : LowerMaybeIrSymbol
           (lower-dispatch-find-internal-name
             variants
@@ -69316,18 +69330,19 @@
                 tail-blocks)
               (Ok
                 (ir.compiler-ir-function-seq1
-                  (Function
-                    logical-name
-                    (lower-dispatch-physical-param-list
-                      ctx
-                      mode
-                      clean-param-types
-                      source-start
-                      leading-sret?)
-                    physical-ret-ty
-                    (+ param-count 41)
-                    (ir.compiler-ir-block-builder-to-list blocks)
-                    Ordinary))
+                  (&
+                    (Function
+                      logical-name
+                      (lower-dispatch-physical-param-list
+                        ctx
+                        mode
+                        clean-param-types
+                        source-start
+                        leading-sret?)
+                      physical-ret-ty
+                      (+ param-count 41)
+                      (ir.compiler-ir-block-builder-to-list blocks)
+                      Ordinary)))
                 spans))]
           [(No)
             (Err
@@ -69477,7 +69492,7 @@
           [next-functions : ir.CompilerIrFunctionBuilder functions]
           (ir.compiler-ir-function-builder-append-seq!
             (&mut next-functions)
-            lowered-functions)
+            (& lowered-functions))
           (lower-dispatch-lower-variants-from
             ctx
             top-env
@@ -69598,10 +69613,10 @@
                             escaped-thunk-functions)))]
                     (ir.compiler-ir-function-builder-append-seq!
                       (&mut functions)
-                      variant-functions)
+                      (& variant-functions))
                     (ir.compiler-ir-function-builder-append-seq!
                       (&mut functions)
-                      escaped-thunk-functions)
+                      (& escaped-thunk-functions))
                     (Ok
                       (box
                         (Decl
@@ -69821,11 +69836,11 @@
     [cur-paths : ast.AstDeclPathList paths]
     [cur-local-top-env : tc_core.TcTypeEnv local-top-env]
     [cur-globals : ir.CompilerIrGlobalBuilder
-      (ir.compiler-ir-global-builder-from-seq globals)]
+      (ir.compiler-ir-global-builder-from-seq (& globals))]
     [cur-functions : ir.CompilerIrFunctionBuilder
-      (ir.compiler-ir-function-builder-from-seq functions)]
+      (ir.compiler-ir-function-builder-from-seq (& functions))]
     [cur-externs : ir.CompilerIrExternBuilder
-      (ir.compiler-ir-extern-builder-from-seq externs)]
+      (ir.compiler-ir-extern-builder-from-seq (& externs))]
     [cur-spans : ir.CompilerSourceSpans spans]
     [cur-name-cache : LowerNameCache name-cache]
     [cur-type-cache : LowerTypeCache type-cache]
@@ -69990,7 +70005,7 @@
                                       (RuntimeGlobal init-symbol)))
                                   (ir.compiler-ir-function-builder-append-seq!
                                     (&mut cur-functions)
-                                    init-funcs)
+                                    (& init-funcs))
                                   (set! cur-spans init-spans)
                                   (set! cur-decls rest)]
                                 [(Err init-message)
@@ -70184,10 +70199,10 @@
                                       logical-name))
                                   (ir.compiler-ir-function-builder-append-seq!
                                     (&mut cur-functions)
-                                    lowered-functions)
+                                    (& lowered-functions))
                                   (ir.compiler-ir-function-builder-append-seq!
                                     (&mut cur-functions)
-                                    callable-functions)
+                                    (& callable-functions))
                                   (set! cur-spans next-spans)
                                   (set! cur-decls rest)))])]
                         [(Err message)
@@ -70224,7 +70239,7 @@
                           cache-global)
                         (ir.compiler-ir-function-builder-append-seq!
                           (&mut cur-functions)
-                          lowered-functions)
+                          (& lowered-functions))
                         (set! cur-spans function-spans)
                         (set! cur-decls rest)])]
                   [(Err message)
@@ -70337,7 +70352,7 @@
                     [(Ok cleanup-functions cleanup-spans)
                       (ir.compiler-ir-function-builder-append-seq!
                         (&mut cur-functions)
-                        cleanup-functions)
+                        (& cleanup-functions))
                       (set! cur-spans cleanup-spans)
                       (set! cur-decls rest)]
                     [(Err message)
@@ -70407,7 +70422,7 @@
                     [(Ok cleanup-functions cleanup-spans)
                       (ir.compiler-ir-function-builder-append-seq!
                         (&mut cur-functions)
-                        cleanup-functions)
+                        (& cleanup-functions))
                       (set! cur-spans cleanup-spans)
                       (set! cur-decls rest)]
                     [(Err message)
@@ -70462,7 +70477,7 @@
                     [(Ok cleanup-functions cleanup-spans)
                       (ir.compiler-ir-function-builder-append-seq!
                         (&mut cur-functions)
-                        cleanup-functions)
+                        (& cleanup-functions))
                       (set! cur-spans cleanup-spans)
                       (set! cur-decls rest)]
                     [(Err message)
@@ -70518,7 +70533,7 @@
                     [(Ok cleanup-functions cleanup-spans)
                       (ir.compiler-ir-function-builder-append-seq!
                         (&mut cur-functions)
-                        cleanup-functions)
+                        (& cleanup-functions))
                       (set! cur-spans cleanup-spans)
                       (set! cur-decls rest)]
                     [(Err message)

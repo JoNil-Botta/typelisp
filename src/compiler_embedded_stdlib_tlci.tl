@@ -2330,7 +2330,8 @@
         [_ tlci.tlci-host-callback-status-bad-request]))))
 
 ;; Project name/type/init from an ExprBindingClause on the session stack.
-;; selector: 0=name, 1=type syntax, 2=initializer expression.
+;; selector: 0=name, 1=type syntax, 2=initializer expression, 3=identity of
+;; the function the initializer calls directly.
 (define (compiler-comptime-host-expr-binding-clause-project! [selector : i64]) : i64
   (if (< compiler-comptime-host-stack-len 1)
     tlci.tlci-host-callback-status-bad-request
@@ -2347,6 +2348,8 @@
                 (Expr
                   (ctfe_support.ctfe-expr-binding-clause-type clause)
                   (ctfe_support.ctfe-untyped-expr-type))]
+              [(= selector 3)
+                (ctfe_support.ctfe-expr-binding-clause-init-callee-value clause)]
               [else
                 (let
                   [produced : ast.AstType
@@ -2391,6 +2394,15 @@
   (compiler-comptime-host-status-callback
     session
     (compiler-comptime-host-expr-binding-clause-project! 2)))
+
+(define (compiler-comptime-host-callback-expr-binding-clause-init-callee
+  [session : i64]
+  [_arg-a : i64]
+  [_arg-b : i64]
+  [_arg-c : i64]) : i64
+  (compiler-comptime-host-status-callback
+    session
+    (compiler-comptime-host-expr-binding-clause-project! 3)))
 
 ;; Data probe for whether a clause stored in local slot `a` has an annotation.
 (define (compiler-comptime-host-callback-expr-binding-clause-has-type?

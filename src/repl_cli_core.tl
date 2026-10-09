@@ -322,7 +322,7 @@
   [input : String]) : unit
   (repl-stderr-write
     (cdiag.compiler-diagnostic-render-source
-      (cdiag.compiler-diagnostic-with-path diag (repl-input-path))
+      (cdiag.compiler-diagnostic-with-path (& diag) (& (repl-input-path)))
       input)))
 
 ;; A candidate is the accepted session followed by new source: typed input,
@@ -349,11 +349,11 @@
       (let
         [diag : cdiag.CompilerDiagnostic
           (cdiag.compiler-diagnostic-split-at-line
-            (cdiag.compiler-diagnostic-list-get diagnostics index)
-            (repl-session-source-path)
+            (& (cdiag.compiler-diagnostic-list-get diagnostics index))
+            (& (repl-session-source-path))
             session-lines
             "<repl-session>"
-            (owned_view.compiler-owned-shared-view source-path))]
+            (& source-path))]
         [in-source : bool
           (string.eq (cdiag.compiler-diagnostic-path diag) source-path)]
         (repl-stderr-write

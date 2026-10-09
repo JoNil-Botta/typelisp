@@ -896,7 +896,10 @@
   (MissingRuntimeEntry)
   (EmptyTextSection)
   (TargetMismatch)
-  (ForcedAssembly))
+  (ForcedAssembly)
+  ;; The ELF writer has no initial-exec TLS relocation or `.data.rel.ro`
+  ;; section yet, so a shared-object emission takes the assembly route.
+  (SharedObjectCodeModel))
 
 (defenum CompilerBackendObjectEligibility
   (Eligible)
@@ -1001,7 +1004,11 @@
   (object-format CompilerBackendObjectFormatPolicy)
   (gp-arg-register-count i64)
   (float-arg-register-count i64)
-  (outgoing-shadow-space i64))
+  (outgoing-shadow-space i64)
+  ;; The Linux shared-object code model (#8257): initial-exec TLS, hidden
+  ;; internal symbols, relocated constants in `.data.rel.ro`, no absolute
+  ;; switch dispatch and no program entry. False for every executable.
+  (shared-object bool))
 
 (define (compiler-backend-target-policy-new [target : CompilerBackendTarget]) : CompilerBackendTargetPolicy
   (let
@@ -1025,7 +1032,32 @@
         Coff)
       (compiler_abi.compiler-abi-gp-arg-register-count abi)
       (compiler_abi.compiler-abi-float-arg-register-count abi)
-      (compiler_abi.compiler-abi-outgoing-shadow-space abi))))
+      (compiler_abi.compiler-abi-outgoing-shadow-space abi)
+      false)))
+
+;; TARGET's policy under the code model SHARED-OBJECT selects. Only an ELF
+;; target has a shared-object code model; the prepared boundaries reject the
+;; request for any other before using this.
+(define (compiler-backend-target-policy-for-code-model
+  [target : CompilerBackendTarget]
+  [shared-object : bool]) : CompilerBackendTargetPolicy
+  (let
+    [policy : CompilerBackendTargetPolicy
+      (compiler-backend-target-policy-new target)]
+    (CompilerBackendTargetPolicy
+      policy.target
+      policy.abi
+      policy.linux
+      policy.windows
+      policy.seh-unwind
+      policy.stack-probe
+      policy.red-zone
+      policy.linux-syscall
+      policy.object-format
+      policy.gp-arg-register-count
+      policy.float-arg-register-count
+      policy.outgoing-shadow-space
+      shared-object)))
 
 ;; Facts for code that holds only a raw target. Each reads the target's policy,
 ;; so `compiler-backend-target-policy-new` stays the one place a target is
@@ -1136,7 +1168,11 @@
   (emission-target-policy CompilerBackendTargetPolicy)
   ;; Shared with semantic/lowering/optimizer work by the owning driver. The
   ;; diagnostic module gives its payloads an independently resettable arena.
-  (advisory-sink compiler_diagnostic.CompilerAdvisorySink))
+  (advisory-sink compiler_diagnostic.CompilerAdvisorySink)
+  ;; The requested code model (#8257): true asks every later emission of this
+  ;; owner for a Linux shared object. Prepared boundaries read it into the
+  ;; emission policy; the direct object route refuses it.
+  (shared-object-code-model bool))
 
 (defstruct CompilerBackendState
   (address i64))
@@ -1201,7 +1237,8 @@
         metrics
         (backend_i64_i64_map.with-capacity 1)
         (compiler-backend-target-policy-new CompilerBackendTarget.Linux)
-        (compiler_diagnostic.compiler-advisory-sink-new)))
+        (compiler_diagnostic.compiler-advisory-sink-new)
+        false))
     (CompilerBackendState
       (cast
         (unsafe
@@ -1263,6 +1300,19 @@
       (deref (compiler-backend-state-ptr state)).emission-target-policy
       policy)))
 
+(define (compiler-backend-state-shared-object-code-model?
+  [state : CompilerBackendState]) : bool
+  (unsafe
+    (deref (compiler-backend-state-view state)).shared-object-code-model))
+
+(define (compiler-backend-state-set-shared-object-code-model!
+  [state : CompilerBackendState]
+  [shared-object : bool]) : unit
+  (unsafe
+    (set!
+      (deref (compiler-backend-state-ptr state)).shared-object-code-model
+      shared-object)))
+
 (define (compiler-backend-state-set-representations!
   [state : CompilerBackendState]
   [representations : compiler_ir_types.CompilerIrRepresentationIndex]) : unit
@@ -1315,10 +1365,11 @@
         (deref data).representations
         (compiler_ir_types.compiler-ir-representation-index-build
           type-segment-bases
-          (Program
-            (compiler_ir_types.compiler-ir-global-seq-empty)
-            functions
-            externs))))))
+          (&
+            (Program
+              (compiler_ir_types.compiler-ir-global-seq-empty)
+              functions
+              externs)))))))
 
 (define (compiler-backend-state-ptr [state : CompilerBackendState]) : (MutPtr
     CompilerBackendStateData)
@@ -4411,9 +4462,7 @@
   (match (compiler-backend-global-shared-view spans)
     [(Spans entries _ _)
       (let
-        [count : i64
-          (compiler_ir_types.compiler-source-spans-count
-            (compiler-backend-global-shared-view spans))]
+        [count : i64 (compiler_ir_types.compiler-source-spans-count (& spans))]
         [values : (__tl_dyn-array compiler_ir_types.CompilerMaybeSourceSpan)
           (__tl_make-array compiler_ir_types.CompilerMaybeSourceSpan count)]
         (compiler-backend-source-span-index-fill (&mut values) 0)
@@ -4454,12 +4503,13 @@
   [instr : compiler_ir_types.CompilerIrInstr]
   [fallback : compiler_diagnostic.CompilerDiagnostic]) : compiler_diagnostic.CompilerDiagnostic
   (match (compiler_ir_types.compiler-source-spans-lookup-instr
-    spans
+    (& spans)
     (compiler_ir_types.compiler-ir-symbol-typed-id function)
-    instr)
+    (& instr))
     [(Some span)
       (compiler_diagnostic.compiler-diagnostic-from-ast-span "" span "")]
-    [(No) (compiler_diagnostic.compiler-diagnostic-with-message fallback "")]))
+    [(No)
+      (compiler_diagnostic.compiler-diagnostic-with-message (& fallback) "")]))
 
 ;; Instruction spans use the destination variable as their provenance key.
 ;; Stack-slot coloring may renumber that variable, so keep every keyed value
@@ -4570,7 +4620,9 @@
   [message : String]) : ResultCompilerBackend
   (Err
     (box
-      (compiler_diagnostic.compiler-diagnostic-with-message instr-diag message))))
+      (compiler_diagnostic.compiler-diagnostic-with-message
+        (& instr-diag)
+        message))))
 
 ;; A callee's emission error, restated at the instruction being emitted.
 (define (compiler-backend-instr-error-from
@@ -4654,7 +4706,7 @@
       "backend: unsupported AVX2 vector shape "
       (string.int->string lanes)
       " x "
-      (compiler_ir_types.compiler-ir-type-name type-segment-bases elem-ty))))
+      (compiler_ir_types.compiler-ir-type-name type-segment-bases (& elem-ty)))))
 
 (define compiler-backend-xmm-family-xmm : (__tl_dyn-array String)
   (__tl_make-array
@@ -7120,7 +7172,7 @@
       "backend: unsupported AVX-512 vector shape "
       (string.int->string lanes)
       " x "
-      (compiler_ir_types.compiler-ir-type-name type-segment-bases elem-ty))))
+      (compiler_ir_types.compiler-ir-type-name type-segment-bases (& elem-ty)))))
 
 (define (compiler-backend-avx512-mask-value-reg
   [backend-state : CompilerBackendState]
@@ -7875,12 +7927,13 @@
   (compiler-backend-asm-label
     function
     (compiler_ir_types.compiler-ir-label
-      (str_cat.str-cat
-        "tail_mask_"
-        (compiler_ir_types.compiler-ir-label-text current-label)
-        "_v"
-        (string.int->string dst)
-        suffix))))
+      (&
+        (str_cat.str-cat
+          "tail_mask_"
+          (compiler_ir_types.compiler-ir-label-text current-label)
+          "_v"
+          (string.int->string dst)
+          suffix)))))
 
 (define (compiler-backend-avx2-i64-lane-id-label) : String
   ".L_tl_lane_id_i64x4")
@@ -9061,12 +9114,13 @@
   (compiler-backend-asm-label
     function
     (compiler_ir_types.compiler-ir-label
-      (str_cat.str-cat
-        "vector_shuffle_"
-        (compiler_ir_types.compiler-ir-label-text current-label)
-        "_v"
-        (string.int->string dst)
-        suffix))))
+      (&
+        (str_cat.str-cat
+          "vector_shuffle_"
+          (compiler_ir_types.compiler-ir-label-text current-label)
+          "_v"
+          (string.int->string dst)
+          suffix)))))
 
 (define (compiler-backend-shuffle-selector-offset
   [lane : i64]
@@ -13088,12 +13142,13 @@
   (compiler-backend-asm-label
     function
     (compiler_ir_types.compiler-ir-label
-      (str_cat.str-cat
-        "avx2_mask_"
-        (compiler_ir_types.compiler-ir-label-text current-label)
-        "_v"
-        (string.int->string dst)
-        suffix))))
+      (&
+        (str_cat.str-cat
+          "avx2_mask_"
+          (compiler_ir_types.compiler-ir-label-text current-label)
+          "_v"
+          (string.int->string dst)
+          suffix)))))
 
 (define (compiler-backend-address-add-byte-offset [addr : String] [disp : i64]) : String
   (if (= disp 0)
@@ -14150,15 +14205,12 @@
   [mask : i64]) : i64
   (let
     [ids : (__tl_dyn-array i64) (compiler_liveness.compiler-live-instr-ids)]
-    [id-count : i64
-      (compiler_liveness.compiler-live-instr-use-ids!
-        (compiler-backend-global-shared-view instr))]
+    [id-count : i64 (compiler_liveness.compiler-live-instr-use-ids! (& instr))]
     [out : i64 mask]
     (if (< id-count 0)
       (compiler-backend-plan-body-reg-mask-set
         assignments
-        (compiler_liveness.compiler-live-instr-defs
-          (compiler-backend-global-shared-view instr))
+        (compiler_liveness.compiler-live-instr-defs (& instr))
         (compiler-backend-plan-body-reg-mask-set
           assignments
           (compiler_liveness.compiler-live-instr-uses instr)
@@ -14184,7 +14236,7 @@
   [params : compiler_ir_types.CompilerIrParamSeq]) : i64
   (let
     [seq : compiler_ir_types.CompilerIrBlockSeq
-      (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
+      (compiler_liveness.compiler-live-ir-block-list-to-seq (& blocks))]
     [count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
     [out : i64 0]
     [b : i64 0]
@@ -15451,8 +15503,7 @@
   [incoming? : bool]) : String
   (let
     [seq : compiler_ir_types.CompilerIrBlockSeq
-      (compiler_liveness.compiler-live-ir-block-list-to-seq
-        (compiler-backend-global-shared-view blocks))]
+      (compiler_liveness.compiler-live-ir-block-list-to-seq (& blocks))]
     [selected : compiler_regalloc.CompilerRegAssignmentTable
       (if incoming?
         (compiler-backend-shrinkwrap-incoming-assignments
@@ -18537,7 +18588,7 @@
       span-index
       function
       (compiler_ir_types.compiler-source-spans-lookup-location
-        spans
+        (& spans)
         (compiler_ir_types.compiler-ir-symbol-typed-id function)))))
 
 (define (compiler-backend-debug-instr-location
@@ -18546,9 +18597,9 @@
   (if (not (compiler_ir_types.compiler-debug-info-enabled?))
     ""
     (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
-      (compiler-backend-global-shared-view ctx.spans)
+      (& ctx.spans)
       (compiler_ir_types.compiler-ir-symbol-typed-id ctx.source-function)
-      instr)
+      (& instr))
       [(Some location)
         (compiler-backend-debug-location-directive
           ctx.target-policy.target
@@ -18680,7 +18731,7 @@
           [column : i64 0]
           [_location : unit
             (match (compiler_ir_types.compiler-source-spans-lookup-location
-              spans
+              (& spans)
               (compiler_ir_types.compiler-ir-symbol-typed-id name))
               [(No) unit]
               [(Some location)
@@ -18809,7 +18860,7 @@
   [instr : compiler_ir_types.CompilerIrInstr]) : bool
   (match instr
     [(BoundsCheck _ _ _) true]
-    [(BinOp _ op _ _ _) (compiler_ir_types.compiler-ir-binop-may-fault? op)]
+    [(BinOp _ op _ _ _) (compiler_ir_types.compiler-ir-binop-may-fault? (& op))]
     [(Call _ name _ _)
       (compiler-backend-stdlib-io-panic-name? backend-state name)]
     [_ false]))
@@ -18842,9 +18893,9 @@
   (let
     [function-state : CompilerBackendFunctionState ctx.function-state]
     (match (compiler_ir_types.compiler-source-spans-lookup-instr-location
-      ctx.spans
+      (& ctx.spans)
       (compiler_ir_types.compiler-ir-symbol-typed-id ctx.source-function)
-      instr)
+      (& instr))
       [(No) unit]
       [(Some location)
         (let
@@ -18919,10 +18970,14 @@
       (compiler-backend-function-state-string
         function-state
         compiler-backend-function-string-abort-site-path)]
+    [shared-object : bool
+      (compiler-backend-state-emission-target-policy backend-state).shared-object]
+    ;; Under the shared-object code model the descriptor's path word needs a
+    ;; load-time relocation, so it lives in `.data.rel.ro` instead of inline.
     (str_cat.str-cat
-      "    jmp "
-      end-label
-      "\n    .balign 8\n"
+      (if shared-object
+        "    .pushsection .data.rel.ro,\"aw\",@progbits\n    .balign 8\n"
+        (str_cat.str-cat "    jmp " end-label "\n    .balign 8\n"))
       label
       ":\n    .quad "
       (compiler-backend-string-data-label path)
@@ -18939,8 +18994,9 @@
           function-state
           compiler-backend-function-i64-abort-site-column))
       "\n"
-      end-label
-      ":\n")))
+      (if shared-object
+        "    .popsection\n"
+        (str_cat.str-cat end-label ":\n")))))
 
 ;; SAVE-SECOND runs before SAVE-FIRST. The top of stack is therefore the first
 ;; reported value and can be popped straight into ABI argument 1.
@@ -22390,8 +22446,7 @@
   [lhs : compiler_ir_types.CompilerIrValue]
   [rhs : compiler_ir_types.CompilerIrValue]
   [result-ty : compiler_ast_types.AstType]) : compiler_ast_types.AstType
-  (if (compiler_ir_types.compiler-ir-binop-compare?
-    (compiler-backend-global-shared-view op))
+  (if (compiler_ir_types.compiler-ir-binop-compare? (& op))
     ;; New comparison IR records the operand type directly. Keep the old Bool
     ;; inference fallback for hand-authored optimizer/backend fixtures while
     ;; they migrate; production lowering must never depend on it.
@@ -23527,9 +23582,7 @@
     [(Dense _ _)
       (match (backend_label_i64_map.get
         (& ids)
-        (compiler_liveness.compiler-live-label-set-ref
-          (compiler-backend-global-shared-view succs)
-          0))
+        (compiler_liveness.compiler-live-label-set-ref (& succs) 0))
         [(LookupFound q)
           (if (and (> q h) (<= q le))
             true
@@ -23561,7 +23614,7 @@
           (compiler-backend-const-hoist-succs-inside?
             ids
             (compiler_liveness.compiler-live-block-successors
-              (compiler-backend-global-array-element-shared-view orig p))
+              (& (array-ref orig p)))
             h
             le))
         unit)
@@ -23579,9 +23632,7 @@
     [(Dense _ _)
       (match (backend_label_i64_map.get
         (& ids)
-        (compiler_liveness.compiler-live-label-set-ref
-          (compiler-backend-global-shared-view succs)
-          0))
+        (compiler_liveness.compiler-live-label-set-ref (& succs) 0))
         [(LookupFound q)
           (if (and (>= q lo) (<= q le))
             true
@@ -23626,7 +23677,7 @@
           (compiler-backend-const-hoist-succs-within?
             ids
             (compiler_liveness.compiler-live-block-successors
-              (compiler-backend-global-array-element-shared-view orig p))
+              (& (array-ref orig p)))
             lo
             le)
           (set! (array-ref out found) p)
@@ -25824,7 +25875,7 @@
           vars))]
     [position : i64 0]
     [seq : compiler_ir_types.CompilerIrBlockSeq
-      (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
+      (compiler_liveness.compiler-live-ir-block-list-to-seq (& blocks))]
     [block-count : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
     [b : i64 0]
     (while (< position params.len)
@@ -28634,7 +28685,7 @@
           (compiler-backend-global-shared-view ty))]
       [result-ty : compiler_ast_types.AstType
         (compiler_ir_types.compiler-ir-binop-result-type
-          (compiler-backend-global-shared-view op)
+          (& op)
           (compiler-backend-global-shared-view ty))]
       [dst-home : String
         (compiler-backend-var-register-home backend-state assignments dst)]
@@ -28725,9 +28776,7 @@
           (compiler-backend-global-shared-view rhs)
           (compiler-backend-global-shared-view ty))]
       [result-ty : compiler_ast_types.AstType
-        (compiler_ir_types.compiler-ir-binop-result-type
-          (compiler-backend-global-shared-view op)
-          ty)]
+        (compiler_ir_types.compiler-ir-binop-result-type (& op) ty)]
       [dst-home : String
         (compiler-backend-var-register-home backend-state assignments dst)]
       [mnem : String (compiler-backend-binop-direct-mnemonic op)]
@@ -35464,12 +35513,13 @@
   [dst : i64]
   [suffix : String]) : i64
   (compiler_ir_types.compiler-ir-label
-    (str_cat.str-cat
-      "cast_u64_float_"
-      (compiler_ir_types.compiler-ir-label-text current-label)
-      "_v"
-      (string.int->string dst)
-      suffix)))
+    (&
+      (str_cat.str-cat
+        "cast_u64_float_"
+        (compiler_ir_types.compiler-ir-label-text current-label)
+        "_v"
+        (string.int->string dst)
+        suffix))))
 
 (define (compiler-backend-u64-to-float-cast-asm
   [function : String]
@@ -35549,12 +35599,13 @@
   [dst : i64]
   [suffix : String]) : i64
   (compiler_ir_types.compiler-ir-label
-    (str_cat.str-cat
-      "cast_float_u64_"
-      (compiler_ir_types.compiler-ir-label-text current-label)
-      "_v"
-      (string.int->string dst)
-      suffix)))
+    (&
+      (str_cat.str-cat
+        "cast_float_u64_"
+        (compiler_ir_types.compiler-ir-label-text current-label)
+        "_v"
+        (string.int->string dst)
+        suffix))))
 
 (define (compiler-backend-float-to-u64-cast-asm
   [function : String]
@@ -36391,15 +36442,16 @@
   (compiler-backend-asm-label
     function
     (compiler_ir_types.compiler-ir-label
-      (str_cat.str-cat
-        "alloc"
-        (compiler_ir_types.compiler-ir-label-text current-label)
-        "_i"
+      (&
         (str_cat.str-cat
-          (string.int->string site)
-          "_v"
-          (string.int->string dst)
-          suffix)))))
+          "alloc"
+          (compiler_ir_types.compiler-ir-label-text current-label)
+          "_i"
+          (str_cat.str-cat
+            (string.int->string site)
+            "_v"
+            (string.int->string dst)
+            suffix))))))
 
 (define (compiler-backend-emit-inline-fast-alloc
   [target : CompilerBackendTarget]
@@ -37265,7 +37317,7 @@
         (match (compiler_ir_types.compiler-ir-representation-index-kind
           type-segment-bases
           tables.representations
-          ty)
+          (& ty))
           [(RegisterGroup count _) count]
           ;; Unknown values retain the backend's conservative one-slot fallback;
           ;; only KnownOneWord is positive proof exposed to optimization clients.
@@ -37535,7 +37587,7 @@
         (match (compiler_ir_types.compiler-ir-representation-index-kind
           type-segment-bases
           tables.representations
-          ty)
+          (& ty))
           [(RegisterGroup _ mask) mask]
           [_ 0]))]))
 
@@ -43873,7 +43925,7 @@
     ;; Normalised to a seq: after stack colouring and the call-save rewrite the
     ;; emitted block list is not always the array form.
     [seq : compiler_ir_types.CompilerIrBlockSeq
-      (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
+      (compiler_liveness.compiler-live-ir-block-list-to-seq (& blocks))]
     [n : i64 (compiler_ir_types.compiler-ir-block-seq-count seq)]
     [raw : (__tl_dyn-array i64) (__tl_make-array i64 (* 2 n))]
     [used : i64 0]
@@ -43956,10 +44008,11 @@
   [current-label : i64]
   [suffix : String]) : i64
   (compiler_ir_types.compiler-ir-label
-    (str_cat.str-cat
-      (compiler_ir_types.compiler-ir-label-text current-label)
-      "_branch_"
-      suffix)))
+    (&
+      (str_cat.str-cat
+        (compiler_ir_types.compiler-ir-label-text current-label)
+        "_branch_"
+        suffix))))
 
 (define (compiler-backend-branch-edge-target
   [edge-label : i64]
@@ -47077,12 +47130,13 @@
   (let
     [values : compiler_ir_types.CompilerIrValueSeq
       (compiler_ir_types.compiler-ir-value-seq-prepend
-        active-mask
-        (compiler-backend-spmd-call-values
-          (compiler-backend-global-shared-view args)
-          false))]
+        (& active-mask)
+        (&
+          (compiler-backend-spmd-call-values
+            (compiler-backend-global-shared-view args)
+            false)))]
     [call-args : compiler_ir_types.CompilerIrCallArgs
-      (compiler_ir_types.compiler-ir-call-args-from-seq values)]
+      (compiler_ir_types.compiler-ir-call-args-from-seq (& values))]
     [param-types : compiler_ast_types.AstTypeList
       (compiler_ast_types.ast-type-cons
         (& (Bool))
@@ -47154,7 +47208,7 @@
         (compiler-backend-global-shared-view args)
         true)]
     [uniform-args : compiler_ir_types.CompilerIrCallArgs
-      (compiler_ir_types.compiler-ir-call-args-from-seq uniform-values)]
+      (compiler_ir_types.compiler-ir-call-args-from-seq (& uniform-values))]
     [uniform-types : compiler_ast_types.AstTypeList
       (compiler-backend-spmd-call-types-from
         (compiler-backend-global-shared-view args)
@@ -47276,7 +47330,7 @@
         (compiler-backend-global-shared-view args)
         true)]
     [uniform-args : compiler_ir_types.CompilerIrCallArgs
-      (compiler_ir_types.compiler-ir-call-args-from-seq uniform-values)]
+      (compiler_ir_types.compiler-ir-call-args-from-seq (& uniform-values))]
     [uniform-types : compiler_ast_types.AstTypeList
       (compiler-backend-spmd-call-types-from
         (compiler-backend-global-shared-view args)
@@ -47993,16 +48047,18 @@
   [current-label : i64]
   [tag : i64]) : i64
   (compiler_ir_types.compiler-ir-label
-    (str_cat.str-cat
-      (compiler_ir_types.compiler-ir-label-text current-label)
-      "_switch_case_"
-      (compiler-backend-switch-case-tag-text tag))))
+    (&
+      (str_cat.str-cat
+        (compiler_ir_types.compiler-ir-label-text current-label)
+        "_switch_case_"
+        (compiler-backend-switch-case-tag-text tag)))))
 
 (define (compiler-backend-switch-default-edge-label [current-label : i64]) : i64
   (compiler_ir_types.compiler-ir-label
-    (str_cat.str-cat
-      (compiler_ir_types.compiler-ir-label-text current-label)
-      "_switch_default")))
+    (&
+      (str_cat.str-cat
+        (compiler_ir_types.compiler-ir-label-text current-label)
+        "_switch_default"))))
 
 (define (compiler-backend-emit-switch-edge-block
   [function : String]
@@ -48106,10 +48162,11 @@
   (compiler-backend-asm-label
     function
     (compiler_ir_types.compiler-ir-label
-      (str_cat.str-cat
-        (compiler_ir_types.compiler-ir-label-text current-label)
-        "_switch_table"
-        ""))))
+      (&
+        (str_cat.str-cat
+          (compiler_ir_types.compiler-ir-label-text current-label)
+          "_switch_table"
+          "")))))
 
 (define (compiler-backend-emit-switch-table-cases-into
   [function : String]
@@ -48332,10 +48389,11 @@
       (compiler-backend-asm-label
         (compiler-backend-global-shared-view function)
         (compiler_ir_types.compiler-ir-label
-          (str_cat.str-cat
-            (compiler_ir_types.compiler-ir-label-text current-label)
-            "_disp_j"
-            "")))]
+          (&
+            (str_cat.str-cat
+              (compiler_ir_types.compiler-ir-label-text current-label)
+              "_disp_j"
+              ""))))]
     ;; Emits the borrowed-occupant restores here (before the transfer) and
     ;; suppresses the wrap's trailing restore. Must be spliced AFTER the target
     ;; stash and BEFORE the indirect jump.
@@ -48481,18 +48539,20 @@
       (compiler-backend-asm-label
         (compiler-backend-global-shared-view function)
         (compiler_ir_types.compiler-ir-label
-          (str_cat.str-cat
-            (compiler_ir_types.compiler-ir-label-text current-label)
-            "_disp_j"
-            "")))]
+          (&
+            (str_cat.str-cat
+              (compiler_ir_types.compiler-ir-label-text current-label)
+              "_disp_j"
+              ""))))]
     [default-stub-label : String
       (compiler-backend-asm-label
         (compiler-backend-global-shared-view function)
         (compiler_ir_types.compiler-ir-label
-          (str_cat.str-cat
-            (compiler_ir_types.compiler-ir-label-text current-label)
-            "_disp_d"
-            "")))]
+          (&
+            (str_cat.str-cat
+              (compiler_ir_types.compiler-ir-label-text current-label)
+              "_disp_d"
+              ""))))]
     [rebase : String
       (if (= base 0)
         ""
@@ -68462,7 +68522,7 @@
                 (set!
                   found
                   (and
-                    (compiler_ir_types.compiler-ir-binop-compare? op)
+                    (compiler_ir_types.compiler-ir-binop-compare? (& op))
                     (or
                       (and
                         (compiler-backend-placement-marked?
@@ -70534,7 +70594,8 @@
                     (&mut idom)
                     0)]
                 [seq : compiler_ir_types.CompilerIrBlockSeq
-                  (compiler_liveness.compiler-live-ir-block-list-to-seq blocks)]
+                  (compiler_liveness.compiler-live-ir-block-list-to-seq
+                    (& blocks))]
                 [block-count : i64
                   (compiler_ir_types.compiler-ir-block-seq-count seq)]
                 [block-index : (__tl_dyn-array i64)
@@ -71280,7 +71341,7 @@
                 (compiler_regalloc.compiler-reg-live-interval-selection-with-live-in
                   (compiler-backend-global-shared-view scavenge-func)
                   (compiler_liveness.compiler-live-analyze-function
-                    scavenge-func)
+                    (& scavenge-func))
                   false))
               (compiler_regalloc.CompilerRegIntervalSelection.Selection
                 (compiler_regalloc.compiler-reg-interval-seq-empty)
@@ -72633,7 +72694,7 @@
   (match func
     [(Function _ _ _ _ blocks _)
       (<=
-        (compiler_ir_types.compiler-ir-block-list-instruction-count blocks)
+        (compiler_ir_types.compiler-ir-block-list-instruction-count (& blocks))
         (compiler-backend-direct-emit-instr-limit))]))
 
 (define (compiler-backend-emit-function-scratch
@@ -73208,9 +73269,10 @@
     [vars : i64 (compiler-backend-type-list-count param-types)]
     [args : compiler_ir_types.CompilerIrCallArgs
       (compiler_ir_types.compiler-ir-call-args-from-seq
-        (compiler-backend-var-value-seq
-          (compiler-backend-type-list-count param-types)
-          0))]
+        (&
+          (compiler-backend-var-value-seq
+            (compiler-backend-type-list-count param-types)
+            0)))]
     [extern-call-info : i64
       (compiler-backend-index-extern-call-info program-index name)]
     [frame : i64
@@ -76606,7 +76668,7 @@
       (when
         (> (string.string-length spec) 0)
         (begin
-          (compiler_ir_types.compiler-debug-path-remap-set! spec)
+          (compiler_ir_types.compiler-debug-path-remap-set! (& spec))
           unit)))))
 
 ;; `_tl_start` is the freestanding Linux entry and the only function this
@@ -76636,6 +76698,633 @@
 ;; silently continue on the original small stack when mmap fails: report the
 ;; failed reservation and exit 134 so a runner constraint cannot masquerade as
 ;; an unrelated compiler SIGSEGV.
+;; --- Shared-object code model (#8257) ---------------------------------------
+;; A Linux shared object needs object code with no text relocation, no
+;; local-exec TLS and no exported internal symbol. The emission keeps the
+;; executable code everywhere else, so the model is applied by one pass over
+;; the finished assembly (`compiler-backend-shared-object-assembly`) plus two
+;; emission changes the pass cannot make: the program has no entry, only
+;; `tl_shared_object_init`, and an abort-site descriptor is placed in
+;; `.data.rel.ro` instead of inline in `.text`. The executable code model's
+;; output is unchanged.
+(define (compiler-backend-shared-object-target-message
+  [target : CompilerBackendTarget]) : String
+  (str_cat.str-cat
+    "backend: the shared-object code model needs an ELF target; "
+    (compiler-backend-target-triple target)
+    " has none"))
+
+;; The shared object's one initializer: the program's global initializers,
+;; which an executable runs from `_tl_start`. A host calls it once, through an
+;; export shim, before any other entry; #8194's lifecycle child owns that
+;; contract. The initializers only call ABI-conforming functions and copy
+;; results into globals through %rax, %rdx, %r10 and %xmm0, so the wrapper only
+;; realigns the stack for those calls.
+(define (compiler-backend-shared-object-init [global-inits : String]) : String
+  (str_cat.str-cat
+    "    .text
+    .globl tl_shared_object_init
+    .type tl_shared_object_init,@function
+tl_shared_object_init:
+    subq $8, %rsp
+"
+    global-inits
+    "    addq $8, %rsp
+    ret
+    .size tl_shared_object_init, . - tl_shared_object_init
+"))
+
+;; The register a TLS store borrows under the shared-object code model, by
+;; enclosing function, or "" for none. An initial-exec store reaches the
+;; variable through its GOT offset, which must be loaded into a register first.
+;; Each runtime helper that stores TLS names a register dead at its stores.
+;; Generated code stores TLS only through the current-arena store builtin,
+;; which is lowered at a call site, where %rax is call-clobbered.
+(define (compiler-backend-shared-object-tls-scratch
+  [function : (& function str)]) : String
+  (cond
+    [(or
+        (string.eq function "tl_alloc")
+        (string.eq function "tl_alloc_aligned")
+        (string.eq function "tl_arena_set")
+        (string.eq function "tl_backtrace_stack_set"))
+      "%rax"]
+    [(string.eq function "tl_region_reset") "%rbx"]
+    [(string.is-string-prefix-at function "tl_" 0) ""]
+    [else "%rax"]))
+
+(defenum CompilerBackendSharedObjectLine
+  (Ok String)
+  (Err String))
+
+;; The symbol between PREFIX and `@tpoff` in OPERAND, or "".
+(define (compiler-backend-shared-object-tls-symbol
+  [operand : (& operand str)]
+  [prefix : (& prefix str)]) : String
+  (let
+    [length : i64 (string.string-length operand)]
+    [prefix-length : i64 (string.string-length prefix)]
+    (if (and
+      (string.is-string-prefix-at operand prefix 0)
+      (> length (+ prefix-length 6))
+      (string.is-string-prefix-at operand "@tpoff" (- length 6)))
+      (string.substring operand prefix-length (- length (+ prefix-length 6)))
+      "")))
+
+;; One instruction line holding `@tpoff`, rewritten from local-exec to
+;; initial-exec: a load reads the GOT offset into its own destination, an
+;; offset immediate becomes the GOT word, and a store borrows SCRATCH.
+(define (compiler-backend-shared-object-tls-line
+  [line : (& line str)]
+  [function : (& function str)]) : CompilerBackendSharedObjectLine
+  (let
+    [text : String (string.trim line)]
+    [space : i64 (string.index-of-byte (& text) 0 (cast 32 : u8))]
+    [comma : i64 (string.index-of-byte (& text) 0 (cast 44 : u8))]
+    [unsupported : String
+      (str_cat.str-cat
+        "backend: no shared-object form for TLS access `"
+        text
+        "` in "
+        function)]
+    (if (or (< space 0) (< comma space))
+      (Err unsupported)
+      (let
+        [mnemonic : String (string.substring (& text) 0 space)]
+        [source : String
+          (string.trim
+            (& (string.substring (& text) (+ space 1) (- comma (+ space 1)))))]
+        [dest : String
+          (string.trim
+            (&
+              (string.substring
+                (& text)
+                (+ comma 1)
+                (- (string.string-length (& text)) (+ comma 1)))))]
+        [load-symbol : String
+          (compiler-backend-shared-object-tls-symbol (& source) "%fs:")]
+        [store-symbol : String
+          (compiler-backend-shared-object-tls-symbol (& dest) "%fs:")]
+        [offset-symbol : String
+          (compiler-backend-shared-object-tls-symbol (& source) "$")]
+        (cond
+          [(and
+              (string.eq mnemonic "movq")
+              (> (string.string-length (& load-symbol)) 0)
+              (string.is-string-prefix-at dest "%" 0))
+            (Ok
+              (str_cat.str-cat
+                "    movq "
+                load-symbol
+                "@gottpoff(%rip), "
+                dest
+                "\n    movq %fs:("
+                dest
+                "), "
+                dest))]
+          [(and
+              (string.eq mnemonic "movq")
+              (> (string.string-length (& store-symbol)) 0))
+            (let
+              [scratch : String
+                (compiler-backend-shared-object-tls-scratch function)]
+              (if (or
+                (= (string.string-length (& scratch)) 0)
+                (string.eq scratch source))
+                (Err
+                  (str_cat.str-cat
+                    "backend: no shared-object scratch register for TLS store `"
+                    text
+                    "` in "
+                    function))
+                (Ok
+                  (str_cat.str-cat
+                    "    movq "
+                    store-symbol
+                    "@gottpoff(%rip), "
+                    scratch
+                    "\n    movq "
+                    source
+                    ", %fs:("
+                    scratch
+                    ")"))))]
+          [(and
+              (or (string.eq mnemonic "movq") (string.eq mnemonic "addq"))
+              (> (string.string-length (& offset-symbol)) 0)
+              (string.is-string-prefix-at dest "%" 0))
+            (Ok
+              (str_cat.str-cat
+                "    "
+                mnemonic
+                " "
+                offset-symbol
+                "@gottpoff(%rip), "
+                dest))]
+          ;; `@gottpoff` takes only mov and add, so a subtracted offset is added
+          ;; to the negated register. The value matches; the flags do not, and
+          ;; the one such site, in tl_thread_init, never reads them.
+          [(and
+              (string.eq mnemonic "subq")
+              (> (string.string-length (& offset-symbol)) 0)
+              (string.is-string-prefix-at dest "%" 0))
+            (Ok
+              (str_cat.str-cat
+                "    negq "
+                dest
+                "\n    addq "
+                offset-symbol
+                "@gottpoff(%rip), "
+                dest
+                "\n    negq "
+                dest))]
+          [else (Err unsupported)])))))
+
+;; The first offset in [START, END) of TEXT that is not a space or tab.
+(define (compiler-backend-shared-object-skip-blank
+  [text : (& text str)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [index : i64 start]
+    (while (and
+      (< index end)
+      (or
+        (= (string.char-at text index) ' ')
+        (= (string.char-at text index) '\t')))
+      (set! index (+ index 1)))
+    index))
+
+;; Whether the line [START, END) of TEXT, from its first non-blank byte, is a
+;; `.quad` whose operand is not an integer: an address the loader relocates.
+(define (compiler-backend-shared-object-relocated-word?
+  [text : (& text str)]
+  [start : i64]
+  [end : i64]) : bool
+  (if (string.is-string-prefix-at text ".quad " start)
+    (let
+      [index : i64
+        (compiler-backend-shared-object-skip-blank text (+ start 6) end)]
+      [numeric : bool (< index end)]
+      (when
+        (and (< index end) (= (string.char-at text index) '-'))
+        (set! index (+ index 1)))
+      (when
+        (string.is-string-prefix-at text "0x" index)
+        (set! index (+ index 2)))
+      (set! numeric (< index end))
+      (while (and numeric (< index end))
+        (let
+          [c : char (string.char-at text index)]
+          (unless
+            (or
+              (and (>= c '0') (<= c '9'))
+              (and (>= c 'a') (<= c 'f'))
+              (and (>= c 'A') (<= c 'F'))
+              (= c ' ')
+              (= c '\t'))
+            (set! numeric false)))
+        (set! index (+ index 1)))
+      (not numeric))
+    false))
+
+;; What the line of TEXT whose first non-blank byte is at START does to the
+;; current section: 0 nothing, 1 select a writable or code section, 2 select a
+;; read-only data section, 3 push a section, 4 pop one. A push of a read-only
+;; section is 5. Every prefix tested holds no newline, so no match crosses the
+;; line's end.
+(define (compiler-backend-shared-object-section-kind
+  [text : (& text str)]
+  [start : i64]) : i64
+  (let
+    [push : bool (string.is-string-prefix-at text ".pushsection " start)]
+    [name-start : i64
+      (cond
+        [push (+ start 13)]
+        [(string.is-string-prefix-at text ".section " start) (+ start 9)]
+        [else -1])]
+    (cond
+      [(>= name-start 0)
+        (let
+          [read-only : bool
+            (or
+              (string.is-string-prefix-at text ".rodata" name-start)
+              (string.is-string-prefix-at
+                text
+                ".typelisp_backtrace,"
+                name-start))]
+          (cond [(and push read-only) 5] [push 3] [read-only 2] [else 1]))]
+      [(string.is-string-prefix-at text ".popsection" start) 4]
+      [(or
+          (string.is-string-prefix-at text ".text" start)
+          (string.is-string-prefix-at text ".data" start)
+          (string.is-string-prefix-at text ".bss" start))
+        1]
+      [else 0])))
+
+;; Whether the section directive whose first byte is at START of TEXT selects
+;; code: a `.text` directive, or a `.section`/`.pushsection` of a `.text*`
+;; section such as the runtime's `.text.typelisp_runtime`.
+(define (compiler-backend-shared-object-text-section?
+  [text : (& text str)]
+  [start : i64]) : bool
+  (or
+    (string.is-string-prefix-at text ".text" start)
+    (string.is-string-prefix-at text ".section .text" start)
+    (string.is-string-prefix-at text ".pushsection .text" start)))
+
+;; The directive that replaces a moved read-only section directive whose first
+;; byte is at START of TEXT: the same kind (a push stays a push, so its
+;; `.popsection` still matches), now writable for the loader's relocations.
+(define (compiler-backend-shared-object-moved-section
+  [text : (& text str)]
+  [start : i64]) : String
+  (let
+    [push : bool (string.is-string-prefix-at text ".pushsection " start)]
+    [name-start : i64
+      (if push
+        (+ start 13)
+        (+ start 9))]
+    (str_cat.str-cat
+      (if push
+        "    .pushsection "
+        "    .section ")
+      (if (string.is-string-prefix-at text ".typelisp_backtrace" name-start)
+        ".typelisp_backtrace"
+        ".data.rel.ro")
+      ",\"aw\",@progbits")))
+
+;; Whether the line [START, END) of TEXT mentions a local-exec TLS offset.
+(define (compiler-backend-shared-object-tls-line?
+  [text : (& text str)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [at : i64 (string.index-of-byte text start (cast 64 : u8))]
+    [found : bool false]
+    (while (and (not found) (>= at 0) (< at end))
+      (if (string.is-string-prefix-at text "@tpoff" at)
+        (set! found true)
+        (set! at (string.index-of-byte text (+ at 1) (cast 64 : u8)))))
+    found))
+
+;; The extern symbol TEXT reads rip-relatively on the line [START, END) when
+;; it names one in EXTERNS, else "".
+(define (compiler-backend-shared-object-extern-reference
+  [text : (& text str)]
+  [start : i64]
+  [end : i64]
+  [externs : (& externs backend_string_i64_map.Map)]) : String
+  (let
+    [open : i64 (string.index-of-byte text start (cast 40 : u8))]
+    [found : String ""]
+    (while (and (>= open 0) (< open end) (= (string.string-length (& found)) 0))
+      (when
+        (string.is-string-prefix-at text "(%rip)" open)
+        (let
+          [first : i64 open]
+          [scanning : bool true]
+          (while (and scanning (> first start))
+            (let
+              [c : char (string.char-at text (- first 1))]
+              (if (or
+                (and (>= c 'a') (<= c 'z'))
+                (and (>= c 'A') (<= c 'Z'))
+                (and (>= c '0') (<= c '9'))
+                (= c '_')
+                (= c '.'))
+                (set! first (- first 1))
+                (set! scanning false))))
+          (when
+            (< first open)
+            (let
+              [symbol : String (string.substring text first (- open first))]
+              (when
+                (backend_string_i64_map.contains?
+                  externs
+                  (string.copy (& symbol)))
+                (set! found symbol))))))
+      (set! open (string.index-of-byte text (+ open 1) (cast 40 : u8))))
+    found))
+
+;; One instruction line reading extern SYMBOL rip-relatively, rewritten to
+;; reach it through the GOT: the symbol may be defined in another object of
+;; the process, so its address is the GOT word, not a link-time constant.
+(define (compiler-backend-shared-object-extern-line
+  [line : (& line str)]
+  [symbol : (& symbol str)]
+  [function : (& function str)]) : CompilerBackendSharedObjectLine
+  (let
+    [text : String (string.trim line)]
+    [space : i64 (string.index-of-byte (& text) 0 (cast 32 : u8))]
+    [comma : i64 (string.index-of-byte (& text) 0 (cast 44 : u8))]
+    [unsupported : String
+      (str_cat.str-cat
+        "backend: no shared-object form for extern access `"
+        text
+        "` in "
+        function)]
+    (if (or (< space 0) (< comma space))
+      (Err unsupported)
+      (let
+        [mnemonic : String (string.substring (& text) 0 space)]
+        [source : String
+          (string.trim
+            (& (string.substring (& text) (+ space 1) (- comma (+ space 1)))))]
+        [dest : String
+          (string.trim
+            (&
+              (string.substring
+                (& text)
+                (+ comma 1)
+                (- (string.string-length (& text)) (+ comma 1)))))]
+        [rip-symbol : String (str_cat.str-cat symbol "(%rip)")]
+        (cond
+          [(not
+              (and
+                (string.eq source rip-symbol)
+                (string.is-string-prefix-at dest "%" 0)))
+            (Err unsupported)]
+          [(string.eq mnemonic "leaq")
+            (Ok (str_cat.str-cat "    movq " symbol "@GOTPCREL(%rip), " dest))]
+          [(string.eq mnemonic "movq")
+            (Ok
+              (str_cat.str-cat
+                "    movq "
+                symbol
+                "@GOTPCREL(%rip), "
+                dest
+                "\n    movq ("
+                dest
+                "), "
+                dest))]
+          [else (Err unsupported)])))))
+
+;; TEXT, a whole executable-model assembly, under the shared-object code
+;; model:
+;; - every `.globl` symbol is also `.hidden`, so the object exports nothing
+;;   until #8194's export policy names a symbol;
+;; - every local-exec TLS access becomes initial-exec
+;;   (`compiler-backend-shared-object-tls-line`), so the object links into a
+;;   DSO marked static-TLS;
+;; - a rip-relative read of an `.extern` symbol goes through the GOT, since
+;;   the symbol may live in another object of the process;
+;; - a read-only data run holding a relocated word moves to `.data.rel.ro`, which
+;;   the loader writes once before RELRO seals it.
+;; A relocated word left in `.text` would be a text relocation; that is an
+;; error here rather than a link failure later. Lines are scanned in place and
+;; unchanged runs are copied whole, so the pass allocates per edit, not per
+;; line.
+(define (compiler-backend-shared-object-assembly [text : String]) : ResultCompilerBackendBuffer
+  (let
+    [length : i64 (string.string-length (& text))]
+    [moved : (__tl_dyn-array i64) (__tl_make-array i64 0)]
+    [moved-count : i64 0]
+    [chunk-start : i64 -1]
+    [chunk-relocated : bool false]
+    [pushed-text : (__tl_dyn-array bool) (__tl_make-array bool 0)]
+    [depth : i64 0]
+    [in-text : bool true]
+    [externs : backend_string_i64_map.Map
+      (backend_string_i64_map.with-capacity 16)]
+    [error : String ""]
+    [start : i64 0]
+    ;; Pass 1: record the directive of each read-only run that holds a
+    ;; relocated word, and refuse a relocated word in `.text`.
+    (while (and (< start length) (= (string.string-length (& error)) 0))
+      (let
+        [newline : i64 (string.index-of-byte (& text) start (cast 10 : u8))]
+        [end : i64
+          (if (< newline 0)
+            length
+            newline)]
+        [first : i64
+          (compiler-backend-shared-object-skip-blank (& text) start end)]
+        [kind : i64
+          (compiler-backend-shared-object-section-kind (& text) first)]
+        (when
+          (string.is-string-prefix-at (& text) ".extern " first)
+          (backend_string_i64_map.insert-ref!
+            (&mut externs)
+            (string.trim
+              (& (string.substring (& text) (+ first 8) (- end (+ first 8)))))
+            1))
+        (cond
+          [(> kind 0)
+            (when
+              (and (>= chunk-start 0) chunk-relocated)
+              (__tl_array-push! moved chunk-start)
+              (set! moved-count (+ moved-count 1)))
+            (set! chunk-start -1)
+            (set! chunk-relocated false)
+            (cond
+              [(= kind 4)
+                (if (> depth 0)
+                  (begin
+                    (set! depth (- depth 1))
+                    (set! in-text (array-ref pushed-text depth)))
+                  (set! in-text true))]
+              [else
+                (when
+                  (or (= kind 3) (= kind 5))
+                  (if (< depth (array-length pushed-text))
+                    (set! (array-ref pushed-text depth) in-text)
+                    (__tl_array-push! pushed-text in-text))
+                  (set! depth (+ depth 1)))
+                (set!
+                  in-text
+                  (compiler-backend-shared-object-text-section? (& text) first))
+                (when (or (= kind 2) (= kind 5)) (set! chunk-start start))])]
+          [(compiler-backend-shared-object-relocated-word? (& text) first end)
+            (cond
+              [(>= chunk-start 0) (set! chunk-relocated true)]
+              [in-text
+                (set!
+                  error
+                  (str_cat.str-cat
+                    "backend: shared-object code model leaves a relocated word in .text: "
+                    (string.substring (& text) first (- end first))))]
+              [else unit])]
+          [else unit])
+        (set! start (+ end 1))))
+    (when
+      (and (>= chunk-start 0) chunk-relocated)
+      (__tl_array-push! moved chunk-start)
+      (set! moved-count (+ moved-count 1)))
+    (if (> (string.string-length (& error)) 0)
+      (Err (box (compiler_diagnostic.compiler-diagnostic-at-start "" error)))
+      ;; Pass 2: copy unchanged runs and rewrite the marked lines.
+      (let
+        [out : text_buf.TextBuf (text_buf.empty)]
+        [copied : i64 0]
+        [next-moved : i64 0]
+        [function : String ""]
+        (set! start 0)
+        (while (and (< start length) (= (string.string-length (& error)) 0))
+          (let
+            [newline : i64 (string.index-of-byte (& text) start (cast 10 : u8))]
+            [end : i64
+              (if (< newline 0)
+                length
+                newline)]
+            [first : i64
+              (compiler-backend-shared-object-skip-blank (& text) start end)]
+            ;; The extern an instruction reads rip-relatively, or "".
+            [extern-symbol : String
+              (if (and
+                (< first end)
+                (not (= (string.char-at (& text) first) '.')))
+                (compiler-backend-shared-object-extern-reference
+                  (& text)
+                  first
+                  end
+                  (& externs))
+                "")]
+            (cond
+              [(and
+                (< next-moved moved-count)
+                (= (array-ref moved next-moved) start))
+                (set! next-moved (+ next-moved 1))
+                (set!
+                  out
+                  (text_buf.append
+                    (text_buf.append
+                      out
+                      (string.substring (& text) copied (- start copied)))
+                    (compiler-backend-shared-object-moved-section
+                      (& text)
+                      first)))
+                (set! copied end)]
+              [(string.is-string-prefix-at (& text) ".globl " first)
+                (set!
+                  out
+                  (text_buf.append
+                    (text_buf.append
+                      (text_buf.append
+                        out
+                        (string.substring (& text) copied (- end copied)))
+                      "\n    .hidden ")
+                    (string.substring
+                      (& text)
+                      (compiler-backend-shared-object-skip-blank
+                        (& text)
+                        (+ first 7)
+                        end)
+                      (-
+                        end
+                        (compiler-backend-shared-object-skip-blank
+                          (& text)
+                          (+ first 7)
+                          end)))))
+                (set! copied end)]
+              [(and
+                  (= first start)
+                  (> end (+ start 1))
+                  (not (= (string.char-at (& text) start) '.'))
+                  (= (string.char-at (& text) (- end 1)) ':'))
+                (set!
+                  function
+                  (string.substring (& text) start (- (- end start) 1)))]
+              ;; Only an instruction is rewritten; a `.string` or `.ascii`
+              ;; directive may spell `@tpoff` as data.
+              [(and
+                  (< first end)
+                  (not (= (string.char-at (& text) first) '.'))
+                  (compiler-backend-shared-object-tls-line? (& text) first end))
+                (match (compiler-backend-shared-object-tls-line
+                  (& (string.substring (& text) start (- end start)))
+                  (& function))
+                  [(Ok rewritten)
+                    (set!
+                      out
+                      (text_buf.append
+                        (text_buf.append
+                          out
+                          (string.substring (& text) copied (- start copied)))
+                        rewritten))
+                    (set! copied end)]
+                  [(Err message) (set! error message)])]
+              [(> (string.string-length (& extern-symbol)) 0)
+                (match (compiler-backend-shared-object-extern-line
+                  (& (string.substring (& text) start (- end start)))
+                  (& extern-symbol)
+                  (& function))
+                  [(Ok rewritten)
+                    (set!
+                      out
+                      (text_buf.append
+                        (text_buf.append
+                          out
+                          (string.substring (& text) copied (- start copied)))
+                        rewritten))
+                    (set! copied end)]
+                  [(Err message) (set! error message)])]
+              [else unit])
+            (set! start (+ end 1))))
+        (if (> (string.string-length (& error)) 0)
+          (Err
+            (box (compiler_diagnostic.compiler-diagnostic-at-start "" error)))
+          (Ok
+            (text_buf.append
+              out
+              (string.substring (& text) copied (- length copied)))))))))
+
+;; RESULT, an unstreamed emission, under the shared-object code model when the
+;; emission policy asks for it. A streamed emission is rewritten once its
+;; stream finishes, in the final-buffer entry instead.
+(define (compiler-backend-shared-object-unstreamed
+  [backend-state : CompilerBackendState]
+  [result : ResultCompilerBackendBuffer]) : ResultCompilerBackendBuffer
+  (match result
+    [(Ok buf)
+      (if (and
+        (compiler-backend-state-emission-target-policy backend-state).shared-object
+        (not
+          (compiler-backend-assembly-stream-active?
+            (compiler-backend-state-stream-state backend-state))))
+        (compiler-backend-shared-object-assembly (text_buf.render buf))
+        (Ok buf))]
+    [(Err message) (Err message)]))
+
 (define (compiler-backend-entry-call-main) : String
   (x64_catalog.compiler-x64-template-render-assembly
     (if (compiler_ir_types.compiler-debug-info-enabled?)
@@ -76987,10 +77676,13 @@
                                 [prefix-buf : text_buf.TextBuf
                                   (text_buf.append
                                     runtime-externs-buf
-                                    (compiler-backend-target-entry-text-with-crt
-                                      target
-                                      emit-entry
-                                      crt-entry))]
+                                    (if (compiler-backend-state-emission-target-policy
+                                      program-index.backend-state).shared-object
+                                      ".text\n"
+                                      (compiler-backend-target-entry-text-with-crt
+                                        target
+                                        emit-entry
+                                        crt-entry)))]
                                 (begin
                                   (cfg
                                     compile-profile
@@ -77282,15 +77974,22 @@
                                   target
                                   runtime-features)
                                 ""))
-                            (if emit-entry
-                              (compiler-backend-entry-for-target-with-crt
-                                type-segment-bases
-                                target
-                                plan
-                                globals
-                                crt-entry
-                                program-index)
-                              ""))]
+                            (cond
+                              [(not emit-entry) ""]
+                              [target-policy.shared-object
+                                (compiler-backend-shared-object-init
+                                  (compiler-backend-global-initializers
+                                    type-segment-bases
+                                    globals
+                                    program-index))]
+                              [else
+                                (compiler-backend-entry-for-target-with-crt
+                                  type-segment-bases
+                                  target
+                                  plan
+                                  globals
+                                  crt-entry
+                                  program-index)]))]
                         (begin
                           (cfg
                             compile-profile
@@ -77344,10 +78043,22 @@
   [pic-emit? : bool]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendBuffer
   (begin
+    (when
+      (and
+        (compiler-backend-state-shared-object-code-model? backend-state)
+        (not (compiler-backend-target-elf? target)))
+      (return
+        (Err
+          (box
+            (compiler_diagnostic.compiler-diagnostic-at-start
+              ""
+              (compiler-backend-shared-object-target-message target))))))
     (compiler-backend-debug-path-remap-load-environment!)
     (compiler-backend-state-set-emission-target-policy!
       backend-state
-      (compiler-backend-target-policy-new target))
+      (compiler-backend-target-policy-for-code-model
+        target
+        (compiler-backend-state-shared-object-code-model? backend-state)))
     (compiler-backend-state-set-metrics!
       backend-state
       (profile_state.compiler-profile-state-metrics profile-state))
@@ -77360,9 +78071,14 @@
       backend-state
       (compiler-backend-state-stream-state backend-state))
     (compiler-backend-state-set-abort-site-counter! backend-state 0)
+    ;; An absolute `jmp *table(,idx,8)` needs a text relocation in a shared
+    ;; object, so that code model takes the rip-relative table form.
     (compiler-backend-state-set-absolute-switch-ok!
       backend-state
-      (and (not pic-emit?) (compiler-backend-target-elf? target)))
+      (and
+        (not pic-emit?)
+        (not (compiler-backend-state-shared-object-code-model? backend-state))
+        (compiler-backend-target-elf? target)))
     (cfg
       test
       (profile_state.compiler-profile-metrics-reset-range!
@@ -77444,23 +78160,25 @@
                                   plan
                                   program-index
                                   emit-entry))]
-                            (compiler-backend-emit-program-buffer-after-index
-                              type-segment-bases
-                              program
-                              (compiler-backend-state-emission-target-policy
-                                backend-state)
-                              mode
-                              functions
-                              globals
-                              externs
-                              plan
-                              runtime-index
-                              program-index
-                              spans
-                              globals-buf
-                              collections
-                              emit-entry
-                              crt-entry)))]
+                            (compiler-backend-shared-object-unstreamed
+                              backend-state
+                              (compiler-backend-emit-program-buffer-after-index
+                                type-segment-bases
+                                program
+                                (compiler-backend-state-emission-target-policy
+                                  backend-state)
+                                mode
+                                functions
+                                globals
+                                externs
+                                plan
+                                runtime-index
+                                program-index
+                                spans
+                                globals-buf
+                                collections
+                                emit-entry
+                                crt-entry))))]
                       [(Err message)
                         (begin
                           (cfg
@@ -79556,16 +80274,18 @@
               (compiler-backend-asm-label
                 (compiler-backend-global-shared-view label-scope)
                 (compiler_ir_types.compiler-ir-label
-                  (str_cat.str-cat
-                    (compiler_ir_types.compiler-ir-label-text current-label)
-                    ".phit")))]
+                  (&
+                    (str_cat.str-cat
+                      (compiler_ir_types.compiler-ir-label-text current-label)
+                      ".phit"))))]
             [false-edge : String
               (compiler-backend-asm-label
                 label-scope
                 (compiler_ir_types.compiler-ir-label
-                  (str_cat.str-cat
-                    (compiler_ir_types.compiler-ir-label-text current-label)
-                    ".phif")))]
+                  (&
+                    (str_cat.str-cat
+                      (compiler_ir_types.compiler-ir-label-text current-label)
+                      ".phif"))))]
             [branched : object_target.CompilerBackendObjectTargetParts
               (compiler-backend-object-jcc
                 (compiler-backend-object-branch-test
@@ -81039,7 +81759,8 @@
     [(MissingRuntimeEntry) "missing-runtime-entry"]
     [(EmptyTextSection) "empty-text-section"]
     [(TargetMismatch) "target-mismatch"]
-    [(ForcedAssembly) "forced-assembly"]))
+    [(ForcedAssembly) "forced-assembly"]
+    [(SharedObjectCodeModel) "shared-object-code-model"]))
 
 (define (compiler-direct-object-fallback-context
   [reason : CompilerDirectObjectFallbackReason]) : String
@@ -81492,20 +82213,24 @@
   [program : compiler_ir_types.CompilerIrProgram]) : CompilerBackendObjectEligibility
   (match program
     [(Program globals functions _)
-      (if (not
-        (and
-          (compiler-backend-object-globals-semantically-supported?
-            (compiler-backend-global-shared-view globals))
-          (compiler-backend-object-functions-semantically-supported?
-            backend-state
-            (compiler-backend-global-shared-view functions))))
-        (Unsupported (compiler-backend-object-unsupported-semantics-category))
-        (compiler-backend-object-functions-abi-eligibility
-          program-index.type-segment-bases
-          target
-          program-index
-          (compiler-backend-global-types globals)
-          functions))]))
+      (cond
+        [(compiler-backend-state-shared-object-code-model? backend-state)
+          (Unsupported (SharedObjectCodeModel))]
+        [(not
+            (and
+              (compiler-backend-object-globals-semantically-supported?
+                (compiler-backend-global-shared-view globals))
+              (compiler-backend-object-functions-semantically-supported?
+                backend-state
+                (compiler-backend-global-shared-view functions))))
+          (Unsupported (compiler-backend-object-unsupported-semantics-category))]
+        [else
+          (compiler-backend-object-functions-abi-eligibility
+            program-index.type-segment-bases
+            target
+            program-index
+            (compiler-backend-global-types globals)
+            functions)])]))
 
 (define (compiler-backend-object-program-eligibility-with-type-segment-bases-and-profile-state
   [backend-state : CompilerBackendState]
@@ -81552,6 +82277,17 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [profile-state : profile_state.CompilerProfileState]) : ResultCompilerBackendObject
+  ;; Eligibility already routes a shared-object request to assembly
+  ;; (`SharedObjectCodeModel`); an object image must never silently use the
+  ;; executable code model instead.
+  (when
+    (compiler-backend-state-shared-object-code-model? backend-state)
+    (return
+      (Err
+        (box
+          (compiler_diagnostic.compiler-diagnostic-at-start
+            ""
+            "backend: direct objects do not support the shared-object code model; use the assembly route")))))
   (compiler-backend-state-set-emission-target-policy!
     backend-state
     (compiler-backend-target-policy-new target))
@@ -91482,7 +92218,11 @@
                   (arena.destroy peephole-arena))
                 (compiler-backend-clear-scratch-escaped-emit-state!
                   backend-state)
-                (Ok final))]
+                (if (compiler-backend-state-emission-target-policy
+                  backend-state).shared-object
+                  (compiler-backend-shared-object-assembly
+                    (text_buf.render final))
+                  (Ok final)))]
             [(Err message)
               (let
                 [owned-message : (Box compiler_diagnostic.CompilerDiagnostic)
@@ -92223,38 +92963,41 @@
   (Program
     (compiler_ir_types.compiler-ir-global-seq-empty)
     (compiler_ir_types.compiler-ir-function-seq-prepend
-      (Function
-        cbi.compiler-builtin-id-fix-main
-        (compiler_ir_types.compiler-ir-param-seq-empty)
-        (I64)
-        4
-        (compiler_ir_types.compiler-ir-blocks
-          (compiler_ir_types.CompilerIrBlock.Block
-            (compiler_ir_types.compiler-ir-label "entry")
-            (compiler_ir_types.compiler-ir-instr-seq4
-              (Call 0 cbi.compiler-builtin-id-tl-alloc (One (I64 8)) (I64))
-              (Call
-                1
-                cbi.compiler-builtin-id-tl-substring
-                (compiler_ir_types.compiler-ir-call-args-from-seq
-                  (compiler_ir_types.compiler-ir-value-seq3
-                    (I64 0)
-                    (I64 0)
-                    (I64 0)))
-                (I64))
-              (Call
-                2
-                cbi.compiler-builtin-id-tl-string-concat
-                (compiler_ir_types.compiler-ir-call-args-from-seq
-                  (compiler_ir_types.compiler-ir-value-seq4
-                    (I64 0)
-                    (I64 0)
-                    (I64 0)
-                    (I64 0)))
-                (I64))
-              (Return (Some (I64 42))))))
-        Ordinary)
-      (compiler_ir_types.compiler-ir-function-seq-empty))
+      (&
+        (Function
+          cbi.compiler-builtin-id-fix-main
+          (compiler_ir_types.compiler-ir-param-seq-empty)
+          (I64)
+          4
+          (compiler_ir_types.compiler-ir-blocks
+            (compiler_ir_types.CompilerIrBlock.Block
+              (compiler_ir_types.compiler-ir-label "entry")
+              (compiler_ir_types.compiler-ir-instr-seq4
+                (Call 0 cbi.compiler-builtin-id-tl-alloc (One (I64 8)) (I64))
+                (Call
+                  1
+                  cbi.compiler-builtin-id-tl-substring
+                  (compiler_ir_types.compiler-ir-call-args-from-seq
+                    (&
+                      (compiler_ir_types.compiler-ir-value-seq3
+                        (I64 0)
+                        (I64 0)
+                        (I64 0))))
+                  (I64))
+                (Call
+                  2
+                  cbi.compiler-builtin-id-tl-string-concat
+                  (compiler_ir_types.compiler-ir-call-args-from-seq
+                    (&
+                      (compiler_ir_types.compiler-ir-value-seq4
+                        (I64 0)
+                        (I64 0)
+                        (I64 0)
+                        (I64 0))))
+                  (I64))
+                (Return (Some (I64 42))))))
+          Ordinary))
+      (& (compiler_ir_types.compiler-ir-function-seq-empty)))
     (compiler-backend-runtime-helper-externs)))
 
 (define (compiler-backend-windows-driver-runtime-source) : String

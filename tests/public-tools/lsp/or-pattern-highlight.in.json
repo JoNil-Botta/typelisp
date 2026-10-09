@@ -1,0 +1,8 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/or_highlight.tl","languageId":"typelisp","version":1,"text":"(defenum Op (Load i64) (Store i64) (Halt))\n(define (dst [op : Op]) : i64\n  (match op\n    [(or (Load value) (Store value)) value]\n    [Halt 0]))\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"textDocument/documentHighlight","params":{"textDocument":{"uri":"${{TMP_URI}}/or_highlight.tl"},"position":{"line":3,"character":38}}},
+  {"jsonrpc":"2.0","id":3,"method":"textDocument/documentHighlight","params":{"textDocument":{"uri":"${{TMP_URI}}/or_highlight.tl"},"position":{"line":3,"character":30}}},
+  {"jsonrpc":"2.0","id":4,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

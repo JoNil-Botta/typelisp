@@ -73,7 +73,9 @@
       target
       names
       (+ index 1)
-      (cfg_core.compiler-cfg-enable cfgs (target_cfg_svec.get names index "")))))
+      (cfg_core.compiler-cfg-enable
+        cfgs
+        (& (target_cfg_svec.get names index ""))))))
 
 (define (compiler-target-cfgs-with-names
   [target : CompilerTargetCfg]

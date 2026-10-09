@@ -142,7 +142,7 @@
 (define (reader-test-projection-suffix-cursor?
   [source : String]
   [expected-cursor : i64]) : bool
-  (match (lexer.spanned-result source)
+  (match (lexer.spanned-result (& source))
     [(Err _) false]
     [(Ok toks)
       (let
@@ -530,7 +530,7 @@
   [intern-state : (&mut intern-state ci.InternCompatState)]) : lexer.ResultTokens
   (ci.intern-compat-state-ensure-ready! intern-state)
   (lexer.result-with-intern-owner
-    src
+    (& src)
     (lexer.LexerInternOwner.State (& intern-state))))
 
 (define (percent-symbol-ok?) : bool
@@ -749,7 +749,7 @@
   [want-line : i64]
   [want-col : i64]
   [want-message : String]) : bool
-  (match (lexer.spanned-result src)
+  (match (lexer.spanned-result (& src))
     [(Ok _) false]
     [(Err err)
       (and

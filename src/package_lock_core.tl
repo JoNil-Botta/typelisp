@@ -188,7 +188,7 @@
 
 (define (package-lock-entry-list-insert-at!
   [entries : (&mut entries package_lock_entry_vec.Vec)]
-  [entry : PackageLockEntry]
+  [entry : (& PackageLockEntry)]
   [index : i64]) : unit
   (package_lock_entry_vec.push-ref! entries (package-lock-entry-list-fallback))
   (let
@@ -202,7 +202,10 @@
             (package-lock-entry-list-fallback))]
         (package_lock_entry_vec.set-ref! entries write previous)
         (set! write (- write 1))))
-    (package_lock_entry_vec.set-ref! entries index entry)))
+    (package_lock_entry_vec.set-ref!
+      entries
+      index
+      (owned_view.compiler-owned-reference-shared-view entry))))
 
 (define (package-lock-entry-list-insert
   [entries : package_lock_entry_vec.Vec]
@@ -218,7 +221,7 @@
           entry.alias
           "`"))
       (begin
-        (package-lock-entry-list-insert-at! (&mut next) entry index)
+        (package-lock-entry-list-insert-at! (&mut next) (& entry) index)
         (Ok next)))))
 
 (define (package-lock-field-string-value
@@ -597,19 +600,21 @@
       (set! i (+ i 1)))
     out))
 
-(define (package-lock-quote-string [text : String]) : String
+(define (package-lock-quote-string [text : (& str)]) : String
   (str_cat.str-cat
     (package-lock-quote-text)
     (package-lock-escape-string text)
     (package-lock-quote-text)))
 
-(define (package-lock-emit-string-field [field : String] [value : String]) : String
+(define (package-lock-emit-string-field [field : String] [value : (& str)]) : String
   (str_cat.str-cat "      (" field " " (package-lock-quote-string value) ")\n"))
 
-(define (package-lock-emit-final-string-field [field : String] [value : String]) : String
+(define (package-lock-emit-final-string-field
+  [field : String]
+  [value : (& str)]) : String
   (str_cat.str-cat "      (" field " " (package-lock-quote-string value) "))\n"))
 
-(define (package-lock-emit-pin-field [kind-name : String] [value : String]) : String
+(define (package-lock-emit-pin-field [kind-name : String] [value : (& str)]) : String
   (str_cat.str-cat
     "      (pin ("
     kind-name
@@ -623,10 +628,10 @@
       (package_cache_core.package-cache-pin-kind-name entry.pin-kind)]
     (str_cat.str-cat
       "    (dependency\n"
-      (package-lock-emit-string-field "alias" entry.alias)
-      (package-lock-emit-string-field "url" entry.url)
-      (package-lock-emit-pin-field kind-name entry.pin-value)
-      (package-lock-emit-final-string-field "commit" entry.commit))))
+      (package-lock-emit-string-field "alias" (& entry.alias))
+      (package-lock-emit-string-field "url" (& entry.url))
+      (package-lock-emit-pin-field kind-name (& entry.pin-value))
+      (package-lock-emit-final-string-field "commit" (& entry.commit)))))
 
 (define (package-lock-emit-entries-from
   [entries : (& entries package_lock_entry_vec.Vec)]
@@ -641,15 +646,15 @@
           (package-lock-entry-list-fallback)))
       (package-lock-emit-entries-from entries (+ index 1)))))
 
-(define (package-lock-emit-entries [entries : package_lock_entry_vec.Vec]) : String
-  (package-lock-emit-entries-from (& entries) 0))
+(define (package-lock-emit-entries [entries : (& package_lock_entry_vec.Vec)]) : String
+  (package-lock-emit-entries-from entries 0))
 
-(define (package-lock-emit [lock : PackageLockFile]) : String
+(define (package-lock-emit [lock : (& PackageLockFile)]) : String
   (str_cat.str-cat
     "(typelisp-lock\n"
     "  (version \"v1\")\n"
     "  (dependencies\n"
-    (package-lock-emit-entries lock.entries)
+    (package-lock-emit-entries (& lock.entries))
     "  ))\n"))
 
 (define (package-lock-transaction-error
@@ -696,12 +701,12 @@
   [source : String]) : bool
   (and snapshot.existed (string.eq snapshot.source source)))
 
-(define (package-lock-io-already-exists? [error : io.IoError]) : bool
+(define (package-lock-io-already-exists? [error : (& io.IoError)]) : bool
   (match error
     [(IoSystemCode code _) (= code fs.fs-status-already-exists)]
     [_ false]))
 
-(define (package-lock-io-retryable-replace? [error : io.IoError]) : bool
+(define (package-lock-io-retryable-replace? [error : (& io.IoError)]) : bool
   (match error
     [(IoSystemCode code _) (or (= code 32) (= code 33))]
     [_ false]))
@@ -720,13 +725,13 @@
       [(EnvNoString) false]
       [(EnvSomeString value) (string.eq value phase)])))
 
-(define (package-lock-transaction-wait-release [path : String]) : ResultPackageLockString
+(define (package-lock-transaction-wait-release [path : (& str)]) : ResultPackageLockString
   (let
     [attempt : i64 0]
     [done : bool false]
     [error-message : String ""]
     (while (and (not done) (< attempt 6000))
-      (match (io.try-file-exists? (& path))
+      (match (io.try-file-exists? path)
         [(ErrIoBool error)
           (set! error-message (io.error-message error))
           (set! done true)]
@@ -753,7 +758,7 @@
           (match (time.sleep-ms 2000)
             [(ErrTimeUnit error) (Err (time.error-message error))]
             [(OkTimeUnit) (Ok "")])]
-        [(EnvSomeString path) (package-lock-transaction-wait-release path)]))
+        [(EnvSomeString path) (package-lock-transaction-wait-release (& path))]))
     (Ok "")))
 
 (define (package-lock-stage-next-sequence) : i64
@@ -822,7 +827,7 @@
 
 (define (package-lock-stage-write-opened
   [path : String]
-  [source : String]
+  [source : (& str)]
   [handle : io.FileHandle]) : ResultPackageLockString
   (if (package-lock-transaction-fault? "during-stage")
     (begin
@@ -833,7 +838,7 @@
           "during-stage"
           path
           "injected test failure")))
-    (match (io.file-write handle (byte_buf.str-as-bytes (& source)))
+    (match (io.file-write handle (byte_buf.str-as-bytes source))
       [(ErrIoUnit error)
         (io.file-close handle)
         (package-lock-remove-stage (string.copy path))
@@ -878,9 +883,10 @@
       [path : String
         (package-lock-stage-path (string.copy destination) sequence attempt)]
       (match (io.file-open (& path) (OpenWriteCreateNew))
-        [(OkIoFile handle) (package-lock-stage-write-opened path source handle)]
+        [(OkIoFile handle)
+          (package-lock-stage-write-opened path (& source) handle)]
         [(ErrIoFile error)
-          (if (package-lock-io-already-exists? (clone error))
+          (if (package-lock-io-already-exists? (& (clone error)))
             (package-lock-stage-write-attempt
               destination
               source
@@ -932,9 +938,9 @@
           path
           (io.error-message error)))]))
 
-(define (package-lock-transaction-lock-path [destination : String]) : ResultPackageLockString
+(define (package-lock-transaction-lock-path [destination : (& str)]) : ResultPackageLockString
   (let
-    [parent : String (fs.dirname (& destination))]
+    [parent : String (fs.dirname destination)]
     [target-name : String "target"]
     [typelisp-name : String "typelisp"]
     [locks-name : String "locks"]
@@ -972,15 +978,15 @@
       [(OkIoUnit) result])))
 
 (define (package-lock-atomic-replace-attempt
-  [stage : String]
+  [stage : (& str)]
   [destination : String]
   [attempt : i64]) : ResultPackageLockString
-  (match (fs.try-atomic-replace (& stage) (& destination))
+  (match (fs.try-atomic-replace stage (& destination))
     [(OkIoUnit) (Ok destination)]
     [(ErrIoUnit error)
       (if (and
         (< attempt 100)
-        (package-lock-io-retryable-replace? (clone error)))
+        (package-lock-io-retryable-replace? (& (clone error))))
         (match (time.sleep-ms 10)
           [(ErrTimeUnit sleep-error) (Err (time.error-message sleep-error))]
           [(OkTimeUnit)
@@ -1028,7 +1034,7 @@
                 "injected test failure")))]
         [else
           (match (package-lock-atomic-replace-attempt
-            (string.copy stage)
+            (& (string.copy stage))
             (string.copy snapshot.path)
             0)
             [(Err message)
@@ -1119,7 +1125,8 @@
           (let
             [guard
               (try
-                (package-lock-transaction-lock-path (string.copy snapshot.path)))]
+                (package-lock-transaction-lock-path
+                  (& (string.copy snapshot.path))))]
             (package-lock-transaction-with-guard snapshot source guard))))]))
 
 (define (package-lock-entry-matches?

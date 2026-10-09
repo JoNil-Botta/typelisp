@@ -76,20 +76,22 @@
             (ir.compiler-ir-phi-input-seq-prepend
               (Var 0)
               entry
-              (ir.compiler-ir-phi-input-seq-prepend
-                (Var 3)
-                body
-                (ir.compiler-ir-phi-input-seq-empty)))
+              (&
+                (ir.compiler-ir-phi-input-seq-prepend
+                  (Var 3)
+                  body
+                  (& (ir.compiler-ir-phi-input-seq-empty)))))
             (view.compiler-owned-shared-view ty))
           (ir.CompilerIrInstr.Phi
             2
             (ir.compiler-ir-phi-input-seq-prepend
               (I64 0)
               entry
-              (ir.compiler-ir-phi-input-seq-prepend
-                (Var 5)
-                body
-                (ir.compiler-ir-phi-input-seq-empty)))
+              (&
+                (ir.compiler-ir-phi-input-seq-prepend
+                  (Var 5)
+                  body
+                  (& (ir.compiler-ir-phi-input-seq-empty)))))
             (I64))
           (ir.CompilerIrInstr.BinOp 4 (Lt) (Var 2) (Var 6) (I64))
           (ir.CompilerIrInstr.Branch (Var 4) body exit))

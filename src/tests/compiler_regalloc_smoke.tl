@@ -49,9 +49,9 @@
                     (ci.intern-generated-canonical-name "spmd_helper")
                     (Avx512)
                     8
-                    (Var 0)
-                    spmd-args
-                    (Value 3 (Varying) (reg_tests.compiler-reg-i64-ty)))
+                    (& (Var 0))
+                    (& spmd-args)
+                    (& (Value 3 (Varying) (reg_tests.compiler-reg-i64-ty))))
                   (irt.instrs
                     "%4 = mov %3 : i64
                      return %4")))))))
@@ -68,7 +68,7 @@
         (clone blocks)
         (live.compiler-live-set-empty))]
     [liveness : live.CompilerFunctionLiveness
-      (live.compiler-live-analyze-function (clone func))]
+      (live.compiler-live-analyze-function (& (clone func)))]
     [call-live : live.CompilerLiveI64Set
       (reg_tests.compiler-reg-call-live-blocks
         blocks

@@ -592,7 +592,7 @@
         (parser.compiler-parse-place-shared-view src))
         [(Err message) (string.eq message "parse: malformed define")]
         [_ false])
-      (match (lexer.spanned-result src)
+      (match (lexer.spanned-result (& src))
         [(Ok toks)
           (let
             [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]

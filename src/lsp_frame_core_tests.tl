@@ -644,12 +644,14 @@
     (let
       [diag : cdiag.CompilerDiagnostic
         (cdiag.compiler-diagnostic-with-secondary
-          (cdiag.compiler-diagnostic-with-code
-            (cdiag.compiler-diagnostic-from-span
-              "primary.tl"
-              (token.SourceSpan 2 3 2 9)
-              "wide primary")
-            "E7777")
+          (&
+            (cdiag.compiler-diagnostic-with-code
+              (&
+                (cdiag.compiler-diagnostic-from-span
+                  "primary.tl"
+                  (token.SourceSpan 2 3 2 9)
+                  "wide primary"))
+              "E7777"))
           (cdiag.CompilerDiagnosticSpan "" 4 5 4 8)
           (CompilerDiagnosticSomeString "borrow remains live"))]
       [source : String "\n  abcdefghij\n\n    abcdefghij"]
@@ -701,11 +703,11 @@
   (let
     [parse-diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-code
-        (cdiag.compiler-diagnostic-simple "parse.tl" 2 3 "missing paren")
+        (& (cdiag.compiler-diagnostic-simple "parse.tl" 2 3 "missing paren"))
         (cdiag.compiler-diagnostic-code-parse))]
     [typecheck-diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-code
-        (cdiag.compiler-diagnostic-simple "type.tl" 4 5 "not assignable")
+        (& (cdiag.compiler-diagnostic-simple "type.tl" 4 5 "not assignable"))
         (cdiag.compiler-diagnostic-code-typecheck))]
     [uncoded : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-simple

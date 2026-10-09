@@ -1016,18 +1016,18 @@
 ;; trailing `token.Token.End`. The buffer identity can change during the scan
 ;; (growth), so it is re-read from the global here rather than captured before.
 (define (spanned-result-with-intern-owner
-  [src : String]
+  [src : (& str)]
   [owner : (LexerInternOwner intern-state)]) : ResultSpannedTokens
   (let
-    [_ (try (into-spanned-tokens-result-with-intern-owner (& src) owner))]
+    [_ (try (into-spanned-tokens-result-with-intern-owner src owner))]
     (Ok (global-shared-view lex-spanned-token-buffer))))
 
 ;; Serial/tool compatibility adapter. Compile jobs use the explicit twin below.
-(define (spanned-result [src : String]) : ResultSpannedTokens
+(define (spanned-result [src : (& str)]) : ResultSpannedTokens
   (spanned-result-with-intern-owner src Active))
 
 (define (spanned-result-with-intern-state
-  [src : String]
+  [src : (& str)]
   [intern-state : (&mut intern-state ci.InternCompatState)]) : ResultSpannedTokens
   (ci.intern-compat-state-ensure-ready! intern-state)
   (spanned-result-with-intern-owner src (State (& intern-state))))
@@ -1035,7 +1035,7 @@
 ;; The spanned token stream without positions, copied into a fresh array that
 ;; ends in `token.Token.End`, for callers that compare token streams.
 (define (result-with-intern-owner
-  [src : String]
+  [src : (& str)]
   [owner : (LexerInternOwner intern-state)]) : ResultTokens
   (match (spanned-result-with-intern-owner src owner)
     [(Err err) (Err (token.source-error-message err))]
@@ -1055,7 +1055,7 @@
         (Ok toks))]))
 
 (define (result [src : String]) : ResultTokens
-  (result-with-intern-owner src Active))
+  (result-with-intern-owner (& src) Active))
 
 (define (lex [src : String]) : (__tl_dyn-array token.Token)
   (match (result src)

@@ -1236,7 +1236,7 @@
 
 ;; FORM as the reader reads it, or an empty list when it does not read.
 (define (macro-output-source-sexpr [form : String]) : reader.SpannedSexpr
-  (match (lexer.spanned-result form)
+  (match (lexer.spanned-result (& form))
     [(Ok toks)
       (match (reader.spanned-result toks)
         [(Ok sexpr) sexpr]

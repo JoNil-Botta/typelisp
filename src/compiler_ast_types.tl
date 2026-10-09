@@ -1510,6 +1510,112 @@
       (set! i (+ i 1)))
     (set! ast-node-canonical-span-records next)))
 
+;; In-place rewrites of persistent nodes (#8757). A session that caches parsed
+;; programs (the LSP, `typelisp test`, `typelisp doc`) keeps them below its AST
+;; floor across checks, but typecheck rewrites some parsed nodes in place: a
+;; dotted local field becomes a projection whose children are new nodes above
+;; the floor. The next reset discards those children, and the cached node would
+;; then point at whatever the next parse puts there. So every write to a node
+;; below the protected floor first records the node's words and span slot at
+;; their addresses, and the session restores them, newest first, before it
+;; resets the pool to that floor: each check sees its cached programs exactly as
+;; parsed. A floor of 0 protects nothing and drops the journal.
+(define ast-node-protected-journal-stride : i64
+  8)
+(define ast-node-protected-floor : i64
+  0)
+(define ast-node-protected-journal : (__tl_dyn-array i64)
+  (__tl_make-array i64 0))
+(define ast-node-protected-journal-len : i64
+  0)
+
+;: Protect nodes below `floor` from in-place rewrites outliving a reset to it.
+(define (ast-node-protected-floor-set! [floor : i64]) : unit
+  (set! ast-node-protected-floor floor)
+  (when (<= floor 0) (set! ast-node-protected-journal-len 0)))
+
+;: Entries waiting for `ast-node-protected-restore!`.
+(define (ast-node-protected-journal-count) : i64
+  ast-node-protected-journal-len)
+
+(define (ast-node-protected-journal-grow!) : unit
+  (let
+    [old : (__tl_dyn-array i64)
+      (ast-global-shared-view ast-node-protected-journal)]
+    [old-capacity : i64 (array-length old)]
+    [new-capacity : i64
+      (if (< old-capacity ast-node-protected-journal-stride)
+        (* 64 ast-node-protected-journal-stride)
+        (* old-capacity 2))]
+    [next : (__tl_dyn-array i64)
+      (in-arena
+        (arena.Arena node-pool-base-arena)
+        (__tl_make-array i64 new-capacity))]
+    [used : i64
+      (* ast-node-protected-journal-len ast-node-protected-journal-stride)]
+    [i : i64 0]
+    (while (< i used)
+      (set! (array-ref next i) (array-ref old i))
+      (set! i (+ i 1)))
+    (set! ast-node-protected-journal next)))
+
+;; Record node `id`, stored at address `dest` with its span slot in
+;; `slot-bases` holding `prior-slot`, before a write replaces it.
+(define (ast-node-protected-note!
+  [id : i64]
+  [dest : i64]
+  [slot-bases : i64]
+  [prior-slot : i64]) : unit
+  (when
+    (< id ast-node-protected-floor)
+    (when
+      (>
+        (*
+          (+ ast-node-protected-journal-len 1)
+          ast-node-protected-journal-stride)
+        (array-length ast-node-protected-journal))
+      (ast-node-protected-journal-grow!))
+    (let
+      [at : i64
+        (* ast-node-protected-journal-len ast-node-protected-journal-stride)]
+      [source : (Ptr i64)
+        (unsafe
+          (int->ptr dest : (Ptr i64)))]
+      [word : i64 0]
+      (set! (array-ref ast-node-protected-journal at) dest)
+      (while (< word 4)
+        (set!
+          (array-ref ast-node-protected-journal (+ at (+ word 1)))
+          (unsafe
+            (ptr-read (ptr-offset source word))))
+        (set! word (+ word 1)))
+      (set! (array-ref ast-node-protected-journal (+ at 5)) slot-bases)
+      (set! (array-ref ast-node-protected-journal (+ at 6)) id)
+      (set! (array-ref ast-node-protected-journal (+ at 7)) prior-slot)
+      (set! ast-node-protected-journal-len (+ ast-node-protected-journal-len 1)))))
+
+;: Undo every recorded in-place write, newest first, and empty the journal.
+(define (ast-node-protected-restore!) : unit
+  (while (> ast-node-protected-journal-len 0)
+    (set! ast-node-protected-journal-len (- ast-node-protected-journal-len 1))
+    (let
+      [at : i64
+        (* ast-node-protected-journal-len ast-node-protected-journal-stride)]
+      [dest : (MutPtr i64)
+        (unsafe
+          (int->ptr (array-ref ast-node-protected-journal at) : (MutPtr i64)))]
+      [word : i64 0]
+      (while (< word 4)
+        (unsafe
+          (ptr-write!
+            (ptr-offset dest word)
+            (array-ref ast-node-protected-journal (+ at (+ word 1)))))
+        (set! word (+ word 1)))
+      (ast-expr-span-slot-set-in-bases!
+        (array-ref ast-node-protected-journal (+ at 5))
+        (array-ref ast-node-protected-journal (+ at 6))
+        (array-ref ast-node-protected-journal (+ at 7))))))
+
 (define (ast-node-respan-records-grow!) : unit
   (let
     [old : (__tl_dyn-array AstExprReSpan)
@@ -1781,6 +1887,11 @@
           (int->ptr (ast-place-address node) : (Ptr i64)))]
       [prior-slot : i64
         (ast-expr-span-slot-get-from-bases ast-node-span-slot-segment-bases id)]
+      (ast-node-protected-note!
+        id
+        (+ biased-base (* id (ast-expr-node-bytes)))
+        ast-node-span-slot-segment-bases
+        prior-slot)
       (unsafe
         (ptr-write! dest (ptr-read source))
         (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
@@ -2691,6 +2802,11 @@
         (int->ptr (ast-place-address node) : (Ptr i64)))]
     [prior-slot : i64
       (ast-expr-span-slot-get-from-bases pool.span-slot-segment-bases id)]
+    (ast-node-protected-note!
+      id
+      (+ biased-base (* id (ast-expr-node-bytes)))
+      pool.span-slot-segment-bases
+      prior-slot)
     (unsafe
       (ptr-write! dest (ptr-read source))
       (ptr-write! (ptr-offset dest 1) (ptr-read (ptr-offset source 1)))
@@ -4948,6 +5064,11 @@
   ;; call `expr-type`; ordinary syntax-only binding captures keep the untyped
   ;; sentinel and pay no caller typecheck cost.
   (init-produced AstType)
+  ;; The module-level function the initializer calls directly, as its module
+  ;; and declaration name ids, or -1 and -1. Captured like `init-produced`,
+  ;; only for transformers that ask for it (`expr-binding-clause-init-callee`).
+  (init-callee-module i64)
+  (init-callee-name i64)
   (span AstSourceSpan))
 
 (defstruct AstExprBindingClauseList
@@ -6416,7 +6537,7 @@
   [init : i64]
   [init-produced : AstType]
   [span : AstSourceSpan]) : AstExprBindingClause
-  (AstExprBindingClause name has-type ty init init-produced span))
+  (AstExprBindingClause name has-type ty init init-produced -1 -1 span))
 
 (define (ast-expr-binding-clause-fallback) : AstExprBindingClause
   (AstExprBindingClause
@@ -6425,6 +6546,8 @@
     0
     0
     (Var -3)
+    -1
+    -1
     (ast-source-span 0 0 0 0)))
 
 (dense_list.compiler-dense-list-operations

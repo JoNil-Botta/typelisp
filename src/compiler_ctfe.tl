@@ -533,12 +533,14 @@
   (= name-id (ctfe-builtin "expr-binding-clause-list->expr-list")))
 
 (define (ctfe-builtin-expr-binding-clause-inspector-id? [name-id : i64]) : bool
-  (ctfe-builtin-id-any4?
-    name-id
-    (ctfe-builtin "expr-binding-clause-name")
-    (ctfe-builtin "expr-binding-clause-has-type?")
-    (ctfe-builtin "expr-binding-clause-type")
-    (ctfe-builtin "expr-binding-clause-init")))
+  (or
+    (ctfe-builtin-id-any4?
+      name-id
+      (ctfe-builtin "expr-binding-clause-name")
+      (ctfe-builtin "expr-binding-clause-has-type?")
+      (ctfe-builtin "expr-binding-clause-type")
+      (ctfe-builtin "expr-binding-clause-init"))
+    (= name-id (ctfe-builtin "expr-binding-clause-init-callee"))))
 
 (define (ctfe-builtin-inspector-id? [name-id : i64]) : bool
   (or
@@ -7392,6 +7394,10 @@
                       (ctfe-expr-binding-clause-type clause)
                       (ctfe-untyped-expr-type))
                     arg-fuel)]
+                [(string.eq name "expr-binding-clause-init-callee")
+                  (Ok
+                    (ctfe-expr-binding-clause-init-callee-value clause)
+                    arg-fuel)]
                 [else
                   (ctfe-env-adopt-active-pools! (& env))
                   (let
@@ -13606,6 +13612,21 @@
 
 (define (ctfe-expr-binding-clause-init [clause : ast.AstExprBindingClause]) : i64
   clause.init)
+
+;; `expr-binding-clause-init-callee`: the `module/name` identity of the
+;; function the initializer calls directly, recorded when the clause was
+;; captured, or "".
+(define (ctfe-expr-binding-clause-init-callee-value
+  [clause : ast.AstExprBindingClause]) : CompilerCtfeValue
+  (if (and
+    (ci.intern-renderable-id? clause.init-callee-module)
+    (ci.intern-renderable-id? clause.init-callee-name))
+    (ctfe-generated-string-value
+      (str_cat.str-cat
+        (ci.intern-str clause.init-callee-module)
+        "/"
+        (ci.intern-str clause.init-callee-name)))
+    (String "" cbi.compiler-builtin-id-fix-empty)))
 
 (define (ctfe-expr-binding-clause-list-length
   [lst : (& lst ast.AstExprBindingClauseList)]) : i64

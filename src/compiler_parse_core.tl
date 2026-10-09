@@ -1998,7 +1998,7 @@
     (if (= control 0)
       ;; Named compatibility branch for direct serial parser callers. Compile
       ;; jobs attach a state owner to cfgs and take the explicit branch below.
-      (lexer.spanned-result src)
+      (lexer.spanned-result (& src))
       (begin
         ;; Until #5754 retires the driver's installed-owner builtin bridge,
         ;; builtin seeding may have advanced the matching active scalar view.
@@ -2007,7 +2007,7 @@
           [intern-state : ci.InternCompatState
             (compiler-parse-state-owner control)]
           [result : lexer.ResultSpannedTokens
-            (lexer.spanned-result-with-intern-state src (&mut intern-state))]
+            (lexer.spanned-result-with-intern-state (& src) (&mut intern-state))]
           ;; Keep that same temporary installed view monotone across files;
           ;; inactive owners do not match and are never published.
           (compiler-parse-state-owner-sync-active! control)
@@ -2097,10 +2097,10 @@
   (cfg_core.compiler-cfg-empty))
 
 (define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
-  (cfg_core.compiler-cfg-enable cfgs name))
+  (cfg_core.compiler-cfg-enable cfgs (& name)))
 
 (define (compiler-cfg-union [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
-  (cfg_core.compiler-cfg-union cfgs name))
+  (cfg_core.compiler-cfg-union cfgs (& name)))
 
 (define (compiler-cfg-merge
   [base : sym_i64_env.SymI64Env]
@@ -11647,7 +11647,7 @@
   (cbi.compiler-builtin-initialize-for-parse!)
   (let
     [mark : i64 (reader.sp-node-pool-len)]
-    (match (lexer.spanned-result src)
+    (match (lexer.spanned-result (& src))
       [(Ok toks)
         (let
           [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -11710,9 +11710,10 @@
   (let
     [canonical : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-category
-        (cdiag.compiler-diagnostic-with-code
-          diag
-          (cdiag.compiler-diagnostic-code-parse))
+        (&
+          (cdiag.compiler-diagnostic-with-code
+            (& diag)
+            (cdiag.compiler-diagnostic-code-parse)))
         "parse")]
     (if (parse-ast-if-message? (cdiag.compiler-diagnostic-message canonical))
       (parse-ast-if-diagnostic-notes canonical)

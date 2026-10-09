@@ -780,6 +780,7 @@ lsp_position_edit_smoke|linux|-|src/tests/lsp_position_edit_smoke.tl|42|-|-|lsp_
 function_lifetime_elision|all|-|tests/integration/function_lifetime_elision.tl|42|-|-|stdlib/io.tl|-
 consume_parameters|all|-|tests/integration/consume_parameters.tl|0|-|-|consume/parameters/helper.tl stdlib/string.tl|-
 comptime_module_value_reflection|all|-|tests/integration/comptime_module_value_reflection.tl|42|-|-|reflection/signature/provider.tl stdlib/comptime.tl|-
+comptime_init_callee|all|-|tests/integration/comptime_init_callee.tl|42|-|-|init_callee/probe.tl init_callee/provider.tl stdlib/comptime.tl stdlib/iterator.tl stdlib/string.tl|-
 comptime_type_expr_worklist|all|-|tests/integration/comptime_type_expr_worklist.tl|42|-|-|stdlib/comptime.tl|-
 comptime_lambda_reflected_closure|all|-|tests/integration/comptime_lambda_reflected_closure.tl|42|-|-|stdlib/comptime.tl stdlib/string.tl|-
 str_cat_scoped_region|all|-|tests/integration/str_cat_scoped_region.tl|42|-|-|-|-

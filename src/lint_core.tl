@@ -1961,7 +1961,7 @@
 (define (lint-deprecated-string-concat-scan
   [source : String]
   [acc : LintFindings]) : LintFindings
-  (match (lexer.spanned-result (owned_view.compiler-owned-shared-view source))
+  (match (lexer.spanned-result (& source))
     [(Err _) acc]
     [(Ok toks)
       (let
@@ -2434,7 +2434,7 @@
 
 ;: Report every redundant `(begin ...)` in `source`, as described above.
 (define (lint-redundant-begin-scan [source : String] [acc : LintFindings]) : LintFindings
-  (match (lexer.spanned-result (owned_view.compiler-owned-shared-view source))
+  (match (lexer.spanned-result (& source))
     [(Err _) acc]
     [(Ok toks)
       (let

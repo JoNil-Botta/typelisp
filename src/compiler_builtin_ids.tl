@@ -1744,8 +1744,9 @@
           (ctfe 323 "__tl_semantic_origin_value_name")
           (ctfe 324 "__tl_semantic_origin_binding_definition")
           (ctfe 325 ":opaque")
+          (ctfe 326 "expr-binding-clause-init-callee")
           ;; The by-name struct pattern head (compiler_parse_core.tl).
-          (ctfe 326 "fields")))
+          (ctfe 327 "fields")))
         [(comptime.Expr.Call _ items) items]
         [_
           (comptime.comptime-error

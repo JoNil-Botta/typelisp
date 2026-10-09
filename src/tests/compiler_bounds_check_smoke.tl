@@ -29,30 +29,34 @@
   (Program
     (ir.compiler-ir-global-seq-empty)
     (ir.compiler-ir-function-seq-prepend
-      (Function
-        (ir.compiler-ir-label "main")
-        (ir.compiler-ir-param-seq-prepend
-          (Param "index" (I64) 0)
+      (&
+        (Function
+          (ir.compiler-ir-label "main")
           (ir.compiler-ir-param-seq-prepend
-            (Param "length" (I64) 1)
-            (ir.compiler-ir-param-seq-empty)))
-        (I64)
-        4
-        (ir.compiler-ir-blocks
-          (ir.CompilerIrBlock.Block
-            (ir.compiler-ir-label "entry")
-            (compiler-bounds-check-smoke-instr-seq-prepend
-              (BoundsCheck (Var 0) (Var 1) (ir.compiler-ir-label "bounds_ok.0"))
+            (Param "index" (I64) 0)
+            (ir.compiler-ir-param-seq-prepend
+              (Param "length" (I64) 1)
+              (ir.compiler-ir-param-seq-empty)))
+          (I64)
+          4
+          (ir.compiler-ir-blocks
+            (ir.CompilerIrBlock.Block
+              (ir.compiler-ir-label "entry")
               (compiler-bounds-check-smoke-instr-seq-prepend
                 (BoundsCheck
                   (Var 0)
                   (Var 1)
-                  (ir.compiler-ir-label "bounds_ok.1"))
+                  (ir.compiler-ir-label "bounds_ok.0"))
                 (compiler-bounds-check-smoke-instr-seq-prepend
-                  (Return (Some (I64 42)))
-                  (ir.compiler-ir-instr-seq-empty))))))
-        Ordinary)
-      (ir.compiler-ir-function-seq-empty))
+                  (BoundsCheck
+                    (Var 0)
+                    (Var 1)
+                    (ir.compiler-ir-label "bounds_ok.1"))
+                  (compiler-bounds-check-smoke-instr-seq-prepend
+                    (Return (Some (I64 42)))
+                    (ir.compiler-ir-instr-seq-empty))))))
+          Ordinary))
+      (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (main) : i64

@@ -194,7 +194,7 @@
   (ir.compiler-ir-test-symbol name))
 
 (define (ir-text-label! [cur : (&mut cur IrTextCursor)]) : i64
-  (ir.compiler-ir-label (ir-text-word! cur ",()[]")))
+  (ir.compiler-ir-label (& (ir-text-word! cur ",()[]"))))
 
 (define (ir-text-lifetime! [cur : (&mut cur IrTextCursor)]) : i64
   (let
@@ -396,8 +396,10 @@
     (let
       [index : i64 (ir-text-int! cur)]
       (ir-text-expect! cur "]")
-      (ir.compiler-ir-call-args-sret-from-seq (ir-text-values! cur ")") index))
-    (ir.compiler-ir-call-args-from-seq (ir-text-values! cur ")"))))
+      (ir.compiler-ir-call-args-sret-from-seq
+        (& (ir-text-values! cur ")"))
+        index))
+    (ir.compiler-ir-call-args-from-seq (& (ir-text-values! cur ")")))))
 
 (define (ir-text-maybe-value! [cur : (&mut cur IrTextCursor)]) : ir.CompilerIrMaybeValue
   (if (ir-text-at-end? cur)
@@ -440,7 +442,7 @@
     (while (and (< found 0) (< i (array-length ops)))
       (if (string.eq
         name
-        (ir.compiler-ir-bin-op-render (clone (array-ref ops i))))
+        (ir.compiler-ir-bin-op-render (& (clone (array-ref ops i)))))
         (set! found i)
         unit)
       (set! i (+ i 1)))
@@ -921,7 +923,7 @@
                 index
                 length
                 (ir.compiler-ir-label
-                  (string.substring cur.line start (- end start)))))
+                  (& (string.substring cur.line start (- end start))))))
             (ir-text-error cur "expected a quoted message"))))]
     [(or (string.eq op "vector_store") (string.eq op "predicated_store"))
       (let
@@ -1055,7 +1057,7 @@
       (let
         [label : i64
           (ir.compiler-ir-label
-            (string.substring line 0 (- (string.string-length line) 1)))]
+            (& (string.substring line 0 (- (string.string-length line) 1))))]
         (Block label (ir-text-instr-lines! doc)))
       (ir-text-fail line "expected a block label"))))
 
@@ -1233,7 +1235,7 @@
   (ir.compiler-ir-instr-seq-render-from
     (ir-text-session)
     (ast.ast-node-pool-reader-type-segment-bases)
-    seq
+    (& seq)
     0))
 
 ;: The text `blocks` reads back.
@@ -1241,14 +1243,14 @@
   (ir.compiler-ir-block-list-render
     (ir-text-session)
     (ast.ast-node-pool-reader-type-segment-bases)
-    list))
+    (& list)))
 
 ;: The text `program` reads back.
 (define (program-text [whole : ir.CompilerIrProgram]) : String
   (ir.compiler-ir-program-render
     (ir-text-session)
     (ast.ast-node-pool-reader-type-segment-bases)
-    whole))
+    (& whole)))
 
 ;; Every instruction form and every type constructor the renderer writes.
 (cfg

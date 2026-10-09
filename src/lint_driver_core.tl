@@ -203,15 +203,21 @@
       (lint_core.lint-rule-suggestion (string.copy (& rule-id)))]
     [diagnostic : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-help
-        (cdiag.compiler-diagnostic-with-code
-          (cdiag.compiler-diagnostic-with-level
-            (cdiag.compiler-diagnostic-from-ast-span path fspan finding.message)
-            CompilerDiagnosticWarning)
-          rule-id)
+        (&
+          (cdiag.compiler-diagnostic-with-code
+            (&
+              (cdiag.compiler-diagnostic-with-level
+                (&
+                  (cdiag.compiler-diagnostic-from-ast-span
+                    path
+                    fspan
+                    finding.message))
+                CompilerDiagnosticWarning))
+            rule-id))
         suggestion)]
     (match finding.fix
       [(LintFixAvailable fix)
-        (cdiag.compiler-diagnostic-with-fix diagnostic fix)]
+        (cdiag.compiler-diagnostic-with-fix diagnostic (& fix))]
       [(LintFixUnavailable _ _) diagnostic])))
 
 ;; Rich diagnostics are the human-facing default. `--format flat` preserves the
@@ -226,7 +232,7 @@
       (selfhost-lint-finding-diagnostic path finding)]
     (if selfhost-lint-flat-output
       (cdiag.compiler-diagnostic-render diag)
-      (cdiag.compiler-diagnostic-render-indexed-source diag source))))
+      (cdiag.compiler-diagnostic-render-indexed-source (& diag) source))))
 
 (define (selfhost-lint-render-finding-line
   [path : String]

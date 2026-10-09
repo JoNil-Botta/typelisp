@@ -2467,7 +2467,9 @@
   (if (>
     (ast.ast-node-pool-len)
     (compiler-load-session-state-ast-floor-value state))
-    (set! (array-ref state.ast-floor 0) (ast.ast-node-pool-len))
+    (begin
+      (set! (array-ref state.ast-floor 0) (ast.ast-node-pool-len))
+      (ast.ast-node-protected-floor-set! (ast.ast-node-pool-len)))
     unit)
   (if (>
     (ast.ty-node-pool-len)
@@ -2494,9 +2496,12 @@
   (if (>
     (ast.ast-node-pool-context-expr-len pools)
     (compiler-load-session-state-ast-floor-value state))
-    (set!
-      (array-ref state.ast-floor 0)
-      (ast.ast-node-pool-context-expr-len pools))
+    (begin
+      (set!
+        (array-ref state.ast-floor 0)
+        (ast.ast-node-pool-context-expr-len pools))
+      (ast.ast-node-protected-floor-set!
+        (ast.ast-node-pool-context-expr-len pools)))
     unit)
   (if (>
     (ast.ast-node-pool-context-type-len pools)
@@ -2545,6 +2550,7 @@
   [ty-floor : i64]
   [intern-floor : i64]) : unit
   (set! (array-ref state.ast-floor 0) ast-floor)
+  (ast.ast-node-protected-floor-set! ast-floor)
   (set! (array-ref state.ty-floor 0) ty-floor)
   (set! (array-ref state.intern-floor 0) intern-floor))
 
@@ -2970,6 +2976,8 @@
     0)
   (if (compiler-load-session-cache-enabled?)
     (begin
+      ;; Cached programs below the floor go back to their parsed form (#8757).
+      (ast.ast-node-protected-restore!)
       (ast.ast-node-pool-reset-to! (compiler-load-session-ast-floor-value))
       (ast.ty-node-pool-reset-to! (compiler-load-session-ty-floor-value)))
     (begin
@@ -2977,6 +2985,7 @@
       ;; survive. Clear the spanned reader pool before their arena is retired,
       ;; matching compiler-load-session-state-reset-pools-with-pools! below.
       (reader.sp-node-pool-reset!)
+      (ast.ast-node-protected-floor-set! 0)
       (ast.ast-node-pool-reset!)
       (ast.ty-node-pool-reset!))))
 
@@ -2989,12 +2998,16 @@
   (compiler-load-session-state-lazy-qualified-observer-reset! state)
   (set! (array-ref state.surface-summary-load-depth 0) 0)
   (if (compiler-load-session-state-cache-enabled? state)
-    (ast.ast-node-pool-context-reset-to!
-      pools
-      (compiler-load-session-state-ast-floor-value state)
-      (compiler-load-session-state-ty-floor-value state))
+    (begin
+      ;; Cached programs below the floor go back to their parsed form (#8757).
+      (ast.ast-node-protected-restore!)
+      (ast.ast-node-pool-context-reset-to!
+        pools
+        (compiler-load-session-state-ast-floor-value state)
+        (compiler-load-session-state-ty-floor-value state)))
     (begin
       (reader.sp-node-pool-reset!)
+      (ast.ast-node-protected-floor-set! 0)
       (ast.ast-node-pool-context-reset-to! pools 0 0))))
 
 (define (compiler-load-session-reset-interns!) : unit
@@ -5891,18 +5904,19 @@
     (let
       [diag : cdiag.CompilerDiagnostic
         (cdiag.compiler-diagnostic-with-help
-          (cdiag.compiler-diagnostic-from-ast-span
-            (owned_view.compiler-owned-shared-view collision.path)
-            collision.span
-            (compiler-load-unqualified-import-local-collision-message
-              (owned_view.compiler-owned-shared-view collision)))
+          (&
+            (cdiag.compiler-diagnostic-from-ast-span
+              (owned_view.compiler-owned-shared-view collision.path)
+              collision.span
+              (compiler-load-unqualified-import-local-collision-message
+                (owned_view.compiler-owned-shared-view collision))))
           "alias the import with `as`, rename the declaration, or import the module and use qualified access")]
       (Err
         (box
           (match (parser.compiler-parse-decl-span decls collision.local-index)
             [(Some span)
               (cdiag.compiler-diagnostic-with-secondary
-                diag
+                (& diag)
                 (cdiag.CompilerDiagnosticSpan
                   (ast.ast-decl-path-list-get
                     paths
@@ -15195,7 +15209,7 @@
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultCompilerPkgManifestDiagnostic
-      (match (lexer.spanned-result source)
+      (match (lexer.spanned-result (& source))
         [(Err err)
           (Err (box (compiler-load-manifest-source-error-diagnostic path err)))]
         [(Ok toks)
@@ -15213,7 +15227,7 @@
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultCompilerPkgManifestDiagnostic
-      (match (lexer.spanned-result source)
+      (match (lexer.spanned-result (& source))
         [(Err err)
           (Err (box (compiler-load-manifest-source-error-diagnostic path err)))]
         [(Ok toks)

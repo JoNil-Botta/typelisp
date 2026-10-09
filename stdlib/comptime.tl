@@ -602,6 +602,14 @@
 (define (expr-binding-clause-init [clause : ExprBindingClause]) : Expr
   (__tl_struct-get clause init))
 
+;: Return the canonical `module/name` identity of the module-level function a
+;: binding clause's initializer calls directly, such as `"stdlib.iterator/range"`
+;: for `(iterator.range 0 n)`, as the compiler resolved the call where the
+;: macro was called. Return `""` when the initializer is not such a call or
+;: the compiler cannot be sure which function it calls.
+(define (expr-binding-clause-init-callee [_clause : ExprBindingClause]) : String
+  "")
+
 ;: Return the number of binding clauses in a binding-clause list.
 (define (expr-binding-clause-list-length [items : ExprBindingClauseList]) : i64
   (__tl_struct-get items len))

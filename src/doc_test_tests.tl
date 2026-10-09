@@ -140,15 +140,21 @@
   (let
     [parse-diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-code
-        (cdiag.compiler-diagnostic-simple
-          "docs/parse.tl"
-          1
-          2
-          "missing closing paren")
+        (&
+          (cdiag.compiler-diagnostic-simple
+            "docs/parse.tl"
+            1
+            2
+            "missing closing paren"))
         (cdiag.compiler-diagnostic-code-parse))]
     [typecheck-diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-code
-        (cdiag.compiler-diagnostic-simple "docs/type.tl" 3 4 "return mismatch")
+        (&
+          (cdiag.compiler-diagnostic-simple
+            "docs/type.tl"
+            3
+            4
+            "return mismatch"))
         (cdiag.compiler-diagnostic-code-typecheck))]
     [uncoded : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-simple

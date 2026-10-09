@@ -56,7 +56,7 @@
         (smoke-cfg-index-test-block label 44)
         (smoke-cfg-index-test-block label 55))]
     [_refresh : unit
-      (opt.opt-cfg-index-refresh-blocks! index replacement-blocks)]
+      (opt.opt-cfg-index-refresh-blocks! (&mut index) replacement-blocks)]
     [dense-second : i64
       (smoke-cfg-index-block-return (opt.opt-cfg-index-block index 1))]
     [_newer-index : opt.OptCfgIndex

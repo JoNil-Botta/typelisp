@@ -366,8 +366,8 @@
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [liveness : compiler_liveness.CompilerFunctionLiveness]
   [point : i64]
-  [starts : (& starts (__tl_dyn-array i64))]
-  [ends : (& ends (__tl_dyn-array i64))]) : i64
+  [starts : (&mut starts (__tl_dyn-array i64))]
+  [ends : (&mut ends (__tl_dyn-array i64))]) : i64
   (match blocks
     [(slice) point]
     [(slice block & rest)
@@ -490,14 +490,14 @@
             (owned_view.compiler-owned-shared-view emit-blocks)
             (owned_view.compiler-owned-shared-view liveness)
             0
-            starts
-            ends)
+            (&mut starts)
+            (&mut ends))
           (compiler-backend-test-scavenge-seed-block-liveins
             (ir.compiler-ir-block-list-view emit-blocks)
             liveness
             0
-            starts
-            ends)
+            (&mut starts)
+            (&mut ends))
           (backend.compiler-backend-set-scavenge-ctx-ready!
             (backend.compiler-backend-state-function-state backend-state)
             (owned_view.compiler-owned-shared-view starts)
@@ -34090,7 +34090,7 @@ f:
 (define (compiler-backend-swb-dup-tail-body-for
   [text : String]
   [return-label : String]
-  [ok : (& ok (__tl_dyn-array i64))]) : String
+  [ok : (&mut ok (__tl_dyn-array i64))]) : String
   (let
     [data : (Ptr u8)
       (unsafe
@@ -34101,7 +34101,7 @@ f:
       0
       (string.string-length text)
       return-label
-      (&mut ok))))
+      ok)))
 
 (define (compiler-backend-swb-dup-tail-bound-ok?) : bool
   (let
@@ -34117,17 +34117,17 @@ f:
       (compiler-backend-swb-dup-tail-body-for
         "    movq $7, %rax\n    jmp .Lret\n"
         ".Lret"
-        good)]
+        (&mut good))]
     [_bad-text : String
       (compiler-backend-swb-dup-tail-body-for
         "    movq $7, %rax\n    jne .Lelsewhere\n    jmp .Lret\n"
         ".Lret"
-        bad)]
+        (&mut bad))]
     [plain-text : String
       (compiler-backend-swb-dup-tail-body-for
         "    movq $7, %rax\n    addq $8, %rsp\n    ret\n"
         ".Lret"
-        plain)]
+        (&mut plain))]
     (and
       ;; The trailing jump to the shared epilogue is dropped, the data kept.
       (= (array-ref good 0) 1)

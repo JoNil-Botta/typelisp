@@ -1136,7 +1136,7 @@
       (compiler-driver-state-profile state)
       ordinal
       "owned-pool-release")
-    (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
+    (compiler-driver-state-reset-owned-intern-arena-if-uncached! (&mut state))
     (let
       [pools : compiler_ast_types.AstNodePoolContext
         (compiler-driver-state-pool-context state)]

@@ -994,6 +994,9 @@ mut_borrow_through_shared_slice_reject|check-fail|tests/safety/mut_borrow_throug
 mut_borrow_through_shared_nested_field_reject|check-fail|tests/safety/mut_borrow_through_shared_nested_field_reject.tl|-|mutable borrow through a shared reference
 mut_borrow_through_shared_tuple_reject|check-fail|tests/safety/mut_borrow_through_shared_tuple_reject.tl|-|mutable borrow through a shared reference
 mut_borrow_through_shared_deref_array_reject|check-fail|tests/safety/mut_borrow_through_shared_deref_array_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_box_reject|check-fail|tests/safety/mut_borrow_through_shared_box_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_buffer_element_reject|check-fail|tests/safety/mut_borrow_through_shared_buffer_element_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_buffer_handle_reject|check-fail|tests/safety/mut_borrow_through_shared_buffer_handle_reject.tl|-|mutable borrow through a shared reference
 mut_borrow_mutable_paths_ok|run-exit|tests/safety/mut_borrow_mutable_paths_ok.tl|42|-
 vector_aggregate_ref_rvalue_call_reject|check-fail|tests/safety/vector_aggregate_ref_rvalue_call_reject.tl|-|borrow slots from a vector place or use the generated vector get helper
 vector_aggregate_ref_rvalue_workarounds_ok|check-ok|tests/safety/vector_aggregate_ref_rvalue_workarounds_ok.tl|-|-

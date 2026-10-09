@@ -5634,7 +5634,7 @@
           (opt-aggregate-split-reason-alias))])))
 
 (define (opt-aggregate-split-propagate!
-  [plan : (& plan OptSplitPlan)]
+  [plan : (&mut plan OptSplitPlan)]
   [flat : (& flat OptSplitFlat)]
   [index : i64]) : unit
   (unless
@@ -5678,7 +5678,7 @@
 
 ;; --- definition counting -----------------------------------------------------
 (define (opt-aggregate-split-count-defs!
-  [plan : (& plan OptSplitPlan)]
+  [plan : (&mut plan OptSplitPlan)]
   [flat : (& flat OptSplitFlat)]
   [index : i64]) : unit
   (unless
@@ -5691,7 +5691,7 @@
     (opt-aggregate-split-count-defs! plan flat (+ index 1))))
 
 (define (opt-aggregate-split-count-param-defs!
-  [plan : (& plan OptSplitPlan)]
+  [plan : (&mut plan OptSplitPlan)]
   [params : ir.CompilerIrParamSeq]
   [index : i64]) : unit
   (unless
@@ -5710,7 +5710,7 @@
 
 (define (opt-aggregate-split-check-access!
   [type-segment-bases : i64]
-  [plan : (& plan OptSplitPlan)]
+  [plan : (&mut plan OptSplitPlan)]
   [index : i64]
   [offset : i64]
   [ty : ast.AstType]) : unit
@@ -5782,7 +5782,7 @@
 ;; One `copy_bytes` side: the aggregate must sit at offset 0 and the copy must
 ;; move a whole number of its words.
 (define (opt-aggregate-split-classify-copy-side!
-  [plan : (& plan OptSplitPlan)]
+  [plan : (&mut plan OptSplitPlan)]
   [value : ir.CompilerIrValue]
   [size : i64]) : unit
   (let
@@ -5827,7 +5827,7 @@
 
 ;; A copy moves whole words, so no word it covers may hold lanes.
 (define (opt-aggregate-split-check-copy-lanes!
-  [plan : (& plan OptSplitPlan)]
+  [plan : (&mut plan OptSplitPlan)]
   [index : i64]) : unit
   (if (>= index plan.count)
     unit
@@ -5861,8 +5861,8 @@
   (let
     [dst-index : i64 (opt-aggregate-split-value-cand plan.ptr dst)]
     [src-index : i64 (opt-aggregate-split-value-cand plan.ptr src)]
-    (opt-aggregate-split-classify-copy-side! plan dst size)
-    (opt-aggregate-split-classify-copy-side! plan src size)
+    (opt-aggregate-split-classify-copy-side! (&mut plan) dst size)
+    (opt-aggregate-split-classify-copy-side! (&mut plan) src size)
     ;; A register-to-register copy carries the destination's word type, so the
     ;; two aggregates must be the same type for that to describe both sides.
     (when
@@ -5948,7 +5948,7 @@
               (opt-aggregate-split-mark-touched))
             (opt-aggregate-split-check-access!
               type-segment-bases
-              plan
+              (&mut plan)
               candidate
               (opt-aggregate-split-ptr-offset
                 plan.ptr
@@ -5964,7 +5964,7 @@
               (opt-aggregate-split-value-var-or place 0))
             (opt-aggregate-split-check-access!
               type-segment-bases
-              plan
+              (&mut plan)
               candidate
               (opt-aggregate-split-ptr-offset
                 plan.ptr
@@ -6002,7 +6002,7 @@
 ;; any other reader of the address -- a phi input, a stored pointer, a compare,
 ;; an ownership edge, an indirect call -- shows up here as a surplus use.
 (define (opt-aggregate-split-check-uses!
-  [plan : (& plan OptSplitPlan)]
+  [plan : (&mut plan OptSplitPlan)]
   [total-uses : (__tl_dyn-array i64)]
   [var : i64]) : unit
   (unless
@@ -6030,7 +6030,7 @@
 ;; candidate that would only move stores around is turned down here: without a
 ;; load or a copy the split buys nothing and only adds register pressure.
 (define (opt-aggregate-split-assign-words!
-  [plan : (& plan OptSplitPlan)]
+  [plan : (&mut plan OptSplitPlan)]
   [index : i64]
   [next : i64]) : i64
   (if (>= index plan.count)
@@ -6500,10 +6500,10 @@
                 flat
                 0
                 0)
-              (opt-aggregate-split-propagate! plan flat 0)
-              (opt-aggregate-split-count-defs! plan flat 0)
+              (opt-aggregate-split-propagate! (&mut plan) flat 0)
+              (opt-aggregate-split-count-defs! (&mut plan) flat 0)
               (opt-aggregate-split-count-param-defs!
-                plan
+                (&mut plan)
                 (compiler-opt-global-shared-view params)
                 0)
               (opt-aggregate-split-classify!
@@ -6511,14 +6511,14 @@
                 (compiler-opt-global-shared-view plan)
                 flat
                 0)
-              (opt-aggregate-split-check-copy-lanes! plan 0)
+              (opt-aggregate-split-check-copy-lanes! (&mut plan) 0)
               (opt-aggregate-split-check-uses!
-                plan
+                (&mut plan)
                 (opt-collect-blocks-uses-array frame blocks)
                 0)
               (let
                 [next-frame : i64
-                  (opt-aggregate-split-assign-words! plan 0 frame)]
+                  (opt-aggregate-split-assign-words! (&mut plan) 0 frame)]
                 [cursor : (__tl_dyn-array i64) (__tl_make-array i64 1)]
                 (if (and
                   compiler-opt-debug-trace-passes
@@ -10915,7 +10915,7 @@
     [(Array seq) (opt-cfg-index-refresh-block-seq! out seq index)]))
 
 (define (opt-cfg-index-refresh-blocks!
-  [index : (& index OptCfgIndex)]
+  [index : (&mut index OptCfgIndex)]
   [blocks : (& blocks ir.CompilerIrBlockList)]) : unit
   (let
     [blocks : ir.CompilerIrBlockList
@@ -15343,7 +15343,7 @@
     [entry-label : i64 (opt-cfg-entry-label blocks)]
     [index : OptCfgIndex context.index]
     [block-capacity : i64 (opt-cfg-index-block-count index)]
-    (opt-cfg-index-refresh-blocks! index blocks)
+    (opt-cfg-index-refresh-blocks! (&mut index) blocks)
     (match (opt-cfg-index-id index entry-label)
       [(Some entry-id)
         (opt-ssa-rename-missing-blocks
@@ -16086,10 +16086,10 @@
 
 (define (opt-global-fact-table-add!
   [type-segment-bases : i64]
-  [table : (& table OptGlobalFactTable)]
+  [table : (&mut table OptGlobalFactTable)]
   [fact : OptGlobalFact]) : unit
   (let
-    [buckets (& table.buckets)]
+    [buckets (&mut table.buckets)]
     [bucket : i64
       (opt-global-fact-bucket type-segment-bases (array-length buckets) fact)]
     (if (and (>= bucket 0) (< bucket (array-length buckets)))
@@ -16136,7 +16136,7 @@
       (while (< index count)
         (opt-global-fact-table-add!
           type-segment-bases
-          table
+          (&mut table)
           (compiler-opt-borrowed-array-element-shared-view slots index))
         (set! index (+ index 1)))
       table)))
@@ -38026,13 +38026,13 @@
   [frame : i64]
   [loop : OptNaturalLoop]) : OptFlagExitPassResult
   (match (opt-flag-facts-rewrite-seeds
-    context.index
+    (&mut context.index)
     context.doms
     (opt-gvn-sources-blocks blocks (opt-value-sources-new))
     (opt-natural-loop-header loop)
     (compiler-opt-global-shared-view blocks))
     [(No)
-      (opt-cfg-index-refresh-blocks! context.index blocks)
+      (opt-cfg-index-refresh-blocks! (&mut context.index) blocks)
       (Result blocks frame false)]
     [(Some seeded)
       (let
@@ -38068,7 +38068,7 @@
                   (opt-flag-exit-gate-count plan.clears 0)))
               true)]
           [(No)
-            (opt-cfg-index-refresh-blocks! context.index blocks)
+            (opt-cfg-index-refresh-blocks! (&mut context.index) blocks)
             (Result blocks frame false)]))]))
 
 (define (opt-flag-exit-convert-loops
@@ -51410,7 +51410,7 @@
       (opt-gvn-dom-children (compiler-opt-global-shared-view doms))]
     [out : (__tl_dyn-array OptGvnBlockResult)
       (__tl_make-array OptGvnBlockResult count)]
-    (opt-cfg-index-refresh-blocks! index blocks)
+    (opt-cfg-index-refresh-blocks! (&mut index) blocks)
     (let
       [changed : i64
         (match (opt-cfg-index-id index context.entry-label)
@@ -58288,7 +58288,7 @@
 ;; seeds are flag_exit's to try, one loop at a time
 ;; (opt-flag-exit-convert-loops).
 (define (opt-flag-facts-rewrite-blocks
-  [index : (& index OptCfgIndex)]
+  [index : (&mut index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
   [sources : OptValueSources]
   [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
@@ -58310,7 +58310,7 @@
   (Some ir.CompilerIrBlockList))
 
 (define (opt-flag-facts-rewrite-seeds
-  [index : (& index OptCfgIndex)]
+  [index : (&mut index OptCfgIndex)]
   [doms : (& doms OptDomInfo)]
   [sources : OptValueSources]
   [header : i64]
@@ -58346,7 +58346,7 @@
   (let
     [flagged : ir.CompilerIrBlockList
       (opt-flag-facts-rewrite-blocks
-        context.index
+        (&mut context.index)
         context.doms
         (opt-bounds-dom-sources
           (compiler-opt-global-shared-view params)
@@ -58478,7 +58478,7 @@
     ;; The loop set is a property of THIS function's CFG, so it is computed
     ;; where the topology context is, not where the table was built.
     [len-eq-blocks : OptLenEqUse (opt-len-eq-use-with-loops len-eq index doms)]
-    (opt-cfg-index-refresh-blocks! index blocks)
+    (opt-cfg-index-refresh-blocks! (&mut index) blocks)
     ;; Decide every derived value at its own definition site first; the walk
     ;; below reads the answers wherever it needs them.
     (opt-bounds-dom-nonneg-prepass! env children (&mut var-facts))
@@ -59329,7 +59329,7 @@
         (__tl_make-array OptDivRemFacts count)]
       [out : (__tl_dyn-array OptDivRemBlockResult)
         (__tl_make-array OptDivRemBlockResult count)]
-      (opt-cfg-index-refresh-blocks! index blocks)
+      (opt-cfg-index-refresh-blocks! (&mut index) blocks)
       (opt-divrem-process-rpo!
         type-segment-bases
         context
@@ -94879,7 +94879,7 @@
   [remaining : i64]
   [remat-left : i64]
   [changed : bool]) : OptBlockListPassResult
-  (opt-cfg-index-refresh-blocks! (__tl-project-field context index) blocks)
+  (opt-cfg-index-refresh-blocks! (&mut context.index) blocks)
   (if (> remaining 0)
     (match (opt-guard-sink-round
       (compiler-opt-global-shared-view cells)
@@ -94951,9 +94951,7 @@
               [(Result next rewritten)
                 (if (not rewritten)
                   (begin
-                    (opt-cfg-index-refresh-blocks!
-                      (__tl-project-field context index)
-                      blocks)
+                    (opt-cfg-index-refresh-blocks! (&mut context.index) blocks)
                     (Result func context))
                   (let
                     [candidate : ir.CompilerIrFunction
@@ -94965,14 +94963,12 @@
                         (compiler-opt-global-shared-view next)
                         function-abi)]
                     [_refresh : unit
-                      (opt-cfg-index-refresh-blocks!
-                        (__tl-project-field context index)
-                        next)]
+                      (opt-cfg-index-refresh-blocks! (&mut context.index) next)]
                     (match (opt-verify-function-with-context candidate context)
                       [(Ok) (Result candidate context)]
                       [(Err _)
                         (opt-cfg-index-refresh-blocks!
-                          (__tl-project-field context index)
+                          (&mut context.index)
                           blocks)
                         (Result func context)])))]))])]))
 
@@ -99708,7 +99704,7 @@
   [state : OptPassState]) : OptPassState
   (let
     [blocks (opt-function-blocks func)]
-    (opt-cfg-index-refresh-blocks! state.ctx.index blocks))
+    (opt-cfg-index-refresh-blocks! (&mut state.ctx.index) blocks))
   (opt-pass-with-func func state))
 
 ;; Rotation, with the speculative literal-edge normalization kept only if the
@@ -134140,7 +134136,7 @@
 
 (define (opt-load-join-budget-ok?
   [index : (& index OptCfgIndex)]
-  [joins : (& joins OptLoadJoinPhis)]
+  [live-ins : (&mut live-ins (__tl_dyn-array i64))]
   [loops : (& loops (Slice OptNaturalLoop))]
   [loop-index : i64]
   [id : i64]) : bool
@@ -134150,13 +134146,10 @@
       (and
         (if (opt-load-join-enters-loop? index loop id)
           (<
-            (opt-load-loop-live-ins-cached
-              (&mut joins.live-ins)
-              loop
-              loop-index)
+            (opt-load-loop-live-ins-cached live-ins loop loop-index)
             (opt-licm-chain-live-in-budget))
           true)
-        (opt-load-join-budget-ok? index joins rest (+ loop-index 1) id))]))
+        (opt-load-join-budget-ok? index live-ins rest (+ loop-index 1) id))]))
 
 ;; Fill `joins.preds` with this block's reachable predecessor ids. Returns the
 ;; count, or -1 when the site is refused: an unprocessed predecessor (the
@@ -134449,7 +134442,7 @@
         (if (not
           (opt-load-join-budget-ok?
             index
-            joins
+            (&mut joins.live-ins)
             (opt_natural_loop_vec.view joins.loops)
             0
             id))
@@ -137725,7 +137718,8 @@
                   true
                   frame
                   blocks)]
-              [_refresh : unit (opt-cfg-index-refresh-blocks! index hoisted)]
+              [_refresh : unit
+                (opt-cfg-index-refresh-blocks! (&mut index) hoisted)]
               [moved : (__tl_dyn-array bool) (__tl_make-array bool frame)]
               [_moved : unit
                 (opt-guard-dedup-moved-fill!
@@ -138634,7 +138628,7 @@
       ;; it, and everything below simply reads the hoisted list. The block walk
       ;; that records cell reads indexes blocks BY ID, so the index has to
       ;; describe the hoist's input first and its output after.
-      [_refresh-in : unit (opt-cfg-index-refresh-blocks! index blocks)]
+      [_refresh-in : unit (opt-cfg-index-refresh-blocks! (&mut index) blocks)]
       [work : ir.CompilerIrBlockList
         (opt-load-pre-hoist-blocks
           type-segment-bases
@@ -138679,7 +138673,7 @@
             (opt_natural_loop_vec.view loops)
             0)
           unit)]
-      [_refresh : unit (opt-cfg-index-refresh-blocks! index work)]
+      [_refresh : unit (opt-cfg-index-refresh-blocks! (&mut index) work)]
       [promote : OptLoadCellPromote
         (opt-load-cell-promote-build
           candidates

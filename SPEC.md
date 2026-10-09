@@ -1829,7 +1829,8 @@ Reference types are lifetime-bearing:
   references. `(&mut r)`, or a field, tuple element or array element borrowed
   through a shared reference `r` or through a shared reference stored in a
   field, is rejected (E0207), in a call argument as in a `let`. Storage behind
-  a `Box` or a private buffer is not covered yet (#8743).
+  a `Box` or a private buffer counts as owned through it: such a borrow reached
+  through a shared reference is rejected too.
   The checker enforces many immutable borrows or one mutable borrow for
   tracked local, parameter, and global place paths. Tracked aggregate-place
   paths conflict only when they are the same path or one is an ancestor of the

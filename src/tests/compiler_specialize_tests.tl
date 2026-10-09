@@ -1,5 +1,6 @@
 ;; compiler_specialize_tests.tl - Self-tests for comptime specialization and the
 ;; generated-declaration registry.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_parse_core as parser)
 (import compiler_ast_types as ast)
@@ -544,18 +545,16 @@
     [unrelated : spec.SpecTemplateEnv
       (spec.spec-template-env-shadow-name base cbi.compiler-builtin-id-fix-flag)]
     [wide : spec.SpecTemplateEnv (spec.spec-template-env-from-list items)]
-    [index : i64 0]
     [ok : bool true]
     ;; Cross multiple dense-record growth boundaries with repeated names.
-    (while (< index 64)
+    (for [index (iterator.range 0 64)]
       (set!
         wide
         (spec.spec-template-env-shadow-name
           wide
           (if (= (bit-and index 1) 0)
             cbi.compiler-builtin-id-fix-x
-            cbi.compiler-builtin-id-fix-second)))
-      (set! index (+ index 1)))
+            cbi.compiler-builtin-id-fix-second))))
     ;; Alternate retained parents, siblings, duplicates, and nested snapshots
     ;; so the activated dense counts must roll backward and forward exactly.
     (set!
@@ -998,24 +997,20 @@
     paths
     (string.copy (& path))
     cbi.compiler-builtin-id-fix-empty)
-  (let
-    [index : i64 0]
-    (while (< index (ast.ast-decl-list-len (& decls)))
-      (ast.ast-decl-list-push
-        out
-        (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback)))
-      (ast.ast-decl-path-list-push-with-owner-id
-        paths
-        (string.copy (& path))
-        cbi.compiler-builtin-id-fix-empty)
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 (ast.ast-decl-list-len (& decls)))]
+    (ast.ast-decl-list-push
+      out
+      (ast.ast-decl-list-get (& decls) index (ast.ast-decl-fallback)))
+    (ast.ast-decl-path-list-push-with-owner-id
+      paths
+      (string.copy (& path))
+      cbi.compiler-builtin-id-fix-empty)))
 
 ;: The declaration names of `decls`, one per line; a module marker is `@`.
 (define (compiler-specialize-decl-shape [decls : (& decls ast.AstDeclList)]) : String
   (let
     [text : String ""]
-    [index : i64 0]
-    (while (< index (ast.ast-decl-list-len decls))
+    (for [index (iterator.range 0 (ast.ast-decl-list-len decls))]
       (set!
         text
         (str_cat.str-cat
@@ -1024,8 +1019,7 @@
             [(Module _) "@"]
             [(DefFn _ name _ _ _ _) (spec_ci.intern-str name)]
             [_ "?"])
-          "\n"))
-      (set! index (+ index 1)))
+          "\n")))
     text))
 
 (define (compiler-specialize-module-identity-ok?) : bool
@@ -1708,7 +1702,7 @@
         (if (string.eq (spec_ci.intern-compat-state-str intern-state handle) "")
           unit
           (set! ok false))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (spec.spec-materialize-owner-generated-symbols! (&mut owner))
     (set! index 0)
     (while (and ok (< index count))
@@ -1722,7 +1716,7 @@
           (spec.spec-specialized-name-with-owner owner "wide" values))
           unit
           (set! ok false))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (and
       ok
       (=

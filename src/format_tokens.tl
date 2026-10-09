@@ -3,6 +3,7 @@
 ;; This lexer is separate from lex.tl because a formatter must keep source
 ;; spelling and comments. Whitespace is skipped; comments are retained
 ;; as trivia tokens so later layout rules can place them deliberately.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
@@ -184,10 +185,10 @@
         [c : char (string.string-ref src i)]
         (if (= c '\n')
           (begin
-            (set! line (+ line 1))
+            (+= line 1)
             (set! col 1))
-          (set! col (+ col 1)))
-        (set! i (+ i 1))))
+          (+= col 1))
+        (+= i 1)))
     (FormatPosition line col)))
 
 (define (fmt-source-error-at [src : (& src str)] [idx : i64] [message : String]) : FormatSourceError
@@ -264,9 +265,8 @@
 (define (fmt-char-class-init) : unit
   (if fmt-char-class-ready
     unit
-    (let
-      [i : i64 0]
-      (while (< i 256)
+    (begin
+      (for [i (iterator.range 0 256)]
         (let
           [c : char (cast i : char)]
           [mask : i64
@@ -285,8 +285,7 @@
                   (if (fmt-is-hex-digit c)
                     8
                     0))))]
-          (set! (array-ref fmt-char-class-table i) mask)
-          (set! i (+ i 1))))
+          (set! (array-ref fmt-char-class-table i) mask)))
       (set! fmt-char-class-ready true))))
 
 ;; Inline class test: no function call, just a table load and bit test.
@@ -353,7 +352,7 @@
           (if (if (= base 16)
             (fmt-char-class? c 8)
             (or (= c '0') (= c '1')))
-            (set! j (+ j 1))
+            (+= j 1)
             (set! keep false)))
         (set! keep false)))
     j))
@@ -393,7 +392,7 @@
     [keep : bool true]
     (if (< j n)
       (if (= (fmt-source-byte-bounds-proven data j) '-')
-        (set! j (+ j 1))
+        (+= j 1)
         unit)
       unit)
     (while keep
@@ -403,14 +402,14 @@
           (cond
             [(and (= c '.') (not seen-dot))
               (set! seen-dot true)
-              (set! j (+ j 1))]
+              (+= j 1)]
             [(or (fmt-char-class? c 2) (= c '_'))
               (if (= c '_')
                 (set! valid false)
                 (if (and seen-dot (fmt-char-class? c 2))
                   (set! found true)
                   unit))
-              (set! j (+ j 1))]
+              (+= j 1)]
             [(and valid (or (not seen-dot) found) (or (= c 'e') (= c 'E')))
               (let
                 [mark : i64 j]
@@ -419,7 +418,7 @@
                   (if (or
                     (= (fmt-source-byte-bounds-proven data exp-digits) '+')
                     (= (fmt-source-byte-bounds-proven data exp-digits) '-'))
-                    (set! exp-digits (+ exp-digits 1))
+                    (+= exp-digits 1)
                     unit)
                   unit)
                 (if (< exp-digits n)
@@ -432,7 +431,7 @@
                         (fmt-char-class?
                           (fmt-source-byte-bounds-proven data exp-digits)
                           2))
-                        (set! exp-digits (+ exp-digits 1)))
+                        (+= exp-digits 1))
                       (set! j exp-digits)
                       ;; A valid exponent terminates the numeric token;
                       ;; any following dot/underscore is rejected by the
@@ -482,7 +481,7 @@
     (while keep
       (if (< j n)
         (if (fmt-char-class? (fmt-source-byte-bounds-proven data j) 4)
-          (set! j (+ j 1))
+          (+= j 1)
           (set! keep false))
         (set! keep false)))
     j))
@@ -495,7 +494,7 @@
       (if (< j n)
         (if (= (fmt-source-byte-bounds-proven data j) '\n')
           (set! keep false)
-          (set! j (+ j 1)))
+          (+= j 1))
         (set! keep false)))
     j))
 
@@ -515,14 +514,14 @@
           (cond
             [escaped
               (set! escaped false)
-              (set! j (+ j 1))]
+              (+= j 1)]
             [(= c '\\')
               (set! escaped true)
-              (set! j (+ j 1))]
+              (+= j 1)]
             [(= c '"')
-              (set! j (+ j 1))
+              (+= j 1)
               (set! keep false)]
-            [else (set! j (+ j 1))]))
+            [else (+= j 1)]))
         (return
           (Err
             (fmt-source-error-at
@@ -605,10 +604,8 @@
   [newcap : i64]) : (__tl_dyn-array FormatToken)
   (let
     [bigger : (__tl_dyn-array FormatToken) (__tl_make-array FormatToken newcap)]
-    [j : i64 0]
-    (while (< j count)
-      (set! (array-ref bigger j) (array-ref old j))
-      (set! j (+ j 1)))
+    (for [j (iterator.range 0 count)]
+      (set! (array-ref bigger j) (array-ref old j)))
     bigger))
 
 (define (fmt-grow-i64-array
@@ -617,10 +614,8 @@
   [newcap : i64]) : (__tl_dyn-array i64)
   (let
     [bigger : (__tl_dyn-array i64) (__tl_make-array i64 newcap)]
-    [j : i64 0]
-    (while (< j count)
-      (set! (array-ref bigger j) (array-ref old j))
-      (set! j (+ j 1)))
+    (for [j (iterator.range 0 count)]
+      (set! (array-ref bigger j) (array-ref old j)))
     bigger))
 
 ;; Token-buffer capacity estimate for a `n`-byte source: roughly one token per
@@ -648,7 +643,7 @@
       (< i n)
       (not
         (fmt-recovery-token-delimiter? (fmt-source-byte-bounds-proven data i))))
-      (set! i (+ i 1)))
+      (+= i 1))
     (if (> i start)
       i
       (+ start 1))))
@@ -681,7 +676,7 @@
       (let
         [c : char (fmt-source-byte-bounds-proven data i)]
         (cond
-          [(fmt-char-class? c 1) (set! i (+ i 1))]
+          [(fmt-char-class? c 1) (+= i 1)]
           [(= c ';')
             (let
               [end : i64 (fmt-scan-comment-end data i n)]
@@ -691,7 +686,7 @@
                 count
                 i
                 (Comment (string.substring src i (- end i))))
-              (set! count (+ count 1))
+              (+= count 1)
               (set! i end))]
           [(= c '(')
             (fmt-store-token
@@ -700,8 +695,8 @@
               count
               i
               (LParen))
-            (set! count (+ count 1))
-            (set! i (+ i 1))]
+            (+= count 1)
+            (+= i 1)]
           [(= c ')')
             (fmt-store-token
               (owned_view.compiler-owned-shared-view tokens)
@@ -709,8 +704,8 @@
               count
               i
               (RParen))
-            (set! count (+ count 1))
-            (set! i (+ i 1))]
+            (+= count 1)
+            (+= i 1)]
           [(= c '[')
             (fmt-store-token
               (owned_view.compiler-owned-shared-view tokens)
@@ -718,8 +713,8 @@
               count
               i
               (LBracket))
-            (set! count (+ count 1))
-            (set! i (+ i 1))]
+            (+= count 1)
+            (+= i 1)]
           [(= c ']')
             (fmt-store-token
               (owned_view.compiler-owned-shared-view tokens)
@@ -727,8 +722,8 @@
               count
               i
               (RBracket))
-            (set! count (+ count 1))
-            (set! i (+ i 1))]
+            (+= count 1)
+            (+= i 1)]
           [(= c ':')
             (fmt-store-token
               (owned_view.compiler-owned-shared-view tokens)
@@ -736,8 +731,8 @@
               count
               i
               (Colon))
-            (set! count (+ count 1))
-            (set! i (+ i 1))]
+            (+= count 1)
+            (+= i 1)]
           [(= c '\'')
             (match (fmt-scan-apostrophe-char-end-result src data i n)
               [(Ok end)
@@ -747,7 +742,7 @@
                   count
                   i
                   (Char (string.substring src i (- end i))))
-                (set! count (+ count 1))
+                (+= count 1)
                 (set! i end)]
               [(Err err)
                 (if recover
@@ -758,8 +753,8 @@
                       count
                       i
                       (Quote))
-                    (set! count (+ count 1))
-                    (set! i (+ i 1)))
+                    (+= count 1)
+                    (+= i 1))
                   (return (Err err)))]
               [(No)
                 (fmt-store-token
@@ -768,8 +763,8 @@
                   count
                   i
                   (Quote))
-                (set! count (+ count 1))
-                (set! i (+ i 1))])]
+                (+= count 1)
+                (+= i 1)])]
           [(= c '`')
             (fmt-store-token
               (owned_view.compiler-owned-shared-view tokens)
@@ -777,8 +772,8 @@
               count
               i
               (Backtick))
-            (set! count (+ count 1))
-            (set! i (+ i 1))]
+            (+= count 1)
+            (+= i 1)]
           [(fmt-starts-ellipsis data i n)
             (fmt-store-token
               (owned_view.compiler-owned-shared-view tokens)
@@ -786,8 +781,8 @@
               count
               i
               (Symbol "..."))
-            (set! count (+ count 1))
-            (set! i (+ i 3))]
+            (+= count 1)
+            (+= i 3)]
           [(= c '.')
             (fmt-store-token
               (owned_view.compiler-owned-shared-view tokens)
@@ -795,8 +790,8 @@
               count
               i
               (Dot))
-            (set! count (+ count 1))
-            (set! i (+ i 1))]
+            (+= count 1)
+            (+= i 1)]
           [(= c ',')
             (if (< (+ i 1) n)
               (if (= (fmt-source-byte-bounds-proven data (+ i 1)) '@')
@@ -807,8 +802,8 @@
                     count
                     i
                     (CommaAt))
-                  (set! count (+ count 1))
-                  (set! i (+ i 2)))
+                  (+= count 1)
+                  (+= i 2))
                 (begin
                   (fmt-store-token
                     (owned_view.compiler-owned-shared-view tokens)
@@ -816,8 +811,8 @@
                     count
                     i
                     (Comma))
-                  (set! count (+ count 1))
-                  (set! i (+ i 1))))
+                  (+= count 1)
+                  (+= i 1)))
               (begin
                 (fmt-store-token
                   (owned_view.compiler-owned-shared-view tokens)
@@ -825,8 +820,8 @@
                   count
                   i
                   (Comma))
-                (set! count (+ count 1))
-                (set! i (+ i 1))))]
+                (+= count 1)
+                (+= i 1)))]
           [(= c '"')
             (match (fmt-scan-string-end-result src data (+ i 1) n)
               [(Ok end)
@@ -836,7 +831,7 @@
                   count
                   i
                   (String (string.substring src i (- end i))))
-                (set! count (+ count 1))
+                (+= count 1)
                 (set! i end)]
               [(Err err)
                 (if recover
@@ -847,7 +842,7 @@
                       count
                       i
                       (String (string.substring src i (- n i))))
-                    (set! count (+ count 1))
+                    (+= count 1)
                     (set! i n))
                   (return (Err err)))])]
           [(fmt-starts-number data i n)
@@ -859,7 +854,7 @@
                   count
                   i
                   (Int (string.substring src i (- end i))))
-                (set! count (+ count 1))
+                (+= count 1)
                 (set! i end)]
               [(Err err)
                 (if recover
@@ -871,7 +866,7 @@
                       count
                       i
                       (Int (string.substring src i (- end i))))
-                    (set! count (+ count 1))
+                    (+= count 1)
                     (set! i end))
                   (return (Err err)))])]
           [(fmt-char-class? c 4)
@@ -883,11 +878,11 @@
                 count
                 i
                 (Symbol (string.substring src i (- end i))))
-              (set! count (+ count 1))
+              (+= count 1)
               (set! i end))]
           [else
             (if recover
-              (set! i (+ i 1))
+              (+= i 1)
               (return
                 (Err
                   (fmt-source-error-at

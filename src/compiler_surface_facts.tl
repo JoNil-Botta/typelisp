@@ -1,5 +1,6 @@
 ;; compiler_surface_facts.tl - relocatable checked-prefix facts shared by
 ;; package surface producers and consumers.
+(import stdlib.iterator)
 (import stdlib.byte_reader)
 (import compiler_surface_identity as surface_identity)
 (import compiler_intern_state as cis)
@@ -82,11 +83,8 @@
     [dst : (&mut dst (__tl_dyn-array SurfaceCloneObservation))]
     [src : (& src (__tl_dyn-array SurfaceCloneObservation))]
     [count : i64]) : unit
-    (let
-      [index : i64 0]
-      (while (< index count)
-        (set! (array-ref dst index) (array-ref src index))
-        (set! index (+ index 1))))))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref dst index) (array-ref src index)))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -243,9 +241,7 @@
       (set!
         surface-typecheck-facts-recording-current-call
         surface-typecheck-facts-recording-next-call)
-      (set!
-        surface-typecheck-facts-recording-next-call
-        (+ surface-typecheck-facts-recording-next-call 1)))))
+      (+= surface-typecheck-facts-recording-next-call 1))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -280,15 +276,13 @@
       [decl-keys : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [root-keys : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [call-indices : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-      [index : i64 0]
       [slots : (__tl_dyn-array SurfaceCloneObservation) observations.slots]
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (let
           [observation : SurfaceCloneObservation (array-ref slots index)]
           (set! (array-ref decl-keys index) observation.decl-key)
           (set! (array-ref root-keys index) observation.root-key)
-          (set! (array-ref call-indices index) observation.call-index)
-          (set! index (+ index 1))))
+          (set! (array-ref call-indices index) observation.call-index)))
       (set! surface-typecheck-facts-recording-active false)
       (set! surface-typecheck-facts-recording-arena 0)
       (set! surface-typecheck-facts-recording-decl-key -1)
@@ -365,7 +359,7 @@
               (or
                 (not (= call-index (array-ref call-indices (- index 1))))
                 (= decl-key (array-ref decl-keys (- index 1)))))))
-          (set! index (+ index 1))
+          (+= index 1)
           (set! ok false))))
     ok))
 
@@ -512,11 +506,8 @@
   [dst : (&mut dst (__tl_dyn-array i64))]
   [dst-offset : i64]
   [src : (& src (__tl_dyn-array i64))]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (array-length src))
-      (set! (array-ref dst (+ dst-offset index)) (array-ref src index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 (array-length src))]
+    (set! (array-ref dst (+ dst-offset index)) (array-ref src index))))
 
 (define (surface-typecheck-facts-builder-append
   [builder : SurfaceTypecheckFactsBuilder]
@@ -576,7 +567,6 @@
               (__tl_make-array i64 combined-count)]
             [call-indices : (__tl_dyn-array i64)
               (__tl_make-array i64 combined-count)]
-            [index : i64 0]
             (surface-typecheck-facts-copy-i64-range!
               (&mut decl-keys)
               0
@@ -597,13 +587,12 @@
               (&mut root-keys)
               builder-count
               (& fragment.clone-root-keys))
-            (while (< index fragment-count)
+            (for [index (iterator.range 0 fragment-count)]
               (set!
                 (array-ref call-indices (+ builder-count index))
                 (+
                   base-call-index
-                  (array-ref fragment.clone-call-indices index)))
-              (set! index (+ index 1)))
+                  (array-ref fragment.clone-call-indices index))))
             (Ok
               (SurfaceTypecheckFactsBuilder
                 (+ builder.fragment-count 1)
@@ -683,7 +672,7 @@
                 (byte_le.push-u64! (&mut out) decl-key)
                 (byte_le.push-u64! (&mut out) root-key)
                 (byte_le.push-u64! (&mut out) (array-ref call-indices index))
-                (set! index (+ index 1))))))
+                (+= index 1)))))
         (if ok
           (Ok (byte_buf_core.byte-buf-builder-finish-array (& out)))
           (Err "surface facts: identity is not relocatable"))))))
@@ -784,7 +773,7 @@
                     root-key
                     remap))
                 (set! (array-ref call-indices index) call-index)
-                (set! index (+ index 1))))))
+                (+= index 1)))))
         (let
           [facts : SurfaceTypecheckFacts
             (SurfaceTypecheckFacts

@@ -1,3 +1,4 @@
+(import stdlib.iterator)
 (import compiler_ast_types as ast)
 (import compiler_ast_types_tests as ast_tests)
 (import compiler_builtin_ids as cbi)
@@ -36,14 +37,12 @@
           (ast.ast-ty-func
             (ast.ast-type-cons (& (I64)) (& (ast.ast-type-list-new)))
             (& (I64)))))]
-    [index : i64 0]
-    (while (< index 4)
+    (for [index (iterator.range 0 4)]
       (let
         [mode : ast.AstCFunctionMode (c-function-test-mode index)]
         [first : i64 (c-function-test-type-id mode I64)]
         [repeated : i64 (c-function-test-type-id mode I64)]
         [other-result : i64 (c-function-test-type-id mode U64)]
-        [other : i64 0]
         (test.assert-true (= first repeated) "equal C signatures deduplicate")
         (test.assert-true
           (not (= first ordinary))
@@ -51,7 +50,7 @@
         (test.assert-true
           (not (= first other-result))
           "C signatures preserve their exact result type")
-        (while (< other 4)
+        (for [other (iterator.range 0 4)]
           (let
             [second : i64
               (c-function-test-type-id (c-function-test-mode other) I64)]
@@ -64,6 +63,4 @@
                   (ast.ast-node-pool-reader-type-get first)
                   (ast.ast-node-pool-reader-type-get second))
                 (= index other))
-              "structural equality preserves nullability and unsafe effect")
-            (set! other (+ other 1))))
-        (set! index (+ index 1))))))
+              "structural equality preserves nullability and unsafe effect")))))))

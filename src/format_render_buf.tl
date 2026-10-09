@@ -1,14 +1,13 @@
 ;; format_render_buf.tl - Shared formatter render buffer helpers.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
 
 (define (spaces [count : i64]) : String
   (let
-    [i : i64 0]
     [out : String ""]
-    (while (< i count)
-      (set! out (str_cat.str-cat out " " ""))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 count)]
+      (set! out (str_cat.str-cat out " " "")))
     out))
 
 ;; Flat byte buffer for the render pass. The chunk-list `TextBuf` allocates a

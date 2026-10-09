@@ -33,7 +33,7 @@
     (while (and (= found -1) (< i n))
       (if (= (cast (string.string-ref text i) : i64) needle)
         (set! found i)
-        (set! i (+ i 1))))
+        (+= i 1)))
     found))
 
 (define (package-cache-parse-normalized-remote [dep : (& dep str)]) : cache.ResultPackageCacheRemoteSpec

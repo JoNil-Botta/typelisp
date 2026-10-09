@@ -5,6 +5,7 @@
 ;; replace CompilerLiveI64Set with the general `(set i64)` family without a
 ;; compiler-path benchmark: opt2 self-compile is sensitive to liveness set
 ;; iteration and copy costs.
+(import stdlib.iterator)
 (import compiler_ir_types as ir)
 (import stdlib.hashmap)
 (import (hashmap.hashmap i64 i64) as live_label_map)
@@ -68,10 +69,8 @@
               4
               (* len 2))]
           [bigger : (__tl_dyn-array i64) (__tl_make-array i64 capacity)]
-          [index : i64 0]
-          (while (< index len)
-            (set! (array-ref bigger index) (array-ref items index))
-            (set! index (+ index 1)))
+          (for [index (iterator.range 0 len)]
+            (set! (array-ref bigger index) (array-ref items index)))
           (set! (array-ref bigger len) value)
           (Dense bigger (+ len 1))))]))
 
@@ -250,14 +249,11 @@
             (__tl_array-data
               (owned_view.compiler-owned-reference-shared-view dst)))]
         (if (< words (compiler-live-set-bulk-copy-words))
-          (let
-            [at : i64 index]
-            (while (< at count)
-              (unsafe
-                (ptr-write!
-                  (ptr-offset dst-data at)
-                  (ptr-read (ptr-offset src-data at))))
-              (set! at (+ at 1))))
+          (for [at (iterator.range index count)]
+            (unsafe
+              (ptr-write!
+                (ptr-offset dst-data at)
+                (ptr-read (ptr-offset src-data at)))))
           (unsafe
             (live-runtime-copy-bytes!
               (ptr-cast (ptr-offset dst-data index) : (MutPtr u8))
@@ -281,7 +277,7 @@
   (let
     [i : i64 count]
     (while (and (> i 0) (= (array-ref words (- i 1)) 0))
-      (set! i (- i 1)))
+      (-= i 1))
     i))
 
 (define (compiler-live-set-from-words-trimmed
@@ -394,7 +390,7 @@
               (if (not (= (bit-and right-bits (bit-xor left-bits -1)) 0))
                 (set! changed true)
                 unit)
-              (set! probe (+ probe 1))))
+              (+= probe 1)))
           (if changed
             (let
               [count : i64
@@ -426,20 +422,20 @@
                     (bit-or
                       (ptr-read (ptr-offset left-data index))
                       (ptr-read (ptr-offset right-data index)))))
-                (set! index (+ index 1)))
+                (+= index 1))
               (if (< left-count right-count)
                 (while (< index count)
                   (unsafe
                     (ptr-write!
                       (ptr-offset out-data index)
                       (ptr-read (ptr-offset right-data index))))
-                  (set! index (+ index 1)))
+                  (+= index 1))
                 (while (< index count)
                   (unsafe
                     (ptr-write!
                       (ptr-offset out-data index)
                       (ptr-read (ptr-offset left-data index))))
-                  (set! index (+ index 1))))
+                  (+= index 1)))
               ;; The longer input's final word is nonzero because every
               ;; CompilerLiveI64Set is canonical, so union cannot introduce
               ;; a trailing zero word.
@@ -469,12 +465,11 @@
         (if (not (= (bit-and left-bits right-bits) 0))
           (set! changed true)
           unit)
-        (set! probe (+ probe 1))))
+        (+= probe 1)))
     (if changed
       (let
         [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-        [index : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (let
             [left-bits : i64
               (unsafe
@@ -486,8 +481,7 @@
                 0)]
             (set!
               (array-ref out index)
-              (bit-and left-bits (bit-xor right-bits -1)))
-            (set! index (+ index 1))))
+              (bit-and left-bits (bit-xor right-bits -1)))))
         (compiler-live-set-from-words-trimmed out count))
       left)))
 
@@ -534,7 +528,7 @@
               (ptr-read (ptr-offset right-data index)))
             0)]
         (if (= left-bits right-bits)
-          (set! index (+ index 1))
+          (+= index 1)
           (set! same false))))
     same))
 
@@ -550,11 +544,9 @@
           (owned_view.compiler-owned-reference-shared-view words)))]
     [count : i64
       (array-length (owned_view.compiler-owned-reference-shared-view words))]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (unsafe
-        (ptr-write! (ptr-offset data index) 0))
-      (set! index (+ index 1)))))
+        (ptr-write! (ptr-offset data index) 0)))))
 
 (define (compiler-live-scratch-copy-set!
   [words : (& (__tl_dyn-array i64))]
@@ -575,11 +567,11 @@
     (while (< index src-count)
       (unsafe
         (ptr-write! (ptr-offset dst index) (ptr-read (ptr-offset src index))))
-      (set! index (+ index 1)))
+      (+= index 1))
     (while (< index count)
       (unsafe
         (ptr-write! (ptr-offset dst index) 0))
-      (set! index (+ index 1)))
+      (+= index 1))
     src-count))
 
 (define (compiler-live-scratch-union-set!
@@ -595,15 +587,13 @@
       (unsafe
         (__tl_array-data src-words))]
     [count : i64 (array-length src-words)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (unsafe
         (ptr-write!
           (ptr-offset dst index)
           (bit-or
             (ptr-read (ptr-offset dst index))
-            (ptr-read (ptr-offset src index)))))
-      (set! index (+ index 1)))
+            (ptr-read (ptr-offset src index))))))
     (compiler-live-set-max active-count count)))
 
 ;; Id form of compiler-live-scratch-step!: `live = (live & ~defs) | uses` for a
@@ -626,7 +616,6 @@
   [def-var : i64]) : i64
   (let
     [count : i64 active-count]
-    [index : i64 0]
     (if (< def-var 0)
       unit
       (let
@@ -637,15 +626,14 @@
           (bit-and
             (array-ref words word)
             (bit-xor (compiler-live-set-bit-mask def-var) -1)))))
-    (while (< index id-count)
+    (for [index (iterator.range 0 id-count)]
       (let
         [var : i64 (array-ref ids index)]
         [word : i64 (compiler-live-set-word-index var)]
         (set! count (compiler-live-set-max count (+ word 1)))
         (set!
           (array-ref words word)
-          (bit-or (array-ref words word) (compiler-live-set-bit-mask var)))
-        (set! index (+ index 1))))
+          (bit-or (array-ref words word) (compiler-live-set-bit-mask var)))))
     (compiler-live-set-trim-length words count)))
 
 (define (compiler-live-scratch-step!
@@ -672,8 +660,7 @@
       (compiler-live-set-max
         active-count
         (compiler-live-set-max use-count def-count))]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [use-bits : i64
           (if (< index use-count)
@@ -690,8 +677,7 @@
             (ptr-offset dst index)
             (bit-or
               (bit-and (ptr-read (ptr-offset dst index)) (bit-xor def-bits -1))
-              use-bits)))
-        (set! index (+ index 1))))
+              use-bits)))))
     (compiler-live-set-trim-length words count)))
 
 (define (compiler-live-scratch-eq-set?
@@ -717,7 +703,7 @@
           (ptr-read (ptr-offset set-data index))))
         unit
         (set! same false))
-      (set! index (+ index 1)))
+      (+= index 1))
     same))
 
 (define (compiler-live-scratch-freeze
@@ -736,7 +722,6 @@
         [dst : (MutPtr i64)
           (unsafe
             (__tl_array-data out))]
-        [index : i64 0]
         ;; `out` is the allocation two lines up, so it can never be the array
         ;; `words` points at and the two ranges cannot overlap -- the bulk
         ;; copy therefore reads exactly what the ascending word walk read.
@@ -744,12 +729,11 @@
         ;; under the width where the call pays for itself, so the word walk
         ;; stays for those (see `compiler-live-set-bulk-copy-words`).
         (if (< count (compiler-live-set-bulk-copy-words))
-          (while (< index count)
+          (for [index (iterator.range 0 count)]
             (unsafe
               (ptr-write!
                 (ptr-offset dst index)
-                (ptr-read (ptr-offset src index))))
-            (set! index (+ index 1)))
+                (ptr-read (ptr-offset src index)))))
           (unsafe
             (live-runtime-copy-bytes!
               (ptr-cast dst : (MutPtr u8))
@@ -773,18 +757,14 @@
 
 (define (compiler-live-set-count [set : (& set CompilerLiveI64Set)]) : i64
   (let
-    [index : i64 0]
     [count : i64 0]
     [word-count : i64 (compiler-live-set-word-count set)]
-    (while (< index word-count)
-      (set!
+    (for [index (iterator.range 0 word-count)]
+      (+=
         count
-        (+
-          count
-          (compiler-live-set-word-count-bits
-            (compiler-live-set-word-at-bounded set index)
-            0)))
-      (set! index (+ index 1)))
+        (compiler-live-set-word-count-bits
+          (compiler-live-set-word-at-bounded set index)
+          0)))
     count))
 
 (define (compiler-live-set-builder-insert!
@@ -893,12 +873,10 @@
   [set : CompilerLiveLabelSet]
   [cases : (& ir.CompilerIrSwitchCaseSeq)]) : CompilerLiveLabelSet
   (let
-    [index : i64 0]
     [out : CompilerLiveLabelSet set]
-    (while (< index cases.len)
+    (for [index (iterator.range 0 cases.len)]
       (match (ir.compiler-ir-switch-case-seq-ref cases index)
-        [(Case _ label) (set! out (compiler-live-label-set-insert out label))])
-      (set! index (+ index 1)))
+        [(Case _ label) (set! out (compiler-live-label-set-insert out label))]))
     out))
 
 (define (compiler-live-use-vars-into
@@ -961,7 +939,7 @@
           (if (= (array-ref out index) id)
             (set! found true)
             unit)
-          (set! index (+ index 1)))
+          (+= index 1))
         (if found
           n
           (if (>= n (array-length out))
@@ -989,15 +967,12 @@
 (define (compiler-live-use-ids-add-value-array!
   [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
-  [values : (& (__tl_dyn-array ir.CompilerIrValue))]
-  [index : i64]) : i64
-  (if (>= index (array-length values))
-    n
-    (compiler-live-use-ids-add-value-array!
-      out
-      (compiler-live-use-ids-add-value! out n (& (array-ref values index)))
-      values
-      (+ index 1))))
+  [values : (& (__tl_dyn-array ir.CompilerIrValue))]) : i64
+  (for [index (iterator.range 0 (array-length values))]
+    (set!
+      n
+      (compiler-live-use-ids-add-value! out n (& (array-ref values index)))))
+  n)
 
 (define (compiler-live-use-ids-add-call-args!
   [out : (&mut out (__tl_dyn-array i64))]
@@ -1012,27 +987,24 @@
         (compiler-live-use-ids-add-value! out n (& a))
         (& b))]
     [(or (Array values) (Sret values _))
-      (compiler-live-use-ids-add-value-array! out n (& values) 0)]))
+      (compiler-live-use-ids-add-value-array! out n (& values))]))
 
 ;; Walk dense value slots in place; no transient chain is materialized.
 (define (compiler-live-use-ids-add-value-seq-from!
   [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
-  [seq : (& ir.CompilerIrValueSeq)]
-  [index : i64]) : i64
-  (if (>= index seq.len)
-    n
-    (compiler-live-use-ids-add-value-seq-from!
-      out
-      (compiler-live-use-ids-add-value! out n (& (array-ref seq.slots index)))
-      seq
-      (+ index 1))))
+  [seq : (& ir.CompilerIrValueSeq)]) : i64
+  (for [index (iterator.range 0 seq.len)]
+    (set!
+      n
+      (compiler-live-use-ids-add-value! out n (& (array-ref seq.slots index)))))
+  n)
 
 (define (compiler-live-use-ids-add-value-seq!
   [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
   [values : (& ir.CompilerIrValueSeq)]) : i64
-  (compiler-live-use-ids-add-value-seq-from! out n values 0))
+  (compiler-live-use-ids-add-value-seq-from! out n values))
 
 (define (compiler-live-use-ids-add-phi-inputs!
   [out : (&mut out (__tl_dyn-array i64))]
@@ -1056,22 +1028,19 @@
 (define (compiler-live-use-ids-add-spmd-args-seq!
   [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
-  [seq : (& ir.CompilerIrSpmdCallArgSeq)]
-  [index : i64]) : i64
-  (if (>= index seq.len)
-    n
-    (compiler-live-use-ids-add-spmd-args-seq!
-      out
+  [seq : (& ir.CompilerIrSpmdCallArgSeq)]) : i64
+  (for [index (iterator.range 0 seq.len)]
+    (set!
+      n
       (match (array-ref seq.slots index)
-        [(Arg _ value _) (compiler-live-use-ids-add-value! out n (& value))])
-      seq
-      (+ index 1))))
+        [(Arg _ value _) (compiler-live-use-ids-add-value! out n (& value))])))
+  n)
 
 (define (compiler-live-use-ids-add-spmd-args!
   [out : (&mut out (__tl_dyn-array i64))]
   [n : i64]
   [args : (& ir.CompilerIrSpmdCallArgSeq)]) : i64
-  (compiler-live-use-ids-add-spmd-args-seq! out n args 0))
+  (compiler-live-use-ids-add-spmd-args-seq! out n args))
 
 ;; Write the distinct used var ids of `instr` into `out`, returning the count,
 ;; or -1 when they do not fit (caller falls back to compiler-live-instr-uses).
@@ -1272,9 +1241,8 @@
   [ids : (& (__tl_dyn-array i64))]
   [id-count : i64]) : i64
   (let
-    [index : i64 0]
     [words : i64 0]
-    (while (< index id-count)
+    (for [index (iterator.range 0 id-count)]
       (set!
         words
         (compiler-live-set-max
@@ -1284,8 +1252,7 @@
               (array-ref
                 (owned_view.compiler-owned-reference-shared-view ids)
                 index))
-            1)))
-      (set! index (+ index 1)))
+            1))))
     words))
 
 (define (compiler-live-var-word-count-of [var : i64]) : i64
@@ -1315,24 +1282,21 @@
   [ids : (& ids (__tl_dyn-array i64))]
   [id-count : i64]
   [def-var : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index id-count)
-      (let
-        [var : i64 (array-ref ids index)]
-        [word : i64 (compiler-live-set-word-index var)]
-        [mask : i64 (compiler-live-set-bit-mask var)]
-        (if (= (bit-and (array-ref defs word) mask) 0)
-          (set! (array-ref uses word) (bit-or (array-ref uses word) mask))
-          unit)
-        (set! index (+ index 1))))
-    (if (< def-var 0)
-      unit
-      (let
-        [word : i64 (compiler-live-set-word-index def-var)]
-        (set!
-          (array-ref defs word)
-          (bit-or (array-ref defs word) (compiler-live-set-bit-mask def-var)))))))
+  (for [index (iterator.range 0 id-count)]
+    (let
+      [var : i64 (array-ref ids index)]
+      [word : i64 (compiler-live-set-word-index var)]
+      [mask : i64 (compiler-live-set-bit-mask var)]
+      (if (= (bit-and (array-ref defs word) mask) 0)
+        (set! (array-ref uses word) (bit-or (array-ref uses word) mask))
+        unit)))
+  (if (< def-var 0)
+    unit
+    (let
+      [word : i64 (compiler-live-set-word-index def-var)]
+      (set!
+        (array-ref defs word)
+        (bit-or (array-ref defs word) (compiler-live-set-bit-mask def-var))))))
 
 (define (compiler-live-block-use-def-step!
   [uses : (& (__tl_dyn-array i64))]
@@ -1357,8 +1321,7 @@
     [instr-use-count : i64 (array-length instr-use-words)]
     [instr-def-count : i64 (array-length instr-def-words)]
     [count : i64 (compiler-live-set-max instr-use-count instr-def-count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [instr-use-bits : i64
           (if (< index instr-use-count)
@@ -1382,8 +1345,7 @@
         (unsafe
           (ptr-write!
             (ptr-offset def-data index)
-            (bit-or old-def-bits instr-def-bits)))
-        (set! index (+ index 1))))))
+            (bit-or old-def-bits instr-def-bits)))))))
 
 ;; Leading phis read their inputs in PARALLEL on entry: each input is the value
 ;; its predecessor left, not a value another phi of this block just wrote. So a
@@ -1399,7 +1361,7 @@
     [index : i64 0]
     (while (< index count)
       (match (ir.compiler-ir-instr-seq-ref instrs index)
-        [(Phi _ _ _) (set! index (+ index 1))]
+        [(Phi _ _ _) (+= index 1)]
         [_ (return index)]))
     index))
 
@@ -1408,9 +1370,8 @@
   [phi-end : i64]
   [defs : (&mut defs (__tl_dyn-array i64))]) : i64
   (let
-    [index : i64 0]
     [word-count : i64 0]
-    (while (< index phi-end)
+    (for [index (iterator.range 0 phi-end)]
       (let
         [def-var : i64
           (let
@@ -1429,8 +1390,7 @@
               word-count
               (compiler-live-set-max
                 word-count
-                (compiler-live-var-word-count-of def-var)))))
-        (set! index (+ index 1))))
+                (compiler-live-var-word-count-of def-var)))))))
     word-count))
 
 (define (compiler-live-block-use-def-seq-with-scratch
@@ -1444,10 +1404,9 @@
       (compiler-live-leading-phi-count (compiler-live-shared-view instrs))]
     [use-count : i64 0]
     [def-count : i64 0]
-    [index : i64 0]
     (compiler-live-scratch-clear! (& uses))
     (compiler-live-scratch-clear! (& defs))
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
         [ids : (__tl_dyn-array i64) (compiler-live-instr-ids)]
@@ -1513,8 +1472,7 @@
               (compiler-live-leading-phi-defs!
                 (compiler-live-shared-view instrs)
                 phi-end
-                (&mut defs)))))
-        (set! index (+ index 1))))
+                (&mut defs)))))))
     (CompilerLiveUseDef
       (compiler-live-scratch-freeze (& uses) use-count)
       (compiler-live-scratch-freeze (& defs) def-count))))
@@ -1538,8 +1496,7 @@
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
     [phi-end : i64
       (compiler-live-leading-phi-count (compiler-live-shared-view instrs))]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
         [ids : (__tl_dyn-array i64) (compiler-live-instr-ids)]
@@ -1563,7 +1520,7 @@
                     (compiler-live-set-bit-mask id))
                   0)
                 (compiler-live-use-id! use-at def-at block id use-out))
-              (set! id (+ id 1))))
+              (+= id 1)))
           (while (< id id-count)
             (compiler-live-use-id!
               use-at
@@ -1571,29 +1528,25 @@
               block
               (array-ref ids id)
               use-out)
-            (set! id (+ id 1))))
+            (+= id 1)))
         (cond
           [(< (+ index 1) phi-end) unit]
           [(= (+ index 1) phi-end)
-            (let
-              [phi : i64 0]
-              (while (< phi phi-end)
-                (let
-                  [phi-instr : ir.CompilerIrInstr
-                    (ir.compiler-ir-instr-seq-ref instrs phi)]
-                  (compiler-live-def-id!
-                    def-at
-                    block
-                    (ir.compiler-ir-instr-dst phi-instr)
-                    def-out)
-                  (set! phi (+ phi 1)))))]
+            (for [phi (iterator.range 0 phi-end)]
+              (let
+                [phi-instr : ir.CompilerIrInstr
+                  (ir.compiler-ir-instr-seq-ref instrs phi)]
+                (compiler-live-def-id!
+                  def-at
+                  block
+                  (ir.compiler-ir-instr-dst phi-instr)
+                  def-out)))]
           [else
             (compiler-live-def-id!
               def-at
               block
               (ir.compiler-ir-instr-dst instr)
-              def-out)])
-        (set! index (+ index 1))))))
+              def-out)])))))
 
 ;; Ids outside the stamp rows are not the function's vars and are skipped.
 (define (compiler-live-use-id!
@@ -1687,10 +1640,8 @@
     items
     (let
       [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-      [i : i64 0]
-      (while (< i count)
-        (set! (array-ref out i) (array-ref items i))
-        (set! i (+ i 1)))
+      (for [i (iterator.range 0 count)]
+        (set! (array-ref out i) (array-ref items i)))
       out)))
 
 (define (compiler-live-label-set-fill-indexes!
@@ -1736,25 +1687,23 @@
 ;; predecessors of a changed block, preserving deterministic source/RPO order.
 (define (compiler-live-predecessor-counts-add!
   [successors : (& (__tl_dyn-array CompilerLiveIndexVec))]
-  [counts : (&mut counts (__tl_dyn-array i64))]
-  [source : i64]) : unit
-  (if (>=
-    source
-    (array-length (owned_view.compiler-owned-reference-shared-view successors)))
-    unit
+  [counts : (&mut counts (__tl_dyn-array i64))]) : unit
+  (for [source
+    (iterator.range
+      0
+      (array-length
+        (owned_view.compiler-owned-reference-shared-view successors)))]
     (let
       [row : CompilerLiveIndexVec
         (compiler-live-array-element-shared-view
           (owned_view.compiler-owned-reference-shared-view successors)
           source)]
       [items : (__tl_dyn-array i64) row.items]
-      [i : i64 0]
-      (while (< i (array-length items))
+      (for [i (iterator.range 0 (array-length items))]
         (let
           [target : i64 (array-ref items i)]
-          (set! (array-ref counts target) (+ (array-ref counts target) 1))
-          (set! i (+ i 1))))
-      (compiler-live-predecessor-counts-add! successors counts (+ source 1)))))
+          (set! (array-ref counts target) (+ (array-ref counts target) 1))))
+      unit)))
 
 (define (compiler-live-predecessor-items-make
   [counts : (& (__tl_dyn-array i64))]
@@ -1777,20 +1726,19 @@
 (define (compiler-live-predecessor-fill!
   [successors : (& (__tl_dyn-array CompilerLiveIndexVec))]
   [predecessors : (__tl_dyn-array CompilerLiveIndexVec)]
-  [next : (__tl_dyn-array i64)]
-  [source : i64]) : unit
-  (if (>=
-    source
-    (array-length (owned_view.compiler-owned-reference-shared-view successors)))
-    unit
+  [next : (__tl_dyn-array i64)]) : unit
+  (for [source
+    (iterator.range
+      0
+      (array-length
+        (owned_view.compiler-owned-reference-shared-view successors)))]
     (let
       [source-row : CompilerLiveIndexVec
         (compiler-live-array-element-shared-view
           (owned_view.compiler-owned-reference-shared-view successors)
           source)]
       [items : (__tl_dyn-array i64) source-row.items]
-      [i : i64 0]
-      (while (< i (array-length items))
+      (for [i (iterator.range 0 (array-length items))]
         (let
           [target : i64 (array-ref items i)]
           [slot : i64 (array-ref next target)]
@@ -1798,13 +1746,8 @@
             (compiler-live-array-element-shared-view predecessors target)]
           [target-items : (__tl_dyn-array i64) target-row.items]
           (set! (array-ref target-items slot) source)
-          (set! (array-ref next target) (+ slot 1))
-          (set! i (+ i 1))))
-      (compiler-live-predecessor-fill!
-        successors
-        predecessors
-        next
-        (+ source 1)))))
+          (set! (array-ref next target) (+ slot 1))))
+      unit)))
 
 (define (compiler-live-predecessors-build
   [successors : (& (__tl_dyn-array CompilerLiveIndexVec))]) : (__tl_dyn-array
@@ -1817,13 +1760,12 @@
     [out : (__tl_dyn-array CompilerLiveIndexVec)
       (__tl_make-array CompilerLiveIndexVec count)]
     [next : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    (compiler-live-predecessor-counts-add! successors (&mut counts) 0)
+    (compiler-live-predecessor-counts-add! successors (&mut counts))
     (compiler-live-predecessor-items-make (& counts) 0 (&mut out))
     (compiler-live-predecessor-fill!
       successors
       (compiler-live-shared-view out)
-      next
-      0)
+      next)
     out))
 
 (define (compiler-live-successor-live-out-graph-into!
@@ -1833,9 +1775,8 @@
   (let
     [items : (__tl_dyn-array i64) successors.items]
     [active-count : i64 0]
-    [index : i64 0]
     (compiler-live-scratch-clear! (& words))
-    (while (< index (array-length items))
+    (for [index (iterator.range 0 (array-length items))]
       (let
         [successor : CompilerLiveBlock
           (compiler-live-array-element-shared-view
@@ -1846,8 +1787,7 @@
           (compiler-live-scratch-union-set!
             (compiler-live-shared-view words)
             active-count
-            successor.live-in))
-        (set! index (+ index 1))))
+            successor.live-in))))
     active-count))
 
 (define (compiler-live-recompute-block-graph
@@ -1914,7 +1854,7 @@
         (array-ref pending index)
         (set! (array-ref pending index) false)
         (set! picked index))
-      (set! index (- index 1)))
+      (-= index 1))
     picked))
 
 (define (compiler-live-worklist-enqueue-predecessors!
@@ -1925,10 +1865,8 @@
     [row : CompilerLiveIndexVec
       (compiler-live-array-element-shared-view graph.predecessors slot)]
     [items : (__tl_dyn-array i64) row.items]
-    [i : i64 0]
-    (while (< i (array-length items))
-      (set! (array-ref pending (array-ref items i)) true)
-      (set! i (+ i 1)))))
+    (for [i (iterator.range 0 (array-length items))]
+      (set! (array-ref pending (array-ref items i)) true))))
 
 (define (compiler-live-instr-seq-fill-after!
   [instrs : ir.CompilerIrInstrSeq]
@@ -1978,7 +1916,7 @@
               ids
               id-count
               def-var)))
-        (set! index (- index 1))))))
+        (-= index 1)))))
 
 (define (compiler-live-fill-instr-after-block
   [ir-block : (& ir.CompilerIrBlock)]
@@ -2097,8 +2035,7 @@
   [phi-out : (__tl_dyn-array CompilerLiveI64Set)]) : unit
   (let
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [i : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (match (& (array-ref instrs.slots i))
         [(Phi _ _ _)
           (match (ir.compiler-ir-instr-seq-ref instrs i)
@@ -2108,8 +2045,7 @@
                 ids
                 (compiler-live-shared-view phi-out))]
             [_ unit])]
-        [_ unit])
-      (set! i (+ i 1)))))
+        [_ unit]))))
 
 (define (compiler-live-recompute-block-graph-ep
   [block : CompilerLiveBlock]
@@ -2219,11 +2155,9 @@
     [phi-out : (__tl_dyn-array CompilerLiveI64Set)
       (__tl_make-array CompilerLiveI64Set (array-length graph0.blocks))]
     (let
-      [i : i64 0]
       [n : i64 (array-length phi-out)]
-      (while (< i n)
-        (set! (array-ref phi-out i) (compiler-live-set-empty))
-        (set! i (+ i 1))))
+      (for [i (iterator.range 0 n)]
+        (set! (array-ref phi-out i) (compiler-live-set-empty))))
     (compiler-live-phi-out-build-seq!
       seq
       (& graph0.ids)
@@ -2311,8 +2245,7 @@
     [word-count : i64 (compiler-live-var-word-count vars)]
     [uses : (__tl_dyn-array i64) (__tl_make-array i64 word-count)]
     [defs : (__tl_dyn-array i64) (__tl_make-array i64 word-count)]
-    [i : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (let
         [block : ir.CompilerIrBlock (ir.compiler-ir-block-seq-ref blocks i)]
         (match (compiler-live-shared-view block)
@@ -2325,8 +2258,7 @@
                   instrs
                   (compiler-live-shared-view uses)
                   (compiler-live-shared-view defs)
-                  edge-precise?)))])
-        (set! i (+ i 1))))
+                  edge-precise?)))])))
     out))
 
 (define (compiler-live-build-block-array
@@ -2345,25 +2277,22 @@
   [phi-out : (__tl_dyn-array CompilerLiveI64Set)]) : unit
   (let
     [count : i64 (ir.compiler-ir-block-seq-count blocks)]
-    [i : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (match (ir.compiler-ir-block-seq-ref blocks i)
         [(Block _ instrs)
           (compiler-live-phi-out-add-seq!
             instrs
             ids
-            (compiler-live-shared-view phi-out))])
-      (set! i (+ i 1)))))
+            (compiler-live-shared-view phi-out))]))))
 
 (define (compiler-live-block-graph-fill-successors-from-array!
   [blocks : (& (__tl_dyn-array CompilerLiveBlock))]
   [ids : (& ids live_label_map.Map)]
-  [successors : (&mut successors (__tl_dyn-array CompilerLiveIndexVec))]
-  [index : i64]) : unit
-  (if (>=
-    index
-    (array-length (owned_view.compiler-owned-reference-shared-view blocks)))
-    unit
+  [successors : (&mut successors (__tl_dyn-array CompilerLiveIndexVec))]) : unit
+  (for [index
+    (iterator.range
+      0
+      (array-length (owned_view.compiler-owned-reference-shared-view blocks)))]
     (let
       [block : CompilerLiveBlock
         (compiler-live-array-element-shared-view
@@ -2372,11 +2301,7 @@
       (set!
         (array-ref successors index)
         (compiler-live-label-set-to-index-vec (& block.successors) ids))
-      (compiler-live-block-graph-fill-successors-from-array!
-        blocks
-        ids
-        successors
-        (+ index 1)))))
+      unit)))
 
 (define (compiler-live-block-graph-build-from-array
   [blocks : (__tl_dyn-array CompilerLiveBlock)]) : CompilerLiveBlockGraph
@@ -2385,20 +2310,17 @@
     [successors : (__tl_dyn-array CompilerLiveIndexVec)
       (__tl_make-array CompilerLiveIndexVec count)]
     [ids : live_label_map.Map (live_label_map.with-capacity (+ (* count 2) 1))]
-    [i : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (let
         [block : CompilerLiveBlock
           (compiler-live-array-element-shared-view blocks i)]
         [_inserted : bool
           (live_label_map.insert-if-absent-ref! (&mut ids) block.label i)]
-        unit)
-      (set! i (+ i 1)))
+        unit))
     (compiler-live-block-graph-fill-successors-from-array!
       (& blocks)
       (& ids)
-      (&mut successors)
-      0)
+      (&mut successors))
     (CompilerLiveBlockGraph
       ids
       blocks
@@ -2425,16 +2347,14 @@
         (ir.compiler-ir-block-seq-count ir-blocks)
         (array-length blocks))]
     [words : (__tl_dyn-array i64) (__tl_make-array i64 word-count)]
-    [i : i64 0]
-    (while (< i count)
+    (for [i (iterator.range 0 count)]
       (set!
         (array-ref blocks i)
         (compiler-live-fill-instr-after-block
           (& (ir.compiler-ir-block-seq-ref ir-blocks i))
           (compiler-live-array-element-shared-view blocks i)
           (& words)
-          edge-precise?))
-      (set! i (+ i 1)))))
+          edge-precise?)))))
 
 (define (compiler-live-fixpoint
   [graph : CompilerLiveBlockGraph]

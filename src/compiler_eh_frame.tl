@@ -13,6 +13,7 @@
 ;; non-expression opcodes with bounded LEB operands.  DWARF64, other versions,
 ;; augmentations and pointer encodings, DW_CFA_set_loc, expression opcodes and
 ;; unknown opcodes fail closed.
+(import stdlib.iterator)
 (import stdlib.byte_buf_core)
 (import stdlib.byte_le)
 (import stdlib.leb128)
@@ -291,8 +292,8 @@
         [register-a : i64 -1]
         [register-b : i64 -1]
         [ok : bool true]
-        (set! at (+ at 1))
-        (set! work (+ work 1))
+        (+= at 1)
+        (+= work 1)
         (cond
           [(= high 1) (set! advance low)]
           [(= high 2)
@@ -314,19 +315,19 @@
               (set! ok false)
               (begin
                 (set! advance (byte_le.byte-le-at bytes at))
-                (set! at (+ at 1))))]
+                (+= at 1)))]
           [(= op 0x03)
             (if (> (+ at 2) end)
               (set! ok false)
               (begin
                 (set! advance (byte_le.read-u16 bytes at))
-                (set! at (+ at 2))))]
+                (+= at 2)))]
           [(= op 0x04)
             (if (> (+ at 4) end)
               (set! ok false)
               (begin
                 (set! advance (byte_le.read-u32 bytes at))
-                (set! at (+ at 4))))]
+                (+= at 4)))]
           ;; register, operand: offset_extended, register, def_cfa,
           ;; val_offset (both ULEB) and the _sf forms (SLEB second).
           [(or
@@ -379,7 +380,7 @@
                 (set! message "cfa: DW_CFA_remember_state in a CIE program")]
               [(>= depth max-depth)
                 (set! message "cfa: remembered state depth limit exceeded")]
-              [else (set! depth (+ depth 1))])]
+              [else (+= depth 1)])]
           [(= op 0x0b)
             (cond
               [cie? (set! message "cfa: DW_CFA_restore_state in a CIE program")]
@@ -387,7 +388,7 @@
                 (set!
                   message
                   "cfa: DW_CFA_restore_state without a remembered state")]
-              [else (set! depth (- depth 1))])]
+              [else (-= depth 1)])]
           [(or (= op 0x0f) (= op 0x10) (= op 0x16))
             (set! message "cfa: DWARF expression instructions are not admitted")]
           [else (set! message "cfa: unknown or unadmitted CFA opcode")])
@@ -411,7 +412,7 @@
               (begin
                 ;; delta < 2^32 and code-alignment < 2^32, so the product
                 ;; and the sum stay far below 2^63.
-                (set! location (+ location (* advance code-alignment)))
+                (+= location (* advance code-alignment))
                 (when
                   (> location range)
                   (set! message "cfa: location advance past the FDE range")
@@ -491,9 +492,9 @@
             (set! message "eh_frame: record limit exceeded")]
           [else
             (if (= (byte_le.read-u32 bytes (+ at 4)) 0)
-              (set! cies (+ cies 1))
-              (set! fdes (+ fdes 1)))
-            (set! at (+ at (+ 4 record-length)))])))
+              (+= cies 1)
+              (+= fdes 1))
+            (+= at (+ 4 record-length))])))
     (CompilerEhFrameFraming code record offset message cies fdes terminated)))
 
 ;; Index of the CIE decoded at `offset`, or -1.  CIEs are decoded in offset
@@ -521,11 +522,8 @@
   [bytes : (& bytes (__tl_dyn-array u8))]
   [start : i64]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref programs (+ at index)) (array-ref bytes (+ start index)))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (set! (array-ref programs (+ at index)) (array-ref bytes (+ start index)))))
 
 ;; Decode the `.eh_frame` section `bytes`, which the caller identifies as
 ;; `input`.  Every record is checked against the admitted profile before any
@@ -610,7 +608,7 @@
                         record
                         check.offset
                         check.message))))
-                (set! work (+ work check.work))
+                (+= work check.work)
                 (compiler-eh-frame-copy-program!
                   (&mut programs)
                   program-bytes
@@ -628,8 +626,8 @@
                     compiler-eh-frame-pe-pcrel-sdata4
                     program-bytes
                     program-length))
-                (set! program-bytes (+ program-bytes program-length))
-                (set! cie-count (+ cie-count 1)))
+                (+= program-bytes program-length)
+                (+= cie-count 1))
               (let
                 [cie-offset : i64 (- (+ record 4) id)]
                 [cie : i64
@@ -722,7 +720,7 @@
                             record
                             check.offset
                             check.message))))
-                    (set! work (+ work check.work))
+                    (+= work check.work)
                     (compiler-eh-frame-copy-program!
                       (&mut programs)
                       program-bytes
@@ -741,8 +739,8 @@
                         range
                         program-bytes
                         program-length))
-                    (set! program-bytes (+ program-bytes program-length))
-                    (set! fde-count (+ fde-count 1))))))
+                    (+= program-bytes program-length)
+                    (+= fde-count 1)))))
             (when
               (> work limits.max-work)
               (return
@@ -960,7 +958,7 @@
               (array-ref images right-image).programs
               (+ right-start index))
             : i64)))
-      (set! index (+ index 1)))
+      (+= index 1))
     (if (= result 0)
       (compiler-eh-frame-compare-i64 left-length right-length)
       result)))
@@ -1140,7 +1138,7 @@
         order
         start
         count)
-      (set! start (- start 1)))
+      (-= start 1))
     (while (> end 0)
       (let
         [swap : i64 (array-ref order 0)]
@@ -1154,7 +1152,7 @@
           order
           0
           end)
-        (set! end (- end 1))))))
+        (-= end 1)))))
 
 (define (compiler-eh-frame-align [size : i64]) : i64
   (* (/ (+ size 7) 8) 8))
@@ -1178,13 +1176,10 @@
   [image : i64]
   [start : i64]
   [length : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index length)
-      (byte_buf_core.byte-buf-builder-push
-        out
-        (array-ref (array-ref images image).programs (+ start index)))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 length)]
+    (byte_buf_core.byte-buf-builder-push
+      out
+      (array-ref (array-ref images image).programs (+ start index)))))
 
 (define (compiler-eh-frame-push-padding!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -1209,7 +1204,6 @@
   [limits : (& limits CompilerEhFrameLimits)]) : ResultCompilerEhFrameOutput
   (let
     [count : i64 (array-length selections)]
-    [index : i64 0]
     (when
       (not (compiler-eh-frame-limits-valid? limits))
       (return
@@ -1228,7 +1222,7 @@
         (compiler-eh-frame-encode-error
           compiler-eh-frame-error-address
           "eh_frame: section address outside the supported range")))
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [selection : CompilerEhFrameSelection (array-ref selections index)]
         (when
@@ -1254,18 +1248,15 @@
           (return
             (compiler-eh-frame-encode-error
               compiler-eh-frame-error-address
-              "eh_frame: FDE code range outside the supported address range")))
-        (set! index (+ index 1))))
+              "eh_frame: FDE code range outside the supported address range")))))
     (let
       [cie-order : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [fde-order : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [cie-ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
       [unique : i64 0]
-      (set! index 0)
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (set! (array-ref cie-order index) index)
-        (set! (array-ref fde-order index) index)
-        (set! index (+ index 1)))
+        (set! (array-ref fde-order index) index))
       (compiler-eh-frame-sort!
         images
         selections
@@ -1273,8 +1264,7 @@
         false
         (&mut cie-order))
       ;; Number runs of equal contracts in contract order.
-      (set! index 0)
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (when
           (and
             (> index 0)
@@ -1284,9 +1274,8 @@
                 (& (array-ref selections (array-ref cie-order (- index 1))))
                 (& (array-ref selections (array-ref cie-order index))))
               0))
-          (set! unique (+ unique 1)))
-        (set! (array-ref cie-ids (array-ref cie-order index)) unique)
-        (set! index (+ index 1)))
+          (+= unique 1))
+        (set! (array-ref cie-ids (array-ref cie-order index)) unique))
       (compiler-eh-frame-sort!
         images
         selections
@@ -1294,8 +1283,7 @@
         true
         (&mut fde-order))
       ;; The same FDE selected twice, or two images claiming one identity.
-      (set! index 1)
-      (while (< index count)
+      (for [index (iterator.range 1 count)]
         (let
           [previous : CompilerEhFrameSelection
             (array-ref selections (array-ref fde-order (- index 1)))]
@@ -1312,8 +1300,7 @@
             (return
               (compiler-eh-frame-encode-error
                 compiler-eh-frame-error-selection
-                "eh_frame: an FDE identity is selected more than once")))
-          (set! index (+ index 1))))
+                "eh_frame: an FDE identity is selected more than once")))))
       (compiler-eh-frame-encode-layout
         images
         selections
@@ -1341,37 +1328,31 @@
         (+ (array-ref cie-ids (array-ref cie-order (- count 1))) 1))]
     ;; Selection index of each retained CIE's representative.
     [representatives : (__tl_dyn-array i64) (__tl_make-array i64 unique-count)]
-    [index : i64 0]
     [total : i64 4]
     [previous-id : i64 -1]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [selection : i64 (array-ref cie-order index)]
         [id : i64 (array-ref cie-ids selection)]
         (when
           (!= id previous-id)
           (set! (array-ref representatives id) selection)
-          (set! previous-id id))
-        (set! index (+ index 1))))
+          (set! previous-id id))))
     ;; Size every record before allocating the output.
-    (set! index 0)
-    (while (< index unique-count)
+    (for [index (iterator.range 0 unique-count)]
       (let
         [cie : CompilerEhFrameCie
           (compiler-eh-frame-selected-cie
             images
             (& (array-ref selections (array-ref representatives index))))]
-        (set! total (+ total (compiler-eh-frame-cie-size (& cie))))
-        (set! index (+ index 1))))
-    (set! index 0)
-    (while (< index count)
+        (+= total (compiler-eh-frame-cie-size (& cie)))))
+    (for [index (iterator.range 0 count)]
       (let
         [fde : CompilerEhFrameFde
           (compiler-eh-frame-selected-fde
             images
             (& (array-ref selections (array-ref fde-order index))))]
-        (set! total (+ total (compiler-eh-frame-fde-size (& fde))))
-        (set! index (+ index 1))))
+        (+= total (compiler-eh-frame-fde-size (& fde)))))
     (when
       (> total limits.max-output-bytes)
       (return
@@ -1391,8 +1372,7 @@
         (__tl_make-array CompilerEhFrameRow count)]
       [current-id : i64 -1]
       [cie-offset : i64 0]
-      (set! index 0)
-      (while (< index count)
+      (for [index (iterator.range 0 count)]
         (let
           [selection : CompilerEhFrameSelection
             (array-ref selections (array-ref fde-order index))]
@@ -1462,8 +1442,7 @@
               (CompilerEhFrameRow
                 selection.initial-location
                 fde.range
-                (+ section-address fde-offset))))
-          (set! index (+ index 1))))
+                (+ section-address fde-offset))))))
       (byte_le.push-u32! (&mut out) 0)
       ;; Two FDEs claiming one code address leave an unwinder no way to
       ;; choose, whether or not a search header is built.
@@ -1562,11 +1541,11 @@
                 -1
                 "eh_frame: FDE range or address outside the supported range"))))
         (set! (array-ref order index) index)
-        (set! index (+ index 1))))
+        (+= index 1)))
     (set! index (- (/ count 2) 1))
     (while (>= index 0)
       (compiler-eh-frame-row-sift! rows (&mut order) index count)
-      (set! index (- index 1)))
+      (-= index 1))
     (set! index (- count 1))
     (while (> index 0)
       (let
@@ -1574,11 +1553,11 @@
         (set! (array-ref order 0) (array-ref order index))
         (set! (array-ref order index) swap)
         (compiler-eh-frame-row-sift! rows (&mut order) 0 index)
-        (set! index (- index 1))))
+        (-= index 1)))
     (set! index 0)
     (while (< index count)
       (set! (array-ref sorted index) (array-ref rows (array-ref order index)))
-      (set! index (+ index 1)))
+      (+= index 1))
     (set! index 1)
     (while (< index count)
       (let
@@ -1602,7 +1581,7 @@
                 compiler-eh-frame-error-header-order
                 -1
                 "eh_frame: FDE code ranges overlap"))))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (Ok sorted)))
 
 ;; Encode the version-1 search header at `header-address` for `rows` of a
@@ -1658,7 +1637,6 @@
       [(Err error) (Err error)]
       [(Ok sorted)
         (let
-          [index : i64 0]
           [out : byte_buf_core.ByteBufBuilder
             (byte_buf_core.byte-buf-builder-with-capacity size)]
           [pointer : i64 (- eh-frame-address (+ header-address 4))]
@@ -1682,8 +1660,7 @@
             compiler-eh-frame-pe-datarel-sdata4)
           (byte_le.push-u32! (&mut out) pointer)
           (byte_le.push-u32! (&mut out) count)
-          (set! index 0)
-          (while (< index count)
+          (for [index (iterator.range 0 count)]
             (let
               [row : CompilerEhFrameRow (array-ref sorted index)]
               [location : i64 (- row.initial-location header-address)]
@@ -1699,8 +1676,7 @@
                       (+ compiler-eh-frame-header-size (* index 8))
                       "eh_frame_hdr: table displacement overflows sdata4"))))
               (byte_le.push-u32! (&mut out) location)
-              (byte_le.push-u32! (&mut out) fde)
-              (set! index (+ index 1))))
+              (byte_le.push-u32! (&mut out) fde)))
           (Ok (byte_buf_core.byte-buf-builder-finish-array (& out))))])))
 
 ;; Decode a version-1 search header at `header-address`: the eh_frame pointer
@@ -1778,8 +1754,7 @@
       (let
         [rows : (__tl_dyn-array CompilerEhFrameRow)
           (__tl_make-array CompilerEhFrameRow count)]
-        [index : i64 0]
-        (while (< index count)
+        (for [index (iterator.range 0 count)]
           (let
             [at : i64 (+ compiler-eh-frame-header-size (* index 8))]
             [location : i64
@@ -1799,8 +1774,7 @@
               (CompilerEhFrameRow
                 location
                 0
-                (+ header-address (compiler-eh-frame-read-i32 bytes (+ at 4)))))
-            (set! index (+ index 1))))
+                (+ header-address (compiler-eh-frame-read-i32 bytes (+ at 4)))))))
         (Ok
           (CompilerEhFrameHeader
             (+ (+ header-address 4) (compiler-eh-frame-read-i32 bytes 4))

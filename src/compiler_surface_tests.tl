@@ -4,6 +4,7 @@
 ;; `--cfg compiler-surface-selftest --cfg compiler-surface-producer` by
 ;; tools/compiler-surface-ast-smoke.tl, which scripts/verify-embedded-stdlib-tlci.sh
 ;; runs.
+(cfg compiler-surface-selftest (import stdlib.iterator))
 (cfg compiler-surface-selftest (import stdlib.arena))
 (cfg compiler-surface-selftest (import compiler_ast_types as ast))
 (cfg compiler-surface-selftest (import stdlib.byte_buf_core))
@@ -74,10 +75,8 @@
       u8)
     (let
       [out : (__tl_dyn-array u8) (__tl_make-array u8 (array-length bytes))]
-      [index : i64 0]
-      (while (< index (array-length bytes))
-        (set! (array-ref out index) (array-ref bytes index))
-        (set! index (+ index 1)))
+      (for [index (iterator.range 0 (array-length bytes))]
+        (set! (array-ref out index) (array-ref bytes index)))
       out)))
 
 (cfg
@@ -672,8 +671,7 @@
     [end : i64]) : String
     (let
       [text : String ""]
-      [index : i64 0]
-      (while (< index end)
+      (for [index (iterator.range 0 end)]
         (set!
           text
           (str_cat.str-cat
@@ -683,8 +681,7 @@
               (ast.ast-pattern-list-get
                 patterns
                 index
-                (ast.ast-pattern-fallback)))))
-        (set! index (+ index 1)))
+                (ast.ast-pattern-fallback))))))
       text)))
 
 ;; Writes `pattern` and reads it back with an identity name remap over intern
@@ -705,11 +702,9 @@
       [context : codec.SurfaceAstWriteContext
         (codec.surface-ast-write-context-new structural-session count count)]
       [remap : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-      [index : i64 0]
       [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-      (while (< index count)
-        (set! (array-ref remap index) index)
-        (set! index (+ index 1)))
+      (for [index (iterator.range 0 count)]
+        (set! (array-ref remap index) index))
       (expr_codec.surface-ast-write-pattern! (&mut out) (&mut context) pattern)
       (let
         [bytes : (__tl_dyn-array u8)
@@ -951,7 +946,7 @@
           (while (and
             (< index count)
             (= (array-ref left index) (array-ref right index)))
-            (set! index (+ index 1)))
+            (+= index 1))
           (= index count))))))
 
 (cfg
@@ -1043,7 +1038,7 @@
                 (surface-ast-int-node-value? pools target 20)
                 (surface-ast-int-node-value? pools value 22)))]
           [_ unit])
-        (set! id (+ id 1)))
+        (+= id 1))
       ok)))
 
 (cfg
@@ -1078,7 +1073,7 @@
                       [_ false])))]
               [_ unit])]
           [_ unit])
-        (set! id (+ id 1)))
+        (+= id 1))
       ok)))
 
 (cfg
@@ -1102,7 +1097,7 @@
                     (surface-ast-int-node-value? (& pools) value 20)]
                   [_ false])))]
           [_ unit])
-        (set! id (+ id 1)))
+        (+= id 1))
       ok)))
 
 (cfg
@@ -1152,7 +1147,7 @@
                       [_ false])))]
               [_ unit])]
           [_ unit])
-        (set! id (+ id 1)))
+        (+= id 1))
       ok)))
 
 (cfg
@@ -1800,7 +1795,7 @@
       [ok : bool (= (array-length left) (array-length right))]
       (while (and ok (< index (array-length left)))
         (if (= (array-ref left index) (array-ref right index))
-          (set! index (+ index 1))
+          (+= index 1)
           (set! ok false)))
       ok)))
 

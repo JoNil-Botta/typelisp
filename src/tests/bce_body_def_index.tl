@@ -1,5 +1,6 @@
 ;; Compare the bounded sparse-query path and dense linear path with the
 ;; original instruction walk, including duplicate defs and unused spare slots.
+(import stdlib.iterator)
 (import compiler_optimize as opt)
 (import compiler_ir_types as ir)
 (import stdlib.hashmap)
@@ -16,8 +17,7 @@
   (let
     [slots : (__tl_dyn-array ir.CompilerIrBlock)
       (__tl_make-array ir.CompilerIrBlock n)]
-    [i : i64 0]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (let
         [is : (__tl_dyn-array ir.CompilerIrInstr)
           (__tl_make-array ir.CompilerIrInstr 3)]
@@ -30,8 +30,7 @@
         (set! (array-ref is 2) (ir.CompilerIrInstr.Mov 999999 (I64 0) (I64)))
         (set!
           (array-ref slots i)
-          (ir.CompilerIrBlock.Block i (ir.CompilerIrInstrSeq is 2)))
-        (set! i (+ i 1))))
+          (ir.CompilerIrBlock.Block i (ir.CompilerIrInstrSeq is 2)))))
     (Array (ir.CompilerIrBlockSeq slots n))))
 
 (define (seed) : opt.OptBceMbVarList
@@ -57,7 +56,7 @@
             (< (/ i 13) (+ pattern 27)))
           (and (= pattern 7) (= i 0)))
         (imap.insert-ref! (&mut uses) i 1))
-      (set! i (+ i 1)))
+      (+= i 1))
     (when
       (and (> pattern 0) (or (< pattern 4) (= pattern 7)))
       (begin
@@ -70,46 +69,36 @@
           uses
           (seed))]
       [new (opt.opt-bce-mb-body-defs-used defs bs uses (seed))]
-      [i : i64 0]
       (test.assert-i64-eq
         (opt.opt-bce-mb-var-list-count old)
         (opt.opt-bce-mb-var-list-count new)
         "def count")
-      (while (< i (opt.opt-bce-mb-var-list-count old))
+      (for [i (iterator.range 0 (opt.opt-bce-mb-var-list-count old))]
         (test.assert-i64-eq
           (opt.opt-bce-mb-var-list-ref old i)
           (opt.opt-bce-mb-var-list-ref new i)
-          "def order")
-        (set! i (+ i 1))))))
+          "def order")))))
 
 (test
   bce-body-def-index-preserves-walk-order
-  (let
-    [kind : i64 0]
-    (while (< kind 2)
+  (for [kind (iterator.range 0 2)]
+    (for [size (iterator.range 0 10)]
       (let
-        [size : i64 0]
-        (while (< size 10)
+        [n : i64
+          (cond
+            [(< size 3) size]
+            [(= size 3) 15]
+            [(= size 4) 16]
+            [(= size 5) 17]
+            [(= size 6) 31]
+            [(= size 7) 32]
+            [(= size 8) 33]
+            [else 257])]
+        (for [pattern (iterator.range 0 8)]
           (let
-            [n : i64
-              (cond
-                [(< size 3) size]
-                [(= size 3) 15]
-                [(= size 4) 16]
-                [(= size 5) 17]
-                [(= size 6) 31]
-                [(= size 7) 32]
-                [(= size 8) 33]
-                [else 257])]
-            [pattern : i64 0]
-            (while (< pattern 8)
-              (let
-                [scope (arena.make)]
-                (in-arena
-                  scope
-                  (check n kind false pattern)
-                  (check n kind true pattern))
-                (arena.destroy-safe! scope)
-                (set! pattern (+ pattern 1))))
-            (set! size (+ size 1))))
-        (set! kind (+ kind 1))))))
+            [scope (arena.make)]
+            (in-arena
+              scope
+              (check n kind false pattern)
+              (check n kind true pattern))
+            (arena.destroy-safe! scope)))))))

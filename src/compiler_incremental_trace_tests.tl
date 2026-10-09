@@ -1,4 +1,5 @@
 ;; Synthetic frontend dependency graphs and hostile transcript fixtures (#7267).
+(import stdlib.iterator)
 (import compiler_incremental_binary as binary)
 (import compiler_incremental_identity as identity)
 (import compiler_incremental_trace as trace)
@@ -193,7 +194,7 @@
             (set!
               accepted?
               (trace.compiler-trace-note! (&mut builder) (trace-test-absent)))
-            (set! attempts (+ attempts 1)))
+            (+= attempts 1))
           (and
             (> attempts 1)
             (< attempts 100)
@@ -297,7 +298,6 @@
       (binary.compiler-incremental-binary-copy (& original.transcript))]
     [trailing : (__tl_dyn-array u8)
       (__tl_make-array u8 (+ (array-length original.transcript) 1))]
-    [index : i64 0]
     (set!
       (array-ref
         schema-bytes
@@ -305,9 +305,8 @@
       (cast 2 : u8))
     (set! (array-ref count-bytes (- header 4)) (cast 4 : u8))
     (set! (array-ref tag-bytes (+ header 4)) (cast 255 : u8))
-    (while (< index (array-length original.transcript))
-      (set! (array-ref trailing index) (array-ref original.transcript index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 (array-length original.transcript))]
+      (set! (array-ref trailing index) (array-ref original.transcript index)))
     (let
       [schema : trace.CompilerIncrementalTrace
         (trace-test-rehash schema-bytes 3)]

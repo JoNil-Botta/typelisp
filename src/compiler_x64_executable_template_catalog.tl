@@ -1,4 +1,5 @@
 ;; compiler_x64_executable_template_catalog.tl - Reviewed x86-64 template rows.
+(import stdlib.iterator)
 (import compiler_x64_executable_template as x64)
 (import stdlib.hash)
 (import stdlib.io)
@@ -33,17 +34,14 @@
   [data : (& data str)]
   [index : i64]) : i64
   (let
-    [line : i64 0]
     [start : i64 0]
     ;; Row zero is the checked-in schema header.
-    (while (<= line index)
+    (for [line (iterator.range 0 (+ index 1))]
       (let
         [end : i64 (string.index-of-byte data start (cast '\n' : u8))]
         (if (< end 0)
           (io.panic "x64 executable template: catalog row is missing")
-          (begin
-            (set! start (+ end 1))
-            (set! line (+ line 1))))))
+          (set! start (+ end 1)))))
     start))
 
 (define (compiler-x64-template-catalog-row-end
@@ -68,16 +66,13 @@
   [row-end : i64]
   [field-index : i64]) : String
   (let
-    [field : i64 0]
     [start : i64 row-start]
-    (while (< field field-index)
+    (for [field (iterator.range 0 field-index)]
       (let
         [end : i64 (string.index-of-byte data start (cast '\t' : u8))]
         (if (or (< end 0) (>= end row-end))
           (io.panic "x64 executable template: catalog field is missing")
-          (begin
-            (set! start (+ end 1))
-            (set! field (+ field 1))))))
+          (set! start (+ end 1)))))
     (let
       [tab : i64 (string.index-of-byte data start (cast '\t' : u8))]
       [end : i64
@@ -126,8 +121,8 @@
           (or (< byte 48) (> byte 57) (>= digits 10))
           (io.panic "x64 executable template: malformed catalog integer"))
         (set! value (+ (* value 10) (- byte 48)))
-        (set! digits (+ digits 1))
-        (set! at (+ at 1))))
+        (+= digits 1)
+        (+= at 1)))
     (if negative
       (- 0 value)
       value)))

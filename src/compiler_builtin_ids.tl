@@ -2,6 +2,7 @@
 ;; `compiler-builtin-id-fix-*` suffixes mechanically encode the exact source
 ;; spelling, including case and punctuation. Non-kebab encodings carry targeted
 ;; name-case allows so new ordinary bindings remain covered by the lint gate.
+(import stdlib.iterator)
 (import stdlib.io)
 (import stdlib.string)
 (import compiler_intern as ci)
@@ -1937,11 +1938,11 @@
     (set! (array-ref metadata 3) 0)
     (while (< i (array-length ids))
       (set! (array-ref ids i) -1)
-      (set! i (+ i 1)))
+      (+= i 1))
     (set! i 0)
     (while (< i (array-length ctfe-ids))
       (set! (array-ref ctfe-ids i) -1)
-      (set! i (+ i 1)))
+      (+= i 1))
     (CompilerBuiltinIdsState metadata ids ctfe-ids)))
 
 (define (state-generation [state : (& state CompilerBuiltinIdsState)]) : i64
@@ -2014,14 +2015,11 @@
     [i : i64 0]
     (while (< i (array-length state.ctfe-ids))
       (set! (array-ref state.ctfe-ids i) (compiler-builtin-ctfe-ref i))
-      (set! i (+ i 1)))))
+      (+= i 1))))
 
 (define (state-install-ctfe-ids! [state : (& state CompilerBuiltinIdsState)]) : unit
-  (let
-    [i : i64 0]
-    (while (< i (array-length state.ctfe-ids))
-      (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))
-      (set! i (+ i 1)))))
+  (for [i (iterator.range 0 (array-length state.ctfe-ids))]
+    (compiler-builtin-ctfe-set! i (array-ref state.ctfe-ids i))))
 
 ;; State-owned reset: the state's own metadata always clears so its next parse
 ;; re-derives the table. The compatibility-global metadata is invalidated only
@@ -2086,9 +2084,8 @@
   (let
     [slot : i64 0]
     [start : i64 -1]
-    [index : i64 0]
     ;; `start` is -1 while reading a row's slot digits.
-    (while (< index (string.string-length rows))
+    (for [index (iterator.range 0 (string.string-length rows))]
       (let
         [c : char (string.string-ref rows index)]
         (cond
@@ -2105,8 +2102,7 @@
                   "compiler builtin IDs must be installed with their intern table")))
             (set! slot 0)
             (set! start -1)]
-          [else unit])
-        (set! index (+ index 1))))))
+          [else unit])))))
 
 ;; Interns the CTFE spellings in slot order, then the fixed ids' in table order,
 ;; into a fresh state, and installs it. Slots without a spelling stay -1.

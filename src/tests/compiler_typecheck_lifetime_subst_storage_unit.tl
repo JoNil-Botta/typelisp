@@ -1,4 +1,5 @@
 ;; Test-only coverage for persistent lifetime-substitution storage.
+(import stdlib.iterator)
 (import compiler_typecheck_core as tc_core)
 (import compiler_ast_types as ast)
 (import stdlib.io)
@@ -31,15 +32,13 @@
 (define (tc-lifetime-subst-build [count : i64] [reverse? : bool]) : tc_core.TcLifetimeSubst
   (let
     [subst : tc_core.TcLifetimeSubst Nil]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [from : i64
           (if reverse?
             (- (- count index) 1)
             index)]
-        (set! subst (tc-lifetime-subst-must-bind subst from (+ from 100000)))
-        (set! index (+ index 1))))
+        (set! subst (tc-lifetime-subst-must-bind subst from (+ from 100000)))))
     subst))
 
 (define (tc-lifetime-subst-len [subst : tc_core.TcLifetimeSubst]) : i64
@@ -61,7 +60,7 @@
         (tc-lifetime-subst-lookup-eq? reverse index (+ index 100000)))
         unit
         (set! ok false))
-      (set! index (+ index 1)))
+      (+= index 1))
     (and
       ok
       (= (tc-lifetime-subst-len forward) count)

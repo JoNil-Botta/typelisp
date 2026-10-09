@@ -34,7 +34,7 @@
             backend-target)
           1)
         (io.panic "test CLI entry memory: inline entry did not pass one test"))
-      (set! index (+ index 1))
+      (+= index 1)
       (when (= index 4) (set! warm-live (profile.alloc-live))))
     (unless
       (> warm-live 0)

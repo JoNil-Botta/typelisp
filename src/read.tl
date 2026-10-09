@@ -23,12 +23,13 @@
 ;; TypeLisp has only proper parenthesized and bracketed forms. A list therefore
 ;; stores one contiguous range of child-node ids instead of a boxed head/tail
 ;; spine. The storage variants are intentionally not a public traversal
-;; contract: consumers use `SexprView` / `SpannedSexprView`, whose `Cons` step
-;; carries a value-level tail view and never allocates or stores a recursive
-;; pair. `Str` carries the parser-assigned ID of a string literal's unescaped
-;; inner text. The reader preserves the lexer's `token.Token.Str` ID, so a
-;; quoted string reads as a distinct atom rather than being conflated with a
-;; `Sym` of the same characters. `Char` carries a character-literal datum
+;; contract: consumers use `SexprView` / `SpannedSexprView`, whose `List`
+;; hands out a list's children as one borrowed slice of rows (see the views
+;; below), so a traversal never builds a tail or a recursive pair. `Str`
+;; carries the parser-assigned ID of a string literal's unescaped inner text.
+;; The reader preserves the lexer's `token.Token.Str` ID, so a quoted string
+;; reads as a distinct atom rather than being conflated with a `Sym` of the
+;; same characters. `Char` carries a character-literal datum
 ;; (`'x'`), likewise keeping chars distinct from symbols, ints, and strings.
 ;; `Int` and `Float` keep their source spelling as an intern id (most integer
 ;; spellings are empty, see `token.int-text`), so every row is Copy.
@@ -39,7 +40,7 @@
 ;; a spelling past an intern reset copies it out with `sp-text-copy`, as the
 ;; parser's literal nodes do.
 ;;
-;; `SexprView` is the span-free view: it drops spans and walks a bracket list
+;; `SexprView` is the span-free view: it drops spans and reads a bracket list
 ;; like a parenthesized one.
 (defenum SexprView
   (Int i64 String)
@@ -47,8 +48,7 @@
   ;; crossing the traversal surface. Consumers must explicitly preserve the
   ;; identity or reduce it to a renderable source name.
   (Sym ci.InternSyntaxId)
-  (Nil)
-  (Cons SpannedSexpr SpannedSexpr)
+  (List (& program (Slice SpannedSexpr)))
   (Str ci.InternId)
   (Char char)
   (Float String))
@@ -69,12 +69,11 @@
 (defenum SpannedSexprView
   (Int i64 String token.SourceSpan)
   (Sym ci.InternSyntaxId token.SourceSpan)
-  (Nil token.SourceSpan)
-  (Cons SpannedSexpr SpannedSexpr token.SourceSpan)
+  (List (& program (Slice SpannedSexpr)) token.SourceSpan)
   (Str ci.InternId token.SourceSpan)
   (Char char token.SourceSpan)
   (Float String token.SourceSpan)
-  (BracketList SpannedSexpr token.SourceSpan))
+  (BracketList (& program (Slice SpannedSexpr)) token.SourceSpan))
 
 (defenum ResultSpannedSexpr
   (Ok SpannedSexpr)
@@ -789,60 +788,13 @@
     ""
     (string.copy text)))
 
-(define (spanned-sexpr-view [s : SpannedSexpr]) : SpannedSexprView
-  (match s
-    [(Int n text span) (Int n (sp-text text) span)]
-    [(Sym name span) (Sym name span)]
-    [(List start length span)
-      (if (<= length 0)
-        (Nil span)
-        (Cons (sp-node-get start) (List (+ start 1) (- length 1) span) span))]
-    [(Str text span) (Str text span)]
-    [(Char c span) (Char c span)]
-    [(Float text span) (Float (sp-text text) span)]
-    [(BracketList start length span)
-      (BracketList (List start length span) span)]))
-
-(define (sexpr-list-view [start : i64] [length : i64] [span : token.SourceSpan]) : SexprView
-  (if (<= length 0)
-    Nil
-    (Cons (sp-node-get start) (List (+ start 1) (- length 1) span))))
-
-(define (sexpr-view [s : SpannedSexpr]) : SexprView
-  (match s
-    [(Int n text _) (Int n (sp-text text))]
-    [(Sym name _) (Sym name)]
-    [(List start length span) (sexpr-list-view start length span)]
-    [(Str text _) (Str text)]
-    [(Char c _) (Char c)]
-    [(Float text _) (Float (sp-text text))]
-    [(BracketList start length span) (sexpr-list-view start length span)]))
-
-;; --- slice views ---
-;; A list's children as one borrowed slice of pool rows. Rows never move while
-;; the pool is live: only a handoff (`sp-node-pool-compact-retained!`) copies
-;; them, and the driver runs it between phases, never during a traversal. A
-;; slice view therefore outlives the traversal that holds it, but it must not
-;; be kept across a handoff. It is typed `program` because no shorter owner can
-;; be named for the global pool.
-(defenum SpannedSexprSliceView
-  (Int i64 String token.SourceSpan)
-  (Sym ci.InternSyntaxId token.SourceSpan)
-  (List (& program (Slice SpannedSexpr)) token.SourceSpan)
-  (Str ci.InternId token.SourceSpan)
-  (Char char token.SourceSpan)
-  (Float String token.SourceSpan)
-  (BracketList (& program (Slice SpannedSexpr)) token.SourceSpan))
-
-;; The span-free slice view walks a bracket list like a parenthesized one.
-(defenum SexprSliceView
-  (Int i64 String)
-  (Sym ci.InternSyntaxId)
-  (List (& program (Slice SpannedSexpr)))
-  (Str ci.InternId)
-  (Char char)
-  (Float String))
-
+;; --- views ---
+;; A view's `List` holds a list's children as one borrowed slice of pool rows.
+;; Rows never move while the pool is live: only a handoff
+;; (`sp-node-pool-compact-retained!`) copies them, and the driver runs it
+;; between phases, never during a traversal. A view therefore outlives the
+;; traversal that holds it, but it must not be kept across a handoff. It is
+;; typed `program` because no shorter owner can be named for the global pool.
 ;; The (data address, length) header that `sp-node-items` reads as a slice. An
 ;; empty list points at a static empty array.
 (define sp-node-items-header : (__tl_dyn-array i64)
@@ -888,8 +840,8 @@
         (__tl_array-data sp-node-items-header)
         : (Ptr (& program (Slice SpannedSexpr)))))))
 
-;; Like `spanned-sexpr-view`, but a list is one `List` of its children.
-(define (spanned-sexpr-slice-view [s : SpannedSexpr]) : SpannedSexprSliceView
+;; A node as consumers match on it: a list is one `List` of its children.
+(define (spanned-sexpr-view [s : SpannedSexpr]) : SpannedSexprView
   (match s
     [(Int n text span) (Int n (sp-text text) span)]
     [(Sym name span) (Sym name span)]
@@ -900,8 +852,8 @@
     [(BracketList start length span)
       (BracketList (sp-node-items start length) span)]))
 
-;; Like `sexpr-view`, but a list is one `List` of its children.
-(define (sexpr-slice-view [s : SpannedSexpr]) : SexprSliceView
+;; Like `spanned-sexpr-view` without spans; a bracket list is a `List` too.
+(define (sexpr-view [s : SpannedSexpr]) : SexprView
   (match s
     [(Int n text _) (Int n (sp-text text))]
     [(Sym name _) (Sym name)]
@@ -911,9 +863,9 @@
     [(Float text _) (Float (sp-text text))]
     [(BracketList start length _) (List (sp-node-items start length))]))
 
-;; The list after its first `count` children, with the list's span: the tail a
-;; cons step hands out. A slice pattern binds its rest as `& _` and takes the
-;; tail here when a helper needs it as a node.
+;; The list after its first `count` children as a node, with the list's span.
+;; A slice pattern binds its rest as `& _` and takes the tail here when a helper
+;; needs it as a node.
 (define (spanned-sexpr-drop [s : SpannedSexpr] [count : i64]) : SpannedSexpr
   (match s
     [(List start length span) (List (+ start count) (- length count) span)]
@@ -922,7 +874,7 @@
     [_ (io.panic "reader: spanned-sexpr-drop expects a list")]))
 
 ;; A parenthesized list's children, and no items for any other node: what the
-;; `List` of `spanned-sexpr-slice-view` carries. A list walker's entry hands a
+;; `List` of `spanned-sexpr-view` carries. A list walker's entry hands a
 ;; node to its slice walker through this when a non-list behaves like `()`.
 (define (spanned-sexpr-items [s : SpannedSexpr]) : (&
     program
@@ -932,7 +884,7 @@
     [_ (sp-node-items 0 0)]))
 
 ;; Like `spanned-sexpr-items`, but a bracket list's children count too, as in
-;; `sexpr-slice-view`.
+;; `sexpr-view`.
 (define (sexpr-items [s : SpannedSexpr]) : (& program (Slice SpannedSexpr))
   (match s
     [(List start length _) (sp-node-items start length)]
@@ -1318,7 +1270,7 @@
 ;; the node pool; callers truncate it to their own mark once they have copied
 ;; out what they need. A lexer error panics.
 (define (data-result [src : String]) : ResultSexpr
-  (match (lexer.spanned-result src)
+  (match (lexer.spanned-result (& src))
     [(Err err) (io.panic (token.source-error-message err))]
     [(Ok toks)
       (let

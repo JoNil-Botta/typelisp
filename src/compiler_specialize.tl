@@ -2078,7 +2078,7 @@
             (& rendered)))))))
 
 (define (spec-reserve-specialized-symbol-with-owner
-  [owner : (& owner SpecOwnerContext)]
+  [owner : (&mut owner SpecOwnerContext)]
   [key : SpecStructuralKey]
   [template-name : String]
   [values : SpecValueList]) : i64
@@ -2117,7 +2117,7 @@
         (set! index (+ index 1))))))
 
 (define (spec-materialize-owner-generated-symbols!
-  [owner : (& owner SpecOwnerContext)]) : unit
+  [owner : (&mut owner SpecOwnerContext)]) : unit
   (spec-materialize-generated-symbol-records-with-owner!
     owner
     (& (array-ref owner.generated-symbol-records 0)))
@@ -4091,6 +4091,19 @@
     (spec-type-subst-remove-name (& subs.types) name-id)
     (spec-value-subst-remove-name (& subs.values) name-id)))
 
+;; `subs` without the name the binder expression `binder-id` names, when it is
+;; a variable (possibly span-wrapped). The owned `for` forms carry their
+;; binders as variable expressions (#8704).
+(define (spec-subst-remove-binder-expr
+  [owner : (& owner SpecOwnerContext)]
+  [subs : (& subs SpecSubst)]
+  [binder-id : i64]) : SpecSubst
+  (match (spec-expr-var-name-id-with-owner
+    owner
+    (spec-owner-expr-get owner binder-id))
+    [(Some name) (spec-subst-remove-name subs name)]
+    [(None) (spec-subst-shared-view subs)]))
+
 (define (spec-subst-remove-params
   [subs : (& subs SpecSubst)]
   [params : (& params ast.AstParamList)]) : SpecSubst
@@ -4958,7 +4971,7 @@
                 (let
                   [generated-name-id : i64
                     (spec-reserve-specialized-symbol-with-owner
-                      pools
+                      (&mut pools)
                       structural-key
                       name
                       (spec-place-shared-view values))]
@@ -5840,15 +5853,12 @@
                 rewritten-inner-start
                 rewritten-inner-end
                 rewritten-body)))])]
-    ;; A lane name shadows value bindings only; type bindings stay visible in
-    ;; the body, as they did in the separate type pass (#8704).
+    ;; A lane name shadows the parameter of that name in the body, a type
+    ;; parameter as much as a value parameter, like every other binder (#8704).
     [(ForeachActive lane body-box)
       (let
         [body : ast.AstExpr (spec-owner-expr-get owner body-box)]
-        [body-subs : SpecSubst
-          (SpecSubst
-            (spec-type-subst-shared-view (& subs.types))
-            (spec-value-subst-remove-name (& subs.values) lane))]
+        [body-subs : SpecSubst (spec-subst-remove-name subs lane)]
         [rewritten-body : i64
           (try (spec-substitute-walk-with-owner owner body body-subs held))]
         (Ok
@@ -5992,62 +6002,130 @@
                 (spec-owner-pools owner)
                 rewritten-bindings
                 rewritten-body)))])]
+    ;; The loop's source and index names bind in its body; only the source
+    ;; expression is evaluated outside them. The name slots are binders, never
+    ;; substituted, so a binder named like a parameter shadows it (#8704).
     [(ForOwnedState payload)
       (let
-        [rewritten : ast.AstExprList
+        [source-name : i64 (ast.ast-for-owned-state-source-name (& payload))]
+        [index-name : i64 (ast.ast-for-owned-state-index-name (& payload))]
+        [inner-subs : SpecSubst
+          (let
+            [without-source : SpecSubst
+              (spec-subst-remove-binder-expr owner subs source-name)]
+            (spec-subst-remove-binder-expr owner (& without-source) index-name))]
+        [rewritten-source-name : i64
           (try
-            (spec-substitute-walk-list-with-owner
+            (spec-substitute-walk-with-owner
               owner
-              (spec-for-owned-state-exprs
-                (ast.ast-for-owned-state-source-name (& payload))
-                (ast.ast-for-owned-state-index-name (& payload))
-                (ast.ast-for-owned-state-source (& payload))
-                (ast.ast-for-owned-state-body (& payload)))
+              (spec-owner-expr-get owner source-name)
+              (& inner-subs)
+              held))]
+        [rewritten-index-name : i64
+          (try
+            (spec-substitute-walk-with-owner
+              owner
+              (spec-owner-expr-get owner index-name)
+              (& inner-subs)
+              held))]
+        [rewritten-source : i64
+          (try
+            (spec-substitute-walk-with-owner
+              owner
+              (spec-owner-expr-get
+                owner
+                (ast.ast-for-owned-state-source (& payload)))
               subs
+              held))]
+        [rewritten-body : i64
+          (try
+            (spec-substitute-walk-with-owner
+              owner
+              (spec-owner-expr-get
+                owner
+                (ast.ast-for-owned-state-body (& payload)))
+              (& inner-subs)
               held))]
         (Ok
           (ast.ast-expr-for-owned-state-with-pools
             (spec-owner-pools owner)
-            (ast.ast-expr-list-get (& rewritten) 0 0)
-            (ast.ast-expr-list-get (& rewritten) 1 0)
-            (ast.ast-expr-list-get (& rewritten) 2 0)
-            (ast.ast-expr-list-get (& rewritten) 3 0))))]
+            rewritten-source-name
+            rewritten-index-name
+            rewritten-source
+            rewritten-body)))]
+    ;; A step binds its item and done names in its body. Its source and index
+    ;; names are uses of the enclosing state's binders, and its expected type
+    ;; is read outside the binding, so those keep the outer substitution
+    ;; (#8704). The slots are walked in their original order.
     [(ForOwnedStep payload)
       (let
         [expected-type : i64 (ast.ast-for-owned-step-expected-type (& payload))]
-        [rewritten : ast.AstExprList
+        [binding-name : i64 (ast.ast-for-owned-step-binding-name (& payload))]
+        [done-name : i64 (ast.ast-for-owned-step-done-name (& payload))]
+        [inner-subs : SpecSubst
+          (let
+            [without-binding : SpecSubst
+              (spec-subst-remove-binder-expr owner subs binding-name)]
+            (spec-subst-remove-binder-expr owner (& without-binding) done-name))]
+        [rewritten-source-name : i64
           (try
-            (spec-substitute-walk-list-with-owner
+            (spec-substitute-walk-with-owner
               owner
-              (spec-for-owned-step-exprs
-                (ast.ast-for-owned-step-source-name (& payload))
-                (ast.ast-for-owned-step-index-name (& payload))
-                (ast.ast-for-owned-step-binding-name (& payload))
-                expected-type
-                (ast.ast-for-owned-step-done-name (& payload))
-                (ast.ast-for-owned-step-body (& payload)))
+              (spec-owner-expr-get
+                owner
+                (ast.ast-for-owned-step-source-name (& payload)))
               subs
               held))]
-        [typed? : bool (>= expected-type 0)]
-        [done-index : i64
-          (if typed?
-            4
-            3)]
-        [body-index : i64
-          (if typed?
-            5
-            4)]
+        [rewritten-index-name : i64
+          (try
+            (spec-substitute-walk-with-owner
+              owner
+              (spec-owner-expr-get
+                owner
+                (ast.ast-for-owned-step-index-name (& payload)))
+              subs
+              held))]
+        [rewritten-binding-name : i64
+          (try
+            (spec-substitute-walk-with-owner
+              owner
+              (spec-owner-expr-get owner binding-name)
+              (& inner-subs)
+              held))]
+        [rewritten-expected-type : i64
+          (if (>= expected-type 0)
+            (try
+              (spec-substitute-walk-with-owner
+                owner
+                (spec-owner-expr-get owner expected-type)
+                subs
+                held))
+            -1)]
+        [rewritten-done-name : i64
+          (try
+            (spec-substitute-walk-with-owner
+              owner
+              (spec-owner-expr-get owner done-name)
+              (& inner-subs)
+              held))]
+        [rewritten-body : i64
+          (try
+            (spec-substitute-walk-with-owner
+              owner
+              (spec-owner-expr-get
+                owner
+                (ast.ast-for-owned-step-body (& payload)))
+              (& inner-subs)
+              held))]
         (Ok
           (ast.ast-expr-for-owned-step-with-pools
             (spec-owner-pools owner)
-            (ast.ast-expr-list-get (& rewritten) 0 0)
-            (ast.ast-expr-list-get (& rewritten) 1 0)
-            (ast.ast-expr-list-get (& rewritten) 2 0)
-            (if typed?
-              (ast.ast-expr-list-get (& rewritten) 3 0)
-              -1)
-            (ast.ast-expr-list-get (& rewritten) done-index 0)
-            (ast.ast-expr-list-get (& rewritten) body-index 0))))]
+            rewritten-source-name
+            rewritten-index-name
+            rewritten-binding-name
+            rewritten-expected-type
+            rewritten-done-name
+            rewritten-body)))]
     [(Set name value-box)
       (let
         [value : ast.AstExpr (spec-owner-expr-get owner value-box)]
@@ -6586,7 +6664,7 @@
               [(Ok rewritten state)
                 (match state
                   [(State generated _ _ _)
-                    (spec-materialize-owner-generated-symbols! owner)
+                    (spec-materialize-owner-generated-symbols! (&mut owner))
                     (Ok
                       (ast.ast-program
                         (spec-decl-list-append rewritten generated)))])]
@@ -6643,7 +6721,7 @@
                   [(Ok rewritten rewritten-paths state)
                     (match state
                       [(State generated _ _ _)
-                        (spec-materialize-owner-generated-symbols! owner)
+                        (spec-materialize-owner-generated-symbols! (&mut owner))
                         (Ok
                           (ast.ast-program
                             (spec-decl-list-append rewritten generated))

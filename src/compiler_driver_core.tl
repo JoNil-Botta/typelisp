@@ -773,7 +773,7 @@
   (compiler-driver-state-replace-owned-pool-arena-if-uncached! state 1 1))
 
 (define (compiler-driver-state-reset-owned-intern-arena-if-uncached!
-  [state : (& state CompilerDriverState)]) : unit
+  [state : (&mut state CompilerDriverState)]) : unit
   (if (or
     (not (compiler-driver-state-has-owned-pool-arena? state))
     (compiler-driver-state-session-cache-enabled? state))
@@ -808,7 +808,7 @@
 
 ;; Legacy/test capture paired with `compiler-driver-state-install-interns!`.
 (define (compiler-driver-state-capture-active-interns!
-  [state : (& state CompilerDriverState)]) : unit
+  [state : (&mut state CompilerDriverState)]) : unit
   (ci.intern-compat-state-capture-from-globals!
     (&mut (array-ref state.intern-state 0))))
 
@@ -874,7 +874,7 @@
     (compiler-driver-state-surface-arena state)))
 
 (define (compiler-driver-state-capture-active-builtins!
-  [state : (& state CompilerDriverState)]) : unit
+  [state : (&mut state CompilerDriverState)]) : unit
   (cbi.state-capture-from-globals! (&mut (array-ref state.builtin-ids 0))))
 
 ;; State-owned builtin reset: clears the state's own metadata and, only when
@@ -906,7 +906,7 @@
 ;; later state-owned reset/release sees the current (possibly grown) handles.
 (define (compiler-driver-state-capture-active-transients!
   [state : CompilerDriverState]) : unit
-  (compiler-driver-state-capture-active-builtins! state)
+  (compiler-driver-state-capture-active-builtins! (&mut state))
   (compiler-driver-state-capture-active-lower-arenas! state))
 
 (define (compiler-driver-state-capture-session-floors!
@@ -915,7 +915,7 @@
   ;; not overwrite them from whichever compatibility pool happens to be
   ;; installed when a batch entry finishes, and do not install the loader's
   ;; serial/test selector as a compile-job handoff.
-  (compiler-driver-state-capture-active-interns! state)
+  (compiler-driver-state-capture-active-interns! (&mut state))
   (compiler-driver-state-capture-active-transients! state))
 
 (define (compiler-driver-lowered-from-active-pools-and-profile-state-and-backend-state
@@ -1055,7 +1055,7 @@
     (owned_view.compiler-owned-shared-view state))
   (compiler-driver-state-reset-owned-pool-arena-if-uncached!
     (owned_view.compiler-owned-shared-view state))
-  (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
+  (compiler-driver-state-reset-owned-intern-arena-if-uncached! (&mut state))
   (let
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler-driver-state-pool-context state)]
@@ -1096,7 +1096,7 @@
     (owned_view.compiler-owned-shared-view state))
   (compiler-driver-state-release-owned-pool-arena-if-uncached!
     (owned_view.compiler-owned-shared-view state))
-  (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
+  (compiler-driver-state-reset-owned-intern-arena-if-uncached! (&mut state))
   (let
     [pools : compiler_ast_types.AstNodePoolContext
       (compiler-driver-state-pool-context state)]
@@ -1136,7 +1136,7 @@
       (compiler-driver-state-profile state)
       ordinal
       "owned-pool-release")
-    (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
+    (compiler-driver-state-reset-owned-intern-arena-if-uncached! (&mut state))
     (let
       [pools : compiler_ast_types.AstNodePoolContext
         (compiler-driver-state-pool-context state)]
@@ -2099,7 +2099,7 @@
           typecheck-state
           (compiler_ir_types.compiler-ir-representation-index-build
             (compiler_ast_types.ast-node-pool-context-type-segment-bases pools)
-            program)))]
+            (& program))))]
     (compiler_backend.compiler-backend-state-set-representations!
       backend-state
       (owned_view.compiler-owned-shared-view representations))
@@ -2893,7 +2893,9 @@
             unit)]
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [_profile-program-finish : unit
           (cfg
@@ -2977,7 +2979,9 @@
             unit)]
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [_profile-program-finish : unit
           (cfg
@@ -3056,7 +3060,9 @@
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -3105,7 +3111,9 @@
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -3154,7 +3162,9 @@
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -4216,13 +4226,13 @@
           ;; Parsing initialized builtin IDs for this state's active intern
           ;; table. Preserve that snapshot instead of reinstalling the stale
           ;; pre-parse builtin state; only lowerer arenas need restoration here.
-          (compiler-driver-state-capture-active-builtins! state)
+          (compiler-driver-state-capture-active-builtins! (&mut state))
           (compiler-driver-state-install-lower-arenas!
             (owned_view.compiler-owned-shared-view state))
           (compiler-driver-state-install-pools! state)
           (let
             [_capture-source-names : unit
-              (compiler-driver-state-capture-active-interns! state)]
+              (compiler-driver-state-capture-active-interns! (&mut state))]
             [source-names : ci.InternSourceNameSessionHandle
               (compiler-driver-state-entry-source-name-session
                 (owned_view.compiler-owned-shared-view state))]
@@ -4438,13 +4448,13 @@
             compile-profile
             (compiler-driver-profile-start-phase
               (compiler-driver-state-profile state)))
-          (compiler-driver-state-capture-active-builtins! state)
+          (compiler-driver-state-capture-active-builtins! (&mut state))
           (compiler-driver-state-install-lower-arenas!
             (owned_view.compiler-owned-shared-view state))
           (compiler-driver-state-install-pools! state)
           (let
             [_capture-source-names : unit
-              (compiler-driver-state-capture-active-interns! state)]
+              (compiler-driver-state-capture-active-interns! (&mut state))]
             [intern-state : ci.InternCompatState
               (compiler-driver-state-owned-interns state)]
             [source-names : ci.InternSourceNameSessionHandle
@@ -4878,8 +4888,8 @@
     (compiler-driver-state-adopt-pools!
       state
       (compiler_ast_types.ast-node-pool-context-capture-active))
-    (compiler-driver-state-capture-active-interns! state)
-    (compiler-driver-state-capture-active-builtins! state)))
+    (compiler-driver-state-capture-active-interns! (&mut state))
+    (compiler-driver-state-capture-active-builtins! (&mut state))))
 
 (define (compiler-driver-package-runtime-load
   [scope : CompilerDriverPackageRuntimeScope]
@@ -5291,7 +5301,7 @@
               (compiler-driver-advisories-for-job typecheck-state))
             (Ok
               (compiler-driver-ir-summary-render
-                (compiler_ir_types.compiler-ir-program-summary optimized))
+                (compiler_ir_types.compiler-ir-program-summary (& optimized)))
               (compiler-driver-advisories-for-job typecheck-state)))]))))
 
 (define (compiler-driver-emit-ir-summary-lowered-result-with-level
@@ -5302,7 +5312,9 @@
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -5390,7 +5402,7 @@
             (compiler_ir_types.compiler-ir-program-render
               structural-session
               type-segment-bases
-              optimized))]
+              (& optimized)))]
         (if (and
           (> (string.string-length dump-pass) 0)
           (= (string.string-length text) 0))
@@ -5453,7 +5465,9 @@
       (let
         [emit-program : compiler_ir_types.CompilerIrProgram
           (if (compiler-driver-retirement-clone-shells? opt-level)
-            (compiler_ir_types.compiler-ir-clone-program-shell pools program)
+            (compiler_ir_types.compiler-ir-clone-program-shell
+              pools
+              (& program))
             program)]
         [emit-spans : compiler_ir_types.CompilerSourceSpans
           (if (compiler-driver-retirement-clone-shells? opt-level)
@@ -5602,7 +5616,7 @@
         sources
         (compiler_diagnostic.compiler-diagnostic-path diag))]
     (compiler_diagnostic.compiler-diagnostic-render-indexed-source
-      diag
+      (& diag)
       (& (array-ref sources.sources slot)))))
 
 (define (compiler-driver-print-advisories

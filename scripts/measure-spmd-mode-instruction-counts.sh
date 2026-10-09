@@ -8,7 +8,7 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-DEFAULT_CASES=spmd_map,spmd_zip,spmd_reduce,spmd_scan,spmd_shuffle,spmd_short_tail,spmd_mask
+DEFAULT_CASES=spmd_map,spmd_zip,spmd_reduce,spmd_scan,spmd_shuffle,spmd_short_tail,spmd_mask,spmd_foreach_2d
 DEFAULT_MODES=scalar,avx2
 DEFAULT_SUPPORT="$ROOT/perf/spmd-mode-support.tsv"
 DEFAULT_BASELINE="$ROOT/perf/spmd-mode-insn-baseline.tsv"
@@ -39,7 +39,7 @@ Options:
   --support-table FILE  Checked support/diagnostic matrix
   --baseline FILE       Checked count baseline
   --check-baseline      Require selected rows to exactly match the baseline
-  --update-baseline     Replace the baseline from a full 7x2 matrix run
+  --update-baseline     Replace the baseline from a full 8x2 matrix run
   --self-test           Run fast shell/reporting mutation tests only
   -h, --help            Show this help
 
@@ -226,8 +226,9 @@ validate_support_table() {
             rows++
         }
         END {
-            if (rows != 14) {
-                print "support table must contain 14 rows, found " rows > "/dev/stderr"
+            expected = split(cases, case_list, ",") * split(modes, mode_list, ",")
+            if (rows != expected) {
+                print "support table must contain " expected " rows, found " rows > "/dev/stderr"
                 failed = 1
             }
             exit failed ? 1 : 0

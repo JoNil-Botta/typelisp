@@ -1115,7 +1115,7 @@
       (package_lock_core.PackageLockFile
         (package_lock_core.package-lock-version-shared-view)
         entries)]
-    [text : String (package_lock_core.package-lock-emit lock)]
+    [text : String (package_lock_core.package-lock-emit (& lock))]
     [path : String state.path]
     [snapshot : package_lock_core.PackageLockSnapshot
       (package_lock_core.PackageLockSnapshot

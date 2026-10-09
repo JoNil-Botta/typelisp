@@ -835,14 +835,14 @@
         (spec.spec-structural-key-raw key-a))]
     [symbol-handle : i64
       (spec.spec-reserve-specialized-symbol-with-owner
-        owner-a
+        (&mut owner-a)
         key-a
         "alloc"
         (spec.spec-place-shared-view values-a))]
     [symbol-before : String
       (spec_ci.intern-compat-state-str intern-a symbol-handle)]
     [_materialized : unit
-      (spec.spec-materialize-owner-generated-symbols! owner-a)]
+      (spec.spec-materialize-owner-generated-symbols! (&mut owner-a))]
     [rendered : String (spec_ci.intern-compat-state-str intern-a symbol-handle)]
     [rendered-again : String
       (spec.spec-render-specialized-name-with-owner
@@ -1581,7 +1581,7 @@
             values)]
         [handle : i64
           (spec.spec-reserve-specialized-symbol-with-owner
-            owner
+            (&mut owner)
             key
             "wide"
             values)]
@@ -1590,7 +1590,7 @@
           unit
           (set! ok false))
         (set! index (+ index 1))))
-    (spec.spec-materialize-owner-generated-symbols! owner)
+    (spec.spec-materialize-owner-generated-symbols! (&mut owner))
     (set! index 0)
     (while (and ok (< index count))
       (let

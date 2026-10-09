@@ -56,7 +56,7 @@
         (smoke-cfg-index-test-block label 44)
         (smoke-cfg-index-test-block label 55))]
     [_refresh : unit
-      (opt.opt-cfg-index-refresh-blocks! index replacement-blocks)]
+      (opt.opt-cfg-index-refresh-blocks! (&mut index) replacement-blocks)]
     [dense-second : i64
       (smoke-cfg-index-block-return (opt.opt-cfg-index-block index 1))]
     [_newer-index : opt.OptCfgIndex
@@ -315,10 +315,10 @@
 (define (opt-switch-test-chain-label [i : i64]) : i64
   (if (= i 0)
     (ir.compiler-ir-label "entry")
-    (ir.compiler-ir-label (str_cat.str-cat "cmp" (string.int->string i) ""))))
+    (ir.compiler-ir-label (& (str_cat.str-cat "cmp" (string.int->string i) "")))))
 
 (define (opt-switch-test-arm-label [i : i64]) : i64
-  (ir.compiler-ir-label (str_cat.str-cat "case" (string.int->string i) "")))
+  (ir.compiler-ir-label (& (str_cat.str-cat "case" (string.int->string i) ""))))
 
 (define (opt-switch-test-tag-array [count : i64] [first : i64] [last : i64]) : (__tl_dyn-array
     i64)
@@ -1800,10 +1800,11 @@
         (ir.compiler-ir-phi-input-seq-prepend
           start
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 2)
-            (ir.compiler-ir-label "latch")
-            (ir.compiler-ir-phi-input-seq-empty)))
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 2)
+              (ir.compiler-ir-label "latch")
+              (& (ir.compiler-ir-phi-input-seq-empty)))))
         (I64))
       (ir.CompilerIrInstr.BoundsCheck
         (Var 0)
@@ -1902,7 +1903,7 @@
       [else 42])))
 
 (define (smoke-heavy-pass-large-label [index : i64]) : i64
-  (ir.compiler-ir-label (str_cat.str-cat "b" (string.int->string index))))
+  (ir.compiler-ir-label (& (str_cat.str-cat "b" (string.int->string index)))))
 
 (define (smoke-heavy-pass-large-jump-block [index : i64] [next : i64]) : ir.CompilerIrBlock
   (Block
@@ -1982,14 +1983,17 @@
       (let
         [bound-arg-1
           (ir.compiler-ir-function-seq-prepend
-            (ot.opt-test-function-named
-              (string.copy qualified)
-              (ir.compiler-ir-instr-seq-empty))
-            (ir.compiler-ir-function-seq-prepend
+            (&
               (ot.opt-test-function-named
-                (string.copy plain)
-                (ir.compiler-ir-instr-seq-empty))
-              (ir.compiler-ir-function-seq-empty)))]
+                (string.copy qualified)
+                (ir.compiler-ir-instr-seq-empty)))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (&
+                  (ot.opt-test-function-named
+                    (string.copy plain)
+                    (ir.compiler-ir-instr-seq-empty)))
+                (& (ir.compiler-ir-function-seq-empty)))))]
         (opt.opt-function-index-build bound-arg-1))]
     [starts : (__tl_dyn-array i64) index.leaf-starts]
     (cond
@@ -2023,10 +2027,11 @@
     (ir.compiler-ir-phi-input-seq-prepend
       (I64 0)
       (ir.compiler-ir-label "entry")
-      (ir.compiler-ir-phi-input-seq-prepend
-        (Var 0)
-        latch-label
-        (ir.compiler-ir-phi-input-seq-empty)))
+      (&
+        (ir.compiler-ir-phi-input-seq-prepend
+          (Var 0)
+          latch-label
+          (& (ir.compiler-ir-phi-input-seq-empty)))))
     (I64)))
 
 (define (smoke-inline-phi-exit [latch-label : i64]) : ir.CompilerIrInstr
@@ -2035,10 +2040,11 @@
     (ir.compiler-ir-phi-input-seq-prepend
       (Var 1)
       (ir.compiler-ir-label "header")
-      (ir.compiler-ir-phi-input-seq-prepend
-        (Var 0)
-        latch-label
-        (ir.compiler-ir-phi-input-seq-empty)))
+      (&
+        (ir.compiler-ir-phi-input-seq-prepend
+          (Var 0)
+          latch-label
+          (& (ir.compiler-ir-phi-input-seq-empty)))))
     (I64)))
 
 (define (smoke-inline-phi-caller-with-call
@@ -2102,10 +2108,11 @@
 
 (define (smoke-inline-phi-functions [symbols : ot.OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (smoke-inline-phi-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (smoke-inline-phi-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (smoke-inline-phi-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (smoke-inline-phi-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (smoke-inline-phi-loop-repaired?
   [blocks : (& blocks ir.CompilerIrBlockList)]) : bool
@@ -2193,13 +2200,13 @@
           (ir.compiler-source-spans-insert-instr
             (ot.opt-spans-base)
             main-symbol
-            call
+            (& call)
             (ot.opt-test-span 161 31))
           main-symbol
-          header-phi
+          (& header-phi)
           (ot.opt-test-span 162 33))
         main-symbol
-        exit-phi
+        (& exit-phi)
         (ot.opt-test-span 163 35))]
     [result-mov : ir.CompilerIrInstr (Mov 0 (Var 3) (I64))]
     [repaired-header : ir.CompilerIrInstr
@@ -2253,8 +2260,8 @@
       (ot.opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt.compiler-opt-global-shared-view caller)
-          (ir.compiler-ir-function-seq-empty))
+          (& caller)
+          (& (ir.compiler-ir-function-seq-empty)))
         2)]
     (match (ot.opt-function-seq-find optimized "main")
       [(Some main)
@@ -2280,10 +2287,11 @@
       (ot.opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          caller
-          (ir.compiler-ir-function-seq-prepend
-            (ot.opt-inline-nonleaf-callee symbols)
-            (ir.compiler-ir-function-seq-empty)))
+          (& caller)
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (& (ot.opt-inline-nonleaf-callee symbols))
+              (& (ir.compiler-ir-function-seq-empty)))))
         2)]
     (match (ot.opt-function-seq-find optimized "main")
       [(Some main)
@@ -2354,10 +2362,11 @@
                 (Var 3)
                 (Var 1))
               (ir.compiler-ir-label "then")
-              (ir.compiler-ir-phi-input-seq-prepend
-                (Var 1)
-                (ir.compiler-ir-label "else")
-                (ir.compiler-ir-phi-input-seq-empty)))
+              (&
+                (ir.compiler-ir-phi-input-seq-prepend
+                  (Var 1)
+                  (ir.compiler-ir-label "else")
+                  (& (ir.compiler-ir-phi-input-seq-empty)))))
             (I64))
           (irt.instr "%6 = add %2, 1 : i64")
           (irt.instr "%7 = lt %6, 2 : i64")
@@ -3768,6 +3777,10 @@
 (test
   bounds-dom-slice-word
   (smoke-require-42 (ot.compiler-optimize-bounds-dom-slice-word-self-test)))
+
+(test
+  bounds-dom-addr-taken
+  (smoke-require-42 (ot.compiler-optimize-bounds-dom-addr-taken-self-test)))
 
 (test
   range-merge

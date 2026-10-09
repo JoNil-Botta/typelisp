@@ -971,7 +971,7 @@
                 [program-b : compiler_ir_types.CompilerIrProgram
                   (compiler_ir_types.compiler-ir-clone-program-shell
                     pools-b
-                    program-a)]
+                    (& program-a))]
                 [spans-b : compiler_ir_types.CompilerSourceSpans
                   (clone spans-a)]
                 (driver.compiler-driver-state-adopt-pools! state-b pools-b)
@@ -1472,8 +1472,8 @@
     (ci.intern-compat-state-install! intern-a)
     (cbi.compiler-builtin-reset!)
     (cbi.compiler-builtin-initialize-for-parse!)
-    (driver.compiler-driver-state-capture-active-builtins! state-a)
-    (driver.compiler-driver-state-capture-active-interns! state-a)
+    (driver.compiler-driver-state-capture-active-builtins! (&mut state-a))
+    (driver.compiler-driver-state-capture-active-interns! (&mut state-a))
     (let
       [gen-a : i64 (driver.compiler-driver-state-intern-generation state-a)]
       [gen-b0 : i64 (driver.compiler-driver-state-intern-generation state-b)]
@@ -1502,8 +1502,8 @@
         (ci.intern-compat-state-install! intern-b)
         (cbi.compiler-builtin-reset!)
         (cbi.compiler-builtin-initialize-for-parse!)
-        (driver.compiler-driver-state-capture-active-builtins! state-b)
-        (driver.compiler-driver-state-capture-active-interns! state-b)
+        (driver.compiler-driver-state-capture-active-builtins! (&mut state-b))
+        (driver.compiler-driver-state-capture-active-interns! (&mut state-b))
         ;; Isolation: resetting uninstalled A must not disturb B's
         ;; installed compatibility table -- the retired install/reset
         ;; bridge invalidated it unconditionally.
@@ -1559,7 +1559,7 @@
 
 (define (compiler-driver-advisory-fixture [message : String]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-level
-    (cdiag.compiler-diagnostic-simple "tests/advisories.tl" 1 1 message)
+    (& (cdiag.compiler-diagnostic-simple "tests/advisories.tl" 1 1 message))
     CompilerDiagnosticWarning))
 
 (define (compiler-driver-advisory-phase-is?

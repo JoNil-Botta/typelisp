@@ -718,11 +718,12 @@
     [job : tc_core.TcJobState (tc_core.tc-job-state-new)]
     [warning : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-level
-        (cdiag.compiler-diagnostic-simple
-          "tests/check_advisory.tl"
-          1
-          1
-          "successful check advisory")
+        (&
+          (cdiag.compiler-diagnostic-simple
+            "tests/check_advisory.tl"
+            1
+            1
+            "successful check advisory"))
         CompilerDiagnosticWarning)]
     [fatal : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-simple

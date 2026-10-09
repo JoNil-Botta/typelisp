@@ -1188,17 +1188,23 @@
         [(Sym bs _)
           (= (ci.intern-syntax-id-value as) (ci.intern-syntax-id-value bs))]
         [_ false])]
-    [(Nil _)
-      (match (reader.spanned-sexpr-view b)
-        [(Nil _) true]
-        [_ false])]
-    [(Cons ahead atail _)
-      (match (reader.spanned-sexpr-view b)
-        [(Cons bhead btail _)
-          (and
-            (macro-output-sexpr-eq? ahead bhead)
-            (macro-output-sexpr-eq? atail btail))]
-        [_ false])]
+    [(List items _)
+      (match items
+        [(slice)
+          (match (reader.spanned-sexpr-view b)
+            [(List (slice) _) true]
+            [_ false])]
+        [(slice ahead & _)
+          (let
+            [atail (reader.spanned-sexpr-drop a 1)]
+            (match (reader.spanned-sexpr-view b)
+              [(List (slice bhead & _) _)
+                (let
+                  [btail (reader.spanned-sexpr-drop b 1)]
+                  (and
+                    (macro-output-sexpr-eq? ahead bhead)
+                    (macro-output-sexpr-eq? atail btail)))]
+              [_ false]))])]
     [(Str aid _)
       (match (reader.spanned-sexpr-view b)
         [(Str bid _) (= (ci.intern-id-value aid) (ci.intern-id-value bid))]
@@ -1211,17 +1217,20 @@
       (match (reader.spanned-sexpr-view b)
         [(Float bt _) (string.eq at bt)]
         [_ false])]
-    [(BracketList aitems _)
-      (match (reader.spanned-sexpr-view b)
-        [(BracketList bitems _) (macro-output-sexpr-eq? aitems bitems)]
-        [_ false])]))
+    [(BracketList _ _)
+      (let
+        [aitems (reader.spanned-sexpr-drop a 0)]
+        (match (reader.spanned-sexpr-view b)
+          [(BracketList _ _)
+            (let
+              [bitems (reader.spanned-sexpr-drop b 0)]
+              (macro-output-sexpr-eq? aitems bitems))]
+          [_ false]))]))
 
 (define (macro-output-sexpr-head? [form : reader.SpannedSexpr] [head : String]) : bool
   (match (reader.spanned-sexpr-view form)
-    [(Cons first _ _)
-      (match (reader.spanned-sexpr-view first)
-        [(Sym name _) (= (ci.intern-syntax-id-value name) (ci.intern head))]
-        [_ false])]
+    [(List (slice (Sym name _) & _) _)
+      (= (ci.intern-syntax-id-value name) (ci.intern head))]
     [_ false]))
 
 ;; The body of `(define (probe) : i64 FORM)`, parsed into the active pools.
@@ -1236,7 +1245,7 @@
 
 ;; FORM as the reader reads it, or an empty list when it does not read.
 (define (macro-output-source-sexpr [form : String]) : reader.SpannedSexpr
-  (match (lexer.spanned-result form)
+  (match (lexer.spanned-result (& form))
     [(Ok toks)
       (match (reader.spanned-result toks)
         [(Ok sexpr) sexpr]

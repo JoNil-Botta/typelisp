@@ -213,7 +213,7 @@
       [(Function _ params ret-ty _ blocks _)
         (let
           [seq : ir.CompilerIrBlockSeq
-            (live.compiler-live-ir-block-list-to-seq blocks)]
+            (live.compiler-live-ir-block-list-to-seq (& blocks))]
           [body : ir.CompilerIrInstrSeq
             (match (ir.compiler-ir-block-seq-ref seq 5)
               [(Block _ instrs) instrs])]
@@ -284,7 +284,7 @@
         (and
           (=
             (ir.compiler-ir-block-seq-count
-              (live.compiler-live-ir-block-list-to-seq blocks))
+              (live.compiler-live-ir-block-list-to-seq (& blocks)))
             3)
           (= reg.compiler-reg-early-exit-prefix-count 0)
           (not
@@ -341,7 +341,7 @@
         [(Function _ _ _ vars blocks _)
           (let
             [seq : ir.CompilerIrBlockSeq
-              (live.compiler-live-ir-block-list-to-seq blocks)]
+              (live.compiler-live-ir-block-list-to-seq (& blocks))]
             [instrs : ir.CompilerIrInstrSeq
               (match (ir.compiler-ir-block-seq-ref seq 1)
                 [(Block _ found) found])]
@@ -582,7 +582,7 @@
           [arms : reg.CompilerRegCallHoleWeights
             (let
               [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
-              [seq (live.compiler-live-ir-block-list-to-seq blocks)]
+              [seq (live.compiler-live-ir-block-list-to-seq (& blocks))]
               (reg.compiler-reg-call-hole-cold-arm-weights
                 type-segment-bases
                 self-name
@@ -648,7 +648,7 @@
           [arms : reg.CompilerRegCallHoleWeights
             (let
               [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
-              [seq (live.compiler-live-ir-block-list-to-seq blocks)]
+              [seq (live.compiler-live-ir-block-list-to-seq (& blocks))]
               (reg.compiler-reg-call-hole-cold-arm-weights
                 type-segment-bases
                 self-name
@@ -709,7 +709,7 @@
           [arms : reg.CompilerRegCallHoleWeights
             (let
               [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
-              [seq (live.compiler-live-ir-block-list-to-seq blocks)]
+              [seq (live.compiler-live-ir-block-list-to-seq (& blocks))]
               (reg.compiler-reg-call-hole-cold-arm-weights
                 type-segment-bases
                 self-name
@@ -960,32 +960,32 @@
           [carrier : (__tl_dyn-array i64) (__tl_make-array i64 width)]
           [valid : (__tl_dyn-array bool) (__tl_make-array bool width)]
           [seq : ir.CompilerIrBlockSeq
-            (live.compiler-live-ir-block-list-to-seq blocks)]
+            (live.compiler-live-ir-block-list-to-seq (& blocks))]
           [liveness : live.CompilerFunctionLiveness
-            (live.compiler-live-analyze-function-edge-precise
-              (reg.compiler-reg-global-shared-view func))]
+            (live.compiler-live-analyze-function-edge-precise (& func))]
           [index : i64 0]
           (reg.compiler-reg-fill-i64-array (&mut carrier) (- 0 1))
           (while (< index selected-count)
             (set! (array-ref carrier (array-ref selected index)) (+ vars index))
             (set! index (+ index 1)))
           (live.compiler-live-ir-block-list-to-seq
-            (reg.compiler-reg-call-hole-rewrite-blocks
-              (ast.ast-node-pool-reader-type-segment-bases)
-              seq
-              (reg.compiler-reg-global-shared-view liveness)
-              (reg.compiler-reg-function-var-types func)
-              carrier
-              selected
-              selected-count
-              (reg.compiler-reg-call-hole-flow-build
+            (&
+              (reg.compiler-reg-call-hole-rewrite-blocks
                 (ast.ast-node-pool-reader-type-segment-bases)
                 seq
-                liveness
+                (reg.compiler-reg-global-shared-view liveness)
+                (reg.compiler-reg-function-var-types func)
+                carrier
                 selected
-                selected-count)
-              (reg.compiler-reg-call-hole-flow-full selected-count)
-              (&mut valid))))])))
+                selected-count
+                (reg.compiler-reg-call-hole-flow-build
+                  (ast.ast-node-pool-reader-type-segment-bases)
+                  seq
+                  liveness
+                  selected
+                  selected-count)
+                (reg.compiler-reg-call-hole-flow-full selected-count)
+                (&mut valid)))))])))
 
 (cfg
   test
@@ -1338,22 +1338,21 @@
           [func : ir.CompilerIrFunction
             (compiler-reg-call-hole-cross-block-function)]
           [seq : ir.CompilerIrBlockSeq
-            (live.compiler-live-ir-block-list-to-seq blocks)]
+            (live.compiler-live-ir-block-list-to-seq (& blocks))]
           [selected : (__tl_dyn-array i64)
             (compiler-reg-call-hole-test-selection 0)]
           [empty : reg.CompilerRegCallHoleFlow
             (reg.compiler-reg-call-hole-flow-build
               (ast.ast-node-pool-reader-type-segment-bases)
               seq
-              (live.compiler-live-analyze-function-edge-precise
-                (reg.compiler-reg-global-shared-view func))
+              (live.compiler-live-analyze-function-edge-precise (& func))
               selected
               0)]
           [built : reg.CompilerRegCallHoleFlow
             (reg.compiler-reg-call-hole-flow-build
               (ast.ast-node-pool-reader-type-segment-bases)
               seq
-              (live.compiler-live-analyze-function-edge-precise func)
+              (live.compiler-live-analyze-function-edge-precise (& func))
               selected
               1)]
           (and
@@ -1825,23 +1824,24 @@
       (ir.compiler-ir-blocks-with-tail
         (compiler-reg-call-hole-cold-arms-chain (+ index 1) arms callee)
         (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label (compiler-reg-call-hole-guard-label index))
+          (ir.compiler-ir-label (& (compiler-reg-call-hole-guard-label index)))
           (compiler-reg-test-instr-seq-prepend
             (Branch
               (Bool false)
               (ir.compiler-ir-label
-                (compiler-reg-call-hole-arm-label "cold" index))
+                (& (compiler-reg-call-hole-arm-label "cold" index)))
               (ir.compiler-ir-label
-                (compiler-reg-call-hole-join-label (+ index 1) arms)))
+                (& (compiler-reg-call-hole-join-label (+ index 1) arms))))
             (ir.compiler-ir-instr-seq-empty)))
         (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label (compiler-reg-call-hole-arm-label "cold" index))
+          (ir.compiler-ir-label
+            (& (compiler-reg-call-hole-arm-label "cold" index)))
           (compiler-reg-test-instr-seq-prepend
             (Call (+ index 1) callee (Nil) (compiler-reg-i64-ty))
             (compiler-reg-test-instr-seq-prepend
               (Jump
                 (ir.compiler-ir-label
-                  (compiler-reg-call-hole-join-label (+ index 1) arms)))
+                  (& (compiler-reg-call-hole-join-label (+ index 1) arms))))
               (ir.compiler-ir-instr-seq-empty))))))))
 
 (cfg
@@ -1944,7 +1944,7 @@
       [(Function self-name _ _ _ blocks _)
         (let
           [type-segment-bases (ast.ast-node-pool-reader-type-segment-bases)]
-          [seq (live.compiler-live-ir-block-list-to-seq blocks)]
+          [seq (live.compiler-live-ir-block-list-to-seq (& blocks))]
           (reg.compiler-reg-call-hole-cold-arm-weights
             type-segment-bases
             self-name
@@ -2083,7 +2083,7 @@
     [seq : ir.CompilerIrBlockSeq]
     [name : String]) : i64
     (let
-      [want : i64 (ir.compiler-ir-label name)]
+      [want : i64 (ir.compiler-ir-label (& name))]
       [count : i64 (ir.compiler-ir-block-seq-count seq)]
       [index : i64 0]
       (while (< index count)
@@ -2103,7 +2103,7 @@
       [(Function _ _ _ vars blocks _)
         (let
           [seq : ir.CompilerIrBlockSeq
-            (live.compiler-live-ir-block-list-to-seq blocks)]
+            (live.compiler-live-ir-block-list-to-seq (& blocks))]
           [count : i64 (ir.compiler-ir-block-seq-count seq)]
           [nest : reg.CompilerRegLoopNest
             (reg.compiler-reg-loop-nest-build-seq seq)]
@@ -2249,20 +2249,22 @@
         (compiler-reg-loop-park-splice-function)]
       [direct-seq : ir.CompilerIrBlockSeq
         (live.compiler-live-ir-block-list-to-seq
-          (match (reg.compiler-reg-global-shared-view direct-func)
-            [(Function _ _ _ _ blocks _) blocks]))]
+          (&
+            (match (reg.compiler-reg-global-shared-view direct-func)
+              [(Function _ _ _ _ blocks _) blocks])))]
       [splice-seq : ir.CompilerIrBlockSeq
         (live.compiler-live-ir-block-list-to-seq
-          (match (reg.compiler-reg-global-shared-view splice-func)
-            [(Function _ _ _ _ blocks _) blocks]))]
+          (&
+            (match (reg.compiler-reg-global-shared-view splice-func)
+              [(Function _ _ _ _ blocks _) blocks])))]
       [direct-nest : reg.CompilerRegLoopNest
         (reg.compiler-reg-loop-nest-build-seq direct-seq)]
       [splice-nest : reg.CompilerRegLoopNest
         (reg.compiler-reg-loop-nest-build-seq splice-seq)]
       [direct-live : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function-edge-precise direct-func)]
+        (live.compiler-live-analyze-function-edge-precise (& direct-func))]
       [splice-live : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function-edge-precise splice-func)]
+        (live.compiler-live-analyze-function-edge-precise (& splice-func))]
       [weights : (__tl_dyn-array i64) (__tl_make-array i64 16)]
       [from : (__tl_dyn-array i64) (__tl_make-array i64 8)]
       [to : (__tl_dyn-array i64) (__tl_make-array i64 8)]
@@ -2391,13 +2393,14 @@
     (let
       [seq : ir.CompilerIrBlockSeq
         (live.compiler-live-ir-block-list-to-seq
-          (irt.blocks
-            "sw:
+          (&
+            (irt.blocks
+              "sw:
                switch %0 base 3 [0:s0, 1:s1, 2:s2] default s3
              shared:
                switch %0 base 2 [0:s0, 1:s3] default s3
              br:
-               branch %0, s0, s1"))]
+               branch %0, s0, s1")))]
       (and
         ;; case edges are pinned by the jump table
         (not
@@ -2468,7 +2471,7 @@
       [(Function _ _ _ vars blocks _)
         (let
           [seq : ir.CompilerIrBlockSeq
-            (live.compiler-live-ir-block-list-to-seq blocks)]
+            (live.compiler-live-ir-block-list-to-seq (& blocks))]
           [count : i64 (ir.compiler-ir-block-seq-count seq)]
           [type-info : reg.CompilerRegVarTypes
             (let
@@ -2484,7 +2487,7 @@
               "exit")]
           [pk : reg.CompilerRegLoopParkPlan
             (reg.compiler-reg-loop-park-plan-make count vars)]
-          (reg.compiler-reg-loop-park-plan-reset! pk)
+          (reg.compiler-reg-loop-park-plan-reset! (&mut pk))
           (set! (array-ref pk.park-var 0) 1)
           (set! (array-ref pk.park-carrier 0) vars)
           (set! (array-ref pk.park-loop 0) 0)
@@ -2509,7 +2512,7 @@
           (let
             [out : ir.CompilerIrBlockSeq
               (live.compiler-live-ir-block-list-to-seq
-                (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info))]
+                (& (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info)))]
             (and
               ;; a direct reload adds no block
               (= (ir.compiler-ir-block-seq-count out) count)
@@ -2546,7 +2549,7 @@
       [(Function _ _ _ vars blocks _)
         (let
           [seq : ir.CompilerIrBlockSeq
-            (live.compiler-live-ir-block-list-to-seq blocks)]
+            (live.compiler-live-ir-block-list-to-seq (& blocks))]
           [count : i64 (ir.compiler-ir-block-seq-count seq)]
           [type-info : reg.CompilerRegVarTypes
             (let
@@ -2568,7 +2571,7 @@
             (reg.compiler-reg-loop-park-splice-label seq header 0)]
           [pk : reg.CompilerRegLoopParkPlan
             (reg.compiler-reg-loop-park-plan-make count vars)]
-          (reg.compiler-reg-loop-park-plan-reset! pk)
+          (reg.compiler-reg-loop-park-plan-reset! (&mut pk))
           (set! (array-ref pk.park-var 0) 1)
           (set! (array-ref pk.park-carrier 0) vars)
           (set! (array-ref pk.park-loop 0) 0)
@@ -2592,7 +2595,7 @@
           (let
             [out : ir.CompilerIrBlockSeq
               (live.compiler-live-ir-block-list-to-seq
-                (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info))]
+                (& (reg.compiler-reg-loop-park-rewrite-blocks pk seq type-info)))]
             [spliced : i64
               (compiler-reg-loop-park-block-index
                 (ir.compiler-ir-global-shared-view out)
@@ -2673,7 +2676,7 @@
           (reg.compiler-reg-var-types-empty)
           (reg.compiler-reg-call-split-empty))]
       [dropped : (__tl_dyn-array bool) (__tl_make-array bool 8)]
-      (reg.compiler-reg-loop-park-plan-reset! pk)
+      (reg.compiler-reg-loop-park-plan-reset! (&mut pk))
       ;; loop 0 targets var 2, which the replan registerised; loop 1 targets
       ;; var 4, which it did not
       (set! (array-ref pk.resident-mask 2) 1)
@@ -2806,7 +2809,8 @@
 (cfg
   test
   (define (compiler-reg-park-nest-label [prefix : String] [level : i64]) : i64
-    (ir.compiler-ir-label (str_cat.str-cat prefix (string.int->string level)))))
+    (ir.compiler-ir-label
+      (& (str_cat.str-cat prefix (string.int->string level))))))
 
 ;; Per-level var ids: counter, trip condition, increment.
 (cfg
@@ -2864,10 +2868,11 @@
           (ir.compiler-ir-phi-input-seq-prepend
             (I64 0)
             (compiler-reg-park-nest-label "pre." level)
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var (compiler-reg-park-nest-next level))
-              (compiler-reg-park-nest-label "lat." level)
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var (compiler-reg-park-nest-next level))
+                (compiler-reg-park-nest-label "lat." level)
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (compiler-reg-i64-ty))
         (compiler-reg-test-instr-seq-prepend
           (compiler-reg-park-nest-binop
@@ -3369,8 +3374,7 @@
     (let
       [func : ir.CompilerIrFunction (compiler-reg-scavenge-hole-function)]
       [liveness : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function
-          (reg.compiler-reg-global-shared-view func))]
+        (live.compiler-live-analyze-function (& func))]
       [hull-only : reg.CompilerRegIntervalIndex
         (reg.compiler-reg-interval-index-build
           (reg.compiler-reg-live-intervals
@@ -3384,8 +3388,7 @@
           false)]
       [rotated : ir.CompilerIrFunction (compiler-reg-scavenge-rotated-function)]
       [rotated-liveness : live.CompilerFunctionLiveness
-        (live.compiler-live-analyze-function
-          (reg.compiler-reg-global-shared-view rotated))]
+        (live.compiler-live-analyze-function (& rotated))]
       [rotated-unseeded : reg.CompilerRegIntervalSelection
         (reg.compiler-reg-live-interval-selection-with-live-in
           (reg.compiler-reg-global-shared-view rotated)
@@ -3847,16 +3850,15 @@
     [loop-first-mask : (__tl_dyn-array i64)
       (compiler-reg-function-phi-touched-safe
         (ir.compiler-ir-global-shared-view loop-first)
-        (live.compiler-live-analyze-function-edge-precise
-          (ir.compiler-ir-global-shared-view loop-first)))]
+        (live.compiler-live-analyze-function-edge-precise (& loop-first)))]
     [exit-first-mask : (__tl_dyn-array i64)
       (compiler-reg-function-phi-touched-safe
         (ir.compiler-ir-global-shared-view exit-first)
-        (live.compiler-live-analyze-function-edge-precise exit-first))]
+        (live.compiler-live-analyze-function-edge-precise (& exit-first)))]
     [fixed-register-mask : (__tl_dyn-array i64)
       (reg.compiler-reg-function-phi-touched-safe-mode
         (ir.compiler-ir-global-shared-view loop-first)
-        (live.compiler-live-analyze-function-edge-precise loop-first)
+        (live.compiler-live-analyze-function-edge-precise (& loop-first))
         false)]
     (and
       (compiler-reg-self-loop-exit-live-phi-mask-shape-ok? loop-first-mask)
@@ -3896,13 +3898,11 @@
     [exit-read-mask : (__tl_dyn-array i64)
       (compiler-reg-function-phi-touched-safe
         (owned_view.compiler-owned-shared-view exit-read)
-        (live.compiler-live-analyze-function-edge-precise
-          (owned_view.compiler-owned-shared-view exit-read)))]
+        (live.compiler-live-analyze-function-edge-precise (& exit-read)))]
     [late-read-mask : (__tl_dyn-array i64)
       (compiler-reg-function-phi-touched-safe
         (owned_view.compiler-owned-shared-view late-read)
-        (live.compiler-live-analyze-function-edge-precise
-          (owned_view.compiler-owned-shared-view late-read)))]
+        (live.compiler-live-analyze-function-edge-precise (& late-read)))]
     (and
       (= (array-ref exit-read-mask 0) 0)
       (= (array-ref exit-read-mask 1) 0)
@@ -6339,7 +6339,7 @@
       [(Function _ _ _ _ blocks _)
         (let
           [seq : ir.CompilerIrBlockSeq
-            (live.compiler-live-ir-block-list-to-seq blocks)]
+            (live.compiler-live-ir-block-list-to-seq (& blocks))]
           [bslots : (__tl_dyn-array ir.CompilerIrBlock) seq.slots]
           [points : (__tl_dyn-array i64)
             (reg.compiler-reg-loop-phi-mb-block-points bslots)]
@@ -6433,7 +6433,7 @@
             [(Rewrite out _ next-vars _ _)
               (let
                 [oseq : ir.CompilerIrBlockSeq
-                  (live.compiler-live-ir-block-list-to-seq out)]
+                  (live.compiler-live-ir-block-list-to-seq (& out))]
                 [oslots : (__tl_dyn-array ir.CompilerIrBlock) oseq.slots]
                 (and
                   (= oseq.len 3)
@@ -8354,8 +8354,7 @@
     [types : reg.CompilerRegVarTypes (reg.compiler-reg-function-var-types func)]
     (match (reg.compiler-reg-live-interval-selection
       (ir.compiler-ir-global-shared-view func)
-      (live.compiler-live-analyze-function
-        (ir.compiler-ir-global-shared-view func)))
+      (live.compiler-live-analyze-function (& func)))
       [(Selection _ index)
         (reg.compiler-reg-early-scratch-model
           func
@@ -10792,7 +10791,7 @@
     [selection : reg.CompilerRegIntervalSelection
       (reg.compiler-reg-live-interval-selection
         (clone func)
-        (live.compiler-live-analyze-function (clone func)))]
+        (live.compiler-live-analyze-function (& (clone func))))]
     (match selection
       [(Selection _ interval-index)
         (let
@@ -10816,7 +10815,7 @@
     i64)
   (match (reg.compiler-reg-live-interval-selection
     (clone func)
-    (live.compiler-live-analyze-function (clone func)))
+    (live.compiler-live-analyze-function (& (clone func))))
     [(Selection _ interval-index)
       (reg.compiler-reg-function-same-value-parents-multi
         (clone func)
@@ -12422,11 +12421,12 @@
                 12
                 2)))
           (ir.compiler-ir-call-args-sret-from-seq
-            (ir.compiler-ir-value-seq1
-              (Var
-                (if structural?
-                  12
-                  2)))
+            (&
+              (ir.compiler-ir-value-seq1
+                (Var
+                  (if structural?
+                    12
+                    2))))
             0))
         (U64)))
     (ir.compiler-ir-instr-builder-push!
@@ -12467,11 +12467,12 @@
         8
         (ir.compiler-ir-test-symbol "sret_two")
         (ir.compiler-ir-call-args-sret-from-seq
-          (ir.compiler-ir-value-seq1
-            (Var
-              (if structural?
-                13
-                7)))
+          (&
+            (ir.compiler-ir-value-seq1
+              (Var
+                (if structural?
+                  13
+                  7))))
           0)
         (U64)))
     (ir.compiler-ir-instr-builder-push!
@@ -13528,7 +13529,7 @@
     i64)
   (let
     [seq : ir.CompilerIrBlockSeq
-      (live.compiler-live-ir-block-list-to-seq blocks)]
+      (live.compiler-live-ir-block-list-to-seq (& blocks))]
     (reg.compiler-reg-loop-nest-spans-seq
       seq
       (ir.compiler-ir-block-seq-count seq))))
@@ -13631,8 +13632,7 @@
   (let
     [func : ir.CompilerIrFunction (compiler-reg-live-in-call-function)]
     [liveness : live.CompilerFunctionLiveness
-      (live.compiler-live-analyze-function
-        (reg.compiler-reg-global-shared-view func))]
+      (live.compiler-live-analyze-function (& func))]
     (match (reg.compiler-reg-live-interval-selection
       (reg.compiler-reg-global-shared-view func)
       liveness)
@@ -14786,8 +14786,7 @@
       (match (compiler-reg-trace-fixture-function)
         [(Function _ _ _ _ blocks _)
           (test.assert-i64-eq
-            (ir.compiler-ir-block-list-instruction-count
-              (owned_view.compiler-owned-shared-view blocks))
+            (ir.compiler-ir-block-list-instruction-count (& blocks))
             12
             "fixture keeps the exact ownership-budget boundary")
           (test.assert-true
@@ -15024,45 +15023,27 @@
           [(Call _ _ _ _)
             (live.compiler-live-set-union
               out
-              (live.compiler-live-after
-                (reg.compiler-reg-global-shared-view liveness)
-                label
-                instr-index))]
+              (live.compiler-live-after (& liveness) label instr-index))]
           [(CallCAbiStoreResult payload-box)
             (live.compiler-live-set-union
               out
-              (live.compiler-live-after
-                (reg.compiler-reg-global-shared-view liveness)
-                label
-                instr-index))]
+              (live.compiler-live-after (& liveness) label instr-index))]
           [(CallIndirectCAbiStoreResult payload-box)
             (live.compiler-live-set-union
               out
-              (live.compiler-live-after
-                (reg.compiler-reg-global-shared-view liveness)
-                label
-                instr-index))]
+              (live.compiler-live-after (& liveness) label instr-index))]
           [(SpmdCall payload-box)
             (live.compiler-live-set-union
               out
-              (live.compiler-live-after
-                (reg.compiler-reg-global-shared-view liveness)
-                label
-                instr-index))]
+              (live.compiler-live-after (& liveness) label instr-index))]
           [(TailCall _ _ _)
             (live.compiler-live-set-union
               out
-              (live.compiler-live-after
-                (reg.compiler-reg-global-shared-view liveness)
-                label
-                instr-index))]
+              (live.compiler-live-after (& liveness) label instr-index))]
           [(TailCallIndirect _ _ _)
             (live.compiler-live-set-union
               out
-              (live.compiler-live-after
-                (reg.compiler-reg-global-shared-view liveness)
-                label
-                instr-index))]
+              (live.compiler-live-after (& liveness) label instr-index))]
           [_ out]))
       (set! instr-index (+ instr-index 1))
       (set! index (+ index 1)))
@@ -15744,7 +15725,7 @@
         (match (ir.compiler-ir-representation-index-kind
           type-segment-bases
           representations
-          ty)
+          (& ty))
           [(RegisterGroup _ mask)
             (not
               (=

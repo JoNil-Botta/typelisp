@@ -3078,7 +3078,7 @@
   [name : String]
   [want-line : i64]) : bool
   (match (ir.compiler-source-spans-lookup
-    spans
+    (& spans)
     (ir.compiler-ir-symbol-typed-id (ci.intern name)))
     [(Some span) (= (ast.ast-source-span-start-line span) want-line)]
     [(No) false]))
@@ -3087,10 +3087,7 @@
   (match (lower.lower-compiler-source src)
     [(Ok _ spans)
       (and
-        (=
-          (ir.compiler-source-spans-count
-            (owned_view.compiler-owned-shared-view spans))
-          2)
+        (= (ir.compiler-source-spans-count (& spans)) 2)
         (compiler-lower-span-start-line-ok?
           (owned_view.compiler-owned-shared-view spans)
           "inc"
@@ -3103,7 +3100,7 @@
     [(Ok program _)
       (let
         [summary : ir.CompilerIrSummary
-          (ir.compiler-ir-program-summary program)]
+          (ir.compiler-ir-program-summary (& program))]
         (and
           (= (ir.compiler-ir-summary-globals summary) 1)
           (= (ir.compiler-ir-summary-functions summary) 2)
@@ -8076,6 +8073,96 @@
       (U8)
       32)))
 
+;; Rank-2 rows (#7191). The canonical row-major map lowers each row through
+;; row-origin views to one 1-D gang loop: in both SIMD modes, a vector load and
+;; store in the gang body, the row's protected tail, and the scalar row the
+;; guard takes when a view would start outside its array. A body the row plan
+;; refuses keeps scalar rows instead of failing to lower.
+(define (compiler-lower-foreach2-row-map-source) : String
+  "(define (fill [a : (& a (__tl_dyn-array i64))] [out : (&mut out (__tl_dyn-array i64))] [base : i64] [y0 : i64] [y1 : i64] [x0 : i64] [x1 : i64]) : unit
+  (foreach
+    ([y : i64 y0 y1] [x : i64 x0 x1])
+    (set!
+      (array-ref out (+ base (+ (* (- y y0) (- x1 x0)) (- x x0))))
+      (+ (array-ref a (+ base (+ (* (- y y0) (- x1 x0)) (- x x0)))) y))))")
+
+;; `out` is also a call argument, so it has no view: the read still gets one,
+;; but the store keeps scalar rows, on both sides of the guard.
+(define (compiler-lower-foreach2-row-other-use-source) : String
+  "(define (peek [out : (& out (__tl_dyn-array i64))]) : i64 (array-ref out 0))
+(define (fill [a : (& a (__tl_dyn-array i64))] [out : (&mut out (__tl_dyn-array i64))] [y1 : i64] [x1 : i64]) : unit
+  (foreach
+    ([y : i64 0 y1] [x : i64 0 x1])
+    (set!
+      (array-ref out (+ (* y x1) x))
+      (+ (array-ref a (+ (* y x1) x)) (peek out)))))")
+
+;; The read's origin uses a name bound inside the body, which a row origin
+;; cannot read before the row, so only the store gets a view, and the read
+;; keeps the rows scalar on both sides of the guard.
+(define (compiler-lower-foreach2-row-body-name-source) : String
+  "(define (fill [a : (& a (__tl_dyn-array i64))] [out : (&mut out (__tl_dyn-array i64))] [y1 : i64] [x1 : i64]) : unit
+  (foreach
+    ([y : i64 0 y1] [x : i64 0 x1])
+    (let
+      [k : i64 (* y x1)]
+      (set! (array-ref out (+ (* y x1) x)) (array-ref a (+ k x))))))")
+
+(define (compiler-lower-foreach2-row-counts
+  [src : String]
+  [mode : lower.CompilerLowerMode]) : (Array i64 6)
+  (match (lower-test-functions (lower.lower-compiler-source-with-mode src mode))
+    [(Some functions)
+      (array
+        (lower-test-count functions "fill" (VectorLoad))
+        (lower-test-count functions "fill" (VectorStore))
+        (lower-test-count functions "fill" (PredicatedLoad))
+        (lower-test-count functions "fill" (PredicatedStore))
+        (lower-test-count functions "fill" (TailMask))
+        (lower-test-count functions "fill" (StorePtr)))]
+    [_ (array -1 -1 -1 -1 -1 -1)]))
+
+(define (compiler-lower-foreach2-row-counts-are?
+  [src : String]
+  [mode : lower.CompilerLowerMode]
+  [want : (Array i64 6)]) : bool
+  (let
+    [got : (Array i64 6) (compiler-lower-foreach2-row-counts src mode)]
+    [index : i64 0]
+    [same : bool true]
+    (while (< index 6)
+      (when
+        (not (= (array-ref got index) (array-ref want index)))
+        (set! same false))
+      (set! index (+ index 1)))
+    same))
+
+(define (compiler-lower-foreach2-row-tests-ok?) : bool
+  (compiler-lower-and8
+    (compiler-lower-foreach2-row-counts-are?
+      (compiler-lower-foreach2-row-map-source)
+      (lower.CompilerLowerMode.Avx2)
+      (array 1 1 1 1 1 2))
+    (compiler-lower-foreach2-row-counts-are?
+      (compiler-lower-foreach2-row-map-source)
+      (lower.CompilerLowerMode.Avx512)
+      (array 1 1 1 1 1 2))
+    (compiler-lower-foreach2-row-counts-are?
+      (compiler-lower-foreach2-row-map-source)
+      (lower.CompilerLowerMode.Scalar)
+      (array 0 0 0 0 0 1))
+    (compiler-lower-foreach2-row-counts-are?
+      (compiler-lower-foreach2-row-other-use-source)
+      (lower.CompilerLowerMode.Avx2)
+      (array 0 0 0 0 0 2))
+    (compiler-lower-foreach2-row-counts-are?
+      (compiler-lower-foreach2-row-body-name-source)
+      (lower.CompilerLowerMode.Avx2)
+      (array 0 0 0 0 0 2))
+    true
+    true
+    true))
+
 (define (compiler-lower-avx2-foreach-uniform-source-shape-ok?
   [src : String]
   [elem-ty : ast.AstType]
@@ -9728,7 +9815,7 @@
               (set! found true)
               (set!
                 ordinary
-                (ir.compiler-ir-function-abi-ordinary? function-abi)))
+                (ir.compiler-ir-function-abi-ordinary? (& function-abi))))
             unit)])
       (set! index (+ index 1)))
     (and found ordinary)))
@@ -9747,7 +9834,7 @@
         (string.eq (ir.compiler-ir-spmd-private-abi-program-error functions) "")
         (lower-test-function-abi-ordinary? functions caller)
         (string.eq
-          (ir.compiler-ir-test-spmd-private-abi-shapes functions)
+          (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))
           expected))]
     [_ false]))
 
@@ -9763,7 +9850,7 @@
         [before : String
           (match (ir.compiler-ir-global-shared-view program)
             [(Program _ functions _)
-              (ir.compiler-ir-test-spmd-private-abi-shapes functions)])]
+              (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))])]
         [optimized : ir.CompilerIrProgram
           (match (optimize.optimize-program-with-spans-and-level
             program
@@ -9778,7 +9865,7 @@
                 (ir.compiler-ir-spmd-private-abi-program-error functions)
                 "")
               (string.eq
-                (ir.compiler-ir-test-spmd-private-abi-shapes functions)
+                (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))
                 before))]))]
     [(Err _) false]))
 
@@ -10043,6 +10130,7 @@
       (compiler-lower-avx512-foreach-map-shape-ok?)
       (compiler-lower-avx2-foreach-uniform-shape-ok?))
     (compiler-lower-avx512-foreach-uniform-shape-ok?)
+    (compiler-lower-foreach2-row-tests-ok?)
     (compiler-lower-spmd-lane-array-shape-ok?
       (lower.CompilerLowerMode.Avx2)
       false)
@@ -12334,7 +12422,7 @@
       [session-b : cis.InternStructuralSessionHandle
         (cis.intern-structural-session-handle-from-source-names
           (ci.intern-source-name-session-handle-from-state intern-b))]
-      [identities : (__tl_dyn-array i64) (__tl_make-array i64 20)]
+      [identities : (__tl_dyn-array i64) (__tl_make-array i64 24)]
       [ok : bool true]
       (set!
         (array-ref identities 0)
@@ -12396,12 +12484,24 @@
       (set!
         (array-ref identities 19)
         (compiler-lower-private-identity-raw session-a (SpmdDomainBound 3)))
+      (set!
+        (array-ref identities 20)
+        (compiler-lower-private-identity-raw session-a SpmdRowIndex))
+      (set!
+        (array-ref identities 21)
+        (compiler-lower-private-identity-raw session-a SpmdRowStart))
+      (set!
+        (array-ref identities 22)
+        (compiler-lower-private-identity-raw session-a (SpmdRowView 0)))
+      (set!
+        (array-ref identities 23)
+        (compiler-lower-private-identity-raw session-a (SpmdRowView 2)))
       (let
         [left : i64 0]
-        (while (< left 20)
+        (while (< left 24)
           (let
             [right : i64 (+ left 1)]
-            (while (< right 20)
+            (while (< right 24)
               (when
                 (= (array-ref identities left) (array-ref identities right))
                 (set! ok false))
@@ -12493,6 +12593,21 @@
           [(Some (SpmdDomainBound ordinal))
             (unless (= ordinal 3) (set! ok false))]
           [_ (set! ok false)])
+        (match (cis.intern-structural-session-lower-private-record-for-raw
+          session-a
+          (array-ref identities 20))
+          [(Some (SpmdRowIndex)) unit]
+          [_ (set! ok false)])
+        (match (cis.intern-structural-session-lower-private-record-for-raw
+          session-a
+          (array-ref identities 21))
+          [(Some (SpmdRowStart)) unit]
+          [_ (set! ok false)])
+        (match (cis.intern-structural-session-lower-private-record-for-raw
+          session-a
+          (array-ref identities 23))
+          [(Some (SpmdRowView ordinal)) (unless (= ordinal 2) (set! ok false))]
+          [_ (set! ok false)])
         (while (< index 700)
           (begin
             (compiler-lower-private-identity-raw
@@ -12514,10 +12629,10 @@
             (cis.intern-structural-session-kind-count
               session-a
               (ci.intern-structural-kind-lower-private))
-            725)
+            729)
           (set! ok false))
         (unless
-          (= (ci.intern-compat-state-structural-count intern-a) 726)
+          (= (ci.intern-compat-state-structural-count intern-a) 730)
           (set! ok false))
         (unless (= (ci.intern-structural-record-slot-bytes) 37) (set! ok false)))
       (let

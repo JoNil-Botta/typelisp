@@ -47,7 +47,12 @@
     (let
       [diag
         (cdiag.compiler-diagnostic-with-secondary
-          (cdiag.compiler-diagnostic-simple "template.tl" 2 14 "type mismatch")
+          (&
+            (cdiag.compiler-diagnostic-simple
+              "template.tl"
+              2
+              14
+              "type mismatch"))
           (cdiag.CompilerDiagnosticSpan "caller.tl" 7 9 7 15)
           (CompilerDiagnosticSomeString
             "in expansion of macro `demo` invoked here"))]
@@ -75,9 +80,9 @@
     [diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-simple "old.tl" 1 2 "old")]
     [moved : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-with-path diag "new.tl")]
+      (cdiag.compiler-diagnostic-with-path (& diag) "new.tl")]
     [rewritten : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-with-message moved "new message")]
+      (cdiag.compiler-diagnostic-with-message (& moved) "new message")]
     (and
       (string.eq (cdiag.compiler-diagnostic-path rewritten) "new.tl")
       (= (cdiag.compiler-diagnostic-line rewritten) 1)
@@ -123,27 +128,32 @@
     [diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-fix
         (cdiag.compiler-diagnostic-with-secondary
-          (cdiag.compiler-diagnostic-with-secondary
+          (&
             (cdiag.compiler-diagnostic-with-secondary
-              (cdiag.compiler-diagnostic-with-primary-span
-                (cdiag.compiler-diagnostic-simple "" 5 2 "in the tail")
-                (cdiag.CompilerDiagnosticSpan "" 5 2 6 4))
-              (cdiag.CompilerDiagnosticSpan "other.tl" 9 1 9 3)
-              CompilerDiagnosticNoString)
-            (cdiag.CompilerDiagnosticSpan "whole.tl" 4 1 4 2)
-            CompilerDiagnosticNoString)
+              (&
+                (cdiag.compiler-diagnostic-with-secondary
+                  (&
+                    (cdiag.compiler-diagnostic-with-primary-span
+                      (&
+                        (cdiag.compiler-diagnostic-simple "" 5 2 "in the tail"))
+                      (cdiag.CompilerDiagnosticSpan "" 5 2 6 4)))
+                  (cdiag.CompilerDiagnosticSpan "other.tl" 9 1 9 3)
+                  CompilerDiagnosticNoString))
+              (cdiag.CompilerDiagnosticSpan "whole.tl" 4 1 4 2)
+              CompilerDiagnosticNoString))
           (cdiag.CompilerDiagnosticSpan "" 2 1 2 5)
           CompilerDiagnosticNoString)
-        (cdiag.compiler-diagnostic-fix-new
-          "fix"
-          CompilerDiagnosticMachineApplicable
-          (cdiag.compiler-diagnostic-text-edit-single
-            (cdiag.compiler-diagnostic-text-edit-new
-              (cdiag.CompilerDiagnosticSpan "" 6 1 6 1)
-              "x"))))]
+        (&
+          (cdiag.compiler-diagnostic-fix-new
+            "fix"
+            CompilerDiagnosticMachineApplicable
+            (cdiag.compiler-diagnostic-text-edit-single
+              (cdiag.compiler-diagnostic-text-edit-new
+                (cdiag.CompilerDiagnosticSpan "" 6 1 6 1)
+                "x")))))]
     [split : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-split-at-line
-        diag
+        (& diag)
         "whole.tl"
         3
         "head.tl"
@@ -168,7 +178,7 @@
         (ptr-read (ptr-offset (__tl_array-data fix.edits.slots) 0)))]
     [in-head : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-split-at-line
-        (cdiag.compiler-diagnostic-simple "whole.tl" 3 7 "in the head")
+        (& (cdiag.compiler-diagnostic-simple "whole.tl" 3 7 "in the head"))
         "whole.tl"
         3
         "head.tl"
@@ -200,9 +210,10 @@
   (let
     [diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-help
-        (cdiag.compiler-diagnostic-with-code
-          (cdiag.compiler-diagnostic-simple "test.tl" 3 6 "type mismatch")
-          "E0001")
+        (&
+          (cdiag.compiler-diagnostic-with-code
+            (& (cdiag.compiler-diagnostic-simple "test.tl" 3 6 "type mismatch"))
+            "E0001"))
         "expected i64, found bool")]
     [source : String "(define x true)\n(define y 42)\n(+ x y)\n"]
     [out : String (cdiag.compiler-diagnostic-render-source diag source)]
@@ -214,7 +225,7 @@
   (let
     [diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-level
-        (cdiag.compiler-diagnostic-simple "lib.tl" 1 1 "heads up")
+        (& (cdiag.compiler-diagnostic-simple "lib.tl" 1 1 "heads up"))
         CompilerDiagnosticWarning)]
     [out : String (cdiag.compiler-diagnostic-render-source diag "x\n")]
     (compiler-diagnostic-string-eq?
@@ -244,18 +255,22 @@
       [diag : cdiag.CompilerDiagnostic
         (cdiag.compiler-diagnostic-with-note
           (cdiag.compiler-diagnostic-with-help
-            (cdiag.compiler-diagnostic-with-code
-              (cdiag.compiler-diagnostic-with-secondary
-                (cdiag.compiler-diagnostic-with-secondary
-                  (cdiag.compiler-diagnostic-from-span
-                    "meta.tl"
-                    (token.SourceSpan 1 2 1 8)
-                    "metadata")
-                  (cdiag.CompilerDiagnosticSpan "" 3 4 3 5)
-                  (CompilerDiagnosticSomeString "second related"))
-                (cdiag.CompilerDiagnosticSpan "" 2 11 2 13)
-                (CompilerDiagnosticSomeString "first related"))
-              "E1234")
+            (&
+              (cdiag.compiler-diagnostic-with-code
+                (&
+                  (cdiag.compiler-diagnostic-with-secondary
+                    (&
+                      (cdiag.compiler-diagnostic-with-secondary
+                        (&
+                          (cdiag.compiler-diagnostic-from-span
+                            "meta.tl"
+                            (token.SourceSpan 1 2 1 8)
+                            "metadata"))
+                        (cdiag.CompilerDiagnosticSpan "" 3 4 3 5)
+                        (CompilerDiagnosticSomeString "second related")))
+                    (cdiag.CompilerDiagnosticSpan "" 2 11 2 13)
+                    (CompilerDiagnosticSomeString "first related")))
+                "E1234"))
             "inspect references")
           "first note")]
       [source : String "(define x true)\n(define y 42)\n(+ x y)\n"]
@@ -312,13 +327,15 @@
   (let
     [diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-secondary
-        (cdiag.compiler-diagnostic-with-secondary
-          (cdiag.compiler-diagnostic-from-span
-            "back.tl"
-            (token.SourceSpan 3 2 3 3)
-            "late use")
-          (cdiag.CompilerDiagnosticSpan "" 3 4 3 5)
-          (CompilerDiagnosticSomeString "same line"))
+        (&
+          (cdiag.compiler-diagnostic-with-secondary
+            (&
+              (cdiag.compiler-diagnostic-from-span
+                "back.tl"
+                (token.SourceSpan 3 2 3 3)
+                "late use"))
+            (cdiag.CompilerDiagnosticSpan "" 3 4 3 5)
+            (CompilerDiagnosticSomeString "same line")))
         (cdiag.CompilerDiagnosticSpan "" 1 9 1 10)
         (CompilerDiagnosticSomeString "defined here"))]
     [source : String "(define x true)\n(define y 42)\n(+ x y)"]
@@ -335,7 +352,7 @@
         (token.SourceSpan 2 3 2 9)
         "wide token")]
     [moved : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-with-path diag "moved.tl")]
+      (cdiag.compiler-diagnostic-with-path (& diag) "moved.tl")]
     (and
       (= (cdiag.compiler-diagnostic-end-line moved) 2)
       (= (cdiag.compiler-diagnostic-end-col moved) 9)
@@ -347,14 +364,22 @@
       (cdiag.compiler-diagnostic-with-note
         (cdiag.compiler-diagnostic-with-note
           (cdiag.compiler-diagnostic-with-secondary
-            (cdiag.compiler-diagnostic-with-secondary
-              (cdiag.compiler-diagnostic-with-category
-                (cdiag.compiler-diagnostic-with-code
-                  (cdiag.compiler-diagnostic-simple "meta.tl" 1 2 "metadata")
-                  "E1234")
-                "typecheck")
-              (cdiag.CompilerDiagnosticSpan "first.tl" 3 4 3 7)
-              (CompilerDiagnosticSomeString "first related"))
+            (&
+              (cdiag.compiler-diagnostic-with-secondary
+                (&
+                  (cdiag.compiler-diagnostic-with-category
+                    (&
+                      (cdiag.compiler-diagnostic-with-code
+                        (&
+                          (cdiag.compiler-diagnostic-simple
+                            "meta.tl"
+                            1
+                            2
+                            "metadata"))
+                        "E1234"))
+                    "typecheck"))
+                (cdiag.CompilerDiagnosticSpan "first.tl" 3 4 3 7)
+                (CompilerDiagnosticSomeString "first related")))
             (cdiag.CompilerDiagnosticSpan "other.tl" 4 5 4 8)
             (CompilerDiagnosticSomeString "related"))
           "first note")
@@ -389,7 +414,7 @@
     [uncoded : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-simple "none.tl" 1 1 "none")]
     [coded : cdiag.CompilerDiagnostic
-      (cdiag.compiler-diagnostic-with-code (clone uncoded) "E1234")]
+      (cdiag.compiler-diagnostic-with-code (& (clone uncoded)) "E1234")]
     (and
       (string.eq (cdiag.compiler-diagnostic-code-or-empty uncoded) "")
       (string.eq (cdiag.compiler-diagnostic-code-or-empty coded) "E1234"))))
@@ -404,12 +429,12 @@
       (cdiag.compiler-diagnostic-with-note (clone note-one) "two")]
     [label-one : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-secondary
-        (clone base)
+        (& (clone base))
         (cdiag.CompilerDiagnosticSpan "one.tl" 1 1 1 2)
         CompilerDiagnosticNoString)]
     [label-two : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-secondary
-        (clone label-one)
+        (& (clone label-one))
         (cdiag.CompilerDiagnosticSpan "two.tl" 2 1 2 2)
         CompilerDiagnosticNoString)]
     [base-notes : cdiag.CompilerDiagnosticNoteList
@@ -714,7 +739,7 @@
   [line : i64]
   [message : String]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-level
-    (cdiag.compiler-diagnostic-simple path line 1 message)
+    (& (cdiag.compiler-diagnostic-simple path line 1 message))
     CompilerDiagnosticWarning))
 
 (define (compiler-diagnostic-advisory-sink-ok?) : bool

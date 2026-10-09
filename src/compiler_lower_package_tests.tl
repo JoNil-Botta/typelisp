@@ -114,7 +114,7 @@
             (ir.compiler-ir-function-render
               (cis.InternStructuralSessionHandle 0)
               (ast.ast-node-pool-reader-type-segment-bases)
-              function)
+              (& function))
             (compiler-lower-spmd-package-uniform-helper-render-from
               functions
               (+ index 1)))]))))
@@ -697,7 +697,7 @@
               (ir.compiler-ir-spmd-private-abi-program-error functions)
               "")
             (string.eq
-              (ir.compiler-ir-test-spmd-private-abi-shapes functions)
+              (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))
               expected))])]
     [(Err _) false]))
 

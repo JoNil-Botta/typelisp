@@ -146,7 +146,12 @@
   (WhileHeader i64)
   ;; A rank-2 foreach bound held across the domain, by binding-order ordinal:
   ;; 0 outer begin, 1 outer end, 2 inner begin, 3 inner end.
-  (SpmdDomainBound i64))
+  (SpmdDomainBound i64)
+  ;; A native rank-2 row (#7191): its index counted from 0, the row's
+  ;; evaluated inner begin, and its row-origin array views by ordinal.
+  (SpmdRowIndex)
+  (SpmdRowStart)
+  (SpmdRowView i64))
 
 (defstruct InternLowerPrivateIdentity
   (value i64))
@@ -1086,6 +1091,21 @@
       (intern-structural-session-lower-private-component-identity
         handle
         18
+        ordinal)]
+    [(SpmdRowIndex)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        19
+        0)]
+    [(SpmdRowStart)
+      (intern-structural-session-lower-private-identity-for-components
+        handle
+        20
+        0)]
+    [(SpmdRowView ordinal)
+      (intern-structural-session-lower-private-component-identity
+        handle
+        21
         ordinal)]))
 
 (define (intern-structural-session-lower-private-record
@@ -1160,6 +1180,15 @@
             [(= role 16) (Some (WhileExit component))]
             [(= role 17) (Some (WhileHeader component))]
             [(= role 18) (Some (SpmdDomainBound component))]
+            [(= role 19)
+              (if (= component 0)
+                (Some SpmdRowIndex)
+                No)]
+            [(= role 20)
+              (if (= component 0)
+                (Some SpmdRowStart)
+                No)]
+            [(= role 21) (Some (SpmdRowView component))]
             [else No])))]))
 
 (define (intern-structural-session-lower-private-record-for-raw

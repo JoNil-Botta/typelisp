@@ -1430,6 +1430,264 @@
       (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
       ok)))
 
+;; A one-clause binding-clause operand with initializer node `init`, which
+;; the compiler resolved to `callee-module/callee-name`, or to nothing when
+;; either id is -1.
+(define (producer-test-binding-clause-operand
+  [pools : (& pools ast.AstNodePoolContext)]
+  [init : i64]
+  [callee-module : i64]
+  [callee-name : i64]) : compiler_ctfe.CompilerCtfeValue
+  (let
+    [clauses : ast.AstExprBindingClauseList
+      (ast.ast-expr-binding-clause-list-with-capacity 1)]
+    (ast.ast-expr-binding-clause-list-push
+      (&mut clauses)
+      (ast.AstExprBindingClause
+        (ci.intern-syntax-id-from-raw (ci.intern "item"))
+        false
+        (producer-test-push-spanned pools (Literal (Unit)))
+        init
+        (compiler_ctfe.ctfe-untyped-expr-type)
+        callee-module
+        callee-name
+        (ast.ast-source-span 0 0 0 0)))
+    (compiler_ctfe.CompilerCtfeValue.ExprBindingClauseList clauses)))
+
+(define (producer-test-init-callee-operand
+  [pools : (& pools ast.AstNodePoolContext)]
+  [callee-module : i64]
+  [callee-name : i64]) : compiler_ctfe.CompilerCtfeValue
+  (producer-test-binding-clause-operand
+    pools
+    (producer-test-push-spanned pools (Var (ci.intern "range")))
+    callee-module
+    callee-name))
+
+;; A spanned call `(f first second)` whose callee and arguments are spanned
+;; Vars, as the parser hands a call over.
+(define (producer-test-two-arg-call [pools : (& pools ast.AstNodePoolContext)]) : i64
+  (producer-test-push-spanned
+    pools
+    (Call
+      (producer-test-push-spanned pools (Var (ci.intern "f")))
+      (ast.ast-expr-cons
+        (producer-test-push-spanned pools (Var (ci.intern "first")))
+        (&
+          (ast.ast-expr-cons
+            (producer-test-push-spanned pools (Var (ci.intern "second")))
+            (& (ast.ast-expr-list-new))))))))
+
+;; `callargs` binds a clause initializer's call arguments to a local list and
+;; indexes it natively: the second argument of a two-argument call, otherwise
+;; `(noargs)`.
+(define (producer-test-dispatch-call-args?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
+  [identity : String]
+  [call? : bool]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [init : i64
+      (if call?
+        (producer-test-two-arg-call (& pools))
+        (producer-test-push-spanned (& pools) (Literal (Unit))))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (set!
+      (array-ref operands 0)
+      (producer-test-binding-clause-operand (& pools) init -1 -1))
+    (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+      pools
+      operands
+      1
+      64
+      producer-test-cookie
+      (compiler_ctfe.ctfe-reflect-info-list-empty))
+    (let
+      [ok : bool
+        (match (tlci_loader.tlci-loader-dispatch-macro
+          loaded
+          identity
+          producer-test-cookie
+          (__tl_make-array i64 0)
+          0)
+          [(Err _) false]
+          [(Ok dispatch)
+            (and
+              (= dispatch.status tlci.tlci-host-callback-status-ok)
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+              (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+                [(Expr node _)
+                  (match (producer-test-expr-get (& pools) node)
+                    [(Var name-id)
+                      (and call? (string.eq (ci.intern-str name-id) "second"))]
+                    [(Call callee args)
+                      (and
+                        (not call?)
+                        (ast.ast-expr-list-empty? (& args))
+                        (match (producer-test-expr-get (& pools) callee)
+                          [(Var name-id)
+                            (= name-id (producer-test-name-id "noargs"))]
+                          [_ false]))]
+                    [_ false])]
+                [_ false]))])]
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+      ok)))
+
+;; The host callback looks through a span and a caller-origin marker to a
+;; call's arguments, and answers an empty list for any other expression.
+(define (producer-test-expr-call-args-callback? [call? : bool]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [inner : i64
+      (if call?
+        (producer-test-two-arg-call (& pools))
+        (producer-test-push-spanned (& pools) (Literal (Unit))))]
+    [marked : i64
+      (producer-test-push-spanned (& pools) (MacroExpansion inner -1 -1))]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 0)]
+    (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+      pools
+      operands
+      0
+      64
+      producer-test-cookie
+      (compiler_ctfe.ctfe-reflect-info-list-empty))
+    (let
+      [push-status : i64
+        (compiler_embedded_stdlib_tlci.compiler-comptime-host-push!
+          (compiler_ctfe.CompilerCtfeValue.Expr marked (Expr)))]
+      [args-status : i64
+        (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-call-args
+          producer-test-cookie
+          0
+          0
+          0)]
+      [ok : bool
+        (and
+          (= push-status tlci.tlci-host-callback-status-ok)
+          (= args-status tlci.tlci-host-callback-status-ok)
+          (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-stack-value
+            1)
+            [(ExprList items)
+              (=
+                (ast.ast-expr-list-len (& items))
+                (if call?
+                  2
+                  0))]
+            [_ false]))]
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+      ok)))
+
+;; `initcallee` compares a clause's callee identity with
+;; "stdlib.iterator/range" natively and expands to `(lean)` or `(general)`.
+(define (producer-test-dispatch-init-callee?
+  [loaded : (& loaded tlci_loader.TlciLoadedImage)]
+  [identity : String]
+  [callee-module : String]
+  [callee-name : String]
+  [expected-callee : String]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (set!
+      (array-ref operands 0)
+      (producer-test-init-callee-operand
+        (& pools)
+        (if (string.eq callee-module "")
+          -1
+          (ci.intern callee-module))
+        (if (string.eq callee-name "")
+          -1
+          (ci.intern callee-name))))
+    (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+      pools
+      operands
+      1
+      64
+      producer-test-cookie
+      (compiler_ctfe.ctfe-reflect-info-list-empty))
+    (let
+      [ok : bool
+        (match (tlci_loader.tlci-loader-dispatch-macro
+          loaded
+          identity
+          producer-test-cookie
+          (__tl_make-array i64 0)
+          0)
+          [(Err _) false]
+          [(Ok dispatch)
+            (and
+              (= dispatch.status tlci.tlci-host-callback-status-ok)
+              (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-ready?)
+              (match (compiler_embedded_stdlib_tlci.compiler-comptime-host-result-value)
+                [(Expr node _)
+                  (match (producer-test-expr-get (& pools) node)
+                    [(Call callee args)
+                      (and
+                        (ast.ast-expr-list-empty? (& args))
+                        (match (producer-test-expr-get (& pools) callee)
+                          [(Var name-id)
+                            (= name-id (producer-test-name-id expected-callee))]
+                          [_ false]))]
+                    [_ false])]
+                [_ false]))])]
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+      ok)))
+
+;; The host callback projects a captured clause's callee identity as a String,
+;; "" when the clause recorded none.
+(define (producer-test-init-callee-callback?
+  [callee-module : i64]
+  [callee-name : i64]
+  [expected : String]) : bool
+  (let
+    [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
+    [operands : (__tl_dyn-array compiler_ctfe.CompilerCtfeValue)
+      (__tl_make-array compiler_ctfe.CompilerCtfeValue 1)]
+    (set!
+      (array-ref operands 0)
+      (producer-test-init-callee-operand (& pools) callee-module callee-name))
+    (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-open!
+      pools
+      operands
+      1
+      64
+      producer-test-cookie
+      (compiler_ctfe.ctfe-reflect-info-list-empty))
+    (let
+      [nth-status : i64
+        (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-binding-clause-list-nth
+          producer-test-cookie
+          0
+          0
+          0)]
+      [callee-status : i64
+        (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-expr-binding-clause-init-callee
+          producer-test-cookie
+          0
+          0
+          0)]
+      [literal-status : i64
+        (compiler_embedded_stdlib_tlci.compiler-comptime-host-push!
+          (compiler_ctfe.ctfe-generated-string-value expected))]
+      [equal : i64
+        (compiler_embedded_stdlib_tlci.compiler-comptime-host-callback-string-eq
+          producer-test-cookie
+          0
+          0
+          0)]
+      [ok : bool
+        (and
+          (= nth-status tlci.tlci-host-callback-status-ok)
+          (= callee-status tlci.tlci-host-callback-status-ok)
+          (= literal-status tlci.tlci-host-callback-status-ok)
+          (= equal 1))]
+      (compiler_embedded_stdlib_tlci.compiler-comptime-host-session-close!)
+      ok)))
+
 ;; `Expr.Var` destructuring binds an interpreted Name, not a generated String.
 ;; A structural macro-global id is the non-vacuous case: its visible text is
 ;; unwrapped to the source identifier while its original id remains intact.
@@ -4258,7 +4516,9 @@
       (str_cat.str-cat
         source-base
         "(defmacro (literalmatch [T : type]) : Expr (let [kind : String (type-kind T)] [scalar? : bool (match kind [\"i64\" true] [\"f64\" true] [_ false])] [rank : i64 (match kind [\"i64\" 7] [\"f64\" 9] [_ 11])] [selected : Expr (if scalar? `(scalar ,(comptime.expr-int rank)) `(custom ,(comptime.expr-int rank)))] selected))\n"
-        "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n(defmacro (nameidentity [value : Expr]) : Expr (match value [(comptime.Expr.Var name) (comptime.expr-var name)] [_ value]))\n(defmacro (structset [target : Expr] [field : String] [value : Expr]) : Expr (comptime.expr-struct-set target field value))\n(defmacro (dynamicset [place : Expr] [value : Expr]) : Expr `(set! ,place ,value))\n")]
+        "(defmacro (tuplepack [items : Expr ...]) : Expr `(tuple ,@items))\n(defmacro (tuplepair [a : Expr] [b : Expr]) : Expr `(tuple ,a ,b))\n(defmacro (tuplemarked [value : Expr]) : Expr `(tuple tuple-marker ,value))\n(defmacro (nommod [T : type]) : String (type-nominal-module T))\n(defmacro (nameidentity [value : Expr]) : Expr (match value [(comptime.Expr.Var name) (comptime.expr-var name)] [_ value]))\n(defmacro (structset [target : Expr] [field : String] [value : Expr]) : Expr (comptime.expr-struct-set target field value))\n(defmacro (dynamicset [place : Expr] [value : Expr]) : Expr `(set! ,place ,value))\n"
+        "(defmacro (initcallee [clauses : ExprBindingClause ...]) : Expr (if (string-eq (comptime.expr-binding-clause-init-callee (comptime.expr-binding-clause-list-nth clauses 0)) \"stdlib.iterator/range\") `(lean) `(general)))\n"
+        "(defmacro (callargs [clauses : ExprBindingClause ...]) : Expr (let [args : ExprList (comptime.expr-call-args (comptime.expr-binding-clause-init (comptime.expr-binding-clause-list-nth clauses 0)))] (if (= (comptime.expr-list-length args) 2) (comptime.expr-list-nth args 1) `(noargs))))\n")]
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
       (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
@@ -4309,13 +4569,13 @@
                       (let
                         [ok : bool
                           (and
-                            (= (array-length name-array) 45)
-                            (= captures.len 45)
+                            (= (array-length name-array) 47)
+                            (= captures.len 47)
                             (=
                               (array-ref
                                 compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-count
                                 0)
-                              44)
+                              46)
                             (=
                               (array-ref
                                 compiler_tlci_native_producer.embedded-stdlib-tlci-native-report-partial-count
@@ -4438,6 +4698,39 @@
                             (producer-test-dispatch-strval?
                               (& loaded)
                               "package.macros/strval")
+                            (producer-test-dispatch-init-callee?
+                              (& loaded)
+                              "package.macros/initcallee"
+                              "stdlib.iterator"
+                              "range"
+                              "lean")
+                            (producer-test-dispatch-init-callee?
+                              (& loaded)
+                              "package.macros/initcallee"
+                              "init_callee.provider"
+                              "range"
+                              "general")
+                            (producer-test-dispatch-init-callee?
+                              (& loaded)
+                              "package.macros/initcallee"
+                              ""
+                              ""
+                              "general")
+                            (producer-test-init-callee-callback?
+                              (ci.intern "stdlib.iterator")
+                              (ci.intern "range")
+                              "stdlib.iterator/range")
+                            (producer-test-init-callee-callback? -1 -1 "")
+                            (producer-test-dispatch-call-args?
+                              (& loaded)
+                              "package.macros/callargs"
+                              true)
+                            (producer-test-dispatch-call-args?
+                              (& loaded)
+                              "package.macros/callargs"
+                              false)
+                            (producer-test-expr-call-args-callback? true)
+                            (producer-test-expr-call-args-callback? false)
                             (producer-test-dispatch-typeof?
                               (& loaded)
                               "package.macros/typeof")

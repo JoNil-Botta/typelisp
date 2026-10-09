@@ -63,7 +63,7 @@
     [diagnostic : diag.CompilerDiagnostic
       (diag.compiler-diagnostic-with-fix
         (diag.compiler-diagnostic-simple path 1 1 "lint")
-        fix)]
+        (& fix))]
     (planner.LintFixCandidate
       id
       diagnostic
@@ -304,7 +304,7 @@
           "two-files"
           (diag.compiler-diagnostic-with-fix
             (diag.compiler-diagnostic-simple "a.tl" 1 1 "lint")
-            fix)
+            (& fix))
           (planner.LintFixSourceIdentitySeq identities 2))]
       [plan : planner.LintFixPlan
         (planner.plan
@@ -345,7 +345,7 @@
           "many"
           (diag.compiler-diagnostic-with-fix
             (diag.compiler-diagnostic-simple "many.tl" 1 1 "lint")
-            fix)
+            (& fix))
           (one-identity (planner.source-identity (clone source))))]
       [plan : planner.LintFixPlan
         (planner.plan
@@ -533,7 +533,7 @@
                     "fix.tl"
                     finding.span
                     finding.message)
-                  fix)
+                  (& fix))
                 (one-identity (planner.source-identity (clone snap)))))]
           [(lint_core.LintFixUnavailable _ _)
             (io.panic "redundant-begin finding without a fix")])

@@ -2354,7 +2354,7 @@
       (+ index 1)
       (cfg_core.compiler-cfg-enable
         cfgs
-        (cli_svec.get (& tltest-user-cfg-slots) index "")))))
+        (& (cli_svec.get (& tltest-user-cfg-slots) index ""))))))
 
 (define (tltest-cfgs [backend-target : compiler_backend.CompilerBackendTarget]) : sym_i64_env.SymI64Env
   (tltest-user-cfgs-from

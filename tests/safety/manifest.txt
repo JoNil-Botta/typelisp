@@ -729,6 +729,9 @@ fixed_array_match_pattern_borrow_escape_reject|check-fail|tests/safety/fixed_arr
 fixed_array_match_pattern_borrow_conflict_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[0]`
 borrowed_struct_pattern_string_escape_reject|check-fail|tests/safety/borrowed_struct_pattern_string_escape_reject.tl|-|does not outlive required lifetime `outer`
 borrowed_struct_pattern_string_mutation_reject|check-fail|tests/safety/borrowed_struct_pattern_string_mutation_reject.tl|-|cannot assign to borrowed place `items[0]`
+borrowed_struct_match_escape_reject|check-fail|tests/safety/borrowed_struct_match_escape_reject.tl|-|does not outlive required lifetime `outer`
+borrowed_struct_match_mutation_reject|check-fail|tests/safety/borrowed_struct_match_mutation_reject.tl|-|cannot assign to borrowed place `label`
+borrowed_struct_match_pattern_kind_reject|check-fail|tests/safety/borrowed_struct_match_pattern_kind_reject.tl|-|borrowed struct match requires a constructor-shaped struct pattern, binding, or wildcard
 slice_match_pattern_exhaustive_ok|check-ok|tests/safety/slice_match_pattern_exhaustive_ok.tl|-|-
 slice_match_pattern_scrutinee_reject|check-fail|tests/safety/slice_match_pattern_scrutinee_reject.tl|-|slice pattern requires a borrowed Slice or fixed-array scrutinee
 slice_match_pattern_element_type_reject|check-fail|tests/safety/slice_match_pattern_element_type_reject.tl|-|typecheck: literal pattern type mismatch
@@ -991,6 +994,9 @@ mut_borrow_through_shared_slice_reject|check-fail|tests/safety/mut_borrow_throug
 mut_borrow_through_shared_nested_field_reject|check-fail|tests/safety/mut_borrow_through_shared_nested_field_reject.tl|-|mutable borrow through a shared reference
 mut_borrow_through_shared_tuple_reject|check-fail|tests/safety/mut_borrow_through_shared_tuple_reject.tl|-|mutable borrow through a shared reference
 mut_borrow_through_shared_deref_array_reject|check-fail|tests/safety/mut_borrow_through_shared_deref_array_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_box_reject|check-fail|tests/safety/mut_borrow_through_shared_box_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_buffer_element_reject|check-fail|tests/safety/mut_borrow_through_shared_buffer_element_reject.tl|-|mutable borrow through a shared reference
+mut_borrow_through_shared_buffer_handle_reject|check-fail|tests/safety/mut_borrow_through_shared_buffer_handle_reject.tl|-|mutable borrow through a shared reference
 mut_borrow_mutable_paths_ok|run-exit|tests/safety/mut_borrow_mutable_paths_ok.tl|42|-
 vector_aggregate_ref_rvalue_call_reject|check-fail|tests/safety/vector_aggregate_ref_rvalue_call_reject.tl|-|borrow slots from a vector place or use the generated vector get helper
 vector_aggregate_ref_rvalue_workarounds_ok|check-ok|tests/safety/vector_aggregate_ref_rvalue_workarounds_ok.tl|-|-

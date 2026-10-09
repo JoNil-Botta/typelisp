@@ -348,14 +348,14 @@
           "disabled Windows allocator debug emits no arena-debug hooks"))
       (test.assert-true
         (and
-          (= (string.string-length (& linux-ordinary-alloc)) 8146)
-          (= (hash.string-key (& linux-ordinary-alloc)) 1528833549)
-          (= (string.string-length (& linux-profile-ordinary-alloc)) 14779)
-          (= (hash.string-key (& linux-profile-ordinary-alloc)) 643856254)
-          (= (string.string-length (& windows-ordinary-alloc)) 13890)
-          (= (hash.string-key (& windows-ordinary-alloc)) 1909494154)
-          (= (string.string-length (& windows-profile-ordinary-alloc)) 20563)
-          (= (hash.string-key (& windows-profile-ordinary-alloc)) 812496703))
+          (= (string.string-length (& linux-ordinary-alloc)) 8156)
+          (= (hash.string-key (& linux-ordinary-alloc)) 2102350846)
+          (= (string.string-length (& linux-profile-ordinary-alloc)) 14789)
+          (= (hash.string-key (& linux-profile-ordinary-alloc)) 2008108109)
+          (= (string.string-length (& windows-ordinary-alloc)) 13900)
+          (= (hash.string-key (& windows-ordinary-alloc)) 1070032323)
+          (= (string.string-length (& windows-profile-ordinary-alloc)) 20573)
+          (= (hash.string-key (& windows-profile-ordinary-alloc)) 1677209187))
         "ordinary tl_alloc assembly remains byte-identical in base/profile modes")
       (test.assert-true
         (and

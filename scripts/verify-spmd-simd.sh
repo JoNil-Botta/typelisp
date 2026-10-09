@@ -132,6 +132,7 @@ tests/spmd/predicated_map_tail_fault_suppression.tl
 tests/spmd/tail_i32_add.tl
 tests/spmd/foreach_bound_extremes.tl
 tests/spmd/foreach_2d_row_major.tl
+tests/spmd/foreach_2d_native.tl
 tests/spmd/uniform_zip_i64.tl
 tests/spmd/multi_output_i64.tl
 tests/spmd/store_alias_i64.tl

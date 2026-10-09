@@ -10147,6 +10147,70 @@
       [(not (opt.opt-cfg-successor-targets-known? after)) 5]
       [else 42])))
 
+;; An address-taken local is not one value (#8672): `%2`'s address is `%3`, so
+;; the store through `%3` redefines `%2` without naming it, and neither `%2` nor
+;; its copy `%4` keeps a checked pair or a branch fact across that store. `%7`
+;; and its copy `%8` are the same shape on a local whose address is never
+;; taken: the second check of that pair is dropped and the inner branch decided.
+(define (opt-bounds-dom-addr-taken-params) : ir.CompilerIrParamSeq
+  (irt.params "idx=%0:i64, len=%1:i64"))
+
+(define (opt-bounds-dom-addr-taken-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %2 = mov %0 : i64
+       %3 = addr_of %2
+       %4 = mov %2 : i64
+       bounds_check %4, %1 message \"taken_copy_ok\"
+       store_ptr %3, 9 : i64
+       bounds_check %2, %1 message \"taken_ok\"
+       %7 = mov %0 : i64
+       %8 = mov %7 : i64
+       bounds_check %8, %1 message \"plain_copy_ok\"
+       bounds_check %7, %1 message \"plain_ok\"
+       %5 = eq %4, 3 : i64
+       branch %5, taken, exit
+     taken:
+       store_ptr %3, 9 : i64
+       %6 = eq %2, 3 : i64
+       branch %6, plain, exit
+     plain:
+       %9 = eq %8, 3 : i64
+       branch %9, inner, exit
+     inner:
+       %10 = eq %7, 3 : i64
+       branch %10, done, exit
+     done:
+       return %2
+     exit:
+       return %0"))
+
+(define (compiler-optimize-bounds-dom-addr-taken-self-test) : i64
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-bounds-dom-addr-taken-blocks)]
+    [before : i64
+      (opt.opt-count-bounds-blocks (ir.compiler-ir-block-list-view blocks))]
+    [after : ir.CompilerIrBlockList
+      (opt.opt-bounds-dom-blocks-with-context
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
+        (opt-bounds-dom-addr-taken-params)
+        12
+        blocks)]
+    (cond
+      [(not (= before 4)) 1]
+      ;; Kept: both checks of the address-taken pair and the first plain one.
+      [(not
+          (=
+            (opt.opt-count-bounds-blocks (ir.compiler-ir-block-list-view after))
+            3))
+        2]
+      ;; Only `%10` is decided: `%6` reads `%2` after the store.
+      [(not (opt-branch-fold-count-is? (& after) 1 1)) 3]
+      [(not (opt-branch-fold-count-is? (& after) 0 0)) 4]
+      [(not (opt-branch-fold-block-count-is? (& after) 6)) 5]
+      [else 42])))
+
 ;; --- unsigned range-check merge ----------------------------------------------
 ;;
 ;; `(and (>= i 0) (< i n))` is one unsigned compare when `n` is non-negative.

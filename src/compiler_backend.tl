@@ -29,6 +29,7 @@
 (import stdlib.text_buf)
 (import stdlib.text_buf_borrowed)
 (import compiler_object as cobj)
+(import compiler_machine_x64 as mx)
 (import compiler_intern as ci)
 (import stdlib.arena)
 (import stdlib.hash)
@@ -15716,6 +15717,30 @@
         (- 0 1))
       (- 0 1))))
 
+;; Copy register `home` into `reg`; nothing when they are one register.
+(define (compiler-backend-emit-register-home-into!
+  [out : (&mut out CompilerBackendAsmBuf)]
+  [home : i64]
+  [reg : String]) : unit
+  (let
+    [dst : i64
+      (compiler-backend-machine-register
+        (compiler-backend-global-shared-view reg))]
+    (cond
+      [(= dst home) unit]
+      [(mx.compiler-machine-x64-gpr? dst)
+        (compiler-backend-asm-append-machine!
+          out
+          (mx.MachineInstr.MovRR (W64) dst home))]
+      [else
+        (compiler-backend-asm-append5
+          out
+          "    movq "
+          (compiler_abi.compiler-abi-register-spelling home)
+          ", "
+          reg
+          "\n")])))
+
 (define (compiler-backend-emit-load-var-into
   [out : (&mut out CompilerBackendAsmBuf)]
   [assignments : compiler_regalloc.CompilerRegAssignmentTable]
@@ -15743,35 +15768,13 @@
         [(Some location)
           (match location
             [(Register home)
-              (let
-                [home-name : String
-                  (compiler_abi.compiler-abi-register-spelling home)]
-                (if (string.eq home-name reg)
-                  unit
-                  (compiler-backend-asm-append5
-                    out
-                    "    movq "
-                    home-name
-                    ", "
-                    reg
-                    "\n")))]
+              (compiler-backend-emit-register-home-into! out home reg)]
+            ;; Loading a whole register-group var into one register is not a
+            ;; scalar op; word extraction goes through CompilerIrInstr.Word.
+            ;; Word0's home is the low register -- used only by the (unreached
+            ;; here) group paths.
             [(RegisterPair home _)
-              ;; Loading a whole register-group var into one register is not a
-              ;; scalar op; word extraction goes through CompilerIrInstr.Word.
-              ;; Word0's home is the low register -- used only by the (unreached
-              ;; here) group paths.
-              (let
-                [home-name : String
-                  (compiler_abi.compiler-abi-register-spelling home)]
-                (if (string.eq home-name reg)
-                  unit
-                  (compiler-backend-asm-append5
-                    out
-                    "    movq "
-                    home-name
-                    ", "
-                    reg
-                    "\n")))]
+              (compiler-backend-emit-register-home-into! out home reg)]
             [(Spill offset)
               (compiler-backend-asm-append5
                 out
@@ -17516,6 +17519,59 @@
 
 (define (compiler-backend-imm32? [n : i64]) : bool
   (and (>= n (- 0 2147483648)) (<= n 2147483647)))
+
+;; Integer register moves and imm32 moves are typed machine records (#7055):
+;; both routes build `compiler_machine_x64` records, which spell and encode
+;; them, and no other code path writes these forms. A `movq` that names an XMM
+;; register is another instruction (MOVQ xmm), whose family has not migrated.
+(define (compiler-backend-machine-line [instr : mx.MachineInstr]) : String
+  (mx.compiler-machine-x64-asm-line (mx.compiler-machine-x64-checked instr)))
+
+(define (compiler-backend-asm-append-machine!
+  [out : (&mut out CompilerBackendAsmBuf)]
+  [instr : mx.MachineInstr]) : unit
+  (let
+    [parts : mx.MachineAsmParts
+      (mx.compiler-machine-x64-asm-parts
+        (mx.compiler-machine-x64-checked instr))]
+    (compiler-backend-asm-append5
+      out
+      parts.head
+      parts.source
+      ", "
+      parts.destination
+      "\n")))
+
+(define (compiler-backend-machine-register [spelling : String]) : i64
+  (compiler_abi.compiler-abi-register-id-from-spelling spelling))
+
+;; `mov{l,q} %src, %dst` as a machine record when both are general-purpose
+;; registers; otherwise the text of the other register class's move.
+(define (compiler-backend-machine-move-line
+  [width : mx.MachineWidth]
+  [src : String]
+  [dst : String]) : String
+  (let
+    [src-id : i64
+      (compiler-backend-machine-register
+        (compiler-backend-global-shared-view src))]
+    [dst-id : i64
+      (compiler-backend-machine-register
+        (compiler-backend-global-shared-view dst))]
+    (if (and
+      (mx.compiler-machine-x64-gpr? src-id)
+      (mx.compiler-machine-x64-gpr? dst-id))
+      (compiler-backend-machine-line
+        (mx.MachineInstr.MovRR width dst-id src-id))
+      (match width
+        [(W64) (str_cat.str-cat "    movq " src ", " dst "\n")]
+        [(W32)
+          (str_cat.str-cat
+            "    movl "
+            (compiler-backend-reg-part src 4)
+            ", "
+            (compiler-backend-reg-part dst 4)
+            "\n")]))))
 
 ;; --------------------------------------------------------------------------
 ;; Explicit per-job operand-render storage (Packet B1)
@@ -19363,16 +19419,16 @@
         ", "
         reg32
         "\n"))
-    (if (and (> n 0) (< n 2147483648))
-      (let
-        [reg32 : String (compiler-backend-reg-part reg 4)]
-        (compiler-backend-asm-append5
-          out
-          "    movl $"
-          (string.int->string n)
-          ", "
-          reg32
-          "\n"))
+    (if (compiler-backend-imm32? n)
+      ;; `movl` zero-extends a positive imm32, `movq` sign-extends a negative.
+      (compiler-backend-asm-append-machine!
+        out
+        (mx.MachineInstr.MovRI
+          (if (> n 0)
+            (W32)
+            (W64))
+          (compiler-backend-machine-register reg)
+          n))
       (compiler-backend-asm-append5
         out
         "    movq $"
@@ -19843,7 +19899,7 @@
       [(= size 8)
         (if (string.eq src-reg dst-reg)
           ""
-          (str_cat.str-cat "    movq " src-reg ", " dst-reg "\n"))]
+          (compiler-backend-machine-move-line (W64) src-reg dst-reg))]
       [(= size 4)
         (if (compiler-backend-type-signed? ty)
           (str_cat.str-cat
@@ -19852,12 +19908,7 @@
             ", "
             dst-reg
             "\n")
-          (str_cat.str-cat
-            "    movl "
-            (compiler-backend-reg-part src-reg size)
-            ", "
-            (compiler-backend-reg-part dst-reg size)
-            "\n"))]
+          (compiler-backend-machine-move-line (W32) src-reg dst-reg))]
       [(= size 2)
         (if (compiler-backend-type-signed? ty)
           (str_cat.str-cat
@@ -27034,13 +27085,14 @@
         dst-home
         "\n")
       (str_cat.str-cat
-        "    movl $"
-        (match (compiler-backend-global-shared-view op)
-          [(Ne) "1"]
-          [_ "0"])
-        ", "
-        (compiler-backend-reg-part (string.copy dst-home) 4)
-        "\n    jp 1f\n    "
+        (compiler-backend-machine-line
+          (mx.MachineInstr.MovRI
+            (W32)
+            (compiler-backend-machine-register (string.copy dst-home))
+            (match (compiler-backend-global-shared-view op)
+              [(Ne) 1]
+              [_ 0])))
+        "    jp 1f\n    "
         (compiler-backend-float-compare-setcc op)
         " "
         (compiler-backend-reg-part dst-home 1)
@@ -78390,6 +78442,34 @@ tl_shared_object_init:
     parts
     (object_target.compiler-backend-object-add-text parts (Bytes bytes))))
 
+(define (compiler-backend-object-add-machine
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [instr : mx.MachineInstr]) : object_target.CompilerBackendObjectTargetParts
+  (object_target.compiler-backend-object-add-text
+    parts
+    (Machine (mx.compiler-machine-x64-checked instr))))
+
+;; `movq $value, %reg` in its sign-extending imm32 form.
+(define (compiler-backend-object-add-mov-imm32
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [value : i64]
+  [reg : String]) : object_target.CompilerBackendObjectTargetParts
+  (compiler-backend-object-add-machine
+    parts
+    (mx.MachineInstr.MovRI (W64) (compiler-backend-machine-register reg) value)))
+
+;; `movq %rax, %reg`; nothing when `reg` is `%rax`.
+(define (compiler-backend-object-add-mov-from-rax
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [reg : String]) : object_target.CompilerBackendObjectTargetParts
+  (let
+    [dst : i64 (compiler-backend-machine-register reg)]
+    (if (= dst compiler_abi.compiler-reg-id-rax)
+      parts
+      (compiler-backend-object-add-machine
+        parts
+        (mx.MachineInstr.MovRR (W64) dst compiler_abi.compiler-reg-id-rax)))))
+
 (define (compiler-backend-object-reg-low-code [reg : (& reg str)]) : i64
   (cond
     [(or (string.eq reg "%rax") (string.eq reg "%r8")) 0]
@@ -78484,7 +78564,10 @@ tl_shared_object_init:
         (compiler-backend-object-push-u32! (&mut out) disp)))
     (compiler-backend-object-bytes-finish (& out))))
 
-(define (compiler-backend-object-mov-imm32-reg-bytes
+;; `movabsq $value, %reg` (`REX.W + B8+r imm64`) for a value no imm32 form
+;; represents. Native TLCI entries pass source integer literals through here,
+;; so truncating one would change the AST the next bootstrap stage produces.
+(define (compiler-backend-object-mov-wide-reg-bytes
   [value : i64]
   [reg : String]) : String
   (let
@@ -78497,57 +78580,21 @@ tl_shared_object_init:
           1
           0))]
     (compiler-backend-object-push-u8! (&mut out) rex)
-    (compiler-backend-object-push-u8! (&mut out) 0xc7)
-    (compiler-backend-object-push-u8! (&mut out) (+ 0xc0 reg-code))
-    (compiler-backend-object-push-u32! (&mut out) value)
+    (compiler-backend-object-push-u8! (&mut out) (+ 0xb8 reg-code))
+    (compiler-backend-object-push-u64! (&mut out) value)
     (compiler-backend-object-bytes-finish (& out))))
 
-;; `REX.W + C7 /0` sign-extends its imm32 payload. Keep that compact encoding
-;; only for values it can represent; wide literals need `REX.W + B8+r imm64`.
-;; Native TLCI entries pass source integer literals through this path, so
-;; truncating one here changes the AST produced by the next bootstrap stage.
-(define (compiler-backend-object-mov-i64-reg-bytes [value : i64] [reg : String]) : String
+;; `REX.W + C7 /0` sign-extends its imm32 payload, so a value outside it takes
+;; the wide form.
+(define (compiler-backend-object-add-mov-i64
+  [parts : object_target.CompilerBackendObjectTargetParts]
+  [value : i64]
+  [reg : String]) : object_target.CompilerBackendObjectTargetParts
   (if (compiler-backend-imm32? value)
-    (compiler-backend-object-mov-imm32-reg-bytes value reg)
-    (let
-      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-      [reg-code : i64 (compiler-backend-object-reg-low-code reg)]
-      [rex : i64
-        (+
-          0x48
-          (if (compiler-backend-object-reg-high? reg)
-            1
-            0))]
-      (compiler-backend-object-push-u8! (&mut out) rex)
-      (compiler-backend-object-push-u8! (&mut out) (+ 0xb8 reg-code))
-      (compiler-backend-object-push-u64! (&mut out) value)
-      (compiler-backend-object-bytes-finish (& out)))))
-
-(define (compiler-backend-object-mov-reg-reg-bytes
-  [src : String]
-  [dst : String]) : String
-  (if (string.eq src dst)
-    ""
-    (let
-      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-      [src-code : i64 (compiler-backend-object-reg-low-code src)]
-      [dst-code : i64 (compiler-backend-object-reg-low-code dst)]
-      [rex : i64
-        (+
-          0x48
-          (+
-            (if (compiler-backend-object-reg-high? src)
-              4
-              0)
-            (if (compiler-backend-object-reg-high? dst)
-              1
-              0)))]
-      (compiler-backend-object-push-u8! (&mut out) rex)
-      (compiler-backend-object-push-u8! (&mut out) 0x89)
-      (compiler-backend-object-push-u8!
-        (&mut out)
-        (+ 0xc0 (+ (* src-code 8) dst-code)))
-      (compiler-backend-object-bytes-finish (& out)))))
+    (compiler-backend-object-add-mov-imm32 parts value reg)
+    (compiler-backend-object-add-nonempty-bytes
+      parts
+      (compiler-backend-object-mov-wide-reg-bytes value reg))))
 
 (define (compiler-backend-object-push-sub-rsp!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -78753,52 +78800,44 @@ tl_shared_object_init:
         (compiler-backend-object-load-rbp-disp-bytes
           (compiler-backend-object-slot-disp id)
           reg))]
-    [(I64 n)
-      (compiler-backend-object-add-nonempty-bytes
-        parts
-        (compiler-backend-object-mov-i64-reg-bytes n reg))]
+    [(I64 n) (compiler-backend-object-add-mov-i64 parts n reg)]
     [(Bool b)
-      (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-add-mov-imm32
         parts
-        (compiler-backend-object-mov-imm32-reg-bytes
-          (if b
-            1
-            0)
-          reg))]
+        (if b
+          1
+          0)
+        reg)]
     [(Char c)
-      (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-add-mov-imm32
         parts
-        (compiler-backend-object-mov-imm32-reg-bytes
-          (compiler-backend-char-code c)
-          reg))]
-    [(Unit)
-      (compiler-backend-object-add-nonempty-bytes
-        parts
-        (compiler-backend-object-mov-imm32-reg-bytes 0 reg))]
+        (compiler-backend-char-code c)
+        reg)]
+    [(Unit) (compiler-backend-object-add-mov-imm32 parts 0 reg)]
     [(Global _)
-      (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-add-mov-from-rax
         (compiler-backend-object-value-ref parts site value program-index)
-        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+        reg)]
     [(GlobalAddr _)
-      (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-add-mov-from-rax
         (compiler-backend-object-value-ref parts site value program-index)
-        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+        reg)]
     [(String _)
-      (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-add-mov-from-rax
         (compiler-backend-object-value-ref parts site value program-index)
-        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+        reg)]
     [(Bytes _)
-      (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-add-mov-from-rax
         (compiler-backend-object-value-ref parts site value program-index)
-        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+        reg)]
     [(Function _)
-      (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-add-mov-from-rax
         (compiler-backend-object-value-ref parts site value program-index)
-        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+        reg)]
     [(F64 _)
-      (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-add-mov-from-rax
         (compiler-backend-object-value-ref parts site value program-index)
-        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+        reg)]
     [_ parts]))
 
 (define (compiler-backend-object-load-value-to-reg-with-type
@@ -78810,14 +78849,14 @@ tl_shared_object_init:
   [program-index : CompilerBackendProgramIndex]) : object_target.CompilerBackendObjectTargetParts
   (match (compiler-backend-global-shared-view value)
     [(F64 _)
-      (compiler-backend-object-add-nonempty-bytes
+      (compiler-backend-object-add-mov-from-rax
         (compiler-backend-object-value-ref-with-type
           parts
           site
           value
           ty
           program-index)
-        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+        reg)]
     [_
       (compiler-backend-object-load-value-to-reg
         parts

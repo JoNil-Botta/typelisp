@@ -8917,18 +8917,27 @@
   (and
     ;; C7 /0 is compact but sign-extends imm32. The direct-object path must use
     ;; B8+r for wider values; native TLCI literal callbacks depend on all 64
-    ;; bits surviving into their mapped entry.
+    ;; bits surviving into their mapped entry. An imm32 value is a machine
+    ;; record, whose encoding compiler_machine_x64_tests pins.
+    (let
+      [parts : object_target.CompilerBackendObjectTargetParts
+        (backend.compiler-backend-object-add-mov-i64
+          (object_target.compiler-backend-object-parts-empty)
+          42
+          "%rdx")]
+      [text : cobj.CompilerObjectX64InstrList
+        (cobj.compiler-object-instr-builder-finish parts.text)]
+      (match (cobj.compiler-object-instr-list-ref text 0)
+        [(Machine (MovRI (W64) 2 42)) true]
+        [_ false]))
     (string.eq
-      (backend.compiler-backend-object-mov-i64-reg-bytes 42 "%rdx")
-      (object_target.compiler-backend-object-bytes-from-hex "48c7c22a000000"))
-    (string.eq
-      (backend.compiler-backend-object-mov-i64-reg-bytes
+      (backend.compiler-backend-object-mov-wide-reg-bytes
         6364136223846793005
         "%rax")
       (object_target.compiler-backend-object-bytes-from-hex
         "48b82d7f954c2df45158"))
     (string.eq
-      (backend.compiler-backend-object-mov-i64-reg-bytes -2147483649 "%r9")
+      (backend.compiler-backend-object-mov-wide-reg-bytes -2147483649 "%r9")
       (object_target.compiler-backend-object-bytes-from-hex
         "49b9ffffff7fffffffff"))
     (string.eq

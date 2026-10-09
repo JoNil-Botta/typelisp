@@ -356,6 +356,54 @@
 (define (compiler-diagnostic-code-parse) : String
   "E0100")
 
+;; Per-kind parse codes (#7135), append-only like the typecheck codes below.
+;; `E0100` stays the code for a parse error whose kind has not been
+;; classified. Every parse code is `E01..`.
+(define (compiler-diagnostic-code-parse-unbalanced-delimiter) : String
+  "E0101")
+
+(define (compiler-diagnostic-code-parse-malformed-token) : String
+  "E0102")
+
+(define (compiler-diagnostic-code-parse-malformed-form) : String
+  "E0103")
+
+(define (compiler-diagnostic-code-parse-invalid-pattern) : String
+  "E0104")
+
+;; One kind per published parse code, append-only like the codes.
+;; `UnclassifiedParse` is `E0100`. A parser raise site tags its message with
+;; its kind (`compiler-diagnostic-parse-tagged`); a lexer or reader error
+;; carries a `token.SourceErrorKind` instead, because its text also reaches
+;; tools that print it raw.
+(defenum CompilerParseKind
+  (UnclassifiedParse)
+  (UnbalancedDelimiter)
+  (MalformedToken)
+  (MalformedForm)
+  (InvalidPattern))
+
+(define (compiler-diagnostic-code-for-parse-kind [kind : CompilerParseKind]) : String
+  (match kind
+    [(UnclassifiedParse) (compiler-diagnostic-code-parse)]
+    [(UnbalancedDelimiter)
+      (compiler-diagnostic-code-parse-unbalanced-delimiter)]
+    [(MalformedToken) (compiler-diagnostic-code-parse-malformed-token)]
+    [(MalformedForm) (compiler-diagnostic-code-parse-malformed-form)]
+    [(InvalidPattern) (compiler-diagnostic-code-parse-invalid-pattern)]))
+
+(define (compiler-diagnostic-parse-kind-of-source-error
+  [kind : token.SourceErrorKind]) : CompilerParseKind
+  (match kind
+    [(TokenError) MalformedToken]
+    [(DelimiterError) UnbalancedDelimiter]))
+
+;; Whether `code` is a parse code.
+(define (compiler-diagnostic-parse-code? [code : (& code str)]) : bool
+  (and
+    (= (string.string-length code) 5)
+    (string.is-string-prefix-at code "E01" 0)))
+
 (define (compiler-diagnostic-code-typecheck) : String
   "E0200")
 
@@ -540,6 +588,22 @@
   [message : String]) : String
   (str_cat.str-cat (compiler-diagnostic-typecheck-tag kind) message))
 
+;; A parse kind tag uses the same transport as a typecheck kind tag, so the
+;; diagnostic constructor treats both alike.
+(define (compiler-diagnostic-parse-tag [kind : CompilerParseKind]) : String
+  (match kind
+    [(UnclassifiedParse) "__tl_tc_kind:E0100:"]
+    [(UnbalancedDelimiter) "__tl_tc_kind:E0101:"]
+    [(MalformedToken) "__tl_tc_kind:E0102:"]
+    [(MalformedForm) "__tl_tc_kind:E0103:"]
+    [(InvalidPattern) "__tl_tc_kind:E0104:"]))
+
+;; `message` tagged with `kind`.
+(define (compiler-diagnostic-parse-tagged
+  [kind : CompilerParseKind]
+  [message : String]) : String
+  (str_cat.str-cat (compiler-diagnostic-parse-tag kind) message))
+
 ;; Tests run on every diagnostic built, so they read the message in place.
 (define (compiler-diagnostic-typecheck-tagged? [message : (& message str)]) : bool
   (and
@@ -613,7 +677,7 @@
 ;; detailed explanation. `owner` identifies the subsystem responsible for
 ;; keeping the classification and explanation current.
 (define (compiler-diagnostic-code-registry-count) : i64
-  23)
+  27)
 
 (define (compiler-diagnostic-code-registry-code [index : i64]) : String
   (cond
@@ -640,6 +704,10 @@
     [(= index 20) (compiler-diagnostic-code-typecheck-unsafe-callable-effect)]
     [(= index 21) (compiler-diagnostic-code-typecheck-foreign-global-write)]
     [(= index 22) (compiler-diagnostic-code-typecheck-opaque-representation)]
+    [(= index 23) (compiler-diagnostic-code-parse-unbalanced-delimiter)]
+    [(= index 24) (compiler-diagnostic-code-parse-malformed-token)]
+    [(= index 25) (compiler-diagnostic-code-parse-malformed-form)]
+    [(= index 26) (compiler-diagnostic-code-parse-invalid-pattern)]
     [else ""]))
 
 (define (compiler-diagnostic-code-registry-title [index : i64]) : String
@@ -667,6 +735,10 @@
     [(= index 20) "unsafe callable effect erasure"]
     [(= index 21) "global written outside its module"]
     [(= index 22) "opaque representation used outside its module family"]
+    [(= index 23) "unbalanced delimiter"]
+    [(= index 24) "malformed token"]
+    [(= index 25) "malformed form"]
+    [(= index 26) "invalid pattern syntax"]
     [else ""]))
 
 (define (compiler-diagnostic-code-or-empty [diag : (& diag CompilerDiagnostic)]) : String
@@ -1292,13 +1364,22 @@
     (compiler-diagnostic-label-list-empty)
     (compiler-diagnostic-note-list-empty)))
 
+;; Coded by the error's kind.
 (define (compiler-diagnostic-from-source-error
   [path : String]
   [err : token.SourceError]) : CompilerDiagnostic
-  (compiler-diagnostic-from-span
-    path
-    (token.source-error-span (compiler-diagnostic-place-shared-view err))
-    (token.source-error-message err)))
+  (let
+    [kind : CompilerParseKind
+      (compiler-diagnostic-parse-kind-of-source-error
+        (token.source-error-kind (compiler-diagnostic-place-shared-view err)))]
+    [diag : CompilerDiagnostic
+      (compiler-diagnostic-from-span
+        path
+        (token.source-error-span (compiler-diagnostic-place-shared-view err))
+        (token.source-error-message err))]
+    (compiler-diagnostic-with-code
+      (& diag)
+      (compiler-diagnostic-code-for-parse-kind kind))))
 
 (define (compiler-diagnostic-at-start [path : String] [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-simple path 1 1 message))

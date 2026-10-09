@@ -1690,7 +1690,15 @@
   (AstReplDecl ast.AstDecl)
   (AstReplExpr i64))
 
-;; A REPL parse error is an E0100 diagnostic located in the input, with an
+;; A parser error travels as an `Err` string, so its raise site states its kind
+;; by tagging the message, and the diagnostic built from it takes the kind's
+;; code; the wording never decides it. A message without a kind is `E0100`.
+;; The tag stays inside the parser and its diagnostics: every entry point that
+;; hands an error to other code as text removes it.
+(define (parse-kind-message [kind : cdiag.CompilerParseKind] [message : String]) : String
+  (cdiag.compiler-diagnostic-parse-tagged kind message))
+
+;; A REPL parse error is a parse-coded diagnostic located in the input, with an
 ;; empty path the REPL names.
 (defenum ResultAstReplItem
   (Ok AstReplItem)
@@ -2155,7 +2163,11 @@
       (let
         [enabled (try (compiler-cfg-eval dispatch pred))]
         (Ok (not enabled)))]
-    [_ (Err "parse: cfg not expects exactly one predicate")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: cfg not expects exactly one predicate"))]))
 
 (define (compiler-cfg-eval
   [dispatch : sym_i64_env.SymI64Env]
@@ -2171,8 +2183,14 @@
           (compiler-cfg-eval-list-any dispatch predicates)]
         [(= (ci.intern-syntax-id-value op) (cbi.compiler-builtin-ctfe "not"))
           (compiler-cfg-eval-not dispatch predicates)]
-        [else (Err "parse: cfg predicate expects a name, all, any, or not")])]
-    [_ (Err "parse: malformed cfg predicate")]))
+        [else
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: cfg predicate expects a name, all, any, or not"))])]
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed cfg predicate"))]))
 
 (define (compiler-parse-abstraction-policy-message) : String
   "parse: TypeLisp does not support source-level generics or traits; use defmacro to generate concrete declarations instead")
@@ -3926,7 +3944,7 @@
   [out : (&mut out ast.AstTypeList)]) : ResultAstTypeListBuild
   (match (reader.sexpr-view s)
     [(List items) (parse-ast-type-list-items dispatch pools items out)]
-    [_ (Err "parse: malformed type list")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed type list"))]))
 
 (define (parse-ast-type-list-items
   [dispatch : sym_i64_env.SymI64Env]
@@ -4001,8 +4019,11 @@
   [s : reader.SpannedSexpr]
   [message : String]) : ResultAstLifetimeList
   (match (reader.sexpr-view s)
-    [(List (slice)) (Err message)]
-    [_ (parse-ast-lifetime-list-result dispatch pools s message)]))
+    [(List (slice)) (Err (parse-kind-message (MalformedForm) message))]
+    [_
+      (match (parse-ast-lifetime-list-result dispatch pools s message)
+        [(Ok lifetimes) (Ok lifetimes)]
+        [(Err detail) (Err (parse-kind-message (MalformedForm) detail))])]))
 
 (defenum ResultAstCFunctionMode
   (Ok ast.AstCFunctionMode)
@@ -4024,7 +4045,11 @@
           [else
             (Err
               "parse: CFunc mode must be nullable, non-null, unsafe-nullable, or unsafe-non-null")]))]
-    [_ (Err "parse: CFunc mode must be a symbol")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: CFunc mode must be a symbol"))]))
 
 (define (parse-ast-c-function-type
   [dispatch : sym_i64_env.SymI64Env]
@@ -4046,11 +4071,19 @@
                       mode))]
                 [_
                   (Err
-                    "parse: CFunc requires an explicit (-> ... result) signature")]))]
+                    (parse-kind-message
+                      (MalformedForm)
+                      "parse: CFunc requires an explicit (-> ... result) signature"))]))]
           [_
             (Err
-              "parse: CFunc requires exactly a mode and a function signature")]))]
-    [_ (Err "parse: CFunc requires exactly a mode and a function signature")]))
+              (parse-kind-message
+                (MalformedForm)
+                "parse: CFunc requires exactly a mode and a function signature"))]))]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: CFunc requires exactly a mode and a function signature"))]))
 
 ;; `(:invalidate r T)`: a callable parameter type whose call destroys the owner
 ;; of lifetime `r` (#6670). The checker admits it only as a parameter type.
@@ -4073,7 +4106,9 @@
     [_ (Err (parse-ast-invalidate-type-message))]))
 
 (define (parse-ast-invalidate-type-message) : String
-  "parse: malformed :invalidate type; expected (:invalidate lifetime type)")
+  (parse-kind-message
+    (MalformedForm)
+    "parse: malformed :invalidate type; expected (:invalidate lifetime type)"))
 
 (define (parse-ast-func-type-parts
   [dispatch : sym_i64_env.SymI64Env]
@@ -4100,7 +4135,11 @@
                       (& parsed-args))
                     parsed-ret)]
                 [(Err message) (Err message)]))]))]
-    [_ (Err "parse: function type needs at least return type")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: function type needs at least return type"))]))
 
 (define (parse-ast-internal-binary-data
   [dispatch : sym_i64_env.SymI64Env]
@@ -4195,12 +4234,20 @@
               pools
               (ci.intern-syntax-id-value region)
               (& inner-ty)))))]
-    [(List (slice _ _)) (Err "parse: reference lifetime must be an identifier")]
+    [(List (slice _ _))
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: reference lifetime must be an identifier"))]
     [_
       (Err
         (if mutable
-          "parse: &mut expects an optional lifetime and exactly one type"
-          "parse: & expects an optional lifetime and exactly one type"))]))
+          (parse-kind-message
+            (MalformedForm)
+            "parse: &mut expects an optional lifetime and exactly one type")
+          (parse-kind-message
+            (MalformedForm)
+            "parse: & expects an optional lifetime and exactly one type")))]))
 
 (define (parse-ast-type
   [dispatch : sym_i64_env.SymI64Env]
@@ -4274,43 +4321,71 @@
                 (let
                   [elem-ty (try (parse-ast-type dispatch pools elem))]
                   (Ok (ast.ast-ty-array-with-pools pools (& elem-ty) size)))]
-              [(List (slice _ _)) (Err "parse: array size must be integer")]
-              [_ (Err "parse: malformed array type")])]
+              [(List (slice _ _))
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: array size must be integer"))]
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: malformed array type"))])]
           [(= tag (compiler-parse-tag-ty-dyn-array))
             (match (reader.sexpr-view rest)
               [(List (slice elem))
                 (let
                   [elem-ty (try (parse-ast-type dispatch pools elem))]
                   (Ok (ast.ast-ty-dyn-array-with-pools pools elem-ty)))]
-              [_ (Err "parse: __tl_dyn-array expects exactly one type")])]
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: __tl_dyn-array expects exactly one type"))])]
           [(= tag (compiler-parse-tag-ty-slice))
             (match (reader.sexpr-view rest)
               [(List (slice elem))
                 (let
                   [elem-ty (try (parse-ast-type dispatch pools elem))]
                   (Ok (ast.ast-ty-slice-with-pools pools elem-ty)))]
-              [_ (Err "parse: Slice expects exactly one type")])]
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: Slice expects exactly one type"))])]
           [(= tag (compiler-parse-tag-ty-ptr))
             (match (reader.sexpr-view rest)
               [(List (slice elem))
                 (let
                   [elem-ty (try (parse-ast-type dispatch pools elem))]
                   (Ok (ast.ast-ty-ptr-with-pools pools elem-ty)))]
-              [_ (Err "parse: Ptr expects exactly one type")])]
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: Ptr expects exactly one type"))])]
           [(= tag (compiler-parse-tag-ty-mut-ptr))
             (match (reader.sexpr-view rest)
               [(List (slice elem))
                 (let
                   [elem-ty (try (parse-ast-type dispatch pools elem))]
                   (Ok (ast.ast-ty-mut-ptr-with-pools pools elem-ty)))]
-              [_ (Err "parse: MutPtr expects exactly one type")])]
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: MutPtr expects exactly one type"))])]
           [(= tag (compiler-parse-tag-ty-box))
             (match (reader.sexpr-view rest)
               [(List (slice elem))
                 (let
                   [elem-ty (try (parse-ast-type dispatch pools elem))]
                   (Ok (ast.ast-ty-box-with-pools pools elem-ty)))]
-              [_ (Err "parse: Box expects exactly one type")])]
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: Box expects exactly one type"))])]
           [(= tag (compiler-parse-tag-ty-ref))
             (parse-ast-reference-type dispatch pools rest false)]
           [(= tag (compiler-parse-tag-ty-mut-ref))
@@ -4326,8 +4401,15 @@
                       (ci.intern-syntax-id-value region)
                       inner-ty)))]
               [(List (slice _ _))
-                (Err "parse: region name must be an identifier")]
-              [_ (Err "parse: malformed region type")])]
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: region name must be an identifier"))]
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: malformed region type"))])]
           [else
             (let
               [lifetimes
@@ -4339,7 +4421,7 @@
                     (compiler-parse-generic-type-policy-message
                       (compiler-parse-dispatch-syntax-id-text dispatch head))))]
               (Ok (ast.ast-ty-var-args head-id lifetimes)))]))]
-    [_ (Err "parse: expected type")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: expected type"))]))
 
 (define (compiler-parse-semantic-type-list-origins!
   [dispatch : sym_i64_env.SymI64Env]
@@ -4503,7 +4585,9 @@
                 [_ (Err "parse: duplicate :invalidate parameter metadata")])])]
         [(Malformed)
           (Err
-            "parse: malformed :invalidate metadata; expected (:invalidate lifetime)")]
+            (parse-kind-message
+              (MalformedForm)
+              "parse: malformed :invalidate metadata; expected (:invalidate lifetime)"))]
         [(Other) (Err (parse-ast-param-metadata-error dispatch end))])]))
 
 ;; Parameter metadata `(:invalidate r)` (#6670), told apart from any other.
@@ -4551,10 +4635,18 @@
                   (str_cat.str-cat
                     "parse: unknown parameter metadata "
                     key-text)
-                  "parse: malformed parameter metadata"))])]
-        [(List (slice _ & _)) "parse: malformed parameter metadata"]
-        [_ "parse: malformed parameter metadata"])]
-    [_ "parse: malformed parameter"]))
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: malformed parameter metadata")))])]
+        [(List (slice _ & _))
+          (parse-kind-message
+            (MalformedForm)
+            "parse: malformed parameter metadata")]
+        [_
+          (parse-kind-message
+            (MalformedForm)
+            "parse: malformed parameter metadata")])]
+    [_ (parse-kind-message (MalformedForm) "parse: malformed parameter")]))
 
 (define (parse-ast-param
   [dispatch : sym_i64_env.SymI64Env]
@@ -4576,9 +4668,14 @@
                       (ast.ast-comptime-param-id
                         (ci.intern-syntax-id-value name)
                         parsed-ty)))
-                  (Err "parse: expected ':' in parameter"))]
+                  (Err
+                    (parse-kind-message
+                      (MalformedForm)
+                      "parse: expected ':' in parameter")))]
               [_ (Err (parse-ast-param-metadata-error dispatch end))])]
-          [_ (Err "parse: malformed parameter")])
+          [_
+            (Err
+              (parse-kind-message (MalformedForm) "parse: malformed parameter"))])
         (match rest
           [(slice colon ty & end)
             (if (sexpr-colon? colon)
@@ -4590,9 +4687,14 @@
                   first-name
                   parsed-ty
                   end))
-              (Err "parse: expected ':' in parameter"))]
-          [_ (Err "parse: malformed parameter")]))]
-    [_ (Err "parse: malformed parameter")]))
+              (Err
+                (parse-kind-message
+                  (MalformedForm)
+                  "parse: expected ':' in parameter")))]
+          [_
+            (Err
+              (parse-kind-message (MalformedForm) "parse: malformed parameter"))]))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed parameter"))]))
 
 (define (ast-param-list-has-comptime? [params : (& params ast.AstParamList)]) : bool
   (ast-param-list-has-comptime-at? (& params) 0))
@@ -4792,8 +4894,15 @@
               (cbi.compiler-builtin-ctfe "..."))
               (match suffix-rest
                 [(slice) (Ok (ast.ast-macro-param name-id (& parsed-ty) true))]
-                [_ (Err "parse: malformed macro operand")])
-              (Err "parse: malformed macro operand"))]
+                [_
+                  (Err
+                    (parse-kind-message
+                      (MalformedForm)
+                      "parse: malformed macro operand"))])
+              (Err
+                (parse-kind-message
+                  (MalformedForm)
+                  "parse: malformed macro operand")))]
           [(List (slice _ & _))
             (if (parse-ast-macro-type-operand?
               (compiler-parse-place-shared-view parsed-ty))
@@ -4838,7 +4947,11 @@
                   "parse: macro operand "
                   name-text
                   " constraint :kind is only legal on fixed type operands")))]
-          [_ (Err "parse: malformed macro operand")])])))
+          [_
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: malformed macro operand"))])])))
 
 (define (parse-ast-macro-param
   [dispatch : sym_i64_env.SymI64Env]
@@ -4856,9 +4969,18 @@
               (let
                 [parsed-ty (try (parse-ast-type dispatch pools ty))]
                 (parse-ast-macro-param-after-type dispatch name parsed-ty rest3))
-              (Err "parse: expected ':' in macro operand"))]
-          [_ (Err "parse: malformed macro operand")]))]
-    [_ (Err "parse: malformed macro operand")]))
+              (Err
+                (parse-kind-message
+                  (MalformedForm)
+                  "parse: expected ':' in macro operand")))]
+          [_
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: malformed macro operand"))]))]
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed macro operand"))]))
 
 (define (parse-ast-macro-param-list
   [dispatch : sym_i64_env.SymI64Env]
@@ -4914,7 +5036,9 @@
   [out : (&mut out ast.AstParamList)]) : ResultAstParamListBuild
   (match (reader.sexpr-view s)
     [(List items) (parse-ast-param-list-into-items dispatch pools items out)]
-    [_ (Err "parse: malformed parameter list")]))
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed parameter list"))]))
 
 (define (parse-ast-param-list-into-items
   [dispatch : sym_i64_env.SymI64Env]
@@ -5000,20 +5124,36 @@
           (match tail
             [(slice (Sym cleanup-fn _))
               (Ok (ast.ast-field-cleanup-fn-id cleanup-fn))]
-            [_ (Err "parse: malformed field :cleanup metadata")])]
+            [_
+              (Err
+                (parse-kind-message
+                  (MalformedForm)
+                  "parse: malformed field :cleanup metadata"))])]
         [(=
             (ci.intern-syntax-id-value key)
             (cbi.compiler-builtin-ctfe ":owned"))
           (match tail
             [(slice) (Ok (Owned))]
-            [_ (Err "parse: malformed field :owned metadata")])]
+            [_
+              (Err
+                (parse-kind-message
+                  (MalformedForm)
+                  "parse: malformed field :owned metadata"))])]
         [(compiler-parse-metadata-key? dispatch key)
           (Err
             (str_cat.str-cat
               "parse: unknown field metadata "
               (compiler-parse-dispatch-syntax-id-text dispatch key)))]
-        [else (Err "parse: malformed field cleanup metadata")])]
-    [_ (Err "parse: malformed field cleanup metadata")]))
+        [else
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: malformed field cleanup metadata"))])]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed field cleanup metadata"))]))
 
 (define (parse-ast-variant-payload-cleanup
   [dispatch : sym_i64_env.SymI64Env]
@@ -5027,20 +5167,36 @@
           (match tail
             [(slice (Sym cleanup-fn _))
               (Ok (ast.ast-variant-payload-cleanup-fn-id cleanup-fn))]
-            [_ (Err "parse: malformed enum payload :cleanup metadata")])]
+            [_
+              (Err
+                (parse-kind-message
+                  (MalformedForm)
+                  "parse: malformed enum payload :cleanup metadata"))])]
         [(=
             (ci.intern-syntax-id-value key)
             (cbi.compiler-builtin-ctfe ":owned"))
           (match tail
             [(slice) (Ok (Owned))]
-            [_ (Err "parse: malformed enum payload :owned metadata")])]
+            [_
+              (Err
+                (parse-kind-message
+                  (MalformedForm)
+                  "parse: malformed enum payload :owned metadata"))])]
         [(compiler-parse-metadata-key? dispatch key)
           (Err
             (str_cat.str-cat
               "parse: unknown enum payload metadata "
               (compiler-parse-dispatch-syntax-id-text dispatch key)))]
-        [else (Err "parse: malformed enum payload cleanup metadata")])]
-    [_ (Err "parse: malformed enum payload cleanup metadata")]))
+        [else
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: malformed enum payload cleanup metadata"))])]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed enum payload cleanup metadata"))]))
 
 (define (parse-ast-field-def
   [dispatch : sym_i64_env.SymI64Env]
@@ -5062,7 +5218,9 @@
           (No)
           false
           0))]
-    [_ (Err "parse: malformed field definition")]))
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed field definition"))]))
 
 ;; A field's metadata forms after its type: at most one cleanup form (only in
 ;; a `:cleanup` struct) and at most one `(:align N)` (only in a `(:repr c)`
@@ -5154,7 +5312,7 @@
       (if (ast.ast-declared-align-valid? value)
         (Ok value)
         (Err "parse: :align value must be a power of two from 1 through 4096"))]
-    [_ (Err malformed)]))
+    [_ (Err (parse-kind-message (MalformedForm) malformed))]))
 
 ;; The aggregate marker word bit of a zero-argument marker KEY: 1 for
 ;; :must-use, 2 for :opaque (#6999), else 0.
@@ -5200,19 +5358,29 @@
             (str_cat.str-cat
               "parse: unknown struct repr "
               (compiler-parse-dispatch-syntax-id-text dispatch name)))))]
-    [_ (Err "parse: malformed :repr metadata")]))
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed :repr metadata"))]))
 
 (define (parse-ast-defstruct-cleanup-tail [tail : reader.SpannedSexpr]) : ResultAstStructCleanup
   (match (reader.sexpr-view tail)
     [(List (slice (Sym cleanup-fn _)))
       (Ok (ast.ast-struct-cleanup-fn-id cleanup-fn))]
-    [_ (Err "parse: malformed defstruct :cleanup metadata")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed defstruct :cleanup metadata"))]))
 
 (define (parse-ast-defenum-cleanup-tail [tail : reader.SpannedSexpr]) : ResultAstEnumCleanup
   (match (reader.sexpr-view tail)
     [(List (slice (Sym cleanup-fn _)))
       (Ok (ast.ast-enum-cleanup-fn-id cleanup-fn))]
-    [_ (Err "parse: malformed defenum :cleanup metadata")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed defenum :cleanup metadata"))]))
 
 (define (compiler-parse-semantic-field-definition-origins!
   [dispatch : sym_i64_env.SymI64Env]
@@ -5357,7 +5525,10 @@
                   (ci.intern-syntax-id-value key)
                   (cbi.compiler-builtin-ctfe ":lifetimes"))
                 (if seen-field
-                  (Err "parse: defstruct metadata must appear before fields")
+                  (Err
+                    (parse-kind-message
+                      (MalformedForm)
+                      "parse: defstruct metadata must appear before fields"))
                   (if seen-lifetimes
                     (Err "parse: duplicate defstruct :lifetimes metadata")
                     (let
@@ -5385,7 +5556,10 @@
                   (ci.intern-syntax-id-value key)
                   (cbi.compiler-builtin-ctfe ":repr"))
                 (if seen-field
-                  (Err "parse: defstruct metadata must appear before fields")
+                  (Err
+                    (parse-kind-message
+                      (MalformedForm)
+                      "parse: defstruct metadata must appear before fields"))
                   (if seen-repr
                     (Err "parse: duplicate defstruct :repr metadata")
                     (let
@@ -5414,7 +5588,10 @@
                   (ci.intern-syntax-id-value key)
                   (cbi.compiler-builtin-ctfe ":cleanup"))
                 (if seen-field
-                  (Err "parse: defstruct metadata must appear before fields")
+                  (Err
+                    (parse-kind-message
+                      (MalformedForm)
+                      "parse: defstruct metadata must appear before fields"))
                   (if seen-cleanup
                     (Err "parse: duplicate defstruct :cleanup metadata")
                     (let
@@ -5445,7 +5622,9 @@
                     (parse-ast-defstruct-align-error
                       dispatch
                       head
-                      "parse: defstruct metadata must appear before fields")]
+                      (parse-kind-message
+                        (MalformedForm)
+                        "parse: defstruct metadata must appear before fields"))]
                   [(> align 0)
                     (parse-ast-defstruct-align-error
                       dispatch
@@ -5476,7 +5655,10 @@
                 (let
                   [bit : i64 (compiler-parse-aggregate-marker-bit key)]
                   (if seen-field
-                    (Err "parse: defstruct metadata must appear before fields")
+                    (Err
+                      (parse-kind-message
+                        (MalformedForm)
+                        "parse: defstruct metadata must appear before fields"))
                     (if (not (= (bit-and markers bit) 0))
                       (Err
                         (str_cat.str-cat
@@ -5502,14 +5684,17 @@
                         [_
                           (Err
                             (str_cat.str-cat
-                              "parse: "
+                              (parse-kind-message (MalformedForm) "parse: ")
                               (compiler-parse-dispatch-syntax-id-text
                                 dispatch
                                 key)
                               " metadata takes no arguments"))]))))]
               [(compiler-parse-metadata-key? dispatch key)
                 (if seen-field
-                  (Err "parse: defstruct metadata must appear before fields")
+                  (Err
+                    (parse-kind-message
+                      (MalformedForm)
+                      "parse: defstruct metadata must appear before fields"))
                   (if (=
                     (ci.intern-syntax-id-value key)
                     (cbi.compiler-builtin-ctfe ":packed"))
@@ -5628,8 +5813,16 @@
                             (No)
                             (& cleanup-rest)))]
                       [(Err message) (Err message)])))]
-              [_ (Err "parse: malformed enum payload list")]))))]
-    [_ (Err "parse: malformed enum payload list")]))
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: malformed enum payload list"))]))))]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed enum payload list"))]))
 
 (define (parse-ast-variant-def
   [dispatch : sym_i64_env.SymI64Env]
@@ -5644,7 +5837,10 @@
           (if (=
             (ci.intern-syntax-id-value name)
             (cbi.compiler-builtin-ctfe ":cleanup"))
-            (Err "parse: defenum metadata must appear before variants")
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: defenum metadata must appear before variants"))
             (Err
               (str_cat.str-cat
                 "parse: unknown defenum metadata "
@@ -5661,7 +5857,11 @@
                   parsed-fields
                   parsed-cleanups))]
             [(Err message) (Err message)])))]
-    [_ (Err "parse: malformed variant definition")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed variant definition"))]))
 
 (define (parse-ast-dispatch-isa
   [dispatch : sym_i64_env.SymI64Env]
@@ -5691,7 +5891,11 @@
           (ModulePath)
           (DispatchFunction))
         (Ok (Variant isa (ci.intern-syntax-id-value fn-name))))]
-    [_ (Err "parse: malformed defdispatch variant")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed defdispatch variant"))]))
 
 (define (parse-ast-dispatch-variant-list-into
   [dispatch : sym_i64_env.SymI64Env]
@@ -5805,7 +6009,10 @@
                   seen-lifetimes
                   seen-cleanup)]
               [seen-variant
-                (Err "parse: defenum metadata must appear before variants")]
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: defenum metadata must appear before variants"))]
               [(=
                   (ci.intern-syntax-id-value key)
                   (cbi.compiler-builtin-ctfe ":lifetimes"))
@@ -5870,7 +6077,7 @@
                       [_
                         (Err
                           (str_cat.str-cat
-                            "parse: "
+                            (parse-kind-message (MalformedForm) "parse: ")
                             (compiler-parse-dispatch-syntax-id-text
                               dispatch
                               key)
@@ -5958,14 +6165,19 @@
         (if (< marker 0)
           (set! marker index)
           (return
-            (Err "parse: slice pattern takes at most one `&` rest binding"))))
+            (Err
+              (parse-kind-message
+                (InvalidPattern)
+                "parse: slice pattern takes at most one `&` rest binding")))))
       (when
         (parse-ast-slice-glued-rest?
           (& intern-state)
           (ast.ast-pattern-list-get (& items) index (ast.ast-pattern-fallback)))
         (return
           (Err
-            "parse: slice pattern rest needs a space after `&`, as in `(slice x & rest)`")))
+            (parse-kind-message
+              (InvalidPattern)
+              "parse: slice pattern rest needs a space after `&`, as in `(slice x & rest)`"))))
       (set! index (+ index 1)))
     (if (< marker 0)
       (Ok (ast.ast-pat-slice items false))
@@ -5992,7 +6204,9 @@
             (set! copy (+ copy 1)))
           (Ok (ast.ast-pat-slice out true)))
         (Err
-          "parse: slice pattern `&` must be followed by exactly one rest binding or `_`")))))
+          (parse-kind-message
+            (InvalidPattern)
+            "parse: slice pattern `&` must be followed by exactly one rest binding or `_`"))))))
 
 (define (parse-ast-pattern
   [dispatch : sym_i64_env.SymI64Env]
@@ -6030,7 +6244,7 @@
           [(= name-id (cbi.compiler-builtin-ctfe "slice"))
             (parse-ast-slice-pattern dispatch parsed-args)]
           [else (Ok (ast.ast-pat-variant-id name-id parsed-args))]))]
-    [_ (Err "parse: expected pattern")]))
+    [_ (Err (parse-kind-message (InvalidPattern) "parse: expected pattern"))]))
 
 (define (compiler-parse-semantic-pattern-list-origins!
   [dispatch : sym_i64_env.SymI64Env]
@@ -6129,7 +6343,11 @@
               [(Ok parsed) (SomeExpr parsed)]
               [(Err message) (Err message)])]
           [(Err message) (Err message)]))]
-    [_ (Err "parse: cfg expression expects predicate and expression")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: cfg expression expects predicate and expression"))]))
 
 (define (parse-ast-cfg-expr
   [dispatch : sym_i64_env.SymI64Env]
@@ -6165,7 +6383,9 @@
   [out : (&mut out ast.AstExprList)]) : ResultAstExprListBuild
   (match (reader.spanned-sexpr-view s)
     [(List items _) (parse-ast-expr-list-into-items dispatch pools items out)]
-    [_ (Err "parse: malformed expression list")]))
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed expression list"))]))
 
 (define (parse-ast-expr-list-into-items
   [dispatch : sym_i64_env.SymI64Env]
@@ -6197,13 +6417,14 @@
   [s : reader.SpannedSexpr]
   [missing-message : String]) : ResultAstExpr
   (match (reader.spanned-sexpr-view s)
-    [(List (slice) _) (Err missing-message)]
+    [(List (slice) _)
+      (Err (parse-kind-message (MalformedForm) missing-message))]
     [_
       (let
         [exprs (try (parse-ast-expr-list dispatch pools s))]
         [n : i64 exprs.len]
         (cond
-          [(= n 0) (Err missing-message)]
+          [(= n 0) (Err (parse-kind-message (MalformedForm) missing-message))]
           [(= n 1) (Ok (ast.ast-expr-list-get (& exprs) 0 0))]
           [else (Ok (ast.ast-node-pool-context-expr-push pools (Begin exprs)))]))]))
 
@@ -6252,7 +6473,11 @@
   (match (reader.spanned-sexpr-view s)
     [(List items _)
       (parse-ast-call-arg-list-into-items dispatch pools items out)]
-    [_ (Err "parse: malformed call argument list")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed call argument list"))]))
 
 (define (parse-ast-call-arg-list-into-items
   [dispatch : sym_i64_env.SymI64Env]
@@ -6289,7 +6514,11 @@
         [parsed-left (try (parse-ast-expr-with-pools dispatch pools left))]
         [parsed-right (try (parse-ast-expr-with-pools dispatch pools right))]
         (Ok (ast.ast-expr-binary-with-pools pools op parsed-left parsed-right)))]
-    [_ (Err "parse: malformed binary expression")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed binary expression"))]))
 
 (define (parse-ast-binary-left-fold-tail
   [dispatch : sym_i64_env.SymI64Env]
@@ -6325,7 +6554,11 @@
           op
           (ast.ast-expr-binary-with-pools pools op parsed-left parsed-right)
           tail))]
-    [_ (Err "parse: malformed binary expression")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed binary expression"))]))
 
 (define (parse-ast-unary
   [dispatch : sym_i64_env.SymI64Env]
@@ -6337,7 +6570,9 @@
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
         (Ok (ast.ast-expr-unary-with-pools pools op parsed-expr)))]
-    [_ (Err "parse: malformed unary expression")]))
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed unary expression"))]))
 
 (define (parse-ast-if-missing-else-message) : String
   "parse: if is missing its else branch")
@@ -6375,9 +6610,12 @@
           (try (parse-ast-expr-with-pools dispatch pools else-branch))]
         (Ok
           (ast.ast-expr-if-with-pools pools parsed-cond parsed-then parsed-else)))]
-    [(List (slice _ _ _ & _) _) (Err (parse-ast-if-arity-message))]
-    [(List (slice _ _ & _) _) (Err (parse-ast-if-missing-else-message))]
-    [_ (Err (parse-ast-if-arity-message))]))
+    [(List (slice _ _ _ & _) _)
+      (Err (parse-kind-message (MalformedForm) (parse-ast-if-arity-message)))]
+    [(List (slice _ _ & _) _)
+      (Err
+        (parse-kind-message (MalformedForm) (parse-ast-if-missing-else-message)))]
+    [_ (Err (parse-kind-message (MalformedForm) (parse-ast-if-arity-message)))]))
 
 (define (parse-ast-while
   [dispatch : sym_i64_env.SymI64Env]
@@ -6390,12 +6628,12 @@
         [parsed-cond (try (parse-ast-expr-with-pools dispatch pools cond))]
         [parsed-body (try (parse-ast-expr-list dispatch pools body-tail))]
         (if (= parsed-body.len 0)
-          (Err "parse: malformed while")
+          (Err (parse-kind-message (MalformedForm) "parse: malformed while"))
           (Ok
             (ast.ast-node-pool-context-expr-push
               pools
               (While parsed-cond parsed-body)))))]
-    [_ (Err "parse: malformed while")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed while"))]))
 
 (define (parse-ast-set
   [dispatch : sym_i64_env.SymI64Env]
@@ -6467,8 +6705,12 @@
                       parsed-target
                       (ast.ast-expr-unquote-set-target-field-id)
                       parsed-value))]
-                [_ (Err "parse: set! target must be a mutable place")]))]))]
-    [_ (Err "parse: malformed set!")]))
+                [_
+                  (Err
+                    (parse-kind-message
+                      (MalformedForm)
+                      "parse: set! target must be a mutable place"))]))]))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed set!"))]))
 
 (define (parse-ast-replace-place?
   [pools : ast.AstNodePoolContext]
@@ -6497,8 +6739,15 @@
             [replacement-id
               (try (parse-ast-expr-with-pools dispatch pools replacement-node))]
             (Ok (ast.ast-expr-replace-with-pools pools place-id replacement-id)))
-          (Err "parse: replace! target must be a mutable place")))]
-    [_ (Err "parse: replace! expects exactly two operands")]))
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: replace! target must be a mutable place"))))]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: replace! expects exactly two operands"))]))
 
 (define (parse-ast-ann-like
   [dispatch : sym_i64_env.SymI64Env]
@@ -6514,8 +6763,11 @@
           (if is-cast
             (Ok (ast.ast-expr-cast-with-pools pools parsed-expr (& parsed-ty)))
             (Ok (ast.ast-expr-ann-with-pools pools parsed-expr (& parsed-ty)))))
-        (Err "parse: expected ':' in annotation"))]
-    [_ (Err "parse: malformed annotation")]))
+        (Err
+          (parse-kind-message
+            (MalformedForm)
+            "parse: expected ':' in annotation")))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed annotation"))]))
 
 (define (parse-ast-let-binding
   [dispatch : sym_i64_env.SymI64Env]
@@ -6558,8 +6810,13 @@
                         parsed-value))]
                   [(Err message) (Err message)])]
               [(Err message) (Err message)])
-            (Err "parse: expected ':' in let binding"))]
-        [_ (Err "parse: malformed let binding")])]
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: expected ':' in let binding")))]
+        [_
+          (Err
+            (parse-kind-message (MalformedForm) "parse: malformed let binding"))])]
     (parse-ast-error-span-note-let-binding dispatch s result)))
 
 (define (parse-ast-let-flat-tail-into
@@ -6579,8 +6836,9 @@
               (parse-ast-let-flat-tail-into dispatch pools tail out))]
           [_
             (parse-ast-body-tail dispatch pools rest "parse: let missing body")]))]
-    [(List (slice) _) (Err "parse: let missing body")]
-    [_ (Err "parse: malformed let")]))
+    [(List (slice) _)
+      (Err (parse-kind-message (MalformedForm) "parse: let missing body"))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed let"))]))
 
 (define (parse-ast-let-flat-tail
   [dispatch : sym_i64_env.SymI64Env]
@@ -6611,7 +6869,9 @@
                       pools
                       body-tail
                       "parse: let missing body"))]
-                [_ (Err "parse: malformed let")])]
+                [_
+                  (Err
+                    (parse-kind-message (MalformedForm) "parse: malformed let"))])]
             [_
               (match (parse-ast-let-flat-tail dispatch pools rest)
                 [(Ok parsed-bindings parsed-body)
@@ -6621,8 +6881,12 @@
                       parsed-bindings
                       parsed-body))]
                 [(Err message) (Err message)])])]
-        [_ (Err "parse: let requires at least one binding")])]
-    [_ (Err "parse: malformed let")]))
+        [_
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: let requires at least one binding"))])]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed let"))]))
 
 (define (parse-ast-let
   [dispatch : sym_i64_env.SymI64Env]
@@ -6643,8 +6907,12 @@
             (reader.spanned-sexpr-span bindings))
           (Err
             "parse: parenthesized let bindings were removed; write leading [name [: type] init] bindings without parentheses")]
-        [_ (Err "parse: let requires at least one binding")])]
-    [_ (Err "parse: malformed let")]))
+        [_
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: let requires at least one binding"))])]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed let"))]))
 
 (define (parse-ast-lambda
   [dispatch : sym_i64_env.SymI64Env]
@@ -6683,7 +6951,11 @@
                             parsed-params
                             (Some parsed-ret)
                             parsed-body)))]
-                    [_ (Err "parse: malformed lambda")])
+                    [_
+                      (Err
+                        (parse-kind-message
+                          (MalformedForm)
+                          "parse: malformed lambda"))])
                   (let
                     [parsed-body
                       (try
@@ -6698,8 +6970,10 @@
                         parsed-params
                         No
                         parsed-body)))))]
-            [_ (Err "parse: malformed lambda")])))]
-    [_ (Err "parse: malformed lambda")]))
+            [_
+              (Err
+                (parse-kind-message (MalformedForm) "parse: malformed lambda"))])))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed lambda"))]))
 
 (define (parse-ast-tuple-ref
   [dispatch : sym_i64_env.SymI64Env]
@@ -6710,8 +6984,12 @@
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
         (Ok (ast.ast-expr-tuple-ref-with-pools pools parsed-expr index)))]
-    [(List (slice _ _) _) (Err "parse: tuple-ref index must be integer")]
-    [_ (Err "parse: malformed tuple-ref")]))
+    [(List (slice _ _) _)
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: tuple-ref index must be integer"))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed tuple-ref"))]))
 
 (define (parse-ast-dyn-array-literal
   [dispatch : sym_i64_env.SymI64Env]
@@ -6753,7 +7031,11 @@
             pools
             (& parsed-ty)
             parsed-len)))]
-    [_ (Err "parse: make-array expects exactly one type and one length")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: make-array expects exactly one type and one length"))]))
 
 (define (parse-ast-array-ref-like
   [dispatch : sym_i64_env.SymI64Env]
@@ -6770,7 +7052,9 @@
             (ast.ast-expr-string-ref-with-pools pools parsed-expr parsed-index))
           (Ok
             (ast.ast-expr-array-ref-with-pools pools parsed-expr parsed-index))))]
-    [_ (Err "parse: malformed ref expression")]))
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed ref expression"))]))
 
 (define (parse-ast-array-set
   [dispatch : sym_i64_env.SymI64Env]
@@ -6788,7 +7072,7 @@
             parsed-expr
             parsed-index
             parsed-value)))]
-    [_ (Err "parse: malformed array-set!")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed array-set!"))]))
 
 (define (parse-ast-array-push
   [dispatch : sym_i64_env.SymI64Env]
@@ -6800,7 +7084,9 @@
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
         [parsed-value (try (parse-ast-expr-with-pools dispatch pools value))]
         (Ok (ast.ast-expr-array-push-with-pools pools parsed-expr parsed-value)))]
-    [_ (Err "parse: malformed __tl_array-push!")]))
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed __tl_array-push!"))]))
 
 (define (parse-ast-private-array-take
   [dispatch : sym_i64_env.SymI64Env]
@@ -6818,7 +7104,9 @@
             parsed-array
             parsed-live
             parsed-index)))]
-    [_ (Err "parse: malformed __tl_array-take!")]))
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed __tl_array-take!"))]))
 
 (define (parse-ast-for-owned-state
   [dispatch : sym_i64_env.SymI64Env]
@@ -6834,7 +7122,10 @@
           (ast.ast-expr-list-get (& args) 1 0)
           (ast.ast-expr-list-get (& args) 2 0)
           (ast.ast-expr-list-get (& args) 3 0)))
-      (Err "parse: __tl_for-owned-state expects exactly four operands"))))
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: __tl_for-owned-state expects exactly four operands")))))
 
 (define (parse-ast-for-owned-step
   [dispatch : sym_i64_env.SymI64Env]
@@ -6871,8 +7162,12 @@
             0)))
       (Err
         (if typed
-          "parse: __tl_for-owned-step-typed expects exactly six operands"
-          "parse: __tl_for-owned-step expects exactly five operands")))))
+          (parse-kind-message
+            (MalformedForm)
+            "parse: __tl_for-owned-step-typed expects exactly six operands")
+          (parse-kind-message
+            (MalformedForm)
+            "parse: __tl_for-owned-step expects exactly five operands"))))))
 
 (define (parse-ast-borrow
   [dispatch : sym_i64_env.SymI64Env]
@@ -6894,8 +7189,16 @@
             mutable
             (Named (ci.intern-syntax-id-value name))
             parsed-place)))]
-    [(List (slice _ _) _) (Err "parse: borrow lifetime must be an identifier")]
-    [_ (Err "parse: borrow expects a place or lifetime and place")]))
+    [(List (slice _ _) _)
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: borrow lifetime must be an identifier"))]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: borrow expects a place or lifetime and place"))]))
 
 (define (parse-ast-struct-get
   [dispatch : sym_i64_env.SymI64Env]
@@ -6917,8 +7220,10 @@
                 pools
                 parsed-expr
                 (ci.intern-syntax-id-value field))))]
-        [_ (Err "parse: malformed struct-get")])]
-    [_ (Err "parse: malformed struct-get")]))
+        [_
+          (Err
+            (parse-kind-message (MalformedForm) "parse: malformed struct-get"))])]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed struct-get"))]))
 
 ;; `(comptime expr)` wraps exactly one inner expression for compile-time
 ;; evaluation; evaluation itself happens in CTFE, not the parser.
@@ -6931,7 +7236,11 @@
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
         (Ok (ast.ast-expr-comptime-with-pools pools parsed-expr)))]
-    [_ (Err "parse: comptime expects exactly one expression")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: comptime expects exactly one expression"))]))
 
 (define (parse-ast-type-literal
   [dispatch : sym_i64_env.SymI64Env]
@@ -6945,7 +7254,11 @@
           (ast.ast-node-pool-context-expr-push
             pools
             (TypeLiteral (ast.ast-node-pool-context-type-push pools parsed-ty)))))]
-    [_ (Err "parse: type expects exactly one type")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: type expects exactly one type"))]))
 
 (define (parse-ast-spmd-reduce-op
   [dispatch : sym_i64_env.SymI64Env]
@@ -7005,10 +7318,11 @@
                         parsed-ty
                         start
                         end)))
-                  (Err expected-colon-message))]
-              [_ (Err malformed-message)])]
-          [_ (Err malformed-message)]))]
-    [_ (Err malformed-message)]))
+                  (Err
+                    (parse-kind-message (MalformedForm) expected-colon-message)))]
+              [_ (Err (parse-kind-message (MalformedForm) malformed-message))])]
+          [_ (Err (parse-kind-message (MalformedForm) malformed-message))]))]
+    [_ (Err (parse-kind-message (MalformedForm) malformed-message))]))
 
 (define (parse-ast-spmd-state-binding
   [dispatch : sym_i64_env.SymI64Env]
@@ -7045,10 +7359,11 @@
                         (ci.intern-syntax-id-value name)
                         parsed-ty
                         init)))
-                  (Err expected-colon-message))]
-              [_ (Err malformed-message)])]
-          [_ (Err malformed-message)]))]
-    [_ (Err malformed-message)]))
+                  (Err
+                    (parse-kind-message (MalformedForm) expected-colon-message)))]
+              [_ (Err (parse-kind-message (MalformedForm) malformed-message))])]
+          [_ (Err (parse-kind-message (MalformedForm) malformed-message))]))]
+    [_ (Err (parse-kind-message (MalformedForm) malformed-message))]))
 
 ;; `[name : T]`, the binding shape with no range or initializer.
 (define (parse-ast-spmd-typed-binding
@@ -7085,10 +7400,11 @@
                       (ParseAstSpmdTypedBinding
                         (ci.intern-syntax-id-value name)
                         parsed-ty)))
-                  (Err expected-colon-message))]
-              [_ (Err malformed-message)])]
-          [_ (Err malformed-message)]))]
-    [_ (Err malformed-message)]))
+                  (Err
+                    (parse-kind-message (MalformedForm) expected-colon-message)))]
+              [_ (Err (parse-kind-message (MalformedForm) malformed-message))])]
+          [_ (Err (parse-kind-message (MalformedForm) malformed-message))]))]
+    [_ (Err (parse-kind-message (MalformedForm) malformed-message))]))
 
 (define (parse-ast-spmd-reduce-binding
   [dispatch : sym_i64_env.SymI64Env]
@@ -7139,8 +7455,11 @@
                   "spmd-reduce"
                   (ci.intern-syntax-id-value op-name)))]
             (parse-ast-spmd-reduce-binding dispatch pools op binding init value))]
-        [_ (Err "parse: malformed spmd-reduce")])]
-    [_ (Err "parse: malformed spmd-reduce")]))
+        [_
+          (Err
+            (parse-kind-message (MalformedForm) "parse: malformed spmd-reduce"))])]
+    [_
+      (Err (parse-kind-message (MalformedForm) "parse: malformed spmd-reduce"))]))
 
 (define (parse-ast-spmd-scan
   [dispatch : sym_i64_env.SymI64Env]
@@ -7165,8 +7484,10 @@
               prefix-binding
               value
               body))]
-        [_ (Err "parse: malformed spmd-scan")])]
-    [_ (Err "parse: malformed spmd-scan")]))
+        [_
+          (Err
+            (parse-kind-message (MalformedForm) "parse: malformed spmd-scan"))])]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed spmd-scan"))]))
 
 (define (parse-ast-spmd-scan-bindings
   [dispatch : sym_i64_env.SymI64Env]
@@ -7227,8 +7548,11 @@
             slot-binding
             keep
             body)]
-        [_ (Err "parse: malformed spmd-compact")])]
-    [_ (Err "parse: malformed spmd-compact")]))
+        [_
+          (Err
+            (parse-kind-message (MalformedForm) "parse: malformed spmd-compact"))])]
+    [_
+      (Err (parse-kind-message (MalformedForm) "parse: malformed spmd-compact"))]))
 
 (define (parse-ast-spmd-compact-bindings
   [dispatch : sym_i64_env.SymI64Env]
@@ -7282,7 +7606,9 @@
         [value (try (parse-ast-expr-with-pools dispatch pools value-node))]
         [lane (try (parse-ast-expr-with-pools dispatch pools lane-node))]
         (Ok (ast.ast-expr-spmd-broadcast-with-pools pools value lane)))]
-    [_ (Err "parse: malformed spmd-broadcast")]))
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed spmd-broadcast"))]))
 
 (define (parse-ast-spmd-shuffle
   [dispatch : sym_i64_env.SymI64Env]
@@ -7294,7 +7620,8 @@
         [value (try (parse-ast-expr-with-pools dispatch pools value-node))]
         [lane (try (parse-ast-expr-with-pools dispatch pools lane-node))]
         (Ok (ast.ast-expr-spmd-shuffle-with-pools pools value lane)))]
-    [_ (Err "parse: malformed spmd-shuffle")]))
+    [_
+      (Err (parse-kind-message (MalformedForm) "parse: malformed spmd-shuffle"))]))
 
 ;; `(foreach-active [lane : i64] body...)`. Like a `let` body, several body
 ;; forms become one `begin`, so the node keeps a single body expression.
@@ -7332,7 +7659,9 @@
           [_ (Err "parse: foreach-active lane binding must have type i64")]))]
     [_
       (Err
-        "parse: malformed foreach-active; expected (foreach-active [lane : i64] body...)")]))
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed foreach-active; expected (foreach-active [lane : i64] body...)"))]))
 
 (define (parse-ast-lane-value
   [dispatch : sym_i64_env.SymI64Env]
@@ -7343,7 +7672,11 @@
       (let
         [value (try (parse-ast-expr-with-pools dispatch pools value-node))]
         (Ok (ast.ast-expr-lane-value-with-pools pools value)))]
-    [_ (Err "parse: lane-value takes exactly one expression")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: lane-value takes exactly one expression"))]))
 
 (define (parse-ast-try
   [dispatch : sym_i64_env.SymI64Env]
@@ -7354,7 +7687,11 @@
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
         (Ok (ast.ast-expr-try-with-pools pools parsed-expr)))]
-    [_ (Err "parse: try expects exactly one expression")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: try expects exactly one expression"))]))
 
 (define (parse-ast-return
   [dispatch : sym_i64_env.SymI64Env]
@@ -7365,7 +7702,11 @@
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
         (Ok (ast.ast-expr-return-with-pools pools parsed-expr)))]
-    [_ (Err "parse: return expects exactly one expression")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: return expects exactly one expression"))]))
 
 (define (parse-ast-box-like
   [dispatch : sym_i64_env.SymI64Env]
@@ -7385,10 +7726,16 @@
     [_
       (Err
         (if is-get
-          "parse: box-get expects exactly one expression"
+          (parse-kind-message
+            (MalformedForm)
+            "parse: box-get expects exactly one expression")
           (if is-take
-            "parse: box-take expects exactly one expression"
-            "parse: box expects exactly one expression")))]))
+            (parse-kind-message
+              (MalformedForm)
+              "parse: box-take expects exactly one expression")
+            (parse-kind-message
+              (MalformedForm)
+              "parse: box expects exactly one expression"))))]))
 
 (define (parse-ast-deref
   [dispatch : sym_i64_env.SymI64Env]
@@ -7399,7 +7746,11 @@
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
         (Ok (ast.ast-expr-box-take-with-pools pools parsed-expr)))]
-    [_ (Err "parse: deref expects exactly one expression")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: deref expects exactly one expression"))]))
 
 ;; `(ptr-null : T)` - a colon followed by a pointer type, no leading expression.
 ;; The parser accepts any type here; the typechecker rejects non-pointer `T`.
@@ -7416,8 +7767,13 @@
             (ast.ast-node-pool-context-expr-push
               pools
               (PtrNull (ast.ast-node-pool-context-type-push pools parsed-ty)))))
-        (Err "parse: expected ':' in ptr-null"))]
-    [_ (Err "parse: ptr-null expects (ptr-null : T) with a pointer type T")]))
+        (Err
+          (parse-kind-message (MalformedForm) "parse: expected ':' in ptr-null")))]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: ptr-null expects (ptr-null : T) with a pointer type T"))]))
 
 ;; `(init : T)` carries an explicit target type. Bare `(init)` is contextual
 ;; and must be checked/lowered in a position with an expected type.
@@ -7432,8 +7788,10 @@
         (let
           [parsed-ty (try (parse-ast-type-spanned dispatch pools ty))]
           (Ok (ast.ast-expr-init-with-pools pools parsed-ty)))
-        (Err "parse: expected ':' in init"))]
-    [_ (Err "parse: init expects (init : T)")]))
+        (Err (parse-kind-message (MalformedForm) "parse: expected ':' in init")))]
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: init expects (init : T)"))]))
 
 ;; `(ptr-null? p)` - a single pointer operand.
 (define (parse-ast-ptr-null-check
@@ -7445,7 +7803,11 @@
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
         (Ok (ast.ast-expr-ptr-null-check-with-pools pools parsed-expr)))]
-    [_ (Err "parse: ptr-null? expects exactly one expression")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: ptr-null? expects exactly one expression"))]))
 
 (define (parse-ast-ptr-read
   [dispatch : sym_i64_env.SymI64Env]
@@ -7456,7 +7818,11 @@
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
         (Ok (ast.ast-expr-ptr-read-with-pools pools parsed-expr)))]
-    [_ (Err "parse: ptr-read expects exactly one expression")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: ptr-read expects exactly one expression"))]))
 
 (define (parse-ast-ptr-addr-of
   [dispatch : sym_i64_env.SymI64Env]
@@ -7467,7 +7833,11 @@
       (let
         [parsed-place (try (parse-ast-expr-with-pools dispatch pools place))]
         (Ok (ast.ast-expr-ptr-addr-of-id-with-pools pools parsed-place)))]
-    [_ (Err "parse: ptr-addr-of expects exactly one addressable place")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: ptr-addr-of expects exactly one addressable place"))]))
 
 (define (parse-ast-ptr-write
   [dispatch : sym_i64_env.SymI64Env]
@@ -7479,7 +7849,11 @@
         [parsed-ptr (try (parse-ast-expr-with-pools dispatch pools ptr))]
         [parsed-value (try (parse-ast-expr-with-pools dispatch pools value))]
         (Ok (ast.ast-expr-ptr-write-with-pools pools parsed-ptr parsed-value)))]
-    [_ (Err "parse: ptr-write! expects exactly two expressions")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: ptr-write! expects exactly two expressions"))]))
 
 (define (parse-ast-ptr-offset
   [dispatch : sym_i64_env.SymI64Env]
@@ -7491,7 +7865,11 @@
         [parsed-ptr (try (parse-ast-expr-with-pools dispatch pools ptr))]
         [parsed-offset (try (parse-ast-expr-with-pools dispatch pools offset))]
         (Ok (ast.ast-expr-ptr-offset-with-pools pools parsed-ptr parsed-offset)))]
-    [_ (Err "parse: ptr-offset expects exactly two expressions")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: ptr-offset expects exactly two expressions"))]))
 
 (define (parse-ast-ptr-cast-like
   [dispatch : sym_i64_env.SymI64Env]
@@ -7512,8 +7890,15 @@
                 (& parsed-ty)))
             (Ok
               (ast.ast-expr-ptr-cast-with-pools pools parsed-expr (& parsed-ty)))))
-        (Err "parse: expected ':' in pointer cast"))]
-    [_ (Err "parse: pointer cast expects (form expr : pointer-type)")]))
+        (Err
+          (parse-kind-message
+            (MalformedForm)
+            "parse: expected ':' in pointer cast")))]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: pointer cast expects (form expr : pointer-type)"))]))
 
 (define (parse-ast-ptr-to-int
   [dispatch : sym_i64_env.SymI64Env]
@@ -7524,7 +7909,11 @@
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
         (Ok (ast.ast-expr-ptr-to-int-with-pools pools parsed-expr)))]
-    [_ (Err "parse: ptr->int expects exactly one expression")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: ptr->int expects exactly one expression"))]))
 
 (define (parse-ast-one-expr
   [dispatch : sym_i64_env.SymI64Env]
@@ -7622,7 +8011,10 @@
     [args (try (parse-ast-expr-list dispatch pools rest))]
     [count : i64 (parse-ast-syscall-count args)]
     (if (< count 1)
-      (Err "parse: syscall requires a syscall number")
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: syscall requires a syscall number"))
       (if (> count 7)
         (Err
           "parse: syscall takes at most 7 operands (number plus six arguments)")
@@ -7634,7 +8026,10 @@
   [rest : reader.SpannedSexpr]) : ResultAstExpr
   (match (reader.spanned-sexpr-view rest)
     [(List (slice) _)
-      (Err "parse: with-arena requires a region name before its body")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: with-arena requires a region name before its body"))]
     [(List (slice _ & _) _)
       (match (reader.spanned-sexpr-view rest)
         [(List (slice region-node & _) _)
@@ -7656,7 +8051,9 @@
                     [(List (slice) _)
                       (Err
                         (str_cat.str-cat
-                          "parse: with-arena '"
+                          (parse-kind-message
+                            (MalformedForm)
+                            "parse: with-arena '")
                           (compiler-parse-dispatch-syntax-id-text
                             dispatch
                             region)
@@ -7670,9 +8067,15 @@
                             (WithRegion
                               (ci.intern-syntax-id-value region)
                               exprs))))]))]
-              [_ (Err "parse: with-arena region name must be an identifier")]))]
-        [_ (Err "parse: malformed with-arena")])]
-    [_ (Err "parse: malformed with-arena")]))
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: with-arena region name must be an identifier"))]))]
+        [_
+          (Err
+            (parse-kind-message (MalformedForm) "parse: malformed with-arena"))])]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed with-arena"))]))
 
 (define (parse-ast-with-escape
   [dispatch : sym_i64_env.SymI64Env]
@@ -7680,13 +8083,19 @@
   [rest : reader.SpannedSexpr]) : ResultAstExpr
   (match (reader.spanned-sexpr-view rest)
     [(List (slice) _)
-      (Err "parse: with-escape requires a scratch arena before its body")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: with-escape requires a scratch arena before its body"))]
     [(List (slice scratch & _) _)
       (let
         [body (reader.spanned-sexpr-drop rest 1)]
         (match (reader.spanned-sexpr-view body)
           [(List (slice) _)
-            (Err "parse: with-escape requires a non-empty body")]
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: with-escape requires a non-empty body"))]
           [_
             (let
               [parsed-scratch
@@ -7694,38 +8103,52 @@
               [exprs (try (parse-ast-expr-list dispatch pools body))]
               (Ok
                 (ast.ast-expr-with-escape-with-pools pools parsed-scratch exprs)))]))]
-    [_ (Err "parse: malformed with-escape")]))
+    [_
+      (Err (parse-kind-message (MalformedForm) "parse: malformed with-escape"))]))
 
 (define (parse-ast-with-scratch
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
   (match (reader.spanned-sexpr-view rest)
-    [(List (slice) _) (Err "parse: with-scratch requires a non-empty body")]
+    [(List (slice) _)
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: with-scratch requires a non-empty body"))]
     [(List (slice _ & _) _)
       (let
         [exprs (try (parse-ast-expr-list dispatch pools rest))]
         (Ok (ast.ast-expr-with-scratch-with-pools pools exprs)))]
-    [_ (Err "parse: malformed with-scratch")]))
+    [_
+      (Err (parse-kind-message (MalformedForm) "parse: malformed with-scratch"))]))
 
 (define (parse-ast-in-arena
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
   (match (reader.spanned-sexpr-view rest)
-    [(List (slice) _) (Err "parse: in-arena requires an arena before its body")]
+    [(List (slice) _)
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: in-arena requires an arena before its body"))]
     [(List (slice arena & _) _)
       (let
         [body (reader.spanned-sexpr-drop rest 1)]
         (match (reader.spanned-sexpr-view body)
-          [(List (slice) _) (Err "parse: in-arena requires a non-empty body")]
+          [(List (slice) _)
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: in-arena requires a non-empty body"))]
           [_
             (let
               [parsed-arena
                 (try (parse-ast-expr-with-pools dispatch pools arena))]
               [exprs (try (parse-ast-expr-list dispatch pools body))]
               (Ok (ast.ast-expr-in-arena-with-pools pools parsed-arena exprs)))]))]
-    [_ (Err "parse: malformed in-arena")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed in-arena"))]))
 
 (define (parse-ast-resource-binding-items
   [dispatch : sym_i64_env.SymI64Env]
@@ -7744,9 +8167,16 @@
             (match (reader.spanned-sexpr-view name-node)
               [(Sym name _)
                 (match rest
-                  [(slice) (Err "parse: with binding is missing initializer")]
+                  [(slice)
+                    (Err
+                      (parse-kind-message
+                        (MalformedForm)
+                        "parse: with binding is missing initializer"))]
                   [(slice _)
-                    (Err "parse: with binding is missing cleanup function")]
+                    (Err
+                      (parse-kind-message
+                        (MalformedForm)
+                        "parse: with binding is missing cleanup function"))]
                   [(slice init cleanup)
                     (let
                       [parsed-init
@@ -7759,10 +8189,20 @@
                           parsed-init
                           parsed-cleanup)))]
                   [(slice _ _ & _)
-                    (Err "parse: with binding has too many fields")])]
-              [_ (Err "parse: with binding name must be an identifier")]))]
-        [_ (Err "parse: malformed with binding")])]
-    [_ (Err "parse: malformed with binding")]))
+                    (Err
+                      (parse-kind-message
+                        (MalformedForm)
+                        "parse: with binding has too many fields"))])]
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: with binding name must be an identifier"))]))]
+        [_
+          (Err
+            (parse-kind-message (MalformedForm) "parse: malformed with binding"))])]
+    [_
+      (Err (parse-kind-message (MalformedForm) "parse: malformed with binding"))]))
 
 (define (parse-ast-resource-binding
   [dispatch : sym_i64_env.SymI64Env]
@@ -7771,7 +8211,11 @@
   (match (reader.spanned-sexpr-view binding)
     [(BracketList items _)
       (parse-ast-resource-binding-items dispatch pools items)]
-    [_ (Err "parse: with binding must use bracket syntax")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: with binding must use bracket syntax"))]))
 
 (define (parse-ast-resource-binding-list-into
   [dispatch : sym_i64_env.SymI64Env]
@@ -7781,7 +8225,11 @@
   (match (reader.spanned-sexpr-view bindings)
     [(List items _)
       (parse-ast-resource-binding-list-into-items dispatch pools items out)]
-    [_ (Err "parse: malformed with binding list")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed with binding list"))]))
 
 (define (parse-ast-resource-binding-list-into-items
   [dispatch : sym_i64_env.SymI64Env]
@@ -7817,16 +8265,26 @@
   [rest : reader.SpannedSexpr]) : ResultAstExpr
   (match (reader.spanned-sexpr-view rest)
     [(List (slice) _)
-      (Err "parse: with requires a binding list before its body")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: with requires a binding list before its body"))]
     [(List (slice bindings & _) _)
       (let
         [body (reader.spanned-sexpr-drop rest 1)]
         (match (reader.spanned-sexpr-view bindings)
           [(List (slice) _)
-            (Err "parse: with requires a non-empty binding list")]
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: with requires a non-empty binding list"))]
           [(List (slice _ & _) _)
             (match (reader.spanned-sexpr-view body)
-              [(List (slice) _) (Err "parse: with requires a non-empty body")]
+              [(List (slice) _)
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: with requires a non-empty body"))]
               [_
                 (let
                   [parsed-bindings
@@ -7841,8 +8299,12 @@
                           (ast.AstWithResource.WithResource
                             parsed-bindings
                             parsed-body))))))])]
-          [_ (Err "parse: malformed with binding list")]))]
-    [_ (Err "parse: malformed with")]))
+          [_
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: malformed with binding list"))]))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed with"))]))
 
 (define (parse-sexpr-list-last [s : reader.SpannedSexpr]) : reader.SpannedSexpr
   (match (reader.spanned-sexpr-view s)
@@ -7886,7 +8348,7 @@
                     (token.merge-spans
                       (reader.spanned-sexpr-span body)
                       (reader.spanned-sexpr-span (parse-sexpr-list-last end)))))))]))]
-    [_ (Err "parse: malformed match arm")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed match arm"))]))
 
 (define (parse-ast-match-arm
   [dispatch : sym_i64_env.SymI64Env]
@@ -7916,8 +8378,10 @@
                       parsed-body
                       (ast-source-span-from-source-span
                         (reader.spanned-sexpr-span pattern)))))))]
-          [_ (Err "parse: malformed match arm")]))]
-    [_ (Err "parse: malformed match arm")]))
+          [_
+            (Err
+              (parse-kind-message (MalformedForm) "parse: malformed match arm"))]))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed match arm"))]))
 
 (define (parse-ast-match-arm-list-into
   [dispatch : sym_i64_env.SymI64Env]
@@ -7952,7 +8416,7 @@
           (try (parse-ast-expr-with-pools dispatch pools scrutinee))]
         [parsed-arms (try (parse-ast-match-arm-list dispatch pools arms))]
         (Ok (ast.ast-expr-match-with-pools pools parsed-scrutinee parsed-arms)))]
-    [_ (Err "parse: malformed match")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed match"))]))
 
 ;; One parsed `[name : type start end]` foreach domain binding.
 (defenum ResultForeachDim
@@ -7992,10 +8456,23 @@
                       parsed-index-ty
                       parsed-start
                       parsed-end))
-                  (Err "parse: expected ':' in foreach"))]
-              [_ (Err "parse: malformed foreach binding")])]
-          [_ (Err "parse: malformed foreach binding")]))]
-    [_ (Err "parse: malformed foreach binding")]))
+                  (Err
+                    (parse-kind-message
+                      (MalformedForm)
+                      "parse: expected ':' in foreach")))]
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: malformed foreach binding"))])]
+          [_
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: malformed foreach binding"))]))]
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed foreach binding"))]))
 
 ;; Parse the single body form of a foreach after its domain bindings.
 (define (parse-ast-foreach-body
@@ -8004,7 +8481,7 @@
   [body-tail : reader.SpannedSexpr]) : ResultAstExpr
   (match (reader.spanned-sexpr-view body-tail)
     [(List (slice body) _) (parse-ast-expr-with-pools dispatch pools body)]
-    [_ (Err "parse: malformed foreach")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed foreach"))]))
 
 ;; `(foreach ([i : T start end]) body)` is a rank-1 domain and
 ;; `(foreach ([y : T y0 y1] [x : T x0 x1]) body)` a rank-2 one. Bindings,
@@ -8017,7 +8494,10 @@
     [(List (slice binding-list & _) _)
       (match (reader.spanned-sexpr-view binding-list)
         [(List (slice) _)
-          (Err "parse: foreach requires one or two domain bindings")]
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: foreach requires one or two domain bindings"))]
         [(List (slice binding) _)
           (let
             [body-tail (reader.spanned-sexpr-drop rest 1)]
@@ -8064,8 +8544,9 @@
               [(Err message) (Err message)]))]
         [(List (slice _ _ & _) _)
           (Err "parse: foreach supports at most two domain bindings (rank 2)")]
-        [_ (Err "parse: malformed foreach")])]
-    [_ (Err "parse: malformed foreach")]))
+        [_
+          (Err (parse-kind-message (MalformedForm) "parse: malformed foreach"))])]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed foreach"))]))
 
 (define (parse-ast-call
   [dispatch : sym_i64_env.SymI64Env]
@@ -8093,7 +8574,11 @@
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
   (match (reader.spanned-sexpr-view rest)
-    [(List (slice) _) (Err "parse: unsafe requires a non-empty body")]
+    [(List (slice) _)
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: unsafe requires a non-empty body"))]
     [_
       (let
         [exprs (try (parse-ast-expr-list dispatch pools rest))]
@@ -8152,7 +8637,11 @@
         (set! compiler-parse-quote-depth saved-depth)
         (set! compiler-parse-semantic-quote-depth saved-semantic-depth)
         result)]
-    [_ (Err "parse: quote form expects exactly one expression")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: quote form expects exactly one expression"))]))
 
 (define (parse-ast-list-expr-tag
   [dispatch : sym_i64_env.SymI64Env]
@@ -8509,7 +8998,9 @@
                 (match (parse-ast-list-expr dispatch pools head rest)
                   [(Ok parsed) (Ok (ast-expr-wrap-span pools parsed s))]
                   [(Err message) (Err message)])]))]
-        [_ (Err "parse: malformed expression")])]
+        [_
+          (Err
+            (parse-kind-message (MalformedForm) "parse: malformed expression"))])]
     (parse-ast-error-span-note-expr dispatch s result)))
 
 (define (parse-ast-expr
@@ -8519,7 +9010,9 @@
     [pools : ast.AstNodePoolContext (ast.ast-node-pool-context-capture-active)]
     [result : ResultAstExpr (parse-ast-expr-with-pools dispatch pools s)]
     (ast.ast-node-pool-context-install! pools)
-    result))
+    (match result
+      [(Ok expr) (Ok expr)]
+      [(Err message) (Err (cdiag.compiler-diagnostic-untagged-message message))])))
 
 (define (parse-ast-define-value
   [dispatch : sym_i64_env.SymI64Env]
@@ -8537,8 +9030,13 @@
           [parsed-ty (try (parse-ast-type-spanned dispatch pools ty))]
           [parsed-value (try (parse-ast-expr-with-pools dispatch pools value))]
           (Ok (ast.ast-decl-def-id name (Some parsed-ty) parsed-value)))
-        (Err "parse: expected ':' in definition"))]
-    [_ (Err "parse: malformed value definition")]))
+        (Err
+          (parse-kind-message
+            (MalformedForm)
+            "parse: expected ':' in definition")))]
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed value definition"))]))
 
 (define (parse-ast-spmd-param-classes
   [items : (& program (Slice reader.SpannedSexpr))]
@@ -8583,8 +9081,16 @@
           (Err "parse: :spmd-callable result expects unit, uniform, or varying")])]
     [(slice _)
       (Err "parse: :spmd-callable result expects unit, uniform, or varying")]
-    [(slice _ & _) (Err "parse: :spmd-callable result expects one value")]
-    [_ (Err "parse: malformed :spmd-callable result field")]))
+    [(slice _ & _)
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: :spmd-callable result expects one value"))]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed :spmd-callable result field"))]))
 
 (define (parse-ast-spmd-index-param
   [tail : (& program (Slice reader.SpannedSexpr))]) : ResultAstSpmdIndexParam
@@ -8604,8 +9110,16 @@
     [(slice _)
       (Err
         "parse: :spmd-callable index-param expects none or a non-negative integer")]
-    [(slice _ & _) (Err "parse: :spmd-callable index-param expects one value")]
-    [_ (Err "parse: malformed :spmd-callable index-param field")]))
+    [(slice _ & _)
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: :spmd-callable index-param expects one value"))]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed :spmd-callable index-param field"))]))
 
 (define (parse-ast-spmd-specialization-fields
   [dispatch : sym_i64_env.SymI64Env]
@@ -8639,7 +9153,11 @@
                           state.seen-index-param))
                       (Err
                         "parse: :spmd-callable lanes must be greater than one"))]
-                  [_ (Err "parse: :spmd-callable lanes expects one integer")]))]
+                  [_
+                    (Err
+                      (parse-kind-message
+                        (MalformedForm)
+                        "parse: :spmd-callable lanes expects one integer"))]))]
             [(=
                 (ci.intern-syntax-id-value key)
                 (cbi.compiler-builtin-ctfe "args"))
@@ -8707,8 +9225,15 @@
                   "parse: unknown :spmd-callable specialization field "
                   (compiler-parse-dispatch-syntax-id-text dispatch key)))])]
         [(List (slice _ & _))
-          (Err "parse: malformed :spmd-callable specialization field")]
-        [_ (Err "parse: malformed :spmd-callable specialization field")])]))
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: malformed :spmd-callable specialization field"))]
+        [_
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: malformed :spmd-callable specialization field"))])]))
 
 (define (parse-ast-spmd-specialization
   [dispatch : sym_i64_env.SymI64Env]
@@ -8731,13 +9256,25 @@
             false)))]
     (cond
       [(not state.seen-lanes)
-        (Err "parse: :spmd-callable specialization is missing lanes")]
+        (Err
+          (parse-kind-message
+            (MalformedForm)
+            "parse: :spmd-callable specialization is missing lanes"))]
       [(not state.seen-args)
-        (Err "parse: :spmd-callable specialization is missing args")]
+        (Err
+          (parse-kind-message
+            (MalformedForm)
+            "parse: :spmd-callable specialization is missing args"))]
       [(not state.seen-result)
-        (Err "parse: :spmd-callable specialization is missing result")]
+        (Err
+          (parse-kind-message
+            (MalformedForm)
+            "parse: :spmd-callable specialization is missing result"))]
       [(not state.seen-index-param)
-        (Err "parse: :spmd-callable specialization is missing index-param")]
+        (Err
+          (parse-kind-message
+            (MalformedForm)
+            "parse: :spmd-callable specialization is missing index-param"))]
       [(not (= (ast.ast-spmd-param-class-list-len (& state.args)) param-count))
         (Err
           "parse: :spmd-callable args must contain one class per ordinary parameter")]
@@ -8808,7 +9345,10 @@
   (match items
     [(slice)
       (if (= (ast.ast-spmd-specialization-list-len (& out)) 0)
-        (Err "parse: :spmd-callable expects at least one specialization")
+        (Err
+          (parse-kind-message
+            (MalformedForm)
+            "parse: :spmd-callable expects at least one specialization"))
         (Ok (Callable out)))]
     [(slice item-node & rest)
       (match (reader.sexpr-view item-node)
@@ -8835,10 +9375,20 @@
                     rest
                     param-count
                     next))))
-            (Err "parse: :spmd-callable expects specialization forms"))]
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: :spmd-callable expects specialization forms")))]
         [(List (slice _ & _))
-          (Err "parse: malformed :spmd-callable specialization")]
-        [_ (Err "parse: malformed :spmd-callable specialization")])]))
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: malformed :spmd-callable specialization"))]
+        [_
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: malformed :spmd-callable specialization"))])]))
 
 (define (parse-ast-define-fn-spmd-callable-tail
   [dispatch : sym_i64_env.SymI64Env]
@@ -8861,7 +9411,11 @@
         0)
         (Ok (ast.ast-fn-export-id value-id))
         (Err "parse: define :export-symbol must not be empty"))]
-    [_ (Err "parse: malformed define :export-symbol metadata")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed define :export-symbol metadata"))]))
 
 (define (parse-ast-metadata-form?
   [dispatch : sym_i64_env.SymI64Env]
@@ -8945,7 +9499,11 @@
                   parsed-body
                   export
                   spmd-callable))]
-            [_ (Err "parse: malformed function definition")])
+            [_
+              (Err
+                (parse-kind-message
+                  (MalformedForm)
+                  "parse: malformed function definition"))])
           (if (parse-ast-metadata-form? dispatch first)
             (match (reader.sexpr-view first)
               [(List (slice (Sym key _) & after-key))
@@ -8996,8 +9554,16 @@
                       (str_cat.str-cat
                         "parse: unknown define metadata "
                         (compiler-parse-dispatch-syntax-id-text dispatch key)))]
-                  [else (Err "parse: malformed function metadata")])]
-              [_ (Err "parse: malformed function definition")])
+                  [else
+                    (Err
+                      (parse-kind-message
+                        (MalformedForm)
+                        "parse: malformed function metadata"))])]
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: malformed function definition"))])
             (let
               [parsed-body
                 (try
@@ -9013,7 +9579,11 @@
                 parsed-body
                 export
                 spmd-callable)))))]
-    [_ (Err "parse: malformed function definition")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed function definition"))]))
 
 (define (parse-ast-define-fn
   [dispatch : sym_i64_env.SymI64Env]
@@ -9069,9 +9639,14 @@
                     (ci.intern-syntax-id-value name)
                     params
                     after-name)]
-                [_ (Err "parse: malformed define")]))]
-          [_ (Err "parse: malformed define")]))]
-    [_ (Err "parse: malformed define")]))
+                [_
+                  (Err
+                    (parse-kind-message
+                      (MalformedForm)
+                      "parse: malformed define"))]))]
+          [_
+            (Err (parse-kind-message (MalformedForm) "parse: malformed define"))]))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed define"))]))
 
 (define (parse-ast-defmacro
   [dispatch : sym_i64_env.SymI64Env]
@@ -9098,9 +9673,13 @@
                     parsed-params
                     parsed-ret
                     parsed-body))))
-            (Err "parse: expected ':' in macro definition"))]
-        [_ (Err "parse: malformed defmacro")])]
-    [_ (Err "parse: malformed defmacro")]))
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: expected ':' in macro definition")))]
+        [_
+          (Err (parse-kind-message (MalformedForm) "parse: malformed defmacro"))])]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed defmacro"))]))
 
 (define (parse-ast-extern-varargs-typed-name?
   [dispatch : sym_i64_env.SymI64Env]
@@ -9143,7 +9722,10 @@
         (ci.intern-syntax-id-from-raw
           (parse-ast-extern-varargs-tail-id dispatch name-id))
         (token.SourceSpan 0 0 0 0)))
-    (Err "parse: expected typed extern varargs tail")))
+    (Err
+      (parse-kind-message
+        (MalformedForm)
+        "parse: expected typed extern varargs tail"))))
 
 (define (parse-ast-extern-head-fixed-param
   [dispatch : sym_i64_env.SymI64Env]
@@ -9169,7 +9751,10 @@
         (match (reader.spanned-sexpr-view ty-node)
           [(Sym ty-name ty-span)
             (if (parse-ast-extern-varargs-open? ty-name)
-              (Err "parse: extern typed varargs tail needs a type")
+              (Err
+                (parse-kind-message
+                  (MalformedForm)
+                  "parse: extern typed varargs tail needs a type"))
               (if (parse-ast-extern-varargs-typed-name? dispatch ty-name)
                 (let
                   [tail-ty
@@ -9203,11 +9788,21 @@
       (if (parse-ast-extern-varargs-open? name)
         (Ok (VarargsOpen))
         (if (parse-ast-extern-varargs-typed-name? dispatch name)
-          (Err "parse: typed extern varargs tail must use bracket syntax")
-          (Err "parse: malformed extern function head")))]
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: typed extern varargs tail must use bracket syntax"))
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: malformed extern function head"))))]
     [(BracketList items _)
       (parse-ast-extern-head-bracket-item dispatch pools item items)]
-    [_ (Err "parse: malformed extern function head")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed extern function head"))]))
 
 (define (parse-ast-extern-head-items
   [dispatch : sym_i64_env.SymI64Env]
@@ -9233,13 +9828,25 @@
           [(VarargsOpen)
             (match (reader.spanned-sexpr-view tail)
               [(List (slice) _) (Ok -1 (ast.ast-type-list-new) (CVarargsOpen))]
-              [_ (Err "parse: extern varargs tail must be final")])]
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: extern varargs tail must be final"))])]
           [(VarargsTyped tail-ty)
             (match (reader.spanned-sexpr-view tail)
               [(List (slice) _)
                 (Ok -1 (ast.ast-type-list-new) (CVarargsTyped tail-ty))]
-              [_ (Err "parse: extern varargs tail must be final")])]))]
-    [_ (Err "parse: malformed extern function head")]))
+              [_
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: extern varargs tail must be final"))])]))]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed extern function head"))]))
 
 (define (parse-ast-extern-header
   [dispatch : sym_i64_env.SymI64Env]
@@ -9253,7 +9860,11 @@
           [(Ok _ param-types abi)
             (Ok (ci.intern-syntax-id-value name) param-types abi)]
           [(Err message) (Err message)]))]
-    [_ (Err "parse: malformed extern function head")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed extern function head"))]))
 
 (define (parse-ast-extern-c-varargs-legacy-message) : String
   "parse: legacy :abi c-varargs metadata is retired; use function-head ... or ...T varargs")
@@ -9282,7 +9893,11 @@
           (str_cat.str-cat
             "parse: unknown extern ABI "
             (compiler-parse-dispatch-syntax-id-text dispatch name))))]
-    [_ (Err "parse: malformed extern :abi metadata")]))
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed extern :abi metadata"))]))
 
 (define (parse-ast-extern-string-tail
   [dispatch : sym_i64_env.SymI64Env]
@@ -9295,7 +9910,12 @@
         (if (> (string.string-length value) 0)
           (Ok value value-id)
           (Err (str_cat.str-cat "parse: extern " key " must not be empty"))))]
-    [_ (Err (str_cat.str-cat "parse: malformed extern " key " metadata"))]))
+    [_
+      (Err
+        (str_cat.str-cat
+          (parse-kind-message (MalformedForm) "parse: malformed extern ")
+          key
+          " metadata"))]))
 
 (define (parse-ast-extern-symbol-tail
   [dispatch : sym_i64_env.SymI64Env]
@@ -9328,7 +9948,8 @@
             (let
               [parsed-ty (try (parse-ast-type-spanned dispatch pools ty))]
               (Ok abi symbol-id seen-abi parsed-ty))]
-          [_ (Err "parse: malformed extern")])
+          [_
+            (Err (parse-kind-message (MalformedForm) "parse: malformed extern"))])
         (match (reader.sexpr-view head)
           [(List (slice (Sym key _) & after-key))
             (cond
@@ -9434,9 +10055,17 @@
                   (str_cat.str-cat
                     "parse: unknown extern metadata "
                     (compiler-parse-dispatch-syntax-id-text dispatch key)))]
-              [else (Err "parse: expected ':' in extern")])]
-          [_ (Err "parse: expected ':' in extern")]))]
-    [_ (Err "parse: malformed extern")]))
+              [else
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: expected ':' in extern"))])]
+          [_
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: expected ':' in extern"))]))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed extern"))]))
 
 (define (parse-ast-extern-head-finish
   [pools : ast.AstNodePoolContext]
@@ -9589,8 +10218,10 @@
                 (str_cat.str-cat
                   "parse: unknown extern metadata "
                   (compiler-parse-dispatch-syntax-id-text dispatch key)))]
-            [else (Err "parse: malformed extern")])]
-        [_ (Err "parse: malformed extern")])]))
+            [else
+              (Err
+                (parse-kind-message (MalformedForm) "parse: malformed extern"))])]
+        [_ (Err (parse-kind-message (MalformedForm) "parse: malformed extern"))])]))
 
 (define (parse-ast-extern-head-rest
   [dispatch : sym_i64_env.SymI64Env]
@@ -9632,7 +10263,8 @@
                     seen-symbol
                     param-types
                     parsed-ret))])]
-          [_ (Err "parse: malformed extern")])
+          [_
+            (Err (parse-kind-message (MalformedForm) "parse: malformed extern"))])
         (match (reader.sexpr-view head)
           [(List (slice (Sym key _) & after-key))
             (cond
@@ -9745,9 +10377,17 @@
                   (str_cat.str-cat
                     "parse: unknown extern metadata "
                     (compiler-parse-dispatch-syntax-id-text dispatch key)))]
-              [else (Err "parse: expected ':' in extern")])]
-          [_ (Err "parse: expected ':' in extern")]))]
-    [_ (Err "parse: malformed extern")]))
+              [else
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: expected ':' in extern"))])]
+          [_
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: expected ':' in extern"))]))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed extern"))]))
 
 (define (parse-ast-extern-function-head
   [dispatch : sym_i64_env.SymI64Env]
@@ -9826,7 +10466,7 @@
                     parsed-ty))]
               [(Err message) (Err message)]))]
         [_ (parse-ast-extern-function-head dispatch pools name-node after-name)])]
-    [_ (Err "parse: malformed extern")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed extern"))]))
 
 (define (parse-ast-defenum
   [dispatch : sym_i64_env.SymI64Env]
@@ -9868,7 +10508,10 @@
                 (compiler-parse-marker "__tl_member_origin")
                 name-span))
             (if (ast.ast-variant-def-list-empty? (& parsed-variants))
-              (Err "parse: defenum needs at least one variant")
+              (Err
+                (parse-kind-message
+                  (MalformedForm)
+                  "parse: defenum needs at least one variant"))
               (if (ast.ast-lifetime-list-empty? (& lifetimes))
                 (Ok
                   (ast.ast-decl-with-aggregate-markers
@@ -9883,7 +10526,7 @@
                       parsed-variants)
                     markers))))]
           [(Err message) (Err message)]))]
-    [_ (Err "parse: malformed defenum")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed defenum"))]))
 
 (define (parse-ast-defstruct
   [dispatch : sym_i64_env.SymI64Env]
@@ -9929,7 +10572,10 @@
                 (compiler-parse-marker "__tl_member_origin")
                 name-span))
             (if (ast.ast-field-def-list-empty? (& parsed-fields))
-              (Err "parse: defstruct needs at least one field")
+              (Err
+                (parse-kind-message
+                  (MalformedForm)
+                  "parse: defstruct needs at least one field"))
               (if (ast.ast-lifetime-list-empty? (& lifetimes))
                 (Ok
                   (ast.ast-decl-with-aggregate-markers
@@ -9955,7 +10601,7 @@
               (string.eq message (parse-ast-defstruct-align-needs-repr-c))
               (parse-ast-defstruct-note-align-form! dispatch fields))
             (Err message)]))]
-    [_ (Err "parse: malformed defstruct")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed defstruct"))]))
 
 (define (parse-ast-defdispatch
   [dispatch : sym_i64_env.SymI64Env]
@@ -9966,12 +10612,16 @@
         [parsed-variants
           (try (parse-ast-dispatch-variant-list dispatch variants))]
         (if (ast.ast-dispatch-variant-list-empty? (& parsed-variants))
-          (Err "parse: defdispatch needs at least one variant")
+          (Err
+            (parse-kind-message
+              (MalformedForm)
+              "parse: defdispatch needs at least one variant"))
           (Ok
             (ast.ast-decl-def-dispatch-id
               (ci.intern-syntax-id-value name)
               parsed-variants))))]
-    [_ (Err "parse: malformed defdispatch")]))
+    [_
+      (Err (parse-kind-message (MalformedForm) "parse: malformed defdispatch"))]))
 
 (define (parse-ast-module-body-forms-into-vec
   [dispatch : sym_i64_env.SymI64Env]
@@ -10065,7 +10715,7 @@
             pools
             (ci.intern-syntax-id-value name)
             end)])]
-    [_ (Err "parse: malformed module")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed module"))]))
 
 (define (parse-ast-import-spec
   [kind : ast.AstImportKind]
@@ -10101,8 +10751,8 @@
             module-name
             (Some (ci.intern-syntax-id-value alias))
             span))
-        (Err "parse: malformed import"))]
-    [_ (Err "parse: malformed import")]))
+        (Err (parse-kind-message (MalformedForm) "parse: malformed import")))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed import"))]))
 
 (define (parse-ast-import-macro-tail
   [dispatch : sym_i64_env.SymI64Env]
@@ -10124,9 +10774,15 @@
               (ci.intern-syntax-id-value head)
               (cbi.compiler-builtin-ctfe "as"))
               (parse-ast-import-alias (Macro call-expr No) "" No tail span)
-              (Err "parse: malformed import"))]
-          [_ (Err "parse: malformed import")])]
-      [_ (Err "parse: import macro operand must be a call")])))
+              (Err
+                (parse-kind-message (MalformedForm) "parse: malformed import")))]
+          [_
+            (Err (parse-kind-message (MalformedForm) "parse: malformed import"))])]
+      [_
+        (Err
+          (parse-kind-message
+            (MalformedForm)
+            "parse: import macro operand must be a call"))])))
 
 (define (parse-ast-dotted-import-default-alias-start [name : (& name str)]) : i64
   (let
@@ -10269,8 +10925,10 @@
                 (Some module-name-id)
                 tail
                 span)
-              (Err "parse: malformed import"))]
-          [_ (Err "parse: malformed import")])))))
+              (Err
+                (parse-kind-message (MalformedForm) "parse: malformed import")))]
+          [_
+            (Err (parse-kind-message (MalformedForm) "parse: malformed import"))])))))
 
 (define (parse-ast-import
   [dispatch : sym_i64_env.SymI64Env]
@@ -10323,96 +10981,181 @@
                   [(Err _) result])))]
           [(List (slice _ & _) _)
             (parse-ast-import-macro-tail dispatch pools path-node tail span)]
-          [_ (Err "parse: malformed import")]))]
-    [_ (Err "parse: malformed import")]))
+          [_
+            (Err (parse-kind-message (MalformedForm) "parse: malformed import"))]))]
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed import"))]))
 
 (define (parse-ast-include-str
   [dispatch : sym_i64_env.SymI64Env]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match (reader.spanned-sexpr-view rest)
-    [(List (slice) _) (Err "parse: include-str expects name and string path")]
+    [(List (slice) _)
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str expects name and string path"))]
     [(List (slice (Sym name _) (Str path-id _)) _)
       (Ok
         (IncludeStr
           (ci.intern-syntax-id-value name)
           (compiler-parse-dispatch-id-str dispatch path-id)))]
     [(List (slice (Sym _ _) (Str _ _) & _) _)
-      (Err "parse: include-str expects exactly two operands")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str expects exactly two operands"))]
     [(List (slice (Sym _ _) _ & _) _)
-      (Err "parse: include-str path must be a string")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str path must be a string"))]
     [(List (slice (Sym _ _)) _)
-      (Err "parse: include-str expects name and string path")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str expects name and string path"))]
     [(List (slice (Sym _ _) & _) _)
-      (Err "parse: include-str expects exactly two operands")]
-    [(List (slice _ & _) _) (Err "parse: include-str name must be a symbol")]
-    [_ (Err "parse: malformed include-str")]))
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str expects exactly two operands"))]
+    [(List (slice _ & _) _)
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str name must be a symbol"))]
+    [_
+      (Err (parse-kind-message (MalformedForm) "parse: malformed include-str"))]))
 
 (define (parse-ast-include-str-comptime
   [dispatch : sym_i64_env.SymI64Env]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match (reader.spanned-sexpr-view rest)
     [(List (slice) _)
-      (Err "parse: include-str-comptime expects name and string path")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str-comptime expects name and string path"))]
     [(List (slice (Sym name _) (Str path-id _)) _)
       (Ok
         (IncludeStrComptime
           (ci.intern-syntax-id-value name)
           (compiler-parse-dispatch-id-str dispatch path-id)))]
     [(List (slice (Sym _ _) (Str _ _) & _) _)
-      (Err "parse: include-str-comptime expects exactly two operands")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str-comptime expects exactly two operands"))]
     [(List (slice (Sym _ _) _ & _) _)
-      (Err "parse: include-str-comptime path must be a string")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str-comptime path must be a string"))]
     [(List (slice (Sym _ _)) _)
-      (Err "parse: include-str-comptime expects name and string path")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str-comptime expects name and string path"))]
     [(List (slice (Sym _ _) & _) _)
-      (Err "parse: include-str-comptime expects exactly two operands")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str-comptime expects exactly two operands"))]
     [(List (slice _ & _) _)
-      (Err "parse: include-str-comptime name must be a symbol")]
-    [_ (Err "parse: malformed include-str-comptime")]))
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str-comptime name must be a symbol"))]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed include-str-comptime"))]))
 
 (define (parse-ast-include-str-lzss
   [dispatch : sym_i64_env.SymI64Env]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match (reader.spanned-sexpr-view rest)
     [(List (slice) _)
-      (Err "parse: include-str-lzss expects name and string path")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str-lzss expects name and string path"))]
     [(List (slice (Sym name _) (Str path _)) _)
       (Ok
         (IncludeStrLzss
           (ci.intern-syntax-id-value name)
           (compiler-parse-dispatch-id-str dispatch path)))]
     [(List (slice (Sym _ _) (Str _ _) & _) _)
-      (Err "parse: include-str-lzss expects exactly two operands")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str-lzss expects exactly two operands"))]
     [(List (slice (Sym _ _) _ & _) _)
-      (Err "parse: include-str-lzss path must be a string")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str-lzss path must be a string"))]
     [(List (slice (Sym _ _)) _)
-      (Err "parse: include-str-lzss expects name and string path")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str-lzss expects name and string path"))]
     [(List (slice (Sym _ _) & _) _)
-      (Err "parse: include-str-lzss expects exactly two operands")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str-lzss expects exactly two operands"))]
     [(List (slice _ & _) _)
-      (Err "parse: include-str-lzss name must be a symbol")]
-    [_ (Err "parse: malformed include-str-lzss")]))
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-str-lzss name must be a symbol"))]
+    [_
+      (Err
+        (parse-kind-message (MalformedForm) "parse: malformed include-str-lzss"))]))
 
 (define (parse-ast-include-bin
   [dispatch : sym_i64_env.SymI64Env]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
   (match (reader.spanned-sexpr-view rest)
-    [(List (slice) _) (Err "parse: include-bin expects name and string path")]
+    [(List (slice) _)
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-bin expects name and string path"))]
     [(List (slice (Sym name _) (Str path-id _)) _)
       (Ok
         (IncludeBin
           (ci.intern-syntax-id-value name)
           (compiler-parse-dispatch-id-str dispatch path-id)))]
     [(List (slice (Sym _ _) (Str _ _) & _) _)
-      (Err "parse: include-bin expects exactly two operands")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-bin expects exactly two operands"))]
     [(List (slice (Sym _ _) _ & _) _)
-      (Err "parse: include-bin path must be a string")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-bin path must be a string"))]
     [(List (slice (Sym _ _)) _)
-      (Err "parse: include-bin expects name and string path")]
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-bin expects name and string path"))]
     [(List (slice (Sym _ _) & _) _)
-      (Err "parse: include-bin expects exactly two operands")]
-    [(List (slice _ & _) _) (Err "parse: include-bin name must be a symbol")]
-    [_ (Err "parse: malformed include-bin")]))
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-bin expects exactly two operands"))]
+    [(List (slice _ & _) _)
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: include-bin name must be a symbol"))]
+    [_
+      (Err (parse-kind-message (MalformedForm) "parse: malformed include-bin"))]))
 
 (define (parse-ast-test-body
   [pools : ast.AstNodePoolContext]
@@ -10475,7 +11218,9 @@
                               seen-slow)))]
                       [_
                         (Err
-                          "parse: test :ignore metadata expects one string reason")]))]
+                          (parse-kind-message
+                            (MalformedForm)
+                            "parse: test :ignore metadata expects one string reason"))]))]
                 [(=
                     (ci.intern-syntax-id-value key)
                     (cbi.compiler-builtin-ctfe ":slow"))
@@ -10490,17 +11235,32 @@
                           seen-ignore
                           true
                           true)]
-                      [_ (Err "parse: test :slow metadata takes no values")]))]
+                      [_
+                        (Err
+                          (parse-kind-message
+                            (MalformedForm)
+                            "parse: test :slow metadata takes no values"))]))]
                 [else
                   (Err
                     (str_cat.str-cat
                       "parse: unknown test metadata "
                       (compiler-parse-dispatch-syntax-id-text dispatch key)))])]
-            [_ (Err "parse: malformed test metadata")])
+            [_
+              (Err
+                (parse-kind-message
+                  (MalformedForm)
+                  "parse: malformed test metadata"))])
           (if (parse-ast-test-body-metadata-free? dispatch forms)
             (Ok (ast.ast-test-metadata-new ignore-reason slow) forms)
-            (Err "parse: test metadata must appear before body expressions"))))]
-    [_ (Err "parse: malformed test metadata or body")]))
+            (Err
+              (parse-kind-message
+                (MalformedForm)
+                "parse: test metadata must appear before body expressions")))))]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: malformed test metadata or body"))]))
 
 (define (parse-ast-test
   [dispatch : sym_i64_env.SymI64Env]
@@ -10522,7 +11282,10 @@
           [(Ok metadata parsed-body-forms)
             (match (reader.spanned-sexpr-view parsed-body-forms)
               [(List (slice) _)
-                (Err "parse: test needs at least one expression")]
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: test needs at least one expression"))]
               [_
                 (let
                   [exprs
@@ -10533,7 +11296,7 @@
                       (parse-ast-test-body pools exprs)
                       metadata
                       form-span)))])]))]
-    [_ (Err "parse: malformed test")]))
+    [_ (Err (parse-kind-message (MalformedForm) "parse: malformed test"))]))
 
 (define (parse-ast-removed-declaration-message) : String
   "parse: comptime-decl and comptime-decls are removed; use defmacro with Module or Decls return type instead")
@@ -10582,8 +11345,14 @@
           [(Extern decl-meta _ _ _ _) (Ok (ast.ast-decl-unsafe decl))]
           [_
             (Err
-              "parse: unsafe declaration accepts only function define or extern")]))]
-    [_ (Err "parse: unsafe declaration expects exactly one declaration")]))
+              (parse-kind-message
+                (MalformedForm)
+                "parse: unsafe declaration accepts only function define or extern"))]))]
+    [_
+      (Err
+        (parse-kind-message
+          (MalformedForm)
+          "parse: unsafe declaration expects exactly one declaration"))]))
 
 (define (parse-ast-module-macro-call
   [dispatch : sym_i64_env.SymI64Env]
@@ -10601,7 +11370,8 @@
           No
           No
           (ast-source-span-from-source-span (reader.spanned-sexpr-span form)))]
-      [_ (Err "parse: expected declaration")])))
+      [_
+        (Err (parse-kind-message (MalformedForm) "parse: expected declaration"))])))
 
 (define (parse-ast-decl
   [dispatch : sym_i64_env.SymI64Env]
@@ -10665,7 +11435,9 @@
               [(compiler-parse-policy-form? (ci.intern-syntax-id-value head))
                 (Err (compiler-parse-abstraction-policy-message))]
               [else (parse-ast-module-macro-call dispatch pools s)]))]
-        [_ (Err "parse: malformed declaration")])]
+        [_
+          (Err
+            (parse-kind-message (MalformedForm) "parse: malformed declaration"))])]
     (parse-ast-error-span-note-decl dispatch s result)))
 
 (define (parse-ast-decl-maybe-with-pools
@@ -10688,7 +11460,10 @@
                       (NoDecl))]
                   [(Err message) (Err message)])]
               [_
-                (Err "parse: cfg declaration expects predicate and declaration")])
+                (Err
+                  (parse-kind-message
+                    (MalformedForm)
+                    "parse: cfg declaration expects predicate and declaration"))])
             (match (parse-ast-decl dispatch pools s)
               [(Ok decl) (SomeDecl decl)]
               [(Err message) (Err message)]))]
@@ -10696,7 +11471,9 @@
           (match (parse-ast-decl dispatch pools s)
             [(Ok decl) (SomeDecl decl)]
             [(Err message) (Err message)])]
-        [_ (Err "parse: malformed declaration")])]
+        [_
+          (Err
+            (parse-kind-message (MalformedForm) "parse: malformed declaration"))])]
     (parse-ast-error-span-note-maybe-decl dispatch s result)))
 
 (define (parse-ast-decl-maybe
@@ -10707,7 +11484,11 @@
     [result : ResultAstMaybeDecl
       (parse-ast-decl-maybe-with-pools dispatch pools s)]
     (ast.ast-node-pool-context-install! pools)
-    result))
+    (match result
+      [(NoDecl) NoDecl]
+      [(SomeDecl decl) (SomeDecl decl)]
+      [(Decls decls) (Decls decls)]
+      [(Err message) (Err (cdiag.compiler-diagnostic-untagged-message message))])))
 
 (defstruct ParseAstDeclVec
   (slots (__tl_dyn-array ast.AstDecl))
@@ -11096,9 +11877,9 @@
       invocation-address
       compiler-parse-invocation-control-slot
       base-control)
-    (let
-      [decls (try (parse-ast-program-forms dispatch pools toks cur))]
-      (Ok (ast.ast-program decls)))))
+    (match (parse-ast-program-forms dispatch pools toks cur)
+      [(Ok decls) (Ok (ast.ast-program decls))]
+      [(Err message) (Err (cdiag.compiler-diagnostic-untagged-message message))])))
 
 (define (parse-ast-source [src : String]) : ResultAstProgram
   (parse-ast-source-with-cfg src (compiler-cfg-empty)))
@@ -11135,9 +11916,10 @@
         (cdiag.compiler-diagnostic-from-span "" span message)))))
 
 (define (parse-ast-repl-source-error [err : token.SourceError]) : ResultAstReplItem
-  (parse-ast-repl-error
-    (token.source-error-span (compiler-parse-place-shared-view err))
-    (token.source-error-message err)))
+  (Err
+    (box
+      (parse-ast-canonical-diagnostic
+        (cdiag.compiler-diagnostic-from-source-error "" err)))))
 
 ;; The REPL dispatch carries no invocation frame to record the failing subform,
 ;; so an expression error is located at the input form.
@@ -11212,14 +11994,18 @@
     (ast.ast-node-pool-context-install! pools)
     result))
 
+;; Every parse error becomes a diagnostic through here. A tagged message or a
+;; lexer or reader error already gave the diagnostic its kind's code.
 (define (parse-ast-canonical-diagnostic [diag : cdiag.CompilerDiagnostic]) : cdiag.CompilerDiagnostic
   (let
+    [code : String
+      (match (cdiag.compiler-diagnostic-code (& diag))
+        [(CompilerDiagnosticSomeString tagged) tagged]
+        [CompilerDiagnosticNoString
+          (cdiag.compiler-diagnostic-code-for-parse-kind (UnclassifiedParse))])]
     [canonical : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-with-category
-        (&
-          (cdiag.compiler-diagnostic-with-code
-            (& diag)
-            (cdiag.compiler-diagnostic-code-parse)))
+        (& (cdiag.compiler-diagnostic-with-code (& diag) code))
         "parse")]
     (if (parse-ast-if-message? (cdiag.compiler-diagnostic-message canonical))
       (parse-ast-if-diagnostic-notes canonical)

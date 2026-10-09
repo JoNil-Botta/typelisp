@@ -2234,11 +2234,11 @@
 
 (define (lsp-compiler-diagnostic-kind
   [diag : (& diag cdiag.CompilerDiagnostic)]) : String
-  (if (string.eq
-    (cdiag.compiler-diagnostic-code-or-empty diag)
-    (cdiag.compiler-diagnostic-code-parse))
-    "parse"
-    "compiler"))
+  (let
+    [code : String (cdiag.compiler-diagnostic-code-or-empty diag)]
+    (if (cdiag.compiler-diagnostic-parse-code? (& code))
+      "parse"
+      "compiler")))
 
 (define (lsp-compiler-diagnostic-versioned
   [fallback-path : String]

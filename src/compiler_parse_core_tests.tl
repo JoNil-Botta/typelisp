@@ -747,21 +747,154 @@
     [(Err message) (string.eq message want)]
     [(Ok _) false]))
 
-(define (compiler-parse-diagnostic-code-ok?) : bool
-  (match (parser.parse-ast-source-diagnostic
-    "parse-code.tl"
-    (compiler-parse-malformed-binary-source))
+;; Whether `src` fails to parse with a parse-category diagnostic coded `want`
+;; whose text carries no kind tag.
+(define (compiler-parse-diagnostic-code-is?
+  [src : String]
+  [want : (& want str)]) : bool
+  (match (parser.parse-ast-source-diagnostic "parse-code.tl" src)
     [(Err diag)
-      (match (cdiag.compiler-diagnostic-code (__tl-box-place diag))
-        [(CompilerDiagnosticSomeString code)
-          (and
-            (string.eq code (cdiag.compiler-diagnostic-code-parse))
-            (match (cdiag.compiler-diagnostic-category (__tl-box-place diag))
-              [(CompilerDiagnosticSomeString category)
-                (string.eq category "parse")]
-              [CompilerDiagnosticNoString false]))]
-        [CompilerDiagnosticNoString false])]
+      (let
+        [error : cdiag.CompilerDiagnostic (deref diag)]
+        [message : String (cdiag.compiler-diagnostic-message error)]
+        (and
+          (string.eq (cdiag.compiler-diagnostic-code-or-empty (& error)) want)
+          (match (cdiag.compiler-diagnostic-category error)
+            [(CompilerDiagnosticSomeString category)
+              (string.eq category "parse")]
+            [CompilerDiagnosticNoString false])
+          (not (string.contains (& message) "__tl_tc_kind"))))]
     [(Ok _) false]))
+
+;; Each syntax family has its own code (#7135), stated where the error is
+;; raised: by the lexer or reader error's kind, or by the parser's tag, which
+;; also covers the helpers that tag a message their callers pass in. A parse
+;; error of no classified family stays E0100.
+(define (compiler-parse-diagnostic-code-ok?) : bool
+  (let
+    [delimiter : String
+      (cdiag.compiler-diagnostic-code-parse-unbalanced-delimiter)]
+    [token : String (cdiag.compiler-diagnostic-code-parse-malformed-token)]
+    [form : String (cdiag.compiler-diagnostic-code-parse-malformed-form)]
+    [pattern : String (cdiag.compiler-diagnostic-code-parse-invalid-pattern)]
+    [unclassified : String (cdiag.compiler-diagnostic-code-parse)]
+    (and
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : i64
+  (+ 1 2)"
+        (& delimiter))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : i64 (+ 1 2]))"
+        (& delimiter))
+      (compiler-parse-diagnostic-code-is?
+        ") (define (main) : i64 0)"
+        (& delimiter))
+      (compiler-parse-diagnostic-code-is? "(define (main) : i64 @)" token)
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : i64 (cast '\\q' : i64))"
+        (& token))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : String \"open)"
+        (& token))
+      (compiler-parse-diagnostic-code-is?
+        "(defstruct P (x i64))
+(define (main) : i64 (P 1).)"
+        (& token))
+      (compiler-parse-diagnostic-code-is?
+        "(defstruct P (x i64))
+(define (main) : i64 (P 1).0)"
+        (& token))
+      (compiler-parse-diagnostic-code-is?
+        (compiler-parse-malformed-binary-source)
+        (& form))
+      (compiler-parse-diagnostic-code-is?
+        (compiler-parse-malformed-if-source)
+        (& form))
+      (compiler-parse-diagnostic-code-is? "(define)" form)
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : i64 (if true 1 2 3))"
+        (& form))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : i64 (let [x : i64 1]))"
+        (& form))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : i64 (let [x : i64 1] (cfg nope 1)))"
+        (& form))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : i64 (match 1 [_]))"
+        (& form))
+      (compiler-parse-diagnostic-code-is?
+        "(defstruct Bad (:repr c) (x i64 (:align)))"
+        (& form))
+      (compiler-parse-diagnostic-code-is?
+        "(defstruct P (:lifetimes) (x i64))"
+        (& form))
+      (compiler-parse-diagnostic-code-is?
+        "(defstruct P (:lifetimes 1) (x i64))"
+        (& form))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : unit (spmd-scan sum ([i nope i64 0 3] [prefix : i64 0]) i unit))"
+        (& form))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : unit (spmd-scan sum ([i : i64 0 3] [prefix nope i64 0]) i unit))"
+        (& form))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : i64 (begin (foreach-active [lane nope i64] unit) 0))"
+        (& form))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : i64 (cfg (not a b) 1))"
+        (& form))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main [x : i64]) : i64 (match x [(1 2) 0] [_ 1]))"
+        (& pattern))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main [xs : (& (Slice i64))]) : i64 (match xs [(slice a &rest) a] [_ 0]))"
+        (& pattern))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main [xs : (& (Slice i64))]) : i64 (match xs [(slice a & b & c) a] [_ 0]))"
+        (& pattern))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main [xs : (& (Slice i64))]) : i64 (match xs [(slice a &) a] [_ 0]))"
+        (& pattern))
+      (compiler-parse-diagnostic-code-is?
+        "(define (main) : i64 (box-get (box 42)))"
+        (& unclassified))
+      (compiler-parse-diagnostic-code-is?
+        "(defstruct Bad (:repr packed) (x i64))"
+        (& unclassified))
+      (compiler-parse-diagnostic-code-is?
+        "(defstruct Bad (:repr c) (:repr c) (x i64))"
+        (& unclassified)))))
+
+;; A parser error handed out as text has no kind tag, from every entry point
+;; that returns text.
+(define (compiler-parse-error-text-untagged-ok?) : bool
+  (let
+    [src : String "(+ 1)"]
+    (match (lexer.spanned-result (& src))
+      [(Ok toks)
+        (let
+          [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+          (set! (array-ref cur 0) 0)
+          (match (reader.form-spanned-result (& toks) (&mut cur))
+            [(Ok form)
+              (let
+                [dispatch : sym_i64_env.SymI64Env
+                  (parser.compiler-parse-dispatch-env)]
+                (and
+                  (match (parser.parse-ast-expr dispatch form)
+                    [(Err message)
+                      (string.eq message "parse: malformed binary expression")]
+                    [(Ok _) false])
+                  (match (parser.parse-ast-decl-maybe dispatch form)
+                    [(Err message)
+                      (string.eq message "parse: malformed binary expression")]
+                    [_ false])
+                  (compiler-parse-error-ok?
+                    "(define (main) : i64 (+ 1))"
+                    "parse: malformed binary expression")))]
+            [(Err _) false]))]
+      [(Err _) false])))
 
 ;; Minimal complete programs that lex cleanly but reach a specific parser
 ;; rejection, one per representative special form.
@@ -2577,15 +2710,86 @@
           (= (cdiag.compiler-diagnostic-list-count (deref diagnostics-box)) 1))]
       [(Fatal _) false])))
 
+;; Whether `diag` is at `line`:`col` with `code`.
+(define (compiler-parse-recovery-diagnostic-is?
+  [diag : cdiag.CompilerDiagnostic]
+  [line : i64]
+  [col : i64]
+  [code : String]) : bool
+  (and
+    (= (cdiag.compiler-diagnostic-line (& diag)) line)
+    (= (cdiag.compiler-diagnostic-col (& diag)) col)
+    (string.eq (cdiag.compiler-diagnostic-code-or-empty (& diag)) code)))
+
+;; Recovery reports errors of different families in source order, each at its
+;; own span with its own code, and keeps the declarations around them.
+(define (compiler-parse-recovery-mixed-codes-ok?) : bool
+  (match (parse-ast-source-recovery-diagnostic
+    "tests/recovery-codes.tl"
+    "(define (bad-form) : i64 (if true 1))
+(define (bad-pattern [items : (& (Slice i64))]) : i64
+  (match items [(slice a &rest) a] [_ 0]))
+(define (removed) : i64 (box-get (box 1)))
+(define (bad-close) : i64 (+ 1 2])
+(define (kept) : i64 1)")
+    [(Parsed (Program decls-box) diagnostics-box)
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList (deref diagnostics-box)]
+        (and
+          (= (ast.ast-decl-list-len (& (__tl-box-place decls-box))) 1)
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 4)
+          (compiler-parse-recovery-diagnostic-is?
+            (cdiag.compiler-diagnostic-list-get diagnostics 0)
+            1
+            26
+            (cdiag.compiler-diagnostic-code-parse-malformed-form))
+          (compiler-parse-recovery-diagnostic-is?
+            (cdiag.compiler-diagnostic-list-get diagnostics 1)
+            3
+            3
+            (cdiag.compiler-diagnostic-code-parse-invalid-pattern))
+          (compiler-parse-recovery-diagnostic-is?
+            (cdiag.compiler-diagnostic-list-get diagnostics 2)
+            4
+            25
+            (cdiag.compiler-diagnostic-code-parse))
+          (compiler-parse-recovery-diagnostic-is?
+            (cdiag.compiler-diagnostic-list-get diagnostics 3)
+            5
+            33
+            (cdiag.compiler-diagnostic-code-parse-unbalanced-delimiter))))]
+    [(Fatal _) false]))
+
+;; A lexer error is fatal: it is the file's only diagnostic, coded E0102.
+(define (compiler-parse-recovery-lexer-fatal-code-ok?) : bool
+  (match (parse-ast-source-recovery-diagnostic
+    "tests/recovery-lexer.tl"
+    "(define)
+(define (main) : i64 @)")
+    [(Parsed _ _) false]
+    [(Fatal diagnostics-box)
+      (let
+        [diagnostics : cdiag.CompilerDiagnosticList (deref diagnostics-box)]
+        (and
+          (= (cdiag.compiler-diagnostic-list-count diagnostics) 1)
+          (compiler-parse-recovery-diagnostic-is?
+            (cdiag.compiler-diagnostic-list-first diagnostics)
+            2
+            22
+            (cdiag.compiler-diagnostic-code-parse-malformed-token))))]))
+
 (define (compiler-parse-recovery-tests-ok?) : bool
   (and
     (compiler-parse-recovery-balanced-decl-ok?)
     (compiler-parse-recovery-ordered-errors-ok?)
-    (compiler-parse-recovery-reader-progress-ok?)))
+    (compiler-parse-recovery-reader-progress-ok?)
+    (compiler-parse-recovery-mixed-codes-ok?)
+    (compiler-parse-recovery-lexer-fatal-code-ok?)))
 
 (define (compiler-parse-error-tests-ok?) : bool
   (cond
     [(not (compiler-parse-diagnostic-code-ok?)) false]
+    [(not (compiler-parse-error-text-untagged-ok?)) false]
     [(not (compiler-parse-nested-diagnostic-spans-ok?)) false]
     [(not (compiler-parse-recovery-tests-ok?)) false]
     [(not (compiler-parse-special-form-error-tests-ok?)) false]
@@ -3371,7 +3575,10 @@
         [(AstReplDecl _) false])]
     [(Err _) false]))
 
-(define (compiler-parse-repl-error-ok? [src : String] [expected : String]) : bool
+(define (compiler-parse-repl-error-ok?
+  [src : String]
+  [expected : String]
+  [code : String]) : bool
   (match (parser.parse-ast-repl-source src)
     [(Ok _) false]
     [(Err diag)
@@ -3379,10 +3586,7 @@
         [error : cdiag.CompilerDiagnostic (deref diag)]
         (and
           (string.eq (cdiag.compiler-diagnostic-message error) expected)
-          (match (cdiag.compiler-diagnostic-code error)
-            [(CompilerDiagnosticSomeString code)
-              (string.eq code (cdiag.compiler-diagnostic-code-parse))]
-            [CompilerDiagnosticNoString false])
+          (string.eq (cdiag.compiler-diagnostic-code-or-empty (& error)) code)
           (>= (cdiag.compiler-diagnostic-line error) 1)))]))
 
 (define (compiler-parse-repl-error-at? [src : String] [line : i64] [col : i64]) : bool
@@ -3408,9 +3612,22 @@
     ;; trailing tokens after a complete item are rejected
     (compiler-parse-repl-error-ok?
       "42 43"
-      "parse: trailing tokens after REPL input")
+      "parse: trailing tokens after REPL input"
+      (cdiag.compiler-diagnostic-code-parse))
     ;; a malformed expression item surfaces the expression diagnostic
-    (compiler-parse-repl-error-ok? "(+ 1)" "parse: malformed binary expression")
+    (compiler-parse-repl-error-ok?
+      "(+ 1)"
+      "parse: malformed binary expression"
+      (cdiag.compiler-diagnostic-code-parse-malformed-form))
+    ;; lexer and reader errors keep their codes in the REPL
+    (compiler-parse-repl-error-ok?
+      "@"
+      "lexer: unexpected character"
+      (cdiag.compiler-diagnostic-code-parse-malformed-token))
+    (compiler-parse-repl-error-ok?
+      "(+ 1 2"
+      "reader: unterminated list: reached end of input before ')'"
+      (cdiag.compiler-diagnostic-code-parse-unbalanced-delimiter))
     ;; errors are located in the input: at the trailing token, and at the
     ;; malformed input form, including one on a later line
     (compiler-parse-repl-error-at? "42 43" 1 4)

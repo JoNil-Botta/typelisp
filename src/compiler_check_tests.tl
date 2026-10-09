@@ -377,7 +377,7 @@
             "parse: malformed define")
           (string.eq
             (cdiag.compiler-diagnostic-code-or-empty first)
-            (cdiag.compiler-diagnostic-code-parse))
+            (cdiag.compiler-diagnostic-code-parse-malformed-form))
           (= (cdiag.compiler-diagnostic-line first) 1)
           (string.eq
             (cdiag.compiler-diagnostic-message second)

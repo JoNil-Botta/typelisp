@@ -6256,7 +6256,10 @@
                   (cbi.compiler-builtin-ctfe "or")
                   "or")
                 (if (< (ast.ast-pattern-list-len (& parsed-args)) 2)
-                  (Err "parse: or-pattern needs at least two alternatives")
+                  (Err
+                    (parse-kind-message
+                      (InvalidPattern)
+                      "parse: or-pattern needs at least two alternatives"))
                   (Ok (ast.ast-pat-or parsed-args)))]
               [else (Ok (ast.ast-pat-variant-id name-id parsed-args))]))))]
     [_ (Err (parse-kind-message (InvalidPattern) "parse: expected pattern"))]))
@@ -6289,7 +6292,9 @@
       [(ResultAstPatternListBuild.Ok)
         (if (ast.ast-pattern-list-empty? (& out))
           (ResultAstPattern.Err
-            "parse: (fields ...) pattern needs at least one field")
+            (parse-kind-message
+              (InvalidPattern)
+              "parse: (fields ...) pattern needs at least one field"))
           (ResultAstPattern.Ok (ast.ast-pat-fields out)))]
       [(ResultAstPatternListBuild.Err message) (ResultAstPattern.Err message)])))
 
@@ -6330,7 +6335,10 @@
       (let
         [name-id : i64 (parse-ast-fields-pattern-field-name dispatch entry)]
         (if (< name-id 0)
-          (ResultAstPattern.Err "parse: (fields ...) entry must name a field")
+          (ResultAstPattern.Err
+            (parse-kind-message
+              (InvalidPattern)
+              "parse: (fields ...) entry must name a field"))
           (ResultAstPattern.Ok
             (ast.ast-pat-field name-id (ast.ast-pat-binding-id name-id)))))]
     [(reader.SpannedSexprView.BracketList (slice pattern field) _)
@@ -6338,17 +6346,23 @@
         [name-id : i64 (parse-ast-fields-pattern-field-name dispatch field)]
         (if (< name-id 0)
           (ResultAstPattern.Err
-            "parse: (fields ...) entry [pattern field] must end with a field name")
+            (parse-kind-message
+              (InvalidPattern)
+              "parse: (fields ...) entry [pattern field] must end with a field name"))
           (match (parse-ast-pattern dispatch pools pattern)
             [(ResultAstPattern.Ok parsed)
               (ResultAstPattern.Ok (ast.ast-pat-field name-id parsed))]
             [(ResultAstPattern.Err message) (ResultAstPattern.Err message)])))]
     [(reader.SpannedSexprView.BracketList _ _)
       (ResultAstPattern.Err
-        "parse: (fields ...) entry [pattern field] takes exactly two items")]
+        (parse-kind-message
+          (InvalidPattern)
+          "parse: (fields ...) entry [pattern field] takes exactly two items"))]
     [_
       (ResultAstPattern.Err
-        "parse: (fields ...) entry must be a field name or [pattern field]")]))
+        (parse-kind-message
+          (InvalidPattern)
+          "parse: (fields ...) entry must be a field name or [pattern field]"))]))
 
 (define (compiler-parse-semantic-pattern-list-origins!
   [dispatch : sym_i64_env.SymI64Env]

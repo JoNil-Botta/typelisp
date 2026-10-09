@@ -56,7 +56,7 @@ file.
 | Unbalanced delimiter | `reader: unterminated list`, `reader: unexpected ')'`, `reader: mismatched delimiter`, `reader: unexpected end of input` | E0101 | reader | detailed |
 | Malformed token | every `lexer:` error (unexpected character, malformed integer literal, unterminated string or character literal, unknown or unterminated escape); `reader:` dotted field access with an empty or numeric field | E0102 | lexer, reader | detailed |
 | Malformed form | `parse: malformed <form>`, `<form> expects ...`, `<form> requires ...`, `... is missing ...`, `expected ':' in ...`, `expected type`, `expected declaration`, a part of the wrong syntactic kind, metadata before the items it must precede | E0103 | parser | detailed |
-| Invalid pattern syntax | `parse: expected pattern`, slice-pattern `&` rest errors | E0104 | parser | detailed |
+| Invalid pattern syntax | `parse: expected pattern`, slice-pattern `&` rest errors, `(or ...)` with fewer than two alternatives, malformed `(fields ...)` entries | E0104 | parser | detailed |
 | Unknown name or keyword | `unknown <form> metadata`, `unknown type constructor`, `unknown extern ABI`, `unsupported <op> operator`, `CFunc mode must be ...`, `:spmd-callable` class keywords | E0100 | parser | detailed (E0100) |
 | Duplicate metadata | `duplicate <form> <key> metadata`, `foreach domain bindings must use distinct names` | E0100 | parser | detailed (E0100) |
 | Metadata or value constraint | `field :align metadata requires struct (:repr c) metadata`, `:align value must be a power of two ...`, `lanes must be greater than one`, `... cannot be used on functions with comptime parameters` | E0100 | parser | detailed (E0100) |

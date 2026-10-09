@@ -857,6 +857,29 @@
         "(define (main [xs : (& (Slice i64))]) : i64 (match xs [(slice a &) a] [_ 0]))"
         (& pattern))
       (compiler-parse-diagnostic-code-is?
+        "(define (main [x : i64]) : i64 (match x [(or 1) 0] [_ 1]))"
+        (& pattern))
+      (compiler-parse-diagnostic-code-is?
+        "(defstruct P (x i64))
+(define (main [p : P]) : i64 (match p [(fields) 0]))"
+        (& pattern))
+      (compiler-parse-diagnostic-code-is?
+        "(defstruct P (x i64))
+(define (main [p : P]) : i64 (match p [(fields _) 0]))"
+        (& pattern))
+      (compiler-parse-diagnostic-code-is?
+        "(defstruct P (x i64))
+(define (main [p : P]) : i64 (match p [(fields [a 1]) 0]))"
+        (& pattern))
+      (compiler-parse-diagnostic-code-is?
+        "(defstruct P (x i64))
+(define (main [p : P]) : i64 (match p [(fields [a b c]) 0]))"
+        (& pattern))
+      (compiler-parse-diagnostic-code-is?
+        "(defstruct P (x i64))
+(define (main [p : P]) : i64 (match p [(fields 1) 0]))"
+        (& pattern))
+      (compiler-parse-diagnostic-code-is?
         "(define (main) : i64 (box-get (box 42)))"
         (& unclassified))
       (compiler-parse-diagnostic-code-is?

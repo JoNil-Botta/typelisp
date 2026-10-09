@@ -505,8 +505,7 @@
 
 (define (lower-test-product-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(BinOp _ (Mul) _ _ (I64)) true]
-    [(BinOp _ (Shl _) _ _ (I64)) true]
+    [(or (BinOp _ (Mul) _ _ (I64)) (BinOp _ (Shl _) _ _ (I64))) true]
     [_ false]))
 
 (define (lower-test-product-shape-blocks
@@ -3155,8 +3154,7 @@
 
 (define (lower-test-instr-branch-count [instr : ir.CompilerIrInstr]) : i64
   (match instr
-    [(Branch _ _ _) 1]
-    [(TotalEnumBranch _ _ _) 1]
+    [(or (Branch _ _ _) (TotalEnumBranch _ _ _)) 1]
     [_ 0]))
 
 (define (lower-test-instr-total-enum-branch-count [instr : ir.CompilerIrInstr]) : i64
@@ -3254,11 +3252,7 @@
 
 (define (lower-test-instr-indirect-unit-count [instr : ir.CompilerIrInstr]) : i64
   (match instr
-    [(CallIndirect _ _ _ ty)
-      (match ty
-        [(Unit) 1]
-        [_ 0])]
-    [(TailCallIndirect _ _ ty)
+    [(or (CallIndirect _ _ _ ty) (TailCallIndirect _ _ ty))
       (match ty
         [(Unit) 1]
         [_ 0])]
@@ -3284,8 +3278,8 @@
       (+
         (lower-test-value-function-count a name)
         (lower-test-value-function-count b name))]
-    [(Array values) (lower-test-call-args-array-function-count values name 0)]
-    [(Sret values _) (lower-test-call-args-array-function-count values name 0)]))
+    [(or (Array values) (Sret values _))
+      (lower-test-call-args-array-function-count values name 0)]))
 
 (define (lower-test-call-args-array-function-count
   [values : (__tl_dyn-array ir.CompilerIrValue)]
@@ -3313,9 +3307,7 @@
   [instr : ir.CompilerIrInstr]
   [function-name : (& function-name str)]) : i64
   (match instr
-    [(CallIndirect _ func _ _)
-      (lower-test-value-function-count func function-name)]
-    [(TailCallIndirect func _ _)
+    [(or (CallIndirect _ func _ _) (TailCallIndirect func _ _))
       (lower-test-value-function-count func function-name)]
     [_ 0]))
 
@@ -3374,12 +3366,10 @@
   [instr : ir.CompilerIrInstr]
   [want : ir.CompilerIrBinOp]) : i64
   (match instr
-    [(VectorBinOp payload-box)
-      (let
-        [op (ir.compiler-ir-box-field-shared-view payload-box op)]
-        (if (lower-test-binop-same? op want)
-          1
-          0))]
+    [(VectorBinOp (box (fields op)))
+      (if (lower-test-binop-same? op want)
+        1
+        0)]
     [_ 0]))
 
 (define (lower-test-instr-vector-reduce-count [instr : ir.CompilerIrInstr]) : i64
@@ -3484,57 +3474,33 @@
   [lanes : i64]
   [elem-ty : ast.AstType]) : i64
   (match instr
-    [(VectorLoad _ _ _ actual-lanes actual-ty)
+    [(or (VectorLoad _ _ _ actual-lanes actual-ty)
+         (VectorReduce _ _ _ actual-lanes actual-ty)
+         (Splat _ _ actual-lanes actual-ty))
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
-    [(VectorBinOp payload-box)
-      (let
-        [actual-lanes (ir.compiler-ir-box-field-shared-view payload-box lanes)]
-        [actual-ty (ir.compiler-ir-box-field-shared-view payload-box ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-          1
-          0))]
-    [(VectorReduce _ _ _ actual-lanes actual-ty)
+    [(VectorBinOp (box (fields [actual-lanes lanes] [actual-ty ty])))
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
-    [(VectorStore payload-box)
-      (let
-        [actual-lanes (ir.compiler-ir-box-field-shared-view payload-box lanes)]
-        [actual-ty (ir.compiler-ir-box-field-shared-view payload-box ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-          1
-          0))]
-    [(PredicatedLoad payload-box)
-      (let
-        [actual-lanes (ir.compiler-ir-box-field-shared-view payload-box lanes)]
-        [actual-ty (ir.compiler-ir-box-field-shared-view payload-box ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-          1
-          0))]
-    [(GatherLoad payload-box)
-      (let
-        [actual-lanes (ir.compiler-ir-box-field-shared-view payload-box lanes)]
-        [actual-ty (ir.compiler-ir-box-field-shared-view payload-box ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-          1
-          0))]
-    [(PredicatedStore payload-box)
-      (let
-        [actual-lanes (ir.compiler-ir-box-field-shared-view payload-box lanes)]
-        [actual-ty (ir.compiler-ir-box-field-shared-view payload-box ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-          1
-          0))]
-    [(Select payload-box)
-      (let
-        [actual-lanes (ir.compiler-ir-box-field-shared-view payload-box lanes)]
-        [actual-ty (ir.compiler-ir-box-field-shared-view payload-box ty)]
-        (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
-          1
-          0))]
-    [(Splat _ _ actual-lanes actual-ty)
+    [(VectorStore (box (fields [actual-lanes lanes] [actual-ty ty])))
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(PredicatedLoad (box (fields [actual-lanes lanes] [actual-ty ty])))
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(GatherLoad (box (fields [actual-lanes lanes] [actual-ty ty])))
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(PredicatedStore (box (fields [actual-lanes lanes] [actual-ty ty])))
+      (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
+        1
+        0)]
+    [(Select (box (fields [actual-lanes lanes] [actual-ty ty])))
       (if (lower-test-vector-shape? actual-lanes actual-ty lanes elem-ty)
         1
         0)]
@@ -4652,8 +4618,8 @@
 (define (lower-test-call-args-distinct-vars [args : ir.CompilerIrCallArgs]) : i64
   (match args
     [(Two a b) (lower-test-values-distinct-vars a b)]
-    [(Array values) (lower-test-call-args-array-distinct-vars values)]
-    [(Sret values _) (lower-test-call-args-array-distinct-vars values)]
+    [(or (Array values) (Sret values _))
+      (lower-test-call-args-array-distinct-vars values)]
     [_ 0]))
 
 (define (lower-test-instr-seq-distinct-arg-call-count
@@ -6174,8 +6140,7 @@
 
 (define (lower-test-instr-binop-count [instr : ir.CompilerIrInstr]) : i64
   (match instr
-    [(BinOp _ _ _ _ _) 1]
-    [(UnOp _ _ _ _) 1]
+    [(or (BinOp _ _ _ _ _) (UnOp _ _ _ _)) 1]
     [_ 0]))
 
 (define (lower-test-instr-gep-offset-count
@@ -10863,23 +10828,9 @@
       (let
         [rest : ast.AstDeclList rest]
         (match decl
-          [(DefFn decl-meta found _ _ _ _)
-            (if (string.eq (tc_core.tc-env-key-name-text found) name)
-              true
-              (lower-test-decl-list-defines? rest name))]
-          [(DefEnum decl-meta found _ _)
-            (if (string.eq (tc_core.tc-env-key-name-text found) name)
-              true
-              (lower-test-decl-list-defines? rest name))]
-          [(DefEnumLifetimes decl-meta found _ _ _)
-            (if (string.eq (tc_core.tc-env-key-name-text found) name)
-              true
-              (lower-test-decl-list-defines? rest name))]
-          [(DefStruct decl-meta found _ _ _)
-            (if (string.eq (tc_core.tc-env-key-name-text found) name)
-              true
-              (lower-test-decl-list-defines? rest name))]
-          [(DefStructLifetimes decl-meta found _ _ _ _)
+          [(or (DefFn _ found _ _ _ _) (DefEnum _ found _ _)
+               (DefEnumLifetimes _ found _ _ _) (DefStruct _ found _ _ _)
+               (DefStructLifetimes _ found _ _ _ _))
             (if (string.eq (tc_core.tc-env-key-name-text found) name)
               true
               (lower-test-decl-list-defines? rest name))]

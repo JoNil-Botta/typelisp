@@ -51657,6 +51657,10 @@
 ;; recorded only when both values are literals or single-source vars
 ;; (opt-gvn-value-stable?), so recorded pairs can never be redefined and no
 ;; invalidation is needed: stores and calls cannot change an SSA var's value.
+;; A var whose storage an `addr_of` exposes is the exception: a store through
+;; that address changes it with no instruction naming it (#7972), so
+;; `opt-bounds-dom-sources` counts it as unstable and no rule here, whether a
+;; copy, a comparison fact or a checked pair, ever holds it (#8672).
 ;; PRECONDITION: the caller must have verified the function (defs dominate
 ;; uses). In a fallback non-SSA function a textually-single-def var inside a
 ;; loop takes a new value each iteration and loop-carried uses precede the
@@ -58505,11 +58509,10 @@
       (opt-flag-facts-rewrite-blocks
         context.index
         context.doms
-        (opt-gvn-sources-blocks
-          blocks
-          (opt-gvn-sources-params
-            (compiler-opt-global-shared-view params)
-            (opt-value-sources-new)))
+        (opt-bounds-dom-sources
+          (compiler-opt-global-shared-view params)
+          frame
+          (compiler-opt-global-shared-view blocks))
         blocks)]
     (opt-bounds-dom-blocks-with-context-result-core
       type-segment-bases
@@ -58519,6 +58522,29 @@
       nonneg
       len-eq
       flagged)))
+
+;; The value sources every bounds_dom rule reads. Each address-taken var gets
+;; two more, so its count is never the single source `opt-gvn-stable-var?`
+;; accepts, even when no instruction defines it (#8672).
+(define (opt-bounds-dom-sources
+  [params : ir.CompilerIrParamSeq]
+  [frame : i64]
+  [blocks : ir.CompilerIrBlockList]) : OptValueSources
+  (let
+    [marks : (__tl_dyn-array bool) (opt-addr-taken-vars frame (& blocks))]
+    [sources : OptValueSources
+      (opt-gvn-sources-blocks
+        blocks
+        (opt-gvn-sources-params
+          (compiler-opt-global-shared-view params)
+          (opt-value-sources-new)))]
+    [var : i64 0]
+    (while (< var (array-length marks))
+      (when
+        (array-ref marks var)
+        (set! sources (opt-gvn-defs-add (opt-gvn-defs-add sources var) var)))
+      (set! var (+ var 1)))
+    sources))
 
 (define (opt-bounds-dom-blocks-with-context-result-core
   [type-segment-bases : i64]
@@ -58530,11 +58556,10 @@
   [blocks : ir.CompilerIrBlockList]) : OptBoundsDomResult
   (let
     [sources : OptValueSources
-      (opt-gvn-sources-blocks
-        blocks
-        (opt-gvn-sources-params
-          (compiler-opt-global-shared-view params)
-          (opt-value-sources-new)))]
+      (opt-bounds-dom-sources
+        (compiler-opt-global-shared-view params)
+        frame
+        (compiler-opt-global-shared-view blocks))]
     [copies : opt_i64_i64_map.Map
       (opt-bounds-dom-copies-add-blocks
         sources

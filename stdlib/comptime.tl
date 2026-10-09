@@ -610,6 +610,14 @@
 (define (expr-binding-clause-init-callee [_clause : ExprBindingClause]) : String
   "")
 
+;: Return the argument expressions of a call expression, or an empty list for
+;: any other expression. Source spans and caller-origin markers around the
+;: expression are looked through.
+(define (expr-call-args [value : Expr]) : ExprList
+  (match value
+    [(Call _ args) args]
+    [_ (expr-list-empty)]))
+
 ;: Return the number of binding clauses in a binding-clause list.
 (define (expr-binding-clause-list-length [items : ExprBindingClauseList]) : i64
   (__tl_struct-get items len))

@@ -819,6 +819,7 @@ range_loop_shapes_protocol_abort|all|-,2|tests/integration/range_loop_shapes.tl|
 range_loop_shapes_fields_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 2|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:55:46: array index out of bounds: index=16 length=16\n
 range_loop_shapes_advance_first_abort|all|-,2|tests/integration/range_loop_shapes.tl|134|-|16 3|stdlib/io.tl stdlib/iterator.tl stdlib/string.tl|expected-stderr:tl: $SRC:116:48: array index out of bounds: index=16 length=16\n
 latch_sink_for_loops|all|0,2|tests/integration/latch_sink_for_loops.tl|42|-|-|stdlib/iterator.tl|-
+counter_sink_loops|all|0,1,2|tests/integration/counter_sink_loops.tl|42|-|-|-|-
 specialize_resource_scope|all|-|tests/integration/specialize_resource_scope.tl|42|-|-|-|-
 specialize_substitution_forms|all|-|tests/integration/specialize_substitution_forms.tl|42|-|-|stdlib/vector.tl|-
 specialize_binder_shadow|all|-|tests/integration/specialize_binder_shadow.tl|42|-|-|-|-

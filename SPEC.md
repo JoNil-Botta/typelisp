@@ -853,7 +853,12 @@ E0221, even inside `unsafe`:
   operand, so `(size-of (type T))` is rejected;
 - binds a value that holds it by value with `let`, even without an annotation;
 - names a value or function whose type holds it by value, such as a function of
-  the defining module that returns it.
+  the defining module that returns it;
+- yields a value that holds it by value without writing the type: `ptr-read`,
+  a `deref` read, or reading a `Box`'s contents. `ptr-write!` writes such a
+  value and `ptr-offset` scales by its size, so both are rejected too. A
+  dereference that stays a place, as in the reborrow `(& (deref c))`, is not a
+  read.
 
 Code a macro expands into a module is checked as that module's code.
 
@@ -877,10 +882,7 @@ Not yet enforced:
   namespace is still treated as a family member (#8733);
 - layout queries and reflection still reach the representation through a type
   derived from an allowed one, such as the `reference-element-type` of
-  `(& a T)` (#8735);
-- a value that `ptr-read` or `deref` yields is rejected only where it is bound
-  with `let` or named, and `ptr-offset` and `ptr-write!` are not checked
-  (#8734).
+  `(& a T)` (#8735).
 
 ### 3.6 Type aliases
 
@@ -902,6 +904,16 @@ implementation declarations. Declaration generation is expressed as
 declaration-emitting `defmacro` declarations (section 3.7.1): `: Module` for
 generated module families bound by `import`, and `: Decls` for declarations
 spliced into the current module.
+
+A function with a `[comptime name : T]` parameter is a template rather than a
+runtime function: each distinct combination of comptime arguments at its calls
+produces one concrete instance, and every call with the same arguments uses
+that instance. A template belongs to its module. Same-named templates of two
+modules are different templates; a bare call resolves the name in the calling
+module; and an instance is declared in its template's module in the template's
+place, so its body sees that module's private declarations, whichever module
+asked for the instance. Calling another module's template through its module
+name is not supported yet (#8596).
 
 #### 3.7.1 Typed expression macros
 
@@ -2126,6 +2138,13 @@ range is inclusive. This is exactly the `stdlib.iterator` protocol's sequence,
 including an inclusive range that ends at the largest `i64`, but no iterator
 state is constructed and no protocol function is called per item. An annotated
 clause uses the protocol.
+
+When that source is a direct call of `stdlib.iterator.range` or
+`range-inclusive` itself, as `comptime.expr-binding-clause-init-callee` reports
+it, the loop counts from the call's two arguments and no range value is built.
+The start and then the end are each evaluated once, as `i64`. A call of any
+other function, including a local or user function named `range`, takes the
+path above.
 
 A single unannotated clause over a counted range or a borrowed array, `Slice`,
 `__tl_dyn-array`, or slots/len struct expands to one index-driven `while`
@@ -6636,6 +6655,12 @@ Primitive names and signatures are fixed as follows:
 non-type operands, and kind mismatches are compile-time diagnostics. The
 diagnostic names the primitive and the expected kind, for example
 `struct-field-type requires struct type`.
+
+`struct-field-type` and `enum-variant-payload-type` resolve the declared type
+in the declaring module's scope. A type written through that module's import
+alias, such as `svec.Vec` after `(import (vector.vector String) as svec)`,
+reflects as the canonical nominal type the alias names, so a macro that splices
+it into another module does not need the alias.
 
 `type-kind` returns one of these lowercase stable strings:
 

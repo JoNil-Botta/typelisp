@@ -64,11 +64,15 @@
     [err : token.SourceError
       (token.SourceError
         "lexer: unexpected character"
-        (token.SourceSpan 4 5 4 6))]
+        (token.SourceSpan 4 5 4 6)
+        TokenError)]
     [diag : cdiag.CompilerDiagnostic
       (cdiag.compiler-diagnostic-from-source-error "input.tl" err)]
     (and
       (string.eq (cdiag.compiler-diagnostic-path diag) "input.tl")
+      (string.eq
+        (cdiag.compiler-diagnostic-code-or-empty (& diag))
+        (cdiag.compiler-diagnostic-code-parse-malformed-token))
       (= (cdiag.compiler-diagnostic-line diag) 4)
       (= (cdiag.compiler-diagnostic-col diag) 5)
       (string.eq
@@ -534,6 +538,108 @@
     (compiler-diagnostic-typecheck-kind-row-is? (ForeignGlobalWrite) 21)
     (compiler-diagnostic-typecheck-kind-row-is? (OpaqueRepresentation) 22)))
 
+;; Parse kinds map one-to-one onto the parse rows of the registry (#7135).
+(define (compiler-diagnostic-parse-kind-row-is?
+  [kind : cdiag.CompilerParseKind]
+  [index : i64]) : bool
+  (let
+    [code : String (cdiag.compiler-diagnostic-code-registry-code index)]
+    (and
+      (cdiag.compiler-diagnostic-parse-code? (& code))
+      (string.eq
+        (cdiag.compiler-diagnostic-code-for-parse-kind kind)
+        (string.copy (& code)))
+      (string.eq
+        (cdiag.compiler-diagnostic-parse-tag kind)
+        (str_cat.str-cat
+          (cdiag.compiler-diagnostic-typecheck-tag-prefix)
+          code
+          ":")))))
+
+(define (compiler-diagnostic-parse-kind-rows-ok?) : bool
+  (and
+    (compiler-diagnostic-parse-kind-row-is? (UnclassifiedParse) 0)
+    (compiler-diagnostic-parse-kind-row-is? (UnbalancedDelimiter) 23)
+    (compiler-diagnostic-parse-kind-row-is? (MalformedToken) 24)
+    (compiler-diagnostic-parse-kind-row-is? (MalformedForm) 25)
+    (compiler-diagnostic-parse-kind-row-is? (InvalidPattern) 26)
+    (not
+      (cdiag.compiler-diagnostic-parse-code?
+        (& (cdiag.compiler-diagnostic-code-typecheck))))
+    (not (cdiag.compiler-diagnostic-parse-code? "E010"))
+    (not (cdiag.compiler-diagnostic-parse-code? "E01000"))
+    (not (cdiag.compiler-diagnostic-parse-code? ""))))
+
+;; A parse tag rides the typecheck tag transport: the diagnostic built from a
+;; tagged message takes the kind's code whatever the wording says, and the tag
+;; never reaches the text. Turning the diagnostic back into error text drops a
+;; parse code, and untagging the raw message gives the text back.
+(define (compiler-diagnostic-parse-kind-transport-ok?) : bool
+  (let
+    [decoy : String "parse: expected pattern; unterminated list; malformed let"]
+    [tagged : String
+      (cdiag.compiler-diagnostic-parse-tagged
+        (MalformedForm)
+        (string.copy (& decoy)))]
+    [diag : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-at-start "" (string.copy (& tagged)))]
+    (and
+      (string.eq
+        (compiler-diagnostic-built-code (string.copy (& tagged)))
+        "E0103")
+      (string.eq (cdiag.compiler-diagnostic-message diag) decoy)
+      (string.eq
+        (compiler-diagnostic-built-code
+          (cdiag.compiler-diagnostic-parse-tagged
+            (InvalidPattern)
+            "parse: malformed let"))
+        "E0104")
+      (string.eq
+        (compiler-diagnostic-built-code
+          (cdiag.compiler-diagnostic-parse-tagged
+            (UnclassifiedParse)
+            "parse: unknown define metadata :x"))
+        "E0100")
+      (string.eq (compiler-diagnostic-built-code (string.copy (& decoy))) "")
+      (string.eq
+        (cdiag.compiler-diagnostic-typecheck-error-text (& diag))
+        decoy)
+      (string.eq
+        (cdiag.compiler-diagnostic-untagged-message (string.copy (& tagged)))
+        decoy))))
+
+;; A lexer or reader error is coded by its kind, whatever its text says, and
+;; keeps its message and span.
+(define (compiler-diagnostic-source-error-code-is?
+  [kind : token.SourceErrorKind]
+  [message : String]
+  [want : String]) : bool
+  (let
+    [diag : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-from-source-error
+        "lexed.tl"
+        (token.source-error-new
+          (string.copy (& message))
+          (token.SourceSpan 3 4 3 5)
+          kind))]
+    (and
+      (string.eq (cdiag.compiler-diagnostic-code-or-empty (& diag)) want)
+      (string.eq (cdiag.compiler-diagnostic-message diag) message)
+      (= (cdiag.compiler-diagnostic-line (& diag)) 3)
+      (= (cdiag.compiler-diagnostic-col (& diag)) 4)
+      (= (cdiag.compiler-diagnostic-end-col (& diag)) 5))))
+
+(define (compiler-diagnostic-source-error-codes-ok?) : bool
+  (and
+    (compiler-diagnostic-source-error-code-is?
+      TokenError
+      "reader: unterminated list"
+      "E0102")
+    (compiler-diagnostic-source-error-code-is?
+      DelimiterError
+      "lexer: unexpected character"
+      "E0101")))
+
 ;; The code a diagnostic built from `message` carries, or "" for none.
 (define (compiler-diagnostic-built-code [message : String]) : String
   (let
@@ -617,7 +723,7 @@
   (let
     [count : i64 (cdiag.compiler-diagnostic-code-registry-count)]
     [index : i64 0]
-    [ok : bool (= count 23)]
+    [ok : bool (= count 27)]
     (while (and ok (< index count))
       (let
         [code : String (cdiag.compiler-diagnostic-code-registry-code index)]
@@ -839,6 +945,9 @@
     (unless (compiler-diagnostic-advisory-sink-ok?) (return 4))
     (unless (compiler-diagnostic-typecheck-kind-rows-ok?) (return 5))
     (unless (compiler-diagnostic-typecheck-kind-transport-ok?) (return 5))
+    (unless (compiler-diagnostic-parse-kind-rows-ok?) (return 6))
+    (unless (compiler-diagnostic-parse-kind-transport-ok?) (return 6))
+    (unless (compiler-diagnostic-source-error-codes-ok?) (return 6))
     42))
 
 (define (compiler-advisory-sink-generation [sink : cdiag.CompilerAdvisorySink]) : i64
@@ -846,15 +955,17 @@
     (deref (cdiag.compiler-advisory-sink-view sink)).generation))
 
 (define (compiler-diagnostic-code-registry-category [index : i64]) : String
-  (cond
-    [(= index 0) "parse"]
-    [(and (> index 0) (< index (cdiag.compiler-diagnostic-code-registry-count)))
-      "typecheck"]
-    [else ""]))
+  (let
+    [code : String (cdiag.compiler-diagnostic-code-registry-code index)]
+    (cond
+      [(cdiag.compiler-diagnostic-parse-code? (& code)) "parse"]
+      [(string.is-string-prefix-at (& code) "E02" 0) "typecheck"]
+      [else ""])))
 
 (define (compiler-diagnostic-code-registry-owner [index : i64]) : String
-  (cond
-    [(= index 0) "parser"]
-    [(and (> index 0) (< index (cdiag.compiler-diagnostic-code-registry-count)))
-      "typechecker"]
-    [else ""]))
+  (let
+    [category : String (compiler-diagnostic-code-registry-category index)]
+    (cond
+      [(string.eq category "parse") "parser"]
+      [(string.eq category "typecheck") "typechecker"]
+      [else ""])))

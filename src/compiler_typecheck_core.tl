@@ -52397,12 +52397,66 @@
 ;; env onto their own pools instead of rebuilding.
 ;; Compiles that never request metadata keep the empty env for their whole
 ;; lifetime, so those O(program) walks run only when metadata is consumed.
+;; A generator import a module has not materialized yet, such as an instance
+;; another module generated first, resolves through its lazy-import stub, not
+;; through an import declaration. Reflection resolves a declaration's dotted
+;; field types through the same aliases (#8474), so the cached env takes every
+;; stub recorded since it last synced. Returns the cached env.
+(define (tc-ctfe-env-sync-import-stubs! [state : TcMacroState]) : ctfe_support.CtfeEnv
+  (let
+    [env : ctfe_support.CtfeEnv
+      (tc-macro-walk-field state macro-expand-ctfe-env-value)]
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    [synced : i64
+      (if (<
+        data.record-count
+        (tc-macro-walk-field state macro-expand-ctfe-env-import-stubs))
+        0
+        (tc-macro-walk-field state macro-expand-ctfe-env-import-stubs))]
+    [owner : i64 (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena)]
+    (if (or
+      (= data.record-count synced)
+      (not (tc-macro-walk-field state macro-expand-ctfe-env-has-metadata))
+      (= owner 0))
+      env
+      (let
+        [synced-env : ctfe_support.CtfeEnv
+          (in-arena
+            (arena.Arena owner)
+            (let
+              [reflections : ctfe_support.CtfeReflectInfoList
+                (ctfe_support.ctfe-env-reflections (& env))]
+              [index : i64 synced]
+              (while (< index data.record-count)
+                (let
+                  [alias-id : i64 (array-ref data.alias-ids index)]
+                  [target-id : i64 (array-ref data.target-ids index)]
+                  (unless
+                    (= target-id alias-id)
+                    (set!
+                      reflections
+                      (ctfe_support.ctfe-reflect-info-list-add-alias
+                        reflections
+                        (array-ref data.module-ids index)
+                        alias-id
+                        target-id))))
+                (set! index (+ index 1)))
+              (ctfe_support.ctfe-env-with-reflections env reflections)))]
+        (tc-macro-walk-set! state macro-expand-ctfe-env-value synced-env)
+        (tc-macro-walk-set!
+          state
+          macro-expand-ctfe-env-import-stubs
+          data.record-count)
+        synced-env))))
+
 (define (tc-ctfe-env [ctx : TcContext]) : ctfe_support.CtfeEnv
   (let
     [state : TcMacroState (tc-context-macro-state ctx)]
     (if (tc-macro-walk-field state macro-expand-ctfe-env-ready)
       (ctfe_support.ctfe-env-rebase-pools
-        (tc-macro-walk-field state macro-expand-ctfe-env-value)
+        (tc-ctfe-env-sync-import-stubs! state)
         (tc-context-pools ctx))
       (if (tc-macro-walk-field state ctfe-needs-metadata)
         (let
@@ -52422,7 +52476,8 @@
           (tc-macro-walk-set! state macro-expand-ctfe-env-owner-arena owner)
           (tc-macro-walk-set! state macro-expand-ctfe-env-has-metadata true)
           (tc-macro-walk-set! state macro-expand-ctfe-env-ready true)
-          built)
+          (tc-macro-walk-set! state macro-expand-ctfe-env-import-stubs 0)
+          (tc-ctfe-env-sync-import-stubs! state))
         (ctfe_support.ctfe-env-empty-with-pools-and-source-names-and-macro-state
           (tc-context-pools ctx)
           (tc-context-source-names ctx)
@@ -90119,6 +90174,8 @@
   (macro-expand-ctfe-env-owner-arena i64)
   (macro-expand-ctfe-env-build-generation i64)
   (macro-expand-ctfe-env-rebuild-pending bool)
+  ;; How many lazy-import stubs the cached CTFE env's reflection aliases hold.
+  (macro-expand-ctfe-env-import-stubs i64)
   (ctfe-needs-metadata bool)
   (ctfe-macro-state ctfe_support.CompilerCtfeMacroState)
   (macro-live-symbols-ready bool)
@@ -90251,6 +90308,7 @@
     0
     0
     false
+    0
     true
     (ctfe_support.compiler-ctfe-macro-state-new)
     false

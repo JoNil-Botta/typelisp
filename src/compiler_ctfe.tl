@@ -1121,7 +1121,15 @@
   (slots (__tl_dyn-array CtfeReflectInfo))
   (index ctfe_key_map.Map)
   (len i64)
-  (aligns CtfeReflectAlignTable))
+  (aligns CtfeReflectAlignTable)
+  ;; `(module, alias)`, as an interned composite pair, -> the module that an
+  ;; aliased import names in that module.
+  (aliases ctfe_key_map.Map)
+  ;; The module whose import aliases a dotted nominal name resolves through, or
+  ;; -1. A declaration's field and payload types are written in its own module,
+  ;; so reflection scopes their resolution to it: `svec.Vec` means whatever
+  ;; `svec` names there, wherever the reflecting macro expands (#8474).
+  (alias-scope i64))
 
 (defenum CtfeMaybeReflectInfo
   (None)
@@ -1554,7 +1562,9 @@
     (__tl_make-array CtfeReflectInfo capacity)
     (ctfe_key_map.with-capacity (+ (* capacity 2) 1))
     0
-    (CtfeReflectAlignTable (__tl_make-array i64 0) 0)))
+    (CtfeReflectAlignTable (__tl_make-array i64 0) 0)
+    (ctfe_key_map.with-capacity 1)
+    -1))
 
 ;; Record a struct's declared alignments under its canonical key.
 (define (ctfe-reflect-info-list-add-aligns
@@ -1594,7 +1604,9 @@
       items.slots
       items.index
       items.len
-      (CtfeReflectAlignTable words needed))))
+      (CtfeReflectAlignTable words needed)
+      items.aliases
+      items.alias-scope)))
 
 ;; The declared alignment of the struct with canonical key `key-id`: its own
 ;; value for `field` -1, otherwise that field's. 0 when it declares none.
@@ -1638,7 +1650,13 @@
         (while (< index len)
           (set! (array-ref grown index) (array-ref slots index))
           (set! index (+ index 1)))
-        (CtfeReflectInfoList grown items.index len items.aligns)))))
+        (CtfeReflectInfoList
+          grown
+          items.index
+          len
+          items.aligns
+          items.aliases
+          items.alias-scope)))))
 
 (define (ctfe-reflect-info-list-contains-key-id?
   [items : CtfeReflectInfoList]
@@ -1661,7 +1679,13 @@
     [aligns : CtfeReflectAlignTable items.aligns]
     (set! (array-ref slots n) value)
     (ctfe_key_map.insert-ref! (&mut index) key-id n)
-    (CtfeReflectInfoList slots index (+ n 1) aligns)))
+    (CtfeReflectInfoList
+      slots
+      index
+      (+ n 1)
+      aligns
+      items.aliases
+      items.alias-scope)))
 
 ;; Retained as a compatibility hook for callers that delimit metadata builds.
 ;; Each metadata list now owns its id index, so no shared String-derived set is
@@ -1983,6 +2007,26 @@
           pools
           metadata.layouts
           metadata.reflections
+          metadata.source-names
+          metadata.type-literals))
+      env.macro-state)))
+
+;; `env` reading `reflections` as its reflection metadata.
+(define (ctfe-env-with-reflections
+  [env : CtfeEnv]
+  [reflections : CtfeReflectInfoList]) : CtfeEnv
+  (let
+    [env-view : CtfeEnv env]
+    [metadata : CtfeEnvMetadata (ctfe-env-metadata-read env-view.metadata)]
+    (CtfeEnv
+      env.arena-store
+      env.head
+      env.syntax-pools
+      (ctfe-env-metadata-box-new
+        (CtfeEnvMetadata
+          metadata.pools
+          metadata.layouts
+          reflections
           metadata.source-names
           metadata.type-literals))
       env.macro-state)))
@@ -2630,6 +2674,18 @@
             current-module
             (ci.intern-syntax-name-text-or next-module "<structural-module>"))
           (set! current-module-id next-module)]
+        ;; A materialized import of a known module; an empty alias marks an
+        ;; unqualified import, not a dotted alias.
+        [(Import _ (Spec (Module) _ (Some target) (Some alias) _))
+          (unless
+            (= alias cbi.compiler-builtin-id-fix-empty)
+            (set!
+              current-infos
+              (ctfe-reflect-info-list-add-alias
+                current-infos
+                current-module-id
+                alias
+                target)))]
         [(DefStruct decl-meta name repr cleanup fields)
           (set!
             current-infos
@@ -3720,11 +3776,46 @@
       canonical-id)))
 
 (define (ctfe-reflect-info-nominal-module-id [info : CtfeReflectInfo]) : i64
+  (ctfe-reflect-canonical-module-id (ctfe-reflect-info-canonical-id info)))
+
+;; The module of a nominal type's canonical key; a top-level declaration's key
+;; is its bare name.
+(define (ctfe-reflect-canonical-module-id [canonical-id : i64]) : i64
+  (if (ci.intern-composite-pair-id? canonical-id)
+    (ci.intern-composite-left-id-unchecked canonical-id)
+    cbi.compiler-builtin-id-fix-empty))
+
+;; `infos` with `alias` in `module-id` naming the module `target-id`.
+(define (ctfe-reflect-info-list-add-alias
+  [infos : CtfeReflectInfoList]
+  [module-id : i64]
+  [alias-id : i64]
+  [target-id : i64]) : CtfeReflectInfoList
   (let
-    [canonical-id : i64 (ctfe-reflect-info-canonical-id info)]
-    (if (ci.intern-composite-pair-id? canonical-id)
-      (ci.intern-composite-left-id-unchecked canonical-id)
-      cbi.compiler-builtin-id-fix-empty)))
+    [aliases : ctfe_key_map.Map infos.aliases]
+    (ctfe_key_map.insert-ref!
+      (&mut aliases)
+      (ci.intern-composite-pair-id module-id alias-id)
+      target-id)
+    (CtfeReflectInfoList
+      infos.slots
+      infos.index
+      infos.len
+      infos.aligns
+      aliases
+      infos.alias-scope)))
+
+;; `infos` resolving dotted names through `module-id`'s import aliases.
+(define (ctfe-reflect-info-list-in-scope
+  [infos : CtfeReflectInfoList]
+  [module-id : i64]) : CtfeReflectInfoList
+  (CtfeReflectInfoList
+    infos.slots
+    infos.index
+    infos.len
+    infos.aligns
+    infos.aliases
+    module-id))
 
 (define (ctfe-reflect-resolve-type-list-with-pools
   [pools : ast.AstNodePoolContext]
@@ -3897,7 +3988,44 @@
 (define (ctfe-reflect-info-canonical-type-lookup
   [infos : (& infos CtfeReflectInfoList)]
   [name-id : i64]) : ast.AstMaybeType
-  (match (ctfe_key_map.get infos.index (ctfe-name-id-key name-id))
+  (match (ctfe-reflect-info-canonical-type-for-key
+    infos
+    (ctfe-name-id-key name-id))
+    [(Some canonical) (Some canonical)]
+    [(No)
+      (let
+        [alias-key : i64 (ctfe-reflect-info-alias-key infos name-id)]
+        (if (< alias-key 0)
+          (No)
+          (ctfe-reflect-info-canonical-type-for-key infos alias-key)))]))
+
+;; The key of the type a dotted name `alias.Base` names when `alias` is an
+;; import alias of `infos.alias-scope`, split the way typecheck splits a dotted
+;; alias name; -1 otherwise.
+(define (ctfe-reflect-info-alias-key
+  [infos : (& infos CtfeReflectInfoList)]
+  [name-id : i64]) : i64
+  (if (and
+    (>= infos.alias-scope 0)
+    (ci.intern-renderable-id? name-id)
+    (ci.intern-dotted? name-id))
+    (let
+      [base-id : i64 (ci.intern-dotted-tail-id name-id)]
+      (if (< base-id 0)
+        -1
+        (match (ctfe_key_map.get
+          (& infos.aliases)
+          (ci.intern-composite-pair-id
+            infos.alias-scope
+            (ci.intern-leading-dot-id name-id)))
+          [(LookupFound target) (ctfe-qualified-name-key-id target base-id)]
+          [(LookupMissing) -1])))
+    -1))
+
+(define (ctfe-reflect-info-canonical-type-for-key
+  [infos : (& infos CtfeReflectInfoList)]
+  [key : i64]) : ast.AstMaybeType
+  (match (ctfe_key_map.get infos.index key)
     [(LookupFound slot)
       (let
         [info : CtfeReflectInfo
@@ -5088,11 +5216,17 @@
                 [else
                   (ctfe-reflection-type-result
                     name
-                    (ctfe-reflect-field-type-at fields pools infos index))])]
+                    (ctfe-reflect-field-type-at
+                      fields
+                      pools
+                      (ctfe-reflect-info-list-in-scope
+                        infos
+                        (ctfe-reflect-canonical-module-id canonical-id))
+                      index))])]
             [_ (ctfe-reflection-requires name "struct type")])]
         [else
           (match info
-            [(Enum _ _ _ _ _ variants _)
+            [(Enum _ _ _ canonical-id _ variants _)
               (cond
                 [(string.eq name "enum-variant-count")
                   (Ok (I64 (ctfe-reflect-variant-list-count variants)))]
@@ -5111,7 +5245,9 @@
                           (ctfe-type-list-ref-with-pools
                             payloads
                             pools
-                            infos
+                            (ctfe-reflect-info-list-in-scope
+                              infos
+                              (ctfe-reflect-canonical-module-id canonical-id))
                             second-index)))]
                     [(Err message) (Err (str_cat.str-cat name " " message))])])]
             [_ (ctfe-reflection-requires name "enum type")])])]))

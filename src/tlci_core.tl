@@ -1905,47 +1905,27 @@
   (cast (tlci-string-ref text idx) : i64))
 
 (define (tlci-field-string-value [ftail : reader.SpannedSexpr] [fname : String]) : ResultTlciString
-  (match (reader.sexpr-view ftail)
-    [(Cons vhead vrest)
-      (match (reader.sexpr-view vhead)
-        [(Str val-id)
-          (match (reader.sexpr-view vrest)
-            [(Nil) (Ok (ci.intern-id-str val-id))]
-            [_
-              (Err
-                (str_cat.str-cat
-                  "tlci metadata: field `"
-                  fname
-                  "` takes one string value"))])]
-        [_
-          (Err
-            (str_cat.str-cat
-              "tlci metadata: field `"
-              fname
-              "` must be a string"))])]
+  (match (reader.sexpr-slice-view ftail)
+    [(List (slice (Str val-id _))) (Ok (ci.intern-id-str val-id))]
+    [(List (slice (Str _ _) & _))
+      (Err
+        (str_cat.str-cat
+          "tlci metadata: field `"
+          fname
+          "` takes one string value"))]
     [_
       (Err
         (str_cat.str-cat "tlci metadata: field `" fname "` must be a string"))]))
 
 (define (tlci-field-i64-value [ftail : reader.SpannedSexpr] [fname : String]) : ResultTlciI64
-  (match (reader.sexpr-view ftail)
-    [(Cons vhead vrest)
-      (match (reader.sexpr-view vhead)
-        [(Int val _)
-          (match (reader.sexpr-view vrest)
-            [(Nil) (Ok val)]
-            [_
-              (Err
-                (str_cat.str-cat
-                  "tlci metadata: field `"
-                  fname
-                  "` takes one integer value"))])]
-        [_
-          (Err
-            (str_cat.str-cat
-              "tlci metadata: field `"
-              fname
-              "` must be an integer"))])]
+  (match (reader.sexpr-slice-view ftail)
+    [(List (slice (Int val _ _))) (Ok val)]
+    [(List (slice (Int _ _ _) & _))
+      (Err
+        (str_cat.str-cat
+          "tlci metadata: field `"
+          fname
+          "` takes one integer value"))]
     [_
       (Err
         (str_cat.str-cat "tlci metadata: field `" fname "` must be an integer"))]))
@@ -1979,15 +1959,20 @@
       result)))
 
 (define (tlci-sexpr-list-length [items : reader.SpannedSexpr]) : i64
-  (match (reader.sexpr-view items)
-    [(Nil) 0]
-    [(Cons _ rest)
+  (match (reader.sexpr-slice-view items)
+    [(List items-items) (tlci-sexpr-list-length-items items-items)]
+    [_ -1]))
+
+(define (tlci-sexpr-list-length-items
+  [items : (& program (Slice reader.SpannedSexpr))]) : i64
+  (match items
+    [(slice) 0]
+    [(slice _ & rest)
       (let
-        [tail-len : i64 (tlci-sexpr-list-length rest)]
+        [tail-len : i64 (tlci-sexpr-list-length-items rest)]
         (if (< tail-len 0)
           -1
-          (+ tail-len 1)))]
-    [_ -1]))
+          (+ tail-len 1)))]))
 
 (define (tlci-signature-param-count [signature : String]) : i64
   (let
@@ -1996,18 +1981,15 @@
       (match (reader.data-result signature)
         [(Err _) -1]
         [(Ok form)
-          (match (reader.sexpr-view form)
-            [(Cons head rest)
-              (match (reader.sexpr-view head)
-                [(Sym arrow)
-                  (if (string.eq (tlci-symbol-text arrow) "->")
-                    (let
-                      [item-count : i64 (tlci-sexpr-list-length rest)]
-                      (if (> item-count 0)
-                        (- item-count 1)
-                        -1))
-                    -1)]
-                [_ -1])]
+          (match (reader.sexpr-slice-view form)
+            [(List (slice (Sym arrow _) & rest))
+              (if (string.eq (tlci-symbol-text arrow) "->")
+                (let
+                  [item-count : i64 (tlci-sexpr-list-length-items rest)]
+                  (if (> item-count 0)
+                    (- item-count 1)
+                    -1))
+                -1)]
             [_ -1])])]
     (reader.sp-node-pool-truncate! mark)
     count))
@@ -2232,8 +2214,44 @@
   [has-index-param : bool]
   [symbol : String]
   [has-symbol : bool]) : ResultTlciSpmdSpecialization
-  (match (reader.sexpr-view fields)
-    [(Nil)
+  (match (reader.sexpr-slice-view fields)
+    [(List items)
+      (tlci-spmd-specialization-fields-items
+        items
+        abi
+        has-abi
+        backend
+        has-backend
+        lanes
+        has-lanes
+        args
+        has-args
+        result
+        has-result
+        index-param
+        has-index-param
+        symbol
+        has-symbol)]
+    [_ (Err "tlci metadata: specialization fields must be lists")]))
+
+(define (tlci-spmd-specialization-fields-items
+  [fields : (& program (Slice reader.SpannedSexpr))]
+  [abi : String]
+  [has-abi : bool]
+  [backend : String]
+  [has-backend : bool]
+  [lanes : i64]
+  [has-lanes : bool]
+  [args : String]
+  [has-args : bool]
+  [result : String]
+  [has-result : bool]
+  [index-param : i64]
+  [has-index-param : bool]
+  [symbol : String]
+  [has-symbol : bool]) : ResultTlciSpmdSpecialization
+  (match fields
+    [(slice)
       (cond
         [(not has-abi)
           (Err "tlci metadata: specialization missing required field `abi`")]
@@ -2260,199 +2278,184 @@
               result
               index-param
               symbol))])]
-    [(Cons field rest)
-      (match (reader.sexpr-view field)
-        [(Cons fhead ftail)
-          (match (reader.sexpr-view fhead)
-            [(Sym fname)
-              (cond
-                [(string.eq (tlci-symbol-text fname) "abi")
-                  (if has-abi
-                    (Err "tlci metadata: duplicate specialization field `abi`")
-                    (let
-                      [value
-                        (try
-                          (tlci-field-string-value
-                            ftail
-                            (tlci-symbol-text fname)))]
-                      (tlci-spmd-specialization-fields
-                        rest
-                        value
-                        true
-                        backend
-                        has-backend
-                        lanes
-                        has-lanes
-                        args
-                        has-args
-                        result
-                        has-result
-                        index-param
-                        has-index-param
-                        symbol
-                        has-symbol)))]
-                [(string.eq (tlci-symbol-text fname) "backend")
-                  (if has-backend
-                    (Err
-                      "tlci metadata: duplicate specialization field `backend`")
-                    (let
-                      [value
-                        (try
-                          (tlci-field-string-value
-                            ftail
-                            (tlci-symbol-text fname)))]
-                      (tlci-spmd-specialization-fields
-                        rest
-                        abi
-                        has-abi
-                        value
-                        true
-                        lanes
-                        has-lanes
-                        args
-                        has-args
-                        result
-                        has-result
-                        index-param
-                        has-index-param
-                        symbol
-                        has-symbol)))]
-                [(string.eq (tlci-symbol-text fname) "lanes")
-                  (if has-lanes
-                    (Err
-                      "tlci metadata: duplicate specialization field `lanes`")
-                    (let
-                      [value
-                        (try
-                          (tlci-field-i64-value ftail (tlci-symbol-text fname)))]
-                      (tlci-spmd-specialization-fields
-                        rest
-                        abi
-                        has-abi
-                        backend
-                        has-backend
-                        value
-                        true
-                        args
-                        has-args
-                        result
-                        has-result
-                        index-param
-                        has-index-param
-                        symbol
-                        has-symbol)))]
-                [(string.eq (tlci-symbol-text fname) "args")
-                  (if has-args
-                    (Err "tlci metadata: duplicate specialization field `args`")
-                    (let
-                      [value
-                        (try
-                          (tlci-field-string-value
-                            ftail
-                            (tlci-symbol-text fname)))]
-                      (tlci-spmd-specialization-fields
-                        rest
-                        abi
-                        has-abi
-                        backend
-                        has-backend
-                        lanes
-                        has-lanes
-                        value
-                        true
-                        result
-                        has-result
-                        index-param
-                        has-index-param
-                        symbol
-                        has-symbol)))]
-                [(string.eq (tlci-symbol-text fname) "result")
-                  (if has-result
-                    (Err
-                      "tlci metadata: duplicate specialization field `result`")
-                    (let
-                      [value
-                        (try
-                          (tlci-field-string-value
-                            ftail
-                            (tlci-symbol-text fname)))]
-                      (tlci-spmd-specialization-fields
-                        rest
-                        abi
-                        has-abi
-                        backend
-                        has-backend
-                        lanes
-                        has-lanes
-                        args
-                        has-args
-                        value
-                        true
-                        index-param
-                        has-index-param
-                        symbol
-                        has-symbol)))]
-                [(string.eq (tlci-symbol-text fname) "index-param")
-                  (if has-index-param
-                    (Err
-                      "tlci metadata: duplicate specialization field `index-param`")
-                    (let
-                      [value
-                        (try
-                          (tlci-field-i64-value ftail (tlci-symbol-text fname)))]
-                      (tlci-spmd-specialization-fields
-                        rest
-                        abi
-                        has-abi
-                        backend
-                        has-backend
-                        lanes
-                        has-lanes
-                        args
-                        has-args
-                        result
-                        has-result
-                        value
-                        true
-                        symbol
-                        has-symbol)))]
-                [(string.eq (tlci-symbol-text fname) "symbol")
-                  (if has-symbol
-                    (Err
-                      "tlci metadata: duplicate specialization field `symbol`")
-                    (let
-                      [value
-                        (try
-                          (tlci-field-string-value
-                            ftail
-                            (tlci-symbol-text fname)))]
-                      (tlci-spmd-specialization-fields
-                        rest
-                        abi
-                        has-abi
-                        backend
-                        has-backend
-                        lanes
-                        has-lanes
-                        args
-                        has-args
-                        result
-                        has-result
-                        index-param
-                        has-index-param
-                        value
-                        true)))]
-                [else
+    [(slice field & rest)
+      (match (reader.sexpr-slice-view field)
+        [(List (slice (Sym fname _) & _))
+          (let
+            [ftail (reader.spanned-sexpr-drop field 1)]
+            (cond
+              [(string.eq (tlci-symbol-text fname) "abi")
+                (if has-abi
+                  (Err "tlci metadata: duplicate specialization field `abi`")
+                  (let
+                    [value
+                      (try
+                        (tlci-field-string-value ftail (tlci-symbol-text fname)))]
+                    (tlci-spmd-specialization-fields-items
+                      rest
+                      value
+                      true
+                      backend
+                      has-backend
+                      lanes
+                      has-lanes
+                      args
+                      has-args
+                      result
+                      has-result
+                      index-param
+                      has-index-param
+                      symbol
+                      has-symbol)))]
+              [(string.eq (tlci-symbol-text fname) "backend")
+                (if has-backend
                   (Err
-                    (str_cat.str-cat
-                      "tlci metadata: unknown specialization field `"
-                      (tlci-symbol-text fname)
-                      "`"))])]
-            [_
-              (Err
-                "tlci metadata: specialization fields must start with a name")])]
-        [_ (Err "tlci metadata: specialization fields must be lists")])]
-    [_ (Err "tlci metadata: specialization fields must be lists")]))
+                    "tlci metadata: duplicate specialization field `backend`")
+                  (let
+                    [value
+                      (try
+                        (tlci-field-string-value ftail (tlci-symbol-text fname)))]
+                    (tlci-spmd-specialization-fields-items
+                      rest
+                      abi
+                      has-abi
+                      value
+                      true
+                      lanes
+                      has-lanes
+                      args
+                      has-args
+                      result
+                      has-result
+                      index-param
+                      has-index-param
+                      symbol
+                      has-symbol)))]
+              [(string.eq (tlci-symbol-text fname) "lanes")
+                (if has-lanes
+                  (Err "tlci metadata: duplicate specialization field `lanes`")
+                  (let
+                    [value
+                      (try
+                        (tlci-field-i64-value ftail (tlci-symbol-text fname)))]
+                    (tlci-spmd-specialization-fields-items
+                      rest
+                      abi
+                      has-abi
+                      backend
+                      has-backend
+                      value
+                      true
+                      args
+                      has-args
+                      result
+                      has-result
+                      index-param
+                      has-index-param
+                      symbol
+                      has-symbol)))]
+              [(string.eq (tlci-symbol-text fname) "args")
+                (if has-args
+                  (Err "tlci metadata: duplicate specialization field `args`")
+                  (let
+                    [value
+                      (try
+                        (tlci-field-string-value ftail (tlci-symbol-text fname)))]
+                    (tlci-spmd-specialization-fields-items
+                      rest
+                      abi
+                      has-abi
+                      backend
+                      has-backend
+                      lanes
+                      has-lanes
+                      value
+                      true
+                      result
+                      has-result
+                      index-param
+                      has-index-param
+                      symbol
+                      has-symbol)))]
+              [(string.eq (tlci-symbol-text fname) "result")
+                (if has-result
+                  (Err "tlci metadata: duplicate specialization field `result`")
+                  (let
+                    [value
+                      (try
+                        (tlci-field-string-value ftail (tlci-symbol-text fname)))]
+                    (tlci-spmd-specialization-fields-items
+                      rest
+                      abi
+                      has-abi
+                      backend
+                      has-backend
+                      lanes
+                      has-lanes
+                      args
+                      has-args
+                      value
+                      true
+                      index-param
+                      has-index-param
+                      symbol
+                      has-symbol)))]
+              [(string.eq (tlci-symbol-text fname) "index-param")
+                (if has-index-param
+                  (Err
+                    "tlci metadata: duplicate specialization field `index-param`")
+                  (let
+                    [value
+                      (try
+                        (tlci-field-i64-value ftail (tlci-symbol-text fname)))]
+                    (tlci-spmd-specialization-fields-items
+                      rest
+                      abi
+                      has-abi
+                      backend
+                      has-backend
+                      lanes
+                      has-lanes
+                      args
+                      has-args
+                      result
+                      has-result
+                      value
+                      true
+                      symbol
+                      has-symbol)))]
+              [(string.eq (tlci-symbol-text fname) "symbol")
+                (if has-symbol
+                  (Err "tlci metadata: duplicate specialization field `symbol`")
+                  (let
+                    [value
+                      (try
+                        (tlci-field-string-value ftail (tlci-symbol-text fname)))]
+                    (tlci-spmd-specialization-fields-items
+                      rest
+                      abi
+                      has-abi
+                      backend
+                      has-backend
+                      lanes
+                      has-lanes
+                      args
+                      has-args
+                      result
+                      has-result
+                      index-param
+                      has-index-param
+                      value
+                      true)))]
+              [else
+                (Err
+                  (str_cat.str-cat
+                    "tlci metadata: unknown specialization field `"
+                    (tlci-symbol-text fname)
+                    "`"))]))]
+        [(List (slice _ & _))
+          (Err "tlci metadata: specialization fields must start with a name")]
+        [_ (Err "tlci metadata: specialization fields must be lists")])]))
 
 (define (tlci-spmd-specialization-from-field [fields : reader.SpannedSexpr]) : ResultTlciSpmdSpecialization
   (tlci-spmd-specialization-fields
@@ -2479,114 +2482,135 @@
   [signature : String]
   [has-signature : bool]
   [specializations : TlciSpmdSpecializations]) : ResultTlciSpmdCallable
-  (match (reader.sexpr-view fields)
-    [(Nil)
+  (match (reader.sexpr-slice-view fields)
+    [(List items)
+      (tlci-spmd-helper-fields-items
+        items
+        name
+        has-name
+        signature
+        has-signature
+        specializations)]
+    [_ (Err "tlci metadata: helper fields must be lists")]))
+
+(define (tlci-spmd-helper-fields-items
+  [fields : (& program (Slice reader.SpannedSexpr))]
+  [name : String]
+  [has-name : bool]
+  [signature : String]
+  [has-signature : bool]
+  [specializations : TlciSpmdSpecializations]) : ResultTlciSpmdCallable
+  (match fields
+    [(slice)
       (cond
         [(not has-name)
           (Err "tlci metadata: helper missing required field `name`")]
         [(not has-signature)
           (Err "tlci metadata: helper missing required field `signature`")]
         [else (Ok (TlciSpmdCallable name signature specializations))])]
-    [(Cons field rest)
-      (match (reader.sexpr-view field)
-        [(Cons fhead ftail)
-          (match (reader.sexpr-view fhead)
-            [(Sym fname)
-              (cond
-                [(string.eq (tlci-symbol-text fname) "name")
-                  (if has-name
-                    (Err "tlci metadata: duplicate helper field `name`")
-                    (let
-                      [value
-                        (try
-                          (tlci-field-string-value
-                            ftail
-                            (tlci-symbol-text fname)))]
-                      (tlci-spmd-helper-fields
-                        rest
-                        value
-                        true
-                        signature
-                        has-signature
-                        specializations)))]
-                [(string.eq (tlci-symbol-text fname) "signature")
-                  (if has-signature
-                    (Err "tlci metadata: duplicate helper field `signature`")
-                    (let
-                      [value
-                        (try
-                          (tlci-field-string-value
-                            ftail
-                            (tlci-symbol-text fname)))]
-                      (tlci-spmd-helper-fields
-                        rest
-                        name
-                        has-name
-                        value
-                        true
-                        specializations)))]
-                [(string.eq (tlci-symbol-text fname) "specialization")
+    [(slice field & rest)
+      (match (reader.sexpr-slice-view field)
+        [(List (slice (Sym fname _) & _))
+          (let
+            [ftail (reader.spanned-sexpr-drop field 1)]
+            (cond
+              [(string.eq (tlci-symbol-text fname) "name")
+                (if has-name
+                  (Err "tlci metadata: duplicate helper field `name`")
                   (let
-                    [specialization
-                      (try (tlci-spmd-specialization-from-field ftail))]
-                    (tlci-spmd-helper-fields
+                    [value
+                      (try
+                        (tlci-field-string-value ftail (tlci-symbol-text fname)))]
+                    (tlci-spmd-helper-fields-items
+                      rest
+                      value
+                      true
+                      signature
+                      has-signature
+                      specializations)))]
+              [(string.eq (tlci-symbol-text fname) "signature")
+                (if has-signature
+                  (Err "tlci metadata: duplicate helper field `signature`")
+                  (let
+                    [value
+                      (try
+                        (tlci-field-string-value ftail (tlci-symbol-text fname)))]
+                    (tlci-spmd-helper-fields-items
                       rest
                       name
                       has-name
-                      signature
-                      has-signature
-                      (tlci-spmd-specializations-push
-                        specializations
-                        specialization)))]
-                [else
-                  (Err
-                    (str_cat.str-cat
-                      "tlci metadata: unknown helper field `"
-                      (tlci-symbol-text fname)
-                      "`"))])]
-            [_ (Err "tlci metadata: helper fields must start with a name")])]
-        [_ (Err "tlci metadata: helper fields must be lists")])]
-    [_ (Err "tlci metadata: helper fields must be lists")]))
+                      value
+                      true
+                      specializations)))]
+              [(string.eq (tlci-symbol-text fname) "specialization")
+                (let
+                  [specialization
+                    (try (tlci-spmd-specialization-from-field ftail))]
+                  (tlci-spmd-helper-fields-items
+                    rest
+                    name
+                    has-name
+                    signature
+                    has-signature
+                    (tlci-spmd-specializations-push
+                      specializations
+                      specialization)))]
+              [else
+                (Err
+                  (str_cat.str-cat
+                    "tlci metadata: unknown helper field `"
+                    (tlci-symbol-text fname)
+                    "`"))]))]
+        [(List (slice _ & _))
+          (Err "tlci metadata: helper fields must start with a name")]
+        [_ (Err "tlci metadata: helper fields must be lists")])]))
 
 (define (tlci-spmd-helper-from-form [form : reader.SpannedSexpr]) : ResultTlciSpmdCallable
-  (match (reader.sexpr-view form)
-    [(Cons head rest)
-      (match (reader.sexpr-view head)
-        [(Sym name)
-          (if (string.eq (tlci-symbol-text name) "helper")
-            (let
-              [field-count : i64 (tlci-sexpr-list-length (clone rest))]
-              (tlci-spmd-helper-fields
-                rest
-                ""
-                false
-                ""
-                false
-                (tlci-spmd-specializations-with-capacity
-                  (if (< field-count 0)
-                    0
-                    field-count))))
-            (Err
-              (str_cat.str-cat
-                "tlci metadata: expected `helper`, got `"
-                (tlci-symbol-text name)
-                "`")))]
-        [_
-          (Err "tlci metadata: spmd-callables entries must start with `helper`")])]
+  (match (reader.sexpr-slice-view form)
+    [(List (slice (Sym name _) & _))
+      (let
+        [rest (reader.spanned-sexpr-drop form 1)]
+        (if (string.eq (tlci-symbol-text name) "helper")
+          (let
+            [field-count : i64 (tlci-sexpr-list-length (clone rest))]
+            (tlci-spmd-helper-fields
+              rest
+              ""
+              false
+              ""
+              false
+              (tlci-spmd-specializations-with-capacity
+                (if (< field-count 0)
+                  0
+                  field-count))))
+          (Err
+            (str_cat.str-cat
+              "tlci metadata: expected `helper`, got `"
+              (tlci-symbol-text name)
+              "`"))))]
+    [(List (slice _ & _))
+      (Err "tlci metadata: spmd-callables entries must start with `helper`")]
     [_ (Err "tlci metadata: spmd-callables entries must be helper lists")]))
 
 (define (tlci-spmd-callables-from-fields
   [fields : reader.SpannedSexpr]
   [items : TlciSpmdCallables]) : ResultTlciSpmdCallables
-  (match (reader.sexpr-view fields)
-    [(Nil) (Ok items)]
-    [(Cons item rest)
+  (match (reader.sexpr-slice-view fields)
+    [(List fields-items)
+      (tlci-spmd-callables-from-fields-items fields-items items)]
+    [_ (Err "tlci metadata: spmd-callables must contain helper lists")]))
+
+(define (tlci-spmd-callables-from-fields-items
+  [fields : (& program (Slice reader.SpannedSexpr))]
+  [items : TlciSpmdCallables]) : ResultTlciSpmdCallables
+  (match fields
+    [(slice) (Ok items)]
+    [(slice item & rest)
       (let
         [callable (try (tlci-spmd-helper-from-form item))]
-        (tlci-spmd-callables-from-fields
+        (tlci-spmd-callables-from-fields-items
           rest
-          (tlci-spmd-callables-push items callable)))]
-    [_ (Err "tlci metadata: spmd-callables must contain helper lists")]))
+          (tlci-spmd-callables-push items callable)))]))
 
 (define (tlci-spmd-callables-from-field [fields : reader.SpannedSexpr]) : ResultTlciSpmdCallables
   (let
@@ -2604,8 +2628,19 @@
   [has-name : bool]
   [version : String]
   [has-version : bool]) : ResultTlciMetadata
-  (match (reader.sexpr-view fields)
-    [(Nil)
+  (match (reader.sexpr-slice-view fields)
+    [(List items)
+      (tlci-package-fields-items items name has-name version has-version)]
+    [_ (Err "tlci metadata: package fields must be lists")]))
+
+(define (tlci-package-fields-items
+  [fields : (& program (Slice reader.SpannedSexpr))]
+  [name : String]
+  [has-name : bool]
+  [version : String]
+  [has-version : bool]) : ResultTlciMetadata
+  (match fields
+    [(slice)
       (cond
         [(not has-name)
           (Err "tlci metadata: package missing required field `name`")]
@@ -2622,43 +2657,46 @@
               name
               version
               (tlci-spmd-callables-empty)))])]
-    [(Cons field rest)
-      (match (reader.sexpr-view field)
-        [(Cons fhead ftail)
-          (match (reader.sexpr-view fhead)
-            [(Sym fname)
-              (if (string.eq (tlci-symbol-text fname) "name")
-                (if has-name
-                  (Err "tlci metadata: duplicate package field `name`")
+    [(slice field & rest)
+      (match (reader.sexpr-slice-view field)
+        [(List (slice (Sym fname _) & _))
+          (let
+            [ftail (reader.spanned-sexpr-drop field 1)]
+            (if (string.eq (tlci-symbol-text fname) "name")
+              (if has-name
+                (Err "tlci metadata: duplicate package field `name`")
+                (let
+                  [value
+                    (try
+                      (tlci-field-string-value ftail (tlci-symbol-text fname)))]
+                  (tlci-package-fields-items
+                    rest
+                    value
+                    true
+                    version
+                    has-version)))
+              (if (string.eq (tlci-symbol-text fname) "version")
+                (if has-version
+                  (Err "tlci metadata: duplicate package field `version`")
                   (let
                     [value
                       (try
                         (tlci-field-string-value ftail (tlci-symbol-text fname)))]
-                    (tlci-package-fields rest value true version has-version)))
-                (if (string.eq (tlci-symbol-text fname) "version")
-                  (if has-version
-                    (Err "tlci metadata: duplicate package field `version`")
-                    (let
-                      [value
-                        (try
-                          (tlci-field-string-value
-                            ftail
-                            (tlci-symbol-text fname)))]
-                      (tlci-package-fields rest name has-name value true)))
-                  (Err
-                    (str_cat.str-cat
-                      "tlci metadata: unknown package field `"
-                      (tlci-symbol-text fname)
-                      "`"))))]
-            [_ (Err "tlci metadata: package fields must start with a name")])]
-        [_ (Err "tlci metadata: package fields must be lists")])]
-    [_ (Err "tlci metadata: package fields must be lists")]))
+                    (tlci-package-fields-items rest name has-name value true)))
+                (Err
+                  (str_cat.str-cat
+                    "tlci metadata: unknown package field `"
+                    (tlci-symbol-text fname)
+                    "`")))))]
+        [(List (slice _ & _))
+          (Err "tlci metadata: package fields must start with a name")]
+        [_ (Err "tlci metadata: package fields must be lists")])]))
 
 (define (tlci-package-from-field [ftail : reader.SpannedSexpr]) : ResultTlciMetadata
   (tlci-package-fields ftail "" false "" false))
 
-(define (tlci-metadata-fields
-  [fields : reader.SpannedSexpr]
+(define (tlci-metadata-fields-items
+  [fields : (& program (Slice reader.SpannedSexpr))]
   [version : String]
   [has-version : bool]
   [package-name : String]
@@ -2666,8 +2704,8 @@
   [has-package : bool]
   [spmd-callables : TlciSpmdCallables]
   [has-spmd-callables : bool]) : ResultTlciMetadata
-  (match (reader.sexpr-view fields)
-    [(Nil)
+  (match fields
+    [(slice)
       (cond
         [(not has-version)
           (Err "tlci metadata: missing required field `version`")]
@@ -2689,75 +2727,79 @@
         [else
           (Ok
             (TlciMetadata version package-name package-version spmd-callables))])]
-    [(Cons field rest)
-      (match (reader.sexpr-view field)
-        [(Cons fhead ftail)
-          (match (reader.sexpr-view fhead)
-            [(Sym fname)
-              (cond
-                [(string.eq (tlci-symbol-text fname) "version")
-                  (if has-version
-                    (Err "tlci metadata: duplicate field `version`")
-                    (let
-                      [value
-                        (try
-                          (tlci-field-string-value
-                            ftail
-                            (tlci-symbol-text fname)))]
-                      (tlci-metadata-fields
-                        rest
-                        value
-                        true
-                        package-name
-                        package-version
-                        has-package
-                        spmd-callables
-                        has-spmd-callables)))]
-                [(string.eq (tlci-symbol-text fname) "package")
-                  (if has-package
-                    (Err "tlci metadata: duplicate field `package`")
-                    (let
-                      [parsed (try (tlci-package-from-field ftail))]
-                      (tlci-metadata-fields
-                        rest
-                        version
-                        has-version
-                        parsed.package-name
-                        parsed.package-version
-                        true
-                        spmd-callables
-                        has-spmd-callables)))]
-                [(string.eq (tlci-symbol-text fname) "spmd-callables")
-                  (if has-spmd-callables
-                    (Err "tlci metadata: duplicate field `spmd-callables`")
-                    (let
-                      [parsed (try (tlci-spmd-callables-from-field ftail))]
-                      (tlci-metadata-fields
-                        rest
-                        version
-                        has-version
-                        package-name
-                        package-version
-                        has-package
-                        parsed
-                        true)))]
-                [else
-                  (Err
-                    (str_cat.str-cat
-                      "tlci metadata: unknown field `"
-                      (tlci-symbol-text fname)
-                      "`"))])]
-            [_ (Err "tlci metadata: fields must start with a field name")])]
-        [_ (Err "tlci metadata: fields must be lists")])]
-    [_ (Err "tlci metadata: fields must be lists")]))
+    [(slice field & rest)
+      (match (reader.sexpr-slice-view field)
+        [(List (slice (Sym fname _) & _))
+          (let
+            [ftail (reader.spanned-sexpr-drop field 1)]
+            (cond
+              [(string.eq (tlci-symbol-text fname) "version")
+                (if has-version
+                  (Err "tlci metadata: duplicate field `version`")
+                  (let
+                    [value
+                      (try
+                        (tlci-field-string-value ftail (tlci-symbol-text fname)))]
+                    (tlci-metadata-fields-items
+                      rest
+                      value
+                      true
+                      package-name
+                      package-version
+                      has-package
+                      spmd-callables
+                      has-spmd-callables)))]
+              [(string.eq (tlci-symbol-text fname) "package")
+                (if has-package
+                  (Err "tlci metadata: duplicate field `package`")
+                  (let
+                    [parsed (try (tlci-package-from-field ftail))]
+                    (tlci-metadata-fields-items
+                      rest
+                      version
+                      has-version
+                      parsed.package-name
+                      parsed.package-version
+                      true
+                      spmd-callables
+                      has-spmd-callables)))]
+              [(string.eq (tlci-symbol-text fname) "spmd-callables")
+                (if has-spmd-callables
+                  (Err "tlci metadata: duplicate field `spmd-callables`")
+                  (let
+                    [parsed (try (tlci-spmd-callables-from-field ftail))]
+                    (tlci-metadata-fields-items
+                      rest
+                      version
+                      has-version
+                      package-name
+                      package-version
+                      has-package
+                      parsed
+                      true)))]
+              [else
+                (Err
+                  (str_cat.str-cat
+                    "tlci metadata: unknown field `"
+                    (tlci-symbol-text fname)
+                    "`"))]))]
+        [(List (slice _ & _))
+          (Err "tlci metadata: fields must start with a field name")]
+        [_ (Err "tlci metadata: fields must be lists")])]))
 
 (define (tlci-metadata-from-form [form : reader.SpannedSexpr]) : ResultTlciMetadata
-  (match (reader.sexpr-view form)
-    [(Cons head rest)
+  (match (reader.sexpr-slice-view form)
+    [(List items) (tlci-metadata-from-form-items items)]
+    [_ (Err "tlci metadata: expected `(typelisp-tlci-metadata ...)`")]))
+
+(define (tlci-metadata-from-form-items
+  [form : (& program (Slice reader.SpannedSexpr))]) : ResultTlciMetadata
+  (match form
+    [(slice head & rest)
       (match (reader.sexpr-view head)
         [(Sym name)
           (if (string.eq (tlci-symbol-text name) "typelisp-tlci-metadata")
-            (tlci-metadata-fields
+            (tlci-metadata-fields-items
               rest
               ""
               false

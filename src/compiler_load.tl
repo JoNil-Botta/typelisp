@@ -14989,30 +14989,28 @@
     [(List (slice _ & _)) (Err "manifest must start with `package`")]
     [_ (Err "manifest must be a `(package ...)` form")]))
 
-(define (compiler-load-manifest-fields-have?
-  [fields : reader.SpannedSexpr]
+(define (compiler-load-manifest-fields-have?-items
+  [fields : (& program (Slice reader.SpannedSexpr))]
   [target : (& target str)]) : bool
-  (match (reader.sexpr-view fields)
-    [(Nil) false]
-    [(Cons field rest)
+  (match fields
+    [(slice) false]
+    [(slice field & rest)
       (let
-        [tail-has : bool (compiler-load-manifest-fields-have? rest target)]
+        [tail-has : bool
+          (compiler-load-manifest-fields-have?-items rest target)]
         (match (reader.sexpr-slice-view field)
           [(List (slice (Sym name _) & _))
             (or (string.eq (compiler-load-symbol-text name) target) tail-has)]
-          [_ tail-has]))]
-    [_ false]))
+          [_ tail-has]))]))
 
 (define (compiler-load-manifest-form-has-field?
   [form : reader.SpannedSexpr]
   [target : (& target str)]) : bool
   (match (reader.sexpr-slice-view form)
-    [(List (slice (Sym s _) & _))
-      (let
-        [rest (reader.spanned-sexpr-drop form 1)]
-        (if (string.eq (compiler-load-symbol-text s) "package")
-          (compiler-load-manifest-fields-have? rest target)
-          false))]
+    [(List (slice (Sym s _) & rest))
+      (if (string.eq (compiler-load-symbol-text s) "package")
+        (compiler-load-manifest-fields-have?-items rest target)
+        false)]
     [_ false]))
 
 (define (compiler-load-manifest-needs-kind-inference?
@@ -15105,9 +15103,11 @@
   [form : reader.SpannedSexpr]) : token.SourceSpan
   (let
     [fallback : token.SourceSpan (reader.spanned-sexpr-span (clone form))]
-    (match (reader.spanned-sexpr-view form)
-      [(Cons _ fields _)
-        (compiler-load-manifest-first-dependency-field-span fields fallback)]
+    (match (reader.spanned-sexpr-slice-view form)
+      [(List (slice _ & _) _)
+        (let
+          [fields (reader.spanned-sexpr-drop form 1)]
+          (compiler-load-manifest-first-dependency-field-span fields fallback))]
       [_ fallback])))
 
 ;: Enforce dependency-free library artifacts after kind inference and attach

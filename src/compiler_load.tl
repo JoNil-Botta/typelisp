@@ -1135,8 +1135,7 @@
           slot
           (begin
             (match (compiler-load-dependency-catalog-entry-release-mapping! old)
-              [(Ok) unit]
-              [(Err _) unit])
+              [(or (Ok) (Err _)) unit])
             (set! (array-ref items.slots slot) entry)
             (set!
               (array-ref registry.generation 0)
@@ -1642,8 +1641,7 @@
         [(Some image)
           (match (surface_hydrate.compiler-surface-key
             (owned_view.compiler-owned-shared-view image.rodata))
-            [(Missing) Unavailable]
-            [(Err _) Unavailable]
+            [(or (Missing) (Err _)) Unavailable]
             [(Ok key)
               (if (not
                 (compiler-load-dependency-surface-key-current?
@@ -4263,10 +4261,7 @@
                       (if (= (string.string-length message) 0)
                         (Err original-message)
                         (Err message))]))))]))]
-    [(Macro _ _)
-      (Err
-        "compiler-load: module macro imports must be expanded before import resolution")]
-    [(MacroDecls _ _)
+    [(or (Macro _ _) (MacroDecls _ _))
       (Err
         "compiler-load: module macro imports must be expanded before import resolution")]))
 
@@ -4376,20 +4371,13 @@
           (match (compiler-load-pkg-dep-lookup deps first)
             [(CompilerLoadSomePath _) true]
             [(CompilerLoadNoPath) false])))]
-    [(ModuleAll)
+    [(or (ModuleAll) (ModuleItem _))
       (compiler-load-package-import-externs?
         Module
         import-path
         expected-module
         deps)]
-    [(ModuleItem _)
-      (compiler-load-package-import-externs?
-        Module
-        import-path
-        expected-module
-        deps)]
-    [(Macro _ _) false]
-    [(MacroDecls _ _) false]))
+    [(or (Macro _ _) (MacroDecls _ _)) false]))
 
 (define (compiler-load-package-source-expected-module
   [kind : ast.AstImportKind]
@@ -4400,16 +4388,13 @@
       ;; A dependency alias selects a package root and source path; it is not
       ;; the dependency source's public module identity. Let an explicit module
       ;; declaration win, while a moduleless source keeps the dotted fallback.
-      [(Module) No]
-      [(ModuleAll) No]
-      [(ModuleItem _) No]
+      [(or (Module) (ModuleAll) (ModuleItem _)) No]
       [_ expected-module])
     expected-module))
 
 (define (compiler-load-macro-import-kind? [kind : ast.AstImportKind]) : bool
   (match kind
-    [(Macro _ _) true]
-    [(MacroDecls _ _) true]
+    [(or (Macro _ _) (MacroDecls _ _)) true]
     [_ false]))
 
 (defenum CompilerLoadIncludeKind
@@ -5241,9 +5226,7 @@
   [resolved-path : String]
   [_ : String]) : String
   (match kind
-    [(Module) import-path]
-    [(ModuleAll) import-path]
-    [(ModuleItem _) import-path]
+    [(or (Module) (ModuleAll) (ModuleItem _)) import-path]
     [_ (compiler-load-canonical-module-id-from-path resolved-path)]))
 
 (define (compiler-load-canonical-module-id-from-import
@@ -5402,27 +5385,7 @@
   [_ : ast.AstMaybeImportAlias]
   [imported-decls : ast.AstDeclList]) : ast.AstMaybeModuleName
   (match kind
-    [(Module)
-      (match (compiler-load-session-state-surface-summary-find-source
-        state
-        source-path-id)
-        [(CompilerLoadSomeSurfaceSummary summary)
-          (Some summary.declaration-module-id)]
-        [(CompilerLoadNoSurfaceSummary)
-          (if (compiler-load-decl-list-has-module? imported-decls)
-            (Some (compiler-load-decls-source-module-id imported-decls))
-            expected)])]
-    [(ModuleAll)
-      (match (compiler-load-session-state-surface-summary-find-source
-        state
-        source-path-id)
-        [(CompilerLoadSomeSurfaceSummary summary)
-          (Some summary.declaration-module-id)]
-        [(CompilerLoadNoSurfaceSummary)
-          (if (compiler-load-decl-list-has-module? imported-decls)
-            (Some (compiler-load-decls-source-module-id imported-decls))
-            expected)])]
-    [(ModuleItem _)
+    [(or (Module) (ModuleAll) (ModuleItem _))
       (match (compiler-load-session-state-surface-summary-find-source
         state
         source-path-id)
@@ -5627,7 +5590,9 @@
   [path : String]
   [span : ast.AstSourceSpan]) : CompilerLoadUnqualifiedImportStep
   (match (ast.ast-decl-unwrapped (& decl))
-    [(Def _ name _ _)
+    [(or (Def _ name _ _) (DefFn _ name _ _ _ _) (DefMacro _ name _ _ _)
+         (DefDispatch _ name _) (Extern _ name _ _ _) (DefStruct _ name _ _ _)
+         (DefStructLifetimes _ name _ _ _ _))
       (compiler-load-unqualified-import-note
         state
         importer-module
@@ -5637,88 +5602,7 @@
         local-index
         path
         span)]
-    [(DefFn _ name _ _ _ _)
-      (compiler-load-unqualified-import-note
-        state
-        importer-module
-        name
-        source-module
-        name
-        local-index
-        path
-        span)]
-    [(DefMacro _ name _ _ _)
-      (compiler-load-unqualified-import-note
-        state
-        importer-module
-        name
-        source-module
-        name
-        local-index
-        path
-        span)]
-    [(DefDispatch _ name _)
-      (compiler-load-unqualified-import-note
-        state
-        importer-module
-        name
-        source-module
-        name
-        local-index
-        path
-        span)]
-    [(Extern _ name _ _ _)
-      (compiler-load-unqualified-import-note
-        state
-        importer-module
-        name
-        source-module
-        name
-        local-index
-        path
-        span)]
-    [(DefStruct _ name _ _ _)
-      (compiler-load-unqualified-import-note
-        state
-        importer-module
-        name
-        source-module
-        name
-        local-index
-        path
-        span)]
-    [(DefStructLifetimes _ name _ _ _ _)
-      (compiler-load-unqualified-import-note
-        state
-        importer-module
-        name
-        source-module
-        name
-        local-index
-        path
-        span)]
-    [(DefEnum _ name _ variants)
-      (match (compiler-load-unqualified-import-note
-        state
-        importer-module
-        name
-        source-module
-        name
-        local-index
-        (owned_view.compiler-owned-shared-view path)
-        span)
-        [(Ok)
-          (compiler-load-unqualified-import-note-variants
-            state
-            importer-module
-            source-module
-            (& variants)
-            0
-            local-index
-            path
-            span)]
-        [(Collision collision) (Collision collision)])]
-    [(DefEnumLifetimes _ name _ _ variants)
+    [(or (DefEnum _ name _ variants) (DefEnumLifetimes _ name _ _ variants))
       (match (compiler-load-unqualified-import-note
         state
         importer-module
@@ -5799,10 +5683,8 @@
               decls
               index
               cbi.compiler-builtin-id-fix-empty))]
-        [(Import _ (Spec (ModuleAll) _ (Some _) _ _))
-          (load_i64_i64_map.insert-ref! (&mut importers) cur-module 1)
-          (set! any-importer true)]
-        [(Import _ (Spec (ModuleItem _) _ (Some _) (Some _) _))
+        [(or (Import _ (Spec (ModuleAll) _ (Some _) _ _))
+             (Import _ (Spec (ModuleItem _) _ (Some _) (Some _) _)))
           (load_i64_i64_map.insert-ref! (&mut importers) cur-module 1)
           (set! any-importer true)]
         [_ unit])
@@ -5841,8 +5723,7 @@
                 index
                 ""
                 (ast.ast-decl-span-fallback))
-                [(Ok) unit]
-                [(Collision _) unit]))])
+                [(or (Ok) (Collision _)) unit]))])
         (set! index (+ index 1))))))
 
 (define (compiler-load-unqualified-import-collision-message
@@ -6971,8 +6852,8 @@
       [(CompilerLoadSurfaceMacro) true]
       [_ false])
     (match decl.macro-result
-      [(CompilerLoadSurfaceMacroModule) true]
-      [(CompilerLoadSurfaceMacroDecls) true]
+      [(or (CompilerLoadSurfaceMacroModule) (CompilerLoadSurfaceMacroDecls))
+        true]
       [_ false])))
 
 (define (compiler-load-surface-decls-decl-emitting-only?
@@ -7052,42 +6933,8 @@
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match (owned_view.compiler-owned-shared-view ty)
-    [(Enum name)
-      (compiler-load-session-state-lazy-name-demand
-        state
-        name
-        alias
-        summary
-        locals)]
-    [(EnumArgs name _)
-      (compiler-load-session-state-lazy-name-demand
-        state
-        name
-        alias
-        summary
-        locals)]
-    [(Struct name)
-      (compiler-load-session-state-lazy-name-demand
-        state
-        name
-        alias
-        summary
-        locals)]
-    [(StructArgs name _)
-      (compiler-load-session-state-lazy-name-demand
-        state
-        name
-        alias
-        summary
-        locals)]
-    [(Var name)
-      (compiler-load-session-state-lazy-name-demand
-        state
-        name
-        alias
-        summary
-        locals)]
-    [(VarArgs name _)
+    [(or (Enum name) (EnumArgs name _) (Struct name) (StructArgs name _)
+         (Var name) (VarArgs name _))
       (compiler-load-session-state-lazy-name-demand
         state
         name
@@ -7375,42 +7222,8 @@
         alias
         summary
         locals)]
-    [(Tuple patterns)
-      (compiler-load-session-state-lazy-pattern-list-demand
-        state
-        (deref patterns)
-        alias
-        summary
-        locals)]
-    [(Array patterns)
-      (compiler-load-session-state-lazy-pattern-list-demand
-        state
-        (deref patterns)
-        alias
-        summary
-        locals)]
-    [(Slice patterns _)
-      (compiler-load-session-state-lazy-pattern-list-demand
-        state
-        (deref patterns)
-        alias
-        summary
-        locals)]
-    [(Or patterns)
-      (compiler-load-session-state-lazy-pattern-list-demand
-        state
-        (deref patterns)
-        alias
-        summary
-        locals)]
-    [(Fields patterns)
-      (compiler-load-session-state-lazy-pattern-list-demand
-        state
-        (deref patterns)
-        alias
-        summary
-        locals)]
-    [(Field _ patterns)
+    [(or (Tuple patterns) (Array patterns) (Slice patterns _) (Or patterns)
+         (Fields patterns) (Field _ patterns))
       (compiler-load-session-state-lazy-pattern-list-demand
         state
         (deref patterns)
@@ -7431,9 +7244,8 @@
           alias
           summary
           locals))]
-    [(Wildcard) (compiler-load-lazy-alias-demand-none)]
-    [(Binding _) (compiler-load-lazy-alias-demand-none)]
-    [(Literal _) (compiler-load-lazy-alias-demand-none)]))
+    [(or (Wildcard) (Binding _) (Literal _))
+      (compiler-load-lazy-alias-demand-none)]))
 
 (define (compiler-load-session-state-lazy-pattern-list-demand-at?
   [state : CompilerLoadSessionState]
@@ -7478,7 +7290,7 @@
   [pattern : ast.AstPattern]
   [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match pattern
-    [(Var name _)
+    [(or (Var name _) (Binding name))
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-demand-bind-local-exhaustive
@@ -7486,51 +7298,13 @@
           locals
           name)
         (sym_i64_env.sym-i64-bind-id locals name 1))]
-    [(Binding name)
-      (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-        state)
-        (compiler-load-session-state-lazy-demand-bind-local-exhaustive
-          state
-          locals
-          name)
-        (sym_i64_env.sym-i64-bind-id locals name 1))]
-    [(Tuple patterns)
+    [(or (Tuple patterns) (Array patterns) (Slice patterns _) (Or patterns)
+         (Fields patterns) (Field _ patterns) (Variant _ patterns))
       (compiler-load-session-state-lazy-pattern-list-locals
         state
         (deref patterns)
         locals)]
-    [(Array patterns)
-      (compiler-load-session-state-lazy-pattern-list-locals
-        state
-        (deref patterns)
-        locals)]
-    [(Slice patterns _)
-      (compiler-load-session-state-lazy-pattern-list-locals
-        state
-        (deref patterns)
-        locals)]
-    [(Or patterns)
-      (compiler-load-session-state-lazy-pattern-list-locals
-        state
-        (deref patterns)
-        locals)]
-    [(Fields patterns)
-      (compiler-load-session-state-lazy-pattern-list-locals
-        state
-        (deref patterns)
-        locals)]
-    [(Field _ patterns)
-      (compiler-load-session-state-lazy-pattern-list-locals
-        state
-        (deref patterns)
-        locals)]
-    [(Variant _ patterns)
-      (compiler-load-session-state-lazy-pattern-list-locals
-        state
-        (deref patterns)
-        locals)]
-    [(Wildcard) locals]
-    [(Literal _) locals]))
+    [(or (Wildcard) (Literal _)) locals]))
 
 (define (compiler-load-session-state-lazy-pattern-list-locals-at
   [state : (& state CompilerLoadSessionState)]
@@ -8132,47 +7906,8 @@
                           alias
                           summary
                           body-locals))))))))])]
-    [(Comptime inner)
-      (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-        state)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          inner
-          alias
-          summary
-          locals)
-        (compiler-load-lazy-alias-demand-unknown))]
-    [(Quote inner)
-      (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-        state)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          inner
-          alias
-          summary
-          locals)
-        (compiler-load-lazy-alias-demand-unknown))]
-    [(Quasiquote inner)
-      (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-        state)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          inner
-          alias
-          summary
-          locals)
-        (compiler-load-lazy-alias-demand-unknown))]
-    [(Unquote inner)
-      (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-        state)
-        (compiler-load-session-state-lazy-expr-demand
-          state
-          inner
-          alias
-          summary
-          locals)
-        (compiler-load-lazy-alias-demand-unknown))]
-    [(UnquoteSplicing inner)
+    [(or (Comptime inner) (Quote inner) (Quasiquote inner) (Unquote inner)
+         (UnquoteSplicing inner))
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-expr-demand
@@ -8183,29 +7918,13 @@
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
     ;; Macro-generated and uncommon AST shapes are an explicit eager fence.
-    [(MacroExpansion _ _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ArrayTake _ _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(WithRegion _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(WithResource _) (compiler-load-lazy-alias-demand-unknown)]
-    [(BracketClause _) (compiler-load-lazy-alias-demand-unknown)]
-    [(PtrAddrOf _) (compiler-load-lazy-alias-demand-unknown)]
-    [(PtrRead _) (compiler-load-lazy-alias-demand-unknown)]
-    [(PtrWrite _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(PtrOffset _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(PtrCast _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(PtrToInt _) (compiler-load-lazy-alias-demand-unknown)]
-    [(IntToPtr _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(StringData _) (compiler-load-lazy-alias-demand-unknown)]
-    [(StringFromBytes _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ArrayData _) (compiler-load-lazy-alias-demand-unknown)]
-    [(CpuIdEax _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(CpuIdEbx _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(CpuIdEcx _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(CpuIdEdx _ _) (compiler-load-lazy-alias-demand-unknown)]
-    [(Xgetbv _) (compiler-load-lazy-alias-demand-unknown)]
-    [(Syscall _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ForOwnedState _) (compiler-load-lazy-alias-demand-unknown)]
-    [(ForOwnedStep _) (compiler-load-lazy-alias-demand-unknown)]
+    [(or (MacroExpansion _ _ _) (ArrayTake _ _ _) (WithRegion _ _)
+         (WithResource _) (BracketClause _) (PtrAddrOf _) (PtrRead _)
+         (PtrWrite _ _) (PtrOffset _ _) (PtrCast _ _) (PtrToInt _)
+         (IntToPtr _ _) (StringData _) (StringFromBytes _ _) (ArrayData _)
+         (CpuIdEax _ _) (CpuIdEbx _ _) (CpuIdEcx _ _) (CpuIdEdx _ _) (Xgetbv _)
+         (Syscall _) (ForOwnedState _) (ForOwnedStep _))
+      (compiler-load-lazy-alias-demand-unknown)]
     [_
       (ast.ast-expr-fold-children
         (ast.ast-node-get node-id)
@@ -8361,7 +8080,9 @@
   [summary : (& summary CompilerLoadSurfaceSummary)]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (match decl
-    [(Module _) (compiler-load-lazy-alias-demand-none)]
+    [(or (Module _) (DefDispatch _ _ _) (IncludeStr _ _)
+         (IncludeStrComptime _ _) (IncludeStrLzss _ _) (IncludeBin _ _))
+      (compiler-load-lazy-alias-demand-none)]
     [(ModuleBody _ body)
       (compiler-load-session-state-lazy-decl-list-demand
         state
@@ -8444,7 +8165,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(DefEnum decl-meta _ _ variants)
+    [(or (DefEnum _ _ _ variants) (DefEnumLifetimes _ _ _ _ variants))
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-variant-list-demand
@@ -8454,27 +8175,7 @@
           summary
           locals)
         (compiler-load-lazy-alias-demand-unknown))]
-    [(DefEnumLifetimes decl-meta _ _ _ variants)
-      (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-        state)
-        (compiler-load-session-state-lazy-variant-list-demand
-          state
-          variants
-          alias
-          summary
-          locals)
-        (compiler-load-lazy-alias-demand-unknown))]
-    [(DefStruct decl-meta _ _ _ fields)
-      (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
-        state)
-        (compiler-load-session-state-lazy-field-list-demand
-          state
-          fields
-          alias
-          summary
-          locals)
-        (compiler-load-lazy-alias-demand-unknown))]
-    [(DefStructLifetimes decl-meta _ _ _ _ fields)
+    [(or (DefStruct _ _ _ _ fields) (DefStructLifetimes _ _ _ _ _ fields))
       (if (compiler-load-session-state-lazy-qualified-observer-exhaustive?
         state)
         (compiler-load-session-state-lazy-field-list-demand
@@ -8510,11 +8211,6 @@
         alias
         summary
         locals)]
-    [(DefDispatch decl-meta _ _) (compiler-load-lazy-alias-demand-none)]
-    [(IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
-    [(IncludeStrComptime _ _) (compiler-load-lazy-alias-demand-none)]
-    [(IncludeStrLzss _ _) (compiler-load-lazy-alias-demand-none)]
-    [(IncludeBin _ _) (compiler-load-lazy-alias-demand-none)]
     ;; A future declaration shape might hide references. Keep it conservative.
     [_ (compiler-load-lazy-alias-demand-unknown)]))
 
@@ -8832,9 +8528,7 @@
 
 (define (compiler-load-surface-import-kind [kind : ast.AstImportKind]) : CompilerLoadSurfaceImportKind
   (match kind
-    [(Module) (CompilerLoadSurfaceImportModule)]
-    [(ModuleAll) (CompilerLoadSurfaceImportModule)]
-    [(ModuleItem _) (CompilerLoadSurfaceImportModule)]
+    [(or (Module) (ModuleAll) (ModuleItem _)) (CompilerLoadSurfaceImportModule)]
     [(Macro _ _) (CompilerLoadSurfaceImportMacro)]
     [(MacroDecls _ _) (CompilerLoadSurfaceImportMacroDecls)]))
 
@@ -8874,8 +8568,7 @@
 
 (define (compiler-load-surface-macro-result-decl-emitting? [ret : ast.AstType]) : bool
   (match (compiler-load-surface-macro-result-kind ret)
-    [(CompilerLoadSurfaceMacroModule) true]
-    [(CompilerLoadSurfaceMacroDecls) true]
+    [(or (CompilerLoadSurfaceMacroModule) (CompilerLoadSurfaceMacroDecls)) true]
     [_ false]))
 
 (define (compiler-load-surface-fn-export? [export : ast.AstFnExport]) : bool
@@ -9300,25 +8993,7 @@
         false
         generated
         false)]
-    [(IncludeStrLzss name _)
-      (compiler-load-surface-build-add-decl
-        build
-        (CompilerLoadSurfaceDecl
-          (CompilerLoadSurfaceIncludeBin)
-          name
-          module-id
-          (CompilerLoadSurfaceNoSignature)
-          (CompilerLoadSurfaceMacroOther)
-          false
-          false
-          generated
-          was-unsafe
-          (compiler-load-surface-zero-span))
-        false
-        false
-        generated
-        false)]
-    [(IncludeBin name _)
+    [(or (IncludeStrLzss name _) (IncludeBin name _))
       (compiler-load-surface-build-add-decl
         build
         (CompilerLoadSurfaceDecl
@@ -9501,21 +9176,14 @@
   [decl : ast.AstDecl]
   [item : i64]) : bool
   (match (ast.ast-decl-unwrapped (& decl))
-    [(Def decl-meta name _ _) (= name item)]
-    [(DefFn decl-meta name _ _ _ _) (= name item)]
-    [(DefMacro decl-meta name _ _ _) (= name item)]
-    [(DefDispatch decl-meta name _) (= name item)]
-    [(Extern decl-meta name _ _ _) (= name item)]
-    [(DefEnum decl-meta name _ variants)
+    [(or (Def _ name _ _) (DefFn _ name _ _ _ _) (DefMacro _ name _ _ _)
+         (DefDispatch _ name _) (Extern _ name _ _ _) (DefStruct _ name _ _ _)
+         (DefStructLifetimes _ name _ _ _ _))
+      (= name item)]
+    [(or (DefEnum _ name _ variants) (DefEnumLifetimes _ name _ _ variants))
       (or
         (= name item)
         (compiler-load-lazy-surface-variant-direct-name? variants item))]
-    [(DefEnumLifetimes decl-meta name _ _ variants)
-      (or
-        (= name item)
-        (compiler-load-lazy-surface-variant-direct-name? variants item))]
-    [(DefStruct decl-meta name _ _ _) (= name item)]
-    [(DefStructLifetimes decl-meta name _ _ _ _) (= name item)]
     [_ false]))
 
 (define (compiler-load-module-defines-selected-item?
@@ -9560,8 +9228,7 @@
   (match (ast.ast-decl-unwrapped (& decl))
     [(Import _ (Spec kind _ _ _ _))
       (match kind
-        [(Macro _ _) true]
-        [(MacroDecls _ _) true]
+        [(or (Macro _ _) (MacroDecls _ _)) true]
         [_ false])]
     [_ false]))
 
@@ -9749,12 +9416,9 @@
 ;; sync; the arm order below mirrors the arm order there so they cannot drift.
 (define (compiler-load-decl-ordinary? [decl : ast.AstDecl]) : bool
   (match decl
-    [(ModuleBody _ _) false]
-    [(Import _ _) false]
-    [(IncludeStr _ _) false]
-    [(IncludeStrComptime _ _) false]
-    [(IncludeStrLzss _ _) false]
-    [(IncludeBin _ _) false]
+    [(or (ModuleBody _ _) (Import _ _) (IncludeStr _ _) (IncludeStrComptime _ _)
+         (IncludeStrLzss _ _) (IncludeBin _ _))
+      false]
     [_ true]))
 
 ;; Length of the maximal run of ordinary declarations starting at the head of
@@ -12387,9 +12051,8 @@
     ;; dependency-native results. Retaining the declaration also ensures the
     ;; catalog registry is consulted only after ordinary import visibility and
     ;; shadowing resolve this exact transformer.
-    [(DefMacro _ _ _ _ _) (CompilerLoadSomeDecl decl)]
-    [(DefStruct decl-meta _ _ _ _) (CompilerLoadSomeDecl decl)]
-    [(Module _) (CompilerLoadSomeDecl decl)]
+    [(or (DefMacro _ _ _ _ _) (DefStruct _ _ _ _ _) (Module _))
+      (CompilerLoadSomeDecl decl)]
     [(Unsafe inner-box)
       (let
         [inner : ast.AstDecl (deref inner-box)]

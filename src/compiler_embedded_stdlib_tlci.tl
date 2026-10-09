@@ -378,8 +378,7 @@
       (begin
         (match (loader.tlci-loader-release
           (compiler-embedded-stdlib-tlci-session-image-shared-view))
-          [(Ok) unit]
-          [(Err _) unit])
+          [(or (Ok) (Err _)) unit])
         (cfg
           tlci-native-route-stress
           (set!
@@ -760,18 +759,14 @@
 (define (compiler-comptime-host-value-expr-list
   [value : (& value ctfe_support.CompilerCtfeValue)]) : CompilerCtfeMaybeExprList
   (match value
-    [(ExprList items)
-      (Some (owned_view.compiler-owned-reference-shared-view items))]
-    [(CapturedExprList items _)
+    [(or (ExprList items) (CapturedExprList items _))
       (Some (owned_view.compiler-owned-reference-shared-view items))]
     [_ (None)]))
 
 (define (compiler-comptime-host-value-expr-clause-list
   [value : (& value ctfe_support.CompilerCtfeValue)]) : CompilerCtfeMaybeExprClauseList
   (match value
-    [(ExprClauseList items)
-      (Some (owned_view.compiler-owned-reference-shared-view items))]
-    [(CapturedExprClauseList items _)
+    [(or (ExprClauseList items) (CapturedExprClauseList items _))
       (Some (owned_view.compiler-owned-reference-shared-view items))]
     [_ (None)]))
 
@@ -835,13 +830,8 @@
 (define (compiler-comptime-host-value-pools
   [value : (& value ctfe_support.CompilerCtfeValue)]) : ast.AstNodePoolContext
   (match value
-    [(CapturedExpr _ _ pools)
-      (owned_view.compiler-owned-reference-shared-view pools)]
-    [(CapturedExprList _ pools)
-      (owned_view.compiler-owned-reference-shared-view pools)]
-    [(CapturedExprClause _ pools)
-      (owned_view.compiler-owned-reference-shared-view pools)]
-    [(CapturedExprClauseList _ pools)
+    [(or (CapturedExpr _ _ pools) (CapturedExprList _ pools)
+         (CapturedExprClause _ pools) (CapturedExprClauseList _ pools))
       (owned_view.compiler-owned-reference-shared-view pools)]
     [_ (compiler-comptime-host-session-pools)]))
 
@@ -858,11 +848,7 @@
   [pools : (& pools ast.AstNodePoolContext)]
   [expr : ast.AstExpr]) : ast.AstExpr
   (match (owned_view.compiler-owned-shared-view expr)
-    [(Spanned inner _)
-      (compiler-comptime-host-unspanned-expr
-        pools
-        (ast.ast-node-pool-context-expr-get pools inner))]
-    [(MacroExpansion inner _ _)
+    [(or (Spanned inner _) (MacroExpansion inner _ _))
       (compiler-comptime-host-unspanned-expr
         pools
         (ast.ast-node-pool-context-expr-get pools inner))]
@@ -893,8 +879,7 @@
 (define (compiler-comptime-host-value-node
   [value : (& value ctfe_support.CompilerCtfeValue)]) : i64
   (match value
-    [(Expr node _) (owned_view.compiler-owned-reference-shared-view node)]
-    [(CapturedExpr node _ _)
+    [(or (Expr node _) (CapturedExpr node _ _))
       (owned_view.compiler-owned-reference-shared-view node)]
     [(Type ty)
       (let

@@ -148,20 +148,10 @@
 ;; the interned lexeme id back to text, the way a parser reads a symbol/name.
 (define (sym [t : Token]) : String
   (match t
-    [(LParen) ""]
-    [(RParen) ""]
-    [(Int _ _) ""]
     [(Sym id) (ci.intern-id-str id)]
-    [(End) ""]
-    [(Str _) ""]
-    [(Char _) ""]
-    [(Float _) ""]
-    [(LBracket) ""]
-    [(RBracket) ""]
-    [(Quote) ""]
-    [(Backtick) ""]
-    [(Comma) ""]
-    [(CommaAt) ""]))
+    [(or (LParen) (RParen) (Int _ _) (End) (Str _) (Char _) (Float _) (LBracket)
+         (RBracket) (Quote) (Backtick) (Comma) (CommaAt))
+      ""]))
 
 ;; String text of `Token.Str` (the empty string for any other kind): projects
 ;; the sliced inner text of a `"..."` literal back out of the enum, the way a
@@ -169,20 +159,10 @@
 ;; `Token.Str` and a `Token.Sym` with the same characters stay distinguishable.
 (define (str [t : Token]) : String
   (match t
-    [(LParen) ""]
-    [(RParen) ""]
-    [(Int _ _) ""]
-    [(Sym _) ""]
-    [(End) ""]
     [(Str id) (ci.intern-id-str id)]
-    [(Char _) ""]
-    [(Float _) ""]
-    [(LBracket) ""]
-    [(RBracket) ""]
-    [(Quote) ""]
-    [(Backtick) ""]
-    [(Comma) ""]
-    [(CommaAt) ""]))
+    [(or (LParen) (RParen) (Int _ _) (Sym _) (End) (Char _) (Float _) (LBracket)
+         (RBracket) (Quote) (Backtick) (Comma) (CommaAt))
+      ""]))
 
 ;; Parser-assigned renderable identity of a string literal. Callers classify by
 ;; tag before projecting, so missing remains outside the name-id type.

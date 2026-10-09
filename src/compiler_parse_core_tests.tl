@@ -1802,11 +1802,7 @@
       (let
         [decls : ast.AstDeclList (deref decls-box)]
         (match (ast.ast-decl-list-get (& decls) 0 (ast.ast-decl-fallback))
-          [(DefStruct _ _ repr _ _)
-            (tuple
-              (ast.ast-struct-repr-declared-align repr)
-              (ast.ast-struct-repr-field-declared-align repr field))]
-          [(DefStructLifetimes _ _ _ repr _ _)
+          [(or (DefStruct _ _ repr _ _) (DefStructLifetimes _ _ _ repr _ _))
             (tuple
               (ast.ast-struct-repr-declared-align repr)
               (ast.ast-struct-repr-field-declared-align repr field))]

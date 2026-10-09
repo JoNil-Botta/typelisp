@@ -903,10 +903,8 @@
       [(Some span) (Some span)]
       [(No) None])
     (match (ast.ast-node-get expr-id)
-      [(Unary _ inner) (compiler-parse-expr-maybe-span inner)]
-      [(Ann inner _) (compiler-parse-expr-maybe-span inner)]
-      [(Cast inner _) (compiler-parse-expr-maybe-span inner)]
-      [(Borrow _ _ inner) (compiler-parse-expr-maybe-span inner)]
+      [(or (Unary _ inner) (Ann inner _) (Cast inner _) (Borrow _ _ inner))
+        (compiler-parse-expr-maybe-span inner)]
       [_ None])))
 
 ;; Definitions and tests record no declaration origin
@@ -914,9 +912,8 @@
 ;; its value or body and a test by its own span.
 (define (compiler-parse-decl-body-span [decl : ast.AstDecl]) : CompilerParseMaybeDeclSpan
   (match decl
-    [(Def _ _ _ body) (compiler-parse-expr-maybe-span body)]
-    [(DefFn _ _ _ _ body _) (compiler-parse-expr-maybe-span body)]
-    [(DefMacro _ _ _ _ body) (compiler-parse-expr-maybe-span body)]
+    [(or (Def _ _ _ body) (DefFn _ _ _ _ body _) (DefMacro _ _ _ _ body))
+      (compiler-parse-expr-maybe-span body)]
     [(Test _ _ _ span) (Some span)]
     [(Unsafe inner-box) (compiler-parse-decl-body-span (deref inner-box))]
     [_ None]))
@@ -6581,13 +6578,7 @@
                       receiver-box
                       index-box
                       parsed-value))]
-                [(BoxGet receiver-box)
-                  (Ok
-                    (ast.ast-expr-box-set-with-pools
-                      pools
-                      receiver-box
-                      parsed-value))]
-                [(BoxTake receiver-box)
+                [(or (BoxGet receiver-box) (BoxTake receiver-box))
                   (Ok
                     (ast.ast-expr-box-set-with-pools
                       pools
@@ -6609,12 +6600,8 @@
   (match (ast.ast-expr-unspan-with-pools
     pools
     (& (ast.ast-node-pool-context-expr-get pools expr-id)))
-    [(Var _) true]
-    [(StructGet _ _) true]
+    [(or (Var _) (StructGet _ _) (ArrayRef _ _) (BoxGet _) (BoxTake _)) true]
     [(TupleRef _ index) (>= index 0)]
-    [(ArrayRef _ _) true]
-    [(BoxGet _) true]
-    [(BoxTake _) true]
     [_ false]))
 
 (define (parse-ast-replace
@@ -10711,8 +10698,8 @@
       (let
         [decl (try (parse-ast-decl dispatch pools inner))]
         (match (compiler-parse-place-shared-view decl)
-          [(DefFn decl-meta _ _ _ _ _) (Ok (ast.ast-decl-unsafe decl))]
-          [(Extern decl-meta _ _ _ _) (Ok (ast.ast-decl-unsafe decl))]
+          [(or (DefFn _ _ _ _ _ _) (Extern _ _ _ _ _))
+            (Ok (ast.ast-decl-unsafe decl))]
           [_
             (Err
               "parse: unsafe declaration accepts only function define or extern")]))]
@@ -10954,10 +10941,8 @@
 
 (define (compiler-parse-decl-origin-needs-record? [decl : ast.AstDecl]) : bool
   (match decl
-    [(Def decl-meta _ _ _) false]
-    [(DefFn decl-meta _ _ _ _ _) false]
-    [(DefMacro decl-meta _ _ _ _) false]
-    [(Test _ _ _ _) false]
+    [(or (Def _ _ _ _) (DefFn _ _ _ _ _ _) (DefMacro _ _ _ _ _) (Test _ _ _ _))
+      false]
     [(Unsafe inner-box)
       (compiler-parse-decl-origin-needs-record? (deref inner-box))]
     [_ true]))

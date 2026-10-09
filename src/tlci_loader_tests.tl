@@ -613,8 +613,7 @@
     [(Err message) (string.eq message expected)]
     [(Ok loaded)
       (match (tlci_loader.tlci-loader-release loaded)
-        [(Ok) false]
-        [(Err _) false])]))
+        [(or (Ok) (Err _)) false])]))
 
 (define (tlci-loader-test-registration-rejections-ok?) : bool
   (match (tlci-loader-test-emit-with-code
@@ -814,8 +813,7 @@
           [(Err message) (string.eq message expected)]
           [(Ok loaded)
             (match (tlci_loader.tlci-loader-release loaded)
-              [(Ok) false]
-              [(Err _) false])])))))
+              [(or (Ok) (Err _)) false])])))))
 
 (cfg
   test

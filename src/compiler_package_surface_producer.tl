@@ -171,8 +171,7 @@
             pools
             macro-decl-count
             result-arena)))]
-    [(Inactive) unit]
-    [(Err _) unit]
+    [(or (Inactive) (Err _)) unit]
     [_
       (surface_facts.surface-typecheck-facts-recording-abort!)
       (package-surface-capture-error!

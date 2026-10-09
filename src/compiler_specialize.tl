@@ -665,13 +665,7 @@
   [expr : ast.AstExpr]) : SpecMaybeSourceSpan
   (match expr
     [(Spanned _ span) (Some span)]
-    [(Unary _ inner)
-      (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner inner))]
-    [(Ann inner _)
-      (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner inner))]
-    [(Cast inner _)
-      (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner inner))]
-    [(Borrow _ _ inner)
+    [(or (Unary _ inner) (Ann inner _) (Cast inner _) (Borrow _ _ inner))
       (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner inner))]
     [_ (None)]))
 
@@ -696,11 +690,7 @@
   [owner : (& owner SpecOwnerContext)]
   [decl : ast.AstDecl]) : SpecMaybeSourceSpan
   (match decl
-    [(Def decl-meta _ _ body)
-      (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner body))]
-    [(DefFn decl-meta _ _ _ body _)
-      (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner body))]
-    [(DefMacro decl-meta _ _ _ body)
+    [(or (Def _ _ _ body) (DefFn _ _ _ _ body _) (DefMacro _ _ _ _ body))
       (spec-expr-maybe-span-with-owner owner (spec-owner-expr-get owner body))]
     [(Test _ _ _ span) (Some span)]
     [(Unsafe inner-box)
@@ -1119,45 +1109,16 @@
   [templates : (& templates SpecTemplateEnv)]
   [pattern : ast.AstPattern]) : SpecTemplateEnv
   (match pattern
-    [(Var name _) (spec-template-env-shadow-name templates name)]
-    [(Tuple patterns-box)
+    [(or (Var name _) (Binding name))
+      (spec-template-env-shadow-name templates name)]
+    [(or (Tuple patterns-box) (Array patterns-box) (Slice patterns-box _)
+         (Or patterns-box) (Fields patterns-box) (Field _ patterns-box)
+         (Variant _ patterns-box))
       (let
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Array patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Slice patterns-box _)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Or patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Fields patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Field _ patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Wildcard) (spec-template-env-shared-view templates)]
-    [(Binding name) (spec-template-env-shadow-name templates name)]
-    [(Variant _ patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-template-env-shadow-pattern-list templates patterns))]
-    [(Literal _) (spec-template-env-shared-view templates)]))
+    [(or (Wildcard) (Literal _)) (spec-template-env-shared-view templates)]))
 
 (define (spec-template-env-shadow-pattern-list
   [templates : (& templates SpecTemplateEnv)]
@@ -1489,18 +1450,13 @@
         "bool_1"
         "bool_0")]
     [(Char c) (str_cat.str-cat "char_" (string.int->string (cast c : i64)))]
-    [(String text _) (spec-string-key text)]
-    [(Name text _) (spec-string-key text)]
+    [(or (String text _) (Name text _)) (spec-string-key text)]
     [(Unit) "unit"]
     [(Type ty) (str_cat.str-cat "type_" (spec-type-key-with-owner owner ty))]
-    [(Expr _ _) "Expr"]
-    [(CapturedExpr _ _ _) "Expr"]
-    [(ExprList _) "expr-list"]
-    [(CapturedExprList _ _) "expr-list"]
-    [(ExprClause _) "expr-clause"]
-    [(CapturedExprClause _ _) "expr-clause"]
-    [(ExprClauseList _) "expr-clause-list"]
-    [(CapturedExprClauseList _ _) "expr-clause-list"]
+    [(or (Expr _ _) (CapturedExpr _ _ _)) "Expr"]
+    [(or (ExprList _) (CapturedExprList _ _)) "expr-list"]
+    [(or (ExprClause _) (CapturedExprClause _ _)) "expr-clause"]
+    [(or (ExprClauseList _) (CapturedExprClauseList _ _)) "expr-clause-list"]
     [(ExprBindingClause _) "expr-binding-clause"]
     [(ExprBindingClauseList _) "expr-binding-clause-list"]
     [(Pattern _) "pattern"]
@@ -1949,14 +1905,7 @@
           0)
         0)]
     [(Char c) (spec-structural-node-with-owner owner -204 (cast c : i64) 0)]
-    [(String text _)
-      (spec-structural-node-with-owner
-        owner
-        -205
-        (spec-structural-generated-text-atom-with-owner owner text)
-        0)]
-    [(Name text _)
-      ;; String and Name intentionally share the old content equivalence.
+    [(or (String text _) (Name text _))
       (spec-structural-node-with-owner
         owner
         -205
@@ -1972,14 +1921,13 @@
           -207
           (spec-structural-key-raw type-key)
           0))]
-    [(Expr _ _) (spec-structural-node-with-owner owner -208 0 0)]
-    [(CapturedExpr _ _ _) (spec-structural-node-with-owner owner -208 0 0)]
-    [(ExprList _) (spec-structural-node-with-owner owner -209 0 0)]
-    [(CapturedExprList _ _) (spec-structural-node-with-owner owner -209 0 0)]
-    [(ExprClause _) (spec-structural-node-with-owner owner -210 0 0)]
-    [(CapturedExprClause _ _) (spec-structural-node-with-owner owner -210 0 0)]
-    [(ExprClauseList _) (spec-structural-node-with-owner owner -211 0 0)]
-    [(CapturedExprClauseList _ _)
+    [(or (Expr _ _) (CapturedExpr _ _ _))
+      (spec-structural-node-with-owner owner -208 0 0)]
+    [(or (ExprList _) (CapturedExprList _ _))
+      (spec-structural-node-with-owner owner -209 0 0)]
+    [(or (ExprClause _) (CapturedExprClause _ _))
+      (spec-structural-node-with-owner owner -210 0 0)]
+    [(or (ExprClauseList _) (CapturedExprClauseList _ _))
       (spec-structural-node-with-owner owner -211 0 0)]
     [(ExprBindingClause _) (spec-structural-node-with-owner owner -212 0 0)]
     [(ExprBindingClauseList _) (spec-structural-node-with-owner owner -213 0 0)]
@@ -2249,15 +2197,11 @@
 
 (define (gen-decl-visible-name-id [decl : ast.AstDecl]) : SpecMaybeId
   (match decl
-    [(Def decl-meta name _ _) (Some name)]
-    [(DefFn decl-meta name _ _ _ _) (Some name)]
-    [(Extern decl-meta name _ _ _) (Some name)]
-    [(DefDispatch decl-meta name _) (Some name)]
-    [(DefEnum decl-meta name _ _) (Some name)]
-    [(DefEnumLifetimes decl-meta name _ _ _) (Some name)]
-    [(DefStruct decl-meta name _ _ _) (Some name)]
-    [(DefStructLifetimes decl-meta name _ _ _ _) (Some name)]
-    [(DefMacro decl-meta name _ _ _) (Some name)]
+    [(or (Def _ name _ _) (DefFn _ name _ _ _ _) (Extern _ name _ _ _)
+         (DefDispatch _ name _) (DefEnum _ name _ _)
+         (DefEnumLifetimes _ name _ _ _) (DefStruct _ name _ _ _)
+         (DefStructLifetimes _ name _ _ _ _) (DefMacro _ name _ _ _))
+      (Some name)]
     [(Unsafe inner-box)
       (gen-decl-visible-name-id (ast.ast-decl-box-shared-view inner-box))]
     [_ (None)]))
@@ -3882,30 +3826,18 @@
       [(F32 _) (ctfe.ctfe-type-eq-in-env env ty (F32))]
       [(Bool _) (ctfe.ctfe-type-eq-in-env env ty (Bool))]
       [(Char _) (ctfe.ctfe-type-eq-in-env env ty (Char))]
-      [(String _ _) (ctfe.ctfe-type-eq-in-env env ty (String))]
-      [(Name _ _) (ctfe.ctfe-type-eq-in-env env ty (String))]
+      [(or (String _ _) (Name _ _)) (ctfe.ctfe-type-eq-in-env env ty (String))]
       [(Unit) (ctfe.ctfe-type-eq-in-env env ty (Unit))]
-      [(Type _) false]
-      [(Expr _ _) (ctfe.ctfe-type-eq-in-env env ty (Expr))]
-      [(CapturedExpr _ _ _) (ctfe.ctfe-type-eq-in-env env ty (Expr))]
-      [(ExprList _) (ctfe.ctfe-type-eq-in-env env ty (ExprList))]
-      [(CapturedExprList _ _) (ctfe.ctfe-type-eq-in-env env ty (ExprList))]
-      [(ExprClause _)
+      [(or (Expr _ _) (CapturedExpr _ _ _))
+        (ctfe.ctfe-type-eq-in-env env ty (Expr))]
+      [(or (ExprList _) (CapturedExprList _ _))
+        (ctfe.ctfe-type-eq-in-env env ty (ExprList))]
+      [(or (ExprClause _) (CapturedExprClause _ _))
         (ctfe.ctfe-type-eq-in-env
           env
           ty
           (Var cbi.compiler-builtin-id-fix-ExprClause))]
-      [(CapturedExprClause _ _)
-        (ctfe.ctfe-type-eq-in-env
-          env
-          ty
-          (Var cbi.compiler-builtin-id-fix-ExprClause))]
-      [(ExprClauseList _)
-        (ctfe.ctfe-type-eq-in-env
-          env
-          ty
-          (Var cbi.compiler-builtin-id-fix-ExprClauseList))]
-      [(CapturedExprClauseList _ _)
+      [(or (ExprClauseList _) (CapturedExprClauseList _ _))
         (ctfe.ctfe-type-eq-in-env
           env
           ty
@@ -3950,15 +3882,10 @@
           env
           ty
           (Var cbi.compiler-builtin-id-fix-LetBindingList))]
-      [(TypeInfo _) false]
-      [(TypeInfoBox _) false]
-      [(TypeInfoList _) false]
-      [(TypeField _ _) false]
-      [(TypeFieldList _) false]
-      [(TypeVariantPayload _) false]
-      [(TypeVariantPayloadList _) false]
-      [(TypeVariant _ _) false]
-      [(TypeVariantList _) false])))
+      [(or (Type _) (TypeInfo _) (TypeInfoBox _) (TypeInfoList _)
+           (TypeField _ _) (TypeFieldList _) (TypeVariantPayload _)
+           (TypeVariantPayloadList _) (TypeVariant _ _) (TypeVariantList _))
+        false])))
 
 (define (spec-value-type-label [value : ctfe.CompilerCtfeValue]) : String
   (match value
@@ -3967,18 +3894,13 @@
     [(F32 _) "f32"]
     [(Bool _) "bool"]
     [(Char _) "char"]
-    [(String _ _) "String"]
-    [(Name _ _) "String"]
+    [(or (String _ _) (Name _ _)) "String"]
     [(Unit) "unit"]
     [(Type _) "type"]
-    [(Expr _ _) "Expr"]
-    [(CapturedExpr _ _ _) "Expr"]
-    [(ExprList _) "expr-list"]
-    [(CapturedExprList _ _) "expr-list"]
-    [(ExprClause _) "ExprClause"]
-    [(CapturedExprClause _ _) "ExprClause"]
-    [(ExprClauseList _) "ExprClauseList"]
-    [(CapturedExprClauseList _ _) "ExprClauseList"]
+    [(or (Expr _ _) (CapturedExpr _ _ _)) "Expr"]
+    [(or (ExprList _) (CapturedExprList _ _)) "expr-list"]
+    [(or (ExprClause _) (CapturedExprClause _ _)) "ExprClause"]
+    [(or (ExprClauseList _) (CapturedExprClauseList _ _)) "ExprClauseList"]
     [(ExprBindingClause _) "ExprBindingClause"]
     [(ExprBindingClauseList _) "ExprBindingClauseList"]
     [(Pattern _) "Pattern"]
@@ -4166,45 +4088,15 @@
   [subs : (& subs SpecSubst)]
   [pattern : ast.AstPattern]) : SpecSubst
   (match pattern
-    [(Var name _) (spec-subst-remove-name subs name)]
-    [(Tuple patterns-box)
+    [(or (Var name _) (Binding name)) (spec-subst-remove-name subs name)]
+    [(or (Tuple patterns-box) (Array patterns-box) (Slice patterns-box _)
+         (Or patterns-box) (Fields patterns-box) (Field _ patterns-box)
+         (Variant _ patterns-box))
       (let
         [patterns : ast.AstPatternList
           (ast.ast-pattern-list-box-shared-view patterns-box)]
         (spec-subst-remove-pattern-list subs patterns))]
-    [(Array patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-subst-remove-pattern-list subs patterns))]
-    [(Slice patterns-box _)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-subst-remove-pattern-list subs patterns))]
-    [(Or patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-subst-remove-pattern-list subs patterns))]
-    [(Fields patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-subst-remove-pattern-list subs patterns))]
-    [(Field _ patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-subst-remove-pattern-list subs patterns))]
-    [(Wildcard) (spec-subst-shared-view subs)]
-    [(Binding name) (spec-subst-remove-name subs name)]
-    [(Variant _ patterns-box)
-      (let
-        [patterns : ast.AstPatternList
-          (ast.ast-pattern-list-box-shared-view patterns-box)]
-        (spec-subst-remove-pattern-list subs patterns))]
-    [(Literal _) (spec-subst-shared-view subs)]))
+    [(or (Wildcard) (Literal _)) (spec-subst-shared-view subs)]))
 
 (define (spec-subst-remove-pattern-list
   [subs : (& subs SpecSubst)]
@@ -4462,13 +4354,7 @@
           (& (F32))))]
     [(Bool b) (Ok (spec-owner-expr-push owner (Literal (Bool b))))]
     [(Char c) (Ok (spec-owner-expr-push owner (Literal (Char c))))]
-    [(String _ _)
-      (Err
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time String value into runtime expression")))]
-    [(Name _ _)
+    [(or (String _ _) (Name _ _))
       (Err
         (box
           (spec-diagnostic-at-expr
@@ -4484,49 +4370,25 @@
               "cannot substitute compile-time type value "
               (spec-type-key-with-owner owner ty)
               " into runtime expression"))))]
-    [(Expr _ _)
+    [(or (Expr _ _) (CapturedExpr _ _ _))
       (Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time Expr value into runtime expression")))]
-    [(CapturedExpr _ _ _)
-      (Err
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time Expr value into runtime expression")))]
-    [(ExprList _)
+    [(or (ExprList _) (CapturedExprList _ _))
       (Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprList value into runtime expression")))]
-    [(CapturedExprList _ _)
-      (Err
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time ExprList value into runtime expression")))]
-    [(ExprClause _)
+    [(or (ExprClause _) (CapturedExprClause _ _))
       (Err
         (box
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprClause value into runtime expression")))]
-    [(CapturedExprClause _ _)
-      (Err
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time ExprClause value into runtime expression")))]
-    [(ExprClauseList _)
-      (Err
-        (box
-          (spec-diagnostic-at-expr
-            origin
-            "cannot substitute compile-time ExprClauseList value into runtime expression")))]
-    [(CapturedExprClauseList _ _)
+    [(or (ExprClauseList _) (CapturedExprClauseList _ _))
       (Err
         (box
           (spec-diagnostic-at-expr
@@ -5554,15 +5416,10 @@
     [pools : ast.AstNodePoolContext (spec-owner-pools owner)]
     (match (ast.ast-expr-unspan-with-pools pools (& place))
       [(Var name) (spec-value-subst-lookup subs name)]
-      [(StructGet receiver-box _)
+      [(or (StructGet receiver-box _) (ArrayRef receiver-box _))
         (spec-ptr-addr-of-place-value-conflict-with-owner
           owner
           (spec-owner-expr-get owner receiver-box)
-          subs)]
-      [(ArrayRef array-box _)
-        (spec-ptr-addr-of-place-value-conflict-with-owner
-          owner
-          (spec-owner-expr-get owner array-box)
           subs)]
       [_ (None)])))
 

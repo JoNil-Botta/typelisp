@@ -287,15 +287,8 @@
         " "
         (repl-type-render (ast.ty-node-get inner))
         ")")]
-    [(Enum name) (ast.ast-nominal-name-id-display name)]
-    [(EnumArgs name lifetimes)
-      (str_cat.str-cat
-        "("
-        (ast.ast-nominal-name-id-display name)
-        (repl-lifetime-list-render-spaced (deref lifetimes))
-        ")")]
-    [(Struct name) (ast.ast-nominal-name-id-display name)]
-    [(StructArgs name lifetimes)
+    [(or (Enum name) (Struct name)) (ast.ast-nominal-name-id-display name)]
+    [(or (EnumArgs name lifetimes) (StructArgs name lifetimes))
       (str_cat.str-cat
         "("
         (ast.ast-nominal-name-id-display name)
@@ -438,8 +431,7 @@
 
 (define (repl-display-helpers-source [ty : ast.AstType]) : String
   (match ty
-    [(F64) (repl-f64-display-helpers-source)]
-    [(F32) (repl-f64-display-helpers-source)]
+    [(or (F64) (F32)) (repl-f64-display-helpers-source)]
     [(Char) (repl-char-display-helpers-source)]
     [_ ""]))
 
@@ -453,14 +445,14 @@
 
 (define (repl-display-body [ty : ast.AstType] [expr-source : String]) : ResultReplString
   (match (owned_view.compiler-owned-shared-view ty)
-    [(I64) (Ok (str_cat.str-cat "(io.println \"{}\"\n" expr-source "\n)"))]
+    [(or (I64) (Bool))
+      (Ok (str_cat.str-cat "(io.println \"{}\"\n" expr-source "\n)"))]
     [(I32)
       (Ok
         (str_cat.str-cat
           "(io.println \"{}\"\n(cast\n"
           expr-source
           "\n: i64)\n)"))]
-    [(Bool) (Ok (str_cat.str-cat "(io.println \"{}\"\n" expr-source "\n)"))]
     [(F64) (Ok (str_cat.str-cat "(__tl_repl_print_f64\n" expr-source "\n)"))]
     [(F32)
       (Ok
@@ -476,12 +468,9 @@
           expr-source
           "\n  )\n  (io.println \"\"))"))]
     [(Unit) (Ok expr-source)]
-    [(Tuple _) (Ok (repl-aggregate-display-body ty expr-source))]
-    [(Array _ _) (Ok (repl-aggregate-display-body ty expr-source))]
-    [(Enum _) (Ok (repl-aggregate-display-body ty expr-source))]
-    [(EnumArgs _ _) (Ok (repl-aggregate-display-body ty expr-source))]
-    [(Struct _) (Ok (repl-aggregate-display-body ty expr-source))]
-    [(StructArgs _ _) (Ok (repl-aggregate-display-body ty expr-source))]
+    [(or (Tuple _) (Array _ _) (Enum _) (EnumArgs _ _) (Struct _)
+         (StructArgs _ _))
+      (Ok (repl-aggregate-display-body ty expr-source))]
     [_
       (Err
         (str_cat.str-cat

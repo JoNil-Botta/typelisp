@@ -400,6 +400,16 @@
             (host-smoke-int 2)
             (host-smoke-zero-record 0)))
         (+ rejected 1))
+      ;; A record count far past the bytes left runs the records present, then
+      ;; rejects, without sizing its decoding by the count.
+      (=
+        (host-smoke-run-ops-outcome
+          (str_cat.str-cat
+            (host-smoke-int 1)
+            (host-smoke-name "expr-list-empty")
+            (host-smoke-int 1000000000000)
+            (host-smoke-zero-record 0)))
+        (+ rejected 1))
       (=
         (host-smoke-run-ops-outcome
           (str_cat.str-cat

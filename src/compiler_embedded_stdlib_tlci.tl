@@ -5438,8 +5438,9 @@
 ;; which a hit compares word by word before replaying, so an image mapped again
 ;; at the same address with other bytes (or any caller's own buffer) decodes
 ;; afresh, and that decoding replaces the stale entry for the key. Only
-;; well-formed batches are cached: a malformed one runs through the
-;; interleaved decoder below exactly as before, so its status is unchanged.
+;; well-formed batches are cached. A malformed one runs the records before its
+;; first malformed token and then reports a bad request, as a native chain
+;; would stop there.
 ;;
 ;; Entries live in one process-lifetime arena; a batch's words and records are
 ;; contiguous runs of the flat lanes, located by the entry's start offsets.
@@ -5614,9 +5615,15 @@
         (+ entry 1))
       (set! entry (+ entry 1)))))
 
-;; Decode the whole batch without running it. Returns the new entry's index,
-;; or -1 when the batch is malformed (nothing is cached then).
-(define (compiler-comptime-host-batch-cache-decode! [base : i64] [len : i64]) : i64
+;; A batch decoded without running it: the cache entry of a well-formed batch,
+;; or, for a malformed one, where its records' lanes start (past the cache's
+;; committed records) and how many leading records parsed whole.
+(defenum CompilerComptimeHostBatchDecoded
+  (Entry i64)
+  (Prefix i64 i64))
+
+;; Decode the whole batch without running it, caching it when well formed.
+(define (compiler-comptime-host-batch-cache-decode! [base : i64] [len : i64]) : CompilerComptimeHostBatchDecoded
   (let
     [batch : CompilerComptimeHostBatch
       (CompilerComptimeHostBatch base len 0 true)]
@@ -5649,6 +5656,14 @@
       [record-count : i64 (compiler-comptime-host-batch-int! (&mut batch))]
       [record-start : i64 compiler-comptime-host-batch-cache-records-len]
       [record : i64 0]
+      [parsed : i64 0]
+      ;; A record is at least four bytes (an op and three one-byte
+      ;; immediates), so at most one record past the bytes left can start
+      ;; parsing, and the lanes never grow past that for a malformed count.
+      [lane-records : i64
+        (if (< record-count (+ (/ (- batch.len batch.pos) 4) 1))
+          record-count
+          (+ (/ (- batch.len batch.pos) 4) 1))]
       (when (< record-count 1) (set! batch.ok false))
       (when
         batch.ok
@@ -5658,7 +5673,7 @@
             (compiler-comptime-host-global-shared-view
               compiler-comptime-host-batch-cache-records)
             record-start
-            (+ record-start (* record-count 4)))))
+            (+ record-start (* lane-records 4)))))
       (while (and batch.ok (< record record-count))
         (let
           [op : i64
@@ -5721,9 +5736,10 @@
                     (+ lane 1 arg))
                   value)
                 (set! arg (+ arg 1)))))
+          (when batch.ok (set! parsed (+ record 1)))
           (set! record (+ record 1))))
       (if (not (and batch.ok (= record record-count) (= batch.pos batch.len)))
-        -1
+        (Prefix record-start parsed)
         (let
           [entry : i64 compiler-comptime-host-batch-cache-entries]
           [words : i64 (/ (+ len 7) 8)]
@@ -5811,17 +5827,15 @@
                 compiler-comptime-host-batch-cache-slots
                 (compiler-comptime-host-batch-cache-key-slot base len))
               (+ entry 1)))
-          entry)))))
+          (Entry entry))))))
 
-;; Run a cached entry's records in order, stopping at the first non-ok status.
-(define (compiler-comptime-host-batch-cache-replay
+;; Run `count` decoded records from lane `start` in order, stopping at the
+;; first non-ok status.
+(define (compiler-comptime-host-batch-replay
   [session : i64]
-  [entry : i64]) : i64
+  [start : i64]
+  [count : i64]) : i64
   (let
-    [start : i64
-      (array-ref compiler-comptime-host-batch-cache-record-starts entry)]
-    [count : i64
-      (array-ref compiler-comptime-host-batch-cache-record-counts entry)]
     [record : i64 0]
     [status : i64 tlci.tlci-host-callback-status-ok]
     (while (and (= status tlci.tlci-host-callback-status-ok) (< record count))
@@ -5838,8 +5852,18 @@
       (set! record (+ record 1)))
     status))
 
+(define (compiler-comptime-host-batch-cache-replay
+  [session : i64]
+  [entry : i64]) : i64
+  (compiler-comptime-host-batch-replay
+    session
+    (array-ref compiler-comptime-host-batch-cache-record-starts entry)
+    (array-ref compiler-comptime-host-batch-cache-record-counts entry)))
+
 ;; Run the batch at `base`/`len`: replay its cached decoding, decoding and
-;; caching it first when it is well formed, else run it interleaved.
+;; caching it first when it is well formed. A malformed batch runs the records
+;; before its first malformed token, then reports a bad request unless one of
+;; them failed first, which is what running it token by token returned.
 (define (compiler-comptime-host-run-batch
   [session : i64]
   [base : i64]
@@ -5848,122 +5872,16 @@
     [cached : i64 (compiler-comptime-host-batch-cache-find base len)]
     (if (>= cached 0)
       (compiler-comptime-host-batch-cache-replay session cached)
-      (let
-        [decoded : i64 (compiler-comptime-host-batch-cache-decode! base len)]
-        (if (>= decoded 0)
-          (compiler-comptime-host-batch-cache-replay session decoded)
-          (compiler-comptime-host-run-batch-interleaved session base len))))))
-
-(define (compiler-comptime-host-run-batch-interleaved
-  [session : i64]
-  [base : i64]
-  [len : i64]) : i64
-  (let
-    [batch : CompilerComptimeHostBatch
-      (CompilerComptimeHostBatch base len 0 true)]
-    ;; One slot per batch name; the name count is capped at the array size.
-    [resolved : (Array i64 64) (init : (Array i64 64))]
-    [name-count : i64 (compiler-comptime-host-batch-int! (&mut batch))]
-    [index : i64 0]
-    [status : i64 tlci.tlci-host-callback-status-ok]
-    [args : (Array i64 3) (init : (Array i64 3))]
-    (when
-      (or (< name-count 1) (> name-count tlci.tlci-run-ops-names-cap))
-      (set! batch.ok false))
-    (while (and batch.ok (< index name-count))
-      (let
-        [hint : i64 (compiler-comptime-host-batch-int! (&mut batch))]
-        [length : i64 (compiler-comptime-host-batch-int! (&mut batch))]
-        (if (or (not batch.ok) (< length 1) (> length (- batch.len batch.pos)))
-          (set! batch.ok false)
+      (match (compiler-comptime-host-batch-cache-decode! base len)
+        [(Entry entry)
+          (compiler-comptime-host-batch-cache-replay session entry)]
+        [(Prefix start parsed)
           (let
-            [found : i64
-              (compiler-comptime-host-batch-name-index
-                (& batch)
-                hint
-                batch.pos
-                length)]
-            (if (< found 0)
-              (set! batch.ok false)
-              (begin
-                (set! (array-ref resolved index) found)
-                (set! batch.pos (+ batch.pos length))
-                (set! index (+ index 1))))))))
-    (let
-      [record-count : i64 (compiler-comptime-host-batch-int! (&mut batch))]
-      [record : i64 0]
-      (when (< record-count 1) (set! batch.ok false))
-      (while (and
-        batch.ok
-        (= status tlci.tlci-host-callback-status-ok)
-        (< record record-count))
-        (let
-          [op : i64
-            (if (< batch.pos batch.len)
-              (- (compiler-comptime-host-batch-byte (& batch) batch.pos) 48)
-              -1)]
-          [byte-len : i64 -1]
-          [arg : i64 0]
-          (if (or (< op 0) (>= op name-count))
-            (set! batch.ok false)
-            (set! batch.pos (+ batch.pos 1)))
-          (while (and batch.ok (< arg 3))
-            (if (and
-              (< batch.pos batch.len)
-              (= (compiler-comptime-host-batch-byte (& batch) batch.pos) 35))
-              ;; Caller bytes: a pointer argument whose length must be
-              ;; the next argument.
-              (let
-                [count : i64
-                  (begin
-                    (set! batch.pos (+ batch.pos 1))
-                    (compiler-comptime-host-batch-int! (&mut batch)))]
-                (if (or
-                  (not batch.ok)
-                  (>= byte-len 0)
-                  (< count 0)
-                  (> count (- batch.len batch.pos))
-                  (= arg 2))
-                  (set! batch.ok false)
-                  (begin
-                    (set! (array-ref args arg) (+ batch.base batch.pos))
-                    (set! batch.pos (+ batch.pos count))
-                    (set! byte-len count)
-                    (set! arg (+ arg 1)))))
-              (let
-                ;; Most immediates are zero, the one-byte integer `@`.
-                [value : i64
-                  (if (and
-                    (< batch.pos batch.len)
-                    (=
-                      (compiler-comptime-host-batch-byte (& batch) batch.pos)
-                      64))
-                    (begin
-                      (set! batch.pos (+ batch.pos 1))
-                      0)
-                    (compiler-comptime-host-batch-int! (&mut batch)))]
-                (when
-                  (and (>= byte-len 0) (not (= value byte-len)))
-                  (set! batch.ok false))
-                (set! byte-len -1)
-                (set! (array-ref args arg) value)
-                (set! arg (+ arg 1)))))
-          (when
-            batch.ok
-            (set!
-              status
-              (compiler-comptime-host-batch-call
-                (array-ref resolved op)
-                session
-                (array-ref args 0)
-                (array-ref args 1)
-                (array-ref args 2))))
-          (set! record (+ record 1))))
-      (cond
-        [(not (= status tlci.tlci-host-callback-status-ok)) status]
-        [(and batch.ok (= record record-count) (= batch.pos batch.len))
-          tlci.tlci-host-callback-status-ok]
-        [else tlci.tlci-host-callback-status-bad-request]))))
+            [status : i64
+              (compiler-comptime-host-batch-replay session start parsed)]
+            (if (= status tlci.tlci-host-callback-status-ok)
+              tlci.tlci-host-callback-status-bad-request
+              status))]))))
 
 (define (compiler-comptime-host-callback-run-ops
   [session : i64]

@@ -2126,7 +2126,7 @@
 (define (compiler-cfg-eval-list-all
   [dispatch : sym_i64_env.SymI64Env]
   [predicates : reader.SpannedSexpr]) : ResultCompilerCfg
-  (match (reader.spanned-sexpr-slice-view predicates)
+  (match (reader.spanned-sexpr-view predicates)
     [(List items _) (compiler-cfg-eval-list-all-items dispatch items)]
     [_ (Err "parse: cfg all expects predicates")]))
 
@@ -2145,7 +2145,7 @@
 (define (compiler-cfg-eval-list-any
   [dispatch : sym_i64_env.SymI64Env]
   [predicates : reader.SpannedSexpr]) : ResultCompilerCfg
-  (match (reader.spanned-sexpr-slice-view predicates)
+  (match (reader.spanned-sexpr-view predicates)
     [(List items _) (compiler-cfg-eval-list-any-items dispatch items)]
     [_ (Err "parse: cfg any expects predicates")]))
 
@@ -2164,7 +2164,7 @@
 (define (compiler-cfg-eval-not
   [dispatch : sym_i64_env.SymI64Env]
   [predicates : reader.SpannedSexpr]) : ResultCompilerCfg
-  (match (reader.spanned-sexpr-slice-view predicates)
+  (match (reader.spanned-sexpr-view predicates)
     [(List (slice pred) _)
       (let
         [enabled (try (compiler-cfg-eval dispatch pred))]
@@ -2174,7 +2174,7 @@
 (define (compiler-cfg-eval
   [dispatch : sym_i64_env.SymI64Env]
   [predicate : reader.SpannedSexpr]) : ResultCompilerCfg
-  (match (reader.spanned-sexpr-slice-view predicate)
+  (match (reader.spanned-sexpr-view predicate)
     [(Sym name _)
       (Ok (compiler-cfg-enabled? dispatch (ci.intern-syntax-id-value name)))]
     [(List (slice (Sym op _) & _) _)
@@ -3940,7 +3940,7 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]
   [out : (&mut out ast.AstTypeList)]) : ResultAstTypeListBuild
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List items) (parse-ast-type-list-items dispatch pools items out)]
     [_ (Err "parse: malformed type list")]))
 
@@ -3989,7 +3989,7 @@
   [s : reader.SpannedSexpr]
   [message : String]
   [out : (&mut out ast.AstLifetimeList)]) : ResultAstLifetimeListBuild
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice)) (Ok)]
     [(List (slice (Sym name _) & _))
       (let
@@ -4016,7 +4016,7 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]
   [message : String]) : ResultAstLifetimeList
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice)) (Err message)]
     [_ (parse-ast-lifetime-list-result dispatch pools s message)]))
 
@@ -4046,12 +4046,12 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstType
-  (match (reader.sexpr-slice-view rest)
+  (match (reader.sexpr-view rest)
     [(List (slice mode-node & _))
       (let
         [signature-tail (reader.spanned-sexpr-drop rest 1)]
         [mode (try (parse-ast-c-function-mode mode-node))]
-        (match (reader.sexpr-slice-view signature-tail)
+        (match (reader.sexpr-view signature-tail)
           [(List (slice signature-node))
             (let
               [signature (try (parse-ast-type dispatch pools signature-node))]
@@ -4075,11 +4075,11 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstType
-  (match (reader.sexpr-slice-view rest)
+  (match (reader.sexpr-view rest)
     [(List (slice (Sym lifetime _) ty & _))
       (let
         [end (reader.spanned-sexpr-drop rest 2)]
-        (match (reader.sexpr-slice-view end)
+        (match (reader.sexpr-view end)
           [(List (slice))
             (let
               [inner (try (parse-ast-type dispatch pools ty))]
@@ -4098,11 +4098,11 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]) : ResultAstFuncTypeParts
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice arg & _))
       (let
         [rest (reader.spanned-sexpr-drop s 1)]
-        (match (reader.sexpr-slice-view rest)
+        (match (reader.sexpr-view rest)
           [(List (slice))
             (let
               [parsed-ret (try (parse-ast-type dispatch pools arg))]
@@ -4125,7 +4125,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice (Str bytes _)) _)
       (Ok
         (ast.ast-node-pool-context-expr-push
@@ -4139,36 +4139,42 @@
   [rest : reader.SpannedSexpr]
   [is-struct : bool]) : ResultAstType
   (match (reader.sexpr-view rest)
-    [(Cons name-node lifetimes-box)
-      (match (reader.sexpr-view name-node)
-        [(Sym name-id)
-          (let
-            [raw-name-id : i64 (ci.intern-syntax-id-value name-id)]
-            [lifetimes
-              (try
-                (parse-ast-lifetime-list-result
-                  dispatch
-                  pools
-                  lifetimes-box
-                  "parse: malformed internal resolved type lifetime list"))]
-            (Ok
-              (if is-struct
-                (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                  (Struct raw-name-id)
-                  (ast.ast-ty-struct-args raw-name-id lifetimes))
-                (if (ast.ast-lifetime-list-empty? (& lifetimes))
-                  (Enum raw-name-id)
-                  (ast.ast-ty-enum-args raw-name-id lifetimes)))))]
-        [(Str _)
-          (Err "parse: malformed internal resolved type name was string")]
-        [(Int _ _)
-          (Err "parse: malformed internal resolved type name was integer")]
-        [(Nil) (Err "parse: malformed internal resolved type name was nil")]
-        [(Cons _ _)
-          (Err "parse: malformed internal resolved type name was list")]
-        [(Char _) (Err "parse: malformed internal resolved type name was char")]
-        [(Float _)
-          (Err "parse: malformed internal resolved type name was float")])]
+    [(List (slice name-node & _))
+      (let
+        [lifetimes-box (reader.spanned-sexpr-drop rest 1)]
+        (match (reader.sexpr-view name-node)
+          [(Sym name-id)
+            (let
+              [raw-name-id : i64 (ci.intern-syntax-id-value name-id)]
+              [lifetimes
+                (try
+                  (parse-ast-lifetime-list-result
+                    dispatch
+                    pools
+                    lifetimes-box
+                    "parse: malformed internal resolved type lifetime list"))]
+              (Ok
+                (if is-struct
+                  (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                    (Struct raw-name-id)
+                    (ast.ast-ty-struct-args raw-name-id lifetimes))
+                  (if (ast.ast-lifetime-list-empty? (& lifetimes))
+                    (Enum raw-name-id)
+                    (ast.ast-ty-enum-args raw-name-id lifetimes)))))]
+          [(Str _)
+            (Err "parse: malformed internal resolved type name was string")]
+          [(Int _ _)
+            (Err "parse: malformed internal resolved type name was integer")]
+          [(List items)
+            (match items
+              [(slice)
+                (Err "parse: malformed internal resolved type name was nil")]
+              [(slice _ & _)
+                (Err "parse: malformed internal resolved type name was list")])]
+          [(Char _)
+            (Err "parse: malformed internal resolved type name was char")]
+          [(Float _)
+            (Err "parse: malformed internal resolved type name was float")]))]
     [_ (Err "parse: malformed internal resolved type shape")]))
 
 (define (parse-ast-reference-type
@@ -4176,7 +4182,7 @@
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]
   [mutable : bool]) : ResultAstType
-  (match (reader.sexpr-slice-view rest)
+  (match (reader.sexpr-view rest)
     ;; The parser is context-free. An empty lifetime marker is legal in
     ;; the AST, but the typechecker only accepts it while normalizing a
     ;; function signature into hidden signature-local lifetimes.
@@ -4219,7 +4225,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]) : ResultAstType
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(Sym name)
       (let
         [name-id : i64 (ci.intern-syntax-id-value name)]
@@ -4279,7 +4285,7 @@
               [elems (try (parse-ast-type-list-result dispatch pools rest))]
               (Ok (ast.ast-ty-tuple elems)))]
           [(= tag (compiler-parse-tag-ty-array))
-            (match (reader.sexpr-slice-view rest)
+            (match (reader.sexpr-view rest)
               [(List (slice _))
                 (Err
                   "parse: unsized (Array T) was removed; use (Array T N), stdlib.vector, or a borrowed Slice")]
@@ -4290,35 +4296,35 @@
               [(List (slice _ _)) (Err "parse: array size must be integer")]
               [_ (Err "parse: malformed array type")])]
           [(= tag (compiler-parse-tag-ty-dyn-array))
-            (match (reader.sexpr-slice-view rest)
+            (match (reader.sexpr-view rest)
               [(List (slice elem))
                 (let
                   [elem-ty (try (parse-ast-type dispatch pools elem))]
                   (Ok (ast.ast-ty-dyn-array-with-pools pools elem-ty)))]
               [_ (Err "parse: __tl_dyn-array expects exactly one type")])]
           [(= tag (compiler-parse-tag-ty-slice))
-            (match (reader.sexpr-slice-view rest)
+            (match (reader.sexpr-view rest)
               [(List (slice elem))
                 (let
                   [elem-ty (try (parse-ast-type dispatch pools elem))]
                   (Ok (ast.ast-ty-slice-with-pools pools elem-ty)))]
               [_ (Err "parse: Slice expects exactly one type")])]
           [(= tag (compiler-parse-tag-ty-ptr))
-            (match (reader.sexpr-slice-view rest)
+            (match (reader.sexpr-view rest)
               [(List (slice elem))
                 (let
                   [elem-ty (try (parse-ast-type dispatch pools elem))]
                   (Ok (ast.ast-ty-ptr-with-pools pools elem-ty)))]
               [_ (Err "parse: Ptr expects exactly one type")])]
           [(= tag (compiler-parse-tag-ty-mut-ptr))
-            (match (reader.sexpr-slice-view rest)
+            (match (reader.sexpr-view rest)
               [(List (slice elem))
                 (let
                   [elem-ty (try (parse-ast-type dispatch pools elem))]
                   (Ok (ast.ast-ty-mut-ptr-with-pools pools elem-ty)))]
               [_ (Err "parse: MutPtr expects exactly one type")])]
           [(= tag (compiler-parse-tag-ty-box))
-            (match (reader.sexpr-slice-view rest)
+            (match (reader.sexpr-view rest)
               [(List (slice elem))
                 (let
                   [elem-ty (try (parse-ast-type dispatch pools elem))]
@@ -4329,7 +4335,7 @@
           [(= tag (compiler-parse-tag-ty-mut-ref))
             (parse-ast-reference-type dispatch pools rest true)]
           [(= tag (compiler-parse-tag-ty-region))
-            (match (reader.sexpr-slice-view rest)
+            (match (reader.sexpr-view rest)
               [(List (slice (Sym region _) inner))
                 (let
                   [inner-ty (try (parse-ast-type dispatch pools inner))]
@@ -4373,14 +4379,14 @@
 (define (compiler-parse-semantic-func-type-item-origins!
   [dispatch : sym_i64_env.SymI64Env]
   [item : reader.SpannedSexpr]) : unit
-  (match (reader.spanned-sexpr-slice-view item)
+  (match (reader.spanned-sexpr-view item)
     [(List (slice (Sym key _) & _) _)
       (let
         [tail (reader.spanned-sexpr-drop item 1)]
         (if (=
           (ci.intern-syntax-id-value key)
           (cbi.compiler-builtin-ctfe ":consume"))
-          (match (reader.spanned-sexpr-slice-view tail)
+          (match (reader.spanned-sexpr-view tail)
             [(List (slice ty-node) _)
               (compiler-parse-semantic-type-origins! dispatch ty-node)]
             [_ unit])
@@ -4406,7 +4412,7 @@
 (define (compiler-parse-semantic-type-second-origin!
   [dispatch : sym_i64_env.SymI64Env]
   [items : reader.SpannedSexpr]) : unit
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List (slice _ second & _) _)
       (compiler-parse-semantic-type-origins! dispatch second)]
     [_ unit]))
@@ -4414,7 +4420,7 @@
 (define (compiler-parse-semantic-type-first-origin!
   [dispatch : sym_i64_env.SymI64Env]
   [items : reader.SpannedSexpr]) : unit
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List (slice first & _) _)
       (compiler-parse-semantic-type-origins! dispatch first)]
     [_ unit]))
@@ -4422,7 +4428,7 @@
 (define (compiler-parse-semantic-reference-type-origin!
   [dispatch : sym_i64_env.SymI64Env]
   [items : reader.SpannedSexpr]) : unit
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List (slice first) _)
       (compiler-parse-semantic-type-origins! dispatch first)]
     [(List (slice _ second & _) _)
@@ -4432,7 +4438,7 @@
 (define (compiler-parse-semantic-type-origins!
   [dispatch : sym_i64_env.SymI64Env]
   [s : reader.SpannedSexpr]) : unit
-  (match (reader.spanned-sexpr-slice-view s)
+  (match (reader.spanned-sexpr-view s)
     [(Sym name span)
       (let
         [name-id : i64 (ci.intern-syntax-id-value name)]
@@ -4517,7 +4523,7 @@
   [name : ci.InternSyntaxId]
   [ty : ast.AstType]
   [end : reader.SpannedSexpr]) : ResultAstParam
-  (match (reader.sexpr-slice-view end)
+  (match (reader.sexpr-view end)
     [(List (slice))
       (Ok (ast.ast-param-id (ci.intern-syntax-id-value name) ty false))]
     [(List (slice metadata & _))
@@ -4525,7 +4531,7 @@
         [metadata-rest (reader.spanned-sexpr-drop end 1)]
         (match (parse-ast-param-invalidate-metadata metadata)
           [(Lifetime lifetime)
-            (match (reader.sexpr-slice-view metadata-rest)
+            (match (reader.sexpr-view metadata-rest)
               [(List (slice))
                 (Ok
                   (ast.ast-param-id
@@ -4552,14 +4558,14 @@
   (Other))
 
 (define (parse-ast-param-invalidate-metadata [metadata : reader.SpannedSexpr]) : ParseAstInvalidateMetadata
-  (match (reader.sexpr-slice-view metadata)
+  (match (reader.sexpr-view metadata)
     [(List (slice (Sym key _) & _))
       (let
         [tail (reader.spanned-sexpr-drop metadata 1)]
         (if (=
           (ci.intern-syntax-id-value key)
           (cbi.compiler-builtin-ctfe ":invalidate"))
-          (match (reader.sexpr-slice-view tail)
+          (match (reader.sexpr-view tail)
             [(List (slice (Sym lifetime _)))
               (Lifetime (ci.intern-syntax-id-value lifetime))]
             [_ Malformed])
@@ -4569,9 +4575,9 @@
 (define (parse-ast-param-metadata-error
   [dispatch : sym_i64_env.SymI64Env]
   [end : reader.SpannedSexpr]) : String
-  (match (reader.sexpr-slice-view end)
+  (match (reader.sexpr-view end)
     [(List (slice metadata-node & _))
-      (match (reader.sexpr-slice-view metadata-node)
+      (match (reader.sexpr-view metadata-node)
         [(List (slice (Sym key _) & _))
           (cond
             [(=
@@ -4601,18 +4607,18 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]) : ResultAstParam
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice (Sym first-name _) & _))
       (let
         [rest (reader.spanned-sexpr-drop s 1)]
         (if (=
           (ci.intern-syntax-id-value first-name)
           cbi.compiler-builtin-id-fix-comptime)
-          (match (reader.sexpr-slice-view rest)
+          (match (reader.sexpr-view rest)
             [(List (slice (Sym name _) colon ty & _))
               (let
                 [end (reader.spanned-sexpr-drop rest 3)]
-                (match (reader.sexpr-slice-view end)
+                (match (reader.sexpr-view end)
                   [(List (slice))
                     (if (sexpr-colon? colon)
                       (let
@@ -4624,7 +4630,7 @@
                       (Err "parse: expected ':' in parameter"))]
                   [_ (Err (parse-ast-param-metadata-error dispatch end))]))]
             [_ (Err "parse: malformed parameter")])
-          (match (reader.sexpr-slice-view rest)
+          (match (reader.sexpr-view rest)
             [(List (slice colon ty & _))
               (let
                 [end (reader.spanned-sexpr-drop rest 2)]
@@ -4725,7 +4731,7 @@
 (define (parse-ast-macro-type-kind-sexpr-contains-id?
   [s : reader.SpannedSexpr]
   [kind : ci.InternSyntaxId]) : bool
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice (Sym found _) & _))
       (let
         [tail (reader.spanned-sexpr-drop s 1)]
@@ -4738,7 +4744,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [operand-name : String]
   [s : reader.SpannedSexpr]) : ResultAstMacroTypeKindCount
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice)) (Ok 0)]
     [(List (slice (Sym kind-name _) & _))
       (let
@@ -4776,7 +4782,7 @@
   [out : (&mut out ast.AstMacroTypeKindList)]
   [s : reader.SpannedSexpr]
   [index : i64]) : unit
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice (Sym kind-name _) & _))
       (let
         [tail (reader.spanned-sexpr-drop s 1)]
@@ -4807,14 +4813,14 @@
   [dispatch : sym_i64_env.SymI64Env]
   [operand-name : String]
   [s : reader.SpannedSexpr]) : ResultAstMacroTypeKindList
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice (Sym tag _) & _))
       (let
         [tail (reader.spanned-sexpr-drop s 1)]
         (if (=
           (ci.intern-syntax-id-value tag)
           (cbi.compiler-builtin-ctfe ":kind"))
-          (match (reader.sexpr-slice-view tail)
+          (match (reader.sexpr-view tail)
             [(List (slice))
               (Err
                 (parse-ast-macro-type-kind-error
@@ -4846,17 +4852,17 @@
   (let
     [name-id : i64 (ci.intern-syntax-id-value name)]
     [name-text : String (compiler-parse-dispatch-syntax-id-text dispatch name)]
-    (match (reader.sexpr-slice-view rest)
+    (match (reader.sexpr-view rest)
       [(List (slice)) (Ok (ast.ast-macro-param name-id (& parsed-ty) false))]
       [(List (slice suffix & _))
         (let
           [suffix-rest (reader.spanned-sexpr-drop rest 1)]
-          (match (reader.sexpr-slice-view suffix)
+          (match (reader.sexpr-view suffix)
             [(Sym suffix-name)
               (if (=
                 (ci.intern-syntax-id-value suffix-name)
                 (cbi.compiler-builtin-ctfe "..."))
-                (match (reader.sexpr-slice-view suffix-rest)
+                (match (reader.sexpr-view suffix-rest)
                   [(List (slice))
                     (Ok (ast.ast-macro-param name-id (& parsed-ty) true))]
                   [_ (Err "parse: malformed macro operand")])
@@ -4864,7 +4870,7 @@
             [(List (slice _ & _))
               (if (parse-ast-macro-type-operand?
                 (compiler-parse-place-shared-view parsed-ty))
-                (match (reader.sexpr-slice-view suffix-rest)
+                (match (reader.sexpr-view suffix-rest)
                   [(List (slice))
                     (let
                       [type-kinds
@@ -4886,7 +4892,7 @@
                         (=
                           (ci.intern-syntax-id-value dots-name)
                           (cbi.compiler-builtin-ctfe "..."))
-                        (match (reader.sexpr-slice-view after-dots)
+                        (match (reader.sexpr-view after-dots)
                           [(List (slice)) true]
                           [_ false]))
                         (Err
@@ -4914,7 +4920,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]) : ResultAstMacroParam
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice (Sym name _) & _))
       (let
         [rest (reader.spanned-sexpr-drop s 1)]
@@ -4922,7 +4928,7 @@
           (ci.intern-syntax-id-value name)
           cbi.compiler-builtin-id-fix-comptime)
           (Err "parse: defmacro operands are already compile-time")
-          (match (reader.sexpr-slice-view rest)
+          (match (reader.sexpr-view rest)
             [(List (slice colon ty & _))
               (let
                 [rest3 (reader.spanned-sexpr-drop rest 2)]
@@ -4952,7 +4958,7 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]
   [out : (&mut out ast.AstMacroParamList)]) : ResultAstMacroParamListBuild
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice)) Ok]
     [(List (slice head & _))
       (let
@@ -4960,7 +4966,7 @@
         [parsed-head (try (parse-ast-macro-param dispatch pools head))]
         (if (ast-macro-param-variadic?
           (compiler-parse-place-shared-view parsed-head))
-          (match (reader.sexpr-slice-view tail)
+          (match (reader.sexpr-view tail)
             [(List (slice))
               (ast.ast-macro-param-list-push out parsed-head)
               Ok]
@@ -4992,7 +4998,7 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]
   [out : (&mut out ast.AstParamList)]) : ResultAstParamListBuild
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List items) (parse-ast-param-list-into-items dispatch pools items out)]
     [_ (Err "parse: malformed parameter list")]))
 
@@ -5012,12 +5018,12 @@
 (define (compiler-parse-semantic-param-items-origin!
   [dispatch : sym_i64_env.SymI64Env]
   [items : reader.SpannedSexpr]) : unit
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List (slice head & _) _)
       (let
         [tail (reader.spanned-sexpr-drop items 1)]
         (if (sexpr-colon? head)
-          (match (reader.spanned-sexpr-slice-view tail)
+          (match (reader.spanned-sexpr-view tail)
             [(List (slice ty-node & _) _)
               (compiler-parse-semantic-type-origins! dispatch ty-node)]
             [_ unit])
@@ -5028,33 +5034,34 @@
   [dispatch : sym_i64_env.SymI64Env]
   [item : reader.SpannedSexpr]) : unit
   (match (reader.spanned-sexpr-view item)
-    [(BracketList items _)
-      (when
-        compiler-parse-semantic-binding-origin-capture-active
-        (match (reader.spanned-sexpr-slice-view items)
-          [(List (slice name & _) _)
-            (let
-              [rest (reader.spanned-sexpr-drop items 1)]
-              (if (match (reader.sexpr-view
-                (compiler-parse-place-shared-view name))
-                [(Sym id)
-                  (=
-                    (ci.intern-syntax-id-value id)
-                    cbi.compiler-builtin-id-fix-comptime)]
-                [_ false])
-                (match (reader.spanned-sexpr-slice-view rest)
-                  [(List (slice binding & _) _)
-                    (compiler-parse-semantic-token-origin!
-                      dispatch
-                      (compiler-parse-place-shared-view binding)
-                      CompilerParseSemanticOriginKind.BindingDefinition)]
-                  [_ unit])
-                (compiler-parse-semantic-token-origin!
-                  dispatch
-                  (compiler-parse-place-shared-view name)
-                  CompilerParseSemanticOriginKind.BindingDefinition)))]
-          [_ unit]))
-      (compiler-parse-semantic-param-items-origin! dispatch items)]
+    [(BracketList _ _)
+      (let
+        [items (reader.spanned-sexpr-drop item 0)]
+        (when
+          compiler-parse-semantic-binding-origin-capture-active
+          (match (reader.spanned-sexpr-view items)
+            [(List (slice name & _) _)
+              (let
+                [rest (reader.spanned-sexpr-drop items 1)]
+                (if (match (reader.sexpr-view name)
+                  [(Sym id)
+                    (=
+                      (ci.intern-syntax-id-value id)
+                      cbi.compiler-builtin-id-fix-comptime)]
+                  [_ false])
+                  (match (reader.spanned-sexpr-view rest)
+                    [(List (slice binding & _) _)
+                      (compiler-parse-semantic-token-origin!
+                        dispatch
+                        (compiler-parse-place-shared-view binding)
+                        CompilerParseSemanticOriginKind.BindingDefinition)]
+                    [_ unit])
+                  (compiler-parse-semantic-token-origin!
+                    dispatch
+                    (compiler-parse-place-shared-view name)
+                    CompilerParseSemanticOriginKind.BindingDefinition)))]
+            [_ unit]))
+        (compiler-parse-semantic-param-items-origin! dispatch items))]
     [_ unit]))
 
 (define (compiler-parse-semantic-param-list-origins!
@@ -5076,7 +5083,7 @@
 (define (parse-ast-field-cleanup
   [dispatch : sym_i64_env.SymI64Env]
   [s : reader.SpannedSexpr]) : ResultAstFieldCleanup
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice (Sym key _) & _))
       (let
         [tail (reader.spanned-sexpr-drop s 1)]
@@ -5084,14 +5091,14 @@
           [(=
               (ci.intern-syntax-id-value key)
               (cbi.compiler-builtin-ctfe ":cleanup"))
-            (match (reader.sexpr-slice-view tail)
+            (match (reader.sexpr-view tail)
               [(List (slice (Sym cleanup-fn _)))
                 (Ok (ast.ast-field-cleanup-fn-id cleanup-fn))]
               [_ (Err "parse: malformed field :cleanup metadata")])]
           [(=
               (ci.intern-syntax-id-value key)
               (cbi.compiler-builtin-ctfe ":owned"))
-            (match (reader.sexpr-slice-view tail)
+            (match (reader.sexpr-view tail)
               [(List (slice)) (Ok (Owned))]
               [_ (Err "parse: malformed field :owned metadata")])]
           [(compiler-parse-metadata-key? dispatch key)
@@ -5105,7 +5112,7 @@
 (define (parse-ast-variant-payload-cleanup
   [dispatch : sym_i64_env.SymI64Env]
   [s : reader.SpannedSexpr]) : ResultAstVariantPayloadCleanup
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice (Sym key _) & _))
       (let
         [tail (reader.spanned-sexpr-drop s 1)]
@@ -5113,14 +5120,14 @@
           [(=
               (ci.intern-syntax-id-value key)
               (cbi.compiler-builtin-ctfe ":cleanup"))
-            (match (reader.sexpr-slice-view tail)
+            (match (reader.sexpr-view tail)
               [(List (slice (Sym cleanup-fn _)))
                 (Ok (ast.ast-variant-payload-cleanup-fn-id cleanup-fn))]
               [_ (Err "parse: malformed enum payload :cleanup metadata")])]
           [(=
               (ci.intern-syntax-id-value key)
               (cbi.compiler-builtin-ctfe ":owned"))
-            (match (reader.sexpr-slice-view tail)
+            (match (reader.sexpr-view tail)
               [(List (slice)) (Ok (Owned))]
               [_ (Err "parse: malformed enum payload :owned metadata")])]
           [(compiler-parse-metadata-key? dispatch key)
@@ -5137,7 +5144,7 @@
   [s : reader.SpannedSexpr]
   [allow-cleanup : bool]
   [allow-align : bool]) : ResultAstFieldParts
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice (Sym name _) ty & rest))
       (let
         [parsed-ty (try (parse-ast-type dispatch pools ty))]
@@ -5227,7 +5234,7 @@
 
 ;; Whether `meta` is an `(:align ...)` form.
 (define (parse-ast-align-metadata? [meta : reader.SpannedSexpr]) : bool
-  (match (reader.sexpr-slice-view meta)
+  (match (reader.sexpr-view meta)
     [(List (slice (Sym key _) & _))
       (= (ci.intern-syntax-id-value key) (cbi.compiler-builtin-ctfe ":align"))]
     [_ false]))
@@ -5238,7 +5245,7 @@
 (define (parse-ast-declared-align-form
   [form : reader.SpannedSexpr]
   [malformed : String]) : ResultAstDeclaredAlign
-  (match (reader.sexpr-slice-view form)
+  (match (reader.sexpr-view form)
     [(List (slice _ (Int value _ _)))
       (if (ast.ast-declared-align-valid? value)
         (Ok value)
@@ -5277,7 +5284,7 @@
 (define (parse-ast-defstruct-repr-tail
   [dispatch : sym_i64_env.SymI64Env]
   [tail : reader.SpannedSexpr]) : ResultAstStructRepr
-  (match (reader.sexpr-slice-view tail)
+  (match (reader.sexpr-view tail)
     [(List (slice (Sym name _)))
       (if (= (ci.intern-syntax-id-value name) cbi.compiler-builtin-id-fix-c)
         (Ok (ast.ast-struct-repr-c))
@@ -5292,13 +5299,13 @@
     [_ (Err "parse: malformed :repr metadata")]))
 
 (define (parse-ast-defstruct-cleanup-tail [tail : reader.SpannedSexpr]) : ResultAstStructCleanup
-  (match (reader.sexpr-slice-view tail)
+  (match (reader.sexpr-view tail)
     [(List (slice (Sym cleanup-fn _)))
       (Ok (ast.ast-struct-cleanup-fn-id cleanup-fn))]
     [_ (Err "parse: malformed defstruct :cleanup metadata")]))
 
 (define (parse-ast-defenum-cleanup-tail [tail : reader.SpannedSexpr]) : ResultAstEnumCleanup
-  (match (reader.sexpr-slice-view tail)
+  (match (reader.sexpr-view tail)
     [(List (slice (Sym cleanup-fn _)))
       (Ok (ast.ast-enum-cleanup-fn-id cleanup-fn))]
     [_ (Err "parse: malformed defenum :cleanup metadata")]))
@@ -5306,7 +5313,7 @@
 (define (compiler-parse-semantic-field-definition-origins!
   [dispatch : sym_i64_env.SymI64Env]
   [items : reader.SpannedSexpr]) : unit
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List (slice name-node & _) _)
       (let
         [tail-items (reader.spanned-sexpr-drop items 1)]
@@ -5318,7 +5325,7 @@
               (ModulePath)
               (StructFieldDefinition))]
           [_ unit])
-        (match (reader.spanned-sexpr-slice-view tail-items)
+        (match (reader.spanned-sexpr-view tail-items)
           [(List (slice ty-node & _) _)
             (compiler-parse-semantic-type-origins! dispatch ty-node)]
           [_ unit]))]
@@ -5358,11 +5365,14 @@
         (let
           [field-index : i64 fields.len]
           [next-fields : ast.AstFieldDefList fields]
-          (match (reader.spanned-sexpr-view
-            (compiler-parse-place-shared-view head))
-            [(BracketList items _)
-              (compiler-parse-semantic-field-definition-origins! dispatch items)]
-            [(Cons _ _ _)
+          (match (reader.spanned-sexpr-view head)
+            [(BracketList _ _)
+              (let
+                [items (reader.spanned-sexpr-drop head 0)]
+                (compiler-parse-semantic-field-definition-origins!
+                  dispatch
+                  items))]
+            [(List (slice _ & _) _)
               (compiler-parse-semantic-field-definition-origins!
                 dispatch
                 (compiler-parse-place-shared-view head))]
@@ -5439,7 +5449,7 @@
   [seen-repr : bool]
   [seen-cleanup : bool]
   [seen-field : bool]) : ResultAstStructDefParts
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List (slice) _)
       (let
         [final-repr (try (parse-ast-defstruct-resolve-repr repr align))]
@@ -5447,7 +5457,7 @@
     [(List (slice head & _) _)
       (let
         [tail (reader.spanned-sexpr-drop items 1)]
-        (match (reader.sexpr-slice-view head)
+        (match (reader.sexpr-view head)
           [(List (slice (Sym key _) & _))
             (let
               [after-key (reader.spanned-sexpr-drop head 1)]
@@ -5589,7 +5599,7 @@
                               dispatch
                               key)
                             " metadata"))
-                        (match (reader.sexpr-slice-view after-key)
+                        (match (reader.sexpr-view after-key)
                           [(List (slice))
                             (parse-ast-defstruct-items
                               dispatch
@@ -5659,7 +5669,7 @@
 (define (compiler-parse-metadata-sexpr?
   [dispatch : sym_i64_env.SymI64Env]
   [s : reader.SpannedSexpr]) : bool
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice (Sym key _) & _)) (compiler-parse-metadata-key? dispatch key)]
     [_ false]))
 
@@ -5668,7 +5678,7 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]
   [allow-cleanup : bool]) : ResultAstVariantPayloadParts
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice))
       (Ok (ast.ast-type-list-new) (ast.ast-variant-payload-cleanup-list-new))]
     [(List (slice ty-node & _))
@@ -5683,7 +5693,7 @@
             "parse: enum payload cleanup metadata must follow a payload type")
           (let
             [parsed-ty (try (parse-ast-type dispatch pools ty-form))]
-            (match (reader.sexpr-slice-view rest-form)
+            (match (reader.sexpr-view rest-form)
               [(List (slice))
                 (Ok
                   (ast.ast-type-cons-with-pools
@@ -5747,7 +5757,7 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]
   [allow-cleanup : bool]) : ResultAstVariantDef
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List (slice (Sym name _) & _))
       (let
         [fields (reader.spanned-sexpr-drop s 1)]
@@ -5792,7 +5802,7 @@
 (define (parse-ast-dispatch-variant
   [dispatch : sym_i64_env.SymI64Env]
   [s : reader.SpannedSexpr]) : ResultAstDispatchVariant
-  (match (reader.spanned-sexpr-slice-view s)
+  (match (reader.spanned-sexpr-view s)
     [(List (slice (Sym isa-name _) (Sym fn-name fn-span)) _)
       (let
         [isa (try (parse-ast-dispatch-isa dispatch isa-name))]
@@ -5808,7 +5818,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [variants : reader.SpannedSexpr]
   [out : (&mut out ast.AstDispatchVariantList)]) : ResultAstDispatchVariantListBuild
-  (match (reader.spanned-sexpr-slice-view variants)
+  (match (reader.spanned-sexpr-view variants)
     [(List items _)
       (parse-ast-dispatch-variant-list-into-items dispatch items out)]
     [_ (Err "parse: malformed defdispatch variant list")]))
@@ -5865,7 +5875,7 @@
           pools
           (compiler-parse-place-shared-view head)
           (ast.ast-enum-cleanup? cleanup)))]
-    (match (reader.spanned-sexpr-slice-view head)
+    (match (reader.spanned-sexpr-view head)
       [(List (slice name-node & payloads) _)
         (match (reader.spanned-sexpr-view name-node)
           [(Sym name span)
@@ -5909,13 +5919,13 @@
   [seen-lifetimes : bool]
   [seen-cleanup : bool]
   [seen-variant : bool]) : ResultAstEnumDefParts
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List (slice) _)
       (Ok lifetimes cleanup markers (ast.ast-variant-def-list-new))]
     [(List (slice head & _) _)
       (let
         [tail (reader.spanned-sexpr-drop items 1)]
-        (match (reader.sexpr-slice-view head)
+        (match (reader.sexpr-view head)
           [(List (slice (Sym key _) & _))
             (let
               [after-key (reader.spanned-sexpr-drop head 1)]
@@ -5982,7 +5992,7 @@
                           "parse: duplicate defenum "
                           (compiler-parse-dispatch-syntax-id-text dispatch key)
                           " metadata"))
-                      (match (reader.sexpr-slice-view after-key)
+                      (match (reader.sexpr-view after-key)
                         [(List (slice))
                           (parse-ast-defenum-items
                             dispatch
@@ -6025,7 +6035,7 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]
   [out : (&mut out ast.AstPatternList)]) : ResultAstPatternListBuild
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(List items) (parse-ast-pattern-list-into-items dispatch pools items out)]
     [_ (Err "parse: malformed pattern list")]))
 
@@ -6135,7 +6145,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]) : ResultAstPattern
-  (match (reader.sexpr-slice-view s)
+  (match (reader.sexpr-view s)
     [(Int n text) (Ok (Literal (Int n (reader.sp-text-copy text))))]
     [(Float text) (Ok (Literal (Float (reader.sp-text-copy text))))]
     [(Str string-id) (Ok (Literal (String (ci.intern-id-value string-id))))]
@@ -6190,30 +6200,34 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pattern : reader.SpannedSexpr]) : unit
   (match (reader.spanned-sexpr-view pattern)
-    [(BracketList items _)
-      (compiler-parse-semantic-pattern-origins! dispatch items)]
-    [(Cons name-node args _)
-      (match (reader.spanned-sexpr-view name-node)
-        [(Sym name span)
-          (let
-            [tag : i64
-              (compiler-parse-dispatch-tag-id
-                dispatch
-                (ci.intern-syntax-id-value name))]
-            (if (or
-              (= tag (compiler-parse-tag-expr-tuple))
-              (= tag (compiler-parse-tag-expr-array))
-              (=
-                (ci.intern-syntax-id-value name)
-                (cbi.compiler-builtin-ctfe "slice")))
-              unit
-              (compiler-parse-semantic-origin-push-components!
-                name
-                span
-                (ModulePath)
-                (EnumVariantPattern))))]
-        [_ unit])
-      (compiler-parse-semantic-pattern-list-origins! dispatch args)]
+    [(BracketList _ _)
+      (let
+        [items (reader.spanned-sexpr-drop pattern 0)]
+        (compiler-parse-semantic-pattern-origins! dispatch items))]
+    [(List (slice name-node & _) _)
+      (let
+        [args (reader.spanned-sexpr-drop pattern 1)]
+        (match (reader.spanned-sexpr-view name-node)
+          [(Sym name span)
+            (let
+              [tag : i64
+                (compiler-parse-dispatch-tag-id
+                  dispatch
+                  (ci.intern-syntax-id-value name))]
+              (if (or
+                (= tag (compiler-parse-tag-expr-tuple))
+                (= tag (compiler-parse-tag-expr-array))
+                (=
+                  (ci.intern-syntax-id-value name)
+                  (cbi.compiler-builtin-ctfe "slice")))
+                unit
+                (compiler-parse-semantic-origin-push-components!
+                  name
+                  span
+                  (ModulePath)
+                  (EnumVariantPattern))))]
+          [_ unit])
+        (compiler-parse-semantic-pattern-list-origins! dispatch args))]
     [(Sym name span)
       (let
         [tag : i64
@@ -6237,7 +6251,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstMaybeExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice pred then-expr) _)
       (match (compiler-cfg-eval dispatch pred)
         [(Ok enabled)
@@ -6289,7 +6303,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [head : reader.SpannedSexpr]) : ResultAstMaybeExpr
-  (match (reader.spanned-sexpr-slice-view head)
+  (match (reader.spanned-sexpr-view head)
     [(List (slice (Sym op _) & _) _)
       (let
         [cfg-rest (reader.spanned-sexpr-drop head 1)]
@@ -6308,7 +6322,7 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]
   [out : (&mut out ast.AstExprList)]) : ResultAstExprListBuild
-  (match (reader.spanned-sexpr-slice-view s)
+  (match (reader.spanned-sexpr-view s)
     [(List items _) (parse-ast-expr-list-into-items dispatch pools items out)]
     [_ (Err "parse: malformed expression list")]))
 
@@ -6341,7 +6355,7 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]
   [missing-message : String]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view s)
+  (match (reader.spanned-sexpr-view s)
     [(List (slice) _) (Err missing-message)]
     [_
       (let
@@ -6369,25 +6383,21 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [head : reader.SpannedSexpr]) : ResultAstMaybeExpr
-  (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view head))
-    [(BracketList items _)
-      (match (parse-ast-call-bracket-clause dispatch pools head items)
-        [(Ok parsed) (SomeExpr parsed)]
-        [(Err message) (Err message)])]
-    [(Cons op-node cfg-rest _)
-      (match (reader.spanned-sexpr-view op-node)
-        [(Sym op _)
-          (if (=
-            (ci.intern-syntax-id-value op)
-            (cbi.compiler-builtin-ctfe "cfg"))
-            (parse-ast-cfg-expr-maybe dispatch pools cfg-rest)
-            (match (parse-ast-expr-with-pools dispatch pools head)
-              [(Ok parsed) (SomeExpr parsed)]
-              [(Err message) (Err message)]))]
-        [_
+  (match (reader.spanned-sexpr-view head)
+    [(BracketList _ _)
+      (let
+        [items (reader.spanned-sexpr-drop head 0)]
+        (match (parse-ast-call-bracket-clause dispatch pools head items)
+          [(Ok parsed) (SomeExpr parsed)]
+          [(Err message) (Err message)]))]
+    [(List (slice (Sym op _) & _) _)
+      (let
+        [cfg-rest (reader.spanned-sexpr-drop head 1)]
+        (if (= (ci.intern-syntax-id-value op) (cbi.compiler-builtin-ctfe "cfg"))
+          (parse-ast-cfg-expr-maybe dispatch pools cfg-rest)
           (match (parse-ast-expr-with-pools dispatch pools head)
             [(Ok parsed) (SomeExpr parsed)]
-            [(Err message) (Err message)])])]
+            [(Err message) (Err message)])))]
     [_
       (match (parse-ast-expr-with-pools dispatch pools head)
         [(Ok parsed) (SomeExpr parsed)]
@@ -6398,7 +6408,7 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]
   [out : (&mut out ast.AstExprList)]) : ResultAstExprListBuild
-  (match (reader.spanned-sexpr-slice-view s)
+  (match (reader.spanned-sexpr-view s)
     [(List items _)
       (parse-ast-call-arg-list-into-items dispatch pools items out)]
     [_ (Err "parse: malformed call argument list")]))
@@ -6432,7 +6442,7 @@
   [pools : ast.AstNodePoolContext]
   [op : ast.AstBinOp]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice left right) _)
       (let
         [parsed-left (try (parse-ast-expr-with-pools dispatch pools left))]
@@ -6463,7 +6473,7 @@
   [pools : ast.AstNodePoolContext]
   [op : ast.AstBinOp]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice left right & tail) _)
       (let
         [parsed-left (try (parse-ast-expr-with-pools dispatch pools left))]
@@ -6481,7 +6491,7 @@
   [pools : ast.AstNodePoolContext]
   [op : ast.AstUnOp]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -6514,7 +6524,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice cond then-branch else-branch) _)
       (let
         [parsed-cond (try (parse-ast-expr-with-pools dispatch pools cond))]
@@ -6532,7 +6542,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice cond & _) _)
       (let
         [body-tail (reader.spanned-sexpr-drop rest 1)]
@@ -6550,12 +6560,11 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice target-node value) _)
       (let
         [parsed-value (try (parse-ast-expr-with-pools dispatch pools value))]
-        (match (reader.spanned-sexpr-view
-          (compiler-parse-place-shared-view target-node))
+        (match (reader.spanned-sexpr-view target-node)
           [(Sym name target-span)
             (compiler-parse-semantic-dotted-field-origins! name target-span)
             (Ok
@@ -6638,7 +6647,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice place-node replacement-node) _)
       (let
         [place-id (try (parse-ast-expr-with-pools dispatch pools place-node))]
@@ -6655,7 +6664,7 @@
   [pools : ast.AstNodePoolContext]
   [is-cast : bool]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr colon ty) _)
       (if (sexpr-colon? colon)
         (let
@@ -6673,7 +6682,7 @@
   [s : reader.SpannedSexpr]) : ResultAstLetBinding
   (let
     [_binding-origin : unit
-      (match (reader.spanned-sexpr-slice-view s)
+      (match (reader.spanned-sexpr-view s)
         [(List (slice name & _) _)
           (compiler-parse-semantic-token-origin!
             dispatch
@@ -6681,52 +6690,34 @@
             CompilerParseSemanticOriginKind.BindingDefinition)]
         [_ unit])]
     [result : ResultAstLetBinding
-      (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view s))
-        [(BracketList items _) (parse-ast-let-binding dispatch pools items)]
-        [(Cons name-node tail _)
-          (match (reader.spanned-sexpr-view name-node)
-            [(Sym name _)
-              (match (reader.spanned-sexpr-view tail)
-                [(Cons second rest _)
-                  (match (reader.spanned-sexpr-view rest)
-                    [(Nil _)
-                      (match (parse-ast-expr-with-pools dispatch pools second)
-                        [(Ok parsed-value)
-                          (Ok
-                            (ast.ast-let-binding-id
-                              (ci.intern-syntax-id-value name)
-                              No
-                              parsed-value))]
-                        [(Err message) (Err message)])]
-                    [(Cons ty value-tail _)
-                      (match (reader.spanned-sexpr-view value-tail)
-                        [(Cons value end _)
-                          (match (reader.spanned-sexpr-view end)
-                            [(Nil _)
-                              (if (sexpr-colon? second)
-                                (match (parse-ast-type-spanned
-                                  dispatch
-                                  pools
-                                  ty)
-                                  [(Ok parsed-ty)
-                                    (match (parse-ast-expr-with-pools
-                                      dispatch
-                                      pools
-                                      value)
-                                      [(Ok parsed-value)
-                                        (Ok
-                                          (ast.ast-let-binding-id
-                                            (ci.intern-syntax-id-value name)
-                                            (Some parsed-ty)
-                                            parsed-value))]
-                                      [(Err message) (Err message)])]
-                                  [(Err message) (Err message)])
-                                (Err "parse: expected ':' in let binding"))]
-                            [_ (Err "parse: malformed let binding")])]
-                        [_ (Err "parse: malformed let binding")])]
-                    [_ (Err "parse: malformed let binding")])]
-                [_ (Err "parse: malformed let binding")])]
-            [_ (Err "parse: malformed let binding")])]
+      (match (reader.spanned-sexpr-view s)
+        [(BracketList _ _)
+          (let
+            [items (reader.spanned-sexpr-drop s 0)]
+            (parse-ast-let-binding dispatch pools items))]
+        [(List (slice (Sym name _) second) _)
+          (match (parse-ast-expr-with-pools dispatch pools second)
+            [(Ok parsed-value)
+              (Ok
+                (ast.ast-let-binding-id
+                  (ci.intern-syntax-id-value name)
+                  No
+                  parsed-value))]
+            [(Err message) (Err message)])]
+        [(List (slice (Sym name _) second ty value) _)
+          (if (sexpr-colon? second)
+            (match (parse-ast-type-spanned dispatch pools ty)
+              [(Ok parsed-ty)
+                (match (parse-ast-expr-with-pools dispatch pools value)
+                  [(Ok parsed-value)
+                    (Ok
+                      (ast.ast-let-binding-id
+                        (ci.intern-syntax-id-value name)
+                        (Some parsed-ty)
+                        parsed-value))]
+                  [(Err message) (Err message)])]
+              [(Err message) (Err message)])
+            (Err "parse: expected ':' in let binding"))]
         [_ (Err "parse: malformed let binding")])]
     (parse-ast-error-span-note-let-binding dispatch s result)))
 
@@ -6735,12 +6726,11 @@
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]
   [out : (&mut out ast.AstLetBindingList)]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice head & _) _)
       (let
         [tail (reader.spanned-sexpr-drop rest 1)]
-        (match (reader.spanned-sexpr-view
-          (compiler-parse-place-shared-view head))
+        (match (reader.spanned-sexpr-view head)
           [(BracketList _ _)
             (let
               [parsed-head (try (parse-ast-let-binding dispatch pools head))]
@@ -6765,31 +6755,33 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view rest))
-    [(Cons head _ _)
+  (match (reader.spanned-sexpr-view rest)
+    [(List (slice head & _) _)
       (match (reader.spanned-sexpr-view head)
-        [(BracketList items _)
-          (match (reader.spanned-sexpr-view items)
-            [(Nil _)
-              (match (reader.spanned-sexpr-slice-view rest)
-                [(List (slice _ & _) _)
-                  (let
-                    [body-tail (reader.spanned-sexpr-drop rest 1)]
-                    (parse-ast-body-tail
-                      dispatch
-                      pools
-                      body-tail
-                      "parse: let missing body"))]
-                [_ (Err "parse: malformed let")])]
-            [_
-              (match (parse-ast-let-flat-tail dispatch pools rest)
-                [(Ok parsed-bindings parsed-body)
-                  (Ok
-                    (ast.ast-expr-let-with-pools
-                      pools
-                      parsed-bindings
-                      parsed-body))]
-                [(Err message) (Err message)])])]
+        [(BracketList _ _)
+          (let
+            [items (reader.spanned-sexpr-drop head 0)]
+            (match (reader.spanned-sexpr-view items)
+              [(List (slice) _)
+                (match (reader.spanned-sexpr-view rest)
+                  [(List (slice _ & _) _)
+                    (let
+                      [body-tail (reader.spanned-sexpr-drop rest 1)]
+                      (parse-ast-body-tail
+                        dispatch
+                        pools
+                        body-tail
+                        "parse: let missing body"))]
+                  [_ (Err "parse: malformed let")])]
+              [_
+                (match (parse-ast-let-flat-tail dispatch pools rest)
+                  [(Ok parsed-bindings parsed-body)
+                    (Ok
+                      (ast.ast-expr-let-with-pools
+                        pools
+                        parsed-bindings
+                        parsed-body))]
+                  [(Err message) (Err message)])]))]
         [_ (Err "parse: let requires at least one binding")])]
     [_ (Err "parse: malformed let")]))
 
@@ -6797,9 +6789,9 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice bindings & _) _)
-      (match (reader.spanned-sexpr-slice-view bindings)
+      (match (reader.spanned-sexpr-view bindings)
         [(BracketList _ _) (parse-ast-let-flat dispatch pools rest)]
         [(List (slice) _)
           (parse-ast-error-span-note!
@@ -6819,7 +6811,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice params & _) _)
       (let
         [tail (reader.spanned-sexpr-drop rest 1)]
@@ -6833,12 +6825,12 @@
         (if (ast-param-list-has-comptime? parsed-params)
           (Err
             "comptime parameters are only supported on top-level function definitions")
-          (match (reader.spanned-sexpr-slice-view tail)
+          (match (reader.spanned-sexpr-view tail)
             [(List (slice first & _) _)
               (let
                 [rest-tail (reader.spanned-sexpr-drop tail 1)]
                 (if (sexpr-colon? first)
-                  (match (reader.spanned-sexpr-slice-view rest-tail)
+                  (match (reader.spanned-sexpr-view rest-tail)
                     [(List (slice ret & _) _)
                       (let
                         [body-tail (reader.spanned-sexpr-drop rest-tail 1)]
@@ -6879,7 +6871,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr (Int index _ _)) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -6899,7 +6891,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice elem-ty len) _)
       (match (parse-ast-type-spanned dispatch pools elem-ty)
         [(Ok parsed-ty)
@@ -6917,7 +6909,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice elem-ty len) _)
       (let
         [parsed-ty (try (parse-ast-type-spanned dispatch pools elem-ty))]
@@ -6934,7 +6926,7 @@
   [pools : ast.AstNodePoolContext]
   [is-string : bool]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr index) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -6950,7 +6942,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr index value) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -6968,7 +6960,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr value) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -6980,7 +6972,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice array live index) _)
       (let
         [parsed-array (try (parse-ast-expr-with-pools dispatch pools array))]
@@ -7053,7 +7045,7 @@
   [pools : ast.AstNodePoolContext]
   [mutable : bool]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice first) _)
       (let
         [parsed-place (try (parse-ast-expr-with-pools dispatch pools first))]
@@ -7075,10 +7067,9 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr field-node) _)
-      (match (reader.spanned-sexpr-view
-        (compiler-parse-place-shared-view field-node))
+      (match (reader.spanned-sexpr-view field-node)
         [(Sym field _)
           (let
             [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -7101,7 +7092,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -7112,7 +7103,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice ty) _)
       (let
         [parsed-ty (try (parse-ast-type-spanned dispatch pools ty))]
@@ -7151,15 +7142,18 @@
   [expected-colon-message : String]
   [malformed-message : String]) : ResultParseAstSpmdTypedRangeBinding
   (match (reader.spanned-sexpr-view binding)
-    [(BracketList items _)
-      (parse-ast-spmd-typed-range-binding
-        dispatch
-        pools
-        items
-        expected-colon-message
-        malformed-message)]
-    [(Cons name-node colon-tail _)
+    [(BracketList _ _)
       (let
+        [items (reader.spanned-sexpr-drop binding 0)]
+        (parse-ast-spmd-typed-range-binding
+          dispatch
+          pools
+          items
+          expected-colon-message
+          malformed-message))]
+    [(List (slice name-node & _) _)
+      (let
+        [colon-tail (reader.spanned-sexpr-drop binding 1)]
         [_origin : unit
           (compiler-parse-semantic-token-origin!
             dispatch
@@ -7167,7 +7161,7 @@
             CompilerParseSemanticOriginKind.BindingDefinition)]
         (match (reader.spanned-sexpr-view name-node)
           [(Sym name _)
-            (match (reader.spanned-sexpr-slice-view colon-tail)
+            (match (reader.spanned-sexpr-view colon-tail)
               [(List (slice colon ty start end) _)
                 (if (sexpr-colon? colon)
                   (let
@@ -7190,15 +7184,18 @@
   [expected-colon-message : String]
   [malformed-message : String]) : ResultParseAstSpmdStateBinding
   (match (reader.spanned-sexpr-view binding)
-    [(BracketList items _)
-      (parse-ast-spmd-state-binding
-        dispatch
-        pools
-        items
-        expected-colon-message
-        malformed-message)]
-    [(Cons name-node colon-tail _)
+    [(BracketList _ _)
       (let
+        [items (reader.spanned-sexpr-drop binding 0)]
+        (parse-ast-spmd-state-binding
+          dispatch
+          pools
+          items
+          expected-colon-message
+          malformed-message))]
+    [(List (slice name-node & _) _)
+      (let
+        [colon-tail (reader.spanned-sexpr-drop binding 1)]
         [_origin : unit
           (compiler-parse-semantic-token-origin!
             dispatch
@@ -7206,7 +7203,7 @@
             CompilerParseSemanticOriginKind.BindingDefinition)]
         (match (reader.spanned-sexpr-view name-node)
           [(Sym name _)
-            (match (reader.spanned-sexpr-slice-view colon-tail)
+            (match (reader.spanned-sexpr-view colon-tail)
               [(List (slice colon ty init) _)
                 (if (sexpr-colon? colon)
                   (let
@@ -7229,15 +7226,18 @@
   [expected-colon-message : String]
   [malformed-message : String]) : ResultParseAstSpmdTypedBinding
   (match (reader.spanned-sexpr-view binding)
-    [(BracketList items _)
-      (parse-ast-spmd-typed-binding
-        dispatch
-        pools
-        items
-        expected-colon-message
-        malformed-message)]
-    [(Cons name-node colon-tail _)
+    [(BracketList _ _)
       (let
+        [items (reader.spanned-sexpr-drop binding 0)]
+        (parse-ast-spmd-typed-binding
+          dispatch
+          pools
+          items
+          expected-colon-message
+          malformed-message))]
+    [(List (slice name-node & _) _)
+      (let
+        [colon-tail (reader.spanned-sexpr-drop binding 1)]
         [_origin : unit
           (compiler-parse-semantic-token-origin!
             dispatch
@@ -7245,7 +7245,7 @@
             CompilerParseSemanticOriginKind.BindingDefinition)]
         (match (reader.spanned-sexpr-view name-node)
           [(Sym name _)
-            (match (reader.spanned-sexpr-slice-view colon-tail)
+            (match (reader.spanned-sexpr-view colon-tail)
               [(List (slice colon ty) _)
                 (if (sexpr-colon? colon)
                   (let
@@ -7296,9 +7296,9 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice (Sym op-name _) binding-list init value) _)
-      (match (reader.spanned-sexpr-slice-view binding-list)
+      (match (reader.spanned-sexpr-view binding-list)
         [(List (slice binding) _)
           (let
             [op
@@ -7315,9 +7315,9 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice (Sym op-name _) binding-list value body) _)
-      (match (reader.spanned-sexpr-slice-view binding-list)
+      (match (reader.spanned-sexpr-view binding-list)
         [(List (slice range-binding prefix-binding) _)
           (let
             [op
@@ -7385,9 +7385,9 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice binding-list keep body) _)
-      (match (reader.spanned-sexpr-slice-view binding-list)
+      (match (reader.spanned-sexpr-view binding-list)
         [(List (slice range-binding slot-binding) _)
           (parse-ast-spmd-compact-bindings
             dispatch
@@ -7445,7 +7445,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice value-node lane-node) _)
       (let
         [value (try (parse-ast-expr-with-pools dispatch pools value-node))]
@@ -7457,7 +7457,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice value-node lane-node) _)
       (let
         [value (try (parse-ast-expr-with-pools dispatch pools value-node))]
@@ -7471,7 +7471,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice binding & _) _)
       (let
         [body-tail (reader.spanned-sexpr-drop rest 1)]
@@ -7507,7 +7507,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice value-node) _)
       (let
         [value (try (parse-ast-expr-with-pools dispatch pools value-node))]
@@ -7518,7 +7518,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -7529,7 +7529,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -7542,7 +7542,7 @@
   [rest : reader.SpannedSexpr]
   [is-get : bool]
   [is-take : bool]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -7563,7 +7563,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -7576,7 +7576,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice colon ty) _)
       (if (sexpr-colon? colon)
         (let
@@ -7594,7 +7594,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice) _) (Ok (ast.ast-expr-init-contextual-with-pools pools))]
     [(List (slice colon ty) _)
       (if (sexpr-colon? colon)
@@ -7609,7 +7609,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -7620,7 +7620,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -7631,7 +7631,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice place) _)
       (let
         [parsed-place (try (parse-ast-expr-with-pools dispatch pools place))]
@@ -7642,7 +7642,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice ptr value) _)
       (let
         [parsed-ptr (try (parse-ast-expr-with-pools dispatch pools ptr))]
@@ -7654,7 +7654,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice ptr offset) _)
       (let
         [parsed-ptr (try (parse-ast-expr-with-pools dispatch pools ptr))]
@@ -7667,7 +7667,7 @@
   [pools : ast.AstNodePoolContext]
   [is-int-to-ptr : bool]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr colon ty) _)
       (if (sexpr-colon? colon)
         (let
@@ -7688,7 +7688,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr) _)
       (let
         [parsed-expr (try (parse-ast-expr-with-pools dispatch pools expr))]
@@ -7700,7 +7700,7 @@
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]
   [name : String]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr) _) (parse-ast-expr-with-pools dispatch pools expr)]
     [_ (Err (str_cat.str-cat "parse: " name " expects exactly one expression"))]))
 
@@ -7709,7 +7709,7 @@
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]
   [name : String]) : ResultAstExprPair
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice first second) _)
       (let
         [parsed-first (try (parse-ast-expr-with-pools dispatch pools first))]
@@ -7747,7 +7747,7 @@
   [rest : reader.SpannedSexpr]
   [name : String]
   [expr : i64]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice) _) (Ok expr)]
     [_ (Err (str_cat.str-cat "parse: " name " expects no arguments"))]))
 
@@ -7801,11 +7801,11 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice) _)
       (Err "parse: with-arena requires a region name before its body")]
     [(List (slice _ & _) _)
-      (match (reader.spanned-sexpr-slice-view rest)
+      (match (reader.spanned-sexpr-view rest)
         [(List (slice region-node & _) _)
           (let
             [body (reader.spanned-sexpr-drop rest 1)]
@@ -7821,7 +7821,7 @@
                   "program")
                   (Err
                     "parse: with-arena region cannot be the reserved lifetime 'program'")
-                  (match (reader.spanned-sexpr-slice-view body)
+                  (match (reader.spanned-sexpr-view body)
                     [(List (slice) _)
                       (Err
                         (str_cat.str-cat
@@ -7847,13 +7847,13 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice) _)
       (Err "parse: with-escape requires a scratch arena before its body")]
     [(List (slice scratch & _) _)
       (let
         [body (reader.spanned-sexpr-drop rest 1)]
-        (match (reader.spanned-sexpr-slice-view body)
+        (match (reader.spanned-sexpr-view body)
           [(List (slice) _)
             (Err "parse: with-escape requires a non-empty body")]
           [_
@@ -7869,7 +7869,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice) _) (Err "parse: with-scratch requires a non-empty body")]
     [(List (slice _ & _) _)
       (let
@@ -7881,12 +7881,12 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice) _) (Err "parse: in-arena requires an arena before its body")]
     [(List (slice arena & _) _)
       (let
         [body (reader.spanned-sexpr-drop rest 1)]
-        (match (reader.spanned-sexpr-slice-view body)
+        (match (reader.spanned-sexpr-view body)
           [(List (slice) _) (Err "parse: in-arena requires a non-empty body")]
           [_
             (let
@@ -7900,9 +7900,9 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [items : reader.SpannedSexpr]) : ResultAstResourceBinding
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List (slice _ & _) _)
-      (match (reader.spanned-sexpr-slice-view items)
+      (match (reader.spanned-sexpr-view items)
         [(List (slice name-node & _) _)
           (let
             [rest (reader.spanned-sexpr-drop items 1)]
@@ -7913,7 +7913,7 @@
                 CompilerParseSemanticOriginKind.BindingDefinition)]
             (match (reader.spanned-sexpr-view name-node)
               [(Sym name _)
-                (match (reader.spanned-sexpr-slice-view rest)
+                (match (reader.spanned-sexpr-view rest)
                   [(List (slice) _)
                     (Err "parse: with binding is missing initializer")]
                   [(List (slice _) _)
@@ -7941,8 +7941,10 @@
   [pools : ast.AstNodePoolContext]
   [binding : reader.SpannedSexpr]) : ResultAstResourceBinding
   (match (reader.spanned-sexpr-view binding)
-    [(BracketList items _)
-      (parse-ast-resource-binding-items dispatch pools items)]
+    [(BracketList _ _)
+      (let
+        [items (reader.spanned-sexpr-drop binding 0)]
+        (parse-ast-resource-binding-items dispatch pools items))]
     [_ (Err "parse: with binding must use bracket syntax")]))
 
 (define (parse-ast-resource-binding-list-into
@@ -7950,7 +7952,7 @@
   [pools : ast.AstNodePoolContext]
   [bindings : reader.SpannedSexpr]
   [out : (&mut out ast.AstResourceBindingList)]) : ResultAstResourceBindingListBuild
-  (match (reader.spanned-sexpr-slice-view bindings)
+  (match (reader.spanned-sexpr-view bindings)
     [(List items _)
       (parse-ast-resource-binding-list-into-items dispatch pools items out)]
     [_ (Err "parse: malformed with binding list")]))
@@ -7987,17 +7989,17 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice) _)
       (Err "parse: with requires a binding list before its body")]
     [(List (slice bindings & _) _)
       (let
         [body (reader.spanned-sexpr-drop rest 1)]
-        (match (reader.spanned-sexpr-slice-view bindings)
+        (match (reader.spanned-sexpr-view bindings)
           [(List (slice) _)
             (Err "parse: with requires a non-empty binding list")]
           [(List (slice _ & _) _)
-            (match (reader.spanned-sexpr-slice-view body)
+            (match (reader.spanned-sexpr-view body)
               [(List (slice) _) (Err "parse: with requires a non-empty body")]
               [_
                 (let
@@ -8017,11 +8019,11 @@
     [_ (Err "parse: malformed with")]))
 
 (define (parse-sexpr-list-last [s : reader.SpannedSexpr]) : reader.SpannedSexpr
-  (match (reader.spanned-sexpr-slice-view s)
+  (match (reader.spanned-sexpr-view s)
     [(List (slice head & _) _)
       (let
         [tail (reader.spanned-sexpr-drop s 1)]
-        (match (reader.spanned-sexpr-slice-view tail)
+        (match (reader.spanned-sexpr-view tail)
           [(List (slice _ & _) _) (parse-sexpr-list-last tail)]
           [_ head]))]
     [_ s]))
@@ -8035,11 +8037,11 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [body-tail : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view body-tail)
+  (match (reader.spanned-sexpr-view body-tail)
     [(List (slice body & _) _)
       (let
         [end (reader.spanned-sexpr-drop body-tail 1)]
-        (match (reader.spanned-sexpr-slice-view end)
+        (match (reader.spanned-sexpr-view end)
           [(List (slice) _) (parse-ast-expr-with-pools dispatch pools body)]
           [_
             (let
@@ -8065,32 +8067,37 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]) : ResultAstMatchArm
   (match (reader.spanned-sexpr-view s)
-    [(BracketList items _) (parse-ast-match-arm dispatch pools items)]
-    [(Cons pattern body-tail _)
-      (match (reader.spanned-sexpr-slice-view body-tail)
-        [(List (slice _ & _) _)
-          (let
-            [parsed-pattern
-              (try
-                (parse-ast-pattern
-                  dispatch
-                  pools
-                  (compiler-parse-place-shared-view pattern)))]
-            (compiler-parse-semantic-pattern-origins!
-              dispatch
-              (compiler-parse-place-shared-view pattern))
+    [(BracketList _ _)
+      (let
+        [items (reader.spanned-sexpr-drop s 0)]
+        (parse-ast-match-arm dispatch pools items))]
+    [(List (slice pattern & _) _)
+      (let
+        [body-tail (reader.spanned-sexpr-drop s 1)]
+        (match (reader.spanned-sexpr-view body-tail)
+          [(List (slice _ & _) _)
             (let
-              [parsed-body
-                (try (parse-ast-match-arm-body dispatch pools body-tail))]
-              (Ok
-                (ast.ast-match-arm
-                  parsed-pattern
-                  (ast.ast-expr-spanned-with-pools
+              [parsed-pattern
+                (try
+                  (parse-ast-pattern
+                    dispatch
                     pools
-                    parsed-body
-                    (ast-source-span-from-source-span
-                      (reader.spanned-sexpr-span pattern)))))))]
-        [_ (Err "parse: malformed match arm")])]
+                    (compiler-parse-place-shared-view pattern)))]
+              (compiler-parse-semantic-pattern-origins!
+                dispatch
+                (compiler-parse-place-shared-view pattern))
+              (let
+                [parsed-body
+                  (try (parse-ast-match-arm-body dispatch pools body-tail))]
+                (Ok
+                  (ast.ast-match-arm
+                    parsed-pattern
+                    (ast.ast-expr-spanned-with-pools
+                      pools
+                      parsed-body
+                      (ast-source-span-from-source-span
+                        (reader.spanned-sexpr-span pattern)))))))]
+          [_ (Err "parse: malformed match arm")]))]
     [_ (Err "parse: malformed match arm")]))
 
 (define (parse-ast-match-arm-list-into
@@ -8098,7 +8105,7 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]
   [out : (&mut out ast.AstMatchArmList)]) : ResultAstMatchArmListBuild
-  (match (reader.spanned-sexpr-slice-view s)
+  (match (reader.spanned-sexpr-view s)
     [(List items _)
       (parse-ast-match-arm-list-into-items dispatch pools items out)]
     [_ (Err "parse: malformed match arm list")]))
@@ -8129,7 +8136,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice scrutinee & _) _)
       (let
         [arms (reader.spanned-sexpr-drop rest 1)]
@@ -8149,9 +8156,13 @@
   [pools : ast.AstNodePoolContext]
   [binding : reader.SpannedSexpr]) : ResultForeachDim
   (match (reader.spanned-sexpr-view binding)
-    [(BracketList items _) (parse-ast-foreach-dim dispatch pools items)]
-    [(Cons index-node colon-tail _)
+    [(BracketList _ _)
       (let
+        [items (reader.spanned-sexpr-drop binding 0)]
+        (parse-ast-foreach-dim dispatch pools items))]
+    [(List (slice index-node & _) _)
+      (let
+        [colon-tail (reader.spanned-sexpr-drop binding 1)]
         [_origin : unit
           (compiler-parse-semantic-token-origin!
             dispatch
@@ -8159,7 +8170,7 @@
             CompilerParseSemanticOriginKind.BindingDefinition)]
         (match (reader.spanned-sexpr-view index-node)
           [(Sym index _)
-            (match (reader.spanned-sexpr-slice-view colon-tail)
+            (match (reader.spanned-sexpr-view colon-tail)
               [(List (slice colon index-ty start end) _)
                 (if (sexpr-colon? colon)
                   (let
@@ -8184,7 +8195,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [body-tail : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view body-tail)
+  (match (reader.spanned-sexpr-view body-tail)
     [(List (slice body) _) (parse-ast-expr-with-pools dispatch pools body)]
     [_ (Err "parse: malformed foreach")]))
 
@@ -8195,9 +8206,9 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice binding-list & _) _)
-      (match (reader.spanned-sexpr-slice-view binding-list)
+      (match (reader.spanned-sexpr-view binding-list)
         [(List (slice) _)
           (Err "parse: foreach requires one or two domain bindings")]
         [(List (slice binding) _)
@@ -8274,7 +8285,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice) _) (Err "parse: unsafe requires a non-empty body")]
     [_
       (let
@@ -8302,7 +8313,7 @@
   [pools : ast.AstNodePoolContext]
   [tag : i64]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice expr) _)
       (let
         [saved-depth : i64 compiler-parse-quote-depth]
@@ -8533,7 +8544,7 @@
   [pools : ast.AstNodePoolContext]
   [head : reader.SpannedSexpr]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
-  (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view head))
+  (match (reader.spanned-sexpr-view head)
     [(Sym op _)
       (cond
         [(=
@@ -8545,7 +8556,7 @@
               dispatch
               (ci.intern-syntax-id-value op))
             (compiler-parse-tag-expr-init))
-          (match (reader.spanned-sexpr-slice-view rest)
+          (match (reader.spanned-sexpr-view rest)
             [(List (slice first & _) _)
               (if (sexpr-colon? first)
                 (parse-ast-init dispatch pools rest)
@@ -8605,7 +8616,7 @@
   [s : reader.SpannedSexpr]) : ResultAstExpr
   (let
     [result : ResultAstExpr
-      (match (reader.spanned-sexpr-slice-view s)
+      (match (reader.spanned-sexpr-view s)
         [(Int n text _)
           (Ok
             (ast-expr-wrap-span
@@ -8676,8 +8687,7 @@
         [(List (slice head & _) _)
           (let
             [rest (reader.spanned-sexpr-drop s 1)]
-            (match (reader.spanned-sexpr-view
-              (compiler-parse-place-shared-view head))
+            (match (reader.spanned-sexpr-view head)
               [(Sym op _)
                 (if (=
                   (ci.intern-syntax-id-value op)
@@ -8724,7 +8734,7 @@
   [pools : ast.AstNodePoolContext]
   [name : i64]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice first) _)
       (let
         [parsed-value (try (parse-ast-expr-with-pools dispatch pools first))]
@@ -8741,7 +8751,7 @@
 (define (parse-ast-spmd-param-classes
   [items : reader.SpannedSexpr]
   [out : ast.AstSpmdParamClassList]) : ResultAstSpmdParamClassList
-  (match (reader.sexpr-slice-view items)
+  (match (reader.sexpr-view items)
     [(List (slice)) (Ok out)]
     [(List (slice (Sym name _) & _))
       (let
@@ -8765,7 +8775,7 @@
     [_ (Err "parse: malformed :spmd-callable args field")]))
 
 (define (parse-ast-spmd-result-class [tail : reader.SpannedSexpr]) : ResultAstSpmdResultClass
-  (match (reader.sexpr-slice-view tail)
+  (match (reader.sexpr-view tail)
     [(List (slice (Sym name _)))
       (cond
         [(= (ci.intern-syntax-id-value name) (cbi.compiler-builtin-ctfe "unit"))
@@ -8787,7 +8797,7 @@
     [_ (Err "parse: malformed :spmd-callable result field")]))
 
 (define (parse-ast-spmd-index-param [tail : reader.SpannedSexpr]) : ResultAstSpmdIndexParam
-  (match (reader.sexpr-slice-view tail)
+  (match (reader.sexpr-view tail)
     [(List (slice (Sym name _)))
       (if (=
         (ci.intern-syntax-id-value name)
@@ -8811,10 +8821,10 @@
   [dispatch : sym_i64_env.SymI64Env]
   [fields : reader.SpannedSexpr]
   [state : AstSpmdSpecializationParseState]) : ResultAstSpmdSpecializationParseState
-  (match (reader.sexpr-slice-view fields)
+  (match (reader.sexpr-view fields)
     [(List (slice)) (Ok state)]
     [(List (slice field-node & _))
-      (match (reader.sexpr-slice-view field-node)
+      (match (reader.sexpr-view field-node)
         [(List (slice (Sym key _) & _))
           (let
             [rest (reader.spanned-sexpr-drop fields 1)]
@@ -8825,7 +8835,7 @@
                   (cbi.compiler-builtin-ctfe "lanes"))
                 (if state.seen-lanes
                   (Err "parse: duplicate :spmd-callable lanes field")
-                  (match (reader.sexpr-slice-view value-tail)
+                  (match (reader.sexpr-view value-tail)
                     [(List (slice (Int lanes _ _)))
                       (if (> lanes 1)
                         (parse-ast-spmd-specialization-fields
@@ -9009,13 +9019,13 @@
   [items : reader.SpannedSexpr]
   [param-count : i64]
   [out : ast.AstSpmdSpecializationList]) : ResultAstSpmdCallable
-  (match (reader.sexpr-slice-view items)
+  (match (reader.sexpr-view items)
     [(List (slice))
       (if (= (ast.ast-spmd-specialization-list-len (& out)) 0)
         (Err "parse: :spmd-callable expects at least one specialization")
         (Ok (Callable out)))]
     [(List (slice item-node & _))
-      (match (reader.sexpr-slice-view item-node)
+      (match (reader.sexpr-view item-node)
         [(List (slice (Sym name _) & _))
           (let
             [rest (reader.spanned-sexpr-drop items 1)]
@@ -9061,7 +9071,7 @@
 (define (parse-ast-define-fn-export-tail
   [dispatch : sym_i64_env.SymI64Env]
   [tail : reader.SpannedSexpr]) : ResultAstFnExport
-  (match (reader.sexpr-slice-view tail)
+  (match (reader.sexpr-view tail)
     [(List (slice (Str value-id _)))
       (if (>
         (string.string-length
@@ -9074,7 +9084,7 @@
 (define (parse-ast-metadata-form?
   [dispatch : sym_i64_env.SymI64Env]
   [item : reader.SpannedSexpr]) : bool
-  (match (reader.sexpr-slice-view item)
+  (match (reader.sexpr-view item)
     [(List (slice (Sym key _) & _)) (compiler-parse-metadata-key? dispatch key)]
     [_ false]))
 
@@ -9129,12 +9139,12 @@
   [spmd-callable : ast.AstSpmdCallable]
   [seen-spmd-callable : bool]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice first & _) _)
       (let
         [tail (reader.spanned-sexpr-drop rest 1)]
         (if (sexpr-colon? (compiler-parse-place-shared-view first))
-          (match (reader.spanned-sexpr-slice-view tail)
+          (match (reader.spanned-sexpr-view tail)
             [(List (slice ret & _) _)
               (let
                 [body-tail (reader.spanned-sexpr-drop tail 1)]
@@ -9157,7 +9167,7 @@
           (if (parse-ast-metadata-form?
             dispatch
             (compiler-parse-place-shared-view first))
-            (match (reader.sexpr-slice-view first)
+            (match (reader.sexpr-view first)
               [(List (slice (Sym key _) & _))
                 (let
                   [after-key (reader.spanned-sexpr-drop first 1)]
@@ -9258,11 +9268,11 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice head & _) _)
       (let
         [after-name (reader.spanned-sexpr-drop rest 1)]
-        (match (reader.spanned-sexpr-slice-view head)
+        (match (reader.spanned-sexpr-view head)
           [(Sym name _)
             (compiler-parse-semantic-token-origin!
               dispatch
@@ -9276,8 +9286,7 @@
           [(List (slice name-node & _) _)
             (let
               [params (reader.spanned-sexpr-drop head 1)]
-              (match (reader.spanned-sexpr-view
-                (compiler-parse-place-shared-view name-node))
+              (match (reader.spanned-sexpr-view name-node)
                 [(Sym name _)
                   (compiler-parse-semantic-token-origin!
                     dispatch
@@ -9297,9 +9306,9 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice header colon ret body) _)
-      (match (reader.spanned-sexpr-slice-view header)
+      (match (reader.spanned-sexpr-view header)
         [(List (slice (Sym name _) & _) _)
           (let
             [params (reader.spanned-sexpr-drop header 1)]
@@ -9389,7 +9398,7 @@
   [pools : ast.AstNodePoolContext]
   [item : reader.SpannedSexpr]
   [items : reader.SpannedSexpr]) : ResultAstExternHeadItem
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List (slice _ colon ty-node) _)
       (if (sexpr-colon? colon)
         (match (reader.spanned-sexpr-view ty-node)
@@ -9424,22 +9433,24 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [item : reader.SpannedSexpr]) : ResultAstExternHeadItem
-  (match (reader.spanned-sexpr-view (compiler-parse-place-shared-view item))
+  (match (reader.spanned-sexpr-view item)
     [(Sym name _)
       (if (parse-ast-extern-varargs-open? name)
         (Ok (VarargsOpen))
         (if (parse-ast-extern-varargs-typed-name? dispatch name)
           (Err "parse: typed extern varargs tail must use bracket syntax")
           (Err "parse: malformed extern function head")))]
-    [(BracketList items _)
-      (parse-ast-extern-head-bracket-item dispatch pools item items)]
+    [(BracketList _ _)
+      (let
+        [items (reader.spanned-sexpr-drop item 0)]
+        (parse-ast-extern-head-bracket-item dispatch pools item items))]
     [_ (Err "parse: malformed extern function head")]))
 
 (define (parse-ast-extern-head-items
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [items : reader.SpannedSexpr]) : ResultAstExternHeader
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List (slice) _) (Ok -1 (ast.ast-type-list-new) (C))]
     [(List (slice item & _) _)
       (let
@@ -9457,11 +9468,11 @@
                   parsed-abi)]
               [(Err message) (Err message)])]
           [(VarargsOpen)
-            (match (reader.spanned-sexpr-slice-view tail)
+            (match (reader.spanned-sexpr-view tail)
               [(List (slice) _) (Ok -1 (ast.ast-type-list-new) (CVarargsOpen))]
               [_ (Err "parse: extern varargs tail must be final")])]
           [(VarargsTyped tail-ty)
-            (match (reader.spanned-sexpr-slice-view tail)
+            (match (reader.spanned-sexpr-view tail)
               [(List (slice) _)
                 (Ok -1 (ast.ast-type-list-new) (CVarargsTyped tail-ty))]
               [_ (Err "parse: extern varargs tail must be final")])]))]
@@ -9471,7 +9482,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [head : reader.SpannedSexpr]) : ResultAstExternHeader
-  (match (reader.spanned-sexpr-slice-view head)
+  (match (reader.spanned-sexpr-view head)
     [(List (slice (Sym name _) & _) _)
       (let
         [params (reader.spanned-sexpr-drop head 1)]
@@ -9487,7 +9498,7 @@
 (define (parse-ast-extern-abi-tail
   [dispatch : sym_i64_env.SymI64Env]
   [tail : reader.SpannedSexpr]) : ResultAstExternAbi
-  (match (reader.sexpr-slice-view tail)
+  (match (reader.sexpr-view tail)
     [(List (slice (Sym name _)))
       (if (= (ci.intern-syntax-id-value name) cbi.compiler-builtin-id-fix-c)
         (Ok (C))
@@ -9514,7 +9525,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [key : String]
   [tail : reader.SpannedSexpr]) : ResultAstExternSymbol
-  (match (reader.sexpr-slice-view tail)
+  (match (reader.sexpr-view tail)
     [(List (slice (Str value-id _)))
       (let
         [value : String (compiler-parse-dispatch-id-str dispatch value-id)]
@@ -9546,18 +9557,18 @@
   [link-inputs : (&mut link-inputs ast.AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]) : ResultAstExternParts
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List (slice head & _) _)
       (let
         [tail (reader.spanned-sexpr-drop items 1)]
         (if (sexpr-colon? (compiler-parse-place-shared-view head))
-          (match (reader.spanned-sexpr-slice-view tail)
+          (match (reader.spanned-sexpr-view tail)
             [(List (slice ty) _)
               (let
                 [parsed-ty (try (parse-ast-type-spanned dispatch pools ty))]
                 (Ok abi symbol-id seen-abi parsed-ty))]
             [_ (Err "parse: malformed extern")])
-          (match (reader.sexpr-slice-view head)
+          (match (reader.sexpr-view head)
             [(List (slice (Sym key _) & _))
               (let
                 [after-key (reader.spanned-sexpr-drop head 1)]
@@ -9692,7 +9703,7 @@
   [seen-symbol : bool]
   [param-types : ast.AstTypeList]
   [ret : ast.AstType]) : ResultAstExternParts
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List items-items _)
       (parse-ast-extern-head-post-ret-items
         dispatch
@@ -9728,7 +9739,7 @@
         param-types
         ret)]
     [(slice head & tail)
-      (match (reader.sexpr-slice-view head)
+      (match (reader.sexpr-view head)
         [(List (slice (Sym key _) & _))
           (let
             [after-key (reader.spanned-sexpr-drop head 1)]
@@ -9860,16 +9871,16 @@
   [seen-abi : bool]
   [seen-symbol : bool]
   [param-types : ast.AstTypeList]) : ResultAstExternParts
-  (match (reader.spanned-sexpr-slice-view items)
+  (match (reader.spanned-sexpr-view items)
     [(List (slice head & _) _)
       (let
         [tail (reader.spanned-sexpr-drop items 1)]
         (if (sexpr-colon? (compiler-parse-place-shared-view head))
-          (match (reader.spanned-sexpr-slice-view tail)
+          (match (reader.spanned-sexpr-view tail)
             [(List (slice ret & _) _)
               (let
                 [end (reader.spanned-sexpr-drop tail 1)]
-                (match (reader.spanned-sexpr-slice-view end)
+                (match (reader.spanned-sexpr-view end)
                   [(List (slice) _)
                     (let
                       [parsed-ret
@@ -9897,7 +9908,7 @@
                         param-types
                         parsed-ret))]))]
             [_ (Err "parse: malformed extern")])
-          (match (reader.sexpr-slice-view head)
+          (match (reader.sexpr-view head)
             [(List (slice (Sym key _) & _))
               (let
                 [after-key (reader.spanned-sexpr-drop head 1)]
@@ -10058,12 +10069,11 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice name-node & _) _)
       (let
         [after-name (reader.spanned-sexpr-drop rest 1)]
-        (match (reader.spanned-sexpr-view
-          (compiler-parse-place-shared-view name-node))
+        (match (reader.spanned-sexpr-view name-node)
           [(Sym name _)
             (let
               [name-id : i64 (ci.intern-syntax-id-value name)]
@@ -10103,7 +10113,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice (Sym name name-span) & _) _)
       (let
         [variants (reader.spanned-sexpr-drop rest 1)]
@@ -10161,7 +10171,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice (Sym name name-span) & _) _)
       (let
         [fields (reader.spanned-sexpr-drop rest 1)]
@@ -10233,7 +10243,7 @@
 (define (parse-ast-defdispatch
   [dispatch : sym_i64_env.SymI64Env]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice (Sym name _) & _) _)
       (let
         [variants (reader.spanned-sexpr-drop rest 1)]
@@ -10253,7 +10263,7 @@
   [forms : reader.SpannedSexpr]
   [semantic-origins : (MutPtr ParseSemanticOriginVec)]
   [out : (&mut out ParseAstDeclVec)]) : ResultParseAstDeclVec
-  (match (reader.spanned-sexpr-slice-view forms)
+  (match (reader.spanned-sexpr-view forms)
     [(List items _)
       (parse-ast-module-body-forms-into-vec-items
         dispatch
@@ -10343,7 +10353,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice (Sym name span) & _) _)
       (let
         [end (reader.spanned-sexpr-drop rest 1)]
@@ -10352,7 +10362,7 @@
           span
           (ModuleDefinition)
           (ModuleDefinition))
-        (match (reader.spanned-sexpr-slice-view end)
+        (match (reader.spanned-sexpr-view end)
           [(List (slice) _)
             (Ok (ast.ast-decl-module-id (ci.intern-syntax-id-value name)))]
           [_
@@ -10380,7 +10390,7 @@
   [module-name : ast.AstMaybeModuleName]
   [tail : reader.SpannedSexpr]
   [span : ast.AstSourceSpan]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view tail)
+  (match (reader.spanned-sexpr-view tail)
     [(List (slice (Sym as-name _) (Sym alias alias-span)) _)
       (if (=
         (ci.intern-syntax-id-value as-name)
@@ -10412,7 +10422,7 @@
       pools
       (& (ast.ast-node-pool-context-expr-get pools call-expr)))
       [(Call _ _)
-        (match (reader.spanned-sexpr-slice-view tail)
+        (match (reader.spanned-sexpr-view tail)
           [(List (slice) _)
             (parse-ast-import-spec (Macro call-expr No) "" No No span)]
           [(List (slice (Sym head _) & _) _)
@@ -10525,7 +10535,7 @@
     (if (not (module_name.compiler-module-name-valid? module-name))
       (Err "parse: invalid dotted import module name")
       (if (parse-ast-dotted-import-wildcard? module-name)
-        (match (reader.spanned-sexpr-slice-view tail)
+        (match (reader.spanned-sexpr-view tail)
           [(List (slice) _)
             (let
               [target-id : i64
@@ -10544,7 +10554,7 @@
           [_
             (Err
               "parse: wildcard import cannot use as; import a selected item instead")])
-        (match (reader.spanned-sexpr-slice-view tail)
+        (match (reader.spanned-sexpr-view tail)
           [(List (slice) _)
             (parse-ast-import-spec
               (Module)
@@ -10573,11 +10583,11 @@
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]
   [span : ast.AstSourceSpan]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice path-node & _) _)
       (let
         [tail (reader.spanned-sexpr-drop rest 1)]
-        (match (reader.spanned-sexpr-slice-view path-node)
+        (match (reader.spanned-sexpr-view path-node)
           [(Str _ _)
             (Err
               "parse: string-path imports are no longer supported; use a dotted module identity")]
@@ -10604,7 +10614,7 @@
                     span)]
                 (match (& result)
                   [(Ok _)
-                    (match (reader.spanned-sexpr-slice-view tail)
+                    (match (reader.spanned-sexpr-view tail)
                       [(List (slice) _)
                         (compiler-parse-semantic-default-import-alias-origin!
                           dispatch
@@ -10625,7 +10635,7 @@
 (define (parse-ast-include-str
   [dispatch : sym_i64_env.SymI64Env]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice) _) (Err "parse: include-str expects name and string path")]
     [(List (slice (Sym name _) (Str path-id _)) _)
       (Ok
@@ -10646,7 +10656,7 @@
 (define (parse-ast-include-str-comptime
   [dispatch : sym_i64_env.SymI64Env]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice) _)
       (Err "parse: include-str-comptime expects name and string path")]
     [(List (slice (Sym name _) (Str path-id _)) _)
@@ -10669,7 +10679,7 @@
 (define (parse-ast-include-str-lzss
   [dispatch : sym_i64_env.SymI64Env]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice) _)
       (Err "parse: include-str-lzss expects name and string path")]
     [(List (slice (Sym name _) (Str path _)) _)
@@ -10692,7 +10702,7 @@
 (define (parse-ast-include-bin
   [dispatch : sym_i64_env.SymI64Env]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice) _) (Err "parse: include-bin expects name and string path")]
     [(List (slice (Sym name _) (Str path-id _)) _)
       (Ok
@@ -10720,7 +10730,7 @@
 (define (parse-ast-test-body-metadata-free?
   [dispatch : sym_i64_env.SymI64Env]
   [forms : reader.SpannedSexpr]) : bool
-  (match (reader.spanned-sexpr-slice-view forms)
+  (match (reader.spanned-sexpr-view forms)
     [(List items _) (parse-ast-test-body-metadata-free?-items dispatch items)]
     [_ false]))
 
@@ -10741,7 +10751,7 @@
   [seen-ignore : bool]
   [slow : bool]
   [seen-slow : bool]) : ResultAstTestMetadataForms
-  (match (reader.spanned-sexpr-slice-view forms)
+  (match (reader.spanned-sexpr-view forms)
     [(List (slice) _) (Ok (ast.ast-test-metadata-new ignore-reason slow) forms)]
     [(List (slice item & _) _)
       (let
@@ -10749,7 +10759,7 @@
         (if (parse-ast-metadata-form?
           dispatch
           (compiler-parse-place-shared-view item))
-          (match (reader.sexpr-slice-view item)
+          (match (reader.sexpr-view item)
             [(List (slice (Sym key _) & _))
               (let
                 [after-key (reader.spanned-sexpr-drop item 1)]
@@ -10759,7 +10769,7 @@
                       (cbi.compiler-builtin-ctfe ":ignore"))
                     (if seen-ignore
                       (Err "parse: duplicate test :ignore metadata")
-                      (match (reader.sexpr-slice-view after-key)
+                      (match (reader.sexpr-view after-key)
                         [(List (slice (Str reason-id _)))
                           (let
                             [reason : String
@@ -10784,7 +10794,7 @@
                       (cbi.compiler-builtin-ctfe ":slow"))
                     (if seen-slow
                       (Err "parse: duplicate test :slow metadata")
-                      (match (reader.sexpr-slice-view after-key)
+                      (match (reader.sexpr-view after-key)
                         [(List (slice))
                           (parse-ast-test-metadata-forms
                             dispatch
@@ -10812,7 +10822,7 @@
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]
   [form-span : ast.AstSourceSpan]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice (Sym name _) & _) _)
       (let
         [body-forms (reader.spanned-sexpr-drop rest 1)]
@@ -10825,7 +10835,7 @@
           false)
           [(Err message) (Err message)]
           [(Ok metadata parsed-body-forms)
-            (match (reader.spanned-sexpr-slice-view parsed-body-forms)
+            (match (reader.spanned-sexpr-view parsed-body-forms)
               [(List (slice) _)
                 (Err "parse: test needs at least one expression")]
               [_
@@ -10878,7 +10888,7 @@
   [dispatch : sym_i64_env.SymI64Env]
   [pools : ast.AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstDecl
-  (match (reader.spanned-sexpr-slice-view rest)
+  (match (reader.spanned-sexpr-view rest)
     [(List (slice inner) _)
       (let
         [decl (try (parse-ast-decl dispatch pools inner))]
@@ -10919,7 +10929,7 @@
   [s : reader.SpannedSexpr]) : ResultAstDecl
   (let
     [result : ResultAstDecl
-      (match (reader.spanned-sexpr-slice-view s)
+      (match (reader.spanned-sexpr-view s)
         [(List (slice (Sym head _) & _) _)
           (let
             [rest (reader.spanned-sexpr-drop s 1)]
@@ -10990,14 +11000,14 @@
   [s : reader.SpannedSexpr]) : ResultAstMaybeDecl
   (let
     [result : ResultAstMaybeDecl
-      (match (reader.spanned-sexpr-slice-view s)
+      (match (reader.spanned-sexpr-view s)
         [(List (slice (Sym head _) & _) _)
           (let
             [rest (reader.spanned-sexpr-drop s 1)]
             (if (=
               (ci.intern-syntax-id-value head)
               (cbi.compiler-builtin-ctfe "cfg"))
-              (match (reader.spanned-sexpr-slice-view rest)
+              (match (reader.spanned-sexpr-view rest)
                 [(List (slice pred decl-form) _)
                   (match (compiler-cfg-eval dispatch pred)
                     [(Ok enabled)
@@ -11269,7 +11279,7 @@
     [fallback : ast.AstSourceSpan
       (ast-source-span-from-source-span
         (reader.spanned-sexpr-span (compiler-parse-place-shared-view form)))]
-    (match (reader.spanned-sexpr-slice-view form)
+    (match (reader.spanned-sexpr-view form)
       [(List (slice (Sym head _) & _) _)
         (let
           [rest (reader.spanned-sexpr-drop form 1)]
@@ -11281,12 +11291,12 @@
             [(=
                 (ci.intern-syntax-id-value head)
                 (cbi.compiler-builtin-ctfe "cfg"))
-              (match (reader.spanned-sexpr-slice-view rest)
+              (match (reader.spanned-sexpr-view rest)
                 [(List (slice _ decl-form & _) _)
                   (compiler-parse-decl-origin-syntax-span dispatch decl-form)]
                 [_ fallback])]
             [(= tag (compiler-parse-tag-expr-unsafe))
-              (match (reader.spanned-sexpr-slice-view rest)
+              (match (reader.spanned-sexpr-view rest)
                 [(List (slice inner & _) _)
                   (compiler-parse-decl-origin-syntax-span dispatch inner)]
                 [_ fallback])]

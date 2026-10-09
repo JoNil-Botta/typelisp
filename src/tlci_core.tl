@@ -1905,7 +1905,7 @@
   (cast (tlci-string-ref text idx) : i64))
 
 (define (tlci-field-string-value [ftail : reader.SpannedSexpr] [fname : String]) : ResultTlciString
-  (match (reader.sexpr-slice-view ftail)
+  (match (reader.sexpr-view ftail)
     [(List (slice (Str val-id _))) (Ok (ci.intern-id-str val-id))]
     [(List (slice (Str _ _) & _))
       (Err
@@ -1918,7 +1918,7 @@
         (str_cat.str-cat "tlci metadata: field `" fname "` must be a string"))]))
 
 (define (tlci-field-i64-value [ftail : reader.SpannedSexpr] [fname : String]) : ResultTlciI64
-  (match (reader.sexpr-slice-view ftail)
+  (match (reader.sexpr-view ftail)
     [(List (slice (Int val _ _))) (Ok val)]
     [(List (slice (Int _ _ _) & _))
       (Err
@@ -1959,7 +1959,7 @@
       result)))
 
 (define (tlci-sexpr-list-length [items : reader.SpannedSexpr]) : i64
-  (match (reader.sexpr-slice-view items)
+  (match (reader.sexpr-view items)
     [(List items-items) (tlci-sexpr-list-length-items items-items)]
     [_ -1]))
 
@@ -1981,7 +1981,7 @@
       (match (reader.data-result signature)
         [(Err _) -1]
         [(Ok form)
-          (match (reader.sexpr-slice-view form)
+          (match (reader.sexpr-view form)
             [(List (slice (Sym arrow _) & rest))
               (if (string.eq (tlci-symbol-text arrow) "->")
                 (let
@@ -2214,7 +2214,7 @@
   [has-index-param : bool]
   [symbol : String]
   [has-symbol : bool]) : ResultTlciSpmdSpecialization
-  (match (reader.sexpr-slice-view fields)
+  (match (reader.sexpr-view fields)
     [(List items)
       (tlci-spmd-specialization-fields-items
         items
@@ -2279,7 +2279,7 @@
               index-param
               symbol))])]
     [(slice field & rest)
-      (match (reader.sexpr-slice-view field)
+      (match (reader.sexpr-view field)
         [(List (slice (Sym fname _) & _))
           (let
             [ftail (reader.spanned-sexpr-drop field 1)]
@@ -2482,7 +2482,7 @@
   [signature : String]
   [has-signature : bool]
   [specializations : TlciSpmdSpecializations]) : ResultTlciSpmdCallable
-  (match (reader.sexpr-slice-view fields)
+  (match (reader.sexpr-view fields)
     [(List items)
       (tlci-spmd-helper-fields-items
         items
@@ -2509,7 +2509,7 @@
           (Err "tlci metadata: helper missing required field `signature`")]
         [else (Ok (TlciSpmdCallable name signature specializations))])]
     [(slice field & rest)
-      (match (reader.sexpr-slice-view field)
+      (match (reader.sexpr-view field)
         [(List (slice (Sym fname _) & _))
           (let
             [ftail (reader.spanned-sexpr-drop field 1)]
@@ -2566,7 +2566,7 @@
         [_ (Err "tlci metadata: helper fields must be lists")])]))
 
 (define (tlci-spmd-helper-from-form [form : reader.SpannedSexpr]) : ResultTlciSpmdCallable
-  (match (reader.sexpr-slice-view form)
+  (match (reader.sexpr-view form)
     [(List (slice (Sym name _) & _))
       (let
         [rest (reader.spanned-sexpr-drop form 1)]
@@ -2595,7 +2595,7 @@
 (define (tlci-spmd-callables-from-fields
   [fields : reader.SpannedSexpr]
   [items : TlciSpmdCallables]) : ResultTlciSpmdCallables
-  (match (reader.sexpr-slice-view fields)
+  (match (reader.sexpr-view fields)
     [(List fields-items)
       (tlci-spmd-callables-from-fields-items fields-items items)]
     [_ (Err "tlci metadata: spmd-callables must contain helper lists")]))
@@ -2628,7 +2628,7 @@
   [has-name : bool]
   [version : String]
   [has-version : bool]) : ResultTlciMetadata
-  (match (reader.sexpr-slice-view fields)
+  (match (reader.sexpr-view fields)
     [(List items)
       (tlci-package-fields-items items name has-name version has-version)]
     [_ (Err "tlci metadata: package fields must be lists")]))
@@ -2658,7 +2658,7 @@
               version
               (tlci-spmd-callables-empty)))])]
     [(slice field & rest)
-      (match (reader.sexpr-slice-view field)
+      (match (reader.sexpr-view field)
         [(List (slice (Sym fname _) & _))
           (let
             [ftail (reader.spanned-sexpr-drop field 1)]
@@ -2728,7 +2728,7 @@
           (Ok
             (TlciMetadata version package-name package-version spmd-callables))])]
     [(slice field & rest)
-      (match (reader.sexpr-slice-view field)
+      (match (reader.sexpr-view field)
         [(List (slice (Sym fname _) & _))
           (let
             [ftail (reader.spanned-sexpr-drop field 1)]
@@ -2788,7 +2788,7 @@
         [_ (Err "tlci metadata: fields must be lists")])]))
 
 (define (tlci-metadata-from-form [form : reader.SpannedSexpr]) : ResultTlciMetadata
-  (match (reader.sexpr-slice-view form)
+  (match (reader.sexpr-view form)
     [(List items) (tlci-metadata-from-form-items items)]
     [_ (Err "tlci metadata: expected `(typelisp-tlci-metadata ...)`")]))
 

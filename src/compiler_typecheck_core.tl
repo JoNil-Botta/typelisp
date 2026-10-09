@@ -94188,20 +94188,23 @@
             session
             (ci.intern-syntax-id-value name)
             "identity-key")))]
-    [(Nil _) (text_buf.append buf "nil")]
-    [(Cons head tail _)
-      (let
-        [head-key : String (macro-identity-key-sexpr session head)]
-        (macro-identity-key-sexpr-into
-          session
-          tail
-          (text_buf.append
-            (text_buf.append
-              (text_buf.append-int
-                (text_buf.append buf "cons:")
-                (string.string-length head-key))
-              ":")
-            head-key)))]
+    [(List list-items _)
+      (match list-items
+        [(slice) (text_buf.append buf "nil")]
+        [(slice head & _)
+          (let
+            [tail (reader.spanned-sexpr-drop sexpr 1)]
+            [head-key : String (macro-identity-key-sexpr session head)]
+            (macro-identity-key-sexpr-into
+              session
+              tail
+              (text_buf.append
+                (text_buf.append
+                  (text_buf.append-int
+                    (text_buf.append buf "cons:")
+                    (string.string-length head-key))
+                  ":")
+                head-key)))])]
     [(Str string-id _)
       (text_buf.append
         (text_buf.append buf "str:")
@@ -94212,11 +94215,13 @@
       (text_buf.append
         (text_buf.append buf "float:")
         (spec.spec-string-key text))]
-    [(BracketList items _)
-      (macro-identity-key-sexpr-into
-        session
-        items
-        (text_buf.append buf "bracket:"))]))
+    [(BracketList _ _)
+      (let
+        [items (reader.spanned-sexpr-drop sexpr 0)]
+        (macro-identity-key-sexpr-into
+          session
+          items
+          (text_buf.append buf "bracket:")))]))
 
 (define (macro-identity-key-sexpr
   [session : cis.InternStructuralSessionHandle]

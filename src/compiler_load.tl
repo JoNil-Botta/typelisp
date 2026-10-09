@@ -14371,7 +14371,7 @@
 (define (compiler-load-manifest-string-value
   [ftail : reader.SpannedSexpr]
   [fname : String]) : ResultPkgString
-  (match (reader.sexpr-slice-view ftail)
+  (match (reader.sexpr-view ftail)
     [(List (slice (Str val-id _)))
       (Ok (compiler-load-manifest-owned-intern-text val-id))]
     [(List (slice (Str _ _) & _))
@@ -14388,13 +14388,13 @@
   [alias : String]
   [address : String]
   [pin-form : reader.SpannedSexpr]) : ResultPkgString
-  (match (reader.sexpr-slice-view pin-form)
+  (match (reader.sexpr-view pin-form)
     [(List (slice (Sym pin-kind _) & _))
       (let
         [pin-tail (reader.spanned-sexpr-drop pin-form 1)]
         (if (compiler-load-github-pin-kind-valid?
           (compiler-load-symbol-text pin-kind))
-          (match (reader.sexpr-slice-view pin-tail)
+          (match (reader.sexpr-view pin-tail)
             [(List (slice (Str pin-value-id _)))
               (let
                 [pin-value : String (ci.intern-id-str pin-value-id)]
@@ -14430,12 +14430,12 @@
 (define (compiler-load-manifest-github-value
   [alias : String]
   [source-tail : reader.SpannedSexpr]) : ResultPkgString
-  (match (reader.sexpr-slice-view source-tail)
+  (match (reader.sexpr-view source-tail)
     [(List (slice (Str address-id _) & _))
       (let
         [after-address (reader.spanned-sexpr-drop source-tail 1)]
         [address : String (ci.intern-id-str address-id)]
-        (match (reader.sexpr-slice-view after-address)
+        (match (reader.sexpr-view after-address)
           [(List (slice pin-form))
             (compiler-load-manifest-github-pin alias address pin-form)]
           [_
@@ -14454,11 +14454,11 @@
 (define (compiler-load-manifest-dependency-value
   [etail : reader.SpannedSexpr]
   [alias : String]) : ResultPkgString
-  (match (reader.sexpr-slice-view etail)
+  (match (reader.sexpr-view etail)
     [(List (slice (Str path-id _)))
       (Ok (compiler-load-manifest-owned-intern-text path-id))]
     [(List (slice vhead))
-      (match (reader.sexpr-slice-view vhead)
+      (match (reader.sexpr-view vhead)
         [(List (slice (Sym source-kind _) & _))
           (let
             [source-tail (reader.spanned-sexpr-drop vhead 1)]
@@ -14502,7 +14502,7 @@
       (Err "manifest field `kind` must be `bin`, `staticlib`, or `lib`"))))
 
 (define (compiler-load-manifest-kind-value [ftail : reader.SpannedSexpr]) : ResultCompilerPkgKind
-  (match (reader.sexpr-slice-view ftail)
+  (match (reader.sexpr-view ftail)
     [(List (slice (Str val-id _)))
       (compiler-load-manifest-kind-token (ci.intern-id-str val-id))]
     [(List (slice (Sym val _)))
@@ -14538,10 +14538,10 @@
 
 ;: Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
 (define (compiler-load-manifest-parse-deps [entries : reader.SpannedSexpr]) : ResultCompilerPkgDeps
-  (match (reader.sexpr-slice-view entries)
+  (match (reader.sexpr-view entries)
     [(List (slice)) (Ok (compiler-pkg-deps-empty))]
     [(List (slice entry & _))
-      (match (reader.sexpr-slice-view entry)
+      (match (reader.sexpr-view entry)
         [(List (slice (Sym alias _) & _))
           (let
             [rest (reader.spanned-sexpr-drop entries 1)]
@@ -14671,7 +14671,7 @@
   [values : reader.SpannedSexpr]
   [fname : String]
   [acc : fs.FsStringVector]) : ResultPkgStrVec
-  (match (reader.sexpr-slice-view values)
+  (match (reader.sexpr-view values)
     [(List (slice))
       (if (= (fs.string-vector-len (& acc)) 0)
         (Err
@@ -14727,10 +14727,10 @@
 (define (compiler-load-manifest-parse-link-into
   [entries : reader.SpannedSexpr]
   [acc : CompilerPkgLink]) : ResultCompilerPkgLink
-  (match (reader.sexpr-slice-view entries)
+  (match (reader.sexpr-view entries)
     [(List (slice)) (Ok acc)]
     [(List (slice entry & _))
-      (match (reader.sexpr-slice-view entry)
+      (match (reader.sexpr-view entry)
         [(List (slice (Sym fname _) & _))
           (let
             [rest (reader.spanned-sexpr-drop entries 1)]
@@ -14790,7 +14790,7 @@
   [deps : CompilerPkgDeps]
   [has-link : bool]
   [link : CompilerPkgLink]) : ResultCompilerPkgManifest
-  (match (reader.sexpr-slice-view fields)
+  (match (reader.sexpr-view fields)
     [(List (slice))
       (let
         [final-entry : String
@@ -14815,7 +14815,7 @@
           [else
             (Ok (CompilerPkgManifest name version kind final-entry deps link))]))]
     [(List (slice field & _))
-      (match (reader.sexpr-slice-view field)
+      (match (reader.sexpr-view field)
         [(List (slice (Sym fname _) & _))
           (let
             [rest (reader.spanned-sexpr-drop fields 1)]
@@ -14962,7 +14962,7 @@
 
 ;: Parse the top-level `(package ...)` form.
 (define (compiler-load-manifest-from-form [form : reader.SpannedSexpr]) : ResultCompilerPkgManifest
-  (match (reader.sexpr-slice-view form)
+  (match (reader.sexpr-view form)
     [(List (slice (Sym s _) & _))
       (let
         [rest (reader.spanned-sexpr-drop form 1)]
@@ -14998,7 +14998,7 @@
       (let
         [tail-has : bool
           (compiler-load-manifest-fields-have?-items rest target)]
-        (match (reader.sexpr-slice-view field)
+        (match (reader.sexpr-view field)
           [(List (slice (Sym name _) & _))
             (or (string.eq (compiler-load-symbol-text name) target) tail-has)]
           [_ tail-has]))]))
@@ -15006,7 +15006,7 @@
 (define (compiler-load-manifest-form-has-field?
   [form : reader.SpannedSexpr]
   [target : (& target str)]) : bool
-  (match (reader.sexpr-slice-view form)
+  (match (reader.sexpr-view form)
     [(List (slice (Sym s _) & rest))
       (if (string.eq (compiler-load-symbol-text s) "package")
         (compiler-load-manifest-fields-have?-items rest target)
@@ -15067,9 +15067,9 @@
 (define (compiler-load-manifest-first-dependency-entry-span
   [entries : reader.SpannedSexpr]
   [fallback : token.SourceSpan]) : token.SourceSpan
-  (match (reader.spanned-sexpr-slice-view entries)
+  (match (reader.spanned-sexpr-view entries)
     [(List (slice entry & _) _)
-      (match (reader.spanned-sexpr-slice-view entry)
+      (match (reader.spanned-sexpr-view entry)
         [(List (slice alias & _) _) (reader.spanned-sexpr-span alias)]
         [_ fallback])]
     [_ fallback]))
@@ -15077,9 +15077,9 @@
 (define (compiler-load-manifest-first-dependency-field-span
   [fields : reader.SpannedSexpr]
   [fallback : token.SourceSpan]) : token.SourceSpan
-  (match (reader.spanned-sexpr-slice-view fields)
+  (match (reader.spanned-sexpr-view fields)
     [(List (slice field & _) _)
-      (match (reader.spanned-sexpr-slice-view field)
+      (match (reader.spanned-sexpr-view field)
         [(List (slice (Sym name _) & _) _)
           (let
             [rest (reader.spanned-sexpr-drop fields 1)]
@@ -15103,7 +15103,7 @@
   [form : reader.SpannedSexpr]) : token.SourceSpan
   (let
     [fallback : token.SourceSpan (reader.spanned-sexpr-span (clone form))]
-    (match (reader.spanned-sexpr-slice-view form)
+    (match (reader.spanned-sexpr-view form)
       [(List (slice _ & _) _)
         (let
           [fields (reader.spanned-sexpr-drop form 1)]

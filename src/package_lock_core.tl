@@ -227,7 +227,7 @@
 (define (package-lock-field-string-value
   [ftail : reader.SpannedSexpr]
   [fname : String]) : ResultPackageLockString
-  (match (reader.sexpr-slice-view ftail)
+  (match (reader.sexpr-view ftail)
     [(List (slice (Str val-id _))) (Ok (ci.intern-id-str val-id))]
     [(List (slice (Str _ _) & _))
       (Err
@@ -253,7 +253,7 @@
   (Err "package-lock: pin must be `(rev|tag|branch \"value\")`"))
 
 (define (package-lock-pin-form [form : reader.SpannedSexpr]) : ResultPackageLockPin
-  (match (reader.sexpr-slice-view form)
+  (match (reader.sexpr-view form)
     [(List (slice (Sym kind-name _) (Str pin-value-id _)))
       (let
         [pin-value : String (ci.intern-id-str pin-value-id)]
@@ -268,7 +268,7 @@
     [_ (package-lock-pin-shape-error)]))
 
 (define (package-lock-field-pin-value [ftail : reader.SpannedSexpr]) : ResultPackageLockPin
-  (match (reader.sexpr-slice-view ftail)
+  (match (reader.sexpr-view ftail)
     [(List (slice pin-form)) (package-lock-pin-form pin-form)]
     [_ (Err "package-lock: field `pin` takes one value")]))
 
@@ -305,7 +305,7 @@
           (Err "package-lock: dependency commit must not be empty")]
         [else (Ok (PackageLockEntry alias url pin-kind pin-value commit))])]
     [(slice field & rest)
-      (match (reader.sexpr-slice-view field)
+      (match (reader.sexpr-view field)
         [(List (slice (Sym fname _) & _))
           (let
             [ftail (reader.spanned-sexpr-drop field 1)]
@@ -397,7 +397,7 @@
         [_ (Err "package-lock: dependency fields must be lists")])]))
 
 (define (package-lock-entry-from-form [form : reader.SpannedSexpr]) : ResultPackageLockEntry
-  (match (reader.sexpr-slice-view form)
+  (match (reader.sexpr-view form)
     [(List items) (package-lock-entry-from-form-items items)]
     [_ (Err "package-lock: dependency entries must be lists")]))
 
@@ -428,7 +428,7 @@
 (define (package-lock-dependencies-entries
   [entries : reader.SpannedSexpr]
   [acc : package_lock_entry_vec.Vec]) : ResultPackageLockEntryList
-  (match (reader.sexpr-slice-view entries)
+  (match (reader.sexpr-view entries)
     [(List items) (package-lock-dependencies-entries-items items acc)]
     [_ (Err "package-lock: `dependencies` must contain dependency lists")]))
 
@@ -461,7 +461,7 @@
           (Err "package-lock: missing required field `dependencies`")]
         [else (Ok (PackageLockFile version entries))])]
     [(slice field & rest)
-      (match (reader.sexpr-slice-view field)
+      (match (reader.sexpr-view field)
         [(List (slice (Sym fname _) & _))
           (let
             [ftail (reader.spanned-sexpr-drop field 1)]
@@ -500,7 +500,7 @@
         [_ (Err "package-lock: fields must be lists")])]))
 
 (define (package-lock-from-form [form : reader.SpannedSexpr]) : ResultPackageLockFile
-  (match (reader.sexpr-slice-view form)
+  (match (reader.sexpr-view form)
     [(List items) (package-lock-from-form-items items)]
     [_ (Err "package-lock: lockfile must be a `(typelisp-lock ...)` form")]))
 

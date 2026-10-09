@@ -41784,6 +41784,133 @@
     func-diag
     backend-state))
 
+;; Step 3 of the stack-first tail marshalling: the overflow arguments whose
+;; source is an immediate or memory, staged through the scratch the sequential
+;; path uses. The register prefix is already placed, which is also the order the
+;; sequential path stages its stack arguments in.
+(define (compiler-backend-emit-direct-tail-memory-sourced-stack-args-into
+  [out : (&mut out CompilerBackendAsmBuf)]
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [types : compiler_ast_types.AstTypeList]
+  [sources : (& sources (__tl_dyn-array i64))]
+  [index : i64]
+  [prefix : i64]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (if (>= index (array-length sources))
+    (Ok "")
+    (let
+      [_
+        (try
+          (if (= (array-ref sources index) compiler_abi.compiler-reg-id-invalid)
+            (let
+              [store
+                (try
+                  (compiler-backend-emit-direct-tail-stack-call-arg
+                    type-segment-bases
+                    target
+                    assignments
+                    (compiler-backend-call-arg-at (& args) (+ prefix index))
+                    (compiler-backend-call-arg-type-at
+                      type-segment-bases
+                      (& types)
+                      (+ prefix index))
+                    false
+                    index
+                    backend-state))]
+              (compiler-backend-asm-append out store)
+              (ResultCompilerBackend.Ok ""))
+            (ResultCompilerBackend.Ok "")))]
+      (compiler-backend-emit-direct-tail-memory-sourced-stack-args-into
+        out
+        type-segment-bases
+        target
+        assignments
+        args
+        types
+        sources
+        (+ index 1)
+        prefix
+        backend-state))))
+
+;; A direct tail call whose all-GP arguments overflow the registers into the
+;; caller's incoming stack area, and whose register prefix has a source/dest
+;; conflict or reads a stack argument out of a register. The sequential path
+;; loads the prefix in argument order, so a later argument read out of an
+;; argument register the prefix already overwrote gets the wrong value. This is
+;; the stack-first order of `compiler-backend-emit-call-args-stack-first-into`,
+;; with the stores aimed at the incoming slots the callee reads: the
+;; register-sourced overflow first, then the prefix as one parallel move, then
+;; the memory-sourced overflow. The caller copied its own stack parameters into
+;; their homes at entry, so no source lives in the area these stores overwrite.
+(define (compiler-backend-emit-direct-tail-call-args-stack-first
+  [type-segment-bases : i64]
+  [target : CompilerBackendTarget]
+  [assignments : compiler_regalloc.CompilerRegAssignmentTable]
+  [args : compiler_ir_types.CompilerIrCallArgs]
+  [types : compiler_ast_types.AstTypeList]
+  [backend-state : CompilerBackendState]) : ResultCompilerBackend
+  (let
+    [count : i64
+      (compiler-backend-call-args-count
+        (compiler-backend-global-shared-view args))]
+    [prefix : i64
+      (compiler-backend-call-args-gp-register-prefix target count 0 0)]
+    [sources : (__tl_dyn-array i64)
+      (compiler-backend-stack-arg-sources
+        backend-state
+        assignments
+        (compiler-backend-global-shared-view args)
+        prefix
+        count)]
+    [out : CompilerBackendAsmBuf
+      (compiler-backend-asm-buf-with-capacity compiler-backend-asm-seq-capacity)]
+    [index : i64 0]
+    (while (< index (array-length sources))
+      (let
+        [source : i64 (array-ref sources index)]
+        (if (= source compiler_abi.compiler-reg-id-invalid)
+          unit
+          (compiler-backend-asm-append5
+            (&mut out)
+            "    movq "
+            (compiler_abi.compiler-abi-register-spelling source)
+            ", "
+            (compiler-backend-tail-final-stack-slot target index backend-state)
+            "\n")))
+      (set! index (+ index 1)))
+    (let
+      [moves
+        (try
+          (compiler-backend-emit-arg-move-list
+            assignments
+            (compiler-backend-arg-moves-build-from
+              target
+              (compiler-backend-global-shared-view args)
+              0
+              prefix
+              0
+              0)
+            backend-state))]
+      (compiler-backend-asm-append (&mut out) moves)
+      (let
+        [_
+          (try
+            (compiler-backend-emit-direct-tail-memory-sourced-stack-args-into
+              (&mut out)
+              type-segment-bases
+              target
+              assignments
+              args
+              types
+              (& sources)
+              0
+              prefix
+              backend-state))]
+        (Ok (compiler-backend-asm-buf-finish (& out)))))))
+
 (define (compiler-backend-phi-input-value
   [inputs : compiler_ir_types.CompilerIrPhiInputSeq]
   [from-label : i64]) : ResultBackendValue
@@ -45194,11 +45321,12 @@
       (let
         [args-asm
           (try
-            (if (compiler-backend-function-state-bool?
-              (compiler-backend-state-function-state backend-state)
-              compiler-backend-function-bool-identity-tail-forwarder-active)
-              (ResultCompilerBackend.Ok "")
-              (if (= tail-stack-count 0)
+            (cond
+              [(compiler-backend-function-state-bool?
+                  (compiler-backend-state-function-state backend-state)
+                  compiler-backend-function-bool-identity-tail-forwarder-active)
+                (ResultCompilerBackend.Ok "")]
+              [(= tail-stack-count 0)
                 (compiler-backend-emit-call-args
                   type-segment-bases
                   target
@@ -45214,7 +45342,26 @@
                   instr-diag
                   program-index
                   vars
+                  backend-state)]
+              [(compiler-backend-call-args-gp-stack-first?
+                  type-segment-bases
+                  target
+                  assignments
+                  (compiler-backend-global-shared-view args)
+                  (& param-types)
+                  c-abi?
+                  program-index
+                  0
+                  0
                   backend-state)
+                (compiler-backend-emit-direct-tail-call-args-stack-first
+                  type-segment-bases
+                  target
+                  assignments
+                  (compiler-backend-global-shared-view args)
+                  (compiler-backend-global-shared-view param-types)
+                  backend-state)]
+              [else
                 (compiler-backend-emit-direct-tail-call-args
                   type-segment-bases
                   target
@@ -45222,7 +45369,7 @@
                   args
                   param-types
                   instr-diag
-                  backend-state))))]
+                  backend-state)]))]
         (Ok
           (str_cat.str-cat
             args-asm

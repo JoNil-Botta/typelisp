@@ -322,6 +322,7 @@ synth_wrapped_probe|all|-|tests/integration/synth_wrapped_probe.tl|42|-|-|-|-
 synth_wrapped_probe_abort|all|-,2|tests/integration/synth_wrapped_probe_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:37:36: array index out of bounds: index=64 length=64\n
 synth_tail_wrapper|all|-|tests/integration/synth_tail_wrapper.tl|42|-|-|-|-
 tail_borrow_param|all|-,0,2|tests/integration/tail_borrow_param.tl|42|-|-|-|-
+tail_stack_arg_permute|all|-,0,2|tests/integration/tail_stack_arg_permute.tl|42|-|-|-|-
 synth_tail_wrapper_abort|all|-,2|tests/integration/synth_tail_wrapper_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:37:36: array index out of bounds: index=64 length=64\n
 synth_struct_accessor|all|-|tests/integration/synth_struct_accessor.tl|42|-|-|-|-
 synth_struct_accessor_abort|all|-|tests/integration/synth_struct_accessor_abort.tl|134|-|128 2|stdlib/io.tl stdlib/string.tl|expected-stderr:tl: $SRC:38:32: array index out of bounds: index=71 length=64\n

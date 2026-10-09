@@ -3984,7 +3984,9 @@
                     (string.eq head "comptime.expr-binding-clause-type")
                     (string.eq head "expr-binding-clause-type")
                     (string.eq head "comptime.expr-binding-clause-init")
-                    (string.eq head "expr-binding-clause-init")))
+                    (string.eq head "expr-binding-clause-init")
+                    (string.eq head "comptime.expr-binding-clause-init-callee")
+                    (string.eq head "expr-binding-clause-init-callee")))
                 (let
                   [opened : i64
                     (embedded-native-computed-expr-ops
@@ -4004,6 +4006,13 @@
                           (string.eq head "expr-binding-clause-type"))
                         (tlci_core.tlci-host-callback-name
                           expr-binding-clause-type)]
+                      [(or
+                          (string.eq
+                            head
+                            "comptime.expr-binding-clause-init-callee")
+                          (string.eq head "expr-binding-clause-init-callee"))
+                        (tlci_core.tlci-host-callback-name
+                          expr-binding-clause-init-callee)]
                       [else
                         (tlci_core.tlci-host-callback-name
                           expr-binding-clause-init)])]

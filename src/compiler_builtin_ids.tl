@@ -1743,7 +1743,8 @@
           (ctfe 322 "__tl_semantic_origin_value_qualifier")
           (ctfe 323 "__tl_semantic_origin_value_name")
           (ctfe 324 "__tl_semantic_origin_binding_definition")
-          (ctfe 325 ":opaque")))
+          (ctfe 325 ":opaque")
+          (ctfe 326 "expr-binding-clause-init-callee")))
         [(comptime.Expr.Call _ items) items]
         [_
           (comptime.comptime-error

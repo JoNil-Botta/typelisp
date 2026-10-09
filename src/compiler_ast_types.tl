@@ -4941,6 +4941,11 @@
   ;; call `expr-type`; ordinary syntax-only binding captures keep the untyped
   ;; sentinel and pay no caller typecheck cost.
   (init-produced AstType)
+  ;; The module-level function the initializer calls directly, as its module
+  ;; and declaration name ids, or -1 and -1. Captured like `init-produced`,
+  ;; only for transformers that ask for it (`expr-binding-clause-init-callee`).
+  (init-callee-module i64)
+  (init-callee-name i64)
   (span AstSourceSpan))
 
 (defstruct AstExprBindingClauseList
@@ -6393,7 +6398,7 @@
   [init : i64]
   [init-produced : AstType]
   [span : AstSourceSpan]) : AstExprBindingClause
-  (AstExprBindingClause name has-type ty init init-produced span))
+  (AstExprBindingClause name has-type ty init init-produced -1 -1 span))
 
 (define (ast-expr-binding-clause-fallback) : AstExprBindingClause
   (AstExprBindingClause
@@ -6402,6 +6407,8 @@
     0
     0
     (Var -3)
+    -1
+    -1
     (ast-source-span 0 0 0 0)))
 
 (dense_list.compiler-dense-list-operations

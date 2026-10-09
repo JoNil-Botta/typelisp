@@ -1057,6 +1057,22 @@ calls. They can inspect binding-clause captures with
 `expr-binding-clause-list-length`, and `expr-binding-clause-list-nth`.
 `expr-binding-clause-list->expr-list` converts a binding-clause list back
 into bracket-clause operand syntax for explicit splicing into macro calls.
+`(expr-binding-clause-init-callee clause)` returns the canonical identity of
+the module-level function that the clause's initializer calls directly, as a
+`String` `module/name`: `"stdlib.iterator/range"` for
+`[i (iterator.range 0 n)]`. `module` is the canonical path of the module that
+declares the function and `name` its declared name, whichever import alias or
+full module path the call is spelled with. The compiler resolves the call head
+where the macro is called, as it resolves that call when checking it, and does
+not evaluate the initializer. The result is `""` when the initializer is not a
+call, or when its head is not a `define`d function of a named module or the
+compiler cannot be sure which declaration it names. That covers a local
+binding of the head's name, which shadows declarations (a parameter, a `let`
+binding, or a local whose field a dotted head names), a call through a function
+value, a macro, a struct constructor or enum variant, an extern or dispatch
+function, a function of the root program module, a hygiene-renamed name from
+another macro's expansion, and a slash-qualified spelling. A non-empty result
+therefore names the function the call runs; `""` means unknown.
 Cons-list helpers such as `expr-list-head` and `expr-list-tail` are not part
 of the public macro ABI.
 

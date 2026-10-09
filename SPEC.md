@@ -2139,6 +2139,13 @@ including an inclusive range that ends at the largest `i64`, but no iterator
 state is constructed and no protocol function is called per item. An annotated
 clause uses the protocol.
 
+When that source is a direct call of `stdlib.iterator.range` or
+`range-inclusive` itself, as `comptime.expr-binding-clause-init-callee` reports
+it, the loop counts from the call's two arguments and no range value is built.
+The start and then the end are each evaluated once, as `i64`. A call of any
+other function, including a local or user function named `range`, takes the
+path above.
+
 A single unannotated clause over a counted range or a borrowed array, `Slice`,
 `__tl_dyn-array`, or slots/len struct expands to one index-driven `while`
 whose body advances the index before the user body, so `continue` moves to the

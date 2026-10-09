@@ -510,7 +510,8 @@
       (ctfe-builtin "expr-if-then")
       (ctfe-builtin "expr-if-else")
       (ctfe-builtin "expr-clause-first")
-      (ctfe-builtin "expr-clause-second"))))
+      (ctfe-builtin "expr-clause-second"))
+    (= name-id (ctfe-builtin "expr-call-args"))))
 
 (define (ctfe-builtin-sequence-length-id? [name-id : i64]) : bool
   (ctfe-builtin-id-any3?
@@ -9170,6 +9171,17 @@
             (match inspected
               [(If _ _ _) true]
               [_ false]))
+          fuel)]
+      ;; The arguments of a call, in the pool that holds them; any other
+      ;; expression has none.
+      [(string.eq name "expr-call-args")
+        (Ok
+          (match inspected
+            [(Call _ call-args)
+              (if captured?
+                (CapturedExprList call-args pools)
+                (ExprList call-args))]
+            [_ (ExprList (ast.ast-expr-list-new))])
           fuel)]
       [else
         (match inspected

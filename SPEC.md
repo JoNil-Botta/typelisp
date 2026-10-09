@@ -8105,11 +8105,18 @@ arbitrary-user slot (`GS:0x28`). Under the Linux shared-object code model
 (`docs/compiler-architecture.md`, #8257), the same accesses are initial-exec:
 each loads the variable's GOT offset and the DSO carries `DF_STATIC_TLS`.
 There is no entry, and `tl_shared_object_init` runs the global initializers.
-Raw thread spawn initializes a fresh zero
-current-arena slot before user code runs, so a worker's first allocation
-creates an independent default arena chain. The slot always contains that
-chain's stable root; allocator and mark/reset internals reach the changing
-physical head through the root's `root.current` field.
+Raw thread spawn initializes a fresh current-arena slot before user code
+runs, so a worker's first allocation creates an independent default arena
+chain. Once a chain exists, the slot contains its stable root; allocator and
+mark/reset internals reach the changing physical head through the root's
+`root.current` field. Before that, and after a full reset, the slot holds a
+static null-arena sentinel rather than zero: its flag word marks it shared, so
+inline allocation fast paths take the runtime slow path without a separate
+null test, and runtime helpers recognize it by a dedicated null flag.
+`tl_arena_current` and `(tls-current-arena)` still report it as zero, and
+`tl_arena_set` and `(tls-current-arena-set!)` store it for zero. The Linux slot
+is initialized to the sentinel in its TLS image, and the freestanding entry,
+raw thread spawn and the Windows entries store it explicitly.
 
 The compiler provides two allocation-free current-arena TLS intrinsics for
 runtime-prelude code: `(tls-current-arena)` returns the stable root handle for

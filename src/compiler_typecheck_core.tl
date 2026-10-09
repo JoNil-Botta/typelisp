@@ -59269,7 +59269,14 @@
         (tc-raw-pointer-elem
           (tc-resolve-type ctx ptr-ty)
           "typecheck: ptr-read requires a raw pointer operand"))]
-    (Ok (tc-resolve-type ctx elem))))
+    [resolved : ast.AstType (tc-resolve-type ctx elem)]
+    [_
+      (try
+        (tc-opaque-by-value-ok
+          ctx
+          (tc-global-shared-view resolved)
+          "cannot read through a pointer to the"))]
+    (Ok resolved)))
 
 (define (tc-ptr-write-expr
   [ctx : TcContext]
@@ -59285,6 +59292,12 @@
           (tc-mut-pointer-elem
             (tc-resolve-type ctx ptr-ty)
             "typecheck: ptr-write! requires a MutPtr pointer operand"))]
+      [_
+        (try
+          (tc-opaque-by-value-ok
+            ctx
+            (tc-global-shared-view elem)
+            "cannot write through a pointer to the"))]
       [value-ty
         (try
           (tc-expr-with-expected-or-actual
@@ -59310,11 +59323,14 @@
     (let
       [ptr-ty : ast.AstType (try (tc-expr ctx env ptr))]
       [resolved-ptr : ast.AstType (tc-resolve-type ctx ptr-ty)]
-      [_
+      [elem : ast.AstType
         (try
           (tc-raw-pointer-elem
             (tc-global-shared-view resolved-ptr)
             "typecheck: ptr-offset requires a raw pointer operand"))]
+      ;; An offset scales by the pointee's size, part of its representation.
+      [_
+        (try (tc-opaque-by-value-ok ctx elem "cannot offset a pointer to the"))]
       [offset-ty : ast.AstType
         (try (tc-expr-with-expected-or-actual ctx env offset (I64)))]
       (if (tc-integer-type? offset-ty)
@@ -59539,8 +59555,10 @@
     (match (tc-type-strip-region
       (tc-resolve-type ctx (tc-global-shared-view box-ty)))
       [(Box inner-ty)
-        (Ok
-          (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty)))]
+        (tc-opaque-by-value-result
+          ctx
+          (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty))
+          "cannot read out of a box the")]
       [_
         (Err
           (tc-kind-message
@@ -59566,11 +59584,14 @@
         (let
           [projected : ast.AstType
             (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty))]
-          (if (tc-type-compatible?
-            (tc-global-shared-view expected)
-            (tc-global-shared-view projected))
-            (Ok (tc-contextual-result-type expected projected))
-            (Ok projected)))]
+          (tc-opaque-by-value-result
+            ctx
+            (if (tc-type-compatible?
+              (tc-global-shared-view expected)
+              (tc-global-shared-view projected))
+              (tc-contextual-result-type expected projected)
+              projected)
+            "cannot read out of a box the"))]
       [_
         (Err
           (tc-kind-message
@@ -59701,7 +59722,10 @@
   [receiver : ast.AstExpr]) : ResultTcType
   (let
     [receiver-ty : ast.AstType (try (tc-expr ctx env receiver))]
-    (tc-deref-result-type ctx receiver-ty)))
+    (tc-opaque-by-value-result
+      ctx
+      (try (tc-deref-result-type ctx receiver-ty))
+      "cannot dereference by value the")))
 
 (define (tc-deref-expr-with-expected-or-actual
   [ctx : TcContext]
@@ -59718,11 +59742,14 @@
           (let
             [projected : ast.AstType
               (try (tc-deref-result-type ctx receiver-ty))]
-            (if (tc-type-compatible?
-              (tc-global-shared-view expected)
-              (tc-global-shared-view projected))
-              (Ok (tc-contextual-result-type expected projected))
-              (Ok projected)))])]
+            (tc-opaque-by-value-result
+              ctx
+              (if (tc-type-compatible?
+                (tc-global-shared-view expected)
+                (tc-global-shared-view projected))
+                (tc-contextual-result-type expected projected)
+                projected)
+              "cannot dereference by value the"))])]
     [(Err _)
       ;; Preserve contextual inference for `(deref (box (init)))`.
       (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)]))
@@ -74175,6 +74202,19 @@
       (if (< name 0)
         Ok
         (Err (tc-opaque-representation-message name use))))))
+
+;; TY, the value an operation yields, or E0221 when TY holds an opaque
+;; aggregate foreign to CTX's module family by value. Gating the operations
+;; that read through a pointer, reference or box (#8734) leaves no unwritten
+;; source of such a value: the expressions that pass one along (if, match,
+;; begin) only ever receive it from a gated operation.
+(define (tc-opaque-by-value-result
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [use : String]) : ResultTcType
+  (match (tc-opaque-by-value-ok ctx (tc-global-shared-view ty) use)
+    [(Ok) (Ok ty)]
+    [(Err message) (Err message)]))
 
 ;; Err with E0221 when NAME is an opaque aggregate foreign to CTX's module
 ;; family, else Ok.

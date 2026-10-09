@@ -853,7 +853,12 @@ E0221, even inside `unsafe`:
   operand, so `(size-of (type T))` is rejected;
 - binds a value that holds it by value with `let`, even without an annotation;
 - names a value or function whose type holds it by value, such as a function of
-  the defining module that returns it.
+  the defining module that returns it;
+- yields a value that holds it by value without writing the type: `ptr-read`,
+  a `deref` read, or reading a `Box`'s contents. `ptr-write!` writes such a
+  value and `ptr-offset` scales by its size, so both are rejected too. A
+  dereference that stays a place, as in the reborrow `(& (deref c))`, is not a
+  read.
 
 Code a macro expands into a module is checked as that module's code.
 
@@ -877,10 +882,7 @@ Not yet enforced:
   namespace is still treated as a family member (#8733);
 - layout queries and reflection still reach the representation through a type
   derived from an allowed one, such as the `reference-element-type` of
-  `(& a T)` (#8735);
-- a value that `ptr-read` or `deref` yields is rejected only where it is bound
-  with `let` or named, and `ptr-offset` and `ptr-write!` are not checked
-  (#8734).
+  `(& a T)` (#8735).
 
 ### 3.6 Type aliases
 

@@ -754,10 +754,71 @@ exit 134
 in stderr
 contains array index out of bounds
 
-# A rank-2 foreach runs the scalar reference in every mode: a domain product
-# beyond i64 aborts before the body (#7190).
+# A rank-2 domain product beyond i64 aborts before the body in every mode
+# (#7190).
 case foreach-2d-product-trap
 source tests/spmd/foreach_2d_product_trap.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+
+# Rank-2 rows are row-local native gangs (#7191). The row loop is scalar; each
+# row enters the 1-D gang planner through row-origin views, so its hot gang
+# body stores whole vectors while the row-major multiply and any division stay
+# out of it, in the domain checks and the row's preheader.
+case foreach-2d-native-row-gangs
+source tests/spmd/foreach_2d_native.tl
+mode avx2 avx512
+in fn _tl_foreach_2d_native_map_i64
+order foreach2_header || foreach2_row || foreach_avx2_body
+contains row_origin_native
+contains row_origin_scalar
+contains foreach_tail_mask
+narrow labeled-block:foreach_avx2_body
+match ^[[:space:]]+vmovdqu(64)? %[yz]mm[0-9]+, \(%r[a-z0-9]+,%r[a-z0-9]+,8\)$
+not-contains imul
+not-contains idiv
+
+# The narrow-lane kernel gangs 8 (AVX2) or 16 (AVX-512) i32 lanes per row.
+case foreach-2d-native-row-gangs-i32
+source tests/spmd/foreach_2d_native.tl
+mode avx2 avx512
+in fn _tl_foreach_2d_native_map_i32
+narrow labeled-block:foreach_avx2_body
+match ^[[:space:]]+vmovdqu(32)? %[yz]mm[0-9]+, \(%r[a-z0-9]+,%r[a-z0-9]+,4\)$
+
+# Row-range safety (#7191): a destination or source first too short on a later
+# row, a row origin before the array, and an origin whose index wraps past i64
+# all abort at the scalar reference's first out-of-bounds access, and no gang
+# touches memory outside the arrays.
+case foreach-2d-native-short-dest
+source tests/spmd/foreach_2d_native_short_dest.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+
+case foreach-2d-native-short-src
+source tests/spmd/foreach_2d_native_short_src.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+
+case foreach-2d-native-negative-origin
+source tests/spmd/foreach_2d_native_negative_origin.tl
+do link-run
+mode scalar avx2 avx512
+exit 134
+in stderr
+contains array index out of bounds
+
+case foreach-2d-native-overflow-origin
+source tests/spmd/foreach_2d_native_overflow_origin.tl
 do link-run
 mode scalar avx2 avx512
 exit 134

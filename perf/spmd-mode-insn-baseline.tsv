@@ -27,3 +27,7 @@ spmd_mask	scalar	typelisp	supported	8613460697
 spmd_mask	scalar	clang	supported	9833561381
 spmd_mask	avx2	typelisp	supported	4327740380
 spmd_mask	avx2	clang	supported	1770726834
+spmd_foreach_2d	scalar	typelisp	supported	2507027015
+spmd_foreach_2d	scalar	clang	supported	2850901439
+spmd_foreach_2d	avx2	typelisp	supported	2719999610
+spmd_foreach_2d	avx2	clang	supported	561375451

@@ -87894,23 +87894,16 @@ tl_shared_object_init:
 
 ;; The single render of the group, with COLD-1's out-of-line abort stubs. A
 ;; group without an abort call renders in record order; otherwise the plan and its
-;; synthesized lines are scratch and only the rendered string lands in the
-;; caller's arena.
+;; synthesized lines are scratch and only the rendered string is cloned out into
+;; the caller's arena.
 (define (compiler-backend-peephole-records-render
   [v : CompilerBackendPeepholeLineVec]) : String
   (if (= v.abort-cand-len 0)
     (compiler-backend-peephole-records-render-plain v)
-    (let
-      [output-arena : arena.Arena (arena.current)]
-      [rendered : String ""]
-      (with-scratch
-        (let
-          [plan : CompilerBackendColdPlan (compiler-backend-cold-plan v)]
-          (set!
-            rendered
-            (in-arena output-arena (compiler-backend-cold-render v plan)))
-          unit))
-      rendered)))
+    (with-scratch
+      (let
+        [plan : CompilerBackendColdPlan (compiler-backend-cold-plan v)]
+        (compiler-backend-cold-render v plan)))))
 
 ;; ---------------------------------------------------------------------------
 ;; RMW-2/RMW-3: fold an adjacent load / ALU / store of ONE memory location into

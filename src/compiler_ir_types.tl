@@ -98,14 +98,7 @@
 ;; the field as both operand and result type.
 (define (compiler-ir-binop-compare? [op : (& CompilerIrBinOp)]) : bool
   (match op
-    [(Eq) true]
-    [(Ne) true]
-    [(Lt) true]
-    [(Le) true]
-    [(Gt) true]
-    [(Ge) true]
-    [(BitTestEq) true]
-    [(BitTestNe) true]
+    [(or (Eq) (Ne) (Lt) (Le) (Gt) (Ge) (BitTestEq) (BitTestNe)) true]
     [_ false]))
 
 (define (compiler-ir-binop-result-type
@@ -764,17 +757,8 @@
       [(compiler_ir_types.CompilerIrCallArgs.Two a b)
         (,visitor ,@contexts a)
         (,visitor ,@contexts b)]
-      [(compiler_ir_types.CompilerIrCallArgs.Array values)
-        (let
-          [count : i64 (array-length values)]
-          [index : i64 0]
-          (while (< index count)
-            (,visitor
-              ,@contexts
-              (unsafe
-                (ptr-read (ptr-offset (__tl_array-data values) index))))
-            (set! index (+ index 1))))]
-      [(compiler_ir_types.CompilerIrCallArgs.Sret values _)
+      [(or (compiler_ir_types.CompilerIrCallArgs.Array values)
+           (compiler_ir_types.CompilerIrCallArgs.Sret values _))
         (let
           [count : i64 (array-length values)]
           [index : i64 0]
@@ -1579,21 +1563,25 @@
 ;: The var `instr` defines, or -1. Var ids are nonnegative.
 (define (compiler-ir-instr-dst [instr : (& instr CompilerIrInstr)]) : i64
   (match instr
-    [(CompilerIrInstr.Mov dst _ _) dst]
-    [(CompilerIrInstr.Alloc dst _) dst]
-    [(CompilerIrInstr.AddrOf dst _) dst]
-    [(CompilerIrInstr.Gep dst _ _ _) dst]
-    [(CompilerIrInstr.Load dst _ _) dst]
-    [(CompilerIrInstr.StoreOwned _ _ _) -1]
-    [(CompilerIrInstr.StorePtr _ _ _) -1]
-    [(CompilerIrInstr.CopyBytes _ _ _) -1]
-    [(CompilerIrInstr.BoundsCheck _ _ _) -1]
-    [(CompilerIrInstr.Cast dst _ _ _) dst]
-    [(CompilerIrInstr.Bitcast dst _ _ _) dst]
-    [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
-    [(CompilerIrInstr.UnOp dst _ _ _) dst]
-    [(CompilerIrInstr.LaneId dst _ _) dst]
-    [(CompilerIrInstr.Splat dst _ _ _) dst]
+    [(or (CompilerIrInstr.Mov dst _ _) (CompilerIrInstr.Alloc dst _)
+         (CompilerIrInstr.AddrOf dst _) (CompilerIrInstr.Gep dst _ _ _)
+         (CompilerIrInstr.Load dst _ _) (CompilerIrInstr.Cast dst _ _ _)
+         (CompilerIrInstr.Bitcast dst _ _ _) (CompilerIrInstr.BinOp dst _ _ _ _)
+         (CompilerIrInstr.UnOp dst _ _ _) (CompilerIrInstr.LaneId dst _ _)
+         (CompilerIrInstr.Splat dst _ _ _)
+         (CompilerIrInstr.VectorReduce dst _ _ _ _)
+         (CompilerIrInstr.MaskBinOp dst _ _ _ _)
+         (CompilerIrInstr.MaskNot dst _ _)
+         (CompilerIrInstr.MaskReduce dst _ _ _)
+         (CompilerIrInstr.VectorLoad dst _ _ _ _)
+         (CompilerIrInstr.TailMask dst _ _ _) (CompilerIrInstr.EntryArgc dst)
+         (CompilerIrInstr.EntryArgv dst) (CompilerIrInstr.EntryEnvp dst)
+         (CompilerIrInstr.CpuId dst _ _ _) (CompilerIrInstr.Xgetbv dst _)
+         (CompilerIrInstr.Syscall dst _) (CompilerIrInstr.Call dst _ _ _)
+         (CompilerIrInstr.CallIndirect dst _ _ _)
+         (CompilerIrInstr.CallIndirectC dst _ _ _) (CompilerIrInstr.Phi dst _ _)
+         (CompilerIrInstr.Pack dst _ _) (CompilerIrInstr.Word dst _ _ _))
+      dst]
     [(CompilerIrInstr.VectorBinOp payload-box)
       (let
         [payload-box
@@ -1604,23 +1592,16 @@
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         payload-box.dst)]
-    [(CompilerIrInstr.VectorReduce dst _ _ _ _) dst]
     [(CompilerIrInstr.VectorCompare payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         payload-box.dst)]
-    [(CompilerIrInstr.MaskBinOp dst _ _ _ _) dst]
-    [(CompilerIrInstr.MaskNot dst _ _) dst]
-    [(CompilerIrInstr.MaskReduce dst _ _ _) dst]
     [(CompilerIrInstr.Select payload-box)
       (let
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         payload-box.dst)]
-    [(CompilerIrInstr.VectorLoad dst _ _ _ _) dst]
-    [(CompilerIrInstr.VectorStore _) -1]
-    [(CompilerIrInstr.PredicatedStore _) -1]
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (let
         [payload-box
@@ -1636,18 +1617,6 @@
         [payload-box
           (owned_view.compiler-owned-reference-shared-view payload-box)]
         payload-box.dst)]
-    [(CompilerIrInstr.TailMask dst _ _ _) dst]
-    [(CompilerIrInstr.EntryArgc dst) dst]
-    [(CompilerIrInstr.EntryArgv dst) dst]
-    [(CompilerIrInstr.EntryEnvp dst) dst]
-    [(CompilerIrInstr.CpuId dst _ _ _) dst]
-    [(CompilerIrInstr.Xgetbv dst _) dst]
-    [(CompilerIrInstr.Syscall dst _) dst]
-    [(CompilerIrInstr.Call dst _ _ _) dst]
-    [(CompilerIrInstr.CallIndirect dst _ _ _) dst]
-    [(CompilerIrInstr.CallIndirectC dst _ _ _) dst]
-    [(CompilerIrInstr.CallCAbiStoreResult _) -1]
-    [(CompilerIrInstr.CallIndirectCAbiStoreResult _) -1]
     [(CompilerIrInstr.SpmdCall payload-box)
       (match (let
         [payload-box
@@ -1655,18 +1624,18 @@
         (compiler-ir-box-field-shared-view payload-box result))
         [(CompilerIrSpmdCallResult.Unit) -1]
         [(CompilerIrSpmdCallResult.Value dst _ _) dst])]
-    [(CompilerIrInstr.TailCall _ _ _) -1]
-    [(CompilerIrInstr.Store _ _ _) -1]
-    [(CompilerIrInstr.Jump _) -1]
-    [(CompilerIrInstr.Branch _ _ _) -1]
-    [(CompilerIrInstr.TotalEnumBranch _ _ _) -1]
-    [(CompilerIrInstr.Return _) -1]
-    [(CompilerIrInstr.Phi dst _ _) dst]
-    [(CompilerIrInstr.Pack dst _ _) dst]
-    [(CompilerIrInstr.Word dst _ _ _) dst]
-    [(CompilerIrInstr.TailCallIndirect _ _ _) -1]
-    [(CompilerIrInstr.Switch _ _ _ _) -1]
-    [(CompilerIrInstr.TotalEnumSwitch _ _ _ _ _) -1]))
+    [(or (CompilerIrInstr.StoreOwned _ _ _) (CompilerIrInstr.StorePtr _ _ _)
+         (CompilerIrInstr.CopyBytes _ _ _) (CompilerIrInstr.BoundsCheck _ _ _)
+         (CompilerIrInstr.VectorStore _) (CompilerIrInstr.PredicatedStore _)
+         (CompilerIrInstr.CallCAbiStoreResult _)
+         (CompilerIrInstr.CallIndirectCAbiStoreResult _)
+         (CompilerIrInstr.TailCall _ _ _) (CompilerIrInstr.Store _ _ _)
+         (CompilerIrInstr.Jump _) (CompilerIrInstr.Branch _ _ _)
+         (CompilerIrInstr.TotalEnumBranch _ _ _) (CompilerIrInstr.Return _)
+         (CompilerIrInstr.TailCallIndirect _ _ _)
+         (CompilerIrInstr.Switch _ _ _ _)
+         (CompilerIrInstr.TotalEnumSwitch _ _ _ _ _))
+      -1]))
 
 ;: The value type the instruction states for its destination: the type field
 ;: of a scalar result (a Cast's target, a comparison's `bool`, an SPMD call's
@@ -1676,27 +1645,12 @@
 ;: Syscall).
 (define (compiler-ir-instr-dst-type [instr : CompilerIrInstr]) : ast.AstMaybeType
   (match instr
-    [(Mov _ _ ty) (Some ty)]
-    [(Alloc _ _) (No)]
-    [(AddrOf _ _) (No)]
-    [(Gep _ _ _ _) (No)]
-    [(Load _ _ ty) (Some ty)]
-    [(StoreOwned _ _ _) (No)]
-    [(StorePtr _ _ _) (No)]
-    [(CopyBytes _ _ _) (No)]
-    [(BoundsCheck _ _ _) (No)]
-    [(Cast _ _ _ to-ty) (Some to-ty)]
-    [(Bitcast _ _ _ to-ty) (Some to-ty)]
+    [(or (Mov _ _ ty) (Load _ _ ty) (Cast _ _ _ ty) (Bitcast _ _ _ ty)
+         (UnOp _ _ _ ty) (VectorReduce _ _ _ _ ty) (Call _ _ _ ty)
+         (CallIndirect _ _ _ ty) (CallIndirectC _ _ _ ty) (Phi _ _ ty)
+         (Pack _ _ ty) (Word _ _ _ ty))
+      (Some ty)]
     [(BinOp _ op _ _ ty) (Some (compiler-ir-binop-result-type (& op) ty))]
-    [(UnOp _ _ _ ty) (Some ty)]
-    [(LaneId _ _ _) (No)]
-    [(Splat _ _ _ _) (No)]
-    [(VectorBinOp _) (No)]
-    [(VectorPrefix _) (No)]
-    [(VectorReduce _ _ _ _ ty) (Some ty)]
-    [(VectorCompare _) (No)]
-    [(MaskBinOp _ _ _ _ _) (No)]
-    [(MaskNot _ _ _) (No)]
     [(MaskReduce _ _ _ _) (Some (Bool))]
     [(Select payload-box)
       (let
@@ -1705,40 +1659,22 @@
         (if (= payload.lanes 0)
           (Some payload.ty)
           (No)))]
-    [(VectorLoad _ _ _ _ _) (No)]
-    [(VectorStore _) (No)]
-    [(PredicatedStore _) (No)]
-    [(PredicatedLoad _) (No)]
-    [(GatherLoad _) (No)]
-    [(VectorShuffle _) (No)]
-    [(TailMask _ _ _ _) (No)]
-    [(EntryArgc _) (No)]
-    [(EntryArgv _) (No)]
-    [(EntryEnvp _) (No)]
-    [(CpuId _ _ _ _) (No)]
-    [(Xgetbv _ _) (No)]
-    [(Syscall _ _) (No)]
-    [(Call _ _ _ ty) (Some ty)]
-    [(CallIndirect _ _ _ ty) (Some ty)]
-    [(CallIndirectC _ _ _ ty) (Some ty)]
-    [(CallCAbiStoreResult _) (No)]
-    [(CallIndirectCAbiStoreResult _) (No)]
     [(SpmdCall payload-box)
       (match (compiler-ir-box-field-shared-view payload-box result)
         [(Unit) (No)]
         [(Value _ _ ty) (Some ty)])]
-    [(TailCall _ _ _) (No)]
-    [(Store _ _ _) (No)]
-    [(Jump _) (No)]
-    [(Branch _ _ _) (No)]
-    [(TotalEnumBranch _ _ _) (No)]
-    [(Return _) (No)]
-    [(Phi _ _ ty) (Some ty)]
-    [(Pack _ _ ty) (Some ty)]
-    [(Word _ _ _ ty) (Some ty)]
-    [(TailCallIndirect _ _ _) (No)]
-    [(Switch _ _ _ _) (No)]
-    [(TotalEnumSwitch _ _ _ _ _) (No)]))
+    [(or (Alloc _ _) (AddrOf _ _) (Gep _ _ _ _) (StoreOwned _ _ _)
+         (StorePtr _ _ _) (CopyBytes _ _ _) (BoundsCheck _ _ _) (LaneId _ _ _)
+         (Splat _ _ _ _) (VectorBinOp _) (VectorPrefix _) (VectorCompare _)
+         (MaskBinOp _ _ _ _ _) (MaskNot _ _ _) (VectorLoad _ _ _ _ _)
+         (VectorStore _) (PredicatedStore _) (PredicatedLoad _) (GatherLoad _)
+         (VectorShuffle _) (TailMask _ _ _ _) (EntryArgc _) (EntryArgv _)
+         (EntryEnvp _) (CpuId _ _ _ _) (Xgetbv _ _) (Syscall _ _)
+         (CallCAbiStoreResult _) (CallIndirectCAbiStoreResult _)
+         (TailCall _ _ _) (Store _ _ _) (Jump _) (Branch _ _ _)
+         (TotalEnumBranch _ _ _) (Return _) (TailCallIndirect _ _ _)
+         (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
+      (No)]))
 
 ;; Folds beside compiler-ir-value-seq-visit and compiler-ir-call-args-visit:
 ;; `(folder ctx... acc value)` returns the next accumulator.
@@ -4543,8 +4479,7 @@
             (string.int->string abi.lanes)))]
       [(not
           (match payload.active-mask
-            [(Var _) true]
-            [(Bool _) true]
+            [(or (Var _) (Bool _)) true]
             [_ false]))
         (set! problem "active mask is not a bool value")]
       [(not (= payload.args.len (- abi.params.len 1)))
@@ -5303,14 +5238,9 @@
   [instr : (& CompilerIrInstr)]
   [fallback : i64]) : i64
   (match instr
-    [(Mov dst _ _) dst]
-    [(Gep dst _ _ _) dst]
-    [(Load dst _ _) dst]
-    [(Cast dst _ _ _) dst]
-    [(Bitcast dst _ _ _) dst]
-    [(BinOp dst _ _ _ _) dst]
-    [(UnOp dst _ _ _) dst]
-    [(Phi dst _ _) dst]
+    [(or (Mov dst _ _) (Gep dst _ _ _) (Load dst _ _) (Cast dst _ _ _)
+         (Bitcast dst _ _ _) (BinOp dst _ _ _ _) (UnOp dst _ _ _) (Phi dst _ _))
+      dst]
     [_ fallback]))
 
 (define (compiler-ir-instr-array-loop-dst-or
@@ -5362,8 +5292,8 @@
   (match instr
     [(BinOp dst op lhs rhs ty) (BinOp dst op lhs rhs ty)]
     [(Jump target) (Jump target)]
-    [(Branch cond yes no) (Branch cond yes no)]
-    [(TotalEnumBranch cond yes no) (Branch cond yes no)]
+    [(or (Branch cond yes no) (TotalEnumBranch cond yes no))
+      (Branch cond yes no)]
     [(Phi dst inputs ty) (Phi dst inputs ty)]
     [_ (Other)]))
 
@@ -6517,14 +6447,8 @@
           type-segment-bases
           (& (ast.ast-type-segment-bases-get type-segment-bases inner)))
         ")")]
-    [(Enum name) (ast.ast-nominal-name-id-display name)]
-    [(EnumArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render
-        structural-session
-        (ast.ast-nominal-name-id-display name)
-        (& (deref lifetimes)))]
-    [(Struct name) (ast.ast-nominal-name-id-display name)]
-    [(StructArgs name lifetimes)
+    [(or (Enum name) (Struct name)) (ast.ast-nominal-name-id-display name)]
+    [(or (EnumArgs name lifetimes) (StructArgs name lifetimes))
       (compiler-ir-nominal-lifetime-render
         structural-session
         (ast.ast-nominal-name-id-display name)
@@ -6690,8 +6614,7 @@
     [(Nil) 0]
     [(One _) 1]
     [(Two _ _) 2]
-    [(Array values) (array-length values)]
-    [(Sret values _) (array-length values)]))
+    [(or (Array values) (Sret values _)) (array-length values)]))
 
 (define (compiler-ir-spmd-backend-render [backend : CompilerIrSpmdBackend]) : String
   (match backend
@@ -7433,25 +7356,20 @@
             type-segment-bases
             (& slots))
           "]"))]
-    [(CallIndirectCAbiStoreResult payload-box)
-      (let
-        [base (compiler-ir-box-field-shared-view payload-box base)]
-        [callee (compiler-ir-box-field-shared-view payload-box callee)]
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        [slots (compiler-ir-box-field-shared-view payload-box slots)]
-        (str_cat.str-cat
-          "  call_c_store* "
-          (compiler-ir-value-render callee)
-          "("
-          (compiler-ir-call-args-render (& args))
-          ") -> "
-          (compiler-ir-value-render base)
-          " ["
-          (compiler-ir-c-abi-return-slot-seq-render
-            structural-session
-            type-segment-bases
-            (& slots))
-          "]"))]
+    [(CallIndirectCAbiStoreResult (box (fields base callee args slots)))
+      (str_cat.str-cat
+        "  call_c_store* "
+        (compiler-ir-value-render callee)
+        "("
+        (compiler-ir-call-args-render (& args))
+        ") -> "
+        (compiler-ir-value-render base)
+        " ["
+        (compiler-ir-c-abi-return-slot-seq-render
+          structural-session
+          type-segment-bases
+          (& slots))
+        "]")]
     [(TailCall name args ty)
       (compiler-ir-tail-call-render
         structural-session
@@ -7497,15 +7415,7 @@
           (& value)
           (& ty)))]
     [(Jump label) (str_cat.str-cat "  jump " (compiler-ir-label-text label))]
-    [(Branch test on-true on-false)
-      (str_cat.str-cat
-        "  branch "
-        (compiler-ir-value-render test)
-        ", "
-        (compiler-ir-label-text on-true)
-        ", "
-        (compiler-ir-label-text on-false))]
-    [(TotalEnumBranch test on-true on-false)
+    [(or (Branch test on-true on-false) (TotalEnumBranch test on-true on-false))
       (str_cat.str-cat
         "  branch "
         (compiler-ir-value-render test)
@@ -7538,17 +7448,8 @@
         (string.int->string index)
         " : "
         (compiler-ir-type-render structural-session type-segment-bases (& ty)))]
-    [(Switch index base cases default-label)
-      (str_cat.str-cat
-        "  switch "
-        (compiler-ir-value-render index)
-        " base "
-        (string.int->string base)
-        " ["
-        (compiler-ir-switch-case-seq-render cases)
-        "] default "
-        (compiler-ir-label-text default-label))]
-    [(TotalEnumSwitch index base cases default-label _)
+    [(or (Switch index base cases default-label)
+         (TotalEnumSwitch index base cases default-label _))
       (str_cat.str-cat
         "  switch "
         (compiler-ir-value-render index)
@@ -7929,12 +7830,8 @@
 
 (define (compiler-ir-effect-has-side-effect? [effect : CompilerIrEffect]) : bool
   (match effect
-    [(Pure) false]
-    [(MemoryRead) false]
-    [(CpuProbe) true]
-    [(MemoryWrite) true]
-    [(ControlFlow) true]
-    [(Unknown) true]))
+    [(or (Pure) (MemoryRead)) false]
+    [(or (CpuProbe) (MemoryWrite) (ControlFlow) (Unknown)) true]))
 
 (define (compiler-ir-effect-invalidates-cse? [effect : CompilerIrEffect]) : bool
   (match effect
@@ -7986,63 +7883,32 @@
 
 (define (compiler-ir-instr-effect [instr : (& CompilerIrInstr)]) : CompilerIrEffect
   (match instr
-    [(Mov _ _ _) Pure]
-    [(AddrOf _ _) Pure]
-    [(Gep _ _ _ _) Pure]
-    [(Cast _ _ _ _) Pure]
-    [(Bitcast _ _ _ _) Pure]
-    [(BinOp _ _ _ _ _) Pure]
-    [(UnOp _ _ _ _) Pure]
-    [(Phi _ _ _) Pure]
-    [(LaneId _ _ _) Pure]
-    [(Splat _ _ _ _) Pure]
-    [(VectorBinOp _) Pure]
-    [(VectorPrefix _) Pure]
-    [(VectorReduce _ _ _ _ _) Pure]
-    [(VectorCompare _) Pure]
-    [(MaskBinOp _ _ _ _ _) Pure]
-    [(MaskNot _ _ _) Pure]
-    [(MaskReduce _ _ _ _) Pure]
-    [(Select _) Pure]
-    [(TailMask _ _ _ _) Pure]
-    [(Load _ _ _) MemoryRead]
-    [(StoreOwned _ _ _) MemoryWrite]
-    [(VectorLoad _ _ _ _ _) MemoryRead]
-    [(PredicatedLoad _) MemoryRead]
-    [(GatherLoad _) MemoryRead]
+    [(or (Mov _ _ _) (AddrOf _ _) (Gep _ _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _)
+         (BinOp _ _ _ _ _) (UnOp _ _ _ _) (Phi _ _ _) (LaneId _ _ _)
+         (Splat _ _ _ _) (VectorBinOp _) (VectorPrefix _)
+         (VectorReduce _ _ _ _ _) (VectorCompare _) (MaskBinOp _ _ _ _ _)
+         (MaskNot _ _ _) (MaskReduce _ _ _ _) (Select _) (TailMask _ _ _ _)
+         (Pack _ _ _) (Word _ _ _ _))
+      Pure]
+    [(or (Load _ _ _) (VectorLoad _ _ _ _ _) (PredicatedLoad _) (GatherLoad _)
+         (EntryArgc _) (EntryArgv _) (EntryEnvp _))
+      MemoryRead]
+    [(or (StoreOwned _ _ _) (Alloc _ _) (StorePtr _ _ _) (CopyBytes _ _ _)
+         (Store _ _ _) (VectorStore _) (PredicatedStore _))
+      MemoryWrite]
     ;; Selector validation may call the standard nonreturning OOB abort path,
     ;; but the valid path falls through like an ordinary instruction. Unknown
     ;; keeps it effectful without classifying it as a CFG terminator.
-    [(VectorShuffle _) Unknown]
-    [(EntryArgc _) MemoryRead]
-    [(EntryArgv _) MemoryRead]
-    [(EntryEnvp _) MemoryRead]
-    [(CpuId _ _ _ _) CpuProbe]
-    [(Xgetbv _ _) CpuProbe]
-    [(Syscall _ _) Unknown]
-    [(Alloc _ _) MemoryWrite]
-    [(StorePtr _ _ _) MemoryWrite]
-    [(CopyBytes _ _ _) MemoryWrite]
-    [(Store _ _ _) MemoryWrite]
-    [(VectorStore _) MemoryWrite]
-    [(PredicatedStore _) MemoryWrite]
+    [(or (VectorShuffle _) (Syscall _ _) (CallIndirect _ _ _ _)
+         (CallIndirectC _ _ _ _) (CallCAbiStoreResult _)
+         (CallIndirectCAbiStoreResult _) (SpmdCall _))
+      Unknown]
+    [(or (CpuId _ _ _ _) (Xgetbv _ _)) CpuProbe]
     [(Call _ name _ _) (compiler-ir-direct-call-effect-id name)]
-    [(CallIndirect _ _ _ _) Unknown]
-    [(CallIndirectC _ _ _ _) Unknown]
-    [(CallCAbiStoreResult _) Unknown]
-    [(CallIndirectCAbiStoreResult payload-box) Unknown]
-    [(SpmdCall _) Unknown]
-    [(BoundsCheck _ _ _) ControlFlow]
-    [(TailCall _ _ _) ControlFlow]
-    [(Jump _) ControlFlow]
-    [(Branch _ _ _) ControlFlow]
-    [(TotalEnumBranch _ _ _) ControlFlow]
-    [(Return _) ControlFlow]
-    [(Pack _ _ _) Pure]
-    [(Word _ _ _ _) Pure]
-    [(TailCallIndirect _ _ _) ControlFlow]
-    [(Switch _ _ _ _) ControlFlow]
-    [(TotalEnumSwitch _ _ _ _ _) ControlFlow]))
+    [(or (BoundsCheck _ _ _) (TailCall _ _ _) (Jump _) (Branch _ _ _)
+         (TotalEnumBranch _ _ _) (Return _) (TailCallIndirect _ _ _)
+         (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
+      ControlFlow]))
 
 ;; Safe-language faults an instruction can raise. A pass that deletes, skips,
 ;; duplicates, reorders or runs an instruction once has to preserve them. This
@@ -8063,29 +7929,12 @@
 
 (define (compiler-ir-binop-fault [op : (& CompilerIrBinOp)]) : CompilerIrFault
   (match op
-    [(Add) None]
-    [(Sub) None]
-    [(Mul) None]
-    [(Div) Operands]
-    [(Mod) Operands]
-    ;; Emitted only once the divisor is proven neither zero nor MIN / -1.
-    [(SafeDiv) None]
-    [(SafeMod) None]
-    [(Eq) None]
-    [(Ne) None]
-    [(Lt) None]
-    [(Le) None]
-    [(Gt) None]
-    [(Ge) None]
-    [(BitTestEq) None]
-    [(BitTestNe) None]
-    [(And) None]
-    [(Or) None]
-    [(BitAnd) None]
-    [(BitOr) None]
-    [(BitXor) None]
-    [(Shl _) Operands]
-    [(Shr _) Operands]))
+    ;; SafeDiv and SafeMod are emitted only once the divisor is proven neither
+    ;; zero nor MIN / -1.
+    [(or (Add) (Sub) (Mul) (SafeDiv) (SafeMod) (Eq) (Ne) (Lt) (Le) (Gt) (Ge)
+         (BitTestEq) (BitTestNe) (And) (Or) (BitAnd) (BitOr) (BitXor))
+      None]
+    [(or (Div) (Mod) (Shl _) (Shr _)) Operands]))
 
 ;; Whether some operands make OP fault. This is the operator-level answer every
 ;; pass shares; a pass that proves the operands safe may still admit it.
@@ -8096,63 +7945,29 @@
 
 (define (compiler-ir-instr-fault [instr : (& CompilerIrInstr)]) : CompilerIrFault
   (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(Mov _ _ _) None]
-    [(AddrOf _ _) None]
-    [(Gep _ _ _ _) None]
-    [(Cast _ _ _ _) None]
-    [(Bitcast _ _ _ _) None]
     [(BinOp _ op _ _ _) (compiler-ir-binop-fault (& op))]
-    [(UnOp _ _ _ _) None]
-    [(Phi _ _ _) None]
-    [(LaneId _ _ _) None]
-    [(Splat _ _ _ _) None]
     [(VectorBinOp payload-box)
       (compiler-ir-binop-fault (& (deref payload-box).op))]
-    [(VectorPrefix _) None]
-    [(VectorReduce _ _ _ _ _) None]
-    [(VectorCompare _) None]
-    [(MaskBinOp _ _ _ _ _) None]
-    [(MaskNot _ _ _) None]
-    [(MaskReduce _ _ _ _) None]
-    [(Select _) None]
-    [(TailMask _ _ _ _) None]
-    ;; Safe code reaches a memory access only through its explicit checks.
-    [(Load _ _ _) None]
-    [(StoreOwned _ _ _) None]
-    [(VectorLoad _ _ _ _ _) None]
-    [(PredicatedLoad _) None]
-    [(GatherLoad _) None]
     ;; Selector validation takes the out-of-bounds abort path.
-    [(VectorShuffle _) Check]
-    [(EntryArgc _) None]
-    [(EntryArgv _) None]
-    [(EntryEnvp _) None]
-    [(CpuId _ _ _ _) None]
-    [(Xgetbv _ _) None]
-    [(Syscall _ _) Call]
-    [(Alloc _ _) None]
-    [(StorePtr _ _ _) None]
-    [(CopyBytes _ _ _) None]
-    [(Store _ _ _) None]
-    [(VectorStore _) None]
-    [(PredicatedStore _) None]
-    [(Call _ _ _ _) Call]
-    [(CallIndirect _ _ _ _) Call]
-    [(CallIndirectC _ _ _ _) Call]
-    [(CallCAbiStoreResult _) Call]
-    [(CallIndirectCAbiStoreResult _) Call]
-    [(SpmdCall _) Call]
-    [(BoundsCheck _ _ _) Check]
-    [(TailCall _ _ _) Call]
-    [(Jump _) None]
-    [(Branch _ _ _) None]
-    [(TotalEnumBranch _ _ _) None]
-    [(Return _) None]
-    [(Pack _ _ _) None]
-    [(Word _ _ _ _) None]
-    [(TailCallIndirect _ _ _) Call]
-    [(Switch _ _ _ _) None]
-    [(TotalEnumSwitch _ _ _ _ _) None]))
+    [(or (VectorShuffle _) (BoundsCheck _ _ _)) Check]
+    [(or (Syscall _ _) (Call _ _ _ _) (CallIndirect _ _ _ _)
+         (CallIndirectC _ _ _ _) (CallCAbiStoreResult _)
+         (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCall _ _ _)
+         (TailCallIndirect _ _ _))
+      Call]
+    ;; Safe code reaches a memory access only through its explicit checks.
+    [(or (Mov _ _ _) (AddrOf _ _) (Gep _ _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _)
+         (UnOp _ _ _ _) (Phi _ _ _) (LaneId _ _ _) (Splat _ _ _ _)
+         (VectorPrefix _) (VectorReduce _ _ _ _ _) (VectorCompare _)
+         (MaskBinOp _ _ _ _ _) (MaskNot _ _ _) (MaskReduce _ _ _ _) (Select _)
+         (TailMask _ _ _ _) (Load _ _ _) (StoreOwned _ _ _)
+         (VectorLoad _ _ _ _ _) (PredicatedLoad _) (GatherLoad _) (EntryArgc _)
+         (EntryArgv _) (EntryEnvp _) (CpuId _ _ _ _) (Xgetbv _ _) (Alloc _ _)
+         (StorePtr _ _ _) (CopyBytes _ _ _) (Store _ _ _) (VectorStore _)
+         (PredicatedStore _) (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _)
+         (Return _) (Pack _ _ _) (Word _ _ _ _) (Switch _ _ _ _)
+         (TotalEnumSwitch _ _ _ _ _))
+      None]))
 
 ;; Source provenance side table for the lowered IR. Kept OUTSIDE
 ;; `CompilerIrProgram` so the optimizer and liveness data model stay unchanged.
@@ -8967,23 +8782,14 @@
 
 (define (compiler-ir-instr-call-arg-count [instr : (& CompilerIrInstr)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(Call _ _ args _) (compiler-ir-call-args-count (& args))]
-    [(CallIndirect _ _ args _) (compiler-ir-call-args-count (& args))]
-    [(CallIndirectC _ _ args _) (compiler-ir-call-args-count (& args))]
-    [(CallCAbiStoreResult payload-box)
-      (let
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        (compiler-ir-call-args-count (& args)))]
-    [(CallIndirectCAbiStoreResult payload-box)
-      (let
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        (compiler-ir-call-args-count (& args)))]
-    [(SpmdCall payload-box)
-      (let
-        [args (compiler-ir-box-field-shared-view payload-box args)]
-        (compiler-ir-spmd-call-arg-seq-count args))]
-    [(TailCall _ args _) (compiler-ir-call-args-count (& args))]
-    [(TailCallIndirect _ args _) (compiler-ir-call-args-count (& args))]
+    [(or (Call _ _ args _) (CallIndirect _ _ args _) (CallIndirectC _ _ args _)
+         (TailCall _ args _) (TailCallIndirect _ args _))
+      (compiler-ir-call-args-count (& args))]
+    [(CallCAbiStoreResult (box (fields args)))
+      (compiler-ir-call-args-count (& args))]
+    [(CallIndirectCAbiStoreResult (box (fields args)))
+      (compiler-ir-call-args-count (& args))]
+    [(SpmdCall (box (fields args))) (compiler-ir-spmd-call-arg-seq-count args)]
     [_ 0]))
 
 (define (compiler-ir-instr-phi-input-count [instr : (& CompilerIrInstr)]) : i64
@@ -9418,14 +9224,8 @@
           type-segment-bases
           (& (ast.ast-type-segment-bases-get type-segment-bases inner)))
         ")")]
-    [(Enum name) (ast.ast-nominal-name-id-display name)]
-    [(EnumArgs name lifetimes)
-      (compiler-ir-nominal-lifetime-render
-        (cis.InternStructuralSessionHandle 0)
-        (ast.ast-nominal-name-id-display name)
-        (& (deref lifetimes)))]
-    [(Struct name) (ast.ast-nominal-name-id-display name)]
-    [(StructArgs name lifetimes)
+    [(or (Enum name) (Struct name)) (ast.ast-nominal-name-id-display name)]
+    [(or (EnumArgs name lifetimes) (StructArgs name lifetimes))
       (compiler-ir-nominal-lifetime-render
         (cis.InternStructuralSessionHandle 0)
         (ast.ast-nominal-name-id-display name)
@@ -9525,19 +9325,11 @@
   [type-segment-bases : i64]
   [ty : (& ast.AstType)]) : i64
   (match ty
-    [(Struct name)
+    [(or (Struct name) (StructArgs name _))
       (if (compiler-ir-symbol-owned? name)
         name
         -1)]
-    [(StructArgs name _)
-      (if (compiler-ir-symbol-owned? name)
-        name
-        -1)]
-    [(Region _ inner)
-      (compiler-ir-representation-owned-aggregate-name
-        type-segment-bases
-        (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-    [(Invalidate _ inner)
+    [(or (Region _ inner) (Invalidate _ inner))
       (compiler-ir-representation-owned-aggregate-name
         type-segment-bases
         (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
@@ -9644,9 +9436,7 @@
   [types : (& types CompilerIrRepresentationVarTypes)]) : unit
   (match (owned_view.compiler-owned-reference-shared-view instr)
     ;; The index does not type indirect-call results or a scalar Select.
-    [(CallIndirect _ _ _ _) unit]
-    [(CallIndirectC _ _ _ _) unit]
-    [(Select _) unit]
+    [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _) (Select _)) unit]
     [_
       (match (compiler-ir-instr-dst-type
         (owned_view.compiler-owned-reference-shared-view instr))
@@ -9696,8 +9486,7 @@
 
 (define (compiler-ir-representation-float-type? [ty : (& ast.AstType)]) : bool
   (match ty
-    [(F64) true]
-    [(F32) true]
+    [(or (F64) (F32)) true]
     [_ false]))
 
 (define (compiler-ir-representation-pack-word-sse?
@@ -9977,53 +9766,15 @@
           type-segment-bases
           (& with-nominal)
           (& (deref items)))]
-      [(Array elem _)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases elem)))]
-      [(DynArray elem)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases elem)))]
-      [(Box inner)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-      [(Ref _ inner)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-      [(MutRef _ inner)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-      [(Ptr inner)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-      [(MutPtr inner)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
       ;; Region was already transparently classified by the canonical-key
       ;; query; recurse only to discover nested container types.
-      [(Region _ inner)
+      [(or (Array elem _) (DynArray elem) (Box elem) (Ref _ elem)
+           (MutRef _ elem) (Ptr elem) (MutPtr elem) (Region _ elem)
+           (Invalidate _ elem))
         (compiler-ir-representation-collect-one-type
           type-segment-bases
           (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
-      [(Invalidate _ inner)
-        (compiler-ir-representation-collect-one-type
-          type-segment-bases
-          (& with-nominal)
-          (& (ast.ast-type-segment-bases-get type-segment-bases inner)))]
+          (& (ast.ast-type-segment-bases-get type-segment-bases elem)))]
       [_ with-nominal])))
 
 (define (compiler-ir-representation-collect-one-param-seq-from
@@ -10059,37 +9810,17 @@
   [index : CompilerIrRepresentationIndex]
   [instr : (& CompilerIrInstr)]) : CompilerIrRepresentationIndex
   (match instr
-    [(Mov _ _ ty)
+    [(or (Mov _ _ ty) (Alloc _ ty) (Gep _ _ _ ty) (Load _ _ ty)
+         (StoreOwned _ _ ty) (StorePtr _ _ ty) (BinOp _ _ _ _ ty)
+         (UnOp _ _ _ ty) (Splat _ _ _ ty) (VectorReduce _ _ _ _ ty)
+         (VectorLoad _ _ _ _ ty) (Call _ _ _ ty) (CallIndirect _ _ _ ty)
+         (CallIndirectC _ _ _ ty) (TailCall _ _ ty) (Store _ _ ty) (Phi _ _ ty)
+         (Pack _ _ ty) (Word _ _ _ ty) (TailCallIndirect _ _ ty))
       (compiler-ir-representation-collect-one-type
         type-segment-bases
         (& index)
         (& ty))]
-    [(Alloc _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Gep _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Load _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(StoreOwned _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(StorePtr _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Cast _ _ from-ty to-ty)
+    [(or (Cast _ _ from-ty to-ty) (Bitcast _ _ from-ty to-ty))
       (compiler-ir-representation-collect-one-type
         type-segment-bases
         (&
@@ -10098,85 +9829,6 @@
             (& index)
             (& from-ty)))
         (& to-ty))]
-    [(Bitcast _ _ from-ty to-ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (&
-          (compiler-ir-representation-collect-one-type
-            type-segment-bases
-            (& index)
-            (& from-ty)))
-        (& to-ty))]
-    [(BinOp _ _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(UnOp _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Splat _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(VectorReduce _ _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(VectorLoad _ _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Call _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(CallIndirect _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(CallIndirectC _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(TailCall _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Store _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Phi _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Pack _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(Word _ _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
-    [(TailCallIndirect _ _ ty)
-      (compiler-ir-representation-collect-one-type
-        type-segment-bases
-        (& index)
-        (& ty))]
     [_ index]))
 
 (define (compiler-ir-representation-collect-one-instrs-from

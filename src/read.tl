@@ -1074,10 +1074,15 @@
               cur
               (prefix-spanned-form name span form))))]
       [(= t (token.tag-rparen))
-        (Err (token.SourceError "reader: unexpected ')'" span))]
+        (Err (token.SourceError "reader: unexpected ')'" span DelimiterError))]
       [(= t (token.tag-rbracket))
-        (Err (token.SourceError "reader: unexpected ']'" span))]
-      [else (Err (token.SourceError "reader: unexpected end of input" span))])))
+        (Err (token.SourceError "reader: unexpected ']'" span DelimiterError))]
+      [else
+        (Err
+          (token.SourceError
+            "reader: unexpected end of input"
+            span
+            DelimiterError))])))
 
 (define (spanned-sexpr-adjacent?
   [left : SpannedSexpr]
@@ -1102,7 +1107,7 @@
     end))
 
 (define (projection-suffix-error [message : String] [span : token.SourceSpan]) : ResultSpannedSexpr
-  (Err (token.SourceError message span)))
+  (Err (token.SourceError message span TokenError)))
 
 (define (spanned-projection-suffix-at
   [base : SpannedSexpr]
@@ -1200,10 +1205,16 @@
             (token.merge-spans open-span span)))]
       [(= t (token.tag-end))
         (Err
-          (token.SourceError (unterminated-list-message close-tag) open-span))]
+          (token.SourceError
+            (unterminated-list-message close-tag)
+            open-span
+            DelimiterError))]
       [(and (opposite-close-delimiter? t close-tag) (not sp-reader-data-mode?))
         (Err
-          (token.SourceError (mismatched-close-message close-tag t span) span))]
+          (token.SourceError
+            (mismatched-close-message close-tag t span)
+            span
+            DelimiterError))]
       [else
         (let
           [head (try (form-spanned-result toks cur))]

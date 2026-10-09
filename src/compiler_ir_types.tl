@@ -7929,10 +7929,11 @@
 
 (define (compiler-ir-binop-fault [op : (& CompilerIrBinOp)]) : CompilerIrFault
   (match op
+    ;; SafeDiv and SafeMod are emitted only once the divisor is proven neither
+    ;; zero nor MIN / -1.
     [(or (Add) (Sub) (Mul) (SafeDiv) (SafeMod) (Eq) (Ne) (Lt) (Le) (Gt) (Ge)
          (BitTestEq) (BitTestNe) (And) (Or) (BitAnd) (BitOr) (BitXor))
       None]
-    ;; Emitted only once the divisor is proven neither zero nor MIN / -1.
     [(or (Div) (Mod) (Shl _) (Shr _)) Operands]))
 
 ;; Whether some operands make OP fault. This is the operator-level answer every
@@ -7947,7 +7948,6 @@
     [(BinOp _ op _ _ _) (compiler-ir-binop-fault (& op))]
     [(VectorBinOp payload-box)
       (compiler-ir-binop-fault (& (deref payload-box).op))]
-    ;; Safe code reaches a memory access only through its explicit checks.
     ;; Selector validation takes the out-of-bounds abort path.
     [(or (VectorShuffle _) (BoundsCheck _ _ _)) Check]
     [(or (Syscall _ _) (Call _ _ _ _) (CallIndirect _ _ _ _)
@@ -7955,6 +7955,7 @@
          (CallIndirectCAbiStoreResult _) (SpmdCall _) (TailCall _ _ _)
          (TailCallIndirect _ _ _))
       Call]
+    ;; Safe code reaches a memory access only through its explicit checks.
     [(or (Mov _ _ _) (AddrOf _ _) (Gep _ _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _)
          (UnOp _ _ _ _) (Phi _ _ _) (LaneId _ _ _) (Splat _ _ _ _)
          (VectorPrefix _) (VectorReduce _ _ _ _ _) (VectorCompare _)
@@ -9765,6 +9766,8 @@
           type-segment-bases
           (& with-nominal)
           (& (deref items)))]
+      ;; Region was already transparently classified by the canonical-key
+      ;; query; recurse only to discover nested container types.
       [(or (Array elem _) (DynArray elem) (Box elem) (Ref _ elem)
            (MutRef _ elem) (Ptr elem) (MutPtr elem) (Region _ elem)
            (Invalidate _ elem))
@@ -9772,8 +9775,6 @@
           type-segment-bases
           (& with-nominal)
           (& (ast.ast-type-segment-bases-get type-segment-bases elem)))]
-      ;; Region was already transparently classified by the canonical-key
-      ;; query; recurse only to discover nested container types.
       [_ with-nominal])))
 
 (define (compiler-ir-representation-collect-one-param-seq-from

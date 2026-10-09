@@ -2994,6 +2994,7 @@
         (compiler-opt-global-shared-view items)
         base)
       (opt-collect-value-uses-array items offset)]
+    ;; Register-group ops use their operands (Pack: each word; Word: src).
     [(or (Mov _ src _) (Load _ src _) (Branch src _ _) (Cast _ src _ _)
          (UnOp _ _ src _) (Word _ src _ _) (Store _ src _) (Switch src _ _ _)
          (TotalEnumSwitch src _ _ _ _) (TotalEnumBranch src _ _)
@@ -3008,7 +3009,6 @@
         [(No) unit])]
     [(AddrOf _ src) (opt-used-array-add items src)]
     [(Phi _ inputs _) (opt-collect-phi-uses-array items inputs)]
-    ;; Register-group ops use their operands (Pack: each word; Word: src).
     [(Pack _ words _) (opt-collect-value-seq-uses-array items words)]
     [(or (CallIndirect _ func args _) (CallIndirectC _ func args _)
          (TailCallIndirect func args _))
@@ -3345,6 +3345,9 @@
               index
               dst)
             (opt-array-next-adjacent-alloc? slots count index dst))))]
+    ;; Register-group ops are pure producers like the scalar temps above: a
+    ;; Pack whose group is never read (every Word extraction folded away) is
+    ;; dead, and so is a Word nobody reads.
     [(or (Mov dst _ _) (AddrOf dst _) (Gep dst _ _ _) (Cast dst _ _ _)
          (Load dst _ _) (Phi dst _ _) (LaneId dst _ _) (Splat dst _ _ _)
          (VectorReduce dst _ _ _ _) (MaskBinOp dst _ _ _ _) (MaskNot dst _ _)
@@ -3485,9 +3488,6 @@
       (let
         [dst (deref payload-box).dst]
         (not (opt-used-array-contains items dst)))]
-    ;; Register-group ops are pure producers like the scalar temps above: a
-    ;; Pack whose group is never read (every Word extraction folded away) is
-    ;; dead, and so is a Word nobody reads.
     [_ false]))
 
 ;; Where the DCE sweep puts the instructions it keeps: nowhere (a dry run), into
@@ -8782,6 +8782,10 @@
           (opt-copy-resolve-mask env on-false)
           lanes
           ty))]
+    ;; `CompilerIrInstr.AddrOf` takes the address of a storage slot named by a raw var id,
+    ;; not a value, so its operand must not be copy-substituted.
+    ;; `CompilerIrInstr.Alloc`/`CompilerIrInstr.Jump` have no value operands; `CompilerIrInstr.Phi` inputs
+    ;; belong to predecessor edges and are not block-local copies.
     [(or (VectorLoad _ _ _ _ _) (GatherLoad _) (VectorShuffle _)
          (TailMask _ _ _ _) (EntryArgc _) (EntryArgv _) (EntryEnvp _)
          (AddrOf _ _) (Alloc _ _) (LaneId _ _ _) (Jump _) (Phi _ _ _))
@@ -8896,10 +8900,6 @@
       (match maybe
         [(Some value) (Return (Some (opt-copy-resolve env value)))]
         [(No) instr])]
-    ;; `CompilerIrInstr.AddrOf` takes the address of a storage slot named by a raw var id,
-    ;; not a value, so its operand must not be copy-substituted.
-    ;; `CompilerIrInstr.Alloc`/`CompilerIrInstr.Jump` have no value operands; `CompilerIrInstr.Phi` inputs
-    ;; belong to predecessor edges and are not block-local copies.
     ;; Register-group ops carry value operands -- substitute copies into
     ;; the packed words / the extracted source group.
     [(Pack dst words ty) (Pack dst (opt-copy-subst-value-seq env words) ty)]
@@ -11317,6 +11317,9 @@
 ;; TailCallIndirect) answer `None`.
 (define (opt-instr-def-var [instr : ir.CompilerIrInstr]) : option_i64.Option
   (match instr
+    ;; Pack/Word define their dst like any scalar op. Without these arms
+    ;; the verifier saw every use of a register-group word as use-before-def
+    ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
     [(or (Alloc dst _) (Gep dst _ _ _) (Mov dst _ _) (Call dst _ _ _)
          (BinOp dst _ _ _ _) (Load dst _ _) (AddrOf dst _) (Phi dst _ _)
          (Cast dst _ _ _) (UnOp dst _ _ _) (Word dst _ _ _) (Pack dst _ _)
@@ -11331,9 +11334,6 @@
          (CopyBytes _ _ _) (BoundsCheck _ _ _) (TailCall _ _ _) (Store _ _ _)
          (TotalEnumBranch _ _ _) (Switch _ _ _ _) (TotalEnumSwitch _ _ _ _ _))
       (None)]
-    ;; Pack/Word define their dst like any scalar op. Without these arms
-    ;; the verifier saw every use of a register-group word as use-before-def
-    ;; and silently knocked aggregate-using functions out of SSA/GVN/LICM.
     [(SpmdCall payload-box)
       (match (deref payload-box).result
         [(Unit) (None)]
@@ -13611,14 +13611,14 @@
 
 (define (opt-ssa-fixed-register-value-type? [ty : (& ty ast.AstType)]) : bool
   (match ty
-    [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool) (Char)
-         (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (String) (Str) (Func _ _)
-         (Array _ _) (DynArray _) (Box _))
-      true]
     ;; These built-ins have a fixed register representation even though their
     ;; source-level values are handles rather than primitive scalars. Keep the
     ;; boundary explicit: aggregate/nominal and lifetime-wrapper forms still
     ;; need grouped SSA packets before they can be renamed safely.
+    [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool) (Char)
+         (Ptr _) (MutPtr _) (Ref _ _) (MutRef _ _) (String) (Str) (Func _ _)
+         (Array _ _) (DynArray _) (Box _))
+      true]
     [_ false]))
 
 ;; SSA may rename a resolved nominal only when the job-owned pre-optimizer
@@ -15934,6 +15934,9 @@
     [(or (VectorPrefix _) (VectorStore _) (PredicatedStore _)
          (PredicatedLoad _))
       (opt-rewrite-operands (GlobalCopyVector facts doms block-id pos) instr)]
+    ;; Pack operands remain unchanged. A dominated Word of a known Pack becomes
+    ;; an ordinary copy; the pass's second copy sweep forwards that copy into
+    ;; all non-phi uses, and late DCE retires the dead Word/Pack chain.
     [(or (VectorLoad _ _ _ _ _) (GatherLoad _) (VectorShuffle _)
          (TailMask _ _ _ _) (Pack _ _ _))
       instr]
@@ -15954,9 +15957,6 @@
           ty))]
     [(Phi dst inputs ty)
       (Phi dst (opt-global-copy-subst-phi-inputs facts doms uses inputs) ty)]
-    ;; Pack operands remain unchanged. A dominated Word of a known Pack becomes
-    ;; an ordinary copy; the pass's second copy sweep forwards that copy into
-    ;; all non-phi uses, and late DCE retires the dead Word/Pack chain.
     [(Word dst src index ty)
       (match src
         [(Var group)
@@ -23415,12 +23415,12 @@
 ;; walk goes next.
 (define (opt-licm-deref-may-exit? [instr : ir.CompilerIrInstr]) : bool
   (match instr
+    ;; Jump is a block's own terminator: the chain walk decides where it leads.
     [(or (Mov _ _ _) (Alloc _ _) (AddrOf _ _) (Gep _ _ _ _) (Load _ _ _)
          (StorePtr _ _ _) (StoreOwned _ _ _) (Store _ _ _) (Cast _ _ _ _)
          (Bitcast _ _ _ _) (UnOp _ _ _ _) (Phi _ _ _) (Jump _) (Branch _ _ _))
       false]
     [(BinOp _ op _ _ _) (ir.compiler-ir-binop-may-fault? (& op))]
-    ;; A block's own terminator: the chain walk decides where it leads.
     [_ true]))
 
 (define (opt-licm-deref-def
@@ -25347,16 +25347,16 @@
         (opt-used-array-contains hot-uses dst)
         (not (ir.compiler-ir-binop-may-fault? (& op)))
         (opt-licm-global-values-invariant? globals loop-defs hoisted lhs rhs))]
-    [(or (UnOp dst _ src _) (Splat dst src _ _))
-      (and
-        (opt-used-array-contains hot-uses dst)
-        (opt-licm-global-value-invariant? globals loop-defs hoisted src))]
     ;; Pure SIMD values use the same hot-consumer gate as scalar arithmetic:
     ;; moving one out lengthens a vector or mask live range across the loop,
     ;; so a bypassable cold use does not pay for the added pressure.  Keep the
     ;; source instruction itself -- no scalar Mov can represent these values --
     ;; and let the ordered body walk add each moved dst to `hoisted`, which in
     ;; turn admits dependent invariant SIMD chains in program order.
+    [(or (UnOp dst _ src _) (Splat dst src _ _))
+      (and
+        (opt-used-array-contains hot-uses dst)
+        (opt-licm-global-value-invariant? globals loop-defs hoisted src))]
     [(VectorBinOp payload-box)
       (let
         [op (compiler-opt-box-field-shared-view payload-box op)]
@@ -26025,12 +26025,6 @@
 ;; exit a break into further work instead.
 (define (opt-licm-return-staging-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(or (Mov _ _ _) (Phi _ _ _) (Pack _ _ _) (Word _ _ _ _) (Cast _ _ _ _)
-         (Bitcast _ _ _ _) (BinOp _ _ _ _ _) (UnOp _ _ _ _) (Gep _ _ _ _)
-         (Load _ _ _) (StorePtr _ _ _) (StoreOwned _ _ _) (BoundsCheck _ _ _)
-         (Store _ _ _) (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _)
-         (Return _))
-      true]
     ;; A found/insert exit does bounded memory work (compute the entry address,
     ;; read/write the slot) before returning. That still makes the loop a
     ;; short-trip SEARCH -- it returns as soon as the slot is located -- so
@@ -26039,9 +26033,15 @@
     ;; probe loop. Allow the memory ops on the way OUT; a path that instead
     ;; loops back into more iterations never reaches a Return within the walk
     ;; fuel, so it still classifies as break-into-work.
-    [(Call _ name _ _) (ir.compiler-ir-runtime-control-flow-id? name)]
     ;; a Branch is only ever a terminator; the walk itself validates both
     ;; of its arms.
+    [(or (Mov _ _ _) (Phi _ _ _) (Pack _ _ _) (Word _ _ _ _) (Cast _ _ _ _)
+         (Bitcast _ _ _ _) (BinOp _ _ _ _ _) (UnOp _ _ _ _) (Gep _ _ _ _)
+         (Load _ _ _) (StorePtr _ _ _) (StoreOwned _ _ _) (BoundsCheck _ _ _)
+         (Store _ _ _) (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _)
+         (Return _))
+      true]
+    [(Call _ name _ _) (ir.compiler-ir-runtime-control-flow-id? name)]
     [_ false]))
 
 (define (opt-licm-return-staging-block?
@@ -30568,15 +30568,15 @@
   [instrs : (& instrs ir.CompilerIrInstrSeq)]
   [index : i64]) : bool
   (match (& (array-ref instrs.slots index))
+    ;; A derived phi is loop-live: across a call it must ride in a
+    ;; callee-saved register or spill slot, and that traffic costs more than
+    ;; the per-iteration mul/gep the IV replaces. Loops with calls keep their
+    ;; plain recurrences.
     [(or (Alloc _ _) (CopyBytes _ _ _) (VectorStore _) (PredicatedStore _)
          (CpuId _ _ _ _) (Xgetbv _ _) (Syscall _ _) (SpmdCall _)
          (TailCall _ _ _) (TailCallIndirect _ _ _) (Call _ _ _ _)
          (CallIndirect _ _ _ _))
       true]
-    ;; A derived phi is loop-live: across a call it must ride in a
-    ;; callee-saved register or spill slot, and that traffic costs more than
-    ;; the per-iteration mul/gep the IV replaces. Loops with calls keep their
-    ;; plain recurrences.
     [_ false]))
 
 (define (opt-induction-blocker-instr-seq-from?
@@ -33637,8 +33637,8 @@
   (or
     (opt-flag-exit-pure-instr? (compiler-opt-global-shared-view instr))
     (match instr
-      [(or (Load _ _ _) (BoundsCheck _ _ _) (BinOp _ _ _ _ _)) true]
       ;; A fault ends the run before the second read; no operator writes.
+      [(or (Load _ _ _) (BoundsCheck _ _ _) (BinOp _ _ _ _ _)) true]
       [_ false])))
 
 ;; Two reads of one global with nothing between them that could have written
@@ -61123,12 +61123,6 @@
 ;; vector stores, name stores, nested terminators) rejects the loop.
 (define (opt-unroll-body-instr-ok? [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(or (Mov _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _) (BinOp _ _ _ _ _)
-         (UnOp _ _ _ _) (Gep _ _ _ _) (Load _ _ _) (LaneId _ _ _)
-         (Splat _ _ _ _) (VectorBinOp _) (VectorReduce _ _ _ _ _)
-         (VectorCompare _) (MaskBinOp _ _ _ _ _) (Select _)
-         (VectorLoad _ _ _ _ _) (BoundsCheck _ _ _))
-      true]
     ;; Store-free SIMD gang bodies have the same long-trip compute/load shape
     ;; as scalar reductions and scans. Keep vector stores and predicated memory
     ;; operations excluded alongside scalar StorePtr.
@@ -61138,6 +61132,12 @@
     ;; loss below ~8 iterations and trip counts are unknowable statically.
     ;; Pure compute/load loops (arithmetic recurrences, sums, reductions,
     ;; scans) are the long-trip shapes where unrolling pays.
+    [(or (Mov _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _) (BinOp _ _ _ _ _)
+         (UnOp _ _ _ _) (Gep _ _ _ _) (Load _ _ _) (LaneId _ _ _)
+         (Splat _ _ _ _) (VectorBinOp _) (VectorReduce _ _ _ _ _)
+         (VectorCompare _) (MaskBinOp _ _ _ _ _) (Select _)
+         (VectorLoad _ _ _ _ _) (BoundsCheck _ _ _))
+      true]
     [_ false]))
 
 (define (opt-unroll-body-instr-seq-ok?
@@ -77701,13 +77701,13 @@
 ;; unwireable.
 (define (opt-bce-mb-def-type [instr : ir.CompilerIrInstr]) : OptMaybeAstType
   (match instr
+    ;; A direct call's result type is its own carried type, and the clone
+    ;; duplicates the call (opt-bce-mb-body-instr-ok?), so a call result used
+    ;; outside the loop is exit-wireable exactly like a load's.
     [(or (Mov _ _ ty) (Cast _ _ _ ty) (Bitcast _ _ _ ty) (BinOp _ _ _ _ ty)
          (UnOp _ _ _ ty) (Gep _ _ _ ty) (Load _ _ ty) (Phi _ _ ty)
          (Call _ _ _ ty))
       (Some ty)]
-    ;; A direct call's result type is its own carried type, and the clone
-    ;; duplicates the call (opt-bce-mb-body-instr-ok?), so a call result used
-    ;; outside the loop is exit-wireable exactly like a load's.
     [_ (No)]))
 
 ;; One input per predecessor edge, all carrying the same loop def.
@@ -88332,6 +88332,9 @@
   (unless
     (>= index (ir.compiler-ir-instr-seq-count instrs))
     (match (ir.compiler-ir-instr-seq-ref instrs index)
+      ;; A Mov of the Gep result is replaced by a fresh Gep, so it counts as
+      ;; an address use too (its dst's role does not matter: the fresh Gep
+      ;; yields the same address value).
       [(or (Load _ src _) (StorePtr src _ _) (StoreOwned src _ _) (Mov _ src _))
         (match src
           [(Var v) (set! (array-ref memuses v) (+ (array-ref memuses v) 1))]
@@ -88347,9 +88350,6 @@
                 [_ unit])
               unit)]
           [_ unit])]
-      ;; A Mov of the Gep result is replaced by a fresh Gep, so it counts as
-      ;; an address use too (its dst's role does not matter: the fresh Gep
-      ;; yields the same address value).
       [_ unit])
     (opt-gep-split-memuses-instrs! instrs (+ index 1) memuses chainuses)))
 
@@ -90006,6 +90006,8 @@
 
 (define (opt-successor-sink-load-barrier? [instr : ir.CompilerIrInstr]) : bool
   (match instr
+    ;; Vector stores are stores as well, even though the first-cut scalar rule
+    ;; does not otherwise schedule vector instructions.
     [(or (Store _ _ _) (StorePtr _ _ _) (StoreOwned _ _ _) (CopyBytes _ _ _)
          (BoundsCheck _ _ _) (Call _ _ _ _) (CallIndirect _ _ _ _)
          (CallIndirectC _ _ _ _) (CallCAbiStoreResult _)
@@ -90013,8 +90015,6 @@
          (TailCallIndirect _ _ _) (Syscall _ _) (VectorStore _)
          (PredicatedStore _))
       true]
-    ;; These are stores as well, even though the first-cut scalar rule does not
-    ;; otherwise schedule vector instructions.
     [_ false]))
 
 (define (opt-successor-sink-load-clear-to-terminator?
@@ -104267,12 +104267,6 @@
 
 (define (opt-inline-body-instr-op-ok? [instr : (& instr ir.CompilerIrInstr)]) : bool
   (match instr
-    [(or (Mov _ _ _) (Gep _ _ _ _) (Load _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _)
-         (BinOp _ _ _ _ _) (UnOp _ _ _ _) (Pack _ _ _) (Word _ _ _ _)
-         (Call _ _ _ _) (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)
-         (BoundsCheck _ _ _) (StorePtr _ _ _) (StoreOwned _ _ _)
-         (CopyBytes _ _ _) (Store _ _ _))
-      true]
     ;; INL-5/INL-6. `Store` -- the write to a module global CELL, the lowering
     ;; of `(set! <global> v)`. This is the MULTIBLOCK gate's whitelist
     ;; (opt-inline-multiblock-instr-reason's fall-through); the single-block
@@ -104290,6 +104284,12 @@
     ;; (opt-inline-checked-rescan-loop-import?), and the hot-loop-leaf band's
     ;; loop-free tier does not read a self-recursive caller as loop-free
     ;; (opt-inline-caller-loop-free?).
+    [(or (Mov _ _ _) (Gep _ _ _ _) (Load _ _ _) (Cast _ _ _ _) (Bitcast _ _ _ _)
+         (BinOp _ _ _ _ _) (UnOp _ _ _ _) (Pack _ _ _) (Word _ _ _ _)
+         (Call _ _ _ _) (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)
+         (BoundsCheck _ _ _) (StorePtr _ _ _) (StoreOwned _ _ _)
+         (CopyBytes _ _ _) (Store _ _ _))
+      true]
     [_ false]))
 
 (define (opt-inline-body-instr-ok?
@@ -104301,9 +104301,6 @@
          (Word dst _ _ _) (Call dst _ _ _) (CallIndirect dst _ _ _)
          (CallIndirectC dst _ _ _))
       (>= dst np)]
-    [(or (BoundsCheck _ _ _) (StorePtr _ _ _) (StoreOwned _ _ _)
-         (CopyBytes _ _ _) (Store _ _ _))
-      true]
     ;; INL-5: the write to a module global CELL -- the lowering of
     ;; `(set! <global> v)`, and the SINGLE-BLOCK tier's admission of it. (The
     ;; multiblock whitelist above carries the same admission.)
@@ -104330,6 +104327,9 @@
     ;; priced a site: a one-block cursor accessor such as asm_render's
     ;; `asm-tok-next` would keep paying the call boundary and the global
     ;; reloads the caller would otherwise have kept in registers.
+    [(or (BoundsCheck _ _ _) (StorePtr _ _ _) (StoreOwned _ _ _)
+         (CopyBytes _ _ _) (Store _ _ _))
+      true]
     [_ false]))
 
 (define (opt-inline-body-instr-seq-ok?
@@ -104729,6 +104729,28 @@
   [instr : ir.CompilerIrInstr]
   [np : i64]) : i64
   (match (compiler-opt-global-shared-view instr)
+    ;; A DIRECT tail call is an EXIT of the callee body, not a terminator the
+    ;; merged caller inherits. Leaving it as a tail call would return past the
+    ;; caller's own continuation, so the clone does not leave it as one: it
+    ;; converts the instruction into an ordinary `Call` writing a caller-frame
+    ;; slot, followed by the same `Jump cont` plus phi input that every `Return`
+    ;; already produces (opt-inline-clone-multiblock-instr-seq-with-spans-from).
+    ;; Nothing downstream ever sees a tail call inside a merged caller, and the
+    ;; exit is wired by the mechanism the multiblock path already owns.
+    ;; Refusing it would hold whole bodies out of their single call site
+    ;; whenever ONE arm ended in `(helper ...)`.
+    ;;
+    ;; `TailCallIndirect` stays refused. Its target is a computed value, so the
+    ;; converted form would be a `CallIndirect` -- expressible, but the census
+    ;; cannot see through a computed target to price the site. The admission
+    ;; stops at the direct form.
+    ;; Bounds checks are inlinable: the instruction remapper freshens the
+    ;; ok-label with the site prefix (the same machinery the single-block
+    ;; bounds path uses), and the multiblock rewrite gates bounds-carrying
+    ;; callees behind opt-inline-bounds-inline-ok? exactly like the
+    ;; single-block path. This is what lets small loop-bearing helpers such
+    ;; as a string-scan or hashmap probe inline into their hot single call
+    ;; site instead of paying a call per iteration.
     [(or (Jump _) (Branch _ _ _) (TotalEnumBranch _ _ _) (Switch _ _ _ _)
          (TotalEnumSwitch _ _ _ _ _) (Return _) (TailCall _ _ _)
          (BoundsCheck _ _ _))
@@ -104764,32 +104786,10 @@
       (if (and (>= dst np) (>= src np))
         (opt-inline-shape-ok)
         (opt-inline-shape-addr-of))]
-    ;; A DIRECT tail call is an EXIT of the callee body, not a terminator the
-    ;; merged caller inherits. Leaving it as a tail call would return past the
-    ;; caller's own continuation, so the clone does not leave it as one: it
-    ;; converts the instruction into an ordinary `Call` writing a caller-frame
-    ;; slot, followed by the same `Jump cont` plus phi input that every `Return`
-    ;; already produces (opt-inline-clone-multiblock-instr-seq-with-spans-from).
-    ;; Nothing downstream ever sees a tail call inside a merged caller, and the
-    ;; exit is wired by the mechanism the multiblock path already owns.
-    ;; Refusing it would hold whole bodies out of their single call site
-    ;; whenever ONE arm ended in `(helper ...)`.
-    ;;
-    ;; `TailCallIndirect` stays refused. Its target is a computed value, so the
-    ;; converted form would be a `CallIndirect` -- expressible, but the census
-    ;; cannot see through a computed target to price the site. The admission
-    ;; stops at the direct form.
     [(Phi dst _ _)
       (if (>= dst 0)
         (opt-inline-shape-ok)
         (opt-inline-shape-structure))]
-    ;; Bounds checks are inlinable: the instruction remapper freshens the
-    ;; ok-label with the site prefix (the same machinery the single-block
-    ;; bounds path uses), and the multiblock rewrite gates bounds-carrying
-    ;; callees behind opt-inline-bounds-inline-ok? exactly like the
-    ;; single-block path. This is what lets small loop-bearing helpers such
-    ;; as a string-scan or hashmap probe inline into their hot single call
-    ;; site instead of paying a call per iteration.
     [_
       (if (opt-inline-body-instr-op-ok? instr)
         (opt-inline-shape-ok)
@@ -116050,12 +116050,12 @@
         0)]
     [(LookupMissing)
       (match (ir.compiler-ir-direct-call-effect-id name)
-        [(or (MemoryRead) (ControlFlow)) summary]
         ;; The runtime control-flow family is the nonreturning abort set;
         ;; it writes no memory the caller can observe afterwards because
         ;; there is no afterwards. The non-call arm below already gives
         ;; ControlFlow this verdict, so a callee whose only "effect" is a
         ;; bounds/divide abort does not summarize as unknown.
+        [(or (MemoryRead) (ControlFlow)) summary]
         [_ (opt-call-memory-summary-add-unknown summary)])]))
 
 ;; One memory write's class. The parameter root wins whenever the pointer
@@ -128272,12 +128272,12 @@
       (opt-alias-root-of-value
         (owned_view.compiler-owned-reference-shared-view facts)
         value)]
+    ;; A scaled element address lives in the base var's buffer: rooting it at
+    ;; the base is what lets an exclusive-allocation store root clear it.
     [(or (Field base _ _ _) (ScaledField base _ _ _))
       (opt-alias-root-of-var
         (owned_view.compiler-owned-reference-shared-view facts)
         base)]
-    ;; A scaled element address lives in the base var's buffer: rooting it at
-    ;; the base is what lets an exclusive-allocation store root clear it.
     ;; A global slot has no tracked pointer provenance. NoRoot is the
     ;; conservative answer: `opt-alias-store-root-disjoint?` never proves an
     ;; entry on NoRoot disjoint from any store, so a global-keyed entry can only
@@ -128469,13 +128469,13 @@
         (match (opt-load-kinds-lookup
           (owned_view.compiler-owned-reference-shared-view kinds)
           p)
+          ;; A scaled element store writes data-buffer memory (base is the
+          ;; loaded data pointer), exactly like an Element store: descriptor
+          ;; fields are provably outside it, so header-typed entries survive.
           [(or (OptLoadLocElement) (OptLoadLocScaledField _ _ _ _))
             (OptLoadStoreElement ty)]
           [(OptLoadLocField base off _ header?)
             (OptLoadStoreField base off width header? ty)]
-          ;; A scaled element store writes data-buffer memory (base is the
-          ;; loaded data pointer), exactly like an Element store: descriptor
-          ;; fields are provably outside it, so header-typed entries survive.
           [(OptLoadLocUnknown) (OptLoadStoreUnknown)])]
       [_ (OptLoadStoreUnknown)])))
 
@@ -129386,13 +129386,13 @@
                   0))]
             [(LookupMissing)
               (match (ir.compiler-ir-direct-call-effect-id name)
-                [(or (MemoryRead) (ControlFlow)) table]
                 ;; The runtime control-flow family is the nonreturning abort
                 ;; set (tl_abort_label / tl_oob_abort / tl_div_abort /
                 ;; tl_shift_abort). No instruction after such a call ever runs,
                 ;; so no cached load it could invalidate is ever consulted;
                 ;; opt-call-memory-candidate-instr already gives ControlFlow
                 ;; this verdict for the non-call instruction forms.
+                [(or (MemoryRead) (ControlFlow)) table]
                 [_ (Nil)])])]
         [next-epoch : i64
           (opt-load-cse-epoch-step

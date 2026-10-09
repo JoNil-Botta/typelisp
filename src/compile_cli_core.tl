@@ -759,11 +759,8 @@
   [result : compiler_windows_coff_core.ResultCompilerWindowsBatchArtifact]
   [message : String]) : ResultCompileCliWindowsBatchEntry
   (match result
-    [(CoffObject _ _ advisories)
-      (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
-    [(Assembly _ _ advisories)
-      (compiler_driver_core.compiler-driver-print-advisories (& advisories))]
-    [(Err _ advisories)
+    [(or (CoffObject _ _ advisories) (Assembly _ _ advisories)
+         (Err _ advisories))
       (compiler_driver_core.compiler-driver-print-advisories (& advisories))])
   (compile-cli-print-ir-verification-error message)
   (Err 1))

@@ -195,11 +195,8 @@
 
 (define (clone-module-alias-import-kind? [kind : ast.AstImportKind]) : bool
   (match kind
-    [(Module) true]
-    [(Macro _ _) true]
-    [(MacroDecls _ _) true]
-    [(ModuleAll) false]
-    [(ModuleItem _) false]))
+    [(or (Module) (Macro _ _) (MacroDecls _ _)) true]
+    [(or (ModuleAll) (ModuleItem _)) false]))
 
 (define (clone-name-set-for-decls [decls : (& decls ast.AstDeclList)]) : CloneNameSet
   (let
@@ -670,60 +667,22 @@
   [names : (& names CloneNameSet)]
   [module-id : i64]) : bool
   (match ty
-    [(I64) true]
-    [(I32) true]
-    [(I16) true]
-    [(I8) true]
-    [(U64) true]
-    [(U32) true]
-    [(U16) true]
-    [(U8) true]
-    [(F64) true]
-    [(F32) true]
-    [(Bool) true]
-    [(Char) true]
-    [(Unit) true]
-    [(Never) true]
-    [(String) true]
+    [(or (I64) (I32) (I16) (I8) (U64) (U32) (U16) (U8) (F64) (F32) (Bool) (Char)
+         (Unit) (Never) (String))
+      true]
     [(Tuple elems)
       (clone-field-type-list-able? pools (deref elems) names module-id)]
-    [(Array elem _)
+    [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Region _ elem))
       (clone-field-type-able-id?
         pools
         (clone-type-get pools elem)
-        names
-        module-id)]
-    [(DynArray elem)
-      (clone-field-type-able-id?
-        pools
-        (clone-type-get pools elem)
-        names
-        module-id)]
-    [(Slice elem)
-      (clone-field-type-able-id?
-        pools
-        (clone-type-get pools elem)
-        names
-        module-id)]
-    [(Box elem)
-      (clone-field-type-able-id?
-        pools
-        (clone-type-get pools elem)
-        names
-        module-id)]
-    [(Region _ inner)
-      (clone-field-type-able-id?
-        pools
-        (clone-type-get pools inner)
         names
         module-id)]
     [(Var name)
       (clone-name-set-contains-id?
         names
         (clone-type-name-resolve-id names module-id name))]
-    [(Enum name)
-      (clone-name-set-contains-resolved-nominal-id? names module-id name)]
-    [(Struct name)
+    [(or (Enum name) (Struct name))
       (clone-name-set-contains-resolved-nominal-id? names module-id name)]
     [_ false]))
 
@@ -880,13 +839,7 @@
         (match (ast.ast-decl-unwrapped
           (& (ast.ast-decl-list-get decls index (ast.ast-decl-fallback))))
           [(Module next-module) (set! current-module-id next-module)]
-          [(DefEnum decl-meta name _ _)
-            (set!
-              out
-              (clone-name-set-insert-id
-                out
-                (clone-name-key-id-in-module current-module-id name)))]
-          [(DefStruct decl-meta name _ _ _)
+          [(or (DefEnum _ name _ _) (DefStruct _ name _ _ _))
             (set!
               out
               (clone-name-set-insert-id
@@ -1135,7 +1088,7 @@
   (match ty
     [(Tuple elems)
       (clone-root-add-type-list pools decls able roots (deref elems) module-id)]
-    [(Array elem _)
+    [(or (Array elem _) (DynArray elem) (Slice elem) (Box elem) (Region _ elem))
       (clone-root-add-type
         pools
         decls
@@ -1143,53 +1096,7 @@
         roots
         (clone-type-get pools elem)
         module-id)]
-    [(DynArray elem)
-      (clone-root-add-type
-        pools
-        decls
-        able
-        roots
-        (clone-type-get pools elem)
-        module-id)]
-    [(Slice elem)
-      (clone-root-add-type
-        pools
-        decls
-        able
-        roots
-        (clone-type-get pools elem)
-        module-id)]
-    [(Box elem)
-      (clone-root-add-type
-        pools
-        decls
-        able
-        roots
-        (clone-type-get pools elem)
-        module-id)]
-    [(Region _ inner)
-      (clone-root-add-type
-        pools
-        decls
-        able
-        roots
-        (clone-type-get pools inner)
-        module-id)]
-    [(Var name)
-      (clone-root-add-name
-        pools
-        decls
-        able
-        roots
-        (clone-root-nominal-key-id able module-id name))]
-    [(Enum name)
-      (clone-root-add-name
-        pools
-        decls
-        able
-        roots
-        (clone-root-nominal-key-id able module-id name))]
-    [(Struct name)
+    [(or (Var name) (Enum name) (Struct name))
       (clone-root-add-name
         pools
         decls

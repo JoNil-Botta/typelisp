@@ -284,11 +284,6 @@
                 state
                 key
                 (StaleSource expected actual))]
-            [(Unreadable message)
-              (compiler-dependency-tlci-record-unavailable!
-                state
-                key
-                (Malformed (compiler-dependency-tlci-own-text message)))]
             [(MissingOrLegacy)
               (compiler-dependency-tlci-record-unavailable!
                 state
@@ -303,7 +298,7 @@
                   (str_cat.str-cat
                     "dependency tlci uses unsupported package-source binding schema "
                     (string.int->string schema))))]
-            [(Malformed message)
+            [(or (Unreadable message) (Malformed message))
               (compiler-dependency-tlci-record-unavailable!
                 state
                 key

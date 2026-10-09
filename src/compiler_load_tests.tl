@@ -44,9 +44,8 @@
 (define (compiler-load-surface-signature-must-use?
   [signature : load.CompilerLoadSurfaceSignature]) : bool
   (match signature
-    [(CompilerLoadSurfaceStructSignature _ _ _ markers _)
-      (not (= (bit-and markers 1) 0))]
-    [(CompilerLoadSurfaceEnumSignature _ _ markers _)
+    [(or (CompilerLoadSurfaceStructSignature _ _ _ markers _)
+         (CompilerLoadSurfaceEnumSignature _ _ markers _))
       (not (= (bit-and markers 1) 0))]
     [_ false]))
 

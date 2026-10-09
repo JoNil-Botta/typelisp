@@ -1,5 +1,5 @@
 {
   "exit": 0,
   "stdout_contains": ["TypeLisp REPL commands:"],
-  "stderr_contains": ["lexer:", "unexpected character", "parse: malformed binary expression", "error[E0100]"]
+  "stderr_contains": ["lexer:", "unexpected character", "parse: malformed binary expression", "error[E0102]", "error[E0103]"]
 }

@@ -24,19 +24,123 @@ Summary:
   "E0100: parse error
 
 Description:
-    The parser could not turn the source tokens into a valid TypeLisp form.
-    The message and highlighted span identify the malformed construct.
+    The parser rejected a form for a reason that has no more specific parse
+    code yet: an unknown or duplicate metadata key, removed or deferred
+    syntax, or a constraint between metadata. Unbalanced delimiters (E0101),
+    malformed tokens (E0102), malformed forms (E0103) and invalid pattern
+    syntax (E0104) have their own codes. The message and highlighted span
+    identify the construct.
 
 Minimal failing example:
     (define (main) : i64
-      (+ 1)
+      (box-get (box 42)))
 
 Fix:
-    Balance delimiters and use the grammar expected by the enclosing form.
-    Here, add the missing closing `)` after the function body.
+    Follow the message. Here `box-get` was removed; read the box with
+    `deref`:
+
+    (define (main) : i64
+      (deref (box 42)))
 
 See also:
-    README.md, \"Language sketch\"; SPEC.md, \"Surface grammar\".
+    SPEC.md, \"Grammar (informal)\"; docs/diagnostic-codes.md.
+")
+
+(define (diagnostic-explain-e0101) : String
+  "E0101: unbalanced delimiter
+
+Description:
+    A `(` or `[` is never closed, a `)` or `]` closes nothing, a closing
+    delimiter does not match the one that opened its form, or the input ends
+    inside a form. The span points at the delimiter that has no partner.
+
+Minimal failing example:
+    (define (main) : i64
+      (+ 1 2)
+
+Fix:
+    Close every form with the delimiter that opened it:
+
+    (define (main) : i64
+      (+ 1 2))
+
+See also:
+    SPEC.md, \"Lexical structure\"; SPEC.md, \"Grammar (informal)\".
+")
+
+(define (diagnostic-explain-e0102) : String
+  "E0102: malformed token
+
+Description:
+    The source holds text that is not a TypeLisp token: an unexpected
+    character, a malformed integer literal, an unterminated string or
+    character literal, an unknown escape, or a dotted field access with an
+    empty or numeric field name.
+
+Minimal failing example:
+    (define (main) : i64
+      (cast '\\q' : i64))
+
+Fix:
+    Write the token in its lexical form. Here `\\q` is not an escape; use
+    `\\t` for a tab, or `\\\\` for a backslash:
+
+    (define (main) : i64
+      (cast '\\t' : i64))
+
+See also:
+    SPEC.md, \"Lexical structure\".
+")
+
+(define (diagnostic-explain-e0103) : String
+  "E0103: malformed form
+
+Description:
+    A special form or declaration does not have the shape it requires: an
+    operand is missing, extra or misplaced, or has the wrong syntactic kind
+    (a symbol, string, integer, binding or type where the form needs another).
+    The message names the form and what it expects.
+
+Minimal failing example:
+    (define (main) : i64
+      (if true 1))
+
+Fix:
+    Write the form with every part it requires. `if` needs both branches;
+    use `when` or `unless` for a one-sided conditional:
+
+    (define (main) : i64
+      (if true 1 0))
+
+See also:
+    SPEC.md, \"Grammar (informal)\".
+")
+
+(define (diagnostic-explain-e0104) : String
+  "E0104: invalid pattern syntax
+
+Description:
+    A match pattern is not written in a pattern form: a list whose head is
+    not a pattern constructor, or a slice pattern whose `&` rest marker is
+    repeated, glued to its binding, or not followed by exactly one binding or
+    `_`. A pattern that parses but does not fit its scrutinee is E0213.
+
+Minimal failing example:
+    (define (first-or-zero [items : (& (Slice i64))]) : i64
+      (match items
+        [(slice first &rest) first]
+        [_ 0]))
+
+Fix:
+    Separate the rest marker from its binding:
+
+    (define (first-or-zero [items : (& (Slice i64))]) : i64
+      (match items
+        [(slice first & rest) first]
+        [_ 0]))
+
+See also:
+    SPEC.md, \"pattern matching\"; E0213.
 ")
 
 (define (diagnostic-explain-e0200) : String
@@ -676,6 +780,22 @@ See also:
         code
         (cdiag.compiler-diagnostic-code-typecheck-opaque-representation))
       (DiagnosticExplainDetailed (diagnostic-explain-e0221))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-parse-unbalanced-delimiter))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0101))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-parse-malformed-token))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0102))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-parse-malformed-form))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0103))]
+    [(diagnostic-explain-ascii-case-eq
+        code
+        (cdiag.compiler-diagnostic-code-parse-invalid-pattern))
+      (DiagnosticExplainDetailed (diagnostic-explain-e0104))]
     [else DiagnosticExplainUnknown]))
 
 (define (diagnostic-explain-print-registry-row [index : i64]) : unit

@@ -19,8 +19,9 @@
 ;; family for physical interference.  Mask registers occupy a third range.
 ;;
 ;; Strings are accepted only by `compiler-abi-register-id-from-spelling`, the
-;; cold legacy/test ingress boundary, and produced only by
-;; `compiler-abi-register-spelling`, the emission/diagnostic boundary.
+;; ingress boundary for legacy, test and spelling-carrying emission helpers,
+;; and produced only by `compiler-abi-register-spelling`, the
+;; emission/diagnostic boundary.
 (define compiler-reg-id-invalid : i64
   -1)
 (define compiler-reg-id-rax : i64
@@ -148,65 +149,92 @@
       value
       -1)))
 
-(define (compiler-abi-register-id-from-spelling [spelling : String]) : i64
-  (cond
-    [(string.eq spelling "%rax") compiler-reg-id-rax]
-    [(string.eq spelling "%rcx") compiler-reg-id-rcx]
-    [(string.eq spelling "%rdx") compiler-reg-id-rdx]
-    [(string.eq spelling "%rbx") compiler-reg-id-rbx]
-    [(string.eq spelling "%rsp") compiler-reg-id-rsp]
-    [(string.eq spelling "%rbp") compiler-reg-id-rbp]
-    [(string.eq spelling "%rsi") compiler-reg-id-rsi]
-    [(string.eq spelling "%rdi") compiler-reg-id-rdi]
-    [(string.eq spelling "%r8") compiler-reg-id-r8]
-    [(string.eq spelling "%r9") compiler-reg-id-r9]
-    [(string.eq spelling "%r10") compiler-reg-id-r10]
-    [(string.eq spelling "%r11") compiler-reg-id-r11]
-    [(string.eq spelling "%r12") compiler-reg-id-r12]
-    [(string.eq spelling "%r13") compiler-reg-id-r13]
-    [(string.eq spelling "%r14") compiler-reg-id-r14]
-    [(string.eq spelling "%r15") compiler-reg-id-r15]
-    [else
+;; The general-purpose register `spelling` names (`%rax`..`%r15`), read from
+;; at most its first four characters; `compiler-reg-id-invalid` otherwise.
+(define (compiler-abi-gp-register-id-from-spelling
+  [spelling : (& spelling str)]) : i64
+  (let
+    [n : i64 (string.string-length spelling)]
+    (if (or
+      (< n 3)
+      (> n 4)
+      (not (= (string.string-ref spelling 0) '%'))
+      (not (= (string.string-ref spelling 1) 'r')))
+      compiler-reg-id-invalid
       (let
-        [n : i64 (string.string-length spelling)]
-        [is-xmm : bool
-          (and
-            (> n 4)
-            (= (string.string-ref spelling 0) '%')
-            (= (string.string-ref spelling 1) 'x')
-            (= (string.string-ref spelling 2) 'm')
-            (= (string.string-ref spelling 3) 'm'))]
-        [is-vec : bool
-          (and
-            (> n 4)
-            (= (string.string-ref spelling 0) '%')
-            (or
-              (and
-                (= (string.string-ref spelling 1) 'v')
-                (= (string.string-ref spelling 2) 'e')
-                (= (string.string-ref spelling 3) 'c'))
-              (and
-                (or
-                  (= (string.string-ref spelling 1) 'y')
-                  (= (string.string-ref spelling 1) 'z'))
-                (= (string.string-ref spelling 2) 'm')
-                (= (string.string-ref spelling 3) 'm'))))]
-        [is-mask : bool
-          (and
-            (> n 2)
-            (= (string.string-ref spelling 0) '%')
-            (= (string.string-ref spelling 1) 'k'))]
+        [c2 : char (string.string-ref spelling 2)]
         (cond
-          [is-xmm
-            (compiler-abi-xmm-register-id
-              (compiler-abi-register-decimal-suffix spelling 4 31))]
-          [is-vec
-            (compiler-abi-vector-register-id
-              (compiler-abi-register-decimal-suffix spelling 4 31))]
-          [is-mask
-            (compiler-abi-mask-register-id
-              (compiler-abi-register-decimal-suffix spelling 2 7))]
-          [else compiler-reg-id-invalid]))]))
+          [(= n 3)
+            (cond
+              [(= c2 '8') compiler-reg-id-r8]
+              [(= c2 '9') compiler-reg-id-r9]
+              [else compiler-reg-id-invalid])]
+          [(= c2 '1')
+            (let
+              [digit : i64 (- (cast (string.string-ref spelling 3) : i64) 48)]
+              (if (and (>= digit 0) (<= digit 5))
+                (+ compiler-reg-id-r10 digit)
+                compiler-reg-id-invalid))]
+          [else
+            (let
+              [c3 : char (string.string-ref spelling 3)]
+              (cond
+                [(and (= c2 'a') (= c3 'x')) compiler-reg-id-rax]
+                [(and (= c2 'c') (= c3 'x')) compiler-reg-id-rcx]
+                [(and (= c2 'd') (= c3 'x')) compiler-reg-id-rdx]
+                [(and (= c2 'b') (= c3 'x')) compiler-reg-id-rbx]
+                [(and (= c2 's') (= c3 'p')) compiler-reg-id-rsp]
+                [(and (= c2 'b') (= c3 'p')) compiler-reg-id-rbp]
+                [(and (= c2 's') (= c3 'i')) compiler-reg-id-rsi]
+                [(and (= c2 'd') (= c3 'i')) compiler-reg-id-rdi]
+                [else compiler-reg-id-invalid]))])))))
+
+(define (compiler-abi-register-id-from-spelling [spelling : String]) : i64
+  (let
+    [gp : i64 (compiler-abi-gp-register-id-from-spelling (& spelling))]
+    (cond
+      [(>= gp 0) gp]
+      [else
+        (let
+          [n : i64 (string.string-length spelling)]
+          [is-xmm : bool
+            (and
+              (> n 4)
+              (= (string.string-ref spelling 0) '%')
+              (= (string.string-ref spelling 1) 'x')
+              (= (string.string-ref spelling 2) 'm')
+              (= (string.string-ref spelling 3) 'm'))]
+          [is-vec : bool
+            (and
+              (> n 4)
+              (= (string.string-ref spelling 0) '%')
+              (or
+                (and
+                  (= (string.string-ref spelling 1) 'v')
+                  (= (string.string-ref spelling 2) 'e')
+                  (= (string.string-ref spelling 3) 'c'))
+                (and
+                  (or
+                    (= (string.string-ref spelling 1) 'y')
+                    (= (string.string-ref spelling 1) 'z'))
+                  (= (string.string-ref spelling 2) 'm')
+                  (= (string.string-ref spelling 3) 'm'))))]
+          [is-mask : bool
+            (and
+              (> n 2)
+              (= (string.string-ref spelling 0) '%')
+              (= (string.string-ref spelling 1) 'k'))]
+          (cond
+            [is-xmm
+              (compiler-abi-xmm-register-id
+                (compiler-abi-register-decimal-suffix spelling 4 31))]
+            [is-vec
+              (compiler-abi-vector-register-id
+                (compiler-abi-register-decimal-suffix spelling 4 31))]
+            [is-mask
+              (compiler-abi-mask-register-id
+                (compiler-abi-register-decimal-suffix spelling 2 7))]
+            [else compiler-reg-id-invalid]))])))
 
 (define (compiler-abi-register-spelling [reg-id : i64]) : String
   (cond

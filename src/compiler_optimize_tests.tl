@@ -59264,6 +59264,584 @@
       [(not (= (opt-ls-test-head-count l8) 5)) 80]
       [else 42])))
 
+;; --- counter increment sinking -----------------------------------------------
+;;
+;; The fixtures are pre-SSA functions in the prelude `for` range shape: `pre`
+;; (block 1) sets the counter `%2` and the end, `head` (block 2) compares, and
+;; `body` (block 3) starts with the copy `%5 = mov %2` and the step
+;; `%6 = add %2, 1`, `%2 = mov %6` before the user body. Blocks: entry 0,
+;; pre 1, head 2, body 3, then the rest in order.
+;;
+;; C1 positive : the copy and the step leave `body`, the step closes it before
+;;               `jump head`, and the sum reads `%2` for `%5`.
+;; C2 positive : a `continue` block `skip` is a second latch; both get the step.
+;; C3 positive : no copy; the body reads `%2` in a `gep` before the step, as an
+;;               array loop does. The step moves, the `gep` stays.
+;; N1 negative : the body reads `%2` after the step.
+;; N2 negative : the exit reads `%2`, the counter after the loop.
+;; N3 negative : the counter's first definition is in a block that branches
+;;               rather than jumping to `head`.
+;; N4 negative : the latch closes the loop with a conditional branch.
+;; N5 partial  : the body reassigns the copy `%5`; the step moves, the copy
+;;               stays.
+;; N5' partial : the exit reads the copy `%5`; the step moves, the copy stays.
+;; N6 partial  : the body takes the copy's address; the step moves, the copy
+;;               stays.
+;; N7 negative : `body` has a second predecessor, `extra`.
+;; N8 negative : the step is the parameter `%0`, not a literal.
+;; N9 negative : `head` has a third predecessor, `side`, that no path through
+;;               `body` reaches.
+;; S1 positive : the SSA shape: the header phi `%2` is stepped by `%5 = add %2,
+;;               1`, `%6 = mov %5` feeding the phi from the latch; the pair
+;;               moves before `jump head`.
+;; S2 positive : the same with the add feeding the phi directly.
+;; S3 negative : the body reads the stepped `%6`.
+;;
+;; The negatives were checked load-bearing by mutating the implementation and
+;; confirming THIS test is what fails, with the code it reports:
+;;   * the in-H plus in-B use count test in `opt-counter-sink-admit!` forced
+;;     true -> code 41 (N1 moves).
+;;   * the `jump head` test in `opt-counter-sink-jump-kind` forced true -> code
+;;     60 (N3 moves; N4's conditional latch rests on the same test).
+;;   * the copy's single-definition test forced true -> code 80.
+;;   * the address-taken test in `opt-counter-sink-local-uses` dropped -> 90.
+;;   * the single-predecessor test forced true -> code 100.
+;;   * `opt-counter-sink-step` accepting any right operand -> code 110.
+;;   * `opt-counter-sink-walk-after?` answering true -> code 82 (N5' drops its
+;;     copy; N9 is the same walk for the latches).
+;;   * the SSA shape's single-read test of `%n` dropped -> code 150 (S3 moves).
+;; The pass over a function, and whether it changed it.
+(defenum OptCsTestResult
+  (Result ir.CompilerIrFunction bool))
+
+(define (opt-cs-test-apply [func : ir.CompilerIrFunction]) : OptCsTestResult
+  (match func
+    [(Function name params ret-ty frame blocks function-abi)
+      (match (opt.opt-counter-sink-blocks
+        (ir.compiler-ir-global-shared-view params)
+        frame
+        blocks)
+        [(Result next changed)
+          (Result (Function name params ret-ty frame next function-abi) changed)])]))
+
+(define (opt-cs-test-run [text : String]) : ir.CompilerIrFunction
+  (match (opt-cs-test-apply (irt.func text))
+    [(Result func _) func]))
+
+(define (opt-cs-test-count [out : (& out ir.CompilerIrFunction)] [block : i64]) : i64
+  (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-block-instr-count blocks block)))
+
+(define (opt-cs-test-instr
+  [out : (& out ir.CompilerIrFunction)]
+  [block : i64]
+  [index : i64]) : ir.CompilerIrInstr
+  (let
+    [blocks (opt.opt-function-blocks out)]
+    (opt-gc-test-instr-at blocks block index)))
+
+;; Whether `instr` is the step `%6 = add %2, 1`.
+(define (opt-cs-test-step? [instr : ir.CompilerIrInstr]) : bool
+  (match instr
+    [(BinOp 6 (Add) (Var 2) (I64 1) _) true]
+    [_ false]))
+
+;; Whether block `block` ends with the step pair and `jump head`.
+(define (opt-cs-test-latch? [out : (& out ir.CompilerIrFunction)] [block : i64]) : bool
+  (let
+    [count : i64 (opt-cs-test-count out block)]
+    (and
+      (opt-cs-test-step? (opt-cs-test-instr out block (- count 3)))
+      (match (opt-cs-test-instr out block (- count 2))
+        [(Mov 2 (Var 6) _) true]
+        [_ false])
+      (match (opt-cs-test-instr out block (- count 1))
+        [(Jump _) true]
+        [_ false]))))
+
+(define (opt-cs-test-c1) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %0 : i64
+       jump head
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = mov %2 : i64
+       %6 = add %2, 1 : i64
+       %2 = mov %6 : i64
+       %7 = add %1, %5 : i64
+       %1 = mov %7 : i64
+       jump head
+     exit:
+       return %1
+     }"))
+
+(define (opt-cs-test-c2) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %0 : i64
+       jump head
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = mov %2 : i64
+       %6 = add %2, 1 : i64
+       %2 = mov %6 : i64
+       %8 = gt %5, 3 : i64
+       branch %8, skip, rest
+     skip:
+       jump head
+     rest:
+       %7 = add %1, %5 : i64
+       %1 = mov %7 : i64
+       jump head
+     exit:
+       return %1
+     }"))
+
+(define (opt-cs-test-c3) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(p=%0:i64, n=%9:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %9 : i64
+       jump head
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = gep %0, %2 : i64
+       %6 = add %2, 1 : i64
+       %2 = mov %6 : i64
+       %8 = load %5 : i64
+       %7 = add %1, %8 : i64
+       %1 = mov %7 : i64
+       jump head
+     exit:
+       return %1
+     }"))
+
+(define (opt-cs-test-n1) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %0 : i64
+       jump head
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = mov %2 : i64
+       %6 = add %2, 1 : i64
+       %2 = mov %6 : i64
+       %7 = add %1, %2 : i64
+       %1 = mov %7 : i64
+       jump head
+     exit:
+       return %1
+     }"))
+
+(define (opt-cs-test-n2) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %0 : i64
+       jump head
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = mov %2 : i64
+       %6 = add %2, 1 : i64
+       %2 = mov %6 : i64
+       %7 = add %1, %5 : i64
+       %1 = mov %7 : i64
+       jump head
+     exit:
+       return %2
+     }"))
+
+(define (opt-cs-test-n3) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %0 : i64
+       %10 = lt 0, %0 : i64
+       branch %10, head, exit
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = mov %2 : i64
+       %6 = add %2, 1 : i64
+       %2 = mov %6 : i64
+       %7 = add %1, %5 : i64
+       %1 = mov %7 : i64
+       jump head
+     exit:
+       return %1
+     }"))
+
+(define (opt-cs-test-n4) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %0 : i64
+       jump head
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = mov %2 : i64
+       %6 = add %2, 1 : i64
+       %2 = mov %6 : i64
+       %7 = add %1, %5 : i64
+       %1 = mov %7 : i64
+       %8 = lt %1, 100 : i64
+       branch %8, head, exit
+     exit:
+       return %1
+     }"))
+
+(define (opt-cs-test-n5) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %0 : i64
+       jump head
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = mov %2 : i64
+       %6 = add %2, 1 : i64
+       %2 = mov %6 : i64
+       %9 = mul %5, 2 : i64
+       %5 = mov %9 : i64
+       %7 = add %1, %5 : i64
+       %1 = mov %7 : i64
+       jump head
+     exit:
+       return %1
+     }"))
+
+(define (opt-cs-test-n5-single-def) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %0 : i64
+       jump head
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = mov %2 : i64
+       %6 = add %2, 1 : i64
+       %2 = mov %6 : i64
+       %7 = add %1, %5 : i64
+       %1 = mov %7 : i64
+       jump head
+     exit:
+       %8 = add %1, %5 : i64
+       return %8
+     }"))
+
+(define (opt-cs-test-n6) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %0 : i64
+       jump head
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = mov %2 : i64
+       %6 = add %2, 1 : i64
+       %2 = mov %6 : i64
+       %8 = addr_of %5
+       %7 = add %1, %5 : i64
+       %1 = mov %7 : i64
+       jump head
+     exit:
+       return %1
+     }"))
+
+(define (opt-cs-test-n7) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       %10 = lt 0, %0 : i64
+       branch %10, pre, extra
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %0 : i64
+       jump head
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = mov %2 : i64
+       %6 = add %2, 1 : i64
+       %2 = mov %6 : i64
+       %7 = add %1, %5 : i64
+       %1 = mov %7 : i64
+       jump head
+     extra:
+       jump body
+     exit:
+       return %1
+     }"))
+
+(define (opt-cs-test-n8) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       jump pre
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %0 : i64
+       jump head
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = mov %2 : i64
+       %6 = add %2, %0 : i64
+       %2 = mov %6 : i64
+       %7 = add %1, %5 : i64
+       %1 = mov %7 : i64
+       jump head
+     exit:
+       return %1
+     }"))
+
+(define (opt-cs-test-n9) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       %1 = mov 0 : i64
+       %10 = lt 0, %0 : i64
+       branch %10, pre, side
+     pre:
+       %2 = mov 0 : i64
+       %3 = mov %0 : i64
+       jump head
+     head:
+       %4 = lt %2, %3 : i64
+       branch %4, body, exit
+     body:
+       %5 = mov %2 : i64
+       %6 = add %2, 1 : i64
+       %2 = mov %6 : i64
+       %7 = add %1, %5 : i64
+       %1 = mov %7 : i64
+       jump head
+     side:
+       jump head
+     exit:
+       return %1
+     }"))
+
+;; The SSA shape: the counter is the header phi `%2`, and the step `%5 = add %2,
+;; 1`, `%6 = mov %5` (or `%6 = add %2, 1` alone) feeds that phi from the latch.
+;; Blocks: entry 0, head 1, body 2, exit 3.
+(define (opt-cs-test-s1) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       jump head
+     head:
+       %2 = phi [0, entry], [%6, body] : i64
+       %1 = phi [0, entry], [%7, body] : i64
+       %4 = lt %2, %0 : i64
+       branch %4, body, exit
+     body:
+       %5 = add %2, 1 : i64
+       %6 = mov %5 : i64
+       %7 = add %1, %2 : i64
+       jump head
+     exit:
+       return %1
+     }"))
+
+(define (opt-cs-test-s2) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       jump head
+     head:
+       %2 = phi [0, entry], [%6, body] : i64
+       %1 = phi [0, entry], [%7, body] : i64
+       %4 = lt %2, %0 : i64
+       branch %4, body, exit
+     body:
+       %6 = add %2, 1 : i64
+       %7 = add %1, %2 : i64
+       jump head
+     exit:
+       return %1
+     }"))
+
+(define (opt-cs-test-s3) : ir.CompilerIrFunction
+  (opt-cs-test-run
+    "function @cs_fn(n=%0:i64) -> i64 vars 12 {
+     entry:
+       jump head
+     head:
+       %2 = phi [0, entry], [%6, body] : i64
+       %1 = phi [0, entry], [%7, body] : i64
+       %4 = lt %2, %0 : i64
+       branch %4, body, exit
+     body:
+       %5 = add %2, 1 : i64
+       %6 = mov %5 : i64
+       %7 = add %1, %6 : i64
+       jump head
+     exit:
+       return %1
+     }"))
+
+(define (compiler-optimize-counter-sink-self-test) : i64
+  (let
+    [c1 : ir.CompilerIrFunction (opt-cs-test-c1)]
+    [c2 : ir.CompilerIrFunction (opt-cs-test-c2)]
+    [c3 : ir.CompilerIrFunction (opt-cs-test-c3)]
+    [n1 : ir.CompilerIrFunction (opt-cs-test-n1)]
+    [n2 : ir.CompilerIrFunction (opt-cs-test-n2)]
+    [n3 : ir.CompilerIrFunction (opt-cs-test-n3)]
+    [n4 : ir.CompilerIrFunction (opt-cs-test-n4)]
+    [n5 : ir.CompilerIrFunction (opt-cs-test-n5)]
+    [n5-single : ir.CompilerIrFunction (opt-cs-test-n5-single-def)]
+    [n6 : ir.CompilerIrFunction (opt-cs-test-n6)]
+    [n7 : ir.CompilerIrFunction (opt-cs-test-n7)]
+    [n8 : ir.CompilerIrFunction (opt-cs-test-n8)]
+    [n9 : ir.CompilerIrFunction (opt-cs-test-n9)]
+    [s1 : ir.CompilerIrFunction (opt-cs-test-s1)]
+    [s2 : ir.CompilerIrFunction (opt-cs-test-s2)]
+    [s3 : ir.CompilerIrFunction (opt-cs-test-s3)]
+    [c1-again-changed : bool
+      (match (opt-cs-test-apply (ir.compiler-ir-global-shared-view c1))
+        [(Result _ changed) changed])]
+    (cond
+      ;; C1: body is add, mov, step, step mov, jump; the add reads %2.
+      [(not (= (opt-cs-test-count c1 3) 5)) 10]
+      [(not (opt-cs-test-latch? c1 3)) 11]
+      [(not
+          (match (opt-cs-test-instr c1 3 0)
+            [(BinOp 7 (Add) (Var 1) (Var 2) _) true]
+            [_ false]))
+        12]
+      ;; Idempotent: nothing is left to move.
+      [c1-again-changed 13]
+      ;; C2: body keeps its compare (now on %2) and branch; skip and rest close
+      ;; with the step.
+      [(not (= (opt-cs-test-count c2 3) 2)) 20]
+      [(not
+          (match (opt-cs-test-instr c2 3 0)
+            [(BinOp 8 (Gt) (Var 2) (I64 3) _) true]
+            [_ false]))
+        21]
+      [(not (opt-cs-test-latch? c2 4)) 22]
+      [(not (opt-cs-test-latch? c2 5)) 23]
+      ;; C3: the gep stays first, the step moves to the end.
+      [(not (= (opt-cs-test-count c3 3) 7)) 30]
+      [(not
+          (match (opt-cs-test-instr c3 3 0)
+            [(Gep 5 _ (Var 2) _) true]
+            [_ false]))
+        31]
+      [(not (opt-cs-test-latch? c3 3)) 32]
+      [(not (opt-cs-test-step? (opt-cs-test-instr n1 3 1))) 41]
+      [(not (opt-cs-test-step? (opt-cs-test-instr n2 3 1))) 50]
+      [(not (opt-cs-test-step? (opt-cs-test-instr n3 3 1))) 60]
+      [(not (opt-cs-test-step? (opt-cs-test-instr n4 3 1))) 70]
+      ;; N5: the body reassigns %5; the copy stays, the step moves.
+      [(not (= (opt-cs-test-count n5 3) 8)) 80]
+      [(not (opt-cs-test-latch? n5 3)) 81]
+      [(not (= (opt-cs-test-count n5-single 3) 6)) 82]
+      [(not
+          (match (opt-cs-test-instr n5-single 3 0)
+            [(Mov 5 (Var 2) _) true]
+            [_ false]))
+        83]
+      [(not (= (opt-cs-test-count n6 3) 7)) 90]
+      [(not (opt-cs-test-latch? n6 3)) 91]
+      [(not (opt-cs-test-step? (opt-cs-test-instr n7 3 1))) 100]
+      [(not (= (opt-cs-test-count n8 3) 6)) 110]
+      [(not (opt-cs-test-step? (opt-cs-test-instr n9 3 1))) 120]
+      ;; S1: the SSA step pair moves behind the sum, before `jump head`.
+      [(not
+          (match (opt-cs-test-instr s1 2 0)
+            [(BinOp 7 (Add) (Var 1) (Var 2) _) true]
+            [_ false]))
+        130]
+      [(not
+          (match (opt-cs-test-instr s1 2 1)
+            [(BinOp 5 (Add) (Var 2) (I64 1) _) true]
+            [_ false]))
+        131]
+      ;; S2: a lone add feeding the phi moves the same way.
+      [(not
+          (match (opt-cs-test-instr s2 2 1)
+            [(BinOp 6 (Add) (Var 2) (I64 1) _) true]
+            [_ false]))
+        140]
+      ;; S3: the body reads the stepped value `%6`, so nothing moves.
+      [(not
+          (match (opt-cs-test-instr s3 2 0)
+            [(BinOp 5 (Add) (Var 2) (I64 1) _) true]
+            [_ false]))
+        150]
+      [else 42])))
+
 ;; --- global-cell condition (a): per-store observability ----------------------
 ;;
 ;; Condition (a) is not "this function stores G" but "this function has a store
@@ -64068,6 +64646,13 @@
     "a bump-first counter's increment moves into its latch before the loop-closing compare, idempotently; a body read, an exit-edge read from another block, a non-literal step, a latch that does not test the counter, a latch that can rerun without the header, and a counter or header phi with a second definition keep it in place"))
 
 (test
+  counter-increment-sink
+  (test.assert-i64-eq
+    (compiler-optimize-counter-sink-self-test)
+    42
+    "a counter stepped before its loop body is stepped at the end of every latch instead, and the body reads it for the item copy, idempotently; a counter read after the step or after the loop, an initialization that does not jump to the header, a conditional latch, a body with a second predecessor, a non-literal step and a header entered from elsewhere keep it in place; an item read after the loop, defined twice or address-taken keeps its copy"))
+
+(test
   global-cell-call-mod-ref
   (test.assert-i64-eq
     (compiler-optimize-global-cell-call-mod-ref-self-test)
@@ -66397,6 +66982,56 @@
         (ir.compiler-ir-block-list-view blocks)
         (ir.compiler-ir-label "l0b"))
       (return 4))
+    42))
+
+;; Returns 42 only when an equality chain over every value of its window,
+;; [3, 8] here, as an or-pattern arm over consecutive tags leaves, collapses to
+;; the window guard alone: it branches straight to the shared arm and builds
+;; no mask block.
+(define (compiler-optimize-bit-test-full-window-self-test) : i64
+  (let
+    [chain : ir.CompilerIrBlockList
+      (opt-bit-test-equality-chain (__tl_make-array 5 3 8 4 7 6))]
+    [blocks : ir.CompilerIrBlockList
+      (opt-bit-test-result-blocks
+        (opt-bit-test-equality-chain (__tl_make-array 5 3 8 4 7 6)))]
+    [head : ir.CompilerIrBlock
+      (opt-bit-test-block-at (& blocks) (ir.compiler-ir-label "entry"))]
+    [head-count : i64 (opt-block-instr-count head)]
+    (unless (opt-bit-test-changed? chain) (return 1))
+    (unless
+      (opt-bit-test-result-verified?
+        (opt-bit-test-equality-chain (__tl_make-array 5 3 8 4 7 6)))
+      (return 2))
+    (when
+      (opt-block-list-has-label?
+        (ir.compiler-ir-block-list-view blocks)
+        (ir.compiler-ir-label "entry__bit_test"))
+      (return 3))
+    (unless (>= head-count 3) (return 4))
+    (unless
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at head (- head-count 3))
+        17
+        Sub
+        (Var 0)
+        (I64 3))
+      (return 5))
+    (unless
+      (opt-bit-test-binop-matches?
+        (opt-block-instr-at head (- head-count 2))
+        18
+        Le
+        (Var 17)
+        (I64 5))
+      (return 6))
+    (unless
+      (opt-bit-test-branch-matches?
+        (opt-block-instr-at head (- head-count 1))
+        18
+        (ir.compiler-ir-label "hit")
+        (ir.compiler-ir-label "miss"))
+      (return 7))
     42))
 
 ;; Returns 42 only when every refused shape is left exactly as it was.

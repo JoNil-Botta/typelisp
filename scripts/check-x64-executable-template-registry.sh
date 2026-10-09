@@ -58,6 +58,16 @@ count_matches 1 'CompilerObjectX64Instr\.(Bytes|Raw)' \
 grep -Eq 'CompilerObjectX64Instr\.Bytes bytes' src/compiler_backend_object_target.tl \
     || fail "central target-owned Bytes gate is missing"
 
+# Integer register and imm32 moves are typed machine records (#7055): both
+# routes build them through compiler_machine_x64, which alone spells and
+# encodes them. These literals remain only for forms outside that family: the
+# stack probe's `movl $frame, %eax` (a frame operation) and the full-width
+# `movq $imm64` (#7022). A new spelling of either family member must be a record
+# instead, and a count change here must say why.
+count_matches 1 '"    movl \$"' src/compiler_backend.tl
+count_matches 1 '"    movq \$"' src/compiler_backend.tl
+count_matches 0 'mov-(reg-reg|imm32-reg)-bytes' src/compiler_backend.tl
+
 # Contribution boundaries are registered separately from reusable byte pieces.
 count_matches 1 'LinuxObjectStartContribution' src/compiler_backend_object_target_linux.tl
 count_matches 2 'LinuxObjectTlci(Image|Macro)Contribution' src/compiler_backend_object_target_linux.tl

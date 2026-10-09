@@ -978,7 +978,7 @@ file worker/src/lib.tl
     (+ y x)))
 end-file
 if-host windows
-sh CCV_o2a='0x48,0xc7,0xc0,0x2d,0x00,0x00,0x00' CCV_o2b='    leaq (%rcx,%rdx), %rax' CCV_o0='    imulq 24(%rsp), %r8'
+sh CCV_o2a='    movq $45, %rax' CCV_o2b='    leaq (%rcx,%rdx), %rax' CCV_o0='    imulq 24(%rsp), %r8'
 else
 sh CCV_o2a='    movl $45, %eax' CCV_o2b='    leaq (%rdi,%rsi), %rax' CCV_o0='    imulq -24(%rsp), %r8'
 end-if

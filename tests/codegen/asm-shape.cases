@@ -64,6 +64,17 @@ count >= 1 __bce_fast__unroll_body:$
 # `if` body with `jge exit; mov; jmp top`. The latch sink moves the add into
 # the latch, so both close with `add; cmp; jl` like the `while` twin: no `lea`
 # of the next index, no inverted exit branch.
+# #8795: `string.eq` against a literal reads the literal's length as a
+# constant, so the inlined comparison keeps only the 4-byte arm: the length
+# compares against an immediate, and neither the literal's length word, the
+# 8-byte arm nor its word-count shift survive.
+case string-literal-eq-width
+source tests/integration/string_literal_eq.tl
+in fn _tl_string_literal_eq_is_4
+match ^[[:space:]]+cmpq \$4, %r
+not-match ^[[:space:]]+cmpq 8\(%r[a-z0-9]+\), %r
+not-match ^[[:space:]]+cmpq \$8, %r
+not-match ^[[:space:]]+sarq \$3, %r
 case latch-sink-for-range
 source tests/integration/latch_sink_for_loops.tl
 in fn latch_sink_count_if_for

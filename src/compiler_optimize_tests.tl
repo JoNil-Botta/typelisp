@@ -59234,6 +59234,91 @@
     [(BinOp 8 (Lt) (Var 4) _ _) true]
     [_ false]))
 
+;; --- string literal lengths (#8795) ------------------------------------------
+;;
+;; One block through CL-1's rewrite. Positives: a length-slot load off a var
+;; whose only definition is a `Mov` of a literal (`%2`, 4), off a literal base
+;; directly (`%4`, 9), and the `(I64 8) (U8)` spelling of the slot (`%14`, 4).
+;; Negatives keep their `Load`: a var with two definitions (`%7`), an
+;; address-taken var (`%11`), the data slot (`%13`), and a gep destination
+;; that is defined twice (`%17`).
+(define (opt-sl-test-blocks) : ir.CompilerIrBlockList
+  (ir.compiler-ir-blocks
+    (ir.CompilerIrBlock.Block
+      (ir.compiler-ir-label "entry")
+      (opt-test-instrs
+        (ir.CompilerIrInstr.Mov 0 (String "abcd") (Str))
+        (ir.CompilerIrInstr.Gep 1 (Var 0) (I64 1) (I64))
+        (ir.CompilerIrInstr.Load 2 (Var 1) (I64))
+        (ir.CompilerIrInstr.Gep 3 (String "wxyz12345") (I64 1) (I64))
+        (ir.CompilerIrInstr.Load 4 (Var 3) (I64))
+        (ir.CompilerIrInstr.Mov 5 (String "ab") (Str))
+        (ir.CompilerIrInstr.Mov 5 (String "abc") (Str))
+        (ir.CompilerIrInstr.Gep 6 (Var 5) (I64 1) (I64))
+        (ir.CompilerIrInstr.Load 7 (Var 6) (I64))
+        (ir.CompilerIrInstr.Mov 8 (String "abcd") (Str))
+        (ir.CompilerIrInstr.AddrOf 9 8)
+        (ir.CompilerIrInstr.Gep 10 (Var 8) (I64 1) (I64))
+        (ir.CompilerIrInstr.Load 11 (Var 10) (I64))
+        (ir.CompilerIrInstr.Gep 12 (Var 0) (I64 0) (U8))
+        (ir.CompilerIrInstr.Load 13 (Var 12) (U64))
+        (ir.CompilerIrInstr.Gep 15 (Var 0) (I64 8) (U8))
+        (ir.CompilerIrInstr.Load 14 (Var 15) (I64))
+        (ir.CompilerIrInstr.Gep 16 (Var 0) (I64 1) (I64))
+        (ir.CompilerIrInstr.Gep 16 (Var 5) (I64 1) (I64))
+        (ir.CompilerIrInstr.Load 17 (Var 16) (I64))
+        (ir.CompilerIrInstr.Return (No))))))
+
+;; The literal the rewrite put in `dst`'s definition, or -1 when it is still a
+;; `Load` (or anything else).
+(define (opt-sl-test-folded
+  [blocks : (& blocks ir.CompilerIrBlockList)]
+  [dst : i64]) : i64
+  (match (ir.compiler-ir-block-list-view blocks)
+    [(slice block & _)
+      (match block
+        [(Block _ instrs) (opt-sl-test-folded-in instrs dst)])]
+    [(slice) -2]))
+
+(define (opt-sl-test-folded-in
+  [instrs : (& instrs ir.CompilerIrInstrSeq)]
+  [dst : i64]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (while (< index (ir.compiler-ir-instr-seq-count instrs))
+      (let
+        [instr : ir.CompilerIrInstr (ir.compiler-ir-instr-seq-ref instrs index)]
+        (when
+          (= (ir.compiler-ir-instr-dst (& instr)) dst)
+          (match instr
+            [(Mov _ (I64 n) _) (set! found n)]
+            [_ (set! found -1)])))
+      (set! index (+ index 1)))
+    found))
+
+(define (compiler-optimize-string-literal-length-self-test) : i64
+  (let
+    [summaries : opt.OptProgramSummaries
+      (opt.opt-program-summaries-empty-for false)]
+    [rewritten : ir.CompilerIrBlockList
+      (opt.opt-const-length-rewrite-summary-blocks
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt-test-symbol "sl_fn")
+        (& summaries)
+        (ir.compiler-ir-param-seq-empty)
+        18
+        (opt-sl-test-blocks))]
+    (cond
+      [(not (= (opt-sl-test-folded (& rewritten) 2) 4)) 10]
+      [(not (= (opt-sl-test-folded (& rewritten) 4) 9)) 20]
+      [(not (= (opt-sl-test-folded (& rewritten) 14) 4)) 30]
+      [(not (= (opt-sl-test-folded (& rewritten) 7) -1)) 40]
+      [(not (= (opt-sl-test-folded (& rewritten) 11) -1)) 50]
+      [(not (= (opt-sl-test-folded (& rewritten) 13) -1)) 60]
+      [(not (= (opt-sl-test-folded (& rewritten) 17) -1)) 70]
+      [else 42])))
+
 (define (compiler-optimize-latch-sink-self-test) : i64
   (let
     [l1 : ir.CompilerIrFunction (opt-ls-test-l1)]
@@ -64637,6 +64722,13 @@
     (compiler-optimize-copy-call-self-test)
     42
     "an element copy in a __bce_fast clone becomes one tl_mem_copy_fwd (bytes) or tl_mem_copy8_fwd (i64 slots) call, with an invariant+counter destination index admitted and idempotently, and a bump-first loop's geps on the counter's next reading the first iteration's index; checked, unsupported-width, wrong-predecessor, non-unit-step, invariant-index, two-store, mismatched-width, below-floor and constant-value loops do not"))
+
+(test
+  string-literal-length-fold
+  (test.assert-i64-eq
+    (compiler-optimize-string-literal-length-self-test)
+    42
+    "a length-slot load off a string literal, directly or through a var whose only definition is a Mov of it, folds to the literal's byte length; a var with two definitions, an address-taken var, the data slot and a twice-defined gep keep their Load"))
 
 (test
   latch-increment-sink

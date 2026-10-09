@@ -905,6 +905,16 @@ declaration-emitting `defmacro` declarations (section 3.7.1): `: Module` for
 generated module families bound by `import`, and `: Decls` for declarations
 spliced into the current module.
 
+A function with a `[comptime name : T]` parameter is a template rather than a
+runtime function: each distinct combination of comptime arguments at its calls
+produces one concrete instance, and every call with the same arguments uses
+that instance. A template belongs to its module. Same-named templates of two
+modules are different templates; a bare call resolves the name in the calling
+module; and an instance is declared in its template's module in the template's
+place, so its body sees that module's private declarations, whichever module
+asked for the instance. Calling another module's template through its module
+name is not supported yet (#8596).
+
 #### 3.7.1 Typed expression macros
 
 Macros are compile-time expression transformers. They are declared with
@@ -6638,6 +6648,12 @@ Primitive names and signatures are fixed as follows:
 non-type operands, and kind mismatches are compile-time diagnostics. The
 diagnostic names the primitive and the expected kind, for example
 `struct-field-type requires struct type`.
+
+`struct-field-type` and `enum-variant-payload-type` resolve the declared type
+in the declaring module's scope. A type written through that module's import
+alias, such as `svec.Vec` after `(import (vector.vector String) as svec)`,
+reflects as the canonical nominal type the alias names, so a macro that splices
+it into another module does not need the alias.
 
 `type-kind` returns one of these lowercase stable strings:
 

@@ -112,23 +112,25 @@
               (= pool-len-before (ci.intern-pool-len))
               (ci.intern-id-eq? first-id second-id)
               (match (reader.spanned-sexpr-view form)
-                [(Cons first tail _)
-                  (match first
-                    [(Sym first-text _)
-                      (match (reader.spanned-sexpr-view tail)
-                        [(Cons second _ _)
-                          (match second
-                            [(Sym second-text _)
-                              (and
-                                (=
-                                  (reader.symbol-id first-text)
-                                  (ci.intern-id-value first-id))
-                                (=
-                                  (reader.symbol-id second-text)
-                                  (ci.intern-id-value second-id)))]
-                            [_ false])]
-                        [_ false])]
-                    [_ false])]
+                [(List (slice first & _) _)
+                  (let
+                    [tail (reader.spanned-sexpr-drop form 1)]
+                    (match first
+                      [(Sym first-text _)
+                        (match (reader.spanned-sexpr-view tail)
+                          [(List (slice second & _) _)
+                            (match second
+                              [(Sym second-text _)
+                                (and
+                                  (=
+                                    (reader.symbol-id first-text)
+                                    (ci.intern-id-value first-id))
+                                  (=
+                                    (reader.symbol-id second-text)
+                                    (ci.intern-id-value second-id)))]
+                              [_ false])]
+                          [_ false])]
+                      [_ false]))]
                 [_ false]))]
           [(Err _) false]))]
     [(Err _) false]))
@@ -178,14 +180,17 @@
         [(Err _) false]
         [(Ok form)
           (match (reader.sexpr-view form)
-            [(Cons inner tail)
-              (and
-                (match (reader.sexpr-view inner)
-                  [(Cons alpha _) (reader-test-symbol? alpha "alpha")]
-                  [_ false])
-                (match (reader.sexpr-view tail)
-                  [(Cons beta _) (reader-test-symbol? beta ".beta")]
-                  [_ false]))]
+            [(List (slice inner & _))
+              (let
+                [tail (reader.spanned-sexpr-drop form 1)]
+                (and
+                  (match (reader.sexpr-view inner)
+                    [(List (slice alpha & _))
+                      (reader-test-symbol? alpha "alpha")]
+                    [_ false])
+                  (match (reader.sexpr-view tail)
+                    [(List (slice beta & _)) (reader-test-symbol? beta ".beta")]
+                    [_ false])))]
             [_ false])])]
     (reader.sp-node-pool-reset!)
     (and errors-ok suffix-ok (not reader.sp-reader-data-mode?))))
@@ -255,36 +260,54 @@
                 (= start 2)
                 (= length 3)
                 (match (reader.sexpr-view form)
-                  [(Cons first tail1)
-                    (and
-                      (reader-test-symbol? first "alpha")
-                      (match (reader.sexpr-view tail1)
-                        [(Cons nested tail2)
-                          (and
-                            (match (reader.sexpr-view nested)
-                              [(Cons beta nested-tail)
-                                (and
-                                  (reader-test-symbol? beta "beta")
-                                  (match (reader.sexpr-view nested-tail)
-                                    [(Cons gamma nested-end)
+                  [(List (slice first & _))
+                    (let
+                      [tail1 (reader.spanned-sexpr-drop form 1)]
+                      (and
+                        (reader-test-symbol? first "alpha")
+                        (match (reader.sexpr-view tail1)
+                          [(List (slice nested & _))
+                            (let
+                              [tail2 (reader.spanned-sexpr-drop tail1 1)]
+                              (and
+                                (match (reader.sexpr-view nested)
+                                  [(List (slice beta & _))
+                                    (let
+                                      [nested-tail
+                                        (reader.spanned-sexpr-drop nested 1)]
                                       (and
-                                        (reader-test-symbol? gamma "gamma")
-                                        (match (reader.sexpr-view nested-end)
-                                          [(Nil) true]
-                                          [_ false]))]
-                                    [_ false]))]
-                              [_ false])
-                            (match (reader.sexpr-view tail2)
-                              [(Cons empty tail3)
-                                (and
-                                  (match (reader.sexpr-view empty)
-                                    [(Nil) true]
-                                    [_ false])
-                                  (match (reader.sexpr-view tail3)
-                                    [(Nil) true]
-                                    [_ false]))]
-                              [_ false]))]
-                        [_ false]))]
+                                        (reader-test-symbol? beta "beta")
+                                        (match (reader.sexpr-view nested-tail)
+                                          [(List (slice gamma & _))
+                                            (let
+                                              [nested-end
+                                                (reader.spanned-sexpr-drop
+                                                  nested-tail
+                                                  1)]
+                                              (and
+                                                (reader-test-symbol?
+                                                  gamma
+                                                  "gamma")
+                                                (match (reader.sexpr-view
+                                                  nested-end)
+                                                  [(List (slice)) true]
+                                                  [_ false])))]
+                                          [_ false])))]
+                                  [_ false])
+                                (match (reader.sexpr-view tail2)
+                                  [(List (slice empty & _))
+                                    (let
+                                      [tail3
+                                        (reader.spanned-sexpr-drop tail2 1)]
+                                      (and
+                                        (match (reader.sexpr-view empty)
+                                          [(List (slice)) true]
+                                          [_ false])
+                                        (match (reader.sexpr-view tail3)
+                                          [(List (slice)) true]
+                                          [_ false])))]
+                                  [_ false])))]
+                          [_ false])))]
                   [_ false]))]
             [_ false]))])
     (begin
@@ -306,27 +329,37 @@
                       (= (token.span-start-line span) 1)
                       (= (token.span-start-col span) 1)
                       (match (reader.spanned-sexpr-view form)
-                        [(BracketList items _)
-                          (match (reader.spanned-sexpr-view items)
-                            [(Cons alpha tail _)
-                              (and
-                                (match (reader.spanned-sexpr-view alpha)
-                                  [(Sym name-id _)
-                                    (string.eq
-                                      (reader.symbol-text-for-syntax-id name-id)
-                                      "alpha")]
-                                  [_ false])
-                                (match (reader.spanned-sexpr-view tail)
-                                  [(Cons nested end _)
-                                    (and
-                                      (match (reader.spanned-sexpr-view nested)
-                                        [(Cons _ _ _) true]
-                                        [_ false])
-                                      (match (reader.spanned-sexpr-view end)
-                                        [(Nil _) true]
-                                        [_ false]))]
-                                  [_ false]))]
-                            [_ false])]
+                        [(BracketList _ _)
+                          (let
+                            [items (reader.spanned-sexpr-drop form 0)]
+                            (match (reader.spanned-sexpr-view items)
+                              [(List (slice alpha & _) _)
+                                (let
+                                  [tail (reader.spanned-sexpr-drop items 1)]
+                                  (and
+                                    (match (reader.spanned-sexpr-view alpha)
+                                      [(Sym name-id _)
+                                        (string.eq
+                                          (reader.symbol-text-for-syntax-id
+                                            name-id)
+                                          "alpha")]
+                                      [_ false])
+                                    (match (reader.spanned-sexpr-view tail)
+                                      [(List (slice nested & _) _)
+                                        (let
+                                          [end
+                                            (reader.spanned-sexpr-drop tail 1)]
+                                          (and
+                                            (match (reader.spanned-sexpr-view
+                                              nested)
+                                              [(List (slice _ & _) _) true]
+                                              [_ false])
+                                            (match (reader.spanned-sexpr-view
+                                              end)
+                                              [(List (slice) _) true]
+                                              [_ false])))]
+                                      [_ false])))]
+                              [_ false]))]
                         [_ false]))]
                   [_ false]))])]))
     (match (begin
@@ -337,17 +370,21 @@
         (and
           (= (reader.sp-node-pool-len) 2)
           (match (reader.sexpr-view form)
-            [(Cons quote tail)
-              (and
-                (reader-test-symbol? quote "quote")
-                (match (reader.sexpr-view tail)
-                  [(Cons value end)
-                    (and
-                      (reader-test-symbol? value "alpha")
-                      (match (reader.sexpr-view end)
-                        [(Nil) true]
-                        [_ false]))]
-                  [_ false]))]
+            [(List (slice quote & _))
+              (let
+                [tail (reader.spanned-sexpr-drop form 1)]
+                (and
+                  (reader-test-symbol? quote "quote")
+                  (match (reader.sexpr-view tail)
+                    [(List (slice value & _))
+                      (let
+                        [end (reader.spanned-sexpr-drop tail 1)]
+                        (and
+                          (reader-test-symbol? value "alpha")
+                          (match (reader.sexpr-view end)
+                            [(List (slice)) true]
+                            [_ false])))]
+                    [_ false])))]
             [_ false]))])
     (begin
       (reader.sp-node-pool-reset!)
@@ -396,17 +433,19 @@
                 (and
                   (= (reader.sp-node-pool-len) 1)
                   (match (reader.spanned-sexpr-view form)
-                    [(Cons value tail _)
-                      (and
-                        (match (reader.spanned-sexpr-view value)
-                          [(Sym name-id _)
-                            (string.eq
-                              (reader.symbol-text-for-syntax-id name-id)
-                              "beta")]
-                          [_ false])
-                        (match (reader.spanned-sexpr-view tail)
-                          [(Nil _) true]
-                          [_ false]))]
+                    [(List (slice value & _) _)
+                      (let
+                        [tail (reader.spanned-sexpr-drop form 1)]
+                        (and
+                          (match (reader.spanned-sexpr-view value)
+                            [(Sym name-id _)
+                              (string.eq
+                                (reader.symbol-text-for-syntax-id name-id)
+                                "beta")]
+                            [_ false])
+                          (match (reader.spanned-sexpr-view tail)
+                            [(List (slice) _) true]
+                            [_ false])))]
                     [_ false]))])])]
       [ok : bool (and data-error-ok spanned-error-ok repeated-read-ok)]
       (reader.sp-node-pool-reset!)
@@ -1295,25 +1334,25 @@
   (match (reader.data-result "(alpha (beta gamma) [delta] 7)")
     [(Err _) false]
     [(Ok form)
-      (match (reader.spanned-sexpr-slice-view form)
+      (match (reader.spanned-sexpr-view form)
         [(List (slice head inner bracket (Int seven _ _)) span)
           (and
             (reader-test-symbol? head "alpha")
             (= seven 7)
-            (match (reader.spanned-sexpr-slice-view inner)
+            (match (reader.spanned-sexpr-view inner)
               [(List (slice beta gamma) _)
                 (and
                   (reader-test-symbol? beta "beta")
                   (reader-test-symbol? gamma "gamma"))]
               [_ false])
-            (match (reader.spanned-sexpr-slice-view bracket)
+            (match (reader.spanned-sexpr-view bracket)
               [(BracketList (slice delta) _)
                 (reader-test-symbol? delta "delta")]
               [_ false])
-            (match (reader.sexpr-slice-view bracket)
+            (match (reader.sexpr-view bracket)
               [(List (slice _)) true]
               [_ false])
-            (match (reader.spanned-sexpr-slice-view
+            (match (reader.spanned-sexpr-view
               (reader.spanned-sexpr-drop form 2))
               [(List (slice (BracketList _ _ _) (Int _ _ _)) tail-span)
                 (and
@@ -1324,7 +1363,7 @@
                     (token.span-start-col tail-span)
                     (token.span-start-col span)))]
               [_ false])
-            (match (reader.sexpr-slice-view (reader.spanned-sexpr-drop form 4))
+            (match (reader.sexpr-view (reader.spanned-sexpr-drop form 4))
               [(List (slice)) true]
               [_ false]))]
         [_ false])]))
@@ -1350,7 +1389,7 @@
   [list : reader.SpannedSexpr]
   [base : i64]
   [count : i64]) : bool
-  (match (reader.spanned-sexpr-slice-view list)
+  (match (reader.spanned-sexpr-view list)
     [(List items _)
       (let
         [index : i64 0]
@@ -1377,7 +1416,7 @@
       ")"))
     [(Err _) false]
     [(Ok form)
-      (match (reader.spanned-sexpr-slice-view form)
+      (match (reader.spanned-sexpr-view form)
         [(List (slice near-boundary crossing long) _)
           (and
             (reader-test-slice-counts? near-boundary 0 1000)

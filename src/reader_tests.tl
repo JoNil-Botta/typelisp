@@ -106,7 +106,7 @@
           (token.sym-id (token.spanned-token-token-ref (& (array-ref toks 2))))]
         [pool-len-before : i64 (ci.intern-pool-len)]
         (reader.sp-node-pool-reset!)
-        (match (reader.spanned-result toks)
+        (match (reader.spanned-result (& toks))
           [(Ok form)
             (and
               (= pool-len-before (ci.intern-pool-len))
@@ -156,7 +156,7 @@
           [(Ok _) (= (array-ref cur 0) expected-cursor)]))]))
 
 (define (reader-test-data-error? [source : String] [expected : String]) : bool
-  (match (reader.data-result source)
+  (match (reader.data-result (& source))
     [(Ok _) false]
     [(Err message) (string.eq message expected)]))
 
@@ -315,7 +315,7 @@
       (match (lexer.spanned-result "[alpha (beta gamma)]")
         [(Err _) false]
         [(Ok toks)
-          (match (reader.spanned-result toks)
+          (match (reader.spanned-result (& toks))
             [(Err _) false]
             [(Ok form)
               (and
@@ -391,7 +391,7 @@
       (match (lexer.spanned-result "(alpha]")
         [(Err _) false]
         [(Ok toks)
-          (match (reader.spanned-result toks)
+          (match (reader.spanned-result (& toks))
             [(Ok _) false]
             [(Err err)
               (let
@@ -417,7 +417,7 @@
         (match (lexer.spanned-result "((alpha)]")
           [(Err _) false]
           [(Ok toks)
-            (match (reader.spanned-result toks)
+            (match (reader.spanned-result (& toks))
               [(Ok _) false]
               [(Err _)
                 (and
@@ -427,7 +427,7 @@
         (match (lexer.spanned-result "(beta)")
           [(Err _) false]
           [(Ok toks)
-            (match (reader.spanned-result toks)
+            (match (reader.spanned-result (& toks))
               [(Err _) false]
               [(Ok form)
                 (and
@@ -1408,12 +1408,13 @@
 (define (reader-test-slice-views-span-segments?) : bool
   (reader.sp-node-pool-reset!)
   (match (reader.data-result
-    (str_cat.str-cat
-      "("
-      (reader-test-int-list-text 0 1000)
-      (reader-test-int-list-text 5000 50)
-      (reader-test-int-list-text 9000 1500)
-      ")"))
+    (&
+      (str_cat.str-cat
+        "("
+        (reader-test-int-list-text 0 1000)
+        (reader-test-int-list-text 5000 50)
+        (reader-test-int-list-text 9000 1500)
+        ")")))
     [(Err _) false]
     [(Ok form)
       (match (reader.spanned-sexpr-view form)

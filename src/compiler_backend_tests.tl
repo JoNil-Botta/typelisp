@@ -85,20 +85,21 @@
     (if (or (< eq 2) (not (= (string.char-at entry 0) '%')))
       (io.panic (str_cat.str-cat "reg-homes: bad entry " entry))
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment
-          (string.>int (string.substring entry 1 (- eq 1)))
-          (cond
-            [(string.is-string-prefix-at home "spill:" 0)
-              (Spill (string.>int (string.substring home 6 (- (- n eq) 7))))]
-            [(> slash eq)
-              (RegisterPair
-                (reg-homes-register
-                  entry
-                  (string.substring entry (+ eq 1) (- (- slash eq) 1)))
-                (reg-homes-register
-                  entry
-                  (string.substring entry (+ slash 1) (- (- n slash) 1))))]
-            [else (Register (reg-homes-register entry home))]))
+        (&
+          (regalloc.CompilerRegAssignment
+            (string.>int (string.substring entry 1 (- eq 1)))
+            (cond
+              [(string.is-string-prefix-at home "spill:" 0)
+                (Spill (string.>int (string.substring home 6 (- (- n eq) 7))))]
+              [(> slash eq)
+                (RegisterPair
+                  (reg-homes-register
+                    entry
+                    (string.substring entry (+ eq 1) (- (- slash eq) 1)))
+                  (reg-homes-register
+                    entry
+                    (string.substring entry (+ slash 1) (- (- n slash) 1))))]
+              [else (Register (reg-homes-register entry home))])))
         table))))
 
 ;; Emitted-text assertions. `(asm-has? text s ...)` holds when `text` contains
@@ -376,7 +377,7 @@
           (let
             [live-afters : compiler_liveness.CompilerLiveInstrSetVec
               (regalloc.compiler-reg-live-intervals-find-afters
-                (owned_view.compiler-owned-shared-view liveness)
+                (& liveness)
                 label)]
             [after-items : (__tl_dyn-array compiler_liveness.CompilerLiveI64Set)
               live-afters.items]
@@ -385,11 +386,12 @@
               (regalloc.compiler-reg-extend-set-words
                 starts
                 ends
-                (if (> (array-length after-items) 0)
-                  (owned_view.compiler-owned-array-element-shared-view
-                    after-items
-                    0)
-                  (compiler_liveness.compiler-live-set-empty))
+                (&
+                  (if (> (array-length after-items) 0)
+                    (owned_view.compiler-owned-array-element-shared-view
+                      after-items
+                      0)
+                    (compiler_liveness.compiler-live-set-empty)))
                 0
                 point)
               unit)
@@ -487,8 +489,8 @@
           (regalloc.compiler-reg-fill-i64-array (&mut starts) -1)
           (regalloc.compiler-reg-fill-i64-array (&mut ends) -1)
           (regalloc.compiler-reg-live-intervals-blocks-with-live
-            (owned_view.compiler-owned-shared-view emit-blocks)
-            (owned_view.compiler-owned-shared-view liveness)
+            (& emit-blocks)
+            (& liveness)
             0
             (&mut starts)
             (&mut ends))
@@ -4176,7 +4178,7 @@
 
 (define (compiler-backend-indirect-c-call-reg-assignments [home : i64]) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
-    (regalloc.CompilerRegAssignment 1 (Register home))
+    (& (regalloc.CompilerRegAssignment 1 (Register home)))
     (reg-homes "%2=%r13")))
 
 (define (compiler-backend-indirect-c-call-callee-home-target-ok?
@@ -5315,7 +5317,7 @@
   [emit-entry : bool]) : backend.ResultCompilerBackend
   (match (backend.compiler-backend-lower-source-for-target source target)
     [(Ok program spans)
-      (match (opt.optimize-program-with-spans-and-level program spans 2)
+      (match (opt.optimize-program-with-spans-and-level (& program) spans 2)
         [(Program optimized optimized-spans)
           (let
             [backend-state : backend.CompilerBackendState
@@ -5356,7 +5358,7 @@
   [level : i64]) : backend.ResultCompilerBackend
   (match (backend.compiler-backend-lower-source-for-target source target)
     [(Ok program spans)
-      (match (opt.optimize-program-with-spans-and-level program spans level)
+      (match (opt.optimize-program-with-spans-and-level (& program) spans level)
         [(Program optimized optimized-spans)
           (let
             [backend-state : backend.CompilerBackendState
@@ -6175,23 +6177,24 @@
 
 (define (compiler-backend-win64-callee-save-full-assignments) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
-    (regalloc.CompilerRegAssignment 5 (Register cabi.compiler-reg-id-rsi))
+    (& (regalloc.CompilerRegAssignment 5 (Register cabi.compiler-reg-id-rsi)))
     (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment 6 (Register cabi.compiler-reg-id-rdi))
+      (& (regalloc.CompilerRegAssignment 6 (Register cabi.compiler-reg-id-rdi)))
       (compiler-backend-callee-save-assignments5))))
 
 (define (compiler-backend-win64-callee-save-rbp-assignments) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
-    (regalloc.CompilerRegAssignment 7 (Register cabi.compiler-reg-id-rbp))
+    (& (regalloc.CompilerRegAssignment 7 (Register cabi.compiler-reg-id-rbp)))
     (compiler-backend-win64-callee-save-full-assignments)))
 
 (define (compiler-backend-win64-xmm-full-assignments-at [idx : i64]) : regalloc.CompilerRegAssignmentTable
   (if (>= idx 10)
     (regalloc.compiler-reg-assignment-table-empty)
     (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment
-        idx
-        (Register (cabi.compiler-abi-xmm-register-id (+ idx 6))))
+      (&
+        (regalloc.CompilerRegAssignment
+          idx
+          (Register (cabi.compiler-abi-xmm-register-id (+ idx 6)))))
       (compiler-backend-win64-xmm-full-assignments-at (+ idx 1)))))
 
 (define (compiler-backend-win64-xmm-full-assignments) : regalloc.CompilerRegAssignmentTable
@@ -6858,9 +6861,10 @@
       (compiler-backend-win64-xmm15-only-assignments)]
     [planned : regalloc.CompilerRegAssignmentTable
       (regalloc.compiler-reg-plan-assignments
-        (regalloc.compiler-reg-plan-function-scalar-for-abi
-          Windows
-          (reg_tests.compiler-reg-f64-call-live-function)))]
+        (&
+          (regalloc.compiler-reg-plan-function-scalar-for-abi
+            Windows
+            (& (reg_tests.compiler-reg-f64-call-live-function)))))]
     [planned-frame : i64
       (backend.compiler-backend-frame-size
         (backend.compiler-backend-frame-slots 3 planned backend-state))]
@@ -6946,7 +6950,7 @@
     [ok : bool
       (and
         (regalloc.compiler-reg-location-register?
-          (regalloc.compiler-reg-assignment-lookup planned 0)
+          (& (regalloc.compiler-reg-assignment-lookup planned 0))
           (cabi.compiler-abi-xmm-register-id 6))
         (asm-has? planned-save "    movdqu %xmm6, ")
         (asm-lacks? planned-save "%xmm7")
@@ -7592,7 +7596,7 @@
       (reg-homes "%0=%r12")]
     [spill-assignments : regalloc.CompilerRegAssignmentTable
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 1 (Spill -40))
+        (& (regalloc.CompilerRegAssignment 1 (Spill -40)))
         slot-assignments)]
     (and
       ;; unassigned destination -> its bare slot, one store
@@ -8229,27 +8233,27 @@
         0)
       (regalloc.compiler-reg-type-register-group?
         bases
-        (backend.compiler-backend-program-index-representations index)
-        (owned_view.compiler-owned-shared-view ref))
+        (& (backend.compiler-backend-program-index-representations index))
+        (& ref))
       (regalloc.compiler-reg-type-register-group?
         bases
-        (backend.compiler-backend-program-index-representations index)
-        mut-ref)
+        (& (backend.compiler-backend-program-index-representations index))
+        (& mut-ref))
       (not
         (regalloc.compiler-reg-type-register-group?
           bases
-          (backend.compiler-backend-program-index-representations index)
-          ordinary-ref))
+          (& (backend.compiler-backend-program-index-representations index))
+          (& ordinary-ref)))
       (not
         (regalloc.compiler-reg-type-register-group?
           bases
-          (backend.compiler-backend-program-index-representations index)
-          bare-slice))
+          (& (backend.compiler-backend-program-index-representations index))
+          (& bare-slice)))
       (not
         (regalloc.compiler-reg-type-register-group-has-sse?
           bases
-          (backend.compiler-backend-program-index-representations index)
-          (owned_view.compiler-owned-shared-view ref)))
+          (& (backend.compiler-backend-program-index-representations index))
+          (& ref)))
       (not
         (reg_tests.compiler-reg-type-register-group-word-sse?
           bases
@@ -9561,29 +9565,29 @@
         0)
       (regalloc.compiler-reg-type-register-group?
         bases
-        (backend.compiler-backend-program-index-representations index)
-        (owned_view.compiler-owned-shared-view struct-plain))
+        (& (backend.compiler-backend-program-index-representations index))
+        (& struct-plain))
       (regalloc.compiler-reg-type-register-group?
         bases
-        (backend.compiler-backend-program-index-representations index)
-        (owned_view.compiler-owned-shared-view struct-args-root))
+        (& (backend.compiler-backend-program-index-representations index))
+        (& struct-args-root))
       (regalloc.compiler-reg-type-register-group?
         bases
-        (backend.compiler-backend-program-index-representations index)
-        (owned_view.compiler-owned-shared-view enum-qualified))
+        (& (backend.compiler-backend-program-index-representations index))
+        (& enum-qualified))
       (regalloc.compiler-reg-type-register-group?
         bases
-        (backend.compiler-backend-program-index-representations index)
-        enum-args-qualified)
+        (& (backend.compiler-backend-program-index-representations index))
+        (& enum-args-qualified))
       (regalloc.compiler-reg-type-register-group?
         bases
-        (backend.compiler-backend-program-index-representations index)
-        region-qualified)
+        (& (backend.compiler-backend-program-index-representations index))
+        (& region-qualified))
       (not
         (regalloc.compiler-reg-type-register-group?
           bases
-          (backend.compiler-backend-program-index-representations index)
-          (owned_view.compiler-owned-shared-view opaque-struct)))
+          (& (backend.compiler-backend-program-index-representations index))
+          (& opaque-struct)))
       (reg_tests.compiler-reg-type-register-group-word-sse?
         bases
         (backend.compiler-backend-program-index-representations index)
@@ -13394,13 +13398,14 @@ f:
 ;; select result.
 (define (compiler-backend-select-flags-assignments [result-reg : i64]) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
-    (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r13))
+    (& (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r13)))
     (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment 1 (Register cabi.compiler-reg-id-rcx))
+      (& (regalloc.CompilerRegAssignment 1 (Register cabi.compiler-reg-id-rcx)))
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 3 (Register cabi.compiler-reg-id-rax))
+        (&
+          (regalloc.CompilerRegAssignment 3 (Register cabi.compiler-reg-id-rax)))
         (regalloc.compiler-reg-assignments-prepend
-          (regalloc.CompilerRegAssignment 4 (Register result-reg))
+          (& (regalloc.CompilerRegAssignment 4 (Register result-reg)))
           (regalloc.compiler-reg-assignment-table-empty))))))
 
 ;; `%3 = lt %0, %1 ; %4 = select %3, %0, %1` -- the `min` shape, with `tail`
@@ -17070,11 +17075,12 @@ f:
 
 (define (compiler-backend-stack-splat-spill-assignments [offset : i64]) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
-    (regalloc.CompilerRegAssignment
-      0
-      (Register (cabi.compiler-abi-vector-register-id 6)))
+    (&
+      (regalloc.CompilerRegAssignment
+        0
+        (Register (cabi.compiler-abi-vector-register-id 6))))
     (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment 1 (Spill offset))
+      (& (regalloc.CompilerRegAssignment 1 (Spill offset)))
       (regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-stack-splat-register-assignments) : regalloc.CompilerRegAssignmentTable
@@ -18564,7 +18570,7 @@ f:
     (ast.ast-node-pool-reader-type-segment-bases)
     (if spilled
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 0 (Spill -64))
+        (& (regalloc.CompilerRegAssignment 0 (Spill -64)))
         (compiler-backend-vector-reduce-direct-assignments
           (Register cabi.compiler-reg-id-r12)))
       (compiler-backend-vector-reduce-direct-assignments
@@ -18621,12 +18627,13 @@ f:
   (if (= index 5)
     (regalloc.compiler-reg-assignment-table-empty)
     (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment
-        index
-        (cond
-          [(= index 0) (Spill -64)]
-          [(= index 1) (Register cabi.compiler-reg-id-r12)]
-          [else (Spill (* -8 index))]))
+      (&
+        (regalloc.CompilerRegAssignment
+          index
+          (cond
+            [(= index 0) (Spill -64)]
+            [(= index 1) (Register cabi.compiler-reg-id-r12)]
+            [else (Spill (* -8 index))])))
       (compiler-backend-i64-reduce-call-assignments (+ index 1)))))
 
 (define (compiler-backend-i64-reduce-call-case-ok?
@@ -18855,11 +18862,12 @@ f:
 (define (compiler-backend-vector-reduce-direct-assignments
   [dst-location : regalloc.CompilerRegLocation]) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
-    (regalloc.CompilerRegAssignment
-      0
-      (Register (cabi.compiler-abi-vector-register-id 6)))
+    (&
+      (regalloc.CompilerRegAssignment
+        0
+        (Register (cabi.compiler-abi-vector-register-id 6))))
     (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment 1 dst-location)
+      (& (regalloc.CompilerRegAssignment 1 dst-location))
       (regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-avx512-vector-reduce-narrow-case-ok?
@@ -19361,13 +19369,15 @@ f:
 
 (define (compiler-backend-avx512-mask-spill-compare-assignments) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
-    (regalloc.CompilerRegAssignment
-      4
-      (Register (cabi.compiler-abi-vector-register-id 6)))
-    (regalloc.compiler-reg-assignments-prepend
+    (&
       (regalloc.CompilerRegAssignment
-        5
-        (Register (cabi.compiler-abi-vector-register-id 7)))
+        4
+        (Register (cabi.compiler-abi-vector-register-id 6))))
+    (regalloc.compiler-reg-assignments-prepend
+      (&
+        (regalloc.CompilerRegAssignment
+          5
+          (Register (cabi.compiler-abi-vector-register-id 7))))
       (compiler-backend-avx512-mask-spill-assignments))))
 
 (define (compiler-backend-avx512-mask-spill-compare-emits-ok?) : bool
@@ -20864,7 +20874,7 @@ f:
     (compiler-backend-avx2-data-pointer-cse-source)
     (lower.CompilerLowerMode.Avx2))
     [(Ok program spans)
-      (match (opt.optimize-program-with-spans program spans)
+      (match (opt.optimize-program-with-spans (& program) spans)
         [(Program optimized optimized-spans)
           (match (backend.compiler-backend-emit-program-target-with-mode
             optimized
@@ -21156,7 +21166,7 @@ f:
       (begin
         ;; Non-abort instruction spans are intentionally a debug-only cost.
         (ir.compiler-debug-info-set-enabled! true)
-        (match (opt.optimize-program-with-spans program spans)
+        (match (opt.optimize-program-with-spans (& program) spans)
           [(Program optimized optimized-spans)
             (match (backend.compiler-backend-emit-program-linux-with-spans
               optimized
@@ -24300,17 +24310,19 @@ f:
   [base-spilled? : bool]
   [index-spilled? : bool]) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
-    (regalloc.CompilerRegAssignment
-      0
-      (if base-spilled?
-        (Spill 16)
-        (Register cabi.compiler-reg-id-r12)))
-    (regalloc.compiler-reg-assignments-prepend
+    (&
       (regalloc.CompilerRegAssignment
-        1
-        (if index-spilled?
-          (Spill 24)
-          (Register cabi.compiler-reg-id-r8)))
+        0
+        (if base-spilled?
+          (Spill 16)
+          (Register cabi.compiler-reg-id-r12))))
+    (regalloc.compiler-reg-assignments-prepend
+      (&
+        (regalloc.CompilerRegAssignment
+          1
+          (if index-spilled?
+            (Spill 24)
+            (Register cabi.compiler-reg-id-r8))))
       (reg-homes "%3=%r13 %4=%r14 %5=%r15"))))
 
 ;; A spilled BASE stages into the load destination's home and the compare reads
@@ -24636,9 +24648,9 @@ f:
       (BinOp 1 (Mul) (Var 0) (I64 factor) (I64))
       (irt.instrs "%2 = mov %1 : i64"))
     (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r12))
+      (& (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r12)))
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 1 (Register dst-reg))
+        (& (regalloc.CompilerRegAssignment 1 (Register dst-reg)))
         (regalloc.compiler-reg-assignment-table-empty)))
     3))
 
@@ -24893,9 +24905,9 @@ f:
   (let
     [assignments : regalloc.CompilerRegAssignmentTable
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 0 (Register leaf-home))
+        (& (regalloc.CompilerRegAssignment 0 (Register leaf-home)))
         (regalloc.compiler-reg-assignments-prepend
-          (regalloc.CompilerRegAssignment 1 (Register subleaf-home))
+          (& (regalloc.CompilerRegAssignment 1 (Register subleaf-home)))
           (reg-homes "%2=%r12")))]
     [backend-state : backend.CompilerBackendState
       (backend.compiler-backend-state-new
@@ -25471,9 +25483,9 @@ f:
   (backend.compiler-backend-emit-bitcast
     (ast.ast-node-pool-reader-type-segment-bases)
     (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment 0 (Register src-home))
+      (& (regalloc.CompilerRegAssignment 0 (Register src-home)))
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 1 (Register dst-home))
+        (& (regalloc.CompilerRegAssignment 1 (Register dst-home)))
         (regalloc.compiler-reg-assignment-table-empty)))
     1
     (Var 0)
@@ -27108,9 +27120,9 @@ f:
         (F64))
       (Empty)
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 0 (Register lhs-home))
+        (& (regalloc.CompilerRegAssignment 0 (Register lhs-home)))
         (regalloc.compiler-reg-assignments-prepend
-          (regalloc.CompilerRegAssignment 1 (Register rhs-home))
+          (& (regalloc.CompilerRegAssignment 1 (Register rhs-home)))
           (regalloc.compiler-reg-assignment-table-empty)))
       2
       (Add)
@@ -27321,9 +27333,10 @@ f:
         (ci.intern-compat-state-capture-active))]
     [assignments : regalloc.CompilerRegAssignmentTable
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-rax))
+        (&
+          (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-rax)))
         (regalloc.compiler-reg-assignments-prepend
-          (regalloc.CompilerRegAssignment 1 (Remat (I64 0)))
+          (& (regalloc.CompilerRegAssignment 1 (Remat (I64 0))))
           (regalloc.compiler-reg-assignment-table-empty)))]
     (asm-ok?
       (backend.compiler-backend-emit-binop-return
@@ -27349,11 +27362,13 @@ f:
         (ci.intern-compat-state-capture-active))]
     [assignments : regalloc.CompilerRegAssignmentTable
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-rax))
+        (&
+          (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-rax)))
         (regalloc.compiler-reg-assignments-prepend
-          (regalloc.CompilerRegAssignment
-            1
-            (Remat (Global (ci.intern "tls_current_arena"))))
+          (&
+            (regalloc.CompilerRegAssignment
+              1
+              (Remat (Global (ci.intern "tls_current_arena")))))
           (regalloc.compiler-reg-assignment-table-empty)))]
     (asm-ok?
       (backend.compiler-backend-emit-binop-return
@@ -27429,9 +27444,10 @@ f:
         (ci.intern-compat-state-capture-active))]
     [assignments : regalloc.CompilerRegAssignmentTable
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 0 (Spill -8))
+        (& (regalloc.CompilerRegAssignment 0 (Spill -8)))
         (regalloc.compiler-reg-assignments-prepend
-          (regalloc.CompilerRegAssignment 1 (Remat (I64 0x7ff0000000000000)))
+          (&
+            (regalloc.CompilerRegAssignment 1 (Remat (I64 0x7ff0000000000000))))
           (regalloc.compiler-reg-assignment-table-empty)))]
     (asm-ok?
       (backend.compiler-backend-emit-binop-return
@@ -27460,9 +27476,10 @@ f:
         (ci.intern-compat-state-capture-active))]
     [assignments : regalloc.CompilerRegAssignmentTable
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 0 (Remat (I64 0x7ff0000000000001)))
+        (& (regalloc.CompilerRegAssignment 0 (Remat (I64 0x7ff0000000000001))))
         (regalloc.compiler-reg-assignments-prepend
-          (regalloc.CompilerRegAssignment 1 (Remat (I64 0x7ff0000000000002)))
+          (&
+            (regalloc.CompilerRegAssignment 1 (Remat (I64 0x7ff0000000000002))))
           (regalloc.compiler-reg-assignment-table-empty)))]
     (asm-ok?
       (backend.compiler-backend-emit-binop-return
@@ -28050,13 +28067,14 @@ f:
 ;; is still rebased normally.
 (define (compiler-backend-rbp-immediate-add-assignments [spill-dst? : bool]) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
-    (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-rbp))
+    (& (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-rbp)))
     (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment
-        1
-        (if spill-dst?
-          (Spill -16)
-          (Register cabi.compiler-reg-id-r12)))
+      (&
+        (regalloc.CompilerRegAssignment
+          1
+          (if spill-dst?
+            (Spill -16)
+            (Register cabi.compiler-reg-id-r12))))
       (regalloc.compiler-reg-assignment-table-empty))))
 
 (define (compiler-backend-rbp-immediate-add-final-asm
@@ -28380,12 +28398,13 @@ f:
 ;; those tables deliberately.
 (define (compiler-backend-divmod-polish-assignments [rbp-lhs : bool]) : regalloc.CompilerRegAssignmentTable
   (regalloc.compiler-reg-assignments-prepend
-    (regalloc.CompilerRegAssignment
-      0
-      (Register
-        (if rbp-lhs
-          cabi.compiler-reg-id-rbp
-          cabi.compiler-reg-id-r12)))
+    (&
+      (regalloc.CompilerRegAssignment
+        0
+        (Register
+          (if rbp-lhs
+            cabi.compiler-reg-id-rbp
+            cabi.compiler-reg-id-r12))))
     (reg-homes "%1=%r13 %2=%rdx %3=%rax %4=%rdi %5=%rsi %6=%r10 %7=%r14")))
 
 (define (compiler-backend-divmod-polish-instrs
@@ -30994,11 +31013,12 @@ f:
           (compiler-backend-known-function-call-index)]
         [assignments : regalloc.CompilerRegAssignmentTable
           (regalloc.compiler-reg-assignments-prepend
-            (regalloc.CompilerRegAssignment
-              1
-              (Register
-                (cabi.compiler-abi-register-id-from-spelling
-                  (owned_view.compiler-owned-shared-view arg-reg))))
+            (&
+              (regalloc.CompilerRegAssignment
+                1
+                (Register
+                  (cabi.compiler-abi-register-id-from-spelling
+                    (owned_view.compiler-owned-shared-view arg-reg)))))
             (regalloc.compiler-reg-assignment-table-empty))]
         [result : backend.ResultCompilerBackend
           (backend.compiler-backend-emit-indirect-call
@@ -31630,7 +31650,8 @@ f:
   (if (>= index (array-length regs))
     (regalloc.compiler-reg-assignment-table-empty)
     (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment index (Register (array-ref regs index)))
+      (&
+        (regalloc.CompilerRegAssignment index (Register (array-ref regs index))))
       (compiler-backend-inline-fast-alloc-emergency-assignments-from
         regs
         (+ index 1)))))
@@ -33069,7 +33090,8 @@ f:
   (if (>= index (array-length regs))
     (regalloc.compiler-reg-assignment-table-empty)
     (regalloc.compiler-reg-assignments-prepend
-      (regalloc.CompilerRegAssignment index (Register (array-ref regs index)))
+      (&
+        (regalloc.CompilerRegAssignment index (Register (array-ref regs index))))
       (compiler-backend-test-reg-assignment-table-from regs (+ index 1)))))
 
 (define (compiler-backend-test-fill-live-range!
@@ -34548,9 +34570,10 @@ f:
         (array-ref segments 0)
         (regalloc.compiler-reg-interval-seq-prepend
           (regalloc.CompilerRegInterval 0 0 4)
-          (regalloc.compiler-reg-interval-seq-prepend
-            (regalloc.CompilerRegInterval 0 12 16)
-            (regalloc.compiler-reg-interval-seq-empty))))
+          (&
+            (regalloc.compiler-reg-interval-seq-prepend
+              (regalloc.CompilerRegInterval 0 12 16)
+              (& (regalloc.compiler-reg-interval-seq-empty))))))
       unit)
     (backend.compiler-backend-scavenge-occupancy-build
       starts
@@ -35038,14 +35061,16 @@ f:
     [ends : (__tl_dyn-array i64) (__tl_make-array i64 vars)]
     [assignments : regalloc.CompilerRegAssignmentTable
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r13))
+        (&
+          (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r13)))
         (regalloc.compiler-reg-assignments-prepend
-          (regalloc.CompilerRegAssignment
-            1
-            (Register
-              (if carried?
-                cabi.compiler-reg-id-r13
-                cabi.compiler-reg-id-r14)))
+          (&
+            (regalloc.CompilerRegAssignment
+              1
+              (Register
+                (if carried?
+                  cabi.compiler-reg-id-r13
+                  cabi.compiler-reg-id-r14))))
           (reg-homes "%2=%r13")))]
     ;; var 0: the dividend definition -- dead after point 10
     (set! (array-ref starts 0) 9)
@@ -38967,15 +38992,17 @@ b_keep:
       (backend.compiler-backend-state-function-state state-b)]
     [assignments-a : regalloc.CompilerRegAssignmentTable
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r12))
+        (&
+          (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r12)))
         (regalloc.compiler-reg-assignments-prepend
-          (regalloc.CompilerRegAssignment 1 (Spill 24))
+          (& (regalloc.CompilerRegAssignment 1 (Spill 24)))
           (regalloc.compiler-reg-assignment-table-empty)))]
     [assignments-b : regalloc.CompilerRegAssignmentTable
       (regalloc.compiler-reg-assignments-prepend
-        (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r13))
+        (&
+          (regalloc.CompilerRegAssignment 0 (Register cabi.compiler-reg-id-r13)))
         (regalloc.compiler-reg-assignments-prepend
-          (regalloc.CompilerRegAssignment 1 (Spill 40))
+          (& (regalloc.CompilerRegAssignment 1 (Spill 40)))
           (regalloc.compiler-reg-assignment-table-empty)))]
     [disp-a : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [kind-a : (__tl_dyn-array i64) (__tl_make-array i64 1)]
@@ -40230,9 +40257,10 @@ b_keep:
       (let
         [assignments
           (regalloc.compiler-reg-assignments-prepend
-            (regalloc.CompilerRegAssignment
-              2
-              (Register cabi.compiler-reg-id-rax))
+            (&
+              (regalloc.CompilerRegAssignment
+                2
+                (Register cabi.compiler-reg-id-rax)))
             (regalloc.compiler-reg-assignment-table-empty))]
         [value (ir.CompilerIrValue.Var 2)]
         (backend.compiler-backend-value-register-home

@@ -153,7 +153,7 @@
   (reader.sp-node-pool-compact-retained!)
   (match (lex.spanned-result "(7 (8) \"text\"")
     [(Ok tokens)
-      (match (reader.spanned-result tokens)
+      (match (reader.spanned-result (& tokens))
         [(Err _)
           (unless
             (and (= (reader.sp-node-pool-len) 1) (retained-reader-row? 0))
@@ -162,7 +162,7 @@
     [_ (io.panic "retained reader: lexer rejected the malformed reader input")])
   (match (lex.spanned-result "(9 10)")
     [(Ok tokens)
-      (match (reader.spanned-result tokens)
+      (match (reader.spanned-result (& tokens))
         [(Ok form)
           (match form
             [(List start length _)
@@ -300,7 +300,7 @@
     [_ false]))
 
 (define (scan-reader-wide-ok? [source : String]) : bool
-  (match (reader.data-result source)
+  (match (reader.data-result (& source))
     [(Err _) false]
     [(Ok form)
       (match form
@@ -333,7 +333,7 @@
       [wide-ok : bool (scan-reader-wide-ok? (string.copy source))]
       [_reset-wide : unit (reader.sp-node-pool-reset!)]
       [error-ok : bool
-        (match (reader.data-result (str_cat.str-cat "(" source))
+        (match (reader.data-result (& (str_cat.str-cat "(" source)))
           [(Ok _) false]
           [(Err message)
             (and

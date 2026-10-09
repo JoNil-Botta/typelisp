@@ -166,10 +166,10 @@
   (ci.intern-syntax-id-value name-id))
 
 ;: Intern a process-stable parser literal once and memoize its String object.
-(define (stable-symbol-id [text : String]) : i64
+(define (stable-symbol-id [text : (& str)]) : i64
   (ci.intern-source-slice text 0 (ci.intern-private-string-length text)))
 
-(define (stable-syntax-id [text : String]) : ci.InternSyntaxId
+(define (stable-syntax-id [text : (& str)]) : ci.InternSyntaxId
   (ci.intern-syntax-id-from-renderable
     (ci.intern-source-slice-id text 0 (ci.intern-private-string-length text))))
 
@@ -783,7 +783,7 @@
 
 ;; A spelling that must outlive the intern table. The empty spelling stays the
 ;; static literal, as `token.int-text` returns it.
-(define (sp-text-copy [text : String]) : String
+(define (sp-text-copy [text : (& str)]) : String
   (if (= (string.string-length text) 0)
     ""
     (string.copy text)))
@@ -1268,20 +1268,20 @@
         (sp-node-pool-truncate! pool-mark)
         (Err err)])))
 
-(define (spanned-result [toks : (__tl_dyn-array token.SpannedToken)]) : ResultSpannedSexpr
+(define (spanned-result [toks : (& (__tl_dyn-array token.SpannedToken))]) : ResultSpannedSexpr
   (let
     [cur : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     (set! sp-builder-count 0)
     (set! (array-ref cur 0) 0)
-    (form-spanned-result (& toks) (&mut cur))))
+    (form-spanned-result toks (&mut cur))))
 
 ;; Read one plain data form from the front of `src` (a lockfile, TLCI
 ;; metadata): no projection suffixes, a stray closing delimiter is unexpected
 ;; rather than mismatched, and errors are message-only. The form's rows stay in
 ;; the node pool; callers truncate it to their own mark once they have copied
 ;; out what they need. A lexer error panics.
-(define (data-result [src : String]) : ResultSexpr
-  (match (lexer.spanned-result (& src))
+(define (data-result [src : (& str)]) : ResultSexpr
+  (match (lexer.spanned-result src)
     [(Err err) (io.panic (token.source-error-message err))]
     [(Ok toks)
       (let

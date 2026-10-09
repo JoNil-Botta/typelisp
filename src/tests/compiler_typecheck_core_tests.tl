@@ -1247,7 +1247,7 @@
 (define (macro-output-source-sexpr [form : String]) : reader.SpannedSexpr
   (match (lexer.spanned-result (& form))
     [(Ok toks)
-      (match (reader.spanned-result toks)
+      (match (reader.spanned-result (& toks))
         [(Ok sexpr) sexpr]
         [(Err _)
           (reader.spanned-sexpr-list-from-builder

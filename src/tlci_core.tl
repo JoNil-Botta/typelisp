@@ -1978,7 +1978,7 @@
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [count : i64
-      (match (reader.data-result signature)
+      (match (reader.data-result (& signature))
         [(Err _) -1]
         [(Ok form)
           (match (reader.sexpr-view form)
@@ -2731,7 +2731,7 @@
   (let
     [mark : i64 (reader.sp-node-pool-len)]
     [result : ResultTlciMetadata
-      (match (reader.data-result source)
+      (match (reader.data-result (& source))
         [(Err message) (Err (str_cat.str-cat "tlci metadata: " message))]
         [(Ok form) (tlci-metadata-from-form form)])]
     (reader.sp-node-pool-truncate! mark)

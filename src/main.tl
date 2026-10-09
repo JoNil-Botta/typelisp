@@ -8,7 +8,7 @@
 ;;   typelisp <command> <args...>
 ;;
 ;; Recognized commands: build, run, check, fmt, lint, test, doc, compile, clean,
-;; explain, inspect, repl, lsp, new, and init. The command name is `(io.arg 1)`;
+;; expand, explain, inspect, repl, lsp, new, and init. The command name is `(io.arg 1)`;
 ;; each `*-run-from` entry parses its own arguments starting at index 2.
 ;;
 ;; This is the shipped Rust-free stage0 dispatcher: the toolchain
@@ -32,6 +32,7 @@
 (import doc_cli_core)
 (import compile_cli_core)
 (import clean_cli_core)
+(import expand_cli_core)
 (import explain_cli_core)
 (import inspect_cli_core)
 (import repl_cli_core)
@@ -80,6 +81,7 @@ Commands:
     typelisp clean          Remove build artifacts
     typelisp compile        Generate assembly or IR
     typelisp doc            Generate documentation or run doc tests
+    typelisp expand         Show the checked expansion of a macro invocation
     typelisp explain        Explain a diagnostic code
     typelisp fmt            Format source files or a package
     typelisp init           Scaffold a package in the current directory
@@ -318,6 +320,24 @@ Options:
 (define (cli-inspect-help-text) : String
   (inspect_cli_core.tlci-inspect-help-text))
 
+(define (cli-expand-help-text) : String
+  "Usage:
+    typelisp expand <file.tl> --at <line>:<column> [--max-bytes <n>] [--target <target>] [--cfg <name>...] [--stdlib-root <dir>...]
+
+Summary:
+    Check a source file and show the checked expansion of the innermost macro
+    invocation that covers a position, with every enclosing invocation from
+    the outermost inward. The expansion is the production expansion the check
+    used; inspecting it never builds or runs code.
+
+Options:
+    --at <line>:<column>           1-based position inside the invocation
+    --max-bytes <n>                Truncate the rendered expansion (default 65536)
+    --target <target>              linux-x86_64 or windows-x86_64
+    --cfg <name>                   Enable a compile-time cfg predicate name
+    --stdlib-root <dir>            Search root for stdlib/... imports
+")
+
 (define (cli-explain-help-text) : String
   ;; The help-surface gate scans this dispatcher block while the rendered help
   ;; is deliberately owned by explain_cli_core. Keep its delegated public
@@ -459,6 +479,10 @@ Options:
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-compile-help-text) 0)
         (compile_cli_core.compile-cli-run count))]
+    [(cli-eq? command "expand")
+      (if (cli-subcommand-help-request? count)
+        (cli-print-help-text (cli-expand-help-text) 0)
+        (expand_cli_core.selfhost-expand-run-from 2 count))]
     [(cli-eq? command "explain")
       (if (cli-subcommand-help-request? count)
         (cli-print-help-text (cli-explain-help-text) 0)

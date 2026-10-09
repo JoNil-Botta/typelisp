@@ -662,6 +662,7 @@ thread_safe_string|all|-|tests/integration/thread_safe_string.tl|42|-|-|stdlib/a
 thread_safe_i64_vec|all|-|tests/integration/thread_safe_i64_vec.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl stdlib/vector.tl|-
 thread_safe_box_i64|all|-|tests/integration/thread_safe_box_i64.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 atomic_thread_spawn|all|-|tests/integration/atomic_thread_spawn.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
+null_arena_sentinel|all|-|tests/integration/null_arena_sentinel.tl|42|-|-|stdlib/arena.tl stdlib/thread.tl stdlib/string.tl|-
 safe_threading_example|all|-|examples/safe_threading.tl|42|safe threading score: 42\n|-|stdlib/arena.tl stdlib/io.tl stdlib/thread.tl stdlib/string.tl stdlib/str_cat.tl|-
 arena_lifetimes_example|all|-|examples/arena_lifetimes.tl|42|arena lifetime score: 42\n|-|stdlib/arena.tl stdlib/io.tl stdlib/profile.tl stdlib/thread.tl stdlib/string.tl stdlib/test.tl|-
 tl_alloc|all|-|tests/integration/tl_alloc.tl|0|-|-|-|-

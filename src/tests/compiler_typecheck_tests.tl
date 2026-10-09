@@ -2750,6 +2750,186 @@
     (with-escape scratch inc)))")
       "typecheck: with-escape result type is not clone-supported: (-> i64 i64)")))
 
+;; #8776: with-escape and with-scratch check their body under a region scoped
+;; to the form, so a body allocation cannot outlive it through a store, a
+;; global, a capture, `return` or a `try` error exit. Values passed by value to
+;; ordinary functions, outer-body values used by a nested form, scalar exits and
+;; lifetime-generic calls on tagged values still check.
+(define (compiler-typecheck-scratch-body-region-tests-ok?) : bool
+  (and
+    (compiler-typecheck-rendered-error-ok?
+      "(define (main) : i64
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (with-scratch (set! items (__tl_make-array i64 4)) 0)
+    (array-length items)))"
+      "error[E0205]: typecheck: cannot store region-tagged value into assignment; region value would escape
+  --> :4:19
+   |
+ 4 |     (with-scratch (set! items (__tl_make-array i64 4)) 0)
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  --> :4:19
+   |
+ 4 |     (with-scratch (set! items (__tl_make-array i64 4)) 0)
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ target binding `items` lives longer than the assigned value
+  --> :4:31
+   |
+ 4 |     (with-scratch (set! items (__tl_make-array i64 4)) 0)
+   |                               ^^^^^^^^^^^^^^^^^^^^^^ assigned value carries a shorter lifetime
+   = help: return an owned clone, keep the value inside the arena/scope, or use with-escape for supported clone-out
+")
+    (compiler-typecheck-rendered-error-ok?
+      "(define (leak) : (__tl_dyn-array i64)
+  (with-scratch (return (__tl_make-array i64 4)) 0)
+  (__tl_make-array i64 1))
+(define (main) : i64
+  (array-length (leak)))"
+      "error[E0205]: typecheck: scratch-allocated value cannot leave with-scratch or with-escape through return; the form reclaims it on exit
+  --> :2:17
+   |
+ 2 |   (with-scratch (return (__tl_make-array i64 4)) 0)
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  --> :2:25
+   |
+ 2 |   (with-scratch (return (__tl_make-array i64 4)) 0)
+   |                         ^^^^^^^^^^^^^^^^^^^^^^ returned value carries a lifetime or arena that cannot cross this boundary
+   = help: return an owned clone, keep the value inside the arena/scope, or use with-escape for supported clone-out
+")
+    (compiler-typecheck-rendered-error-ok?
+      "(defenum Outcome
+  (Ok i64)
+  (Err (__tl_dyn-array i64)))
+(define (attempt) : Outcome
+  (Outcome.Err (__tl_make-array i64 2)))
+(define (leak) : Outcome
+  (with-scratch (try (attempt)))
+  (Outcome.Ok 0))
+(define (main) : i64
+  0)"
+      "error[E0205]: typecheck: scratch-allocated value cannot leave with-scratch or with-escape through try's error exit; the form reclaims it on exit
+  --> :7:22
+   |
+ 7 |   (with-scratch (try (attempt)))
+   |                      ^^^^^^^^
+")
+    (compiler-typecheck-error-ok?
+      "(define g : (__tl_dyn-array i64) (__tl_make-array i64 1))
+(define (main) : i64
+  (with-scratch (set! g (__tl_make-array i64 4)) 0)
+  (array-length g))"
+      "typecheck: cannot store region-tagged value into assignment; region value would escape")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64
+  (with-scratch
+    (let
+      [items : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      [size : (-> i64) (lambda () : i64 (array-length items))]
+      (size))))"
+      "typecheck: lambda cannot capture region-tagged value; region value would escape")
+    ;; A nested form's allocation cannot outlive it inside the outer body.
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64
+  (with-scratch
+    (let
+      [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      (with-scratch (set! items (__tl_make-array i64 4)) 0)
+      (array-length items))))"
+      "typecheck: assignment type mismatch: expected (__tl_dyn-array i64), found (__tl_dyn-array i64)")
+    ;; A try's Ok payload keeps the operand's region.
+    (compiler-typecheck-error-ok?
+      "(defenum Outcome
+  (Ok (__tl_dyn-array i64))
+  (Err i64))
+(define (attempt) : Outcome
+  (Outcome.Ok (__tl_make-array i64 2)))
+(define (keep) : Outcome
+  (let
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (with-scratch (set! items (try (attempt))) 0)
+    (Outcome.Ok items)))
+(define (main) : i64
+  0)"
+      "typecheck: cannot store region-tagged value into assignment; region value would escape")
+    ;; in-arena inside the body keeps the body region unless its arena names an
+    ;; owner region, as inside with-arena.
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-with-arena-source
+        "(define (main) : i64
+  (let
+    [home : Arena (arena-current)]
+    [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+    (with-scratch (set! items (in-arena home (__tl_make-array i64 4))) 0)
+    (array-length items)))")
+      "typecheck: cannot store region-tagged value into assignment; region value would escape")
+    (compiler-typecheck-ok?
+      "(define (size [items : (__tl_dyn-array i64)]) : i64
+  (array-length items))
+(define (main) : i64
+  (with-scratch (size (__tl_make-array i64 4))))")
+    ;; The body region, not the enclosing with-arena's, tags a scratch
+    ;; allocation, so it may still be passed to an ordinary function.
+    (compiler-typecheck-ok?
+      (compiler-typecheck-with-arena-source
+        "(define (size [items : (__tl_dyn-array i64)]) : i64
+  (array-length items))
+(define (main) : i64
+  (let
+    [scratch : Arena (arena-make)]
+    (with-arena phase
+      (with-escape scratch (size (__tl_make-array i64 4))))))"))
+    (compiler-typecheck-ok?
+      "(define (main) : i64
+  (with-scratch
+    (let
+      [outer : (__tl_dyn-array i64) (__tl_make-array i64 4)]
+      [items : (__tl_dyn-array i64) (__tl_make-array i64 1)]
+      (with-scratch (set! items outer) 0)
+      (array-length items))))")
+    (compiler-typecheck-ok?
+      "(defenum Outcome
+  (Ok (__tl_dyn-array i64))
+  (Err i64))
+(define (attempt) : Outcome
+  (Outcome.Ok (__tl_make-array i64 2)))
+(define (count) : Outcome
+  (let
+    [n : i64 (with-scratch (array-length (try (attempt))))]
+    (Outcome.Err n)))
+(define (main) : i64
+  0)")
+    (compiler-typecheck-ok?
+      "(define (size) : i64
+  (with-scratch (return (array-length (__tl_make-array i64 4))) 0)
+  0)
+(define (main) : i64
+  (size))")
+    (compiler-typecheck-ok?
+      (compiler-typecheck-with-arena-source
+        "(define (main) : i64
+  (let
+    [scratch : Arena (arena-make)]
+    (array-length
+      (with-escape scratch
+        (with-arena r (array-length (__tl_make-array i64 4)))
+        (__tl_make-array i64 2)))))"))
+    ;; A region tag does not block a lifetime-generic call's inference, in a
+    ;; scratch body or a with-arena body.
+    (compiler-typecheck-ok?
+      "(defenum Anchor
+  (:lifetimes text)
+  (Anchored (& text str) (__tl_dyn-array i64)))
+(define (anchored [text : (& text str)]) : (Anchor text)
+  (Anchored text (__tl_make-array i64 3)))
+(define (anchor-size [anchor : (Anchor text)]) : i64
+  (match anchor
+    [(Anchored _ items) (array-length items)]))
+(define (main) : i64
+  (let
+    [source : String \"abc\"]
+    (+
+      (with-scratch (anchor-size (anchored (& source))))
+      (with-arena r (anchor-size (anchored (& source)))))))")))
+
 (define (compiler-typecheck-in-arena-tests-ok?) : bool
   (and
     (compiler-typecheck-ok?
@@ -11087,6 +11267,9 @@
   (if (compiler-typecheck-with-escape-tests-ok?)
     unit
     (io.panic "typecheck: with-escape tests failed"))
+  (if (compiler-typecheck-scratch-body-region-tests-ok?)
+    unit
+    (io.panic "typecheck: scratch body region tests failed"))
   (if (compiler-typecheck-in-arena-tests-ok?)
     unit
     (io.panic "typecheck: in-arena tests failed"))

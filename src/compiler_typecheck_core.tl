@@ -7867,6 +7867,7 @@
       (tc-diag-string-prefix?
         (& text)
         "typecheck: cannot store region-tagged value into ")
+      (tc-diag-string-prefix? (& text) (tc-scratch-exit-message-prefix))
       (string.eq
         text
         "typecheck: lambda cannot capture region-tagged value; region value would escape")
@@ -35433,6 +35434,48 @@
   [formal : ast.AstType]
   [actual : ast.AstType]
   [position : TcVariance]) : ResultTcLifetimeSubst
+  ;; A region tag the formal does not name, such as a with-arena or scratch
+  ;; body's allocation tag, constrains no lifetime parameter; the call's
+  ;; region-argument rule judges it. Infer from the type under it.
+  (match (tc-global-shared-view actual)
+    [(Region _ actual-inner)
+      (match (tc-resolve-type ctx (tc-global-shared-view formal))
+        [(Region _ _)
+          (tc-infer-lifetime-subst-from-type-core
+            ctx
+            env
+            params
+            subst
+            formal
+            actual
+            position)]
+        [_
+          (tc-infer-lifetime-subst-from-type
+            ctx
+            env
+            params
+            subst
+            formal
+            (ast.ty-node-get actual-inner)
+            position)])]
+    [_
+      (tc-infer-lifetime-subst-from-type-core
+        ctx
+        env
+        params
+        subst
+        formal
+        actual
+        position)]))
+
+(define (tc-infer-lifetime-subst-from-type-core
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : ast.AstLifetimeList]
+  [subst : TcLifetimeSubst]
+  [formal : ast.AstType]
+  [actual : ast.AstType]
+  [position : TcVariance]) : ResultTcLifetimeSubst
   (let
     [want : ast.AstType (tc-resolve-type ctx (tc-global-shared-view formal))]
     [got : ast.AstType (tc-resolve-type ctx (tc-global-shared-view actual))]
@@ -39063,6 +39106,9 @@
                       (not
                         (tc-type-regions-all-atomic-arena-owners?
                           env
+                          (tc-global-shared-view got)))
+                      (not
+                        (tc-type-regions-all-scratch?
                           (tc-global-shared-view got)))
                       (not
                         (tc-type-contains-reference?
@@ -52750,14 +52796,54 @@
     [(TcTryEarlyExitForbidden _)
       (tc-kind-message (Spmd) "typecheck: try inside foreach is not supported")]))
 
+;; A with-scratch or with-escape body's allocation is reclaimed when the form
+;; exits, so it cannot leave through `return` or a `try` error exit (#8776).
+;; The forms' clone-out result is the way out.
+(define (tc-scratch-exit-message-prefix) : String
+  "typecheck: scratch-allocated value cannot leave with-scratch or with-escape through ")
+
+(define (tc-scratch-exit-error [exit : String]) : String
+  (tc-kind-message
+    (RegionEscape)
+    (str_cat.str-cat
+      (tc-scratch-exit-message-prefix)
+      exit
+      "; the form reclaims it on exit")))
+
+(define (tc-regions-have-scratch-body? [regions : TcNameIdList]) : bool
+  (let
+    [cursor : TcNameIdList regions]
+    [found : bool false]
+    (while (and (not found) (not (tc-name-id-list-empty? cursor)))
+      (when
+        (tc-scratch-region-id? (tc-name-id-list-head cursor))
+        (set! found true))
+      (set! cursor (tc-name-id-list-rest cursor)))
+    found))
+
 (define (tc-try-expr [ctx : TcContext] [env : TcTypeEnv] [inner : ast.AstExpr]) : ResultTcType
   (let
-    [operand-ty : ast.AstType (try (tc-expr ctx env inner))]
+    [operand-ty : ast.AstType
+      (try (tc-expr ctx env (tc-global-shared-view inner)))]
+    [regions : TcNameIdList
+      (tc-type-outer-regions (tc-global-shared-view operand-ty))]
     (match (tc-current-return-type env)
       [(Ok return-ty)
         (match (tc-try-query ctx operand-ty return-ty TcTryEarlyExitAllowed)
           [(TcTryQueryCompatible operand-info _)
-            (Ok (tc-result-info-ok-type operand-info))]
+            (if (and
+              (tc-regions-have-scratch-body? regions)
+              (tc-region-taggable-type?
+                (tc-result-info-err-type (tc-global-shared-view operand-info))))
+              (Err
+                (tc-locate-error-at-expr
+                  (tc-context-expr-bases ctx)
+                  inner
+                  (tc-scratch-exit-error "try's error exit")))
+              ;; The Ok payload lives where the operand does, as a match
+              ;; arm's binding would.
+              (Ok
+                (tc-tag-regions regions (tc-result-info-ok-type operand-info))))]
           [(TcTryQueryIncompatible _ _ reason)
             (Err (tc-try-incompatibility-message reason))])]
       [(Err _) (Err "typecheck: try requires enclosing Result-like function")])))
@@ -52776,6 +52862,11 @@
               env
               (tc-global-shared-view value)
               (tc-global-shared-view return-ty)))]
+        [scratch-value : bool
+          (and
+            (tc-type-contains-region-tag? (tc-global-shared-view value-ty))
+            (tc-regions-have-scratch-body?
+              (tc-type-collect-regions (tc-global-shared-view value-ty))))]
         [_
           (try (tc-expect value-ty return-ty "typecheck: return type mismatch"))]
         (if (tc-expr-result-uses-active-cleanup-owner? ctx env value)
@@ -52783,7 +52874,9 @@
             (tc-kind-message
               (ResourceOwnership)
               "typecheck: cleanup-required resource would escape with scope"))
-          (Ok (Never))))]
+          (if scratch-value
+            (Err (tc-scratch-exit-error "return"))
+            (Ok (Never)))))]
     [(Err _) (Err "typecheck: return requires enclosing function")]))
 
 (define (tc-variant-owner-name [ctx : TcContext] [handle : i64]) : ResultTcString
@@ -60276,6 +60369,65 @@
 ;; with-escape is a first-class scratch-arena clone path, not a lexical
 ;; lifetime binder. The scratch expression is just an arena handle, and
 ;; supported results leave the form with scratch-region tags erased.
+;;
+;; The scratch arena is rewound (with-escape) or destroyed (with-scratch) when
+;; the form exits, so both check their body under an anonymous region scoped
+;; to the form, as with-arena does (#8776): a body allocation is tagged with it,
+;; and the ordinary escape checks reject storing one into a place that outlives
+;; the form, a global or a lambda capture. `return` and a `try` error exit are
+;; rejected below. Only the cloned result leaves. The region is never a branded
+;; scratch's own `r`, which outlives the rewind. Each form names its region by
+;; its first body expression, so nested forms get distinct regions.
+;;
+;; A by-value call argument does not take with-arena's blanket rule (see
+;; tc-type-regions-all-scratch?): that rule would reject handing any body
+;; allocation to an ordinary function, which is what a scratch body is for.
+;; What a callee does with the value is tracked by #8805.
+(define (tc-scratch-region-name-prefix) : String
+  "\n__typelisp_scratch_region_")
+
+(define (tc-scratch-body-region [body : (& body ast.AstExprList)]) : i64
+  (tc-generated-name-id
+    (str_cat.str-cat
+      (tc-scratch-region-name-prefix)
+      (string.int->string
+        (if (> body.len 0)
+          (array-ref body.slots 0)
+          -1)))))
+
+(define (tc-scratch-region-id? [region : i64]) : bool
+  (and
+    (ci.intern-renderable-id? region)
+    (tc-diag-string-prefix?
+      (ci.intern-str region)
+      (tc-scratch-region-name-prefix))))
+
+(define (tc-type-regions-all-scratch? [ty : ast.AstType]) : bool
+  (let
+    [cursor : TcNameIdList (tc-type-collect-regions ty)]
+    [all-scratch : bool true]
+    (while (and all-scratch (not (tc-name-id-list-empty? cursor)))
+      (if (tc-scratch-region-id? (tc-name-id-list-head cursor))
+        unit
+        (set! all-scratch false))
+      (set! cursor (tc-name-id-list-rest cursor)))
+    all-scratch))
+
+(define (tc-scratch-body-type
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [body : ast.AstExprList]
+  [expected : ast.AstMaybeType]) : ResultTcType
+  (let
+    [saved : TcTypeEnvScopedRuntimeSave
+      (tc-type-env-scoped-runtime-enter-env! env)]
+    [region-env : TcTypeEnv
+      (tc-push-region env (tc-scratch-body-region (& body)))]
+    [result : ResultTcType
+      (tc-begin-list-maybe-expected ctx region-env body expected)]
+    (tc-type-env-scoped-runtime-restore! saved)
+    result))
+
 (define (tc-with-escape-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -60287,7 +60439,7 @@
     (if (tc-arena-type? ctx scratch-ty)
       (let
         [body-ty : ast.AstType
-          (try (tc-begin-list-maybe-expected ctx env body expected))]
+          (try (tc-scratch-body-type ctx env body expected))]
         (if (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
           (let
             [clone-ty : ast.AstType (tc-type-without-regions body-ty)]
@@ -60307,8 +60459,7 @@
   [body : ast.AstExprList]
   [expected : ast.AstMaybeType]) : ResultTcType
   (let
-    [body-ty : ast.AstType
-      (try (tc-begin-list-maybe-expected ctx env body expected))]
+    [body-ty : ast.AstType (try (tc-scratch-body-type ctx env body expected))]
     (if (tc-clone-able-type? ctx (tc-global-shared-view body-ty))
       (let
         [clone-ty : ast.AstType (tc-type-without-regions body-ty)]

@@ -38152,8 +38152,8 @@ b_keep:
     (= result 1)))
 
 ;; Optimize only the accumulated function group.  The group's chunks are parsed
-;; in place; the complete peephole result is allocated in the caller arena
-;; before the scoped record arena is released.
+;; in place; the complete peephole result is cloned out into the caller arena
+;; when the scoped record arena is released.
 (define (compiler-backend-peephole-chunk-state-flush
   [backend-state : backend.CompilerBackendState]
   [stream : backend.CompilerBackendStreamState]
@@ -38161,32 +38161,28 @@ b_keep:
   (if (text_buf.empty? (& state.group))
     state
     (let
-      [output-arena : arena.Arena (arena.current)]
-      [peepholed-asm : String ""]
-      (with-scratch
-        (let
-          [chunks : backend.CompilerBackendPeepholeChunkArray
-            (backend.compiler-backend-peephole-chunk-array state.group)]
-          [records : backend.CompilerBackendPeepholeLineVec
-            (backend.compiler-backend-peephole-asm-once-records-chunks
-              backend-state
-              stream
-              chunks
-              false)]
-          ;; RMW-2 folds the recognized triples on the FINAL record stream of
-          ;; the group -- see the PLACEMENT note on the pass.
-          [_folded : unit
-            (backend.compiler-backend-peephole-rmw-fold-candidates!
-              backend-state
-              stream
-              (backend.compiler-backend-global-shared-view records))]
-          [rendered : String
-            (in-arena
-              output-arena
-              (backend.compiler-backend-peephole-records-render records))]
-          (backend.compiler-backend-peephole-records-retire! stream)
-          (set! peepholed-asm rendered)
-          unit))
+      [peepholed-asm : String
+        (with-scratch
+          (let
+            [chunks : backend.CompilerBackendPeepholeChunkArray
+              (backend.compiler-backend-peephole-chunk-array state.group)]
+            [records : backend.CompilerBackendPeepholeLineVec
+              (backend.compiler-backend-peephole-asm-once-records-chunks
+                backend-state
+                stream
+                chunks
+                false)]
+            ;; RMW-2 folds the recognized triples on the FINAL record stream of
+            ;; the group -- see the PLACEMENT note on the pass.
+            [_folded : unit
+              (backend.compiler-backend-peephole-rmw-fold-candidates!
+                backend-state
+                stream
+                (backend.compiler-backend-global-shared-view records))]
+            [rendered : String
+              (backend.compiler-backend-peephole-records-render records)]
+            (backend.compiler-backend-peephole-records-retire! stream)
+            rendered))]
       (CompilerBackendPeepholeChunkState
         (text_buf.append state.out peepholed-asm)
         (text_buf.empty)))))
@@ -38322,34 +38318,21 @@ b_keep:
 ;; the standalone profiling driver use this text-to-text spelling; production
 ;; runs the same analysis inside the peephole's record walk and never builds
 ;; the intermediate text.
-(define (compiler-backend-layout-run
-  [asm : String]
-  [mode : i64]
-  [home : arena.Arena]) : String
+(define (compiler-backend-layout-run [asm : String] [mode : i64]) : String
   (let
     [n : i64 (string.string-length asm)]
     [laid-out : backend.CompilerBackendLayoutPlan
       (backend.compiler-backend-layout-analyze asm n mode true)]
     (if (= laid-out.len 0)
       asm
-      (in-arena
-        home
-        (compiler-backend-layout-render
-          asm
-          laid-out.starts
-          laid-out.plan
-          laid-out.len)))))
+      (compiler-backend-layout-render
+        asm
+        laid-out.starts
+        laid-out.plan
+        laid-out.len))))
 
 (define (compiler-backend-layout-asm-with-mode [asm : String] [mode : i64]) : String
-  (let
-    [home : arena.Arena (arena.current)]
-    [out : String ""]
-    (with-scratch
-      (let
-        [rendered : String (compiler-backend-layout-run asm mode home)]
-        (set! out rendered)
-        unit))
-    out))
+  (with-scratch (compiler-backend-layout-run asm mode)))
 
 (define (compiler-backend-peephole-asm-once [asm : String]) : String
   (let

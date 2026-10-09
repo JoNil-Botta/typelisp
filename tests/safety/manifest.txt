@@ -496,6 +496,13 @@ float_literal_infinity_reject|check-fail|tests/safety/float_literal_infinity_rej
 float_literal_inf_reject|check-fail|tests/safety/float_literal_inf_reject.tl|-|unbound name inf
 in_arena_inner_region_escape|check-fail|tests/safety/in_arena_inner_region_escape.tl|-|cannot escape with-arena
 with_escape_raw_i64_reject|check-fail|tests/safety/with_escape_raw_i64_reject.tl|-|with-escape arena must be Arena
+# A with-escape or with-scratch body allocation cannot outlive the form (#8776).
+scratch_body_with_escape_store_reject|check-fail|tests/safety/scratch_body_with_escape_store_reject.tl|-|cannot store region-tagged value into assignment
+scratch_body_with_scratch_store_reject|check-fail|tests/safety/scratch_body_with_scratch_store_reject.tl|-|cannot store region-tagged value into assignment
+scratch_body_global_store_reject|check-fail|tests/safety/scratch_body_global_store_reject.tl|-|cannot store region-tagged value into assignment
+scratch_body_return_reject|check-fail|tests/safety/scratch_body_return_reject.tl|-|scratch-allocated value cannot leave with-scratch or with-escape through return
+scratch_body_try_error_exit_reject|check-fail|tests/safety/scratch_body_try_error_exit_reject.tl|-|scratch-allocated value cannot leave with-scratch or with-escape through try's error exit
+scratch_body_owner_region_reject|check-fail|tests/safety/scratch_body_owner_region_reject.tl|-|assignment type mismatch
 in_arena_raw_i64_reject|check-fail|tests/safety/in_arena_raw_i64_reject.tl|-|in-arena arena must be Arena
 in_arena_ordinary_assignment_reject|check-fail|tests/safety/in_arena_ordinary_assignment_reject.tl|-|cannot store region-tagged value into assignment
 in_arena_ordinary_return_reject|check-fail|tests/safety/in_arena_ordinary_return_reject.tl|-|reference value would escape lexical scope

@@ -17152,7 +17152,104 @@
         target-signature
         signature-marker-id)]))
 
+;; Memo of persistent-spine outlives answers. Every reference coercion asks
+;; whether its value's lifetime outlives the expected one, and outside a scoped
+;; function body (lowering re-checks, comparison environments) each question
+;; walks the spine several times. Lowering asks the same pairs against the same
+;; few environments over and over, so a direct-mapped memo answers most of them
+;; without a walk.
+;;
+;; Soundness. The answer is a function of the spine below `env` and of the
+;; structural session the arena-owner markers are resolved in. The chain below
+;; a head is immutable and records are append-only within a store, so the key
+;; (store handle, head) denotes the same chain for as long as
+;; `tc-type-env-store-epoch` holds still; a moved epoch, a different session
+;; owner or reset generation, or a new intern generation misses. A collision
+;; only overwrites a slot.
+(define tc-outlives-memo-capacity : i64
+  1024)
+(define tc-outlives-memo-stores : (__tl_dyn-array i64)
+  (__tl_make-array i64 tc-outlives-memo-capacity))
+(define tc-outlives-memo-heads : (__tl_dyn-array i64)
+  (__tl_make-array i64 tc-outlives-memo-capacity))
+(define tc-outlives-memo-values : (__tl_dyn-array i64)
+  (__tl_make-array i64 tc-outlives-memo-capacity))
+(define tc-outlives-memo-targets : (__tl_dyn-array i64)
+  (__tl_make-array i64 tc-outlives-memo-capacity))
+(define tc-outlives-memo-owners : (__tl_dyn-array i64)
+  (__tl_make-array i64 tc-outlives-memo-capacity))
+(define tc-outlives-memo-session-generations : (__tl_dyn-array i64)
+  (__tl_make-array i64 tc-outlives-memo-capacity))
+(define tc-outlives-memo-intern-generations : (__tl_dyn-array i64)
+  (__tl_make-array i64 tc-outlives-memo-capacity))
+
+;; Zero is an empty slot; otherwise the store epoch at recording plus one.
+(define tc-outlives-memo-epochs : (__tl_dyn-array i64)
+  (__tl_make-array i64 tc-outlives-memo-capacity))
+(define tc-outlives-memo-results : (__tl_dyn-array bool)
+  (__tl_make-array bool tc-outlives-memo-capacity))
+
+(define (tc-outlives-memo-slot [head : i64] [value : i64] [target : i64]) : i64
+  (bit-and
+    (bit-xor
+      (bit-xor (* head 2654435761) (shr head 21))
+      (bit-xor (* value 40503) (* target 9973)))
+    (- tc-outlives-memo-capacity 1)))
+
 (define (tc-lifetime-outlives-lifetime-persistent-id?
+  [env : TcTypeEnv]
+  [value-lifetime-id : i64]
+  [target-lifetime-id : i64]) : bool
+  (if (or (< value-lifetime-id 0) (< target-lifetime-id 0))
+    false
+    (if (= value-lifetime-id target-lifetime-id)
+      true
+      (let
+        [session : cis.InternStructuralSessionHandle
+          (tc-type-env-structural-session env)]
+        [owner : i64 (cis.intern-structural-session-owner session)]
+        [session-generation : i64
+          (cis.intern-structural-session-current-reset-generation session)]
+        [intern-generation : i64 (ci.intern-generation)]
+        [epoch : i64 (+ tc-type-env-store-epoch 1)]
+        [slot : i64
+          (tc-outlives-memo-slot env.head value-lifetime-id target-lifetime-id)]
+        (if (and
+          (= (array-ref tc-outlives-memo-epochs slot) epoch)
+          (= (array-ref tc-outlives-memo-heads slot) env.head)
+          (= (array-ref tc-outlives-memo-stores slot) env.store)
+          (= (array-ref tc-outlives-memo-values slot) value-lifetime-id)
+          (= (array-ref tc-outlives-memo-targets slot) target-lifetime-id)
+          (= (array-ref tc-outlives-memo-owners slot) owner)
+          (=
+            (array-ref tc-outlives-memo-session-generations slot)
+            session-generation)
+          (=
+            (array-ref tc-outlives-memo-intern-generations slot)
+            intern-generation))
+          (array-ref tc-outlives-memo-results slot)
+          (let
+            [result : bool
+              (tc-lifetime-outlives-lifetime-persistent-scan-id?
+                env
+                value-lifetime-id
+                target-lifetime-id)]
+            (set! (array-ref tc-outlives-memo-epochs slot) epoch)
+            (set! (array-ref tc-outlives-memo-heads slot) env.head)
+            (set! (array-ref tc-outlives-memo-stores slot) env.store)
+            (set! (array-ref tc-outlives-memo-values slot) value-lifetime-id)
+            (set! (array-ref tc-outlives-memo-targets slot) target-lifetime-id)
+            (set! (array-ref tc-outlives-memo-owners slot) owner)
+            (set!
+              (array-ref tc-outlives-memo-session-generations slot)
+              session-generation)
+            (set!
+              (array-ref tc-outlives-memo-intern-generations slot)
+              intern-generation)
+            (set! (array-ref tc-outlives-memo-results slot) result)
+            result))))))
+
+(define (tc-lifetime-outlives-lifetime-persistent-scan-id?
   [env : TcTypeEnv]
   [value-lifetime-id : i64]
   [target-lifetime-id : i64]) : bool

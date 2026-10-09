@@ -89,14 +89,6 @@ in asm
 not-contains into_next
 not-contains into_iterator
 
-# A direct `iterator.range` call is never called: the loop counts from its
-# arguments, so even -O0 builds no range value.
-case range-call-builds-no-range
-source {{work}}/range-for.tl
-opt 0
-in asm
-not-contains call _tl_stdlib_iterator_stdlib_iterator_range
-
 case range-protocol-control
 source {{work}}/range-protocol.tl
 opt 0

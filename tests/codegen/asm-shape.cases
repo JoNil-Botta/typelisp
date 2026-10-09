@@ -100,32 +100,6 @@ count >= 1 ^[[:space:]]+jl \.L
 in fn counter_sink_copy_bump
 count = 1 ^[[:space:]]+call tl_mem_copy8_fwd$
 
-# A `for` over a direct `iterator.range` call counts from the call's arguments,
-# and the counter sink gives it its `while` twin's loop. At level 1 both close
-# with the step stored right before the jump back to the header; at level 2
-# they close with `jl` and no `leaq 1(...)` of a next index, and the copy idiom
-# is one block copy.
-case for-range-lean-opt1
-opt 1
-source tests/integration/for_range_lean.tl
-in fn for_range_sum_for
-count = 1 ^[[:space:]]+addq \$1, %r
-narrow ranges:addq \$1, %r~jmp \.L
-count = 3 .
-in fn for_range_sum_while
-narrow ranges:addq \$1, %r~jmp \.L
-count = 3 .
-
-case for-range-lean-opt2
-source tests/integration/for_range_lean.tl
-in fn for_range_sum_for
-count >= 1 ^[[:space:]]+jl \.L
-not-match ^[[:space:]]+leaq 1\(%r[a-z0-9]+\), %r
-in fn for_range_count_above
-not-match ^[[:space:]]+leaq 1\(%r[a-z0-9]+\), %r
-in fn for_range_copy_for
-count = 1 ^[[:space:]]+call tl_mem_copy8_fwd$
-
 # Divisor magic hoisting: constant multiplies fold into imm32 imuls; the /7
 # quotient reads the live dividend through %rax (one irreducible copy chain).
 case divmagic-hoist

@@ -64068,15 +64068,30 @@
             name
             (deref args-box))))]
     [(Fields entries-box)
-      (lower-bind-fields-pattern
-        ctx
-        state
-        env
-        type-env
-        (LowerBindMode.Owned)
-        (ir.CompilerIrValue.Var scrut-var)
-        scrut-ty
-        (deref entries-box))]
+      (match (tc_core.tc-type-strip-region
+        (tc_core.tc-resolve-type ctx (lower-global-shared-view scrut-ty)))
+        ;; On a `(& S)` scrutinee (#8583) the fields bind through the borrow,
+        ;; as a constructor-shaped struct pattern's do.
+        [(Ref borrow-lifetime referent-box)
+          (lower-bind-fields-pattern
+            ctx
+            state
+            env
+            type-env
+            (LowerBindMode.Borrowed borrow-lifetime)
+            (ir.CompilerIrValue.Var scrut-var)
+            (tc_core.tc-context-type-get ctx referent-box)
+            (deref entries-box))]
+        [_
+          (lower-bind-fields-pattern
+            ctx
+            state
+            env
+            type-env
+            (LowerBindMode.Owned)
+            (ir.CompilerIrValue.Var scrut-var)
+            scrut-ty
+            (deref entries-box))])]
     [_ (Ok state env type-env)]))
 
 ;; A struct pattern on a `(& S)` scrutinee (#8583): the scrutinee holds the

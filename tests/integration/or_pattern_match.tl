@@ -85,6 +85,12 @@
   (match span
     [(fields end start) (- end start)]))
 
+;; On a `(& S)` scrutinee the fields bind through the borrow, as a
+;; constructor-shaped struct pattern's do (#8583).
+(define (span-width-ref [span : (& s Span)]) : i64
+  (match span
+    [(fields end start) (- end start)]))
+
 (define (located-score [value : Located]) : i64
   (match value
     [(At (fields [last end]) weight) (+ last weight)]))
@@ -291,7 +297,9 @@
     [select : Instr (Select (box (SelectPayload 0 38 "sel")))]
     [load : Instr (Load 3 4 5)]
     [argc : Instr (EntryArgc 9)]
+    [span : Span (Span 4 9)]
     (begin
+      (unless (= (span-width-ref (& span)) 5) (return 53))
       (unless (= (instr-dst (Load 3 4 5)) 3) (return 1))
       (unless (= (instr-dst (EntryArgc 9)) 9) (return 2))
       (unless

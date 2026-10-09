@@ -5325,15 +5325,16 @@ explicit constructors.
   ...)` resolves as an enum variant pattern when the expected enum has such a
   variant.
 - `(fields f [p g] ...)` matches a struct by field name wherever a struct
-  pattern may appear: a struct scrutinee, a struct field, tuple slot, array
-  element, enum payload, or `(box ...)` payload. A bare `f` binds field `f` to
-  a local named `f`; `[p g]` matches field `g` against the pattern `p`, so
-  `[local g]` binds field `g` as `local`. `p` is any pattern a struct field
-  accepts: a binding, `_`, or a nested irrefutable tuple, array, struct, or
-  `(fields ...)` pattern. Fields the pattern does not name are ignored, so it
-  stands for the positional struct pattern with `_` in their places. It needs
-  at least one entry; naming a field the struct does not declare, or naming a
-  field twice, is rejected. Positional struct patterns are unchanged.
+  pattern may appear: a struct or `(& S)` scrutinee, a struct field, tuple
+  slot, array element, enum payload, or `(box ...)` payload. A bare `f` binds
+  field `f` to a local named `f`; `[p g]` matches field `g` against the
+  pattern `p`, so `[local g]` binds field `g` as `local`. `p` is any pattern a
+  struct field accepts: a binding, `_`, or a nested irrefutable tuple, array,
+  struct, or `(fields ...)` pattern. Fields the pattern does not name are
+  ignored, so it stands for the positional struct pattern with `_` in their
+  places. It needs at least one entry; naming a field the struct does not
+  declare, or naming a field twice, is rejected. Positional struct patterns
+  are unchanged.
 - `(or p1 p2 ...)` matches when any of its two or more alternatives does,
   trying them left to right. It may be an arm's whole pattern, an enum
   payload sub-pattern at any depth, such as `(Move dst (or (Small) (Large)))`,

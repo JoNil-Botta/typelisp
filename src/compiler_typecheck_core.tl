@@ -56150,6 +56150,13 @@
             (tc-env-key-name-text pattern-name)
             pattern-name
             (ast.ast-pattern-list-box-shared-view args-box))]
+        [(ast.AstPattern.Fields entries-box)
+          (tc-bind-fields-pattern
+            ctx
+            env
+            (TcPatternListMode.BorrowedElement lifetime)
+            referent-ty
+            (ast.ast-pattern-list-box-shared-view entries-box))]
         [_
           (Err
             (tc-kind-message

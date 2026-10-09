@@ -36563,19 +36563,15 @@
     ;; arenas must use the runtime helper, whose atomic path reserves with CAS.
     ;; The shared flag is bit 0 of the arena's flag word and only `jnz` reads
     ;; the result, so testing the flag word's low byte is exact; `testb` takes
-    ;; an 8-bit immediate where `testq` on memory needs 32 bits.
+    ;; an 8-bit immediate where `testq` on memory needs 32 bits. The slot is
+    ;; never 0: with no arena it holds the null-arena sentinel, whose shared
+    ;; bit sends this path to the helper (`compiler-backend-runtime-null-arena-data`).
     (str_cat.str-cat
       (compiler-backend-current-arena-load
         target
         (compiler-backend-global-shared-view scav))
       (str_cat.str-cat
-        "    testq "
-        scav
-        ", "
-        scav
-        "\n    jz "
-        slow-label
-        "\n    testb $1, 48("
+        "    testb $1, 48("
         scav
         ")\n    jnz "
         slow-label
@@ -46097,16 +46093,35 @@
 (define (compiler-backend-tls-current-arena-call-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-backend-tls-current-arena-call-id? name-id))
 
+;; The intrinsics keep their contract of 0 for "no arena" while the slot holds
+;; the null-arena sentinel instead: a load reports the sentinel as 0 (by moving
+;; in the sentinel's own zero first word) and a store of 0 installs it. They
+;; stand in for a call, so %r11 is free.
 (define (compiler-backend-tls-current-arena-inline-asm
   [target : CompilerBackendTarget]
   [name-id : i64]
   [instr-diag : compiler_diagnostic.CompilerDiagnostic]) : ResultCompilerBackend
   (cond
     [(cbi.compiler-builtin-backend-tls-current-arena-load-id? name-id)
-      (Ok (compiler-backend-current-arena-load target "%rax"))]
+      (Ok
+        (str_cat.str-cat
+          (compiler-backend-current-arena-load target "%rax")
+          "    testb $16, 48(%rax)
+    cmovnzq .L_tl_null_arena(%rip), %rax
+"))]
     [(cbi.compiler-builtin-backend-tls-current-arena-store-id? name-id)
       (match (compiler-backend-target-arg-reg target 0)
-        [(Ok reg) (Ok (compiler-backend-current-arena-store target reg))]
+        [(Ok reg)
+          (Ok
+            (str_cat.str-cat
+              "    leaq .L_tl_null_arena(%rip), %r11\n    testq "
+              reg
+              ", "
+              reg
+              "\n    cmovzq %r11, "
+              reg
+              "\n"
+              (compiler-backend-current-arena-store target reg)))]
         [(Err message) (compiler-backend-instr-error instr-diag message)])]
     [else
       (compiler-backend-instr-error
@@ -76802,6 +76817,7 @@ tl_shared_object_init:
         (string.eq function "tl_backtrace_stack_set"))
       "%rax"]
     [(string.eq function "tl_region_reset") "%rbx"]
+    [(string.eq function "tl_thread_init") "%rdi"]
     [(string.is-string-prefix-at function "tl_" 0) ""]
     [else "%rax"]))
 

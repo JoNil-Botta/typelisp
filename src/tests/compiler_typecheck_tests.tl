@@ -568,7 +568,7 @@
   (and
     (compiler-typecheck-error-code-ok?
       "(define (main) : i64 (+ 1))"
-      (cdiag.compiler-diagnostic-code-parse)
+      (cdiag.compiler-diagnostic-code-parse-malformed-form)
       "parse")
     (compiler-typecheck-error-code-ok?
       (compiler-typecheck-branch-mismatch-source)

@@ -169,6 +169,7 @@ unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|typ
 stdlib_eq_box_reject|check-fail|tests/safety/stdlib_eq_box_reject.tl|-|eq: unsupported type
 stdlib_eq_recursive_box_reject|check-fail|tests/safety/stdlib_eq_recursive_box_reject.tl|-|eq: unsupported type
 stdlib_eq_dynamic_array_reject|check-fail|tests/safety/stdlib_eq_dynamic_array_reject.tl|-|eq: unsupported type
+stdlib_eq_alias_vector_field_reject|check-fail|tests/safety/stdlib_eq_alias_vector_field_reject.tl|-|eq: unsupported type dynarray_String
 stdlib_eq_reference_reject|check-fail|tests/safety/stdlib_eq_reference_reject.tl|-|eq: unsupported type
 stdlib_eq_ptr_reject|check-fail|tests/safety/stdlib_eq_ptr_reject.tl|-|eq: unsupported type
 stdlib_eq_mut_ptr_reject|check-fail|tests/safety/stdlib_eq_mut_ptr_reject.tl|-|eq: unsupported type
@@ -1376,7 +1377,14 @@ opaque_foreign_tuple_reject|check-fail|tests/safety/opaque_foreign_tuple_reject.
 opaque_foreign_box_reject|check-fail|tests/safety/opaque_foreign_box_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_by_value_fn_reject|check-fail|tests/safety/opaque_foreign_by_value_fn_reject.tl|-|typecheck: cannot use opaque_dep.make, which holds by value the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_macro_reject|check-fail|tests/safety/opaque_foreign_macro_reject.tl|-|typecheck: cannot construct the opaque type opaque_dep/Connection outside its module family
-opaque_foreign_ptr_read_reject|check-fail|tests/safety/opaque_foreign_ptr_read_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_ptr_read_reject|check-fail|tests/safety/opaque_foreign_ptr_read_reject.tl|-|typecheck: cannot read through a pointer to the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_ptr_read_borrow_reject|check-fail|tests/safety/opaque_foreign_ptr_read_borrow_reject.tl|-|typecheck: cannot read through a pointer to the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_deref_match_reject|check-fail|tests/safety/opaque_foreign_deref_match_reject.tl|-|typecheck: cannot dereference by value the opaque type opaque_dep/State outside its module family
+opaque_foreign_ptr_write_reject|check-fail|tests/safety/opaque_foreign_ptr_write_reject.tl|-|typecheck: cannot write through a pointer to the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_ptr_offset_reject|check-fail|tests/safety/opaque_foreign_ptr_offset_reject.tl|-|typecheck: cannot offset a pointer to the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_deref_place_ok|run-exit|tests/safety/opaque_foreign_deref_place_ok.tl|42|-
+opaque_foreign_ptr_read_nested_reject|check-fail|tests/safety/opaque_foreign_ptr_read_nested_reject.tl|-|typecheck: cannot read through a pointer to the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_pointer_to_reference_ok|run-exit|tests/safety/opaque_foreign_pointer_to_reference_ok.tl|42|-
 
 # JSON live-prefix validation and checked arithmetic, including strategy hooks.
 json_sequence_live_prefix|run-exit|tests/safety/json_sequence_live_prefix.tl|42|-

@@ -52576,12 +52576,66 @@
 ;; env onto their own pools instead of rebuilding.
 ;; Compiles that never request metadata keep the empty env for their whole
 ;; lifetime, so those O(program) walks run only when metadata is consumed.
+;; A generator import a module has not materialized yet, such as an instance
+;; another module generated first, resolves through its lazy-import stub, not
+;; through an import declaration. Reflection resolves a declaration's dotted
+;; field types through the same aliases (#8474), so the cached env takes every
+;; stub recorded since it last synced. Returns the cached env.
+(define (tc-ctfe-env-sync-import-stubs! [state : TcMacroState]) : ctfe_support.CtfeEnv
+  (let
+    [env : ctfe_support.CtfeEnv
+      (tc-macro-walk-field state macro-expand-ctfe-env-value)]
+    [lazy-state : TcLazyImportState (tc-macro-state-lazy-import state)]
+    [_ready : unit (tc-lazy-import-stubs-ensure-for-state! state lazy-state)]
+    [data : TcLazyImportStateData (tc-lazy-import-state-data lazy-state)]
+    [synced : i64
+      (if (<
+        data.record-count
+        (tc-macro-walk-field state macro-expand-ctfe-env-import-stubs))
+        0
+        (tc-macro-walk-field state macro-expand-ctfe-env-import-stubs))]
+    [owner : i64 (tc-macro-walk-field state macro-expand-ctfe-env-owner-arena)]
+    (if (or
+      (= data.record-count synced)
+      (not (tc-macro-walk-field state macro-expand-ctfe-env-has-metadata))
+      (= owner 0))
+      env
+      (let
+        [synced-env : ctfe_support.CtfeEnv
+          (in-arena
+            (arena.Arena owner)
+            (let
+              [reflections : ctfe_support.CtfeReflectInfoList
+                (ctfe_support.ctfe-env-reflections (& env))]
+              [index : i64 synced]
+              (while (< index data.record-count)
+                (let
+                  [alias-id : i64 (array-ref data.alias-ids index)]
+                  [target-id : i64 (array-ref data.target-ids index)]
+                  (unless
+                    (= target-id alias-id)
+                    (set!
+                      reflections
+                      (ctfe_support.ctfe-reflect-info-list-add-alias
+                        reflections
+                        (array-ref data.module-ids index)
+                        alias-id
+                        target-id))))
+                (set! index (+ index 1)))
+              (ctfe_support.ctfe-env-with-reflections env reflections)))]
+        (tc-macro-walk-set! state macro-expand-ctfe-env-value synced-env)
+        (tc-macro-walk-set!
+          state
+          macro-expand-ctfe-env-import-stubs
+          data.record-count)
+        synced-env))))
+
 (define (tc-ctfe-env [ctx : TcContext]) : ctfe_support.CtfeEnv
   (let
     [state : TcMacroState (tc-context-macro-state ctx)]
     (if (tc-macro-walk-field state macro-expand-ctfe-env-ready)
       (ctfe_support.ctfe-env-rebase-pools
-        (tc-macro-walk-field state macro-expand-ctfe-env-value)
+        (tc-ctfe-env-sync-import-stubs! state)
         (tc-context-pools ctx))
       (if (tc-macro-walk-field state ctfe-needs-metadata)
         (let
@@ -52601,7 +52655,8 @@
           (tc-macro-walk-set! state macro-expand-ctfe-env-owner-arena owner)
           (tc-macro-walk-set! state macro-expand-ctfe-env-has-metadata true)
           (tc-macro-walk-set! state macro-expand-ctfe-env-ready true)
-          built)
+          (tc-macro-walk-set! state macro-expand-ctfe-env-import-stubs 0)
+          (tc-ctfe-env-sync-import-stubs! state))
         (ctfe_support.ctfe-env-empty-with-pools-and-source-names-and-macro-state
           (tc-context-pools ctx)
           (tc-context-source-names ctx)
@@ -60367,7 +60422,14 @@
         (tc-raw-pointer-elem
           (tc-resolve-type ctx ptr-ty)
           "typecheck: ptr-read requires a raw pointer operand"))]
-    (Ok (tc-resolve-type ctx elem))))
+    [resolved : ast.AstType (tc-resolve-type ctx elem)]
+    [_
+      (try
+        (tc-opaque-by-value-ok
+          ctx
+          (tc-global-shared-view resolved)
+          "cannot read through a pointer to the"))]
+    (Ok resolved)))
 
 (define (tc-ptr-write-expr
   [ctx : TcContext]
@@ -60383,6 +60445,12 @@
           (tc-mut-pointer-elem
             (tc-resolve-type ctx ptr-ty)
             "typecheck: ptr-write! requires a MutPtr pointer operand"))]
+      [_
+        (try
+          (tc-opaque-by-value-ok
+            ctx
+            (tc-global-shared-view elem)
+            "cannot write through a pointer to the"))]
       [value-ty
         (try
           (tc-expr-with-expected-or-actual
@@ -60408,11 +60476,14 @@
     (let
       [ptr-ty : ast.AstType (try (tc-expr ctx env ptr))]
       [resolved-ptr : ast.AstType (tc-resolve-type ctx ptr-ty)]
-      [_
+      [elem : ast.AstType
         (try
           (tc-raw-pointer-elem
             (tc-global-shared-view resolved-ptr)
             "typecheck: ptr-offset requires a raw pointer operand"))]
+      ;; An offset scales by the pointee's size, part of its representation.
+      [_
+        (try (tc-opaque-by-value-ok ctx elem "cannot offset a pointer to the"))]
       [offset-ty : ast.AstType
         (try (tc-expr-with-expected-or-actual ctx env offset (I64)))]
       (if (tc-integer-type? offset-ty)
@@ -60637,8 +60708,10 @@
     (match (tc-type-strip-region
       (tc-resolve-type ctx (tc-global-shared-view box-ty)))
       [(Box inner-ty)
-        (Ok
-          (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty)))]
+        (tc-opaque-by-value-result
+          ctx
+          (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty))
+          "cannot read out of a box the")]
       [_
         (Err
           (tc-kind-message
@@ -60664,11 +60737,14 @@
         (let
           [projected : ast.AstType
             (tc-project-from-region-container box-ty (ast.ty-node-get inner-ty))]
-          (if (tc-type-compatible?
-            (tc-global-shared-view expected)
-            (tc-global-shared-view projected))
-            (Ok (tc-contextual-result-type expected projected))
-            (Ok projected)))]
+          (tc-opaque-by-value-result
+            ctx
+            (if (tc-type-compatible?
+              (tc-global-shared-view expected)
+              (tc-global-shared-view projected))
+              (tc-contextual-result-type expected projected)
+              projected)
+            "cannot read out of a box the"))]
       [_
         (Err
           (tc-kind-message
@@ -60799,7 +60875,10 @@
   [receiver : ast.AstExpr]) : ResultTcType
   (let
     [receiver-ty : ast.AstType (try (tc-expr ctx env receiver))]
-    (tc-deref-result-type ctx receiver-ty)))
+    (tc-opaque-by-value-result
+      ctx
+      (try (tc-deref-result-type ctx receiver-ty))
+      "cannot dereference by value the")))
 
 (define (tc-deref-expr-with-expected-or-actual
   [ctx : TcContext]
@@ -60816,11 +60895,14 @@
           (let
             [projected : ast.AstType
               (try (tc-deref-result-type ctx receiver-ty))]
-            (if (tc-type-compatible?
-              (tc-global-shared-view expected)
-              (tc-global-shared-view projected))
-              (Ok (tc-contextual-result-type expected projected))
-              (Ok projected)))])]
+            (tc-opaque-by-value-result
+              ctx
+              (if (tc-type-compatible?
+                (tc-global-shared-view expected)
+                (tc-global-shared-view projected))
+                (tc-contextual-result-type expected projected)
+                projected)
+              "cannot dereference by value the"))])]
     [(Err _)
       ;; Preserve contextual inference for `(deref (box (init)))`.
       (tc-box-get-expr-with-expected-or-actual ctx env receiver expected)]))
@@ -75331,6 +75413,19 @@
       (if (< name 0)
         Ok
         (Err (tc-opaque-representation-message name use))))))
+
+;; TY, the value an operation yields, or E0221 when TY holds an opaque
+;; aggregate foreign to CTX's module family by value. Gating the operations
+;; that read through a pointer, reference or box (#8734) leaves no unwritten
+;; source of such a value: the expressions that pass one along (if, match,
+;; begin) only ever receive it from a gated operation.
+(define (tc-opaque-by-value-result
+  [ctx : TcContext]
+  [ty : ast.AstType]
+  [use : String]) : ResultTcType
+  (match (tc-opaque-by-value-ok ctx (tc-global-shared-view ty) use)
+    [(Ok) (Ok ty)]
+    [(Err message) (Err message)]))
 
 ;; Err with E0221 when NAME is an opaque aggregate foreign to CTX's module
 ;; family, else Ok.
@@ -91263,6 +91358,8 @@
   (macro-expand-ctfe-env-owner-arena i64)
   (macro-expand-ctfe-env-build-generation i64)
   (macro-expand-ctfe-env-rebuild-pending bool)
+  ;; How many lazy-import stubs the cached CTFE env's reflection aliases hold.
+  (macro-expand-ctfe-env-import-stubs i64)
   (ctfe-needs-metadata bool)
   (ctfe-macro-state ctfe_support.CompilerCtfeMacroState)
   (macro-live-symbols-ready bool)
@@ -91395,6 +91492,7 @@
     0
     0
     false
+    0
     true
     (ctfe_support.compiler-ctfe-macro-state-new)
     false
@@ -111496,6 +111594,11 @@
       (let
         [nexprs (try (macro-expand-exprs ctx env decls depth exprs))]
         (Ok (ast.ast-node-push (Tuple nexprs))))]
+    ;; The index is a literal integer, not an expression.
+    [(TupleRef tuple-box index)
+      (let
+        [ntuple (try (macro-expand-node ctx env decls depth tuple-box))]
+        (Ok (ast.ast-expr-tuple-ref ntuple index)))]
     [(Array exprs)
       (let
         [nexprs (try (macro-expand-exprs ctx env decls depth exprs))]
@@ -111792,6 +111895,16 @@
         [nlive (try (macro-expand-node ctx env decls depth live-box))]
         [nindex (try (macro-expand-node ctx env decls depth index-box))]
         (Ok (ast.ast-expr-array-take narray nlive nindex)))]
+    [(ArrayPush array-box value-box)
+      (let
+        [narray (try (macro-expand-node ctx env decls depth array-box))]
+        [nvalue (try (macro-expand-node ctx env decls depth value-box))]
+        (Ok (ast.ast-node-push (ArrayPush narray nvalue))))]
+    [(StringRef string-box index-box)
+      (let
+        [nstring (try (macro-expand-node ctx env decls depth string-box))]
+        [nindex (try (macro-expand-node ctx env decls depth index-box))]
+        (Ok (ast.ast-node-push (StringRef nstring nindex))))]
     [(Replace place-box replacement-box)
       (let
         [nplace (try (macro-expand-node ctx env decls depth place-box))]
@@ -111941,7 +112054,159 @@
       (let
         [nvalue (try (macro-expand-node ctx env decls depth value-box))]
         (Ok (ast.ast-node-push (LaneValue nvalue))))]
-    [_ (Ok (ast.ast-node-push expr))]))
+    ;; The range binder is in scope for the value; the range and initial value
+    ;; are evaluated outside it.
+    [(SpmdReduce reduce-box)
+      (match (ast.ast-spmd-reduce-box-shared-view reduce-box)
+        [(Reduce op index index-ty start-box end-box init-box value-box)
+          (let
+            [nstart (try (macro-expand-node ctx env decls depth start-box))]
+            [nend (try (macro-expand-node ctx env decls depth end-box))]
+            [ninit (try (macro-expand-node ctx env decls depth init-box))]
+            [nvalue
+              (try
+                (macro-expand-node
+                  ctx
+                  (tc-bind-id
+                    env
+                    index
+                    (tc-resolve-type ctx (tc-global-shared-view index-ty)))
+                  decls
+                  depth
+                  value-box))]
+            (Ok
+              (ast.ast-node-push
+                (SpmdReduce
+                  (box (Reduce op index index-ty nstart nend ninit nvalue))))))])]
+    ;; The range binder is in scope for the value and the body, the prefix
+    ;; binder for the body; the range and the prefix's initial value are
+    ;; evaluated outside both.
+    [(SpmdScan scan-box)
+      (match (ast.ast-spmd-scan-box-shared-view scan-box)
+        [(Scan
+            op
+            index
+            index-ty
+            start-box
+            end-box
+            prefix
+            prefix-ty
+            init-box
+            value-box
+            body-box)
+          (let
+            [value-env : TcTypeEnv
+              (tc-bind-id
+                env
+                index
+                (tc-resolve-type ctx (tc-global-shared-view index-ty)))]
+            [nstart (try (macro-expand-node ctx env decls depth start-box))]
+            [nend (try (macro-expand-node ctx env decls depth end-box))]
+            [ninit (try (macro-expand-node ctx env decls depth init-box))]
+            [nvalue
+              (try (macro-expand-node ctx value-env decls depth value-box))]
+            [nbody
+              (try
+                (macro-expand-node
+                  ctx
+                  (tc-bind-id
+                    value-env
+                    prefix
+                    (tc-resolve-type ctx (tc-global-shared-view prefix-ty)))
+                  decls
+                  depth
+                  body-box))]
+            (Ok
+              (ast.ast-node-push
+                (SpmdScan
+                  (box
+                    (Scan
+                      op
+                      index
+                      index-ty
+                      nstart
+                      nend
+                      prefix
+                      prefix-ty
+                      ninit
+                      nvalue
+                      nbody))))))])]
+    ;; The range binder is in scope for the predicate and the body, the slot
+    ;; binder for the body; the range and the slot's initial value are evaluated
+    ;; outside both.
+    [(SpmdCompact compact-box)
+      (match (ast.ast-spmd-compact-box-shared-view compact-box)
+        [(Compact
+            index
+            index-ty
+            start-box
+            end-box
+            slot
+            slot-ty
+            init-box
+            keep-box
+            body-box)
+          (let
+            [keep-env : TcTypeEnv
+              (tc-bind-id
+                env
+                index
+                (tc-resolve-type ctx (tc-global-shared-view index-ty)))]
+            [nstart (try (macro-expand-node ctx env decls depth start-box))]
+            [nend (try (macro-expand-node ctx env decls depth end-box))]
+            [ninit (try (macro-expand-node ctx env decls depth init-box))]
+            [nkeep (try (macro-expand-node ctx keep-env decls depth keep-box))]
+            [nbody
+              (try
+                (macro-expand-node
+                  ctx
+                  (tc-bind-id
+                    keep-env
+                    slot
+                    (tc-resolve-type ctx (tc-global-shared-view slot-ty)))
+                  decls
+                  depth
+                  body-box))]
+            (Ok
+              (ast.ast-node-push
+                (SpmdCompact
+                  (box
+                    (Compact
+                      index
+                      index-ty
+                      nstart
+                      nend
+                      slot
+                      slot-ty
+                      ninit
+                      nkeep
+                      nbody))))))])]
+    [(SpmdBroadcast value-box lane-box)
+      (let
+        [nvalue (try (macro-expand-node ctx env decls depth value-box))]
+        [nlane (try (macro-expand-node ctx env decls depth lane-box))]
+        (Ok (ast.ast-node-push (SpmdBroadcast nvalue nlane))))]
+    [(SpmdShuffle value-box lane-box)
+      (let
+        [nvalue (try (macro-expand-node ctx env decls depth value-box))]
+        [nlane (try (macro-expand-node ctx env decls depth lane-box))]
+        (Ok (ast.ast-node-push (SpmdShuffle nvalue nlane))))]
+    ;; Leaves: no child expression to expand.
+    [(Literal _) (Ok (ast.ast-node-push expr))]
+    [(Var _) (Ok (ast.ast-node-push expr))]
+    [(TypeLiteral _) (Ok (ast.ast-node-push expr))]
+    [(Init _) (Ok (ast.ast-node-push expr))]
+    [(PtrNull _) (Ok (ast.ast-node-push expr))]
+    [(Break) (Ok (ast.ast-node-push expr))]
+    [(Continue) (Ok (ast.ast-node-push expr))]
+    [(ProgramArgc) (Ok (ast.ast-node-push expr))]
+    [(ProgramArgv) (Ok (ast.ast-node-push expr))]
+    [(ProgramEnvp) (Ok (ast.ast-node-push expr))]
+    ;; Quote forms hold syntax as data; a call inside one is not a call.
+    [(Quote _) (Ok (ast.ast-node-push expr))]
+    [(Quasiquote _) (Ok (ast.ast-node-push expr))]
+    [(Unquote _) (Ok (ast.ast-node-push expr))]
+    [(UnquoteSplicing _) (Ok (ast.ast-node-push expr))]))
 
 (define (macro-expand-module-call-position
   [ctx : TcContext]
@@ -114287,10 +114552,8 @@
             (tc-global-shared-view decls)
             func)
           (macro-exprs-use-macro? ctx expr-bases decls args)))]
-    [(TupleRef a b)
-      (or
-        (macro-node-uses-macro? ctx expr-bases (tc-global-shared-view decls) a)
-        (macro-node-uses-macro? ctx expr-bases decls b))]
+    ;; The index is a literal integer, not an expression.
+    [(TupleRef a _) (macro-node-uses-macro? ctx expr-bases decls a)]
     ;; These forms are conservatively assumed to use a macro.
     [(Break) true]
     [(Continue) true]
@@ -114578,15 +114841,12 @@
               (ast.ast-expr-segment-bases-get expr-bases body-box)]
             (macro-expr-might-fire? state expr-bases body))])]
     [(Tuple exprs) (macro-expr-list-might-fire? state expr-bases exprs)]
-    [(TupleRef tuple-box index-box)
-      (let
-        [tuple : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases tuple-box)]
-        [index : ast.AstExpr
-          (ast.ast-expr-segment-bases-get expr-bases index-box)]
-        (or
-          (macro-expr-might-fire? state expr-bases tuple)
-          (macro-expr-might-fire? state expr-bases index)))]
+    ;; The index is a literal integer, not an expression.
+    [(TupleRef tuple-box _)
+      (macro-expr-might-fire?
+        state
+        expr-bases
+        (ast.ast-expr-segment-bases-get expr-bases tuple-box))]
     [(Array exprs) (macro-expr-list-might-fire? state expr-bases exprs)]
     [(DynArray exprs) (macro-expr-list-might-fire? state expr-bases exprs)]
     [(FixedMakeArray _ len-box)

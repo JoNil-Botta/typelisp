@@ -37,6 +37,78 @@ stderr contains typecheck: unbound name missing-a
 stderr contains typecheck: unbound name missing-b
 stderr order parse: malformed define || typecheck: unbound name missing-a || typecheck: unbound name missing-b
 
+case check-parse-error-codes
+file delimiter.tl
+(define (main) : i64
+  (+ 1 2)
+end-file
+file token.tl
+(define (main) : i64
+  (cast '\q' : i64))
+end-file
+file form.tl
+(define (main) : i64
+  (if true 1))
+end-file
+file pattern.tl
+(define (first-or-zero [items : (& (Slice i64))]) : i64
+  (match items
+    [(slice first &rest) first]
+    [_ 0]))
+(define (main) : i64 0)
+end-file
+file unclassified.tl
+(define (main) : i64
+  (box-get (box 42)))
+end-file
+file mixed.tl
+(define (bad-form) : i64 (if true 1))
+(define (bad-pattern [items : (& (Slice i64))]) : i64
+  (match items [(slice a &rest) a] [_ 0]))
+(define (removed) : i64 (box-get (box 1)))
+(define (bad-close) : i64 (+ 1 2])
+(define (later) : i64 missing-name)
+(define (main) : i64 0)
+end-file
+step delimiter
+run check "{{dir}}/delimiter.tl"
+exit nonzero
+stdout empty
+stderr contains error[E0101]: reader: unterminated list
+stderr contains {{native-dir}}/delimiter.tl:1:1
+step token
+run check "{{dir}}/token.tl"
+exit nonzero
+stdout empty
+stderr contains error[E0102]: lexer: unknown character escape
+stderr contains {{native-dir}}/token.tl:2:9
+step form
+run check "{{dir}}/form.tl"
+exit nonzero
+stdout empty
+stderr contains error[E0103]: parse: if is missing its else branch
+stderr contains {{native-dir}}/form.tl:2:3
+step pattern
+run check "{{dir}}/pattern.tl"
+exit nonzero
+stdout empty
+stderr contains error[E0104]: parse: slice pattern rest needs a space after `&`
+step unclassified
+run check "{{dir}}/unclassified.tl"
+exit nonzero
+stdout empty
+stderr contains error[E0100]: parse: box-get was removed
+step mixed-recovery-order
+run check "{{dir}}/mixed.tl"
+exit nonzero
+stdout empty
+stderr contains {{native-dir}}/mixed.tl:1:26
+stderr contains {{native-dir}}/mixed.tl:3:3
+stderr contains {{native-dir}}/mixed.tl:4:25
+stderr contains {{native-dir}}/mixed.tl:5:33
+stderr contains {{native-dir}}/mixed.tl:6:23
+stderr order error[E0103]: parse: if is missing its else branch || error[E0104]: parse: slice pattern || error[E0100]: parse: box-get was removed || error[E0101]: reader: mismatched delimiter || error[E0201]: typecheck: unbound name missing-name
+
 case check-function-assignment-location
 file main.tl
 (define (cap) : i64 4096)

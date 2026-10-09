@@ -1,5 +1,5 @@
 {
   "exit": 0,
   "stdout_contains": ["bool"],
-  "stderr_contains": ["--> <repl>:1:1", "malformed binary expression", "error[E0100]"]
+  "stderr_contains": ["--> <repl>:1:1", "malformed binary expression", "error[E0103]"]
 }

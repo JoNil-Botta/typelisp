@@ -3779,6 +3779,10 @@
   (smoke-require-42 (ot.compiler-optimize-bounds-dom-slice-word-self-test)))
 
 (test
+  bounds-dom-addr-taken
+  (smoke-require-42 (ot.compiler-optimize-bounds-dom-addr-taken-self-test)))
+
+(test
   range-merge
   (smoke-require-42 (ot.compiler-optimize-range-merge-self-test)))
 

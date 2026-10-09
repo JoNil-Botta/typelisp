@@ -729,6 +729,9 @@ fixed_array_match_pattern_borrow_escape_reject|check-fail|tests/safety/fixed_arr
 fixed_array_match_pattern_borrow_conflict_reject|check-fail|tests/safety/fixed_array_match_pattern_borrow_conflict_reject.tl|-|cannot assign to borrowed place `items[0]`
 borrowed_struct_pattern_string_escape_reject|check-fail|tests/safety/borrowed_struct_pattern_string_escape_reject.tl|-|does not outlive required lifetime `outer`
 borrowed_struct_pattern_string_mutation_reject|check-fail|tests/safety/borrowed_struct_pattern_string_mutation_reject.tl|-|cannot assign to borrowed place `items[0]`
+borrowed_struct_match_escape_reject|check-fail|tests/safety/borrowed_struct_match_escape_reject.tl|-|does not outlive required lifetime `outer`
+borrowed_struct_match_mutation_reject|check-fail|tests/safety/borrowed_struct_match_mutation_reject.tl|-|cannot assign to borrowed place `label`
+borrowed_struct_match_pattern_kind_reject|check-fail|tests/safety/borrowed_struct_match_pattern_kind_reject.tl|-|borrowed struct match requires a constructor-shaped struct pattern, binding, or wildcard
 slice_match_pattern_exhaustive_ok|check-ok|tests/safety/slice_match_pattern_exhaustive_ok.tl|-|-
 slice_match_pattern_scrutinee_reject|check-fail|tests/safety/slice_match_pattern_scrutinee_reject.tl|-|slice pattern requires a borrowed Slice or fixed-array scrutinee
 slice_match_pattern_element_type_reject|check-fail|tests/safety/slice_match_pattern_element_type_reject.tl|-|typecheck: literal pattern type mismatch

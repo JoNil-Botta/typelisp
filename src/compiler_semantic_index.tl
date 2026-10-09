@@ -832,7 +832,7 @@
             path-len))))))
 
 (define (compiler-semantic-scope-region-add!
-  [state : (& state CompilerSemanticWalkState)]
+  [state : (&mut state CompilerSemanticWalkState)]
   [parent : CompilerSemanticBindingSnapshot]
   [child : CompilerSemanticBindingSnapshot]
   [start-byte : i64]
@@ -903,7 +903,12 @@
         (owned_view.compiler-owned-shared-view state)
         node-id
         -1)]
-    (compiler-semantic-scope-region-add! state parent child start-byte raw-end)))
+    (compiler-semantic-scope-region-add!
+      (&mut state)
+      parent
+      child
+      start-byte
+      raw-end)))
 
 (define (compiler-semantic-record-vec-new [capacity : i64]) : CompilerSemanticRecordVec
   (CompilerSemanticRecordVec
@@ -3397,7 +3402,7 @@
                   cursor
                   init-start)]
               (compiler-semantic-scope-region-add!
-                state
+                (&mut state)
                 next-scope
                 bound.scope
                 (compiler-semantic-expr-visibility-end-offset
@@ -3716,7 +3721,7 @@
     ;; state is a nested body-only extension, so its exit restores the
     ;; index before the enclosing index region restores the outer scope.
     (compiler-semantic-scope-region-add!
-      state
+      (&mut state)
       scope
       index-bound.scope
       (compiler-semantic-expr-start-offset state element-id -1)
@@ -4192,7 +4197,262 @@
         No
         search-start
         search-limit)]
+    ;; The first alternative binds the locals; every later alternative binds
+    ;; the same names again, and each of those sites is another definition of
+    ;; the first alternative's local.
+    [(Or items)
+      (let
+        [alternatives : ast.AstPatternList (deref items)]
+        [first : CompilerSemanticBindResult
+          (compiler-semantic-bind-pattern!
+            (owned_view.compiler-owned-shared-view state)
+            scope
+            env
+            fact-env
+            facts-available
+            bound-names
+            (ast.ast-pattern-list-get
+              (& alternatives)
+              0
+              (ast.ast-pattern-fallback))
+            (owned_view.compiler-owned-shared-view scrutinee-maybe-ty)
+            search-start
+            search-limit)]
+        [cursor : i64 first.next-search]
+        [index : i64 1]
+        (while (< index alternatives.len)
+          (set!
+            cursor
+            (compiler-semantic-rebind-pattern!
+              (owned_view.compiler-owned-shared-view state)
+              first.scope
+              bound-names
+              (ast.ast-pattern-list-get
+                (& alternatives)
+                index
+                (ast.ast-pattern-fallback))
+              (owned_view.compiler-owned-shared-view scrutinee-maybe-ty)
+              cursor
+              search-limit))
+          (set! index (+ index 1)))
+        (CompilerSemanticBindResult first.scope first.env cursor))]
+    [(Fields items)
+      (compiler-semantic-bind-pattern-list!
+        state
+        scope
+        env
+        fact-env
+        facts-available
+        bound-names
+        (deref items)
+        No
+        search-start
+        search-limit)]
+    [(Field _ items)
+      (compiler-semantic-bind-pattern-list!
+        state
+        scope
+        env
+        fact-env
+        facts-available
+        bound-names
+        (deref items)
+        No
+        search-start
+        search-limit)]
     [_ (CompilerSemanticBindResult scope env search-start)]))
+
+;; Records a later or-pattern alternative's binding site of `name-id` as
+;; another definition of the local its first alternative bound, and returns
+;; where the next name search starts.
+(define (compiler-semantic-rebind-local!
+  [state : (& state CompilerSemanticWalkState)]
+  [scope : CompilerSemanticBindingSnapshot]
+  [name-id : i64]
+  [search-start : i64]
+  [search-limit : i64]) : i64
+  (let
+    [state : CompilerSemanticWalkState
+      (owned_view.compiler-owned-reference-shared-view state)]
+    (compiler-semantic-discard-variant-pattern-origin!
+      (owned_view.compiler-owned-shared-view state))
+    (match (compiler-semantic-binding-lookup
+      (owned_view.compiler-owned-shared-view state)
+      scope
+      name-id)
+      [(CompilerSemanticMaybeBinding.None) search-start]
+      [(CompilerSemanticMaybeBinding.Some binding)
+        (let
+          [span : CompilerSemanticSpan
+            (if (or state.generated (string.eq state.source ""))
+              (CompilerSemanticSpan
+                (string.copy (& state.path))
+                -1
+                -1
+                (ast.ast-source-span 1 1 1 1)
+                -1
+                -1)
+              (compiler-semantic-name-span-in-range
+                state.path
+                state.source
+                (string.copy (& binding.display-name))
+                search-start
+                search-limit))]
+          (compiler-semantic-record-vec-push!
+            (&mut (__tl-box-place state.records))
+            (CompilerSemanticRecord
+              binding.symbol
+              -1
+              CompilerSemanticRecordRole.Definition
+              CompilerSemanticAccess.None
+              binding.kind
+              (string.copy (& binding.display-name))
+              (string.copy (& binding.resolved-type))
+              ""
+              binding.symbol.module-id
+              (owned_view.compiler-owned-shared-view span)
+              (and (not state.generated) (>= span.start-byte 0))
+              (owned_view.compiler-owned-shared-view state.provenance)))
+          (if (>= span.end-byte 0)
+            span.end-byte
+            search-start))])))
+
+;; Walks a later or-pattern alternative like `compiler-semantic-bind-pattern!`
+;; walks the first, recording its binders with `compiler-semantic-rebind-local!`.
+(define (compiler-semantic-rebind-pattern!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingSnapshot]
+  [bound-names : tc.TcNameIdList]
+  [pattern : ast.AstPattern]
+  [scrutinee-maybe-ty : ast.AstMaybeType]
+  [search-start : i64]
+  [search-limit : i64]) : i64
+  (match pattern
+    [(ast.AstPattern.Var name _)
+      (if (tc.tc-name-id-list-contains bound-names name)
+        (compiler-semantic-rebind-local!
+          state
+          scope
+          name
+          search-start
+          search-limit)
+        (begin
+          (compiler-semantic-record-variant-pattern-use!
+            state
+            scrutinee-maybe-ty
+            name)
+          search-start))]
+    [(ast.AstPattern.Binding name)
+      (if (tc.tc-name-id-list-contains bound-names name)
+        (compiler-semantic-rebind-local!
+          state
+          scope
+          name
+          search-start
+          search-limit)
+        (begin
+          (compiler-semantic-record-variant-pattern-use!
+            state
+            scrutinee-maybe-ty
+            name)
+          search-start))]
+    [(ast.AstPattern.Variant name items)
+      (compiler-semantic-record-variant-pattern-use!
+        (owned_view.compiler-owned-shared-view state)
+        scrutinee-maybe-ty
+        name)
+      (compiler-semantic-rebind-pattern-list!
+        state
+        scope
+        bound-names
+        (deref items)
+        ast.AstMaybeType.No
+        search-start
+        search-limit)]
+    [(ast.AstPattern.Or items)
+      (compiler-semantic-rebind-pattern-list!
+        state
+        scope
+        bound-names
+        (deref items)
+        scrutinee-maybe-ty
+        search-start
+        search-limit)]
+    [(ast.AstPattern.Tuple items)
+      (compiler-semantic-rebind-pattern-list!
+        state
+        scope
+        bound-names
+        (deref items)
+        ast.AstMaybeType.No
+        search-start
+        search-limit)]
+    [(ast.AstPattern.Array items)
+      (compiler-semantic-rebind-pattern-list!
+        state
+        scope
+        bound-names
+        (deref items)
+        ast.AstMaybeType.No
+        search-start
+        search-limit)]
+    [(ast.AstPattern.Slice items _)
+      (compiler-semantic-rebind-pattern-list!
+        state
+        scope
+        bound-names
+        (deref items)
+        ast.AstMaybeType.No
+        search-start
+        search-limit)]
+    [(ast.AstPattern.Fields items)
+      (compiler-semantic-rebind-pattern-list!
+        state
+        scope
+        bound-names
+        (deref items)
+        ast.AstMaybeType.No
+        search-start
+        search-limit)]
+    [(ast.AstPattern.Field _ items)
+      (compiler-semantic-rebind-pattern-list!
+        state
+        scope
+        bound-names
+        (deref items)
+        ast.AstMaybeType.No
+        search-start
+        search-limit)]
+    [(ast.AstPattern.Wildcard) search-start]
+    [(ast.AstPattern.Literal _) search-start]))
+
+(define (compiler-semantic-rebind-pattern-list!
+  [state : CompilerSemanticWalkState]
+  [scope : CompilerSemanticBindingSnapshot]
+  [bound-names : tc.TcNameIdList]
+  [patterns : ast.AstPatternList]
+  [scrutinee-maybe-ty : ast.AstMaybeType]
+  [search-start : i64]
+  [search-limit : i64]) : i64
+  (let
+    [cursor : i64 search-start]
+    [index : i64 0]
+    (while (< index (ast.ast-pattern-list-len (& patterns)))
+      (set!
+        cursor
+        (compiler-semantic-rebind-pattern!
+          (owned_view.compiler-owned-shared-view state)
+          scope
+          bound-names
+          (ast.ast-pattern-list-get
+            (& patterns)
+            index
+            (ast.ast-pattern-fallback))
+          (owned_view.compiler-owned-shared-view scrutinee-maybe-ty)
+          cursor
+          search-limit))
+      (set! index (+ index 1)))
+    cursor))
 
 (define (compiler-semantic-bind-pattern-list!
   [state : CompilerSemanticWalkState]
@@ -4480,7 +4740,7 @@
                       init
                       bound.next-search))]
                 (compiler-semantic-scope-region-add!
-                  state
+                  (&mut state)
                   next-scope
                   bound.scope
                   visible-start

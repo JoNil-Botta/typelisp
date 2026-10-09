@@ -366,8 +366,8 @@
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
   [liveness : compiler_liveness.CompilerFunctionLiveness]
   [point : i64]
-  [starts : (& starts (__tl_dyn-array i64))]
-  [ends : (& ends (__tl_dyn-array i64))]) : i64
+  [starts : (&mut starts (__tl_dyn-array i64))]
+  [ends : (&mut ends (__tl_dyn-array i64))]) : i64
   (match blocks
     [(slice) point]
     [(slice block & rest)
@@ -490,14 +490,14 @@
             (owned_view.compiler-owned-shared-view emit-blocks)
             (owned_view.compiler-owned-shared-view liveness)
             0
-            starts
-            ends)
+            (&mut starts)
+            (&mut ends))
           (compiler-backend-test-scavenge-seed-block-liveins
             (ir.compiler-ir-block-list-view emit-blocks)
             liveness
             0
-            starts
-            ends)
+            (&mut starts)
+            (&mut ends))
           (backend.compiler-backend-set-scavenge-ctx-ready!
             (backend.compiler-backend-state-function-state backend-state)
             (owned_view.compiler-owned-shared-view starts)
@@ -6129,6 +6129,13 @@
       (string.eq
         (compiler-backend-test-emit-load-var assignments 0 "%rax")
         "    movq %r8, %rax\n")
+      ;; An XMM home is MOVQ xmm, which is not a machine record.
+      (string.eq
+        (compiler-backend-test-emit-load-var
+          (compiler-backend-peephole-assignments)
+          1
+          "%rax")
+        "    movq %xmm2, %rax\n")
       (string.eq
         (backend.compiler-backend-emit-store-var
           assignments
@@ -8917,18 +8924,27 @@
   (and
     ;; C7 /0 is compact but sign-extends imm32. The direct-object path must use
     ;; B8+r for wider values; native TLCI literal callbacks depend on all 64
-    ;; bits surviving into their mapped entry.
+    ;; bits surviving into their mapped entry. An imm32 value is a machine
+    ;; record, whose encoding compiler_machine_x64_tests pins.
+    (let
+      [parts : object_target.CompilerBackendObjectTargetParts
+        (backend.compiler-backend-object-add-mov-i64
+          (object_target.compiler-backend-object-parts-empty)
+          42
+          "%rdx")]
+      [text : cobj.CompilerObjectX64InstrList
+        (cobj.compiler-object-instr-builder-finish parts.text)]
+      (match (cobj.compiler-object-instr-list-ref text 0)
+        [(Machine (MovRI (W64) 2 42)) true]
+        [_ false]))
     (string.eq
-      (backend.compiler-backend-object-mov-i64-reg-bytes 42 "%rdx")
-      (object_target.compiler-backend-object-bytes-from-hex "48c7c22a000000"))
-    (string.eq
-      (backend.compiler-backend-object-mov-i64-reg-bytes
+      (backend.compiler-backend-object-mov-wide-reg-bytes
         6364136223846793005
         "%rax")
       (object_target.compiler-backend-object-bytes-from-hex
         "48b82d7f954c2df45158"))
     (string.eq
-      (backend.compiler-backend-object-mov-i64-reg-bytes -2147483649 "%r9")
+      (backend.compiler-backend-object-mov-wide-reg-bytes -2147483649 "%r9")
       (object_target.compiler-backend-object-bytes-from-hex
         "49b9ffffff7fffffffff"))
     (string.eq
@@ -34093,7 +34109,7 @@ f:
 (define (compiler-backend-swb-dup-tail-body-for
   [text : String]
   [return-label : String]
-  [ok : (& ok (__tl_dyn-array i64))]) : String
+  [ok : (&mut ok (__tl_dyn-array i64))]) : String
   (let
     [data : (Ptr u8)
       (unsafe
@@ -34104,7 +34120,7 @@ f:
       0
       (string.string-length text)
       return-label
-      (&mut ok))))
+      ok)))
 
 (define (compiler-backend-swb-dup-tail-bound-ok?) : bool
   (let
@@ -34120,17 +34136,17 @@ f:
       (compiler-backend-swb-dup-tail-body-for
         "    movq $7, %rax\n    jmp .Lret\n"
         ".Lret"
-        good)]
+        (&mut good))]
     [_bad-text : String
       (compiler-backend-swb-dup-tail-body-for
         "    movq $7, %rax\n    jne .Lelsewhere\n    jmp .Lret\n"
         ".Lret"
-        bad)]
+        (&mut bad))]
     [plain-text : String
       (compiler-backend-swb-dup-tail-body-for
         "    movq $7, %rax\n    addq $8, %rsp\n    ret\n"
         ".Lret"
-        plain)]
+        (&mut plain))]
     (and
       ;; The trailing jump to the shared epilogue is dropped, the data kept.
       (= (array-ref good 0) 1)

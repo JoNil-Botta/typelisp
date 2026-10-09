@@ -88,3 +88,12 @@ mode scalar avx2 avx512
 exit scalar=13 avx2=70 avx512=142
 in stderr
 empty
+
+# Rank-2 row-local gangs (#7191): `program-index` restarts on every row and a
+# row's partial tail reports the full `program-count`.
+case lane-identity-2d
+source tests/spmd/lane_identity_2d.tl
+mode scalar avx2 avx512
+exit scalar=24 avx2=224 avx512=52
+in stderr
+empty

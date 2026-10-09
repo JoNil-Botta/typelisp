@@ -74,6 +74,32 @@ in fn latch_sink_count_if_while
 count = 2 ^[[:space:]]+jl \.L
 not-match ^[[:space:]]+jge \.L
 
+# Counter sink: a loop that advances its counter before the body, as the prelude
+# `for` expansions do, is rewritten before the loop passes so that it closes
+# like its `while` twin. At level 1 the step `addq $1` is stored right before
+# the jump back to the header; at level 2 the twins compile alike (the closing
+# `jl`, no `leaq 1(...)` of a next index), and the copy idiom is one block copy.
+case counter-sink-latch-opt1
+opt 1
+source tests/integration/counter_sink_loops.tl
+in fn counter_sink_sum_bump
+count = 1 ^[[:space:]]+addq \$1, %r
+narrow ranges:addq \$1, %r~jmp \.L
+count = 3 .
+in fn counter_sink_sum_while
+narrow ranges:addq \$1, %r~jmp \.L
+count = 3 .
+
+case counter-sink-opt2
+source tests/integration/counter_sink_loops.tl
+in fn counter_sink_sum_bump
+count >= 1 ^[[:space:]]+jl \.L
+not-match ^[[:space:]]+leaq 1\(%r[a-z0-9]+\), %r
+in fn counter_sink_sum_while
+count >= 1 ^[[:space:]]+jl \.L
+in fn counter_sink_copy_bump
+count = 1 ^[[:space:]]+call tl_mem_copy8_fwd$
+
 # Divisor magic hoisting: constant multiplies fold into imm32 imuls; the /7
 # quotient reads the live dividend through %rax (one irreducible copy chain).
 case divmagic-hoist

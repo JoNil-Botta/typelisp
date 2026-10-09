@@ -79,6 +79,13 @@ stderr empty
 stdout contains E0100: parse error
 stdout contains Minimal failing example:
 stdout contains See also:
+step explain-parse-family
+run explain E0103
+stderr empty
+stdout contains E0103: malformed form
+stdout contains Minimal failing example:
+stdout contains (if true 1))
+stdout contains See also:
 step explain-lowercase
 run explain e0207
 stderr empty
@@ -88,6 +95,9 @@ run explain --list
 stderr empty
 stdout contains E0100: parse error
 stdout contains E0212: arena ownership violation
+stdout contains E0101: unbalanced delimiter
+stdout contains E0102: malformed token
+stdout contains E0104: invalid pattern syntax
 step explain-search
 run explain --search BORROW
 stderr empty

@@ -261,19 +261,16 @@
   [set : (& set opt_i64_i64_map.Map)]
   [instr : (& instr ir.CompilerIrInstr)]) : bool
   (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(Mov dst _ _) (not (opt.opt-used-contains set dst))]
-    [(AddrOf dst _) (not (opt.opt-used-contains set dst))]
-    [(Gep dst _ _ _) (not (opt.opt-used-contains set dst))]
-    [(Cast dst _ _ _) (not (opt.opt-used-contains set dst))]
-    [(Load dst _ _) (not (opt.opt-used-contains set dst))]
+    [(or (Mov dst _ _) (AddrOf dst _) (Gep dst _ _ _) (Cast dst _ _ _)
+         (Load dst _ _) (UnOp dst _ _ _) (Phi dst _ _) (LaneId dst _ _)
+         (Splat dst _ _ _) (VectorReduce dst _ _ _ _) (MaskBinOp dst _ _ _ _)
+         (MaskNot dst _ _) (MaskReduce dst _ _ _) (TailMask dst _ _ _)
+         (Pack dst _ _) (Word dst _ _ _))
+      (not (opt.opt-used-contains set dst))]
     [(BinOp dst op _ rhs ty)
       (and
         (not (opt.opt-dce-binop-traps? op rhs ty))
         (not (opt.opt-used-contains set dst)))]
-    [(UnOp dst _ _ _) (not (opt.opt-used-contains set dst))]
-    [(Phi dst _ _) (not (opt.opt-used-contains set dst))]
-    [(LaneId dst _ _) (not (opt.opt-used-contains set dst))]
-    [(Splat dst _ _ _) (not (opt.opt-used-contains set dst))]
     [(VectorBinOp payload-box)
       (let
         [dst (deref payload-box).dst]
@@ -282,21 +279,14 @@
       (let
         [dst (deref payload-box).dst]
         (not (opt.opt-used-contains set dst)))]
-    [(VectorReduce dst _ _ _ _) (not (opt.opt-used-contains set dst))]
     [(VectorCompare payload-box)
       (let
         [dst (deref payload-box).dst]
         (not (opt.opt-used-contains set dst)))]
-    [(MaskBinOp dst _ _ _ _) (not (opt.opt-used-contains set dst))]
-    [(MaskNot dst _ _) (not (opt.opt-used-contains set dst))]
-    [(MaskReduce dst _ _ _) (not (opt.opt-used-contains set dst))]
     [(Select payload-box)
       (let
         [dst (deref payload-box).dst]
         (not (opt.opt-used-contains set dst)))]
-    [(TailMask dst _ _ _) (not (opt.opt-used-contains set dst))]
-    [(Pack dst _ _) (not (opt.opt-used-contains set dst))]
-    [(Word dst _ _ _) (not (opt.opt-used-contains set dst))]
     [_ false]))
 
 (define (opt-dce-instrs-from
@@ -1966,8 +1956,7 @@
 ;; --- self-test ---------------------------------------------------------------
 (define (opt-arith-instr-count [instr : ir.CompilerIrInstr]) : i64
   (match instr
-    [(BinOp _ _ _ _ _) 1]
-    [(UnOp _ _ _ _) 1]
+    [(or (BinOp _ _ _ _ _) (UnOp _ _ _ _)) 1]
     [_ 0]))
 
 (define (opt-count-arith-instr-seq-from
@@ -5130,15 +5119,12 @@
   (if (>= index (ir.compiler-ir-instr-seq-count instrs))
     (- 0 1)
     (match (ir.compiler-ir-instr-seq-ref instrs index)
-      [(VectorBinOp payload-box)
-        (let
-          [d (opt.compiler-opt-box-field-shared-view payload-box dst)]
-          [lhs (opt.compiler-opt-box-field-shared-view payload-box lhs)]
-          (if (= d dst)
-            (match lhs
-              [(Var id) id]
-              [_ (- 0 1)])
-            (opt-vector-binop-lhs-var-from instrs (+ index 1) dst)))]
+      [(VectorBinOp (box (fields [d dst] lhs)))
+        (if (= d dst)
+          (match lhs
+            [(Var id) id]
+            [_ (- 0 1)])
+          (opt-vector-binop-lhs-var-from instrs (+ index 1) dst))]
       [_ (opt-vector-binop-lhs-var-from instrs (+ index 1) dst)])))
 
 (define (opt-vector-binop-lhs-var [instrs : ir.CompilerIrInstrSeq] [dst : i64]) : i64
@@ -6906,8 +6892,7 @@
 
 (define (opt-shift-binop-count [instr : ir.CompilerIrInstr]) : i64
   (match instr
-    [(BinOp _ (Shl _) _ _ _) 1]
-    [(BinOp _ (Shr _) _ _ _) 1]
+    [(or (BinOp _ (Shl _) _ _ _) (BinOp _ (Shr _) _ _ _)) 1]
     [_ 0]))
 
 (define (opt-count-shift-binops-from
@@ -13774,8 +13759,7 @@
     0
     (+
       (match (ir.compiler-ir-instr-seq-ref instrs index)
-        [(CallIndirect _ _ _ _) 1]
-        [(CallIndirectC _ _ _ _) 1]
+        [(or (CallIndirect _ _ _ _) (CallIndirectC _ _ _ _)) 1]
         [_ 0])
       (opt-count-indirect-call-instrs-from instrs (+ index 1)))))
 
@@ -36263,15 +36247,10 @@
       (+
         acc
         (match (ir.compiler-ir-instr-seq-ref instrs index)
-          [(LaneId _ _ _) 1]
-          [(Splat _ _ _ _) 1]
-          [(VectorBinOp _) 1]
-          [(VectorReduce _ _ _ _ _) 1]
-          [(VectorCompare _) 1]
-          [(MaskBinOp _ _ _ _ _) 1]
-          [(Select _) 1]
-          [(VectorLoad _ _ _ _ _) 1]
-          [(VectorStore _) 1]
+          [(or (LaneId _ _ _) (Splat _ _ _ _) (VectorBinOp _)
+               (VectorReduce _ _ _ _ _) (VectorCompare _) (MaskBinOp _ _ _ _ _)
+               (Select _) (VectorLoad _ _ _ _ _) (VectorStore _))
+            1]
           [_ 0])))))
 
 (define (opt-unroll-test-count-store-instr-seq
@@ -48123,8 +48102,7 @@
 (define (opt-affine-test-record-base? [rec : opt.OptAffineRec] [var : i64]) : bool
   (match rec
     [(No) false]
-    [(AddC base _) (= base var)]
-    [(MulC base _ _) (= base var)]))
+    [(or (AddC base _) (MulC base _ _)) (= base var)]))
 
 (define (compiler-optimize-affine-env-reference-self-test) : i64
   (let
@@ -57162,11 +57140,9 @@
 ;; in all blocks after the first (the entry block's exempt Movs are skipped)
 (define (opt-gc-test-stray-instr? [instr : ir.CompilerIrInstr]) : bool
   (match instr
-    [(Mov _ (Global _) _) true]
-    [(Gep _ (Global _) _ _) true]
-    [(Load _ (Global _) _) true]
-    [(BinOp _ _ (Global _) _ _) true]
-    [(BinOp _ _ _ (Global _) _) true]
+    [(or (Mov _ (Global _) _) (Gep _ (Global _) _ _) (Load _ (Global _) _)
+         (BinOp _ _ (Global _) _ _) (BinOp _ _ _ (Global _) _))
+      true]
     [_ false]))
 
 (define (opt-gc-test-stray-seq
@@ -60243,7 +60219,7 @@
 ;; Global operands in the instruction shapes these fixtures use.
 (define (opt-lp-instr-global-operands [instr : ir.CompilerIrInstr]) : i64
   (match instr
-    [(Mov _ src _)
+    [(or (Mov _ src _) (Store _ src _))
       (if (opt-lp-value-global? src)
         1
         0)]
@@ -60255,10 +60231,6 @@
         (if (opt-lp-value-global? rhs)
           1
           0))]
-    [(Store _ value _)
-      (if (opt-lp-value-global? value)
-        1
-        0)]
     [_ 0]))
 
 (define (opt-lp-count-seq
@@ -64430,8 +64402,7 @@
 
 (define (opt-dense-insertion-test-code [instr : ir.CompilerIrInstr]) : i64
   (match instr
-    [(Mov dst _ _) dst]
-    [(Phi dst _ _) dst]
+    [(or (Mov dst _ _) (Phi dst _ _)) dst]
     [(Jump _) -1]
     [_ -2]))
 
@@ -76636,8 +76607,7 @@
     [stores : i64 0]
     (while (and (< index count) (< stores 128))
       (match (ir.compiler-ir-instr-seq-ref instrs index)
-        [(StorePtr _ _ _) (set! stores (+ stores 1))]
-        [(StoreOwned _ _ _) (set! stores (+ stores 1))]
+        [(or (StorePtr _ _ _) (StoreOwned _ _ _)) (set! stores (+ stores 1))]
         [_ unit])
       (set! index (+ index 1)))
     stores))

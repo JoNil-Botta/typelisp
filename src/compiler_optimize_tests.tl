@@ -43584,14 +43584,14 @@
     ;; bounds_dom's half: dominated re-tests only.
     [branches : ir.CompilerIrBlockList
       (opt.opt-flag-facts-rewrite-blocks
-        context.index
+        (&mut context.index)
         context.doms
         (opt.compiler-opt-global-shared-view sources)
         (ir.compiler-ir-global-shared-view blocks))]
     ;; flag_exit's half: one header's forward seed.
     [seeded : ir.CompilerIrBlockList
       (match (opt.opt-flag-facts-rewrite-seeds
-        context.index
+        (&mut context.index)
         context.doms
         sources
         (ir.compiler-ir-label "head")
@@ -43704,7 +43704,7 @@
       (opt.opt-cfg-context-build (ir.compiler-ir-global-shared-view blocks))]
     [out : ir.CompilerIrBlockList
       (opt.opt-flag-facts-rewrite-blocks
-        context.index
+        (&mut context.index)
         context.doms
         (opt.opt-gvn-sources-blocks
           blocks

@@ -1,5 +1,6 @@
 ;; compiler_object.tl - Structured object-image records for backend object emitters.
 (import compiler_owned_view as owned_view)
+(import compiler_machine_x64 as mx)
 (import stdlib.string)
 
 (defenum CompilerObjectSectionKind
@@ -103,6 +104,9 @@
   (AddRcxRip String)
   (MovRcxRax)
   (XorpdRip String)
+  ;; A typed machine record (#7055): its bytes and its assembly text both come
+  ;; from compiler_machine_x64.
+  (Machine mx.MachineInstr)
   (Bytes String)
   (Raw String))
 

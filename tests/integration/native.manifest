@@ -602,6 +602,7 @@ spmd_foreach_2d_inner_span_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y
 spmd_foreach_2d_product_trap|all|-|tests/integration/spmd_foreach_2d.tl|134|y0=0\ny1=4294967296\nx0=0\nx1=2147483648\n|6|-|stage-stdlib+expected-stderr:tl: array index out of bounds\n
 stdlib_io|all|-|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl|-
 stdlib_eq_aggregate|all|-|tests/integration/stdlib_eq_aggregate.tl|42|-|-|stdlib/eq.tl stdlib/comptime.tl|-
+vector_alias_field|all|0,1,2|tests/integration/vector_alias_field.tl|42|-|-|vector_alias_field_provider.tl stdlib/vector.tl stdlib/option.tl stdlib/eq.tl|-
 stdlib_hash_generated|all|-|tests/integration/stdlib_hash_generated.tl|0|-|-|stdlib/comptime.tl stdlib/eq.tl stdlib/hash.tl stdlib/io.tl stdlib/string.tl|-
 stdlib_json|all|-|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl|-
 stdlib_serialize_json|all|-|tests/integration/stdlib_serialize_json.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl serialize_enum_fixture.tl|-

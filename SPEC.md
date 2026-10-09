@@ -6639,6 +6639,12 @@ non-type operands, and kind mismatches are compile-time diagnostics. The
 diagnostic names the primitive and the expected kind, for example
 `struct-field-type requires struct type`.
 
+`struct-field-type` and `enum-variant-payload-type` resolve the declared type
+in the declaring module's scope. A type written through that module's import
+alias, such as `svec.Vec` after `(import (vector.vector String) as svec)`,
+reflects as the canonical nominal type the alias names, so a macro that splices
+it into another module does not need the alias.
+
 `type-kind` returns one of these lowercase stable strings:
 
 - Builtins: `i64`, `i32`, `i16`, `i8`, `u64`, `u32`, `u16`, `u8`, `f64`,

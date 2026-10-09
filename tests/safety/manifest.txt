@@ -169,6 +169,7 @@ unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|typ
 stdlib_eq_box_reject|check-fail|tests/safety/stdlib_eq_box_reject.tl|-|eq: unsupported type
 stdlib_eq_recursive_box_reject|check-fail|tests/safety/stdlib_eq_recursive_box_reject.tl|-|eq: unsupported type
 stdlib_eq_dynamic_array_reject|check-fail|tests/safety/stdlib_eq_dynamic_array_reject.tl|-|eq: unsupported type
+stdlib_eq_alias_vector_field_reject|check-fail|tests/safety/stdlib_eq_alias_vector_field_reject.tl|-|eq: unsupported type dynarray_String
 stdlib_eq_reference_reject|check-fail|tests/safety/stdlib_eq_reference_reject.tl|-|eq: unsupported type
 stdlib_eq_ptr_reject|check-fail|tests/safety/stdlib_eq_ptr_reject.tl|-|eq: unsupported type
 stdlib_eq_mut_ptr_reject|check-fail|tests/safety/stdlib_eq_mut_ptr_reject.tl|-|eq: unsupported type

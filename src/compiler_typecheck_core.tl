@@ -55506,37 +55506,46 @@
           args))]
     [_ (Err "typecheck: unsupported enum match pattern")]))
 
-;; A pattern on a `(& S)` scrutinee (#8583). A constructor-shaped struct
-;; pattern binds each field through the borrow, as a borrowed tuple element
-;; does (`tc-borrowed-binding-type`: by value when `Copy`, else a reference into
-;; the scrutinee); a binding takes the reference itself.
+;; A pattern on a `(& T)` scrutinee whose referent no other borrowed arm takes.
+;; For a struct referent (#8583) a constructor-shaped pattern binds each field
+;; through the borrow, as a borrowed tuple element does
+;; (`tc-borrowed-binding-type`: by value when `Copy`, else a reference into the
+;; scrutinee), and a binding takes the reference itself. Any other referent
+;; binds as a scalar.
 (define (tc-bind-borrowed-struct-match-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
   [lifetime : i64]
-  [struct-name : i64]
   [referent-ty : ast.AstType]
   [scrut-ty : ast.AstType]
   [pattern : ast.AstPattern]) : ResultTcEnv
-  (match pattern
-    [(Wildcard) (Ok env)]
-    [(Binding name) (Ok (tc-bind-id env name scrut-ty))]
-    [(Variant pattern-name args-box)
-      (tc-bind-borrowed-struct-pattern
-        ctx
-        env
-        lifetime
-        (tc-nominal-name-id-display struct-name)
-        struct-name
-        referent-ty
-        (tc-env-key-name-text pattern-name)
-        pattern-name
-        (ast.ast-pattern-list-box-shared-view args-box))]
-    [_
-      (Err
-        (tc-kind-message
-          (Pattern)
-          "typecheck: borrowed struct match requires a constructor-shaped struct pattern, binding, or wildcard"))]))
+  (let
+    [struct-name : i64
+      (match (tc-global-shared-view referent-ty)
+        [(Struct name) name]
+        [(StructArgs name _) name]
+        [_ -1])]
+    (if (< struct-name 0)
+      (tc-bind-scalar-match-pattern env scrut-ty pattern)
+      (match pattern
+        [(Wildcard) (Ok env)]
+        [(Binding name) (Ok (tc-bind-id env name scrut-ty))]
+        [(Variant pattern-name args-box)
+          (tc-bind-borrowed-struct-pattern
+            ctx
+            env
+            lifetime
+            (tc-nominal-name-id-display struct-name)
+            struct-name
+            referent-ty
+            (tc-env-key-name-text pattern-name)
+            pattern-name
+            (ast.ast-pattern-list-box-shared-view args-box))]
+        [_
+          (Err
+            (tc-kind-message
+              (Pattern)
+              "typecheck: borrowed struct match requires a constructor-shaped struct pattern, binding, or wildcard"))]))))
 
 (define (tc-bind-match-pattern
   [ctx : TcContext]
@@ -55634,24 +55643,6 @@
                     (Pattern)
                     "typecheck: borrowed fixed-array match requires (array ...), (slice ...), binding, or wildcard pattern"))])]
           [(Slice _) (tc-bind-slice-scrutinee-pattern ctx env scrut-ty pattern)]
-          [(Struct struct-name)
-            (tc-bind-borrowed-struct-match-pattern
-              ctx
-              env
-              lifetime
-              struct-name
-              referent-ty
-              scrut-ty
-              pattern)]
-          [(StructArgs struct-name _)
-            (tc-bind-borrowed-struct-match-pattern
-              ctx
-              env
-              lifetime
-              struct-name
-              referent-ty
-              scrut-ty
-              pattern)]
           [(Box _)
             (match pattern
               [(Wildcard) (Ok env)]
@@ -55668,7 +55659,14 @@
               [_
                 (Err
                   "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]
-          [_ (tc-bind-scalar-match-pattern env scrut-ty pattern)]))]
+          [_
+            (tc-bind-borrowed-struct-match-pattern
+              ctx
+              env
+              lifetime
+              referent-ty
+              scrut-ty
+              pattern)]))]
     [(MutRef _ _) (tc-bind-slice-scrutinee-pattern ctx env scrut-ty pattern)]
     [(Enum enum-name)
       (match pattern

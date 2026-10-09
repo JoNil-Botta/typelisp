@@ -63865,24 +63865,26 @@
       (let
         [referent-ty : ast.AstType
           (tc_core.tc-context-type-get ctx referent-box)]
-        (if (lower-struct-pattern-for-type?
-          ctx
-          (lower-global-shared-view referent-ty)
-          name)
-          (lower-bind-borrowed-struct-pattern
+        (when
+          (lower-struct-pattern-for-type?
             ctx
-            state
-            env
-            type-env
-            borrow-lifetime
-            (Var scrut-var)
             (lower-global-shared-view referent-ty)
-            (lower-struct-type-name-or-empty
-              (tc_core.tc-type-strip-region
-                (tc_core.tc-resolve-type ctx referent-ty)))
-            args)
-          (Err (box (lower-diagnostic "lower: unsupported match pattern")))))]
-    [_ (Err (box (lower-diagnostic "lower: unsupported match pattern")))]))
+            name)
+          (return
+            (lower-bind-borrowed-struct-pattern
+              ctx
+              state
+              env
+              type-env
+              borrow-lifetime
+              (Var scrut-var)
+              (lower-global-shared-view referent-ty)
+              (lower-struct-type-name-or-empty
+                (tc_core.tc-type-strip-region
+                  (tc_core.tc-resolve-type ctx referent-ty)))
+              args))))]
+    [_ unit])
+  (Err (box (lower-diagnostic "lower: unsupported match pattern"))))
 
 ;; The switch-form pass is deliberately the only place that may materialize
 ;; the final enum tag and unreachable default. Lowering keeps the classic

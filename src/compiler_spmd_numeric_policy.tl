@@ -3,6 +3,7 @@
 ;; Keep numeric operation/cast admission above IR and serialization.  Planning
 ;; queries consume this closed description; diagnostic strings are rendered
 ;; only after a query reports Unsupported.
+(cfg test (import stdlib.iterator))
 (import compiler_ast_types as ast)
 (cfg test (import stdlib.io))
 
@@ -488,28 +489,23 @@
   test
   (define (compiler-spmd-numeric-matrix-coverage-ok?) : bool
     (let
-      [backend-index : i64 0]
       [binary-rows : i64 0]
       [cast-rows : i64 0]
       [supported-binary : i64 0]
       [supported-casts : i64 0]
-      (while (< backend-index 3)
+      (for [backend-index (iterator.range 0 3)]
         (let
-          [context-index : i64 0]
           [backend : CompilerSpmdNumericBackend
             (compiler-spmd-numeric-backend-at backend-index)]
-          (while (< context-index 5)
+          (for [context-index (iterator.range 0 5)]
             (let
-              [lane-index : i64 0]
               [context : CompilerSpmdNumericContext
                 (compiler-spmd-numeric-context-at context-index)]
-              (while (< lane-index 10)
+              (for [lane-index (iterator.range 0 10)]
                 (let
                   [source : ast.AstType
                     (compiler-spmd-numeric-lane-at lane-index)]
-                  [op-index : i64 0]
-                  [destination-index : i64 0]
-                  (while (< op-index 18)
+                  (for [op-index (iterator.range 0 18)]
                     (let
                       [op : ast.AstBinOp
                         (compiler-spmd-numeric-binop-at op-index)]
@@ -522,12 +518,11 @@
                           context
                           backend
                           op)]
-                      (set! binary-rows (+ binary-rows 1))
+                      (+= binary-rows 1)
                       (if (compiler-spmd-numeric-decision-supported? decision)
-                        (set! supported-binary (+ supported-binary 1))
-                        unit)
-                      (set! op-index (+ op-index 1))))
-                  (while (< destination-index 10)
+                        (+= supported-binary 1)
+                        unit)))
+                  (for [destination-index (iterator.range 0 10)]
                     (let
                       [decision : CompilerSpmdNumericDecision
                         (compiler-spmd-numeric-conversion-decision
@@ -535,14 +530,10 @@
                           (compiler-spmd-numeric-lane-at destination-index)
                           context
                           backend)]
-                      (set! cast-rows (+ cast-rows 1))
+                      (+= cast-rows 1)
                       (if (compiler-spmd-numeric-decision-supported? decision)
-                        (set! supported-casts (+ supported-casts 1))
-                        unit)
-                      (set! destination-index (+ destination-index 1))))
-                  (set! lane-index (+ lane-index 1))))
-              (set! context-index (+ context-index 1))))
-          (set! backend-index (+ backend-index 1))))
+                        (+= supported-casts 1)
+                        unit)))))))))
       (and
         (= binary-rows 2700)
         (= cast-rows 1500)

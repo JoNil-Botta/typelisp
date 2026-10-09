@@ -194,7 +194,7 @@
       (match (sym-i64-view cursor)
         [(SymI64ViewNil) unit]
         [(SymI64ViewBind _ _ rest)
-          (set! count (+ count 1))
+          (+= count 1)
           (set! cursor rest)]))
     (let
       [bindings : (__tl_dyn-array SymI64Binding)
@@ -207,10 +207,10 @@
           [(SymI64ViewNil) unit]
           [(SymI64ViewBind key value rest)
             (set! (array-ref bindings index) (SymI64Binding key value -1))
-            (set! index (+ index 1))
+            (+= index 1)
             (set! cursor rest)]))
       (while (> index 0)
-        (set! index (- index 1))
+        (-= index 1)
         (let
           [binding : SymI64Binding (array-ref bindings index)]
           (set! out (sym-i64-bind-id out binding.key binding.value))))

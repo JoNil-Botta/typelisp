@@ -13,6 +13,7 @@
 ;; when the server supports shallow. `ofs-delta` and `no-progress` are opt-in,
 ;; and in v0/v1 only when advertised. A response section the request did not
 ;; ask for, or one out of order, fails.
+(import stdlib.iterator)
 (import git_object_core as git_object)
 (import git_pkt_line_core as pkt)
 (import stdlib.byte_buf_core as byte_buf)
@@ -103,11 +104,9 @@
 ;: The first index of `byte` in `text` at or after `start`, or -1.
 (define (git-protocol-find [text : (& text str)] [byte : i64] [start : i64]) : i64
   (let
-    [index : i64 start]
     [count : i64 (string.string-length text)]
-    (while (< index count)
-      (when (= (git-protocol-byte text index) byte) (return index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range start count)]
+      (when (= (git-protocol-byte text index) byte) (return index)))
     -1))
 
 ;: Whether `text` holds a NUL or LF byte; a text packet carries neither.
@@ -169,24 +168,20 @@
       (if (< equals 0)
         count
         equals)]
-    [index : i64 0]
     (when (= key-end 0) (return (Err MalformedCapability)))
-    (while (< index key-end)
+    (for [index (iterator.range 0 key-end)]
       (unless
         (git-protocol-key-byte? (git-protocol-byte text index))
-        (return (Err MalformedCapability)))
-      (set! index (+ index 1)))
+        (return (Err MalformedCapability))))
     (when (= equals (- count 1)) (return (Err MalformedCapability)))
-    (set! index (+ key-end 1))
-    (while (< index count)
+    (for [index (iterator.range (+ key-end 1) count)]
       (let
         [byte : i64 (git-protocol-byte text index)]
         (unless
           (if v2
             (git-protocol-v2-value-byte? byte)
             (and (> byte 32) (<= byte 126)))
-          (return (Err MalformedCapability))))
-      (set! index (+ index 1)))
+          (return (Err MalformedCapability)))))
     (Ok
       (GitCapability
         (string.substring text 0 key-end)
@@ -203,17 +198,14 @@
 (define (git-advertisement-capability
   [advert : (& advert GitAdvertisement)]
   [key : (& key str)]) : GitCapabilityLookup
-  (let
-    [index : i64 0]
-    (while (< index (array-length advert.capabilities))
-      (let
-        [capability : (& advert GitCapability)
-          (& (array-ref advert.capabilities index))]
-        (when
-          (string.eq (& capability.key) key)
-          (return (Present (git-protocol-copy (& capability.value))))))
-      (set! index (+ index 1)))
-    (Absent)))
+  (for [index (iterator.range 0 (array-length advert.capabilities))]
+    (let
+      [capability : (& advert GitCapability)
+        (& (array-ref advert.capabilities index))]
+      (when
+        (string.eq (& capability.key) key)
+        (return (Present (git-protocol-copy (& capability.value)))))))
+  (Absent))
 
 (define (git-advertisement-has-capability?
   [advert : (& advert GitAdvertisement)]
@@ -258,51 +250,40 @@
   [capabilities : (&mut capabilities (__tl_dyn-array GitCapability))]
   [capability : GitCapability]
   [limits : (& limits GitProtocolLimits)]) : ResultGitUnit
-  (let
-    [index : i64 0]
-    (when
-      (>= (array-length capabilities) limits.max-capabilities)
-      (return (Err CapabilityLimit)))
-    (unless
-      (string.eq (& capability.key) "symref")
-      (while (< index (array-length capabilities))
-        (when
-          (string.eq (& (array-ref capabilities index).key) (& capability.key))
-          (return
-            (Err
-              (if (string.eq (& capability.key) "object-format")
-                (ConflictingObjectFormat)
-                (DuplicateCapability)))))
-        (set! index (+ index 1))))
-    (__tl_array-push! capabilities capability)
-    (Ok)))
+  (when
+    (>= (array-length capabilities) limits.max-capabilities)
+    (return (Err CapabilityLimit)))
+  (unless
+    (string.eq (& capability.key) "symref")
+    (for [index (iterator.range 0 (array-length capabilities))]
+      (when
+        (string.eq (& (array-ref capabilities index).key) (& capability.key))
+        (return
+          (Err
+            (if (string.eq (& capability.key) "object-format")
+              (ConflictingObjectFormat)
+              (DuplicateCapability)))))))
+  (__tl_array-push! capabilities capability)
+  (Ok))
 
 ;: The negotiated object format: `object-format` when advertised, else SHA-1.
 (define (git-protocol-capabilities-format
   [capabilities : (& capabilities (__tl_dyn-array GitCapability))]) : ResultGitFormat
-  (let
-    [index : i64 0]
-    (while (< index (array-length capabilities))
-      (let
-        [capability : (& capabilities GitCapability)
-          (& (array-ref capabilities index))]
-        (when
-          (string.eq (& capability.key) "object-format")
-          (return (git-protocol-format-from-name (& capability.value)))))
-      (set! index (+ index 1)))
-    (Ok (Sha1))))
+  (for [index (iterator.range 0 (array-length capabilities))]
+    (let
+      [capability : (& capabilities GitCapability)
+        (& (array-ref capabilities index))]
+      (when
+        (string.eq (& capability.key) "object-format")
+        (return (git-protocol-format-from-name (& capability.value))))))
+  (Ok (Sha1)))
 
 (define (git-protocol-capabilities-have?
   [capabilities : (& capabilities (__tl_dyn-array GitCapability))]
   [key : (& key str)]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (array-length capabilities))
-      (when
-        (string.eq (& (array-ref capabilities index).key) key)
-        (return true))
-      (set! index (+ index 1)))
-    false))
+  (for [index (iterator.range 0 (array-length capabilities))]
+    (when (string.eq (& (array-ref capabilities index).key) key) (return true)))
+  false)
 
 ;; --- advertisements ----------------------------------------------------------
 ;: Protocol v2: `version 2`, one capability per packet, up to the flush the
@@ -313,8 +294,7 @@
   (let
     [capabilities : (__tl_dyn-array GitCapability)
       (__tl_make-array GitCapability 0)]
-    [index : i64 1]
-    (while (< index (array-length lines))
+    (for [index (iterator.range 1 (array-length lines))]
       (let
         [text : String (pkt.git-pkt-text (& (array-ref lines index)))]
         (when
@@ -323,8 +303,7 @@
         (let
           [capability (try (git-protocol-capability (& text) true))]
           (try
-            (git-protocol-add-capability! (&mut capabilities) capability limits))))
-      (set! index (+ index 1)))
+            (git-protocol-add-capability! (&mut capabilities) capability limits)))))
     (let
       [format (try (git-protocol-capabilities-format (& capabilities)))]
       [has-object-format : bool
@@ -376,11 +355,9 @@
   [hex : (& hex str)]) : bool
   (let
     [width : i64 (* 2 (git_object.git-object-id-bytes format))]
-    [index : i64 0]
     (when (!= (string.string-length hex) width) (return false))
-    (while (< index width)
-      (when (!= (git-protocol-byte hex index) 48) (return false))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 width)]
+      (when (!= (git-protocol-byte hex index) 48) (return false)))
     true))
 
 ;: One `<id> SP <name>` ref line, validated through `git_object`.
@@ -495,7 +472,7 @@
                   (&mut names)
                   (git-protocol-copy (& advert.name)))
                 (__tl_array-push! refs advert))))
-          (set! index (+ index 1)))
+          (+= index 1))
         (Ok
           (GitAdvertisement version format has-object-format capabilities refs))))))
 
@@ -571,13 +548,11 @@
 (define (git-protocol-ref-prefix-valid? [prefix : (& prefix str)]) : bool
   (let
     [count : i64 (string.string-length prefix)]
-    [index : i64 0]
     (when (or (= count 0) (> count 1024)) (return false))
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [byte : i64 (git-protocol-byte prefix index)]
-        (when (or (<= byte 32) (>= byte 127)) (return false)))
-      (set! index (+ index 1)))
+        (when (or (<= byte 32) (>= byte 127)) (return false))))
     true))
 
 ;: A v2 ls-refs request for `prefixes` with peeled IDs and symref targets.
@@ -597,12 +572,11 @@
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
     [send-unborn : bool
       (and unborn (git-advertisement-has-feature? advert "ls-refs" "unborn"))]
-    [index : i64 0]
     (try (git-protocol-v2-command! (&mut out) advert "ls-refs"))
     (try (git-protocol-push-line! (&mut out) "peel"))
     (try (git-protocol-push-line! (&mut out) "symrefs"))
     (when send-unborn (try (git-protocol-push-line! (&mut out) "unborn")))
-    (while (< index (array-length prefixes))
+    (for [index (iterator.range 0 (array-length prefixes))]
       (let
         [prefix : (& prefixes str) (& (array-ref prefixes index))]
         (unless
@@ -611,8 +585,7 @@
         (try
           (git-protocol-push-line!
             (&mut out)
-            (str_cat.str-cat "ref-prefix " (git-protocol-copy prefix)))))
-      (set! index (+ index 1)))
+            (str_cat.str-cat "ref-prefix " (git-protocol-copy prefix))))))
     (git-protocol-push-raw! (&mut out) (pkt.git-pkt-flush))
     (Ok
       (GitLsRefsPlan
@@ -728,9 +701,8 @@
   (let
     [refs : (__tl_dyn-array GitLsRef) (__tl_make-array GitLsRef 0)]
     [names : git_name_set.Set (git_name_set.new)]
-    [index : i64 0]
     (when (> (array-length lines) limits.max-refs) (return (Err RefLimit)))
-    (while (< index (array-length lines))
+    (for [index (iterator.range 0 (array-length lines))]
       (let
         [text : String (pkt.git-pkt-text (& (array-ref lines index)))]
         (when (git-protocol-control-byte? (& text)) (return (Err MalformedRef)))
@@ -741,8 +713,7 @@
             (git_name_set.contains-borrowed? (& names) (& name))
             (return (Err DuplicateRef)))
           (git_name_set.insert-ref! (&mut names) name)
-          (__tl_array-push! refs entry)))
-      (set! index (+ index 1)))
+          (__tl_array-push! refs entry))))
     (Ok refs)))
 
 ;: What the caller asks of a fetch. Each is honoured only when the server
@@ -779,9 +750,8 @@
     [ids : (__tl_dyn-array git_object.GitObjectId)
       (__tl_make-array git_object.GitObjectId 0)]
     [seen : git_name_set.Set (git_name_set.new)]
-    [index : i64 0]
     (when (= (array-length wants) 0) (return (Err InvalidWant)))
-    (while (< index (array-length wants))
+    (for [index (iterator.range 0 (array-length wants))]
       (match (git_object.git-object-id-from-hex
         format
         (& (array-ref wants index)))
@@ -791,8 +761,7 @@
             (git_name_set.contains-borrowed? (& seen) (& id.hex))
             (return (Err DuplicateWant)))
           (git_name_set.insert-ref! (&mut seen) (git-protocol-copy (& id.hex)))
-          (__tl_array-push! ids id)])
-      (set! index (+ index 1)))
+          (__tl_array-push! ids id)]))
     (Ok ids)))
 
 (define (git-protocol-v2-fetch-request
@@ -808,7 +777,6 @@
       (and
         options.shallow
         (git-advertisement-has-feature? advert "fetch" "shallow"))]
-    [index : i64 0]
     (try (git-protocol-v2-command! (&mut out) advert "fetch"))
     (when
       options.ofs-delta
@@ -816,14 +784,13 @@
     (when
       options.no-progress
       (try (git-protocol-push-line! (&mut out) "no-progress")))
-    (while (< index (array-length ids))
+    (for [index (iterator.range 0 (array-length ids))]
       (try
         (git-protocol-push-line!
           (&mut out)
           (str_cat.str-cat
             "want "
-            (git-protocol-copy (& (array-ref ids index).hex)))))
-      (set! index (+ index 1)))
+            (git-protocol-copy (& (array-ref ids index).hex))))))
     (when deepen (try (git-protocol-push-line! (&mut out) "deepen 1")))
     (try (git-protocol-push-line! (&mut out) "done"))
     (git-protocol-push-raw! (&mut out) (pkt.git-pkt-flush))
@@ -842,19 +809,16 @@
 (define (git-protocol-advertised-id?
   [advert : (& advert GitAdvertisement)]
   [id : (& id git_object.GitObjectId)]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (array-length advert.refs))
-      (let
-        [ref : (& advert git_object.GitAdvertisedRef)
-          (& (array-ref advert.refs index))]
-        (when (string.eq (& ref.id.hex) (& id.hex)) (return true))
-        (match (& ref.peeled)
-          [(Present peeled)
-            (when (string.eq (& peeled.hex) (& id.hex)) (return true))]
-          [(Absent) unit]))
-      (set! index (+ index 1)))
-    false))
+  (for [index (iterator.range 0 (array-length advert.refs))]
+    (let
+      [ref : (& advert git_object.GitAdvertisedRef)
+        (& (array-ref advert.refs index))]
+      (when (string.eq (& ref.id.hex) (& id.hex)) (return true))
+      (match (& ref.peeled)
+        [(Present peeled)
+          (when (string.eq (& peeled.hex) (& id.hex)) (return true))]
+        [(Absent) unit])))
+  false)
 
 ;: v0/v1: the first `want` carries the capabilities this client uses, then a
 ;: flush, then `done`. Pack data must arrive on side-band-64k, and a want must be
@@ -884,14 +848,12 @@
         options.no-progress
         (git-advertisement-has-capability? advert "no-progress"))]
     [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
-    [index : i64 0]
-    (while (< index (array-length ids))
+    (for [index (iterator.range 0 (array-length ids))]
       (unless
         (or
           any-want
           (git-protocol-advertised-id? advert (& (array-ref ids index))))
-        (return (Err WantNotAdvertised)))
-      (set! index (+ index 1)))
+        (return (Err WantNotAdvertised))))
     (let
       [first : String
         (str_cat.str-cat
@@ -911,15 +873,13 @@
             (git-protocol-format-name
               (git-protocol-format-copy (& advert.format))))))
       (try (git-protocol-push-line! (&mut out) first)))
-    (set! index 1)
-    (while (< index (array-length ids))
+    (for [index (iterator.range 1 (array-length ids))]
       (try
         (git-protocol-push-line!
           (&mut out)
           (str_cat.str-cat
             "want "
-            (git-protocol-copy (& (array-ref ids index).hex)))))
-      (set! index (+ index 1)))
+            (git-protocol-copy (& (array-ref ids index).hex))))))
     (when deepen (try (git-protocol-push-line! (&mut out) "deepen 1")))
     (git-protocol-push-raw! (&mut out) (pkt.git-pkt-flush))
     (try (git-protocol-push-line! (&mut out) "done"))
@@ -1069,7 +1029,7 @@
                 response.limits.max-progress-bytes))
               (Continue)
               (begin
-                (set! response.progress-bytes (+ response.progress-bytes count))
+                (+= response.progress-bytes count)
                 (Progress text))))]
         [(Fatal text)
           (set! response.phase git-fetch-phase-failed)

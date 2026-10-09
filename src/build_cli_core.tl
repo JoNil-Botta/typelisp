@@ -4,6 +4,7 @@
 ;; helpers. Package builds are handled in-process by the selfhost compiler:
 ;; parse/discover `typelisp.pkg`, emit assembly for the manifest entry, and
 ;; produce the package artifact selected by manifest kind.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.fs)
 (import stdlib.arena)
@@ -1815,22 +1816,22 @@
 (define (build-package-lock-list-contains-all?
   [haystack : package_lock_entry_vec.Vec]
   [needles : (& needles package_lock_entry_vec.Vec)]) : bool
-  (build-package-lock-list-contains-all-from haystack (& needles) 0))
+  (build-package-lock-list-contains-all-from haystack (& needles)))
 
 (define (build-package-lock-list-contains-all-from
   [haystack : (& haystack package_lock_entry_vec.Vec)]
-  [needles : (& needles package_lock_entry_vec.Vec)]
-  [index : i64]) : bool
-  (if (>= index (package_lock_entry_vec.len needles))
-    true
-    (and
+  [needles : (& needles package_lock_entry_vec.Vec)]) : bool
+  (for [index (iterator.range 0 (package_lock_entry_vec.len needles))]
+    (unless
       (build-package-lock-list-has-exact-entry?
         haystack
         (package_lock_entry_vec.get
           needles
           index
           (package_lock_core.package-lock-entry-list-fallback)))
-      (build-package-lock-list-contains-all-from haystack needles (+ index 1)))))
+      (return false))
+    unit)
+  true)
 
 (define (build-package-lock-list-eq?
   [left : package_lock_entry_vec.Vec]
@@ -1999,11 +2000,8 @@
   [dst : (&mut dst (__tl_dyn-array BuildPackageGraphNode))]
   [src : (__tl_dyn-array BuildPackageGraphNode)]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (set! (array-ref dst index) (array-ref src index))))
 
 (define (build-package-graph-node-vec-grow [v : BuildPackageGraphNodeVec]) : BuildPackageGraphNodeVec
   (let
@@ -2312,8 +2310,7 @@
   [vec : (& vec fs.FsStringVector)]) : build_run_core.SourceToolLinkInputs
   (let
     [out : build_run_core.SourceToolLinkInputs inputs]
-    [index : i64 0]
-    (while (< index (fs.string-vector-len vec))
+    (for [index (iterator.range 0 (fs.string-vector-len vec))]
       (let
         [value : String (fs.string-vector-get vec index "")]
         (set!
@@ -2328,8 +2325,7 @@
               value)
             (build-package-link-declared-by
               (owned_view.compiler-owned-shared-view owner)
-              (owned_view.compiler-owned-shared-view field))))
-        (set! index (+ index 1))))
+              (owned_view.compiler-owned-shared-view field))))))
     out))
 
 (define (build-package-link-add-set-origins
@@ -2750,20 +2746,19 @@
     (build-package-graph-node-artifact-paths node profile target)))
 
 (define (build-package-validate-graph-checkouts-from
-  [nodes : BuildPackageGraphNodeVec]
-  [index : i64]) : ResultBuildString
-  (if (>= index (build-package-graph-node-vec-len nodes))
-    (Ok "")
+  [nodes : BuildPackageGraphNodeVec]) : ResultBuildString
+  (for [index (iterator.range 0 (build-package-graph-node-vec-len nodes))]
     (let
       [_
         (try
           (build-package-validate-graph-node-checkout
             (build-package-graph-node-vec-at nodes index)))]
-      (build-package-validate-graph-checkouts-from nodes (+ index 1)))))
+      unit))
+  (Ok ""))
 
 (define (build-package-validate-graph-checkouts
   [nodes : BuildPackageGraphNodeVec]) : ResultBuildString
-  (build-package-validate-graph-checkouts-from nodes 0))
+  (build-package-validate-graph-checkouts-from nodes))
 
 ;; A fetched dependency's relative search paths must stay inside its locked
 ;; checkout (#6998); absolute search paths are system locations, used as written.
@@ -2792,7 +2787,7 @@
                   (set! result (Err message))
                   (set! index (fs.string-vector-len vec))]
                 [(Ok _) unit]))
-            (set! index (+ index 1))))
+            (+= index 1)))
         result)]))
 
 ;; The dependency section of a binary's link (#6982): every direct
@@ -2885,17 +2880,15 @@
   [manifest-dir : String]
   [root : (& root str)]) : bool
   (let
-    [index : i64 0]
     [found : bool false]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (if (string.eq
         (build-package-catalog-dep-root
           (owned_view.compiler-owned-shared-view manifest-dir)
           (load.compiler-pkg-dep-list-at (& deps) index))
         root)
         (set! found true)
-        unit)
-      (set! index (+ index 1)))
+        unit))
     found))
 
 (define (build-package-graph-catalog-deps
@@ -2903,11 +2896,10 @@
   [manifest-dir : String]
   [direct-deps : load.CompilerPkgDepList]) : load.CompilerPkgDepList
   (let
-    [index : i64 0]
     [count : i64 (build-package-graph-node-vec-len nodes)]
     [direct-count : i64 (load.compiler-pkg-dep-list-count (& direct-deps))]
     [deps : load.CompilerPkgDepList direct-deps]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [node : BuildPackageGraphNode
           (build-package-graph-node-vec-at nodes index)]
@@ -2927,8 +2919,7 @@
             deps
             (load.compiler-pkg-dep-list-push
               deps
-              (load.CompilerPkgDep node.manifest.name root))))
-        (set! index (+ index 1))))
+              (load.CompilerPkgDep node.manifest.name root))))))
     deps))
 
 (define (build-package-tlci-owner-stdlib-path?
@@ -2982,7 +2973,7 @@
           [(< order 0)
             (set! position scan)
             (set! scan count)]
-          [else (set! scan (+ scan 1))])))
+          [else (+= scan 1)])))
     (if duplicate
       items
       (let
@@ -2993,13 +2984,13 @@
           (tlci.tlci-spmd-specializations-push!
             (&mut dst)
             (tlci.tlci-spmd-specializations-ref items cursor))
-          (set! cursor (+ cursor 1)))
+          (+= cursor 1))
         (tlci.tlci-spmd-specializations-push! (&mut dst) item)
         (while (< cursor count)
           (tlci.tlci-spmd-specializations-push!
             (&mut dst)
             (tlci.tlci-spmd-specializations-ref items cursor))
-          (set! cursor (+ cursor 1)))
+          (+= cursor 1))
         dst))))
 
 (define (build-package-tlci-callable-insert
@@ -3021,18 +3012,18 @@
         (begin
           (set! position scan)
           (set! scan count))
-        (set! scan (+ scan 1))))
+        (+= scan 1)))
     (while (< cursor position)
       (tlci.tlci-spmd-callables-push!
         (&mut dst)
         (tlci.tlci-spmd-callables-ref items cursor))
-      (set! cursor (+ cursor 1)))
+      (+= cursor 1))
     (tlci.tlci-spmd-callables-push! (&mut dst) item)
     (while (< cursor count)
       (tlci.tlci-spmd-callables-push!
         (&mut dst)
         (tlci.tlci-spmd-callables-ref items cursor))
-      (set! cursor (+ cursor 1)))
+      (+= cursor 1))
     dst))
 
 (define (build-package-tlci-backend [mode : backend.CompilerBackendMode]) : ir.CompilerIrSpmdBackend
@@ -3193,7 +3184,7 @@
     (while (and (not present) (< index (cli_svec.len out)))
       (if (string.eq (cli_svec.get out index "") name)
         (set! present true)
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if present
       false
       (begin
@@ -3208,8 +3199,7 @@
   [catalog : (&mut catalog (__tl_dyn-array String))]) : unit
   (let
     [count : i64 (array-length catalog)]
-    [index : i64 1]
-    (while (< index count)
+    (for [index (iterator.range 1 count)]
       (let
         [value : String (string.copy (array-ref catalog index))]
         [slot : i64 index]
@@ -3221,9 +3211,8 @@
           (set!
             (array-ref catalog slot)
             (string.copy (array-ref catalog (- slot 1))))
-          (set! slot (- slot 1)))
-        (set! (array-ref catalog slot) value)
-        (set! index (+ index 1))))))
+          (-= slot 1))
+        (set! (array-ref catalog slot) value)))))
 
 (define (build-package-tlci-finish-macro-collector
   [names : (&mut names cli_svec.Vec)]
@@ -3231,10 +3220,8 @@
   (let
     [count : i64 (cli_svec.len names)]
     [catalog (__tl_make-array String count)]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref catalog index) (cli_svec.get names index ""))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref catalog index) (cli_svec.get names index "")))
     (build-package-tlci-sort-macro-catalog! (&mut catalog))
     (BuildPackageTlciMacroCollector catalog captures)))
 
@@ -3296,13 +3283,11 @@
     [out : build_string_i64_map.Map
       (build_string_i64_map.with-capacity
         (+ (* (cli_svec.len (& sources)) 2) 4))]
-    [index : i64 0]
-    (while (< index (cli_svec.len (& sources)))
+    (for [index (iterator.range 0 (cli_svec.len (& sources)))]
       (build_string_i64_map.insert-ref!
         (&mut out)
         (load.compiler-load-normalize-path (cli_svec.get (& sources) index ""))
-        1)
-      (set! index (+ index 1)))
+        1))
     out))
 
 (define (build-package-tlci-source-owned?
@@ -3540,12 +3525,10 @@
             (let
               [count : i64 (array-length names)]
               [copied : (__tl_dyn-array String) (__tl_make-array String count)]
-              [index : i64 0]
-              (while (< index count)
+              (for [index (iterator.range 0 count)]
                 (set!
                   (array-ref copied index)
-                  (string.copy (array-ref names index)))
-                (set! index (+ index 1)))
+                  (string.copy (array-ref names index))))
               (Ok (string.copy metadata) copied (string.copy native-source))))]))))
 
 (define (build-package-tlci-collect-exports
@@ -3771,26 +3754,23 @@
 (define (build-package-command-args-transcript
   [args : process.ProcessStringList]) : String
   (let
-    [index : i64 0]
     [count : i64 (process.args-count args)]
     [out : String
       (build-package-transcript-field "argc" (string.int->string count))]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (str_cat.str-cat
           out
-          (build-package-transcript-field "arg" (process.args-ref args index))))
-      (set! index (+ index 1)))
+          (build-package-transcript-field "arg" (process.args-ref args index)))))
     out))
 
 (define (build-package-command-env-transcript [items : process.ProcessEnvList]) : String
   (let
-    [index : i64 0]
     [count : i64 (process.env-count items)]
     [out : String
       (build-package-transcript-field "envc" (string.int->string count))]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         out
         (str_cat.str-cat
@@ -3800,8 +3780,7 @@
             (process.env-name-ref items index))
           (build-package-transcript-field
             "env-value"
-            (process.env-value-ref items index))))
-      (set! index (+ index 1)))
+            (process.env-value-ref items index)))))
     out))
 
 (define (build-package-command-transcript
@@ -3896,7 +3875,7 @@
             (set! ok false)
             (set! error message)]
           [(Ok text) (set! out (str_cat.str-cat out text))])
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if ok
       (Ok out)
       (Err error))))
@@ -3975,8 +3954,8 @@
                 (set! ok false)
                 (set! error message)]
               [(Ok text) (set! out (str_cat.str-cat out text))])
-            (set! dir-index (+ dir-index 1))))
-        (set! library-index (+ library-index 1))))
+            (+= dir-index 1)))
+        (+= library-index 1)))
     (if ok
       (Ok out)
       (Err error))))
@@ -4007,9 +3986,8 @@
   (let
     [origins : build_run_core.SourceToolLinkOrigins
       (build_run_core.source-tool-link-inputs-origins inputs)]
-    [index : i64 0]
     [out : String ""]
-    (while (< index (process.args-count origins.kinds))
+    (for [index (iterator.range 0 (process.args-count origins.kinds))]
       (set!
         out
         (str_cat.str-cat
@@ -4022,8 +4000,7 @@
             (process.args-ref origins.values index))
           (build-package-transcript-field
             "native-link-declared-by"
-            (process.args-ref origins.declared-by index))))
-      (set! index (+ index 1)))
+            (process.args-ref origins.declared-by index)))))
     out))
 
 (define (build-package-assembler-command-for
@@ -4365,7 +4342,7 @@
         index)
         [(Retained backup _ _) (set! preserve (string.eq backup backup-path))]
         [_ unit])
-      (set! index (+ index 1)))
+      (+= index 1))
     preserve))
 
 (define (build-package-remove-staged-file-after-rollback
@@ -4477,7 +4454,7 @@
         index)
         [(Retained _ _ _) (set! required true)]
         [_ unit])
-      (set! index (+ index 1)))
+      (+= index 1))
     required))
 
 (define (build-package-commit-error-message
@@ -4535,7 +4512,7 @@
                   ": "
                   reason))]
             [_ unit]))
-        (set! index (+ index 1))))
+        (+= index 1)))
     (if ok
       (Ok "")
       (Err error))))
@@ -4566,7 +4543,7 @@
                     path
                     ": "
                     (io.error-message io-error))))]))
-        (set! index (- index 1))))
+        (-= index 1)))
     (set! index (- backed-up 1))
     (while (>= index 0)
       (let
@@ -4605,7 +4582,7 @@
                       rollback
                       (Retained backup final-path io-message))))]))
           unit)
-        (set! index (- index 1))))
+        (-= index 1)))
     rollback))
 
 (define (build-package-commit-plan-run [plan : BuildPackageCommitPlan]) : ResultBuildPackageCommit
@@ -4650,9 +4627,9 @@
                 (set! ok false)
                 (set! error reason)])
             (if ok
-              (set! backed-up (+ backed-up 1))
+              (+= backed-up 1)
               unit)
-            (set! index (+ index 1))))
+            (+= index 1)))
         (set! index 0)
         (while (and ok (< index count))
           (let
@@ -4663,7 +4640,7 @@
             [from : String item.staged-path]
             [to : String item.final-path]
             (match (fs.try-rename (& from) (& to))
-              [(OkIoUnit) (set! installed (+ installed 1))]
+              [(OkIoUnit) (+= installed 1)]
               [(ErrIoUnit io-error)
                 (set! ok false)
                 (set!
@@ -4671,7 +4648,7 @@
                   (str_cat.str-cat
                     "build: failed to commit package artifact: "
                     (io.error-message io-error)))])
-            (set! index (+ index 1))))
+            (+= index 1)))
         (if ok
           (begin
             (set! index 0)
@@ -4686,7 +4663,7 @@
                     [backup : String item.backup-path]
                     (fs.try-remove-file-if-exists (& backup)))
                   io.OkIoUnit)
-                (set! index (+ index 1))))
+                (+= index 1)))
             (Ok))
           (Err
             error
@@ -5779,17 +5756,15 @@
   [args : process.ProcessStringList]
   [roots : (& roots cli_svec.Vec)]) : process.ProcessStringList
   (let
-    [i : i64 0]
     [n : i64 (cli_svec.len (& roots))]
     [out : process.ProcessStringList args]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (set!
         out
         (build-package-worker-append-option
           out
           "--stdlib-root"
-          (cli_svec.get (& roots) i "")))
-      (set! i (+ i 1)))
+          (cli_svec.get (& roots) i ""))))
     out))
 
 (define (build-package-worker-append-resolved-deps
@@ -6095,19 +6070,17 @@
 (define (build-package-deps-built?
   [manifest-dir : String]
   [deps : load.CompilerPkgDepList]
-  [index : i64]
   [built : (& built build_string_i64_map.Map)]) : bool
-  (if (>= index (load.compiler-pkg-dep-list-count deps))
-    true
+  (for [index (iterator.range 0 (load.compiler-pkg-dep-list-count deps))]
     (let
       [dep-manifest-path : String
         (build-package-dep-manifest-path
           (owned_view.compiler-owned-shared-view manifest-dir)
           (load.compiler-pkg-dep-list-at deps index))]
       (match (build_string_i64_map.get built dep-manifest-path)
-        [(LookupFound _)
-          (build-package-deps-built? manifest-dir deps (+ index 1) built)]
-        [(LookupMissing) false]))))
+        [(LookupFound _) unit]
+        [(LookupMissing) (return false)])))
+  true)
 
 (define (build-package-node-ready?
   [node : BuildPackageGraphNode]
@@ -6119,7 +6092,6 @@
     (build-package-deps-built?
       manifest-dir
       (load.compiler-pkg-deps-list manifest.deps)
-      0
       built)))
 
 (define (build-package-node-scheduled?
@@ -6303,7 +6275,7 @@
         (match (build_string_i64_map.get (& built) manifest-path)
           [(LookupFound _) unit]
           [(LookupMissing) (set! all-built false)])
-        (set! index (+ index 1))))
+        (+= index 1)))
     all-built))
 
 (define (build-package-failure-status [failed-status : i64] [status : i64]) : i64
@@ -6527,7 +6499,7 @@
                 (owned_view.compiler-owned-shared-view producer-identity)
                 announce)])]
         (if (= node-status 0)
-          (set! index (+ index 1))
+          (+= index 1)
           (begin
             (io.print-error
               (str_cat.str-cat
@@ -6853,10 +6825,10 @@
       (let
         [current : String (io.arg i)]
         (match (cli_option.cli-option-lookup (& specs) (& current))
-          [(Found _ arity) (set! i (+ i (+ arity 1)))]
+          [(Found _ arity) (+= i (+ arity 1))]
           [(None)
             (if (cli_option.cli-flag? (& current))
-              (set! i (+ i 1))
+              (+= i 1)
               (set! found true))])))
     found))
 

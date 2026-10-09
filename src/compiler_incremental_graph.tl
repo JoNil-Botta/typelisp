@@ -10,6 +10,7 @@
 ;; reachability and acyclicity checks as persisted bytes, and a failure
 ;; publishes nothing. Result payloads, the result store, the planner and cache
 ;; policy live elsewhere.
+(import stdlib.iterator)
 (import compiler_incremental_binary as binary)
 (import compiler_incremental_identity as identity)
 (import compiler_incremental_trace as trace)
@@ -228,10 +229,8 @@
   [length : i64]) : (__tl_dyn-array u8)
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 length)]
-    [index : i64 0]
-    (while (< index length)
-      (set! (array-ref out index) (array-ref bytes (+ start index)))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 length)]
+      (set! (array-ref out index) (array-ref bytes (+ start index))))
     out))
 
 ;; Unsigned lexicographic order of two byte ranges: -1, 0 or 1.
@@ -254,7 +253,7 @@
         [a : i64 (cast (array-ref left (+ left-start index)) : i64)]
         [b : i64 (cast (array-ref right (+ right-start index)) : i64)]
         (cond [(< a b) (set! result -1)] [(> a b) (set! result 1)] [else unit])
-        (set! index (+ index 1))))
+        (+= index 1)))
     (cond
       [(!= result 0) result]
       [(< left-length right-length) -1]
@@ -278,7 +277,7 @@
         [a : i64 (cast (string.string-ref left index) : i64)]
         [b : i64 (cast (string.string-ref right index) : i64)]
         (cond [(< a b) (set! result -1)] [(> a b) (set! result 1)] [else unit])
-        (set! index (+ index 1))))
+        (+= index 1)))
     (cond
       [(!= result 0) result]
       [(< left-length right-length) -1]
@@ -288,13 +287,10 @@
 (define (compiler-graph-push-string-bytes!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [text : (& text str)]) : unit
-  (let
-    [index : i64 0]
-    (while (< index (string.string-length text))
-      (byte_buf_core.byte-buf-builder-push
-        out
-        (cast (string.string-ref text index) : u8))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 (string.string-length text))]
+    (byte_buf_core.byte-buf-builder-push
+      out
+      (cast (string.string-ref text index) : u8))))
 
 ;; --- field validation and encoding --------------------------------------------
 (define (compiler-graph-identity-limits
@@ -745,10 +741,8 @@
 (define (compiler-graph-identity-order [count : i64]) : (__tl_dyn-array i64)
   (let
     [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref out index) index)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref out index) index))
     out))
 
 ;; Write the distinct roots in sorted order; false when one name is bound to
@@ -777,7 +771,7 @@
               index
               true)
             0))
-        (set! count (+ count 1)))
+        (+= count 1))
       (when
         (and
           (> index 0)
@@ -802,7 +796,7 @@
               false)
             0))
         (set! ok? false))
-      (set! index (+ index 1)))
+      (+= index 1))
     (when
       ok?
       (byte_le.push-u32! out count)
@@ -829,7 +823,7 @@
             (compiler-graph-push-string-bytes! out (& record.key))
             (byte_le.push-u32! out (string.string-length record.query))
             (compiler-graph-push-string-bytes! out (& record.query))))
-        (set! index (+ index 1))))
+        (+= index 1)))
     ok?))
 
 ;; Write the distinct nodes in sorted order; false when one query carries two
@@ -858,7 +852,7 @@
               index
               true)
             0))
-        (set! count (+ count 1)))
+        (+= count 1))
       (when
         (and
           (> index 0)
@@ -883,7 +877,7 @@
               false)
             0))
         (set! ok? false))
-      (set! index (+ index 1)))
+      (+= index 1))
     (when
       ok?
       (byte_le.push-u32! out count)
@@ -910,7 +904,7 @@
             (byte_le.push-u32! out (string.string-length record.query))
             (compiler-graph-push-string-bytes! out (& record.query))
             (compiler-graph-push-string-bytes! out (& record.body))))
-        (set! index (+ index 1))))
+        (+= index 1)))
     ok?))
 
 ;; Compare the records at order[left] and order[right]: mode 1 roots by name
@@ -1081,7 +1075,7 @@
                         observation-length)))
                   (set! ok? false))))
             (set! offset (+ observation-start observation-length))
-            (set! index (+ index 1))))))
+            (+= index 1)))))
     ok?))
 
 ;; The little-endian u32 at `offset`, or -1 when it is not wholly present.
@@ -1295,10 +1289,9 @@
       (compiler-graph-identity-limits limits)]
     [roots : (__tl_dyn-array CompilerIncrementalGraphRoot)
       (__tl_make-array CompilerIncrementalGraphRoot root-count)]
-    [index : i64 0]
     [previous-start : i64 0]
     [previous-length : i64 0]
-    (while (< index root-count)
+    (for [index (iterator.range 0 root-count)]
       (let
         [key-start : i64 reader.cursor.offset]
         [purpose : String
@@ -1354,8 +1347,7 @@
             (array-ref roots index)
             (CompilerIncrementalGraphRoot root-name query)))
         (set! previous-start key-start)
-        (set! previous-length key-length)
-        (set! index (+ index 1))))
+        (set! previous-length key-length)))
     (let
       [node-count : i64 (byte_reader.read-u32! (&mut reader.cursor))]
       (when
@@ -1387,8 +1379,7 @@
         [nodes : (__tl_dyn-array CompilerIncrementalGraphNode)
           (__tl_make-array CompilerIncrementalGraphNode node-count)]
         [edges : graph_edge_vec.Vec (graph_edge_vec.with-capacity 0)]
-        (set! index 0)
-        (while (< index node-count)
+        (for [index (iterator.range 0 node-count)]
           (let
             [query-start : i64 (+ reader.cursor.offset 4)]
             [query-bytes : (__tl_dyn-array u8)
@@ -1484,8 +1475,7 @@
                 (array-ref nodes index)
                 (CompilerIncrementalGraphNode query output stored-key value)))
             (set! previous-start query-start)
-            (set! previous-length query-length)
-            (set! index (+ index 1))))
+            (set! previous-length query-length)))
         (if (!= reader.cursor.offset reader.cursor.end)
           (Err
             (compiler-graph-error
@@ -1545,7 +1535,7 @@
         [a : i64 (cast (array-ref left index) : i64)]
         [b : i64 (cast (string.string-ref right index) : i64)]
         (cond [(< a b) (set! result -1)] [(> a b) (set! result 1)] [else unit])
-        (set! index (+ index 1))))
+        (+= index 1)))
     (cond
       [(!= result 0) result]
       [(< left-length right-length) -1]
@@ -1581,8 +1571,7 @@
                 end)]
             [i : i64 left]
             [j : i64 middle]
-            [k : i64 left]
-            (while (< k right-end)
+            (for [k (iterator.range left right-end)]
               (if (and
                 (< i middle)
                 (or
@@ -1598,16 +1587,12 @@
                     0)))
                 (begin
                   (set! (array-ref scratch k) (array-ref values i))
-                  (set! i (+ i 1))
-                  (set! k (+ k 1)))
+                  (+= i 1))
                 (begin
                   (set! (array-ref scratch k) (array-ref values j))
-                  (set! j (+ j 1))
-                  (set! k (+ k 1)))))
-            (set! k left)
-            (while (< k right-end)
-              (set! (array-ref values k) (array-ref scratch k))
-              (set! k (+ k 1)))
+                  (+= j 1))))
+            (for [k (iterator.range left right-end)]
+              (set! (array-ref values k) (array-ref scratch k)))
             (set! left right-end)))
         (set! width (* width 2))))))
 
@@ -1688,21 +1673,18 @@
     [dependency-count : i64 0]
     [root-nodes : (__tl_dyn-array i64) (__tl_make-array i64 root-count)]
     [outputs : (__tl_dyn-array String) (__tl_make-array String node-count)]
-    [index : i64 0]
-    (while (< index node-count)
+    (for [index (iterator.range 0 node-count)]
       (let
         [node : CompilerIncrementalGraphNode
           (owned_view.compiler-owned-array-element-shared-view nodes index)]
         (set!
           (array-ref outputs index)
-          (compiler-graph-encode-output (& node.output)))
-        (set! index (+ index 1))))
-    (set! index 0)
+          (compiler-graph-encode-output (& node.output)))))
     ;; Resolve each child-result edge to the node with exactly that query, and
     ;; require the output that node publishes to be the one observed. A node
     ;; cannot name itself: its trace is a trace of its own query, and a trace
     ;; never names its parent.
-    (while (< index edge-count)
+    (for [index (iterator.range 0 edge-count)]
       (let
         [edge : CompilerIncrementalGraphEdgeRecord
           (owned_view.compiler-owned-array-element-shared-view
@@ -1733,13 +1715,11 @@
                   -1
                   edge.node
                   "a child-result edge observed a different semantic output")))))
-        (set! (array-ref targets index) target)
-        (set! index (+ index 1))))
+        (set! (array-ref targets index) target)))
     ;; Edges arrive grouped by node in node order; sort and dedupe each row.
     (let
       [edge : i64 0]
-      [node : i64 0]
-      (while (< node node-count)
+      (for [node (iterator.range 0 node-count)]
         (let
           [row-start : i64 edge]
           (while (and
@@ -1751,7 +1731,7 @@
                   edge)
                 node)
               node))
-            (set! edge (+ edge 1)))
+            (+= edge 1))
           (compiler-graph-sort-range!
             (&mut targets)
             (&mut scratch)
@@ -1761,23 +1741,18 @@
             (& no-nodes)
             0)
           (set! (array-ref dependency-start node) dependency-count)
-          (let
-            [k : i64 row-start]
-            (while (< k edge)
-              (when
-                (or
-                  (= k row-start)
-                  (!= (array-ref targets k) (array-ref targets (- k 1))))
-                (set!
-                  (array-ref dependencies dependency-count)
-                  (array-ref targets k))
-                (set! dependency-count (+ dependency-count 1)))
-              (set! k (+ k 1))))
-          (set! node (+ node 1)))))
+          (for [k (iterator.range row-start edge)]
+            (when
+              (or
+                (= k row-start)
+                (!= (array-ref targets k) (array-ref targets (- k 1))))
+              (set!
+                (array-ref dependencies dependency-count)
+                (array-ref targets k))
+              (+= dependency-count 1))))))
     (set! (array-ref dependency-start node-count) dependency-count)
     ;; Every root names a node.
-    (set! index 0)
-    (while (< index root-count)
+    (for [index (iterator.range 0 root-count)]
       (let
         [root : CompilerIncrementalGraphRoot
           (owned_view.compiler-owned-array-element-shared-view roots index)]
@@ -1792,8 +1767,7 @@
                 index
                 -1
                 "a root names no node in the graph"))))
-        (set! (array-ref root-nodes index) target)
-        (set! index (+ index 1))))
+        (set! (array-ref root-nodes index) target)))
     (compiler-graph-order
       roots
       root-nodes
@@ -1807,10 +1781,8 @@
   [count : i64]) : (__tl_dyn-array i64)
   (let
     [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref out index) (array-ref values index))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref out index) (array-ref values index)))
     out))
 
 ;; Build the dependent rows, then order the nodes dependencies-first and check
@@ -1835,14 +1807,12 @@
     [topological : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
     [emitted : i64 0]
     [node : i64 0]
-    [k : i64 0]
     ;; Dependents: count, prefix-sum, then fill in ascending node order so
     ;; each row comes out ascending.
-    (while (< k edge-count)
+    (for [k (iterator.range 0 edge-count)]
       (set!
         (array-ref dependent-start (+ (array-ref dependencies k) 1))
-        (+ (array-ref dependent-start (+ (array-ref dependencies k) 1)) 1))
-      (set! k (+ k 1)))
+        (+ (array-ref dependent-start (+ (array-ref dependencies k) 1)) 1)))
     (set! node 0)
     (while (< node node-count)
       (set!
@@ -1851,16 +1821,17 @@
           (array-ref dependent-start (+ node 1))
           (array-ref dependent-start node)))
       (set! (array-ref fill node) (array-ref dependent-start node))
-      (set! node (+ node 1)))
+      (+= node 1))
     (set! node 0)
     (while (< node node-count)
-      (set! k (array-ref dependency-start node))
-      (while (< k (array-ref dependency-start (+ node 1)))
+      (for [k
+        (iterator.range
+          (array-ref dependency-start node)
+          (array-ref dependency-start (+ node 1)))]
         (let
           [target : i64 (array-ref dependencies k)]
           (set! (array-ref dependents (array-ref fill target)) node)
-          (set! (array-ref fill target) (+ (array-ref fill target) 1))
-          (set! k (+ k 1))))
+          (set! (array-ref fill target) (+ (array-ref fill target) 1))))
       (set!
         (array-ref remaining node)
         (-
@@ -1869,16 +1840,18 @@
       (when
         (= (array-ref remaining node) 0)
         (set! heap-size (compiler-graph-heap-push! (&mut heap) heap-size node)))
-      (set! node (+ node 1)))
+      (+= node 1))
     ;; Kahn's algorithm; the heap releases the smallest ready index first.
     (while (> heap-size 0)
       (let
         [ready : i64 (compiler-graph-heap-pop! (&mut heap) heap-size)]
-        (set! heap-size (- heap-size 1))
+        (-= heap-size 1)
         (set! (array-ref topological emitted) ready)
-        (set! emitted (+ emitted 1))
-        (set! k (array-ref dependent-start ready))
-        (while (< k (array-ref dependent-start (+ ready 1)))
+        (+= emitted 1)
+        (for [k
+          (iterator.range
+            (array-ref dependent-start ready)
+            (array-ref dependent-start (+ ready 1)))]
           (let
             [dependent : i64 (array-ref dependents k)]
             (set!
@@ -1888,13 +1861,12 @@
               (= (array-ref remaining dependent) 0)
               (set!
                 heap-size
-                (compiler-graph-heap-push! (&mut heap) heap-size dependent)))
-            (set! k (+ k 1))))))
+                (compiler-graph-heap-push! (&mut heap) heap-size dependent)))))))
     (when
       (< emitted node-count)
       (set! node 0)
       (while (= (array-ref remaining node) 0)
-        (set! node (+ node 1)))
+        (+= node 1))
       (return
         (Err
           (compiler-graph-error
@@ -1907,31 +1879,29 @@
       [visited : (__tl_dyn-array bool) (__tl_make-array bool node-count)]
       [stack : (__tl_dyn-array i64) (__tl_make-array i64 node-count)]
       [top : i64 0]
-      (set! k 0)
-      (while (< k (array-length root-nodes))
+      (for [k (iterator.range 0 (array-length root-nodes))]
         (let
           [start : i64 (array-ref root-nodes k)]
           (unless
             (array-ref visited start)
             (set! (array-ref visited start) true)
             (set! (array-ref stack top) start)
-            (set! top (+ top 1)))
-          (set! k (+ k 1))))
+            (+= top 1))))
       (while (> top 0)
         (let
           [current : i64 (array-ref stack (- top 1))]
-          [edge : i64 0]
-          (set! top (- top 1))
-          (set! edge (array-ref dependency-start current))
-          (while (< edge (array-ref dependency-start (+ current 1)))
+          (-= top 1)
+          (for [edge
+            (iterator.range
+              (array-ref dependency-start current)
+              (array-ref dependency-start (+ current 1)))]
             (let
               [target : i64 (array-ref dependencies edge)]
               (unless
                 (array-ref visited target)
                 (set! (array-ref visited target) true)
                 (set! (array-ref stack top) target)
-                (set! top (+ top 1)))
-              (set! edge (+ edge 1))))))
+                (+= top 1))))))
       (set! node 0)
       (while (< node node-count)
         (unless
@@ -1943,7 +1913,7 @@
                 -1
                 node
                 "a node is not reachable from any root"))))
-        (set! node (+ node 1))))
+        (+= node 1)))
     (match (identity.compiler-incremental-digest-array (& transcript))
       [(Sha256FinalizeErr _)
         (Err
@@ -2031,10 +2001,8 @@
     [from : i64 (array-ref start index)]
     [count : i64 (- (array-ref start (+ index 1)) from)]
     [out : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [k : i64 0]
-    (while (< k count)
-      (set! (array-ref out k) (array-ref values (+ from k)))
-      (set! k (+ k 1)))
+    (for [k (iterator.range 0 count)]
+      (set! (array-ref out k) (array-ref values (+ from k))))
     out))
 
 ;; The distinct nodes `index` depends on, ascending.

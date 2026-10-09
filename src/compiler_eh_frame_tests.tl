@@ -1,6 +1,7 @@
 ;; Golden, round-trip and rejection coverage for compiler_eh_frame.tl.  The
 ;; external fixture bytes, their sources and the reproduction recipe live in
 ;; tests/fixtures/eh-frame/.
+(import stdlib.iterator)
 (import compiler_eh_frame as eh)
 (import stdlib.io)
 (import stdlib.leb128)
@@ -16,8 +17,7 @@
   (let
     [count : i64 (/ (string.string-length hex) 2)]
     [out : (__tl_dyn-array u8) (__tl_make-array u8 count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref out index)
         (cast
@@ -28,8 +28,7 @@
               16)
             (eh-frame-test-hex-digit
               (cast (string.char-at hex (+ (* index 2) 1)) : i64)))
-          : u8))
-      (set! index (+ index 1)))
+          : u8)))
     out))
 
 ;; GNU as 2.47: two functions, a leaf and one with a remembered state.
@@ -91,7 +90,7 @@
       (when
         (!= (array-ref bytes (+ start index)) (array-ref expected index))
         (set! same? false))
-      (set! index (+ index 1)))
+      (+= index 1))
     same?))
 
 (define (eh-frame-test-bytes-eq?
@@ -109,7 +108,7 @@
       (when
         (!= (array-ref left index) (array-ref right index))
         (set! same? false))
-      (set! index (+ index 1)))
+      (+= index 1))
     same?))
 
 (cfg
@@ -347,7 +346,6 @@
         (__tl_make-array eh.CompilerEhFrameSelection 8)]
       [backward-selections : (__tl_dyn-array eh.CompilerEhFrameSelection)
         (__tl_make-array eh.CompilerEhFrameSelection 8)]
-      [index : i64 0]
       (set! (array-ref forward 0) (eh-frame-test-image (& gas-bytes) 1))
       (set! (array-ref forward 1) (eh-frame-test-image (& gcc-bytes) 2))
       (set! (array-ref forward 2) (eh-frame-test-image (& clang-bytes) 3))
@@ -355,7 +353,7 @@
       (set! (array-ref backward 1) (eh-frame-test-image (& gcc-bytes) 2))
       (set! (array-ref backward 2) (eh-frame-test-image (& gas-bytes) 1))
       ;; gas code at 0x1000, gcc at 0x2000, clang at 0x3000.
-      (while (< index 8)
+      (for [index (iterator.range 0 8)]
         (let
           [image : i64 (cond [(< index 2) 0] [(< index 5) 1] [else 2])]
           [fde : i64
@@ -369,8 +367,7 @@
             (eh.CompilerEhFrameSelection image fde location))
           (set!
             (array-ref backward-selections (- 7 index))
-            (eh.CompilerEhFrameSelection (- 2 image) fde location))
-          (set! index (+ index 1))))
+            (eh.CompilerEhFrameSelection (- 2 image) fde location))))
       (let
         [a : eh.CompilerEhFrameOutput
           (eh-frame-test-encode-basic (& forward) (& forward-selections) 0x9000)]

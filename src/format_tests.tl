@@ -1,5 +1,6 @@
 ;; format_tests.tl - White-box tests for the formatter: token and CST shape,
 ;; rule rendering fixtures, and the fmt CLI error paths.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.io)
 (import stdlib.string)
@@ -598,13 +599,11 @@
   [stream : (& stream tokens.FormatTokenStream)]
   [wanted : i64]) : i64
   (let
-    [i : i64 0]
     [hits : i64 0]
-    (while (< i stream.count)
+    (for [i (iterator.range 0 stream.count)]
       (if (= (tokens.format-token-tag (tokens.format-token-at stream i)) wanted)
-        (set! hits (+ hits 1))
-        (set! hits hits))
-      (set! i (+ i 1)))
+        (+= hits 1)
+        (set! hits hits)))
     hits))
 
 (define (format-lex [src : String]) : tokens.FormatTokenStream

@@ -3,6 +3,7 @@
 ;; side may occupy up to two resources so register-pair/group moves can block on
 ;; either half without teaching this helper about registers, stack slots, or IR
 ;; values. Resource id 0 means "no resource".
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 
 (defmacro (compiler-parallel-move-shared-view [place : Expr]) : Expr
@@ -30,11 +31,8 @@
   [dst : (&mut dst (__tl_dyn-array CompilerParallelMoveEdge))]
   [src : (& src (__tl_dyn-array CompilerParallelMoveEdge))]
   [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref dst index) (array-ref src index))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 count)]
+    (set! (array-ref dst index) (array-ref src index))))
 
 (define (compiler-parallel-move-edge-push!
   [seq : (&mut seq CompilerParallelMoveEdgeSeq)]
@@ -82,16 +80,14 @@
   (let
     [slots : (__tl_dyn-array CompilerParallelMoveEdge) edges.slots]
     [count : i64 edges.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [edge : CompilerParallelMoveEdge (array-ref slots index)]
         (when
           (and
             (not (= (compiler-parallel-move-edge-id edge) exclude-id))
             (compiler-parallel-move-edge-source-uses-resource? edge resource))
-          (return true))
-        (set! index (+ index 1))))
+          (return true))))
     false))
 
 (define (compiler-parallel-move-edge-blocked?
@@ -115,14 +111,12 @@
   (let
     [slots : (__tl_dyn-array CompilerParallelMoveEdge) edges.slots]
     [count : i64 edges.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (when
         (compiler-parallel-move-edge-blocked?
           (array-ref slots index)
           (compiler-parallel-move-shared-view blockers))
-        (return true))
-      (set! index (+ index 1)))
+        (return true)))
     false))
 
 (define (compiler-parallel-move-find-unblocked
@@ -131,8 +125,7 @@
   (let
     [slots : (__tl_dyn-array CompilerParallelMoveEdge) remaining.slots]
     [count : i64 remaining.len]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [edge : CompilerParallelMoveEdge (array-ref slots index)]
         (when
@@ -142,8 +135,7 @@
               (compiler-parallel-move-shared-view blockers)))
           (return
             (CompilerParallelMoveUnblocked
-              (compiler-parallel-move-edge-id edge))))
-        (set! index (+ index 1))))
+              (compiler-parallel-move-edge-id edge))))))
     CompilerParallelMoveDone))
 
 (define (compiler-parallel-move-decision

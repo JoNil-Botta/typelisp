@@ -1,4 +1,5 @@
 ;; Focused ownership, reset, and growth coverage for session-owned syntax ids.
+(import stdlib.iterator)
 (import compiler_intern as ci)
 (import compiler_intern_state as cis)
 (import stdlib.test)
@@ -259,17 +260,15 @@
     [_template : cis.InternTemplateSourceIdentity
       (cis.intern-structural-session-template-source-identity session source)]
     [limit : i64 131073]
-    [index : i64 0]
     [last : i64 -1]
-    (while (< index limit)
+    (for [index (iterator.range 0 limit)]
       (set!
         last
         (cis.intern-fresh-local-identity-raw
           (cis.intern-structural-session-fresh-local-identity
             session
             index
-            source)))
-      (set! index (+ index 1)))
+            source))))
     (test.assert-true
       (intern-fresh-record-components-match? session last (- limit 1) source)
       "the record after the old 131072 pool limit round-trips")

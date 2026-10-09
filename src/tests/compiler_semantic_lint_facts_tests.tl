@@ -1,3 +1,4 @@
+(import stdlib.iterator)
 (import stdlib.arena)
 (import stdlib.test)
 (import stdlib.string)
@@ -103,9 +104,7 @@
                 "previous"
                 "value"))]
           [_ false])]
-      (set!
-        semantic-facts-test-growth-uses
-        (+ semantic-facts-test-growth-uses 1))
+      (+= semantic-facts-test-growth-uses 1)
       (unless
         (and
           owner-matches
@@ -119,267 +118,214 @@
                 (cast 2 : i64)
                 semantic-facts-test-growth-line)
               : i32)))
-        (set!
-          semantic-facts-test-growth-mismatches
-          (+ semantic-facts-test-growth-mismatches 1))))))
+        (+= semantic-facts-test-growth-mismatches 1)))))
 
 (define (semantic-facts-test-consumer
   [_context : i64]
   [snapshot : (& snapshot facts.CompilerSemanticFacts)]) : unit
-  (let
-    [i : i64 0]
-    (set! semantic-facts-test-calls (+ semantic-facts-test-calls 1))
+  (+= semantic-facts-test-calls 1)
+  (set!
+    semantic-facts-test-expression-count
+    (facts.compiler-semantic-facts-expression-count snapshot))
+  (set!
+    semantic-facts-test-binding-count
+    (facts.compiler-semantic-facts-binding-count snapshot))
+  (set!
+    semantic-facts-test-function-count
+    (facts.compiler-semantic-facts-function-count snapshot))
+  (set! semantic-facts-test-local-uses 0)
+  (set! semantic-facts-test-growth-uses 0)
+  (set! semantic-facts-test-growth-mismatches 0)
+  (when
+    (> semantic-facts-test-growth-line 0)
     (set!
-      semantic-facts-test-expression-count
-      (facts.compiler-semantic-facts-expression-count snapshot))
-    (set!
-      semantic-facts-test-binding-count
-      (facts.compiler-semantic-facts-binding-count snapshot))
-    (set!
-      semantic-facts-test-function-count
-      (facts.compiler-semantic-facts-function-count snapshot))
-    (set! semantic-facts-test-local-uses 0)
-    (set! semantic-facts-test-growth-uses 0)
-    (set! semantic-facts-test-growth-mismatches 0)
-    (when
-      (> semantic-facts-test-growth-line 0)
-      (set!
-        semantic-facts-test-persistent-binding-count
-        (facts.compiler-semantic-fact-recorder-data
-          (facts.CompilerSemanticFactRecorder snapshot.address)).persistent-bindings.len))
-    (set! semantic-facts-test-unreliable 0)
-    (set! semantic-facts-test-poisoned 0)
-    (set! semantic-facts-test-unresolved 0)
-    (set! semantic-facts-test-dependent 0)
-    (set! semantic-facts-test-imported 0)
-    (set! semantic-facts-test-field-uses 0)
-    (set! semantic-facts-test-nominal-uses 0)
-    (set! semantic-facts-test-variant-uses 0)
-    (set! semantic-facts-test-core-uses 0)
-    (set! semantic-facts-test-forbidden 0)
-    (set! semantic-facts-test-compatible-try 0)
-    (set! semantic-facts-test-macro-arguments 0)
-    (set! semantic-facts-test-synthetic 0)
-    (set! semantic-facts-test-missing-binding-spans 0)
-    (set! semantic-facts-test-function-uses 0)
-    (set! semantic-facts-test-generated 0)
-    (set! semantic-facts-test-missing-nominal-spans 0)
-    (set! semantic-facts-test-reliable-bools 0)
-    (set! semantic-facts-test-captured-uses 0)
-    (set! semantic-facts-test-allowed-lane-operands 0)
-    (set! semantic-facts-test-forbidden-lane-operands 0)
-    (while (< i (facts.compiler-semantic-facts-expression-count snapshot))
-      (let
-        [fact : facts.CompilerSemanticExpressionFact
-          (match (facts.compiler-semantic-facts-expression-at snapshot i)
-            [(facts.CompilerSemanticFactLookup.Found row) row]
-            [_
-              (test.assert-true false "in-range expression")
-              (return unit)])]
-        (semantic-facts-test-growth-identity snapshot (& fact))
-        (match fact.reliability
-          [(facts.CompilerSemanticFactReliability.Unresolved)
-            (set!
-              semantic-facts-test-unresolved
-              (+ semantic-facts-test-unresolved 1))]
-          [(facts.CompilerSemanticFactReliability.Poisoned)
-            (set!
-              semantic-facts-test-poisoned
-              (+ semantic-facts-test-poisoned 1))]
-          [(facts.CompilerSemanticFactReliability.Dependent)
-            (set!
-              semantic-facts-test-dependent
-              (+ semantic-facts-test-dependent 1))]
-          [_ unit])
-        (when
-          (string.contains (& fact.resolved-value.name) "shared-value")
-          (begin
-            (test.assert-true
-              (> fact.resolved-value.declaration -1)
-              "import retains the actual declaration")
-            (test.assert-true
-              (> fact.resolved-value.span.start-line 0)
-              "import retains its declaring token")
-            (test.assert-true
-              (string.contains (& fact.resolved-value.module) "helper")
-              "import retains its owning module")
-            (test.assert-true
-              (string.contains (& fact.resolved-value.path) "/helper.tl")
-              "import retains its declaring file")
-            (set!
-              semantic-facts-test-imported
-              (+ semantic-facts-test-imported 1))))
-        (when
-          (string.eq (& fact.resolved-value.name) "lane-probe")
-          (if fact.early-exit-allowed
-            (set!
-              semantic-facts-test-allowed-lane-operands
-              (+ semantic-facts-test-allowed-lane-operands 1))
-            (set!
-              semantic-facts-test-forbidden-lane-operands
-              (+ semantic-facts-test-forbidden-lane-operands 1))))
-        (match fact.resolved-value.kind
-          [(facts.CompilerSemanticFactIdentityKind.Local)
-            (when
-              (and
-                (>= fact.resolved-value.function 0)
-                (!= fact.function fact.resolved-value.function))
-              (set!
-                semantic-facts-test-captured-uses
-                (+ semantic-facts-test-captured-uses 1)))
-            (set!
-              semantic-facts-test-local-uses
-              (+ semantic-facts-test-local-uses 1))]
-          [(facts.CompilerSemanticFactIdentityKind.Parameter)
-            (set!
-              semantic-facts-test-local-uses
-              (+ semantic-facts-test-local-uses 1))]
-          [(facts.CompilerSemanticFactIdentityKind.Field)
-            (set!
-              semantic-facts-test-field-uses
-              (+ semantic-facts-test-field-uses 1))]
-          [(facts.CompilerSemanticFactIdentityKind.Variant)
-            (set!
-              semantic-facts-test-variant-uses
-              (+ semantic-facts-test-variant-uses 1))]
-          [(facts.CompilerSemanticFactIdentityKind.CoreOperation)
-            (set!
-              semantic-facts-test-core-uses
-              (+ semantic-facts-test-core-uses 1))]
-          [(facts.CompilerSemanticFactIdentityKind.Function)
-            (test.assert-true
-              (> fact.resolved-value.declaration -1)
-              "resolved function declaration")
-            (set!
-              semantic-facts-test-function-uses
-              (+ semantic-facts-test-function-uses 1))]
-          [_ unit])
-        (when
-          (>= fact.resolved-type.nominal.declaration 0)
-          (begin
-            (set!
-              semantic-facts-test-nominal-uses
-              (+ semantic-facts-test-nominal-uses 1))
-            (test.assert-true
-              (> (string.string-length fact.resolved-type.nominal.name) 0)
-              "direct nominal identity owns its spelling")
-            (when
-              (= fact.resolved-type.nominal.span.start-line 0)
-              (set!
-                semantic-facts-test-missing-nominal-spans
-                (+ semantic-facts-test-missing-nominal-spans 1)))))
-        (when
-          (and (>= fact.function 0) (not fact.early-exit-allowed))
-          (set!
-            semantic-facts-test-forbidden
-            (+ semantic-facts-test-forbidden 1)))
-        (match fact.try-fact
-          [(facts.CompilerSemanticTryFact.Compatible)
-            (set!
-              semantic-facts-test-compatible-try
-              (+ semantic-facts-test-compatible-try 1))]
-          [_ unit])
-        (match fact.provenance
-          [(facts.CompilerSemanticFactProvenance.MacroArgument)
-            (set!
-              semantic-facts-test-macro-arguments
-              (+ semantic-facts-test-macro-arguments 1))]
-          [(facts.CompilerSemanticFactProvenance.Synthetic)
-            (set!
-              semantic-facts-test-synthetic
-              (+ semantic-facts-test-synthetic 1))]
-          [(facts.CompilerSemanticFactProvenance.CheckedGenerated)
-            (set!
-              semantic-facts-test-generated
-              (+ semantic-facts-test-generated 1))]
-          [_ unit])
-        (match fact.reliability
-          [(facts.CompilerSemanticFactReliability.Reliable)
-            (when
-              (string.eq (& fact.resolved-type.text) "bool")
-              (set!
-                semantic-facts-test-reliable-bools
-                (+ semantic-facts-test-reliable-bools 1)))
-            (set!
-              semantic-facts-test-owned-type
-              (string.copy (& fact.resolved-type.text)))]
+      semantic-facts-test-persistent-binding-count
+      (facts.compiler-semantic-fact-recorder-data
+        (facts.CompilerSemanticFactRecorder snapshot.address)).persistent-bindings.len))
+  (set! semantic-facts-test-unreliable 0)
+  (set! semantic-facts-test-poisoned 0)
+  (set! semantic-facts-test-unresolved 0)
+  (set! semantic-facts-test-dependent 0)
+  (set! semantic-facts-test-imported 0)
+  (set! semantic-facts-test-field-uses 0)
+  (set! semantic-facts-test-nominal-uses 0)
+  (set! semantic-facts-test-variant-uses 0)
+  (set! semantic-facts-test-core-uses 0)
+  (set! semantic-facts-test-forbidden 0)
+  (set! semantic-facts-test-compatible-try 0)
+  (set! semantic-facts-test-macro-arguments 0)
+  (set! semantic-facts-test-synthetic 0)
+  (set! semantic-facts-test-missing-binding-spans 0)
+  (set! semantic-facts-test-function-uses 0)
+  (set! semantic-facts-test-generated 0)
+  (set! semantic-facts-test-missing-nominal-spans 0)
+  (set! semantic-facts-test-reliable-bools 0)
+  (set! semantic-facts-test-captured-uses 0)
+  (set! semantic-facts-test-allowed-lane-operands 0)
+  (set! semantic-facts-test-forbidden-lane-operands 0)
+  (for [i
+    (iterator.range 0 (facts.compiler-semantic-facts-expression-count snapshot))]
+    (let
+      [fact : facts.CompilerSemanticExpressionFact
+        (match (facts.compiler-semantic-facts-expression-at snapshot i)
+          [(facts.CompilerSemanticFactLookup.Found row) row]
           [_
-            (set!
-              semantic-facts-test-unreliable
-              (+ semantic-facts-test-unreliable 1))])
-        (match (facts.compiler-semantic-facts-lookup snapshot fact.expression)
-          [(facts.CompilerSemanticFactLookup.Found same)
-            (test.assert-i64-eq
-              same.expression
-              fact.expression
-              "source ID round trip")]
-          [_ (test.assert-true false "every enumerated expression is indexed")])
-        (set! i (+ i 1))))
-    (set! i 0)
-    (while (< i (facts.compiler-semantic-facts-binding-count snapshot))
+            (test.assert-true false "in-range expression")
+            (return unit)])]
+      (semantic-facts-test-growth-identity snapshot (& fact))
+      (match fact.reliability
+        [(facts.CompilerSemanticFactReliability.Unresolved)
+          (+= semantic-facts-test-unresolved 1)]
+        [(facts.CompilerSemanticFactReliability.Poisoned)
+          (+= semantic-facts-test-poisoned 1)]
+        [(facts.CompilerSemanticFactReliability.Dependent)
+          (+= semantic-facts-test-dependent 1)]
+        [_ unit])
       (when
-        (match (facts.compiler-semantic-facts-binding-at snapshot i)
-          [(facts.CompilerSemanticBindingLookup.Found row)
-            (test.assert-true
-              (and
-                (>= row.function 0)
-                (<
-                  row.function
-                  (facts.compiler-semantic-facts-function-count snapshot)))
-              "binding retains its function owner")
-            (= row.span.start-line 0)]
-          [_ true])
-        (set!
-          semantic-facts-test-missing-binding-spans
-          (+ semantic-facts-test-missing-binding-spans 1)))
-      (set! i (+ i 1)))
-    (set! i 0)
-    (while (< i (facts.compiler-semantic-facts-function-count snapshot))
-      (match (facts.compiler-semantic-facts-function-at snapshot i)
-        [(facts.CompilerSemanticFunctionLookup.Found row)
+        (string.contains (& fact.resolved-value.name) "shared-value")
+        (begin
           (test.assert-true
-            (> (string.string-length row.identity.path) 0)
-            "function owns its lexical source path")
+            (> fact.resolved-value.declaration -1)
+            "import retains the actual declaration")
           (test.assert-true
-            (> (string.string-length row.return-type.text) 0)
-            "enclosing function has its resolved return type")]
-        [_ (test.assert-true false "in-range function")])
-      (set! i (+ i 1)))
-    (match (facts.compiler-semantic-facts-lookup snapshot -1)
-      [(facts.CompilerSemanticFactLookup.Missing) unit]
-      [_ (test.assert-true false "missing AST id must stay missing")])
-    (match (facts.compiler-semantic-facts-expression-at
-      snapshot
-      (facts.compiler-semantic-facts-expression-count snapshot))
-      [(facts.CompilerSemanticFactLookup.Missing) unit]
-      [_ (test.assert-true false "past-end expression index")])
-    (match (facts.compiler-semantic-facts-binding-at snapshot -1)
-      [(facts.CompilerSemanticBindingLookup.Missing) unit]
-      [_ (test.assert-true false "negative binding index")])
-    (match (facts.compiler-semantic-facts-function-at
-      snapshot
-      (facts.compiler-semantic-facts-function-count snapshot))
-      [(facts.CompilerSemanticFunctionLookup.Missing) unit]
-      [_ (test.assert-true false "past-end function index")])
-    ;; Mutating a selected owned row cannot mutate the sealed snapshot.
+            (> fact.resolved-value.span.start-line 0)
+            "import retains its declaring token")
+          (test.assert-true
+            (string.contains (& fact.resolved-value.module) "helper")
+            "import retains its owning module")
+          (test.assert-true
+            (string.contains (& fact.resolved-value.path) "/helper.tl")
+            "import retains its declaring file")
+          (+= semantic-facts-test-imported 1)))
+      (when
+        (string.eq (& fact.resolved-value.name) "lane-probe")
+        (if fact.early-exit-allowed
+          (+= semantic-facts-test-allowed-lane-operands 1)
+          (+= semantic-facts-test-forbidden-lane-operands 1)))
+      (match fact.resolved-value.kind
+        [(facts.CompilerSemanticFactIdentityKind.Local)
+          (when
+            (and
+              (>= fact.resolved-value.function 0)
+              (!= fact.function fact.resolved-value.function))
+            (+= semantic-facts-test-captured-uses 1))
+          (+= semantic-facts-test-local-uses 1)]
+        [(facts.CompilerSemanticFactIdentityKind.Parameter)
+          (+= semantic-facts-test-local-uses 1)]
+        [(facts.CompilerSemanticFactIdentityKind.Field)
+          (+= semantic-facts-test-field-uses 1)]
+        [(facts.CompilerSemanticFactIdentityKind.Variant)
+          (+= semantic-facts-test-variant-uses 1)]
+        [(facts.CompilerSemanticFactIdentityKind.CoreOperation)
+          (+= semantic-facts-test-core-uses 1)]
+        [(facts.CompilerSemanticFactIdentityKind.Function)
+          (test.assert-true
+            (> fact.resolved-value.declaration -1)
+            "resolved function declaration")
+          (+= semantic-facts-test-function-uses 1)]
+        [_ unit])
+      (when
+        (>= fact.resolved-type.nominal.declaration 0)
+        (begin
+          (+= semantic-facts-test-nominal-uses 1)
+          (test.assert-true
+            (> (string.string-length fact.resolved-type.nominal.name) 0)
+            "direct nominal identity owns its spelling")
+          (when
+            (= fact.resolved-type.nominal.span.start-line 0)
+            (+= semantic-facts-test-missing-nominal-spans 1))))
+      (when
+        (and (>= fact.function 0) (not fact.early-exit-allowed))
+        (+= semantic-facts-test-forbidden 1))
+      (match fact.try-fact
+        [(facts.CompilerSemanticTryFact.Compatible)
+          (+= semantic-facts-test-compatible-try 1)]
+        [_ unit])
+      (match fact.provenance
+        [(facts.CompilerSemanticFactProvenance.MacroArgument)
+          (+= semantic-facts-test-macro-arguments 1)]
+        [(facts.CompilerSemanticFactProvenance.Synthetic)
+          (+= semantic-facts-test-synthetic 1)]
+        [(facts.CompilerSemanticFactProvenance.CheckedGenerated)
+          (+= semantic-facts-test-generated 1)]
+        [_ unit])
+      (match fact.reliability
+        [(facts.CompilerSemanticFactReliability.Reliable)
+          (when
+            (string.eq (& fact.resolved-type.text) "bool")
+            (+= semantic-facts-test-reliable-bools 1))
+          (set!
+            semantic-facts-test-owned-type
+            (string.copy (& fact.resolved-type.text)))]
+        [_ (+= semantic-facts-test-unreliable 1)])
+      (match (facts.compiler-semantic-facts-lookup snapshot fact.expression)
+        [(facts.CompilerSemanticFactLookup.Found same)
+          (test.assert-i64-eq
+            same.expression
+            fact.expression
+            "source ID round trip")]
+        [_ (test.assert-true false "every enumerated expression is indexed")])))
+  (for [i
+    (iterator.range 0 (facts.compiler-semantic-facts-binding-count snapshot))]
     (when
-      (> (facts.compiler-semantic-facts-binding-count snapshot) 0)
-      (match (facts.compiler-semantic-facts-binding-at snapshot 0)
+      (match (facts.compiler-semantic-facts-binding-at snapshot i)
         [(facts.CompilerSemanticBindingLookup.Found row)
-          (let
-            [original : String (string.copy (& row.name))]
-            (unsafe
-              (ptr-write!
-                (ptr-cast (string-data (& row.name)) : (MutPtr u8))
-                (cast 88 : u8)))
-            (match (facts.compiler-semantic-facts-binding-at snapshot 0)
-              [(facts.CompilerSemanticBindingLookup.Found again)
-                (test.assert-string-eq
-                  (& again.name)
-                  (& original)
-                  "query strings are deep owned copies")]
-              [_ (test.assert-true false "retained binding")]))]
-        [_ (test.assert-true false "first binding")]))))
+          (test.assert-true
+            (and
+              (>= row.function 0)
+              (<
+                row.function
+                (facts.compiler-semantic-facts-function-count snapshot)))
+            "binding retains its function owner")
+          (= row.span.start-line 0)]
+        [_ true])
+      (+= semantic-facts-test-missing-binding-spans 1)))
+  (for [i
+    (iterator.range 0 (facts.compiler-semantic-facts-function-count snapshot))]
+    (match (facts.compiler-semantic-facts-function-at snapshot i)
+      [(facts.CompilerSemanticFunctionLookup.Found row)
+        (test.assert-true
+          (> (string.string-length row.identity.path) 0)
+          "function owns its lexical source path")
+        (test.assert-true
+          (> (string.string-length row.return-type.text) 0)
+          "enclosing function has its resolved return type")]
+      [_ (test.assert-true false "in-range function")]))
+  (match (facts.compiler-semantic-facts-lookup snapshot -1)
+    [(facts.CompilerSemanticFactLookup.Missing) unit]
+    [_ (test.assert-true false "missing AST id must stay missing")])
+  (match (facts.compiler-semantic-facts-expression-at
+    snapshot
+    (facts.compiler-semantic-facts-expression-count snapshot))
+    [(facts.CompilerSemanticFactLookup.Missing) unit]
+    [_ (test.assert-true false "past-end expression index")])
+  (match (facts.compiler-semantic-facts-binding-at snapshot -1)
+    [(facts.CompilerSemanticBindingLookup.Missing) unit]
+    [_ (test.assert-true false "negative binding index")])
+  (match (facts.compiler-semantic-facts-function-at
+    snapshot
+    (facts.compiler-semantic-facts-function-count snapshot))
+    [(facts.CompilerSemanticFunctionLookup.Missing) unit]
+    [_ (test.assert-true false "past-end function index")])
+  ;; Mutating a selected owned row cannot mutate the sealed snapshot.
+  (when
+    (> (facts.compiler-semantic-facts-binding-count snapshot) 0)
+    (match (facts.compiler-semantic-facts-binding-at snapshot 0)
+      [(facts.CompilerSemanticBindingLookup.Found row)
+        (let
+          [original : String (string.copy (& row.name))]
+          (unsafe
+            (ptr-write!
+              (ptr-cast (string-data (& row.name)) : (MutPtr u8))
+              (cast 88 : u8)))
+          (match (facts.compiler-semantic-facts-binding-at snapshot 0)
+            [(facts.CompilerSemanticBindingLookup.Found again)
+              (test.assert-string-eq
+                (& again.name)
+                (& original)
+                "query strings are deep owned copies")]
+            [_ (test.assert-true false "retained binding")]))]
+      [_ (test.assert-true false "first binding")])))
 
 (define (semantic-facts-test-source [source : String]) : bool
   (let
@@ -792,7 +738,7 @@
           "(define (value [x : i64]) : i64 (+ x 1))"
           false)
         "batch entry")
-      (set! index (+ index 1))
+      (+= index 1)
       (when (= index 4) (set! warm-live (profile.alloc-live))))
     (test.assert-true (> warm-live 0) "allocation accounting is active")
     (test.assert-true
@@ -965,8 +911,7 @@
   (let
     [source : String
       "(define growth-probe : i64 99)\n(define (previous) : i64 (let [growth-probe : i64 7] growth-probe))\n(define (value) : i64 (let\n"]
-    [i : i64 0]
-    (while (< i 64)
+    (for [i (iterator.range 0 64)]
       (set!
         source
         (str_cat.str-cat
@@ -975,8 +920,7 @@
           (string.int->string i)
           " : i64 "
           (string.int->string i)
-          "]\n"))
-      (set! i (+ i 1)))
+          "]\n")))
     (set! semantic-facts-test-growth-line 68)
     (set!
       source

@@ -1,3 +1,4 @@
+(import stdlib.iterator)
 (import linker_elf_version_codec as codec)
 (import stdlib.byte_le as le)
 (import stdlib.io)
@@ -69,10 +70,8 @@
     u8)
   (let
     [out : (__tl_dyn-array u8) (__tl_make-array u8 size)]
-    [i : i64 0]
-    (while (< i size)
-      (set! (array-ref out i) (array-ref data i))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 size)]
+      (set! (array-ref out i) (array-ref data i)))
     out))
 
 (define (same? [a : (& a (__tl_dyn-array u8))] [b : (& b (__tl_dyn-array u8))]) : bool
@@ -81,7 +80,7 @@
     [i : i64 0]
     (while (and ok (< i (array-length a)))
       (set! ok (= (array-ref a i) (array-ref b i)))
-      (set! i (+ i 1)))
+      (+= i 1))
     ok))
 
 (define (fixture [lld : bool] [definitions : bool]) : codec.DecodeRequest
@@ -149,56 +148,51 @@
 
 (test
   elf-version-producer-layouts
-  (let
-    [producer : i64 0]
-    (while (< producer 2)
-      (let
-        [definitions : codec.DecodeRequest (fixture (= producer 1) true)]
-        [needs : codec.DecodeRequest (fixture (= producer 1) false)]
-        (round-trip (& definitions))
-        (round-trip (& needs))
-        (match (codec.decode (& definitions))
-          [(Err _) (io.panic "definitions")]
-          [(Ok decoded)
-            (assert
-              (=
-                (array-ref decoded.definitions.records.slots 0).flags
-                codec.flag-base)
-              "base flag")
-            (assert
-              (= (array-ref decoded.definitions.records.slots 2).index 3)
-              "V2 index")
-            (assert
-              (=
-                (array-ref decoded.definitions.records.slots 2).aux.len
-                (if (= producer 1)
-                  1
-                  2))
-              "producer inheritance")
-            (assert
-              (= (cast (array-ref decoded.symbols 2) : i64) 32770)
-              "hidden V1 symbol")])
-        (match (codec.decode (& needs))
-          [(Err _) (io.panic "needs")]
-          [(Ok decoded)
-            (assert (= decoded.needs.records.len 2) "two providers")
-            (assert
-              (=
-                (array-ref decoded.needs.records.slots 1).offset
-                (if (= producer 1)
-                  16
-                  32))
-              "producer header placement")
-            (assert
-              (=
-                (array-ref
-                  (array-ref decoded.needs.records.slots 0).aux.slots
-                  0).offset
-                (if (= producer 1)
-                  32
-                  16))
-              "producer aux placement")]))
-      (set! producer (+ producer 1)))))
+  (for [producer (iterator.range 0 2)]
+    (let
+      [definitions : codec.DecodeRequest (fixture (= producer 1) true)]
+      [needs : codec.DecodeRequest (fixture (= producer 1) false)]
+      (round-trip (& definitions))
+      (round-trip (& needs))
+      (match (codec.decode (& definitions))
+        [(Err _) (io.panic "definitions")]
+        [(Ok decoded)
+          (assert
+            (=
+              (array-ref decoded.definitions.records.slots 0).flags
+              codec.flag-base)
+            "base flag")
+          (assert
+            (= (array-ref decoded.definitions.records.slots 2).index 3)
+            "V2 index")
+          (assert
+            (=
+              (array-ref decoded.definitions.records.slots 2).aux.len
+              (if (= producer 1)
+                1
+                2))
+            "producer inheritance")
+          (assert
+            (= (cast (array-ref decoded.symbols 2) : i64) 32770)
+            "hidden V1 symbol")])
+      (match (codec.decode (& needs))
+        [(Err _) (io.panic "needs")]
+        [(Ok decoded)
+          (assert (= decoded.needs.records.len 2) "two providers")
+          (assert
+            (=
+              (array-ref decoded.needs.records.slots 1).offset
+              (if (= producer 1)
+                16
+                32))
+            "producer header placement")
+          (assert
+            (=
+              (array-ref (array-ref decoded.needs.records.slots 0).aux.slots 0).offset
+              (if (= producer 1)
+                32
+                16))
+            "producer aux placement")]))))
 
 (defstruct BadField
   (definitions bool)
@@ -234,31 +228,28 @@
     (set! (array-ref cases 11) (BadField false 2 12 4 4294967295 "vn_next"))
     (set! (array-ref cases 12) (BadField false 2 16 4 1 "vna_hash"))
     (set! (array-ref cases 13) (BadField false 2 4 4 4294967295 "vn_file"))
-    (let
-      [i : i64 0]
-      (while (< i (array-length cases))
-        (let
-          [case : (& cases BadField) (& (array-ref cases i))]
-          [request : codec.DecodeRequest (fixture false case.definitions)]
-          (cond
-            [(= case.section 0)
-              (le.set-u16! (&mut request.bytes.symbols) case.offset case.value)]
-            [(= case.section 1)
-              (if (= case.width 2)
-                (le.set-u16!
-                  (&mut request.bytes.definitions)
-                  case.offset
-                  case.value)
-                (le.set-u32!
-                  (&mut request.bytes.definitions)
-                  case.offset
-                  case.value))]
-            [else
-              (if (= case.width 2)
-                (le.set-u16! (&mut request.bytes.needs) case.offset case.value)
-                (le.set-u32! (&mut request.bytes.needs) case.offset case.value))])
-          (expect-error (& request) case.field))
-        (set! i (+ i 1))))
+    (for [i (iterator.range 0 (array-length cases))]
+      (let
+        [case : (& cases BadField) (& (array-ref cases i))]
+        [request : codec.DecodeRequest (fixture false case.definitions)]
+        (cond
+          [(= case.section 0)
+            (le.set-u16! (&mut request.bytes.symbols) case.offset case.value)]
+          [(= case.section 1)
+            (if (= case.width 2)
+              (le.set-u16!
+                (&mut request.bytes.definitions)
+                case.offset
+                case.value)
+              (le.set-u32!
+                (&mut request.bytes.definitions)
+                case.offset
+                case.value))]
+          [else
+            (if (= case.width 2)
+              (le.set-u16! (&mut request.bytes.needs) case.offset case.value)
+              (le.set-u32! (&mut request.bytes.needs) case.offset case.value))])
+        (expect-error (& request) case.field)))
     (let
       [request : codec.DecodeRequest (fixture false true)]
       (le.set-u16! (&mut request.bytes.definitions) 2 0)
@@ -267,36 +258,25 @@
 
 (test
   elf-version-truncation-and-limits
-  (let
-    [producer : i64 0]
-    (while (< producer 2)
+  (for [producer (iterator.range 0 2)]
+    (for [kind (iterator.range 0 2)]
       (let
-        [kind : i64 0]
-        (while (< kind 2)
+        [original : codec.DecodeRequest (fixture (= producer 1) (= kind 0))]
+        [size : i64
+          (if (= kind 0)
+            (array-length original.bytes.definitions)
+            (array-length original.bytes.needs))]
+        (for [i (iterator.range 0 size)]
           (let
-            [original : codec.DecodeRequest (fixture (= producer 1) (= kind 0))]
-            [size : i64
-              (if (= kind 0)
-                (array-length original.bytes.definitions)
-                (array-length original.bytes.needs))]
-            [i : i64 0]
-            (while (< i size)
-              (let
-                [request : codec.DecodeRequest
-                  (fixture (= producer 1) (= kind 0))]
-                (if (= kind 0)
-                  (set!
-                    request.bytes.definitions
-                    (copy-bytes (& original.bytes.definitions) i))
-                  (set!
-                    request.bytes.needs
-                    (copy-bytes (& original.bytes.needs) i)))
-                (match (codec.decode (& request))
-                  [(Ok _) (io.panic "accepted truncated section")]
-                  [(Err _) unit]))
-              (set! i (+ i 1))))
-          (set! kind (+ kind 1))))
-      (set! producer (+ producer 1))))
+            [request : codec.DecodeRequest (fixture (= producer 1) (= kind 0))]
+            (if (= kind 0)
+              (set!
+                request.bytes.definitions
+                (copy-bytes (& original.bytes.definitions) i))
+              (set! request.bytes.needs (copy-bytes (& original.bytes.needs) i)))
+            (match (codec.decode (& request))
+              [(Ok _) (io.panic "accepted truncated section")]
+              [(Err _) unit]))))))
   (let
     [request : codec.DecodeRequest (fixture false true)]
     (set! request.limits.max-work 0)
@@ -391,41 +371,38 @@
 
 (test
   elf-version-combined-namespace
-  (let
-    [producer : i64 0]
-    (while (< producer 2)
-      (let
-        [request : codec.DecodeRequest
-          (codec.DecodeRequest
-            (codec.VersionBytes
-              (if (= producer 0)
-                (copy-bytes (& gnu-client-sym) (array-length gnu-client-sym))
-                (copy-bytes (& lld-client-sym) (array-length lld-client-sym)))
-              (if (= producer 0)
-                (copy-bytes (& gnu-client-def) (array-length gnu-client-def))
-                (copy-bytes (& lld-client-def) (array-length lld-client-def)))
-              (if (= producer 0)
-                (copy-bytes (& gnu-client-need) (array-length gnu-client-need))
-                (copy-bytes (& lld-client-need) (array-length lld-client-need))))
+  (for [producer (iterator.range 0 2)]
+    (let
+      [request : codec.DecodeRequest
+        (codec.DecodeRequest
+          (codec.VersionBytes
             (if (= producer 0)
-              (copy-bytes (& gnu-client-str) (array-length gnu-client-str))
-              (copy-bytes (& lld-client-str) (array-length lld-client-str)))
+              (copy-bytes (& gnu-client-sym) (array-length gnu-client-sym))
+              (copy-bytes (& lld-client-sym) (array-length lld-client-sym)))
             (if (= producer 0)
-              6
-              5)
-            2
-            2
-            true
-            (codec.default-limits))]
-        (round-trip (& request))
-        (le.set-u16!
-          (&mut request.bytes.needs)
+              (copy-bytes (& gnu-client-def) (array-length gnu-client-def))
+              (copy-bytes (& lld-client-def) (array-length lld-client-def)))
+            (if (= producer 0)
+              (copy-bytes (& gnu-client-need) (array-length gnu-client-need))
+              (copy-bytes (& lld-client-need) (array-length lld-client-need))))
           (if (= producer 0)
-            22
-            38)
-          2)
-        (expect-error (& request) "vna_other"))
-      (set! producer (+ producer 1)))))
+            (copy-bytes (& gnu-client-str) (array-length gnu-client-str))
+            (copy-bytes (& lld-client-str) (array-length lld-client-str)))
+          (if (= producer 0)
+            6
+            5)
+          2
+          2
+          true
+          (codec.default-limits))]
+      (round-trip (& request))
+      (le.set-u16!
+        (&mut request.bytes.needs)
+        (if (= producer 0)
+          22
+          38)
+        2)
+      (expect-error (& request) "vna_other"))))
 
 (test
   elf-version-model-and-padding-boundaries
@@ -433,50 +410,45 @@
     [request : codec.DecodeRequest (fixture false true)]
     [original : i64 (array-length request.bytes.definitions)]
     [padded : (__tl_dyn-array u8) (__tl_make-array u8 (+ original 3))]
-    [i : i64 0]
-    (while (< i original)
-      (set! (array-ref padded i) (array-ref request.bytes.definitions i))
-      (set! i (+ i 1)))
+    (for [i (iterator.range 0 original)]
+      (set! (array-ref padded i) (array-ref request.bytes.definitions i)))
     (set! (array-ref padded (+ original 1)) (cast 99 : u8))
     (set! request.bytes.definitions padded)
     (round-trip (& request)))
-  (let
-    [i : i64 0]
-    (while (< i 5)
-      (let
-        [request : codec.DecodeRequest (fixture false true)]
-        (match (codec.decode (& request))
-          [(Err _) (io.panic "model fixture")]
-          [(Ok versions)
-            (cond
-              [(= i 0)
-                (set! versions.definitions.records.len 9223372036854775807)]
-              [(= i 1)
-                (set!
-                  (array-ref versions.definitions.records.slots 0).aux.len
-                  9223372036854775807)]
-              [(= i 2)
-                (set! (array-ref versions.definitions.records.slots 0).offset 1)]
-              [(= i 3)
-                (set!
-                  (array-ref
-                    (array-ref versions.definitions.records.slots 0).aux.slots
-                    0).offset
-                  -1)]
-              [else
-                (set!
-                  (array-ref
-                    (array-ref versions.definitions.records.slots 0).aux.slots
-                    0).name
-                  9223372036854775807)])
-            (match (codec.encode
-              (& versions)
-              (& request.dynstr)
-              true
-              (codec.default-limits))
-              [(Ok _) (io.panic "accepted malformed model")]
-              [(Err _) unit])]))
-      (set! i (+ i 1))))
+  (for [i (iterator.range 0 5)]
+    (let
+      [request : codec.DecodeRequest (fixture false true)]
+      (match (codec.decode (& request))
+        [(Err _) (io.panic "model fixture")]
+        [(Ok versions)
+          (cond
+            [(= i 0)
+              (set! versions.definitions.records.len 9223372036854775807)]
+            [(= i 1)
+              (set!
+                (array-ref versions.definitions.records.slots 0).aux.len
+                9223372036854775807)]
+            [(= i 2)
+              (set! (array-ref versions.definitions.records.slots 0).offset 1)]
+            [(= i 3)
+              (set!
+                (array-ref
+                  (array-ref versions.definitions.records.slots 0).aux.slots
+                  0).offset
+                -1)]
+            [else
+              (set!
+                (array-ref
+                  (array-ref versions.definitions.records.slots 0).aux.slots
+                  0).name
+                9223372036854775807)])
+          (match (codec.encode
+            (& versions)
+            (& request.dynstr)
+            true
+            (codec.default-limits))
+            [(Ok _) (io.panic "accepted malformed model")]
+            [(Err _) unit])])))
   (let
     [request : codec.DecodeRequest (fixture false true)]
     (le.set-u16! (&mut request.bytes.symbols) 0 32769)
@@ -574,46 +546,43 @@
 
 (test
   elf-version-multiple-needs-per-provider
-  (let
-    [producer : i64 0]
-    (while (< producer 2)
-      (let
-        [request : codec.DecodeRequest
-          (codec.DecodeRequest
-            (codec.VersionBytes
-              (if (= producer 0)
-                (copy-bytes (& gnu-many-sym) (array-length gnu-many-sym))
-                (copy-bytes (& lld-many-sym) (array-length lld-many-sym)))
-              (__tl_make-array u8 0)
-              (if (= producer 0)
-                (copy-bytes (& gnu-many-need) (array-length gnu-many-need))
-                (copy-bytes (& lld-many-need) (array-length lld-many-need))))
+  (for [producer (iterator.range 0 2)]
+    (let
+      [request : codec.DecodeRequest
+        (codec.DecodeRequest
+          (codec.VersionBytes
             (if (= producer 0)
-              (copy-bytes (& gnu-many-str) (array-length gnu-many-str))
-              (copy-bytes (& lld-many-str) (array-length lld-many-str)))
-            5
-            0
-            2
-            true
-            (codec.default-limits))]
-        (round-trip (& request))
-        (match (codec.decode (& request))
-          [(Err _) (io.panic "multiple need fixture")]
-          [(Ok versions)
-            (assert
-              (=
-                (array-ref
-                  versions.needs.records.slots
-                  (if (= producer 0)
-                    1
-                    0)).aux.len
-                2)
-              "two versions from liba.so")])
-        (le.set-u32!
-          (&mut request.bytes.needs)
+              (copy-bytes (& gnu-many-sym) (array-length gnu-many-sym))
+              (copy-bytes (& lld-many-sym) (array-length lld-many-sym)))
+            (__tl_make-array u8 0)
+            (if (= producer 0)
+              (copy-bytes (& gnu-many-need) (array-length gnu-many-need))
+              (copy-bytes (& lld-many-need) (array-length lld-many-need))))
           (if (= producer 0)
-            60
-            44)
-          0)
-        (expect-error (& request) "vn_cnt"))
-      (set! producer (+ producer 1)))))
+            (copy-bytes (& gnu-many-str) (array-length gnu-many-str))
+            (copy-bytes (& lld-many-str) (array-length lld-many-str)))
+          5
+          0
+          2
+          true
+          (codec.default-limits))]
+      (round-trip (& request))
+      (match (codec.decode (& request))
+        [(Err _) (io.panic "multiple need fixture")]
+        [(Ok versions)
+          (assert
+            (=
+              (array-ref
+                versions.needs.records.slots
+                (if (= producer 0)
+                  1
+                  0)).aux.len
+              2)
+            "two versions from liba.so")])
+      (le.set-u32!
+        (&mut request.bytes.needs)
+        (if (= producer 0)
+          60
+          44)
+        0)
+      (expect-error (& request) "vn_cnt"))))

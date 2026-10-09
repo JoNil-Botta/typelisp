@@ -1,4 +1,5 @@
 ;; inspect_cli_core.tl - Public tlci inspection command.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -61,9 +62,8 @@ Summary:
   [items : tlci_core.TlciSpmdSpecializations]) : String
   (let
     [count : i64 (tlci_core.tlci-spmd-specializations-len items)]
-    [index : i64 0]
     [out : String ""]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [item : tlci_core.TlciSpmdSpecialization
           (tlci_core.tlci-spmd-specializations-ref items index)]
@@ -85,17 +85,15 @@ Summary:
             (string.int->string item.index-param)
             " symbol="
             item.symbol
-            "\n"))
-        (set! index (+ index 1))))
+            "\n"))))
     out))
 
 (define (tlci-inspect-spmd-callables
   [items : (& items tlci_core.TlciSpmdCallables)]) : String
   (let
     [count : i64 (tlci_core.tlci-spmd-callables-len items)]
-    [index : i64 0]
     [out : String ""]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (let
         [item : tlci_core.TlciSpmdCallable
           (tlci_core.tlci-spmd-callables-ref items index)]
@@ -108,8 +106,7 @@ Summary:
             " signature="
             item.signature
             "\n"
-            (tlci-inspect-spmd-specializations item.specializations)))
-        (set! index (+ index 1))))
+            (tlci-inspect-spmd-specializations item.specializations)))))
     out))
 
 (define (tlci-inspect-spmd-section

@@ -1,5 +1,6 @@
 ;; Bounded exact-name VERSION maps for #8263, #8293 and #7042. The shared
 ;; linker-script scanner owns comments, quotes, byte limits and provenance.
+(import stdlib.iterator)
 (import linker_script_subset as script)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as cat)
@@ -84,7 +85,7 @@
 (define (charge! [parser : (&mut p (VersionMapParser s))] [work : i64]) : unit
   (if (> work parser.left)
     (fail! parser "version-map work limit exceeded")
-    (set! parser.left (- parser.left work))))
+    (-= parser.left work)))
 
 (define (is? [parser : (& p (VersionMapParser s))] [text : (& t str)]) : bool
   (and
@@ -96,7 +97,7 @@
 
 (define (expect! [parser : (&mut p (VersionMapParser s))] [text : (& t str)]) : unit
   (if (is? parser text)
-    (set! parser.index (+ parser.index 1))
+    (+= parser.index 1)
     (fail!
       parser
       (if (< parser.index parser.tokens.len)
@@ -141,7 +142,7 @@
                   (= b 46)
                   (= b 36)
                   (= b 45))))
-            (set! i (+ i 1)))
+            (+= i 1))
           (cond
             [(and valid (> (string.string-length token.text) 0))
               (set! name (string.copy token.text))]
@@ -153,7 +154,7 @@
               (fail!
                 parser
                 "unsupported expression or construct; expected exact name")]))])
-    (when parser.ok (set! parser.index (+ parser.index 1)))
+    (when parser.ok (+= parser.index 1))
     name))
 
 (define (same-name?
@@ -175,7 +176,7 @@
         (fail!
           parser
           (cat.str-cat "duplicate bound name '" (string.copy name) "'")))
-      (set! j (+ j 1)))))
+      (+= j 1))))
 
 (define (check-symbol!
   [parser : (&mut p (VersionMapParser s))]
@@ -186,7 +187,7 @@
     [i : i64 0]
     (while (and parser.ok (< i nodes.len))
       (check-symbols! parser (& (array-ref nodes.slots i).symbols) name)
-      (set! i (+ i 1))))
+      (+= i 1)))
   (check-symbols! parser (& node.symbols) name))
 
 (define (parse-node!
@@ -237,7 +238,7 @@
               (if global
                 1
                 2))
-            (set! parser.index (+ parser.index 1))
+            (+= parser.index 1)
             (expect! parser ":"))]
         [(is? parser "*")
           (cond
@@ -245,7 +246,7 @@
               (fail! parser "unsupported glob '*' outside local scope")]
             [node.local-all (fail! parser "duplicate local catch-all")]
             [else (set! node.local-all true)])
-          (set! parser.index (+ parser.index 1))
+          (+= parser.index 1)
           (expect! parser ";")]
         [else
           (when
@@ -294,7 +295,7 @@
           (when
             (same-name? parser parent (array-ref nodes.slots i).name)
             (set! node.parent i))
-          (set! i (+ i 1)))
+          (+= i 1))
         (when
           (and parser.ok (= node.parent -1))
           (set! parser.index start)
@@ -337,16 +338,14 @@
             (let
               [line : i64 1]
               [column : i64 1]
-              [i : i64 0]
               [nodes : node_vec.Vec (node_vec.new)]
               [total : i64 0]
-              (while (< i (array-length data))
+              (for [i (iterator.range 0 (array-length data))]
                 (if (= (array-ref data i) (cast 10 : u8))
                   (begin
-                    (set! line (+ line 1))
+                    (+= line 1)
                     (set! column 1))
-                  (set! column (+ column 1)))
-                (set! i (+ i 1)))
+                  (+= column 1)))
               (let
                 [parser : (VersionMapParser s)
                   (VersionMapParser
@@ -391,7 +390,7 @@
                                 "duplicate version node '"
                                 (string.copy node.name)
                                 "'")))
-                          (set! j (+ j 1)))
+                          (+= j 1))
                         (when parser.ok (node_vec.push-ref! (&mut nodes) node)))]))
                 (when
                   (= nodes.len 0)

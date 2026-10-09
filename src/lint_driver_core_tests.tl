@@ -5,6 +5,7 @@
 ;; the selfhost-lint-*-source fixture getters, the fixture-decls builders, the
 ;; finding helpers, and the six lint driver self-test entries. The production
 ;; module keeps the lint driver itself.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import lint_driver_core as lint_driver)
 (import lint_core)
@@ -200,30 +201,23 @@ end
 (define (selfhost-lint-findings-rule-count-from
   [findings : lint_core.LintFindings]
   [rule-id : (& rule-id str)]
-  [index : i64]
   [count : i64]) : i64
-  (if (>=
-    index
-    (lint_core.lint-findings-count
-      (owned_view.compiler-owned-shared-view findings)))
-    count
+  (for [index
+    (iterator.range
+      0
+      (lint_core.lint-findings-count
+        (owned_view.compiler-owned-shared-view findings)))]
     (match (lint_core_tests.lint-findings-get
       (owned_view.compiler-owned-shared-view findings)
       index)
       [(Some finding)
-        (selfhost-lint-findings-rule-count-from
-          findings
-          rule-id
-          (+ index 1)
+        (set!
+          count
           (if (string.eq finding.rule-id rule-id)
             (+ count 1)
             count))]
-      [(No)
-        (selfhost-lint-findings-rule-count-from
-          findings
-          rule-id
-          (+ index 1)
-          count)])))
+      [(No) unit]))
+  count)
 
 (define (selfhost-lint-findings-rule-count
   [findings : (& findings lint_core.LintFindings)]
@@ -231,7 +225,7 @@ end
   (let
     [findings : lint_core.LintFindings
       (owned_view.compiler-owned-reference-shared-view findings)]
-    (selfhost-lint-findings-rule-count-from findings rule-id 0 0)))
+    (selfhost-lint-findings-rule-count-from findings rule-id 0)))
 
 (define (selfhost-lint-source-rule-count [source : String] [rule-id : String]) : i64
   (let
@@ -2029,10 +2023,9 @@ end
   [path : String]
   [source : (& source str)]
   [items : lint_driver.SelfhostLintDeadDecls]
-  [index : i64]
   [count : i64]) : i64
-  (if (>= index (lint_driver.selfhost-lint-dead-decls-count items))
-    count
+  (for [index
+    (iterator.range 0 (lint_driver.selfhost-lint-dead-decls-count items))]
     (let
       [decl : lint_driver.SelfhostLintDeadDecl
         (lint_driver.selfhost-lint-dead-decls-ref items index)]
@@ -2042,12 +2035,8 @@ end
           (lint_driver.selfhost-lint-package-dead-finding-active? source decl))
           (+ count 1)
           count)]
-      (selfhost-lint-package-dead-count-for-source-from
-        path
-        source
-        items
-        (+ index 1)
-        next-count))))
+      (set! count next-count)))
+  count)
 
 (define (selfhost-lint-package-dead-count-for-source
   [path : String]
@@ -2056,4 +2045,4 @@ end
   (let
     [items : lint_driver.SelfhostLintDeadDecls
       (owned_view.compiler-owned-reference-shared-view items)]
-    (selfhost-lint-package-dead-count-for-source-from path source items 0 0)))
+    (selfhost-lint-package-dead-count-for-source-from path source items 0)))

@@ -1,4 +1,5 @@
 ;; Executable unified diff renderer conformance, discovered by inline-test CI.
+(import stdlib.iterator)
 (import stdlib.byte_buf)
 (import stdlib.io)
 (import stdlib.profile)
@@ -23,7 +24,7 @@
 
 ;; Fails its `fail-call`-th call with a broken-pipe-like status; 0 never fails.
 (define (capture-sink [chunk : (& bytes)]) : i64
-  (set! sink-calls (+ sink-calls 1))
+  (+= sink-calls 1)
   (if (= sink-calls fail-call)
     32
     (begin
@@ -71,26 +72,22 @@
     [count : i64 0]
     [cursor : i64 (string.index-of-byte text 0 (cast 10 : u8))]
     (while (>= cursor 0)
-      (set! count (+ count 1))
+      (+= count 1)
       (set! cursor (string.index-of-byte text (+ cursor 1) (cast 10 : u8))))
     count))
 
 (define (repeat [piece : String] [count : i64]) : String
   (let
     [buf : byte_buf.ByteBuf (byte_buf.new)]
-    [index : i64 0]
-    (while (< index count)
-      (set! buf (byte_buf.append-string buf (clone piece)))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! buf (byte_buf.append-string buf (clone piece))))
     (byte_buf.to-string buf)))
 
 (define (from-bytes [values : (__tl_dyn-array i64)]) : String
   (let
     [buf : byte_buf.ByteBuf (byte_buf.new)]
-    [index : i64 0]
-    (while (< index (array-length values))
-      (set! buf (byte_buf.push buf (cast (array-ref values index) : u8)))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 (array-length values))]
+      (set! buf (byte_buf.push buf (cast (array-ref values index) : u8))))
     (byte_buf.to-string buf)))
 
 ;; --- independent patch application -----------------------------------------
@@ -123,7 +120,7 @@
       (set!
         value
         (+ (* value 10) (- (cast (string.string-ref text index) : i64) 48)))
-      (set! index (+ index 1)))
+      (+= index 1))
     (assert
       (> index start)
       (str_cat.str-cat "expected a number in " (string.copy text)))
@@ -160,9 +157,9 @@
           [new-seen : i64 0]
           (while (< cursor (- old-first.value 1))
             (svec.push-ref! (&mut result) (svec.get (& old-lines) cursor ""))
-            (set! cursor (+ cursor 1)))
+            (+= cursor 1))
           (set! ok (and ok (= (svec.len (& result)) (- new-first.value 1))))
-          (set! row (+ row 1))
+          (+= row 1)
           (while (and
             ok
             (< row (- (svec.len (& rows)) 1))
@@ -177,20 +174,20 @@
                 (set!
                   ok
                   (and ok (string.eq body (svec.get (& old-lines) cursor ""))))
-                (set! cursor (+ cursor 1))
-                (set! old-seen (+ old-seen 1)))
+                (+= cursor 1)
+                (+= old-seen 1))
               (when
                 (or (= marker 32) (= marker 43))
                 (svec.push-ref! (&mut result) body)
-                (set! new-seen (+ new-seen 1)))
+                (+= new-seen 1))
               (set! ok (and ok (or (= marker 32) (= marker 43) (= marker 45))))
-              (set! row (+ row 1))))
+              (+= row 1)))
           (set!
             ok
             (and ok (= old-seen old-count.value) (= new-seen new-count.value)))))
       (while (< cursor (svec.len (& old-lines)))
         (svec.push-ref! (&mut result) (svec.get (& old-lines) cursor ""))
-        (set! cursor (+ cursor 1)))
+        (+= cursor 1))
       (let
         [new-lines : svec.Vec (split-lines (& new))]
         [index : i64 0]
@@ -201,7 +198,7 @@
             (string.eq
               (svec.get (& result) index "")
               (svec.get (& new-lines) index "")))
-          (set! index (+ index 1)))
+          (+= index 1))
         ok))))
 
 ;; Every complete rendering must apply, and its report must count its bytes.
@@ -314,55 +311,45 @@
 ;; equal, across every word/half-word/byte width of the in-place comparison.
 (test
   unified-diff-compares-every-byte-position
-  (let
-    [len : i64 0]
-    (while (<= len 40)
-      (let
-        [line : String (repeat "x" len)]
-        [position : i64 0]
-        (assert
-          (=
-            (string.string-length
-              (diff
-                (str_cat.str-cat (clone line) "\n")
-                (str_cat.str-cat (clone line) "\n")))
-            0)
-          "equal lines rendered a diff")
-        (while (< position len)
-          (let
-            [changed : String
-              (str_cat.str-cat
-                (string.substring (& line) 0 position)
-                "y"
-                (string.substring
-                  (& line)
-                  (+ position 1)
-                  (- len (+ position 1))))]
-            [rendered : String
-              (diff
-                (str_cat.str-cat (clone line) "\n")
-                (str_cat.str-cat (clone changed) "\n"))]
-            [expected : String
-              (str_cat.str-cat "\n-" (clone line) "\n+" changed "\n")]
-            (assert
-              (string.contains (& rendered) (& expected))
-              (str_cat.str-cat "byte change was not detected:\n" rendered))
-            (set! position (+ position 1))))
-        (set! len (+ len 1))))))
+  (for [len (iterator.range 0 (+ 40 1))]
+    (let
+      [line : String (repeat "x" len)]
+      (assert
+        (=
+          (string.string-length
+            (diff
+              (str_cat.str-cat (clone line) "\n")
+              (str_cat.str-cat (clone line) "\n")))
+          0)
+        "equal lines rendered a diff")
+      (for [position (iterator.range 0 len)]
+        (let
+          [changed : String
+            (str_cat.str-cat
+              (string.substring (& line) 0 position)
+              "y"
+              (string.substring (& line) (+ position 1) (- len (+ position 1))))]
+          [rendered : String
+            (diff
+              (str_cat.str-cat (clone line) "\n")
+              (str_cat.str-cat (clone changed) "\n"))]
+          [expected : String
+            (str_cat.str-cat "\n-" (clone line) "\n+" changed "\n")]
+          (assert
+            (string.contains (& rendered) (& expected))
+            (str_cat.str-cat "byte change was not detected:\n" rendered)))))))
 
 ;; Replacements longer than the 64-line lookahead still resynchronize on the
 ;; equal tail instead of rendering it as removed and added text.
 (define (long-replacement [prefix : String]) : String
   (let
     [buf : byte_buf.ByteBuf (byte_buf.new)]
-    [index : i64 0]
-    (while (< index 70)
+    (for [index (iterator.range 0 70)]
       (set!
         buf
         (byte_buf.append-string
           buf
-          (str_cat.str-cat (clone prefix) (string.int->string index) "\n")))
-      (set! index (+ index 1)))
+          (str_cat.str-cat (clone prefix) (string.int->string index) "\n"))))
     (byte_buf.to-string (byte_buf.append-string buf "tail\n"))))
 
 (test
@@ -383,8 +370,7 @@
 (define (sparse-fixture [formatted : bool] [lines : i64]) : String
   (let
     [buf : byte_buf.ByteBuf (byte_buf.new)]
-    [index : i64 0]
-    (while (< index lines)
+    (for [index (iterator.range 0 lines)]
       (set!
         buf
         (byte_buf.append-string
@@ -397,8 +383,7 @@
             (str_cat.str-cat
               "(define value-"
               (string.int->string index)
-              " 0)\n"))))
-      (set! index (+ index 1)))
+              " 0)\n")))))
     (byte_buf.to-string buf)))
 
 (test
@@ -442,56 +427,49 @@
 (define (random-text [lines : svec.Vec]) : String
   (let
     [buf : byte_buf.ByteBuf (byte_buf.new)]
-    [index : i64 0]
-    (while (< index (svec.len (& lines)))
+    (for [index (iterator.range 0 (svec.len (& lines)))]
       (when (> index 0) (set! buf (byte_buf.push buf (cast 10 : u8))))
-      (set! buf (byte_buf.append-string buf (svec.get (& lines) index "")))
-      (set! index (+ index 1)))
+      (set! buf (byte_buf.append-string buf (svec.get (& lines) index ""))))
     (byte_buf.to-string buf)))
 
 (define (random-edit [lines : (& l svec.Vec)]) : svec.Vec
   (let
     [out : svec.Vec (svec.new)]
-    [index : i64 0]
-    (while (< index (svec.len lines))
+    (for [index (iterator.range 0 (svec.len lines))]
       (match (rng-below 12)
         [0 unit]
         [1
           (svec.push-ref! (&mut out) (random-line))
           (svec.push-ref! (&mut out) (svec.get lines index ""))]
         [2 (svec.push-ref! (&mut out) (random-line))]
-        [_ (svec.push-ref! (&mut out) (svec.get lines index ""))])
-      (set! index (+ index 1)))
+        [_ (svec.push-ref! (&mut out) (svec.get lines index ""))]))
     (when (= (rng-below 3) 0) (svec.push-ref! (&mut out) (random-line)))
     out))
 
 (test
   unified-diff-random-edits-apply
-  (let
-    [case : i64 0]
-    (while (< case 400)
+  (for [case (iterator.range 0 400)]
+    (let
+      [old-lines : svec.Vec (svec.new)]
+      [count : i64
+        (rng-below
+          (if (< case 200)
+            12
+            160))]
+      (while (> count 0)
+        (svec.push-ref! (&mut old-lines) (random-line))
+        (-= count 1))
       (let
-        [old-lines : svec.Vec (svec.new)]
-        [count : i64
-          (rng-below
-            (if (< case 200)
-              12
-              160))]
-        (while (> count 0)
-          (svec.push-ref! (&mut old-lines) (random-line))
-          (set! count (- count 1)))
-        (let
-          [new-lines : svec.Vec (random-edit (& old-lines))]
-          [old : String (random-text old-lines)]
-          [new : String (random-text new-lines)]
-          [run : Run
-            (run-diff "r.tl" (clone old) (clone new) (unified_diff.unbounded) 0)]
-          (check-run
-            (str_cat.str-cat "random case " (string.int->string case))
-            old
-            new
-            (& run)))
-        (set! case (+ case 1))))))
+        [new-lines : svec.Vec (random-edit (& old-lines))]
+        [old : String (random-text old-lines)]
+        [new : String (random-text new-lines)]
+        [run : Run
+          (run-diff "r.tl" (clone old) (clone new) (unified_diff.unbounded) 0)]
+        (check-run
+          (str_cat.str-cat "random case " (string.int->string case))
+          old
+          new
+          (& run))))))
 
 ;; --- header quoting -----------------------------------------------------------
 (define (expect-headers [path : String] [expected : String]) : unit
@@ -519,17 +497,17 @@
           (if (!= byte 92)
             (begin
               (set! buf (byte_buf.push buf (cast byte : u8)))
-              (set! index (+ index 1)))
+              (+= index 1))
             (let
               [code : i64 (cast (string.string-ref text (+ index 1)) : i64)]
               [letter : i64 (string.index-of-byte "abtnvfr" 0 (cast code : u8))]
               (cond
                 [(>= letter 0)
                   (set! buf (byte_buf.push buf (cast (+ letter 7) : u8)))
-                  (set! index (+ index 2))]
+                  (+= index 2)]
                 [(or (= code 34) (= code 92))
                   (set! buf (byte_buf.push buf (cast code : u8)))
-                  (set! index (+ index 2))]
+                  (+= index 2)]
                 [else
                   (set!
                     buf
@@ -541,14 +519,13 @@
                           (* 8 (octal-digit (& text) (+ index 2)))
                           (octal-digit (& text) (+ index 3)))
                         : u8)))
-                  (set! index (+ index 4))])))))
+                  (+= index 4)])))))
       (byte_buf.to-string buf))))
 
 (test
   unified-diff-quotes-unsafe-header-paths
   (let
     [every-byte : (__tl_dyn-array i64) (__tl_make-array i64 256)]
-    [index : i64 0]
     (expect-headers "src/a.tl" "--- a/src/a.tl\n+++ b/src/a.tl\n@@ ")
     (expect-headers
       "é/日本.tl"
@@ -564,9 +541,8 @@
     (expect-headers
       (from-bytes (__tl_make-array 1 127 27 0))
       "--- \"a/\\001\\177\\033\\000\"\n+++ \"b/\\001\\177\\033\\000\"\n")
-    (while (< index 256)
-      (set! (array-ref every-byte index) index)
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 256)]
+      (set! (array-ref every-byte index) index))
     (let
       [path : String (from-bytes every-byte)]
       [run : Run
@@ -596,8 +572,7 @@
       (run-diff "t.tl" (distant-old) (distant-new) (unified_diff.unbounded) 0)]
     [total : i64 (string.string-length full.text)]
     [chunks : (Array i64 5) (array 1 2 5 64 65536)]
-    [slot : i64 0]
-    (while (< slot (array-length chunks))
+    (for [slot (iterator.range 0 (array-length chunks))]
       (let
         [chunk : i64 (array-ref chunks slot)]
         [whole : Run
@@ -607,7 +582,6 @@
             (distant-new)
             (options unified_diff.no-limit unified_diff.no-limit chunk)
             0)]
-        [call : i64 1]
         (assert
           (string.eq whole.text full.text)
           "chunk size changed the rendering")
@@ -615,7 +589,7 @@
         (assert
           (= whole.calls (/ (+ total (- chunk 1)) chunk))
           "chunks were not filled before flushing")
-        (while (<= call whole.calls)
+        (for [call (iterator.range 1 (+ whole.calls 1))]
           (let
             [run : Run
               (run-diff
@@ -641,9 +615,7 @@
               "emitted bytes after a failure are wrong")
             (assert
               (= run.report.emitted-lines (count-newlines (& run.text)))
-              "emitted lines after a failure are wrong")
-            (set! call (+ call 1))))
-        (set! slot (+ slot 1))))))
+              "emitted lines after a failure are wrong")))))))
 
 ;; Every line cap and every byte cap yields exactly the longest whole-line
 ;; prefix within the cap, with exact omitted counts, at any chunk size.
@@ -668,7 +640,7 @@
     [next : i64 (string.index-of-byte (& full.text) 0 (cast 10 : u8))]
     (while (and (>= next 0) (< lines max-lines) (<= (+ next 1) max-bytes))
       (set! kept (+ next 1))
-      (set! lines (+ lines 1))
+      (+= lines 1)
       (set! next (string.index-of-byte (& full.text) (+ next 1) (cast 10 : u8))))
     (assert
       (string.eq run.text (string.substring (& full.text) 0 kept))
@@ -713,16 +685,12 @@
         (distant-new)
         (unified_diff.unbounded)
         0)]
-    [limit : i64 0]
-    (while (<= limit (+ (count-newlines (& full.text)) 1))
+    (for [limit (iterator.range 0 (+ (+ (count-newlines (& full.text)) 1) 1))]
       (check-cap (& path) (& full) unified_diff.no-limit limit 65536)
-      (check-cap (& path) (& full) unified_diff.no-limit limit 3)
-      (set! limit (+ limit 1)))
-    (set! limit 0)
-    (while (<= limit (+ (string.string-length full.text) 1))
+      (check-cap (& path) (& full) unified_diff.no-limit limit 3))
+    (for [limit (iterator.range 0 (+ (+ (string.string-length full.text) 1) 1))]
       (check-cap (& path) (& full) limit unified_diff.no-limit 65536)
-      (check-cap (& path) (& full) limit unified_diff.no-limit 1)
-      (set! limit (+ limit 1)))
+      (check-cap (& path) (& full) limit unified_diff.no-limit 1))
     (check-cap (& path) (& full) 60 4 7)
     (check-cap
       (& path)
@@ -748,8 +716,7 @@
         (options unified_diff.no-limit unified_diff.no-limit 0)
         (options unified_diff.no-limit unified_diff.no-limit -9)
         (options -9223372036854775807 5 64))]
-    [index : i64 0]
-    (while (< index (array-length invalid))
+    (for [index (iterator.range 0 (array-length invalid))]
       (let
         [run : Run
           (run-diff
@@ -768,8 +735,7 @@
             (= run.calls 0)
             (= run.report.emitted-bytes 0)
             (= run.report.emitted-lines 0))
-          "invalid options reached the sink")
-        (set! index (+ index 1))))))
+          "invalid options reached the sink")))))
 
 ;; A cap and a failing sink together report the failure, not the truncation.
 (test
@@ -850,17 +816,15 @@
   0)
 
 (define (counting-sink [chunk : (& bytes)]) : i64
-  (set! counted-bytes (+ counted-bytes (byte_buf.bytes-length chunk)))
+  (+= counted-bytes (byte_buf.bytes-length chunk))
   0)
 
 (define (wide-fixture [marker : String]) : String
   (let
     [buf : byte_buf.ByteBuf (byte_buf.new)]
     [line : String (str_cat.str-cat "(" (repeat marker 96) ")\n")]
-    [index : i64 0]
-    (while (< index 4096)
-      (set! buf (byte_buf.append-string buf (clone line)))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 4096)]
+      (set! buf (byte_buf.append-string buf (clone line))))
     (byte_buf.to-string buf)))
 
 ;; Rendering allocates the two line indexes and one staging chunk, never

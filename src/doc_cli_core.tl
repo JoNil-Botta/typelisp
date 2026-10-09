@@ -8,6 +8,7 @@
 ;;   typelisp doc --test input.tl
 ;;   typelisp doc --test --batch inputs.txt
 ;;   typelisp doc --load input.tl output.md [--stdlib-root <dir>...]
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
@@ -82,23 +83,19 @@
 
 (define (doc-read-modules [idx : i64] [end : i64]) : doc_module_vec.Vec
   (let
-    [i : i64 idx]
     [modules : doc_module_vec.Vec (doc_module_vec.with-capacity (- end idx))]
-    (while (< i end)
+    (for [i (iterator.range idx end)]
       (doc_module_vec.push-ref!
         (&mut modules)
         (doc_render.DocModule.Module
           (io.arg i)
-          (doc_extract.doc-extract-file (io.arg i))))
-      (set! i (+ i 1)))
+          (doc_extract.doc-extract-file (io.arg i)))))
     modules))
 
 (define (doc-modules-from-package-sources-from
   [paths : doc_svec.Vec]
-  [index : i64]
   [modules : (&mut modules doc_module_vec.Vec)]) : unit
-  (if (>= index (doc_svec.len (& paths)))
-    unit
+  (for [index (iterator.range 0 (doc_svec.len (& paths)))]
     (let
       [path : String (doc_svec.get (& paths) index "")]
       (doc_module_vec.push-ref!
@@ -106,22 +103,20 @@
         (doc_render.DocModule.Module
           (owned_view.compiler-owned-shared-view path)
           (doc_extract.doc-extract-file path)))
-      (doc-modules-from-package-sources-from paths (+ index 1) modules))))
+      unit)))
 
 (define (doc-modules-from-package-sources [paths : doc_svec.Vec]) : doc_module_vec.Vec
   (let
     [modules : doc_module_vec.Vec
       (doc_module_vec.with-capacity (doc_svec.len (& paths)))]
-    (doc-modules-from-package-sources-from paths 0 (&mut modules))
+    (doc-modules-from-package-sources-from paths (&mut modules))
     modules))
 
 (define (doc-modules-from-package-sources-relative-from
   [paths : (& paths doc_svec.Vec)]
   [root : (& root str)]
-  [index : i64]
   [modules : (&mut modules doc_module_vec.Vec)]) : unit
-  (if (>= index (doc_svec.len (& paths)))
-    unit
+  (for [index (iterator.range 0 (doc_svec.len (& paths)))]
     (let
       [path : String (doc_svec.get (& paths) index "")]
       [relative : String
@@ -131,11 +126,7 @@
         (doc_render.DocModule.Module
           relative
           (doc_extract.doc-extract-file path)))
-      (doc-modules-from-package-sources-relative-from
-        paths
-        root
-        (+ index 1)
-        modules))))
+      unit)))
 
 (define (doc-modules-from-package-source-set
   [source-set : (& source-set package_source_core.PackageSourceSet)]) : doc_module_vec.Vec
@@ -147,7 +138,6 @@
     (doc-modules-from-package-sources-relative-from
       source-set.sources
       root
-      0
       (&mut modules))
     modules))
 
@@ -581,9 +571,9 @@
         (if (< (+ i 1) n)
           (begin
             (doc_svec.push-ref! (&mut roots) (io.arg (+ i 1)))
-            (set! i (+ i 2)))
+            (+= i 2))
           (set! i n))
-        (set! i (+ i 1))))
+        (+= i 1)))
     roots))
 
 (define (doc-modules-from-input-paths-before-last
@@ -591,18 +581,16 @@
   [index : i64]
   [last-index : i64]) : doc_module_vec.Vec
   (let
-    [i : i64 index]
     [modules : doc_module_vec.Vec
       (doc_module_vec.with-capacity (- last-index index))]
-    (while (< i last-index)
+    (for [i (iterator.range index last-index)]
       (let
         [path : String (doc_svec.get (& paths) i "")]
         (doc_module_vec.push-ref!
           (&mut modules)
           (doc_render.DocModule.Module
             (owned_view.compiler-owned-shared-view path)
-            (doc_extract.doc-extract-file path)))
-        (set! i (+ i 1))))
+            (doc_extract.doc-extract-file path)))))
     modules))
 
 (define (doc-generate-module-graph-from-input-paths [paths : doc_svec.Vec]) : i64
@@ -722,12 +710,10 @@
 
 (define (doc-test-files-from
   [input-paths : (& input-paths doc_svec.Vec)]
-  [index : i64]
   [stdlib-roots : doc_svec.Vec]
   [print-headers : bool]
   [status : i64]) : i64
-  (if (>= index (doc_svec.len (& input-paths)))
-    status
+  (for [index (iterator.range 0 (doc_svec.len (& input-paths)))]
     (let
       [input-path : String (doc_svec.get (& input-paths) index "")]
       [file-status : i64
@@ -743,29 +729,25 @@
           (doc-test-file
             input-path
             (owned_view.compiler-owned-shared-view stdlib-roots)))]
-      (doc-test-files-from
-        input-paths
-        (+ index 1)
-        stdlib-roots
-        print-headers
+      (set!
+        status
         (if (= status 0)
           file-status
-          status)))))
+          status))))
+  status)
 
 (define (doc-test-files
   [input-paths : (& input-paths doc_svec.Vec)]
   [stdlib-roots : doc_svec.Vec]
   [print-headers : bool]
   [status : i64]) : i64
-  (doc-test-files-from input-paths 0 stdlib-roots print-headers status))
+  (doc-test-files-from input-paths stdlib-roots print-headers status))
 
 (define (doc-test-package-files-from
   [input-paths : doc_svec.Vec]
-  [index : i64]
   [stdlib-roots : doc_svec.Vec]
   [status : i64]) : i64
-  (if (>= index (doc_svec.len (& input-paths)))
-    status
+  (for [index (iterator.range 0 (doc_svec.len (& input-paths)))]
     (let
       [input-path : String (doc_svec.get (& input-paths) index "")]
       [file-status : i64
@@ -779,19 +761,18 @@
           (doc-test-file
             input-path
             (owned_view.compiler-owned-shared-view stdlib-roots)))]
-      (doc-test-package-files-from
-        input-paths
-        (+ index 1)
-        stdlib-roots
+      (set!
+        status
         (if (= status 0)
           file-status
-          status)))))
+          status))))
+  status)
 
 (define (doc-test-package-files
   [input-paths : doc_svec.Vec]
   [stdlib-roots : doc_svec.Vec]
   [status : i64]) : i64
-  (doc-test-package-files-from input-paths 0 stdlib-roots status))
+  (doc-test-package-files-from input-paths stdlib-roots status))
 
 (define (doc-test-package
   [manifest-path : String]

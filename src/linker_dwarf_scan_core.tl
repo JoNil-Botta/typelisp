@@ -38,6 +38,7 @@
 ;; Every count and the total work are bounded by caller limits checked before
 ;; the corresponding storage grows. Output order is canonical, by
 ;; (input, section) and then offset, whatever order the views arrive in.
+(import stdlib.iterator)
 (import stdlib.byte_le)
 (import stdlib.leb128)
 (import stdlib.string)
@@ -529,7 +530,7 @@
         "dwarf: work limit exceeded")
       false)
     (begin
-      (set! scan.work (+ scan.work amount))
+      (+= scan.work amount)
       true)))
 
 ;: Whether `count` bytes at `at` lie before `end`; otherwise a truncation
@@ -607,7 +608,7 @@
         (= (array-ref scan.views index).kind kind))
         (set! found index)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     found))
 
 ;; --- abbreviation tables ---------------------------------------------------------------
@@ -637,7 +638,7 @@
         (= (array-ref scan.tables.slots index).offset offset))
         (set! found index)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     (if (>= found 0)
       found
       (linker-dwarf-parse-abbrev-table! scan view offset unit-at))))
@@ -778,7 +779,7 @@
                             (dwarf_i64_vec.push-ref!
                               (&mut scan.spec-const)
                               constant.value)
-                            (set! specs (+ specs 1))
+                            (+= specs 1)
                             (set! spec-at constant.next))])))
                   (if scan.ok
                     (begin
@@ -818,7 +819,7 @@
       (if (!= (array-ref scan.entry-code.slots (+ first index)) (+ index 1))
         (set! dense false)
         unit)
-      (set! index (+ index 1)))
+      (+= index 1))
     (if (not dense)
       (let
         [codes : (__tl_dyn-array i64) (__tl_make-array i64 count)]
@@ -828,7 +829,7 @@
           (set!
             (array-ref codes index)
             (array-ref scan.entry-code.slots (+ first index)))
-          (set! index (+ index 1)))
+          (+= index 1))
         (let
           [order : (__tl_dyn-array i64)
             (linker-dwarf-order (& codes) (& zeros) count)]
@@ -846,7 +847,7 @@
                 (array-ref codes (array-ref order index))
                 "dwarf: duplicate abbreviation code in one table")
               unit)
-            (set! index (+ index 1)))))
+            (+= index 1))))
       unit)
     (if (and scan.ok (linker-dwarf-charge! scan (- end offset) view offset))
       (let
@@ -884,7 +885,7 @@
           (if (= (array-ref scan.entry-code.slots (+ first index)) code)
             (set! found (+ first index))
             unit)
-          (set! index (+ index 1)))
+          (+= index 1))
         found))))
 
 ;; --- attribute classes -------------------------------------------------------------------
@@ -1627,7 +1628,7 @@
               (& (array-ref scan.views ctx.view).bytes)
               end-at)
             0))
-          (set! end-at (+ end-at 1)))
+          (+= end-at 1))
         (if (< end-at ctx.end)
           (LinkerDwarfField (+ end-at 1) 0)
           (begin
@@ -2174,7 +2175,7 @@
           [(not scan.ok) unit]
           [(= code.value 0)
             (if (> depth 0)
-              (set! depth (- depth 1))
+              (-= depth 1)
               unit)
             (set! at code.next)]
           [(and (> count 0) (= depth 0))
@@ -2216,8 +2217,8 @@
                     [pos : i64 code.next]
                     [root? : bool (= count 0)]
                     (dwarf_i64_vec.push-ref! (&mut scan.die-offsets) at)
-                    (set! scan.dies (+ scan.dies 1))
-                    (set! count (+ count 1))
+                    (+= scan.dies 1)
+                    (+= count 1)
                     (if root?
                       (set! root-tag (array-ref scan.entry-tag.slots entry))
                       unit)
@@ -2242,7 +2243,7 @@
                               (array-ref scan.spec-form.slots spec)
                               (array-ref scan.spec-const.slots spec)
                               false)]
-                          (set! scan.attributes (+ scan.attributes 1))
+                          (+= scan.attributes 1)
                           (if (and root? (>= field.next 0))
                             (cond
                               [(= attribute 0x72)
@@ -2261,7 +2262,7 @@
                               [else unit])
                             unit)
                           (set! pos field.next)
-                          (set! spec (+ spec 1)))))
+                          (+= spec 1))))
                     (if (and
                       scan.ok
                       (= (array-ref scan.entry-children.slots entry) 1))
@@ -2273,7 +2274,7 @@
                           ctx.offset
                           at
                           "dwarf: DIE nesting limit exceeded")
-                        (set! depth (+ depth 1)))
+                        (+= depth 1))
                       unit)
                     (set! at pos))]))])))
     (cond
@@ -2422,11 +2423,11 @@
     [index : i64 0]
     (while (< index count)
       (set! (array-ref order index) index)
-      (set! index (+ index 1)))
+      (+= index 1))
     (set! index (- (/ count 2) 1))
     (while (>= index 0)
       (linker-dwarf-sift! primary secondary (&mut order) index count)
-      (set! index (- index 1)))
+      (-= index 1))
     (set! index (- count 1))
     (while (> index 0)
       (let
@@ -2434,7 +2435,7 @@
         (set! (array-ref order 0) (array-ref order index))
         (set! (array-ref order index) held)
         (linker-dwarf-sift! primary secondary (&mut order) 0 index)
-        (set! index (- index 1))))
+        (-= index 1)))
     order))
 
 ;; --- split units ----------------------------------------------------------------------------
@@ -2445,8 +2446,7 @@
     [count : i64 scan.units.len]
     [ids : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [split : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set! (array-ref ids index) (array-ref scan.units.slots index).dwo-id)
       (set!
         (array-ref split index)
@@ -2454,8 +2454,7 @@
           [(not (array-ref scan.units.slots index).has-id) 2]
           [(= (array-ref scan.units.slots index).unit-type 5) 1]
           [(= (array-ref scan.units.slots index).unit-type 4) 0]
-          [else 2]))
-      (set! index (+ index 1)))
+          [else 2])))
     (let
       [order : (__tl_dyn-array i64)
         (linker-dwarf-order (& ids) (& split) count)]
@@ -2493,7 +2492,7 @@
                       "dwarf: two split units carry one dwo id")
                     (set! unit-index member))]
                 [else unit])
-              (set! end (+ end 1))))
+              (+= end 1)))
           (if (and scan.ok (>= skeleton 0) (>= unit-index 0))
             (linker-dwarf-set-skeleton! scan unit-index skeleton)
             unit)
@@ -2576,7 +2575,7 @@
         (while (and
           (< at length)
           (!= (byte_le.byte-le-at (& (array-ref scan.views view).bytes) at) 0))
-          (set! at (+ at 1)))
+          (+= at 1))
         (and
           (< at length)
           (linker-dwarf-charge! scan (+ (- at offset) 1) view offset))))))
@@ -2985,8 +2984,8 @@
     (while (< index count)
       (set! (array-ref inputs index) (array-ref views index).input)
       (set! (array-ref sections index) (array-ref views index).section)
-      (set! total (+ total (array-length (array-ref views index).bytes)))
-      (set! index (+ index 1)))
+      (+= total (array-length (array-ref views index).bytes))
+      (+= index 1))
     (when
       (> total limits.max-bytes)
       (return
@@ -3010,7 +3009,7 @@
         (set!
           (array-ref sorted index)
           (array-ref views (array-ref order index)))
-        (set! index (+ index 1)))
+        (+= index 1))
       (let
         [scan : LinkerDwarfScan (linker-dwarf-scan-new sorted limits)]
         (set! index 1)
@@ -3030,7 +3029,7 @@
               0
               "dwarf: two views share one input and section")
             unit)
-          (set! index (+ index 1)))
+          (+= index 1))
         (set! index 0)
         (while (and scan.ok (< index count))
           (let
@@ -3052,7 +3051,7 @@
                     kind
                     (linker-dwarf-ledger-reason kind)))
                 unit))
-            (set! index (+ index 1))))
+            (+= index 1)))
         (if scan.ok
           (linker-dwarf-pair-skeletons! (&mut scan))
           unit)
@@ -3106,9 +3105,8 @@
     [count : i64 scan.units.len]
     [signatures : (__tl_dyn-array i64) (__tl_make-array i64 count)]
     [type-units : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
     [typed : i64 0]
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (set!
         (array-ref signatures index)
         (array-ref scan.units.slots index).signature)
@@ -3117,9 +3115,8 @@
         (= (array-ref scan.units.slots index).unit-type 6))
         (begin
           (set! (array-ref type-units index) 0)
-          (set! typed (+ typed 1)))
-        (set! (array-ref type-units index) 1))
-      (set! index (+ index 1)))
+          (+= typed 1))
+        (set! (array-ref type-units index) 1)))
     (let
       ;; Order type units first, by signature, then drop the rest.
       [order : (__tl_dyn-array i64)
@@ -3127,10 +3124,8 @@
       [signature-order : (__tl_dyn-array i64) (__tl_make-array i64 typed)]
       [reference : i64 0]
       [total : i64 scan.references.len]
-      (set! index 0)
-      (while (< index typed)
-        (set! (array-ref signature-order index) (array-ref order index))
-        (set! index (+ index 1)))
+      (for [index (iterator.range 0 typed)]
+        (set! (array-ref signature-order index) (array-ref order index)))
       (if (linker-dwarf-charge! scan total -1 0)
         (while (and scan.ok (< reference total))
           (linker-dwarf-check-reference!
@@ -3138,5 +3133,5 @@
             reference
             (& signatures)
             (& signature-order))
-          (set! reference (+ reference 1)))
+          (+= reference 1))
         unit))))

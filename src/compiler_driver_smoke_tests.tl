@@ -583,7 +583,7 @@
         (if (= mirrored-id source-id)
           unit
           (set! ok false))
-        (set! source-index (+ source-index 1))))
+        (+= source-index 1)))
     (while (and ok (< generated-index generated-count-a))
       (let
         [source-id : i64 (- (- (ci.intern-capacity) 1) generated-index)]
@@ -594,7 +594,7 @@
         (if (= mirrored-id source-id)
           unit
           (set! ok false))
-        (set! generated-index (+ generated-index 1))))
+        (+= generated-index 1)))
     (and
       ok
       (= source-count-a (ci.intern-compat-state-pool-len intern-b))

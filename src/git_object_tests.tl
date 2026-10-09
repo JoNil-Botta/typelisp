@@ -1,4 +1,5 @@
 ;; Git object format, malformed byte stream, and resolution fixtures.
+(import stdlib.iterator)
 (import git_object_core as git_object)
 (import stdlib.byte_buf as bytes)
 (import stdlib.byte_buf_core as byte_buf)
@@ -59,12 +60,10 @@
     [(GitSha1FinalizeOk value)
       (let
         [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
-        [index : i64 0]
-        (while (< index 20)
+        (for [index (iterator.range 0 20)]
           (byte_buf.byte-buf-builder-push
             (&mut out)
-            (sha1.digest-byte (& value) index))
-          (set! index (+ index 1)))
+            (sha1.digest-byte (& value) index)))
         (byte_buf.byte-buf-builder-finish-string (& out)))]))
 
 (define (git-object-test-sha256 [preimage : String]) : String
@@ -73,12 +72,10 @@
     [(Sha256FinalizeOk value)
       (let
         [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
-        [index : i64 0]
-        (while (< index 32)
+        (for [index (iterator.range 0 32)]
           (byte_buf.byte-buf-builder-push
             (&mut out)
-            (sha256.digest-byte (& value) index))
-          (set! index (+ index 1)))
+            (sha256.digest-byte (& value) index)))
         (byte_buf.byte-buf-builder-finish-string (& out)))]))
 
 (define (git-object-test-identity?
@@ -123,7 +120,6 @@
 (define (git-object-test-refs?) : bool
   (let
     [bad : (__tl_dyn-array String) (__tl_make-array String 0)]
-    [index : i64 0]
     [ok : bool true]
     (__tl_array-push! bad "")
     (__tl_array-push! bad "refs//heads/x")
@@ -135,11 +131,10 @@
     (__tl_array-push! bad "refs/heads/x\ny")
     (__tl_array-push! bad "refs/heads/x\\y")
     (__tl_array-push! bad "refs/heads/x.")
-    (while (< index (array-length bad))
+    (for [index (iterator.range 0 (array-length bad))]
       (when
         (git_object.git-object-refname-valid? (array-ref bad index) true)
-        (set! ok false))
-      (set! index (+ index 1)))
+        (set! ok false)))
     (and
       ok
       (git_object.git-object-refname-valid? "a/b" false)
@@ -299,16 +294,14 @@
       [bad : String (byte_buf.byte-buf-builder-finish-string (& bad-order))]
       [dup : String (byte_buf.byte-buf-builder-finish-string (& duplicate))]
       [wide : String (byte_buf.byte-buf-builder-finish-string (& sha256-tree))]
-      [index : i64 1]
-      (while (< index 28)
+      (for [index (iterator.range 1 28)]
         (unless
           (git-object-test-tree-error?
             (git_object.git-object-decode-tree
               (Sha1)
               (string.substring (& good) 0 index)
               (& limits)))
-          (set! ok false))
-        (set! index (+ index 1)))
+          (set! ok false)))
       (and
         ok
         (match (git_object.git-object-decode-tree (Sha1) (& good) (& limits))
@@ -678,19 +671,16 @@
 (define (git-object-test-deterministic-invalid-bytes?) : bool
   (let
     [state : i64 24681357]
-    [round : i64 0]
     [limits : git_object.GitObjectLimits (git-object-test-limits)]
     [ok : bool true]
-    (while (< round 128)
+    (for [round (iterator.range 0 128)]
       (let
         [out : byte_buf.ByteBufBuilder (byte_buf.byte-buf-builder-new)]
-        [index : i64 0]
-        (while (< index 24)
+        (for [index (iterator.range 0 24)]
           (set! state (% (+ (* state 1664525) 1013904223) 2147483647))
           (byte_buf.byte-buf-builder-push
             (&mut out)
-            (cast (bit-and state 255) : u8))
-          (set! index (+ index 1)))
+            (cast (bit-and state 255) : u8)))
         (let
           [sample : String (byte_buf.byte-buf-builder-finish-string (& out))]
           (unless
@@ -704,8 +694,7 @@
                   (& limits)))
               (git-object-test-tag-error?
                 (git_object.git-object-decode-tag (Sha1) (& sample) (& limits))))
-            (set! ok false))))
-      (set! round (+ round 1)))
+            (set! ok false)))))
     ok))
 
 (define (git-object-test-boundaries?) : bool
@@ -810,9 +799,8 @@
     [commit : String (git-object-test-commit-body (& hex))]
     [tag : String (git-object-test-tag-body (& hex))]
     [limits : git_object.GitObjectLimits (git-object-test-limits)]
-    [index : i64 1]
     [ok : bool true]
-    (while (< index (- (string.string-length (& commit)) 7))
+    (for [index (iterator.range 1 (- (string.string-length (& commit)) 7))]
       (unless
         (=
           (git-object-test-commit-error?
@@ -821,10 +809,8 @@
               (string.substring (& commit) 0 index)
               (& limits)))
           (!= index (- (string.string-length (& commit)) 8)))
-        (set! ok false))
-      (set! index (+ index 1)))
-    (set! index 1)
-    (while (< index (- (string.string-length (& tag)) 7))
+        (set! ok false)))
+    (for [index (iterator.range 1 (- (string.string-length (& tag)) 7))]
       (unless
         (=
           (git-object-test-tag-error?
@@ -841,8 +827,7 @@
               (-
                 (string.string-length (& tag))
                 (string.string-length "tagger A <a@b> 0 +0000\n\nmessage")))))
-        (set! ok false))
-      (set! index (+ index 1)))
+        (set! ok false)))
     ok))
 
 ;; Git's fsck_commit and fsck_tag fix the header order; an object that breaks it
@@ -854,7 +839,6 @@
     [limits : git_object.GitObjectLimits (git-object-test-limits)]
     [commit-bad : (__tl_dyn-array String) (__tl_make-array String 0)]
     [tag-bad : (__tl_dyn-array String) (__tl_make-array String 0)]
-    [index : i64 0]
     [ok : bool true]
     ;; author before tree
     (let
@@ -930,25 +914,22 @@
           (string.substring (& hex) 0 40)
           "\ntype commit\nx y\ntag v1\n\n")]
       (__tl_array-push! tag-bad text))
-    (while (< index (array-length commit-bad))
+    (for [index (iterator.range 0 (array-length commit-bad))]
       (unless
         (git-object-test-commit-error?
           (git_object.git-object-decode-commit
             (Sha1)
             (& (array-ref commit-bad index))
             (& limits)))
-        (set! ok false))
-      (set! index (+ index 1)))
-    (set! index 0)
-    (while (< index (array-length tag-bad))
+        (set! ok false)))
+    (for [index (iterator.range 0 (array-length tag-bad))]
       (unless
         (git-object-test-tag-error?
           (git_object.git-object-decode-tag
             (Sha1)
             (& (array-ref tag-bad index))
             (& limits)))
-        (set! ok false))
-      (set! index (+ index 1)))
+        (set! ok false)))
     (and
       ok
       ;; parents between tree and author, extras after committer, in order

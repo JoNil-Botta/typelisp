@@ -4,6 +4,7 @@
 ;; does not parse ELF, interpret relocations, choose live functions, or assign
 ;; final executable layout.  Callers supply the .sframe section address and
 ;; final function addresses.  The supported dialect is pinned below.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.byte_buf_core)
 (import stdlib.byte_le)
@@ -337,22 +338,17 @@
   [value : i64]) : unit
   (let
     [bits : u64 (cast value : u64)]
-    [index : i64 0]
-    (while (< index 8)
+    (for [index (iterator.range 0 8)]
       (compiler-sframe-v3-push-u8!
         out
-        (cast (bit-and (shr bits (* index 8)) (cast 255 : u64)) : i64))
-      (set! index (+ index 1)))))
+        (cast (bit-and (shr bits (* index 8)) (cast 255 : u64)) : i64)))))
 
 (define (compiler-sframe-v3-push-word!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [value : i64]
   [width : i64]) : unit
-  (let
-    [index : i64 0]
-    (while (< index width)
-      (compiler-sframe-v3-push-u8! out (shr value (* index 8)))
-      (set! index (+ index 1)))))
+  (for [index (iterator.range 0 width)]
+    (compiler-sframe-v3-push-u8! out (shr value (* index 8)))))
 
 (define (compiler-sframe-v3-rule-control [rule : (& rule CompilerSframeV3Rule)]) : i64
   (match (owned_view.compiler-owned-reference-shared-view rule)
@@ -532,14 +528,13 @@
           (__tl_make-array CompilerSframeV3Function function-count)]
         [rows : (__tl_dyn-array CompilerSframeV3Row)
           (__tl_make-array CompilerSframeV3Row declared-row-count)]
-        [function-index : i64 0]
         [fre-cursor : i64 0]
         [decoded-rows : i64 0]
         [previous-function-start : i64 0]
         [field-pcrel? : bool
           (!= (bit-and flags compiler-sframe-v3-flag-field-pcrel) 0)]
         [sorted? : bool (!= (bit-and flags compiler-sframe-v3-flag-sorted) 0)]
-        (while (< function-index function-count)
+        (for [function-index (iterator.range 0 function-count)]
           (let
             [index-offset : i64
               (+ fde-start (* function-index compiler-sframe-v3-index-size))]
@@ -672,13 +667,12 @@
                         attribute-offset
                         "sframe v3: only an increment/default FDE may be an outermost zero-FRE marker"))))
                 (let
-                  [row-index : i64 0]
                   [row-cursor : i64
                     (+ fre-cursor compiler-sframe-v3-attribute-size)]
                   [previous-row-start : i64 0]
                   [start-width : i64
                     (compiler-sframe-v3-width-for-type fre-type)]
-                  (while (< row-index function-row-count)
+                  (for [row-index (iterator.range 0 function-row-count)]
                     (let
                       [row-byte-offset : i64 (+ fre-start row-cursor)]
                       (when
@@ -925,12 +919,9 @@
                               ra-rule
                               fp-rule))
                           (set! previous-row-start row-start)
-                          (set!
+                          (+=
                             row-cursor
-                            (+
-                              row-cursor
-                              (+ (+ start-width 1) (* word-count word-width))))
-                          (set! row-index (+ row-index 1))))))
+                            (+ (+ start-width 1) (* word-count word-width)))))))
                   (set! fre-cursor row-cursor)
                   (set!
                     (array-ref functions function-index)
@@ -945,9 +936,8 @@
                       raw-start
                       decoded-rows
                       function-row-count))
-                  (set! decoded-rows (+ decoded-rows function-row-count)))
-                (set! previous-function-start function-start))
-              (set! function-index (+ function-index 1)))))
+                  (+= decoded-rows function-row-count))
+                (set! previous-function-start function-start)))))
         (when
           (or (!= decoded-rows declared-row-count) (!= fre-cursor fre-bytes))
           (return
@@ -1235,7 +1225,6 @@
           "sframe v3: fixed header offset does not fit i8"))))
   (let
     [function-count : i64 (array-length image.functions)]
-    [function-index : i64 0]
     [row-count : i64 0]
     [fre-bytes : i64 0]
     [previous-function-start : i64 0]
@@ -1247,13 +1236,12 @@
             compiler-sframe-v3-error-function-limit
             -1
             "sframe v3: function count limit exceeded"))))
-    (while (< function-index function-count)
+    (for [function-index (iterator.range 0 function-count)]
       (let
         [function : (& image CompilerSframeV3Function)
           (& (array-ref image.functions function-index))]
         [function-row-count : i64 function.row-count]
         [start-width : i64 (compiler-sframe-v3-row-start-width function.size)]
-        [row-index : i64 0]
         [previous-row-start : i64 0]
         (when
           (or
@@ -1315,8 +1303,8 @@
                 compiler-sframe-v3-error-row-limit
                 -1
                 "sframe v3: row count limit exceeded"))))
-        (set! fre-bytes (+ fre-bytes compiler-sframe-v3-attribute-size))
-        (while (< row-index function-row-count)
+        (+= fre-bytes compiler-sframe-v3-attribute-size)
+        (for [row-index (iterator.range 0 function-row-count)]
           (let
             [row : (& image CompilerSframeV3Row)
               (& (array-ref image.rows (+ function.row-start row-index)))]
@@ -1349,12 +1337,10 @@
                     image.fixed-fp-offset
                     image.fixed-ra-offset
                     start-width))]
-              (set! fre-bytes (+ fre-bytes row-plan.encoded-size)))
-            (set! previous-row-start row.start-offset)
-            (set! row-index (+ row-index 1))))
-        (set! row-count (+ row-count function-row-count))
-        (set! previous-function-start function.start-address)
-        (set! function-index (+ function-index 1))))
+              (+= fre-bytes row-plan.encoded-size))
+            (set! previous-row-start row.start-offset)))
+        (+= row-count function-row-count)
+        (set! previous-function-start function.start-address)))
     (when
       (or
         (!= row-count (array-length image.rows))
@@ -1496,7 +1482,6 @@
     (let
       [out : byte_buf_core.ByteBufBuilder
         (byte_buf_core.byte-buf-builder-with-capacity plan.total-bytes)]
-      [function-index : i64 0]
       [fre-cursor : i64 0]
       (compiler-sframe-v3-push-u16! (&mut out) compiler-sframe-v3-magic)
       (compiler-sframe-v3-push-u8! (&mut out) compiler-sframe-v3-version)
@@ -1520,7 +1505,7 @@
         (* plan.function-count compiler-sframe-v3-index-size))
       ;; Index entries.  Planning each row again is bounded by max-work
       ;; and avoids mutable layout metadata in the caller's records.
-      (while (< function-index plan.function-count)
+      (for [function-index (iterator.range 0 plan.function-count)]
         (let
           [function : (& image CompilerSframeV3Function)
             (& (array-ref image.functions function-index))]
@@ -1551,29 +1536,24 @@
           (compiler-sframe-v3-push-u32! (&mut out) function.size)
           (compiler-sframe-v3-push-u32! (&mut out) fre-cursor)
           (let
-            [row-index : i64 0]
             [start-width : i64
               (compiler-sframe-v3-row-start-width function.size)]
-            (set! fre-cursor (+ fre-cursor compiler-sframe-v3-attribute-size))
-            (while (< row-index function.row-count)
+            (+= fre-cursor compiler-sframe-v3-attribute-size)
+            (for [row-index (iterator.range 0 function.row-count)]
               (let
                 [row : (& image CompilerSframeV3Row)
                   (& (array-ref image.rows (+ function.row-start row-index)))]
-                (let
-                  [row-plan
-                    (try
-                      (compiler-sframe-v3-row-plan
-                        row
-                        function.flex?
-                        image.fixed-fp-offset
-                        image.fixed-ra-offset
-                        start-width))]
-                  (set! fre-cursor (+ fre-cursor row-plan.encoded-size)))
-                (set! row-index (+ row-index 1))))
-            (set! function-index (+ function-index 1)))))
+                [row-plan
+                  (try
+                    (compiler-sframe-v3-row-plan
+                      row
+                      function.flex?
+                      image.fixed-fp-offset
+                      image.fixed-ra-offset
+                      start-width))]
+                (+= fre-cursor row-plan.encoded-size))))))
       ;; Function attributes and rows.
-      (set! function-index 0)
-      (while (< function-index plan.function-count)
+      (for [function-index (iterator.range 0 plan.function-count)]
         (let
           [function : (& image CompilerSframeV3Function)
             (& (array-ref image.functions function-index))]
@@ -1615,8 +1595,7 @@
                       image.fixed-ra-offset
                       start-width))]
                 unit)
-              (set! row-index (+ row-index 1))))
-          (set! function-index (+ function-index 1))))
+              (+= row-index 1)))))
       (if (!= (byte_buf_core.byte-buf-builder-len (& out)) plan.total-bytes)
         (Err
           (compiler-sframe-v3-error
@@ -1663,7 +1642,7 @@
           (if (<= row.start-offset lookup-offset)
             (set! selected row-index)
             (set! row-index row-count))
-          (when (< row-index row-count) (set! row-index (+ row-index 1)))))
+          (when (< row-index row-count) (+= row-index 1))))
       (if (< selected 0)
         (Err
           (compiler-sframe-v3-error

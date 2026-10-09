@@ -2,6 +2,7 @@
 ;; self-test for tlci_loader, kept out of the production module.
 ;; tlci_loader_smoke.tl runs the self-test; the package discovery lifetime
 ;; tests reuse the fixtures.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.arena)
 (import stdlib.string)
@@ -17,13 +18,11 @@
   [offset : i64]
   [text : String]) : unit
   (let
-    [i : i64 0]
     [n : i64 (tlci.tlci-string-length text)]
-    (while (< i n)
+    (for [i (iterator.range 0 n)]
       (set!
         (array-ref bytes (+ offset i))
-        (cast (tlci.tlci-string-ref text i) : u8))
-      (set! i (+ i 1)))
+        (cast (tlci.tlci-string-ref text i) : u8)))
     unit))
 
 (define (tlci-loader-test-macro-loaded

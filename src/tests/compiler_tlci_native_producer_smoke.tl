@@ -6,6 +6,7 @@
 ;; count-binding default arm (#5617).
 ;; A body outside the supported subset keeps the counted interpreted-fallback
 ;; shell.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import compiler_tlci_native_producer)
 
@@ -192,18 +193,16 @@
     [names : producer_test_svec.Vec (producer_test_svec.new)]
     [captures : compiler_tlci_native_producer.TlciNativeMacroCaptures
       (compiler_tlci_native_producer.tlci-native-macro-captures-new)]
-    [index : i64 0]
     (source_buf.byte-buf-builder-append-string
       (&mut source)
       "(module catalog.macros)\n")
-    (while (< index count)
+    (for [index (iterator.range 0 count)]
       (source_buf.byte-buf-builder-append-string
         (&mut source)
         (str_cat.str-cat
           "(defmacro (entry-"
           (string.int->string index)
-          " [value : Expr]) : Expr `(+ ,value 1))\n"))
-      (set! index (+ index 1)))
+          " [value : Expr]) : Expr `(+ ,value 1))\n")))
     (match (parse_core.parse-ast-source
       (source_buf.byte-buf-builder-finish-string (& source)))
       [(Err _) (io.panic "native source allocation fixture did not parse")]
@@ -218,13 +217,11 @@
             (let
               [name-array : (__tl_dyn-array String)
                 (__tl_make-array String count)]
-              [name-index : i64 0]
               [_copy-names : unit
-                (while (< name-index count)
+                (for [name-index (iterator.range 0 count)]
                   (set!
                     (array-ref name-array name-index)
-                    (producer_test_svec.get (& names) name-index ""))
-                  (set! name-index (+ name-index 1)))]
+                    (producer_test_svec.get (& names) name-index "")))]
               [before : i64 (profile.alloc-total)]
               [text : String
                 (compiler_tlci_native_producer.embedded-native-source
@@ -921,7 +918,7 @@
                     (ast.ast-expr-list-get (& args) index -1)
                     (array-ref nodes index)))
                 (set! ok false))
-              (set! index (+ index 1)))
+              (+= index 1))
             (if (and ok (= count 2))
               (match (producer-test-expr-get
                 (& pools)
@@ -972,11 +969,8 @@
         (producer-test-push-spanned
           (& pools)
           (Call call-callee (ast.ast-expr-list-new)))))
-    (let
-      [index : i64 0]
-      (while (< index count)
-        (ast.ast-expr-list-push (&mut items) (array-ref nodes index))
-        (set! index (+ index 1))))
+    (for [index (iterator.range 0 count)]
+      (ast.ast-expr-list-push (&mut items) (array-ref nodes index)))
     (set!
       (array-ref operands 0)
       (compiler_ctfe.CompilerCtfeValue.ExprList items))
@@ -3307,7 +3301,7 @@
             (ast.ast-expr-list-get actual index -1)
             (ast.ast-expr-list-get expected index -2)))
         (set! ok false))
-      (set! index (+ index 1)))
+      (+= index 1))
     ok))
 
 (define (producer-test-tuple-result-ok?
@@ -3705,13 +3699,11 @@
               [name-count : i64 (producer_test_svec.len (& names))]
               [name-array : (__tl_dyn-array String)
                 (__tl_make-array String name-count)]
-              [name-index : i64 0]
               [_copy-names : unit
-                (while (< name-index name-count)
+                (for [name-index (iterator.range 0 name-count)]
                   (set!
                     (array-ref name-array name-index)
-                    (producer_test_svec.get (& names) name-index ""))
-                  (set! name-index (+ name-index 1)))]
+                    (producer_test_svec.get (& names) name-index "")))]
               (match (compiler_tlci_native_producer.embedded-native-emit-package
                 (tlci.tlci-metadata-emit
                   (tlci.tlci-make-metadata "v1" "str-cat-scoped-test" "0.1.0"))
@@ -3782,7 +3774,7 @@
     [equal : bool (= count (array-length right))]
     (while (and equal (< index count))
       (if (= (array-ref left index) (array-ref right index))
-        (set! index (+ index 1))
+        (+= index 1)
         (set! equal false)))
     equal))
 
@@ -3793,10 +3785,8 @@
     [index : i64 0]
     [count : i64 0]
     (while (and (> needle-len 0) (<= (+ index needle-len) limit))
-      (when
-        (string.is-string-prefix-at text needle index)
-        (set! count (+ count 1)))
-      (set! index (+ index 1)))
+      (when (string.is-string-prefix-at text needle index) (+= count 1))
+      (+= index 1))
     count))
 
 ;; Full blocker diagnostics use a second, non-emitting traversal. Two rejected
@@ -4536,13 +4526,11 @@
             (let
               [name-count : i64 (producer_test_svec.len (& names))]
               [name-array (__tl_make-array String name-count)]
-              [name-index : i64 0]
               [_copy-names : unit
-                (while (< name-index name-count)
+                (for [name-index (iterator.range 0 name-count)]
                   (set!
                     (array-ref name-array name-index)
-                    (producer_test_svec.get (& names) name-index ""))
-                  (set! name-index (+ name-index 1)))]
+                    (producer_test_svec.get (& names) name-index "")))]
               (match (compiler_tlci_native_producer.embedded-native-emit-package
                 (tlci.tlci-metadata-emit
                   (tlci.tlci-make-metadata "v1" "package" "0.1.0"))
@@ -5019,13 +5007,11 @@
               [name-count : i64 (producer_test_svec.len (& names))]
               [name-array : (__tl_dyn-array String)
                 (__tl_make-array String name-count)]
-              [name-index : i64 0]
               [_copy-names : unit
-                (while (< name-index name-count)
+                (for [name-index (iterator.range 0 name-count)]
                   (set!
                     (array-ref name-array name-index)
-                    (producer_test_svec.get (& names) name-index ""))
-                  (set! name-index (+ name-index 1)))]
+                    (producer_test_svec.get (& names) name-index "")))]
               (match (compiler_tlci_native_producer.embedded-native-emit-package
                 (tlci.tlci-metadata-emit
                   (tlci.tlci-make-metadata "v1" "span-test" "0.1.0"))

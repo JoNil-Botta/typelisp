@@ -971,7 +971,7 @@
                 [program-b : compiler_ir_types.CompilerIrProgram
                   (compiler_ir_types.compiler-ir-clone-program-shell
                     pools-b
-                    program-a)]
+                    (& program-a))]
                 [spans-b : compiler_ir_types.CompilerSourceSpans
                   (clone spans-a)]
                 (driver.compiler-driver-state-adopt-pools! state-b pools-b)
@@ -1559,7 +1559,7 @@
 
 (define (compiler-driver-advisory-fixture [message : String]) : cdiag.CompilerDiagnostic
   (cdiag.compiler-diagnostic-with-level
-    (cdiag.compiler-diagnostic-simple "tests/advisories.tl" 1 1 message)
+    (& (cdiag.compiler-diagnostic-simple "tests/advisories.tl" 1 1 message))
     CompilerDiagnosticWarning))
 
 (define (compiler-driver-advisory-phase-is?

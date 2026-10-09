@@ -44,6 +44,55 @@
         [(tuple (Label text _) _) (string.string-length text)])]
     (+ length (tuple-ref items 1))))
 
+(defstruct Point
+  (x i64)
+  (y i64))
+
+(defstruct TextRef
+  (:lifetimes text)
+  (view (& text str))
+  (extra i64))
+
+;; A `(& S)` scrutinee itself (#8583): a String field binds as `(& str)`.
+(define (label-score [label : (& label Label)]) : i64
+  (match label
+    [(Label text code) (+ (string.string-length text) code)]))
+
+;; `Copy` fields bind by value.
+(define (point-sum [point : (& point Point)]) : i64
+  (match point
+    [(Point x y) (+ x y)]))
+
+(define (nested-direct-score [nested : (& nested Nested)]) : i64
+  (match nested
+    [(Nested _ (Label text code))
+      (if (string.eq text "nested")
+        (+ (string.string-length text) code)
+        1)]))
+
+(define (bound-score [point : (& point Point)]) : i64
+  (match point
+    [whole
+      (match whole
+        [(Point _ y) y])]))
+
+(define (text-ref-score [item : (& item (TextRef text))]) : i64
+  (match item
+    [(TextRef view extra) (+ (string.string-length view) extra)]))
+
+(define (text-ref-owner [text : (& text str)]) : i64
+  (let
+    [item : (TextRef text) (TextRef text 37)]
+    (text-ref-score (& item))))
+
+(define (borrow-owner-score) : i64
+  (let
+    [label : Label (Label "abc" 39)]
+    [length : i64
+      (match (& label)
+        [(Label text _) (string.string-length text)])]
+    (+ length label.code)))
+
 (define (owned-score [items : (Tuple Label i64)]) : i64
   (match items
     [(tuple (Label text code) _) (+ (string.string-length text) code)]))
@@ -63,6 +112,17 @@
     (unless (= (nested-score (& nested)) 42) (return 6))
     (unless (= (owner-score (tuple (Label "abc" 0) 39)) 42) (return 7))
     (unless (= (owned-score (tuple (Label "abc" 39) 0)) 42) (return 8))
+    (let
+      [label : Label (Label "abc" 39)]
+      [point : Point (Point 40 2)]
+      [direct : Nested (Nested "ignored" (Label "nested" 36))]
+      (unless (= (label-score (& label)) 42) (return 9))
+      (unless (= (point-sum (& point)) 42) (return 10))
+      (unless (= (nested-direct-score (& direct)) 42) (return 11))
+      (unless (= (bound-score (& point)) 2) (return 12))
+      (unless (= (text-ref-owner "forty") 42) (return 13))
+      (unless (= (borrow-owner-score) 42) (return 14))
+      (unless (string.eq label.text "abc") (return 15)))
     42))
 
 (define (main) : i64

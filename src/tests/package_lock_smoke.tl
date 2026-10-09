@@ -55,7 +55,7 @@
     [(Err _) false]
     [(Ok lock)
       (string.eq
-        (package_lock_core.package-lock-emit lock)
+        (package_lock_core.package-lock-emit (& lock))
         (package-lock-expected-emitted))]))
 
 (define (package-lock-round-trip-ok?) : bool
@@ -63,7 +63,7 @@
     [(Err _) false]
     [(Ok lock)
       (match (package_lock_core.package-lock-parse
-        (package_lock_core.package-lock-emit lock))
+        (package_lock_core.package-lock-emit (& lock)))
         [(Err _) false]
         [(Ok again)
           (let
@@ -122,7 +122,7 @@
       [(Ok lock)
         (if (package-lock-growth-entries-ok? (& lock.entries))
           (match (package_lock_core.package-lock-parse
-            (package_lock_core.package-lock-emit lock))
+            (package_lock_core.package-lock-emit (& lock)))
             [(Err _) false]
             [(Ok again) (package-lock-growth-entries-ok? (& again.entries))])
           false)])))

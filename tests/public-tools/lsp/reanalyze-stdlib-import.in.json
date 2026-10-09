@@ -1,0 +1,8 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl","languageId":"typelisp","version":1,"text":"(import stdlib.iterator)\n\n(define (main) : i64\n  (let\n    [total : i64 0]\n    (for [i (iterator.range 0 3)]\n      (when (> i 0)\n        (set! total (+ total i))))\n    total))\n"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl","version":2},"contentChanges":[{"text":"(import stdlib.iterator)\n\n(define (main) : i64\n  (let\n    [total : i64 0]\n    (for [i (iterator.range 0 3)]\n      (when (> i 0)\n        (set! total (+ total i))))\n    total))\n"}]}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/main.tl","version":3},"contentChanges":[{"text":"(import stdlib.iterator)\n\n(define (main) : i64\n  (let\n    [total : i64 0]\n    (for [i (iterator.range 0 3)]\n      (when (> i 0)\n        (set! total (+ total i))))\n    total))\n\n"}]}},
+  {"jsonrpc":"2.0","id":2,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

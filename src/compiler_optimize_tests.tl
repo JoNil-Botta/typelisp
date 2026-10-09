@@ -831,10 +831,11 @@
         (ir.compiler-ir-phi-input-seq-prepend
           (I64 10)
           0
-          (ir.compiler-ir-phi-input-seq-prepend
-            (I64 11)
-            8
-            (ir.compiler-ir-phi-input-seq-empty)))]
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (I64 11)
+              8
+              (& (ir.compiler-ir-phi-input-seq-empty)))))]
       (test.assert-i64-eq
         (ir.compiler-ir-instr-seq-count hoisted)
         9
@@ -997,9 +998,7 @@
       (let
         [context : opt.OptCfgContext
           (opt.opt-cfg-context-build
-            (ir.compiler-ir-clone-block-list
-              pools
-              (opt.compiler-opt-global-shared-view blocks)))]
+            (ir.compiler-ir-clone-block-list pools (& blocks)))]
         [input : ir.CompilerIrFunction
           (Function name params ret-ty frame blocks function-abi)]
         [preheaders-result : opt.OptFunctionCtxResult
@@ -2356,9 +2355,9 @@
     [instr : ir.CompilerIrInstr
       (owned_view.compiler-owned-reference-shared-view instr)]
     (match (ir.compiler-source-spans-lookup-instr
-      spans
+      (& spans)
       (ir.compiler-ir-symbol-typed-id function)
-      instr)
+      (& instr))
       [(Some span) (opt-source-span-line-col-ok? span line col)]
       [(No) false])))
 
@@ -2370,9 +2369,9 @@
     [spans : ir.CompilerSourceSpans
       (owned_view.compiler-owned-reference-shared-view spans)]
     (match (ir.compiler-source-spans-lookup-instr
-      spans
+      (& spans)
       (ir.compiler-ir-symbol-typed-id function)
-      instr)
+      (& instr))
       [(Some _) false]
       [(No) true])))
 
@@ -2387,9 +2386,9 @@
     [spans : ir.CompilerSourceSpans
       (owned_view.compiler-owned-reference-shared-view spans)]
     (match (ir.compiler-source-spans-lookup-instr-location
-      spans
+      (& spans)
       (ir.compiler-ir-symbol-typed-id function)
-      instr)
+      (& instr))
       [(Some (ir.CompilerSourceLocation found-path-id span))
         (and
           (= found-path-id path-id)
@@ -2517,14 +2516,12 @@
         16]
       [(not
           (ir.compiler-ir-effect-eq?
-            (ir.compiler-ir-instr-effect
-              (opt.compiler-opt-global-shared-view runtime-alloc))
+            (ir.compiler-ir-instr-effect (& runtime-alloc))
             MemoryWrite))
         3]
       [(not
           (ir.compiler-ir-effect-eq?
-            (ir.compiler-ir-instr-effect
-              (opt.compiler-opt-global-shared-view hygienic-alloc))
+            (ir.compiler-ir-instr-effect (& hygienic-alloc))
             Unknown))
         4]
       [(match (opt.opt-aggregate-direct-alloc
@@ -2591,8 +2588,8 @@
   (Program
     (ir.compiler-ir-global-seq-empty)
     (ir.compiler-ir-function-seq-prepend
-      (opt-spans-function-with-frame instrs frame)
-      (ir.compiler-ir-function-seq-empty))
+      (& (opt-spans-function-with-frame instrs frame))
+      (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (opt-spans-program [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrProgram
@@ -2615,10 +2612,10 @@
         (ir.compiler-source-spans-insert-instr
           (opt-spans-base)
           (opt-test-span-symbol "main")
-          (opt.compiler-opt-global-shared-view dead)
+          (& dead)
           (opt-test-span 21 3))
         (opt-test-span-symbol "main")
-        (opt.compiler-opt-global-shared-view live)
+        (& live)
         (opt-test-span 31 5))]
     (match (opt.optimize-program-with-spans-and-level
       (opt-spans-program instrs)
@@ -2626,10 +2623,7 @@
       1)
       [(Program _ optimized-spans)
         (and
-          (=
-            (ir.compiler-source-spans-instr-count
-              (opt.compiler-opt-global-shared-view optimized-spans))
-            1)
+          (= (ir.compiler-source-spans-instr-count (& optimized-spans)) 1)
           (opt-span-lookup-missing?
             optimized-spans
             (opt-test-symbol "main")
@@ -2654,7 +2648,7 @@
       (ir.compiler-source-spans-insert-instr
         (opt-spans-base)
         (opt-test-span-symbol "main")
-        folded
+        (& folded)
         (opt-test-span 41 7))]
     (match (opt.optimize-program-with-spans-and-level
       (opt-spans-program instrs)
@@ -2684,10 +2678,10 @@
         (ir.compiler-source-spans-insert-instr
           (opt-spans-base)
           (opt-test-span-symbol "main")
-          (opt.compiler-opt-global-shared-view first)
+          (& first)
           (opt-test-span 51 9))
         (opt-test-span-symbol "main")
-        second
+        (& second)
         (opt-test-span 61 11))]
     (match (opt.optimize-program-with-spans-and-level
       (opt-spans-program-with-frame instrs 5)
@@ -2775,10 +2769,11 @@
   (Program
     (ir.compiler-ir-global-seq-empty)
     (ir.compiler-ir-function-seq-prepend
-      (opt-inline-span-caller symbols)
-      (ir.compiler-ir-function-seq-prepend
-        (opt-inline-span-callee symbols)
-        (ir.compiler-ir-function-seq-empty)))
+      (& (opt-inline-span-caller symbols))
+      (&
+        (ir.compiler-ir-function-seq-prepend
+          (& (opt-inline-span-callee symbols))
+          (& (ir.compiler-ir-function-seq-empty)))))
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (compiler-optimize-spans-inline-callee-ok?) : bool
@@ -2789,11 +2784,11 @@
         (ir.compiler-source-spans-insert-instr-located
           (opt-spans-base)
           (opt-test-span-symbol "inline_span")
-          (opt-inline-span-callee-call symbols)
+          (& (opt-inline-span-callee-call symbols))
           701
           (opt-test-span 71 13))
         (opt-test-span-symbol "main")
-        (opt-inline-span-caller-call symbols)
+        (& (opt-inline-span-caller-call symbols))
         801
         (opt-test-span 81 15))]
     [cloned-call : ir.CompilerIrInstr
@@ -2831,7 +2826,7 @@
       (ir.compiler-source-spans-insert-instr
         (opt-spans-base)
         (opt-test-span-symbol "main")
-        (opt-inline-span-caller-call symbols)
+        (& (opt-inline-span-caller-call symbols))
         (opt-test-span 91 17))]
     [cloned-call : ir.CompilerIrInstr
       (Call 1 symbols.opaque (One (I64 7)) (I64))]
@@ -2855,10 +2850,10 @@
         (ir.compiler-source-spans-insert-instr
           (opt-spans-base)
           (opt-test-span-symbol "inline_branch")
-          (opt-inline-branch-callee-mov)
+          (& (opt-inline-branch-callee-mov))
           (opt-test-span 141 27))
         (opt-test-span-symbol "main")
-        (opt-inline-branch-caller-call symbols)
+        (& (opt-inline-branch-caller-call symbols))
         (opt-test-span 151 29))]
     [phi : ir.CompilerIrInstr
       (irt.instr
@@ -2934,11 +2929,11 @@
     (ir.compiler-source-spans-insert-instr-located
       (opt-spans-base)
       (opt-test-span-symbol "mb_bounds")
-      (irt.instr "bounds_check %0, %1 message \"mb_ok\"")
+      (& (irt.instr "bounds_check %0, %1 message \"mb_ok\""))
       613
       (opt-test-span 57 29))
     (opt-test-span-symbol "main")
-    (Call 2 symbols.mb-bounds (Two (Var 0) (Var 1)) (I64))
+    (& (Call 2 symbols.mb-bounds (Two (Var 0) (Var 1)) (I64)))
     401
     (opt-test-span 12 5)))
 
@@ -2956,10 +2951,11 @@
           (ast.ast-node-pool-reader-context-current)
           (ast.ast-node-pool-reader-type-segment-bases)
           (ir.compiler-ir-function-seq-prepend
-            (opt-inline-mb-bounds-caller symbols)
-            (ir.compiler-ir-function-seq-prepend
-              (opt-inline-mb-bounds-callee symbols)
-              (ir.compiler-ir-function-seq-empty)))
+            (& (opt-inline-mb-bounds-caller symbols))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (& (opt-inline-mb-bounds-callee symbols))
+                (& (ir.compiler-ir-function-seq-empty)))))
           2
           spans)
           [(Program optimized optimized-spans)
@@ -3108,15 +3104,18 @@
     [bases : i64 (ast.ast-node-pool-context-type-segment-bases job)]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-job-pool-caller "job_pool_a" (Ref 1 array-id))
-        (ir.compiler-ir-function-seq-prepend
-          (opt-inline-job-pool-caller "job_pool_b" (Ref 1 array-id))
+        (& (opt-inline-job-pool-caller "job_pool_a" (Ref 1 array-id)))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-inline-job-pool-function
-              "job_pool_leaf"
-              (Ref 1 array-id)
-              (opt-test-instrs (ir.CompilerIrInstr.Return (Some (I64 7)))))
-            (ir.compiler-ir-function-seq-empty))))]
+            (& (opt-inline-job-pool-caller "job_pool_b" (Ref 1 array-id)))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (&
+                  (opt-inline-job-pool-function
+                    "job_pool_leaf"
+                    (Ref 1 array-id)
+                    (opt-test-instrs (ir.CompilerIrInstr.Return (Some (I64 7))))))
+                (& (ir.compiler-ir-function-seq-empty)))))))]
     [ambient : ast.AstNodePoolContext
       (ast.ast-node-pool-reader-context-current)]
     [_install-empty : unit
@@ -3497,47 +3496,51 @@
           (ir.compiler-source-spans-insert-instr-located
             spans
             (opt-test-span-symbol (clone callee-name))
-            (irt.instr "bounds_check %0, %1 message \"lin_ok\"")
+            (& (irt.instr "bounds_check %0, %1 message \"lin_ok\""))
             613
             (opt-test-span 57 29)))
         (set!
           functions
           (ir.compiler-ir-function-seq-prepend
-            (Function
-              (opt-test-symbol (clone callee-name))
-              (irt.params "idx=%0:i64, len=%1:i64")
-              (I64)
-              3
-              (irt.blocks
-                "entry:
+            (&
+              (Function
+                (opt-test-symbol (clone callee-name))
+                (irt.params "idx=%0:i64, len=%1:i64")
+                (I64)
+                3
+                (irt.blocks
+                  "entry:
                        bounds_check %0, %1 message \"lin_ok\"
                        branch true, then, else
                      then:
                        return %0
                      else:
                        return 0")
-              Ordinary)
-            (ir.compiler-ir-function-seq-prepend
-              (Function
-                (opt-test-symbol (str_cat.str-cat "lin_caller_" suffix))
-                (irt.params "a=%0:i64, b=%1:i64")
-                (I64)
-                3
-                (ir.compiler-ir-blocks
-                  (ir.CompilerIrBlock.Block
-                    (ir.compiler-ir-label "entry")
-                    (opt-test-instrs
-                      (ir.CompilerIrInstr.Call
-                        2
-                        (opt-test-symbol callee-name)
-                        (Two (Var 0) (Var 1))
-                        (I64))
-                      (irt.instr "return %2"))))
-                Ordinary)
-              functions)))
+                Ordinary))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (&
+                  (Function
+                    (opt-test-symbol (str_cat.str-cat "lin_caller_" suffix))
+                    (irt.params "a=%0:i64, b=%1:i64")
+                    (I64)
+                    3
+                    (ir.compiler-ir-blocks
+                      (ir.CompilerIrBlock.Block
+                        (ir.compiler-ir-label "entry")
+                        (opt-test-instrs
+                          (ir.CompilerIrInstr.Call
+                            2
+                            (opt-test-symbol callee-name)
+                            (Two (Var 0) (Var 1))
+                            (I64))
+                          (irt.instr "return %2"))))
+                    Ordinary))
+                (& functions)))))
         (set! i (+ i 1))))
     (let
-      [input-rows : i64 (ir.compiler-source-spans-instr-count (clone spans))]
+      [input-rows : i64
+        (ir.compiler-source-spans-instr-count (& (clone spans)))]
       (match (opt-test-inline-program-with-spans
         (ast.ast-node-pool-reader-context-current)
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -3545,7 +3548,7 @@
         2
         spans)
         [(Program _ out-spans)
-          (- (ir.compiler-source-spans-instr-count out-spans) input-rows)]))))
+          (- (ir.compiler-source-spans-instr-count (& out-spans)) input-rows)]))))
 
 (test
   optimizer-inline-span-rows-grow-linearly-with-callers
@@ -3569,7 +3572,7 @@
       (ir.compiler-source-spans-insert-instr
         (opt-spans-base)
         (opt-test-span-symbol "main")
-        (opt.compiler-opt-global-shared-view call)
+        (& call)
         (opt-test-span 101 19))]
     (match (opt.optimize-program-with-spans-and-level
       (opt-spans-program instrs)
@@ -3600,13 +3603,13 @@
           (ir.compiler-source-spans-insert-instr
             (opt-spans-base)
             (opt-test-span-symbol "main")
-            (opt.compiler-opt-global-shared-view pack)
+            (& pack)
             (opt-test-span 111 21))
           (opt-test-span-symbol "main")
-          (opt.compiler-opt-global-shared-view word)
+          (& word)
           (opt-test-span 121 23))
         (opt-test-span-symbol "main")
-        (opt.compiler-opt-global-shared-view tail)
+        (& tail)
         (opt-test-span 131 25))]
     (match (opt.optimize-program-with-spans-and-level
       (opt-spans-program instrs)
@@ -3614,20 +3617,14 @@
       0)
       [(Program _ optimized-spans)
         (and
-          (=
-            (ir.compiler-source-spans-instr-count
-              (opt.compiler-opt-global-shared-view spans))
-            2)
+          (= (ir.compiler-source-spans-instr-count (& spans)) 2)
           (opt-span-lookup-ok? spans (opt-test-symbol "main") pack 111 21)
           (opt-span-lookup-ok? spans (opt-test-symbol "main") word 121 23)
           (opt-span-lookup-missing?
             spans
             (opt-test-symbol "main")
             (opt.compiler-opt-global-shared-view tail))
-          (=
-            (ir.compiler-source-spans-instr-count
-              (opt.compiler-opt-global-shared-view optimized-spans))
-            2)
+          (= (ir.compiler-source-spans-instr-count (& optimized-spans)) 2)
           (opt-span-lookup-ok?
             optimized-spans
             (opt-test-symbol "main")
@@ -3671,7 +3668,7 @@
     ok))
 
 (define (opt-bounds-span-check [label : String]) : ir.CompilerIrInstr
-  (BoundsCheck (Var 0) (Var 1) (ir.compiler-ir-label label)))
+  (BoundsCheck (Var 0) (Var 1) (ir.compiler-ir-label (& label))))
 
 ;; A BoundsCheck's span is keyed by its ok-label, and every clone family that
 ;; copies a KEPT check must uniquify that label (two blocks may not define one
@@ -3688,7 +3685,7 @@
       (ir.compiler-source-spans-insert-instr-located
         (opt-spans-base)
         (ir.compiler-ir-symbol-typed-id checked)
-        (opt-bounds-span-check "bce_span_probe_body")
+        (& (opt-bounds-span-check "bce_span_probe_body"))
         907
         (opt-test-span 44 12))]
     ;; Interned but never given a span: the miss below then proves the span is
@@ -3905,14 +3902,15 @@
           (Program
             (ir.compiler-ir-global-seq-empty)
             (ir.compiler-ir-function-seq-prepend
-              (Function
-                (opt-test-symbol "main")
-                (ir.compiler-ir-param-seq-empty)
-                (I64)
-                4
-                (opt-aggregate-phi-flowed-blocks)
-                Ordinary)
-              (ir.compiler-ir-function-seq-empty))
+              (&
+                (Function
+                  (opt-test-symbol "main")
+                  (ir.compiler-ir-param-seq-empty)
+                  (I64)
+                  4
+                  (opt-aggregate-phi-flowed-blocks)
+                  Ordinary))
+              (& (ir.compiler-ir-function-seq-empty)))
             (ir.compiler-ir-extern-seq-empty)))]
       (opt-aggregate-candidate-list-count candidates))
     0))
@@ -4317,14 +4315,15 @@
       (Program
         (ir.compiler-ir-global-seq-empty)
         (ir.compiler-ir-function-seq-prepend
-          (Function
-            (opt-test-symbol "main")
-            (ir.compiler-ir-param-seq-empty)
-            (I64)
-            4
-            blocks
-            Ordinary)
-          (ir.compiler-ir-function-seq-empty))
+          (&
+            (Function
+              (opt-test-symbol "main")
+              (ir.compiler-ir-param-seq-empty)
+              (I64)
+              4
+              blocks
+              Ordinary))
+          (& (ir.compiler-ir-function-seq-empty)))
         (ir.compiler-ir-extern-seq-empty))]
     [candidates : opt_aggregate_candidate_vec.Vec
       (opt-aggregate-allocation-candidates
@@ -4503,8 +4502,8 @@
     (Program
       (ir.compiler-ir-global-seq-empty)
       (ir.compiler-ir-function-seq-prepend
-        (opt-agsplit-function blocks frame)
-        (ir.compiler-ir-function-seq-empty))
+        (& (opt-agsplit-function blocks frame))
+        (& (ir.compiler-ir-function-seq-empty)))
       (ir.compiler-ir-extern-seq-empty))
     2)
     [(Program _ funcs _) (ir.compiler-ir-function-seq-ref funcs 0)]))
@@ -4526,7 +4525,7 @@
   (Load dst (Var ptr) (I64)))
 
 (define (opt-agsplit-block [label : String] [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlock
-  (Block (ir.compiler-ir-label label) instrs))
+  (Block (ir.compiler-ir-label (& label)) instrs))
 
 ;; POSITIVE. Three match arms store the same tag into word 0 of a two-word
 ;; aggregate; the join reloads it and compares. After the split the tag is a phi
@@ -5373,22 +5372,22 @@
         (opt.opt-verify-function
           (opt-sret-role-verify-function
             (ir.compiler-ir-call-args-sret-from-seq
-              (ir.compiler-ir-value-seq1 (Var 0))
+              (& (ir.compiler-ir-value-seq1 (Var 0)))
               0)
             (U64))))
       (opt-sret-role-rejected?
         (ir.compiler-ir-call-args-sret-from-seq
-          (ir.compiler-ir-value-seq1 (Var 0))
+          (& (ir.compiler-ir-value-seq1 (Var 0)))
           1)
         (U64))
       (opt-sret-role-rejected?
         (ir.compiler-ir-call-args-sret-from-seq
-          (ir.compiler-ir-value-seq1 (I64 0))
+          (& (ir.compiler-ir-value-seq1 (I64 0)))
           0)
         (U64))
       (opt-sret-role-rejected?
         (ir.compiler-ir-call-args-sret-from-seq
-          (ir.compiler-ir-value-seq1 (Var 0))
+          (& (ir.compiler-ir-value-seq1 (Var 0)))
           0)
         (F64)))
     "sret role requires a live pointer variable, in-range index and pointer result"))
@@ -6210,8 +6209,10 @@
       [(not (= (ir.compiler-ir-instr-seq-count again) 2)) 7]
       [(not unused-word-dead) 8]
       [(not (= alloc-tests 42)) 9]
-      [(not (= (ir.compiler-ir-block-list-instruction-count cross-once) 3)) 10]
-      [(not (= (ir.compiler-ir-block-list-instruction-count cross-fixed) 2)) 11]
+      [(not (= (ir.compiler-ir-block-list-instruction-count (& cross-once)) 3))
+        10]
+      [(not (= (ir.compiler-ir-block-list-instruction-count (& cross-fixed)) 2))
+        11]
       [else 42])))
 
 ;; Builds `[Mov v0=4096 (an address), Load v1 = *v0, Return v1]`. `v0` feeds a
@@ -6398,20 +6399,22 @@
           (ir.compiler-ir-phi-input-seq-prepend
             (I64 0)
             (ir.compiler-ir-label "pre")
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var 6)
-              (ir.compiler-ir-label "loop")
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var 6)
+                (ir.compiler-ir-label "loop")
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (opt.compiler-opt-global-shared-view ty))
         (ir.CompilerIrInstr.Phi
           4
           (ir.compiler-ir-phi-input-seq-prepend
             (Var 0)
             (ir.compiler-ir-label "pre")
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var 5)
-              (ir.compiler-ir-label "loop")
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var 5)
+                (ir.compiler-ir-label "loop")
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (opt.compiler-opt-global-shared-view ty))
         (ir.CompilerIrInstr.BinOp
           5
@@ -6444,12 +6447,13 @@
           (ir.compiler-ir-phi-input-seq-prepend
             (I64 0)
             (ir.compiler-ir-label "entry")
-            (ir.compiler-ir-phi-input-seq-prepend
-              (if probe-escapes?
-                (Var 4)
-                (Var 6))
-              (ir.compiler-ir-label "loop")
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (if probe-escapes?
+                  (Var 4)
+                  (Var 6))
+                (ir.compiler-ir-label "loop")
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           ty)
         (irt.instr "return %9")))))
 
@@ -6520,10 +6524,11 @@
                 (ir.compiler-ir-phi-input-seq-prepend
                   seed
                   (ir.compiler-ir-label "pre")
-                  (ir.compiler-ir-phi-input-seq-prepend
-                    (Var 6)
-                    (ir.compiler-ir-label "loop")
-                    (ir.compiler-ir-phi-input-seq-empty)))
+                  (&
+                    (ir.compiler-ir-phi-input-seq-prepend
+                      (Var 6)
+                      (ir.compiler-ir-label "loop")
+                      (& (ir.compiler-ir-phi-input-seq-empty)))))
                 (opt.compiler-opt-global-shared-view ty))
               (ir.compiler-ir-instr-seq-ref instrs 1)
               (ir.compiler-ir-instr-seq-ref instrs 3)
@@ -7288,14 +7293,15 @@
     [blocks : ir.CompilerIrBlockList (opt-const-divisor-test-blocks symbols)]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
-        (Function
-          (opt-test-symbol "f")
-          (ir.compiler-ir-param-seq-empty)
-          (I64)
-          16
-          (opt.compiler-opt-global-shared-view blocks)
-          Ordinary)
-        (ir.compiler-ir-function-seq-empty))]
+        (&
+          (Function
+            (opt-test-symbol "f")
+            (ir.compiler-ir-param-seq-empty)
+            (I64)
+            16
+            (opt.compiler-opt-global-shared-view blocks)
+            Ordinary))
+        (& (ir.compiler-ir-function-seq-empty)))]
     [table : opt_i64_i64_map.Map (opt-test-const-divisors globals functions)]
     [rewritten : ir.CompilerIrBlockList
       (opt.opt-const-divisor-rewrite-blocks table blocks)]
@@ -8319,7 +8325,10 @@
   (BinOp 5 (Lt) lhs (I64 7) (I64)))
 
 (define (opt-cmp-dup-test-branch [cond-var : i64] [yes : String] [no : String]) : ir.CompilerIrInstr
-  (Branch (Var cond-var) (ir.compiler-ir-label yes) (ir.compiler-ir-label no)))
+  (Branch
+    (Var cond-var)
+    (ir.compiler-ir-label (& yes))
+    (ir.compiler-ir-label (& no))))
 
 (define (opt-test-instr-seq-append
   [head : ir.CompilerIrInstrSeq]
@@ -10138,6 +10147,70 @@
       [(not (opt.opt-cfg-successor-targets-known? after)) 5]
       [else 42])))
 
+;; An address-taken local is not one value (#8672): `%2`'s address is `%3`, so
+;; the store through `%3` redefines `%2` without naming it, and neither `%2` nor
+;; its copy `%4` keeps a checked pair or a branch fact across that store. `%7`
+;; and its copy `%8` are the same shape on a local whose address is never
+;; taken: the second check of that pair is dropped and the inner branch decided.
+(define (opt-bounds-dom-addr-taken-params) : ir.CompilerIrParamSeq
+  (irt.params "idx=%0:i64, len=%1:i64"))
+
+(define (opt-bounds-dom-addr-taken-blocks) : ir.CompilerIrBlockList
+  (irt.blocks
+    "entry:
+       %2 = mov %0 : i64
+       %3 = addr_of %2
+       %4 = mov %2 : i64
+       bounds_check %4, %1 message \"taken_copy_ok\"
+       store_ptr %3, 9 : i64
+       bounds_check %2, %1 message \"taken_ok\"
+       %7 = mov %0 : i64
+       %8 = mov %7 : i64
+       bounds_check %8, %1 message \"plain_copy_ok\"
+       bounds_check %7, %1 message \"plain_ok\"
+       %5 = eq %4, 3 : i64
+       branch %5, taken, exit
+     taken:
+       store_ptr %3, 9 : i64
+       %6 = eq %2, 3 : i64
+       branch %6, plain, exit
+     plain:
+       %9 = eq %8, 3 : i64
+       branch %9, inner, exit
+     inner:
+       %10 = eq %7, 3 : i64
+       branch %10, done, exit
+     done:
+       return %2
+     exit:
+       return %0"))
+
+(define (compiler-optimize-bounds-dom-addr-taken-self-test) : i64
+  (let
+    [blocks : ir.CompilerIrBlockList (opt-bounds-dom-addr-taken-blocks)]
+    [before : i64
+      (opt.opt-count-bounds-blocks (ir.compiler-ir-block-list-view blocks))]
+    [after : ir.CompilerIrBlockList
+      (opt.opt-bounds-dom-blocks-with-context
+        (ast.ast-node-pool-reader-type-segment-bases)
+        (opt.opt-cfg-context-build (opt.compiler-opt-global-shared-view blocks))
+        (opt-bounds-dom-addr-taken-params)
+        12
+        blocks)]
+    (cond
+      [(not (= before 4)) 1]
+      ;; Kept: both checks of the address-taken pair and the first plain one.
+      [(not
+          (=
+            (opt.opt-count-bounds-blocks (ir.compiler-ir-block-list-view after))
+            3))
+        2]
+      ;; Only `%10` is decided: `%6` reads `%2` after the store.
+      [(not (opt-branch-fold-count-is? (& after) 1 1)) 3]
+      [(not (opt-branch-fold-count-is? (& after) 0 0)) 4]
+      [(not (opt-branch-fold-block-count-is? (& after) 6)) 5]
+      [else 42])))
+
 ;; --- unsigned range-check merge ----------------------------------------------
 ;;
 ;; `(and (>= i 0) (< i n))` is one unsigned compare when `n` is non-negative.
@@ -10189,14 +10262,16 @@
   (let
     [low-fail : i64
       (ir.compiler-ir-label
-        (if split-arms?
-          "fail_low"
-          "fail"))]
+        (&
+          (if split-arms?
+            "fail_low"
+            "fail")))]
     [high-fail : i64
       (ir.compiler-ir-label
-        (if split-arms?
-          "fail_high"
-          "fail"))]
+        (&
+          (if split-arms?
+            "fail_high"
+            "fail")))]
     [tail : ir.CompilerIrBlockList
       (if split-arms?
         (irt.blocks
@@ -10516,17 +10591,18 @@
 
 (define (opt-nonneg-test-functions [symbols : OptNonnegTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (Function
-      (opt-test-symbol "nn_f")
-      (irt.params "p=%0:(__tl_dyn-array i64)")
-      (I64)
-      16
-      (ir.compiler-ir-blocks
-        (ir.CompilerIrBlock.Block
-          (ir.compiler-ir-label "entry")
-          (opt-nonneg-test-instrs symbols)))
-      Ordinary)
-    (ir.compiler-ir-function-seq-empty)))
+    (&
+      (Function
+        (opt-test-symbol "nn_f")
+        (irt.params "p=%0:(__tl_dyn-array i64)")
+        (I64)
+        16
+        (ir.compiler-ir-blocks
+          (ir.CompilerIrBlock.Block
+            (ir.compiler-ir-label "entry")
+            (opt-nonneg-test-instrs symbols)))
+        Ordinary))
+    (& (ir.compiler-ir-function-seq-empty))))
 
 (define (compiler-optimize-nonneg-globals-self-test) : i64
   (let
@@ -10615,7 +10691,7 @@
   [index : ir.CompilerIrValue]
   [length : ir.CompilerIrValue]
   [label : String]) : ir.CompilerIrInstr
-  (BoundsCheck index length (ir.compiler-ir-label label)))
+  (BoundsCheck index length (ir.compiler-ir-label (& label))))
 
 (define (opt-bounds-run-add [dst : i64] [offset : i64]) : ir.CompilerIrInstr
   (BinOp dst (Add) (Var 1) (I64 offset) (I64)))
@@ -10732,7 +10808,7 @@
 (define (opt-bounds-run-hoisted-add?
   [blocks : ir.CompilerIrBlockList]
   [label : String]) : bool
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) false]
     [(Some block)
       (match block
@@ -10895,13 +10971,13 @@
   [length : ir.CompilerIrValue]
   [next : String]) : ir.CompilerIrBlock
   (Block
-    (ir.compiler-ir-label label)
+    (ir.compiler-ir-label (& label))
     (opt-test-instr-seq-prepend
       (BinOp dst (Add) (Var 8) (I64 offset) (I64))
       (opt-test-instr-seq-prepend
         (opt-bounds-run-check (Var dst) length ok-label)
         (opt-test-instr-seq-prepend
-          (Jump (ir.compiler-ir-label next))
+          (Jump (ir.compiler-ir-label (& next)))
           (ir.compiler-ir-instr-seq-empty))))))
 
 (define (opt-bounds-stride-test-blocks
@@ -11510,13 +11586,15 @@
         (ir.CompilerIrInstr.Branch
           (Var 2)
           (ir.compiler-ir-label
-            (if (= mode 1)
-              "exit"
-              "land"))
+            (&
+              (if (= mode 1)
+                "exit"
+                "land")))
           (ir.compiler-ir-label
-            (if (= mode 1)
-              "land"
-              "exit")))))
+            (&
+              (if (= mode 1)
+                "land"
+                "exit"))))))
     (irt.block "land:
            jump header")
     (irt.block
@@ -11651,13 +11729,15 @@
         (ir.CompilerIrInstr.Branch
           (Var 2)
           (ir.compiler-ir-label
-            (if (= mode 1)
-              "miss"
-              "hit"))
+            (&
+              (if (= mode 1)
+                "miss"
+                "hit")))
           (ir.compiler-ir-label
-            (if (= mode 1)
-              "hit"
-              "miss"))))]))
+            (&
+              (if (= mode 1)
+                "hit"
+                "miss")))))]))
 
 (define (opt-branch-fold-hit-instrs [mode : i64]) : ir.CompilerIrInstrSeq
   (cond
@@ -12008,8 +12088,8 @@
   (Program
     (ir.compiler-ir-global-seq-empty)
     (ir.compiler-ir-function-seq-prepend
-      (opt-test-function instrs)
-      (ir.compiler-ir-function-seq-empty))
+      (& (opt-test-function instrs))
+      (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)))
 
 ;; Self-test helper: exposes the first optimized block as a list for existing
@@ -12349,38 +12429,49 @@
   (Program
     (opt-global-dce-globals symbols)
     (ir.compiler-ir-function-seq-prepend
-      (opt-test-function-symbol
-        symbols.main
-        (opt-global-dce-main-instrs symbols))
-      (ir.compiler-ir-function-seq-prepend
-        (opt-global-dce-large-callee symbols.helper 7)
+      (&
+        (opt-test-function-symbol
+          symbols.main
+          (opt-global-dce-main-instrs symbols)))
+      (&
         (ir.compiler-ir-function-seq-prepend
-          (opt-test-function-symbol
-            symbols.dead
-            (opt-global-dce-return-instrs 9))
-          (ir.compiler-ir-function-seq-prepend
-            (opt-test-function-symbol
-              symbols.callback-target
-              (opt-global-dce-return-instrs 11))
+          (& (opt-global-dce-large-callee symbols.helper 7))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-test-function-named
-                "C:/repo/stdlib/runtime.tl::substring"
-                (opt-global-dce-return-instrs 13))
-              (ir.compiler-ir-function-seq-prepend
-                (opt-test-function-named
-                  "C:/repo/stdlib/runtime.tl::int-to-string"
-                  (opt-global-dce-return-instrs 17))
-                (ir.compiler-ir-function-seq-empty)))))))
+              (&
+                (opt-test-function-symbol
+                  symbols.dead
+                  (opt-global-dce-return-instrs 9)))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (&
+                    (opt-test-function-symbol
+                      symbols.callback-target
+                      (opt-global-dce-return-instrs 11)))
+                  (&
+                    (ir.compiler-ir-function-seq-prepend
+                      (&
+                        (opt-test-function-named
+                          "C:/repo/stdlib/runtime.tl::substring"
+                          (opt-global-dce-return-instrs 13)))
+                      (&
+                        (ir.compiler-ir-function-seq-prepend
+                          (&
+                            (opt-test-function-named
+                              "C:/repo/stdlib/runtime.tl::int-to-string"
+                              (opt-global-dce-return-instrs 17)))
+                          (& (ir.compiler-ir-function-seq-empty)))))))))))))
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (opt-global-dce-no-main-program) : ir.CompilerIrProgram
   (Program
     (ir.compiler-ir-global-seq-empty)
     (ir.compiler-ir-function-seq-prepend
-      (opt-test-function-named "helper" (opt-global-dce-return-instrs 7))
-      (ir.compiler-ir-function-seq-prepend
-        (opt-test-function-named "dead" (opt-global-dce-return-instrs 9))
-        (ir.compiler-ir-function-seq-empty)))
+      (& (opt-test-function-named "helper" (opt-global-dce-return-instrs 7)))
+      (&
+        (ir.compiler-ir-function-seq-prepend
+          (& (opt-test-function-named "dead" (opt-global-dce-return-instrs 9)))
+          (& (ir.compiler-ir-function-seq-empty)))))
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (compiler-optimize-global-dce-ok?) : bool
@@ -12505,20 +12596,33 @@
 
 (define (opt-callgraph-acyclic-functions [symbols : OptCallgraphTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-test-function-symbol symbols.main (opt-callgraph-main-instrs symbols))
-    (ir.compiler-ir-function-seq-prepend
-      (opt-test-function-symbol symbols.a (opt-callgraph-call-instrs symbols.c))
+    (&
+      (opt-test-function-symbol
+        symbols.main
+        (opt-callgraph-main-instrs symbols)))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-test-function-symbol symbols.b (opt-callgraph-return-instrs))
-        (ir.compiler-ir-function-seq-prepend
+        (&
           (opt-test-function-symbol
-            symbols.c
-            (opt-callgraph-tail-instrs symbols.b))
+            symbols.a
+            (opt-callgraph-call-instrs symbols.c)))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-test-function-symbol
-              symbols.address-taken
-              (opt-callgraph-return-instrs))
-            (ir.compiler-ir-function-seq-empty)))))))
+            (&
+              (opt-test-function-symbol symbols.b (opt-callgraph-return-instrs)))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (&
+                  (opt-test-function-symbol
+                    symbols.c
+                    (opt-callgraph-tail-instrs symbols.b)))
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (&
+                      (opt-test-function-symbol
+                        symbols.address-taken
+                        (opt-callgraph-return-instrs)))
+                    (& (ir.compiler-ir-function-seq-empty))))))))))))
 
 (define (opt-callgraph-rec-even-instrs [symbols : OptCallgraphTestSymbols]) : ir.CompilerIrInstrSeq
   (opt-test-instrs
@@ -12528,16 +12632,23 @@
 
 (define (opt-callgraph-recursive-functions [symbols : OptCallgraphTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-test-function-symbol
-      symbols.rec-even
-      (opt-callgraph-rec-even-instrs symbols))
-    (ir.compiler-ir-function-seq-prepend
+    (&
       (opt-test-function-symbol
-        symbols.rec-odd
-        (opt-callgraph-tail-instrs symbols.rec-even))
+        symbols.rec-even
+        (opt-callgraph-rec-even-instrs symbols)))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-test-function-symbol symbols.lonely (opt-callgraph-return-instrs))
-        (ir.compiler-ir-function-seq-empty)))))
+        (&
+          (opt-test-function-symbol
+            symbols.rec-odd
+            (opt-callgraph-tail-instrs symbols.rec-even)))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (&
+              (opt-test-function-symbol
+                symbols.lonely
+                (opt-callgraph-return-instrs)))
+            (& (ir.compiler-ir-function-seq-empty))))))))
 
 (define (compiler-optimize-callgraph-acyclic-ok?) : bool
   (let
@@ -12648,12 +12759,15 @@
 
 (define (opt-scc-self-recursive-functions [symbols : OptCallgraphTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-test-function-symbol
-      symbols.self
-      (opt-callgraph-tail-instrs symbols.self))
-    (ir.compiler-ir-function-seq-prepend
-      (opt-test-function-symbol symbols.leaf (opt-callgraph-return-instrs))
-      (ir.compiler-ir-function-seq-empty))))
+    (&
+      (opt-test-function-symbol
+        symbols.self
+        (opt-callgraph-tail-instrs symbols.self)))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (&
+          (opt-test-function-symbol symbols.leaf (opt-callgraph-return-instrs)))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (compiler-optimize-scc-self-recursive-ok?) : bool
   (let
@@ -12752,21 +12866,29 @@
 ;; ascending, and next-child must step through it one callee at a time.
 (define (opt-callgraph-unsorted-functions [symbols : OptCallgraphTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-test-function-symbol
-      symbols.main
-      (opt-test-instrs
-        (ir.CompilerIrInstr.Call 0 symbols.c Nil (I64))
-        (ir.CompilerIrInstr.Call 1 symbols.a Nil (I64))
-        (ir.CompilerIrInstr.Call 2 symbols.c Nil (I64))
-        (ir.CompilerIrInstr.Call 3 symbols.b Nil (I64))
-        (irt.instr "return 0")))
-    (ir.compiler-ir-function-seq-prepend
-      (opt-test-function-symbol symbols.a (opt-callgraph-return-instrs))
+    (&
+      (opt-test-function-symbol
+        symbols.main
+        (opt-test-instrs
+          (ir.CompilerIrInstr.Call 0 symbols.c Nil (I64))
+          (ir.CompilerIrInstr.Call 1 symbols.a Nil (I64))
+          (ir.CompilerIrInstr.Call 2 symbols.c Nil (I64))
+          (ir.CompilerIrInstr.Call 3 symbols.b Nil (I64))
+          (irt.instr "return 0"))))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-test-function-symbol symbols.b (opt-callgraph-return-instrs))
-        (ir.compiler-ir-function-seq-prepend
-          (opt-test-function-symbol symbols.c (opt-callgraph-return-instrs))
-          (ir.compiler-ir-function-seq-empty))))))
+        (& (opt-test-function-symbol symbols.a (opt-callgraph-return-instrs)))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (&
+              (opt-test-function-symbol symbols.b (opt-callgraph-return-instrs)))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (&
+                  (opt-test-function-symbol
+                    symbols.c
+                    (opt-callgraph-return-instrs)))
+                (& (ir.compiler-ir-function-seq-empty))))))))))
 
 (define (compiler-optimize-callgraph-sorted-rows-ok?) : bool
   (let
@@ -12851,10 +12973,11 @@
 
 (define (opt-inline-frame-functions [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-frame-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-frame-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-frame-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-frame-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-known-indirect-caller [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -12879,10 +13002,11 @@
 (define (opt-inline-known-indirect-functions
   [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-known-indirect-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-frame-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-known-indirect-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-frame-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-pack-word-callee [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -12925,10 +13049,11 @@
 
 (define (opt-inline-pack-word-functions [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-pack-word-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-pack-word-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-pack-word-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-pack-word-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-level-functions [level : i64]) : ir.CompilerIrFunctionSeq
   (let
@@ -13071,25 +13196,28 @@
 
 (define (opt-inline-large-functions [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-call-large symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-large-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-call-large symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-large-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-bounds-functions [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-call-bounds symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-bounds-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-call-bounds symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-bounds-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-bounds-twice-functions
   [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-call-bounds-twice symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-bounds-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-call-bounds-twice symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-bounds-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-bounds-leaf-instrs [index : i64] [limit : i64]) : ir.CompilerIrInstrSeq
   (if (>= index limit)
@@ -13138,10 +13266,11 @@
   [symbols : OptInlineBoundsTestSymbols]
   [body : i64]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-call-bounds-leaf symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-bounds-leaf-callee symbols body)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-call-bounds-leaf symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-bounds-leaf-callee symbols body))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 ;; Two ordinary call sites with variable arguments: the callee is neither
 ;; absorbable (refcount 2) nor all-const-args, so opt-inline-bounds-inline-ok?
@@ -13176,10 +13305,11 @@
   [symbols : OptInlineBoundsTestSymbols]
   [body : i64]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-call-bounds-leaf-twice symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-bounds-leaf-callee symbols body)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-call-bounds-leaf-twice symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-bounds-leaf-callee symbols body))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 ;; Small has-bounds callee whose body carries a Call. The bounds-leaf
 ;; whitelist refuses calls, so this shape must keep its call boundary even
@@ -13212,10 +13342,11 @@
 (define (opt-inline-bounds-leaf-call-functions
   [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-call-bounds-leaf-call-twice symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-bounds-leaf-call-callee)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-call-bounds-leaf-call-twice symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-bounds-leaf-call-callee))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-bounds-leaf-char-symbol) : i64
   (opt-test-symbol "bounds_leaf_char_inline"))
@@ -13275,30 +13406,36 @@
 (define (opt-inline-bounds-leaf-char-functions
   [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-call-bounds-leaf-typed-twice
-      symbols
-      (opt-inline-bounds-leaf-char-symbol)
-      (Char))
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-bounds-leaf-typed-callee
+    (&
+      (opt-inline-call-bounds-leaf-typed-twice
+        symbols
         (opt-inline-bounds-leaf-char-symbol)
-        (Char)
-        (Char 'A'))
-      (ir.compiler-ir-function-seq-empty))))
+        (Char)))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (&
+          (opt-inline-bounds-leaf-typed-callee
+            (opt-inline-bounds-leaf-char-symbol)
+            (Char)
+            (Char 'A')))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-bounds-leaf-owned-functions
   [symbols : OptInlineBoundsTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-call-bounds-leaf-typed-twice
-      symbols
-      (opt-inline-bounds-leaf-owned-symbol)
-      (String))
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-bounds-leaf-typed-callee
+    (&
+      (opt-inline-call-bounds-leaf-typed-twice
+        symbols
         (opt-inline-bounds-leaf-owned-symbol)
-        (String)
-        (String "leaf"))
-      (ir.compiler-ir-function-seq-empty))))
+        (String)))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (&
+          (opt-inline-bounds-leaf-typed-callee
+            (opt-inline-bounds-leaf-owned-symbol)
+            (String)
+            (String "leaf")))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-band-symbol) : i64
   (opt-test-symbol "band_inline"))
@@ -13374,10 +13511,11 @@
 
 (define (opt-inline-band-functions [body : i64] [const-args? : bool]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-band-caller const-args?)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-band-callee body)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-band-caller const-args?))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-band-callee body))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-multi-call-caller [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -13406,10 +13544,11 @@
 
 (define (opt-inline-multi-call-functions [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-multi-call-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-frame-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-multi-call-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-frame-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-cascade-mid [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunction
   (Function
@@ -13451,12 +13590,14 @@
 
 (define (opt-inline-cascade-functions [symbols : OptInlineFrameTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-cascade-main symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-cascade-mid symbols)
+    (& (opt-inline-cascade-main symbols))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-frame-callee symbols)
-        (ir.compiler-ir-function-seq-empty)))))
+        (& (opt-inline-cascade-mid symbols))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& (opt-inline-frame-callee symbols))
+            (& (ir.compiler-ir-function-seq-empty))))))))
 
 (define (opt-inline-mutual-a) : ir.CompilerIrFunction
   (irt.func
@@ -13476,10 +13617,11 @@
 
 (define (opt-inline-mutual-functions) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-mutual-a)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-mutual-b)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-mutual-a))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-mutual-b))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-devirt-dynamic-caller) : ir.CompilerIrFunction
   (irt.func
@@ -13535,12 +13677,17 @@
   (Program
     (ir.compiler-ir-global-seq-empty)
     (ir.compiler-ir-function-seq-prepend
-      (opt-devirt-reach-main)
-      (ir.compiler-ir-function-seq-prepend
-        (opt-devirt-reach-target)
+      (& (opt-devirt-reach-main))
+      (&
         (ir.compiler-ir-function-seq-prepend
-          (opt-test-function-named "dead" (opt-global-dce-return-instrs 9))
-          (ir.compiler-ir-function-seq-empty))))
+          (& (opt-devirt-reach-target))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (&
+                (opt-test-function-named
+                  "dead"
+                  (opt-global-dce-return-instrs 9)))
+              (& (ir.compiler-ir-function-seq-empty)))))))
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (opt-inline-count-binop-dst-from
@@ -13700,8 +13847,8 @@
   (let
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-self-recursive)
-        (ir.compiler-ir-function-seq-empty))]
+        (& (opt-inline-self-recursive))
+        (& (ir.compiler-ir-function-seq-empty)))]
     [optimized : ir.CompilerIrFunctionSeq
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -13805,21 +13952,24 @@
 
 (define (opt-inline-convwalk-functions) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-conv-leaf)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-loop-walk)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-conv-leaf))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-loop-walk))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-conv-functions [other? : bool]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-conv-leaf)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-conv-walk)
-      (if other?
-        (ir.compiler-ir-function-seq-prepend
-          (opt-inline-conv-other)
-          (ir.compiler-ir-function-seq-empty))
-        (ir.compiler-ir-function-seq-empty)))))
+    (& (opt-inline-conv-leaf))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-conv-walk))
+        (&
+          (if other?
+            (ir.compiler-ir-function-seq-prepend
+              (& (opt-inline-conv-other))
+              (& (ir.compiler-ir-function-seq-empty)))
+            (ir.compiler-ir-function-seq-empty)))))))
 
 (define (compiler-optimize-inline-converted-leaf-self-test) : i64
   (let
@@ -13972,12 +14122,14 @@
   (opt-test-inline-program-functions
     (ast.ast-node-pool-reader-type-segment-bases)
     (ir.compiler-ir-function-seq-prepend
-      caller
-      (ir.compiler-ir-function-seq-prepend
-        first
+      (& caller)
+      (&
         (ir.compiler-ir-function-seq-prepend
-          second
-          (ir.compiler-ir-function-seq-empty))))
+          (& first)
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (& second)
+              (& (ir.compiler-ir-function-seq-empty)))))))
     2))
 
 (define (opt-inline-mb2-extra-caller [name : i64] [callee : i64]) : ir.CompilerIrFunction
@@ -14003,16 +14155,20 @@
   (opt-test-inline-program-functions
     (ast.ast-node-pool-reader-type-segment-bases)
     (ir.compiler-ir-function-seq-prepend
-      caller
-      (ir.compiler-ir-function-seq-prepend
-        first
+      (& caller)
+      (&
         (ir.compiler-ir-function-seq-prepend
-          second
-          (ir.compiler-ir-function-seq-prepend
-            extra1
+          (& first)
+          (&
             (ir.compiler-ir-function-seq-prepend
-              extra2
-              (ir.compiler-ir-function-seq-empty))))))
+              (& second)
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (& extra1)
+                  (&
+                    (ir.compiler-ir-function-seq-prepend
+                      (& extra2)
+                      (& (ir.compiler-ir-function-seq-empty)))))))))))
     2))
 
 (define (opt-inline-mb2-main-blocks
@@ -14558,10 +14714,11 @@
 
 (define (opt-inline-branch-functions [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-branch-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-branch-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-branch-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-branch-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-repeated-predicate-callee
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunction
@@ -14613,10 +14770,11 @@
 (define (opt-inline-repeated-predicate-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-repeated-predicate-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-repeated-predicate-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-repeated-predicate-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-repeated-predicate-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (compiler-optimize-inline-repeated-tiny-predicate-ok?) : bool
   (let
@@ -14718,10 +14876,11 @@
 
 (define (opt-inline-loop-functions [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-loop-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-loop-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-loop-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-loop-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (compiler-optimize-inline-multiblock-acyclic-ok?) : bool
   (let
@@ -14791,10 +14950,11 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-mb-bounds-caller symbols)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-mb-bounds-callee symbols)
-            (ir.compiler-ir-function-seq-empty)))
+          (& (opt-inline-mb-bounds-caller symbols))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (& (opt-inline-mb-bounds-callee symbols))
+              (& (ir.compiler-ir-function-seq-empty)))))
         2)]
     (match (opt-function-seq-find optimized "main")
       [(Some main)
@@ -14975,10 +15135,11 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-switch-caller symbols)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-acyclic-switch-callee symbols)
-            (ir.compiler-ir-function-seq-empty)))
+          (& (opt-inline-switch-caller symbols))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (& (opt-inline-acyclic-switch-callee symbols))
+              (& (ir.compiler-ir-function-seq-empty)))))
         2)]
     (match (opt-function-seq-find optimized "main")
       [(Some main)
@@ -15014,10 +15175,11 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-switch-caller symbols)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-switch-callee symbols)
-            (ir.compiler-ir-function-seq-empty)))
+          (& (opt-inline-switch-caller symbols))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (& (opt-inline-switch-callee symbols))
+              (& (ir.compiler-ir-function-seq-empty)))))
         2)]
     (match (opt-function-seq-find optimized "main")
       [(Some main)
@@ -15040,10 +15202,11 @@
   [symbols : OptInlineMultiTestSymbols]
   [callee-name : i64]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-switch-caller-named symbols callee-name)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-switch-callee-named callee-name)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-switch-caller-named symbols callee-name))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-switch-callee-named callee-name))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-switch-case-result-ok?
   [functions : ir.CompilerIrFunctionSeq]
@@ -15195,13 +15358,15 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-loop-site-function
-            symbols.main
-            callee-name
-            (opt-inline-loop-site-entry-instrs))
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-switch-callee-named callee-name)
-            (ir.compiler-ir-function-seq-empty)))
+          (&
+            (opt-inline-loop-site-function
+              symbols.main
+              callee-name
+              (opt-inline-loop-site-entry-instrs)))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (& (opt-inline-switch-callee-named callee-name))
+              (& (ir.compiler-ir-function-seq-empty)))))
         2)]
     (match (opt-function-seq-find optimized "main")
       [(Some main)
@@ -15234,10 +15399,11 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-switch-caller-named symbols callee-name)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-switch-callee-named callee-name)
-            (ir.compiler-ir-function-seq-empty)))
+          (& (opt-inline-switch-caller-named symbols callee-name))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (& (opt-inline-switch-callee-named callee-name))
+              (& (ir.compiler-ir-function-seq-empty)))))
         2)]
     (match (opt-function-seq-find optimized "main")
       [(Some main)
@@ -15271,12 +15437,15 @@
     [mid-name : i64 symbols.inline-nonleaf]
     [leaf-name : i64 symbols.inline-switch]
     (ir.compiler-ir-function-seq-prepend
-      (opt-inline-switch-caller-named symbols mid-name)
-      (ir.compiler-ir-function-seq-prepend
-        (opt-inline-loop-site-function mid-name leaf-name mid-entry)
+      (& (opt-inline-switch-caller-named symbols mid-name))
+      (&
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-dup-leaf-calling leaf-name symbols.external-helper)
-          (ir.compiler-ir-function-seq-empty))))))
+          (& (opt-inline-loop-site-function mid-name leaf-name mid-entry))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (&
+                (opt-inline-dup-leaf-calling leaf-name symbols.external-helper))
+              (& (ir.compiler-ir-function-seq-empty)))))))))
 
 ;; `mid` is single-reference and carries no bounds checks, so it is inlined at
 ;; its own call site for free. Importing the bounds-carrying loop leaf would
@@ -15386,11 +15555,12 @@
     (let
       [name : i64 (array-ref names at)]
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-loop-site-function
-          name
-          callee-name
-          (opt-inline-loop-site-entry-instrs))
-        (opt-inline-dup-caller-chain-from names (+ at 1) callee-name tail)))))
+        (&
+          (opt-inline-loop-site-function
+            name
+            callee-name
+            (opt-inline-loop-site-entry-instrs)))
+        (& (opt-inline-dup-caller-chain-from names (+ at 1) callee-name tail))))))
 
 (define (opt-inline-dup-two-caller-names [symbols : OptInlineMultiTestSymbols]) : (__tl_dyn-array
     i64)
@@ -15418,8 +15588,8 @@
       callers
       callee-name
       (ir.compiler-ir-function-seq-prepend
-        leaf
-        (ir.compiler-ir-function-seq-empty)))
+        (& leaf)
+        (& (ir.compiler-ir-function-seq-empty))))
     2))
 
 ;; Two in-loop callers duplicate the leaf into both. The three-reference shape
@@ -15466,20 +15636,25 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-switch-caller-named symbols mid-name)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-loop-site-function
-              mid-name
-              callee-name
-              (opt-inline-loop-site-entry-instrs))
+          (& (opt-inline-switch-caller-named symbols mid-name))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-inline-loop-site-function
-                symbols.inline-loop
-                callee-name
-                (opt-inline-loop-site-entry-instrs))
-              (ir.compiler-ir-function-seq-prepend
-                (opt-inline-dup-leaf-plain callee-name)
-                (ir.compiler-ir-function-seq-empty)))))
+              (&
+                (opt-inline-loop-site-function
+                  mid-name
+                  callee-name
+                  (opt-inline-loop-site-entry-instrs)))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (&
+                    (opt-inline-loop-site-function
+                      symbols.inline-loop
+                      callee-name
+                      (opt-inline-loop-site-entry-instrs)))
+                  (&
+                    (ir.compiler-ir-function-seq-prepend
+                      (& (opt-inline-dup-leaf-plain callee-name))
+                      (& (ir.compiler-ir-function-seq-empty)))))))))
         2)]
     (and
       (=
@@ -16000,14 +16175,20 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-nested-loop-site-function symbols.main callee-name)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-nested-loop-site-function
-              symbols.inline-nonleaf
-              callee-name)
+          (& (opt-inline-nested-loop-site-function symbols.main callee-name))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-inline-dup-leaf-calling callee-name symbols.external-helper)
-              (ir.compiler-ir-function-seq-empty))))
+              (&
+                (opt-inline-nested-loop-site-function
+                  symbols.inline-nonleaf
+                  callee-name))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (&
+                    (opt-inline-dup-leaf-calling
+                      callee-name
+                      symbols.external-helper))
+                  (& (ir.compiler-ir-function-seq-empty)))))))
         2)]
     [code : i64
       (+
@@ -16113,10 +16294,11 @@
 (define (opt-inline-multiblock-tail-site-indirect-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-multiblock-tail-site-indirect-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-tail-call-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-multiblock-tail-site-indirect-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-tail-call-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 ;; The same program with an INDIRECT tail-call site: nothing is spliced.
 (define (compiler-optimize-inline-multiblock-tail-site-indirect-refusal-ok?) : bool
@@ -16227,14 +16409,20 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-tail-site-loop-function symbols.main callee-name)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-tail-site-loop-function
-              symbols.inline-nonleaf
-              callee-name)
+          (& (opt-inline-tail-site-loop-function symbols.main callee-name))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-inline-tail-exit-leaf callee-name symbols.external-helper)
-              (ir.compiler-ir-function-seq-empty))))
+              (&
+                (opt-inline-tail-site-loop-function
+                  symbols.inline-nonleaf
+                  callee-name))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (&
+                    (opt-inline-tail-exit-leaf
+                      callee-name
+                      symbols.external-helper))
+                  (& (ir.compiler-ir-function-seq-empty)))))))
         2)]
     [code : i64
       (opt-inline-tail-site-reference-code
@@ -16343,18 +16531,23 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-checked-hot-driver-function
-            symbols.inline-loop
-            symbols.inline-nonleaf)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-tail-post-site-function symbols.main callee-name)
+          (&
+            (opt-inline-checked-hot-driver-function
+              symbols.inline-loop
+              symbols.inline-nonleaf))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-inline-tail-post-site-function
-                symbols.inline-nonleaf
-                callee-name)
-              (ir.compiler-ir-function-seq-prepend
-                (opt-inline-switch-callee-named callee-name)
-                (ir.compiler-ir-function-seq-empty)))))
+              (& (opt-inline-tail-post-site-function symbols.main callee-name))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (&
+                    (opt-inline-tail-post-site-function
+                      symbols.inline-nonleaf
+                      callee-name))
+                  (&
+                    (ir.compiler-ir-function-seq-prepend
+                      (& (opt-inline-switch-callee-named callee-name))
+                      (& (ir.compiler-ir-function-seq-empty)))))))))
         2)]
     [code : i64
       (opt-inline-tail-site-reference-code
@@ -16609,10 +16802,18 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-tail-only-site-function symbols.main callee-name literal?)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-tail-only-forwarder callee-name symbols.external-helper)
-            (ir.compiler-ir-function-seq-empty)))
+          (&
+            (opt-inline-tail-only-site-function
+              symbols.main
+              callee-name
+              literal?))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (&
+                (opt-inline-tail-only-forwarder
+                  callee-name
+                  symbols.external-helper))
+              (& (ir.compiler-ir-function-seq-empty)))))
         2)]
     [spent : i64
       (-
@@ -16786,25 +16987,33 @@
 (define (opt-inline-rescan-chain-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-loop-site-function
-      symbols.main
-      symbols.inline-loop
-      (opt-inline-loop-site-entry-instrs))
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-rescan-chain-cold-caller symbols)
+    (&
+      (opt-inline-loop-site-function
+        symbols.main
+        symbols.inline-loop
+        (opt-inline-loop-site-entry-instrs)))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-rescan-chain-leaf
-          symbols.inline-loop
-          symbols.inline-nonleaf)
-        (ir.compiler-ir-function-seq-prepend
-          (opt-inline-rescan-chain-leaf
-            symbols.inline-nonleaf
-            symbols.inline-switch)
+        (& (opt-inline-rescan-chain-cold-caller symbols))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-inline-rescan-chain-leaf
-              symbols.inline-switch
-              symbols.external-helper)
-            (ir.compiler-ir-function-seq-empty)))))))
+            (&
+              (opt-inline-rescan-chain-leaf
+                symbols.inline-loop
+                symbols.inline-nonleaf))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (&
+                  (opt-inline-rescan-chain-leaf
+                    symbols.inline-nonleaf
+                    symbols.inline-switch))
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (&
+                      (opt-inline-rescan-chain-leaf
+                        symbols.inline-switch
+                        symbols.external-helper))
+                    (& (ir.compiler-ir-function-seq-empty))))))))))))
 
 ;; The encoding is the core verdicts spent, then the relaxed ones, then main's
 ;; surviving calls to the three links, one digit apiece, outermost link first.
@@ -16903,7 +17112,7 @@
 ;; admitter left -- the sccp_lattice shape, where `sccp-process-instr`'s sixty
 ;; blocks are what leave the move to that band.
 (define (opt-inline-absorb-rescan-pad-label [index : i64]) : i64
-  (ir.compiler-ir-label (str_cat.str-cat "pad_" (string.int->string index))))
+  (ir.compiler-ir-label (& (str_cat.str-cat "pad_" (string.int->string index)))))
 
 (define (opt-inline-absorb-rescan-pad-count) : i64
   (+ (opt.opt-inline-cost-block-fuel) 4))
@@ -17003,22 +17212,29 @@
 (define (opt-inline-absorb-rescan-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-wide-loop-caller symbols.main symbols.inline-loop)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-absorb-rescan-cold-caller symbols)
+    (& (opt-inline-wide-loop-caller symbols.main symbols.inline-loop))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-absorb-rescan-first-link
-          symbols.inline-loop
-          symbols.inline-nonleaf)
-        (ir.compiler-ir-function-seq-prepend
-          (opt-inline-rescan-chain-leaf
-            symbols.inline-nonleaf
-            symbols.inline-switch)
+        (& (opt-inline-absorb-rescan-cold-caller symbols))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-inline-rescan-chain-leaf
-              symbols.inline-switch
-              symbols.external-helper)
-            (ir.compiler-ir-function-seq-empty)))))))
+            (&
+              (opt-inline-absorb-rescan-first-link
+                symbols.inline-loop
+                symbols.inline-nonleaf))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (&
+                  (opt-inline-rescan-chain-leaf
+                    symbols.inline-nonleaf
+                    symbols.inline-switch))
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (&
+                      (opt-inline-rescan-chain-leaf
+                        symbols.inline-switch
+                        symbols.external-helper))
+                    (& (ir.compiler-ir-function-seq-empty))))))))))))
 
 (define (compiler-optimize-inline-checked-absorb-rescan-self-test) : i64
   (let
@@ -17542,8 +17758,8 @@
 
 (define (opt-inline-pos-branch [yes : String] [no : String]) : ir.CompilerIrInstr
   (opt-inline-pos-branch-at
-    (ir.compiler-ir-label yes)
-    (ir.compiler-ir-label no)))
+    (ir.compiler-ir-label (& yes))
+    (ir.compiler-ir-label (& no))))
 
 ;; An entry branch, the arm the site sits in, and one sibling block per shape
 ;; the arm reading has to tell apart.
@@ -17862,8 +18078,9 @@
   (let
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-pos-function (opt.compiler-opt-global-shared-view blocks))
-        (ir.compiler-ir-function-seq-empty))]
+        (&
+          (opt-inline-pos-function (opt.compiler-opt-global-shared-view blocks)))
+        (& (ir.compiler-ir-function-seq-empty)))]
     [index : opt.OptFunctionIndex (opt.opt-function-index-build functions)]
     [census : opt.OptInlineCensus (opt.opt-inline-census-build index functions)]
     (opt.opt-inline-caller-facts-install!
@@ -17881,7 +18098,7 @@
     (opt.opt-inline-checked-position-class
       blocks
       position
-      (ir.compiler-ir-label name))))
+      (ir.compiler-ir-label (& name)))))
 
 ;; The floor as the depth clause reads it: entry-equivalent and call-free at one
 ;; census weight stands it down to zero, and anything else leaves it standing.
@@ -18174,10 +18391,11 @@
               (ir.compiler-ir-phi-input-seq-prepend
                 (Var arity)
                 (ir.compiler-ir-label "entry")
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (Var (opt-inline-checked-builder-latch-var))
-                  (ir.compiler-ir-label "body")
-                  (ir.compiler-ir-phi-input-seq-empty)))
+                (&
+                  (ir.compiler-ir-phi-input-seq-prepend
+                    (Var (opt-inline-checked-builder-latch-var))
+                    (ir.compiler-ir-label "body")
+                    (& (ir.compiler-ir-phi-input-seq-empty)))))
               (I64))
             (irt.instr "branch %0, body, done")))
         (ir.CompilerIrBlock.Block
@@ -18341,8 +18559,9 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (irt.func
-            "function @inl9_driver(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 7 {
+          (&
+            (irt.func
+              "function @inl9_driver(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 7 {
              entry:
                %3 = mov 0 : i64
                jump header
@@ -18356,16 +18575,20 @@
                jump header
              exit:
                return %4
-             }")
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-inl9-dispatch-function
-              (opt-inline-inl9-dispatch-name)
-              leaf-name)
+             }"))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (if cyclic?
-                (opt-inline-inl9-cyclic-leaf-function leaf-name)
-                (opt-inline-inl9-leaf-function leaf-name))
-              (ir.compiler-ir-function-seq-empty))))
+              (&
+                (opt-inline-inl9-dispatch-function
+                  (opt-inline-inl9-dispatch-name)
+                  leaf-name))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (&
+                    (if cyclic?
+                      (opt-inline-inl9-cyclic-leaf-function leaf-name)
+                      (opt-inline-inl9-leaf-function leaf-name)))
+                  (& (ir.compiler-ir-function-seq-empty)))))))
         2)]
     [spent : i64
       (+
@@ -18454,8 +18677,9 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (irt.func
-            "function @inl8_driver(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 7 {
+          (&
+            (irt.func
+              "function @inl8_driver(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 7 {
              entry:
                %3 = mov 0 : i64
                jump header
@@ -18470,23 +18694,28 @@
                jump header
              exit:
                return %4
-             }")
-          (ir.compiler-ir-function-seq-prepend
-            (irt.func
-              "function @inl8_wrapper(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 4 {
+             }"))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (&
+                (irt.func
+                  "function @inl8_wrapper(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 4 {
                entry:
                  %3 = call inl8_leaf(%1, %0, %2) : i64
                  return %3
-               }")
-            (ir.compiler-ir-function-seq-prepend
-              (opt-inline-inl8-holder-function
-                (opt-inline-inl8-holder-name)
-                callee-name
-                symbols.external-predicate
-                loop?)
-              (ir.compiler-ir-function-seq-prepend
-                (opt-inline-dup-leaf-plain callee-name)
-                (ir.compiler-ir-function-seq-empty)))))
+               }"))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (&
+                    (opt-inline-inl8-holder-function
+                      (opt-inline-inl8-holder-name)
+                      callee-name
+                      symbols.external-predicate
+                      loop?))
+                  (&
+                    (ir.compiler-ir-function-seq-prepend
+                      (& (opt-inline-dup-leaf-plain callee-name))
+                      (& (ir.compiler-ir-function-seq-empty)))))))))
         2)]
     [spent : i64
       (+
@@ -18609,10 +18838,11 @@
             (ir.compiler-ir-phi-input-seq-prepend
               (Var 3)
               (opt-inline-checked-depth0-site-block shape)
-              (ir.compiler-ir-phi-input-seq-prepend
-                (Var (opt-inline-checked-depth0-latch-var))
-                (ir.compiler-ir-label "latch")
-                (ir.compiler-ir-phi-input-seq-empty)))
+              (&
+                (ir.compiler-ir-phi-input-seq-prepend
+                  (Var (opt-inline-checked-depth0-latch-var))
+                  (ir.compiler-ir-label "latch")
+                  (& (ir.compiler-ir-phi-input-seq-empty)))))
             (I64))
           ;; `idx`, not `tag`: the builder's own loop exits only on a false
           ;; `tag`, so a header testing `tag` again would be decided dead below
@@ -18772,22 +19002,28 @@
     [holder-name : i64 symbols.inline-nonleaf]
     [leaf-name : i64 symbols.inline-switch]
     (ir.compiler-ir-function-seq-prepend
-      (if (= mode 0)
-        (opt-inline-checked-cold-driver-function symbols.main holder-name)
-        (opt-inline-checked-hot-driver-function symbols.main holder-name))
-      (ir.compiler-ir-function-seq-prepend
-        (opt-inline-checked-cold-pair-function
-          symbols.inline-loop
-          holder-name
-          leaf-name)
+      (&
+        (if (= mode 0)
+          (opt-inline-checked-cold-driver-function symbols.main holder-name)
+          (opt-inline-checked-hot-driver-function symbols.main holder-name)))
+      (&
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-checked-depth0-caller-function
-            holder-name
-            leaf-name
-            (opt-inline-checked-depth0-shape-of mode))
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-checked-builder-function leaf-name)
-            (ir.compiler-ir-function-seq-empty)))))))
+          (&
+            (opt-inline-checked-cold-pair-function
+              symbols.inline-loop
+              holder-name
+              leaf-name))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (&
+                (opt-inline-checked-depth0-caller-function
+                  holder-name
+                  leaf-name
+                  (opt-inline-checked-depth0-shape-of mode)))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (& (opt-inline-checked-builder-function leaf-name))
+                  (& (ir.compiler-ir-function-seq-empty)))))))))))
 
 ;; The encoding is `spent` then the builder calls left in the holder, so a change
 ;; in either reads directly off the number: 100 * verdicts + surviving calls.
@@ -19100,76 +19336,97 @@
 ;; site under it reads as cold on that count alone.
 (define (opt-inline-synth-chain-program) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (irt.func
-      "function @main(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 5 {
+    (&
+      (irt.func
+        "function @main(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 5 {
        entry:
          %3 = call synth_outer(%1, %0, %2) : i64
          return %3
-       }")
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-loop-site-function
-        (opt-test-symbol "synth_outer")
-        (opt-test-symbol "synth_mid")
-        (opt-inline-loop-site-entry-instrs))
+       }"))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (irt.func
-          "function @synth_mid(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 5 {
+        (&
+          (opt-inline-loop-site-function
+            (opt-test-symbol "synth_outer")
+            (opt-test-symbol "synth_mid")
+            (opt-inline-loop-site-entry-instrs)))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (&
+              (irt.func
+                "function @synth_mid(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 5 {
            entry:
              %3 = call synth_wrap(%1, %0, %2) : i64
              return %3
-           }")
-        (ir.compiler-ir-function-seq-prepend
-          (irt.func
-            "function @synth_wrap(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 5 {
+           }"))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (&
+                  (irt.func
+                    "function @synth_wrap(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 5 {
              entry:
                %3 = call synth_leaf(%1, %0, %2) : i64
                return %3
-             }")
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-synth-leaf-function (opt-test-symbol "synth_leaf"))
-            (ir.compiler-ir-function-seq-empty)))))))
+             }"))
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (&
+                      (opt-inline-synth-leaf-function
+                        (opt-test-symbol "synth_leaf")))
+                    (& (ir.compiler-ir-function-seq-empty))))))))))))
 
 ;; A self-recursive loop holder, reached once from the entry: its component is
 ;; its own, and its count has to carry its own repetition.
 (define (opt-inline-synth-recursive-program) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (irt.func
-      "function @main(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 5 {
+    (&
+      (irt.func
+        "function @main(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 5 {
        entry:
          %3 = call synth_rec(%1, %0, %2) : i64
          return %3
-       }")
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-loop-site-function
-        (opt-test-symbol "synth_rec")
-        (opt-test-symbol "synth_rec")
-        (opt-inline-loop-site-entry-instrs))
-      (ir.compiler-ir-function-seq-empty))))
+       }"))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (&
+          (opt-inline-loop-site-function
+            (opt-test-symbol "synth_rec")
+            (opt-test-symbol "synth_rec")
+            (opt-inline-loop-site-entry-instrs)))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 ;; The same loop body calls one ordinary leaf and one whose address the entry
 ;; also takes, so the two differ by exactly the unknown-caller base.
 (define (opt-inline-synth-address-program) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (irt.func
-      "function @main(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 6 {
+    (&
+      (irt.func
+        "function @main(tag=%0:i64, idx=%1:i64, len=%2:i64) -> i64 vars 6 {
        entry:
          %3 = call synth_outer(%1, %0, %2) : i64
          %4 = mov fn@synth_taken : i64
          return %3
-       }")
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-loop-site-function
-        (opt-test-symbol "synth_outer")
-        (opt-test-symbol "synth_plain")
-        (opt-inline-loop-site-entry-instrs))
+       }"))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-loop-site-function
-          (opt-test-symbol "synth_plain")
-          (opt-test-symbol "synth_taken")
-          (opt-inline-loop-site-entry-instrs))
-        (ir.compiler-ir-function-seq-prepend
-          (opt-inline-synth-leaf-function (opt-test-symbol "synth_taken"))
-          (ir.compiler-ir-function-seq-empty))))))
+        (&
+          (opt-inline-loop-site-function
+            (opt-test-symbol "synth_outer")
+            (opt-test-symbol "synth_plain")
+            (opt-inline-loop-site-entry-instrs)))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (&
+              (opt-inline-loop-site-function
+                (opt-test-symbol "synth_plain")
+                (opt-test-symbol "synth_taken")
+                (opt-inline-loop-site-entry-instrs)))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (&
+                  (opt-inline-synth-leaf-function
+                    (opt-test-symbol "synth_taken")))
+                (& (ir.compiler-ir-function-seq-empty))))))))))
 
 ;; Build the counts for one program and report the count of one function by
 ;; name. `mode` selects which reading is wanted: the synthetic count, or the
@@ -19424,20 +19681,29 @@
     [builder-name : i64 symbols.inline-switch]
     [hot-name : i64 symbols.inline-nonleaf]
     (ir.compiler-ir-function-seq-prepend
-      (opt-inline-checked-hot-driver-function symbols.main hot-name)
-      (ir.compiler-ir-function-seq-prepend
-        (opt-inline-checked-cheap-cold-caller
-          symbols.inline-loop
-          leaf-name
-          builder-name
-          hot-name)
+      (& (opt-inline-checked-hot-driver-function symbols.main hot-name))
+      (&
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-checked-cheap-hot-caller hot-name leaf-name builder-name)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-checked-builder-function builder-name)
+          (&
+            (opt-inline-checked-cheap-cold-caller
+              symbols.inline-loop
+              leaf-name
+              builder-name
+              hot-name))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-inline-checked-cheap-leaf-function leaf-name)
-              (ir.compiler-ir-function-seq-empty))))))))
+              (&
+                (opt-inline-checked-cheap-hot-caller
+                  hot-name
+                  leaf-name
+                  builder-name))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (& (opt-inline-checked-builder-function builder-name))
+                  (&
+                    (ir.compiler-ir-function-seq-prepend
+                      (& (opt-inline-checked-cheap-leaf-function leaf-name))
+                      (& (ir.compiler-ir-function-seq-empty)))))))))))))
 
 (define (opt-count-direct-call-name-functions
   [functions : ir.CompilerIrFunctionSeq]
@@ -19572,10 +19838,11 @@
     (ir.compiler-ir-phi-input-seq-prepend
       (I64 10)
       (ir.compiler-ir-label "zero")
-      (ir.compiler-ir-phi-input-seq-prepend
-        (I64 20)
-        (ir.compiler-ir-label "one")
-        (ir.compiler-ir-phi-input-seq-empty)))
+      (&
+        (ir.compiler-ir-phi-input-seq-prepend
+          (I64 20)
+          (ir.compiler-ir-label "one")
+          (& (ir.compiler-ir-phi-input-seq-empty)))))
     (I64)))
 
 ;; entry -> loop -> {zero, one} -> join, with the loop's default edge back to
@@ -19767,10 +20034,11 @@
   [callee : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
   (opt-inline-wide-optimized
     (ir.compiler-ir-function-seq-prepend
-      caller
-      (ir.compiler-ir-function-seq-prepend
-        callee
-        (ir.compiler-ir-function-seq-empty)))))
+      (& caller)
+      (&
+        (ir.compiler-ir-function-seq-prepend
+          (& callee)
+          (& (ir.compiler-ir-function-seq-empty)))))))
 
 (define (opt-inline-wide-remaining-calls [optimized : ir.CompilerIrFunctionSeq]) : i64
   (opt-count-direct-call-name-function-seq optimized "main" "inline_switch"))
@@ -19842,7 +20110,7 @@
 ;; the cost model would price or edges the acyclic checks would refuse.
 (define (opt-inline-chain-block-label [index : i64]) : i64
   (ir.compiler-ir-label
-    (str_cat.str-cat "chain_" (string.int->string index) "")))
+    (& (str_cat.str-cat "chain_" (string.int->string index) ""))))
 
 (define (opt-inline-chain-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
@@ -19969,12 +20237,14 @@
   [mid : ir.CompilerIrFunction]
   [leaf : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-switch-caller-named symbols symbols.inline-nonleaf)
-    (ir.compiler-ir-function-seq-prepend
-      mid
+    (& (opt-inline-switch-caller-named symbols symbols.inline-nonleaf))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        leaf
-        (ir.compiler-ir-function-seq-empty)))))
+        (& mid)
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& leaf)
+            (& (ir.compiler-ir-function-seq-empty))))))))
 
 (define (opt-inline-narrow-site-optimized
   [symbols : OptInlineMultiTestSymbols]
@@ -20194,12 +20464,18 @@
     [optimized : ir.CompilerIrFunctionSeq
       (opt-inline-wide-optimized
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-fuel-caller symbols.main big-name tiny-name)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-chain-callee big-name (opt-inline-wide-param-count) 34)
+          (& (opt-inline-fuel-caller symbols.main big-name tiny-name))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-inline-fuel-tiny-leaf tiny-name)
-              (ir.compiler-ir-function-seq-empty)))))]
+              (&
+                (opt-inline-chain-callee
+                  big-name
+                  (opt-inline-wide-param-count)
+                  34))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (& (opt-inline-fuel-tiny-leaf tiny-name))
+                  (& (ir.compiler-ir-function-seq-empty))))))))]
     (and
       (=
         (opt-inline-wide-remaining-calls
@@ -20222,18 +20498,22 @@
     [optimized : ir.CompilerIrFunctionSeq
       (opt-inline-wide-optimized
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-wide-cold-caller
-            symbols.main
-            callee-name
-            (opt-inline-wide-param-count))
-          (ir.compiler-ir-function-seq-prepend
+          (&
             (opt-inline-wide-cold-caller
-              symbols.inline-loop
+              symbols.main
               callee-name
-              (opt-inline-wide-param-count))
+              (opt-inline-wide-param-count)))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-inline-wide-callee callee-name)
-              (ir.compiler-ir-function-seq-empty)))))]
+              (&
+                (opt-inline-wide-cold-caller
+                  symbols.inline-loop
+                  callee-name
+                  (opt-inline-wide-param-count)))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (& (opt-inline-wide-callee callee-name))
+                  (& (ir.compiler-ir-function-seq-empty))))))))]
     (and
       (=
         (opt-inline-wide-remaining-calls
@@ -20334,12 +20614,14 @@
   [symbols : OptInlineMultiTestSymbols]
   [mid : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-switch-caller-named symbols symbols.inline-nonleaf)
-    (ir.compiler-ir-function-seq-prepend
-      mid
+    (& (opt-inline-switch-caller-named symbols symbols.inline-nonleaf))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-wide-callee symbols.inline-switch)
-        (ir.compiler-ir-function-seq-empty)))))
+        (& mid)
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& (opt-inline-wide-callee symbols.inline-switch))
+            (& (ir.compiler-ir-function-seq-empty))))))))
 
 (define (compiler-optimize-inline-single-site-cascade-site-ok?) : bool
   (let
@@ -20390,15 +20672,18 @@
     [optimized : ir.CompilerIrFunctionSeq
       (opt-inline-wide-optimized
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-wide-cold-caller
-            symbols.main
-            mid-name
-            (opt-inline-wide-param-count))
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-wide-cascade-middle mid-name leaf-name)
+          (&
+            (opt-inline-wide-cold-caller
+              symbols.main
+              mid-name
+              (opt-inline-wide-param-count)))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-inline-wide-callee leaf-name)
-              (ir.compiler-ir-function-seq-empty)))))]
+              (& (opt-inline-wide-cascade-middle mid-name leaf-name))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (& (opt-inline-wide-callee leaf-name))
+                  (& (ir.compiler-ir-function-seq-empty))))))))]
     (+
       (*
         10
@@ -20685,12 +20970,14 @@
     [optimized : ir.CompilerIrFunctionSeq
       (opt-inline-wide-optimized
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-sole-call-caller symbols.main callee-name)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-sole-call-caller symbols.inline-loop callee-name)
+          (& (opt-inline-sole-call-caller symbols.main callee-name))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-inline-sole-call-leaf callee-name)
-              (ir.compiler-ir-function-seq-empty)))))]
+              (& (opt-inline-sole-call-caller symbols.inline-loop callee-name))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (& (opt-inline-sole-call-leaf callee-name))
+                  (& (ir.compiler-ir-function-seq-empty))))))))]
     (and
       (=
         (opt-inline-wide-remaining-calls
@@ -20740,8 +21027,8 @@
       (opt-inline-wide-remaining-calls
         (opt-inline-wide-optimized
           (ir.compiler-ir-function-seq-prepend
-            (opt-inline-sole-call-caller symbols.main symbols.inline-switch)
-            (ir.compiler-ir-function-seq-empty))))
+            (& (opt-inline-sole-call-caller symbols.main symbols.inline-switch))
+            (& (ir.compiler-ir-function-seq-empty)))))
       1)))
 
 ;; The middle link: a straight-line, single-site, multiblock caller that itself
@@ -20800,12 +21087,14 @@
     [optimized : ir.CompilerIrFunctionSeq
       (opt-inline-wide-optimized
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-sole-call-caller symbols.main mid-name)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-sole-call-middle mid-name leaf-name)
+          (& (opt-inline-sole-call-caller symbols.main mid-name))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-inline-sole-call-leaf leaf-name)
-              (ir.compiler-ir-function-seq-empty)))))]
+              (& (opt-inline-sole-call-middle mid-name leaf-name))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (& (opt-inline-sole-call-leaf leaf-name))
+                  (& (ir.compiler-ir-function-seq-empty))))))))]
     [structure-penalty : i64
       (match (opt-function-seq-find optimized "main")
         [(Some main)
@@ -20921,23 +21210,25 @@
     (let
       [name : i64 (array-ref names at)]
       (ir.compiler-ir-function-seq-prepend
-        (Function
-          name
-          (opt-inline-switch-params)
-          (I64)
-          4
-          (ir.compiler-ir-blocks
-            (ir.CompilerIrBlock.Block
-              (ir.compiler-ir-label "entry")
-              (opt-test-instrs
-                (opt-inline-switch-caller-call-named callee-name)
-                (irt.instr "return %3"))))
-          Ordinary)
-        (opt-inline-shared-flat-caller-chain-from
-          names
-          (+ at 1)
-          callee-name
-          tail)))))
+        (&
+          (Function
+            name
+            (opt-inline-switch-params)
+            (I64)
+            4
+            (ir.compiler-ir-blocks
+              (ir.CompilerIrBlock.Block
+                (ir.compiler-ir-label "entry")
+                (opt-test-instrs
+                  (opt-inline-switch-caller-call-named callee-name)
+                  (irt.instr "return %3"))))
+            Ordinary))
+        (&
+          (opt-inline-shared-flat-caller-chain-from
+            names
+            (+ at 1)
+            callee-name
+            tail))))))
 
 (define (opt-inline-shared-caller-names
   [symbols : OptInlineMultiTestSymbols]
@@ -20993,8 +21284,8 @@
       (opt-inline-shared-caller-names symbols count)]
     [tail : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
-        leaf
-        (ir.compiler-ir-function-seq-empty))]
+        (& leaf)
+        (& (ir.compiler-ir-function-seq-empty)))]
     (opt-test-inline-program-functions
       (ast.ast-node-pool-reader-type-segment-bases)
       (if in-loop?
@@ -21122,8 +21413,8 @@
       (opt-inline-dominant-caller-names-from 0 count)
       callee-name
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-shared-accessor-leaf callee-name)
-        (ir.compiler-ir-function-seq-empty)))
+        (& (opt-inline-shared-accessor-leaf callee-name))
+        (& (ir.compiler-ir-function-seq-empty))))
     2))
 
 ;; 64 straight-line callers put the leaf at the dominant floor and every site
@@ -21156,10 +21447,11 @@
           (opt-inline-dominant-caller-names-from 0 64)
           callee-name
           (ir.compiler-ir-function-seq-prepend
-            (opt-inline-shared-accessor-calling-leaf
-              callee-name
-              symbols.external-helper)
-            (ir.compiler-ir-function-seq-empty)))
+            (&
+              (opt-inline-shared-accessor-calling-leaf
+                callee-name
+                symbols.external-helper))
+            (& (ir.compiler-ir-function-seq-empty))))
         2)]
     (= (opt-inline-dominant-remaining-calls refused 0 64) 64)))
 
@@ -21193,7 +21485,8 @@
      jump join"))
 
 (define (opt-inline-depth-relay-label [index : i64]) : i64
-  (ir.compiler-ir-label (str_cat.str-cat "relay" (string.int->string index))))
+  (ir.compiler-ir-label
+    (& (str_cat.str-cat "relay" (string.int->string index)))))
 
 ;; `other` -> relay_0 -> ... -> relay_{count-1} -> join. The chain length is the
 ;; only thing separating the admitted leaf from the oversize one.
@@ -21226,13 +21519,15 @@
           (ir.compiler-ir-phi-input-seq-prepend
             (I64 10)
             (ir.compiler-ir-label "zero")
-            (ir.compiler-ir-phi-input-seq-prepend
-              (I64 20)
-              (ir.compiler-ir-label "one")
+            (&
               (ir.compiler-ir-phi-input-seq-prepend
-                (I64 30)
-                (opt-inline-depth-relay-label (- relays 1))
-                (ir.compiler-ir-phi-input-seq-empty))))
+                (I64 20)
+                (ir.compiler-ir-label "one")
+                (&
+                  (ir.compiler-ir-phi-input-seq-prepend
+                    (I64 30)
+                    (opt-inline-depth-relay-label (- relays 1))
+                    (& (ir.compiler-ir-phi-input-seq-empty)))))))
           (I64))
         (irt.instr "return %3")))))
 
@@ -21243,8 +21538,9 @@
   (ir.compiler-ir-blocks-with-tail
     tail
     (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label label)
-      (opt-test-instrs (ir.CompilerIrInstr.Jump (ir.compiler-ir-label target))))))
+      (ir.compiler-ir-label (& label))
+      (opt-test-instrs
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label (& target)))))))
 
 ;; `entry-instrs` and the relay count are the only things the bounds-carrying
 ;; and oversize variants change, so all three leaves share one block chain.
@@ -21362,18 +21658,20 @@
     (let
       [name : i64 (array-ref names at)]
       (ir.compiler-ir-function-seq-prepend
-        (if nested?
-          (opt-inline-depth-nested-caller name callee-name)
-          (opt-inline-loop-site-function
-            name
+        (&
+          (if nested?
+            (opt-inline-depth-nested-caller name callee-name)
+            (opt-inline-loop-site-function
+              name
+              callee-name
+              (opt-inline-loop-site-entry-instrs))))
+        (&
+          (opt-inline-depth-caller-chain-from
+            names
+            (+ at 1)
             callee-name
-            (opt-inline-loop-site-entry-instrs)))
-        (opt-inline-depth-caller-chain-from
-          names
-          (+ at 1)
-          callee-name
-          nested?
-          tail)))))
+            nested?
+            tail))))))
 
 (define (opt-inline-depth-optimized
   [callee-name : i64]
@@ -21386,8 +21684,8 @@
       callee-name
       nested?
       (ir.compiler-ir-function-seq-prepend
-        leaf
-        (ir.compiler-ir-function-seq-empty)))
+        (& leaf)
+        (& (ir.compiler-ir-function-seq-empty))))
     2))
 
 ;; Two nested-loop sites weigh 128 and take the leaf; the identical leaf at two
@@ -21488,12 +21786,13 @@
 ;; 12 + 6*13 with no absorb credit to spend. Two in-loop callers hold it, the
 ;; same shape opt-inline-dup-absorb-ok? serves.
 (define (opt-inline-chain-hit-label [index : i64]) : i64
-  (ir.compiler-ir-label (str_cat.str-cat "hit" (string.int->string index))))
+  (ir.compiler-ir-label (& (str_cat.str-cat "hit" (string.int->string index)))))
 
 (define (opt-inline-chain-test-label [index : i64]) : i64
   (if (= index 0)
     (ir.compiler-ir-label "entry")
-    (ir.compiler-ir-label (str_cat.str-cat "chain" (string.int->string index)))))
+    (ir.compiler-ir-label
+      (& (str_cat.str-cat "chain" (string.int->string index))))))
 
 ;; hit_i and the miss block all reach `join`, so the phi carries one input per
 ;; arm. Built newest-first from the miss edge inward.
@@ -21502,11 +21801,11 @@
     (ir.compiler-ir-phi-input-seq-prepend
       (I64 0)
       (ir.compiler-ir-label "miss")
-      (ir.compiler-ir-phi-input-seq-empty))
+      (& (ir.compiler-ir-phi-input-seq-empty)))
     (ir.compiler-ir-phi-input-seq-prepend
       (I64 1)
       (opt-inline-chain-hit-label index)
-      (opt-inline-chain-phi-inputs (- index 1) arms))))
+      (& (opt-inline-chain-phi-inputs (- index 1) arms)))))
 
 (define (opt-inline-chain-hit-blocks!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
@@ -21793,7 +22092,7 @@
 
 ;; A jump-block pad chain for the big caller: entry -> pad0 -> ... -> header.
 (define (opt-inline-hot-loop-pad-label [index : i64]) : i64
-  (ir.compiler-ir-label (str_cat.str-cat "pad" (string.int->string index))))
+  (ir.compiler-ir-label (& (str_cat.str-cat "pad" (string.int->string index)))))
 
 (define (opt-inline-hot-loop-pad-blocks-from!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
@@ -21866,12 +22165,13 @@
     (let
       [name : i64 (array-ref names at)]
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-hot-loop-big-caller-function name callee-name)
-        (opt-inline-hot-loop-big-caller-chain-from
-          names
-          (+ at 1)
-          callee-name
-          tail)))))
+        (& (opt-inline-hot-loop-big-caller-function name callee-name))
+        (&
+          (opt-inline-hot-loop-big-caller-chain-from
+            names
+            (+ at 1)
+            callee-name
+            tail))))))
 
 ;; The same big-tier leaf at the same in-loop sites inside 17-block callers:
 ;; above the caller-size cap the import would tax the caller loop's
@@ -21887,8 +22187,8 @@
           (opt-inline-dup-three-caller-names symbols)
           callee-name
           (ir.compiler-ir-function-seq-prepend
-            (opt-inline-hot-loop-mid-leaf callee-name)
-            (ir.compiler-ir-function-seq-empty)))
+            (& (opt-inline-hot-loop-mid-leaf callee-name))
+            (& (ir.compiler-ir-function-seq-empty))))
         2)]
     (and
       (=
@@ -21996,8 +22296,13 @@
     (let
       [name : i64 (array-ref names at)]
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-recursive-caller-function name callee-name)
-        (opt-inline-recursive-caller-chain-from names (+ at 1) callee-name tail)))))
+        (& (opt-inline-recursive-caller-function name callee-name))
+        (&
+          (opt-inline-recursive-caller-chain-from
+            names
+            (+ at 1)
+            callee-name
+            tail))))))
 
 ;; The same big-tier cyclic leaf as the loop-free positive directly above, at
 ;; the same three sites, in callers that call themselves. The caller's self
@@ -22022,8 +22327,8 @@
           (opt-inline-shared-caller-names symbols 3)
           callee-name
           (ir.compiler-ir-function-seq-prepend
-            (opt-inline-dup-leaf-plain callee-name)
-            (ir.compiler-ir-function-seq-empty)))
+            (& (opt-inline-dup-leaf-plain callee-name))
+            (& (ir.compiler-ir-function-seq-empty))))
         2)]
     (= (opt-inline-shared-remaining-calls optimized 3) 0)))
 
@@ -22043,8 +22348,8 @@
         (opt-inline-shared-caller-names symbols 1)
         callee-name
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-dup-leaf-plain callee-name)
-          (ir.compiler-ir-function-seq-empty)))]
+          (& (opt-inline-dup-leaf-plain callee-name))
+          (& (ir.compiler-ir-function-seq-empty))))]
     [index : opt.OptFunctionIndex (opt.opt-function-index-build functions)]
     [census : opt.OptInlineCensus (opt.opt-inline-census-build index functions)]
     [_install-flat : unit
@@ -22128,12 +22433,13 @@
     (let
       [name : i64 (array-ref names at)]
       (ir.compiler-ir-function-seq-prepend
-        (opt-inline-hot-loop-cold-site-caller name callee-name)
-        (opt-inline-hot-loop-cold-site-chain-from
-          names
-          (+ at 1)
-          callee-name
-          tail)))))
+        (& (opt-inline-hot-loop-cold-site-caller name callee-name))
+        (&
+          (opt-inline-hot-loop-cold-site-chain-from
+            names
+            (+ at 1)
+            callee-name
+            tail))))))
 
 (define (compiler-optimize-inline-hot-loop-leaf-cold-site-refusal-ok?) : bool
   (let
@@ -22146,8 +22452,8 @@
           (opt-inline-dup-three-caller-names symbols)
           callee-name
           (ir.compiler-ir-function-seq-prepend
-            (opt-inline-dup-leaf-plain callee-name)
-            (ir.compiler-ir-function-seq-empty)))
+            (& (opt-inline-dup-leaf-plain callee-name))
+            (& (ir.compiler-ir-function-seq-empty))))
         2)]
     (and
       (=
@@ -22173,7 +22479,8 @@
 ;; Each copy of the five-block leaf costs the caller six blocks of block fuel,
 ;; so five copies fit the per-caller budget and the sixth keeps its call.
 (define (opt-inline-hot-loop-budget-label [index : i64]) : i64
-  (ir.compiler-ir-label (str_cat.str-cat "budget" (string.int->string index))))
+  (ir.compiler-ir-label
+    (& (str_cat.str-cat "budget" (string.int->string index)))))
 
 (define (opt-inline-hot-loop-budget-blocks-from!
   [out : (&mut out ir.CompilerIrBlockBuilder)]
@@ -22220,20 +22527,22 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (Function
-            symbols.main
-            (opt-inline-switch-params)
-            (I64)
-            16
-            (opt.opt-blocks-collect
-              opt-inline-hot-loop-budget-blocks-from!
-              callee-name
-              0
-              6)
-            Ordinary)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-dup-leaf-plain callee-name)
-            (ir.compiler-ir-function-seq-empty)))
+          (&
+            (Function
+              symbols.main
+              (opt-inline-switch-params)
+              (I64)
+              16
+              (opt.opt-blocks-collect
+                opt-inline-hot-loop-budget-blocks-from!
+                callee-name
+                0
+                6)
+              Ordinary))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (& (opt-inline-dup-leaf-plain callee-name))
+              (& (ir.compiler-ir-function-seq-empty)))))
         2)]
     (=
       (opt-count-direct-call-name-function-seq optimized "main" "inline_switch")
@@ -22393,10 +22702,10 @@
         (ir.compiler-source-spans-insert-instr
           (opt-spans-base)
           (ir.compiler-ir-symbol-typed-id callee-name)
-          callee-phi
+          (& callee-phi)
           (opt-test-span 171 33))
         (ir.compiler-ir-symbol-typed-id caller-name)
-        (opt.compiler-opt-global-shared-view caller-call)
+        (& caller-call)
         (opt-test-span 181 35))]
     [previous-debug : bool (ir.compiler-debug-info-enabled?)]
     [code : i64
@@ -22513,10 +22822,11 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-costly-switch-caller symbols)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-costly-switch-callee symbols)
-            (ir.compiler-ir-function-seq-empty)))
+          (& (opt-inline-costly-switch-caller symbols))
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (& (opt-inline-costly-switch-callee symbols))
+              (& (ir.compiler-ir-function-seq-empty)))))
         2)]
     (match (opt-function-seq-find optimized "main")
       [(Some main)
@@ -22570,10 +22880,11 @@
 
 (define (opt-inline-mut-param-functions [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-mut-param-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-mut-param-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-mut-param-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-mut-param-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (compiler-optimize-inline-mut-param-loop-ok?) : bool
   (let
@@ -22623,10 +22934,11 @@
 (define (opt-inline-caller-phi-loop-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-caller-phi-loop-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-loop-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-caller-phi-loop-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-loop-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (compiler-optimize-inline-caller-phi-loop-ok?) : bool
   (let
@@ -22690,19 +23002,21 @@
 
 (define (opt-inline-nonleaf-functions [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-nonleaf-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-nonleaf-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-nonleaf-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-nonleaf-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-nonleaf-functions-named
   [symbols : OptInlineMultiTestSymbols]
   [helper-name : i64]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-nonleaf-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-nonleaf-callee-named symbols helper-name)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-nonleaf-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-nonleaf-callee-named symbols helper-name))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 ;; The caller's call to the multiblock call-carrying callee, and the callee's
 ;; own call, as span keys.
@@ -22729,11 +23043,11 @@
         (ir.compiler-source-spans-insert-instr-located
           (opt-spans-base)
           (opt-test-span-symbol "inline_nonleaf")
-          (opt-inline-nonleaf-inner-call symbols.external-helper)
+          (& (opt-inline-nonleaf-inner-call symbols.external-helper))
           703
           (opt-test-span 73 11))
         (opt-test-span-symbol "main")
-        (opt-inline-nonleaf-caller-call symbols)
+        (& (opt-inline-nonleaf-caller-call symbols))
         803
         (opt-test-span 83 17))]
     [cloned-call : ir.CompilerIrInstr
@@ -22808,10 +23122,10 @@
         (ir.compiler-source-spans-insert-instr
           (opt-spans-base)
           (opt-test-span-symbol "inline_nonleaf")
-          (opt-inline-nonleaf-inner-call panic-name)
+          (& (opt-inline-nonleaf-inner-call panic-name))
           (opt-test-span 61 9))
         (opt-test-span-symbol "main")
-        (opt-inline-nonleaf-caller-call symbols)
+        (& (opt-inline-nonleaf-caller-call symbols))
         (opt-test-span 62 3))]
     [cloned-call : ir.CompilerIrInstr
       (irt.instr "%1 = call stdlib/io.tl::stdlib.io/panic() : i64")]
@@ -22899,12 +23213,14 @@
       (opt-test-inline-program-functions
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq-prepend
-          (opt-inline-chain-main symbols)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-inline-chain-mid symbols)
+          (& (opt-inline-chain-main symbols))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-inline-nonleaf-callee symbols)
-              (ir.compiler-ir-function-seq-empty))))
+              (& (opt-inline-chain-mid symbols))
+              (&
+                (ir.compiler-ir-function-seq-prepend
+                  (& (opt-inline-nonleaf-callee symbols))
+                  (& (ir.compiler-ir-function-seq-empty)))))))
         2)]
     (match (opt-function-seq-find optimized "main")
       [(Some main)
@@ -23012,18 +23328,20 @@
 
 (define (opt-inline-tail-call-functions [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-nonleaf-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-tail-call-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-nonleaf-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-tail-call-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-tail-call-indirect-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-nonleaf-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-tail-call-indirect-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-nonleaf-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-tail-call-indirect-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 ;; A body whose exit arm is a direct tail call inlines, and the merged caller
 ;; carries the CONVERTED shape: the callee is gone, its tail call is an
@@ -23215,34 +23533,38 @@
 (define (opt-inline-single-block-tail-call-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-nonleaf-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-single-block-tail-call-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-nonleaf-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-single-block-tail-call-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-single-block-tail-call-indirect-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-nonleaf-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-single-block-tail-call-indirect-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-nonleaf-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-single-block-tail-call-indirect-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-single-block-self-tail-call-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-nonleaf-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-single-block-self-tail-call-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-nonleaf-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-single-block-self-tail-call-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-single-block-tail-call-to-caller-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-nonleaf-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-single-block-tail-call-to-caller-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-nonleaf-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-single-block-tail-call-to-caller-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 ;; The wrapper inlines, and what lands at the site is the TAIL TARGET's call:
 ;; `%0 = call external_helper(7)`, in the caller's one block, with no tail call
@@ -23499,42 +23821,47 @@
 (define (opt-inline-tail-site-return-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-tail-site-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-tail-site-return-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-tail-site-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-tail-site-return-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-tail-site-tail-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-tail-site-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-single-block-tail-call-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-tail-site-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-single-block-tail-call-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-tail-site-indirect-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-tail-site-indirect-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-tail-site-return-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-tail-site-indirect-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-tail-site-return-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-tail-site-self-recursive-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-tail-site-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-self-tail-recursive-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-tail-site-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-self-tail-recursive-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-inline-tail-site-mutual-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-tail-site-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-tail-site-mutual-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-tail-site-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-tail-site-mutual-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 ;; (a) A `Return`-exit callee at a tail site: the body lands in the caller's one
 ;; block and the callee's `Return` IS the caller's `Return`. No call and no tail
@@ -23823,10 +24150,11 @@
 (define (opt-inline-repeated-nonleaf-predicate-functions
   [symbols : OptInlineMultiTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-repeated-nonleaf-predicate-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-repeated-nonleaf-predicate-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-repeated-nonleaf-predicate-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-repeated-nonleaf-predicate-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (compiler-optimize-inline-repeated-nonleaf-predicate-refusal-ok?) : bool
   (let
@@ -24100,13 +24428,15 @@
     [value-ty : ast.AstType
       (owned_view.compiler-owned-reference-shared-view value-ty)]
     (ir.compiler-ir-function-seq-prepend
-      (opt-inline-private-memory-test-caller
-        caller-name
-        callee-name
-        (ir.compiler-ir-global-shared-view value-ty))
-      (ir.compiler-ir-function-seq-prepend
-        (opt-inline-private-memory-test-callee callee-name value-ty)
-        (ir.compiler-ir-function-seq-empty)))))
+      (&
+        (opt-inline-private-memory-test-caller
+          caller-name
+          callee-name
+          (ir.compiler-ir-global-shared-view value-ty)))
+      (&
+        (ir.compiler-ir-function-seq-prepend
+          (& (opt-inline-private-memory-test-callee callee-name value-ty))
+          (& (ir.compiler-ir-function-seq-empty)))))))
 
 (define (compiler-optimize-inline-private-memory-boundary-ok?) : bool
   (let
@@ -24596,10 +24926,11 @@
   [caller-name : i64]
   [callee-name : i64]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-alloc-sret-caller caller-name callee-name)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-alloc-sret-callee callee-name)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-alloc-sret-caller caller-name callee-name))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-alloc-sret-callee callee-name))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 ;; The splice itself: the call is gone, the merged caller verifies, and both
 ;; storage runs -- the caller's own and the one copy the site imported -- are
@@ -26489,10 +26820,11 @@
     [symbols : OptGsfSymbols (opt-gsf-symbols)]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
-        (opt-gsf-writer-function symbols)
-        (ir.compiler-ir-function-seq-prepend
-          (opt-gsf-probe-function symbols call?)
-          (ir.compiler-ir-function-seq-empty)))]
+        (& (opt-gsf-writer-function symbols))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& (opt-gsf-probe-function symbols call?))
+            (& (ir.compiler-ir-function-seq-empty)))))]
     [cells : opt.OptGlobalCellSummary
       (opt.opt-global-cell-summary-build
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -26614,8 +26946,8 @@
     [symbols : OptGdpSymbols (opt-gdp-symbols)]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
-        (opt-gdp-probe-function symbols)
-        (ir.compiler-ir-function-seq-empty))]
+        (& (opt-gdp-probe-function symbols))
+        (& (ir.compiler-ir-function-seq-empty)))]
     [cells : opt.OptGlobalCellSummary
       (opt.opt-global-cell-summary-build
         (ast.ast-node-pool-reader-type-segment-bases)
@@ -28432,10 +28764,11 @@
           (ir.compiler-ir-phi-input-seq-prepend
             (I64 5)
             (ir.compiler-ir-label "entry")
-            (ir.compiler-ir-phi-input-seq-prepend
-              carried
-              (ir.compiler-ir-label "latch")
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                carried
+                (ir.compiler-ir-label "latch")
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (I64))
         (irt.instr "branch %0, latch, exit")))))
 
@@ -29955,10 +30288,11 @@
     [bases : i64 (ast.ast-node-pool-reader-type-segment-bases)]
     (ir.compiler-ir-representation-index-build
       bases
-      (Program
-        (ir.compiler-ir-global-seq-empty)
-        functions
-        (ir.compiler-ir-extern-seq-empty)))))
+      (&
+        (Program
+          (ir.compiler-ir-global-seq-empty)
+          functions
+          (ir.compiler-ir-extern-seq-empty))))))
 
 (define (opt-ssa-representation-index-for-function
   [func : (& func ir.CompilerIrFunction)]) : ir.CompilerIrRepresentationIndex
@@ -29967,8 +30301,8 @@
       (owned_view.compiler-owned-reference-shared-view func)]
     (opt-ssa-representation-index-for-functions
       (ir.compiler-ir-function-seq-prepend
-        func
-        (ir.compiler-ir-function-seq-empty)))))
+        (& func)
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-ssa-representation-group-evidence-function [ty : ast.AstType]) : ir.CompilerIrFunction
   (Function
@@ -29983,10 +30317,11 @@
           (ir.CompilerIrInstr.Pack
             0
             (ir.compiler-ir-value-seq-prepend
-              (I64 1)
-              (ir.compiler-ir-value-seq-prepend
-                (I64 2)
-                (ir.compiler-ir-value-seq-empty)))
+              (& (I64 1))
+              (&
+                (ir.compiler-ir-value-seq-prepend
+                  (& (I64 2))
+                  (& (ir.compiler-ir-value-seq-empty)))))
             ty)
           (ir.CompilerIrInstr.Return (No)))))
     Ordinary))
@@ -30398,7 +30733,7 @@
         (array-ref slots index)
         (ir.CompilerIrBlock.Block
           (ir.compiler-ir-label
-            (str_cat.str-cat "ssa_budget_" (string.int->string index)))
+            (& (str_cat.str-cat "ssa_budget_" (string.int->string index))))
           (ir.compiler-ir-instr-seq2
             (Mov 0 (I64 index) (I64))
             (irt.instr "return %0"))))
@@ -30429,11 +30764,13 @@
     [group-index : ir.CompilerIrRepresentationIndex
       (opt-ssa-representation-index-for-functions
         (ir.compiler-ir-function-seq-prepend
-          (opt.compiler-opt-global-shared-view group-diamond)
-          (ir.compiler-ir-function-seq-prepend
-            (opt-ssa-representation-group-evidence-function
-              (ast.ast-global-shared-view group-ty))
-            (ir.compiler-ir-function-seq-empty))))]
+          (& group-diamond)
+          (&
+            (ir.compiler-ir-function-seq-prepend
+              (&
+                (opt-ssa-representation-group-evidence-function
+                  (ast.ast-global-shared-view group-ty)))
+              (& (ir.compiler-ir-function-seq-empty))))))]
     [missing-index : ir.CompilerIrRepresentationIndex
       (ir.compiler-ir-representation-index-empty)]
     [nominal-address-taken : ir.CompilerIrFunction
@@ -31695,19 +32032,23 @@
 (define (opt-licm-direct-call-clean-test-functions
   [symbols : OptLicmTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-test-function-symbol
-      symbols.probe
-      (opt-test-instrs
-        (ir.CompilerIrInstr.Call 90 symbols.probe (Nil) (I64))
-        (irt.instr "return %90")))
-    (ir.compiler-ir-function-seq-prepend
+    (&
       (opt-test-function-symbol
-        symbols.writer
-        (irt.instrs "store_ptr %1, 1 : i64
-           return 0"))
+        symbols.probe
+        (opt-test-instrs
+          (ir.CompilerIrInstr.Call 90 symbols.probe (Nil) (I64))
+          (irt.instr "return %90"))))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-test-function-symbol symbols.leaf (irt.instrs "return 7"))
-        (ir.compiler-ir-function-seq-empty)))))
+        (&
+          (opt-test-function-symbol
+            symbols.writer
+            (irt.instrs "store_ptr %1, 1 : i64
+           return 0")))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& (opt-test-function-symbol symbols.leaf (irt.instrs "return 7")))
+            (& (ir.compiler-ir-function-seq-empty))))))))
 
 (cfg
   test
@@ -31895,10 +32236,11 @@
               (ir.compiler-ir-phi-input-seq-prepend
                 (Var 5)
                 (ir.compiler-ir-label "left")
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (Var 6)
-                  (ir.compiler-ir-label "right")
-                  (ir.compiler-ir-phi-input-seq-empty)))
+                (&
+                  (ir.compiler-ir-phi-input-seq-prepend
+                    (Var 6)
+                    (ir.compiler-ir-label "right")
+                    (& (ir.compiler-ir-phi-input-seq-empty)))))
               ref-ty)
             (irt.instr "%8 = mov 0 : i64")
             (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))))))))
@@ -31947,9 +32289,10 @@
       (opt.opt-call-memory-build
         (ast.ast-node-pool-reader-type-segment-bases)
         (ir.compiler-ir-function-seq1
-          (opt-inline-sret-callee
-            (opt-callmem-roots-params sret-name)
-            (opt-callmem-roots-body mode)))
+          (&
+            (opt-inline-sret-callee
+              (opt-callmem-roots-params sret-name)
+              (opt-callmem-roots-body mode))))
         8)]
     (match (opt_i64_i64_map.get
       (& rows)
@@ -33978,8 +34321,8 @@
 (define (opt-lu1-test-branch [var : i64] [on-true : String] [on-false : String]) : ir.CompilerIrInstr
   (Branch
     (Var var)
-    (ir.compiler-ir-label on-true)
-    (ir.compiler-ir-label on-false)))
+    (ir.compiler-ir-label (& on-true))
+    (ir.compiler-ir-label (& on-false))))
 
 (define (opt-lu1-test-blocks [twice? : bool]) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks-with-tail
@@ -35392,10 +35735,11 @@
           (ir.compiler-ir-phi-input-seq-prepend
             counter-seed
             (ir.compiler-ir-label "entry")
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var 7)
-              (ir.compiler-ir-label "body")
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var 7)
+                (ir.compiler-ir-label "body")
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (I64))
         (irt.instr "%10 = gep %2, %9 : i64")
         (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "body"))))
@@ -36945,10 +37289,11 @@
                   2
                   0)))
             (ir.compiler-ir-label "entry")
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var 6)
-              (ir.compiler-ir-label "loop")
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var 6)
+                (ir.compiler-ir-label "loop")
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (I64))
         (irt.instr "%4 = phi [0, entry], [%5, loop] : i64")))))
 
@@ -37209,10 +37554,11 @@
               (Var 0)
               (Var 4))
             (ir.compiler-ir-label "entry")
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var 7)
-              (ir.compiler-ir-label "latch")
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var 7)
+                (ir.compiler-ir-label "latch")
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (I64))
         (irt.instrs
           "bounds_check %5, %1 message \"mask_probe_ok\"
@@ -37254,7 +37600,7 @@
 (define (opt-bce-mask-block-checks
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : i64
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) -1]
     [(Some block)
       (match block
@@ -37268,7 +37614,7 @@
 (define (opt-bce-mask-has-block?
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : bool
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) false]
     [(Some _) true]))
 
@@ -37278,7 +37624,7 @@
 (define (opt-bce-mask-guard-conjuncts
   [blocks : ir.CompilerIrBlockList]
   [label : String]) : i64
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) -1]
     [(Some block)
       (match block
@@ -38609,10 +38955,11 @@
             (Var 0)
             (I64 0))
           (ir.compiler-ir-label "entry")
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 8)
-            (ir.compiler-ir-label "merge")
-            (ir.compiler-ir-phi-input-seq-empty)))
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 8)
+              (ir.compiler-ir-label "merge")
+              (& (ir.compiler-ir-phi-input-seq-empty)))))
         (I64))
       (irt.instr "%4 = phi [0, entry], [%7, merge] : i64")
       (cond
@@ -38753,10 +39100,11 @@
               13
               6))
           (ir.compiler-ir-label "then")
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 4)
-            (ir.compiler-ir-label "else")
-            (ir.compiler-ir-phi-input-seq-empty)))
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 4)
+              (ir.compiler-ir-label "else")
+              (& (ir.compiler-ir-phi-input-seq-empty)))))
         (I64))
       (ir.CompilerIrInstr.BinOp
         8
@@ -39400,10 +39748,11 @@
               (if (= variant 8)
                 (ir.compiler-ir-label "exit")
                 (ir.compiler-ir-label "fara"))
-              (ir.compiler-ir-phi-input-seq-prepend
-                (Bool false)
-                (ir.compiler-ir-label "farb")
-                (ir.compiler-ir-phi-input-seq-empty)))
+              (&
+                (ir.compiler-ir-phi-input-seq-prepend
+                  (Bool false)
+                  (ir.compiler-ir-label "farb")
+                  (& (ir.compiler-ir-phi-input-seq-empty)))))
             (Bool))
           (irt.instr "branch %14, ret1, ret0"))]
       ;; reads a var the wire point does not read: the COUNTER (a header phi)
@@ -39424,7 +39773,7 @@
 
 (define (opt-bce-mb2-test-return-block [label : String] [value : i64]) : ir.CompilerIrBlock
   (Block
-    (ir.compiler-ir-label label)
+    (ir.compiler-ir-label (& label))
     (opt-test-instrs (ir.CompilerIrInstr.Return (Some (I64 value))))))
 
 (define (opt-bce-mb2-test-tail-blocks [variant : i64]) : ir.CompilerIrBlockList
@@ -40104,9 +40453,10 @@
             (&mut builder)
             (ir.CompilerIrInstr.Jump
               (ir.compiler-ir-label
-                (if (= variant 5)
-                  "b2"
-                  "b5"))))
+                (&
+                  (if (= variant 5)
+                    "b2"
+                    "b5")))))
           (Block label (ir.compiler-ir-instr-builder-to-seq builder))))]))
 
 (define (opt-pcd-join-test-run [variant : i64]) : ir.CompilerIrBlockList
@@ -40159,9 +40509,10 @@
               (opt-pcd-test-call-at?
                 out
                 (ir.compiler-ir-label
-                  (if (= variant 5)
-                    "b2"
-                    "b5"))
+                  (&
+                    (if (= variant 5)
+                      "b2"
+                      "b5")))
                 0
                 (if (= variant 5)
                   7
@@ -40599,7 +40950,7 @@
 (define (opt-bce-fuse-test-has-block?
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [name : String]) : bool
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label name))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& name)))
     [(No) false]
     [(Some _) true]))
 
@@ -40609,7 +40960,7 @@
 (define (opt-bce-fuse-test-branch-terminated?
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [name : String]) : bool
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label name))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& name)))
     [(No) false]
     [(Some block)
       (match block
@@ -40949,7 +41300,7 @@
     [(Some _) true]))
 
 (define (opt-bce-fold-test-fast-label [text : String]) : i64
-  (ir.compiler-ir-label (str_cat.str-cat text "__bce_fast")))
+  (ir.compiler-ir-label (& (str_cat.str-cat text "__bce_fast"))))
 
 (define (compiler-optimize-bce-version-fold-self-test) : i64
   (let
@@ -41077,10 +41428,11 @@
         (ir.compiler-ir-phi-input-seq-prepend
           (I64 0)
           (opt-bce-mb-test-nest-inner-pred mode)
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 13)
-            (ir.compiler-ir-label "inner_body")
-            (ir.compiler-ir-phi-input-seq-empty)))
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 13)
+              (ir.compiler-ir-label "inner_body")
+              (& (ir.compiler-ir-phi-input-seq-empty)))))
         (I64))
       (irt.instr "%12 = lt %11, %0 : bool")
       (irt.instr "branch %12, inner_body, merge"))))
@@ -41546,12 +41898,14 @@
 
 (define (opt-bce-p5a-test-preheader [variant : i64]) : i64
   (ir.compiler-ir-label
-    (if (= variant 4)
-      "pre"
-      "entry")))
+    (&
+      (if (= variant 4)
+        "pre"
+        "entry"))))
 
 (define (opt-bce-p5a-test-pad-label [index : i64]) : i64
-  (ir.compiler-ir-label (str_cat.str-cat "p5a_pad" (string.int->string index))))
+  (ir.compiler-ir-label
+    (& (str_cat.str-cat "p5a_pad" (string.int->string index)))))
 
 (define (opt-bce-p5a-test-work-target [variant : i64]) : i64
   (if (> (opt-bce-p5a-test-pads variant) 0)
@@ -41599,10 +41953,11 @@
         (ir.compiler-ir-phi-input-seq-prepend
           (I64 0)
           (opt-bce-p5a-test-preheader variant)
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 7)
-            (ir.compiler-ir-label "latch")
-            (ir.compiler-ir-phi-input-seq-empty)))
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 7)
+              (ir.compiler-ir-label "latch")
+              (& (ir.compiler-ir-phi-input-seq-empty)))))
         (I64)))))
 
 (define (opt-bce-p5a-test-work-block [variant : i64]) : ir.CompilerIrBlock
@@ -42657,10 +43012,11 @@
       (ir.compiler-ir-phi-input-seq-prepend
         (opt-flag-exit-test-seed variant)
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-phi-input-seq-prepend
-          (Var 13)
-          (ir.compiler-ir-label "latch")
-          (ir.compiler-ir-phi-input-seq-empty)))
+        (&
+          (ir.compiler-ir-phi-input-seq-prepend
+            (Var 13)
+            (ir.compiler-ir-label "latch")
+            (& (ir.compiler-ir-phi-input-seq-empty)))))
       (Bool))
     (irt.instr "%12 = lt %10, %1 : bool")
     (irt.instr "branch %12, gate, done_full")))
@@ -42732,16 +43088,17 @@
       (ir.compiler-ir-phi-input-seq-prepend
         (Var 11)
         (ir.compiler-ir-label "done_full")
-        (ir.compiler-ir-phi-input-seq-empty))
+        (& (ir.compiler-ir-phi-input-seq-empty)))
       (ir.compiler-ir-phi-input-seq-prepend
         (Var 11)
         (ir.compiler-ir-label "done_early")
-        (if (= variant 5)
-          (ir.compiler-ir-phi-input-seq-empty)
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 11)
-            (ir.compiler-ir-label "done_full")
-            (ir.compiler-ir-phi-input-seq-empty)))))
+        (&
+          (if (= variant 5)
+            (ir.compiler-ir-phi-input-seq-empty)
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 11)
+              (ir.compiler-ir-label "done_full")
+              (& (ir.compiler-ir-phi-input-seq-empty)))))))
     (Bool)))
 
 ;; Variant 2 reads the loop counter after the loop; variant 3 returns the flag
@@ -42760,8 +43117,9 @@
 
 (define (opt-flag-exit-test-jump-block [label : String] [target : String]) : ir.CompilerIrBlock
   (Block
-    (ir.compiler-ir-label label)
-    (opt-test-instrs (ir.CompilerIrInstr.Jump (ir.compiler-ir-label target)))))
+    (ir.compiler-ir-label (& label))
+    (opt-test-instrs
+      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label (& target))))))
 
 (define (opt-flag-exit-test-blocks [variant : i64]) : ir.CompilerIrBlockList
   (ir.compiler-ir-blocks
@@ -42813,7 +43171,7 @@
 (define (opt-flag-exit-test-last-instr
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : opt.OptMaybeInstr
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) (No)]
     [(Some block)
       (match block
@@ -42841,7 +43199,7 @@
   [target : String]) : bool
   (=
     (opt-flag-exit-test-jump-target blocks label)
-    (ir.compiler-ir-label target)))
+    (ir.compiler-ir-label (& target))))
 
 (define (opt-flag-exit-test-phi-in-instrs
   [instrs : ir.CompilerIrInstrSeq]
@@ -42860,7 +43218,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]
   [dst : i64]) : ir.CompilerIrPhiInputSeq
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) (ir.compiler-ir-phi-input-seq-empty)]
     [(Some block)
       (match block
@@ -42875,7 +43233,7 @@
   [pred : String]) : i64
   (match (opt.opt-thread-phi-input-value
     (opt-flag-exit-test-phi-inputs blocks label dst)
-    (ir.compiler-ir-label pred))
+    (ir.compiler-ir-label (& pred)))
     [(No) (- 0 1)]
     [(Some value)
       (match value
@@ -42898,7 +43256,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]
   [dst : i64]) : i64
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) (- 0 1)]
     [(Some block)
       (match block
@@ -42938,7 +43296,7 @@
   [label : String]) : i64
   (opt-flag-exit-test-pred-count-from
     (ir.compiler-ir-block-list-view blocks)
-    (ir.compiler-ir-label label)))
+    (ir.compiler-ir-label (& label))))
 
 (define (opt-flag-exit-test-pred-count-from
   [blocks : (& blocks (Slice ir.CompilerIrBlock))]
@@ -42963,7 +43321,7 @@
 (define (opt-flag-exit-test-instr-count
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : i64
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) (- 0 1)]
     [(Some block)
       (match block
@@ -43178,7 +43536,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]
   [pred : String]) : ir.CompilerIrValue
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) Unit]
     [(Some block)
       (match block
@@ -43187,7 +43545,7 @@
             [(Phi _ inputs _)
               (let
                 [n : i64 (ir.compiler-ir-phi-input-seq-count inputs)]
-                [pred-label : i64 (ir.compiler-ir-label pred)]
+                [pred-label : i64 (ir.compiler-ir-label (& pred))]
                 [k : i64 0]
                 [found : ir.CompilerIrValue Unit]
                 (while (< k n)
@@ -43460,7 +43818,7 @@
     (ir.CompilerIrInstr.Branch
       (Var 11)
       (ir.compiler-ir-label "body")
-      (ir.compiler-ir-label (opt-flag-exit-gen-arm variant)))))
+      (ir.compiler-ir-label (& (opt-flag-exit-gen-arm variant))))))
 
 ;; Variant 1 clears on the false arm of the body's own Branch, so the clear
 ;; predecessor has a second successor the redirect must leave alone.
@@ -43473,9 +43831,10 @@
       (Var 17)
       (ir.compiler-ir-label "match")
       (ir.compiler-ir-label
-        (if (= variant 1)
-          "latch"
-          "mismatch")))))
+        (&
+          (if (= variant 1)
+            "latch"
+            "mismatch"))))))
 
 ;; Variant 3 carries the accumulator round the back edge through an `add`
 ;; instead of a phi, so the redirected edge has no name for its next value.
@@ -43485,11 +43844,12 @@
       13
       (ir.compiler-ir-phi-input-seq-prepend
         (Bool false)
-        (ir.compiler-ir-label (opt-flag-exit-gen-clear-pred variant))
-        (ir.compiler-ir-phi-input-seq-prepend
-          (Var 11)
-          (ir.compiler-ir-label "match")
-          (ir.compiler-ir-phi-input-seq-empty)))
+        (ir.compiler-ir-label (& (opt-flag-exit-gen-clear-pred variant)))
+        (&
+          (ir.compiler-ir-phi-input-seq-prepend
+            (Var 11)
+            (ir.compiler-ir-label "match")
+            (& (ir.compiler-ir-phi-input-seq-empty)))))
       (Bool))
     (if (= variant 3)
       (irt.instr "%23 = add %19, 1 : i64")
@@ -43497,11 +43857,12 @@
         23
         (ir.compiler-ir-phi-input-seq-prepend
           (Var 16)
-          (ir.compiler-ir-label (opt-flag-exit-gen-clear-pred variant))
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 19)
-            (ir.compiler-ir-label "match")
-            (ir.compiler-ir-phi-input-seq-empty)))
+          (ir.compiler-ir-label (& (opt-flag-exit-gen-clear-pred variant)))
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 19)
+              (ir.compiler-ir-label "match")
+              (& (ir.compiler-ir-phi-input-seq-empty)))))
         (I64)))
     (irt.instr "%14 = add %10, 1 : i64")
     (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "loop"))))
@@ -43520,11 +43881,12 @@
         20
         (ir.compiler-ir-phi-input-seq-prepend
           (Var 11)
-          (ir.compiler-ir-label (opt-flag-exit-gen-out-pred variant))
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 11)
-            (ir.compiler-ir-label "loop")
-            (ir.compiler-ir-phi-input-seq-empty)))
+          (ir.compiler-ir-label (& (opt-flag-exit-gen-out-pred variant)))
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 11)
+              (ir.compiler-ir-label "loop")
+              (& (ir.compiler-ir-phi-input-seq-empty)))))
         (Bool))
       (ir.CompilerIrInstr.BinOp
         24
@@ -43608,7 +43970,7 @@
   [pred : String]) : i64
   (match (opt.opt-thread-phi-input-value
     (opt-flag-exit-test-phi-inputs blocks label dst)
-    (ir.compiler-ir-label pred))
+    (ir.compiler-ir-label (& pred)))
     [(No) (- 0 1)]
     [(Some value)
       (match value
@@ -43634,7 +43996,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]
   [dst : i64]) : i64
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) (- 0 1)]
     [(Some block)
       (match block
@@ -43828,8 +44190,9 @@
 
 (define (opt-dead-phi-test-jump-block [label : String] [target : String]) : ir.CompilerIrBlock
   (Block
-    (ir.compiler-ir-label label)
-    (opt-test-instrs (ir.CompilerIrInstr.Jump (ir.compiler-ir-label target)))))
+    (ir.compiler-ir-label (& label))
+    (opt-test-instrs
+      (ir.CompilerIrInstr.Jump (ir.compiler-ir-label (& target))))))
 
 (define (opt-dead-phi-test-guard-instrs) : ir.CompilerIrInstrSeq
   (irt.instrs "%16 = lt %10, %1 : bool
@@ -43892,7 +44255,7 @@
 (define (opt-dead-phi-test-phi-count
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : i64
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) (- 0 1)]
     [(Some block)
       (match block
@@ -43914,7 +44277,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]
   [dst : i64]) : bool
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) false]
     [(Some block)
       (match block
@@ -45955,9 +46318,10 @@
             (Var 11)
             (ir.compiler-ir-label "pre")
             (ir.compiler-ir-label
-              (if (= mode 5)
-                "alt"
-                "exit")))))
+              (&
+                (if (= mode 5)
+                  "alt"
+                  "exit"))))))
       (ir.compiler-ir-instr-builder-push!
         (&mut builder)
         (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "pre"))))
@@ -46391,7 +46755,7 @@
         (*
           (opt-licm-multi-exit-count-loads out (ir.compiler-ir-label "pre"))
           10)
-        (opt-licm-multi-exit-count-loads out (ir.compiler-ir-label counted))))))
+        (opt-licm-multi-exit-count-loads out (ir.compiler-ir-label (& counted)))))))
 
 ;; A read at the head of the loop, counted in `counted` (the header or a block
 ;; its jump chain enters); the arm only feeds the latch.
@@ -48261,8 +48625,8 @@
     [natural-loops (opt.opt-cfg-natural-loops blocks)]
     (opt.opt-natural-loop-find
       (opt_natural_loop_vec.view natural-loops)
-      (ir.compiler-ir-label header)
-      (ir.compiler-ir-label latch)))
+      (ir.compiler-ir-label (& header))
+      (ir.compiler-ir-label (& latch))))
     [(No) false]
     [(Some loop)
       (match (opt.opt-natural-loop-preheader loop)
@@ -48388,9 +48752,9 @@
   ;; preheader -- exactly the CFG a versioned loop is left in. The labels are
   ;; interned once because a String argument moves on first use.
   (let
-    [guard-label : i64 (ir.compiler-ir-label guard)]
-    [header-label : i64 (ir.compiler-ir-label header)]
-    [body-label : i64 (ir.compiler-ir-label body)]
+    [guard-label : i64 (ir.compiler-ir-label (& guard))]
+    [header-label : i64 (ir.compiler-ir-label (& header))]
+    [body-label : i64 (ir.compiler-ir-label (& body))]
     [exit-label : i64 (ir.compiler-ir-label "exit")]
     (ir.compiler-ir-blocks-with-tail
       (irt.blocks "exit:
@@ -48420,8 +48784,8 @@
     [loops : opt_natural_loop_vec.Vec (opt.opt-cfg-natural-loops blocks)]
     (match (opt.opt-natural-loop-find
       (opt_natural_loop_vec.view loops)
-      (ir.compiler-ir-label header)
-      (ir.compiler-ir-label latch))
+      (ir.compiler-ir-label (& header))
+      (ir.compiler-ir-label (& latch)))
       [(No) (- 0 1)]
       [(Some loop)
         (let
@@ -49221,29 +49585,29 @@
   (ir.compiler-ir-blocks-with-tail
     tail
     (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label (opt.compiler-opt-global-shared-view header))
+      (ir.compiler-ir-label (& header))
       (opt-test-instrs
         (ir.CompilerIrInstr.Phi
           phi
           (ir.compiler-ir-phi-input-seq-prepend
             (I64 0)
-            (ir.compiler-ir-label land)
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var step)
-              (ir.compiler-ir-label (opt.compiler-opt-global-shared-view latch))
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (ir.compiler-ir-label (& land))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var step)
+                (ir.compiler-ir-label (& latch))
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (I64))
         (ir.CompilerIrInstr.BinOp cond-var (Lt) (Var phi) (Var 0) (Bool))
         (ir.CompilerIrInstr.Branch
           (Var cond-var)
-          (ir.compiler-ir-label (opt.compiler-opt-global-shared-view body))
-          (ir.compiler-ir-label exit-label))))
+          (ir.compiler-ir-label (& body))
+          (ir.compiler-ir-label (& exit-label)))))
     (ir.CompilerIrBlock.Block
-      (ir.compiler-ir-label body)
+      (ir.compiler-ir-label (& body))
       (opt-test-instrs
         (ir.CompilerIrInstr.BinOp step (Add) (Var phi) (I64 1) (I64))
-        (ir.CompilerIrInstr.Jump
-          (ir.compiler-ir-label (opt.compiler-opt-global-shared-view latch)))))
+        (ir.CompilerIrInstr.Jump (ir.compiler-ir-label (& latch)))))
     (opt-dead-phi-test-jump-block latch header)))
 
 (define (opt-rotate-ssa-test-siblings) : ir.CompilerIrBlockList
@@ -49493,7 +49857,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]
   [edge : String]) : i64
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) (- 0 2)]
     [(Some block)
       (match block
@@ -49524,9 +49888,7 @@
             phi-inputs-at-57835-3.slots
             (+ phi-inputs-at-57835-3.start 1)
             (- phi-inputs-at-57835-3.len 1))]
-        (if (=
-          input-label
-          (ir.compiler-ir-label (opt.compiler-opt-global-shared-view label)))
+        (if (= input-label (ir.compiler-ir-label (& label)))
           (match value
             [(Var var) var]
             [(I64 literal) literal]
@@ -49773,7 +50135,11 @@
         (opt-block-list-has-label?
           (ir.compiler-ir-block-list-view blocks)
           (ir.compiler-ir-label
-            (str_cat.str-cat "rr-h" (string.int->string index) "__rotate_land")))
+            (&
+              (str_cat.str-cat
+                "rr-h"
+                (string.int->string index)
+                "__rotate_land"))))
         (set! count (+ count 1)))
       (set! index (+ index 1)))
     count))
@@ -49845,7 +50211,7 @@
     [instrs-before : i64
       (let
         [blocks (opt.opt-function-blocks rotated)]
-        (ir.compiler-ir-block-list-instruction-count blocks))]
+        (ir.compiler-ir-block-list-instruction-count (& blocks)))]
     (opt-round-regions-test-clobber!)
     (test.assert-true
       (> one-round 0)
@@ -49869,7 +50235,7 @@
     (test.assert-i64-eq
       (let
         [blocks (opt.opt-function-blocks rotated)]
-        (ir.compiler-ir-block-list-instruction-count blocks))
+        (ir.compiler-ir-block-list-instruction-count (& blocks)))
       instrs-before
       "the result keeps its instructions once the regions are reused")
     (test.assert-true
@@ -52434,8 +52800,8 @@
   (Program
     (ir.compiler-ir-global-seq-empty)
     (ir.compiler-ir-function-seq-prepend
-      (opt-scratch-reset-level-function)
-      (ir.compiler-ir-function-seq-empty))
+      (& (opt-scratch-reset-level-function))
+      (& (ir.compiler-ir-function-seq-empty)))
     (ir.compiler-ir-extern-seq-empty)))
 
 (define (opt-scratch-reset-call-blocked-blocks) : ir.CompilerIrBlockList
@@ -54218,52 +54584,65 @@
     (ir.compiler-ir-function-seq-prepend
       ;; Wrapper precedes its leaf so the leaf-to-caller fixed point needs a
       ;; later round; leaf param 0 is wrapper argument/root 1.
-      (opt-call-memory-test-function
-        wrapper
-        (opt.compiler-opt-global-shared-view params)
-        (opt-test-instrs
-          (ir.CompilerIrInstr.Call 3 leaf (Two (Var 1) (Var 0)) (Unit))))
-      (ir.compiler-ir-function-seq-prepend
+      (&
         (opt-call-memory-test-function
-          leaf
+          wrapper
           (opt.compiler-opt-global-shared-view params)
-          (irt.instrs "store_ptr %0, 9 : i64"))
+          (opt-test-instrs
+            (ir.CompilerIrInstr.Call 3 leaf (Two (Var 1) (Var 0)) (Unit)))))
+      (&
         (ir.compiler-ir-function-seq-prepend
-          (opt-call-memory-test-function
-            global-writer
-            (opt.compiler-opt-global-shared-view params)
-            (irt.instrs "store @call_memory_global, 9 : i64"))
-          (ir.compiler-ir-function-seq-prepend
+          (&
             (opt-call-memory-test-function
-              raw-writer
+              leaf
               (opt.compiler-opt-global-shared-view params)
-              (irt.instrs "store_ptr %99, 9 : i64"))
+              (irt.instrs "store_ptr %0, 9 : i64")))
+          (&
             (ir.compiler-ir-function-seq-prepend
-              (opt-call-memory-test-function
-                indirect-writer
-                (opt.compiler-opt-global-shared-view params)
-                (opt-test-instrs
-                  (ir.CompilerIrInstr.CallIndirect
-                    3
-                    (Function leaf)
-                    (Nil)
-                    (Unit))))
-              (ir.compiler-ir-function-seq-prepend
+              (&
                 (opt-call-memory-test-function
-                  recursive
+                  global-writer
                   (opt.compiler-opt-global-shared-view params)
-                  (opt-test-instrs
-                    (ir.CompilerIrInstr.Call
-                      3
-                      recursive
-                      (Two (Var 0) (Var 1))
-                      (Unit))))
+                  (irt.instrs "store @call_memory_global, 9 : i64")))
+              (&
                 (ir.compiler-ir-function-seq-prepend
-                  (opt-call-memory-test-function
-                    clean
-                    params
-                    (ir.compiler-ir-instr-seq-empty))
-                  (ir.compiler-ir-function-seq-empty))))))))))
+                  (&
+                    (opt-call-memory-test-function
+                      raw-writer
+                      (opt.compiler-opt-global-shared-view params)
+                      (irt.instrs "store_ptr %99, 9 : i64")))
+                  (&
+                    (ir.compiler-ir-function-seq-prepend
+                      (&
+                        (opt-call-memory-test-function
+                          indirect-writer
+                          (opt.compiler-opt-global-shared-view params)
+                          (opt-test-instrs
+                            (ir.CompilerIrInstr.CallIndirect
+                              3
+                              (Function leaf)
+                              (Nil)
+                              (Unit)))))
+                      (&
+                        (ir.compiler-ir-function-seq-prepend
+                          (&
+                            (opt-call-memory-test-function
+                              recursive
+                              (opt.compiler-opt-global-shared-view params)
+                              (opt-test-instrs
+                                (ir.CompilerIrInstr.Call
+                                  3
+                                  recursive
+                                  (Two (Var 0) (Var 1))
+                                  (Unit)))))
+                          (&
+                            (ir.compiler-ir-function-seq-prepend
+                              (&
+                                (opt-call-memory-test-function
+                                  clean
+                                  params
+                                  (ir.compiler-ir-instr-seq-empty)))
+                              (& (ir.compiler-ir-function-seq-empty)))))))))))))))))
 
 ;; A CYCLE of two mutually recursive writers. Each stores through the element
 ;; buffer its own descriptor parameter names and hands that same descriptor to
@@ -54300,16 +54679,19 @@
   [cell : i64]
   [global? : bool]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-call-memory-test-function
-      first
-      (opt-load-cse-descriptor-params)
-      (opt-call-memory-cycle-body second cell false))
-    (ir.compiler-ir-function-seq-prepend
+    (&
       (opt-call-memory-test-function
-        second
+        first
         (opt-load-cse-descriptor-params)
-        (opt-call-memory-cycle-body first cell global?))
-      (ir.compiler-ir-function-seq-empty))))
+        (opt-call-memory-cycle-body second cell false)))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (&
+          (opt-call-memory-test-function
+            second
+            (opt-load-cse-descriptor-params)
+            (opt-call-memory-cycle-body first cell global?)))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 ;; The cycle under a chain of `depth` callers, each handing its descriptor to
 ;; the one below and the last to the cycle's first member. Every row on the
@@ -54327,14 +54709,15 @@
   (if (= depth 0)
     (opt-call-memory-cycle-functions first second cell false)
     (ir.compiler-ir-function-seq-prepend
-      (opt-call-memory-test-function
-        (opt-call-memory-chain-symbol depth)
-        (opt-load-cse-descriptor-params)
-        (opt-call-memory-cycle-tail
-          (if (= depth 1)
-            first
-            (opt-call-memory-chain-symbol (- depth 1)))))
-      (opt-call-memory-chain-functions first second cell (- depth 1)))))
+      (&
+        (opt-call-memory-test-function
+          (opt-call-memory-chain-symbol depth)
+          (opt-load-cse-descriptor-params)
+          (opt-call-memory-cycle-tail
+            (if (= depth 1)
+              first
+              (opt-call-memory-chain-symbol (- depth 1))))))
+      (& (opt-call-memory-chain-functions first second cell (- depth 1))))))
 
 (define (opt-call-memory-cycle-clean-bits
   [first : i64]
@@ -54370,16 +54753,17 @@
 ;; array as a descriptor handle beside a scalar the builder must leave out.
 (define (opt-call-memory-global-element-functions [writer : i64] [array : i64]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-call-memory-test-function
-      writer
-      (ir.compiler-ir-param-seq-empty)
-      (opt-test-instrs
-        (ir.CompilerIrInstr.Gep 0 (Global array) (I64 0) (U64))
-        (ir.CompilerIrInstr.Load 1 (Var 0) (U64))
-        (irt.instr "%2 = gep %1, 4 : u64")
-        (irt.instr "store_ptr %2, 7 : u64")
-        (ir.CompilerIrInstr.Return (No))))
-    (ir.compiler-ir-function-seq-empty)))
+    (&
+      (opt-call-memory-test-function
+        writer
+        (ir.compiler-ir-param-seq-empty)
+        (opt-test-instrs
+          (ir.CompilerIrInstr.Gep 0 (Global array) (I64 0) (U64))
+          (ir.CompilerIrInstr.Load 1 (Var 0) (U64))
+          (irt.instr "%2 = gep %1, 4 : u64")
+          (irt.instr "store_ptr %2, 7 : u64")
+          (ir.CompilerIrInstr.Return (No)))))
+    (& (ir.compiler-ir-function-seq-empty))))
 
 (define (opt-call-memory-global-element-globals [array : i64] [scalar : i64]) : ir.CompilerIrGlobalSeq
   (let
@@ -54550,27 +54934,34 @@
 
 (define (opt-cl-test-functions [symbols : OptClTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-cl-test-init-function symbols.init-array 16)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-cl-test-init-function symbols.init-stored 32)
+    (& (opt-cl-test-init-function symbols.init-array 16))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-cl-test-init-function symbols.init-escaped 48)
-        (ir.compiler-ir-function-seq-prepend
-          (opt-cl-test-init-function symbols.init-header 64)
+        (& (opt-cl-test-init-function symbols.init-stored 32))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-cl-test-reader
-              symbols.reader
-              symbols.array
-              symbols.stored
-              symbols.escaped
-              symbols.header
-              symbols.sink)
-            (ir.compiler-ir-function-seq-prepend
-              (opt-call-memory-test-function
-                symbols.sink
-                (opt-load-cse-descriptor-params)
-                (irt.instrs "return"))
-              (ir.compiler-ir-function-seq-empty))))))))
+            (& (opt-cl-test-init-function symbols.init-escaped 48))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (& (opt-cl-test-init-function symbols.init-header 64))
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (&
+                      (opt-cl-test-reader
+                        symbols.reader
+                        symbols.array
+                        symbols.stored
+                        symbols.escaped
+                        symbols.header
+                        symbols.sink))
+                    (&
+                      (ir.compiler-ir-function-seq-prepend
+                        (&
+                          (opt-call-memory-test-function
+                            symbols.sink
+                            (opt-load-cse-descriptor-params)
+                            (irt.instrs "return")))
+                        (& (ir.compiler-ir-function-seq-empty))))))))))))))
 
 (define (compiler-optimize-load-cse-self-test) : i64
   (let
@@ -55241,10 +55632,11 @@
       (ir.compiler-ir-phi-input-seq-prepend
         seed
         (ir.compiler-ir-label "lc_entry")
-        (ir.compiler-ir-phi-input-seq-prepend
-          (Var 37)
-          (ir.compiler-ir-label "lc_body")
-          (ir.compiler-ir-phi-input-seq-empty)))
+        (&
+          (ir.compiler-ir-phi-input-seq-prepend
+            (Var 37)
+            (ir.compiler-ir-label "lc_body")
+            (& (ir.compiler-ir-phi-input-seq-empty)))))
       (I64))
     (irt.instr "%9 = shl %30, 8 : i64")
     (irt.instr "%10 = add %1, %28 : i64")
@@ -55429,7 +55821,8 @@
         (ir.CompilerIrInstr.BoundsCheck
           (Var a)
           (Var 2)
-          (ir.compiler-ir-label (str_cat.str-cat "lc_b" (string.int->string j))))
+          (ir.compiler-ir-label
+            (& (str_cat.str-cat "lc_b" (string.int->string j)))))
         (ir.CompilerIrInstr.Gep
           g
           (Var 0)
@@ -56482,14 +56875,15 @@
       (opt-const-global-early-test-blocks symbols)]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
-        (Function
-          (opt-test-symbol "f")
-          (ir.compiler-ir-param-seq-empty)
-          (I64)
-          17
-          (opt.compiler-opt-global-shared-view blocks)
-          Ordinary)
-        (ir.compiler-ir-function-seq-empty))]
+        (&
+          (Function
+            (opt-test-symbol "f")
+            (ir.compiler-ir-param-seq-empty)
+            (I64)
+            17
+            (opt.compiler-opt-global-shared-view blocks)
+            Ordinary))
+        (& (ir.compiler-ir-function-seq-empty)))]
     [table : opt_i64_i64_map.Map (opt-test-const-divisors globals functions)]
     [rewritten : ir.CompilerIrBlockList
       (opt.opt-const-divisor-rewrite-blocks table blocks)]
@@ -56702,7 +57096,9 @@
   (let
     [f : ir.CompilerIrFunction
       (owned_view.compiler-owned-reference-shared-view f)]
-    (ir.compiler-ir-function-seq-prepend f (ir.compiler-ir-function-seq-empty))))
+    (ir.compiler-ir-function-seq-prepend
+      (& f)
+      (& (ir.compiler-ir-function-seq-empty)))))
 
 (define (opt-gc-test-functions2
   [f : (& f ir.CompilerIrFunction)]
@@ -56711,16 +57107,17 @@
     [f : ir.CompilerIrFunction
       (owned_view.compiler-owned-reference-shared-view f)]
     (ir.compiler-ir-function-seq-prepend
-      f
-      (ir.compiler-ir-function-seq-prepend
-        g
-        (ir.compiler-ir-function-seq-empty)))))
+      (& f)
+      (&
+        (ir.compiler-ir-function-seq-prepend
+          (& g)
+          (& (ir.compiler-ir-function-seq-empty)))))))
 
 (define (opt-gc-test-functions3
   [f : ir.CompilerIrFunction]
   [g : ir.CompilerIrFunction]
   [h : ir.CompilerIrFunction]) : ir.CompilerIrFunctionSeq
-  (ir.compiler-ir-function-seq-prepend f (opt-gc-test-functions2 g h)))
+  (ir.compiler-ir-function-seq-prepend (& f) (& (opt-gc-test-functions2 g h))))
 
 (define (opt-gc-test-summaries
   [symbols : OptGcTestSymbols]
@@ -57447,7 +57844,7 @@
 ;;     while F1 still passes: that gate, and nothing else, is what made
 ;;     `opt-unroll-block-shape` reject the real clone.
 (define (opt-fc-test-label [name : String]) : i64
-  (ir.compiler-ir-label name))
+  (ir.compiler-ir-label (& name)))
 
 (define (opt-fc-test-i64) : ast.AstType
   (I64))
@@ -57516,10 +57913,11 @@
         (ir.compiler-ir-phi-input-seq-prepend
           (I64 0)
           pred
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 5)
-            loop
-            (ir.compiler-ir-phi-input-seq-empty)))
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 5)
+              loop
+              (& (ir.compiler-ir-phi-input-seq-empty)))))
         (opt-fc-test-i64)))))
 
 (define (opt-fc-test-exit-block [exit : i64]) : ir.CompilerIrBlock
@@ -57610,20 +58008,22 @@
         (ir.compiler-ir-phi-input-seq-prepend
           (I64 0)
           pred
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 5)
-            loop
-            (ir.compiler-ir-phi-input-seq-empty)))
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 5)
+              loop
+              (& (ir.compiler-ir-phi-input-seq-empty)))))
         (opt-fc-test-i64))
       (ir.CompilerIrInstr.Phi
         8
         (ir.compiler-ir-phi-input-seq-prepend
           (Var 2)
           pred
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 6)
-            loop
-            (ir.compiler-ir-phi-input-seq-empty)))
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 6)
+              loop
+              (& (ir.compiler-ir-phi-input-seq-empty)))))
         (Bool)))))
 
 (define (opt-fc-test-real-function) : ir.CompilerIrFunction
@@ -57889,7 +58289,7 @@
 ;; propagating in-place element shift through the real rewrite and checks the
 ;; values.
 (define (opt-cc-test-label [name : String]) : i64
-  (ir.compiler-ir-label name))
+  (ir.compiler-ir-label (& name)))
 
 (define (opt-cc-test-i64) : ast.AstType
   (I64))
@@ -57939,10 +58339,11 @@
           (ir.compiler-ir-phi-input-seq-prepend
             (I64 0)
             pred
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var 6)
-              loop
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var 6)
+                loop
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (opt-cc-test-i64))
         (irt.instr "return %12"))
       (irt.instrs "return 0"))))
@@ -58012,10 +58413,11 @@
         (ir.compiler-ir-phi-input-seq-prepend
           (I64 0)
           pred
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 8)
-            loop
-            (ir.compiler-ir-phi-input-seq-empty)))
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 8)
+              loop
+              (& (ir.compiler-ir-phi-input-seq-empty)))))
         (opt-cc-test-i64)))))
 
 (define (opt-cc-test-loop-tail
@@ -59226,10 +59628,11 @@
 
 (define (opt-lp-test-program-functions [symbols : OptLpTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-lp-test-writer-function symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-lp-test-opaque-callee-function symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-lp-test-writer-function symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-lp-test-opaque-callee-function symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 (define (opt-lp-test-cells [symbols : OptLpTestSymbols]) : opt.OptGlobalCellSummary
   (opt.opt-global-cell-summary-build
@@ -59479,7 +59882,7 @@
     (opt-licm-test-function blocks)))
 
 (define (opt-lp-has-block? [blocks : ir.CompilerIrBlockList] [label : String]) : bool
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) false]
     [(Some _) true]))
 
@@ -59925,21 +60328,25 @@
 
 (define (opt-mr-test-functions [symbols : OptMrTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-mr-write-function symbols.write-a symbols.a)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-mr-write-via-function symbols)
+    (& (opt-mr-write-function symbols.write-a symbols.a))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-mr-write-function symbols.write-b symbols.b)
-        (ir.compiler-ir-function-seq-prepend
-          (opt-mr-elem-function symbols)
+        (& (opt-mr-write-via-function symbols))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-mr-opaque-function symbols)
-            (ir.compiler-ir-function-seq-empty)))))))
+            (& (opt-mr-write-function symbols.write-b symbols.b))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (& (opt-mr-elem-function symbols))
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (& (opt-mr-opaque-function symbols))
+                    (& (ir.compiler-ir-function-seq-empty))))))))))))
 
 (define (opt-mr-addr-functions [symbols : OptMrTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-mr-addr-function symbols)
-    (opt-mr-test-functions symbols)))
+    (& (opt-mr-addr-function symbols))
+    (& (opt-mr-test-functions symbols))))
 
 (define (opt-mr-test-cells [symbols : OptMrTestSymbols]) : opt.OptGlobalCellSummary
   (opt.opt-global-cell-summary-build
@@ -60566,55 +60973,84 @@
 
 (define (opt-le-test-functions [symbols : OptLeTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-le-ctor-function symbols.ctor (Var 0))
-    (ir.compiler-ir-function-seq-prepend
-      (opt-le-ctor-function symbols.ctor-short (I64 0))
+    (& (opt-le-ctor-function symbols.ctor (Var 0)))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-le-init-function symbols.init-a symbols.ctor)
-        (ir.compiler-ir-function-seq-prepend
-          (opt-le-init-function symbols.init-b symbols.ctor)
+        (& (opt-le-ctor-function symbols.ctor-short (I64 0)))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-le-init-function symbols.init-c symbols.ctor)
-            (ir.compiler-ir-function-seq-prepend
-              (opt-le-init-function symbols.init-d symbols.ctor)
+            (& (opt-le-init-function symbols.init-a symbols.ctor))
+            (&
               (ir.compiler-ir-function-seq-prepend
-                (opt-le-init-function symbols.init-e symbols.ctor)
-                (ir.compiler-ir-function-seq-prepend
-                  (opt-le-init-function symbols.init-f symbols.ctor)
+                (& (opt-le-init-function symbols.init-b symbols.ctor))
+                (&
                   (ir.compiler-ir-function-seq-prepend
-                    (opt-le-init-function symbols.init-g symbols.ctor)
-                    (ir.compiler-ir-function-seq-prepend
-                      (opt-le-init-function symbols.init-h symbols.ctor-short)
-                      (opt-le-test-driver-functions symbols))))))))))))
+                    (& (opt-le-init-function symbols.init-c symbols.ctor))
+                    (&
+                      (ir.compiler-ir-function-seq-prepend
+                        (& (opt-le-init-function symbols.init-d symbols.ctor))
+                        (&
+                          (ir.compiler-ir-function-seq-prepend
+                            (&
+                              (opt-le-init-function symbols.init-e symbols.ctor))
+                            (&
+                              (ir.compiler-ir-function-seq-prepend
+                                (&
+                                  (opt-le-init-function
+                                    symbols.init-f
+                                    symbols.ctor))
+                                (&
+                                  (ir.compiler-ir-function-seq-prepend
+                                    (&
+                                      (opt-le-init-function
+                                        symbols.init-g
+                                        symbols.ctor))
+                                    (&
+                                      (ir.compiler-ir-function-seq-prepend
+                                        (&
+                                          (opt-le-init-function
+                                            symbols.init-h
+                                            symbols.ctor-short))
+                                        (&
+                                          (opt-le-test-driver-functions symbols))))))))))))))))))))))
 
 (define (opt-le-test-driver-functions [symbols : OptLeTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-le-reset-function symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-le-reset-pair-function
-        symbols.reset-split
-        symbols
-        symbols.d
-        symbols.e
-        symbols.reader)
+    (& (opt-le-reset-function symbols))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-le-reset-pair-function
-          symbols.reset-clean
-          symbols
-          symbols.f
-          symbols.g
-          symbols.nop)
-        (ir.compiler-ir-function-seq-prepend
-          (opt-le-reset-h-function symbols)
+        (&
+          (opt-le-reset-pair-function
+            symbols.reset-split
+            symbols
+            symbols.d
+            symbols.e
+            symbols.reader))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-le-grow-function symbols)
-            (ir.compiler-ir-function-seq-prepend
-              (opt-le-pass-c-function symbols)
+            (&
+              (opt-le-reset-pair-function
+                symbols.reset-clean
+                symbols
+                symbols.f
+                symbols.g
+                symbols.nop))
+            (&
               (ir.compiler-ir-function-seq-prepend
-                (opt-le-reader-function symbols)
-                (ir.compiler-ir-function-seq-prepend
-                  (opt-le-nop-function symbols)
-                  (ir.compiler-ir-function-seq-empty))))))))))
+                (& (opt-le-reset-h-function symbols))
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (& (opt-le-grow-function symbols))
+                    (&
+                      (ir.compiler-ir-function-seq-prepend
+                        (& (opt-le-pass-c-function symbols))
+                        (&
+                          (ir.compiler-ir-function-seq-prepend
+                            (& (opt-le-reader-function symbols))
+                            (&
+                              (ir.compiler-ir-function-seq-prepend
+                                (& (opt-le-nop-function symbols))
+                                (& (ir.compiler-ir-function-seq-empty))))))))))))))))))
 
 ;; The one call-memory row the walk consults: the grow writes through parameter
 ;; 0, which is what drops the member whose box it is handed.
@@ -60934,50 +61370,68 @@
 
 (define (opt-og-base-functions [symbols : OptOgTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-og-param-writer symbols.mut-writer false)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-og-param-writer symbols.shared-writer true)
+    (& (opt-og-param-writer symbols.mut-writer false))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-og-param-writer symbols.mixed-writer false)
-        (ir.compiler-ir-function-seq-prepend
-          (opt-og-caller symbols.call-mut 30 symbols.mut-writer symbols.a)
+        (& (opt-og-param-writer symbols.shared-writer true))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-og-caller
-              symbols.call-shared
-              31
-              symbols.shared-writer
-              symbols.b)
-            (ir.compiler-ir-function-seq-prepend
-              (opt-og-caller
-                symbols.call-mixed-a
-                32
-                symbols.mixed-writer
-                symbols.a)
+            (& (opt-og-param-writer symbols.mixed-writer false))
+            (&
               (ir.compiler-ir-function-seq-prepend
-                (opt-og-caller
-                  symbols.call-mixed-c
-                  33
-                  symbols.mixed-writer
-                  symbols.c)
-                (ir.compiler-ir-function-seq-prepend
-                  (opt-og-indirect-function symbols)
+                (&
+                  (opt-og-caller
+                    symbols.call-mut
+                    30
+                    symbols.mut-writer
+                    symbols.a))
+                (&
                   (ir.compiler-ir-function-seq-prepend
-                    (opt-og-local-writer-function symbols)
-                    (ir.compiler-ir-function-seq-prepend
-                      (opt-mr-one-block-function
-                        symbols.plain
-                        (opt-mr-return-zero))
-                      (ir.compiler-ir-function-seq-empty))))))))))))
+                    (&
+                      (opt-og-caller
+                        symbols.call-shared
+                        31
+                        symbols.shared-writer
+                        symbols.b))
+                    (&
+                      (ir.compiler-ir-function-seq-prepend
+                        (&
+                          (opt-og-caller
+                            symbols.call-mixed-a
+                            32
+                            symbols.mixed-writer
+                            symbols.a))
+                        (&
+                          (ir.compiler-ir-function-seq-prepend
+                            (&
+                              (opt-og-caller
+                                symbols.call-mixed-c
+                                33
+                                symbols.mixed-writer
+                                symbols.c))
+                            (&
+                              (ir.compiler-ir-function-seq-prepend
+                                (& (opt-og-indirect-function symbols))
+                                (&
+                                  (ir.compiler-ir-function-seq-prepend
+                                    (& (opt-og-local-writer-function symbols))
+                                    (&
+                                      (ir.compiler-ir-function-seq-prepend
+                                        (&
+                                          (opt-mr-one-block-function
+                                            symbols.plain
+                                            (opt-mr-return-zero)))
+                                        (& (ir.compiler-ir-function-seq-empty))))))))))))))))))))))
 
 (define (opt-og-escape-functions [symbols : OptOgTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-og-escape-function symbols)
-    (opt-og-base-functions symbols)))
+    (& (opt-og-escape-function symbols))
+    (& (opt-og-base-functions symbols))))
 
 (define (opt-og-addr-functions [symbols : OptOgTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-og-addr-function symbols)
-    (opt-og-base-functions symbols)))
+    (& (opt-og-addr-function symbols))
+    (& (opt-og-base-functions symbols))))
 
 (define (opt-og-build
   [symbols : OptOgTestSymbols]
@@ -61273,14 +61727,16 @@
 ;; the three named ones, so the shared tail has a writer of its own.
 (define (opt-og-pad-writer-functions [symbols : OptOgTestSymbols] [index : i64]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-og-caller
-      (opt-test-symbol "og_call_pad")
-      41
-      (opt-test-symbol "og_pad_writer")
-      (opt-og-pad-name index))
-    (ir.compiler-ir-function-seq-prepend
-      (opt-og-param-writer (opt-test-symbol "og_pad_writer") false)
-      (opt-og-base-functions symbols))))
+    (&
+      (opt-og-caller
+        (opt-test-symbol "og_call_pad")
+        41
+        (opt-test-symbol "og_pad_writer")
+        (opt-og-pad-name index)))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-og-param-writer (opt-test-symbol "og_pad_writer") false))
+        (& (opt-og-base-functions symbols))))))
 
 (define (compiler-optimize-global-obj-overflow-self-test) : i64
   (let
@@ -61624,10 +62080,11 @@
           (Var 0)
           (I64 0))
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-phi-input-seq-prepend
-          (Var 8)
-          (ir.compiler-ir-label "body")
-          (ir.compiler-ir-phi-input-seq-empty)))
+        (&
+          (ir.compiler-ir-phi-input-seq-prepend
+            (Var 8)
+            (ir.compiler-ir-label "body")
+            (& (ir.compiler-ir-phi-input-seq-empty)))))
       (I64))
     (if (opt-vt-derived-variant? variant)
       ;; the strength-reduced cursor, seeded from a loop-invariant literal
@@ -62159,113 +62616,134 @@
   (let
     [callees : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
-        (opt-ag-function symbols.helper (opt-ag-param-check-instrs (- 0 1)))
-        (ir.compiler-ir-function-seq-prepend
-          (opt-ag-function symbols.split (opt-mr-return-zero))
+        (& (opt-ag-function symbols.helper (opt-ag-param-check-instrs (- 0 1))))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-ag-function symbols.taken (opt-mr-return-zero))
-            (ir.compiler-ir-function-seq-prepend
-              (opt-ag-function
-                symbols.recur
-                (opt-test-instr-seq-prepend
-                  (opt-ag-call-instr
-                    20
-                    symbols.recur
-                    (Global (opt-test-symbol "le_a"))
-                    (Global (opt-test-symbol "le_b")))
-                  (opt-mr-return-zero)))
+            (& (opt-ag-function symbols.split (opt-mr-return-zero)))
+            (&
               (ir.compiler-ir-function-seq-prepend
-                (opt-ag-function
-                  symbols.drift
-                  (opt-test-instr-seq-prepend
-                    (opt-ag-call-instr
-                      20
-                      symbols.drift
-                      (Var 1)
-                      (Global (opt-test-symbol "le_b")))
-                    (opt-mr-return-zero)))
-                (ir.compiler-ir-function-seq-prepend
-                  (opt-ag-function symbols.cabi (opt-mr-return-zero))
-                  (ir.compiler-ir-function-seq-empty)))))))]
+                (& (opt-ag-function symbols.taken (opt-mr-return-zero)))
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (&
+                      (opt-ag-function
+                        symbols.recur
+                        (opt-test-instr-seq-prepend
+                          (opt-ag-call-instr
+                            20
+                            symbols.recur
+                            (Global (opt-test-symbol "le_a"))
+                            (Global (opt-test-symbol "le_b")))
+                          (opt-mr-return-zero))))
+                    (&
+                      (ir.compiler-ir-function-seq-prepend
+                        (&
+                          (opt-ag-function
+                            symbols.drift
+                            (opt-test-instr-seq-prepend
+                              (opt-ag-call-instr
+                                20
+                                symbols.drift
+                                (Var 1)
+                                (Global (opt-test-symbol "le_b")))
+                              (opt-mr-return-zero))))
+                        (&
+                          (ir.compiler-ir-function-seq-prepend
+                            (&
+                              (opt-ag-function
+                                symbols.cabi
+                                (opt-mr-return-zero)))
+                            (& (ir.compiler-ir-function-seq-empty)))))))))))))]
     (if (not with-callers?)
       callees
       (ir.compiler-ir-function-seq-prepend
-        (opt-ag-function
-          symbols.caller
-          (opt-test-instr-seq-prepend
-            (opt-ag-call-instr
-              20
-              symbols.helper
-              (Global (opt-test-symbol "le_a"))
-              (Global (opt-test-symbol "le_b")))
-            (opt-mr-return-zero)))
-        (ir.compiler-ir-function-seq-prepend
+        (&
           (opt-ag-function
-            symbols.split-caller
+            symbols.caller
             (opt-test-instr-seq-prepend
               (opt-ag-call-instr
                 20
-                symbols.split
+                symbols.helper
                 (Global (opt-test-symbol "le_a"))
                 (Global (opt-test-symbol "le_b")))
-              (opt-test-instr-seq-prepend
-                (opt-ag-call-instr
-                  21
-                  symbols.split
-                  (Var 30)
-                  (Global (opt-test-symbol "le_b")))
-                (opt-mr-return-zero))))
+              (opt-mr-return-zero))))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-ag-function
-              symbols.taken-caller
-              (opt-test-instr-seq-prepend
-                (opt-ag-call-instr
-                  20
-                  symbols.taken
-                  (Global (opt-test-symbol "le_a"))
-                  (Global (opt-test-symbol "le_b")))
-                (opt-test-instr-seq-prepend
-                  (Mov 21 (Function symbols.taken) (I64))
-                  (opt-mr-return-zero))))
-            (ir.compiler-ir-function-seq-prepend
+            (&
               (opt-ag-function
-                symbols.recur-caller
+                symbols.split-caller
                 (opt-test-instr-seq-prepend
                   (opt-ag-call-instr
                     20
-                    symbols.recur
+                    symbols.split
                     (Global (opt-test-symbol "le_a"))
                     (Global (opt-test-symbol "le_b")))
-                  (opt-mr-return-zero)))
-              (ir.compiler-ir-function-seq-prepend
-                (opt-ag-function
-                  symbols.drift-caller
                   (opt-test-instr-seq-prepend
                     (opt-ag-call-instr
-                      20
-                      symbols.drift
-                      (Global (opt-test-symbol "le_a"))
+                      21
+                      symbols.split
+                      (Var 30)
                       (Global (opt-test-symbol "le_b")))
-                    (opt-mr-return-zero)))
-                (ir.compiler-ir-function-seq-prepend
+                    (opt-mr-return-zero)))))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (&
                   (opt-ag-function
-                    symbols.cabi-caller
+                    symbols.taken-caller
                     (opt-test-instr-seq-prepend
                       (opt-ag-call-instr
                         20
-                        symbols.cabi
+                        symbols.taken
                         (Global (opt-test-symbol "le_a"))
                         (Global (opt-test-symbol "le_b")))
                       (opt-test-instr-seq-prepend
-                        (ir.ir-instr-call-cabi-store-result
-                          (Var 25)
-                          symbols.cabi
-                          (opt-ag-call-args
+                        (Mov 21 (Function symbols.taken) (I64))
+                        (opt-mr-return-zero)))))
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (&
+                      (opt-ag-function
+                        symbols.recur-caller
+                        (opt-test-instr-seq-prepend
+                          (opt-ag-call-instr
+                            20
+                            symbols.recur
                             (Global (opt-test-symbol "le_a"))
                             (Global (opt-test-symbol "le_b")))
-                          (opt-ag-cabi-slots))
-                        (opt-mr-return-zero))))
-                  callees)))))))))
+                          (opt-mr-return-zero))))
+                    (&
+                      (ir.compiler-ir-function-seq-prepend
+                        (&
+                          (opt-ag-function
+                            symbols.drift-caller
+                            (opt-test-instr-seq-prepend
+                              (opt-ag-call-instr
+                                20
+                                symbols.drift
+                                (Global (opt-test-symbol "le_a"))
+                                (Global (opt-test-symbol "le_b")))
+                              (opt-mr-return-zero))))
+                        (&
+                          (ir.compiler-ir-function-seq-prepend
+                            (&
+                              (opt-ag-function
+                                symbols.cabi-caller
+                                (opt-test-instr-seq-prepend
+                                  (opt-ag-call-instr
+                                    20
+                                    symbols.cabi
+                                    (Global (opt-test-symbol "le_a"))
+                                    (Global (opt-test-symbol "le_b")))
+                                  (opt-test-instr-seq-prepend
+                                    (ir.ir-instr-call-cabi-store-result
+                                      (Var 25)
+                                      symbols.cabi
+                                      (opt-ag-call-args
+                                        (Global (opt-test-symbol "le_a"))
+                                        (Global (opt-test-symbol "le_b")))
+                                      (opt-ag-cabi-slots))
+                                    (opt-mr-return-zero)))))
+                            (& callees)))))))))))))))
 
 ;; The whole-program fact table over that program. `len-eq` is only the gate
 ;; ("would anything read these facts?"), so the LE fixture's table serves.
@@ -62605,46 +63083,74 @@
 
 (define (opt-lga-test-functions [symbols : OptLgaTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-lga-deref-function symbols.helper)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-og-caller symbols.helper-one 10 symbols.helper symbols.a)
+    (& (opt-lga-deref-function symbols.helper))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-og-caller symbols.helper-two 11 symbols.helper symbols.a)
-        (ir.compiler-ir-function-seq-prepend
-          (opt-lga-deref-function symbols.mixed)
+        (& (opt-og-caller symbols.helper-one 10 symbols.helper symbols.a))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-lga-mixed-caller-function symbols)
-            (ir.compiler-ir-function-seq-prepend
-              (opt-lga-deref-function symbols.taken)
+            (& (opt-og-caller symbols.helper-two 11 symbols.helper symbols.a))
+            (&
               (ir.compiler-ir-function-seq-prepend
-                (opt-lga-taken-caller-function symbols)
-                (ir.compiler-ir-function-seq-prepend
-                  (opt-lga-rebind-function symbols.rebind symbols.setter)
+                (& (opt-lga-deref-function symbols.mixed))
+                (&
                   (ir.compiler-ir-function-seq-prepend
-                    (opt-og-caller
-                      symbols.rebind-caller
-                      24
-                      symbols.rebind
-                      symbols.b)
-                    (ir.compiler-ir-function-seq-prepend
-                      (opt-mr-write-function symbols.setter symbols.b)
+                    (& (opt-lga-mixed-caller-function symbols))
+                    (&
                       (ir.compiler-ir-function-seq-prepend
-                        (opt-og-param-writer symbols.mut false)
-                        (ir.compiler-ir-function-seq-prepend
-                          (opt-og-caller
-                            symbols.mut-caller
-                            25
-                            symbols.mut
-                            symbols.c)
+                        (& (opt-lga-deref-function symbols.taken))
+                        (&
                           (ir.compiler-ir-function-seq-prepend
-                            (opt-lga-escape-function symbols.escape)
-                            (ir.compiler-ir-function-seq-prepend
-                              (opt-og-caller
-                                symbols.escape-caller
-                                26
-                                symbols.escape
-                                symbols.a)
-                              (ir.compiler-ir-function-seq-empty))))))))))))))))
+                            (& (opt-lga-taken-caller-function symbols))
+                            (&
+                              (ir.compiler-ir-function-seq-prepend
+                                (&
+                                  (opt-lga-rebind-function
+                                    symbols.rebind
+                                    symbols.setter))
+                                (&
+                                  (ir.compiler-ir-function-seq-prepend
+                                    (&
+                                      (opt-og-caller
+                                        symbols.rebind-caller
+                                        24
+                                        symbols.rebind
+                                        symbols.b))
+                                    (&
+                                      (ir.compiler-ir-function-seq-prepend
+                                        (&
+                                          (opt-mr-write-function
+                                            symbols.setter
+                                            symbols.b))
+                                        (&
+                                          (ir.compiler-ir-function-seq-prepend
+                                            (&
+                                              (opt-og-param-writer
+                                                symbols.mut
+                                                false))
+                                            (&
+                                              (ir.compiler-ir-function-seq-prepend
+                                                (&
+                                                  (opt-og-caller
+                                                    symbols.mut-caller
+                                                    25
+                                                    symbols.mut
+                                                    symbols.c))
+                                                (&
+                                                  (ir.compiler-ir-function-seq-prepend
+                                                    (&
+                                                      (opt-lga-escape-function
+                                                        symbols.escape))
+                                                    (&
+                                                      (ir.compiler-ir-function-seq-prepend
+                                                        (&
+                                                          (opt-og-caller
+                                                            symbols.escape-caller
+                                                            26
+                                                            symbols.escape
+                                                            symbols.a))
+                                                        (&
+                                                          (ir.compiler-ir-function-seq-empty))))))))))))))))))))))))))))))
 
 (define (opt-lga-specialized [symbols : OptLgaTestSymbols] [level : i64]) : ir.CompilerIrFunctionSeq
   (opt.opt-lga-specialize-program
@@ -62917,18 +63423,26 @@
 
 (define (opt-cm-elem-functions [symbols : OptCmElemSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-cm-elem-function symbols.slot (opt-cm-elem-slot-instrs))
-    (ir.compiler-ir-function-seq-prepend
-      (opt-cm-elem-function symbols.length (opt-cm-elem-length-instrs))
+    (& (opt-cm-elem-function symbols.slot (opt-cm-elem-slot-instrs)))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-cm-elem-function symbols.raw (opt-cm-elem-raw-instrs))
-        (ir.compiler-ir-function-seq-prepend
-          (opt-cm-elem-function symbols.rebound (opt-cm-elem-rebound-instrs))
+        (& (opt-cm-elem-function symbols.length (opt-cm-elem-length-instrs)))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-cm-elem-function
-              symbols.caller
-              (opt-cm-elem-caller-instrs symbols.slot))
-            (ir.compiler-ir-function-seq-empty)))))))
+            (& (opt-cm-elem-function symbols.raw (opt-cm-elem-raw-instrs)))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (&
+                  (opt-cm-elem-function
+                    symbols.rebound
+                    (opt-cm-elem-rebound-instrs)))
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (&
+                      (opt-cm-elem-function
+                        symbols.caller
+                        (opt-cm-elem-caller-instrs symbols.slot)))
+                    (& (ir.compiler-ir-function-seq-empty))))))))))))
 
 ;; The pipeline's own composition: the clean bits read off the call-memory
 ;; summaries, which is what a LICM call site reads.
@@ -63135,8 +63649,8 @@
     [call-fixture : ir.CompilerIrFunction (opt-lp-test-call-function symbols)]
     [call-functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
-        (opt.compiler-opt-global-shared-view call-fixture)
-        (opt-lp-test-program-functions symbols))]
+        (& call-fixture)
+        (& (opt-lp-test-program-functions symbols)))]
     [call-summaries : opt.OptProgramSummaries
       (opt-test-summaries-with-global-cell
         (opt.opt-program-summaries-empty)
@@ -64247,7 +64761,7 @@
 (define (opt-cse-block-arith-count
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : i64
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(Some block)
       (match block
         [(Block _ instrs) (opt-count-arith-instr-seq (& instrs))])]
@@ -64697,7 +65211,7 @@
 ;; eligible loop. These fixtures chain N independent counted loops so one
 ;; invocation must schedule across loop boundaries.
 (define (opt-loop-budget-label [prefix : String] [k : i64]) : i64
-  (ir.compiler-ir-label (str_cat.str-cat prefix (string.int->string k))))
+  (ir.compiler-ir-label (& (str_cat.str-cat prefix (string.int->string k)))))
 
 ;; loop_k of the unroll fixture: i/acc phis, acc += i, i += 1, i' < n -- the
 ;; canonical counted self-loop the guarded x16 arm rewrites.
@@ -64721,20 +65235,22 @@
           (ir.compiler-ir-phi-input-seq-prepend
             (I64 0)
             pred
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var n)
-              self
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var n)
+                self
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (I64))
         (ir.CompilerIrInstr.Phi
           a
           (ir.compiler-ir-phi-input-seq-prepend
             (I64 0)
             pred
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var s)
-              self
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var s)
+                self
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (I64))
         (ir.CompilerIrInstr.BinOp s (Add) (Var a) (Var c) (I64))
         (ir.CompilerIrInstr.BinOp n (Add) (Var c) (I64 1) (I64))
@@ -64820,20 +65336,22 @@
           (ir.compiler-ir-phi-input-seq-prepend
             (I64 0)
             pred
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var n)
-              self
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var n)
+                self
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (I64))
         (ir.CompilerIrInstr.Phi
           a
           (ir.compiler-ir-phi-input-seq-prepend
             (I64 0)
             pred
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var s)
-              self
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var s)
+                self
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (I64))
         (ir.CompilerIrInstr.BinOp s (Add) (Var a) (Var c) (I64))
         (ir.CompilerIrInstr.BoundsCheck
@@ -64853,7 +65371,7 @@
         (ir.compiler-ir-phi-input-seq-prepend
           (Var (+ 5 (* 6 k)))
           (opt-loop-budget-label "loop" k)
-          (ir.compiler-ir-phi-input-seq-empty))
+          (& (ir.compiler-ir-phi-input-seq-empty)))
         (I64))
       (ir.CompilerIrInstr.Jump (opt-loop-budget-label "loop" (+ k 1))))))
 
@@ -64866,7 +65384,7 @@
         (ir.compiler-ir-phi-input-seq-prepend
           (Var (+ 5 (* 6 (- n 1))))
           (opt-loop-budget-label "loop" (- n 1))
-          (ir.compiler-ir-phi-input-seq-empty))
+          (& (ir.compiler-ir-phi-input-seq-empty)))
         (I64))
       (ir.CompilerIrInstr.Return (Some (Var (+ 8 (* 6 (- n 1)))))))))
 
@@ -64918,10 +65436,11 @@
           (ir.compiler-ir-phi-input-seq-prepend
             (I64 0)
             pred
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var n)
-              (opt-loop-budget-label "latch" k)
-              (ir.compiler-ir-phi-input-seq-empty)))
+            (&
+              (ir.compiler-ir-phi-input-seq-prepend
+                (Var n)
+                (opt-loop-budget-label "latch" k)
+                (& (ir.compiler-ir-phi-input-seq-empty)))))
           (I64))
         (ir.CompilerIrInstr.BoundsCheck
           (Var c)
@@ -65288,8 +65807,8 @@
         (= (string.string-length (opt.compiler-opt-debug-verification-error)) 0))]
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
-        (opt-test-function (ir.compiler-ir-instr-seq-empty))
-        (ir.compiler-ir-function-seq-empty))]
+        (& (opt-test-function (ir.compiler-ir-instr-seq-empty)))
+        (& (ir.compiler-ir-function-seq-empty)))]
     [index : opt.OptFunctionIndex (opt.opt-function-index-build functions)]
     [_install : unit (opt.opt-inline-owned-state-install! index)]
     [live-owned : opt.CompilerOptOwnedState
@@ -65538,7 +66057,7 @@
        return 0"))
 
 (define (opt-bit-test-chain-label [index : i64]) : i64
-  (ir.compiler-ir-label (str_cat.str-cat "l" (string.int->string index))))
+  (ir.compiler-ir-label (& (str_cat.str-cat "l" (string.int->string index)))))
 
 ;; `bounds[i]` tested for equality at link i; the last link's false edge is the
 ;; miss arm. `ty` is the compare operand type, `value-var` the tested var.
@@ -65916,7 +66435,7 @@
   (irt.params "n=%0:i64, buf=%1:i64"))
 
 (define (opt-ubound-label [name : String]) : i64
-  (ir.compiler-ir-label name))
+  (ir.compiler-ir-label (& name)))
 
 ;; `entry`: the rotation guard. `guard?` false drops it, which is the refusal
 ;; case where nothing proves `n > seed >= 0` at the preheader.
@@ -65956,10 +66475,11 @@
         (ir.compiler-ir-phi-input-seq-prepend
           (I64 seed)
           (opt-ubound-label "pre")
-          (ir.compiler-ir-phi-input-seq-prepend
-            (Var 9)
-            (opt-ubound-label "latch")
-            (ir.compiler-ir-phi-input-seq-empty)))
+          (&
+            (ir.compiler-ir-phi-input-seq-prepend
+              (Var 9)
+              (opt-ubound-label "latch")
+              (& (ir.compiler-ir-phi-input-seq-empty)))))
         (I64)))))
 
 (define (opt-ubound-head-tail [seed : i64] [first? : bool]) : ir.CompilerIrInstrSeq
@@ -66277,7 +66797,7 @@
 ;; shape. `loop?` false drops the back edge, leaving a straight-line function
 ;; the pass must not touch.
 (define (opt-bg-label [name : String]) : i64
-  (ir.compiler-ir-label name))
+  (ir.compiler-ir-label (& name)))
 
 (define (opt-bg-test-params) : ir.CompilerIrParamSeq
   (irt.params "a=%0:i64, b=%1:i64"))
@@ -66343,14 +66863,15 @@
     (ir.compiler-ir-phi-input-seq-prepend
       (I64 0)
       (opt-bg-label "pre")
-      (ir.compiler-ir-phi-input-seq-prepend
-        (Var 9)
-        (opt-bg-label "head")
-        (ir.compiler-ir-phi-input-seq-empty)))
+      (&
+        (ir.compiler-ir-phi-input-seq-prepend
+          (Var 9)
+          (opt-bg-label "head")
+          (& (ir.compiler-ir-phi-input-seq-empty)))))
     (ir.compiler-ir-phi-input-seq-prepend
       (I64 0)
       (opt-bg-label "pre")
-      (ir.compiler-ir-phi-input-seq-empty))))
+      (& (ir.compiler-ir-phi-input-seq-empty)))))
 
 (define (opt-bg-exit-block) : ir.CompilerIrBlock
   (irt.block "exit:
@@ -67033,11 +67554,11 @@
 (define (opt-pcf-branch [on-true : String] [on-false : String]) : ir.CompilerIrInstr
   (Branch
     (Var 0)
-    (ir.compiler-ir-label on-true)
-    (ir.compiler-ir-label on-false)))
+    (ir.compiler-ir-label (& on-true))
+    (ir.compiler-ir-label (& on-false))))
 
 (define (opt-pcf-jump [label : String]) : ir.CompilerIrInstr
-  (Jump (ir.compiler-ir-label label)))
+  (Jump (ir.compiler-ir-label (& label))))
 
 (define (opt-pcf-return [value : bool]) : ir.CompilerIrInstr
   (Return (Some (Bool value))))
@@ -67053,7 +67574,7 @@
   (irt.instr "branch %5, yes, no"))
 
 (define (opt-pcf-block [label : String] [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlock
-  (Block (ir.compiler-ir-label label) instrs))
+  (Block (ir.compiler-ir-label (& label)) instrs))
 
 ;; entry -> {arm, sent} -> merge, with the merge holding the sentinel phi, its
 ;; compare and the branch. `op`/`literal` name the compare; `yes-instrs` is the
@@ -67173,11 +67694,10 @@
 (define (opt-pcf-block-of
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : ir.CompilerIrBlock
-  (match (opt.opt-cfg-find-block
-    blocks
-    (ir.compiler-ir-label (opt.compiler-opt-global-shared-view label)))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(Some block) block]
-    [(No) (Block (ir.compiler-ir-label label) (ir.compiler-ir-instr-seq-empty))]))
+    [(No)
+      (Block (ir.compiler-ir-label (& label)) (ir.compiler-ir-instr-seq-empty))]))
 
 (define (opt-pcf-count
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -67204,7 +67724,7 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]
   [target : String]) : bool
-  (= (opt-pcf-jump-target blocks label) (ir.compiler-ir-label target)))
+  (= (opt-pcf-jump-target blocks label) (ir.compiler-ir-label (& target))))
 
 ;; Is instruction `index` of `label` the moved compare `dst = op src, literal`?
 (define (opt-pcf-moved-compare?
@@ -67280,7 +67800,9 @@
   [inputs : ir.CompilerIrPhiInputSeq]
   [label : String]
   [var : i64]) : bool
-  (match (opt.opt-thread-phi-input-value inputs (ir.compiler-ir-label label))
+  (match (opt.opt-thread-phi-input-value
+    inputs
+    (ir.compiler-ir-label (& label)))
     [(Some value)
       (match value
         [(Var found) (= found var)]
@@ -67291,7 +67813,9 @@
   [inputs : ir.CompilerIrPhiInputSeq]
   [label : String]
   [literal : i64]) : bool
-  (match (opt.opt-thread-phi-input-value inputs (ir.compiler-ir-label label))
+  (match (opt.opt-thread-phi-input-value
+    inputs
+    (ir.compiler-ir-label (& label)))
     [(Some value)
       (match value
         [(I64 found) (= found literal)]
@@ -67379,8 +67903,8 @@
 (define (opt-pcc-branch [cond-var : i64] [on-true : String] [on-false : String]) : ir.CompilerIrInstr
   (Branch
     (Var cond-var)
-    (ir.compiler-ir-label on-true)
-    (ir.compiler-ir-label on-false)))
+    (ir.compiler-ir-label (& on-true))
+    (ir.compiler-ir-label (& on-false))))
 
 (define (opt-pcc-mov [dst : i64] [src : i64]) : ir.CompilerIrInstr
   (Mov dst (Var src) (I64)))
@@ -67588,7 +68112,7 @@
 (define (opt-pcm-has-block?
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : bool
-  (opt.opt-cfg-block-exists? blocks (ir.compiler-ir-label label)))
+  (opt.opt-cfg-block-exists? blocks (ir.compiler-ir-label (& label))))
 
 ;; --- JT-2: a phi merge threaded through the compare tree it feeds ----------
 ;;
@@ -67687,7 +68211,9 @@
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]
   [target : String]) : bool
-  (= (opt-jt2-branch-true-target blocks label) (ir.compiler-ir-label target)))
+  (=
+    (opt-jt2-branch-true-target blocks label)
+    (ir.compiler-ir-label (& target))))
 
 ;; Returns 42 only when the edges the facts decide leave, the rest collapse
 ;; onto the one exit that reads the merge, and the two-reader variant refuses.
@@ -67996,7 +68522,7 @@
       (match (opt-pcf-block-of blocks label)
         [(Block _ instrs) instrs])]
     [count : i64 (ir.compiler-ir-instr-seq-count instrs)]
-    [wanted : i64 (ir.compiler-ir-label target)]
+    [wanted : i64 (ir.compiler-ir-label (& target))]
     (and
       (> count 0)
       (match (ir.compiler-ir-instr-seq-ref instrs (- count 1))
@@ -68178,16 +68704,16 @@
   (irt.params "cond=%0:bool, len=%1:i64, x=%2:i64, y=%3:i64"))
 
 (define (opt-nn-block [label : String] [instrs : ir.CompilerIrInstrSeq]) : ir.CompilerIrBlock
-  (Block (ir.compiler-ir-label label) instrs))
+  (Block (ir.compiler-ir-label (& label)) instrs))
 
 (define (opt-nn-jump [label : String]) : ir.CompilerIrInstr
-  (Jump (ir.compiler-ir-label label)))
+  (Jump (ir.compiler-ir-label (& label))))
 
 (define (opt-nn-branch [cond : i64] [on-true : String] [on-false : String]) : ir.CompilerIrInstr
   (Branch
     (Var cond)
-    (ir.compiler-ir-label on-true)
-    (ir.compiler-ir-label on-false)))
+    (ir.compiler-ir-label (& on-true))
+    (ir.compiler-ir-label (& on-false))))
 
 (define (opt-nn-return [var : i64]) : ir.CompilerIrInstr
   (Return (Some (Var var))))
@@ -68209,13 +68735,16 @@
   (BinOp dst op (Var lhs) (Var rhs) (I64)))
 
 (define (opt-nn-check [idx : i64] [len : i64] [label : String]) : ir.CompilerIrInstr
-  (BoundsCheck (Var idx) (Var len) (ir.compiler-ir-label label)))
+  (BoundsCheck (Var idx) (Var len) (ir.compiler-ir-label (& label))))
 
 (define (opt-nn-phi-input
   [value : ir.CompilerIrValue]
   [label : String]
   [rest : ir.CompilerIrPhiInputSeq]) : ir.CompilerIrPhiInputSeq
-  (ir.compiler-ir-phi-input-seq-prepend value (ir.compiler-ir-label label) rest))
+  (ir.compiler-ir-phi-input-seq-prepend
+    value
+    (ir.compiler-ir-label (& label))
+    (& rest)))
 
 (define (opt-nn-run [blocks : ir.CompilerIrBlockList]) : ir.CompilerIrBlockList
   (opt.opt-bounds-dom-blocks-with-context
@@ -68228,11 +68757,10 @@
 (define (opt-nn-block-of
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : ir.CompilerIrBlock
-  (match (opt.opt-cfg-find-block
-    blocks
-    (ir.compiler-ir-label (owned_view.compiler-owned-shared-view label)))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(Some block) block]
-    [(No) (Block (ir.compiler-ir-label label) (ir.compiler-ir-instr-seq-empty))]))
+    [(No)
+      (Block (ir.compiler-ir-label (& label)) (ir.compiler-ir-instr-seq-empty))]))
 
 (define (opt-nn-count
   [blocks : (& blocks ir.CompilerIrBlockList)]
@@ -68622,10 +69150,11 @@
       (ir.compiler-ir-phi-input-seq-prepend
         (opt-unr-loop-seed mode)
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-phi-input-seq-prepend
-          (opt-unr-var 13)
-          (ir.compiler-ir-label "body")
-          (ir.compiler-ir-phi-input-seq-empty)))
+        (&
+          (ir.compiler-ir-phi-input-seq-prepend
+            (opt-unr-var 13)
+            (ir.compiler-ir-label "body")
+            (& (ir.compiler-ir-phi-input-seq-empty)))))
       (I64))
     (ir.CompilerIrInstr.Gep 9 (opt-unr-var 1) (opt-unr-var 8) (I64))
     (ir.CompilerIrInstr.Load 10 (opt-unr-var 9) (I64))
@@ -68666,7 +69195,7 @@
 (define (opt-unr-has-block?
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : bool
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(Some _) true]
     [(No) false]))
 
@@ -68800,10 +69329,11 @@
       (ir.compiler-ir-phi-input-seq-prepend
         (opt-flag-exit-sent-seed variant)
         (ir.compiler-ir-label "entry")
-        (ir.compiler-ir-phi-input-seq-prepend
-          (Var 4)
-          (ir.compiler-ir-label "latch")
-          (ir.compiler-ir-phi-input-seq-empty)))
+        (&
+          (ir.compiler-ir-phi-input-seq-prepend
+            (Var 4)
+            (ir.compiler-ir-label "latch")
+            (& (ir.compiler-ir-phi-input-seq-empty)))))
       (I64))
     (irt.instr "%5 = lt %1, %0 : bool")
     (irt.instr "branch %5, gate, exit")))
@@ -68836,9 +69366,10 @@
       (ir.CompilerIrInstr.Branch
         (Var 12)
         (ir.compiler-ir-label
-          (if (= variant 2)
-            "probe"
-            "hit"))
+          (&
+            (if (= variant 2)
+              "probe"
+              "hit")))
         (ir.compiler-ir-label "latch")))
     (opt-test-instrs (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "latch")))))
 
@@ -68854,18 +69385,18 @@
       (ir.compiler-ir-phi-input-seq-prepend
         (Var 3)
         (ir.compiler-ir-label "match")
-        (ir.compiler-ir-phi-input-seq-empty))]
+        (& (ir.compiler-ir-phi-input-seq-empty)))]
     (cond
       [(= variant 2)
         (ir.compiler-ir-phi-input-seq-prepend
           (Var 11)
           (ir.compiler-ir-label "probe")
-          tail)]
+          (& tail))]
       [(= variant 4)
         (ir.compiler-ir-phi-input-seq-prepend
           (I64 (- 0 2))
           (ir.compiler-ir-label "hit")
-          tail)]
+          (& tail))]
       [else tail])))
 
 (define (opt-flag-exit-sent-latch-instrs [variant : i64]) : ir.CompilerIrInstrSeq
@@ -68875,7 +69406,7 @@
       (ir.compiler-ir-phi-input-seq-prepend
         (Var 9)
         (ir.compiler-ir-label "mismatch")
-        (opt-flag-exit-sent-latch-extra-inputs variant))
+        (& (opt-flag-exit-sent-latch-extra-inputs variant)))
       (I64))
     (irt.instr "%2 = add %1, 1 : i64")
     (ir.CompilerIrInstr.Jump (ir.compiler-ir-label "header"))))
@@ -68891,15 +69422,17 @@
       (ir.compiler-ir-phi-input-seq-prepend
         (Var 3)
         (ir.compiler-ir-label "exit")
-        (ir.compiler-ir-phi-input-seq-prepend
-          (Var 3)
-          (ir.compiler-ir-label "escape")
-          (if (= variant 2)
-            (ir.compiler-ir-phi-input-seq-prepend
-              (Var 3)
-              (ir.compiler-ir-label "probe")
-              (ir.compiler-ir-phi-input-seq-empty))
-            (ir.compiler-ir-phi-input-seq-empty))))
+        (&
+          (ir.compiler-ir-phi-input-seq-prepend
+            (Var 3)
+            (ir.compiler-ir-label "escape")
+            (&
+              (if (= variant 2)
+                (ir.compiler-ir-phi-input-seq-prepend
+                  (Var 3)
+                  (ir.compiler-ir-label "probe")
+                  (& (ir.compiler-ir-phi-input-seq-empty)))
+                (ir.compiler-ir-phi-input-seq-empty))))))
       (I64))
     (irt.instr "return %7")))
 
@@ -69001,7 +69534,7 @@
 (define (opt-flag-exit-sent-gate-lhs
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : i64
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) (- 0 1)]
     [(Some block)
       (match block
@@ -69024,7 +69557,7 @@
 (define (opt-flag-exit-sent-gate-rhs
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [label : String]) : i64
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) (- 0 99)]
     [(Some block)
       (match block
@@ -69048,7 +69581,7 @@
   [pred : String]) : i64
   (match (opt.opt-thread-phi-input-value
     (opt-flag-exit-test-phi-inputs blocks label dst)
-    (ir.compiler-ir-label pred))
+    (ir.compiler-ir-label (& pred)))
     [(No) (- 0 99)]
     [(Some value)
       (match value
@@ -69246,7 +69779,7 @@
 
 ;; `bounds_check <literal>, %1`
 (define (opt-abcd-check-lit [literal : i64] [label : String]) : ir.CompilerIrInstr
-  (BoundsCheck (I64 literal) (Var 1) (ir.compiler-ir-label label)))
+  (BoundsCheck (I64 literal) (Var 1) (ir.compiler-ir-label (& label))))
 
 ;; (a)/(d) THE EXPLICIT STACK. `sp` is a header phi seeded with a literal the
 ;; preheader already checked, pushed as `sp + 1` (checked at the push, which is
@@ -69955,17 +70488,21 @@
 
 (define (opt-t22-cell-functions [symbols : OptT22CellSymbols] [middle : i64]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-call-memory-test-function
-      symbols.caller
-      (ir.compiler-ir-param-seq-empty)
-      (opt-t22-cell-instrs symbols middle))
-    (ir.compiler-ir-function-seq-prepend
-      (opt-t22-store-function symbols.writer symbols.g)
+    (&
+      (opt-call-memory-test-function
+        symbols.caller
+        (ir.compiler-ir-param-seq-empty)
+        (opt-t22-cell-instrs symbols middle)))
+    (&
       (ir.compiler-ir-function-seq-prepend
-        (opt-t22-store-function symbols.clean symbols.h)
-        (ir.compiler-ir-function-seq-prepend
-          (opt-t22-opaque-function symbols.opaque)
-          (ir.compiler-ir-function-seq-empty))))))
+        (& (opt-t22-store-function symbols.writer symbols.g))
+        (&
+          (ir.compiler-ir-function-seq-prepend
+            (& (opt-t22-store-function symbols.clean symbols.h))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (& (opt-t22-opaque-function symbols.opaque))
+                (& (ir.compiler-ir-function-seq-empty))))))))))
 
 (define (opt-t22-cell-run [symbols : OptT22CellSymbols] [middle : i64]) : ir.CompilerIrBlockList
   (let
@@ -70128,17 +70665,21 @@
   (let
     [functions : ir.CompilerIrFunctionSeq
       (ir.compiler-ir-function-seq-prepend
-        (opt-call-memory-test-function
-          symbols.caller
-          (ir.compiler-ir-param-seq-empty)
-          (opt-t22-cell-row-instrs symbols callee))
-        (ir.compiler-ir-function-seq-prepend
-          (opt-t22-store-function symbols.writer symbols.g)
+        (&
+          (opt-call-memory-test-function
+            symbols.caller
+            (ir.compiler-ir-param-seq-empty)
+            (opt-t22-cell-row-instrs symbols callee)))
+        (&
           (ir.compiler-ir-function-seq-prepend
-            (opt-t22-store-function symbols.clean symbols.h)
-            (ir.compiler-ir-function-seq-prepend
-              (opt-t22-opaque-function symbols.opaque)
-              (ir.compiler-ir-function-seq-empty)))))]
+            (& (opt-t22-store-function symbols.writer symbols.g))
+            (&
+              (ir.compiler-ir-function-seq-prepend
+                (& (opt-t22-store-function symbols.clean symbols.h))
+                (&
+                  (ir.compiler-ir-function-seq-prepend
+                    (& (opt-t22-opaque-function symbols.opaque))
+                    (& (ir.compiler-ir-function-seq-empty)))))))))]
     [blocks
       (opt-t22-run
         (ir.compiler-ir-param-seq-empty)
@@ -70197,13 +70738,15 @@
   [callee : i64]
   [arg : i64]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-call-memory-test-function
-      symbols.caller
-      (ir.compiler-ir-param-seq-empty)
-      (opt-t22-global-arg-instrs symbols callee arg))
-    (ir.compiler-ir-function-seq-prepend
-      (opt-og-param-writer callee false)
-      (ir.compiler-ir-function-seq-empty))))
+    (&
+      (opt-call-memory-test-function
+        symbols.caller
+        (ir.compiler-ir-param-seq-empty)
+        (opt-t22-global-arg-instrs symbols callee arg)))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-og-param-writer callee false))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 ;; `with-storage?` picks whether the summary carries IAG-2's storage table: the
 ;; same program with it absent must keep the pre-IAG-2 verdict exactly.
@@ -70854,7 +71397,7 @@
   [op : ir.CompilerIrBinOp]) : i64
   (opt-bce-version-test-block-binop-count
     blocks
-    (ir.compiler-ir-label label)
+    (ir.compiler-ir-label (& label))
     op))
 
 (define (compiler-optimize-bce-index-form-self-test) : i64
@@ -72254,9 +72797,10 @@
           (Var 10)
           (ir.compiler-ir-label "mid")
           (ir.compiler-ir-label
-            (if (= mode 3)
-              "c0"
-              "exit")))))
+            (&
+              (if (= mode 3)
+                "c0"
+                "exit"))))))
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "mid")
       (opt-test-instrs
@@ -72264,9 +72808,10 @@
         (ir.CompilerIrInstr.Branch
           (Var 11)
           (ir.compiler-ir-label
-            (if (= mode 3)
-              "exit"
-              "c0"))
+            (&
+              (if (= mode 3)
+                "exit"
+                "c0")))
           (ir.compiler-ir-label "exit"))))))
 
 ;; The length-family swap: one `&Vec` parameter's length word read TWICE, once
@@ -72296,21 +72841,24 @@
         (ir.CompilerIrInstr.Branch
           (Var 24)
           (ir.compiler-ir-label
-            (if (= mode 3)
-              "arm"
-              "mid"))
+            (&
+              (if (= mode 3)
+                "arm"
+                "mid")))
           (ir.compiler-ir-label
-            (if (= mode 3)
-              "mid"
-              "slow1")))))
+            (&
+              (if (= mode 3)
+                "mid"
+                "slow1"))))))
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "arm")
       (opt-test-instrs
         (ir.CompilerIrInstr.Jump
           (ir.compiler-ir-label
-            (if (= mode 3)
-              "mid"
-              "slow1")))))
+            (&
+              (if (= mode 3)
+                "mid"
+                "slow1"))))))
     (ir.CompilerIrBlock.Block
       (ir.compiler-ir-label "mid")
       (opt-test-instrs
@@ -72532,7 +73080,7 @@
   [index : ir.CompilerIrValue]
   [length : ir.CompilerIrValue]
   [label : String]) : ir.CompilerIrInstr
-  (BoundsCheck index length (ir.compiler-ir-label label)))
+  (BoundsCheck index length (ir.compiler-ir-label (& label))))
 
 ;; header: pos/acc phis, [4: a call] [5: an underivable check] [7: a load],
 ;; the candidate check, an add, the call, jump latch.
@@ -72567,9 +73115,10 @@
               (opt-test-instr-seq-prepend
                 (Jump
                   (ir.compiler-ir-label
-                    (if (= variant 11)
-                      "inner"
-                      "latch")))
+                    (&
+                      (if (= variant 11)
+                        "inner"
+                        "latch"))))
                 (ir.compiler-ir-instr-seq-empty)))))))))
 
 ;; Variant 11's nested loop: a self-looping counter over the value the header's
@@ -72676,7 +73225,7 @@
 (define (opt-bce-hoist-check-label
   [blocks : ir.CompilerIrBlockList]
   [label : String]) : String
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) ""]
     [(Some block)
       (match block
@@ -72705,7 +73254,7 @@
 (define (opt-bce-hoist-check-index
   [blocks : ir.CompilerIrBlockList]
   [label : String]) : i64
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label label))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& label)))
     [(No) (- 0 1)]
     [(Some block)
       (match block
@@ -73053,10 +73602,11 @@
 
 (define (opt-inline-store-functions [symbols : OptInlineStoreTestSymbols]) : ir.CompilerIrFunctionSeq
   (ir.compiler-ir-function-seq-prepend
-    (opt-inline-store-caller symbols)
-    (ir.compiler-ir-function-seq-prepend
-      (opt-inline-store-callee symbols)
-      (ir.compiler-ir-function-seq-empty))))
+    (& (opt-inline-store-caller symbols))
+    (&
+      (ir.compiler-ir-function-seq-prepend
+        (& (opt-inline-store-callee symbols))
+        (& (ir.compiler-ir-function-seq-empty))))))
 
 ;; The dst of the first `BinOp` in the sequence, or -1.
 (define (opt-inline-store-binop-dst-from
@@ -73830,7 +74380,7 @@
 (define (opt-unroll-sum-test-instrs
   [blocks : (& blocks ir.CompilerIrBlockList)]
   [name : String]) : ir.CompilerIrInstrSeq
-  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label name))
+  (match (opt.opt-cfg-find-block blocks (ir.compiler-ir-label (& name)))
     [(No) (ir.compiler-ir-instr-seq-empty)]
     [(Some block)
       (match block
@@ -74336,12 +74886,13 @@
             (ir.compiler-ir-phi-input-seq-prepend
               (Var 2)
               header
-              (if (= mode 12)
-                (ir.compiler-ir-phi-input-seq-empty)
-                (ir.compiler-ir-phi-input-seq-prepend
-                  (Var 4)
-                  body
-                  (ir.compiler-ir-phi-input-seq-empty))))
+              (&
+                (if (= mode 12)
+                  (ir.compiler-ir-phi-input-seq-empty)
+                  (ir.compiler-ir-phi-input-seq-prepend
+                    (Var 4)
+                    body
+                    (& (ir.compiler-ir-phi-input-seq-empty))))))
             (I64))))
       (ir.compiler-ir-instr-builder-push!
         (&mut b)
@@ -74471,8 +75022,8 @@
           (let
             [functions
               (ir.compiler-ir-function-seq-prepend
-                (opt-lcc-test-callee (= mode 4))
-                (ir.compiler-ir-function-seq-empty))]
+                (& (opt-lcc-test-callee (= mode 4)))
+                (& (ir.compiler-ir-function-seq-empty)))]
             (opt.opt-function-index-build functions))]
         [out : ir.CompilerIrFunction
           (let
@@ -74876,8 +75427,8 @@
           (let
             [functions
               (ir.compiler-ir-function-seq-prepend
-                (opt-lcc-test-callee false)
-                (ir.compiler-ir-function-seq-empty))]
+                (& (opt-lcc-test-callee false))
+                (& (ir.compiler-ir-function-seq-empty)))]
             (opt.opt-function-index-build functions))]
         [out
           (let

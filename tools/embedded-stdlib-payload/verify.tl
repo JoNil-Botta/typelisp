@@ -48,7 +48,7 @@
       [_ tag])))
 
 (define (embedded-stdlib-verify-lex [source : String]) : EmbeddedStdlibVerifyTokens
-  (match (lexer.spanned-result source)
+  (match (lexer.spanned-result (& source))
     [(Ok shared)
       (let
         [count : i64 0]

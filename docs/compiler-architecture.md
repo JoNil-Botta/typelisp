@@ -559,6 +559,23 @@ Every example is its own program.
 
 A batched run therefore gives each file the result it gets alone (#8580). `scripts/verify-doc-tests.sh` fails a batched run that fails while every file passes alone; its per-file probe only locates failures.
 
+A session's program cache hands every later check the same parsed AST
+([#8757](https://github.com/JoNil-Botta/typelisp/issues/8757)). Typecheck rewrites
+a few parsed nodes in place:
+- a dotted local field becomes a projection;
+- macro hygiene renames;
+- an expected bare variant is retargeted.
+
+The rewritten nodes' new children lie above the session's AST floor, which the
+next reset discards. So the AST pools journal every in-place write to a node
+below the floor (`ast-node-protected-note!`). A cached session's pool reset
+restores those nodes, newest first, before it truncates to the floor
+(`ast-node-protected-restore!`). Each check therefore sees its cached programs
+exactly as parsed, so none of these can inherit an earlier check's rewrites:
+- an LSP edit;
+- a later `typelisp test` file;
+- a later doc example.
+
 The lifetime tests in
 [`compiler_package_discovery_lifetime_tests.tl`](../src/tests/compiler_package_discovery_lifetime_tests.tl)
 exercise arena reuse, path and diagnostic ownership, session restoration,
@@ -1008,6 +1025,10 @@ memory, not a value: a store or call through the exposed address redefines it
 without naming it. No pass that forwards values by definition records a copy or
 constant fact naming such a var, as destination or source.
 - Global copy/CSE and affine folding read the marks of `opt-addr-taken-vars`.
+- `bounds_dom` (and its late `bounds_dom_le` slot) reads the same marks through
+  `opt-bounds-dom-sources`, which counts an address-taken var as
+  multiply-defined. So no copy, comparison fact or checked index/length pair
+  holds it (#8672).
 - LICM and the block-local `fold` pipeline read the installed per-function set
   `opt-function-addr-taken`. Each installs it before rewriting a function:
   LICM once it has found a loop, and `optimize-block-list-for-function-pass`

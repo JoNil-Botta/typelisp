@@ -15,22 +15,22 @@
         (ci.intern-generated-canonical-name "helper")
         (Avx512)
         8
-        (Var 20)
-        args
-        (Value 6 (Varying) (live_tests.compiler-live-i64-ty)))]
+        (& (Var 20))
+        (& args)
+        (& (Value 6 (Varying) (live_tests.compiler-live-i64-ty))))]
     (and
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-uses instr)
         (live_tests.compiler-live-set3 20 21 22))
       (live.compiler-live-set-eq?
-        (live.compiler-live-instr-defs instr)
+        (live.compiler-live-instr-defs (& instr))
         (live.compiler-live-set1 6)))))
 
 (define (compiler-live-smoke-descriptor-pair-use-def-ok?) : bool
   (let
     [kind : ir.CompilerIrDescriptorPairKind (OwnedString)]
     [pack : ir.CompilerIrInstr
-      (ir.ir-instr-descriptor-pair-pack 3 (Var 1) (Var 2) kind)]
+      (ir.ir-instr-descriptor-pair-pack 3 (& (Var 1)) (& (Var 2)) kind)]
     [data : ir.CompilerIrInstr (ir.ir-instr-descriptor-pair-data 4 (Var 3))]
     [length : ir.CompilerIrInstr (ir.ir-instr-descriptor-pair-length 5 (Var 3))]
     (and
@@ -38,19 +38,19 @@
         (live.compiler-live-instr-uses pack)
         (live_tests.compiler-live-set2 1 2))
       (live.compiler-live-set-eq?
-        (live.compiler-live-instr-defs pack)
+        (live.compiler-live-instr-defs (& pack))
         (live.compiler-live-set1 3))
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-uses data)
         (live.compiler-live-set1 3))
       (live.compiler-live-set-eq?
-        (live.compiler-live-instr-defs data)
+        (live.compiler-live-instr-defs (& data))
         (live.compiler-live-set1 4))
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-uses length)
         (live.compiler-live-set1 3))
       (live.compiler-live-set-eq?
-        (live.compiler-live-instr-defs length)
+        (live.compiler-live-instr-defs (& length))
         (live.compiler-live-set1 5)))))
 
 (define (main) : i64

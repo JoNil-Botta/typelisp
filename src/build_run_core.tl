@@ -79,7 +79,7 @@
     (while (< index (cli_svec.len (& names)))
       (set!
         env
-        (cfg_core.compiler-cfg-enable env (cli_svec.get (& names) index "")))
+        (cfg_core.compiler-cfg-enable env (& (cli_svec.get (& names) index ""))))
       (set! index (+ index 1)))
     env))
 

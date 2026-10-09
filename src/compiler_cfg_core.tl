@@ -54,9 +54,7 @@
         env
         (compiler-cfg-bind
           env
-          (owned_view.compiler-owned-array-element-shared-view
-            names.slots
-            index)
+          (& (array-ref names.slots index))
           (array-ref names.values index))))
     env))
 
@@ -159,7 +157,7 @@
   [value : i64]) : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-bind-id cfgs (compiler-cfg-key-id key) value))
 
-(define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
+(define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : (& str)]) : sym_i64_env.SymI64Env
   (compiler-cfg-bind cfgs name 1))
 
 (define (compiler-cfg-union-value) : i64
@@ -167,12 +165,12 @@
 
 ;; Static analyses can request both arms of a simple cfg expression. The
 ;; predicate remains enabled for declarations and one-armed expressions.
-(define (compiler-cfg-union [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
+(define (compiler-cfg-union [cfgs : sym_i64_env.SymI64Env] [name : (& str)]) : sym_i64_env.SymI64Env
   (compiler-cfg-bind cfgs name (compiler-cfg-union-value)))
 
 (define (compiler-cfg-bind
   [cfgs : sym_i64_env.SymI64Env]
-  [name : String]
+  [name : (& str)]
   [value : i64]) : sym_i64_env.SymI64Env
   (compiler-cfg-bind-id
     cfgs
@@ -181,11 +179,11 @@
 
 (define (compiler-cfg-enable-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]
-  [name : String]
+  [name : (& str)]
   [intern-state : (&mut intern-state ci.InternCompatState)]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable-id
     cfgs
-    (ci.intern-compat-state-intern intern-state (& name))))
+    (ci.intern-compat-state-intern intern-state name)))
 
 (define (compiler-cfg-merge
   [base : sym_i64_env.SymI64Env]

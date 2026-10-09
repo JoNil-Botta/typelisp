@@ -1057,6 +1057,25 @@ calls. They can inspect binding-clause captures with
 `expr-binding-clause-list-length`, and `expr-binding-clause-list-nth`.
 `expr-binding-clause-list->expr-list` converts a binding-clause list back
 into bracket-clause operand syntax for explicit splicing into macro calls.
+`(expr-binding-clause-init-callee clause)` returns the canonical identity of
+the module-level function that the clause's initializer calls directly, as a
+`String` `module/name`: `"stdlib.iterator/range"` for
+`[i (iterator.range 0 n)]`. `module` is the canonical path of the module that
+declares the function and `name` its declared name, whichever import alias or
+full module path the call is spelled with. The compiler resolves the call head
+where the macro is called, as it resolves that call when checking it, and does
+not evaluate the initializer. The result is `""` when the initializer is not a
+call, or when its head is not a `define`d function of a named module or the
+compiler cannot be sure which declaration it names. That covers a local
+binding of the head's name, which shadows declarations (a parameter, a `let`
+binding, or a local whose field a dotted head names), a call through a function
+value, a macro, a struct constructor or enum variant, an extern or dispatch
+function, a function of the root program module, a hygiene-renamed name from
+another macro's expansion, and a slash-qualified spelling. A non-empty result
+therefore names the function the call runs; `""` means unknown.
+`(expr-call-args expr)` returns the argument expressions of a call
+expression as an `ExprList`, looking through source spans and caller-origin
+markers, and an empty list for any other expression.
 Cons-list helpers such as `expr-list-head` and `expr-list-tail` are not part
 of the public macro ABI.
 
@@ -4600,10 +4619,10 @@ moving it. These are limited to:
   their explicit-lifetime forms.
 - Borrowed enum matches over `(& place)` / `(& lifetime place)`. The match
   inspects the active enum variant without moving the enum owner.
-- Borrowed tuple matches over `(& place)` / `(& lifetime place)`. Tuple
-  subpattern bindings follow the borrowed-pattern binding rule of section
-  5.13: a `Copy` slot is copied, and any other slot binds a shared reference
-  carrying the scrutinee lifetime.
+- Borrowed tuple and struct matches over `(& place)` / `(& lifetime place)`.
+  Tuple slot and struct field subpattern bindings follow the borrowed-pattern
+  binding rule of section 5.13: a `Copy` slot or field is copied, and any
+  other binds a shared reference carrying the scrutinee lifetime.
 - Calls and typed operations whose parameter or receiver is `(& lifetime T)`
   or `(&mut lifetime T)`. The ordinary call rules in section 3.10 insert an
   immutable auto-borrow or reborrow when the formal parameter is an immutable
@@ -5220,7 +5239,9 @@ explicit constructors.
   and `(geometry.Point x y)`. Fields are matched by declaration order,
   mirroring constructor calls. Field subpatterns are field bindings, `_`, and
   nested irrefutable struct patterns; refutable field subpatterns such as
-  literals or enum variants are rejected.
+  literals or enum variants are rejected. Matching a shared borrowed struct
+  `(& S)` binds its fields by the borrowed-pattern binding rule below and does
+  not move the owner.
 - Tuple scrutinees support the constructor-shaped `(tuple p1 ... pn)` pattern.
   Its arity must exactly match `(Tuple T1 ... Tn)`. Slot subpatterns are
   irrefutable bindings, `_`, or nested tuple, struct, and box patterns, and
@@ -8025,11 +8046,18 @@ arbitrary-user slot (`GS:0x28`). Under the Linux shared-object code model
 (`docs/compiler-architecture.md`, #8257), the same accesses are initial-exec:
 each loads the variable's GOT offset and the DSO carries `DF_STATIC_TLS`.
 There is no entry, and `tl_shared_object_init` runs the global initializers.
-Raw thread spawn initializes a fresh zero
-current-arena slot before user code runs, so a worker's first allocation
-creates an independent default arena chain. The slot always contains that
-chain's stable root; allocator and mark/reset internals reach the changing
-physical head through the root's `root.current` field.
+Raw thread spawn initializes a fresh current-arena slot before user code
+runs, so a worker's first allocation creates an independent default arena
+chain. Once a chain exists, the slot contains its stable root; allocator and
+mark/reset internals reach the changing physical head through the root's
+`root.current` field. Before that, and after a full reset, the slot holds a
+static null-arena sentinel rather than zero: its flag word marks it shared, so
+inline allocation fast paths take the runtime slow path without a separate
+null test, and runtime helpers recognize it by a dedicated null flag.
+`tl_arena_current` and `(tls-current-arena)` still report it as zero, and
+`tl_arena_set` and `(tls-current-arena-set!)` store it for zero. The Linux slot
+is initialized to the sentinel in its TLS image, and the freestanding entry,
+raw thread spawn and the Windows entries store it explicitly.
 
 The compiler provides two allocation-free current-arena TLS intrinsics for
 runtime-prelude code: `(tls-current-arena)` returns the stable root handle for

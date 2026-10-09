@@ -132,10 +132,7 @@
   (let
     [words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     [copied : live.CompilerLiveI64Set (compiler-live-set3 1 64 130)]
-    [copy-count : i64
-      (live.compiler-live-scratch-copy-set!
-        (live.compiler-live-shared-view words)
-        copied)]
+    [copy-count : i64 (live.compiler-live-scratch-copy-set! (& words) copied)]
     [copy-ok : bool
       (and
         (= copy-count 5)
@@ -159,7 +156,7 @@
     [step-defs : live.CompilerLiveI64Set (compiler-live-set2 1 130)]
     [step-count : i64
       (live.compiler-live-scratch-step!
-        (live.compiler-live-shared-view words)
+        (& words)
         union-count
         step-uses
         step-defs)]
@@ -171,15 +168,10 @@
           step-count
           (compiler-live-set4 0 64 65 191))
         (live.compiler-live-set-eq?
-          (live.compiler-live-scratch-freeze
-            (live.compiler-live-shared-view words)
-            step-count)
+          (live.compiler-live-scratch-freeze (& words) step-count)
           (compiler-live-set4 0 64 65 191)))]
     [short : live.CompilerLiveI64Set (live.compiler-live-set1 7)]
-    [short-count : i64
-      (live.compiler-live-scratch-copy-set!
-        (live.compiler-live-shared-view words)
-        short)]
+    [short-count : i64 (live.compiler-live-scratch-copy-set! (& words) short)]
     [short-ok : bool
       (and
         (= short-count 1)
@@ -188,8 +180,7 @@
           short-count
           (live.compiler-live-set1 7))
         (= (live.compiler-live-set-trim-length words 6) 1))]
-    [_cleared : unit
-      (live.compiler-live-scratch-clear! (live.compiler-live-shared-view words))]
+    [_cleared : unit (live.compiler-live-scratch-clear! (& words))]
     (and
       copy-ok
       union-ok
@@ -205,10 +196,10 @@
   (let
     [uses : live.CompilerLiveI64Set (live.compiler-live-instr-uses instr)]
     [defs : live.CompilerLiveI64Set
-      (live.compiler-live-instr-defs (clone instr))]
+      (live.compiler-live-instr-defs (& (clone instr)))]
     [def-var : i64 (ir.compiler-ir-instr-dst instr)]
     [ids : (__tl_dyn-array i64) (live.compiler-live-instr-ids)]
-    [id-count : i64 (live.compiler-live-instr-use-ids! instr)]
+    [id-count : i64 (live.compiler-live-instr-use-ids! (& instr))]
     [index : i64 0]
     [ok : bool (= id-count (live.compiler-live-set-count uses))]
     (while (< index id-count)
@@ -267,14 +258,8 @@
     [id-use-words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     [id-def-words : (__tl_dyn-array i64) (__tl_make-array i64 6)]
     [seed : live.CompilerLiveI64Set (compiler-live-set3 1 64 130)]
-    [set-active : i64
-      (live.compiler-live-scratch-copy-set!
-        (live.compiler-live-shared-view set-words)
-        seed)]
-    [id-active : i64
-      (live.compiler-live-scratch-copy-set!
-        (live.compiler-live-shared-view id-words)
-        seed)]
+    [set-active : i64 (live.compiler-live-scratch-copy-set! (& set-words) seed)]
+    [id-active : i64 (live.compiler-live-scratch-copy-set! (& id-words) seed)]
     ;; `130` is used and defined here, and `1` is only defined: the def clear
     ;; must lose `1`, the use must keep `130`, and the row must grow to hold the
     ;; new use `191`.
@@ -286,7 +271,7 @@
     [step-defs : live.CompilerLiveI64Set (live.compiler-live-set1 1)]
     [set-count : i64
       (live.compiler-live-scratch-step!
-        (live.compiler-live-shared-view set-words)
+        (& set-words)
         set-active
         step-uses
         step-defs)]
@@ -296,8 +281,8 @@
       (and
         (= set-count id-count)
         (live.compiler-live-set-eq?
-          (live.compiler-live-scratch-freeze set-words set-count)
-          (live.compiler-live-scratch-freeze id-words id-count)))]
+          (live.compiler-live-scratch-freeze (& set-words) set-count)
+          (live.compiler-live-scratch-freeze (& id-words) id-count)))]
     ;; The block use/def accumulation: `9` is already defined by an earlier
     ;; instruction, so using it here must NOT make it a block use; `70` must.
     [_seed-defs : unit
@@ -312,8 +297,8 @@
     [instr-defs : live.CompilerLiveI64Set (live.compiler-live-set1 130)]
     [_set-step : unit
       (live.compiler-live-block-use-def-step!
-        (live.compiler-live-shared-view set-use-words)
-        (live.compiler-live-shared-view set-def-words)
+        (& set-use-words)
+        (& set-def-words)
         instr-uses
         instr-defs)]
     [_id-step : unit
@@ -326,22 +311,20 @@
     [use-def-ok : bool
       (and
         (live.compiler-live-set-eq?
-          (live.compiler-live-scratch-freeze
-            (live.compiler-live-shared-view set-use-words)
-            6)
+          (live.compiler-live-scratch-freeze (& set-use-words) 6)
           (live.compiler-live-set1 70))
         (live.compiler-live-set-eq?
-          (live.compiler-live-scratch-freeze set-use-words 6)
-          (live.compiler-live-scratch-freeze id-use-words 6))
+          (live.compiler-live-scratch-freeze (& set-use-words) 6)
+          (live.compiler-live-scratch-freeze (& id-use-words) 6))
         (live.compiler-live-set-eq?
-          (live.compiler-live-scratch-freeze set-def-words 6)
-          (live.compiler-live-scratch-freeze id-def-words 6)))]
+          (live.compiler-live-scratch-freeze (& set-def-words) 6)
+          (live.compiler-live-scratch-freeze (& id-def-words) 6)))]
     ;; A use list wider than the buffer reports -1 so the caller can fall back.
     [narrow : (__tl_dyn-array i64) (__tl_make-array i64 1)]
     [overflow-ok : bool
       (=
         (live.compiler-live-instr-use-ids-into!
-          (irt.instr "store_ptr %3, %4 : i64")
+          (& (irt.instr "store_ptr %3, %4 : i64"))
           (&mut narrow))
         -1)]
     (and
@@ -471,7 +454,7 @@
     (and
       (= (ir.compiler-ir-instr-dst store) -1)
       (live.compiler-live-set-eq?
-        (live.compiler-live-instr-defs (clone store))
+        (live.compiler-live-instr-defs (& (clone store)))
         (live.compiler-live-set-empty))
       (live.compiler-live-set-eq?
         (live.compiler-live-instr-uses store)
@@ -516,9 +499,10 @@
 (define (compiler-live-straight-ok?) : bool
   (let
     [liveness : live.CompilerFunctionLiveness
-      (live.compiler-live-analyze-function (compiler-live-straight-function))]
+      (live.compiler-live-analyze-function
+        (& (compiler-live-straight-function)))]
     (match (live.compiler-live-function-find-block
-      (live.compiler-live-shared-view liveness)
+      (& liveness)
       (ir.compiler-ir-label "entry"))
       [(Some block)
         (and
@@ -538,39 +522,42 @@
             (live.compiler-live-set-empty))
           (live.compiler-live-set-eq?
             (live.compiler-live-after
-              (live.compiler-live-shared-view liveness)
+              (& liveness)
               (ir.compiler-ir-label "entry")
               0)
             (compiler-live-set2 0 2))
           (live.compiler-live-set-eq?
             (live.compiler-live-after
-              (live.compiler-live-shared-view liveness)
+              (& liveness)
               (ir.compiler-ir-label "entry")
               1)
             (live.compiler-live-set1 1))
           (live.compiler-live-set-eq?
-            (live.compiler-live-after liveness (ir.compiler-ir-label "entry") 2)
+            (live.compiler-live-after
+              (& liveness)
+              (ir.compiler-ir-label "entry")
+              2)
             (live.compiler-live-set-empty)))]
       [(No) false])))
 
 (define (compiler-live-branch-ok?) : bool
   (let
     [liveness : live.CompilerFunctionLiveness
-      (live.compiler-live-analyze-function (compiler-live-branch-function))]
+      (live.compiler-live-analyze-function (& (compiler-live-branch-function)))]
     (match (live.compiler-live-function-find-block
-      liveness
+      (& liveness)
       (ir.compiler-ir-label "entry"))
       [(Some block)
         (and
           (=
             (live.compiler-live-label-set-count
-              (compiler-live-block-successor-labels block))
+              (& (compiler-live-block-successor-labels block)))
             2)
           (live.compiler-live-label-set-contains?
-            (compiler-live-block-successor-labels block)
+            (& (compiler-live-block-successor-labels block))
             (ir.compiler-ir-label "then"))
           (live.compiler-live-label-set-contains?
-            (compiler-live-block-successor-labels block)
+            (& (compiler-live-block-successor-labels block))
             (ir.compiler-ir-label "else"))
           (live.compiler-live-set-eq?
             (live.compiler-live-block-live-in block)
@@ -580,9 +567,9 @@
 (define (compiler-live-phi-ok?) : bool
   (let
     [liveness : live.CompilerFunctionLiveness
-      (live.compiler-live-analyze-function (compiler-live-phi-function))]
+      (live.compiler-live-analyze-function (& (compiler-live-phi-function)))]
     (match (live.compiler-live-function-find-block
-      (live.compiler-live-shared-view liveness)
+      (& liveness)
       (ir.compiler-ir-label "join"))
       [(Some block)
         (and
@@ -598,16 +585,16 @@
             (compiler-live-set2 1 2))
           (live.compiler-live-set-eq?
             (live.compiler-live-after
-              (live.compiler-live-shared-view liveness)
+              (& liveness)
               (ir.compiler-ir-label "join")
               0)
             (live.compiler-live-set1 3))
           (match (live.compiler-live-function-find-block
-            liveness
+            (& liveness)
             (ir.compiler-ir-label "left"))
             [(Some left-block)
               (live.compiler-live-label-set-contains?
-                (compiler-live-block-successor-labels left-block)
+                (& (compiler-live-block-successor-labels left-block))
                 (ir.compiler-ir-label "join"))]
             [(No) false]))]
       [(No) false])))
@@ -615,28 +602,28 @@
 (define (compiler-live-phi-edge-precise-ok?) : bool
   (let
     [baseline : live.CompilerFunctionLiveness
-      (live.compiler-live-analyze-function (compiler-live-phi-function))]
+      (live.compiler-live-analyze-function (& (compiler-live-phi-function)))]
     [edge-precise : live.CompilerFunctionLiveness
       (live.compiler-live-analyze-function-edge-precise
-        (compiler-live-phi-function))]
+        (& (compiler-live-phi-function)))]
     (match (live.compiler-live-function-find-block
-      (live.compiler-live-shared-view baseline)
+      (& baseline)
       (ir.compiler-ir-label "join"))
       [(Some baseline-join)
         (match (live.compiler-live-function-find-block
-          (live.compiler-live-shared-view edge-precise)
+          (& edge-precise)
           (ir.compiler-ir-label "join"))
           [(Some edge-precise-join)
             (match (live.compiler-live-function-find-block
-              baseline
+              (& baseline)
               (ir.compiler-ir-label "left"))
               [(Some baseline-left)
                 (match (live.compiler-live-function-find-block
-                  (live.compiler-live-shared-view edge-precise)
+                  (& edge-precise)
                   (ir.compiler-ir-label "left"))
                   [(Some edge-precise-left)
                     (match (live.compiler-live-function-find-block
-                      edge-precise
+                      (& edge-precise)
                       (ir.compiler-ir-label "right"))
                       [(Some edge-precise-right)
                         (and
@@ -674,23 +661,20 @@
     [block : ir.CompilerIrBlock
       (Block (ir.compiler-ir-label "entry") (clone instrs))]
     [successors : live.CompilerLiveLabelSet
-      (live.compiler-live-block-successors block)]
+      (live.compiler-live-block-successors (& block))]
     [use-def : live.CompilerLiveUseDef (compiler-live-block-use-def instrs)]
     (and
       (live.compiler-live-set-eq? use-def.uses (live.compiler-live-set1 9))
       (live.compiler-live-set-eq? use-def.defs (live.compiler-live-set-empty))
-      (=
-        (live.compiler-live-label-set-count
-          (live.compiler-live-shared-view successors))
-        3)
+      (= (live.compiler-live-label-set-count (& successors)) 3)
       (live.compiler-live-label-set-contains?
-        (live.compiler-live-shared-view successors)
+        (& successors)
         (ir.compiler-ir-label "four"))
       (live.compiler-live-label-set-contains?
-        (live.compiler-live-shared-view successors)
+        (& successors)
         (ir.compiler-ir-label "five"))
       (live.compiler-live-label-set-contains?
-        successors
+        (& successors)
         (ir.compiler-ir-label "other")))))
 
 (define (compiler-live-self-test) : i64
@@ -819,7 +803,7 @@
         [instr-defs : live.CompilerLiveI64Set
           (if (< cursor phi-end)
             (live.compiler-live-set-empty)
-            (live.compiler-live-instr-defs instr))]
+            (live.compiler-live-instr-defs (& instr)))]
         (set!
           out-uses
           (live.compiler-live-set-union
@@ -838,7 +822,7 @@
                 (live.compiler-live-set-union
                   out-defs
                   (live.compiler-live-instr-defs
-                    (ir.compiler-ir-instr-seq-ref instrs j))))
+                    (& (ir.compiler-ir-instr-seq-ref instrs j)))))
               (set! j (+ j 1)))))
         (set! cursor (+ cursor 1))))
     (live.CompilerLiveUseDef out-uses out-defs)))

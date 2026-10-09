@@ -57,7 +57,7 @@
             (cis.intern-structural-session-handle-from-source-names
               (ci.intern-source-name-session-capture-active-handle))
             (ast.ast-node-pool-context-type-segment-bases pools)
-            program))])))
+            (& program)))])))
 
 (define (proof-smoke-has-conversion? [input : proof.PointerProofInput]) : bool
   (let

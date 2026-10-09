@@ -905,6 +905,16 @@ declaration-emitting `defmacro` declarations (section 3.7.1): `: Module` for
 generated module families bound by `import`, and `: Decls` for declarations
 spliced into the current module.
 
+A function with a `[comptime name : T]` parameter is a template rather than a
+runtime function: each distinct combination of comptime arguments at its calls
+produces one concrete instance, and every call with the same arguments uses
+that instance. A template belongs to its module. Same-named templates of two
+modules are different templates; a bare call resolves the name in the calling
+module; and an instance is declared in its template's module in the template's
+place, so its body sees that module's private declarations, whichever module
+asked for the instance. Calling another module's template through its module
+name is not supported yet (#8596).
+
 #### 3.7.1 Typed expression macros
 
 Macros are compile-time expression transformers. They are declared with

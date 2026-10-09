@@ -8,11 +8,13 @@
   [arena-debug : bool]
   [backtrace : bool]) : String
   (str_cat.str-cat
-    "    .section .tbss,\"awT\",@nobits
+    "    .section .tdata,\"awT\",@progbits
     .balign 8
     .globl tl_current_arena
 tl_current_arena:
-    .zero 8
+    .quad .L_tl_null_arena
+    .section .tbss,\"awT\",@nobits
+    .balign 8
     .globl tl_thread_local_word
 tl_thread_local_word:
     .zero 8
@@ -27,6 +29,7 @@ tl_backtrace_stack_high:
 "
       "")
     "\n"
+    (runtime_common.compiler-backend-runtime-null-arena-data)
     (runtime_common.compiler-backend-runtime-arena-poison-data arena-debug)))
 
 (define (compiler-backend-current-arena-load [dst : String]) : String
@@ -116,8 +119,6 @@ tl_alloc:
     andq $-8, %rdi
     movq %rdi, %rsi
     movq %fs:tl_current_arena@tpoff, %r8
-    testq %r8, %r8
-    jz .L_tl_alloc_new_arena
     movq 56(%r8), %r9
     testq $1, 48(%r8)
     jnz .L_tl_alloc_atomic
@@ -133,6 +134,8 @@ tl_alloc:
     [atomic-fast-asm : String
       "    ret
 .L_tl_alloc_atomic:
+    testb $16, 48(%r8)
+    jnz .L_tl_alloc_new_arena
     movq %r8, %r9
     movq 56(%r9), %r8
     movq 16(%r8), %rax
@@ -246,8 +249,8 @@ tl_alloc:
     addq %rdx, %rcx
     jc .L_tl_alloc_abort
     movq %fs:tl_current_arena@tpoff, %r9
-    testq %r9, %r9
-    jz .L_tl_alloc_root_self
+    testb $16, 48(%r9)
+    jnz .L_tl_alloc_root_self
     movq 56(%r9), %r10
     jmp .L_tl_alloc_root_ready
 .L_tl_alloc_root_self:
@@ -354,8 +357,6 @@ tl_alloc_aligned:
     testq %rsi, %r11
     jnz .L_tl_alloc_aligned_abort
     movq %fs:tl_current_arena@tpoff, %r8
-    testq %r8, %r8
-    jz .L_tl_alloc_aligned_new_arena
     movq 56(%r8), %r9
     testq $1, 48(%r8)
     jnz .L_tl_alloc_aligned_atomic
@@ -378,6 +379,8 @@ tl_alloc_aligned:
       ordinary-profile
       "    ret
 .L_tl_alloc_aligned_atomic:
+    testb $16, 48(%r8)
+    jnz .L_tl_alloc_aligned_new_arena
     movq %r8, %r9
     movq 56(%r9), %r8
     movq 16(%r8), %rax
@@ -524,8 +527,8 @@ tl_alloc_aligned:
     addq %r10, %rdi
     jc .L_tl_alloc_aligned_abort
     movq %fs:tl_current_arena@tpoff, %r8
-    testq %r8, %r8
-    jz .L_tl_alloc_aligned_root_self
+    testb $16, 48(%r8)
+    jnz .L_tl_alloc_aligned_root_self
     movq 56(%r8), %r9
     jmp .L_tl_alloc_aligned_root_ready
 .L_tl_alloc_aligned_root_self:
@@ -603,6 +606,8 @@ tl_thread_init:
     syscall
     testq %rax, %rax
     js .L_tl_thread_init_abort
+    leaq .L_tl_null_arena(%rip), %rsi
+    movq %rsi, %fs:tl_current_arena@tpoff
     ret
 .L_tl_thread_init_abort:
     movq $60, %rax
@@ -623,15 +628,18 @@ tl_thread_local_word_addr:
 tl_arena_current:
 "
     (compiler-backend-current-arena-load "%rax")
-    "    ret
+    "    testb $16, 48(%rax)
+    cmovnzq .L_tl_null_arena(%rip), %rax
+    ret
     .size tl_arena_current, . - tl_arena_current
 
     .globl tl_arena_set
     .type tl_arena_set,@function
 tl_arena_set:
 "
-    "    testq %rdi, %rdi
-    jz .L_tl_arena_set_store
+    "    leaq .L_tl_null_arena(%rip), %rax
+    testq %rdi, %rdi
+    cmovzq %rax, %rdi
     movq 40(%rdi), %rax
     testq %rax, %rax
     jz .L_tl_arena_set_store
@@ -850,8 +858,8 @@ tl_region_reset:
     testq %rbx, %rbx
     jz .L_tl_region_reset_all
     movq %fs:tl_current_arena@tpoff, %r8
-    testq %r8, %r8
-    jz .L_tl_region_reset_invalid
+    testb $16, 48(%r8)
+    jnz .L_tl_region_reset_invalid
 "
     (if arena-debug
       "    testq $8, 48(%r8)
@@ -934,6 +942,8 @@ tl_region_reset:
     ret
 .L_tl_region_reset_all:
     movq %fs:tl_current_arena@tpoff, %r8
+    testb $16, 48(%r8)
+    cmovnzq .L_tl_null_arena(%rip), %r8
 "
     (if arena-debug
       "    testq %r8, %r8
@@ -951,7 +961,8 @@ tl_region_reset:
 .L_tl_region_reset_all_debug_unregister_done:
 "
       "")
-    "    movq $0, %fs:tl_current_arena@tpoff
+    "    leaq .L_tl_null_arena(%rip), %r9
+    movq %r9, %fs:tl_current_arena@tpoff
     xorq %rbx, %rbx
     testq %r8, %r8
     jz .L_tl_region_reset_done

@@ -38,6 +38,7 @@
       (runtime_common.compiler-backend-runtime-arena-poison-data
         (runtime_common.compiler-backend-runtime-arena-debug-text?
           features.arena-debug)))
+    (runtime_common.compiler-backend-runtime-null-arena-data)
     "    .section .rodata
 .L_tl_main_stack_reservation_msg:
     .ascii \"typelisp runtime: 1 GiB main-stack reservation failed\\n\"
@@ -190,7 +191,8 @@ _tl_start:
 "
       "")
     "    call tl_setup_argv
-    movq $0, %gs:0x28
+    leaq .L_tl_null_arena(%rip), %rax
+    movq %rax, %gs:0x28
     leaq .L_tl_stack_overflow_filter(%rip), %rcx
     call SetUnhandledExceptionFilter
     xorl %ecx, %ecx
@@ -341,13 +343,16 @@ tl_boot_pool:
 tl_arena_current:
 "
     (compiler-backend-current-arena-load "%rax")
-    "    ret
+    "    testb $16, 48(%rax)
+    cmovnzq .L_tl_null_arena(%rip), %rax
+    ret
 
     .globl tl_arena_set
 tl_arena_set:
 "
-    "    testq %rcx, %rcx
-    jz .L_tl_arena_set_store
+    "    leaq .L_tl_null_arena(%rip), %rax
+    testq %rcx, %rcx
+    cmovzq %rax, %rcx
     movq 40(%rcx), %rax
     testq %rax, %rax
     jz .L_tl_arena_set_store
@@ -707,8 +712,6 @@ tl_alloc:
     andq $-8, %rcx
     movq %rcx, %r11
     movq %gs:0x28, %r8
-    testq %r8, %r8
-    jz .L_tl_alloc_new_arena_entry
     movq 56(%r8), %r9
     testq $1, 48(%r8)
     jnz .L_tl_alloc_win_atomic
@@ -726,6 +729,8 @@ tl_alloc:
       fast-profile
       "    ret
 .L_tl_alloc_win_atomic:
+    testb $16, 48(%r8)
+    jnz .L_tl_alloc_new_arena_entry
     movq %r8, %r9
     movq 56(%r9), %r8
     movq 16(%r8), %rax
@@ -972,8 +977,8 @@ tl_alloc:
     movq %rcx, 24(%rax)
     movq $0, 32(%rax)
     movq -48(%rbp), %r8
-    testq %r8, %r8
-    jz .L_tl_alloc_win_root_self
+    testb $16, 48(%r8)
+    jnz .L_tl_alloc_win_root_self
     movq 56(%r8), %r10
     jmp .L_tl_alloc_win_root_ready
 .L_tl_alloc_win_root_self:
@@ -1101,8 +1106,6 @@ tl_alloc_aligned:
     jnz .L_tl_alloc_aligned_win_abort
     movq %r11, -16(%rbp)
     movq %gs:0x28, %r8
-    testq %r8, %r8
-    jz .L_tl_alloc_aligned_win_new_arena
     movq 56(%r8), %r9
     testq $1, 48(%r8)
     jnz .L_tl_alloc_aligned_win_atomic
@@ -1141,6 +1144,8 @@ tl_alloc_aligned:
     movq -24(%rbp), %r9
     jmp .L_tl_alloc_aligned_win_ordinary_retry
 .L_tl_alloc_aligned_win_atomic:
+    testb $16, 48(%r8)
+    jnz .L_tl_alloc_aligned_win_new_arena
     movq %r8, -24(%rbp)
     movq 56(%r8), %r8
     movq 16(%r8), %rax
@@ -1385,8 +1390,8 @@ tl_alloc_aligned:
     jc .L_tl_alloc_aligned_win_abort
     movq %r11, -64(%rbp)
     movq %gs:0x28, %r8
-    testq %r8, %r8
-    jz .L_tl_alloc_aligned_win_root_self
+    testb $16, 48(%r8)
+    jnz .L_tl_alloc_aligned_win_root_self
     movq 56(%r8), %r9
     jmp .L_tl_alloc_aligned_win_root_ready
 .L_tl_alloc_aligned_win_root_self:
@@ -1487,8 +1492,8 @@ tl_region_reset:
     testq %r12, %r12
     jz .L_tl_region_reset_win_all
     movq %gs:0x28, %r13
-    testq %r13, %r13
-    jz .L_tl_region_reset_win_invalid
+    testb $16, 48(%r13)
+    jnz .L_tl_region_reset_win_invalid
 "
     (if arena-debug
       "    testq $8, 48(%r13)
@@ -1588,6 +1593,8 @@ tl_region_reset:
     jmp .L_tl_region_reset_win_done
 .L_tl_region_reset_win_all:
     movq %gs:0x28, %r14
+    testb $16, 48(%r14)
+    cmovnzq .L_tl_null_arena(%rip), %r14
 "
     (if arena-debug
       "    testq %r14, %r14
@@ -1607,7 +1614,8 @@ tl_region_reset:
 .L_tl_region_reset_win_all_debug_unregister_done:
 "
       "")
-    "    movq $0, %gs:0x28
+    "    leaq .L_tl_null_arena(%rip), %r12
+    movq %r12, %gs:0x28
     xorq %r12, %r12
     testq %r14, %r14
     jz .L_tl_region_reset_win_done
@@ -1674,7 +1682,8 @@ tl_thread_entry_ptr:
     pushq %r12
     pushq %r13
     subq $40, %rsp
-    movq $0, %gs:0x28
+    leaq .L_tl_null_arena(%rip), %rax
+    movq %rax, %gs:0x28
     movq (%rcx), %r11
     movq 8(%rcx), %rdx
     movq 16(%rcx), %r12

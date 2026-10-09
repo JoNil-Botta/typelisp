@@ -1,0 +1,12 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_count": 5,
+  "stdout_not_contains": [
+    "\"severity\":1",
+    "stdlib/iterator.tl"
+  ],
+  "message_checks": [
+    {"raw_contains": "main.tl\",\"diagnostics\":[]"}
+  ]
+}

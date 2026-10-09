@@ -55506,6 +55506,50 @@
           args))]
     [_ (Err "typecheck: unsupported enum match pattern")]))
 
+;; A pattern on a `(& T)` scrutinee whose referent no other borrowed arm takes.
+;; For a struct referent (#8583) a constructor-shaped pattern binds each field
+;; through the borrow, as a borrowed tuple element does
+;; (`tc-borrowed-binding-type`: by value when `Copy`, else a reference into the
+;; scrutinee). A wildcard or binding, and any pattern on another referent, binds
+;; as a scalar: a binding takes the reference itself.
+(define (tc-bind-borrowed-struct-match-pattern
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [lifetime : i64]
+  [referent-ty : ast.AstType]
+  [scrut-ty : ast.AstType]
+  [pattern : ast.AstPattern]) : ResultTcEnv
+  (let
+    [struct-name : i64
+      (match (tc-global-shared-view referent-ty)
+        [(Struct name) name]
+        [(StructArgs name _) name]
+        [_ -1])]
+    [atom : bool
+      (match (& pattern)
+        [(Wildcard) true]
+        [(Binding _) true]
+        [_ false])]
+    (if (or (< struct-name 0) atom)
+      (tc-bind-scalar-match-pattern env scrut-ty pattern)
+      (match pattern
+        [(Variant pattern-name args-box)
+          (tc-bind-borrowed-struct-pattern
+            ctx
+            env
+            lifetime
+            (tc-nominal-name-id-display struct-name)
+            struct-name
+            referent-ty
+            (tc-env-key-name-text pattern-name)
+            pattern-name
+            (ast.ast-pattern-list-box-shared-view args-box))]
+        [_
+          (Err
+            (tc-kind-message
+              (Pattern)
+              "typecheck: borrowed struct match requires a constructor-shaped struct pattern, binding, or wildcard"))]))))
+
 (define (tc-bind-match-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -55618,7 +55662,14 @@
               [_
                 (Err
                   "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]
-          [_ (tc-bind-scalar-match-pattern env scrut-ty pattern)]))]
+          [_
+            (tc-bind-borrowed-struct-match-pattern
+              ctx
+              env
+              lifetime
+              referent-ty
+              scrut-ty
+              pattern)]))]
     [(MutRef _ _) (tc-bind-slice-scrutinee-pattern ctx env scrut-ty pattern)]
     [(Enum enum-name)
       (match pattern
@@ -58201,6 +58252,18 @@
                 (ast.ast-pattern-list-box-shared-view patterns-box)
                 (ast.ty-node-get referent-box))]
             [_ false])]
+        ;; A borrowed struct pattern (#8583) is irrefutable exactly when the
+        ;; same pattern is on the struct itself.
+        [(Struct _)
+          (tc-match-pattern-catchall-for-shape?
+            ctx
+            (ast.ty-node-get referent-box)
+            pattern)]
+        [(StructArgs _ _)
+          (tc-match-pattern-catchall-for-shape?
+            ctx
+            (ast.ty-node-get referent-box)
+            pattern)]
         [_
           (match pattern
             [(Wildcard) true]

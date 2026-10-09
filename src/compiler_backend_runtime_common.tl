@@ -384,6 +384,24 @@ tl_startup_profile_process_entry_tick:
       ", tl_profile_alloc_live_bytes(%rip)\n")
     ""))
 
+;; The current-arena slot never holds 0 once a thread's TLS is in place: "no
+;; arena yet" is `.L_tl_null_arena`, an arena header no allocation ever writes.
+;; Its flag word carries the shared bit (1), so an inline fast path, which tests
+;; only that bit, takes its slow path, and the null bit (16), by which runtime
+;; readers tell it from a real arena. Its current-segment word (56) is 0, which
+;; no real arena has. `tl_arena_current` reports it as 0, by a conditional move
+;; from its zero first word, and `tl_arena_set` stores it for 0, so arena
+;; handles keep 0 for "none". Every thread installs it before its first
+;; allocation, so no reader tests for 0; allocators test the null bit only on
+;; the shared-arena branch the shared bit already sent them to.
+(define (compiler-backend-runtime-null-arena-data) : String
+  "    .section .rodata
+    .balign 8
+.L_tl_null_arena:
+    .quad 0, 0, 0, 0, 0, 0, 17, 0
+
+")
+
 (define (compiler-backend-runtime-fast-alloc-function
   [current-arena-load : (& current-arena-load str)]
   [usable-end-offset : (& usable-end-offset str)]
@@ -401,14 +419,10 @@ tl_startup_profile_process_entry_tick:
     [atomic-profile-label : String
       (str_cat.str-cat label "_atomic_profile_done")]
     [profile-label : String (str_cat.str-cat label "_profile_done")]
-    [prologue : String
-      (str_cat.str-cat
-        label
-        ":\n"
-        current-arena-load
-        "    testq %r8, %r8\n    jz "
-        slow-label
-        "\n")]
+    ;; No null test: with no arena the slot holds the null-arena sentinel, whose
+    ;; shared bit takes the atomic branch below and whose zero current segment
+    ;; sends it on to `tl_alloc`.
+    [prologue : String (str_cat.str-cat label ":\n" current-arena-load)]
     [ordinary-body-a : String
       (str_cat.str-cat
         "    movq 56(%r8), %r9
@@ -440,6 +454,8 @@ tl_startup_profile_process_entry_tick:
         size-imm
         profile-label
         profile)]
+    ;; Only the null-arena sentinel has a zero current segment; it arrives here
+    ;; through its shared bit and leaves for `tl_alloc`.
     [atomic-body-a : String
       (str_cat.str-cat
         "    ret
@@ -447,6 +463,10 @@ tl_startup_profile_process_entry_tick:
         atomic-label
         ":
     movq 56(%r8), %r9
+    testq %r9, %r9
+    jz "
+        slow-label
+        "
     movq 16(%r9), %rax
 "
         atomic-cas-label)]
@@ -533,8 +553,8 @@ tl_startup_profile_process_entry_tick:
 tl_region_mark:
 "
     current-arena-load
-    "    testq %rax, %rax
-    jz .L_tl_region_mark_zero
+    "    testb $16, 48(%rax)
+    jnz .L_tl_region_mark_zero
 .L_tl_region_mark_current:
     movq 56(%rax), %rax
 .L_tl_region_mark_read:

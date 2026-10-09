@@ -22360,7 +22360,7 @@ f:
           (backend.compiler-backend-string-count
             asm
             "%fs:tl_current_arena@tpoff")
-          21)
+          22)
         (= (backend.compiler-backend-string-count asm "%gs:0x28") 0)))))
 
 (define (compiler-backend-test-runtime-functions-for-target
@@ -31754,7 +31754,7 @@ f:
           (asm-lacks? asm "    movq %rdx, -640(%rbp)\n")
           (asm-has?
             asm
-            "    movq %fs:tl_current_arena@tpoff, %r9\n    testq %r9, %r9\n    jz .L_tl_test_allocentry_i0_v20_slow\n    testb $1, 48(%r9)\n    jnz .L_tl_test_allocentry_i0_v20_slow\n    movq 56(%r9), %rcx\n")
+            "    movq %fs:tl_current_arena@tpoff, %r9\n    testb $1, 48(%r9)\n    jnz .L_tl_test_allocentry_i0_v20_slow\n    movq 56(%r9), %rcx\n")
           (asm-has? asm "    movq 16(%rcx), %rax\n    leaq 8(%rax), %r9\n")
           (asm-has?
             asm
@@ -31767,7 +31767,10 @@ f:
           (asm-lacks? asm "%rcx, tl_profile_alloc_peak_bytes(%rip)")
           (asm-lacks? asm "    movq %fs:tl_current_arena@tpoff, %r8\n")
           (asm-lacks? asm "    leaq 8(%rax), %r8\n")
-          (asm-lacks? asm "    leaq 8(%rax), %rax\n")))]
+          (asm-lacks? asm "    leaq 8(%rax), %rax\n"))
+        (asm-lacks?
+          asm
+          "    testq %r9, %r9\n    jz .L_tl_test_allocentry_i0_v20_slow\n"))]
     [(Err _) false]))
 
 ;; Backend emit-shape coverage for local tuple construction/ref.
@@ -38728,8 +38731,11 @@ b_keep:
     (backend.compiler-backend-emit-source
       (compiler-backend-runtime-helper-source))
     (has
+      ".section .tdata,\"awT\",@progbits\n"
+      "tl_current_arena:\n    .quad .L_tl_null_arena\n"
       ".section .tbss,\"awT\",@nobits\n"
-      "tl_current_arena:\n"
+      ".L_tl_null_arena:\n    .quad 0, 0, 0, 0, 0, 0, 17, 0\n"
+      "    leaq .L_tl_null_arena(%rip), %rsi\n    movq %rsi, %fs:tl_current_arena@tpoff\n    ret\n"
       "tl_thread_init:\n"
       "tl_arena_make_atomic:\n"
       "    movq %fs:tl_current_arena@tpoff, %r8\n"
@@ -40833,7 +40839,8 @@ user_fn:
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    movq %r8, %rax\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %r9, %fs:(%rax)\n    subq %rcx, %r10\n"
         "    movq tl_current_arena@gottpoff(%rip), %rax\n    movq %rdi, %fs:(%rax)\n    ret\n    .size tl_arena_set,"
-        "    movq tl_current_arena@gottpoff(%rip), %rbx\n    movq $0, %fs:(%rbx)\n    xorq %rbx, %rbx\n")
+        "    movq tl_current_arena@gottpoff(%rip), %rbx\n    movq %r9, %fs:(%rbx)\n    xorq %rbx, %rbx\n"
+        "    movq tl_current_arena@gottpoff(%rip), %rdi\n    movq %rsi, %fs:(%rdi)\n    ret\n.L_tl_thread_init_abort:")
       (or
         (not backtrace)
         (asm-has?
@@ -40842,8 +40849,8 @@ user_fn:
       (=
         (backend.compiler-backend-string-count rewritten ", %fs:(")
         (if backtrace
-          6
-          4))
+          7
+          5))
       (asm-lacks? rewritten "@tpoff" "ERR"))))
 
 (test

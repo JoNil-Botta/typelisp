@@ -1025,6 +1025,10 @@ memory, not a value: a store or call through the exposed address redefines it
 without naming it. No pass that forwards values by definition records a copy or
 constant fact naming such a var, as destination or source.
 - Global copy/CSE and affine folding read the marks of `opt-addr-taken-vars`.
+- `bounds_dom` (and its late `bounds_dom_le` slot) reads the same marks through
+  `opt-bounds-dom-sources`, which counts an address-taken var as
+  multiply-defined. So no copy, comparison fact or checked index/length pair
+  holds it (#8672).
 - LICM and the block-local `fold` pipeline read the installed per-function set
   `opt-function-addr-taken`. Each installs it before rewriting a function:
   LICM once it has found a loop, and `optimize-block-list-for-function-pass`

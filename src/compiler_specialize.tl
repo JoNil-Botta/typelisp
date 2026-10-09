@@ -2093,7 +2093,7 @@
             (& rendered)))))))
 
 (define (spec-reserve-specialized-symbol-with-owner
-  [owner : (& owner SpecOwnerContext)]
+  [owner : (&mut owner SpecOwnerContext)]
   [key : SpecStructuralKey]
   [template-name : String]
   [values : SpecValueList]) : i64
@@ -2132,7 +2132,7 @@
         (set! index (+ index 1))))))
 
 (define (spec-materialize-owner-generated-symbols!
-  [owner : (& owner SpecOwnerContext)]) : unit
+  [owner : (&mut owner SpecOwnerContext)]) : unit
   (spec-materialize-generated-symbol-records-with-owner!
     owner
     (& (array-ref owner.generated-symbol-records 0)))
@@ -5001,7 +5001,7 @@
                 (let
                   [generated-name-id : i64
                     (spec-reserve-specialized-symbol-with-owner
-                      pools
+                      (&mut pools)
                       structural-key
                       name
                       (spec-place-shared-view values))]
@@ -6694,7 +6694,7 @@
               [(Ok rewritten state)
                 (match state
                   [(State generated _ _ _)
-                    (spec-materialize-owner-generated-symbols! owner)
+                    (spec-materialize-owner-generated-symbols! (&mut owner))
                     (Ok
                       (ast.ast-program
                         (spec-decl-list-append rewritten generated)))])]
@@ -6751,7 +6751,7 @@
                   [(Ok rewritten rewritten-paths state)
                     (match state
                       [(State generated _ _ _)
-                        (spec-materialize-owner-generated-symbols! owner)
+                        (spec-materialize-owner-generated-symbols! (&mut owner))
                         (Ok
                           (ast.ast-program
                             (spec-decl-list-append rewritten generated))

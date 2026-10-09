@@ -53453,14 +53453,14 @@
               lifetime
               (tc-borrow-referent-type (ast.ty-node-get elem-ty))
               shared))]
-        ;; Private buffer elements are heap storage the shared-path check does
-        ;; not cover yet (#8743); see `tc-borrow-referent-private-buffer?`.
+        ;; A private buffer is move-only: its elements are storage owned through
+        ;; the buffer, so they keep its shared flag (#8743).
         [(DynArray elem-ty)
           (Ok
             (TcBorrowPlace
               lifetime
               (tc-borrow-referent-type (ast.ty-node-get elem-ty))
-              false))]
+              shared))]
         [(Slice elem-ty)
           (Ok
             (TcBorrowPlace
@@ -53477,16 +53477,15 @@
 
 (define (tc-borrow-place-box-get [ctx : TcContext] [place : TcBorrowPlace]) : ResultTcBorrowPlace
   (match place
-    [(TcBorrowPlace lifetime box-ty _)
+    [(TcBorrowPlace lifetime box-ty shared)
       (match (tc-type-strip-region (tc-resolve-type ctx box-ty))
-        ;; Box contents are heap storage the shared-path check does not cover
-        ;; yet (#8743); see `tc-borrow-referent-private-buffer?`.
+        ;; A Box owns its contents, so they keep the Box's shared flag (#8743).
         [(Box inner-ty)
           (Ok
             (TcBorrowPlace
               lifetime
               (tc-borrow-referent-type (ast.ty-node-get inner-ty))
-              false))]
+              shared))]
         [_
           (Err
             (tc-kind-message
@@ -53839,28 +53838,13 @@
           context
           "; reference value would escape lexical scope"))]))
 
-;; The compiler's own passes still write heap storage that they reach through a
-;; shared reference: private `__tl_dyn-array` buffers, their elements, and Box
-;; contents. Until those move behind `&mut` (#8743), a `&mut` borrow of a
-;; private buffer handle, or of storage behind a Box or private buffer, is not
-;; rejected for the shared path. Every other referent is.
-(define (tc-borrow-referent-private-buffer? [referent-ty : ast.AstType]) : bool
-  (match referent-ty
-    [(DynArray _) true]
-    [_ false]))
-
 (define (tc-borrow-place-result-type
   [mutable : bool]
   [lifetime : ast.AstBorrowLifetime]
   [place : TcBorrowPlace]) : ResultTcType
   (match place
     [(TcBorrowPlace inferred referent-ty through-shared)
-      (if (and
-        mutable
-        through-shared
-        (not
-          (tc-borrow-referent-private-buffer?
-            (tc-global-shared-view referent-ty))))
+      (if (and mutable through-shared)
         (Err
           (tc-kind-message
             (BorrowViolation)

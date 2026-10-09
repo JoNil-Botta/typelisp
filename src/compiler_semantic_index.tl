@@ -832,7 +832,7 @@
             path-len))))))
 
 (define (compiler-semantic-scope-region-add!
-  [state : (& state CompilerSemanticWalkState)]
+  [state : (&mut state CompilerSemanticWalkState)]
   [parent : CompilerSemanticBindingSnapshot]
   [child : CompilerSemanticBindingSnapshot]
   [start-byte : i64]
@@ -903,7 +903,12 @@
         (owned_view.compiler-owned-shared-view state)
         node-id
         -1)]
-    (compiler-semantic-scope-region-add! state parent child start-byte raw-end)))
+    (compiler-semantic-scope-region-add!
+      (&mut state)
+      parent
+      child
+      start-byte
+      raw-end)))
 
 (define (compiler-semantic-record-vec-new [capacity : i64]) : CompilerSemanticRecordVec
   (CompilerSemanticRecordVec
@@ -3397,7 +3402,7 @@
                   cursor
                   init-start)]
               (compiler-semantic-scope-region-add!
-                state
+                (&mut state)
                 next-scope
                 bound.scope
                 (compiler-semantic-expr-visibility-end-offset
@@ -3716,7 +3721,7 @@
     ;; state is a nested body-only extension, so its exit restores the
     ;; index before the enclosing index region restores the outer scope.
     (compiler-semantic-scope-region-add!
-      state
+      (&mut state)
       scope
       index-bound.scope
       (compiler-semantic-expr-start-offset state element-id -1)
@@ -4735,7 +4740,7 @@
                       init
                       bound.next-search))]
                 (compiler-semantic-scope-region-add!
-                  state
+                  (&mut state)
                   next-scope
                   bound.scope
                   visible-start

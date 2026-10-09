@@ -1,4 +1,5 @@
 ;; compiler_typecheck_tests.tl - Self-tests for the compiler typechecker API.
+(import stdlib.iterator)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.byte_buf)
 (import stdlib.io)
@@ -976,7 +977,7 @@
                     (set! name-id candidate)
                     unit)]
                 [_ unit])
-              (set! index (+ index 1))))
+              (+= index 1)))
           name-id)])))
 
 (define (compiler-typecheck-repr-c-layout-ok?) : bool
@@ -7548,7 +7549,7 @@
               (if (=
                 (string.string-ref text (+ start index))
                 (string.string-ref prefix index))
-                (set! index (+ index 1))
+                (+= index 1)
                 (set! ok false))
               (set! ok false)))
           (= index prefix-len))))))
@@ -7572,7 +7573,7 @@
           (begin
             (set! found index)
             (set! done true))
-          (set! index (+ index 1)))
+          (+= index 1))
         (set! done true)))
     found))
 
@@ -9153,9 +9154,8 @@
   [origin : ast.AstExpr]) : tc_core.TcMovedSet
   (let
     [out : tc_core.TcMovedSet set]
-    [index : i64 start]
     [end : i64 (+ start count)]
-    (while (< index end)
+    (for [index (iterator.range start end)]
       (set!
         out
         (tc_core.tc-moved-add-path-fact
@@ -9166,8 +9166,7 @@
               (tc_core.tc-move-path-segments-empty)
               index))
           (BorrowShared)
-          (ast.ast-node-push (ast.ast-global-shared-view origin))))
-      (set! index (+ index 1)))
+          (ast.ast-node-push (ast.ast-global-shared-view origin)))))
     out))
 
 (define (compiler-typecheck-moved-facts-same-dense-snapshot?
@@ -9625,10 +9624,8 @@
 (define (compiler-typecheck-deep-owner-source [body : String]) : String
   (let
     [nested : String body]
-    [depth : i64 0]
-    (while (< depth 63)
-      (set! nested (str_cat.str-cat "(while true (begin " nested " (break)))"))
-      (set! depth (+ depth 1)))
+    (for [depth (iterator.range 0 63)]
+      (set! nested (str_cat.str-cat "(while true (begin " nested " (break)))")))
     (compiler-typecheck-let-obligation-source
       (str_cat.str-cat
         "(define (f) : unit (with ([root (open 1) cleanup-file-handle]) "

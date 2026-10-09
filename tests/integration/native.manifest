@@ -690,6 +690,7 @@ u16_div_zero_trap|all|-|tests/integration/u16_div_zero_trap.tl|135|-|-|-|expecte
 u64_float_casts|all|-,0,1,2|tests/integration/u64_float_casts.tl|0|-|-|stdlib/math.tl|-
 u64_high_bit_load_compare|all|-|tests/integration/u64_high_bit_load_compare.tl|42|-|-|-|-
 bit_test_mask_admission|all|-|tests/integration/bit_test_mask_admission.tl|42|-|-|-|-
+bit_test_phi_edge|all|-,0,1,2|tests/integration/bit_test_phi_edge.tl|42|-|-|-|-
 unified_place_syntax|all|-|tests/integration/unified_place_syntax.tl|42|-|-|-|-
 composed_place_projection|all|-|tests/integration/composed_place_projection.tl|42|-|-|-|-
 unit_functions|all|-|tests/integration/unit_functions.tl|7|-|-|-|-

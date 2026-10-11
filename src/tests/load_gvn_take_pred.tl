@@ -63,7 +63,7 @@
             (array-ref labels i)
             (ir.CompilerIrInstrSeq slots 1)))
         (set! i (+ i 1))))
-    (opt.opt-cfg-index-build (Array (ir.CompilerIrBlockSeq blocks count)))))
+    (opt.opt-cfg-index-build (& (Array (ir.CompilerIrBlockSeq blocks count))))))
 
 (define (check-rpo [headers : i64] [exits : i64]) : unit
   (let
@@ -81,10 +81,7 @@
         (when
           (> id headers)
           (test.assert-i64-eq
-            (opt.opt-load-gvn-take-pred
-              index
-              (opt.compiler-opt-global-shared-view processed)
-              id)
+            (opt.opt-load-gvn-take-pred index (& processed) id)
             (if (and (<= (+ headers exits) 32) (= i (- index.reach-count 1)))
               headers
               -1)
@@ -104,7 +101,7 @@
     ;; Even after all other readers finish, a join may reread both incoming
     ;; states while constructing its phis. It must not take either state.
     (test.assert-i64-eq
-      (opt.opt-load-gvn-take-pred index processed (+ headers 1))
+      (opt.opt-load-gvn-take-pred index (& processed) (+ headers 1))
       -1
       "a join retains both predecessor exit states")))
 

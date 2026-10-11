@@ -59,14 +59,12 @@
               label)
             "only matching edges change")
           (test.assert-true
-            (opt.opt-value-eq
-              actual.value
-              (ir.compiler-ir-global-shared-view original.value))
+            (opt.opt-value-eq (& actual.value) (& original.value))
             "values and order preserved")
           (test.assert-true
             (opt.opt-value-eq
-              original.value
-              (fixture-value (- (+ start index) 1)))
+              (& original.value)
+              (& (fixture-value (- (+ start index) 1))))
             "input values unchanged")
           (set! index (+ index 1)))))))
 
@@ -107,5 +105,5 @@
         "one linear allocation, no recursive prepend")
       (test.assert-i64-eq last.label 99 "last edge relabeled")
       (test.assert-true
-        (opt.opt-value-eq last.value (Var (- count 1)))
+        (opt.opt-value-eq (& last.value) (& (Var (- count 1))))
         "last value preserved"))))

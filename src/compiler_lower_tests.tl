@@ -542,7 +542,7 @@
   (match (lower.lower-compiler-source source)
     [(Ok program spans)
       (match (match (optimize.optimize-program-with-spans-and-level
-        program
+        (& program)
         spans
         2)
         [(Program optimized _) optimized])
@@ -9876,7 +9876,7 @@
               (ir.compiler-ir-test-spmd-private-abi-shapes (& functions))])]
         [optimized : ir.CompilerIrProgram
           (match (optimize.optimize-program-with-spans-and-level
-            program
+            (& program)
             spans
             level)
             [(Program optimized _) optimized])]

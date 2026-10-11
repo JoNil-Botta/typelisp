@@ -4,6 +4,7 @@
 ;; expression/type references are dense image-pool indices, and every compiler
 ;; nominal is repacked through compiler_surface_identity. No arena address,
 ;; pointer, Box address, or producer-generation intern id is serialized.
+(import stdlib.iterator)
 (import stdlib.byte_reader)
 (import stdlib.string)
 (import compiler_ast_types as ast)
@@ -223,7 +224,7 @@
           (surface-ast-reader-fail!
             reader
             "surface ast: C function signature must reference a function type"))
-        (set! index (+ index 1))))))
+        (+= index 1)))))
 
 (define (surface-ast-count-valid? [count : i64]) : bool
   (and (>= count 0) (<= count surface-ast-max-count)))
@@ -284,12 +285,9 @@
     [context : (&mut context SurfaceAstWriteContext)]
     [items : (__tl_dyn-array i64)]
     [count : i64]) : unit
-    (let
-      [index : i64 0]
-      (surface-ast-write-i64! out count)
-      (while (< index count)
-        (surface-ast-write-name! out context (array-ref items index))
-        (set! index (+ index 1))))))
+    (surface-ast-write-i64! out count)
+    (for [index (iterator.range 0 count)]
+      (surface-ast-write-name! out context (array-ref items index)))))
 
 (cfg
   (any compiler-surface-producer compiler-build-identity embedded-stdlib-tlci)
@@ -304,10 +302,8 @@
   (let
     [count : i64 (surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref slots index) (surface-ast-read-name! reader))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref slots index) (surface-ast-read-name! reader)))
     (ast.AstLifetimeList slots count)))
 
 (cfg
@@ -316,21 +312,17 @@
     [out : (&mut out byte_buf_core.ByteBufBuilder)]
     [types : ast.AstTypeList]) : unit
     (let
-      [index : i64 0]
       [count : i64 types.len]
       (surface-ast-write-i64! out count)
-      (while (< index count)
-        (surface-ast-write-i64! out (array-ref types.slots index))
-        (set! index (+ index 1))))))
+      (for [index (iterator.range 0 count)]
+        (surface-ast-write-i64! out (array-ref types.slots index))))))
 
 (define (surface-ast-read-type-list! [reader : (&mut reader SurfaceAstReader)]) : ast.AstTypeList
   (let
     [count : i64 (surface-ast-read-count! reader)]
     [slots : (__tl_dyn-array i64) (__tl_make-array i64 count)]
-    [index : i64 0]
-    (while (< index count)
-      (set! (array-ref slots index) (surface-ast-read-i64! reader))
-      (set! index (+ index 1)))
+    (for [index (iterator.range 0 count)]
+      (set! (array-ref slots index) (surface-ast-read-i64! reader)))
     (ast.AstTypeList slots count)))
 
 (cfg

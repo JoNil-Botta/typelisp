@@ -1,5 +1,6 @@
 ;; Checked, target-neutral ar containers for #7033, #7038 and #7244.
 ;; Payloads borrow the immutable input; names and indexes remain dialect policy.
+(import stdlib.iterator)
 (import stdlib.byte_reader)
 (import stdlib.string)
 
@@ -165,11 +166,10 @@
     (not (byte_reader.range-present? (string.string-length data) start width)))
     (NumberFailed (InvalidProfile) start)
     (let
-      [index : i64 0]
       [value : i64 0]
       [digits : i64 0]
       [padding : bool false]
-      (while (< index width)
+      (for [index (iterator.range 0 width)]
         (let
           [at : i64 (+ start index)]
           [byte : i64 (cast (string.string-ref data at) : i64)]
@@ -186,8 +186,7 @@
                   (> value (/ (- rule.maximum digit) rule.radix)))
                 (return (NumberFailed (NumericOverflow) at)))
               (set! value (+ (* value rule.radix) digit))
-              (set! digits (+ digits 1))))
-          (set! index (+ index 1))))
+              (+= digits 1)))))
       (if (and (= digits 0) (not rule.allow-blank))
         (NumberFailed (BadNumeric) start)
         (Number value (= digits 0))))))
@@ -204,7 +203,7 @@
           (let
             [byte : i64 (cast (string.string-ref data (+ start index)) : i64)]
             (set! valid (and (>= byte 32) (<= byte 126)))
-            (set! index (+ index 1))))
+            (+= index 1)))
         valid))))
 
 (define (valid-name? [name : (& n str)] [ascii-only : bool]) : bool
@@ -216,17 +215,14 @@
   [data : (& n str)]
   [start : i64]
   [profile : (& p ArchiveProfile)]) : bool
-  (let
-    [index : i64 0]
-    (while (< index (array-length profile.special-names))
-      (when
-        (string.is-string-prefix-at
-          data
-          (& (array-ref profile.special-names index))
-          start)
-        (return true))
-      (set! index (+ index 1)))
-    false))
+  (for [index (iterator.range 0 (array-length profile.special-names))]
+    (when
+      (string.is-string-prefix-at
+        data
+        (& (array-ref profile.special-names index))
+        start)
+      (return true)))
+  false)
 
 (defenum ArchiveHeaderResult
   (Header i64 bool)
@@ -238,7 +234,6 @@
   [at : i64]
   [profile : (& p ArchiveProfile)]) : ArchiveHeaderResult
   (let
-    [field : i64 0]
     [size : i64 0]
     (unless
       (valid-name-at? data at profile.ascii-names)
@@ -248,15 +243,14 @@
         (= (string.string-ref data (+ at 58)) '`')
         (= (string.string-ref data (+ at 59)) '\n'))
       (return (HeaderFailed (BadTerminator) (+ at 58))))
-    (while (< field 5)
+    (for [field (iterator.range 0 5)]
       (match (read-number
         data
         (+ at (array-ref field-starts field))
         (array-ref field-widths field)
         (& (array-ref profile.numbers field)))
         [(Number value _) (set! size value)]
-        [(NumberFailed kind offset) (return (HeaderFailed kind offset))])
-      (set! field (+ field 1)))
+        [(NumberFailed kind offset) (return (HeaderFailed kind offset))]))
     (Header size (special-name-at? data at profile))))
 
 (defenum ArchiveProfileResult
@@ -268,28 +262,24 @@
 (define (check-profile [profile : (& p ArchiveProfile)] [work : i64]) : ArchiveProfileResult
   (let
     [patterns : i64 (array-length profile.special-names)]
-    [field : i64 0]
-    [index : i64 0]
     (when
       (or (< work 13) (> patterns (/ (- work 13) 17)))
       (return (ProfileFailed (WorkLimit) 0)))
-    (while (< field 5)
+    (for [field (iterator.range 0 5)]
       (unless
         (valid-rule? (& (array-ref profile.numbers field)))
-        (return (ProfileFailed (InvalidProfile) field)))
-      (set! field (+ field 1)))
+        (return (ProfileFailed (InvalidProfile) field))))
     (let
       [size-rule : (& p ArchiveNumberRule) (& (array-ref profile.numbers 4))]
       (when
         (or (!= size-rule.radix 10) size-rule.allow-blank)
         (return (ProfileFailed (InvalidProfile) 4))))
-    (while (< index patterns)
+    (for [index (iterator.range 0 patterns)]
       (unless
         (valid-name?
           (& (array-ref profile.special-names index))
           profile.ascii-names)
-        (return (ProfileFailed (InvalidProfile) index)))
-      (set! index (+ index 1)))
+        (return (ProfileFailed (InvalidProfile) index))))
     (ProfileReady (- (- work 13) (* patterns 17)))))
 
 (define (scan
@@ -355,7 +345,7 @@
                 (return
                   (ScanFailed
                     (ArchiveError (SpecialLimit) identity ordinal cursor))))
-              (set! specials (+ specials 1)))
+              (+= specials 1))
             (set! cursor (+ payload size))
             (when
               (!= (% cursor 2) 0)
@@ -368,27 +358,24 @@
                   (return
                     (ScanFailed
                       (ArchiveError (BadPadding) identity ordinal cursor))))
-                (set! cursor (+ cursor 1)))))])
-      (set! ordinal (+ ordinal 1)))
+                (+= cursor 1))))])
+      (+= ordinal 1))
     (let
       [members : (__tl_dyn-array ArchiveMember)
         (__tl_make-array ArchiveMember ordinal)]
-      [index : i64 0]
       [at : i64 8]
-      (while (< index ordinal)
+      (for [index (iterator.range 0 ordinal)]
         (match (read-header data at profile)
           [(HeaderFailed kind offset)
             (return (ScanFailed (ArchiveError kind identity index offset)))]
           [(Header size special)
             (let
               [name : (Array u8 16) (init : (Array u8 16))]
-              [byte : i64 0]
               [end : i64 (+ (+ at 60) size)]
-              (while (< byte 16)
+              (for [byte (iterator.range 0 16)]
                 (set!
                   (array-ref name byte)
-                  (cast (string.string-ref data (+ at byte)) : u8))
-                (set! byte (+ byte 1)))
+                  (cast (string.string-ref data (+ at byte)) : u8)))
               (set!
                 (array-ref members index)
                 (ArchiveMember
@@ -401,8 +388,7 @@
                 at
                 (if (and (< end length) (!= (% end 2) 0))
                   (+ end 1)
-                  end))
-              (set! index (+ index 1)))]))
+                  end)))]))
       (Scanned (ArchiveDirectory data identity profile.tag members limits work)))))
 
 ;; A session is the single load-once owner for one consumer's archive input.
@@ -467,7 +453,7 @@
           (clone session.identity)
           id.ordinal
           id.header-offset))))
-  (set! session.work-left (- session.work-left 1))
+  (-= session.work-left 1)
   (match (check-session directory (& session))
     [(InvalidId kind)
       (return
@@ -520,12 +506,12 @@
       (>= session.index-entries session.limits.max-index-entries)
       (return
         (IndexFailed (ArchiveError (IndexLimit) identity -1 header-offset))))
-    (set! session.index-entries (+ session.index-entries 1))
+    (+= session.index-entries 1)
     (when
       (< session.work-left 1)
       (return
         (IndexFailed (ArchiveError (WorkLimit) identity -1 header-offset))))
-    (set! session.work-left (- session.work-left 1))
+    (-= session.work-left 1)
     (match (check-session directory (& session))
       [(InvalidId kind)
         (return (IndexFailed (ArchiveError kind identity -1 header-offset)))]
@@ -535,7 +521,7 @@
         (< session.work-left 1)
         (return
           (IndexFailed (ArchiveError (WorkLimit) identity -1 header-offset))))
-      (set! session.work-left (- session.work-left 1))
+      (-= session.work-left 1)
       (let
         [middle : i64 (+ left (/ (- right left) 2))]
         [member : (& d ArchiveMember) (& (array-ref directory.members middle))]

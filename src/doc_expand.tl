@@ -1,4 +1,5 @@
 ;; doc_expand.tl - Expansion-aware generated-module docs.
+(import stdlib.iterator)
 (import compiler_owned_view as owned_view)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.string)
@@ -163,18 +164,17 @@
 
 (define (doc-import-form-list-mut-contains-from?
   [forms : (&mut forms doc_import_form_vec.Vec)]
-  [form : (& form str)]
-  [index : i64]) : bool
-  (if (>= index (doc_import_form_vec.len forms))
-    false
-    (if (string.eq (doc_import_form_vec.get forms index "") form)
-      true
-      (doc-import-form-list-mut-contains-from? forms form (+ index 1)))))
+  [form : (& form str)]) : bool
+  (for [index (iterator.range 0 (doc_import_form_vec.len forms))]
+    (when
+      (string.eq (doc_import_form_vec.get forms index "") form)
+      (return true)))
+  false)
 
 (define (doc-import-form-list-mut-contains?
   [forms : (&mut forms doc_import_form_vec.Vec)]
   [form : (& form str)]) : bool
-  (doc-import-form-list-mut-contains-from? forms form 0))
+  (doc-import-form-list-mut-contains-from? forms form))
 
 (define (doc-import-form-list-push-unique!
   [forms : (&mut forms doc_import_form_vec.Vec)]
@@ -514,23 +514,16 @@
 (define (doc-generated-target-example-find-from
   [examples : (& examples doc_generated_target_example_vec.Vec)]
   [target : (& target str)]
-  [index : i64]
   [count : i64]) : String
-  (if (>= index count)
-    ""
+  (for [index (iterator.range 0 count)]
     (let
       [example : DocGeneratedTargetExample
         (doc_generated_target_example_vec.get
           examples
           index
           (doc-generated-target-example-fallback))]
-      (if (string.eq example.target target)
-        example.form
-        (doc-generated-target-example-find-from
-          examples
-          target
-          (+ index 1)
-          count)))))
+      (when (string.eq example.target target) (return example.form))))
+  "")
 
 (define (doc-generated-target-example-find
   [examples : (& examples doc_generated_target_example_vec.Vec)]
@@ -538,28 +531,24 @@
   (doc-generated-target-example-find-from
     examples
     target
-    0
     (doc_generated_target_example_vec.len examples)))
 
 (define (doc-generated-target-example-mut-find-from
   [examples : (&mut examples doc_generated_target_example_vec.Vec)]
-  [target : (& target str)]
-  [index : i64]) : String
-  (if (>= index examples.len)
-    ""
+  [target : (& target str)]) : String
+  (for [index (iterator.range 0 examples.len)]
     (let
       [example : DocGeneratedTargetExample
         (owned_view.compiler-owned-array-element-shared-view
           examples.slots
           index)]
-      (if (string.eq example.target target)
-        example.form
-        (doc-generated-target-example-mut-find-from examples target (+ index 1))))))
+      (when (string.eq example.target target) (return example.form))))
+  "")
 
 (define (doc-generated-target-example-mut-find
   [examples : (&mut examples doc_generated_target_example_vec.Vec)]
   [target : (& target str)]) : String
-  (doc-generated-target-example-mut-find-from examples target 0))
+  (doc-generated-target-example-mut-find-from examples target))
 
 (define (doc-generated-target-example-add!
   [examples : (&mut examples doc_generated_target_example_vec.Vec)]
@@ -1169,7 +1158,7 @@
       (if (string.is-string-prefix-at text prefix i)
         (set! found i)
         unit)
-      (set! i (+ i 1)))
+      (+= i 1))
     found))
 
 (define (doc-expand-fence-line-start

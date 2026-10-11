@@ -1,5 +1,6 @@
 ;; A one-bit literal alphabet visits every reader occupancy and padding tail.
 ;; Vary exact payload lengths across the fast loop's sixteen-byte boundary.
+(import stdlib.iterator)
 (import compiler_embedded_stdlib_tlci_codec as codec)
 (import compiler_embedded_stdlib_tlci_codec_tests as fixture)
 (import stdlib.arena)
@@ -23,7 +24,7 @@
           (cast
             (bit-or (cast (array-ref payload at) : i64) (shl 1 (- 7 (% i 8))))
             : u8))
-        (set! i (+ i 2))))
+        (+= i 2)))
     (match (codec.compiler-embedded-stdlib-tlci-codec-decode (& payload) n)
       [(Err _) (test.assert-true false "valid exact-length literal frame")]
       [(Ok bytes)
@@ -34,21 +35,18 @@
             (cast (array-ref bytes i) : i64)
             (+ 65 (% i 2))
             "literal bytes across refill boundaries")
-          (set! i (+ i 1)))])
+          (+= i 1))])
     unit))
 
 (test
   bounded_embedded_codec_refill
-  (let
-    [n : i64 0]
-    (while (<= n 260)
-      (let
-        [scope (arena.make)]
-        (in-arena
-          scope
-          (check
-            (if (<= n 257)
-              n
-              (+ 2047 (- n 258)))))
-        (arena.destroy-safe! scope))
-      (set! n (+ n 1)))))
+  (for [n (iterator.range 0 (+ 260 1))]
+    (let
+      [scope (arena.make)]
+      (in-arena
+        scope
+        (check
+          (if (<= n 257)
+            n
+            (+ 2047 (- n 258)))))
+      (arena.destroy-safe! scope))))

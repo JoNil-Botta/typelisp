@@ -75,35 +75,13 @@
 
 (define (compiler-spmd-numeric-lane? [lane : CompilerSpmdNumericLane]) : bool
   (match lane
-    [(I8) true]
-    [(U8) true]
-    [(I16) true]
-    [(U16) true]
-    [(I32) true]
-    [(U32) true]
-    [(I64) true]
-    [(U64) true]
-    [(F32) true]
-    [(F64) true]
-    [(Bool) false]
-    [(Char) false]
-    [(Other) false]))
+    [(or (I8) (U8) (I16) (U16) (I32) (U32) (I64) (U64) (F32) (F64)) true]
+    [(or (Bool) (Char) (Other)) false]))
 
 (define (compiler-spmd-numeric-integer-lane? [lane : CompilerSpmdNumericLane]) : bool
   (match lane
-    [(I8) true]
-    [(U8) true]
-    [(I16) true]
-    [(U16) true]
-    [(I32) true]
-    [(U32) true]
-    [(I64) true]
-    [(U64) true]
-    [(F32) false]
-    [(F64) false]
-    [(Bool) false]
-    [(Char) false]
-    [(Other) false]))
+    [(or (I8) (U8) (I16) (U16) (I32) (U32) (I64) (U64)) true]
+    [(or (F32) (F64) (Bool) (Char) (Other)) false]))
 
 (define (compiler-spmd-numeric-lane-eq?
   [left : CompilerSpmdNumericLane]
@@ -164,72 +142,34 @@
 
 (define (compiler-spmd-numeric-comparison-op? [op : ast.AstBinOp]) : bool
   (match op
-    [(Eq) true]
-    [(Ne) true]
-    [(Lt) true]
-    [(Le) true]
-    [(Gt) true]
-    [(Ge) true]
-    [(Add) false]
-    [(Sub) false]
-    [(Mul) false]
-    [(Div) false]
-    [(Mod) false]
-    [(And) false]
-    [(Or) false]
-    [(BitAnd) false]
-    [(BitOr) false]
-    [(BitXor) false]
-    [(Shl) false]
-    [(Shr) false]))
+    [(or (Eq) (Ne) (Lt) (Le) (Gt) (Ge)) true]
+    [(or (Add) (Sub) (Mul) (Div) (Mod) (And) (Or) (BitAnd) (BitOr) (BitXor)
+         (Shl) (Shr))
+      false]))
 
 (define (compiler-spmd-numeric-simd-binary-strategy
   [source : CompilerSpmdNumericLane]
   [context : CompilerSpmdNumericContext]
   [op : ast.AstBinOp]) : CompilerSpmdNumericStrategy
   (match op
-    [(Add) (NativePacked)]
-    [(Sub) (NativePacked)]
+    [(or (Add) (Sub) (Eq) (Ne) (Lt) (Le) (Gt) (Ge)) (NativePacked)]
     [(Mul)
       (match source
-        [(I8) (OwnedVectorExpansion)]
-        [(U8) (OwnedVectorExpansion)]
+        [(or (I8) (U8)) (OwnedVectorExpansion)]
         [_ (NativePacked)])]
-    [(Div) (Unsupported)]
+    [(or (Div) (And) (Or)) (Unsupported)]
     [(Mod)
       (if (compiler-spmd-numeric-integer-lane? source)
         (match context
-          [(DirectMap) (MaskedPlannerExpansion)]
-          [(InlineHelper) (MaskedPlannerExpansion)]
-          [(MaskedControl) (CheckedActiveLaneExpansion)]
-          [(PrivateHelper) (CheckedActiveLaneExpansion)]
+          [(or (DirectMap) (InlineHelper)) (MaskedPlannerExpansion)]
+          [(or (MaskedControl) (PrivateHelper)) (CheckedActiveLaneExpansion)]
           [(FusedReduction) (Unsupported)])
         (Unsupported))]
-    [(Eq) (NativePacked)]
-    [(Ne) (NativePacked)]
-    [(Lt) (NativePacked)]
-    [(Le) (NativePacked)]
-    [(Gt) (NativePacked)]
-    [(Ge) (NativePacked)]
-    [(And) (Unsupported)]
-    [(Or) (Unsupported)]
-    [(BitAnd)
+    [(or (BitAnd) (BitOr) (BitXor))
       (if (compiler-spmd-numeric-integer-lane? source)
         (NativePacked)
         (Unsupported))]
-    [(BitOr)
-      (if (compiler-spmd-numeric-integer-lane? source)
-        (NativePacked)
-        (Unsupported))]
-    [(BitXor)
-      (if (compiler-spmd-numeric-integer-lane? source)
-        (NativePacked)
-        (Unsupported))]
-    [(Shl)
-      (if (compiler-spmd-numeric-integer-lane? source)
-        (CheckedActiveLaneExpansion)
-        (Unsupported))]
-    [(Shr)
+    [(or (Shl) (Shr))
       (if (compiler-spmd-numeric-integer-lane? source)
         (CheckedActiveLaneExpansion)
         (Unsupported))]))
@@ -257,36 +197,13 @@
             ;; Invalid scalar type/operator pairs are still excluded so the
             ;; matrix describes language-applicable rows, not parser tokens.
             (match op
-              [(And) (Unsupported)]
-              [(Or) (Unsupported)]
-              [(Mod)
-                (if (compiler-spmd-numeric-integer-lane? source)
-                  (ScalarReference)
-                  (Unsupported))]
-              [(BitAnd)
-                (if (compiler-spmd-numeric-integer-lane? source)
-                  (ScalarReference)
-                  (Unsupported))]
-              [(BitOr)
-                (if (compiler-spmd-numeric-integer-lane? source)
-                  (ScalarReference)
-                  (Unsupported))]
-              [(BitXor)
-                (if (compiler-spmd-numeric-integer-lane? source)
-                  (ScalarReference)
-                  (Unsupported))]
-              [(Shl)
-                (if (compiler-spmd-numeric-integer-lane? source)
-                  (ScalarReference)
-                  (Unsupported))]
-              [(Shr)
+              [(or (And) (Or)) (Unsupported)]
+              [(or (Mod) (BitAnd) (BitOr) (BitXor) (Shl) (Shr))
                 (if (compiler-spmd-numeric-integer-lane? source)
                   (ScalarReference)
                   (Unsupported))]
               [_ (ScalarReference)])]
-          [(Avx2)
-            (compiler-spmd-numeric-simd-binary-strategy source context op)]
-          [(Avx512)
+          [(or (Avx2) (Avx512))
             (compiler-spmd-numeric-simd-binary-strategy source context op)])
         (Unsupported))]
     (CompilerSpmdNumericDecision
@@ -300,11 +217,8 @@
 (define (compiler-spmd-numeric-conversion-replan-context?
   [context : CompilerSpmdNumericContext]) : bool
   (match context
-    [(DirectMap) true]
-    [(FusedReduction) true]
-    [(InlineHelper) true]
-    [(MaskedControl) false]
-    [(PrivateHelper) false]))
+    [(or (DirectMap) (FusedReduction) (InlineHelper)) true]
+    [(or (MaskedControl) (PrivateHelper)) false]))
 
 (define (compiler-spmd-numeric-conversion-decision
   [source-ty : ast.AstType]
@@ -321,17 +235,7 @@
         (compiler-spmd-numeric-lane? destination))
         (match backend
           [(Scalar) (ScalarReference)]
-          [(Avx2)
-            (cond
-              [(compiler-spmd-numeric-lane-eq? source destination)
-                (NativePacked)]
-              [(and
-                  (compiler-spmd-numeric-integer-lane? source)
-                  (compiler-spmd-numeric-integer-lane? destination)
-                  (compiler-spmd-numeric-conversion-replan-context? context))
-                (OwnedVectorExpansion)]
-              [else (Unsupported)])]
-          [(Avx512)
+          [(or (Avx2) (Avx512))
             (cond
               [(compiler-spmd-numeric-lane-eq? source destination)
                 (NativePacked)]
@@ -353,11 +257,9 @@
 (define (compiler-spmd-numeric-decision-supported?
   [decision : CompilerSpmdNumericDecision]) : bool
   (match decision.strategy
-    [(ScalarReference) true]
-    [(NativePacked) true]
-    [(OwnedVectorExpansion) true]
-    [(CheckedActiveLaneExpansion) true]
-    [(MaskedPlannerExpansion) true]
+    [(or (ScalarReference) (NativePacked) (OwnedVectorExpansion)
+         (CheckedActiveLaneExpansion) (MaskedPlannerExpansion))
+      true]
     [(Unsupported) false]))
 
 (define (compiler-spmd-numeric-operation-name [op : ast.AstBinOp]) : String

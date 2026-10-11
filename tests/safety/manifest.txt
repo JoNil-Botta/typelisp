@@ -169,6 +169,7 @@ unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|typ
 stdlib_eq_box_reject|check-fail|tests/safety/stdlib_eq_box_reject.tl|-|eq: unsupported type
 stdlib_eq_recursive_box_reject|check-fail|tests/safety/stdlib_eq_recursive_box_reject.tl|-|eq: unsupported type
 stdlib_eq_dynamic_array_reject|check-fail|tests/safety/stdlib_eq_dynamic_array_reject.tl|-|eq: unsupported type
+stdlib_eq_alias_vector_field_reject|check-fail|tests/safety/stdlib_eq_alias_vector_field_reject.tl|-|eq: unsupported type dynarray_String
 stdlib_eq_reference_reject|check-fail|tests/safety/stdlib_eq_reference_reject.tl|-|eq: unsupported type
 stdlib_eq_ptr_reject|check-fail|tests/safety/stdlib_eq_ptr_reject.tl|-|eq: unsupported type
 stdlib_eq_mut_ptr_reject|check-fail|tests/safety/stdlib_eq_mut_ptr_reject.tl|-|eq: unsupported type
@@ -496,6 +497,13 @@ float_literal_infinity_reject|check-fail|tests/safety/float_literal_infinity_rej
 float_literal_inf_reject|check-fail|tests/safety/float_literal_inf_reject.tl|-|unbound name inf
 in_arena_inner_region_escape|check-fail|tests/safety/in_arena_inner_region_escape.tl|-|cannot escape with-arena
 with_escape_raw_i64_reject|check-fail|tests/safety/with_escape_raw_i64_reject.tl|-|with-escape arena must be Arena
+# A with-escape or with-scratch body allocation cannot outlive the form (#8776).
+scratch_body_with_escape_store_reject|check-fail|tests/safety/scratch_body_with_escape_store_reject.tl|-|cannot store region-tagged value into assignment
+scratch_body_with_scratch_store_reject|check-fail|tests/safety/scratch_body_with_scratch_store_reject.tl|-|cannot store region-tagged value into assignment
+scratch_body_global_store_reject|check-fail|tests/safety/scratch_body_global_store_reject.tl|-|cannot store region-tagged value into assignment
+scratch_body_return_reject|check-fail|tests/safety/scratch_body_return_reject.tl|-|scratch-allocated value cannot leave with-scratch or with-escape through return
+scratch_body_try_error_exit_reject|check-fail|tests/safety/scratch_body_try_error_exit_reject.tl|-|scratch-allocated value cannot leave with-scratch or with-escape through try's error exit
+scratch_body_owner_region_reject|check-fail|tests/safety/scratch_body_owner_region_reject.tl|-|assignment type mismatch
 in_arena_raw_i64_reject|check-fail|tests/safety/in_arena_raw_i64_reject.tl|-|in-arena arena must be Arena
 in_arena_ordinary_assignment_reject|check-fail|tests/safety/in_arena_ordinary_assignment_reject.tl|-|cannot store region-tagged value into assignment
 in_arena_ordinary_return_reject|check-fail|tests/safety/in_arena_ordinary_return_reject.tl|-|reference value would escape lexical scope
@@ -1369,7 +1377,14 @@ opaque_foreign_tuple_reject|check-fail|tests/safety/opaque_foreign_tuple_reject.
 opaque_foreign_box_reject|check-fail|tests/safety/opaque_foreign_box_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_by_value_fn_reject|check-fail|tests/safety/opaque_foreign_by_value_fn_reject.tl|-|typecheck: cannot use opaque_dep.make, which holds by value the opaque type opaque_dep/Connection outside its module family
 opaque_foreign_macro_reject|check-fail|tests/safety/opaque_foreign_macro_reject.tl|-|typecheck: cannot construct the opaque type opaque_dep/Connection outside its module family
-opaque_foreign_ptr_read_reject|check-fail|tests/safety/opaque_foreign_ptr_read_reject.tl|-|typecheck: cannot hold by value the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_ptr_read_reject|check-fail|tests/safety/opaque_foreign_ptr_read_reject.tl|-|typecheck: cannot read through a pointer to the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_ptr_read_borrow_reject|check-fail|tests/safety/opaque_foreign_ptr_read_borrow_reject.tl|-|typecheck: cannot read through a pointer to the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_deref_match_reject|check-fail|tests/safety/opaque_foreign_deref_match_reject.tl|-|typecheck: cannot dereference by value the opaque type opaque_dep/State outside its module family
+opaque_foreign_ptr_write_reject|check-fail|tests/safety/opaque_foreign_ptr_write_reject.tl|-|typecheck: cannot write through a pointer to the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_ptr_offset_reject|check-fail|tests/safety/opaque_foreign_ptr_offset_reject.tl|-|typecheck: cannot offset a pointer to the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_deref_place_ok|run-exit|tests/safety/opaque_foreign_deref_place_ok.tl|42|-
+opaque_foreign_ptr_read_nested_reject|check-fail|tests/safety/opaque_foreign_ptr_read_nested_reject.tl|-|typecheck: cannot read through a pointer to the opaque type opaque_dep/Connection outside its module family
+opaque_foreign_pointer_to_reference_ok|run-exit|tests/safety/opaque_foreign_pointer_to_reference_ok.tl|42|-
 
 # JSON live-prefix validation and checked arithmetic, including strategy hooks.
 json_sequence_live_prefix|run-exit|tests/safety/json_sequence_live_prefix.tl|42|-

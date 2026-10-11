@@ -532,6 +532,24 @@
   (member-sets (__tl_dyn-array sym_i64_env.SymI64Env))
   (stack (__tl_dyn-array CompilerLoadLazyQualifiedObserverStack)))
 
+;; One stdlib module's proof that its disk text matched its embedded copy
+;; (#8765), kept as the spans the payload dropped from that text: with the
+;; payload they determine the text exactly, so a later read equal to it matches
+;; too, from any root, and a read that differs anywhere is proved afresh. A
+;; mismatch is not kept.
+(defstruct CompilerLoadStdlibProof
+  (suffix String)
+  (dropped ces.CompilerEmbeddedStdlibDroppedSpans))
+
+;; Proofs a batch keeps across its entries, one per suffix, in `arena`, which
+;; outlives the per-entry provenance reset. `arena` is 0 unless the batch
+;; driver enabled retention: a single compile has no later entry to serve and
+;; retains nothing.
+(defstruct CompilerLoadStdlibProofs
+  (slots (__tl_dyn-array CompilerLoadStdlibProof))
+  (len i64)
+  (arena i64))
+
 ;; Embedded-stdlib route trust belongs to the load session whose intern table
 ;; produced these ids. Keeping the map heads in the session prevents a batch
 ;; reset or an interleaved job from reinterpreting a numeric id under another
@@ -547,7 +565,9 @@
   (canonical-paths (__tl_dyn-array sym_i64_env.SymI64Env))
   ;; Stdlib suffix -> the first physical path noted for it.
   (suffix-claims (__tl_dyn-array sym_i64_env.SymI64Env))
-  (noted (__tl_dyn-array bool)))
+  (noted (__tl_dyn-array bool))
+  ;; Not cleared by the per-entry reset; see CompilerLoadStdlibProofs.
+  (retained-proofs (__tl_dyn-array CompilerLoadStdlibProofs)))
 
 ;; A dependency catalog is admitted once for the load job and then selected by
 ;; the defining declaration's physical source provenance. The stable key keeps
@@ -869,7 +889,9 @@
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (__tl_make-array (sym_i64_env.sym-i64-empty))
     (__tl_make-array (sym_i64_env.sym-i64-empty))
-    (compiler-load-session-state-bool-cell false)))
+    (compiler-load-session-state-bool-cell false)
+    (__tl_make-array
+      (CompilerLoadStdlibProofs (__tl_make-array CompilerLoadStdlibProof 0) 0 0))))
 
 (define (compiler-load-source-provider-inactive) : CompilerLoadSourceProvider
   (CompilerLoadSourceProvider
@@ -2822,8 +2844,10 @@
 ;: outside `--cfg test` and comments define nothing, and any other user
 ;: modification breaks the equality and keeps that module on source
 ;: interpretation. Cached per suffix; the compare runs
-;: once per module per session. Every call also notes the module's canonical
-;: name identity, whether or not the source matches.
+;: once per module per session, and in a batch that retains proofs, once per
+;: module per process while its disk text is unchanged (#8765). Every call
+;: also notes the module's canonical name identity, whether or not the source
+;: matches.
 (define (compiler-load-session-state-note-embedded-equivalent-if-matching!
   [state : CompilerLoadSessionState]
   [suffix : String]
@@ -2846,16 +2870,10 @@
       unit
       (let
         [outcome : i64
-          (match (compiler-load-embedded-stdlib-source (string.copy suffix))
-            [(CompilerEmbeddedStdlibSomeSource embedded-text)
-              (let
-                [disk-text : String (compiler-load-read-file-text disk-path)]
-                (if (ces.compiler-embedded-stdlib-source-matches-blanked?
-                  (& disk-text)
-                  (& embedded-text))
-                  1
-                  -1))]
-            [(CompilerEmbeddedStdlibNoSource) -1])]
+          (compiler-load-session-state-stdlib-equivalence-outcome
+            (& state)
+            (string.copy suffix)
+            (string.copy disk-path))]
         (in-arena
           (arena.Arena
             (compiler-load-session-state-embedded-provenance-arena state))
@@ -2872,6 +2890,150 @@
             state
             (str_cat.str-cat "stdlib/" suffix))
           (set! (array-ref state.embedded-stdlib-provenance.noted 0) true))))))
+
+(define (compiler-load-session-state-stdlib-proofs
+  [state : (& state CompilerLoadSessionState)]) : CompilerLoadStdlibProofs
+  (owned_view.compiler-owned-array-element-shared-view
+    state.embedded-stdlib-provenance.retained-proofs
+    0))
+
+;: Keep stdlib trusted-source proofs across this session's later batch entries.
+(define (compiler-load-session-state-retain-stdlib-proofs!
+  [state : (& state CompilerLoadSessionState)]) : unit
+  (when
+    (= (compiler-load-session-state-stdlib-proofs state).arena 0)
+    (set!
+      (array-ref state.embedded-stdlib-provenance.retained-proofs 0)
+      (CompilerLoadStdlibProofs
+        (__tl_make-array CompilerLoadStdlibProof 0)
+        0
+        (arena.tl_arena_make_small)))))
+
+;: Drop the retained proofs and stop retaining.
+(define (compiler-load-session-state-release-stdlib-proofs!
+  [state : (& state CompilerLoadSessionState)]) : unit
+  (let
+    [owner : i64 (compiler-load-session-state-stdlib-proofs state).arena]
+    (set!
+      (array-ref state.embedded-stdlib-provenance.retained-proofs 0)
+      (CompilerLoadStdlibProofs (__tl_make-array CompilerLoadStdlibProof 0) 0 0))
+    (when
+      (> owner 0)
+      (unsafe
+        (arena.tl_arena_destroy owner)))))
+
+(define (compiler-load-stdlib-proof-index
+  [proofs : (& proofs CompilerLoadStdlibProofs)]
+  [suffix : (& suffix str)]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (while (and (< found 0) (< index proofs.len))
+      (when
+        (string.eq (& (array-ref proofs.slots index).suffix) suffix)
+        (set! found index))
+      (set! index (+ index 1)))
+    found))
+
+;: Record SUFFIX's proof from DISK-TEXT, which matched its embedded copy, when
+;: the session retains proofs. It replaces an older proof for the same suffix.
+(define (compiler-load-session-state-retain-stdlib-proof!
+  [state : (& state CompilerLoadSessionState)]
+  [suffix : (& suffix str)]
+  [disk-text : (& disk-text str)]) : unit
+  (let
+    [proofs : CompilerLoadStdlibProofs
+      (compiler-load-session-state-stdlib-proofs state)]
+    (when
+      (> proofs.arena 0)
+      (in-arena
+        (arena.Arena proofs.arena)
+        (match (ces.compiler-embedded-stdlib-dropped-spans disk-text)
+          [(NoDropped) unit]
+          [(SomeDropped dropped)
+            (let
+              [proof : CompilerLoadStdlibProof
+                (CompilerLoadStdlibProof (string.copy suffix) dropped)]
+              [slot : i64 (compiler-load-stdlib-proof-index (& proofs) suffix)]
+              (if (>= slot 0)
+                (set! (array-ref proofs.slots slot) proof)
+                (let
+                  [capacity : i64 (array-length proofs.slots)]
+                  [slots : (__tl_dyn-array CompilerLoadStdlibProof)
+                    (if (< proofs.len capacity)
+                      proofs.slots
+                      (let
+                        [grown : (__tl_dyn-array CompilerLoadStdlibProof)
+                          (__tl_make-array
+                            CompilerLoadStdlibProof
+                            (if (< capacity 16)
+                              16
+                              (* capacity 2)))]
+                        [index : i64 0]
+                        (while (< index proofs.len)
+                          (set!
+                            (array-ref grown index)
+                            (owned_view.compiler-owned-array-element-shared-view
+                              proofs.slots
+                              index))
+                          (set! index (+ index 1)))
+                        grown))]
+                  (set! (array-ref slots proofs.len) proof)
+                  (set!
+                    (array-ref
+                      state.embedded-stdlib-provenance.retained-proofs
+                      0)
+                    (CompilerLoadStdlibProofs
+                      slots
+                      (+ proofs.len 1)
+                      proofs.arena)))))])))))
+
+;: Whether DISK-TEXT is exactly the text of SUFFIX's retained proof, given the
+;: embedded copy BLANKED.
+(define (compiler-load-session-state-stdlib-proof-matches?
+  [state : (& state CompilerLoadSessionState)]
+  [suffix : (& suffix str)]
+  [disk-text : (& disk-text str)]
+  [blanked : (& blanked str)]) : bool
+  (let
+    [proofs : CompilerLoadStdlibProofs
+      (compiler-load-session-state-stdlib-proofs state)]
+    [slot : i64 (compiler-load-stdlib-proof-index (& proofs) suffix)]
+    (and
+      (>= slot 0)
+      (ces.compiler-embedded-stdlib-source-matches-dropped?
+        disk-text
+        blanked
+        (& (array-ref proofs.slots slot).dropped)))))
+
+;: Whether SUFFIX's disk text at DISK-PATH matches its embedded copy: 1 when
+;: the payload-prepared text equals the copy, -1 otherwise or with no copy. A
+;: retained proof for the exact same text answers without scanning it.
+(define (compiler-load-session-state-stdlib-equivalence-outcome
+  [state : (& state CompilerLoadSessionState)]
+  [suffix : String]
+  [disk-path : String]) : i64
+  (match (compiler-load-embedded-stdlib-source (string.copy suffix))
+    [(CompilerEmbeddedStdlibSomeSource embedded-text)
+      (let
+        [disk-text : String (compiler-load-read-file-text (& disk-path))]
+        (cond
+          [(compiler-load-session-state-stdlib-proof-matches?
+              state
+              (& suffix)
+              (& disk-text)
+              (& embedded-text))
+            1]
+          [(ces.compiler-embedded-stdlib-source-matches-blanked?
+            (& disk-text)
+            (& embedded-text))
+            (compiler-load-session-state-retain-stdlib-proof!
+              state
+              (& suffix)
+              (& disk-text))
+            1]
+          [else -1]))]
+    [(CompilerEmbeddedStdlibNoSource) -1]))
 
 ;: Record that the stdlib module SUFFIX, interned as SUFFIX-ID, was read from
 ;: DISK-PATH. Every stdlib module resolution notes its module here, so the

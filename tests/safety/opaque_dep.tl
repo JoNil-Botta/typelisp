@@ -31,3 +31,8 @@
 
 (defmacro (make-connection [fd : Expr]) : Expr
   `(Connection ,fd))
+
+;; A pointer whose pointee holds the type by value inside a tuple: callers
+;; outside the family may hold it, but not read through it (#8734).
+(define (pair-ptr) : (Ptr (Tuple Connection i64))
+  (ptr-null : (Ptr (Tuple Connection i64))))

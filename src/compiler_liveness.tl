@@ -871,8 +871,8 @@
     [(Nil) (compiler-live-set-empty)]
     [(One value) (compiler-live-value-vars (& value))]
     [(Two a b) (compiler-live-values2-vars (& a) (& b))]
-    [(Array values) (compiler-live-call-args-array-vars (& values) 0)]
-    [(Sret values _) (compiler-live-call-args-array-vars (& values) 0)]))
+    [(or (Array values) (Sret values _))
+      (compiler-live-call-args-array-vars (& values) 0)]))
 
 (define (compiler-live-spmd-call-args-seq-vars
   [seq : (& ir.CompilerIrSpmdCallArgSeq)]
@@ -1011,8 +1011,7 @@
         out
         (compiler-live-use-ids-add-value! out n (& a))
         (& b))]
-    [(Array values) (compiler-live-use-ids-add-value-array! out n (& values) 0)]
-    [(Sret values _)
+    [(or (Array values) (Sret values _))
       (compiler-live-use-ids-add-value-array! out n (& values) 0)]))
 
 ;; Walk dense value slots in place; no transient chain is materialized.
@@ -1083,45 +1082,19 @@
   [instr : (& ir.CompilerIrInstr)]
   [out : (&mut out (__tl_dyn-array i64))]) : i64
   (match (owned_view.compiler-owned-reference-shared-view instr)
-    [(Mov _ src _) (compiler-live-use-ids-add-value! out 0 (& src))]
-    [(Alloc _ _) 0]
+    [(or (Alloc _ _) (LaneId _ _ _) (EntryArgc _) (EntryArgv _) (EntryEnvp _)
+         (Jump _))
+      0]
     [(AddrOf _ src) (compiler-live-use-ids-push! out 0 src)]
-    [(Gep _ base offset _)
+    [(or (Gep _ base offset _) (StorePtr base offset _)
+         (StoreOwned base offset _) (CopyBytes base offset _)
+         (BoundsCheck base offset _) (BinOp _ _ base offset _)
+         (MaskBinOp _ _ base offset _) (VectorLoad _ base offset _ _)
+         (TailMask _ base offset _) (CpuId _ base offset _))
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-value! out 0 (& base))
         (& offset))]
-    [(Load _ src _) (compiler-live-use-ids-add-value! out 0 (& src))]
-    [(StorePtr dst src _)
-      (compiler-live-use-ids-add-value!
-        out
-        (compiler-live-use-ids-add-value! out 0 (& dst))
-        (& src))]
-    [(StoreOwned dst src _)
-      (compiler-live-use-ids-add-value!
-        out
-        (compiler-live-use-ids-add-value! out 0 (& dst))
-        (& src))]
-    [(CopyBytes dst src _)
-      (compiler-live-use-ids-add-value!
-        out
-        (compiler-live-use-ids-add-value! out 0 (& dst))
-        (& src))]
-    [(BoundsCheck index length _)
-      (compiler-live-use-ids-add-value!
-        out
-        (compiler-live-use-ids-add-value! out 0 (& index))
-        (& length))]
-    [(Cast _ src _ _) (compiler-live-use-ids-add-value! out 0 (& src))]
-    [(Bitcast _ src _ _) (compiler-live-use-ids-add-value! out 0 (& src))]
-    [(BinOp _ _ lhs rhs _)
-      (compiler-live-use-ids-add-value!
-        out
-        (compiler-live-use-ids-add-value! out 0 (& lhs))
-        (& rhs))]
-    [(UnOp _ _ src _) (compiler-live-use-ids-add-value! out 0 (& src))]
-    [(LaneId _ _ _) 0]
-    [(Splat _ value _ _) (compiler-live-use-ids-add-value! out 0 (& value))]
     [(VectorBinOp payload-box)
       (let
         [payload : ir.CompilerIrInstrVectorBinOpPayload (deref payload-box)]
@@ -1136,8 +1109,6 @@
           out
           (compiler-live-use-ids-add-value! out 0 (& payload.src))
           (& payload.carry)))]
-    [(VectorReduce _ _ src _ _)
-      (compiler-live-use-ids-add-value! out 0 (& src))]
     [(VectorCompare payload-box)
       (let
         [payload : ir.CompilerIrInstrVectorComparePayload (deref payload-box)]
@@ -1145,13 +1116,6 @@
           out
           (compiler-live-use-ids-add-value! out 0 (& payload.lhs))
           (& payload.rhs)))]
-    [(MaskBinOp _ _ lhs rhs _)
-      (compiler-live-use-ids-add-value!
-        out
-        (compiler-live-use-ids-add-value! out 0 (& lhs))
-        (& rhs))]
-    [(MaskNot _ src _) (compiler-live-use-ids-add-value! out 0 (& src))]
-    [(MaskReduce _ _ src _) (compiler-live-use-ids-add-value! out 0 (& src))]
     [(Select payload-box)
       (let
         [payload : ir.CompilerIrInstrSelectPayload (deref payload-box)]
@@ -1162,11 +1126,6 @@
             (compiler-live-use-ids-add-value! out 0 (& payload.mask))
             (& payload.on-true))
           (& payload.on-false)))]
-    [(VectorLoad _ base index _ _)
-      (compiler-live-use-ids-add-value!
-        out
-        (compiler-live-use-ids-add-value! out 0 (& base))
-        (& index))]
     [(VectorStore payload-box)
       (let
         [payload : ir.CompilerIrInstrVectorStorePayload (deref payload-box)]
@@ -1223,28 +1182,10 @@
               (& payload.selector-low))
             (& payload.active-lanes))
           (& payload.selector-high)))]
-    [(TailMask _ index len _)
-      (compiler-live-use-ids-add-value!
-        out
-        (compiler-live-use-ids-add-value! out 0 (& index))
-        (& len))]
-    [(EntryArgc _) 0]
-    [(EntryArgv _) 0]
-    [(EntryEnvp _) 0]
-    [(CpuId _ leaf subleaf _)
-      (compiler-live-use-ids-add-value!
-        out
-        (compiler-live-use-ids-add-value! out 0 (& leaf))
-        (& subleaf))]
-    [(Xgetbv _ index) (compiler-live-use-ids-add-value! out 0 (& index))]
-    [(Syscall _ args) (compiler-live-use-ids-add-call-args! out 0 (& args))]
-    [(Call _ _ args _) (compiler-live-use-ids-add-call-args! out 0 (& args))]
-    [(CallIndirect _ func args _)
-      (compiler-live-use-ids-add-value!
-        out
-        (compiler-live-use-ids-add-call-args! out 0 (& args))
-        (& func))]
-    [(CallIndirectC _ func args _)
+    [(or (Syscall _ args) (Call _ _ args _) (TailCall _ args _))
+      (compiler-live-use-ids-add-call-args! out 0 (& args))]
+    [(or (CallIndirect _ func args _) (CallIndirectC _ func args _)
+         (TailCallIndirect func args _))
       (compiler-live-use-ids-add-value!
         out
         (compiler-live-use-ids-add-call-args! out 0 (& args))
@@ -1275,23 +1216,15 @@
           out
           (compiler-live-use-ids-add-spmd-args! out 0 (& payload.args))
           (& payload.active-mask)))]
-    [(TailCall _ args _) (compiler-live-use-ids-add-call-args! out 0 (& args))]
-    [(Store _ value _) (compiler-live-use-ids-add-value! out 0 (& value))]
-    [(Branch cond _ _) (compiler-live-use-ids-add-value! out 0 (& cond))]
-    [(TotalEnumBranch cond _ _)
-      (compiler-live-use-ids-add-value! out 0 (& cond))]
     [(Return value) (compiler-live-use-ids-add-maybe-value! out 0 (& value))]
     [(Phi _ inputs _) (compiler-live-use-ids-add-phi-inputs! out 0 inputs)]
     [(Pack _ words _) (compiler-live-use-ids-add-value-seq! out 0 (& words))]
-    [(Word _ src _ _) (compiler-live-use-ids-add-value! out 0 (& src))]
-    [(Jump _) 0]
-    [(TailCallIndirect func args _)
-      (compiler-live-use-ids-add-value!
-        out
-        (compiler-live-use-ids-add-call-args! out 0 (& args))
-        (& func))]
-    [(Switch index _ _ _) (compiler-live-use-ids-add-value! out 0 (& index))]
-    [(TotalEnumSwitch index _ _ _ _)
+    [(or (Mov _ index _) (Load _ index _) (Cast _ index _ _)
+         (Bitcast _ index _ _) (UnOp _ _ index _) (Splat _ index _ _)
+         (VectorReduce _ _ index _ _) (MaskNot _ index _)
+         (MaskReduce _ _ index _) (Xgetbv _ index) (Store _ index _)
+         (Branch index _ _) (TotalEnumBranch index _ _) (Word _ index _ _)
+         (Switch index _ _ _) (TotalEnumSwitch index _ _ _ _))
       (compiler-live-use-ids-add-value! out 0 (& index))]))
 
 ;; Edge-precise counterpart of compiler-live-instr-use-ids-into!: a phi's inputs
@@ -1707,11 +1640,8 @@
         [(Some instr)
           (match instr
             [(Jump target) (compiler-live-label-set-cons target Nil)]
-            [(Branch _ true-label false-label)
-              (compiler-live-label-set-insert
-                (compiler-live-label-set-cons true-label Nil)
-                false-label)]
-            [(TotalEnumBranch _ true-label false-label)
+            [(or (Branch _ true-label false-label)
+                 (TotalEnumBranch _ true-label false-label))
               (compiler-live-label-set-insert
                 (compiler-live-label-set-cons true-label Nil)
                 false-label)]

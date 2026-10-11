@@ -870,7 +870,10 @@
   (let
     [line : i64 (index-line src idx)]
     [col : i64 (index-col src idx)]
-    (token.source-error-new message (token.source-span-new line col line col))))
+    (token.source-error-new
+      message
+      (token.source-span-new line col line col)
+      TokenError)))
 
 ;; Reusable spanned-token buffer, sized by TOKEN COUNT.
 ;;

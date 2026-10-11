@@ -280,6 +280,63 @@
                     "\n(test added (check 1))\n")
                   (string.copy blanked)))))]))))
 
+;; #8765: a batch keeps a matching text as the spans its payload form drops.
+;; With that payload form they must answer exactly whether `candidate` is the
+;; proved text: an edit anywhere, inside a dropped test included, is a miss.
+(define (dropped-exact? [proved : String] [candidate : String]) : bool
+  (match (ces.compiler-embedded-stdlib-dropped-spans (& proved))
+    [(NoDropped) true]
+    [(SomeDropped dropped)
+      (let
+        [blanked : String (ref-payload-source (string.copy proved))]
+        (=
+          (ces.compiler-embedded-stdlib-source-matches-dropped?
+            (& candidate)
+            (& blanked)
+            (& dropped))
+          (string.eq (& candidate) (& proved))))]))
+
+;; `src` against itself and against its edits: inside its first dropped form,
+;; right before it, without it, with it moved to the end, a new test, one more
+;; byte, one byte fewer, and nothing.
+(define (module-dropped-exact? [src : String]) : bool
+  (let
+    [n : i64 (string.string-length (& src))]
+    (and
+      (dropped-exact? (string.copy src) (string.copy src))
+      (dropped-exact?
+        (string.copy src)
+        (str_cat.str-cat (string.copy src) "\n(test added (check 1))\n"))
+      (dropped-exact? (string.copy src) (str_cat.str-cat (string.copy src) " "))
+      (dropped-exact? (string.copy src) "")
+      (or
+        (= n 0)
+        (dropped-exact? (string.copy src) (string.substring (& src) 0 (- n 1))))
+      (match (ces.compiler-embedded-stdlib-inline-test-ranges (& src))
+        [(Unscannable) true]
+        [(Ranges ranges count)
+          (or
+            (< (first-form-range (& src) (& ranges) count) 0)
+            (let
+              [k : i64 (first-form-range (& src) (& ranges) count)]
+              [start : i64 (array-ref ranges (* k 2))]
+              [end : i64 (+ (array-ref ranges (+ (* k 2) 1)) 1)]
+              [form : String (string.substring (& src) start (- end start))]
+              (and
+                (dropped-exact?
+                  (string.copy src)
+                  (splice (& src) (+ start 1) (+ start 1) " "))
+                (dropped-exact?
+                  (string.copy src)
+                  (splice (& src) start start "x"))
+                (dropped-exact? (string.copy src) (splice (& src) start end ""))
+                (dropped-exact?
+                  (string.copy src)
+                  (str_cat.str-cat
+                    (splice (& src) start end "")
+                    "\n"
+                    (string.copy form))))))]))))
+
 (define (stdlib-module-names) : String
   (fs.read-dir "stdlib"))
 
@@ -308,9 +365,17 @@
           (match (io.try-read-file
             (& (str_cat.str-cat "stdlib/" (string.copy name))))
             [(OkIoBytes bytes)
-              (test.assert-true
-                (module-agrees? (byte_buf.to-string bytes))
-                (str_cat.str-cat "stdlib/" name " disagrees"))
+              (let
+                [text : String (byte_buf.to-string bytes)]
+                (test.assert-true
+                  (module-agrees? (string.copy text))
+                  (str_cat.str-cat "stdlib/" (string.copy name) " disagrees"))
+                (test.assert-true
+                  (module-dropped-exact? text)
+                  (str_cat.str-cat
+                    "stdlib/"
+                    name
+                    " dropped spans are not exact")))
               (set! checked (+ checked 1))]
             [(ErrIoBytes _) (test.assert-true false name)]))
         (set! start (+ stop 1))))
@@ -378,4 +443,24 @@
     "edge case 18")
   (test.assert-true
     (match-agrees? ";; one\n(define a 1)\n" ";; one\n(define a 1)\n")
-    "edge case 19"))
+    "edge case 19")
+  ;; The dropped-span proof over the same shapes, CRLF and prose included.
+  (test.assert-true
+    (module-dropped-exact?
+      "(define a 1)\n(test t\n  (check a))\n(define b 2)\n")
+    "dropped case 0")
+  (test.assert-true
+    (module-dropped-exact? "(cfg\r\n  test\r\n  (define h 1))\r\n(define b 2)")
+    "dropped case 1")
+  (test.assert-true
+    (module-dropped-exact?
+      ";; Why.\n(define a 1) ; note\n(test t ; inside\n (check))\n")
+    "dropped case 2")
+  (test.assert-true
+    (module-dropped-exact? "(test t)(test u)(define a 1)")
+    "dropped case 3")
+  (test.assert-true (module-dropped-exact? "(define a 1)") "dropped case 4")
+  (test.assert-true (module-dropped-exact? "") "dropped case 5")
+  (test.assert-true
+    (module-dropped-exact? "(test t (check 1)")
+    "dropped case 6"))

@@ -1,5 +1,6 @@
 ;; A value read through a raw pointer cannot be held by value outside the
-;; family: binding it is rejected (#6999).
+;; family (#6999): the read itself is rejected, before the `let` binds it
+;; (#8734).
 (import opaque_dep)
 
 (define (peek [p : (Ptr opaque_dep.Connection)]) : i64

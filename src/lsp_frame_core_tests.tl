@@ -699,6 +699,40 @@
         (not (string.eq msg ""))
         (not (string.eq ctx "")))]))
 
+;; Every parse code is the "parse" diagnostic kind, not only E0100 (#7135).
+(define (lsp-compiler-diagnostic-kind-is? [code : String] [want : String]) : bool
+  (let
+    [diag : cdiag.CompilerDiagnostic
+      (cdiag.compiler-diagnostic-with-code
+        (& (cdiag.compiler-diagnostic-simple "kind.tl" 1 1 "message"))
+        code)]
+    (string.eq (lsp.lsp-compiler-diagnostic-kind (& diag)) want)))
+
+(define (lsp-compiler-diagnostic-kind-ok?) : bool
+  (and
+    (lsp-compiler-diagnostic-kind-is?
+      (cdiag.compiler-diagnostic-code-parse)
+      "parse")
+    (lsp-compiler-diagnostic-kind-is?
+      (cdiag.compiler-diagnostic-code-parse-unbalanced-delimiter)
+      "parse")
+    (lsp-compiler-diagnostic-kind-is?
+      (cdiag.compiler-diagnostic-code-parse-malformed-form)
+      "parse")
+    (lsp-compiler-diagnostic-kind-is?
+      (cdiag.compiler-diagnostic-code-parse-invalid-pattern)
+      "parse")
+    (lsp-compiler-diagnostic-kind-is?
+      (cdiag.compiler-diagnostic-code-typecheck)
+      "compiler")
+    (lsp-compiler-diagnostic-kind-is?
+      (cdiag.compiler-diagnostic-code-typecheck-pattern)
+      "compiler")
+    (string.eq
+      (lsp.lsp-compiler-diagnostic-kind
+        (& (cdiag.compiler-diagnostic-simple "kind.tl" 1 1 "uncoded")))
+      "compiler")))
+
 (define (lsp-diagnostic-metadata-smoke) : i64
   (let
     [parse-diag : cdiag.CompilerDiagnostic
@@ -727,6 +761,7 @@
           (cdiag.compiler-diagnostic-code-typecheck))
         (return 2))
       (unless (lsp-compiler-diagnostic-uncoded-ok? uncoded) (return 3))
+      (unless (lsp-compiler-diagnostic-kind-ok?) (return 3))
       (cfg test (unless (lsp-compiler-diagnostic-related-ok?) (return 4)) unit)
       (unless (lsp-frame-session-cache-smoke-ok?) (return 5))
       (unless (lsp-definition-smoke-ok?) (return 6))

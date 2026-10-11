@@ -1797,6 +1797,8 @@
                 state)
               (compiler_driver_core.compiler-driver-state-prefix-cache-clear!
                 state)
+              (compiler_driver_core.compiler-driver-state-retain-stdlib-proofs!
+                state)
               (backend.compiler-backend-state-set-shared-object-code-model!
                 (compiler_driver_core.compiler-driver-state-backend (& state))
                 (compile-cli-shared-object-requested?))
@@ -1835,6 +1837,8 @@
               state
               "compile-batch")
             unit)
+          (compiler_driver_core.compiler-driver-state-release-stdlib-proofs!
+            state)
           (compiler_driver_core.compiler-driver-state-prefix-cache-clear! state)
           (compiler_driver_core.compiler-driver-state-prefix-cache-disable!
             state)

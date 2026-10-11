@@ -68,8 +68,9 @@ at opt0, opt1 and opt2. Its valid borrow-ending counterpart remains in the
 native integration matrix and has the same result at every level.
 
 `compiler_global_effects_tests.tl` covers recursive witnesses, nonwriting SCCs,
-indirect unions, positive/negative cache invalidation and deep-copy survival
-after collector scratch retirement. The `global_call_*` safety rows exercise
+indirect unions and positive/negative cache invalidation. The graph-copy
+retirement and explicit-job isolation tests live in
+`src/tests/compiler_typecheck_core_tests.tl`. The `global_call_*` safety rows exercise
 whole/projected/buffer writes, address-taking, mutable loans, transitive and
 recursive calls, indirect functions and closures, macro and imported setters,
 explicit and synthesized cleanup, and the allowed Copy/different-global/ended

@@ -5,7 +5,7 @@
 (import stdlib.arena)
 (import stdlib.hashmap)
 (import compiler_symbols as csym)
-(import compiler_global_effects as global_effects)
+(cfg test (import compiler_global_effects as global_effects))
 (import (vector.vector i64) as effect_words)
 (import compiler_load as cload)
 (import compiler_ast_types as ast)
@@ -10483,3 +10483,42 @@
         (tc_core.tc-context-job-state a))
       (tc_core.tc-job-state-retire-owned-storage!
         (tc_core.tc-context-job-state b)))))
+
+(cfg
+  test
+  (test
+    global-effects-copy-retires-collector-scratch
+    (let
+      [home : i64 (arena.tl_arena_current)]
+      [scratch : i64 (arena.tl_arena_make_small)]
+      [_enter : unit
+        (unsafe
+          (arena.tl_arena_set scratch))]
+      [source : global_effects.Graph (global_effects.new 66)]
+      (global_effects.add-call! (&mut source) 0 65)
+      (global_effects.add-call! (&mut source) 65 64)
+      (global_effects.add-write! (&mut source) 64 7)
+      ;; Both positive and negative cached results belong to scratch.
+      (test.assert-i64-eq
+        (effect_words.len (& (global_effects.witness! (&mut source) 0 7)))
+        3
+        "source positive cache")
+      (test.assert-i64-eq
+        (effect_words.len (& (global_effects.witness! (&mut source) 0 8)))
+        0
+        "source negative cache")
+      (unsafe
+        (arena.tl_arena_set home))
+      (let
+        [kept : global_effects.Graph (global_effects.copy (& source))]
+        (unsafe
+          (arena.tl_arena_destroy scratch))
+        (test.assert-i64-eq
+          (effect_words.len (& (global_effects.witness! (&mut kept) 0 7)))
+          3
+          "copied edges and writers survive retired scratch")
+        (global_effects.add-write! (&mut kept) 65 8)
+        (test.assert-i64-eq
+          (effect_words.len (& (global_effects.witness! (&mut kept) 0 8)))
+          2
+          "copied graph rebuilds query caches in its destination arena")))))

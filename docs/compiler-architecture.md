@@ -504,6 +504,14 @@ builtin ids). The views render Int and Float text as a shared view of the
 interned spelling. A consumer that keeps a spelling past an intern reset copies
 it out, as the parser's literal AST nodes do (`reader.sp-text-copy`).
 
+Macro generation copy-out persists expression payloads in place: all expression
+ids, wrapper targets, and wrapper spans remain unchanged. It shares the row-write
+and protected-node journal operation with ordinary rewrites, but retains the
+existing provenance slots and span records. Registering those wrappers again
+would duplicate per-use re-span records. Semantic rewrites still use the
+span-updating setter, and whole-program compaction rebuilds provenance for its
+new ids.
+
 The IR source-span table (`CompilerSourceSpans`) keeps two dense lists of flat
 inline records: function entries (symbol, path id, span; 32 bytes) and
 instruction entries (value, store or bounds key, path id, span; 48 bytes). The

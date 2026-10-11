@@ -11611,68 +11611,77 @@
         (match (json.object-get params (& pos-key))
           [(JsonFound position)
             (let
-              [line0 : i64 (lsp-json-int-field-default position "line" 0)]
-              [char0 : i64 (lsp-json-int-field-default position "character" 0)]
-              [byte-lc : LspLineCol
-                (lsp-byte-line-col-at-offset
-                  text
-                  (lsp-offset-at-position text line0 char0))]
-              (match (expand.compiler-expand-source-at
-                path
-                (owned_view.compiler-owned-shared-view text)
-                stdlib-roots
-                (lsp-language-cfgs)
-                byte-lc.line
-                byte-lc.col
-                expand.compiler-expand-default-max-bytes)
-                [(Expanded frames expansion truncated _)
-                  (let
-                    [selected : expand.CompilerExpandFrame
-                      (expand.compiler-expand-frame-ref
-                        (& frames)
-                        (- frames.len 1))]
-                    (lsp-write-response
-                      id
-                      (lsp-json-object
-                        (lsp-json-member
-                          "success"
-                          (JsonBool true)
-                          (lsp-json-member
-                            "macro"
-                            (JsonString selected.macro-name)
-                            (lsp-json-member
-                              "definedIn"
-                              (JsonString selected.module-path)
-                              (lsp-json-member
-                                "frames"
-                                (lsp-expand-frames-json (& text) (& frames))
-                                (lsp-json-member
-                                  "expansion"
-                                  (JsonString expansion)
-                                  (lsp-json-member
-                                    "truncated"
-                                    (JsonBool truncated)
-                                    (json.member-list-empty)))))))))
-                    (Continue docs))]
-                [(NotFound _)
-                  (lsp-write-response
-                    id
-                    (lsp-json-object2
-                      "success"
-                      (JsonBool false)
-                      "error"
-                      (JsonString "No macro invocation at this position")))
+              [line0 : i64 (lsp-json-int-field-default position "line" -1)]
+              [char0 : i64 (lsp-json-int-field-default position "character" -1)]
+              (match (lsp-offset-at-position-checked
+                (string.copy (& text))
+                line0
+                char0)
+                [(Missing)
+                  (lsp-write-error id -32602 "Invalid position parameter")
                   (Continue docs)]
-                [(Failed _)
-                  (lsp-write-response
-                    id
-                    (lsp-json-object2
-                      "success"
-                      (JsonBool false)
-                      "error"
-                      (JsonString
-                        "The document does not load; run tl/check for its diagnostics")))
-                  (Continue docs)]))]
+                [(Found offset)
+                  (let
+                    [byte-lc : LspLineCol
+                      (lsp-byte-line-col-at-offset text offset)]
+                    (match (expand.compiler-expand-source-at
+                      path
+                      (owned_view.compiler-owned-shared-view text)
+                      stdlib-roots
+                      (lsp-language-cfgs)
+                      byte-lc.line
+                      byte-lc.col
+                      expand.compiler-expand-default-max-bytes)
+                      [(Expanded frames expansion truncated _)
+                        (let
+                          [selected : expand.CompilerExpandFrame
+                            (expand.compiler-expand-frame-ref
+                              (& frames)
+                              (- frames.len 1))]
+                          (lsp-write-response
+                            id
+                            (lsp-json-object
+                              (lsp-json-member
+                                "success"
+                                (JsonBool true)
+                                (lsp-json-member
+                                  "macro"
+                                  (JsonString selected.macro-name)
+                                  (lsp-json-member
+                                    "definedIn"
+                                    (JsonString selected.module-path)
+                                    (lsp-json-member
+                                      "frames"
+                                      (lsp-expand-frames-json
+                                        (& text)
+                                        (& frames))
+                                      (lsp-json-member
+                                        "expansion"
+                                        (JsonString expansion)
+                                        (lsp-json-member
+                                          "truncated"
+                                          (JsonBool truncated)
+                                          (json.member-list-empty)))))))))
+                          (Continue docs))]
+                      [(NotFound _)
+                        (lsp-write-response
+                          id
+                          (lsp-json-object2
+                            "success"
+                            (JsonBool false)
+                            "error"
+                            (JsonString "No macro invocation at this position")))
+                        (Continue docs)]
+                      [(Failed _)
+                        (lsp-write-response
+                          id
+                          (lsp-json-object2
+                            "success"
+                            (JsonBool false)
+                            "error"
+                            (JsonString
+                              "The document does not load; run tl/check for its diagnostics")))
+                        (Continue docs)]))]))]
           [(JsonMissing)
             (lsp-write-error id -32600 "Missing position parameter")
             (Continue docs)]))]

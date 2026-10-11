@@ -11,6 +11,7 @@
 ;; expansion pipeline and never evaluates a transformer of its own.
 (import stdlib.string)
 (import stdlib.text_buf)
+(import stdlib.byte_buf_core as byte_buf)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.vector)
 (import (vector.vector String) as svec)
@@ -89,7 +90,7 @@
     (set! (array-ref frames.slots (+ base 2)) (cast span.start-line : i64))
     (set! (array-ref frames.slots (+ base 3)) (cast span.start-col : i64))
     (set! (array-ref frames.slots (+ base 4)) (cast span.end-line : i64))
-    (set! (array-ref frames.slots (+ base 5)) (cast span.end-col : i64))
+    (set! (array-ref frames.slots (+ base 5)) (+ (cast span.end-col : i64) 1))
     (set! frames.len (+ frames.len 1))))
 
 (define (compiler-expand-frames-copy [frames : (& frames CompilerExpandFrames)]) : CompilerExpandFrames
@@ -120,7 +121,7 @@
       (array-ref frames.slots (+ base 4))
       (array-ref frames.slots (+ base 5)))))
 
-;; Whether 1-based `line`:`col` lies in `span`, whose end is exclusive.
+;; AST spans include their final byte; reported frame ends are exclusive.
 (define (compiler-expand-span-covers?
   [span : ast.AstSourceSpan]
   [line : i64]
@@ -132,7 +133,7 @@
     [end-col : i64 (cast span.end-col : i64)]
     (and
       (or (> line start-line) (and (= line start-line) (>= col start-col)))
-      (or (< line end-line) (and (= line end-line) (< col end-col))))))
+      (or (< line end-line) (and (= line end-line) (<= col end-col))))))
 
 ;; --- finding the invocation ------------------------------------------------
 (defstruct CompilerExpandWalk
@@ -248,7 +249,7 @@
             [(= c '\n') (text_buf.append buf "\\n")]
             [(= c '\t') (text_buf.append buf "\\t")]
             [(= c '\r') (text_buf.append buf "\\r")]
-            [else (text_buf.append-char buf c)])))
+            [else (text_buf.append buf (string.substring (& text) index 1))])))
       (set! index (+ index 1)))
     (text_buf.render (text_buf.append buf "\""))))
 
@@ -261,10 +262,13 @@
     [(= c '\\') "'\\\\'"]
     [(= c '\'') "'\\''"]
     [else
-      (text_buf.render
-        (text_buf.append
-          (text_buf.append-char (text_buf.append (text_buf.empty) "'") c)
-          "'"))]))
+      (let
+        [buf : byte_buf.ByteBufBuilder
+          (byte_buf.byte-buf-builder-with-capacity 3)]
+        (byte_buf.byte-buf-builder-push (&mut buf) (cast 39 : u8))
+        (byte_buf.byte-buf-builder-push (&mut buf) (cast c : u8))
+        (byte_buf.byte-buf-builder-push (&mut buf) (cast 39 : u8))
+        (byte_buf.byte-buf-builder-to-string (& buf)))]))
 
 (define (compiler-expand-sexpr-items!
   [out : (&mut out CompilerExpandText)]
@@ -348,7 +352,7 @@
         frame.start-line
         frame.start-col
         frame.end-line
-        frame.end-col)
+        (- frame.end-col 1))
       (ast.ast-expr-segment-bases-get (tc.tc-context-expr-bases ctx) produced))
       [(Ok sexpr)
         (compiler-expand-sexpr! (&mut out) names sexpr)

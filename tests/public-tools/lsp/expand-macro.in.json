@@ -6,6 +6,17 @@
   {"jsonrpc":"2.0","id":4,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":2,"character":2}}},
   {"jsonrpc":"2.0","id":5,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"}}},
   {"jsonrpc":"2.0","id":6,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/not-open.tl"},"position":{"line":0,"character":0}}},
+  {"jsonrpc":"2.0","id":8,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":6,"character":9999}}},
+  {"jsonrpc":"2.0","id":9,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":6,"character":-1}}},
+  {"jsonrpc":"2.0","id":10,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":6}}},
+  {"jsonrpc":"2.0","id":11,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":999,"character":0}}},
+  {"jsonrpc":"2.0","id":12,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":-1,"character":0}}},
+  {"jsonrpc":"2.0","id":13,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":"6","character":8}}},
+  {"jsonrpc":"2.0","id":14,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"character":8}}},
+  {"jsonrpc":"2.0","id":15,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":null}},
+  {"jsonrpc":"2.0","id":16,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":7,"character":32}}},
+  {"jsonrpc":"2.0","id":17,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":7,"character":33}}},
+  {"jsonrpc":"2.0","id":18,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro.tl"},"position":{"line":7,"character":34}}},
   {"jsonrpc":"2.0","id":7,"method":"shutdown","params":null},
   {"jsonrpc":"2.0","method":"exit"}
 ]

@@ -1,0 +1,9 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro-utf16.tl","languageId":"typelisp","version":1,"text":"(define (main) : i64 (begin \"λ€𝄞\" (when true (begin \"λ€𝄞\" unit)) 0))\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro-utf16.tl"},"position":{"line":0,"character":36}}},
+  {"jsonrpc":"2.0","id":3,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro-utf16.tl"},"position":{"line":0,"character":9999}}},
+  {"jsonrpc":"2.0","id":4,"method":"tl/expandMacro","params":{"textDocument":{"uri":"${{TMP_URI}}/expand-macro-utf16.tl"},"position":{"line":0,"character":32}}},
+  {"jsonrpc":"2.0","id":5,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

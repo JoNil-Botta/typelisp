@@ -1462,6 +1462,8 @@ uses the existing macro-expression converter and formatter, with an explicit
 byte bound. Frame identities and AST nodes belong to that check's pool and
 intern session; consumers render their response before the session retires.
 Inspection does not evaluate transformers a second time or run generated code.
+LSP positions use the negotiated encoding and must identify an exact position
+in the document; invalid coordinates are rejected before checking the source.
 
 Common options include `--target linux-x86_64|windows-x86_64` (Linux is the
 default output target; `test` defaults to the host), `--backend-mode

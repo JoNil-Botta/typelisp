@@ -94058,10 +94058,7 @@
             (macro-sexpr-session owner)
             name-id
             "call-head")]
-        [tag : i64
-          (parser.compiler-parse-dispatch-tag-id
-            (parser.compiler-parse-dispatch-env)
-            source-id)]
+        [tag : i64 (parser.compiler-parse-default-dispatch-tag-id source-id)]
         (Ok
           (macro-spanned-symbol-id
             (if (or
@@ -97174,9 +97171,7 @@
                 head-id
                 head-id)]
             [tag : i64
-              (parser.compiler-parse-dispatch-tag-id
-                (parser.compiler-parse-dispatch-env)
-                source-head-id)]
+              (parser.compiler-parse-default-dispatch-tag-id source-head-id)]
             [count : i64 args.len]
             (cond
               [(= source-head-id (cbi.compiler-builtin-ctfe "begin"))
@@ -97401,9 +97396,7 @@
               name
               (tc-hygiene-template-base name))]
           [syntax-tag : i64
-            (parser.compiler-parse-dispatch-tag-id
-              (parser.compiler-parse-dispatch-env)
-              template-source-id)]
+            (parser.compiler-parse-default-dispatch-tag-id template-source-id)]
           (match (macro-hygiene-env-lookup env name-id)
             [(Some renamed-id) renamed-id]
             [(No)
@@ -98100,9 +98093,7 @@
             head-id
             head-id)]
         [tag : i64
-          (parser.compiler-parse-dispatch-tag-id
-            (parser.compiler-parse-dispatch-env)
-            source-head-id)]
+          (parser.compiler-parse-default-dispatch-tag-id source-head-id)]
         [count : i64 args.len]
         (cond
           [(= tag (parser.compiler-parse-tag-decl-import))

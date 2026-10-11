@@ -6307,6 +6307,11 @@
           ;; safely marshal register-homed GP user args, but the closure
           ;; pointer itself is loaded after argument setup and remains
           ;; memory-sourced.
+          ;; Closure/indirect calls reserve ABI arg-register 0 for the env and
+          ;; marshal user args at base 1. Register-homed GP user args are safe
+          ;; through the same base-aware backend parallel move; the closure
+          ;; descriptor/call target remains memory-sourced because it is loaded
+          ;; after argument setup.
           [(or (TailCallIndirect func args _) (CallIndirect _ func args _))
             (compiler-reg-call-arg-vars-unless-gp-parallel
               type-segment-bases
@@ -6316,11 +6321,6 @@
               1
               target-abi
               false)]
-          ;; Closure/indirect calls reserve ABI arg-register 0 for the env and
-          ;; marshal user args at base 1. Register-homed GP user args are safe
-          ;; through the same base-aware backend parallel move; the closure
-          ;; descriptor/call target remains memory-sourced because it is loaded
-          ;; after argument setup.
           [(CallIndirectC _ func args _)
             (compiler-reg-call-arg-vars-unless-gp-parallel
               type-segment-bases
@@ -15801,9 +15801,9 @@
     [(No) false]
     [(Some location)
       (match location
-        [(or (Register _) (RegisterPair _ _) (Remat _)) true]
         ;; A rematerialised value is recomputed at each use and has no spill
         ;; store at all, so the split achieved what it was selected for.
+        [(or (Register _) (RegisterPair _ _) (Remat _)) true]
         [(Spill _) false])]))
 
 ;; Drop every selection the replan did not improve: a memory candidate the

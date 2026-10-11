@@ -15571,12 +15571,12 @@
         var-id)
         [(Some location)
           (match location
-            [(or (Register home) (RegisterPair home _))
-              (compiler-backend-emit-register-home-into! out home reg)]
             ;; Loading a whole register-group var into one register is not a
             ;; scalar op; word extraction goes through CompilerIrInstr.Word.
             ;; Word0's home is the low register -- used only by the (unreached
             ;; here) group paths.
+            [(or (Register home) (RegisterPair home _))
+              (compiler-backend-emit-register-home-into! out home reg)]
             [(Spill offset)
               (compiler-backend-asm-append5
                 out
@@ -15691,7 +15691,6 @@
               (if (string.eq home-name reg)
                 ""
                 (str_cat.str-cat "    " mov " " home-name ", " reg "\n")))]
-          ;; A register-group var is never float-class; unreachable.
           [(Spill offset)
             (str_cat.str-cat
               "    "
@@ -15703,6 +15702,7 @@
               ", "
               reg
               "\n")]
+          ;; A register-group var is never float-class; unreachable.
           ;; A rematerialisable value is a constant/address (i64-class), never a
           ;; float; unreachable here.
           [(or (RegisterPair _ _) (Remat _)) ""])]
@@ -15737,7 +15737,6 @@
               (if (string.eq home-name reg)
                 ""
                 (str_cat.str-cat "    " mov " " reg ", " home-name "\n")))]
-          ;; A register-group var is never float-class; unreachable.
           [(Spill offset)
             (str_cat.str-cat
               "    "
@@ -15749,6 +15748,7 @@
                 backend-state
                 offset)
               "\n")]
+          ;; A register-group var is never float-class; unreachable.
           ;; A rematerialised value is never float-class; unreachable.
           [(or (RegisterPair _ _) (Remat _)) ""])]
       [(No)
@@ -18080,8 +18080,8 @@
       [(or (I32) (U32) (F32)) 4]
       [(or (I16) (U16)) 2]
       [(or (I8) (U8) (Bool) (Char)) 1]
-      [(or (Unit) (Never) (Expr) (ExprList) (Slice _)) 0]
       ;; A bare slice has no runtime value layout.
+      [(or (Unit) (Never) (Expr) (ExprList) (Slice _)) 0]
       [(or (Ref _ inner) (MutRef _ inner))
         (if (compiler_ast_types.ast-type-segment-bases-fat-referent?
           type-segment-bases
@@ -19349,14 +19349,14 @@
         id)
         [(Some location)
           (match location
+            ;; A whole register-group is loaded word-wise by the group
+            ;; ABI paths; reaching the generic scalar load means word0's home.
             [(or (Register home) (RegisterPair home _))
               (compiler-backend-emit-load-register-to-reg
                 type-segment-bases
                 (compiler_abi.compiler-abi-register-spelling home)
                 ty
                 reg)]
-            ;; A whole register-group is loaded word-wise by the group
-            ;; ABI paths; reaching the generic scalar load means word0's home.
             [(Spill offset)
               (compiler-backend-emit-load-memory-to-reg
                 type-segment-bases
@@ -19769,12 +19769,12 @@
         var-id)
         [(Some location)
           (match location
+            ;; An immediate never targets a whole register-group; unreached.
             [(or (Register home) (RegisterPair home _))
               (compiler-backend-emit-load-immediate-to-reg
                 value
                 (compiler_abi.compiler-abi-register-spelling home)
                 backend-state)]
-            ;; An immediate never targets a whole register-group; unreached.
             [(Spill offset)
               (Some
                 (str_cat.str-cat
@@ -80642,9 +80642,9 @@ tl_shared_object_init:
     ;; lowering is shared with the object backend.
     [(I64 value) (and (>= value -2147483648) (<= value 2147483647))]
     ;; This placeholder only records the initializer reference today.
-    [(or (RuntimeGlobal _) (StaticArray _)) false]
     ;; The object encoder has no static-array record yet (#8369): a program with
     ;; one keeps the assembly path.
+    [(or (RuntimeGlobal _) (StaticArray _)) false]
     [_ true]))
 
 (define (compiler-backend-object-semantic-call-args-array-supported?

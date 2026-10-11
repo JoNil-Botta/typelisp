@@ -176,10 +176,9 @@
 ;; existing parser and mapper, while the source fallback retains its separate
 ;; lazy per-module `include-str-lzss` payloads and decoder.
 ;;
-;; Expansion is per call: the decoded image is transient working memory owned
-;; by whatever arena the caller made current, and caching it for the process
-;; would retain megabytes. The one reuse is the driver's surface expansion
-;; below, whose owner already keeps it.
+;; One-shot expansion belongs to the caller's current arena. A hydrated
+;; surface or multi-entry compile batch can retain it in its driver-owned
+;; surface arena; that owner must unpublish the bytes before retiring.
 ;; 256 MiB is far above the current image while bounding a corrupt static
 ;; length before allocation.
 (define (compiler-embedded-stdlib-tlci-raw-limit) : i64
@@ -216,16 +215,14 @@
           (string.tl_oob_abort)
           (__tl_make-array u8 0)]))))
 
-;; The one expansion a driver's prelude surface made, and the arena holding it.
-;; The driver builds its surface with its own surface arena current, so those
-;; bytes already stay mapped for the driver state's whole lifetime; the session
-;; open that follows in that lifetime (and any nested package's surface) maps
-;; the same bytes instead of expanding the multi-megabyte image again. Nothing
-;; outlives its owner: the driver forgets the bytes before it destroys that
-;; arena, and a session opened with no surface still expands into the caller's
-;; current arena.
+;; The owner is installed before lazy expansion. Only `decoded-ready` permits
+;; reading the byte slot: between owner installation and the first native
+;; dispatch it can still contain an earlier, retired generation. Nested users
+;; borrow the enclosing owner's immutable bytes and cannot release that owner.
 (define compiler-embedded-stdlib-tlci-decoded-owner : i64
   0)
+(define compiler-embedded-stdlib-tlci-decoded-ready : bool
+  false)
 (define compiler-embedded-stdlib-tlci-decoded : (__tl_dyn-array
     (__tl_dyn-array u8))
   (__tl_make-array (__tl_dyn-array u8) 1))
@@ -236,31 +233,47 @@
     (ptr-read
       (ptr-offset (__tl_array-data compiler-embedded-stdlib-tlci-decoded) 0))))
 
-;; The expanded image: the surface's bytes while their owner is alive, else a
-;; fresh expansion in the caller's current arena.
+;; Install a live owner without decoding an image that source fallback may
+;; never use. The owner must outlive every nested image user until forget.
+(define (compiler-embedded-stdlib-tlci-retain-decoded! [owner : i64]) : unit
+  (when
+    (and (> owner 0) (= compiler-embedded-stdlib-tlci-decoded-owner 0))
+    (set! compiler-embedded-stdlib-tlci-decoded-ready false)
+    (set! compiler-embedded-stdlib-tlci-decoded-owner owner)))
+
+;; Retention shares only the baked-in image bytes. Each native session still
+;; parses, admits, maps, registers and releases its own executable image.
 (define (compiler-embedded-stdlib-tlci-image-bytes) : (__tl_dyn-array u8)
   (if (= compiler-embedded-stdlib-tlci-decoded-owner 0)
     (compiler-embedded-stdlib-tlci-copy)
-    (compiler-embedded-stdlib-tlci-decoded-shared-view)))
+    (if compiler-embedded-stdlib-tlci-decoded-ready
+      (compiler-embedded-stdlib-tlci-decoded-shared-view)
+      (in-arena
+        (arena.Arena compiler-embedded-stdlib-tlci-decoded-owner)
+        (let
+          ;; Decoder tables are transient; only its byte result belongs to
+          ;; the retained surface owner.
+          [bytes : (__tl_dyn-array u8)
+            (with-scratch (compiler-embedded-stdlib-tlci-copy))]
+          (set!
+            (array-ref compiler-embedded-stdlib-tlci-decoded 0)
+            (owned_view.compiler-owned-shared-view bytes))
+          (set! compiler-embedded-stdlib-tlci-decoded-ready true)
+          bytes)))))
 
-;; `owner` must be the current arena, and must stay alive until the caller
-;; passes it to `compiler-embedded-stdlib-tlci-forget-decoded!`.
+;; `owner` must stay alive until forget; an enclosing retained owner takes
+;; precedence and remains responsible for its own lifetime.
 (define (compiler-embedded-stdlib-tlci-surface-bytes [owner : i64]) : (__tl_dyn-array
     u8)
-  (if (= compiler-embedded-stdlib-tlci-decoded-owner 0)
-    (let
-      [bytes : (__tl_dyn-array u8) (compiler-embedded-stdlib-tlci-copy)]
-      (set!
-        (array-ref compiler-embedded-stdlib-tlci-decoded 0)
-        (owned_view.compiler-owned-shared-view bytes))
-      (set! compiler-embedded-stdlib-tlci-decoded-owner owner)
-      bytes)
-    (compiler-embedded-stdlib-tlci-decoded-shared-view)))
+  (compiler-embedded-stdlib-tlci-retain-decoded! owner)
+  (compiler-embedded-stdlib-tlci-image-bytes))
 
 ;; Called before `owner` is destroyed.
 (define (compiler-embedded-stdlib-tlci-forget-decoded! [owner : i64]) : unit
   (if (and (> owner 0) (= compiler-embedded-stdlib-tlci-decoded-owner owner))
-    (set! compiler-embedded-stdlib-tlci-decoded-owner 0)
+    (begin
+      (set! compiler-embedded-stdlib-tlci-decoded-ready false)
+      (set! compiler-embedded-stdlib-tlci-decoded-owner 0))
     unit))
 
 (define (compiler-embedded-stdlib-tlci-surface [owner : i64]) : CompilerEmbeddedStdlibTlciSurface

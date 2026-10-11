@@ -656,6 +656,17 @@ by surface identity order. Exact package-root lint detects uncalled producer
 declarations, while embedded-stdlib and package-surface parity gates exercise
 the real producer entries.
 
+Multi-entry `compile --batch` commands may retain the immutable decoded
+embedded image in the batch driver's surface arena. Installing that owner is
+lazy: source-only batches never expand an unused image. The byte slot becomes
+readable only after expansion completes. Decoder scratch storage retires
+immediately; only the byte result is copied into the surface arena. Nested
+surfaces borrow the enclosing owner's bytes. Both ordinary assembly and Windows object batches
+forget their owner after successful or failed entry execution, before that
+owner can retire. This retains no parsed AST or macro result. Fresh source
+provenance checks and each native session's admission, W^X mapping,
+registration and release remain independent.
+
 The runtime lifetime tests cover repeated checked errors, macro errors, failed
 imports after a successful import, parent restoration, bounded direct-object
 side-backend retention, and emission at all optimization levels for both targets. The copied environment test destroys the

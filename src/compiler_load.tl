@@ -15207,7 +15207,7 @@
         [(Err err)
           (Err (box (compiler-load-manifest-source-error-diagnostic path err)))]
         [(Ok toks)
-          (match (reader.spanned-result toks)
+          (match (reader.spanned-result (& toks))
             [(Err err)
               (Err
                 (box (compiler-load-manifest-source-error-diagnostic path err)))]
@@ -15225,7 +15225,7 @@
         [(Err err)
           (Err (box (compiler-load-manifest-source-error-diagnostic path err)))]
         [(Ok toks)
-          (match (reader.spanned-result toks)
+          (match (reader.spanned-result (& toks))
             [(Err err)
               (Err
                 (box (compiler-load-manifest-source-error-diagnostic path err)))]

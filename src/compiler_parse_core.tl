@@ -3005,7 +3005,7 @@
           compiler-parse-state-control-owner-addr))]
     [name-id : i64
       (if (= owner-address 0)
-        (reader.stable-symbol-id name)
+        (reader.stable-symbol-id (& name))
         (let
           [owner : ci.InternCompatState (compiler-parse-state-owner control)]
           (ci.intern-compat-state-intern (&mut owner) (& name))))]
@@ -6171,8 +6171,8 @@
   [pools : ast.AstNodePoolContext]
   [s : reader.SpannedSexpr]) : ResultAstPattern
   (match (reader.sexpr-view s)
-    [(Int n text) (Ok (Literal (Int n (reader.sp-text-copy text))))]
-    [(Float text) (Ok (Literal (Float (reader.sp-text-copy text))))]
+    [(Int n text) (Ok (Literal (Int n (reader.sp-text-copy (& text)))))]
+    [(Float text) (Ok (Literal (Float (reader.sp-text-copy (& text)))))]
     [(Str string-id) (Ok (Literal (String (ci.intern-id-value string-id))))]
     [(Char c) (Ok (Literal (Char c)))]
     [(Sym name)
@@ -9024,7 +9024,7 @@
               pools
               (ast.ast-node-pool-context-expr-push
                 pools
-                (Literal (Int n (reader.sp-text-copy text))))
+                (Literal (Int n (reader.sp-text-copy (& text)))))
               s))]
         [(Float text _)
           (Ok
@@ -9032,7 +9032,7 @@
               pools
               (ast.ast-node-pool-context-expr-push
                 pools
-                (Literal (Float (reader.sp-text-copy text))))
+                (Literal (Float (reader.sp-text-copy (& text)))))
               s))]
         [(Str string-id _)
           (Ok
